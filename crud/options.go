@@ -1,5 +1,7 @@
 package crud
 
+import "math"
+
 // Options is the resolved query shape. Decorators receive and may inspect it;
 // the fields are exported for exactly that reason.
 type Options struct {
@@ -86,6 +88,12 @@ func Select(fields ...string) Option {
 	return func(o *Options) { o.Fields = append(o.Fields, fields...) }
 }
 
+// SelectAll drops any projection applied before it, so the query reads every
+// column again. It exists for the layers that cannot work with half a row: a
+// row-level check reading a column the client did not select would compare
+// against a zero value and believe it.
+func SelectAll() Option { return func(o *Options) { o.Fields = nil } }
+
 // Unpaged disables pagination for this call.
 func Unpaged() Option { return func(o *Options) { o.Unpaged = true } }
 
@@ -133,8 +141,15 @@ func With(src *Options) Option {
 
 // Resolved computes the effective limit, offset and 1-based page number for a
 // repository's default and maximum page size.
+//
+// Unpaged is honoured only as far as maxLimit: a repository that declares a
+// maximum page size must not be talked out of it by one flag arriving from the
+// wire. With no maximum declared, Unpaged really does mean everything.
 func (o *Options) Resolved(defLimit, maxLimit int) (limit, offset, page int) {
 	if o.Unpaged {
+		if maxLimit > 0 {
+			return maxLimit, max(o.Offset, 0), 1
+		}
 		return 0, max(o.Offset, 0), 1
 	}
 	limit = o.Limit
@@ -148,7 +163,20 @@ func (o *Options) Resolved(defLimit, maxLimit int) (limit, offset, page int) {
 	if page <= 0 {
 		page = 1
 	}
-	offset = (page - 1) * limit
+	// A page number arrives from a client and is multiplied by the page size,
+	// so it is one of the few places an int can wrap. It used to: a wrapped
+	// offset is dropped as non-positive, and the caller was handed page one
+	// labelled as page 9223372036854775807. Saturating instead asks the
+	// database for a page past the end, which is what was requested.
+	var off int64
+	if limit > 0 && page > 1 {
+		if int64(page-1) > math.MaxInt/int64(limit) {
+			off = math.MaxInt
+		} else {
+			off = int64(page-1) * int64(limit)
+		}
+	}
+	offset = int(off)
 	if o.Offset > 0 {
 		offset = o.Offset
 	}

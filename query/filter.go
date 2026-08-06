@@ -121,8 +121,8 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 	if err != nil {
 		return nil, err
 	}
-	if !allowed(c.cfg.filterable(), canonical) {
-		return nil, errf(where, "%s is not filterable", canonical)
+	if !allowed(c.cfg.filterable(), c.qualify(canonical)) {
+		return nil, errf(where, "%s is not filterable", c.qualify(canonical))
 	}
 
 	raw = trim(raw)
@@ -135,12 +135,18 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 		return c.operators(canonical, f, raw, where)
 	case '[':
 		// {"status": ["draft","live"]} means IN.
+		if err := c.count(where); err != nil {
+			return nil, err
+		}
 		vals, err := decodeList(raw, f)
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
 		return crud.In(canonical, vals...), nil
 	default:
+		if err := c.count(where); err != nil {
+			return nil, err
+		}
 		if isNull(raw) {
 			return crud.IsNull(canonical), nil
 		}
@@ -166,9 +172,8 @@ func (c *compiler) operators(field string, f *crud.Field, raw json.RawMessage, w
 
 	var preds []crud.Predicate
 	for _, key := range keys {
-		c.conds++
-		if c.conds > c.cfg.maxConditions() {
-			return nil, errf(where, "at most %d conditions per query", c.cfg.maxConditions())
+		if err := c.count(where); err != nil {
+			return nil, err
 		}
 		p, err := c.operator(field, f, key, obj[key], where+"."+key)
 		if err != nil {
@@ -190,6 +195,14 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 	kind, ok := normalizeOp(op)
 	if !ok {
 		return nil, errf(where, "unknown operator %q", op)
+	}
+	// json.Unmarshal reads null as "leave the destination alone", so a null
+	// operand used to arrive as the zero value of whatever the operator wanted:
+	// {"contains": null} became LIKE '%%' and {"notIn": null} became NOT IN () —
+	// a narrowing the client asked for turning into no narrowing at all. Only a
+	// scalar comparison has an answer for null, and crud.Eq folds that to IS NULL.
+	if isNull(trim(raw)) && (kind.unary() || kind.textual() || kind.multi()) {
+		return nil, errf(where, "%s has no meaning with null", op)
 	}
 
 	switch {

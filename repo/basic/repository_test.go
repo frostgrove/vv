@@ -174,6 +174,58 @@ func TestGetAllIsUnpaged(t *testing.T) {
 	}
 }
 
+// DISTINCT is a keyword in front of a column list, so it cannot reuse the
+// prebuilt SELECT — and a request that asks for it without asking for a
+// projection is the ordinary case, not the exotic one.
+func TestDistinctWithoutAProjectionStillNamesItsColumns(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	if _, err := Users.Bind(rec).GetAll(context.Background(), crud.Distinct()); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT DISTINCT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users"`)
+}
+
+// Select normally keeps the primary key, because a row a client cannot address
+// is not much use. Under DISTINCT that same key is fatal: it is unique, so every
+// row stays distinct from every other and the keyword removes nothing.
+// `?distinct=1&select=name` used to answer one row per user instead of one row
+// per name. TestDistinctActuallyRemovesDuplicateRows in the integration suite
+// counts the rows; this pins the statement that can produce them.
+func TestDistinctProjectsOnlyWhatWasSelected(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	if _, err := Users.Bind(rec).GetAll(context.Background(),
+		crud.Distinct(), crud.Select("Email")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Last().SQL, `"id"`) {
+		t.Fatalf("the primary key is in a DISTINCT projection, so no two rows can ever collapse: %s", rec.Last().SQL)
+	}
+	wantSQL(t, rec.Last().SQL, `SELECT DISTINCT "email" FROM "users"`)
+}
+
+// The same reasoning, from the other end: a preload needs the key to attach the
+// second statement's rows to the first statement's models, and a DISTINCT
+// projection has none. Answering with unattached relations, or quietly putting
+// the key back, would both be worse than saying so.
+func TestDistinctRefusesAPreloadItCannotAttach(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+
+	_, err := basic.Define[Book, int64, struct{}]("books").Bind(rec).GetAll(context.Background(),
+		crud.Distinct(), crud.Select("Title"), crud.Preload("Pages"))
+
+	var se *crud.SchemaError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a *crud.SchemaError naming the conflict", err)
+	}
+	if !strings.Contains(se.Error(), "Pages") {
+		t.Fatalf("err = %v, want the refusal to name the preload", err)
+	}
+	if n := len(rec.Statements()); n != 0 {
+		t.Fatalf("%d statements reached the database: %v", n, rec.SQL())
+	}
+}
+
 func TestMaxLimitClamps(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(0)}))
 	repo := basic.Define[User, int64, UserUpdate]("users", basic.MaxLimit(50)).Bind(rec)
@@ -237,17 +289,27 @@ func TestSaveOnMySQLUsesLastInsertID(t *testing.T) {
 	}
 }
 
-func TestSaveOnMySQLSkipsRefreshWithoutGeneratedColumns(t *testing.T) {
-	rec := crudtest.MySQL().ExecResult(crud.Result{RowsAffected: 1})
-	d := Doc{ID: "abc", Title: "T"}
+// Save promises the model comes back describing the row. PostgreSQL keeps that
+// promise with RETURNING; a dialect without it has to go and read the row, or
+// the caller is left holding whatever they passed in — including the values an
+// upsert's conflict clause refused to write.
+func TestSaveOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
+	rec := crudtest.MySQL().
+		ExecResult(crud.Result{RowsAffected: 1}).
+		Push(crudtest.Rows([]any{"abc", "what the table actually holds"}))
+
+	d := Doc{ID: "abc", Title: "what the caller asked for"}
 	if err := Docs.Bind(rec).Save(context.Background(), &d); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(rec.Statements()); n != 1 {
-		t.Fatalf("%d statements, want 1: %v", n, rec.SQL())
-	}
-	wantSQL(t, rec.Last().SQL,
+
+	wantSQL(t, mustSQL(t, rec, 0).SQL,
 		"INSERT INTO `docs` (`id`, `title`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `title` = VALUES(`title`)")
+	wantSQL(t, mustSQL(t, rec, 1).SQL, "SELECT `id`, `title` FROM `docs` WHERE `id` = ? LIMIT 1")
+	if d.Title != "what the table actually holds" {
+		t.Fatalf("the model still says %q after Save; it has to describe the stored row, "+
+			"or the same handler serialises a different document per engine", d.Title)
+	}
 }
 
 func TestSaveRequiresAssignedKeyWhenNotGenerated(t *testing.T) {
@@ -344,21 +406,57 @@ func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
 	}
 }
 
-func TestUpdateOnMySQLAppliesLocallyWithoutRefresh(t *testing.T) {
+// The same on the update path: without RETURNING the row is read back rather
+// than patched in memory, so what the caller receives is what the table holds —
+// triggers, defaults and all.
+func TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 	rec := crudtest.MySQL().
 		ExecResult(crud.Result{RowsAffected: 1}).
-		Push(crudtest.Rows([]any{"abc", "old"}))
+		Push(
+			crudtest.Rows([]any{"abc", "old"}),           // load
+			crudtest.Rows([]any{"abc", "NEW (trimmed)"}), // read back
+		)
 
 	d, err := Docs.Bind(rec).Update(context.Background(), "abc", DocUpdate{Title: ptr("new")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(rec.Statements()); n != 2 {
-		t.Fatalf("%d statements, want load+update: %v", n, rec.SQL())
+	if n := len(rec.Statements()); n != 3 {
+		t.Fatalf("%d statements, want load+update+read-back: %v", n, rec.SQL())
 	}
 	wantSQL(t, mustSQL(t, rec, 1).SQL, "UPDATE `docs` SET `title` = ? WHERE `id` = ?")
-	if d.Title != "new" {
-		t.Fatalf("model = %+v", d)
+	wantSQL(t, mustSQL(t, rec, 2).SQL, "SELECT `id`, `title` FROM `docs` WHERE `id` = ? LIMIT 1")
+	if d.Title != "NEW (trimmed)" {
+		t.Fatalf("model = %+v; the DTO was applied in memory instead of reading the row", d)
+	}
+}
+
+// A row deleted between the load and the write is gone, and Update has to say
+// so on every engine. RETURNING reports it for free; without RETURNING nothing
+// but the read-back can tell "no such row" from MySQL's "nothing to do", and
+// the answer used to be a fabricated model with err == nil.
+func TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rec  *crudtest.Recorder
+	}{
+		{"postgres", crudtest.Postgres().Push(
+			crudtest.Rows([]any{"abc", "old"}), // load
+			crudtest.Rows(),                    // the UPDATE ... RETURNING matches nothing
+		)},
+		{"mysql", crudtest.MySQL().
+			ExecResult(crud.Result{RowsAffected: 0}).
+			Push(
+				crudtest.Rows([]any{"abc", "old"}), // load
+				crudtest.Rows(),                    // the read-back finds nothing
+			)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Docs.Bind(tc.rec).Update(context.Background(), "abc", DocUpdate{Title: ptr("new")})
+			if !errors.Is(err, crud.ErrNotFound) {
+				t.Fatalf("err = %v, want ErrNotFound: the row was deleted under the update", err)
+			}
+		})
 	}
 }
 

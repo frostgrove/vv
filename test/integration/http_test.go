@@ -286,6 +286,72 @@ func TestHTTPCrudLifecycle(t *testing.T) {
 	}
 }
 
+// PUT is the one write the integration suite never issued: everything about it
+// was proved against a fake repository, and the hazard it is written to avoid —
+// an explicit insert into a serial column, which does not advance the sequence —
+// only exists on a real PostgreSQL.
+func TestHTTPReplace(t *testing.T) {
+	for _, b := range blogs(t) {
+		t.Run(b.name, func(t *testing.T) {
+			ann, _, generics, _, _ := seedBlog(t, b)
+			app := newApp(t, b)
+
+			// PUT replaces the whole row, and the id comes from the URL, not from
+			// the body — a client cannot move a row by putting a different one in
+			// the payload.
+			r := raw(t, app, http.MethodPut, "/articles/"+itoa64(generics.ID), `{
+				"ID": 424242, "AuthorID": `+itoa64(ann.ID)+`,
+				"Title": "replaced", "Body": "whole new body", "Views": 7
+			}`)
+			if r.status != http.StatusOK {
+				t.Fatalf("status %d: %s", r.status, r.body)
+			}
+			var replaced Article
+			r.decode(t, &replaced)
+			if replaced.ID != generics.ID {
+				t.Fatalf("id = %d, want the URL's %d", replaced.ID, generics.ID)
+			}
+			if replaced.Title != "replaced" || replaced.Body != "whole new body" || replaced.Views != 7 {
+				t.Fatalf("replaced = %+v", replaced)
+			}
+			// A field the body left out is not left alone — this is a replace, not
+			// a patch — and a `generated` column is still the database's.
+			if replaced.PublishedAt.IsSet() {
+				t.Fatalf("publishedAt = %v: PUT replaces the row, so an absent field is cleared", replaced.PublishedAt)
+			}
+			if !replaced.CreatedAt.Equal(generics.CreatedAt) {
+				t.Fatalf("created_at %v -> %v: an immutable column was rewritten by a replace",
+					generics.CreatedAt, replaced.CreatedAt)
+			}
+			if n, err := b.articles.Count(context.Background()); err != nil || n != 3 {
+				t.Fatalf("count = %d err = %v: the replace inserted a row instead of replacing one", n, err)
+			}
+
+			// On a generated key, PUT never creates: the id has to name a row that
+			// is already there. Otherwise it would be the way around POST's refusal
+			// to let a client choose its own id.
+			r = raw(t, app, http.MethodPut, "/articles/999999",
+				`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "smuggled", "Body": "x"}`)
+			if r.status != http.StatusNotFound {
+				t.Fatalf("status %d: %s — PUT at an unused id must not create on a generated key", r.status, r.body)
+			}
+
+			// And the sequence is intact: the next POST gets a fresh key rather
+			// than colliding with a row a client put there.
+			r = raw(t, app, http.MethodPost, "/articles",
+				`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "after the put", "Body": "y"}`)
+			if r.status != http.StatusCreated {
+				t.Fatalf("status %d: %s — the key sequence was stranded by the replace", r.status, r.body)
+			}
+			var created Article
+			r.decode(t, &created)
+			if created.ID == 0 || created.ID == generics.ID {
+				t.Fatalf("the new row took id %d", created.ID)
+			}
+		})
+	}
+}
+
 func TestHTTPBulkDelete(t *testing.T) {
 	b := blogs(t)[0]
 	_, _, generics, draft, _ := seedBlog(t, b)
@@ -358,11 +424,7 @@ func TestHTTPRejections(t *testing.T) {
 // A model bound through the adapter but never declared as a repository still
 // resolves its table, because Define registers it.
 func TestHTTPWorksWithoutExtraDeclarations(t *testing.T) {
-	b := blog{name: "postgres", db: pgDB, src: crudsql.Postgres(pgDB)}
-	b.articles = Articles.Bind(b.src)
-	b.authors = Authors.Bind(b.src)
-	b.comments = Comments.Bind(b.src)
-	b.tags = Tags.Bind(b.src)
+	b := newBlog("postgres", pgDB, crudsql.Postgres(pgDB))
 	seedBlog(t, b)
 
 	h := crudfiber.New[Comment, int64, CommentUpdate](Comments.Bind(b.src))

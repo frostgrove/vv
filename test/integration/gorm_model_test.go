@@ -263,3 +263,137 @@ func TestGormModelInsideGormTransaction(t *testing.T) {
 		t.Fatalf("count = %d", n)
 	}
 }
+
+// docs/gorm.md §14 opens with a curl that walks a has_many hop out of Team and
+// preloads back along it two levels deep. Nothing ran it: only the belongs_to
+// direction and the many2many were covered, so the document a reader is most
+// likely to copy was the one nothing executed.
+func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
+	for _, g := range mxGorms(t) {
+		t.Run(g.name, func(t *testing.T) {
+			ctx := context.Background()
+			teams := GormTeams.Bind(g.src)
+
+			goLbl, rust := Label{Slug: "go"}, Label{Slug: "rust"}
+			if err := g.db.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
+				t.Fatal(err)
+			}
+			// core has a member over 30 and a "go" label; ops has neither.
+			core := Team{Name: "core", Labels: []Label{goLbl, rust}}
+			ops := Team{Name: "ops", Labels: []Label{rust}}
+			if err := g.db.Create(&[]*Team{&core, &ops}).Error; err != nil {
+				t.Fatal(err)
+			}
+			senior, junior := 31, 22
+			if err := g.db.Create(&[]*Member{
+				{TeamID: core.ID, Name: "Ann", Age: &senior},
+				{TeamID: core.ID, Name: "Bob", Age: &junior},
+				{TeamID: ops.ID, Name: "Cid", Age: &junior},
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			// The document from the guide, character for character.
+			var req query.Request
+			if err := json.Unmarshal([]byte(`{
+				"filter":  {"labels.slug": {"in": ["go","rust"]}, "members.age": {"gte": 30}},
+				"preload": ["members.team", "labels"],
+				"sort":    ["-createdAt", "name"]
+			}`), &req); err != nil {
+				t.Fatal(err)
+			}
+			req.Unpaged = true
+			opts, err := req.Compile(GormTeams.Meta(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := teams.GetAll(ctx, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Two EXISTS subqueries, ANDed: ops has a matching label but nobody
+			// over 30, so exactly one team comes back — and it comes back once,
+			// even though two of its labels match.
+			if len(got) != 1 || got[0].Name != "core" {
+				t.Fatalf("teams = %v, want just core", mxTeamNames(got))
+			}
+			if len(got[0].Members) != 2 {
+				t.Fatalf("members = %d, want both of core's — a relation filter selects parents, not children", len(got[0].Members))
+			}
+			if want := []string{"go", "rust"}; !eq(mxSlugs(got[0].Labels), want) {
+				t.Fatalf("labels = %v, want %v", mxSlugs(got[0].Labels), want)
+			}
+			// members.team is the second level, and it points back at the team it
+			// came from.
+			for _, m := range got[0].Members {
+				if m.Team == nil {
+					t.Fatalf("member %q has no team: the nested preload did not run", m.Name)
+				}
+				if m.Team.Name != "core" {
+					t.Fatalf("member %q belongs to %q", m.Name, m.Team.Name)
+				}
+			}
+		})
+	}
+}
+
+func mxTeamNames(teams []Team) []string {
+	out := make([]string, len(teams))
+	for i, t := range teams {
+		out[i] = t.Name
+	}
+	return out
+}
+
+// docs/gorm.md §16 tells a reader that gorm's hooks, callbacks and defaults do
+// not run on rx-crud writes: rx-crud sends one statement to the driver and never
+// enters gorm's callback chain. That is a promise about what does *not* happen,
+// which is exactly the kind that rots unnoticed — so here it is, from both
+// sides, with a hook that leaves a mark on the row.
+func TestGormHooksDoNotRunOnRxCrudWrites(t *testing.T) {
+	for _, g := range mxGorms(t) {
+		t.Run(g.name, func(t *testing.T) {
+			ctx := context.Background()
+			labels := GormLabels.Bind(g.src)
+
+			// gorm's own Create goes through the callback chain.
+			before := gormstore.LabelCreations.Load()
+			viaGorm := Label{}
+			if err := g.db.Create(&viaGorm).Error; err != nil {
+				t.Fatal(err)
+			}
+			if gormstore.LabelCreations.Load() != before+1 {
+				t.Fatal("gorm's own Create did not fire the hook, so this test cannot tell anything apart")
+			}
+			if viaGorm.Slug != "defaulted by the hook" {
+				t.Fatalf("slug = %q, want the hook's default", viaGorm.Slug)
+			}
+
+			// rx-crud's Save is one INSERT. The hook does not run, so the column
+			// gets the zero value the model carried — which is the whole point of
+			// the warning in the guide.
+			before = gormstore.LabelCreations.Load()
+			viaRxCrud := Label{}
+			if err := labels.Save(ctx, &viaRxCrud); err != nil {
+				t.Fatal(err)
+			}
+			if n := gormstore.LabelCreations.Load(); n != before {
+				t.Fatalf("the hook fired %d time(s) on an rx-crud write; docs/gorm.md §16 says it does not", n-before)
+			}
+			if viaRxCrud.Slug != "" {
+				t.Fatalf("slug = %q: a gorm-side default reached an rx-crud write", viaRxCrud.Slug)
+			}
+
+			// And the row on disk agrees — this is not a difference in what was
+			// read back afterwards.
+			stored, err := labels.GetByID(ctx, viaRxCrud.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Slug != "" {
+				t.Fatalf("the stored slug is %q", stored.Slug)
+			}
+		})
+	}
+}

@@ -116,6 +116,8 @@ func collectPlanFields(p *UpdatePlan, t reflect.Type, prefix []int, seen []refle
 			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is `generated` and never written"}
 		case target.Immutable:
 			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is `immutable`"}
+		case target.Version:
+			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is the `version` column and is advanced by the repository"}
 		}
 
 		pf := planField{Name: sf.Name, Index: idx, Target: target}
@@ -201,6 +203,28 @@ func (p *UpdatePlan) Changes(dto any, model any) ([]Change, error) {
 			continue
 		}
 		if valuesEqual(pf.Target.comparableOf(base), val) {
+			continue
+		}
+		changes = append(changes, Change{Field: pf.Target, Value: val})
+	}
+	return changes, nil
+}
+
+// Writes lists every column the DTO defines. It is Changes without a row to
+// diff against, which is what a filtered update has: many rows, no single
+// "before" state to compare with. The two rules that matter survive — an
+// undefined field is still never written, and a null Opt still writes NULL —
+// only the "this value is already there" shortcut is gone, so a filtered update
+// writes the columns it was given to every row the predicate matches.
+func (p *UpdatePlan) Writes(dto any) ([]Change, error) {
+	v, err := p.dtoValue(dto)
+	if err != nil {
+		return nil, err
+	}
+	changes := make([]Change, 0, len(p.Fields))
+	for _, pf := range p.Fields {
+		val, defined := pf.read(v)
+		if !defined {
 			continue
 		}
 		changes = append(changes, Change{Field: pf.Target, Value: val})

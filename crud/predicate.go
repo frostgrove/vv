@@ -48,6 +48,11 @@ type writer struct {
 	cur   scope
 	alias int
 	err   error
+
+	// rel narrows the tables a relation hop opens; path is how far down the
+	// relation tree the writer currently is, so the narrowing can be looked up.
+	rel  *RelationScopes
+	path string
 }
 
 func (w *writer) fail(err error) {
@@ -91,8 +96,8 @@ func (w *writer) leaf(path string, emit func(col string)) {
 		return
 	}
 
-	saved := w.cur
-	defer func() { w.cur = saved }()
+	saved, savedPath := w.cur, w.path
+	defer func() { w.cur, w.path = saved, savedPath }()
 
 	for _, hop := range hops {
 		alias := w.nextAlias()
@@ -109,10 +114,33 @@ func (w *writer) leaf(path string, emit func(col string)) {
 		}
 		w.str(" AND ")
 		cur = scope{meta: hop.Target, alias: alias}
-		w.cur = cur
+		w.cur, w.path = cur, joinPath(w.path, hop.Rel.Name)
+		if w.hopScope() {
+			w.str(" AND ")
+		}
 	}
 	emit(cur.qualify(w.d, f.Column))
 	w.str(strings.Repeat(")", len(hops)))
+}
+
+// hopScope renders the narrowing that applies to the table the writer has just
+// stepped into. Without it a filter through a relation reads rows the caller's
+// own repository would refuse to hand over — the subquery has its own FROM and
+// inherits nothing.
+func (w *writer) hopScope() bool {
+	p := w.rel.At(w.path, w.cur.meta)
+	if p == nil {
+		return false
+	}
+	// A narrowing is the repository's own declaration, not caller input, so it
+	// is rendered without narrowing anything further. That also settles the
+	// only way this could fail to terminate: a scope on a model whose own path
+	// walks back into that same model.
+	saved := w.rel
+	w.rel = nil
+	p.render(w)
+	w.rel = saved
+	return true
 }
 
 func (w *writer) column(ref string) {
@@ -336,6 +364,11 @@ func (n rawNode) render(w *writer) {
 		j := strings.IndexByte(n.sql[i:], '?')
 		if j < 0 {
 			w.str(n.sql[i:])
+			if len(n.args) > 0 {
+				// The leftovers are not harmless: whoever wrote a native $1 by
+				// hand would get it renumbered against someone else's bind.
+				w.fail(&SchemaError{Model: w.m.Name, Reason: "crud.Raw: fewer ? markers than arguments"})
+			}
 			return
 		}
 		j += i
@@ -483,8 +516,13 @@ func Asc(field string) Order { return Order{Field: field} }
 // Desc sorts descending by a field.
 func Desc(field string) Order { return Order{Field: field, Desc: true} }
 
-// WithNullsLast places NULLs at the end (PostgreSQL only; MySQL ignores it).
-func (o Order) WithNullsLast() Order  { o.NullsLast, o.NullsSet = true, true; return o }
+// WithNullsLast places NULLs at the end (PostgreSQL only; MySQL ignores it and
+// keeps its own order, which is NULLs first ascending and NULLs last
+// descending).
+func (o Order) WithNullsLast() Order { o.NullsLast, o.NullsSet = true, true; return o }
+
+// WithNullsFirst places NULLs at the start, with the same PostgreSQL-only
+// caveat as WithNullsLast.
 func (o Order) WithNullsFirst() Order { o.NullsLast, o.NullsSet = false, true; return o }
 
 // sortExpr renders a sortable expression for a path. A relation hop becomes a
@@ -521,11 +559,19 @@ func (w *writer) sortExpr(segs []string, cur scope) {
 		return
 	}
 	alias := w.nextAlias()
+	saved, savedPath := w.cur, w.path
+	defer func() { w.cur, w.path = saved, savedPath }()
+
 	w.str("(SELECT ")
 	w.sortExpr(segs[1:], scope{meta: target, alias: alias})
 	w.str(" FROM " + w.d.Quote(target.Table) + " AS " + alias +
-		" WHERE " + alias + "." + w.d.Quote(remote.Column) + " = " + cur.correlate(w.d, local.Column) +
-		" LIMIT 1)")
+		" WHERE " + alias + "." + w.d.Quote(remote.Column) + " = " + cur.correlate(w.d, local.Column))
+	w.cur, w.path = scope{meta: target, alias: alias}, joinPath(w.path, rel.Name)
+	if w.rel.At(w.path, target) != nil {
+		w.str(" AND ")
+		w.hopScope()
+	}
+	w.str(" LIMIT 1)")
 }
 
 func (o Order) render(w *writer) {

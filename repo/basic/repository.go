@@ -130,7 +130,7 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 		if more {
 			items = items[:limit]
 		}
-		resp := crud.NewPaginatedResponse(items, page, limit, int64(offset+len(items)))
+		resp := crud.NewPaginatedResponse(items, page, limit, int64(len(items)))
 		resp.TotalPages = 0
 		resp.HasNext = more
 		return resp, nil
@@ -138,7 +138,12 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 
 	var total int64
 	switch {
-	case o.Unpaged, o.NoTotal:
+	case o.NoTotal:
+		// No COUNT ran, so the only number that is true is the size of what came
+		// back. Deriving it from the offset invented one the client had chosen:
+		// page 999 of an empty table reported 19960 results.
+		total = int64(len(items))
+	case o.Unpaged:
 		total = int64(offset + len(items))
 	case offset == 0 && len(items) < limit:
 		// A short first page is already the whole answer.
@@ -153,8 +158,12 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 
 func (r *repository[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, error) {
 	o := crud.Build(opts...)
-	if o.Limit == 0 && o.Page == 0 && o.Offset == 0 {
-		o.Unpaged = true
+	if o.Limit == 0 && o.Page == 0 && o.Offset == 0 && !o.Unpaged {
+		// GetAll's contract is every matching row, and MaxLimit is a cap on a
+		// *page*. Silently truncating here would be worse than a slow query:
+		// the decorators that read a whole set in order to check it would
+		// check the first n and let the rest through.
+		return r.find(ctx, o, 0, 0)
 	}
 	limit, offset, _ := o.Resolved(r.bp.set.defaultLimit, r.bp.set.maxLimit)
 	return r.find(ctx, o, limit, offset)
@@ -174,16 +183,38 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 		return nil, err
 	}
 
-	b := crud.NewSQL(r.d, r.meta)
+	// Every projection but a DISTINCT one carries the primary key, and the two
+	// things that need it need it for the same reason: a preload attaches its
+	// rows by key, and the stable-pagination tiebreaker breaks ties by key. A
+	// DISTINCT that selects the key back is fine — the caller has then chosen a
+	// unique column, and with it a result that cannot collapse.
+	identified := hasPK(cols)
+	if !identified && len(o.Preloads) > 0 {
+		return nil, &crud.SchemaError{Model: r.meta.Name, Field: o.Preloads[0].Path,
+			Reason: "a DISTINCT projection carries no primary key, so a preload has no rows to attach to"}
+	}
+	sort := r.sortOf(o, limit > 0 && identified)
+
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes)
 	switch {
 	case o.Distinct:
+		// Distinct arrives on its own as often as not — `?distinct=1` with no
+		// select — and the prebuilt SELECT cannot carry the keyword, so the
+		// column list has to be spelled out here or the statement reads
+		// "SELECT DISTINCT FROM users", which no database accepts.
+		if cols == nil {
+			cols = r.meta.Fields
+		}
+		if sort, err = r.distinctSort(cols, sort, len(o.Sort) > 0); err != nil {
+			return nil, err
+		}
 		b.Raw("SELECT DISTINCT ").Columns(cols).Raw(" FROM ").Table()
 	case cols == nil:
 		b.Raw(r.selectFrom)
 	default:
 		b.Raw("SELECT ").Columns(cols).Raw(" FROM ").Table()
 	}
-	b.Where(r.scoped(o)).OrderBy(r.sortOf(o, limit > 0)).LimitOffset(limit, offset)
+	b.Where(r.scoped(o)).OrderBy(sort).LimitOffset(limit, offset)
 	if o.ForUpdate {
 		b.Raw(r.d.LockClause())
 	}
@@ -201,9 +232,15 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 	return items, nil
 }
 
-// projection resolves Select() into a field list, always keeping the primary
-// key: it is what preloads join on and what a client needs to address the row.
-// A nil result means "every column", which lets the prebuilt statement be used.
+// projection resolves Select() into a field list, keeping the primary key: it
+// is what preloads join on and what a client needs to address the row. A nil
+// result means "every column", which lets the prebuilt statement be used.
+//
+// Distinct is the one exception. The primary key is unique by definition, so
+// carrying it would make SELECT DISTINCT unable to remove a single row —
+// `?distinct=1&select=title` returned one row per article rather than one per
+// title. A caller who asks for the distinct values of some columns is asking
+// for values, not for rows, and gives up addressing them.
 func (r *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, error) {
 	if len(o.Fields) == 0 {
 		return nil, nil
@@ -215,6 +252,20 @@ func (r *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, error
 			seen[f.Name] = true
 			out = append(out, f)
 		}
+	}
+	if o.Distinct {
+		// Nothing is added under DISTINCT — not the key, not a preload's join
+		// column — because every extra column is one more thing that can differ
+		// between two rows, and a projection nobody chose defeats the keyword
+		// silently. The caller gets the distinct values of what they selected.
+		for _, name := range o.Fields {
+			f := r.meta.Field(name)
+			if f == nil {
+				return nil, &crud.UnknownFieldError{Model: r.meta.Name, Field: name}
+			}
+			add(f)
+		}
+		return out, nil
 	}
 	add(r.meta.PK)
 	for _, name := range o.Fields {
@@ -236,13 +287,72 @@ func (r *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, error
 	return out, nil
 }
 
+// hasPK reports whether a projection can still identify its rows. A nil
+// projection is every column, so it always can.
+func hasPK(cols []*crud.Field) bool {
+	if cols == nil {
+		return true
+	}
+	for _, f := range cols {
+		if f.PK {
+			return true
+		}
+	}
+	return false
+}
+
+// distinctSort reconciles a sort with a DISTINCT projection. Both engines refuse
+// a SELECT DISTINCT that orders by something outside the select list (42P10 /
+// ER_FIELD_IN_ORDER_NOT_SELECT), and all three inputs — distinct, select and
+// sort — come from the wire, so the combination has to end in a statement or in
+// a refusal the client can read, never in a 500.
+//
+// Widening the projection to cover the sort is what this used to do, and it
+// produced a statement that ran and an answer nobody asked for: the extra column
+// is exactly what tells the duplicate rows apart, so DISTINCT stopped removing
+// them and the response carried a column the client had not selected. The
+// caller's own sort is therefore refused, because those two requests genuinely
+// cannot both be honoured; the repository's default sort, which the caller never
+// asked for, is dropped instead of being turned into an error they cannot avoid.
+func (r *repository[M, ID, U]) distinctSort(cols []*crud.Field, sort []crud.Order, asked bool) ([]crud.Order, error) {
+	if len(sort) == 0 {
+		return sort, nil
+	}
+	projected := make(map[string]bool, len(cols))
+	for _, f := range cols {
+		projected[f.Name] = true
+	}
+	out := make([]crud.Order, 0, len(sort))
+	for _, s := range sort {
+		if strings.Contains(s.Field, ".") {
+			// A sort through a relation renders as a scalar subquery, which can
+			// never be in the select list; there is no statement to build.
+			return nil, &crud.SchemaError{Model: r.meta.Name, Field: s.Field,
+				Reason: "a DISTINCT query cannot be sorted through a relation"}
+		}
+		f := r.meta.Field(s.Field)
+		if f == nil {
+			return nil, &crud.UnknownFieldError{Model: r.meta.Name, Field: s.Field}
+		}
+		if projected[f.Name] {
+			out = append(out, s)
+			continue
+		}
+		if asked {
+			return nil, &crud.SchemaError{Model: r.meta.Name, Field: s.Field,
+				Reason: "a DISTINCT projection cannot be sorted by a column it does not select"}
+		}
+	}
+	return out, nil
+}
+
 // preload runs the requested relation loads against the same executor, so a
 // preload inside a transaction sees the transaction.
 func (r *repository[M, ID, U]) preload(ctx context.Context, items []M, o *crud.Options) error {
 	if len(o.Preloads) == 0 || len(items) == 0 {
 		return nil
 	}
-	return crud.RunPreloads(ctx, r.exec(ctx), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth)
+	return crud.RunPreloads(ctx, r.exec(ctx), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth, r.bp.relScopes)
 }
 
 // sortOf resolves the sort terms, appending a primary-key tiebreaker so that
@@ -268,7 +378,26 @@ func (r *repository[M, ID, U]) sortOf(o *crud.Options, paged bool) []crud.Order 
 
 func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
-	q, args, err := crud.NewSQL(r.d, r.meta).Raw(r.countFrom).Where(r.scoped(o)).Done()
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes)
+	if o.Distinct {
+		// count(*) would count the rows the SELECT DISTINCT is about to
+		// collapse, and Get would then hand the client a total — and a page
+		// count — for pages that do not exist. count(DISTINCT a, b) is MySQL's
+		// spelling only, so the portable one is a derived table, which MySQL in
+		// turn insists on being able to name.
+		cols, err := r.projection(o)
+		if err != nil {
+			return 0, err
+		}
+		if cols == nil {
+			cols = r.meta.Fields
+		}
+		b.Raw("SELECT count(*) FROM (SELECT DISTINCT ").Columns(cols).Raw(" FROM ").Table().
+			Where(r.scoped(o)).Raw(") AS rxcrud_distinct")
+	} else {
+		b.Raw(r.countFrom).Where(r.scoped(o))
+	}
+	q, args, err := b.Done()
 	if err != nil {
 		return 0, err
 	}
@@ -277,7 +406,8 @@ func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (
 
 func (r *repository[M, ID, U]) Exists(ctx context.Context, opts ...crud.Option) (bool, error) {
 	o := crud.Build(opts...)
-	b := crud.NewSQL(r.d, r.meta).Raw("SELECT 1 FROM ").Table().Where(r.scoped(o)).Raw(" LIMIT 1")
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+		Raw("SELECT 1 FROM ").Table().Where(r.scoped(o)).Raw(" LIMIT 1")
 	q, args, err := b.Done()
 	if err != nil {
 		return false, err
@@ -336,7 +466,7 @@ func (r *repository[M, ID, U]) insert(ctx context.Context, m *M, stmt string, fi
 			return nil
 		}
 		// ON CONFLICT DO NOTHING matched an existing row: read it back.
-		return r.refresh(ctx, m)
+		return r.refresh(ctx, m, nil)
 	}
 
 	res, err := ex.Exec(ctx, stmt, args...)
@@ -348,20 +478,26 @@ func (r *repository[M, ID, U]) insert(ctx context.Context, m *M, stmt string, fi
 			return err
 		}
 	}
-	if r.meta.HasGen {
-		return r.refresh(ctx, m)
-	}
-	return nil
+	// Without RETURNING the only way to keep Save's promise — the model
+	// describes the row — is to go and read it. Skipping this when the model
+	// declares no `generated` column saved a round trip and cost correctness:
+	// an upsert's conflict clause leaves out every immutable column, so the
+	// caller was left holding values the database had just refused, and a
+	// handler serialised a different document on MySQL than on PostgreSQL.
+	return r.refresh(ctx, m, nil)
 }
 
-// refresh re-reads the row identified by the model's primary key.
-func (r *repository[M, ID, U]) refresh(ctx context.Context, m *M) error {
+// refresh re-reads the row identified by the model's primary key, optionally
+// through a narrowing — a write that was allowed to touch only some rows must
+// not read back a row it was not allowed to touch.
+func (r *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud.Predicate) error {
 	id, err := r.meta.ID(m)
 	if err != nil {
 		return err
 	}
-	q, args, err := crud.NewSQL(r.d, r.meta).Raw(r.selectFrom).Raw(" WHERE ").
-		Ident(r.meta.PK.Column).Raw(" = ").Bind(id).Raw(" LIMIT 1").Done()
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw(r.selectFrom).
+		Where(crud.And(crud.Eq(r.meta.PK.Name, id), within)).Raw(" LIMIT 1")
+	q, args, err := b.Done()
 	if err != nil {
 		return err
 	}
@@ -379,12 +515,20 @@ func (r *repository[M, ID, U]) refresh(ctx context.Context, m *M) error {
 	return nil
 }
 
-func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any) (M, error) {
+func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any, opts ...crud.Option) (M, error) {
 	var zero M
+
+	// The caller's narrowing goes into both halves. Only checking it on the
+	// load would be check-then-act: a row that leaves the narrowing between the
+	// two statements would be written anyway, and handed back to a caller who
+	// was never allowed to see it.
+	byID := crud.Where(crud.Eq(r.meta.PK.Name, id))
+	within := r.scoped(crud.Build(append([]crud.Option{}, opts...)...))
 
 	// Inside somebody's transaction we can lock the row we are about to diff
 	// against; outside of one, locking would be pointless.
-	loadOpts := []crud.Option{crud.Where(crud.Eq(r.meta.PK.Name, id)), crud.Limit(1), crud.Unsorted()}
+	loadOpts := append([]crud.Option{byID}, opts...)
+	loadOpts = append(loadOpts, crud.Limit(1), crud.Unsorted())
 	if _, inTx := crud.ExecutorFrom(ctx); inTx {
 		loadOpts = append(loadOpts, crud.ForUpdate())
 	}
@@ -405,14 +549,25 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any) (M, e
 		return cur, nil
 	}
 
-	b := crud.NewSQL(r.d, r.meta).Raw("UPDATE ").Table().Raw(" SET ")
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw("UPDATE ").Table().Raw(" SET ")
 	for i, ch := range changes {
 		if i > 0 {
 			b.Raw(", ")
 		}
 		b.Ident(ch.Field.Column).Raw(" = ").Bind(ch.Value)
 	}
-	b.Raw(" WHERE ").Ident(r.meta.PK.Column).Raw(" = ").Bind(id)
+	// The optimistic lock, in the two halves it needs: the counter goes up so
+	// that anyone else holding this row knows their copy is old, and the value
+	// it had when we read it goes into the WHERE, so if somebody got there first
+	// this statement matches nothing instead of overwriting them.
+	stale, err := r.versionCheck(&cur)
+	if err != nil {
+		return zero, err
+	}
+	if stale != nil {
+		b.Raw(", ").Ident(r.meta.Version.Column).Raw(" = ").Ident(r.meta.Version.Column).Raw(" + 1")
+	}
+	b.Where(crud.And(crud.Eq(r.meta.PK.Name, id), within, stale))
 
 	if r.d.SupportsReturning() {
 		q, args, err := b.Raw(r.returning).Done()
@@ -428,7 +583,7 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any) (M, e
 			return zero, err
 		}
 		if !ok {
-			return zero, crud.ErrNotFound
+			return zero, r.missedRow(ctx, id, within, stale != nil)
 		}
 		return cur, nil
 	}
@@ -438,38 +593,117 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any) (M, e
 		return zero, err
 	}
 	// MySQL reports 0 rows affected for a write that changed nothing, so
-	// rows-affected is not evidence of absence here — and we already know the
-	// row exists, we just read it.
-	if _, err := r.exec(ctx).Exec(ctx, q, args...); err != nil {
+	// rows-affected cannot tell "no such row" from "nothing to do". Re-reading
+	// answers both: it is what RETURNING gives the other dialect for free, and
+	// patching the loaded row in memory instead used to report success — with a
+	// fabricated model — for a row deleted between the load and the write.
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
 		return zero, err
 	}
-	if r.meta.HasGen {
-		if err := r.refresh(ctx, &cur); err != nil {
-			return zero, err
-		}
-		return cur, nil
+	// With a version column the count is trustworthy after all: every matching
+	// row is changed, because the counter is always one of the changes. So zero
+	// here means the row we read is not the row that is there now — and a
+	// re-read would otherwise hand the caller somebody else's write as if it
+	// were their own.
+	if stale != nil && res.RowsAffected == 0 {
+		return zero, r.missedRow(ctx, id, within, true)
 	}
-	r.bp.plan.Apply(changes, &cur)
+	if err := r.refresh(ctx, &cur, within); err != nil {
+		return zero, err
+	}
 	return cur, nil
+}
+
+// versionCheck returns the predicate that pins the row to the version it was
+// read at, or nil for a model with no version column.
+func (r *repository[M, ID, U]) versionCheck(cur *M) (crud.Predicate, error) {
+	f := r.meta.Version
+	if f == nil {
+		return nil, nil
+	}
+	vals, err := r.meta.Values(cur, []*crud.Field{f})
+	if err != nil {
+		return nil, err
+	}
+	return crud.Eq(f.Name, vals[0]), nil
+}
+
+// missedRow explains an UPDATE that matched nothing. Both answers are 4xx and
+// they are not interchangeable: a row that is gone is ErrNotFound and the caller
+// should stop, while a row that moved on is ErrStaleVersion and the caller
+// should read it again and reapply.
+func (r *repository[M, ID, U]) missedRow(ctx context.Context, id ID, within crud.Predicate, versioned bool) error {
+	if !versioned {
+		return crud.ErrNotFound
+	}
+	still, err := r.Exists(ctx, crud.Where(crud.And(crud.Eq(r.meta.PK.Name, id), within)))
+	if err != nil {
+		return err
+	}
+	if still {
+		return crud.ErrStaleVersion
+	}
+	return crud.ErrNotFound
+}
+
+// UpdateAll writes the DTO's defined columns to every matching row in one
+// statement. There is no row to diff against — there are many — so this is the
+// one write that does not skip a column whose value is already there.
+func (r *repository[M, ID, U]) UpdateAll(ctx context.Context, dto any, opts ...crud.Option) (int64, error) {
+	o := crud.Build(opts...)
+	changes, err := r.bp.plan.Writes(dto)
+	if err != nil {
+		return 0, err
+	}
+	if len(changes) == 0 {
+		// A DTO that defines nothing is a caller asking for nothing, not a
+		// caller asking to rewrite the table with its own values.
+		return 0, nil
+	}
+
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw("UPDATE ").Table().Raw(" SET ")
+	for i, ch := range changes {
+		if i > 0 {
+			b.Raw(", ")
+		}
+		b.Ident(ch.Field.Column).Raw(" = ").Bind(ch.Value)
+	}
+	// There is no version to check against — a filtered write is not a
+	// read-modify-write of one row — but every row it touches still has to
+	// advance, or a stale Update somebody else is holding would sail past this
+	// change and undo it.
+	if f := r.meta.Version; f != nil {
+		b.Raw(", ").Ident(f.Column).Raw(" = ").Ident(f.Column).Raw(" + 1")
+	}
+	// The repository's own scope is not optional here either: without it a
+	// filtered update would reach exactly the rows the repository exists to hide.
+	q, args, err := b.Where(r.scoped(o)).Done()
+	if err != nil {
+		return 0, err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	b := crud.NewSQL(r.d, r.meta).Raw(r.deleteFrom).Raw(" WHERE ").Ident(r.meta.PK.Column)
+	// The scope belongs in here too. Without it a row the repository refuses to
+	// show is still deletable by id — GET /:id answers 404 and DELETE /:id
+	// answers 200 for the same row.
+	var byID crud.Predicate
 	if len(ids) == 1 {
-		b.Raw(" = ").Bind(ids[0])
+		byID = crud.Eq(r.meta.PK.Name, ids[0])
 	} else {
-		b.Raw(" IN (")
-		for i, id := range ids {
-			if i > 0 {
-				b.Raw(", ")
-			}
-			b.Bind(id)
-		}
-		b.Raw(")")
+		byID = crud.InAny(r.meta.PK.Name, ids)
 	}
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw(r.deleteFrom).
+		Where(crud.And(r.bp.set.scope, byID))
 	q, args, err := b.Done()
 	if err != nil {
 		return 0, err
@@ -483,7 +717,8 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 
 func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
-	q, args, err := crud.NewSQL(r.d, r.meta).Raw(r.deleteFrom).Where(r.scoped(o)).Done()
+	q, args, err := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+		Raw(r.deleteFrom).Where(r.scoped(o)).Done()
 	if err != nil {
 		return 0, err
 	}

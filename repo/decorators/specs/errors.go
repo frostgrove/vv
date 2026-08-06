@@ -14,4 +14,7 @@ var (
 	// ErrUnboundedDelete guards DeleteBy against an empty specification, which
 	// would otherwise truncate the table. Use DeleteAll if that is the intent.
 	ErrUnboundedDelete = errors.New("specs: refusing to delete with an empty specification")
+	// ErrUnboundedUpdate is the same guard for UpdateBy: an empty specification
+	// would rewrite every row. Use UpdateAll if that is the intent.
+	ErrUnboundedUpdate = errors.New("specs: refusing to update with an empty specification")
 )

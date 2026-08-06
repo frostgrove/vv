@@ -77,10 +77,15 @@ func Freeze[M any, ID comparable](fields ...string) Policy[M, ID] {
 }
 
 // Combine merges policies left to right: scopes are ANDed, checks run in order,
-// immutable field lists concatenate, and AllowUnscopedDeleteAll must hold for
-// every policy.
+// immutable field lists concatenate, and the two unscoped-write permissions must
+// hold for every policy.
 func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
-	out := Policy[M, ID]{AllowUnscopedDeleteAll: true}
+	// "every policy allows it" is vacuously true of no policies, and that is the
+	// wrong answer for the one guard here that fails closed: Combine of nothing
+	// — which is what a policy list built from a role produces for a role with
+	// no policies — must be exactly the zero Policy, not a licence to truncate
+	// the table.
+	out := Policy[M, ID]{AllowUnscopedDeleteAll: len(ps) > 0, AllowUnscopedUpdateAll: len(ps) > 0}
 	var scopes []func(context.Context) (crud.Predicate, error)
 	var authz []func(context.Context, Action) error
 	var inspect []func(context.Context, Action, *M) error
@@ -98,6 +103,7 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 		out.Immutable = append(out.Immutable, p.Immutable...)
 		out.InspectReads = out.InspectReads || p.InspectReads
 		out.AllowUnscopedDeleteAll = out.AllowUnscopedDeleteAll && p.AllowUnscopedDeleteAll
+		out.AllowUnscopedUpdateAll = out.AllowUnscopedUpdateAll && p.AllowUnscopedUpdateAll
 	}
 	if len(scopes) > 0 {
 		out.Scope = func(ctx context.Context) (crud.Predicate, error) {

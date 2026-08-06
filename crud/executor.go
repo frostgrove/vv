@@ -55,8 +55,13 @@ type Source interface {
 	Dialect() Dialect
 }
 
-// BulkInserter is an optional fast path (pgx COPY). Adapters that implement it
-// get used automatically; the core never learns about the driver.
+// BulkInserter is an optional fast path (pgx COPY). Nothing in the library
+// reaches for it: the repository writes one statement at a time, so this is a
+// door an application opens itself, by type-asserting its own source.
+//
+//	if bulk, ok := src.(crud.BulkInserter); ok {
+//	    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
+//	}
 type BulkInserter interface {
 	CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error)
 }
@@ -79,6 +84,14 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 // InTx runs fn inside a transaction of src. If ctx already carries a foreign
 // executor, fn simply joins it — no nested transaction is started and the outer
 // owner keeps control of commit and rollback.
+//
+// Joining is unconditional, and src is not consulted when it happens. That is
+// the whole point of the seam — it is how an ent or gorm transaction adopts an
+// rx-crud repository — but it has a sharp edge worth naming: a context executor
+// overrides the repository's own datasource, whatever datasource that is. Two
+// repositories bound to two databases must therefore not share one context. If
+// they do, the second one's statements are sent to the first one's database,
+// which answers, and the write is reported as a success.
 //
 // Use this to span several repositories with one transaction:
 //

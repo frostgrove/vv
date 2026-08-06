@@ -31,6 +31,14 @@ type settings struct {
 	stableSort   bool
 	preloadDepth int
 	scope        crud.Predicate
+	relScopes    []relScope
+}
+
+// relScope is a RelationScope declaration, kept as written until Define can
+// validate the path against the model.
+type relScope struct {
+	path string
+	pred crud.Predicate
 }
 
 // DefaultLimit sets the page size used when a caller does not pass one.
@@ -59,17 +67,45 @@ func PreloadDepth(n int) Setting { return func(s *settings) { s.preloadDepth = n
 //	basic.Define[User, uint, UserUpdate]("users",
 //	    basic.Scope(crud.IsNull("DeletedAt")))
 //
-// It applies to Get, GetAll, GetByID, Count, Exists and DeleteAll, and to the
-// load half of Update. It cannot apply to Save, which is an upsert and has no
-// WHERE clause — guard that in a service method or a security policy.
+// It applies to Get, GetAll, GetByID, Count, Exists, Delete and DeleteAll, and
+// to the load half of Update. It cannot apply to Save, which is an upsert and
+// has no WHERE clause — guard that in a service method or a security policy.
+//
+// It also follows a relation back into this same model, at any depth: a
+// preload of User.Manager, and a filter or sort that hops through it, carry the
+// scope too. Reaching a *different* model is a different question, because
+// another model's rows are another repository's business — say what should
+// happen there with RelationScope.
 func Scope(p crud.Predicate) Setting { return func(s *settings) { s.scope = p } }
+
+// RelationScope narrows the far side of a relation, wherever this repository
+// reaches it: a preload of that path, a filter that hops through it, a sort
+// that walks it. The predicate is written against the *target* model.
+//
+//	basic.Define[Article, int64, ArticleUpdate]("articles",
+//	    basic.Scope(crud.IsNull("DeletedAt")),                  // articles
+//	    basic.RelationScope("Comments", crud.IsNull("DeletedAt"))) // comments
+//
+// Scope alone would not have covered the second line. A preload is a second
+// statement against a second table and a nested filter opens a correlated
+// subquery with its own FROM, so neither inherits the parent statement's WHERE:
+// without this, ?preload=comments hands back exactly the rows the article's own
+// scope exists to hide.
+//
+// The path is canonical and may be nested ("Comments.Author"). It is validated
+// against the model, so a typo fails at declaration time rather than silently
+// narrowing nothing.
+func RelationScope(path string, p crud.Predicate) Setting {
+	return func(s *settings) { s.relScopes = append(s.relScopes, relScope{path, p}) }
+}
 
 // Blueprint is a validated, datasource-independent repository declaration.
 // Bind it to as many sources as you like — the reflection work happens once.
 type Blueprint[M any, ID comparable, U any] struct {
-	meta *crud.Meta
-	plan *crud.UpdatePlan
-	set  settings
+	meta      *crud.Meta
+	plan      *crud.UpdatePlan
+	set       settings
+	relScopes *crud.RelationScopes
 }
 
 // Define declares a repository for model M with primary key ID and update DTO
@@ -115,7 +151,26 @@ func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blu
 	if bp.set.defaultLimit <= 0 {
 		bp.set.defaultLimit = DefaultPageSize
 	}
+	if err := bp.resolveRelationScopes(); err != nil {
+		return nil, err
+	}
 	return bp, nil
+}
+
+// resolveRelationScopes turns the declarations into the form the SQL writer and
+// the preloader consult, and settles the one case that needs no declaring: a
+// relation that points back at this repository's own model is narrowed by
+// Scope, because there is only one possible answer to what those rows are.
+func (bp *Blueprint[M, ID, U]) resolveRelationScopes() error {
+	for _, rs := range bp.set.relScopes {
+		_, canonical, err := bp.meta.RelationAt(rs.path)
+		if err != nil {
+			return err
+		}
+		bp.relScopes = bp.relScopes.AtPath(canonical, rs.pred)
+	}
+	bp.relScopes = bp.relScopes.ForModel(bp.meta.Type, bp.set.scope)
+	return nil
 }
 
 // Meta exposes the bound model description — useful for building specifications

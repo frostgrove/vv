@@ -23,8 +23,15 @@ type Core[M any, ID comparable] interface {
 	// model is refreshed in place with whatever the database generated.
 	Save(ctx context.Context, m *M) error
 	// Update loads the row, diffs the DTO against it and writes only what
-	// actually changed. dto is always the U of the enclosing Repo.
-	Update(ctx context.Context, id ID, dto any) (M, error)
+	// actually changed. dto is always the U of the enclosing Repo. Options
+	// narrow both halves — the load and the UPDATE's own WHERE — which is how a
+	// decorator keeps a row that moved out of scope between them from being
+	// written anyway.
+	Update(ctx context.Context, id ID, dto any, opts ...Option) (M, error)
+	// UpdateAll writes the DTO's defined columns to every row the options match,
+	// in one statement, and reports how many rows the database says it touched.
+	// It is Update's filtered partner, the way DeleteAll is Delete's.
+	UpdateAll(ctx context.Context, dto any, opts ...Option) (int64, error)
 	// Delete removes rows by id and reports how many went away.
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	// DeleteAll removes everything matching the options.
@@ -53,15 +60,32 @@ func Wrap[M any, ID comparable, U any](c Core[M, ID]) Repo[M, ID, U] {
 	return Repo[M, ID, U]{Core: c}
 }
 
-// Update applies a partial update DTO and returns the refreshed model.
+// Update applies a partial update DTO and returns the refreshed model. Options
+// narrow the row it may touch, exactly as they narrow a read.
 //
 // Fields of U are matched to model fields by name. A *T field is applied when
 // non-nil, an Opt[T] field when defined (a null Opt writes SQL NULL), and a
 // plain T field is always applied. Only fields whose value actually differs
 // from the stored row reach the UPDATE statement; when nothing differs the
 // loaded row is returned without a write.
-func (r Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U) (M, error) {
-	return r.Core.Update(ctx, id, dto)
+func (r Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Option) (M, error) {
+	return r.Core.Update(ctx, id, dto, opts...)
+}
+
+// UpdateAll applies a partial update DTO to every row the options match and
+// reports how many rows were touched. It is one statement, so "deactivate every
+// user in this tenant" costs one round trip rather than one per row.
+//
+// It differs from Update in exactly one way, and the difference is forced: there
+// is no single row to diff against, so every field the DTO defines is written to
+// every matching row. Undefined fields are still never written and a null Opt
+// still writes NULL.
+//
+// The row count is the database's own, and the two engines count differently:
+// PostgreSQL reports the rows it matched, MySQL the rows it actually changed, so
+// writing a value a row already holds is counted by one and not by the other.
+func (r Repo[M, ID, U]) UpdateAll(ctx context.Context, dto U, opts ...Option) (int64, error) {
+	return r.Core.UpdateAll(ctx, dto, opts...)
 }
 
 // Unwrap returns the decorated Core, e.g. to add another layer.

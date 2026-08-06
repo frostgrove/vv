@@ -44,7 +44,7 @@ func (e Executor) Unwrap() Queryer { return e.q }
 func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
 	res, err := e.q.ExecContext(ctx, query, args...)
 	if err != nil {
-		return crud.Result{}, err
+		return crud.Result{}, conflict(err)
 	}
 	out := crud.Result{}
 	if n, err := res.RowsAffected(); err == nil {
@@ -58,9 +58,10 @@ func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Res
 }
 
 func (e Executor) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
+	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
 	rs, err := e.q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, conflict(err)
 	}
 	return rows{rs}, nil
 }

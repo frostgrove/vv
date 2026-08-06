@@ -77,6 +77,11 @@ type Policy[M any, ID comparable] struct {
 	// caller narrowed the statement. Off by default, because an unscoped
 	// DeleteAll behind an access-control layer is almost always a bug.
 	AllowUnscopedDeleteAll bool
+
+	// AllowUnscopedUpdateAll is the same permission for UpdateAll, and it is a
+	// separate one on purpose: rewriting every row in a table is not something a
+	// policy should inherit from having allowed the table to be emptied.
+	AllowUnscopedUpdateAll bool
 }
 
 // Gate builds the middleware. Both type parameters are inferred from the
@@ -144,6 +149,20 @@ func (g *gate[M, ID]) scoped(ctx context.Context, opts []crud.Option) ([]crud.Op
 	return append([]crud.Option{crud.Where(p)}, opts...), p, nil
 }
 
+// whole cancels a caller's projection, for the reads whose rows are about to be
+// handed to Inspect. Inspect is an opaque closure, so the gate cannot know which
+// columns it reads; given a projected row it compares against zero values and
+// believes them. That cuts both ways, and ?select= is untrusted input: under the
+// tenancy policy in the package documentation every projected read became a
+// denial, and a rule that hides rows by a column value was bypassed by simply
+// not selecting that column.
+func (g *gate[M, ID]) whole(willInspect bool, opts []crud.Option) []crud.Option {
+	if !willInspect || g.p.Inspect == nil {
+		return opts
+	}
+	return append(append([]crud.Option{}, opts...), crud.SelectAll())
+}
+
 // ---------------------------------------------------------------------------
 // reads
 
@@ -152,7 +171,7 @@ func (g *gate[M, ID]) GetByID(ctx context.Context, id ID, opts ...crud.Option) (
 	if err := g.authorize(ctx, Read); err != nil {
 		return zero, err
 	}
-	m, err := g.loadScoped(ctx, id, opts...)
+	m, err := g.loadScoped(ctx, id, g.whole(true, opts)...)
 	if err != nil {
 		return zero, err
 	}
@@ -192,7 +211,7 @@ func (g *gate[M, ID]) Get(ctx context.Context, opts ...crud.Option) (crud.Pagina
 	if err := g.authorize(ctx, Read); err != nil {
 		return zero, err
 	}
-	scoped, _, err := g.scoped(ctx, opts)
+	scoped, _, err := g.scoped(ctx, g.whole(g.p.InspectReads, opts))
 	if err != nil {
 		return zero, err
 	}
@@ -210,7 +229,7 @@ func (g *gate[M, ID]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, err
 	if err := g.authorize(ctx, Read); err != nil {
 		return nil, err
 	}
-	scoped, _, err := g.scoped(ctx, opts)
+	scoped, _, err := g.scoped(ctx, g.whole(g.p.InspectReads, opts))
 	if err != nil {
 		return nil, err
 	}
@@ -273,26 +292,23 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 
 	action := Create
 	if hasID {
-		// A Save with an id may land on an existing row. Look it up without the
-		// scope so that a cross-tenant overwrite is a denial rather than a
-		// silent insert-turned-update.
 		id, err := meta.ID(m)
 		if err != nil {
 			return err
 		}
-		existing, err := g.Core.GetAll(ctx, crud.Where(crud.Eq(meta.PK.Name, id)), crud.Limit(1), crud.Unsorted())
+		existing, err := g.saveTarget(ctx, meta, id)
 		if err != nil {
 			return err
 		}
-		if len(existing) == 1 {
+		if existing != nil {
 			action = Update
 			if err := g.authorize(ctx, Update); err != nil {
 				return err
 			}
-			if err := g.inspect(ctx, Update, &existing[0]); err != nil {
+			if err := g.inspect(ctx, Update, existing); err != nil {
 				return err
 			}
-			if err := g.checkImmutableSave(meta, &existing[0], m); err != nil {
+			if err := g.checkImmutableSave(meta, existing, m); err != nil {
 				return err
 			}
 		}
@@ -308,6 +324,47 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 		return err
 	}
 	return g.Core.Save(ctx, m)
+}
+
+// saveTarget returns the row a Save with an id would overwrite, or nil when the
+// statement is a plain insert.
+//
+// The lookup goes through the scope, and a row the scope hides is refused
+// outright rather than reported as absent. Save is an upsert: there is no WHERE
+// clause for the scope to narrow, so refusing is the only move it has. Left
+// alone, a policy that scoped rows and nothing else gave Save no protection at
+// all — the insert turned into an update and re-tenanted somebody else's row
+// with err == nil.
+func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (*M, error) {
+	byID := crud.Where(crud.Eq(meta.PK.Name, id))
+	scope, err := g.scope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts := []crud.Option{byID, crud.Limit(1), crud.Unsorted()}
+	if scope != nil {
+		opts = append([]crud.Option{crud.Where(scope)}, opts...)
+	}
+	found, err := g.Core.GetAll(ctx, g.whole(true, opts)...)
+	if err != nil {
+		return nil, err
+	}
+	if len(found) == 1 {
+		return &found[0], nil
+	}
+	if scope == nil {
+		return nil, nil
+	}
+	// Nothing visible under that id. It is still an overwrite if the row is
+	// merely hidden, and only an insert if it is genuinely not there.
+	hidden, err := g.Core.Exists(ctx, byID)
+	if err != nil {
+		return nil, err
+	}
+	if hidden {
+		return nil, Denied(Update, "row is outside the scope")
+	}
+	return nil, nil
 }
 
 // checkImmutableSave rejects a full Save that would change a field the policy
@@ -336,7 +393,7 @@ func (g *gate[M, ID]) checkImmutableSave(meta *crud.Meta, old, next *M) error {
 	return nil
 }
 
-func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any) (M, error) {
+func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.Option) (M, error) {
 	var zero M
 	if err := g.authorize(ctx, Update); err != nil {
 		return zero, err
@@ -361,7 +418,56 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any) (M, error) {
 	if err := g.inspect(ctx, Update, &cur); err != nil {
 		return zero, err
 	}
-	return g.Core.Update(ctx, id, dto)
+	// And it goes into the write itself, not just the check in front of it.
+	// Checking here and writing unscoped was check-then-act: a row that left
+	// the scope in between was updated anyway, and the fresh copy of somebody
+	// else's record was handed back to this caller with err == nil.
+	scope, err := g.scope(ctx)
+	if err != nil {
+		return zero, err
+	}
+	return g.Core.Update(ctx, id, dto, append([]crud.Option{crud.Where(scope)}, opts...)...)
+}
+
+// UpdateAll is the filtered write, and it is the one that most needs a gate: it
+// touches rows nobody named. Everything Update checks is checked here — the
+// coarse authorisation, the frozen fields, the scope in the statement's own
+// WHERE — and Inspect additionally sees each row that is about to change, since
+// with no id in the call there is nothing else that could stand for consent.
+func (g *gate[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Option) (int64, error) {
+	if err := g.authorize(ctx, Update); err != nil {
+		return 0, err
+	}
+	if len(g.immutable) > 0 {
+		defined, err := crud.DefinedFields(g.Meta().Schema, dto)
+		if err != nil {
+			return 0, err
+		}
+		for _, name := range defined {
+			if _, frozen := g.immutable[name]; frozen {
+				return 0, Denied(Update, "field "+name+" is immutable")
+			}
+		}
+	}
+	scoped, scope, err := g.scoped(ctx, opts)
+	if err != nil {
+		return 0, err
+	}
+	if scope == nil && crud.Build(opts...).Predicate() == nil && !g.p.AllowUnscopedUpdateAll {
+		return 0, Denied(Update, "refusing an unscoped UpdateAll; set AllowUnscopedUpdateAll to permit it")
+	}
+	if g.p.Inspect != nil {
+		targets, err := g.Core.GetAll(ctx, g.whole(true, scoped)...)
+		if err != nil {
+			return 0, err
+		}
+		for i := range targets {
+			if err := g.p.Inspect(ctx, Update, &targets[i]); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return g.Core.UpdateAll(ctx, dto, scoped...)
 }
 
 func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
@@ -381,7 +487,7 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	pk := g.Meta().PK.Name
 	within := crud.And(scope, crud.InAny(pk, ids))
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, crud.Where(within))
+		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within)})...)
 		if err != nil {
 			return 0, err
 		}
@@ -406,7 +512,7 @@ func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64
 		return 0, Denied(Delete, "refusing an unscoped DeleteAll; set AllowUnscopedDeleteAll to permit it")
 	}
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, scoped...)
+		victims, err := g.Core.GetAll(ctx, g.whole(true, scoped)...)
 		if err != nil {
 			return 0, err
 		}

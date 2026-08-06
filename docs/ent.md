@@ -387,8 +387,11 @@ Everything in Part I works. The only thing you give up is `repo.Tx(...)` opening
 an *ent* transaction — you can still join one with `crud.WithExecutor`, which is
 the pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction) anyway.
 
-**Better** — an ent-backed source, so `repo.Tx` opens a real `ent.Tx` and your
-hooks and privacy rules still fire:
+**Better** — an ent-backed source, so `repo.Tx` opens a real `ent.Tx`: one
+transaction that ent's own builders and rx-crud both write into, and that ent
+commits or rolls back. It does **not** mean rx-crud's writes start firing ent's
+hooks — those live in ent's builders, and rx-crud sends its own statements, as
+[§16](#16-sharp-edges) says. What you gain is the transaction, not the callbacks:
 
 ```go
 package store
@@ -427,6 +430,13 @@ type entTx struct {
 func (t entTx) Commit(context.Context) error   { return t.tx.Commit() }
 func (t entTx) Rollback(context.Context) error { return t.tx.Rollback() }
 ```
+
+`entTx` has no `Begin`, so it is not a `crud.Beginner`: a nested `Begin` inside
+an ent transaction answers `crud.ErrNoTxSupport` rather than opening a savepoint.
+`crudsql.DB` gives you one for free because it holds the `*sql.Tx`; here ent owns
+it. Add a `Begin` that issues `SAVEPOINT` if you need one — or keep the
+transaction flat, which is what `Tx` joining rather than nesting already
+encourages.
 
 ```go
 client := ent.NewClient(ent.Driver(entsql.OpenDB(dialect.Postgres, db)))
@@ -629,6 +639,24 @@ The predicate AST is closed, so a client cannot compose its way out. `Policy`
 also takes `Authorize(ctx, action)` and `Inspect(ctx, action, *M)`, and
 `security.Combine` ANDs several policies.
 
+**The gate's scope stops at the statement's own `FROM`.** It is a predicate over
+one model, so it narrows the query that reads that model and nothing else: a
+preload is a second statement against a second table, and a nested filter opens
+a correlated subquery with its own `FROM`. If a tenanted model exposes relations
+— see [section 14](#14-relations-edges-vs-rx-crud-relations) — declare what
+should happen at each of them on the blueprint, where it is a property of the
+model rather than of one request:
+
+```go
+var Articles = basic.Define[Article, int64, ArticleUpdate]("articles",
+    basic.RelationScope("Comments", crud.Eq("Published", true)))
+```
+
+Otherwise `?preload=comments` reads that table raw. The safe shape, and the one
+to reach for first, is a foreign key that already implies the tenant: children
+reached through their parent's key are the parent's children whatever the scope
+says.
+
 ## 14. Relations: edges vs rx-crud relations
 
 **This is the one place ent and rx-crud do not overlap for free.** ent's `Edges`
@@ -717,7 +745,12 @@ or keep creates on ent's builder and let rx-crud own reads and updates.
 
 **ent hooks, privacy rules and interceptors run inside ent's builders.** A write
 that goes through rx-crud does not trigger them. Put invariants you cannot lose
-in the database, in a `security.Policy`, or in your service layer.
+in the database, in a `security.Policy`, or in your service layer. The same is
+true of ent's Go-side defaults, and that half is pinned by a test
+(`TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites`): ent's builder fills in
+`field.Bool("active").Default(true)`, an rx-crud `Save` writes the model's
+`false`. No schema in the test tree declares a hook, so the hook half is
+reasoned, not executed — it is the same code path.
 
 **Column names are derived, not read from ent.** They agree for every normal ent
 schema (`field.Int64("tenant_id")` → `TenantID` → `tenant_id`), but a field

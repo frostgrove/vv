@@ -44,7 +44,7 @@ type Repository[M any, ID comparable, U any] interface {
 	Get(ctx context.Context, opts ...crud.Option) (crud.PaginatedResponse[M], error)
 	GetAll(ctx context.Context, opts ...crud.Option) ([]M, error)
 	Save(ctx context.Context, m *M) error
-	Update(ctx context.Context, id ID, dto U) (M, error)
+	Update(ctx context.Context, id ID, dto U, opts ...crud.Option) (M, error)
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	Count(ctx context.Context, opts ...crud.Option) (int64, error)
 }
@@ -241,6 +241,14 @@ func (h *Handler[M, ID, U]) Update(c fiber.Ctx) error {
 
 // Replace answers PUT /:id: the body becomes the whole row, with the id taken
 // from the URL rather than the payload.
+//
+// When the database generates the key, PUT replaces and never creates: the id
+// in the URL has to name a row that already exists. Otherwise PUT is the way
+// around AllowClientID — a client cannot pick its id on POST but could put one
+// at /999 — and on PostgreSQL an explicit insert into a serial column does not
+// advance the sequence, so the next POST collides on the primary key and keeps
+// colliding until somebody repairs the sequence by hand. A key the client owns
+// (a uuid, a slug) is a different matter and PUT still creates those.
 func (h *Handler[M, ID, U]) Replace(c fiber.Ctx) error {
 	id, err := h.id(c)
 	if err != nil {
@@ -249,6 +257,11 @@ func (h *Handler[M, ID, U]) Replace(c fiber.Ctx) error {
 	var m M
 	if err := c.Bind().Body(&m); err != nil {
 		return h.fail(c, badRequest(err))
+	}
+	if h.meta.PK.Auto && !h.opt.allowClientID {
+		if _, err := h.repo.GetByID(c.Context(), id); err != nil {
+			return h.fail(c, err)
+		}
 	}
 	if err := h.clearGenerated(&m); err != nil {
 		return h.fail(c, err)

@@ -47,6 +47,13 @@ func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Optio
 // WithScope adds repository options to every read, derived from the request.
 // The security decorator is the better place for row-level rules; this is for
 // things that are genuinely transport-shaped, like an ?includeArchived flag.
+//
+// Reads only, and that is not a gap waiting to be filled: Save and Delete take
+// no options, so there is nowhere for a predicate to go. The asymmetry is worth
+// saying out loud, because it looks like protection and is not — with a scope
+// of TenantID = 7, GET /:id on somebody else's row is 404 while DELETE /:id on
+// the same row answers 200. Row-level rules on writes belong in security.Gate,
+// whose scope really does reach the DELETE and the UPDATE.
 func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.scope = fn }
 }

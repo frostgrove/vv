@@ -83,15 +83,18 @@ func Coerce(s string, t reflect.Type) (any, error) { return coerceString(s, t) }
 // of its column. It tries the type's own TextUnmarshaler first, so uuid, enum
 // and money types keep their parsing rules.
 func coerceString(s string, t reflect.Type) (any, error) {
+	// time.Time is checked before the TextUnmarshaler branch it would otherwise
+	// win: its own UnmarshalText takes RFC 3339 and nothing else, which would
+	// reject the date-only and space-separated forms the JSON door accepts.
+	if t == reflect.TypeOf(time.Time{}) {
+		return parseTime(s)
+	}
 	ptr := reflect.New(t)
 	if reflect.PointerTo(t).Implements(textUnmarshaler) {
 		if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
 			return nil, err
 		}
 		return ptr.Elem().Interface(), nil
-	}
-	if t == reflect.TypeOf(time.Time{}) {
-		return parseTime(s)
 	}
 
 	switch t.Kind() {

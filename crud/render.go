@@ -20,6 +20,17 @@ func (b *SQL) Alias(alias string) *SQL {
 	return b
 }
 
+// RelationScopes declares the narrowing that follows this statement into every
+// table a relation hop opens — the EXISTS a nested filter builds and the scalar
+// subquery a nested sort builds. Without it those subqueries read their tables
+// raw, whatever the statement's own WHERE says.
+func (b *SQL) RelationScopes(rs *RelationScopes) *SQL {
+	if !rs.Empty() {
+		b.w.rel = rs
+	}
+	return b
+}
+
 // Raw appends literal SQL. Nothing is escaped or rewritten.
 func (b *SQL) Raw(s string) *SQL { b.w.str(s); return b }
 
@@ -98,9 +109,15 @@ func (b *SQL) LimitOffset(limit, offset int) *SQL {
 		b.w.str(itoa(limit))
 	}
 	if offset > 0 {
-		if limit <= 0 && b.w.d.Name() == "mysql" {
-			// MySQL rejects OFFSET without LIMIT.
-			b.w.str(" LIMIT 18446744073709551615")
+		if limit <= 0 {
+			// Not every grammar has a bare OFFSET, and the ones that do not
+			// spell "no limit" differently. Asking the dialect rather than
+			// checking its name for "mysql" is what SQLite needs: it used to be
+			// handed `OFFSET 5` on its own and answer `near "5": syntax error`,
+			// reachable straight from the wire as {"unpaged":true,"offset":5}.
+			if d, ok := b.w.d.(OffsetLimiter); ok {
+				b.w.str(d.LimitAll())
+			}
 		}
 		b.w.str(" OFFSET ")
 		b.w.str(itoa(offset))

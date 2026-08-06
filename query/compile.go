@@ -106,7 +106,7 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 	if r == nil {
 		return nil, nil
 	}
-	c := &compiler{meta: meta, cfg: cfg}
+	c := &compiler{meta: meta, cfg: cfg, conds: new(int)}
 	var opts []crud.Option
 
 	// filter
@@ -238,7 +238,13 @@ func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]
 		return nil, errf("preload."+canonical, "%s", cleanErr(err))
 	}
 
-	sub := &compiler{meta: target, cfg: c.cfg}
+	// The sub-compiler resolves paths against the target but keeps the root's
+	// allow-lists, so every entry it matches has to be spelled the way the root
+	// spells it: `Comments.Body`, not `Body`. Without the prefix a grant on the
+	// root's own Body silently authorised every preloaded relation's Body, and
+	// the documented `Comments.Body` spelling authorised the root path while
+	// refusing the preload route that looks exactly like it.
+	sub := &compiler{meta: target, cfg: c.cfg, conds: c.conds, prefix: canonical}
 	var opts []crud.Option
 	if !p.Filter.IsZero() {
 		pred, err := sub.node(p.Filter.raw, "preload."+canonical+".filter", 1)
@@ -250,12 +256,27 @@ func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]
 		}
 	}
 	for _, s := range p.Sort {
-		f, sortPath, err := sub.path(s.Field, "preload."+canonical+".sort")
+		_, sortPath, err := sub.path(s.Field, "preload."+canonical+".sort")
 		if err != nil {
 			return nil, err
 		}
-		_ = f
-		opts = append(opts, crud.OrderBy(crud.Order{Field: sortPath, Desc: s.Desc}))
+		// A preload's sort used to skip both of these, so a column the config
+		// never named was sortable through a relation and an invalid `nulls`
+		// was accepted and thrown away — on the same axis the root sort guards.
+		if !allowed(c.cfg.sortable(), sub.qualify(sortPath)) {
+			return nil, errf("preload."+canonical+".sort", "%s is not sortable", sub.qualify(sortPath))
+		}
+		o := crud.Order{Field: sortPath, Desc: s.Desc}
+		switch strings.ToLower(s.Nulls) {
+		case "first":
+			o = o.WithNullsFirst()
+		case "last":
+			o = o.WithNullsLast()
+		case "":
+		default:
+			return nil, errf("preload."+canonical+".sort", "nulls must be first or last, got %q", s.Nulls)
+		}
+		opts = append(opts, crud.OrderBy(o))
 	}
 	return opts, nil
 }
@@ -302,11 +323,36 @@ func (c *Config) defaultSearchFields() []string {
 	return c.DefaultSearchFields
 }
 
-// compiler carries the schema and limits through the recursion.
+// compiler carries the schema and limits through the recursion. A preload
+// compiles against its own model but shares the condition counter, because the
+// budget is the whole document's.
 type compiler struct {
 	meta  *crud.Meta
 	cfg   *Config
-	conds int
+	conds *int
+
+	// prefix is where this compiler sits relative to the root, because the
+	// allow-lists are the root's and are spelled from there.
+	prefix string
+}
+
+// qualify spells a path the way the allow-lists do.
+func (c *compiler) qualify(canonical string) string {
+	if c.prefix == "" {
+		return canonical
+	}
+	return c.prefix + "." + canonical
+}
+
+// count charges one leaf comparison against the document's budget. Every shape
+// a comparison can take goes through here, so a client cannot buy itself more
+// conditions by spelling them as shorthand equalities.
+func (c *compiler) count(where string) error {
+	*c.conds++
+	if *c.conds > c.cfg.maxConditions() {
+		return errf(where, "at most %d conditions per query", c.cfg.maxConditions())
+	}
+	return nil
 }
 
 // path resolves and validates a dotted field path, returning the field and its

@@ -14,14 +14,26 @@ var (
 	// ErrMissingID is returned by Save when the model has a non-generated
 	// primary key that was left at its zero value.
 	ErrMissingID = errors.New("crud: primary key is required for save")
-	// ErrReadOnly is returned when a write is attempted through a read-only view.
+	// ErrReadOnly is for a write attempted through a read-only view. The two
+	// read-only facilities in the tree do not use it — crudfiber.ReadOnly does
+	// not mount the write routes at all, and security.ReadOnly denies through
+	// ErrForbidden so a transport answers 403 — so it is here for a decorator
+	// that wants to say "read-only" rather than "forbidden", and for nothing else.
 	ErrReadOnly = errors.New("crud: repository is read-only")
 	// ErrForbidden is the sentinel every access-control layer wraps, so a
 	// transport can answer 403 without importing the decorator that raised it.
 	ErrForbidden = errors.New("forbidden")
 	// ErrConflict marks a request that collided with the current state — a
-	// findOne matching several rows, a duplicate key. Transports map it to 409.
+	// findOne matching several rows, a duplicate key, a foreign key pointing
+	// nowhere. The adapters classify the driver's integrity errors into it, so a
+	// constraint violation reaches a client as 409 with a message rather than as
+	// a 500 whose body says nothing. Transports map it to 409.
 	ErrConflict = errors.New("conflict")
+	// ErrStaleVersion is the optimistic lock refusing a write: the row was
+	// changed by somebody else between the read and the update. It wraps
+	// ErrConflict, so a transport answers 409 without knowing about versions,
+	// and the caller's answer is to read the row again and reapply.
+	ErrStaleVersion = fmt.Errorf("crud: the row was changed by someone else: %w", ErrConflict)
 )
 
 // UnknownFieldError is returned when a predicate or sort references a field

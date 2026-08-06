@@ -23,6 +23,16 @@ type Dialect interface {
 	LockClause() string
 }
 
+// OffsetLimiter is implemented by dialects whose grammar has no OFFSET without
+// a LIMIT in front of it. MySQL and SQLite both need one and spell "no limit"
+// differently; PostgreSQL needs nothing, so it does not implement this and a
+// dialect written outside this package keeps compiling.
+type OffsetLimiter interface {
+	// LimitAll renders the LIMIT clause — leading space included — that has to
+	// precede an OFFSET when the caller asked for no limit.
+	LimitAll() string
+}
+
 // Postgres targets PostgreSQL (and CockroachDB).
 type Postgres struct{}
 
@@ -72,6 +82,10 @@ func (MySQL) Quote(ident string) string {
 	return "`" + strings.ReplaceAll(ident, "`", "``") + "`"
 }
 
+// LimitAll is MySQL's documented spelling of "everything from here on": the
+// largest unsigned 64-bit integer, because the grammar demands a row count.
+func (MySQL) LimitAll() string { return " LIMIT 18446744073709551615" }
+
 func (d MySQL) Upsert(pk string, cols []string) string {
 	var b strings.Builder
 	if d.RowAlias {
@@ -109,7 +123,14 @@ type SQLite struct{}
 func (SQLite) Name() string            { return "sqlite" }
 func (SQLite) Placeholder(int) string  { return "?" }
 func (SQLite) SupportsReturning() bool { return true }
-func (SQLite) LockClause() string      { return "" }
+
+// LockClause is empty because SQLite has no row locks: a write transaction
+// locks the database. crud.ForUpdate() therefore renders nothing here, and the
+// serialisation a caller wanted comes from the transaction instead.
+func (SQLite) LockClause() string { return "" }
+
+// LimitAll is SQLite's spelling: a negative row count means "no limit".
+func (SQLite) LimitAll() string { return " LIMIT -1" }
 func (d SQLite) Quote(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }

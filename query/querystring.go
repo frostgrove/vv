@@ -61,9 +61,8 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 		if !ok {
 			return nil, errf("filter."+canonical, "unknown operator %q", t.Op)
 		}
-		c.conds++
-		if c.conds > c.cfg.maxConditions() {
-			return nil, errf("filter", "at most %d conditions per query", c.cfg.maxConditions())
+		if err := c.count("filter"); err != nil {
+			return nil, err
 		}
 
 		switch {
@@ -198,7 +197,11 @@ func ParseQuery(v url.Values) (*Request, error) {
 			r.Terms = append(r.Terms, t)
 		}
 	}
-	if doc := v.Get("filter"); strings.HasPrefix(strings.TrimSpace(doc), "{") {
+	// Whatever the parameter holds goes to the compiler, which knows how to say
+	// no. Keeping only the documents that look like objects would turn a
+	// malformed filter into an unfiltered answer — the one failure a client
+	// cannot see.
+	if doc := strings.TrimSpace(v.Get("filter")); doc != "" {
 		r.Filter = RawFilter(doc)
 	}
 	return r, nil

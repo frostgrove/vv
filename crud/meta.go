@@ -23,6 +23,10 @@ import (
 //	immutable  written on insert, never on update (created_at, tenant_id)
 //	generated  never written at all; read back after every write (computed
 //	           columns, DB-side defaults, updated_at triggers)
+//	version    optimistic lock: an integer the repository advances on every
+//	           update and checks in the update's own WHERE, so a write against a
+//	           row somebody else has changed since it was read is refused with
+//	           ErrStaleVersion rather than silently overwriting them
 //	-          ignore the field completely
 //
 // The column name may be omitted (`db:",pk"`), in which case it is derived from
@@ -41,6 +45,7 @@ type Field struct {
 	Auto      bool
 	Immutable bool
 	Generated bool
+	Version   bool // optimistic lock counter, owned by the repository
 	Optional  bool // the field is a crud.Opt[...]
 
 	noAutoOptOut bool // `noauto` was requested explicitly
@@ -88,6 +93,7 @@ type Schema struct {
 	InsertGen []*Field // written by INSERT when the PK is DB-generated
 	Update    []*Field // eligible for UPDATE SET
 	HasGen    bool     // has at least one `generated` column
+	Version   *Field   // the optimistic-lock column, or nil
 
 	// Relations are navigable edges: they never become columns, but query
 	// paths, sorts and preloads can walk them.
@@ -266,6 +272,12 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 	}
 	for i, f := range s.Fields {
 		f.Ordinal = i
+		if f.Version {
+			if err := checkVersion(t, s, f); err != nil {
+				return nil, err
+			}
+			s.Version = f
+		}
 		if f.Generated {
 			s.HasGen = true
 			continue
@@ -273,7 +285,12 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		s.Insert = append(s.Insert, f)
 		if !f.PK {
 			s.InsertGen = append(s.InsertGen, f)
-			if !f.Immutable {
+			// The version column is left out of the UPDATE list for the same
+			// reason an immutable one is: it is not the caller's to set. The
+			// repository writes `version = version + 1` itself, and Save's
+			// conflict clause leaves it alone, so an upsert built from a stale
+			// model cannot wind the counter back.
+			if !f.Immutable && !f.Version {
 				s.Update = append(s.Update, f)
 			}
 		}
@@ -289,6 +306,31 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		s.addRelFold(fold(r.Name), r)
 	}
 	return s, nil
+}
+
+// checkVersion refuses the declarations an optimistic lock cannot be built on.
+// Each of them fails silently at run time otherwise: a version the caller can
+// set is not a lock, a version nobody writes never advances, and a version on
+// the primary key would be checked against the row it identifies.
+func checkVersion(t reflect.Type, s *Schema, f *Field) error {
+	deny := func(reason string) error {
+		return &SchemaError{Model: t.String(), Field: f.Name, Reason: reason}
+	}
+	switch {
+	case s.Version != nil:
+		return deny("a model can carry only one `version` column, and " + s.Version.Name + " already is one")
+	case f.PK:
+		return deny("the primary key cannot be the `version` column")
+	case f.Immutable:
+		return deny("`version` and `immutable` contradict each other: the lock has to advance")
+	case f.Generated:
+		return deny("`version` and `generated` contradict each other: the lock is written by rx-crud, not read back from a default")
+	case !isIntKind(ElemType(f.Type).Kind()):
+		// A timestamp version would need a clock, and two application servers
+		// do not share one. An integer counter needs nothing but the row.
+		return deny("a `version` column must be an integer; " + f.Type.String() + " is not")
+	}
+	return nil
 }
 
 func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type) error {
@@ -313,6 +355,13 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 			continue
 		}
 		if !sf.IsExported() {
+			// Reflection cannot read the field, so a tag asking for it to be
+			// mapped can only ever be a typo — and silently dropping the column
+			// would show up as a zero in the row rather than as an error here.
+			if hasTag {
+				return &SchemaError{Model: s.Type.String(), Field: sf.Name,
+					Reason: `unexported fields cannot be mapped; rename it or tag it db:"-"`}
+			}
 			continue
 		}
 
@@ -359,6 +408,8 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 				f.Immutable = true
 			case "generated", "computed":
 				f.Generated = true
+			case "version", "lock":
+				f.Version = true
 			case "":
 			default:
 				return &SchemaError{Model: s.Type.String(), Field: sf.Name, Reason: "unknown tag option " + o}

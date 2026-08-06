@@ -453,9 +453,28 @@ var Members = basic.Define[Member, uint, store.MemberUpdate]("members",
     basic.Scope(crud.IsNull("DeletedAt")))
 ```
 
-That covers `Get`, `GetAll`, `GetByID`, `Count`, `Exists`, `DeleteAll` and the
-load half of `Update`. A caller sending `{"filter":{"deletedAt":{"isNotNull":true}}}`
-gets an empty page, not the tombstones.
+That covers `Get`, `GetAll`, `GetByID`, `Count`, `Exists`, `Delete`, `DeleteAll`
+and both halves of `Update`. A caller sending
+`{"filter":{"deletedAt":{"isNotNull":true}}}` gets an empty page, not the
+tombstones.
+
+**Relations need their own line.** A scope is a `WHERE` clause and a `WHERE`
+clause only constrains its own `FROM`. A preload is a second statement against a
+second table, and a nested filter opens a correlated subquery with its own
+`FROM`, so neither inherits the parent query's narrowing. Say what should happen
+at each relation you expose:
+
+```go
+var Members = basic.Define[Member, uint, store.MemberUpdate]("members",
+    basic.Scope(crud.IsNull("DeletedAt")),                        // members
+    basic.RelationScope("Posts", crud.IsNull("DeletedAt")),       // ?preload=posts
+    basic.RelationScope("Team", crud.IsNull("DeletedAt")))        // ?filter={"team.name":…}
+```
+
+Without the second and third lines `?preload=posts` returns the tombstones, and
+`{"filter":{"posts.title":"…"}}` answers questions about them. A relation that
+points back at the *same* model needs no declaration — `basic.Scope` follows it
+at any depth, because there the answer is not in doubt.
 
 **Deletes** — `repo.Delete` issues a real `DELETE`. If you want gorm's soft
 delete, override the method in your service layer, which you have anyway:

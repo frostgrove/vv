@@ -41,7 +41,8 @@ POST /articles/query
 **Already using an ORM?** Two task-oriented guides — bind the structs you
 already have, generate the update DTO, mount the API, share transactions with
 the ORM's own builders. Every claim in both is executed by the integration
-suite.
+suite, with one exception named where it is made: ent's hooks and privacy rules
+would need a test schema that declares one, and none does.
 
 - [`docs/ent.md`](docs/ent.md) — ent's *generated* entity struct is the model, as-is
 - [`docs/gorm.md`](docs/gorm.md) — your gorm struct is the model, `gorm.Model`
@@ -118,6 +119,7 @@ n, err     = users.DeleteAll(ctx, crud.Where(crud.Lt("Age", 18)))
 | `GetAll(ctx, opts...)` | every match; unpaged unless an option says otherwise |
 | `Save(ctx, *M)` | JPA semantics: no key → INSERT, key → UPSERT; the model is refreshed in place |
 | `Update(ctx, id, dto)` | load, diff, write only what changed |
+| `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns how many rows were touched |
 | `Delete(ctx, ids...)` | returns how many rows went away |
 | `DeleteAll(ctx, opts...)` | same, filtered |
 | `Count` / `Exists` | with the same options |
@@ -168,7 +170,66 @@ reaches `UnmarshalJSON`, so it stays undefined — and implements
 columns too.
 
 Inside a transaction, the load is a `SELECT ... FOR UPDATE`. Outside one it is a
-plain read, so wrap `Update` in `Tx` when you need strict read-modify-write.
+plain read — see **optimistic locking** below for the other way to make that
+safe.
+
+### UpdateAll
+
+`Update` addresses one row; `UpdateAll` addresses a filter, the way `DeleteAll`
+is `Delete`'s filtered partner. It is one statement, so "deactivate every user in
+this tenant" costs one round trip rather than one `SELECT` and one `UPDATE` per
+row.
+
+```go
+n, err := users.UpdateAll(ctx, UserUpdate{Active: ptr(false)},
+    crud.Where(crud.Eq("TenantID", tenant)))
+```
+
+The DTO means the same three things it means on `Update`: undefined is never
+written, `crud.Null[T]()` writes `NULL`. The one difference is forced by the
+shape — there is no single row to diff against, so every field the DTO defines is
+written to every matching row, including one whose value is already there. A DTO
+that defines nothing writes nothing at all.
+
+The count is the database's own, and the engines count differently: PostgreSQL
+reports the rows it *matched*, MySQL the rows it actually *changed*. Under
+`security.Gate` an `UpdateAll` with neither a policy scope nor a caller filter is
+refused unless the policy sets `AllowUnscopedUpdateAll`, and `specs` spells it
+`UpdateBy(ctx, spec, dto)` — which refuses an empty specification outright.
+
+### Optimistic locking
+
+`Update` is load-then-write, and between those two statements somebody else can
+write the same row. Tag an integer column `version` and that stops being possible:
+
+```go
+type Article struct {
+    ID      int64  `db:"id,pk,auto"`
+    Title   string `db:"title"`
+    Version int    `db:"version,version"`
+}
+```
+
+Every `Update` then pins its write to the version it read and advances it:
+
+```sql
+UPDATE articles SET title = $1, version = version + 1
+WHERE id = $2 AND version = $3
+```
+
+If someone got there first the statement matches nothing, and the call returns
+`crud.ErrStaleVersion` — which wraps `crud.ErrConflict`, so the HTTP handler
+answers **409** — instead of quietly overwriting them. A row that is genuinely
+gone is still `crud.ErrNotFound`: the two need different answers from the caller,
+retry versus give up.
+
+The column is the repository's, not the caller's. An update DTO that names it is
+refused at `Define` time, `UpdateAll` advances it on every row it writes (a lock
+only one write path respects protects nothing), and `Save` leaves it alone —
+an upsert is a whole-row overwrite with no `WHERE` clause to check anything in,
+so a `Save` from a stale model cannot wind the counter back either. Versions are
+integers only: a timestamp version would need a clock, and two application
+servers do not share one.
 
 ### Pagination
 
@@ -187,11 +248,13 @@ type PaginatedResponse[T any] struct {
 Options: `Page`, `Limit`, `Offset`, `Where`, `OrderBy`/`SortBy`, `Unpaged`,
 `Unsorted`, `SkipTotal`, `ForUpdate`, `Distinct`, `With`.
 
-Three things happen automatically: the page size is clamped to `MaxLimit`, a
-primary-key tiebreaker is appended so pages do not shuffle under you, and the
-`COUNT` is skipped when the first page already contains everything.
-`SkipTotal()` drops the `COUNT` entirely and answers `HasNext` by fetching one
-row past the page.
+Three things happen automatically: the page size is clamped to `MaxLimit` —
+including when a request asks to be `Unpaged`, which is a flag on the wire and
+does not outrank the repository's own cap — a primary-key tiebreaker is appended
+so pages do not shuffle under you, and the `COUNT` is skipped when the first page
+already contains everything. `SkipTotal()` drops the `COUNT` entirely, answers
+`HasNext` by fetching one row past the page, and reports `Total` as the size of
+what came back, because nothing counted the rest.
 
 `crud.Where` **ANDs** — it never replaces. That is what lets a decorator inject
 a filter the caller cannot remove.
@@ -528,7 +591,11 @@ app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 
 On create the body binds straight onto the model, then a database-generated key
 and every `generated` column are cleared — a client cannot choose its own id or
-forge a server-side timestamp. Options cover the rest: `WithQuery`,
+forge a server-side timestamp. `PUT /:id` is held to the same rule from the other
+side: where the database generates the key it replaces an existing row and never
+creates one, so the id space stays the server's. (`AllowClientID` hands it over,
+and a key the client owns anyway — a uuid, a slug — is unaffected.) Options cover
+the rest: `WithQuery`,
 `WithTransform` (presenters), `WithScope`, `BeforeSave`, `BeforeUpdate`,
 `ReadOnly`, `AllowClientID`, `MaxBulk`, `WithErrorHandler`.
 
@@ -671,6 +738,7 @@ column derived from the Go name in `snake_case`.
 | `noauto` | opt an integer primary key out of that default |
 | `immutable` | written on insert, never on update (`created_at`, `tenant_id`) |
 | `generated` | never written; read back after every write (computed columns, triggers) |
+| `version` | optimistic lock: an integer rx-crud advances and checks on every update |
 | `-` | ignore the field |
 
 Embedded structs are flattened. `time.Time`, `sql.Null[T]`, `crud.Opt[T]` and
@@ -718,7 +786,16 @@ target:
 | sqlx | ✓ | ✓ |
 | gorm | ✓ | ✓ |
 | ent | ✓ | ✓ |
-| sqlc | ✓ | ✓ |
+
+…and once more against an in-process SQLite (`modernc.org/sqlite`, pure Go, no
+container), which is the third dialect: `RETURNING` like PostgreSQL, `?` markers
+like MySQL, and no row locks at all.
+
+sqlc is not in that table on purpose: it generates queries, it is not a
+`crud.Source`. What is worth proving about it — that one transaction can feed
+sqlc's generated queries and an rx-crud repository at once — is proved three
+times below, on pgx, on `database/sql` and on MySQL. The rx-crud code path
+underneath is byte-for-byte the pgx and `database/sql` one.
 
 Plus, on both databases:
 
@@ -745,12 +822,16 @@ Adding a driver means adding a `Target`, never a test.
 - **`Tx` joins, it does not nest.** Documented above; use `Begin` for a
   savepoint when you need isolation.
 - **`Update` is load-then-write.** Inside a transaction the load locks; outside
-  one, two concurrent updates can interleave. Wrap it if that matters.
+  one, two concurrent updates can interleave. Tag an integer column `version`
+  and the second one is refused with `crud.ErrStaleVersion` instead.
 - **Plain DTO fields are always applied**, slices included — a nil `[]byte` in a
   `T` field writes `NULL`. Use `*T` or `Opt[T]` for optional columns.
 - **MySQL upserts** use the deprecated `VALUES()` by default for MariaDB and
   5.7 compatibility. `crud.MySQL{RowAlias: true}` switches to the `AS new` form
   (MySQL 8.0.19+). Both are covered by the integration suite.
+- **`ForUpdate()` does nothing on SQLite.** SQLite locks the database, not the
+  row, so there is no clause to render: the statement is still correct, and the
+  serialisation has to come from the transaction instead.
 - **`crud.Raw` is not validated.** Column names in a raw fragment are neither
   resolved nor quoted; that is the price of the escape hatch, and it is the one
   thing to grep for in review.

@@ -5,7 +5,11 @@ package gormstore
 
 //go:generate go run rx-crud/cmd/rxcrud -readonly UpdatedAt,DeletedAt
 
-import "gorm.io/gorm"
+import (
+	"sync/atomic"
+
+	"gorm.io/gorm"
+)
 
 // Team is an ordinary gorm model. The only additions are the `rel` tags, which
 // gorm ignores and rx-crud reads — one struct, two libraries.
@@ -29,4 +33,20 @@ type Member struct {
 type Label struct {
 	gorm.Model
 	Slug string `gorm:"size:64"`
+}
+
+// LabelCreations counts the gorm callbacks that fired. docs/gorm.md §16 says
+// gorm hooks do not run on rx-crud writes — rx-crud sends one statement to the
+// driver and never goes through gorm's callback chain — and no model in the
+// tree declared a hook, so the claim was pinned by nothing.
+var LabelCreations atomic.Int64
+
+// BeforeCreate is an ordinary gorm hook: it counts, and it defaults the slug, so
+// a test can see whether it ran from the row itself and not only from a counter.
+func (l *Label) BeforeCreate(*gorm.DB) error {
+	LabelCreations.Add(1)
+	if l.Slug == "" {
+		l.Slug = "defaulted by the hook"
+	}
+	return nil
 }

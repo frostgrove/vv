@@ -1,7 +1,8 @@
 // Package crudpgx adapts pgx v5.
 //
-// pgx.Rows already satisfies crud.Rows, so reads cross the boundary untouched:
-// no wrapper allocation, no copying. Anything with pgx's Exec/Query pair works
+// pgx.Rows already satisfies crud.Rows, so rows cross the boundary without
+// being copied; the one method that is wrapped is Err, because that is where
+// pgx reports a statement it refused. Anything with pgx's Exec/Query pair works
 // — *pgxpool.Pool, *pgx.Conn and pgx.Tx alike:
 //
 //	src := crudpgx.Open(pool)
@@ -50,18 +51,29 @@ func (e Executor) Unwrap() Queryer { return e.q }
 func (e Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
 	tag, err := e.q.Exec(ctx, sql, args...)
 	if err != nil {
-		return crud.Result{}, err
+		return crud.Result{}, conflict(err)
 	}
 	return crud.Result{RowsAffected: tag.RowsAffected()}, nil
 }
 
 func (e Executor) Query(ctx context.Context, sql string, args ...any) (crud.Rows, error) {
-	rows, err := e.q.Query(ctx, sql, args...)
+	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
+	rs, err := e.q.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, err
+		return nil, conflict(err)
 	}
-	return rows, nil // pgx.Rows already is a crud.Rows
+	return rows{rs}, nil
 }
+
+// rows exists for one reason: pgx does not report a failed statement from
+// Query. It hands back a live Rows whose first Next is false and whose Err
+// carries the PgError — so on PostgreSQL, where every insert and every update
+// runs as INSERT/UPDATE ... RETURNING, Err is the only place the classification
+// can happen. Without it a duplicate key reached the client as a bare 500 while
+// the same statement through database/sql answered 409.
+type rows struct{ pgx.Rows }
+
+func (r rows) Err() error { return conflict(r.Rows.Err()) }
 
 // CopyFrom implements crud.BulkInserter when the underlying handle supports
 // COPY, which every pool, connection and transaction does.

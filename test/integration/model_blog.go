@@ -34,6 +34,16 @@ type Comment struct {
 	Author *Author `rel:"belongs_to"`
 }
 
+// ArticleStats is the has_one end: the child holds the foreign key and there is
+// at most one of it. The table deliberately carries no unique index on
+// article_id — see TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime, which is
+// about what the library does when a schema does not keep that promise.
+type ArticleStats struct {
+	ID        int64 `db:"id,pk,auto"`
+	ArticleID int64 `db:"article_id"`
+	WordCount int   `db:"word_count"`
+}
+
 type Article struct {
 	ID          int64               `db:"id,pk,auto"`
 	AuthorID    int64               `db:"author_id"`
@@ -43,9 +53,10 @@ type Article struct {
 	PublishedAt crud.Opt[time.Time] `db:"published_at"`
 	CreatedAt   time.Time           `db:"created_at,generated"`
 
-	Author   *Author   `rel:"belongs_to"`
-	Comments []Comment `rel:"has_many"`
-	Tags     []Tag     `rel:"many_to_many,join=article_tags"`
+	Author   *Author       `rel:"belongs_to"`
+	Stats    *ArticleStats `rel:"has_one"`
+	Comments []Comment     `rel:"has_many"`
+	Tags     []Tag         `rel:"many_to_many,join=article_tags"`
 }
 
 type ArticleUpdate struct {
@@ -65,9 +76,11 @@ var (
 	Articles = basic.Define[Article, int64, ArticleUpdate]("articles")
 	Comments = basic.Define[Comment, int64, CommentUpdate]("comments")
 	Tags     = basic.Define[Tag, int64, struct{}]("tags")
+	Stats    = basic.Define[ArticleStats, int64, struct{}]("article_stats")
 )
 
 const schemaBlogPostgres = `
+DROP TABLE IF EXISTS article_stats;
 DROP TABLE IF EXISTS article_tags;
 DROP TABLE IF EXISTS comments;
 DROP TABLE IF EXISTS articles;
@@ -102,9 +115,15 @@ CREATE TABLE article_tags (
 	article_id BIGINT NOT NULL,
 	tag_id     BIGINT NOT NULL,
 	PRIMARY KEY (article_id, tag_id)
+);
+CREATE TABLE article_stats (
+	id         BIGSERIAL PRIMARY KEY,
+	article_id BIGINT  NOT NULL,
+	word_count INTEGER NOT NULL DEFAULT 0
 );`
 
 var schemaBlogMySQL = []string{
+	`DROP TABLE IF EXISTS article_stats`,
 	`DROP TABLE IF EXISTS article_tags`,
 	`DROP TABLE IF EXISTS comments`,
 	`DROP TABLE IF EXISTS articles`,
@@ -138,5 +157,10 @@ var schemaBlogMySQL = []string{
 		article_id BIGINT NOT NULL,
 		tag_id     BIGINT NOT NULL,
 		PRIMARY KEY (article_id, tag_id)
+	) ENGINE=InnoDB`,
+	`CREATE TABLE article_stats (
+		id         BIGINT  NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		article_id BIGINT  NOT NULL,
+		word_count INT     NOT NULL DEFAULT 0
 	) ENGINE=InnoDB`,
 }

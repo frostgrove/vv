@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 type optState uint8
@@ -108,6 +109,13 @@ func (o Opt[T]) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	if v, ok := any(o.value).(driver.Valuer); ok {
+		// A nil *T whose T carries the method would panic on the call, so it is
+		// NULL — the same rule database/sql applies to a bare nil *T argument.
+		// A pointer-receiver Valuer is still asked: it can answer for itself.
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() &&
+			rv.Type().Elem().Implements(valuerType) {
+			return nil, nil
+		}
 		return v.Value()
 	}
 	// database/sql insists on a canonical driver.Value; pgx happily takes the

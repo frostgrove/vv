@@ -73,3 +73,17 @@ CREATE TABLE users (
 	active     BOOLEAN      NOT NULL DEFAULT TRUE,
 	created_at DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
 ) ENGINE=InnoDB;`
+
+// INTEGER PRIMARY KEY is SQLite's rowid alias, which is what makes `auto` work;
+// the declared TIMESTAMP type is what tells the driver to hand back a
+// time.Time rather than the string the column really holds.
+const schemaSQLite = `
+CREATE TABLE users (
+	id         INTEGER   NOT NULL PRIMARY KEY,
+	tenant_id  INTEGER   NOT NULL,
+	email      TEXT      NOT NULL,
+	name       TEXT      NOT NULL,
+	age        INTEGER       NULL,
+	active     BOOLEAN   NOT NULL DEFAULT TRUE,
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`

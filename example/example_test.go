@@ -21,7 +21,9 @@ func row(id, author int64, title string, views int, pub any) []any {
 }
 
 // A partial update writes only the columns that actually changed, and the
-// gate's scope rides along on the read.
+// gate's scope rides along on every statement — including the UPDATE's own
+// WHERE, so a row that leaves the scope between the load and the write is not
+// written after all.
 func Example_partialUpdate() {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(row(1, 7, "Old", 10, nil)), // the gate loads within scope
@@ -45,8 +47,8 @@ func Example_partialUpdate() {
 	}
 	// Output:
 	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("author_id" = $1 AND "id" = $2) LIMIT 1
-	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE "id" = $1 LIMIT 1
-	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE "id" = $3 RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
+	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("id" = $1 AND "author_id" = $2) LIMIT 1
+	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE ("id" = $3 AND "author_id" = $4) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
 }
 
 // Unpublishing writes NULL; leaving the field out would have written nothing.
@@ -68,7 +70,7 @@ func Example_nullVersusAbsent() {
 	fmt.Println("arg is nil:", rec.Last().Args[0] == nil)
 	fmt.Println("published:", a.PublishedAt.IsSet())
 	// Output:
-	// UPDATE "articles" SET "published_at" = $1 WHERE "id" = $2 RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
+	// UPDATE "articles" SET "published_at" = $1 WHERE ("id" = $2 AND "author_id" = $3) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
 	// arg is nil: true
 	// published: false
 }

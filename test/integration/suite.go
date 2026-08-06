@@ -199,6 +199,67 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 	})
 
+	t.Run("UpdateAllWritesEveryMatchingRowInOneStatement", func(t *testing.T) {
+		tg.reset(t)
+		seed(t, repo, 6)
+
+		// The filtered write: one statement for "everybody over 22".
+		n, err := repo.UpdateAll(ctx, UserUpdate{Active: ptr(false)}, crud.Where(crud.Gt("Age", 22)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 3 {
+			t.Fatalf("rows affected = %d, want the 3 rows over 22", n)
+		}
+		off, err := repo.Count(ctx, crud.Where(crud.Eq("Active", false)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if off != 3 {
+			t.Fatalf("%d rows are inactive, want 3: the filter reached rows it should not have", off)
+		}
+
+		// Undefined stays undefined, and a null Opt still means NULL — the two
+		// rules Update lives by, on a write with no row to diff against.
+		if _, err := repo.UpdateAll(ctx, UserUpdate{Age: crud.Null[int]()}, crud.Where(crud.Eq("Email", "user-00@x.io"))); err != nil {
+			t.Fatal(err)
+		}
+		got, err := repo.GetAll(ctx, crud.Where(crud.Eq("Email", "user-00@x.io")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got[0].Age.IsNull() {
+			t.Fatalf("age = %v, want NULL", got[0].Age)
+		}
+		if got[0].Name != "user 0" {
+			t.Fatalf("an undefined DTO field changed the row: name = %q", got[0].Name)
+		}
+
+		// A DTO that defines nothing is not a request to rewrite the table.
+		if n, err := repo.UpdateAll(ctx, UserUpdate{}); err != nil || n != 0 {
+			t.Fatalf("n = %d err = %v: an empty DTO must write nothing", n, err)
+		}
+
+		// Matching nothing is not an error; it is a count of zero.
+		if n, err := repo.UpdateAll(ctx, UserUpdate{Name: ptr("x")}, crud.Where(crud.Eq("Email", "nobody@x.io"))); err != nil || n != 0 {
+			t.Fatalf("n = %d err = %v", n, err)
+		}
+
+		// The engines disagree about what "affected" counts — PostgreSQL reports
+		// the rows it matched, MySQL the rows whose values actually changed — so
+		// what is pinned here is the row count in the table, not the number.
+		if _, err := repo.UpdateAll(ctx, UserUpdate{Name: ptr("all the same")}); err != nil {
+			t.Fatal(err)
+		}
+		same, err := repo.Count(ctx, crud.Where(crud.Eq("Name", "all the same")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if same != 6 {
+			t.Fatalf("%d of 6 rows were renamed by an unfiltered UpdateAll", same)
+		}
+	})
+
 	t.Run("Pagination", func(t *testing.T) {
 		tg.reset(t)
 		seed(t, repo, 25)
@@ -273,6 +334,23 @@ func RunSuite(t *testing.T, tg Target) {
 			{"empty in", crud.InAny("Email", []string{}), 0},
 			{"true", crud.True(), 10},
 			{"raw", crud.Raw("age > ?", 25), 4},
+
+			// The rest of the constructors. They were unit-render-only, which
+			// proves the statement and not the answer: a LIKE pattern that no
+			// engine interprets the way the renderer assumed, or a column-to-
+			// column comparison that one dialect will not quote, produces
+			// perfectly good SQL and the wrong rows.
+			{"lte", crud.Lte("Age", 22), 2}, // 21 and 22; user-00's age was nulled above
+			{"gte", crud.Gte("Age", 27), 3},
+			{"like", crud.Like("Email", "user-0_@x.io"), 10},
+			{"not like", crud.NotLike("Email", "%-01@%"), 9},
+			{"in, variadic", crud.In("Name", "user 1", "user 2", "nobody"), 2},
+			{"not in, variadic", crud.NotIn("Name", "user 1", "user 2"), 8},
+			{"in, one value", crud.In("Name", "user 1"), 1},
+			{"in, nothing at all", crud.In("Name"), 0},
+			{"false", crud.False(), 0},
+			{"false ors away", crud.Or(crud.False(), crud.Eq("Name", "user 1")), 1},
+			{"a column compared with another column", crud.EqField("Name", "Name"), 10},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				n, err := repo.Count(ctx, crud.Where(tc.pred))
@@ -400,6 +478,109 @@ func RunSuite(t *testing.T, tg Target) {
 		if ok, err := sp.ExistsBy(ctx, User_.Email.Eq("user-09@x.io")); err != nil || !ok {
 			t.Fatalf("exists = %v err = %v", ok, err)
 		}
+
+		// The rest of the metamodel and the rest of the criteria builder, each
+		// against the same ten rows. Rendering them is not the same as running
+		// them: a pattern the engine reads differently, or a column-to-column
+		// comparison one dialect will not quote, is perfectly good SQL and the
+		// wrong answer.
+		for _, tc := range []struct {
+			name string
+			spec specs.Specification[User]
+			want int64
+		}{
+			{"Str.Like", User_.Email.Like("user-0_@x.io"), 10},
+			{"Str.NotLike", User_.Email.NotLike("%-01@%"), 9},
+			{"Str.LikeIgnoreCase", User_.Name.LikeIgnoreCase("USER 4"), 1},
+			{"Str.StartsWith", User_.Name.StartsWith("user"), 10},
+			{"Str.EndsWith", User_.Email.EndsWith("@x.io"), 10},
+			{"Ord.Gt", User_.Age.Gt(27), 2},
+			{"Ord.Lt", User_.Age.Lt(21), 1},
+			{"Ord.Lte", User_.Age.Lte(21), 2},
+			{"Ord.Between", User_.Age.Between(22, 24), 3},
+			{"Attr.NotNull", User_.Age.NotNull(), 10},
+			{"Attr.IsNull", User_.Age.IsNull(), 0},
+			{"Attr.In", User_.Name.In("user 1", "user 2"), 2},
+			{"Attr.NotIn", User_.Name.NotIn("user 1"), 9},
+			{"Attr.Ne", User_.Active.Ne(true), 0},
+			{"Cmp.Lt on a timestamp", User_.CreatedAt.Lt(time.Now().Add(time.Hour)), 10},
+
+			{"cb.NotEqual", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.NotEqual(r.Get("Name"), "user 1")
+			}), 9},
+			{"cb.GreaterThan and cb.LessThan", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.And(cb.GreaterThan(r.Get("Age"), 21), cb.LessThan(r.Get("Age"), 25))
+			}), 3},
+			{"cb.LessThanOrEqualTo", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.LessThanOrEqualTo(r.Get("Age"), 21)
+			}), 2},
+			{"cb.Between", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Between(r.Get("Age"), 22, 24)
+			}), 3},
+			{"cb.Like and cb.NotLike", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.And(cb.Like(r.Get("Email"), "user-%"), cb.NotLike(r.Get("Email"), "%-01@%"))
+			}), 9},
+			{"cb.LikeIgnoreCase", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.LikeIgnoreCase(r.Get("Name"), "USER 4")
+			}), 1},
+			{"cb.IsNull and cb.IsNotNull", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Or(cb.IsNull(r.Get("Age")), cb.IsNotNull(r.Get("Age")))
+			}), 10},
+			{"cb.In and cb.NotIn", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.And(cb.In(r.Get("Name"), "user 1", "user 2"), cb.NotIn(r.Get("Name"), "user 2"))
+			}), 1},
+			{"cb.EqualTo compares two columns", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.EqualTo(r.Get("Name"), r.Get("Name"))
+			}), 10},
+			{"cb.Conjunction is everything", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Conjunction()
+			}), 10},
+			{"cb.Disjunction is nothing", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Disjunction()
+			}), 0},
+			{"cb.Not", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Not(cb.Equal(r.Get("Name"), "user 1"))
+			}), 9},
+			{"cb.Raw", byCriteria(func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+				return cb.Raw("age >= ?", 25)
+			}), 5},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				n, err := sp.CountBy(ctx, tc.spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n != tc.want {
+					t.Fatalf("count = %d, want %d", n, tc.want)
+				}
+			})
+		}
+
+		// Attr.Asc is a sort term, so its proof is the order that comes back.
+		byAge, err := sp.FindAll(ctx, User_.Active.Eq(true), crud.SortBy(User_.Age.Asc()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if age, _ := byAge[0].Age.Get(); age != 20 {
+			t.Fatalf("the first row is %v, want the youngest", byAge[0].Age)
+		}
+
+		// UpdateBy is the filtered write, addressed by specification.
+		n, err := sp.UpdateBy(ctx, User_.Age.Gte(28), UserUpdate{Name: ptr("senior")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 2 {
+			t.Fatalf("n = %d, want the 2 rows aged 28 and over", n)
+		}
+		if seniors, err := sp.CountBy(ctx, User_.Name.Eq("senior")); err != nil || seniors != 2 {
+			t.Fatalf("count = %d err = %v", seniors, err)
+		}
+		// And an empty specification is refused rather than applied to the table.
+		if _, err := sp.UpdateBy(ctx, specs.Where[User](nil), UserUpdate{Name: ptr("everyone")}); !errors.Is(err, specs.ErrUnboundedUpdate) {
+			t.Fatalf("err = %v, want ErrUnboundedUpdate", err)
+		}
+
 		if n, err := sp.DeleteBy(ctx, User_.Age.Lt(22)); err != nil || n != 2 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
@@ -525,6 +706,12 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("count = %d err = %v", n, err)
 		}
 	})
+}
+
+// byCriteria is specs.Of with the type parameter filled in, so the table above
+// reads as a list of criteria expressions rather than of generic instantiations.
+func byCriteria(f func(specs.Root[User], specs.Builder) crud.Predicate) specs.Specification[User] {
+	return specs.Of[User](f)
 }
 
 // seed inserts n users with predictable emails, names and ages 20..20+n.

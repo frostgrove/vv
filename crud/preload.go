@@ -2,6 +2,7 @@ package crud
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"strings"
 	"unsafe"
@@ -52,6 +53,7 @@ type preloadNode struct {
 	name     string
 	opts     []Option
 	children []*preloadNode
+	whole    bool // some spec asked for this relation unnarrowed
 }
 
 func (n *preloadNode) child(name string) *preloadNode {
@@ -83,6 +85,18 @@ func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 			}
 			cur = cur.child(seg)
 		}
+		// Folding two requests for the same path into one query is what makes
+		// "Comments" and "Comments.Author" share a statement. Folding their
+		// narrowings together is a different thing: a request that asked for
+		// all of them and for a subset would receive only the subset, with a
+		// 200 and no way to tell. The wider ask wins.
+		if len(spec.Opts) == 0 {
+			cur.whole, cur.opts = true, nil
+			continue
+		}
+		if cur.whole {
+			continue
+		}
 		cur.opts = append(cur.opts, spec.Opts...)
 	}
 	return root, nil
@@ -93,7 +107,10 @@ func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 
 // RunPreloads fills the relation fields of items (a []M or []*M) according to
 // specs. It issues one query per relation per level, batching parent keys.
-func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, specs []PreloadSpec, maxDepth int) error {
+//
+// scopes narrows the related tables; it may be nil, and then a preload reads
+// its table raw — which is the whole reason a repository has to pass its own.
+func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, specs []PreloadSpec, maxDepth int, scopes *RelationScopes) error {
 	if len(specs) == 0 {
 		return nil
 	}
@@ -108,8 +125,8 @@ func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any
 	if len(rows) == 0 {
 		return nil
 	}
-	p := &preloader{ctx: ctx, ex: ex, d: d}
-	return p.level(m, rows, tree.children)
+	p := &preloader{ctx: ctx, ex: ex, d: d, scopes: scopes}
+	return p.level(m, rows, tree.children, "")
 }
 
 // addressableRows turns a []M or []*M into pointers to each element's struct.
@@ -133,18 +150,20 @@ func addressableRows(v reflect.Value) []reflect.Value {
 }
 
 type preloader struct {
-	ctx context.Context
-	ex  Executor
-	d   Dialect
+	ctx    context.Context
+	ex     Executor
+	d      Dialect
+	scopes *RelationScopes
 }
 
-func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode) error {
+func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode, prefix string) error {
 	for _, node := range nodes {
 		rel := m.Relation(node.name)
 		if rel == nil {
 			return &UnknownFieldError{Model: m.Name, Field: node.name}
 		}
-		children, err := p.load(m, rel, parents, node.opts)
+		path := joinPath(prefix, rel.Name)
+		children, err := p.load(m, rel, parents, node.opts, path)
 		if err != nil {
 			return err
 		}
@@ -155,7 +174,7 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 		if err != nil {
 			return err
 		}
-		if err := p.level(target, children, node.children); err != nil {
+		if err := p.level(target, children, node.children, path); err != nil {
 			return err
 		}
 	}
@@ -165,7 +184,7 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 // load fetches one relation for a whole set of parents and wires the results
 // into their fields, returning the loaded children so nested preloads can
 // continue from them.
-func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option) ([]reflect.Value, error) {
+func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option, path string) ([]reflect.Value, error) {
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
 		return nil, err
@@ -200,7 +219,7 @@ func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts [
 	index := make(map[any][]reflect.Value, len(keys))
 	total := 0
 	for chunk := range slices(keys, preloadBatch) {
-		rows, owners, err := p.fetch(target, rel, remote, chunk, o)
+		rows, owners, err := p.fetch(target, rel, local, remote, chunk, o, path)
 		if err != nil {
 			return nil, err
 		}
@@ -237,15 +256,22 @@ func (p *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
 
 // fetch runs one batched SELECT and returns the scanned children together with
 // the parent key each one belongs to.
-func (p *preloader) fetch(target *Meta, rel *Relation, remote *Field, keys []any, o *Options) ([]reflect.Value, []any, error) {
+func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string) ([]reflect.Value, []any, error) {
 	var (
 		b       *SQL
 		ownerAt = -1 // index of the owner-key column in the result, -1 = derive from the row
 	)
+	// The narrowing the parent's repository declared for this relation. It is
+	// ANDed in here, not left to the caller: a preload is a second statement
+	// against a second table, so the parent query's WHERE does nothing for it.
+	extra := p.scopes.At(path, target)
+	if sub := o.Predicate(); sub != nil {
+		extra = And(extra, sub)
+	}
 
 	if rel.Kind == ManyToMany {
 		// SELECT j.<owner>, t.<cols> FROM target t JOIN join j ON j.ref = t.pk
-		b = NewSQL(p.d, target).Alias("rxt")
+		b = NewSQL(p.d, target).Alias("rxt").RelationScopes(p.scopes.under(path))
 		b.Raw("SELECT rxj.").Ident(rel.JoinLocal).Raw(", ")
 		for i, f := range target.Fields {
 			if i > 0 {
@@ -256,21 +282,31 @@ func (p *preloader) fetch(target *Meta, rel *Relation, remote *Field, keys []any
 		b.Raw(" FROM ").Ident(target.Table).Raw(" AS rxt JOIN ").Ident(rel.JoinTable).Raw(" AS rxj ON rxj.").
 			Ident(rel.JoinRef).Raw(" = rxt.").Ident(remote.Column).
 			Raw(" WHERE rxj.").Ident(rel.JoinLocal).Raw(" IN (").Binds(keys).Raw(")")
-		if extra := o.Predicate(); extra != nil {
+		if extra != nil {
 			b.Raw(" AND ")
 			b.Predicate(extra)
 		}
 		ownerAt = 0
 	} else {
-		b = NewSQL(p.d, target)
+		b = NewSQL(p.d, target).RelationScopes(p.scopes.under(path))
 		b.Raw("SELECT ").Columns(target.Fields).Raw(" FROM ").Table().
 			Raw(" WHERE ").Ident(remote.Column).Raw(" IN (").Binds(keys).Raw(")")
-		if extra := o.Predicate(); extra != nil {
+		if extra != nil {
 			b.Raw(" AND ")
 			b.Predicate(extra)
 		}
 	}
-	b.OrderBy(o.Sort)
+	sort := o.Sort
+	if len(sort) == 0 && rel.Kind == HasOne {
+		// A has_one promises at most one row, and only a unique index on the
+		// foreign key can keep that promise. When the schema does not, the
+		// statement matches several rows and the first one wins — so without an
+		// ORDER BY the winner is whichever row the engine felt like returning,
+		// and it can differ between two runs of the same query. The schema is
+		// what is wrong there, but the answer still has to be the same twice.
+		sort = []Order{Asc(target.PK.Name)}
+	}
+	b.OrderBy(sort)
 
 	q, args, err := b.Done()
 	if err != nil {
@@ -294,7 +330,10 @@ func (p *preloader) fetch(target *Meta, rel *Relation, remote *Field, keys []any
 		}
 		var ownerKey reflect.Value
 		if ownerAt >= 0 {
-			ownerKey = reflect.New(remote.Type)
+			// The join table's owner column holds the parent's key, so it has
+			// to be read as the parent's type: the index is looked up with the
+			// parent's own value, and int32(1) does not equal int64(1).
+			ownerKey = reflect.New(local.Type)
 			dest = append([]any{ownerKey.Interface()}, dest...)
 		}
 		if err := rows.Scan(dest...); err != nil {
@@ -346,15 +385,28 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 		return nil, nil
 	}
 	if rel.Type.Kind() == reflect.Pointer {
-		dst.Set(kids[0])
-		return kids[:1], nil
+		// Every parent gets its own copy. Two parents pointing at the same row
+		// used to share one object, so a presenter that rewrote a field on one
+		// rewrote it on all its siblings — and which spelling of the relation
+		// field was used decided whether that happened, because the value form
+		// below has always copied.
+		own := reflect.New(rel.Type.Elem())
+		own.Elem().Set(kids[0].Elem())
+		dst.Set(own)
+		return []reflect.Value{own}, nil
 	}
 	dst.Set(kids[0].Elem())
 	return []reflect.Value{dst.Addr()}, nil
 }
 
-// mapKey normalises a value so it can index a map: byte slices become strings,
-// everything comparable stays as it is.
+// mapKey normalises a value so it can index a map, and — the part that earns
+// its keep — so that the two ends of a relation agree on it. A parent's key and
+// a child's foreign key are separate struct fields that need not share a Go
+// type: int32(1) and int64(1) are different map keys but the same row, and a
+// mismatch here is silent, because the children simply end up filed under a key
+// no parent looks for. So every integer key is widened, every string kind is
+// flattened, and byte slices become strings the way a text driver hands them
+// over.
 func mapKey(v any) any {
 	if v == nil {
 		return nil
@@ -362,8 +414,23 @@ func mapKey(v any) any {
 	if b, ok := v.([]byte); ok {
 		return string(b)
 	}
-	if !reflect.TypeOf(v).Comparable() {
-		return reflect.ValueOf(v).String()
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// Signed and unsigned meet here too: a key that fits in an int64 is
+		// keyed as one, and a key that does not could never have equalled a
+		// signed one anyway.
+		if u := rv.Uint(); u <= math.MaxInt64 {
+			return int64(u)
+		}
+		return rv.Uint()
+	case reflect.String:
+		return rv.String()
+	}
+	if !rv.Type().Comparable() {
+		return rv.String()
 	}
 	return v
 }

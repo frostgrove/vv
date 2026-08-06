@@ -219,3 +219,46 @@ func TestEntStructInsideEntTransaction(t *testing.T) {
 		t.Fatalf("count = %d err = %v: the rollback did not reach rx-crud's write", n, err)
 	}
 }
+
+// docs/ent.md §16 warns that ent's Go-side defaults belong to ent's builders:
+// a write that goes through rx-crud is one INSERT and never sees them, so the
+// column gets whatever the model carries. matrix_test.go works around it in a
+// comment; this is the claim itself, from both sides of the same schema.
+//
+// `field.Bool("active").Default(true)` is the cleanest probe: ent fills it in,
+// rx-crud does not, and the difference is visible in the row.
+func TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites(t *testing.T) {
+	ctx := context.Background()
+	truncate(t, pgDB)
+	client := entClient(pgDB, dialect.Postgres)
+	users := EntUsers.Bind(crudsql.Postgres(pgDB))
+
+	// ent's own builder applies the default.
+	byEnt, err := client.User.Create().
+		SetTenantID(1).SetEmail("ent@x.io").SetName("ByEnt").SetCreatedAt(time.Now()).
+		Save(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !byEnt.Active {
+		t.Fatal("ent did not apply its own default, so this test cannot tell the two paths apart")
+	}
+
+	// rx-crud writes the model, and the model says false.
+	byRxCrud := ent.User{TenantID: 1, Email: "rx@x.io", Name: "ByRxCrud", CreatedAt: time.Now()}
+	if err := users.Save(ctx, &byRxCrud); err != nil {
+		t.Fatal(err)
+	}
+	if byRxCrud.Active {
+		t.Fatal("an ent Go-side default reached an rx-crud write")
+	}
+	// From ent's side of the same row, so this is the stored value and not
+	// something rx-crud failed to read back.
+	stored, err := client.User.Get(ctx, byRxCrud.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Active {
+		t.Fatalf("the stored row has active = true; put invariants in the column, in a security.Policy or in a service layer")
+	}
+}
