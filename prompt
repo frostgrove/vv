@@ -1,0 +1,377 @@
+```
+Как это будет работать? Можно пример generic crud репозитория [Model, Id] & get, save, delete? И как будут юзать пользователи с ent / gorm / sqlc / pgx / ...? Нужен лучший варик без компромиссов. Если надо отдельно писать адаптеры под каждый то ок. Но главное чтобы было универсально
+
+Спроектировал универсальный CRUD с адаптерами под разные БД
+Спроектировал универсальный CRUD с адаптерами под разные БД
+
+Ключевая идея, из которой всё вытекает: через границу абстракции должно проходить только «выполни запрос» и «дай строки». Сканирование остаётся у маппера, диалект — у репозитория, а не у исполнителя. Именно поэтому в контекст можно втолкнуть чужую транзакцию — от неё требуется всего два метода, она ничего не знает про твои SQL-соглашения.
+
+Ядро (crud) — ноль зависимостей
+go
+package crud
+
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+// Всё, что нужно от чужой транзакции.
+type Executor interface {
+	Exec(ctx context.Context, q string, args ...any) (int64, error)
+	Query(ctx context.Context, q string, args ...any) (Rows, error)
+}
+
+// Опционально: умеет начинать свои транзакции.
+type Beginner interface {
+	Begin(ctx context.Context) (Tx, error)
+}
+
+type Tx interface {
+	Executor
+	Commit(ctx context.Context) error
+	Rollback(ctx context.Context) error
+}
+
+// То, что отдаёт адаптер при инициализации.
+type Source interface {
+	Executor
+	Dialect() Dialect
+}
+
+type Dialect interface {
+	Placeholder(n int) string
+	Quote(ident string) string
+	OnConflict(pk string, cols []string) string
+}
+
+Rows подобран так, что pgx.Rows удовлетворяет ему напрямую — Close() там уже void. Обёртка нужна только для *sql.Rows.
+
+Контекст:
+
+go
+type ctxKey struct{}
+
+func WithExecutor(ctx context.Context, e Executor) context.Context {
+	return context.WithValue(ctx, ctxKey{}, e)
+}
+
+func fromCtx(ctx context.Context) (Executor, bool) {
+	e, ok := ctx.Value(ctxKey{}).(Executor)
+	return e, ok
+}
+Маппер
+go
+type Mapper[M any, ID comparable] interface {
+	Table() string
+	Columns() []string  // PK первой
+	ID(m *M) ID
+	Fields(m *M) []any  // указатели, порядок = Columns()
+}
+
+Один Fields работает и на скан, и на вставку: и database/sql, и pgx разыменовывают указатели в аргументах.
+
+go
+type User struct {
+	ID        int64
+	Email     string
+	Name      string
+	CreatedAt time.Time
+}
+
+type UserMapper struct{}
+
+func (UserMapper) Table() string      { return "users" }
+func (UserMapper) Columns() []string  { return []string{"id", "email", "name", "created_at"} }
+func (UserMapper) ID(u *User) int64   { return u.ID }
+func (UserMapper) Fields(u *User) []any {
+	return []any{&u.ID, &u.Email, &u.Name, &u.CreatedAt}
+}
+
+Рефлексия по тегам — отдельный подпакет поверх того же интерфейса, ядро её не знает.
+
+Репозиторий
+go
+type Repository[M any, ID comparable] struct {
+	db  Executor
+	m   Mapper[M, ID]
+	get, save, del string
+}
+
+func New[M any, ID comparable](src Source, m Mapper[M, ID]) *Repository[M, ID] {
+	d, cols := src.Dialect(), m.Columns()
+	pk, tbl := cols[0], d.Quote(m.Table())
+
+	qc := make([]string, len(cols))
+	ph := make([]string, len(cols))
+	for i, c := range cols {
+		qc[i] = d.Quote(c)
+		ph[i] = d.Placeholder(i + 1)
+	}
+	list, vals := strings.Join(qc, ", "), strings.Join(ph, ", ")
+	where := " WHERE " + d.Quote(pk) + " = " + d.Placeholder(1)
+
+	return &Repository[M, ID]{
+		db:   src,
+		m:    m,
+		get:  "SELECT " + list + " FROM " + tbl + where,
+		save: "INSERT INTO " + tbl + " (" + list + ") VALUES (" + vals + ")" + d.OnConflict(pk, cols[1:]),
+		del:  "DELETE FROM " + tbl + where,
+	}
+}
+
+func (r *Repository[M, ID]) exec(ctx context.Context) Executor {
+	if e, ok := fromCtx(ctx); ok {
+		return e
+	}
+	return r.db
+}
+
+func (r *Repository[M, ID]) Get(ctx context.Context, id ID) (M, error) {
+	var m M
+	rows, err := r.exec(ctx).Query(ctx, r.get, id)
+	if err != nil {
+		return m, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return m, err
+		}
+		return m, ErrNotFound
+	}
+	if err := rows.Scan(r.m.Fields(&m)...); err != nil {
+		return m, err
+	}
+	return m, rows.Err()
+}
+
+func (r *Repository[M, ID]) Save(ctx context.Context, m *M) error {
+	_, err := r.exec(ctx).Exec(ctx, r.save, r.m.Fields(m)...)
+	return err
+}
+
+func (r *Repository[M, ID]) Delete(ctx context.Context, id ID) error {
+	n, err := r.exec(ctx).Exec(ctx, r.del, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Своя транзакция — но если в контексте уже чужая, просто присоединяемся.
+func (r *Repository[M, ID]) InTx(ctx context.Context, fn func(context.Context) error) error {
+	if _, ok := fromCtx(ctx); ok {
+		return fn(ctx)
+	}
+	b, ok := r.db.(Beginner)
+	if !ok {
+		return ErrNoTxSupport
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fn(WithExecutor(ctx, tx)); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+SQL строится один раз при создании, в горячем пути — ни конкатенации, ни рефлексии.
+
+Адаптер database/sql
+
+Один адаптер закрывает ent, gorm, sqlx, bun, sqlc-на-database/sql и голый *sql.DB.
+
+go
+package crudsql
+
+type queryer interface {
+	ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error)
+}
+
+type Exec struct{ q queryer }
+
+func From(q queryer) Exec { return Exec{q} }
+
+func (e Exec) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	res, err := e.q.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (e Exec) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	rs, err := e.q.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return rows{rs}, nil
+}
+
+type rows struct{ *sql.Rows }
+
+func (r rows) Close() { _ = r.Rows.Close() } // гасим error, внешний метод перекрывает встроенный
+
+// Полноценный Source поверх *sql.DB
+type DB struct {
+	Exec
+	db *sql.DB
+	d  crud.Dialect
+}
+
+func Open(db *sql.DB, d crud.Dialect) DB { return DB{Exec{db}, db, d} }
+
+func (d DB) Dialect() crud.Dialect { return d.d }
+
+func (d DB) Begin(ctx context.Context) (crud.Tx, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return sqlTx{Exec{tx}, tx}, nil
+}
+Адаптер pgx
+go
+package crudpgx
+
+type pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+type Exec struct{ p pool }
+
+func From(p pool) Exec { return Exec{p} } // *pgxpool.Pool, *pgx.Conn, pgx.Tx
+
+func (e Exec) Exec(ctx context.Context, q string, args ...any) (int64, error) {
+	tag, err := e.p.Exec(ctx, q, args...)
+	return tag.RowsAffected(), err
+}
+
+func (e Exec) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	return e.p.Query(ctx, q, args...) // pgx.Rows уже подходит
+}
+
+Вложенный Begin у pgx автоматически даёт SAVEPOINT — вложенные транзакции работают бесплатно.
+
+Как это выглядит у пользователей
+
+Голый pgx — библиотека владеет транзакцией:
+
+go
+src := crudpgx.Open(pool)
+users := crud.New(src, UserMapper{})
+
+users.InTx(ctx, func(ctx context.Context) error {
+	u, err := users.Get(ctx, 42)
+	if err != nil { return err }
+	u.Name = "new"
+	return users.Save(ctx, &u)
+})
+
+ent (с --feature sql/execquery) — транзакцией владеет ent:
+
+go
+users := crud.New(crudsql.Open(db, crud.Postgres{}), UserMapper{})
+
+ent.WithTx(ctx, client, func(tx *ent.Tx) error {
+	ctx := crud.WithExecutor(ctx, crudsql.From(tx))
+
+	if err := users.Save(ctx, &u); err != nil { return err }
+	_, err := tx.Order.Create().SetUserID(u.ID).Save(ctx)
+	return err
+})
+
+Одна физическая транзакция на обоих — *ent.Tx с фичефлагом отдаёт тот же *sql.Tx, что лежит под ним.
+
+gorm — то же самое через Statement.ConnPool:
+
+go
+db.Transaction(func(tx *gorm.DB) error {
+	ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+	return users.Save(ctx, &u)
+})
+
+Внутри Transaction gorm подменяет ConnPool на *sql.Tx, интерфейс ConnPool уже содержит нужные ExecContext/QueryContext.
+
+sqlc — оба варианта генерации:
+
+go
+// database/sql
+tx, _ := db.BeginTx(ctx, nil)
+q := gen.New(tx)
+ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+
+// pgx
+tx, _ := pool.Begin(ctx)
+q := gen.New(tx)
+ctx = crud.WithExecutor(ctx, crudpgx.From(tx))
+
+pgx.Tx удовлетворяет и sqlc.DBTX, и твоему pool — передаёшь один объект в оба места.
+
+sqlx / bun / squirrel — crudsql.From(tx), там везде обычный *sql.Tx.
+
+Точка интеропа ровно одна: WithExecutor. Новый фреймворк = найти, где он прячет свою транзакцию, и обернуть. Три строки.
+
+Bulk без компромиссов
+
+Быстрый путь протаскивается опциональным интерфейсом, ядро о pgx по-прежнему не знает:
+
+go
+type BulkInserter interface {
+	CopyFrom(ctx context.Context, table string, cols []string, rows [][]any) (int64, error)
+}
+
+func (r *Repository[M, ID]) SaveAll(ctx context.Context, ms []M) error {
+	if b, ok := r.exec(ctx).(BulkInserter); ok {
+		return b.CopyFrom(ctx, r.m.Table(), r.m.Columns(), r.values(ms))
+	}
+	return r.multiRowInsert(ctx, ms) // фолбэк
+}
+
+crudpgx.Exec его реализует нативно. Для crudsql — через conn.Raw (только на *sql.Conn, не на *sql.Tx).
+
+Острые углы, о которых лучше знать заранее
+
+RowsAffected расходится. У pgx UPDATE, который ничего не изменил, вернёт 0; у некоторых драйверов database/sql — тоже 0, но MySQL по умолчанию считает «затронутые», а не «изменённые». Не завязывай ErrNotFound на n == 0 в Save, только в Delete.
+
+Вложенные транзакции. pgx даёт SAVEPOINT сам, database/sql — нет. Если нужны, придётся выдавать SAVEPOINT sp_n руками в sqlTx.Begin.
+
+Чужой executor и InTx. Я сделал «присоединиться», а не «вложить». Это значит, что fn не может откатиться независимо от внешней транзакции. Для библиотеки поведение правильное, но задокументируй явно — иначе кто-нибудь ожидает изоляции.
+
+gorm вне транзакции. db.Statement.ConnPool там *sql.DB — работает, но если пользователь передаст *gorm.DB из чейна с WithContext, Statement может быть переиспользован. Безопаснее принимать tx *gorm.DB только внутри Transaction.
+
+Если скинешь, что ещё должно быть в API кроме Get/Save/Delete — фильтры, пагинация, оптимистичные блокировки — покажу, где их резать, чтобы не утащить в ядро билдер запросов.
+```
+
+наш rx crud пока должен реализовывать только repo.
+
+repo делится на basic & decorators
+в decorators по умолчанию должны быть specs (like jpa specifications & criteria api. Чем более похоже тем лучше)  & security gate.
+
+В basic repo думаю нужно закидывать table name в конструктор. Методы и примерные аргументы:
+delete(ctx, ...ids), save(ctx, model), getById(ctx), update(ctx, id, updateDto), get(ctx, opts), getAll(ctx), deleteAll(ctx).
+
+- save подразумеваю как jpa. Т.е. с id update, без id - create.
+- update. Умный метод с рефлектом чтобы не писать маппинги вручную. Загружает запись по id, потом проходится по полям updateDto, по diff defined fields строит update query и выполняет.
+
+- model. Типизированное представление таблицы. Мб прикрутить какие нибудь struct теги, хотя вроде как можно и без них
+- update dto. Названия полей должны 1:1 совпадать с названиями модели. Однако типы могут быть с pointer для опциональных аргументов, и Opt[T] для nullable (defined boot field для случаев когде поле не передали, чтобы не затереть в null отуствтвующее поле, у nullable полей 3 кейса при update (not defined, defined, set null), поэтому нужно Opt[T] реализовать).
+- get method opts arg: page, limit, может что то еще
+- paginatedResponse[T] тип тоже надо реализовать.
+
+Сделай все. Позаботься о хорошем качественном DX. top level обертка должна быть гибкой но максимально декларативной. Минимум boilerplate для конечного потребителя. Также напиши интеграционные тесты с postgres & mysql на ent, gorm, pgx, sqlc, sqlx, database sql. бд поднимай в docker compose
+
+---
+
+Добавь fiber http handler в отдельный подпакет. В ../nova/modules/curd есть старая реализация вообще всего, но там есть баги и она завязана на gorm. Текущая это переосмысление. Также поверх criteria я бы хотел dsl удобный. Хз может кодогеном, или рефлектом, но я прошу тебя минимизировать дубли в ручном написании. В идеале я хочу просто объявить crud handler, закинуть в него crud repo со spec декоратором (именно по интерфейсу чтобы можно было еще самому докинуть сервисный слой с логикой и проверками). И в итоге получить полный crud api поддерживающий POST query с filters, sort, preloads, pagination, все это также должно работать для nested полей (худо бедно в nova реализовал, но опять же там баги). Мб еще что то что я забыл.  Я больше крч по nova думаю понятно что ты духом стилистически чуть ушел не совсем туда, я больше люблю магию, пусть это и не в духе го. Ваще честно поебать на дух go=)

@@ -1,0 +1,384 @@
+package crud
+
+import (
+	"context"
+	"reflect"
+	"strings"
+	"unsafe"
+)
+
+// DefaultPreloadDepth caps how deep a preload path may go. It exists because
+// preload paths usually arrive from an HTTP client, and `a.b.a.b.a.b…` should
+// not be able to turn one request into a dozen queries.
+const DefaultPreloadDepth = 5
+
+// preloadBatch is how many parent keys go into one IN (...) list.
+const preloadBatch = 900
+
+// PreloadSpec is one requested relation path, optionally narrowed.
+type PreloadSpec struct {
+	Path string   // "Comments" or "Comments.Author"
+	Opts []Option // extra Where/OrderBy applied to the related query
+}
+
+// Preload loads the named relations after the main query. Paths may be nested:
+//
+//	crud.Preload("Author", "Comments.Author")
+//
+// Each relation is fetched in one batched statement per level, never per row.
+func Preload(paths ...string) Option {
+	return func(o *Options) {
+		for _, p := range paths {
+			if p = strings.TrimSpace(p); p != "" {
+				o.Preloads = append(o.Preloads, PreloadSpec{Path: p})
+			}
+		}
+	}
+}
+
+// PreloadWhere loads a relation narrowed by extra options. Pagination options
+// are refused here: a LIMIT on a batched preload would silently truncate some
+// parents' children and not others.
+func PreloadWhere(path string, opts ...Option) Option {
+	return func(o *Options) {
+		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: opts})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the tree
+
+type preloadNode struct {
+	name     string
+	opts     []Option
+	children []*preloadNode
+}
+
+func (n *preloadNode) child(name string) *preloadNode {
+	for _, c := range n.children {
+		if c.name == name {
+			return c
+		}
+	}
+	c := &preloadNode{name: name}
+	n.children = append(n.children, c)
+	return c
+}
+
+// buildPreloadTree folds the flat paths into a tree, so "Comments" and
+// "Comments.Author" share a single query for the comments.
+func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
+	root := &preloadNode{}
+	for _, spec := range specs {
+		segs := strings.Split(spec.Path, ".")
+		if len(segs) > maxDepth {
+			return nil, &SchemaError{Reason: "preload path " + spec.Path + " is deeper than the allowed " +
+				itoa(maxDepth) + " levels"}
+		}
+		cur := root
+		for _, seg := range segs {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				return nil, &SchemaError{Reason: "empty segment in preload path " + spec.Path}
+			}
+			cur = cur.child(seg)
+		}
+		cur.opts = append(cur.opts, spec.Opts...)
+	}
+	return root, nil
+}
+
+// ---------------------------------------------------------------------------
+// execution
+
+// RunPreloads fills the relation fields of items (a []M or []*M) according to
+// specs. It issues one query per relation per level, batching parent keys.
+func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, specs []PreloadSpec, maxDepth int) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	if maxDepth <= 0 {
+		maxDepth = DefaultPreloadDepth
+	}
+	tree, err := buildPreloadTree(specs, maxDepth)
+	if err != nil {
+		return err
+	}
+	rows := addressableRows(reflect.ValueOf(items))
+	if len(rows) == 0 {
+		return nil
+	}
+	p := &preloader{ctx: ctx, ex: ex, d: d}
+	return p.level(m, rows, tree.children)
+}
+
+// addressableRows turns a []M or []*M into pointers to each element's struct.
+func addressableRows(v reflect.Value) []reflect.Value {
+	if !v.IsValid() || v.Kind() != reflect.Slice {
+		return nil
+	}
+	out := make([]reflect.Value, 0, v.Len())
+	for i := range v.Len() {
+		e := v.Index(i)
+		if e.Kind() == reflect.Pointer {
+			if e.IsNil() {
+				continue
+			}
+			out = append(out, e)
+			continue
+		}
+		out = append(out, e.Addr())
+	}
+	return out
+}
+
+type preloader struct {
+	ctx context.Context
+	ex  Executor
+	d   Dialect
+}
+
+func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode) error {
+	for _, node := range nodes {
+		rel := m.Relation(node.name)
+		if rel == nil {
+			return &UnknownFieldError{Model: m.Name, Field: node.name}
+		}
+		children, err := p.load(m, rel, parents, node.opts)
+		if err != nil {
+			return err
+		}
+		if len(node.children) == 0 || len(children) == 0 {
+			continue
+		}
+		target, _, _, err := rel.Resolve()
+		if err != nil {
+			return err
+		}
+		if err := p.level(target, children, node.children); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// load fetches one relation for a whole set of parents and wires the results
+// into their fields, returning the loaded children so nested preloads can
+// continue from them.
+func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option) ([]reflect.Value, error) {
+	target, local, remote, err := rel.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	o := Build(opts...)
+	if o.Limit != 0 || o.Page != 0 || o.Offset != 0 || o.Unpaged {
+		return nil, &SchemaError{Model: m.Name, Field: rel.Name,
+			Reason: "a preload cannot be paginated; it is loaded for every parent at once"}
+	}
+
+	// Collect the distinct parent keys.
+	keys := make([]any, 0, len(parents))
+	seen := make(map[any]struct{}, len(parents))
+	for _, parent := range parents {
+		v := ElemValue(local.valueOf(parent.UnsafePointer()))
+		if v == nil {
+			continue
+		}
+		k := mapKey(v)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		keys = append(keys, v)
+	}
+	if len(keys) == 0 {
+		p.assignEmpty(rel, parents)
+		return nil, nil
+	}
+
+	// index maps a parent key to the children that belong to it.
+	index := make(map[any][]reflect.Value, len(keys))
+	total := 0
+	for chunk := range slices(keys, preloadBatch) {
+		rows, owners, err := p.fetch(target, rel, remote, chunk, o)
+		if err != nil {
+			return nil, err
+		}
+		for i, row := range rows {
+			index[owners[i]] = append(index[owners[i]], row)
+			total++
+		}
+	}
+
+	// Collect the children *as stored*, not the temporaries: a []T relation
+	// copies each row into the parent's slice, and a nested preload has to
+	// write into that copy or it writes into nothing.
+	stored := make([]reflect.Value, 0, total)
+	for _, parent := range parents {
+		v := ElemValue(local.valueOf(parent.UnsafePointer()))
+		var kids []reflect.Value
+		if v != nil {
+			kids = index[mapKey(v)]
+		}
+		placed, err := assignRelation(rel, parent, kids)
+		if err != nil {
+			return nil, err
+		}
+		stored = append(stored, placed...)
+	}
+	return stored, nil
+}
+
+func (p *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
+	for _, parent := range parents {
+		_, _ = assignRelation(rel, parent, nil)
+	}
+}
+
+// fetch runs one batched SELECT and returns the scanned children together with
+// the parent key each one belongs to.
+func (p *preloader) fetch(target *Meta, rel *Relation, remote *Field, keys []any, o *Options) ([]reflect.Value, []any, error) {
+	var (
+		b       *SQL
+		ownerAt = -1 // index of the owner-key column in the result, -1 = derive from the row
+	)
+
+	if rel.Kind == ManyToMany {
+		// SELECT j.<owner>, t.<cols> FROM target t JOIN join j ON j.ref = t.pk
+		b = NewSQL(p.d, target).Alias("rxt")
+		b.Raw("SELECT rxj.").Ident(rel.JoinLocal).Raw(", ")
+		for i, f := range target.Fields {
+			if i > 0 {
+				b.Raw(", ")
+			}
+			b.Raw("rxt.").Ident(f.Column)
+		}
+		b.Raw(" FROM ").Ident(target.Table).Raw(" AS rxt JOIN ").Ident(rel.JoinTable).Raw(" AS rxj ON rxj.").
+			Ident(rel.JoinRef).Raw(" = rxt.").Ident(remote.Column).
+			Raw(" WHERE rxj.").Ident(rel.JoinLocal).Raw(" IN (").Binds(keys).Raw(")")
+		if extra := o.Predicate(); extra != nil {
+			b.Raw(" AND ")
+			b.Predicate(extra)
+		}
+		ownerAt = 0
+	} else {
+		b = NewSQL(p.d, target)
+		b.Raw("SELECT ").Columns(target.Fields).Raw(" FROM ").Table().
+			Raw(" WHERE ").Ident(remote.Column).Raw(" IN (").Binds(keys).Raw(")")
+		if extra := o.Predicate(); extra != nil {
+			b.Raw(" AND ")
+			b.Predicate(extra)
+		}
+	}
+	b.OrderBy(o.Sort)
+
+	q, args, err := b.Done()
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := p.ex.Query(p.ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var (
+		out    []reflect.Value
+		owners []any
+	)
+	for rows.Next() {
+		child := reflect.New(target.Type)
+		dest, err := target.Pointers(child.Interface(), target.Fields)
+		if err != nil {
+			return nil, nil, err
+		}
+		var ownerKey reflect.Value
+		if ownerAt >= 0 {
+			ownerKey = reflect.New(remote.Type)
+			dest = append([]any{ownerKey.Interface()}, dest...)
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, child)
+		if ownerAt >= 0 {
+			owners = append(owners, mapKey(ElemValue(ownerKey.Elem().Interface())))
+		} else {
+			owners = append(owners, mapKey(ElemValue(remote.valueOf(child.UnsafePointer()))))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return out, owners, nil
+}
+
+// assignRelation writes the loaded children into the parent's relation field,
+// adapting to whether it is declared as T, *T, []T or []*T. It returns pointers
+// to the children *where they now live*, which is what a nested preload has to
+// keep filling.
+func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) ([]reflect.Value, error) {
+	dst := rel.fieldValue(parent.UnsafePointer())
+
+	if rel.Kind.ToMany() {
+		ptrElem := rel.Type.Elem().Kind() == reflect.Pointer
+		slice := reflect.MakeSlice(rel.Type, 0, len(kids))
+		for _, k := range kids {
+			if ptrElem {
+				slice = reflect.Append(slice, k)
+			} else {
+				slice = reflect.Append(slice, k.Elem())
+			}
+		}
+		dst.Set(slice)
+		if ptrElem {
+			return kids, nil
+		}
+		placed := make([]reflect.Value, dst.Len())
+		for i := range placed {
+			placed[i] = dst.Index(i).Addr()
+		}
+		return placed, nil
+	}
+
+	if len(kids) == 0 {
+		dst.SetZero()
+		return nil, nil
+	}
+	if rel.Type.Kind() == reflect.Pointer {
+		dst.Set(kids[0])
+		return kids[:1], nil
+	}
+	dst.Set(kids[0].Elem())
+	return []reflect.Value{dst.Addr()}, nil
+}
+
+// mapKey normalises a value so it can index a map: byte slices become strings,
+// everything comparable stays as it is.
+func mapKey(v any) any {
+	if v == nil {
+		return nil
+	}
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	if !reflect.TypeOf(v).Comparable() {
+		return reflect.ValueOf(v).String()
+	}
+	return v
+}
+
+// slices yields consecutive chunks of at most n elements.
+func slices[T any](s []T, n int) func(func([]T) bool) {
+	return func(yield func([]T) bool) {
+		for len(s) > 0 {
+			k := min(n, len(s))
+			if !yield(s[:k]) {
+				return
+			}
+			s = s[k:]
+		}
+	}
+}
+
+var _ = unsafe.Pointer(nil)

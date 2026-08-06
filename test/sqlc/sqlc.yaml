@@ -1,0 +1,21 @@
+# The generated packages checked into test/sqlcgen, test/sqlcmysql and
+# test/sqlcpgx were written to match this configuration. Regenerate with
+# `sqlc generate` from this directory if the queries change.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: query.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: ../sqlcgen
+        sql_package: database/sql
+  - engine: postgresql
+    schema: schema.sql
+    queries: query.sql
+    gen:
+      go:
+        package: sqlcpgx
+        out: ../sqlcpgx
+        sql_package: pgx/v5

@@ -1,0 +1,93 @@
+package crud
+
+import "context"
+
+// Core is the decoratable seam. It carries two type parameters so that a
+// middleware can be written once and still infer both from its arguments; the
+// update DTO is erased to `any` here and re-typed by Repo above it.
+//
+// Implement it only if you are writing a decorator — the basic repository is in
+// repo/basic.
+type Core[M any, ID comparable] interface {
+	// Meta describes the bound model and table.
+	Meta() *Meta
+
+	// GetByID returns one row or ErrNotFound. Options apply to that read, which
+	// is what makes crud.Preload and crud.Select work on a single-entity fetch.
+	GetByID(ctx context.Context, id ID, opts ...Option) (M, error)
+	// Get returns a page of rows.
+	Get(ctx context.Context, opts ...Option) (PaginatedResponse[M], error)
+	// GetAll returns every matching row, unpaged unless options say otherwise.
+	GetAll(ctx context.Context, opts ...Option) ([]M, error)
+	// Save inserts when the primary key is unset and upserts otherwise. The
+	// model is refreshed in place with whatever the database generated.
+	Save(ctx context.Context, m *M) error
+	// Update loads the row, diffs the DTO against it and writes only what
+	// actually changed. dto is always the U of the enclosing Repo.
+	Update(ctx context.Context, id ID, dto any) (M, error)
+	// Delete removes rows by id and reports how many went away.
+	Delete(ctx context.Context, ids ...ID) (int64, error)
+	// DeleteAll removes everything matching the options.
+	DeleteAll(ctx context.Context, opts ...Option) (int64, error)
+	// Count counts matching rows.
+	Count(ctx context.Context, opts ...Option) (int64, error)
+	// Exists reports whether any row matches.
+	Exists(ctx context.Context, opts ...Option) (bool, error)
+	// Tx runs fn in a transaction, joining one already present in ctx.
+	Tx(ctx context.Context, fn func(context.Context) error) error
+}
+
+// Middleware wraps a Core. The type parameters are inferred from whatever the
+// decorator is configured with, so call sites stay free of explicit generics.
+type Middleware[M any, ID comparable] func(Core[M, ID]) Core[M, ID]
+
+// Repo is the typed façade a consumer holds. It promotes every Core method and
+// re-types Update against the update DTO, so the whole surface is compile-time
+// checked while decorators only ever deal with two type parameters.
+type Repo[M any, ID comparable, U any] struct {
+	Core[M, ID]
+}
+
+// Wrap lifts a Core into a typed Repo.
+func Wrap[M any, ID comparable, U any](c Core[M, ID]) Repo[M, ID, U] {
+	return Repo[M, ID, U]{Core: c}
+}
+
+// Update applies a partial update DTO and returns the refreshed model.
+//
+// Fields of U are matched to model fields by name. A *T field is applied when
+// non-nil, an Opt[T] field when defined (a null Opt writes SQL NULL), and a
+// plain T field is always applied. Only fields whose value actually differs
+// from the stored row reach the UPDATE statement; when nothing differs the
+// loaded row is returned without a write.
+func (r Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U) (M, error) {
+	return r.Core.Update(ctx, id, dto)
+}
+
+// Unwrap returns the decorated Core, e.g. to add another layer.
+func (r Repo[M, ID, U]) Unwrap() Core[M, ID] { return r.Core }
+
+// Decorate applies middlewares to an existing typed repo. The first middleware
+// ends up outermost, so it observes calls first.
+func Decorate[M any, ID comparable, U any](r Repo[M, ID, U], mw ...Middleware[M, ID]) Repo[M, ID, U] {
+	return Repo[M, ID, U]{Core: Chain(r.Core, mw...)}
+}
+
+// Chain applies middlewares to a Core; mw[0] ends up outermost.
+func Chain[M any, ID comparable](c Core[M, ID], mw ...Middleware[M, ID]) Core[M, ID] {
+	for i := len(mw) - 1; i >= 0; i-- {
+		if mw[i] != nil {
+			c = mw[i](c)
+		}
+	}
+	return c
+}
+
+// Base is an embeddable pass-through decorator: embed it and override only the
+// methods you care about.
+type Base[M any, ID comparable] struct {
+	Core[M, ID]
+}
+
+// Next returns the wrapped core.
+func (b Base[M, ID]) Next() Core[M, ID] { return b.Core }
