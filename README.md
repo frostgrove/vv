@@ -382,8 +382,26 @@ From there:
   SQL runs;
 - an unscoped `DeleteAll` is refused unless `AllowUnscopedDeleteAll` is set.
 
+A scope is a `WHERE` clause, and a `WHERE` clause only constrains its own
+`FROM`. A preload is a second statement against a second table, so it inherits
+nothing — which is how `?preload=comments` hands back exactly the rows the scope
+existed to hide. Narrow the far side too:
+
+```go
+policy := security.Combine(
+    security.ScopeField[Article, int64]("TenantID", tenantOf),
+    security.ScopeRelationField[Article, int64]("Comments", "TenantID", tenantOf),
+)
+```
+
+The path is resolved at declaration time, so a typo panics at start-up rather
+than leaking rows later, and it may be several hops (`"Comments.Author"`). This
+is the per-principal form; the per-table form is `basic.RelationScope` on the
+blueprint, and where both are declared both apply.
+
 Also available: `security.ReadOnly`, `security.Freeze(fields...)` and
-`security.Combine(policies...)`, which ANDs scopes and chains checks.
+`security.Combine(policies...)`, which ANDs scopes, merges relation narrowings
+and chains checks.
 
 ---
 
@@ -558,7 +576,7 @@ app.Use("/articles", crudfiber.New(articles).Routes())
 | `GET /:id` | one entity, `?preload=…&select=…` |
 | `POST /` | create |
 | `PATCH /:id` | partial update through the DTO |
-| `PUT /:id` | create-or-replace |
+| `PUT /:id` | replace; where the database owns the key it will not create |
 | `DELETE /:id` | delete one |
 | `POST /bulk-delete` | `{"ids": […]}` |
 
@@ -688,6 +706,36 @@ ctx = crud.WithExecutor(ctx, crudsql.From(tx))
 Every repository call made with that context runs on that executor. A new
 framework means finding where it hides its transaction and wrapping it — three
 lines.
+
+That capture is unconditional, and it has to be: the transaction ent or gorm
+hands over has no relationship to the source a repository holds, so there is
+nothing to check it against. **When a process talks to more than one database,
+say which one you mean:**
+
+```go
+ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
+
+users.Save(ctx, &u)    // bound to mainDB      — runs in tx
+events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
+```
+
+With the plain form that second call would have gone to `mainDB`, inside the
+transaction, and reported success. `WithExecutorFor` matches on the datasource
+handle, so naming `mainDB` and naming any `crud.Source` over it are the same
+statement. A repository whose source cannot identify itself — a third-party
+adapter that does not implement `crud.Identified` — is never matched by a scoped
+binding and keeps the plain behaviour.
+
+`Tx` and `InTx` scope the transactions they open the same way, so this holds
+without you writing anything:
+
+```go
+err := users.Tx(ctx, func(ctx context.Context) error {
+    users.Save(ctx, &u)    // in the transaction
+    events.Save(ctx, &e)   // on its own database, and it survives a rollback here
+    return nil
+})
+```
 
 ### Transactions
 
@@ -821,6 +869,11 @@ Adding a driver means adding a `Target`, never a test.
   write path.
 - **`Tx` joins, it does not nest.** Documented above; use `Begin` for a
   savepoint when you need isolation.
+- **`crud.WithExecutor` captures every repository, not just the ones on that
+  database.** That is the interop seam working as designed — but across two
+  databases it means a write can land in the wrong one and report success. Use
+  `crud.WithExecutorFor(ctx, db, e)`, which is matched against the repository's
+  own datasource.
 - **`Update` is load-then-write.** Inside a transaction the load locks; outside
   one, two concurrent updates can interleave. Tag an integer column `version`
   and the second one is refused with `crud.ErrStaleVersion` instead.

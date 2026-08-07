@@ -78,15 +78,28 @@ func insertStmt(d crud.Dialect, table string, fields []*crud.Field) string {
 	return b.String()
 }
 
-// exec picks the foreign executor bound to ctx over the repository's own source.
+// exec picks the foreign executor bound to ctx over the repository's own source
+// — but only one this repository's database would accept. A context carrying
+// somebody else's database (crud.WithExecutorFor) is not this repository's
+// business and is left alone.
 func (r *repository[M, ID, U]) exec(ctx context.Context) crud.Executor {
-	if e, ok := crud.ExecutorFrom(ctx); ok {
+	if e, ok := crud.ExecutorFor(ctx, r.src); ok {
 		return e
 	}
 	return r.src
 }
 
 func (r *repository[M, ID, U]) Meta() *crud.Meta { return r.meta }
+
+// relScopes folds the narrowings this query carries into the repository's own
+// permanent ones. The blueprint's are a property of the table; a query's arrive
+// from a decorator whose answer depends on who is asking, and the two AND.
+func (r *repository[M, ID, U]) relScopes(o *crud.Options) *crud.RelationScopes {
+	if o == nil || o.RelScopes.Empty() {
+		return r.bp.relScopes
+	}
+	return crud.MergeRelationScopes(r.bp.relScopes, o.RelScopes)
+}
 
 func (r *repository[M, ID, U]) Tx(ctx context.Context, fn func(context.Context) error) error {
 	return crud.InTx(ctx, r.src, fn)
@@ -195,7 +208,7 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 	}
 	sort := r.sortOf(o, limit > 0 && identified)
 
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes)
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o))
 	switch {
 	case o.Distinct:
 		// Distinct arrives on its own as often as not — `?distinct=1` with no
@@ -352,7 +365,7 @@ func (r *repository[M, ID, U]) preload(ctx context.Context, items []M, o *crud.O
 	if len(o.Preloads) == 0 || len(items) == 0 {
 		return nil
 	}
-	return crud.RunPreloads(ctx, r.exec(ctx), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth, r.bp.relScopes)
+	return crud.RunPreloads(ctx, r.exec(ctx), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth, r.relScopes(o))
 }
 
 // sortOf resolves the sort terms, appending a primary-key tiebreaker so that
@@ -378,7 +391,7 @@ func (r *repository[M, ID, U]) sortOf(o *crud.Options, paged bool) []crud.Order 
 
 func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes)
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o))
 	if o.Distinct {
 		// count(*) would count the rows the SELECT DISTINCT is about to
 		// collapse, and Get would then hand the client a total — and a page
@@ -406,7 +419,7 @@ func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (
 
 func (r *repository[M, ID, U]) Exists(ctx context.Context, opts ...crud.Option) (bool, error) {
 	o := crud.Build(opts...)
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).
 		Raw("SELECT 1 FROM ").Table().Where(r.scoped(o)).Raw(" LIMIT 1")
 	q, args, err := b.Done()
 	if err != nil {
@@ -466,7 +479,7 @@ func (r *repository[M, ID, U]) insert(ctx context.Context, m *M, stmt string, fi
 			return nil
 		}
 		// ON CONFLICT DO NOTHING matched an existing row: read it back.
-		return r.refresh(ctx, m, nil)
+		return r.refresh(ctx, m, nil, r.bp.relScopes)
 	}
 
 	res, err := ex.Exec(ctx, stmt, args...)
@@ -484,18 +497,18 @@ func (r *repository[M, ID, U]) insert(ctx context.Context, m *M, stmt string, fi
 	// an upsert's conflict clause leaves out every immutable column, so the
 	// caller was left holding values the database had just refused, and a
 	// handler serialised a different document on MySQL than on PostgreSQL.
-	return r.refresh(ctx, m, nil)
+	return r.refresh(ctx, m, nil, r.bp.relScopes)
 }
 
 // refresh re-reads the row identified by the model's primary key, optionally
 // through a narrowing — a write that was allowed to touch only some rows must
 // not read back a row it was not allowed to touch.
-func (r *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud.Predicate) error {
+func (r *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud.Predicate, rs *crud.RelationScopes) error {
 	id, err := r.meta.ID(m)
 	if err != nil {
 		return err
 	}
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw(r.selectFrom).
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(rs).Raw(r.selectFrom).
 		Where(crud.And(crud.Eq(r.meta.PK.Name, id), within)).Raw(" LIMIT 1")
 	q, args, err := b.Done()
 	if err != nil {
@@ -523,13 +536,14 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any, opts 
 	// two statements would be written anyway, and handed back to a caller who
 	// was never allowed to see it.
 	byID := crud.Where(crud.Eq(r.meta.PK.Name, id))
-	within := r.scoped(crud.Build(append([]crud.Option{}, opts...)...))
+	o := crud.Build(opts...)
+	within := r.scoped(o)
 
 	// Inside somebody's transaction we can lock the row we are about to diff
 	// against; outside of one, locking would be pointless.
 	loadOpts := append([]crud.Option{byID}, opts...)
 	loadOpts = append(loadOpts, crud.Limit(1), crud.Unsorted())
-	if _, inTx := crud.ExecutorFrom(ctx); inTx {
+	if _, inTx := crud.ExecutorFor(ctx, r.src); inTx {
 		loadOpts = append(loadOpts, crud.ForUpdate())
 	}
 	found, err := r.GetAll(ctx, loadOpts...)
@@ -549,7 +563,7 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any, opts 
 		return cur, nil
 	}
 
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw("UPDATE ").Table().Raw(" SET ")
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).Raw("UPDATE ").Table().Raw(" SET ")
 	for i, ch := range changes {
 		if i > 0 {
 			b.Raw(", ")
@@ -609,7 +623,7 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any, opts 
 	if stale != nil && res.RowsAffected == 0 {
 		return zero, r.missedRow(ctx, id, within, true)
 	}
-	if err := r.refresh(ctx, &cur, within); err != nil {
+	if err := r.refresh(ctx, &cur, within, r.relScopes(o)); err != nil {
 		return zero, err
 	}
 	return cur, nil
@@ -662,7 +676,7 @@ func (r *repository[M, ID, U]) UpdateAll(ctx context.Context, dto any, opts ...c
 		return 0, nil
 	}
 
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw("UPDATE ").Table().Raw(" SET ")
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).Raw("UPDATE ").Table().Raw(" SET ")
 	for i, ch := range changes {
 		if i > 0 {
 			b.Raw(", ")
@@ -717,7 +731,7 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 
 func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
-	q, args, err := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+	q, args, err := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).
 		Raw(r.deleteFrom).Where(r.scoped(o)).Done()
 	if err != nil {
 		return 0, err

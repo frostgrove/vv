@@ -41,6 +41,12 @@ func From(q Queryer) Executor { return Executor{q: q} }
 // Unwrap returns the wrapped handle.
 func (e Executor) Unwrap() Queryer { return e.q }
 
+// DataSource names the database this executor speaks to, which is what
+// crud.WithExecutorFor matches on. For a DB built by Open it is the *sql.DB, so
+// every repository over that pool answers with the same handle however it was
+// wrapped.
+func (e Executor) DataSource() any { return e.q }
+
 func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
 	res, err := e.q.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -163,10 +169,12 @@ func (s *savepoint) Rollback(ctx context.Context) error {
 func (s *savepoint) Begin(ctx context.Context) (crud.Tx, error) { return s.parent.Begin(ctx) }
 
 var (
-	_ crud.Source   = DB{}
-	_ crud.Beginner = DB{}
-	_ crud.Source   = source{}
-	_ crud.Tx       = (*Tx)(nil)
-	_ crud.Beginner = (*Tx)(nil)
-	_ crud.Tx       = (*savepoint)(nil)
+	_ crud.Source     = DB{}
+	_ crud.Beginner   = DB{}
+	_ crud.Identified = DB{}
+	_ crud.Source     = source{}
+	_ crud.Identified = source{}
+	_ crud.Tx         = (*Tx)(nil)
+	_ crud.Beginner   = (*Tx)(nil)
+	_ crud.Tx         = (*savepoint)(nil)
 )

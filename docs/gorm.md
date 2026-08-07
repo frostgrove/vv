@@ -72,7 +72,7 @@ That is the entire per-resource cost. Everything below falls out of those lines.
 | `GET /members/:id` | one row, `?preload=…&select=…` |
 | `POST /members` | create |
 | `PATCH /members/:id` | partial update |
-| `PUT /members/:id` | create-or-replace |
+| `PUT /members/:id` | replace — where the database generates the key it will not create, so an unused id is 404 |
 | `DELETE /members/:id` | delete |
 | `POST /members/bulk-delete` | `{"ids": […]}` |
 
@@ -153,7 +153,7 @@ On create the body binds onto the model, then the auto-increment key is cleared
 | unknown filter field, bad value type, bad id | 400 | `{"error":"bad_request","path":"filter.nope","message":"unknown field \"nope\" on model Member"}` |
 | row missing, or outside your access scope | 404 | `{"error":"not_found"}` |
 | policy denied | 403 | `{"error":"forbidden", …}` |
-| `FindOne` matched several rows | 409 | `{"error":"conflict"}` |
+| duplicate key, foreign key or NOT NULL violation; `FindOne` matched several rows; a stale `version` | 409 | `{"error":"conflict"}` |
 | anything else | 500 | `{"error":"internal_error"}` — no detail leaks |
 
 An unknown field is a **rejection**, never a silently ignored clause. That is the
@@ -316,7 +316,11 @@ Three things worth noticing:
   the live `*sql.Tx`, which is exactly what `crudsql.From` wants. rx-crud never
   opens a connection of its own when the context carries one. Anything gorm
   writes, rx-crud sees; anything rx-crud writes, gorm sees; a returned error
-  rolls back both.
+  rolls back both. It captures *every* repository the context reaches, which is
+  what makes the seam work — and what you have to be deliberate about if this
+  process also talks to a second database. Then say which one:
+  `crud.WithExecutorFor(ctx, db, crudsql.From(tx.Statement.ConnPool))`, and
+  repositories bound elsewhere carry on using their own.
 - **The client's DSL and your own predicate compose.** `crud.Where` **ANDs** —
   it never replaces — so `crud.Where(crud.Eq("TeamID", teamID))` cannot be
   widened by anything the client sent.
@@ -623,6 +627,30 @@ The predicate AST is closed, so a client cannot compose its way out. `Policy`
 also takes `Authorize(ctx, action)` and `Inspect(ctx, action, *M)`, and
 `security.Combine` ANDs several policies — which is how a tenant scope and the
 soft-delete scope stack.
+
+**`Scope` stops at the statement's own `FROM`**, exactly like a gorm scope does.
+A preload is a second statement against a second table and a nested filter opens
+a correlated subquery with its own `FROM`, so neither inherits it — and
+`?preload=members` would read that table raw. Say what happens at each relation:
+
+```go
+var policy = security.Combine(
+    security.ScopeField[Team, uint]("TenantID", tenantOf),
+    security.ScopeRelationField[Team, uint]("Members", "TenantID", tenantOf),
+)
+```
+
+That is the per-principal half. The per-table half — the soft-delete tombstones
+from [section 9](#9-soft-deletes), which are a property of the model rather than
+of who is asking — belongs on the blueprint as `basic.RelationScope`, and the
+two stack: a preload of `Members` gets both the tenant check and the
+`deleted_at IS NULL`.
+
+The path is resolved when the policy is declared, so a typo panics at start-up
+rather than leaking rows in production. For anything the helper cannot express,
+`Policy.RelationScopes` takes a `func(ctx) (*crud.RelationScopes, error)`
+directly, with `AtPath` for one route and `ForModel` for a model wherever it is
+reached.
 
 ## 14. Associations, filters and preloads
 

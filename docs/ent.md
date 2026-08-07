@@ -71,7 +71,7 @@ lines.
 | `GET /users/:id` | one entity, `?select=…` |
 | `POST /users` | create |
 | `PATCH /users/:id` | partial update |
-| `PUT /users/:id` | create-or-replace |
+| `PUT /users/:id` | replace — where the database generates the key it will not create, so an unused id is 404 |
 | `DELETE /users/:id` | delete |
 | `POST /users/bulk-delete` | `{"ids": […]}` |
 
@@ -148,7 +148,7 @@ cleared — a client cannot choose its own id.
 | unknown filter field, bad value type, bad id | 400 | `{"error":"bad_request","path":"filter.nope","message":"unknown field \"nope\" on model User"}` |
 | row missing, or outside your access scope | 404 | `{"error":"not_found"}` |
 | policy denied | 403 | `{"error":"forbidden", …}` |
-| `FindOne` matched several rows | 409 | `{"error":"conflict"}` |
+| duplicate key, foreign key or NOT NULL violation; `FindOne` matched several rows; a stale `version` | 409 | `{"error":"conflict"}` |
 | anything else | 500 | `{"error":"internal_error"}` — no detail leaks |
 
 An unknown field is a **rejection**, never a silently ignored clause. That is the
@@ -226,6 +226,35 @@ page, err := users.Get(ctx, crud.Where(crud.Eq("Active", true)), crud.Page(1), c
 u,    err  = users.Update(ctx, 42, store.UserUpdate{Age: crud.Null[int]()})
 n,    err := users.Delete(ctx, 1, 2, 3)
 ```
+
+### Writing many rows at once
+
+`Update` addresses one row and diffs it; `UpdateAll` addresses a filter and is
+one statement, the way `DeleteAll` is `Delete`'s filtered partner:
+
+```go
+n, err := users.UpdateAll(ctx, store.UserUpdate{Active: ptr(false)},
+    crud.Where(crud.Eq("TenantID", tenant)))
+```
+
+ent's equivalent is `client.User.Update().Where(…)`, and either is fine — they
+end up as the same `UPDATE`. Reach for this one when the filter came from the
+DSL, because then it is already a `[]crud.Option`. Note the one difference from
+`Update`: there is no single row to diff against, so every field the DTO defines
+is written to every matching row. A DTO that defines nothing writes nothing.
+
+### Optimistic locking
+
+`Update` is load-then-write. Inside a transaction the load locks the row; outside
+one, two concurrent updates can interleave and the second overwrites the first.
+Tag an integer column `version` and that stops being possible — the write pins
+itself to the version it read, and a loser gets `crud.ErrStaleVersion` (which
+wraps `crud.ErrConflict`, so the handler answers 409) instead of silently
+winning.
+
+ent has no equivalent, and the column is invisible to it, so this is additive:
+add `field.Int("version").Default(1)` to the schema and the tag to a model
+struct. See the README for the full rules.
 
 ---
 
@@ -319,6 +348,11 @@ Three things worth noticing:
 - **`crud.WithExecutor` is the whole integration.** rx-crud never opens a
   connection of its own when the context carries one. Anything ent writes,
   rx-crud sees; anything rx-crud writes, ent sees; a rollback takes both.
+  It captures *every* repository the context reaches, which is what makes the
+  seam work — and what you have to be deliberate about if this process also
+  talks to a second database. Then say which one:
+  `crud.WithExecutorFor(ctx, db, crudsql.From(tx))`, and repositories bound
+  elsewhere carry on using their own.
 - **The client's DSL and your own predicate compose.** `crud.Where` **ANDs** —
   it never replaces — so `crud.Where(crud.Eq("TenantID", tenantID))` cannot be
   widened by anything the client sent.
@@ -351,6 +385,31 @@ follows on its own.
 ---
 
 # Part II — how to set it up
+
+## Before you start: adding the module
+
+rx-crud is a multi-module repository, and the module path is `rx-crud` — not a
+URL. `go get` cannot fetch it. Until it is published under a real path, a
+consumer needs both modules named explicitly:
+
+```
+require (
+    rx-crud                  v0.0.0
+    rx-crud/http/crudfiber   v0.0.0
+)
+
+replace rx-crud                => ../rx-crud
+replace rx-crud/http/crudfiber => ../rx-crud/http/crudfiber
+```
+
+Two things to know before you commit that. A relative `replace` resolves against
+your `go.mod`, so it breaks the moment the build happens somewhere the sibling
+directory does not exist — a Docker build with only your own repo copied in is
+the usual way to find that out. And `adapter/crudpgx` is a third module; you only
+need it if you talk to pgx directly rather than through `database/sql`.
+
+For anything past a local experiment, rename the module to a fetchable path
+(`github.com/you/rx-crud`) and drop the `replace` lines.
 
 ## 7. Enable `sql/execquery`
 
@@ -391,7 +450,7 @@ the pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction) anyway.
 transaction that ent's own builders and rx-crud both write into, and that ent
 commits or rolls back. It does **not** mean rx-crud's writes start firing ent's
 hooks — those live in ent's builders, and rx-crud sends its own statements, as
-[§16](#16-sharp-edges) says. What you gain is the transaction, not the callbacks:
+[§16](#16-gotchas) says. What you gain is the transaction, not the callbacks:
 
 ```go
 package store
@@ -483,6 +542,30 @@ var Users = basic.Define[ent.User, int64, store.UserUpdate](entuser.Table)
 
 `Define` validates eagerly — a broken mapping panics at package initialisation,
 not on the first request.
+
+### If your keys are UUIDs
+
+`field.UUID("id", uuid.UUID{})` works everywhere — the key is bindable, filters
+and `in`-lists take it, preloads index by it, and the DSL turns the string a
+client sends into one. Two things differ from an `int64` key:
+
+```go
+var Rooms = basic.Define[ent.Room, uuid.UUID, store.RoomUpdate](entroom.Table)
+```
+
+The ID type parameter is `uuid.UUID`, and on a hand-written model struct the tag
+is `db:"id,pk,noauto"` — the database does not generate this key, ent's
+`Default(uuid.New)` does, in Go. Which brings the sharp edge: **rx-crud does not
+run that default**. A `Save` with an unset key is refused with
+`crud.ErrMissingID` rather than writing the zero UUID, so nothing silently
+corrupts — but you have to supply the key, in a `BeforeSave` hook or a service
+layer. The same is true of `field.Time(...).Default(time.Now)`, and that one has
+no safety net: a zero time is a legal value, so it lands. Put those defaults in
+the database, or fill them in before the write.
+
+On MySQL, note that `uuid.UUID.Value()` hands the driver the 36-character string
+form, not the 16 raw bytes — the column is `char(36)`, not `binary(16)`.
+PostgreSQL's `uuid` type takes the string.
 
 ### Verify the mapping once
 
@@ -639,23 +722,50 @@ The predicate AST is closed, so a client cannot compose its way out. `Policy`
 also takes `Authorize(ctx, action)` and `Inspect(ctx, action, *M)`, and
 `security.Combine` ANDs several policies.
 
-**The gate's scope stops at the statement's own `FROM`.** It is a predicate over
-one model, so it narrows the query that reads that model and nothing else: a
-preload is a second statement against a second table, and a nested filter opens
-a correlated subquery with its own `FROM`. If a tenanted model exposes relations
-— see [section 14](#14-relations-edges-vs-rx-crud-relations) — declare what
-should happen at each of them on the blueprint, where it is a property of the
-model rather than of one request:
+**`Scope` stops at the statement's own `FROM`.** It is a predicate over one
+model, so it narrows the query that reads that model and nothing else: a preload
+is a second statement against a second table, and a nested filter opens a
+correlated subquery with its own `FROM`. If a tenanted model exposes relations —
+see [section 14](#14-relations-edges-vs-rx-crud-relations) — say what happens at
+each of them, or `?preload=comments` reads that table raw.
+
+There are two places to say it, and which one is right depends on whose fact it
+is. A rule about the model goes on the blueprint, once:
 
 ```go
 var Articles = basic.Define[Article, int64, ArticleUpdate]("articles",
     basic.RelationScope("Comments", crud.Eq("Published", true)))
 ```
 
-Otherwise `?preload=comments` reads that table raw. The safe shape, and the one
-to reach for first, is a foreign key that already implies the tenant: children
-reached through their parent's key are the parent's children whatever the scope
-says.
+A rule about the *principal* cannot: the blueprint is built at start-up and the
+tenant arrives per request. That is `RelationScopes`, the companion to `Scope`:
+
+```go
+var policy = security.Combine(
+    security.ScopeField[Article, int64]("TenantID", tenantOf),
+    security.ScopeRelationField[Article, int64]("Comments", "TenantID", tenantOf),
+)
+```
+
+The path is resolved when the policy is declared, so a typo panics at start-up
+rather than leaking rows in production, and it may be several hops
+(`"Comments.Author"`). For anything the helper cannot express, `Policy` takes
+the hook directly:
+
+```go
+RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
+    t, err := tenantOf(ctx)
+    if err != nil { return nil, err }
+    return (*crud.RelationScopes)(nil).
+        AtPath("Comments", crud.Eq("TenantID", t)).
+        ForModel(reflect.TypeOf(Comment{}), crud.Eq("TenantID", t)), nil  // wherever it is reached
+},
+```
+
+Both narrowings apply where both are declared, and neither can be widened by
+anything the client sends. The safe shape, and the one to reach for first, is
+still a foreign key that already implies the tenant: children reached through
+their parent's key are the parent's children whatever the scope says.
 
 ## 14. Relations: edges vs rx-crud relations
 
@@ -783,3 +893,7 @@ Columns tagged `immutable` survive the conflict.
   the DSL-inside-a-transaction pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction), executed
 - [`test/integration/driver_ent_test.go`](../test/integration/driver_ent_test.go) —
   the whole conformance suite through ent's driver, on PostgreSQL and MySQL
+- [`test/integration/uuid_test.go`](../test/integration/uuid_test.go) — the
+  UUID-keyed shape from [§9](#if-your-keys-are-uuids): the key through every
+  method, preloads in both directions, the DSL coercing one off the wire, and
+  the Go-side-default refusal

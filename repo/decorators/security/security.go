@@ -55,7 +55,33 @@ func (a Action) String() string {
 type Policy[M any, ID comparable] struct {
 	// Scope returns the row filter for the current principal. Returning nil
 	// means unrestricted — which is what an admin principal should return.
+	//
+	// It narrows the statement's own FROM and nothing else. Rows of another
+	// table reached through a preload, a nested filter or a nested sort are not
+	// covered by it; RelationScopes is what covers those.
 	Scope func(ctx context.Context) (crud.Predicate, error)
+
+	// RelationScopes returns the narrowing that follows this principal across
+	// relation boundaries. Scope hides rows of the repository's own table, and a
+	// preload of a second table is a second statement over a table Scope never
+	// mentioned — so without this, `?preload=comments` reads every tenant's
+	// comments and hands them back attached to rows the caller was allowed to
+	// see.
+	//
+	// Declare it by path when the answer is "whenever *this* repository reaches
+	// them", or by model when the answer is "wherever these rows are reached at
+	// all", which is what a self-relation needs:
+	//
+	//	RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
+	//	    t, err := tenantOf(ctx)
+	//	    if err != nil { return nil, err }
+	//	    return (*crud.RelationScopes)(nil).
+	//	        AtPath("Comments", crud.Eq("TenantID", t)).
+	//	        AtPath("Comments.Author", crud.Eq("TenantID", t)), nil
+	//	}
+	//
+	// ScopeRelationField writes that for one path; Combine merges several.
+	RelationScopes func(ctx context.Context) (*crud.RelationScopes, error)
 
 	// Authorize is the coarse check, called once per operation before any SQL.
 	Authorize func(ctx context.Context, action Action) error
@@ -137,16 +163,40 @@ func (g *gate[M, ID]) scope(ctx context.Context) (crud.Predicate, error) {
 	return g.p.Scope(ctx)
 }
 
-// scoped prepends the policy scope to a caller's options.
+// narrow builds the option that carries the policy across relation boundaries.
+// A nil Option is a no-op to Apply, so a policy that declares nothing costs one
+// nil check.
+func (g *gate[M, ID]) narrow(ctx context.Context) (crud.Option, error) {
+	if g.p.RelationScopes == nil {
+		return nil, nil
+	}
+	rs, err := g.p.RelationScopes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rs.Empty() {
+		return nil, nil
+	}
+	return crud.NarrowRelations(rs), nil
+}
+
+// scoped prepends the policy scope to a caller's options. Both halves of the
+// policy go in front: the row filter for this table, and the narrowing that
+// follows every relation this query walks. In front, because Where ANDs — a
+// caller cannot subtract either of them by appending anything.
 func (g *gate[M, ID]) scoped(ctx context.Context, opts []crud.Option) ([]crud.Option, crud.Predicate, error) {
 	p, err := g.scope(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if p == nil {
+	rel, err := g.narrow(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p == nil && rel == nil {
 		return opts, nil, nil
 	}
-	return append([]crud.Option{crud.Where(p)}, opts...), p, nil
+	return append([]crud.Option{crud.Where(p), rel}, opts...), p, nil
 }
 
 // whole cancels a caller's projection, for the reads whose rows are about to be
@@ -191,11 +241,15 @@ func (g *gate[M, ID]) loadScoped(ctx context.Context, id ID, opts ...crud.Option
 	if err != nil {
 		return zero, err
 	}
+	rel, err := g.narrow(ctx)
+	if err != nil {
+		return zero, err
+	}
 	if scope == nil {
-		return g.Core.GetByID(ctx, id, opts...)
+		return g.Core.GetByID(ctx, id, append([]crud.Option{rel}, opts...)...)
 	}
 	items, err := g.Core.GetAll(ctx, append([]crud.Option{
-		crud.Where(scope), crud.Where(crud.Eq(g.Meta().PK.Name, id)), crud.Limit(1), crud.Unsorted(),
+		crud.Where(scope), rel, crud.Where(crud.Eq(g.Meta().PK.Name, id)), crud.Limit(1), crud.Unsorted(),
 	}, opts...)...)
 	if err != nil {
 		return zero, err
@@ -341,7 +395,11 @@ func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (
 	if err != nil {
 		return nil, err
 	}
-	opts := []crud.Option{byID, crud.Limit(1), crud.Unsorted()}
+	rel, err := g.narrow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts := []crud.Option{byID, rel, crud.Limit(1), crud.Unsorted()}
 	if scope != nil {
 		opts = append([]crud.Option{crud.Where(scope)}, opts...)
 	}
@@ -426,7 +484,11 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.O
 	if err != nil {
 		return zero, err
 	}
-	return g.Core.Update(ctx, id, dto, append([]crud.Option{crud.Where(scope)}, opts...)...)
+	rel, err := g.narrow(ctx)
+	if err != nil {
+		return zero, err
+	}
+	return g.Core.Update(ctx, id, dto, append([]crud.Option{crud.Where(scope), rel}, opts...)...)
 }
 
 // UpdateAll is the filtered write, and it is the one that most needs a gate: it
@@ -487,7 +549,11 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	pk := g.Meta().PK.Name
 	within := crud.And(scope, crud.InAny(pk, ids))
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within)})...)
+		rel, err := g.narrow(ctx)
+		if err != nil {
+			return 0, err
+		}
+		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), rel})...)
 		if err != nil {
 			return 0, err
 		}

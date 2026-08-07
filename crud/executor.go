@@ -9,7 +9,10 @@
 // all rx-crud asks of it is Exec and Query.
 package crud
 
-import "context"
+import (
+	"context"
+	"reflect"
+)
 
 // Rows is the minimal cursor rx-crud needs. pgx.Rows satisfies it as-is;
 // *sql.Rows needs a two-line wrapper because its Close returns an error.
@@ -66,32 +69,147 @@ type BulkInserter interface {
 	CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error)
 }
 
+// Identified is the optional interface a Source implements to name the physical
+// database it speaks to — the *sql.DB, the *pgxpool.Pool, whatever the adapter
+// holds. Two sources that answer with the same handle are the same database, and
+// that is the only question WithExecutorFor needs answered.
+//
+// A Source that does not implement it is simply never matched by a scoped
+// binding, so it keeps the plain WithExecutor behaviour.
+type Identified interface {
+	DataSource() any
+}
+
 type ctxKey struct{}
 
+// binding is one executor pushed into a context. ds is the datasource it belongs
+// to, or nil for "whoever asks". They chain rather than replace so an inner
+// scoped binding cannot hide an outer unscoped one from a different repository.
+type binding struct {
+	ds   any
+	e    Executor
+	prev *binding
+}
+
+func push(ctx context.Context, ds any, e Executor) context.Context {
+	prev, _ := ctx.Value(ctxKey{}).(*binding)
+	return context.WithValue(ctx, ctxKey{}, &binding{ds: ds, e: e, prev: prev})
+}
+
 // WithExecutor pushes a foreign executor (usually somebody else's transaction)
-// into the context. Every repository call made with that context runs on it.
-// This is the single interop point of the whole library.
-func WithExecutor(ctx context.Context, e Executor) context.Context {
-	return context.WithValue(ctx, ctxKey{}, e)
-}
-
-// ExecutorFrom returns the executor bound to ctx, if any.
-func ExecutorFrom(ctx context.Context) (Executor, bool) {
-	e, ok := ctx.Value(ctxKey{}).(Executor)
-	return e, ok
-}
-
-// InTx runs fn inside a transaction of src. If ctx already carries a foreign
-// executor, fn simply joins it — no nested transaction is started and the outer
-// owner keeps control of commit and rollback.
+// into the context. Every repository call made with that context runs on it,
+// whatever datasource that repository was bound to. This is the single interop
+// point of the whole library, and it is deliberately unconditional: the executor
+// an ent or gorm transaction hands over has no relationship to the source a
+// repository holds, so no check could pass.
 //
-// Joining is unconditional, and src is not consulted when it happens. That is
-// the whole point of the seam — it is how an ent or gorm transaction adopts an
-// rx-crud repository — but it has a sharp edge worth naming: a context executor
-// overrides the repository's own datasource, whatever datasource that is. Two
-// repositories bound to two databases must therefore not share one context. If
-// they do, the second one's statements are sent to the first one's database,
-// which answers, and the write is reported as a success.
+// When a process talks to more than one database, name the one you mean with
+// WithExecutorFor instead.
+func WithExecutor(ctx context.Context, e Executor) context.Context {
+	return push(ctx, nil, e)
+}
+
+// WithExecutorFor is WithExecutor scoped to one database. Only repositories
+// bound to ds run on e; a repository bound to anything else ignores it and keeps
+// using its own datasource.
+//
+// ds is either the raw handle or any Source over it — both name the same
+// database:
+//
+//	tx, _ := mainDB.BeginTx(ctx, nil)
+//	ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
+//
+//	users.Save(ctx, &u)    // bound to mainDB      — runs in tx
+//	events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
+//
+// With a plain WithExecutor that second call would have gone to mainDB, inside
+// the transaction, and reported success.
+func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context {
+	return push(ctx, keyOf(ds), e)
+}
+
+// ExecutorFrom returns the innermost executor bound to ctx, scoped or not. It
+// answers "is there a transaction here at all"; to ask the question a repository
+// actually asks — "is there one for MY database" — use ExecutorFor.
+func ExecutorFrom(ctx context.Context) (Executor, bool) {
+	b, ok := ctx.Value(ctxKey{}).(*binding)
+	if !ok {
+		return nil, false
+	}
+	return b.e, true
+}
+
+// ExecutorFor returns the executor a repository bound to src should run on: the
+// innermost binding scoped to src's datasource, or failing that the innermost
+// unscoped one. src may be the Source itself or the raw handle.
+func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
+	b, ok := ctx.Value(ctxKey{}).(*binding)
+	if !ok {
+		return nil, false
+	}
+	want := keyOf(src)
+	var fallback Executor
+	var found bool
+	for ; b != nil; b = b.prev {
+		if b.ds == nil {
+			if !found {
+				fallback, found = b.e, true
+			}
+			continue
+		}
+		if sameDataSource(b.ds, want) {
+			return b.e, true
+		}
+	}
+	return fallback, found
+}
+
+// keyOf reduces a Source or a raw handle to the value that identifies the
+// database, so both spellings land on the same key. Naming something that
+// cannot identify itself is taken at face value — the caller said it, so it is
+// the key.
+func keyOf(v any) any {
+	if id, ok := v.(Identified); ok {
+		return id.DataSource()
+	}
+	return v
+}
+
+// ownScope is keyOf for a transaction rx-crud opens itself, where nobody named
+// anything. A source that cannot say which database it is gets an unscoped
+// binding — the old, unconditional join — because the alternative is worse:
+// scoping it to itself would quietly stop a sibling repository from joining a
+// transaction it used to join, and a write landing outside the transaction is
+// no better than one landing in the wrong database.
+func ownScope(v any) any {
+	if id, ok := v.(Identified); ok {
+		return id.DataSource()
+	}
+	return nil
+}
+
+// sameDataSource compares two identities without ever panicking on an
+// uncomparable one — a datasource handle is a pointer in practice, but nothing
+// in the contract says it must be.
+func sameDataSource(a, b any) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	if ta != tb || !ta.Comparable() {
+		return false
+	}
+	return a == b
+}
+
+// InTx runs fn inside a transaction of src. If ctx already carries an executor
+// src would run on, fn simply joins it — no nested transaction is started and
+// the outer owner keeps control of commit and rollback.
+//
+// The transaction it opens is bound to src's own datasource when src is
+// Identified, so it reaches every repository over that database and no others.
+// A source that cannot name its database binds unscoped, which is what an
+// adapter written outside this repository gets: the old, unconditional join.
 //
 // Use this to span several repositories with one transaction:
 //
@@ -100,7 +218,7 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 //	    return orders.Save(ctx, &o)
 //	})
 func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
-	if _, ok := ExecutorFrom(ctx); ok {
+	if _, ok := ExecutorFor(ctx, src); ok {
 		return fn(ctx)
 	}
 	b, ok := src.(Beginner)
@@ -117,7 +235,7 @@ func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (er
 			panic(p)
 		}
 	}()
-	if err := fn(WithExecutor(ctx, tx)); err != nil {
+	if err := fn(push(ctx, ownScope(src), tx)); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
 			return errJoin(err, rbErr)
 		}

@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"strings"
 
 	"rx-crud/crud"
 )
@@ -58,6 +59,67 @@ func ScopeField[M any, ID comparable](field string, value func(context.Context) 
 	}
 }
 
+// ScopeRelationField is ScopeField for the far side of a relation: rows reached
+// through path are narrowed to those whose field equals the same principal
+// value.
+//
+// It is a separate declaration rather than something ScopeField could infer,
+// because "the tenant column is called TenantID here too" is a fact about the
+// other model that only you know:
+//
+//	var policy = security.Combine(
+//	    security.ScopeField[Article, int64]("TenantID", tenantOf),
+//	    security.ScopeRelationField[Article, int64]("Comments", "TenantID", tenantOf),
+//	)
+//
+// Without the second line, `?preload=comments` reads every tenant's comments
+// and attaches them to the articles this caller was allowed to see. The path is
+// spelled from the repository's own model and may be several hops
+// ("Comments.Author"); it is resolved at declaration time, so a typo panics
+// here rather than leaking rows in production.
+func ScopeRelationField[M any, ID comparable](path, field string, value func(context.Context) (any, error)) Policy[M, ID] {
+	name := relationFieldName[M](path, field)
+	return Policy[M, ID]{
+		RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
+			v, err := value(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return (*crud.RelationScopes)(nil).AtPath(path, crud.Eq(name, v)), nil
+		},
+	}
+}
+
+// relationFieldName walks the path one relation at a time and returns the
+// canonical name of the field on the model it lands on.
+//
+// It deliberately resolves nothing about tables. Relation.Target caches the
+// table it computes on first call, so walking a path this early — policies are
+// package variables, and Go's initialisation order does not promise the
+// blueprint ran first — would cache a guessed table name and keep it. Stepping
+// through the element types answers the only question there is here, which is
+// whether the path and the field exist.
+func relationFieldName[M any](path, field string) string {
+	schema := crud.MustSchemaOf[M]()
+	at := schema
+	for seg := range strings.SplitSeq(path, ".") {
+		rel := at.Relation(seg)
+		if rel == nil {
+			panic("security: " + at.Name + " has no relation " + seg + " (in path " + path + ")")
+		}
+		target, err := crud.SchemaOfType(rel.Elem)
+		if err != nil {
+			panic("security: resolving " + path + ": " + err.Error())
+		}
+		at = target
+	}
+	f := at.Field(field)
+	if f == nil {
+		panic("security: " + at.Name + " (at " + path + ") has no field " + field)
+	}
+	return f.Name
+}
+
 // ReadOnly denies every write. Compose it over a repository that a request
 // handler should only ever query.
 func ReadOnly[M any, ID comparable]() Policy[M, ID] {
@@ -76,9 +138,10 @@ func Freeze[M any, ID comparable](fields ...string) Policy[M, ID] {
 	return Policy[M, ID]{Immutable: fields}
 }
 
-// Combine merges policies left to right: scopes are ANDed, checks run in order,
-// immutable field lists concatenate, and the two unscoped-write permissions must
-// hold for every policy.
+// Combine merges policies left to right: scopes are ANDed, relation narrowings
+// are merged (and ANDed where two policies narrow the same path), checks run in
+// order, immutable field lists concatenate, and the two unscoped-write
+// permissions must hold for every policy.
 func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 	// "every policy allows it" is vacuously true of no policies, and that is the
 	// wrong answer for the one guard here that fails closed: Combine of nothing
@@ -87,12 +150,16 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 	// the table.
 	out := Policy[M, ID]{AllowUnscopedDeleteAll: len(ps) > 0, AllowUnscopedUpdateAll: len(ps) > 0}
 	var scopes []func(context.Context) (crud.Predicate, error)
+	var relScopes []func(context.Context) (*crud.RelationScopes, error)
 	var authz []func(context.Context, Action) error
 	var inspect []func(context.Context, Action, *M) error
 
 	for _, p := range ps {
 		if p.Scope != nil {
 			scopes = append(scopes, p.Scope)
+		}
+		if p.RelationScopes != nil {
+			relScopes = append(relScopes, p.RelationScopes)
 		}
 		if p.Authorize != nil {
 			authz = append(authz, p.Authorize)
@@ -121,6 +188,19 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 				return nil, nil
 			}
 			return crud.And(ps...), nil
+		}
+	}
+	if len(relScopes) > 0 {
+		out.RelationScopes = func(ctx context.Context) (*crud.RelationScopes, error) {
+			var merged *crud.RelationScopes
+			for _, f := range relScopes {
+				rs, err := f(ctx)
+				if err != nil {
+					return nil, err
+				}
+				merged = crud.MergeRelationScopes(merged, rs)
+			}
+			return merged, nil
 		}
 	}
 	if len(authz) > 0 {

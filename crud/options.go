@@ -16,6 +16,13 @@ type Options struct {
 	Limit  int // 0 means "repository default"
 	Offset int // explicit offset wins over Page
 
+	// RelScopes narrows the far side of a relation for this query only. Filter
+	// constrains the statement's own FROM and nothing else; this is what follows
+	// a preload, a nested filter's EXISTS and a nested sort's subquery. A
+	// decorator whose narrowing depends on the caller — an access-control gate,
+	// which cannot bake anything into the blueprint — puts it here.
+	RelScopes *RelationScopes
+
 	Unpaged   bool // ignore Page/Limit and return everything
 	NoSort    bool // drop the default sort and the stable-pagination tiebreaker
 	NoTotal   bool // skip the COUNT query; Total is then the page length
@@ -59,6 +66,21 @@ func Where(p Predicate) Option {
 	return func(o *Options) {
 		if p != nil {
 			o.Filter = append(o.Filter, p)
+		}
+	}
+}
+
+// NarrowRelations carries a narrowing across relation boundaries for this query.
+// Like Where it accumulates: repeated use ANDs, so nothing a decorator declared
+// can be lifted by a later option.
+//
+// Where only ever constrains the statement's own FROM, which is why this exists
+// separately — a scope that hides rows of the root table hides nothing when the
+// same rows are reached through a preload.
+func NarrowRelations(rs *RelationScopes) Option {
+	return func(o *Options) {
+		if !rs.Empty() {
+			o.RelScopes = MergeRelationScopes(o.RelScopes, rs)
 		}
 	}
 }

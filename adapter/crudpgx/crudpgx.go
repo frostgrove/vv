@@ -48,6 +48,11 @@ func From(q Queryer) Executor { return Executor{q: q} }
 // Unwrap returns the wrapped handle.
 func (e Executor) Unwrap() Queryer { return e.q }
 
+// DataSource names the database this executor speaks to, which is what
+// crud.WithExecutorFor matches on — the *pgxpool.Pool for a source built by
+// Open.
+func (e Executor) DataSource() any { return e.q }
+
 func (e Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
 	tag, err := e.q.Exec(ctx, sql, args...)
 	if err != nil {
@@ -120,5 +125,6 @@ var (
 	_ crud.Source       = Executor{}
 	_ crud.Beginner     = Executor{}
 	_ crud.BulkInserter = Executor{}
+	_ crud.Identified   = Executor{}
 	_ crud.Tx           = Tx{}
 )

@@ -81,6 +81,50 @@ func (rs *RelationScopes) Empty() bool {
 	return rs == nil || (len(rs.paths) == 0 && len(rs.models) == 0)
 }
 
+// MergeRelationScopes combines a repository's permanent narrowings with the ones
+// a single query carries — a per-request scope from an access-control decorator,
+// which cannot be baked into the blueprint because it depends on who is asking.
+//
+// Where both declare the same path or the same model the two are ANDed. A
+// narrowing composes with a narrowing and never replaces one, for the same
+// reason Where ANDs: whoever declared the first one is entitled to assume it
+// still holds.
+func MergeRelationScopes(a, b *RelationScopes) *RelationScopes {
+	if a.Empty() {
+		return b
+	}
+	if b.Empty() {
+		return a
+	}
+	out := &RelationScopes{
+		paths:  make(map[string]Predicate, len(a.paths)+len(b.paths)),
+		models: make(map[reflect.Type]Predicate, len(a.models)+len(b.models)),
+	}
+	for k, p := range a.paths {
+		out.paths[k] = p
+	}
+	for k, p := range b.paths {
+		out.paths[k] = both(out.paths[k], p)
+	}
+	for k, p := range a.models {
+		out.models[k] = p
+	}
+	for k, p := range b.models {
+		out.models[k] = both(out.models[k], p)
+	}
+	return out
+}
+
+func both(a, b Predicate) Predicate {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return And(a, b)
+}
+
 // under re-roots the path declarations at prefix, for a statement whose own
 // FROM is already that far down the path. Model declarations are unaffected —
 // they were never relative to anything.
