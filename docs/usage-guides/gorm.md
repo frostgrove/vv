@@ -380,8 +380,8 @@ follows on its own.
 ## Before you start: adding the module
 
 ```bash
-go get github.com/shardit-io/qq                 # the library
-go get github.com/shardit-io/qq/http/crudfiber  # …and your HTTP framework
+go get github.com/shardit-io/vv                 # the library
+go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
@@ -394,10 +394,10 @@ of the library.
 
 ```go
 import (
-    "github.com/shardit-io/qq/crud"
-    "github.com/shardit-io/qq/repo/basic"
-    "github.com/shardit-io/qq/adapter/crudsql"
-    "github.com/shardit-io/qq/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
+    "github.com/shardit-io/vv/crud"
+    "github.com/shardit-io/vv/repo/basic"
+    "github.com/shardit-io/vv/adapter/crudsql"
+    "github.com/shardit-io/vv/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
 )
 ```
 
@@ -487,7 +487,7 @@ func TestMemberMappingMatchesGorm(t *testing.T) {
     }
     for _, f := range s.Fields {
         if stmt.Schema.LookUpField(f.Column) == nil {
-            t.Errorf("github.com/shardit-io/qq maps %q, gorm has no such column", f.Column)
+            t.Errorf("github.com/shardit-io/vv maps %q, gorm has no such column", f.Column)
         }
     }
     if Members.Meta().Table != stmt.Schema.Table {
@@ -552,7 +552,7 @@ The one type rx-crud needs beyond your model is the partial-update DTO. You do
 not write it:
 
 ```go
-//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -dir ../models -types Member,Team \
+//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -dir ../models -types Member,Team \
 //    -readonly CreatedAt,UpdatedAt,DeletedAt -import myapp/models -into .
 package store
 ```

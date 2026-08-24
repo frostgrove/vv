@@ -34,7 +34,7 @@ about your existing ent code changes.
 11. [Mount it](#11-mount-it)
 12. [Your business rules: the service layer](#12-your-business-rules-the-service-layer)
 13. [Multi-tenancy and authorization](#13-multi-tenancy-and-authorization)
-14. [Relations: edges vs rx-crud relations](#14-relations-edges-vs-github.com/shardit-io/qq-relations)
+14. [Relations: edges vs rx-crud relations](#14-relations-edges-vs-github.com/shardit-io/vv-relations)
 15. [Testing without a database](#15-testing-without-a-database)
 16. [Gotchas](#16-gotchas)
 
@@ -413,8 +413,8 @@ follows on its own.
 ## Before you start: adding the module
 
 ```bash
-go get github.com/shardit-io/qq                 # the library
-go get github.com/shardit-io/qq/http/crudfiber  # …and your HTTP framework
+go get github.com/shardit-io/vv                 # the library
+go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
@@ -427,10 +427,10 @@ of the library.
 
 ```go
 import (
-    "github.com/shardit-io/qq/crud"
-    "github.com/shardit-io/qq/repo/basic"
-    "github.com/shardit-io/qq/adapter/crudsql"
-    "github.com/shardit-io/qq/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
+    "github.com/shardit-io/vv/crud"
+    "github.com/shardit-io/vv/repo/basic"
+    "github.com/shardit-io/vv/adapter/crudsql"
+    "github.com/shardit-io/vv/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
 )
 ```
 
@@ -610,7 +610,7 @@ func TestUserMappingMatchesEnt(t *testing.T) {
     slices.Sort(got)
     want := slices.Sorted(slices.Values(entuser.Columns))
     if !slices.Equal(got, want) {
-        t.Fatalf("github.com/shardit-io/qq maps %v, ent has %v", got, want)
+        t.Fatalf("github.com/shardit-io/vv maps %v, ent has %v", got, want)
     }
     if Users.Meta().Table != entuser.Table {
         t.Fatalf("table = %q, ent says %q", Users.Meta().Table, entuser.Table)
@@ -627,7 +627,7 @@ The one type rx-crud needs beyond your entity is the partial-update DTO. You do
 not write it:
 
 ```go
-//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -dir ../ent -types User,Article \
+//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -dir ../ent -types User,Article \
 //    -readonly CreatedAt -import myapp/ent -into .
 package store
 ```
@@ -782,7 +782,7 @@ also takes `Authorize(ctx, action)` and `Inspect(ctx, action, *M)`, and
 model, so it narrows the query that reads that model and nothing else: a preload
 is a second statement against a second table, and a nested filter opens a
 correlated subquery with its own `FROM`. If a tenanted model exposes relations —
-see [section 14](#14-relations-edges-vs-github.com/shardit-io/qq-relations) — say what happens at
+see [section 14](#14-relations-edges-vs-github.com/shardit-io/vv-relations) — say what happens at
 each of them, or `?preload=comments` reads that table raw.
 
 There are two places to say it, and which one is right depends on whose fact it

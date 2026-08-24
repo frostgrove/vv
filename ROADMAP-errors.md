@@ -300,11 +300,11 @@ Read before designing around it:
 ## 4. Packages and modules
 
 ```
-ERRS MODULE  github.com/shardit-io/qq/errs        (its own version line)
+ERRS MODULE  github.com/shardit-io/vv/errs        (its own version line)
 ├── errs/                     NEW  the contract. stdlib only.
 └── errs/sqlerr/              NEW  four dialect parsers. pure functions, stdlib only.
 
-ROOT MODULE  github.com/shardit-io/qq               (errs is its one require)
+ROOT MODULE  github.com/shardit-io/vv               (errs is its one require)
 ├── crud/                     unchanged — every sentinel stays exactly as it is
 ├── catalog/                  NEW  per-database schema catalog and introspection
 ├── probe/                    NEW  Simple and Full violation handlers
@@ -331,7 +331,7 @@ repeated here only because every package above depends on them:
   both. The `crud` sentinel a `Fault` wraps is attached by the *caller* — the
   adapter or the decorator, which already import both — so `errs` never needs to
   name `crud.ErrConflict`.
-- **The root module is `github.com/shardit-io/qq`** once the framework
+- **The root module is `github.com/shardit-io/vv`** once the framework
   roadmap §11's second rename lands; every path above is written against that.
 - **`errs` gets its own module, and [[D-033]] is amended to allow it.** Its
   invariant becomes *no **third-party** requirement* rather than *no external

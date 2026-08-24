@@ -1,3 +1,3 @@
-module github.com/shardit-io/qq
+module github.com/shardit-io/vv
 
 go 1.26

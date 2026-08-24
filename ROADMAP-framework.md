@@ -2,7 +2,7 @@
 
 **Status:** proposed. The rename to `ordo` is decided and not yet executed; the
 structure below is a target, not a description of the tree today.
-**Scope:** what `github.com/shardit-io/qq` is, how its modules are drawn, what
+**Scope:** what `github.com/shardit-io/vv` is, how its modules are drawn, what
 enforces the boundaries, and what has to be settled before the first tag.
 
 This is one of two roadmaps and they are deliberately separate:
@@ -18,8 +18,8 @@ the structure below, and the module decisions here are the ones that expire.
 
 ---
 
-The repository was `go-rx-crud`, is `github.com/shardit-io/qq` on disk today, and
-is becoming **`github.com/shardit-io/qq`** — Latin for order, rank, and an
+The repository was `go-rx-crud`, is `github.com/shardit-io/vv` on disk today, and
+is becoming **`github.com/shardit-io/vv`** — Latin for order, rank, and an
 official register, which is both halves of what this library does. §11 records why
 and what it costs; this document describes the target.
 
@@ -289,7 +289,7 @@ the enforcement. Neither works. All three were measured on this tree:
   `crypto/internal/entropy/v1.0.0`. It has never had pass/fail semantics. The
   correct form prints nothing:
   ```
-  go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/shardit-io/qq'
+  go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/shardit-io/vv'
   ```
 - **`go.work` hides a root-module dependency leak completely.** A package in the
   root module importing a satellite's dependency builds green, vets green, and
@@ -451,7 +451,7 @@ being written:
   objection died here, and the errors roadmap §4's remaining question — whether `errs` is its own
   module — was then answered yes on release-cadence grounds.
 
-**Rename 2: `rx` → `ordo`. Decided, not yet executed.** `github.com/shardit-io/qq`.
+**Rename 2: `rx` → `ordo`. Decided, not yet executed.** `github.com/shardit-io/vv`.
 
 The reason is discoverability, and it is not a matter of taste. **`rx` in Go means
 ReactiveX.** `ReactiveX/RxGo` has roughly 5,100 stars and its package is literally

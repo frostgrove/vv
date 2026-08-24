@@ -1,12 +1,12 @@
 // The Fiber binding is its own module so a consumer on Gin, Echo or net/http
 // never takes Fiber as a dependency. See D-033.
-module github.com/shardit-io/qq/http/crudfiber
+module github.com/shardit-io/vv/http/crudfiber
 
 go 1.26
 
 require (
 	github.com/gofiber/fiber/v3 v3.4.0
-	github.com/shardit-io/qq v0.0.0
+	github.com/shardit-io/vv v0.0.0
 )
 
 require (
