@@ -160,7 +160,8 @@ package that does not compile yet.
 | `crud/update.go` | `collectPlanFields` — the rules the DTO has to satisfy |
 | `crud/meta.go` | the tag vocabulary and the runtime's own embedded-struct flattening |
 | `repo/decorators/specs/metamodel.go` | `Metamodel`, and the attribute types the generator emits |
-| `example/blog/rxcrud_gen.go`, `test/entstore/`, `test/gormstore/` | checked-in output, verified up to date by tests |
+| `_examples/example/blog/rxcrud_gen.go`, `test/entstore/`, `test/gormstore/` | checked-in output, verified up to date by tests |
+| `_examples/entstore/`, and the `rxcrud_gen.go` in each `_examples/*-*/` stack | the same generator run the usage guides tell a consumer to run, checked in so an example is readable without running anything |
 
 ## Tests that walk this flow
 
@@ -182,9 +183,9 @@ package that does not compile yet.
 - `TestGeneratingOnlyOneHalf` — `cmd/rxcrud/gen_test.go` — `-no-dto` / `-no-meta`.
 - `TestOutputIsByteIdenticalAcrossRuns` — `cmd/rxcrud/gen_test.go`.
 - `TestGeneratedCodeCompilesAndValidates` — `cmd/rxcrud/gen_test.go` — the end-to-end guarantee.
-- `TestGeneratedFileIsUpToDate` — `example/blog/blog_test.go`.
+- `TestGeneratedFileIsUpToDate` — `_examples/example/blog/blog_test.go`.
 - `TestTheGeneratedStoresAreUpToDate` — `test/integration/codegen_test.go` — the ent and gorm stores.
-- `TestGeneratedDTOTypesFollowNullability` — `example/blog/blog_test.go` — the generated types, from the consumer's side.
+- `TestGeneratedDTOTypesFollowNullability` — `_examples/example/blog/blog_test.go` — the generated types, from the consumer's side.
 
 ## See also
 

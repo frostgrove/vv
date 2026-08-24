@@ -5,7 +5,7 @@
 
 ## The decision
 
-Five modules in one repository:
+Six modules in one repository, four of them published:
 
 ```
 github.com/shardit-io/go-rx-crud                    crud, query, repo, cmd,
@@ -14,7 +14,15 @@ github.com/shardit-io/go-rx-crud/http/crudfiber     + fiber/v3
 github.com/shardit-io/go-rx-crud/http/crudgin       + gin
 github.com/shardit-io/go-rx-crud/adapter/crudpgx    + pgx/v5
 github.com/shardit-io/go-rx-crud/test               unpublished, replace ../
+github.com/shardit-io/go-rx-crud/_examples          unpublished, replace ../
 ```
+
+The two unpublished modules exist for the same reason and use the same mechanism:
+the integration suite needs ent, gorm, sqlx, sqlc and two drivers, and the
+examples need every stack they demonstrate. Neither may become a dependency of
+anything a consumer downloads. The leading underscore additionally keeps
+`_examples` out of `go build ./...` at the root, so it is built by `make
+examples` rather than by `make unit`.
 
 A consumer installs the base and then only the plugins it uses:
 
@@ -76,8 +84,9 @@ submodule's `go.mod` does not name the version being cut.
   that names a version nobody can fetch is worse than an unreleased binding.
 - Do not release one module at a version the others are not at. `make version`
   then `make release`, in that order.
-- Do not delete `test/go.mod` or move a driver, an ORM or a test helper into a
-  published module to make an integration test compile.
+- Do not delete `test/go.mod` or `_examples/go.mod`, and do not move a driver, an
+  ORM or a test helper into a published module to make an integration test or an
+  example compile.
 - Do not import anything outside the standard library from a non-test file in
   `crud/`. That half of [[D-016]] survives unchanged and is now checkable across
   the whole root module rather than just one package.
@@ -88,9 +97,9 @@ submodule's `go.mod` does not name the version being cut.
   block at all.
 - `http/crudfiber/go.mod`, `http/crudgin/go.mod`, `adapter/crudpgx/go.mod` —
   one external requirement each, plus the library.
-- `test/go.mod` — the unpublished test module, with a `replace` per published
-  module.
-- `go.work` — joins all five.
+- `test/go.mod`, `_examples/go.mod` — the unpublished modules, each with a
+  `replace` per published module.
+- `go.work` — joins the four published modules and `test`.
 - `Makefile:MODULES` — the list every other target loops over.
 - `Makefile:version` — rewrites each submodule's library requirement.
 - `Makefile:release` — the ordering and the lockstep check.

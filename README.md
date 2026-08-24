@@ -53,6 +53,11 @@ would need a test schema that declares one, and none does.
 - [`docs/usage-guides/gorm.md`](docs/usage-guides/gorm.md) — your gorm struct is the model, `gorm.Model`
   and associations included
 
+**Prefer running code?** [`_examples/`](_examples/) has one small, complete program per
+stack — ent, gorm, sqlx and no-ORM-at-all, across both HTTP bindings and both engines.
+Start the databases with `make up` and `go run ./<example>` serves a real API you can
+curl. Each one is a single file you can read top to bottom.
+
 ---
 
 ## Install

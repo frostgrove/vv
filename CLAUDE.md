@@ -7,8 +7,9 @@ without owning the caller's connection or transaction.
 Module: `github.com/shardit-io/go-rx-crud`, and it has no external dependencies.
 Anything that would add one is a module of its own under the same repository —
 `http/crudfiber`, `http/crudgin`, `adapter/crudpgx` — so a consumer downloads
-only the binding and driver it imports. `test/` is a fifth, unpublished, so
-drivers and ORMs never become dependencies of the library. See `[[D-033]]`.
+only the binding and driver it imports. `test/` and `_examples/` are two more,
+unpublished, so drivers, ORMs and example stacks never become dependencies of
+the library. See `[[D-033]]`.
 
 ---
 
@@ -112,6 +113,7 @@ make vet           # every module
 make fmt           # gofmt
 make generate      # regenerate DTOs and metamodels
 make tidy          # go mod tidy in every module
+make examples      # build, vet and test the runnable examples
 ```
 
 `make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`. A new
@@ -183,4 +185,8 @@ http/crudfiber/             MODULE — a full CRUD API on Fiber v3
 http/crudgin/               MODULE — the same API on Gin
 adapter/crudpgx/            MODULE — pgx v5
 test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
+_examples/                  MODULE (unpublished) — runnable examples, one per stack
 ```
+
+`_examples/` starts with an underscore, so the Go toolchain ignores it at the
+root: `make unit` does not build it and `make examples` does.

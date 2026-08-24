@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shardit-io/go-rx-crud/_examples/example/blog"
 	"github.com/shardit-io/go-rx-crud/crud"
 	"github.com/shardit-io/go-rx-crud/crud/crudtest"
-	"github.com/shardit-io/go-rx-crud/example/blog"
 	"github.com/shardit-io/go-rx-crud/repo/basic"
 	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 )

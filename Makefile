@@ -1,4 +1,4 @@
-.PHONY: help test unit integration up down logs psql mysql fmt vet lint tidy generate ent version release clean
+.PHONY: help test unit integration examples up down logs psql mysql fmt vet lint tidy generate ent version release clean
 
 GO ?= go
 
@@ -19,6 +19,9 @@ integration: up ## Run the integration suite against Postgres and MySQL
 
 test: unit integration ## Everything
 
+examples: ## Build and vet the runnable examples (needs the databases to run them)
+	cd _examples && GOWORK=off $(GO) build ./... && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test ./...
+
 up: ## Start Postgres and MySQL and wait for them
 	docker compose up -d --wait
 
@@ -35,7 +38,7 @@ mysql: ## Open a mysql shell
 	docker compose exec mysql mysql -urxcrud -prxcrud rxcrud
 
 fmt: ## gofmt everything
-	gofmt -l -w crud repo query http cmd adapter test
+	gofmt -l -w crud repo query http cmd adapter test _examples
 
 vet: ## go vet every module, including the test module
 	@for m in $(MODULES); do echo "==> $$m"; (cd $$m && $(GO) vet ./...) || exit 1; done
@@ -58,11 +61,13 @@ tidy: ## Tidy every module
 			exit 1; }; \
 	done
 	cd test && GOWORK=off $(GO) mod tidy
+	cd _examples && GOWORK=off $(GO) mod tidy
 
 generate: ## Regenerate the update DTOs and metamodels
 	$(GO) generate ./...
 	cd test/entstore  && $(GO) generate ./...
 	cd test/gormstore && $(GO) generate ./...
+	cd _examples && GOWORK=off $(GO) generate ./...
 
 ent: ## Regenerate the ent code used by the integration tests
 	cd test && GOWORK=off $(GO) run -mod=mod entgo.io/ent/cmd/ent generate --feature sql/execquery ./ent/schema
