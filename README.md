@@ -10,15 +10,15 @@ repository. That is why any foreign transaction can be pushed into a context —
 all rx-crud asks of it is `Exec` and `Query`.
 
 ```
-crud/                       core: contracts, metadata, relations, predicates, Opt, pagination — zero dependencies
+crud/                       core: contracts, metadata, relations, predicates, Opt, pagination — stdlib only
 repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
-http/crudfiber/             a full CRUD API on Fiber v3 (separate module)
+http/crudfiber/             a full CRUD API on Fiber v3
 cmd/rxcrud/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
-adapter/crudpgx/            pgx v5 (separate module, so the core stays dependency-free)
+adapter/crudpgx/            pgx v5
 crud/crudtest/              an in-memory source for unit-testing repositories
 ```
 
@@ -44,11 +44,23 @@ the ORM's own builders. Every claim in both is executed by the integration
 suite, with one exception named where it is made: ent's hooks and privacy rules
 would need a test schema that declares one, and none does.
 
-- [`docs/ent.md`](docs/ent.md) — ent's *generated* entity struct is the model, as-is
-- [`docs/gorm.md`](docs/gorm.md) — your gorm struct is the model, `gorm.Model`
+- [`docs/usage-guides/ent.md`](docs/usage-guides/ent.md) — ent's *generated* entity struct is the model, as-is
+- [`docs/usage-guides/gorm.md`](docs/usage-guides/gorm.md) — your gorm struct is the model, `gorm.Model`
   and associations included
 
 ---
+
+## Install
+
+```bash
+go get github.com/shardit-io/go-rx-crud
+```
+
+One module. `http/crudfiber` and `adapter/crudpgx` are packages inside it, not
+separate modules, so a single `go get` is the whole installation and there is
+never a `replace` to write. The trade is in the other direction: the module
+requires Fiber v3 and pgx v5 even when you import neither, so they take part in
+version selection.
 
 ## Quick start
 
@@ -118,11 +130,13 @@ n, err     = users.DeleteAll(ctx, crud.Where(crud.Lt("Age", 18)))
 | `Get(ctx, opts...)` | `PaginatedResponse[M]` |
 | `GetAll(ctx, opts...)` | every match; unpaged unless an option says otherwise |
 | `Save(ctx, *M)` | JPA semantics: no key → INSERT, key → UPSERT; the model is refreshed in place |
+| `SaveAll(ctx, []*M)` | the same write, batched into one statement |
 | `Update(ctx, id, dto)` | load, diff, write only what changed |
 | `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns how many rows were touched |
 | `Delete(ctx, ids...)` | returns how many rows went away |
 | `DeleteAll(ctx, opts...)` | same, filtered |
 | `Count` / `Exists` | with the same options |
+| `Aggregate(ctx, opts...)` | grouped summaries, under the same narrowing as a read |
 | `Tx(ctx, fn)` | run in a transaction, joining one already in `ctx` |
 | `Meta()` | the bound schema and table |
 
@@ -173,6 +187,40 @@ Inside a transaction, the load is a `SELECT ... FOR UPDATE`. Outside one it is a
 plain read — see **optimistic locking** below for the other way to make that
 safe.
 
+### Paging by cursor
+
+Offset paging asks the database to walk and discard what it skips, and it asks a
+question whose answer moves: "skip 10, take 10" means something else after
+somebody inserts a row above them, so a client walking a list sees one row twice
+and misses another. Every paged read hands back the edges of its own page:
+
+```json
+{ "items": [ … ], "nextCursor": "eyJmIjpb…", "prevCursor": "eyJmIjpb…" }
+```
+
+Send one back and the offset stops mattering:
+
+```go
+page, err := users.Get(ctx, crud.OrderBy(crud.Desc("CreatedAt")), crud.Limit(20))
+next, err := users.Get(ctx, crud.OrderBy(crud.Desc("CreatedAt")), crud.Limit(20),
+    crud.After(page.NextCursor))
+```
+
+```bash
+curl '/users?sort=-createdAt&limit=20&after=eyJmIjpb…'
+curl -XPOST /users/query -d '{"sort":["-createdAt"],"limit":20,"after":"eyJmIjpb…"}'
+```
+
+`crud.Before` walks back. The token carries the sort's own field names, so a
+cursor made for one sort is refused under another rather than compared against
+whichever columns line up. It needs a unique sort — the primary key is appended
+to a paged sort already, so that is the default; `basic.UnstablePagination`
+removes it and gives up cursors with it. A nullable sort column is refused:
+`NULL > 'x'` is unknown, so the boundary would drop every row that has one.
+
+A cursor walk skips the `COUNT` — there is no page number for a total to divide
+into — so `total` is the page length and `totalPages` is zero.
+
 ### UpdateAll
 
 `Update` addresses one row; `UpdateAll` addresses a filter, the way `DeleteAll`
@@ -196,6 +244,83 @@ reports the rows it *matched*, MySQL the rows it actually *changed*. Under
 `security.Gate` an `UpdateAll` with neither a policy scope nor a caller filter is
 refused unless the policy sets `AllowUnscopedUpdateAll`, and `specs` spells it
 `UpdateBy(ctx, spec, dto)` — which refuses an empty specification outright.
+
+### Aggregates
+
+`Count` was the only summary there was, so the first time an application needed
+"unread per chat" it dropped to raw SQL — and raw SQL runs outside the scope, the
+relation scopes and the security gate. The query that produces a number became
+the query that reads another tenant's rows.
+
+```go
+rows, err := messages.Aggregate(ctx,
+    crud.GroupBy("ChatID"),
+    crud.Aggregate(crud.CountAll("unread"), crud.Max("latest", "CreatedAt")),
+    crud.Where(crud.Eq("Read", false)),
+)
+for _, r := range rows {
+    chat := r.Group["ChatID"]
+    n, _ := r.Int("unread")
+}
+```
+
+`CountAll CountOf CountDistinct Sum Avg Min Max`, and that is the whole set —
+the five functions the three dialects spell identically. Every name is resolved
+against the model, so a typo is a refusal rather than a statement the database
+rejects.
+
+It is a method on the seam, which means a decorator can intercept it: the
+security gate scopes an aggregate exactly as it scopes a page. It is deliberately
+**not** reachable from the wire DSL — a total is a disclosure, and `GROUP BY`
+over a client-chosen column is an oracle. Publish the totals your application
+means to publish.
+
+### Soft deletes
+
+One declaration, both halves:
+
+```go
+var Docs = basic.Define[Doc, int64, DocUpdate]("docs",
+    basic.SoftDelete("DeletedAt"))
+```
+
+`Delete` and `DeleteAll` stamp the column instead of removing rows, and every
+read filters the stamped ones out. Written by hand this is a scope for the reads
+plus a service layer for the writes, and adding the first while forgetting the
+second fails silently — the reads hide rows the deletes are still destroying.
+
+The column has to be nullable, because "not deleted" needs a value. Bind the same
+blueprint without the setting for a repository that sees the tombstones. What it
+cannot do for you: a unique index still sees them, so re-creating a row whose
+soft-deleted twin holds the same key is a conflict — that wants a partial index.
+
+### Batched writes
+
+```go
+err := users.SaveAll(ctx, []*User{&a, &b, &c})
+```
+
+One `INSERT`, the same upsert semantics, the same three `Opt` states. Two things
+it will not do quietly: a batch that mixes rows the database keys with rows you
+keyed is refused rather than split, because splitting would hide the round trips;
+and generated keys come back only where the dialect has `RETURNING`. MySQL
+reports one `LastInsertId` for the statement and only guarantees the rest are
+contiguous under some settings, so it does not guess — assign the keys yourself
+there and the batch is exact.
+
+### Replicas
+
+```go
+src := crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica))
+users := Users.Bind(src)
+```
+
+Reads go to the replica, writes to the primary. Two things are not negotiable,
+both because a replica is *behind*: a read inside a transaction goes to that
+transaction, and a read that decides a write never leaves the primary — the load
+half of an `Update`, and every check the security gate makes. What is left is
+yours: write, then read in a separate call before the replica catches up, and the
+row is missing. Wrap the pair in a transaction, or read with `crud.PrimaryOnly()`.
 
 ### Optimistic locking
 
@@ -630,7 +755,7 @@ The update DTO and the metamodel are mechanical restatements of the model, so
 `cmd/rxcrud` writes them:
 
 ```go
-//go:generate go run rx-crud/cmd/rxcrud
+//go:generate go run github.com/shardit-io/go-rx-crud/cmd/rxcrud
 ```
 
 From this:

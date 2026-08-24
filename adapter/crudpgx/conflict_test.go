@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // pgx does not report a refused statement from Query. It hands back a Rows that

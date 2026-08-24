@@ -3,8 +3,8 @@
 package blog
 
 import (
-	"rx-crud/crud"
-	"rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 	"time"
 )
 

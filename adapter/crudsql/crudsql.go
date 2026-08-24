@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Queryer is the database/sql shape rx-crud needs. *sql.DB, *sql.Tx, *sql.Conn,

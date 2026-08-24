@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Statement is one recorded call.

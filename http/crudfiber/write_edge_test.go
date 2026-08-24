@@ -4,11 +4,12 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // POST refuses a client-chosen key when the database generates it, and PUT is
@@ -141,5 +142,31 @@ func TestAnIntegrityConflictIsA409WithAMessage(t *testing.T) {
 	}
 	if got := failed(t, r); got.Error != "conflict" || got.Message == "" {
 		t.Fatalf("the envelope was %+v; a 409 names the error and says something about it", got)
+	}
+}
+
+// A misspelled key in the query document used to parse into an empty request:
+// the endpoint answered 200 with the whole table, which is the one failure a
+// client cannot see. The transport half of that fix is here — the refusal has to
+// survive Fiber's binding and arrive as a 400 naming the key.
+func TestAMisspelledQueryKeyIs400(t *testing.T) {
+	app, fake := mount(t)
+
+	res := ok(t, app, http.MethodPost, "/widgets/query", `{"filtr":{"name":"x"}}`, http.StatusBadRequest)
+	if !strings.Contains(string(res.body), "filtr") {
+		t.Fatalf("the body does not name the offending key: %s", res.body)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("%d repository calls: the statement went out anyway", len(fake.calls))
+	}
+}
+
+// And the query-string half, for a parameter that is one typo from one of ours.
+func TestAMisspelledQueryParameterIs400(t *testing.T) {
+	app, fake := mount(t)
+
+	ok(t, app, http.MethodGet, "/widgets?filtr=name:eq:x", "", http.StatusBadRequest)
+	if len(fake.calls) != 0 {
+		t.Fatalf("%d repository calls: the unfiltered read went out anyway", len(fake.calls))
 	}
 }

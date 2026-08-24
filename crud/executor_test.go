@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // fakeExec is an executor that only has to be distinguishable from another one.

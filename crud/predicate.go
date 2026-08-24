@@ -562,11 +562,19 @@ func (w *writer) sortExpr(segs []string, cur scope) {
 	saved, savedPath := w.cur, w.path
 	defer func() { w.cur, w.path = saved, savedPath }()
 
+	// The path has to be extended *before* the recursion, not after it. Setting
+	// it afterwards left a second hop resolving its own narrowing under a path
+	// spelled from the wrong segment — `Manager.Department` was looked up as
+	// `Department` — so a narrowing declared by path silently did not apply to
+	// the inner subquery. Model-declared ones still did, which is what kept it
+	// invisible.
+	w.cur, w.path = scope{meta: target, alias: alias}, joinPath(savedPath, rel.Name)
+
 	w.str("(SELECT ")
-	w.sortExpr(segs[1:], scope{meta: target, alias: alias})
+	w.sortExpr(segs[1:], w.cur)
+	// cur, not w.cur: the correlation points back at the parent statement.
 	w.str(" FROM " + w.d.Quote(target.Table) + " AS " + alias +
 		" WHERE " + alias + "." + w.d.Quote(remote.Column) + " = " + cur.correlate(w.d, local.Column))
-	w.cur, w.path = scope{meta: target, alias: alias}, joinPath(w.path, rel.Name)
 	if w.rel.At(w.path, target) != nil {
 		w.str(" AND ")
 		w.hopScope()

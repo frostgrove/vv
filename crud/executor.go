@@ -58,6 +58,63 @@ type Source interface {
 	Dialect() Dialect
 }
 
+// ReadSourcer is the optional interface a Source implements to offer a second,
+// read-only datasource. A repository asks for it once, at Bind time.
+type ReadSourcer interface {
+	ReadSource() Source
+}
+
+// ReadWrite pairs a writable datasource with a replica: reads that only read go
+// to the replica, everything else to the primary.
+//
+// Two things are deliberately not negotiable, and both exist because a replica
+// is *behind*. A read made with a context that carries an executor goes to that
+// executor — joining a transaction and then reading around it would defeat the
+// transaction, and it is also what keeps read-your-own-writes working inside
+// one. And a read marked PrimaryOnly stays on the primary, which is what the
+// repository does for the load half of an Update and the security gate does for
+// its checks: a decision taken against a lagging row is taken against a row as
+// it was, not as it is.
+//
+// What is left is the caller's, and cannot be solved here: write, then read in a
+// separate call before the replica has caught up, and the row is missing. Wrap
+// the pair in a transaction, or read with PrimaryOnly.
+func ReadWrite(primary, replica Source) Source {
+	if replica == nil {
+		return primary
+	}
+	rw := readWrite{Source: primary, replica: replica}
+	// Two types rather than one that always has Begin and sometimes refuses:
+	// a caller testing src.(crud.Beginner) is asking whether transactions work,
+	// and a wrapper that answers yes and then says no has lied about the pool it
+	// is standing in front of.
+	if b, ok := primary.(Beginner); ok {
+		return readWriteTx{readWrite: rw, Beginner: b}
+	}
+	return rw
+}
+
+type readWrite struct {
+	Source
+	replica Source
+}
+
+func (rw readWrite) ReadSource() Source { return rw.replica }
+
+// DataSource forwards the primary's identity, so a scoped executor binding still
+// matches a repository bound through the pair.
+func (rw readWrite) DataSource() any {
+	if id, ok := rw.Source.(Identified); ok {
+		return id.DataSource()
+	}
+	return nil
+}
+
+type readWriteTx struct {
+	readWrite
+	Beginner
+}
+
 // BulkInserter is an optional fast path (pgx COPY). Nothing in the library
 // reaches for it: the repository writes one statement at a time, so this is a
 // door an application opens itself, by type-asserting its own source.
@@ -170,7 +227,11 @@ func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
 // the key.
 func keyOf(v any) any {
 	if id, ok := v.(Identified); ok {
-		return id.DataSource()
+		// A wrapper that forwards an identity it does not have answers nil; that
+		// is "I cannot say", not "my identity is nil".
+		if ds := id.DataSource(); ds != nil {
+			return ds
+		}
 	}
 	return v
 }
@@ -187,6 +248,13 @@ func ownScope(v any) any {
 	}
 	return nil
 }
+
+var (
+	_ Source      = readWrite{}
+	_ ReadSourcer = readWrite{}
+	_ Identified  = readWrite{}
+	_ Beginner    = readWriteTx{}
+)
 
 // sameDataSource compares two identities without ever panicking on an
 // uncomparable one — a datasource handle is a pointer in practice, but nothing

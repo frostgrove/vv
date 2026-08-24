@@ -31,8 +31,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"rx-crud/crud"
-	"rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/query"
 )
 
 // Repository is everything the handler needs. crud.Repo[M, ID, U] satisfies it,

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/query"
 )
 
 // compile turns a document into the raw option list, so a test can count what

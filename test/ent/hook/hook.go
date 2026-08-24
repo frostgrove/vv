@@ -5,7 +5,8 @@ package hook
 import (
 	"context"
 	"fmt"
-	"rx-crud/test/ent"
+
+	"github.com/shardit-io/go-rx-crud/test/ent"
 )
 
 // The UserFunc type is an adapter to allow the use of ordinary

@@ -1,25 +1,24 @@
 // Integration tests live in their own module so the library never picks up a
 // driver, an ORM or a test helper as a dependency.
-module rx-crud/test
+module github.com/shardit-io/go-rx-crud/test
 
 go 1.26
 
-replace (
-	rx-crud => ../
-	rx-crud/adapter/crudpgx => ../adapter/crudpgx
-)
+// The library is the repository this test module lives in, so it is used from
+// disk rather than fetched. Nothing else here is published.
+replace github.com/shardit-io/go-rx-crud => ../
 
 require (
 	entgo.io/ent v0.14.6
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/gofiber/fiber/v3 v3.4.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/shardit-io/go-rx-crud v0.0.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
-	rx-crud v0.0.0
-	rx-crud/adapter/crudpgx v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -42,7 +41,7 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.54.0 // indirect
+	modernc.org/sqlite v1.54.0
 )
 
 require (
@@ -53,7 +52,6 @@ require (
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/go-openapi/inflect v0.19.0 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.18.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -68,7 +66,4 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	rx-crud/http/crudfiber v0.0.0
 )
-
-replace rx-crud/http/crudfiber => ../http/crudfiber

@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// NowFunc is the clock a soft delete stamps with. Swap it in a test rather than
+// reaching for a fake database.
+var NowFunc = time.Now
+
 // TagKey is the struct tag rx-crud reads. `db:"column,option,option"`.
 //
 // Options:

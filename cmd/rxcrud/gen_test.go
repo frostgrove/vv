@@ -27,8 +27,8 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		depth:    2,
 		withDTO:  true,
 		withMeta: true,
-		specsPkg: "rx-crud/repo/decorators/specs",
-		crudPkg:  "rx-crud/crud",
+		specsPkg: "github.com/shardit-io/go-rx-crud/repo/decorators/specs",
+		crudPkg:  "github.com/shardit-io/go-rx-crud/crud",
 	}
 	if tweak != nil {
 		tweak(g)
@@ -93,7 +93,7 @@ const blogModel = `package blog
 import (
 	"time"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 type Author struct {
@@ -461,7 +461,7 @@ func TestGeneratingOnlyOneHalf(t *testing.T) {
 		t.Fatalf("-no-dto took the metamodel with it:\n%s", noDTO)
 	}
 	// With no DTO nothing needs crud, and the import goes away with it.
-	if strings.Contains(noDTO, `"rx-crud/crud"`) {
+	if strings.Contains(noDTO, `"github.com/shardit-io/go-rx-crud/crud"`) {
 		t.Fatalf("an unused import would not compile:\n%s", noDTO)
 	}
 
@@ -533,7 +533,7 @@ func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module gencheck\n\ngo 1.24\n\nrequire rx-crud v0.0.0\n\nreplace rx-crud => "+root+"\n")
+	write("go.mod", "module gencheck\n\ngo 1.24\n\nrequire github.com/shardit-io/go-rx-crud v0.0.0\n\nreplace github.com/shardit-io/go-rx-crud => "+root+"\n")
 	write(filepath.Join("model", "model.go"), tags(blogModel))
 	write(filepath.Join("model", "rxcrud_gen.go"), out)
 	write("main.go", "package main\n\nimport _ \"gencheck/model\"\n\nfunc main() {}\n")
@@ -543,5 +543,44 @@ func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off")
 	if res, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the generated code does not build and run: %v\n%s\n---- generated ----\n%s", err, res, out)
+	}
+}
+
+// The optimistic lock is the repository's column: it pins the write to the
+// version it read and advances it. crud.PlanFor refuses a DTO that names it, so
+// a generator that emitted it produced a package which panicked at Define time —
+// the two features shipped in the same change and did not know about each other.
+func TestTheVersionColumnIsLeftOutOfTheDTO(t *testing.T) {
+	src := tags(`package m
+
+import "time"
+
+type Doc struct {
+	ID        int64     @db:"id,pk,auto"@
+	Title     string    @db:"title"@
+	Version   int       @db:"version,version"@
+	Revision  int       @db:"revision,lock"@
+	UpdatedAt time.Time @db:"updated_at"@
+}
+`)
+	out := gen(t, map[string]string{"model.go": src}, nil)
+
+	dto := decl(t, out, "type DocUpdate struct {")
+	for _, f := range []string{"Version", "Revision"} {
+		if declares(dto, f) {
+			t.Fatalf("%s is in the update DTO; basic.Define will panic on it:\n%s", f, dto)
+		}
+	}
+	if !declares(dto, "Title") {
+		t.Fatalf("an ordinary column left the DTO with it:\n%s", dto)
+	}
+
+	// It is still a column, so filtering and sorting by it must keep working —
+	// "the repository owns the writes" is not "the column is invisible".
+	attrs := decl(t, out, "type DocAttrs struct {")
+	for _, f := range []string{"Version", "Revision"} {
+		if !declares(attrs, f) {
+			t.Fatalf("%s left the metamodel, so it can no longer be filtered or sorted:\n%s", f, attrs)
+		}
 	}
 }

@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // ErrForbidden is what the gate returns when a policy denies an operation. It
@@ -235,6 +235,9 @@ func (g *gate[M, ID]) GetByID(ctx context.Context, id ID, opts ...crud.Option) (
 // back as ErrNotFound, never as a denial — a 403 would leak that the id exists.
 // It deliberately does not run Authorize, so the caller decides which action is
 // being authorised.
+// loadScoped is a read that decides a write on every path but GetByID, so it
+// stays on the primary: authorising against a replica that has not caught up
+// checks a row as it was, not as it is.
 func (g *gate[M, ID]) loadScoped(ctx context.Context, id ID, opts ...crud.Option) (M, error) {
 	var zero M
 	scope, err := g.scope(ctx)
@@ -309,6 +312,29 @@ func (g *gate[M, ID]) inspectAll(ctx context.Context, items []M) error {
 	return nil
 }
 
+// Aggregate is scoped like any other read, and it has to be spelled out rather
+// than inherited: the gate embeds crud.Core, so an aggregate that fell through
+// to the plain repository would answer over every row in the table. "How many"
+// is as much of a disclosure as "which ones" — a count that changes when another
+// tenant writes is an oracle for their data.
+//
+// Inspect has nothing to look at here. A summary row is not an entity, so a
+// policy that authorises per row cannot express itself over one; such a policy
+// refuses the whole call rather than pretending to have checked it.
+func (g *gate[M, ID]) Aggregate(ctx context.Context, opts ...crud.Option) ([]crud.AggregateRow, error) {
+	if err := g.authorize(ctx, Read); err != nil {
+		return nil, err
+	}
+	if g.p.Inspect != nil && g.p.InspectReads {
+		return nil, Denied(Read, "this policy inspects every row it returns, which an aggregate has none of")
+	}
+	scoped, _, err := g.scoped(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return g.Core.Aggregate(ctx, scoped...)
+}
+
 func (g *gate[M, ID]) Count(ctx context.Context, opts ...crud.Option) (int64, error) {
 	if err := g.authorize(ctx, Read); err != nil {
 		return 0, err
@@ -333,6 +359,65 @@ func (g *gate[M, ID]) Exists(ctx context.Context, opts ...crud.Option) (bool, er
 
 // ---------------------------------------------------------------------------
 // writes
+
+// SaveAll runs every check Save runs, once per row, and only then hands the
+// batch down as one statement.
+//
+// Spelled out rather than inherited, for the same reason Aggregate is: the gate
+// embeds crud.Core, so a SaveAll that fell through would write the whole batch
+// with no authorisation, no per-row inspection and no immutable-field check —
+// the one call that writes the most rows would be the one that checks none of
+// them.
+//
+// The checks cost one lookup per row with an assigned key, which is what Save
+// costs too. That is the price of the batch being safe; it is still one INSERT.
+func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
+	if len(models) == 0 {
+		return nil
+	}
+	meta := g.Meta()
+	for _, m := range models {
+		if m == nil {
+			return Denied(Create, "nil model")
+		}
+		hasID, err := meta.HasID(m)
+		if err != nil {
+			return err
+		}
+		action := Create
+		if hasID {
+			id, err := meta.ID(m)
+			if err != nil {
+				return err
+			}
+			existing, err := g.saveTarget(ctx, meta, id)
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				action = Update
+				if err := g.authorize(ctx, Update); err != nil {
+					return err
+				}
+				if err := g.inspect(ctx, Update, existing); err != nil {
+					return err
+				}
+				if err := g.checkImmutableSave(meta, existing, m); err != nil {
+					return err
+				}
+			}
+		}
+		if action == Create {
+			if err := g.authorize(ctx, Create); err != nil {
+				return err
+			}
+		}
+		if err := g.inspect(ctx, action, m); err != nil {
+			return err
+		}
+	}
+	return g.Core.SaveAll(ctx, models)
+}
 
 func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 	if m == nil {
@@ -399,7 +484,7 @@ func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (
 	if err != nil {
 		return nil, err
 	}
-	opts := []crud.Option{byID, rel, crud.Limit(1), crud.Unsorted()}
+	opts := []crud.Option{byID, rel, crud.Limit(1), crud.Unsorted(), crud.PrimaryOnly()}
 	if scope != nil {
 		opts = append([]crud.Option{crud.Where(scope)}, opts...)
 	}
@@ -415,7 +500,7 @@ func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (
 	}
 	// Nothing visible under that id. It is still an overwrite if the row is
 	// merely hidden, and only an insert if it is genuinely not there.
-	hidden, err := g.Core.Exists(ctx, byID)
+	hidden, err := g.Core.Exists(ctx, byID, crud.PrimaryOnly())
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +604,7 @@ func (g *gate[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Optio
 		return 0, Denied(Update, "refusing an unscoped UpdateAll; set AllowUnscopedUpdateAll to permit it")
 	}
 	if g.p.Inspect != nil {
-		targets, err := g.Core.GetAll(ctx, g.whole(true, scoped)...)
+		targets, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly()))...)
 		if err != nil {
 			return 0, err
 		}
@@ -553,7 +638,7 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), rel})...)
+		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), rel, crud.PrimaryOnly()})...)
 		if err != nil {
 			return 0, err
 		}
@@ -578,7 +663,7 @@ func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64
 		return 0, Denied(Delete, "refusing an unscoped DeleteAll; set AllowUnscopedDeleteAll to permit it")
 	}
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, g.whole(true, scoped)...)
+		victims, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly()))...)
 		if err != nil {
 			return 0, err
 		}

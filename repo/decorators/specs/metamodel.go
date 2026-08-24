@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // The typed metamodel is the Go answer to JPA's generated User_ class: one

@@ -23,11 +23,34 @@ type Options struct {
 	// which cannot bake anything into the blueprint — puts it here.
 	RelScopes *RelationScopes
 
+	// Agg carries the summary columns and the grouping for an aggregate read.
+	Agg AggregateSpec
+
+	// After and Before page by cursor rather than by offset. They are opaque
+	// strings a previous page handed back; at most one may be set.
+	After  string
+	Before string
+
+	// Primary forces this read onto the writable datasource even when a replica
+	// is configured. It is what a read that decides a write must set.
+	Primary bool
+
 	Unpaged   bool // ignore Page/Limit and return everything
 	NoSort    bool // drop the default sort and the stable-pagination tiebreaker
 	NoTotal   bool // skip the COUNT query; Total is then the page length
 	ForUpdate bool // SELECT ... FOR UPDATE
 	Distinct  bool
+}
+
+// Cursor reports whether this query pages by cursor, and in which direction.
+func (o *Options) Cursor() (token string, back, ok bool) {
+	switch {
+	case o.After != "":
+		return o.After, false, true
+	case o.Before != "":
+		return o.Before, true, true
+	}
+	return "", false, false
 }
 
 // Option mutates Options. Options are applied left to right.
@@ -85,6 +108,31 @@ func NarrowRelations(rs *RelationScopes) Option {
 	}
 }
 
+// After pages forward from a cursor a previous page returned.
+//
+// It replaces the offset rather than adding to it: "the rows after this one" is
+// a question a concurrent insert cannot change the answer to, which is the whole
+// reason to use it. It also skips the COUNT — a cursor walk has no page number
+// for a total to divide into — so Total is the length of the page and
+// TotalPages is zero. Call Count separately if a client really needs the number.
+func After(cursor string) Option {
+	return func(o *Options) {
+		if cursor != "" {
+			o.After, o.Before, o.NoTotal = cursor, "", true
+		}
+	}
+}
+
+// Before pages backward from a cursor. The page still arrives in the sort's own
+// order; only the boundary comparison is inverted.
+func Before(cursor string) Option {
+	return func(o *Options) {
+		if cursor != "" {
+			o.Before, o.After, o.NoTotal = cursor, "", true
+		}
+	}
+}
+
 // Page selects a 1-based page.
 func Page(n int) Option { return func(o *Options) { o.Page = n } }
 
@@ -115,6 +163,14 @@ func Select(fields ...string) Option {
 // row-level check reading a column the client did not select would compare
 // against a zero value and believe it.
 func SelectAll() Option { return func(o *Options) { o.Fields = nil } }
+
+// PrimaryOnly keeps this read off any replica.
+//
+// A replica is behind, and "behind" is only harmless for a read whose answer is
+// displayed. A read whose answer decides a write — load-then-diff, an
+// authorisation check, a uniqueness probe — must not be served stale, or the
+// decision is made against a row that no longer exists in that shape.
+func PrimaryOnly() Option { return func(o *Options) { o.Primary = true } }
 
 // Unpaged disables pagination for this call.
 func Unpaged() Option { return func(o *Options) { o.Unpaged = true } }
@@ -153,6 +209,7 @@ func With(src *Options) Option {
 		if src.Offset != 0 {
 			o.Offset = src.Offset
 		}
+		o.Primary = o.Primary || src.Primary
 		o.Unpaged = o.Unpaged || src.Unpaged
 		o.NoSort = o.NoSort || src.NoSort
 		o.NoTotal = o.NoTotal || src.NoTotal

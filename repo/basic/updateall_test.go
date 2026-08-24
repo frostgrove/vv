@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
 )
 
 // UpdateAll is Update's filtered partner, and the whole point of it is that

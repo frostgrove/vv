@@ -15,7 +15,7 @@ package basic
 import (
 	"reflect"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // DefaultPageSize is the page size used when a query does not ask for one.
@@ -25,6 +25,8 @@ const DefaultPageSize = 20
 type Setting func(*settings)
 
 type settings struct {
+	softDelete   string
+	replica      crud.Source
 	defaultLimit int
 	maxLimit     int
 	defaultSort  []crud.Order
@@ -78,6 +80,34 @@ func PreloadDepth(n int) Setting { return func(s *settings) { s.preloadDepth = n
 // happen there with RelationScope.
 func Scope(p crud.Predicate) Setting { return func(s *settings) { s.scope = p } }
 
+// SoftDelete turns deletion into a column write: Delete and DeleteAll stamp the
+// named timestamp instead of removing rows, and every read filters the stamped
+// ones out.
+//
+//	var Docs = basic.Define[Doc, int64, DocUpdate]("docs",
+//	    basic.SoftDelete("DeletedAt"))
+//
+// The two halves are one declaration on purpose. Written by hand this is
+// basic.Scope for the reads plus a service layer that overrides two methods for
+// the writes, and the failure when somebody adds the first and forgets the
+// second is silent: the reads hide rows that the deletes are still destroying.
+//
+// It lives here rather than in a decorator because a decorator sits above
+// crud.Core, and Core has no verb for "write this column" — only Update, whose
+// DTO is the one declared at Define time. The stamp is a statement, so it
+// belongs where the statements are built.
+//
+// The field must be nullable, because "not deleted" has to have a value. A
+// crud.Opt[time.Time] or a *time.Time; anything else is refused here rather than
+// at the first delete.
+//
+// What it does not do: a unique index still sees the tombstones. Re-creating a
+// row whose soft-deleted twin holds the same unique key is a conflict, and the
+// answer is a partial index the library cannot write for you.
+func SoftDelete(field string) Setting {
+	return func(s *settings) { s.softDelete = field }
+}
+
 // RelationScope narrows the far side of a relation, wherever this repository
 // reaches it: a preload of that path, a filter that hops through it, a sort
 // that walks it. The predicate is written against the *target* model.
@@ -102,10 +132,11 @@ func RelationScope(path string, p crud.Predicate) Setting {
 // Blueprint is a validated, datasource-independent repository declaration.
 // Bind it to as many sources as you like — the reflection work happens once.
 type Blueprint[M any, ID comparable, U any] struct {
-	meta      *crud.Meta
-	plan      *crud.UpdatePlan
-	set       settings
-	relScopes *crud.RelationScopes
+	meta       *crud.Meta
+	plan       *crud.UpdatePlan
+	set        settings
+	relScopes  *crud.RelationScopes
+	softDelete *crud.Field
 }
 
 // Define declares a repository for model M with primary key ID and update DTO
@@ -151,10 +182,39 @@ func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blu
 	if bp.set.defaultLimit <= 0 {
 		bp.set.defaultLimit = DefaultPageSize
 	}
+	if err := bp.resolveSoftDelete(); err != nil {
+		return nil, err
+	}
 	if err := bp.resolveRelationScopes(); err != nil {
 		return nil, err
 	}
 	return bp, nil
+}
+
+// resolveSoftDelete validates the tombstone column and folds its "not deleted"
+// test into the permanent scope — so declaring the delete behaviour is what
+// declares the read behaviour, and the two cannot be added separately or fall
+// out of step.
+func (bp *Blueprint[M, ID, U]) resolveSoftDelete() error {
+	if bp.set.softDelete == "" {
+		return nil
+	}
+	f := bp.meta.Field(bp.set.softDelete)
+	if f == nil {
+		return &crud.SchemaError{Model: bp.meta.Name, Field: bp.set.softDelete,
+			Reason: "no such field to soft-delete into"}
+	}
+	if !f.Optional && f.Type.Kind() != reflect.Pointer {
+		return &crud.SchemaError{Model: bp.meta.Name, Field: f.Name,
+			Reason: "a soft-delete column has to be nullable, or there is no value that means `not deleted`"}
+	}
+	if f.PK || f.Immutable || f.Generated || f.Version {
+		return &crud.SchemaError{Model: bp.meta.Name, Field: f.Name,
+			Reason: "a soft-delete column has to be writable"}
+	}
+	bp.softDelete = f
+	bp.set.scope = crud.And(bp.set.scope, crud.IsNull(f.Name))
+	return nil
 }
 
 // resolveRelationScopes turns the declarations into the form the SQL writer and

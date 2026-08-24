@@ -353,6 +353,18 @@ follows on its own.
 
 # Part II — how to set it up
 
+## Before you start: adding the module
+
+```bash
+go get github.com/shardit-io/go-rx-crud
+```
+
+One module, one line. The Fiber handler (`.../http/crudfiber`) and the pgx
+adapter (`.../adapter/crudpgx`) are packages inside it, so there is nothing else
+to add and no `replace` to write. Its `../../go.mod` requires Fiber v3 and pgx v5
+whether or not you import them, so if you pin an older Fiber v3, MVS will raise
+it to the one rx-crud asks for.
+
 ## 7. The datasource
 
 Nothing to generate, no feature flags. gorm already holds a `*sql.DB`:
@@ -434,7 +446,7 @@ func TestMemberMappingMatchesGorm(t *testing.T) {
     }
     for _, f := range s.Fields {
         if stmt.Schema.LookUpField(f.Column) == nil {
-            t.Errorf("rx-crud maps %q, gorm has no such column", f.Column)
+            t.Errorf("github.com/shardit-io/go-rx-crud maps %q, gorm has no such column", f.Column)
         }
     }
     if Members.Meta().Table != stmt.Schema.Table {
@@ -499,7 +511,7 @@ The one type rx-crud needs beyond your model is the partial-update DTO. You do
 not write it:
 
 ```go
-//go:generate go run rx-crud/cmd/rxcrud -dir ../models -types Member,Team \
+//go:generate go run github.com/shardit-io/go-rx-crud/cmd/rxcrud -dir ../models -types Member,Team \
 //    -readonly CreatedAt,UpdatedAt,DeletedAt -import myapp/models -into .
 package store
 ```
@@ -713,7 +725,7 @@ for them.
 
 ## 15. Testing without a database
 
-`crud/crudtest` is an in-memory datasource that records the SQL a repository
+`../../crud/crudtest` is an in-memory datasource that records the SQL a repository
 produces and replays canned rows:
 
 ```go
@@ -770,15 +782,15 @@ issues a full `UPDATE` of every field.
 
 ## Reference
 
-- [`README.md`](../README.md) — the full library reference
-- [`docs/ent.md`](ent.md) — the same guide for ent
-- [`example/blog`](../example/blog) — a worked codegen example
-- [`test/integration/gorm_model_test.go`](../test/integration/gorm_model_test.go) —
+- [`../../README.md`](../../README.md) — the full library reference
+- [`ent.md`](ent.md) — the same guide for ent
+- [`../../example/blog`](../../example/blog) — a worked codegen example
+- [`../../test/integration/gorm_model_test.go`](../../test/integration/gorm_model_test.go) —
   every claim on this page against a live PostgreSQL: a gorm struct as a model,
   `gorm.Model` flattening, associations, soft deletes staying invisible, a shared
   gorm transaction
-- [`test/integration/usecase_test.go`](../test/integration/usecase_test.go) —
+- [`../../test/integration/usecase_test.go`](../../test/integration/usecase_test.go) —
   the DSL-inside-a-transaction pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction),
   executed, including a rollback that takes both halves
-- [`test/integration/driver_gorm_test.go`](../test/integration/driver_gorm_test.go) —
+- [`../../test/integration/driver_gorm_test.go`](../../test/integration/driver_gorm_test.go) —
   the whole conformance suite over gorm's pool, on PostgreSQL and MySQL

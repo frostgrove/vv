@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/query"
 )
 
 func articleRow(id, authorID int64, title string) []any {

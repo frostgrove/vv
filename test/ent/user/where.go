@@ -3,10 +3,10 @@
 package user
 
 import (
-	"rx-crud/test/ent/predicate"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
 )
 
 // ID filters vertices based on their ID field.

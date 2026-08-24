@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Options are applied left to right, and each one only touches its own field.

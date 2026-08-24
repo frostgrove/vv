@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Error is a rejected query document. Everything in it is safe to hand back to
@@ -209,6 +209,14 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 	}
 	if r.Offset > 0 {
 		opts = append(opts, crud.Offset(r.Offset))
+	}
+	// A cursor is checked against the sort by the repository, which is the only
+	// place the sort that actually runs is known.
+	if r.After != "" {
+		opts = append(opts, crud.After(r.After))
+	}
+	if r.Before != "" {
+		opts = append(opts, crud.Before(r.Before))
 	}
 	if r.Unpaged {
 		opts = append(opts, crud.Unpaged())

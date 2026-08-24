@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
 )
 
 // Note carries the optimistic lock. Update is load-then-write, so between the
@@ -180,5 +180,35 @@ func TestAModelWithoutAVersionIsUntouched(t *testing.T) {
 	}
 	if n := len(rec.Statements()); n != 2 {
 		t.Fatalf("%d statements: an unversioned miss must not cost an extra existence check", n)
+	}
+}
+
+// The other half of the loop the generator closes: with the version column left
+// out, the declaration the generator produces is one Define accepts. Without
+// both halves each side can look right on its own while the pair panics at
+// start-up, which is exactly what shipped.
+func TestTheDeclarationAGeneratorProducesForAVersionedModelIsAccepted(t *testing.T) {
+	type Doc struct {
+		ID      int64  `db:"id,pk,auto"`
+		Title   string `db:"title"`
+		Version int    `db:"version,version"`
+	}
+	// Exactly what cmd/rxcrud emits now: every writable column, and not the lock.
+	type DocUpdate struct {
+		Title *string
+	}
+
+	if _, err := basic.TryDefine[Doc, int64, DocUpdate]("docs"); err != nil {
+		t.Fatalf("the generated shape was refused: %v", err)
+	}
+
+	// And the control: name the lock and it is refused, which is why the
+	// generator has to leave it out rather than merely happen to.
+	type WithLock struct {
+		Title   *string
+		Version *int
+	}
+	if _, err := basic.TryDefine[Doc, int64, WithLock]("docs"); err == nil {
+		t.Fatal("a DTO naming the version column was accepted — the generator's omission proves nothing")
 	}
 }

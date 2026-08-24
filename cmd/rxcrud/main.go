@@ -1,7 +1,7 @@
 // Command rxcrud generates the two things you would otherwise copy out of your
 // model by hand: the partial-update DTO and the typed metamodel.
 //
-//	//go:generate go run rx-crud/cmd/rxcrud
+//	//go:generate go run github.com/shardit-io/go-rx-crud/cmd/rxcrud
 //
 // Point it at a package; it reads every struct that carries `db` or `rel` tags
 // and writes rxcrud_gen.go next to them:
@@ -32,7 +32,7 @@
 // is what makes ent's generated entities work as-is. Write the result into your
 // own package rather than into ent's, where the names would collide:
 //
-//	go run rx-crud/cmd/rxcrud -dir ./ent -types User,Article -skip CreatedAt \
+//	go run github.com/shardit-io/go-rx-crud/cmd/rxcrud -dir ./ent -types User,Article -skip CreatedAt \
 //	    -import myapp/ent -into ./internal/store
 package main
 
@@ -64,8 +64,8 @@ func main() {
 		depth    = flag.Int("depth", 2, "how far to expand relation paths into the metamodel")
 		noDTO    = flag.Bool("no-dto", false, "skip update DTOs")
 		noMeta   = flag.Bool("no-meta", false, "skip metamodels")
-		specsPkg = flag.String("specs", "rx-crud/repo/decorators/specs", "import path of the specs package")
-		crudPkg  = flag.String("crud", "rx-crud/crud", "import path of the crud package")
+		specsPkg = flag.String("specs", "github.com/shardit-io/go-rx-crud/repo/decorators/specs", "import path of the specs package")
+		crudPkg  = flag.String("crud", "github.com/shardit-io/go-rx-crud/crud", "import path of the crud package")
 	)
 	flag.Parse()
 
@@ -113,6 +113,10 @@ type field struct {
 	Auto      bool
 	Immutable bool
 	Generated bool
+	// Version is the optimistic lock. The repository advances it, so it is not
+	// a field a caller may set — and a DTO that names it is refused at Define
+	// time, which is why the generator has to know about it too.
+	Version bool
 }
 
 type model struct {
@@ -297,6 +301,8 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 					fl.Immutable = true
 				case "generated", "computed":
 					fl.Generated = true
+				case "version", "lock":
+					fl.Version = true
 				}
 			}
 			if fl.Name == "ID" && !fl.PK && db != "-" {

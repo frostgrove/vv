@@ -1,0 +1,191 @@
+# FL-009 — Transactions: joining, opening, and which database
+
+**Entry point:** `crud/executor.go:InTx` and `crud/executor.go:ExecutorFor`
+**Implements:** [[UC-005]] [[UC-012]] · **Governed by:** [[D-009]] [[D-016]] [[D-017]]
+
+rx-crud never owns a transaction it did not open, and it will not open one if
+somebody else already did. The whole mechanism is a linked list of bindings in
+the context and one question asked against it: *is there an executor here that
+my database would accept?*
+
+## The path
+
+1. **`repository.exec`** — `repo/basic/repository.go:85`
+   Every statement in the repository starts here.
+   ```go
+   if e, ok := crud.ExecutorFor(ctx, r.src); ok { return e }
+   return r.src
+   ```
+   A context carrying somebody else's database is not this repository's business
+   and is left alone.
+
+2. **The binding stack** — `crud/executor.go:88`
+   ```go
+   type binding struct { ds any; e Executor; prev *binding }
+   ```
+   `push` (`executor.go:94`) links a new binding in front of whatever was there.
+   They chain rather than replace, so an inner scoped binding cannot hide an
+   outer unscoped one from a different repository.
+
+3. **`WithExecutor`** — `crud/executor.go:108`
+   Pushes with `ds == nil`: **every** repository runs on it, whatever datasource
+   it was bound to. Deliberately unconditional — the executor an ent or gorm
+   transaction hands over has no relationship to the source a repository holds,
+   so no check could pass. This is the single interop point of the library.
+
+4. **`WithExecutorFor`** — `crud/executor.go:127`
+   Pushes with `ds = keyOf(src)` (`executor.go:171`): the raw handle if the
+   value is not `Identified`, otherwise its `DataSource()`. Both spellings — the
+   `*sql.DB` and any `crudsql.DB` over it — land on the same key, because
+   `crudsql.Executor.DataSource` returns the wrapped `Queryer`
+   (`adapter/crudsql/crudsql.go:48`) and `crudpgx.Executor.DataSource` the pgx
+   handle (`adapter/crudpgx/crudpgx.go:54`).
+
+5. **`ExecutorFor`** — `crud/executor.go:145`
+   Walks the chain innermost-first. The first *unscoped* binding it meets is
+   remembered as the fallback; any binding whose `ds` matches `want` returns
+   immediately. So **a matching scoped binding wins over an unscoped one
+   wherever it sits in the stack**, and a repository with no match at all still
+   joins an unscoped binding. `sameDataSource` (`executor.go:194`) compares by
+   type and value and never panics on an identity that is not comparable.
+
+6. **`InTx`** — `crud/executor.go:220`
+   ```go
+   if _, ok := ExecutorFor(ctx, src); ok { return fn(ctx) }   // join, do not nest
+   b, ok := src.(Beginner); if !ok { return ErrNoTxSupport }
+   tx, _ := b.Begin(ctx)
+   // panic  -> Rollback, re-panic
+   // error  -> Rollback (errors.Join if the rollback also fails)
+   // else   -> Commit
+   fn(push(ctx, ownScope(src), tx))
+   ```
+   Joining means the outer owner keeps control of commit and rollback — which is
+   what makes an rx-crud call inside somebody else's transaction safe.
+
+7. **`ownScope`** — `crud/executor.go:184`
+   For a transaction rx-crud opens itself, nobody named a database. An
+   `Identified` source scopes the binding to itself, so the transaction reaches
+   every repository over that database and no others. A source that cannot say
+   which database it is binds **unscoped** — the old, unconditional join —
+   because scoping it to itself would quietly stop a sibling repository from
+   joining a transaction it used to join, and a write landing outside the
+   transaction is no better than one landing in the wrong database.
+
+8. **`repository.Tx`** — `repo/basic/repository.go:104` — `crud.InTx(ctx,
+   r.src, fn)`. `crud.Core.Tx` is on the interface, so a decorator can wrap it.
+
+## Savepoints
+
+- **`crudsql`** — `adapter/crudsql/crudsql.go:145`
+  `database/sql` has no nested transactions, so `Tx.Begin` issues
+  `SAVEPOINT rxcrud_sp_<n>` with an atomic counter, and returns a `savepoint`
+  (`crudsql.go:153`) whose `Commit` is `RELEASE SAVEPOINT` and whose `Rollback`
+  is `ROLLBACK TO SAVEPOINT`. `savepoint.Begin` delegates back to the parent
+  `Tx`, so the counter is shared and names never collide.
+- **`crudpgx`** — `adapter/crudpgx/crudpgx.go:94`
+  `Begin` type-asserts the handle to pgx's own `Begin`; a nested one is already
+  a savepoint, courtesy of pgx.
+- **`SQLite`** — no row locks (`crud/dialect.go:130`), so `crud.ForUpdate()`
+  renders nothing and the serialisation a caller wanted comes from the
+  transaction instead.
+
+## The ORM-owned-transaction pattern
+
+The ORM opens and owns the transaction; rx-crud is handed a handle and joins.
+
+```go
+// gorm
+gdb.Transaction(func(tx *gorm.DB) error {
+    ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+    return users.Save(ctx, &u)          // inside the gorm transaction
+})
+
+// ent (needs --feature sql/execquery)
+tx, _ := client.Tx(ctx)
+ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+
+// pgx / sqlc-on-pgx
+tx, _ := pool.Begin(ctx)
+ctx = crud.WithExecutor(ctx, crudpgx.From(tx))
+```
+
+The wrapper is a plain `crud.Executor`, not a `Beginner`, so `InTx` on it can
+only *join* — `ErrNoTxSupport` if there is nothing to join. That is the correct
+answer: rx-crud must not open a transaction on a handle whose lifetime somebody
+else owns. When a rollback happens on the ORM's side, the rx-crud writes go with
+it, because they were the same transaction all along.
+
+With more than one database in the process, name the one you mean:
+```go
+ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
+users.Save(ctx, &u)    // bound to mainDB      — runs in tx
+events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
+```
+With a plain `WithExecutor` that second call goes to `mainDB`, inside the
+transaction, and reports success.
+
+## Where the decisions bite
+
+- **Join, never nest.** `InTx` checks before it begins. A nested `BEGIN` would
+  either fail or silently commit early depending on the driver.
+- **`WithExecutor` is unconditional on purpose.** It is the interop seam; making
+  it check anything would break every ORM handoff, none of which can identify
+  themselves as the repository's source.
+- **`ownScope` returns `nil` for an unidentified source.** Not "scope it to
+  itself". The failure mode of over-scoping is a write silently landing outside
+  the transaction.
+- **Only `Exec` and `Query` cross the boundary** (`crud/executor.go:36`). That is
+  the reason any foreign transaction can be pushed into a context at all —
+  scanning stays with the mapper and dialect stays with the repository.
+- **`ForUpdate` is only requested inside a transaction.** `repository.Update`
+  asks `ExecutorFor` before adding the lock ([[FL-002]]); outside one the lock
+  would be taken and dropped before the write.
+
+## Failure modes
+
+| What goes wrong | Where it is caught | What the caller sees |
+|---|---|---|
+| `InTx` on a handle that cannot begin | `InTx` (`executor.go:225`) | `ErrNoTxSupport` → 500 |
+| `fn` returns an error | `InTx` (`executor.go:239`) | the error; rollback failure joined onto it |
+| `fn` panics | `InTx` (`executor.go:233`) | rollback, then the panic is re-raised |
+| plain `WithExecutor` with two databases in play | nothing catches it — by design | the write lands in the wrong database; use `WithExecutorFor` |
+| a source that is not `Identified` under `WithExecutorFor` | `keyOf` takes the value at face value | matched only if the caller passes the same value |
+| uncomparable datasource identity | `sameDataSource` (`executor.go:194`) | no match, no panic |
+| a finished transaction still in the context | the driver | the driver's error, surfaced as-is |
+
+## Files
+
+| File | Role |
+|---|---|
+| `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, the binding stack, `WithExecutor(For)`, `ExecutorFor`, `InTx`, `ownScope` |
+| `repo/basic/repository.go` | `exec` — every statement's executor choice; `Tx` |
+| `adapter/crudsql/crudsql.go` | `From`, `Open`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource` |
+| `adapter/crudpgx/crudpgx.go` | `From`, `Open`, `Begin`, `DataSource`, `CopyFrom` |
+| `crud/dialect.go` | `LockClause` per dialect |
+| `crud/errors.go` | `ErrNoTxSupport` |
+
+## Tests that walk this flow
+
+- `TestAnUnscopedExecutorReachesEverySource` — `crud/executor_test.go`.
+- `TestAScopedExecutorReachesOnlyItsOwnDatabase` — `crud/executor_test.go`.
+- `TestTheHandleAndASourceOverItNameTheSameDatabase` — `crud/executor_test.go` — `keyOf`.
+- `TestAScopedBindingDoesNotHideTheUnscopedOneUnderIt` — `crud/executor_test.go` — the chain walk.
+- `TestAnUncomparableDataSourceDoesNotPanic` — `crud/executor_test.go`.
+- `TestInTxScopesTheTransactionItOpens` — `crud/executor_test.go` — `ownScope`.
+- `TestInTxLeavesAnUnidentifiedSourceUnscoped` — `crud/executor_test.go` — the other half.
+- `TestInTxJoinsRatherThanNests` — `crud/executor_test.go`.
+- `TestInTxDoesNotJoinAnotherDatabasesTransaction` — `crud/executor_test.go`.
+- `TestInTxWithoutABeginnerIsRefused` — `crud/executor_test.go`.
+- `TestTransactionJoinsAnAmbientExecutor` / `TestTransactionRollsBackOnError` — `repo/basic/repository_test.go`.
+- `TestGormRollbackTakesRxCrudWithIt` — `test/integration/driver_gorm_test.go` — the ORM-owned pattern.
+- `TestAnEntTransactionJoinsButCannotOpenASavepoint` — `test/integration/driver_ent_test.go`.
+- `TestSavepointsRollBackAndReleaseIndependently` / `TestASavepointInsideASavepointUnwindsOneLevelAtATime` — `test/integration/edge_test.go`.
+- `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` — `test/integration/driver_sqlite_test.go`.
+- `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` — `test/integration/multidb_test.go`.
+- `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` — `test/integration/multidb_test.go` — the documented hazard, executed.
+- `TestATransactionThatFailsHalfwayLeavesNothingBehind` — `test/integration/edge_test.go`.
+- `TestAFinishedTransactionInTheContextIsNotIgnored` — `test/integration/edge_test.go`.
+
+## See also
+
+[[FL-002]] [[FL-003]] [[FL-006]] [[FL-011]]

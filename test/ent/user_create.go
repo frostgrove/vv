@@ -6,11 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"rx-crud/test/ent/user"
 	"time"
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // UserCreate is the builder for creating a User entity.

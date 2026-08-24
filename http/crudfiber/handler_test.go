@@ -11,7 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Every route the package documents, with the verb it answers, the status it

@@ -4,12 +4,12 @@ package ent
 
 import (
 	"context"
-	"rx-crud/test/ent/predicate"
-	"rx-crud/test/ent/user"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // UserDelete is the builder for deleting a User entity.

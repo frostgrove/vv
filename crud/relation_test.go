@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // ---------------------------------------------------------------------------

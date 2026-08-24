@@ -9,12 +9,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"rx-crud/adapter/crudpgx"
-	"rx-crud/adapter/crudsql"
-	"rx-crud/crud"
-	"rx-crud/test/sqlcgen"
-	"rx-crud/test/sqlcmysql"
-	"rx-crud/test/sqlcpgx"
+	"github.com/shardit-io/go-rx-crud/adapter/crudpgx"
+	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/test/sqlcgen"
+	"github.com/shardit-io/go-rx-crud/test/sqlcmysql"
+	"github.com/shardit-io/go-rx-crud/test/sqlcpgx"
 )
 
 // sqlc generates hand-written queries; rx-crud does the boring CRUD. The point
@@ -50,7 +50,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Name != "BySqlc" {
-		t.Fatalf("rx-crud read back %+v", got)
+		t.Fatalf("github.com/shardit-io/go-rx-crud read back %+v", got)
 	}
 	if age, ok := got.Age.Get(); !ok || age != 40 {
 		t.Fatalf("age = %v", got.Age)
@@ -112,7 +112,7 @@ func TestSqlcPgx(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Name != "BySqlc" {
-		t.Fatalf("rx-crud read back %+v", got)
+		t.Fatalf("github.com/shardit-io/go-rx-crud read back %+v", got)
 	}
 
 	u := User{TenantID: 2, Email: "rxcrud-pgx@x.io", Name: "ByRxCrud", Age: crud.Set(7)}
@@ -165,7 +165,7 @@ func TestSqlcMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Name != "BySqlc" {
-		t.Fatalf("rx-crud read back %+v", got)
+		t.Fatalf("github.com/shardit-io/go-rx-crud read back %+v", got)
 	}
 
 	u := User{TenantID: 3, Email: "rxcrud-my@x.io", Name: "ByRxCrud", Active: true}

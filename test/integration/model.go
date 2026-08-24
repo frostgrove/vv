@@ -8,9 +8,9 @@ package integration
 import (
 	"time"
 
-	"rx-crud/crud"
-	"rx-crud/repo/basic"
-	"rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 )
 
 // User is the model under test. It exercises every mapping feature at once: a

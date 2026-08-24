@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"rx-crud/test/ent/predicate"
-	"rx-crud/test/ent/user"
 	"sync"
 	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 const (

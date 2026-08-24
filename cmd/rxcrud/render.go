@@ -103,7 +103,10 @@ func (g *generator) renderDTO(m *model) (string, used) {
 	fmt.Fprintf(&b, "type %sUpdate struct {\n", m.Name)
 
 	for _, f := range m.Fields {
-		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable {
+		// The version column is left out for the same reason the primary key is:
+		// the repository owns it. A DTO that names it is refused at Define time,
+		// so emitting it would hand the caller a package that panics at start-up.
+		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.Version {
 			continue
 		}
 		typ := dtoType(f.Type)

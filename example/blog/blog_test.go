@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/example/blog"
-	"rx-crud/repo/basic"
-	"rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/example/blog"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 )
 
 var Articles = basic.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
@@ -145,7 +145,7 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", "rx-crud/cmd/rxcrud", "-dir", dir)
+	cmd := exec.Command("go", "run", "github.com/shardit-io/go-rx-crud/cmd/rxcrud", "-dir", dir)
 	cmd.Dir = mustRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)

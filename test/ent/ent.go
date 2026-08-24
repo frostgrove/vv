@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"rx-crud/test/ent/user"
 	"sync"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // ent aliases to avoid import conflicts in user's code.

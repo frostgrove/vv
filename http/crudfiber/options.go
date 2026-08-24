@@ -7,8 +7,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"rx-crud/crud"
-	"rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/query"
 )
 
 type options[M any, ID comparable, U any] struct {

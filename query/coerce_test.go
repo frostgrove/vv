@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/query"
-	"rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
 )
 
 // code is a column type that parses itself. Coercion has to let it, or a uuid,

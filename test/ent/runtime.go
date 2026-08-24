@@ -3,9 +3,10 @@
 package ent
 
 import (
-	"rx-crud/test/ent/schema"
-	"rx-crud/test/ent/user"
 	"time"
+
+	"github.com/shardit-io/go-rx-crud/test/ent/schema"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // The init function reads all schema descriptors with runtime code

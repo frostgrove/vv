@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
-	"rx-crud/crud/crudtest"
-	"rx-crud/repo/basic"
-	"rx-crud/repo/decorators/security"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/security"
 )
 
 // UpdateAll writes rows nobody named, which makes it the write that most needs

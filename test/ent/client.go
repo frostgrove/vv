@@ -9,13 +9,12 @@ import (
 	"log"
 	"reflect"
 
-	"rx-crud/test/ent/migrate"
-
-	"rx-crud/test/ent/user"
+	"github.com/shardit-io/go-rx-crud/test/ent/migrate"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 
 	stdsql "database/sql"
 )

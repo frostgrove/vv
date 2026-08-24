@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // schemaErrOf is the table-friendly spelling of SchemaOf: it throws the schema

@@ -22,6 +22,7 @@
 package query
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -43,9 +44,60 @@ type Request struct {
 	Search       string  `json:"search,omitempty"`
 	SearchFields Strings `json:"searchFields,omitempty"`
 
+	// After and Before page by cursor: an opaque string a previous page handed
+	// back. They replace page/offset rather than adding to them.
+	After  string `json:"after,omitempty"`
+	Before string `json:"before,omitempty"`
+
 	Unpaged   bool `json:"unpaged,omitempty"`
 	SkipTotal bool `json:"skipTotal,omitempty"`
 	Distinct  bool `json:"distinct,omitempty"`
+}
+
+// UnmarshalJSON refuses a key this document does not define.
+//
+// Every field reference *inside* the document is resolved against the model and
+// an unknown one is a 400 — but that check starts one level too deep. A client
+// that writes "filtr" instead of "filter" produces a document with no filter at
+// all, and the endpoint answers 200 with every row in the table. That is the one
+// failure a client cannot see, and it is the failure the strictness inside the
+// document exists to prevent, so the document's own keys are held to it too.
+func (r *Request) UnmarshalJSON(b []byte) error {
+	// A distinct type so the decoder does not call this method again. The field
+	// types keep their own unmarshallers.
+	type document Request
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+
+	var doc document
+	if err := dec.Decode(&doc); err != nil {
+		if key, ok := unknownFieldOf(err); ok {
+			return errf(key, "no such option; the document accepts %s", strings.Join(requestKeys, ", "))
+		}
+		return err
+	}
+	*r = Request(doc)
+	return nil
+}
+
+// unknownFieldOf digs the offending key out of encoding/json's message. The
+// package gives no typed error for it, and the message is stable enough to be
+// worth a better diagnostic than passing it through raw.
+func unknownFieldOf(err error) (string, bool) {
+	const prefix = "json: unknown field "
+	msg := err.Error()
+	i := strings.Index(msg, prefix)
+	if i < 0 {
+		return "", false
+	}
+	return strings.Trim(msg[i+len(prefix):], `"`), true
+}
+
+// requestKeys is what the error message offers back. Kept next to the struct so
+// the two cannot drift; the test walks the struct tags to prove they agree.
+var requestKeys = []string{
+	"page", "limit", "offset", "sort", "select", "preload", "filter", "terms",
+	"search", "searchFields", "after", "before", "unpaged", "skipTotal", "distinct",
 }
 
 // Strings accepts either a JSON array or a single comma-separated string, so

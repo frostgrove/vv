@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // done asserts the whole statement at once: text, binds and the resolution

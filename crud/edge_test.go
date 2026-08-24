@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // ---------------------------------------------------------------------------

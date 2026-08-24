@@ -10,8 +10,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"rx-crud/crud"
-	"rx-crud/query"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/query"
 )
 
 // failed decodes the error envelope every failing request answers with. A body

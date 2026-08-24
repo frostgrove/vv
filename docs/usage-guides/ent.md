@@ -34,7 +34,7 @@ about your existing ent code changes.
 11. [Mount it](#11-mount-it)
 12. [Your business rules: the service layer](#12-your-business-rules-the-service-layer)
 13. [Multi-tenancy and authorization](#13-multi-tenancy-and-authorization)
-14. [Relations: edges vs rx-crud relations](#14-relations-edges-vs-rx-crud-relations)
+14. [Relations: edges vs rx-crud relations](#14-relations-edges-vs-github.com/shardit-io/go-rx-crud-relations)
 15. [Testing without a database](#15-testing-without-a-database)
 16. [Gotchas](#16-gotchas)
 
@@ -388,28 +388,28 @@ follows on its own.
 
 ## Before you start: adding the module
 
-rx-crud is a multi-module repository, and the module path is `rx-crud` — not a
-URL. `go get` cannot fetch it. Until it is published under a real path, a
-consumer needs both modules named explicitly:
-
+```bash
+go get github.com/shardit-io/go-rx-crud
 ```
-require (
-    rx-crud                  v0.0.0
-    rx-crud/http/crudfiber   v0.0.0
+
+One module, one line. The Fiber handler (`.../http/crudfiber`) and the pgx
+adapter (`.../adapter/crudpgx`) are packages inside it, so there is nothing else
+to add and no `replace` to write.
+
+```go
+import (
+    "github.com/shardit-io/go-rx-crud/crud"
+    "github.com/shardit-io/go-rx-crud/repo/basic"
+    "github.com/shardit-io/go-rx-crud/adapter/crudsql"
+    "github.com/shardit-io/go-rx-crud/http/crudfiber"
 )
-
-replace rx-crud                => ../rx-crud
-replace rx-crud/http/crudfiber => ../rx-crud/http/crudfiber
 ```
 
-Two things to know before you commit that. A relative `replace` resolves against
-your `go.mod`, so it breaks the moment the build happens somewhere the sibling
-directory does not exist — a Docker build with only your own repo copied in is
-the usual way to find that out. And `adapter/crudpgx` is a third module; you only
-need it if you talk to pgx directly rather than through `database/sql`.
-
-For anything past a local experiment, rename the module to a fetchable path
-(`github.com/you/rx-crud`) and drop the `replace` lines.
+The one thing worth knowing about the single-module layout: its `../../go.mod` requires
+Fiber v3 and pgx v5 whether or not you import them. Module graph pruning keeps
+them out of *your* `../../go.mod` when you do not, but they still take part in version
+selection — pin an older Fiber v3 and MVS will raise it to the one rx-crud asks
+for.
 
 ## 7. Enable `sql/execquery`
 
@@ -582,7 +582,7 @@ func TestUserMappingMatchesEnt(t *testing.T) {
     slices.Sort(got)
     want := slices.Sorted(slices.Values(entuser.Columns))
     if !slices.Equal(got, want) {
-        t.Fatalf("rx-crud maps %v, ent has %v", got, want)
+        t.Fatalf("github.com/shardit-io/go-rx-crud maps %v, ent has %v", got, want)
     }
     if Users.Meta().Table != entuser.Table {
         t.Fatalf("table = %q, ent says %q", Users.Meta().Table, entuser.Table)
@@ -599,7 +599,7 @@ The one type rx-crud needs beyond your entity is the partial-update DTO. You do
 not write it:
 
 ```go
-//go:generate go run rx-crud/cmd/rxcrud -dir ../ent -types User,Article \
+//go:generate go run github.com/shardit-io/go-rx-crud/cmd/rxcrud -dir ../ent -types User,Article \
 //    -readonly CreatedAt -import myapp/ent -into .
 package store
 ```
@@ -726,7 +726,7 @@ also takes `Authorize(ctx, action)` and `Inspect(ctx, action, *M)`, and
 model, so it narrows the query that reads that model and nothing else: a preload
 is a second statement against a second table, and a nested filter opens a
 correlated subquery with its own `FROM`. If a tenanted model exposes relations —
-see [section 14](#14-relations-edges-vs-rx-crud-relations) — say what happens at
+see [section 14](#14-relations-edges-vs-github.com/shardit-io/go-rx-crud-relations) — say what happens at
 each of them, or `?preload=comments` reads that table raw.
 
 There are two places to say it, and which one is right depends on whose fact it
@@ -824,7 +824,7 @@ forging a timestamp.
 
 ## 15. Testing without a database
 
-`crud/crudtest` is an in-memory datasource that records the SQL a repository
+`../../crud/crudtest` is an in-memory datasource that records the SQL a repository
 produces and replays canned rows:
 
 ```go
@@ -883,17 +883,17 @@ Columns tagged `immutable` survive the conflict.
 
 ## Reference
 
-- [`README.md`](../README.md) — the full library reference
-- [`docs/gorm.md`](gorm.md) — the same guide for gorm
-- [`example/blog`](../example/blog) — a worked codegen example
-- [`test/integration/ent_model_test.go`](../test/integration/ent_model_test.go) —
+- [`../../README.md`](../../README.md) — the full library reference
+- [`gorm.md`](gorm.md) — the same guide for gorm
+- [`../../example/blog`](../../example/blog) — a worked codegen example
+- [`../../test/integration/ent_model_test.go`](../../test/integration/ent_model_test.go) —
   every claim on this page against a live PostgreSQL: ent's struct as a model,
   reads, writes, the generated metamodel, a shared ent transaction
-- [`test/integration/usecase_test.go`](../test/integration/usecase_test.go) —
+- [`../../test/integration/usecase_test.go`](../../test/integration/usecase_test.go) —
   the DSL-inside-a-transaction pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction), executed
-- [`test/integration/driver_ent_test.go`](../test/integration/driver_ent_test.go) —
+- [`../../test/integration/driver_ent_test.go`](../../test/integration/driver_ent_test.go) —
   the whole conformance suite through ent's driver, on PostgreSQL and MySQL
-- [`test/integration/uuid_test.go`](../test/integration/uuid_test.go) — the
+- [`../../test/integration/uuid_test.go`](../../test/integration/uuid_test.go) — the
   UUID-keyed shape from [§9](#if-your-keys-are-uuids): the key through every
   method, preloads in both directions, the DSL coercing one off the wire, and
   the Go-side-default refusal

@@ -6,13 +6,13 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"rx-crud/test/ent/predicate"
-	"rx-crud/test/ent/user"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // UserQuery is the builder for querying User entities.

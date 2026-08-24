@@ -3,7 +3,7 @@ package specs
 import (
 	"context"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // Repo is a repository with the JpaSpecificationExecutor surface bolted on. It

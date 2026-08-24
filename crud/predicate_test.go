@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // mustRender renders a predicate on its own, with no surrounding statement, so
@@ -314,5 +314,67 @@ func TestSortOnAnUnknownFieldIsReported(t *testing.T) {
 		if !errors.As(err, &unknown) {
 			t.Fatalf("sorting by %s: err = %v, want an UnknownFieldError", path, err)
 		}
+	}
+}
+
+// A narrowing declared by path has to reach the hop it names, however deep.
+//
+// It did not. The path was extended after the recursion rather than before it,
+// so the second hop looked itself up as "Manager" instead of "Manager.Manager" —
+// a narrowing declared for the inner hop silently did not apply, and one
+// declared for the outer hop applied twice. Model-declared narrowings still
+// worked, which is what kept this out of sight: basic.Scope installs one of
+// those, so a self-relation stayed covered while a path declaration did not.
+func TestARelationScopeReachesTheHopItNames(t *testing.T) {
+	m := metaOf[Person](t, "persons")
+
+	for _, tc := range []struct {
+		name   string
+		scopes *crud.RelationScopes
+		want   string // the narrowing, and which subquery it must land in
+	}{
+		{
+			"the inner hop",
+			(*crud.RelationScopes)(nil).AtPath("Manager.Manager", crud.Eq("Name", "root")),
+			`rx2."name" = $1 LIMIT 1)`,
+		},
+		{
+			"the outer hop",
+			(*crud.RelationScopes)(nil).AtPath("Manager", crud.Eq("Name", "boss")),
+			`rx1."name" = $1 LIMIT 1)`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sql, args, err := crud.NewSQL(crud.Postgres{}, m).
+				RelationScopes(tc.scopes).
+				OrderBy([]crud.Order{crud.Asc("Manager.Manager.Name")}).
+				Done()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(sql, tc.want) {
+				t.Fatalf("the narrowing did not land on the hop that declared it:\n%s\nwant to contain: %s",
+					sql, tc.want)
+			}
+			if len(args) != 1 {
+				t.Fatalf("args = %v, want the narrowing's one bind", args)
+			}
+		})
+	}
+}
+
+// The control: with nothing declared, neither subquery carries a narrowing — so
+// the assertions above are measuring the declaration and not something the
+// writer does anyway.
+func TestATwoHopSortCarriesNoNarrowingWhenNoneIsDeclared(t *testing.T) {
+	m := metaOf[Person](t, "persons")
+	sql, args, err := crud.NewSQL(crud.Postgres{}, m).
+		OrderBy([]crud.Order{crud.Asc("Manager.Manager.Name")}).
+		Done()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sql, "$1") || len(args) != 0 {
+		t.Fatalf("an undeclared narrowing appeared:\n%s\nargs = %v", sql, args)
 	}
 }

@@ -9,10 +9,10 @@ import (
 	"errors"
 	"time"
 
-	"rx-crud/crud"
-	"rx-crud/repo/basic"
-	"rx-crud/repo/decorators/security"
-	"rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/security"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 )
 
 // Article is a typed view of the articles table.

@@ -32,6 +32,15 @@ type Core[M any, ID comparable] interface {
 	// in one statement, and reports how many rows the database says it touched.
 	// It is Update's filtered partner, the way DeleteAll is Delete's.
 	UpdateAll(ctx context.Context, dto any, opts ...Option) (int64, error)
+
+	// Aggregate runs a grouped summary under the same narrowing as every other
+	// read. It is on the seam rather than beside it so a decorator cannot be
+	// bypassed by asking for a total instead of for rows.
+	Aggregate(ctx context.Context, opts ...Option) ([]AggregateRow, error)
+
+	// SaveAll writes many rows in one statement. It is on the seam for the same
+	// reason Aggregate is: a decorator that checks writes has to see this one.
+	SaveAll(ctx context.Context, models []*M) error
 	// Delete removes rows by id and reports how many went away.
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	// DeleteAll removes everything matching the options.

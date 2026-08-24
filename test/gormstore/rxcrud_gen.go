@@ -3,9 +3,9 @@
 package gormstore
 
 import (
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 	"gorm.io/gorm"
-	"rx-crud/crud"
-	"rx-crud/repo/decorators/specs"
 	"time"
 )
 

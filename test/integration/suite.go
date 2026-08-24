@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"rx-crud/crud"
-	"rx-crud/repo/decorators/security"
-	"rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/security"
+	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 )
 
 // Target is one driver bound to one database.

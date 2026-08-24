@@ -2,7 +2,7 @@
 
 package integration
 
-import "rx-crud/repo/basic"
+import "github.com/shardit-io/go-rx-crud/repo/basic"
 
 // The provider matrix needs one relation it can grow past a single preload
 // batch. It gets its own pair of tables rather than the blog ones because every

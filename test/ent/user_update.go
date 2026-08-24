@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"rx-crud/test/ent/predicate"
-	"rx-crud/test/ent/user"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
+	"github.com/shardit-io/go-rx-crud/test/ent/user"
 )
 
 // UserUpdate is the builder for updating User entities.

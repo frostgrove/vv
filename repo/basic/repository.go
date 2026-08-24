@@ -2,17 +2,21 @@ package basic
 
 import (
 	"context"
+	"slices"
 	"strings"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // repository is the SQL implementation of crud.Core.
 type repository[M any, ID comparable, U any] struct {
-	src  crud.Source
-	bp   *Blueprint[M, ID, U]
-	meta *crud.Meta
-	d    crud.Dialect
+	src crud.Source
+	// replica serves the reads that may be served stale; nil when the source
+	// offered none.
+	replica crud.Source
+	bp      *Blueprint[M, ID, U]
+	meta    *crud.Meta
+	d       crud.Dialect
 
 	// Static statement fragments, assembled once at Bind time.
 	selectFrom string // SELECT c1, c2 FROM "t"
@@ -26,6 +30,9 @@ type repository[M any, ID comparable, U any] struct {
 
 func newRepository[M any, ID comparable, U any](src crud.Source, bp *Blueprint[M, ID, U]) *repository[M, ID, U] {
 	r := &repository[M, ID, U]{src: src, bp: bp, meta: bp.meta, d: src.Dialect()}
+	if rs, ok := src.(crud.ReadSourcer); ok {
+		r.replica = rs.ReadSource()
+	}
 	m, d := r.meta, r.d
 	q := d.Quote
 
@@ -89,6 +96,23 @@ func (r *repository[M, ID, U]) exec(ctx context.Context) crud.Executor {
 	return r.src
 }
 
+// read picks the datasource for a statement that only reads.
+//
+// Three rules, in order. An executor on the context wins outright — joining a
+// transaction and then reading around it would defeat the transaction, and it is
+// also how read-your-own-writes keeps working inside one. A read marked
+// PrimaryOnly stays on the writable source, because its answer decides a write.
+// Everything else may go to the replica, if one was declared.
+func (r *repository[M, ID, U]) read(ctx context.Context, o *crud.Options) crud.Executor {
+	if e, ok := crud.ExecutorFor(ctx, r.src); ok {
+		return e
+	}
+	if r.replica != nil && (o == nil || !o.Primary) {
+		return r.replica
+	}
+	return r.src
+}
+
 func (r *repository[M, ID, U]) Meta() *crud.Meta { return r.meta }
 
 // relScopes folds the narrowings this query carries into the repository's own
@@ -113,7 +137,7 @@ func (r *repository[M, ID, U]) GetByID(ctx context.Context, id ID, opts ...crud.
 	o := crud.Build(append([]crud.Option{
 		crud.Where(crud.Eq(r.meta.PK.Name, id)), crud.Limit(1), crud.Unsorted(),
 	}, opts...)...)
-	items, err := r.find(ctx, o, 1, 0)
+	items, _, err := r.find(ctx, o, 1, 0)
 	if err != nil {
 		return zero, err
 	}
@@ -127,13 +151,21 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 	o := crud.Build(opts...)
 	limit, offset, page := o.Resolved(r.bp.set.defaultLimit, r.bp.set.maxLimit)
 
+	// A cursor replaces the offset rather than adding to it. Honouring both
+	// would skip a page's worth of rows past the cursor, which is nobody's
+	// intent, and the page number a cursor walk carries is meaningless anyway.
+	_, back, cursoring := o.Cursor()
+	if cursoring {
+		offset, page = 0, 0
+	}
+
 	// Without a COUNT we still want an honest HasNext, so we fetch one row past
 	// the page and throw it away.
 	probe := limit
 	if o.NoTotal && limit > 0 {
 		probe = limit + 1
 	}
-	items, err := r.find(ctx, o, probe, offset)
+	items, sort, err := r.find(ctx, o, probe, offset)
 	if err != nil {
 		return crud.PaginatedResponse[M]{}, err
 	}
@@ -141,11 +173,28 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 	if o.NoTotal && limit > 0 {
 		more := len(items) > limit
 		if more {
-			items = items[:limit]
+			// Reading backwards, the extra row is the one furthest from the
+			// cursor, and find has already turned the page over — so it is at
+			// the front, not the back.
+			if back {
+				items = items[len(items)-limit:]
+			} else {
+				items = items[:limit]
+			}
 		}
 		resp := crud.NewPaginatedResponse(items, page, limit, int64(len(items)))
 		resp.TotalPages = 0
 		resp.HasNext = more
+		if cursoring {
+			// One end is known by construction: a cursor was handed in, so
+			// there is something on that side of it.
+			if back {
+				resp.HasPrev, resp.HasNext = more, true
+			} else {
+				resp.HasPrev = true
+			}
+		}
+		r.setCursors(&resp, sort)
 		return resp, nil
 	}
 
@@ -166,7 +215,48 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 			return crud.PaginatedResponse[M]{}, err
 		}
 	}
-	return crud.NewPaginatedResponse(items, page, limit, total), nil
+	resp := crud.NewPaginatedResponse(items, page, limit, total)
+	r.setCursors(&resp, sort)
+	return resp, nil
+}
+
+// setCursors stamps the page's own edges, so a client can leave offsets behind
+// whenever it wants to rather than having to choose up front.
+//
+// They are emitted only when the sort is unique — the same condition paging by
+// cursor needs — because a cursor over a sort that ties names more than one
+// place in the result, and handing one out would be handing out a bug.
+func (r *repository[M, ID, U]) setCursors(resp *crud.PaginatedResponse[M], sort []crud.Order) {
+	if len(resp.Items) == 0 || len(sort) == 0 {
+		return
+	}
+	fields := make([]*crud.Field, len(sort))
+	names := make([]string, len(sort))
+	unique := false
+	for i, s := range sort {
+		f := r.meta.Field(s.Field)
+		if f == nil {
+			return // a sort through a relation has no value on the row itself
+		}
+		fields[i], names[i] = f, f.Name
+		unique = unique || f.PK
+	}
+	if !unique {
+		return
+	}
+	edge := func(m *M) string {
+		vals, err := r.meta.Values(m, fields)
+		if err != nil {
+			return ""
+		}
+		c, err := crud.EncodeCursor(names, vals)
+		if err != nil {
+			return ""
+		}
+		return c
+	}
+	resp.PrevCursor = edge(&resp.Items[0])
+	resp.NextCursor = edge(&resp.Items[len(resp.Items)-1])
 }
 
 func (r *repository[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, error) {
@@ -176,10 +266,12 @@ func (r *repository[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) 
 		// *page*. Silently truncating here would be worse than a slow query:
 		// the decorators that read a whole set in order to check it would
 		// check the first n and let the rest through.
-		return r.find(ctx, o, 0, 0)
+		items, _, err := r.find(ctx, o, 0, 0)
+		return items, err
 	}
 	limit, offset, _ := o.Resolved(r.bp.set.defaultLimit, r.bp.set.maxLimit)
-	return r.find(ctx, o, limit, offset)
+	items, _, err := r.find(ctx, o, limit, offset)
+	return items, err
 }
 
 // scoped folds the repository's permanent scope into a caller's predicate.
@@ -190,10 +282,10 @@ func (r *repository[M, ID, U]) scoped(o *crud.Options) crud.Predicate {
 	return crud.And(r.bp.set.scope, o.Predicate())
 }
 
-func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit, offset int) ([]M, error) {
+func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit, offset int) ([]M, []crud.Order, error) {
 	cols, err := r.projection(o)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Every projection but a DISTINCT one carries the primary key, and the two
@@ -203,10 +295,14 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 	// unique column, and with it a result that cannot collapse.
 	identified := hasPK(cols)
 	if !identified && len(o.Preloads) > 0 {
-		return nil, &crud.SchemaError{Model: r.meta.Name, Field: o.Preloads[0].Path,
+		return nil, nil, &crud.SchemaError{Model: r.meta.Name, Field: o.Preloads[0].Path,
 			Reason: "a DISTINCT projection carries no primary key, so a preload has no rows to attach to"}
 	}
 	sort := r.sortOf(o, limit > 0 && identified)
+
+	// The cursor's comparison is built from the sort that actually ran, which is
+	// only settled here — the tiebreaker the sort picks up is part of what the
+	// cursor compares.
 
 	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o))
 	switch {
@@ -219,7 +315,7 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 			cols = r.meta.Fields
 		}
 		if sort, err = r.distinctSort(cols, sort, len(o.Sort) > 0); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		b.Raw("SELECT DISTINCT ").Columns(cols).Raw(" FROM ").Table()
 	case cols == nil:
@@ -227,22 +323,84 @@ func (r *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit,
 	default:
 		b.Raw("SELECT ").Columns(cols).Raw(" FROM ").Table()
 	}
-	b.Where(r.scoped(o)).OrderBy(sort).LimitOffset(limit, offset)
+	// The cursor is built here rather than above because the sort is only final
+	// now: a DISTINCT read rewrites it, and the comparison has to match the
+	// ORDER BY that actually runs or it names a different place in the result.
+	where := r.scoped(o)
+	order := sort
+	if token, back, ok := o.Cursor(); ok {
+		step, err := r.cursorWhere(sort, token, back)
+		if err != nil {
+			return nil, nil, err
+		}
+		where = crud.And(where, step)
+		if back {
+			// Paging backwards asks for the n rows *immediately* before the
+			// cursor. Read in the sort's own direction those are the first n of
+			// everything before it — the far end of the list. So the statement
+			// runs inverted and find turns the page back over.
+			order = invertSort(sort)
+		}
+	}
+
+	b.Where(where).OrderBy(order).LimitOffset(limit, offset)
 	if o.ForUpdate {
 		b.Raw(r.d.LockClause())
 	}
 	q, args, err := b.Done()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	items, err := r.queryCols(ctx, q, args, limit, cols)
+	items, err := r.queryCols(ctx, r.read(ctx, o), q, args, limit, cols)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if _, back, ok := o.Cursor(); ok && back {
+		slices.Reverse(items)
 	}
 	if err := r.preload(ctx, items, o); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return items, nil
+	return items, sort, nil
+}
+
+// invertSort flips every term, which turns "the rows before this one, read
+// forwards" into "the rows after it, read backwards" — the same set, in the
+// order that lets LIMIT take the ones nearest the cursor.
+func invertSort(sort []crud.Order) []crud.Order {
+	out := make([]crud.Order, len(sort))
+	for i, o := range sort {
+		o.Desc = !o.Desc
+		if o.NullsSet {
+			o.NullsLast = !o.NullsLast
+		}
+		out[i] = o
+	}
+	return out
+}
+
+// cursorWhere turns the caller's cursor into the row comparison that selects
+// what comes after (or before) it.
+//
+// The sort has to be unique or "after this row" names more than one place in the
+// result: rows sharing the boundary value are skipped or repeated depending on
+// which side of the tie the engine put them. A paged read appends the primary
+// key for exactly that reason, so the check is whether the key survived —
+// basic.UnstablePagination removes it, and with it the ability to page by
+// cursor.
+func (r *repository[M, ID, U]) cursorWhere(sort []crud.Order, token string, back bool) (crud.Predicate, error) {
+	unique := false
+	for _, s := range sort {
+		if f := r.meta.Field(s.Field); f != nil && f.PK {
+			unique = true
+			break
+		}
+	}
+	if !unique {
+		return nil, &crud.SchemaError{Model: r.meta.Name, Field: "cursor",
+			Reason: "paging by cursor needs a sort that ends in the primary key"}
+	}
+	return crud.CursorPredicate(r.meta, sort, token, back)
 }
 
 // projection resolves Select() into a field list, keeping the primary key: it
@@ -365,7 +523,7 @@ func (r *repository[M, ID, U]) preload(ctx context.Context, items []M, o *crud.O
 	if len(o.Preloads) == 0 || len(items) == 0 {
 		return nil
 	}
-	return crud.RunPreloads(ctx, r.exec(ctx), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth, r.relScopes(o))
+	return crud.RunPreloads(ctx, r.read(ctx, o), r.d, r.meta, items, o.Preloads, r.bp.set.preloadDepth, r.relScopes(o))
 }
 
 // sortOf resolves the sort terms, appending a primary-key tiebreaker so that
@@ -414,7 +572,7 @@ func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (
 	if err != nil {
 		return 0, err
 	}
-	return r.scalar(ctx, q, args)
+	return r.scalar(ctx, r.read(ctx, o), q, args)
 }
 
 func (r *repository[M, ID, U]) Exists(ctx context.Context, opts ...crud.Option) (bool, error) {
@@ -425,7 +583,7 @@ func (r *repository[M, ID, U]) Exists(ctx context.Context, opts ...crud.Option) 
 	if err != nil {
 		return false, err
 	}
-	rows, err := r.exec(ctx).Query(ctx, q, args...)
+	rows, err := r.read(ctx, o).Query(ctx, q, args...)
 	if err != nil {
 		return false, err
 	}
@@ -542,7 +700,7 @@ func (r *repository[M, ID, U]) Update(ctx context.Context, id ID, dto any, opts 
 	// Inside somebody's transaction we can lock the row we are about to diff
 	// against; outside of one, locking would be pointless.
 	loadOpts := append([]crud.Option{byID}, opts...)
-	loadOpts = append(loadOpts, crud.Limit(1), crud.Unsorted())
+	loadOpts = append(loadOpts, crud.Limit(1), crud.Unsorted(), crud.PrimaryOnly())
 	if _, inTx := crud.ExecutorFor(ctx, r.src); inTx {
 		loadOpts = append(loadOpts, crud.ForUpdate())
 	}
@@ -716,8 +874,12 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 	} else {
 		byID = crud.InAny(r.meta.PK.Name, ids)
 	}
+	where := crud.And(r.bp.set.scope, byID)
+	if r.bp.softDelete != nil {
+		return r.stamp(ctx, where)
+	}
 	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw(r.deleteFrom).
-		Where(crud.And(r.bp.set.scope, byID))
+		Where(where)
 	q, args, err := b.Done()
 	if err != nil {
 		return 0, err
@@ -731,8 +893,33 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 
 func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
+	if r.bp.softDelete != nil {
+		return r.stamp(ctx, r.scoped(o))
+	}
 	q, args, err := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).
 		Raw(r.deleteFrom).Where(r.scoped(o)).Done()
+	if err != nil {
+		return 0, err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected, nil
+}
+
+// stamp is what a delete becomes when the repository soft-deletes: one UPDATE
+// setting the tombstone, under exactly the narrowing the DELETE would have had.
+//
+// The permanent scope already carries "not deleted" (the setting folds it in),
+// so a row deleted twice is not counted twice and the number returned is what
+// this call actually removed from view.
+func (r *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicate) (int64, error) {
+	f := r.bp.softDelete
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+		Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(crud.NowFunc()).
+		Where(where)
+	q, args, err := b.Done()
 	if err != nil {
 		return 0, err
 	}
@@ -746,15 +933,15 @@ func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Optio
 // ---------------------------------------------------------------------------
 // scanning
 
-func (r *repository[M, ID, U]) query(ctx context.Context, q string, args []any, sizeHint int) ([]M, error) {
-	return r.queryCols(ctx, q, args, sizeHint, nil)
+func (r *repository[M, ID, U]) query(ctx context.Context, ex crud.Executor, q string, args []any, sizeHint int) ([]M, error) {
+	return r.queryCols(ctx, ex, q, args, sizeHint, nil)
 }
 
-func (r *repository[M, ID, U]) queryCols(ctx context.Context, q string, args []any, sizeHint int, cols []*crud.Field) ([]M, error) {
+func (r *repository[M, ID, U]) queryCols(ctx context.Context, ex crud.Executor, q string, args []any, sizeHint int, cols []*crud.Field) ([]M, error) {
 	if cols == nil {
 		cols = r.meta.Fields
 	}
-	rows, err := r.exec(ctx).Query(ctx, q, args...)
+	rows, err := ex.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -797,8 +984,8 @@ func (r *repository[M, ID, U]) scanOne(rows crud.Rows, m *M) (bool, error) {
 	return true, rows.Err()
 }
 
-func (r *repository[M, ID, U]) scalar(ctx context.Context, q string, args []any) (int64, error) {
-	rows, err := r.exec(ctx).Query(ctx, q, args...)
+func (r *repository[M, ID, U]) scalar(ctx context.Context, ex crud.Executor, q string, args []any) (int64, error) {
+	rows, err := ex.Query(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -814,3 +1001,187 @@ func (r *repository[M, ID, U]) scalar(ctx context.Context, q string, args []any)
 }
 
 var _ crud.Core[struct{}, int] = (*repository[struct{}, int, struct{}])(nil)
+
+// Aggregate runs a summary read: the grouping columns and the aggregates, under
+// exactly the narrowing every other read gets.
+//
+// That is the point of it existing at all. A GROUP BY written by hand runs
+// outside the permanent scope, outside the relation scopes and outside whatever
+// the security gate installed — so the query that counts things becomes the
+// query that counts another tenant's things.
+func (r *repository[M, ID, U]) Aggregate(ctx context.Context, opts ...crud.Option) ([]crud.AggregateRow, error) {
+	o := crud.Build(opts...)
+	if err := o.Agg.Validate(r.meta); err != nil {
+		return nil, err
+	}
+
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).Raw("SELECT ")
+	o.Agg.Render(b)
+	b.Raw(" FROM ").Table().Where(r.scoped(o))
+	if len(o.Agg.GroupBy) > 0 {
+		b.Raw(" GROUP BY ")
+		for i, g := range o.Agg.GroupBy {
+			if i > 0 {
+				b.Raw(", ")
+			}
+			b.Column(g)
+		}
+	}
+	// A sort is honoured only over the grouping columns; anything else is not a
+	// column this statement has.
+	if len(o.Sort) > 0 && !o.NoSort {
+		b.OrderBy(o.Sort)
+	}
+	limit, offset, _ := o.Resolved(r.bp.set.defaultLimit, r.bp.set.maxLimit)
+	if o.Unpaged {
+		limit, offset = 0, 0
+	}
+	b.LimitOffset(limit, offset)
+
+	q, args, err := b.Done()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.read(ctx, o).Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	width := len(o.Agg.GroupBy) + len(o.Agg.Aggregations)
+	var out []crud.AggregateRow
+	for rows.Next() {
+		cells := make([]any, width)
+		dest := make([]any, width)
+		for i := range cells {
+			dest[i] = &cells[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		row := crud.AggregateRow{
+			Group: make(map[string]any, len(o.Agg.GroupBy)),
+			Value: make(map[string]any, len(o.Agg.Aggregations)),
+		}
+		for i, g := range o.Agg.GroupBy {
+			f, _, err := r.meta.FieldAt(g)
+			if err != nil {
+				return nil, err
+			}
+			row.Group[f.Name] = cells[i]
+		}
+		for i, ag := range o.Agg.Aggregations {
+			row.Value[ag.As] = cells[len(o.Agg.GroupBy)+i]
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// SaveAll writes many rows in one statement.
+//
+// It is Save's batched partner and it keeps Save's fork: every row must agree
+// about whether the database generates the key, because the two forms are two
+// different statements. A mixed batch is refused rather than split, so the call
+// stays one round trip or none — silently becoming two would make the cost
+// invisible, which is the only reason to reach for this over a loop.
+//
+// The keys come back only where the dialect has RETURNING. MySQL reports one
+// LastInsertId for the whole statement and guarantees the rest are contiguous
+// only under some autoincrement settings, so reading them back from it would be
+// a guess; there, assign the keys yourself and the batch is exact.
+func (r *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) error {
+	if len(models) == 0 {
+		return nil
+	}
+	generated := false
+	for i, m := range models {
+		if m == nil {
+			return &crud.SchemaError{Model: r.meta.Name, Reason: "SaveAll called with a nil model"}
+		}
+		hasID, err := r.meta.HasID(m)
+		if err != nil {
+			return err
+		}
+		gen := !hasID && r.meta.PK.Auto
+		if !hasID && !r.meta.PK.Auto {
+			return crud.ErrMissingID
+		}
+		if i == 0 {
+			generated = gen
+			continue
+		}
+		if gen != generated {
+			return &crud.SchemaError{Model: r.meta.Name, Reason: "SaveAll cannot mix rows with and without a key: " +
+				"they are two different statements, and splitting the batch would hide the cost"}
+		}
+	}
+
+	fields := r.meta.Insert
+	tail := r.upsertTail
+	if generated {
+		fields, tail = r.meta.InsertGen, ""
+	}
+
+	b := crud.NewSQL(r.d, r.meta).Raw("INSERT INTO ").Table().Raw(" (")
+	for i, f := range fields {
+		if i > 0 {
+			b.Raw(", ")
+		}
+		b.Ident(f.Column)
+	}
+	b.Raw(") VALUES ")
+	for i, m := range models {
+		if i > 0 {
+			b.Raw(", ")
+		}
+		vals, err := r.meta.Values(m, fields)
+		if err != nil {
+			return err
+		}
+		b.Raw("(").Binds(vals).Raw(")")
+	}
+	b.Raw(tail)
+
+	if r.d.SupportsReturning() {
+		b.Raw(r.returning)
+		q, args, err := b.Done()
+		if err != nil {
+			return err
+		}
+		rows, err := r.exec(ctx).Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		// RETURNING follows insertion order on both engines that have it, so the
+		// rows line up with the slice that produced them.
+		i := 0
+		for rows.Next() {
+			if i >= len(models) {
+				break
+			}
+			dest, err := r.meta.Pointers(models[i], r.meta.Fields)
+			if err != nil {
+				return err
+			}
+			if err := rows.Scan(dest...); err != nil {
+				return err
+			}
+			i++
+		}
+		return rows.Err()
+	}
+
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	if _, err := r.exec(ctx).Exec(ctx, q, args...); err != nil {
+		return err
+	}
+	// No RETURNING: the models keep whatever they were handed in with. For
+	// assigned keys that is already the truth; for generated ones the caller was
+	// told above that this dialect cannot say.
+	return nil
+}

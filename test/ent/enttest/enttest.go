@@ -5,13 +5,12 @@ package enttest
 import (
 	"context"
 
-	"rx-crud/test/ent"
+	"github.com/shardit-io/go-rx-crud/test/ent"
 	// required by schema hooks.
-	_ "rx-crud/test/ent/runtime"
-
-	"rx-crud/test/ent/migrate"
+	_ "github.com/shardit-io/go-rx-crud/test/ent/runtime"
 
 	"entgo.io/ent/dialect/sql/schema"
+	"github.com/shardit-io/go-rx-crud/test/ent/migrate"
 )
 
 type (

@@ -10,6 +10,13 @@ type PaginatedResponse[T any] struct {
 	TotalPages int   `json:"totalPages"`
 	HasNext    bool  `json:"hasNext"`
 	HasPrev    bool  `json:"hasPrev"`
+
+	// NextCursor and PrevCursor are the page's own edges, set only on a cursor
+	// walk. Hand NextCursor back as crud.After to get the following page; a
+	// client that stores one has a position that survives concurrent writes,
+	// which a page number does not.
+	NextCursor string `json:"nextCursor,omitempty"`
+	PrevCursor string `json:"prevCursor,omitempty"`
 }
 
 // NewPaginatedResponse fills in the derived fields.
@@ -51,5 +58,7 @@ func MapPage[A, B any](p PaginatedResponse[A], f func(A) B) PaginatedResponse[B]
 		TotalPages: p.TotalPages,
 		HasNext:    p.HasNext,
 		HasPrev:    p.HasPrev,
+		NextCursor: p.NextCursor,
+		PrevCursor: p.PrevCursor,
 	}
 }

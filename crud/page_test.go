@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 func TestPagerArithmetic(t *testing.T) {

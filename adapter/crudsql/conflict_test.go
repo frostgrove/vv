@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"rx-crud/crud"
+	"github.com/shardit-io/go-rx-crud/crud"
 )
 
 // The classifier has to find a SQLSTATE in an error whose type this package is
