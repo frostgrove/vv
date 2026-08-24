@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // Statement is one recorded call.

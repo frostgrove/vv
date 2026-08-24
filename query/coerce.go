@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // decodeValue turns a JSON scalar into the Go type of the column it will be

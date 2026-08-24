@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/query"
 )
 
 // Offset paging answers "skip 10, take 10", and what those ten rows are depends

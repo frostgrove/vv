@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/query"
 )
 
 // Every operator spelling has to mean the same thing on both front doors. A

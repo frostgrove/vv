@@ -37,9 +37,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/http/crudhttp"
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/http/crudhttp"
+	"github.com/shardit-io/qq/query"
 )
 
 // Repository is everything the handler needs. crud.Repo[M, ID, U] satisfies it,

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/query"
 )
 
 // failed decodes the error envelope every failing request answers with. A body

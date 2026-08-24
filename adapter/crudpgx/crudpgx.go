@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // Queryer is the pgx shape: *pgxpool.Pool, *pgx.Conn and pgx.Tx all satisfy it.

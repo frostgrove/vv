@@ -11,14 +11,14 @@ import (
 
 	"entgo.io/ent/dialect"
 
-	"github.com/shardit-io/ordo/adapter/crudsql"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/query"
-	"github.com/shardit-io/ordo/repo/basic"
-	"github.com/shardit-io/ordo/repo/decorators/specs"
-	"github.com/shardit-io/ordo/test/ent"
-	entuser "github.com/shardit-io/ordo/test/ent/user"
-	"github.com/shardit-io/ordo/test/entstore"
+	"github.com/shardit-io/qq/adapter/crudsql"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/qq/repo/decorators/specs"
+	"github.com/shardit-io/qq/test/ent"
+	entuser "github.com/shardit-io/qq/test/ent/user"
+	"github.com/shardit-io/qq/test/entstore"
 )
 
 // EntUserUpdate is generated from ent.User by cmd/rxcrud; test/entstore holds
@@ -44,11 +44,11 @@ func TestEntGeneratedStructIsAModel(t *testing.T) {
 	sorted := append([]string(nil), want...)
 	sort.Strings(sorted)
 	if len(got) != len(sorted) {
-		t.Fatalf("github.com/shardit-io/ordo maps %v, ent has %v", got, sorted)
+		t.Fatalf("github.com/shardit-io/qq maps %v, ent has %v", got, sorted)
 	}
 	for i := range sorted {
 		if got[i] != sorted[i] {
-			t.Fatalf("github.com/shardit-io/ordo maps %v, ent has %v", got, sorted)
+			t.Fatalf("github.com/shardit-io/qq maps %v, ent has %v", got, sorted)
 		}
 	}
 	if EntUsers.Meta().Table != entuser.Table {

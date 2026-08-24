@@ -13,7 +13,7 @@
 // composes, it is unit-testable without a database, and it never sees SQL.
 package specs
 
-import "github.com/shardit-io/ordo/crud"
+import "github.com/shardit-io/qq/crud"
 
 // Specification is a reusable, composable fragment of a WHERE clause — the
 // analogue of javax.persistence Specification<T>.

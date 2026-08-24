@@ -5,8 +5,8 @@ package entmodel
 import (
 	"time"
 
-	"github.com/shardit-io/ordo/_examples/entmodel/product"
-	"github.com/shardit-io/ordo/_examples/entmodel/schema"
+	"github.com/shardit-io/qq/_examples/entmodel/product"
+	"github.com/shardit-io/qq/_examples/entmodel/schema"
 )
 
 // The init function reads all schema descriptors with runtime code

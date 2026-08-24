@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/adapter/crudsql"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/repo/basic"
+	"github.com/shardit-io/qq/adapter/crudsql"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/repo/basic"
 )
 
 // The two engines rx-crud supports disagree about more than syntax: MySQL has no

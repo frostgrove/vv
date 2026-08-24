@@ -5,9 +5,9 @@
 // database/sql in the way — rx-crud talks to the pool directly, and the model
 // is an ordinary struct with `db` tags.
 //
-//	go get github.com/shardit-io/ordo
-//	go get github.com/shardit-io/ordo/adapter/crudpgx
-//	go get github.com/shardit-io/ordo/http/crudfiber
+//	go get github.com/shardit-io/qq
+//	go get github.com/shardit-io/qq/adapter/crudpgx
+//	go get github.com/shardit-io/qq/http/crudfiber
 //
 // Run it with the repository's own databases up (`make up` at the root):
 //
@@ -24,15 +24,15 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/ordo/adapter/crudpgx"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/http/crudfiber"
-	"github.com/shardit-io/ordo/query"
-	"github.com/shardit-io/ordo/repo/basic"
-	"github.com/shardit-io/ordo/repo/decorators/specs"
+	"github.com/shardit-io/qq/adapter/crudpgx"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/http/crudfiber"
+	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/qq/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/ordo/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -readonly CreatedAt
 
 // Product is the model: a plain struct, `db` tags, nothing generated and
 // nothing embedded. `auto` says the database owns the key, so a create request

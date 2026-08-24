@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/crud/crudtest"
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/qq/query"
 )
 
 func articleRow(id, authorID int64, title string) []any {

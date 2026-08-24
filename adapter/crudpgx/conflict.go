@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // conflict tags PostgreSQL's integrity errors as crud.ErrConflict, so a

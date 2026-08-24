@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/crud/crudtest"
-	"github.com/shardit-io/ordo/repo/basic"
-	"github.com/shardit-io/ordo/repo/decorators/security"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/qq/repo/decorators/security"
 )
 
 // Scope only ever narrows the statement's own FROM. Everything below is about

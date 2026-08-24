@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud/crudtest"
-	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/qq/query"
 )
 
 // payloads are the strings an attacker puts where a field name goes: statement

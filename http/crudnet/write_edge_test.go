@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // POST refuses a client-chosen key when the database generates it, and PUT is

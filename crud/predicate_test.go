@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // mustRender renders a predicate on its own, with no surrounding statement, so

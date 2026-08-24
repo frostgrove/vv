@@ -5,8 +5,8 @@ package gormstore
 import (
 	"time"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/repo/decorators/specs"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/repo/decorators/specs"
 	"gorm.io/gorm"
 )
 

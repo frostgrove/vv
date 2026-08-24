@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 func TestOptStates(t *testing.T) {

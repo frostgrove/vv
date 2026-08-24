@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // Options are applied left to right, and each one only touches its own field.

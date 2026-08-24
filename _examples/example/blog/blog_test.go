@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/_examples/example/blog"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/crud/crudtest"
-	"github.com/shardit-io/ordo/repo/basic"
-	"github.com/shardit-io/ordo/repo/decorators/specs"
+	"github.com/shardit-io/qq/_examples/example/blog"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/qq/repo/decorators/specs"
 )
 
 var Articles = basic.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
@@ -145,7 +145,7 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", "github.com/shardit-io/ordo/cmd/rxcrud", "-dir", dir)
+	cmd := exec.Command("go", "run", "github.com/shardit-io/qq/cmd/rxcrud", "-dir", dir)
 	cmd.Dir = mustRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)

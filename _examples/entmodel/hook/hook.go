@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/ordo/_examples/entmodel"
+	"github.com/shardit-io/qq/_examples/entmodel"
 )
 
 // The ProductFunc type is an adapter to allow the use of ordinary

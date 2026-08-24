@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/ordo/adapter/crudsql"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/repo/basic"
+	"github.com/shardit-io/qq/adapter/crudsql"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/repo/basic"
 )
 
 // A real replica lags, which is exactly what makes routing hard to test: you

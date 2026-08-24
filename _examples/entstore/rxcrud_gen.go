@@ -5,9 +5,9 @@ package entstore
 import (
 	"time"
 
-	"github.com/shardit-io/ordo/_examples/entmodel"
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/repo/decorators/specs"
+	"github.com/shardit-io/qq/_examples/entmodel"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/repo/decorators/specs"
 )
 
 // ProductUpdate is the partial-update DTO for entmodel.Product.

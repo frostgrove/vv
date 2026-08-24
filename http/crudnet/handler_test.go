@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // Every route the package documents, with the verb it answers, the status it

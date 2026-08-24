@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/ordo/crud"
-	"github.com/shardit-io/ordo/crud/crudtest"
+	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/qq/crud/crudtest"
 )
 
 // Widget carries one of each kind of column the mapper knows how to fill.

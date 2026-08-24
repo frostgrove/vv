@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/qq/crud"
 )
 
 // fakeExec is an executor that only has to be distinguishable from another one.
