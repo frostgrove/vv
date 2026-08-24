@@ -122,7 +122,7 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | unset `noauto` primary key on save | `ErrMissingID` | 400 |
 | row absent or out of scope | `ErrNotFound` | 404 `{"error":"not_found"}` |
 | policy denial | `security.Denied` → `ErrForbidden` | 403 |
-| duplicate key / FK / NOT NULL / CHECK | adapter `conflict()` | 409 with the driver's message |
+| duplicate key / FK / NOT NULL / CHECK | adapter `conflict()` — SQLSTATE class 23, plus MySQL `3819` and `1364`, which are integrity violations it reports as `HY000` | 409 with the driver's message |
 | stale optimistic-lock version | `ErrStaleVersion` | 409 |
 | `FindOne` matched several rows | `specs.ErrNotUnique` | 409 |
 | driver failure, closed pool, context cancelled | nothing classifies it | 500 `{"error":"internal_error"}` and no detail |

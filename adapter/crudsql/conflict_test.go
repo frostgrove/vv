@@ -90,3 +90,61 @@ func TestAClassifiedConflictIsNotAnyOtherSentinel(t *testing.T) {
 		}
 	}
 }
+
+// mysqlish has the shape go-sql-driver/mysql's *MySQLError has: a numeric
+// Number and a [5]byte SQLState. The package may not import the driver, so the
+// test cannot either — it asserts the shape the classifier reaches for.
+type mysqlish struct {
+	Number   uint16
+	SQLState [5]byte
+	Message  string
+}
+
+func (e *mysqlish) Error() string { return e.Message }
+
+func newMySQLish(number uint16, state, msg string) *mysqlish {
+	e := &mysqlish{Number: number, Message: msg}
+	copy(e.SQLState[:], state)
+	return e
+}
+
+func TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts(t *testing.T) {
+	// Measured on MySQL 8.4: a CHECK violation is 3819 and a missing column
+	// default is 1364, and both arrive as HY000 rather than class 23. Before
+	// this, neither was classified and a client got a bare 500 where FL-011
+	// promises 409.
+	for _, tc := range []struct {
+		name   string
+		number uint16
+		msg    string
+	}{
+		{"check constraint", 3819, "Check constraint 'ck_age' is violated."},
+		{"missing default", 1364, "Field 'nodef' doesn't have a default value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := conflict(newMySQLish(tc.number, "HY000", tc.msg))
+			if !errors.Is(got, crud.ErrConflict) {
+				t.Fatalf("MySQL %d is an integrity violation and did not classify as one: %v", tc.number, got)
+			}
+		})
+	}
+}
+
+func TestAnOrdinaryHY000IsStillNotAConflict(t *testing.T) {
+	// The control. Without it the test above would pass for a classifier that
+	// treated every HY000 as a conflict, which would turn ordinary server
+	// errors into 409s.
+	got := conflict(newMySQLish(1146, "HY000", "Table 'x.y' doesn't exist"))
+	if errors.Is(got, crud.ErrConflict) {
+		t.Fatal("a missing table is not an integrity violation")
+	}
+}
+
+func TestANumberIsOnlyTrustedUnderHY000(t *testing.T) {
+	// A numeric Number field on some other driver's error must not be read as a
+	// MySQL error code.
+	got := conflict(newMySQLish(3819, "08006", "connection failure"))
+	if errors.Is(got, crud.ErrConflict) {
+		t.Fatal("the number was trusted outside HY000, where it means nothing")
+	}
+}

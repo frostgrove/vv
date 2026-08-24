@@ -1,4 +1,4 @@
-// Command sql-nethttp is rx-crud with nothing but the standard library on top:
+// Command sql-nethttp is vv with nothing but the standard library on top:
 // database/sql, the crudsql adapter, and net/http's own ServeMux. No ORM and no
 // web framework.
 //
@@ -35,7 +35,7 @@ import (
 	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
 
 // Product is the model: a plain struct with `db` tags, the same shape every
 // other example serves.
@@ -58,7 +58,7 @@ var Products = basic.Define[Product, int64, ProductUpdate]("sql_nethttp_products
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://rxcrud:rxcrud@localhost:55432/rxcrud?sslmode=disable"
+const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")

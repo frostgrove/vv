@@ -54,8 +54,19 @@ which is the point of wrapping.
 **Why the adapters classify SQLSTATE class 23.** A duplicate key used to reach
 the client as a 500 with an empty body — the class of bug where the client
 retries forever and the server logs nothing useful. Class 23 is *integrity
-constraint violation*: unique key, foreign key, NOT NULL and CHECK live there and
-nothing else does, so the classification needs no per-driver table. The driver
+constraint violation*: unique key, foreign key, NOT NULL and CHECK belong there.
+
+**That last claim was wrong about MySQL, and it cost a 500.** "Nothing else does,
+so the classification needs no per-driver table" held for PostgreSQL and not for
+MySQL, which reports a CHECK violation as `3819` and a missing column default as
+`1364`, both with SQLSTATE `HY000` — its "no more specific state" code. Neither
+was classified, so a client got a bare 500 where the table below promises 409.
+Measured on MySQL 8.4.11, not remembered.
+
+The classifier therefore reads class 23 **and** a short list of MySQL numbers,
+and it only trusts a number when the state is exactly `HY000`, so a numeric field
+on another driver's error cannot be mistaken for a MySQL code. The list is two
+entries long and each one was provoked against a live server. The driver
 error is kept underneath, so a caller who wants the constraint name still
 `errors.As`-es their way to it.
 
@@ -72,6 +83,10 @@ for statuses below 500.
 
 - Do not replace a sentinel with a new error. Wrap it.
 - Do not stop `ErrStaleVersion` wrapping `ErrConflict`.
+- Do not add to the MySQL number list from documentation. Each entry is there
+  because the error was provoked against a running server and the SQLSTATE was
+  observed to be `HY000`. MariaDB's `4025` is deliberately absent for that
+  reason.
 - Do not broaden the SQLSTATE classifier past class 23. Class 40 (serialisation
   failure) is retryable and is *not* a client error; class 22 (data exception) is
   a coercion bug. Adding either to 409 tells the client to fix something it

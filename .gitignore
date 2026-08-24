@@ -1,0 +1,8 @@
+# Compiled binaries. `go build ./cmd/vv` drops one here by default, and a 3.7 MB
+# `rxcrud` was tracked for exactly that reason until it was noticed.
+/vv
+/rxcrud
+
+# Local database state and editor scratch.
+*.db
+*.out

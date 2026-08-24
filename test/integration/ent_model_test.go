@@ -21,17 +21,17 @@ import (
 	"github.com/shardit-io/vv/test/entstore"
 )
 
-// EntUserUpdate is generated from ent.User by cmd/rxcrud; test/entstore holds
+// EntUserUpdate is generated from ent.User by cmd/vv; test/entstore holds
 // the real output and this alias keeps the tests reading naturally.
 type EntUserUpdate = entstore.UserUpdate
 
-// ent's *generated* entity is the rx-crud model: no second struct, no tags.
+// ent's *generated* entity is the vv model: no second struct, no tags.
 // The embedded config, the selectValues field and the Edges holder are all
 // ignored, and the column names fall out of the Go names exactly as ent's own
 // naming does.
 var EntUsers = basic.Define[ent.User, int64, EntUserUpdate](entuser.Table)
 
-// The mapping self-check every ent project should copy: rx-crud derives column
+// The mapping self-check every ent project should copy: vv derives column
 // names from the Go field names, ent knows the real ones, so compare them and
 // find out at build time rather than at runtime.
 func TestEntGeneratedStructIsAModel(t *testing.T) {
@@ -57,7 +57,7 @@ func TestEntGeneratedStructIsAModel(t *testing.T) {
 	if s.PK.Name != "ID" || !s.PK.Auto {
 		t.Fatalf("pk = %+v", s.PK)
 	}
-	// Age is *int on the ent struct, so rx-crud treats the column as nullable.
+	// Age is *int on the ent struct, so vv treats the column as nullable.
 	if f := s.Field("Age"); f == nil || crud.ElemType(f.Type).Kind().String() != "int" {
 		t.Fatalf("age = %+v", f)
 	}
@@ -89,14 +89,14 @@ func TestEntGeneratedMetamodel(t *testing.T) {
 }
 
 // The full read path over ent's struct: filters, sort, pagination, projection.
-func TestEntStructReadsThroughRxCrud(t *testing.T) {
+func TestEntStructReadsThroughVV(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 
 	client := entClient(pgDB, dialect.Postgres)
 	users := EntUsers.Bind(crudsql.Postgres(pgDB))
 
-	// Written by ent, read by rx-crud.
+	// Written by ent, read by vv.
 	for i, name := range []string{"Ann", "Bob", "Cid"} {
 		if _, err := client.User.Create().
 			SetTenantID(1).SetEmail(name + "@x.io").SetName(name).SetAge(30 + i).SetActive(i != 2).
@@ -132,8 +132,8 @@ func TestEntStructReadsThroughRxCrud(t *testing.T) {
 	}
 }
 
-// The write path too: create through rx-crud, read back through ent.
-func TestEntStructWritesThroughRxCrud(t *testing.T) {
+// The write path too: create through vv, read back through ent.
+func TestEntStructWritesThroughVV(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 
@@ -180,7 +180,7 @@ func TestEntStructWritesThroughRxCrud(t *testing.T) {
 	}
 }
 
-// The point of it all: one ent transaction, ent's builders and rx-crud's
+// The point of it all: one ent transaction, ent's builders and vv's
 // repository writing into it, over ent's own struct.
 func TestEntStructInsideEntTransaction(t *testing.T) {
 	ctx := context.Background()
@@ -200,34 +200,34 @@ func TestEntStructInsideEntTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "PatchedByRxCrud"
+	name := "PatchedByVV"
 	if _, err := users.Update(txCtx, byEnt.ID, EntUserUpdate{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	// ent sees rx-crud's update inside the same transaction.
+	// ent sees vv's update inside the same transaction.
 	seen, err := tx.User.Get(ctx, byEnt.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen.Name != "PatchedByRxCrud" {
+	if seen.Name != "PatchedByVV" {
 		t.Fatalf("ent read back %q", seen.Name)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := users.Count(ctx); err != nil || n != 0 {
-		t.Fatalf("count = %d err = %v: the rollback did not reach rx-crud's write", n, err)
+		t.Fatalf("count = %d err = %v: the rollback did not reach vv's write", n, err)
 	}
 }
 
 // docs/ent.md §16 warns that ent's Go-side defaults belong to ent's builders:
-// a write that goes through rx-crud is one INSERT and never sees them, so the
+// a write that goes through vv is one INSERT and never sees them, so the
 // column gets whatever the model carries. matrix_test.go works around it in a
 // comment; this is the claim itself, from both sides of the same schema.
 //
 // `field.Bool("active").Default(true)` is the cleanest probe: ent fills it in,
-// rx-crud does not, and the difference is visible in the row.
-func TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites(t *testing.T) {
+// vv does not, and the difference is visible in the row.
+func TestEntsGoSideDefaultsDoNotApplyToVVWrites(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
@@ -244,17 +244,17 @@ func TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites(t *testing.T) {
 		t.Fatal("ent did not apply its own default, so this test cannot tell the two paths apart")
 	}
 
-	// rx-crud writes the model, and the model says false.
-	byRxCrud := ent.User{TenantID: 1, Email: "rx@x.io", Name: "ByRxCrud", CreatedAt: time.Now()}
-	if err := users.Save(ctx, &byRxCrud); err != nil {
+	// vv writes the model, and the model says false.
+	byVV := ent.User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", CreatedAt: time.Now()}
+	if err := users.Save(ctx, &byVV); err != nil {
 		t.Fatal(err)
 	}
-	if byRxCrud.Active {
-		t.Fatal("an ent Go-side default reached an rx-crud write")
+	if byVV.Active {
+		t.Fatal("an ent Go-side default reached an vv write")
 	}
 	// From ent's side of the same row, so this is the stored value and not
-	// something rx-crud failed to read back.
-	stored, err := client.User.Get(ctx, byRxCrud.ID)
+	// something vv failed to read back.
+	stored, err := client.User.Get(ctx, byVV.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

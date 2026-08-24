@@ -31,7 +31,7 @@ through it.
 | the security gate on reads | [[FL-007]] |
 | the security gate on writes | [[FL-008]] |
 | `context` executors, `InTx`, adapters, savepoints | [[FL-009]] |
-| `cmd/rxcrud` and anything generated | [[FL-010]] |
+| `cmd/vv` and anything generated | [[FL-010]] |
 | sentinels, HTTP statuses, what a 500 may say | [[FL-011]] |
 | operators, coercion, timestamps, the two front doors | [[FL-012]] |
 | the Gin or net/http binding, mounting, or anything the three bindings do differently | [[FL-013]] |
@@ -58,7 +58,7 @@ tables here — the index and the reverse index.
 | [FL-007](FL-007-a-read-through-the-security-gate.md) | A read through the security gate | `repo/decorators/security/security.go:gate.GetByID` | [[UC-004]] [[UC-016]] |
 | [FL-008](FL-008-a-write-through-the-security-gate.md) | A write through the security gate | `repo/decorators/security/security.go:gate.Save` | [[UC-004]] [[UC-008]] |
 | [FL-009](FL-009-transactions-joining-opening-which-database.md) | Transactions: joining, opening, and which database | `crud/executor.go:InTx` | [[UC-005]] [[UC-012]] |
-| [FL-010](FL-010-codegen-model-to-dto-and-metamodel.md) | Codegen: a model becomes a DTO and a metamodel | `cmd/rxcrud/main.go:main` | [[UC-014]] [[UC-010]] [[UC-007]] |
+| [FL-010](FL-010-codegen-model-to-dto-and-metamodel.md) | Codegen: a model becomes a DTO and a metamodel | `internal/codegen.Run` | [[UC-014]] [[UC-010]] [[UC-007]] |
 | [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `http/crudhttp/errors.go:Status` | [[UC-015]] |
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
 | [FL-013](FL-013-a-request-through-another-binding.md) | A request through the Gin and net/http bindings | `http/crudgin/handler.go:List` / `http/crudnet/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
@@ -71,8 +71,9 @@ tables here — the index and the reverse index.
 | `adapter/crudpgx/crudpgx.go` | FL-009, FL-011 |
 | `adapter/crudsql/conflict.go` | FL-003, FL-011 |
 | `adapter/crudsql/crudsql.go` | FL-009 |
-| `cmd/rxcrud/main.go` | FL-010 |
-| `cmd/rxcrud/render.go` | FL-010 |
+| `cmd/vv/main.go` | FL-010 |
+| `internal/codegen/codegen.go` | FL-010 |
+| `internal/codegen/render.go` | FL-010 |
 | `crud/access.go` | FL-001, FL-003, FL-004, FL-006, FL-008 |
 | `crud/dialect.go` | FL-002, FL-003, FL-009 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
@@ -88,7 +89,7 @@ tables here — the index and the reverse index.
 | `crud/repo.go` | FL-002, FL-007 |
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010 |
-| `_examples/example/blog/rxcrud_gen.go` | FL-010 |
+| `*/vv_gen.go` — nine checked-in files under `test/` and `_examples/` | FL-010 |
 | `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012 |
 | `http/crudfiber/options.go` | FL-002, FL-011 |
 | `http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013 |

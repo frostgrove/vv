@@ -1,6 +1,6 @@
 # Use cases
 
-A use case here is an abstract scenario a consumer of rx-crud needs covered,
+A use case here is an abstract scenario a consumer of vv needs covered,
 written in the consumer's language. It says what somebody is trying to achieve
 and what must be observably true for them to have achieved it. It contains no
 implementation: no file paths, no function names, no package names. The only
@@ -9,7 +9,7 @@ identifiers that appear are the ones a consumer literally types — `repo.Update
 mechanism.
 
 **A use case links only to flows.** If a statement needs a file or a function to
-be true, it belongs in a flow ([[FL-001]]…[[FL-012]]) and the use case links to
+be true, it belongs in a flow ([[FL-001]]…[[FL-013]]) and the use case links to
 it instead. That is the whole point: a flow goes stale when a file moves, a use
 case goes stale only when the product changes. A use case that names a symbol
 has become a flow and should be split.

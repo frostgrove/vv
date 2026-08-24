@@ -1,4 +1,4 @@
-// Package example is the whole of rx-crud's user-facing surface in one file:
+// Package example is the whole of vv's user-facing surface in one file:
 // a model, an update DTO, a repository declaration, a metamodel and a security
 // policy. The tests next door run it against crud/crudtest, so what you read
 // here is what the library actually produces.

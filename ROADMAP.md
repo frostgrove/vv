@@ -24,7 +24,7 @@ stop being free.
   from *no external requirement* to *no third-party requirement*.
 - Packages are named for what they are; a prefix appears only to break a
   collision, and **the prefix names the subsystem** — `crudfiber`, `i18nfiber`,
-  not `ordofiber`.
+  not `vvfiber`.
 - A directory either roadmap names but has not implemented carries a `TODO.md`
   and nothing else, deleted in the same change that adds the first `.go` file.
 

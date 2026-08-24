@@ -47,8 +47,8 @@ still says what not to do while it is open — see D-024 through D-027.
 | [D-014](D-014-sql-is-deterministic.md) | The same request compiles to byte-identical SQL and the same argument order | accepted | querying |
 | [D-015](D-015-errors-are-sentinels.md) | Every branchable failure is reachable with `errors.Is` against a `crud` sentinel | accepted | errors |
 | [D-016](D-016-one-module-crud-stays-stdlib-only.md) | One `go get`, no `replace`; `crud/` imports only the standard library | **superseded by D-033** (module half; the stdlib rule stands) | process & tooling |
-| [D-017](D-017-orm-go-side-behaviour-does-not-run.md) | An rx-crud write is exactly the statement rx-crud built; no ORM builder, hook or privacy rule runs | accepted | interop |
-| [D-018](D-018-dtos-and-metamodels-are-generated.md) | `rxcrud_gen.go` is generated output, reproducible from the model source | accepted | process & tooling |
+| [D-017](D-017-orm-go-side-behaviour-does-not-run.md) | An vv write is exactly the statement vv built; no ORM builder, hook or privacy rule runs | accepted | interop |
+| [D-018](D-018-dtos-and-metamodels-are-generated.md) | `vv_gen.go` is generated output, reproducible from the model source | accepted | process & tooling |
 | [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for four named differences | accepted | dialects |
 | [D-020](D-020-tests-are-the-specification.md) | A test that could pass vacuously carries a control case that fails without the behaviour | accepted | process & tooling |
 | [D-021](D-021-magic-is-preferred-to-go-orthodoxy.md) | Boilerplate is removed from the consumer; the magic must fail at build or start-up, never at request time | accepted | philosophy |
@@ -63,8 +63,11 @@ still says what not to do while it is open — see D-024 through D-027.
 | [D-030](D-030-a-new-verb-on-the-seam-is-a-decorator-obligation.md) | Every method added to `crud.Core` is overridden by the gate or has a written reason not to be | accepted | core seam, security |
 | [D-031](D-031-soft-delete-is-a-statement-not-a-decorator.md) | Declaring a soft delete declares both the stamp and the read filter | accepted | querying |
 | [D-032](D-032-a-replica-never-decides-a-write.md) | A read inside a transaction, or one that decides a write, always goes to the primary | accepted | transactions & datasources |
-| [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no external requirement; a package that needs one is its own module | accepted | process & tooling |
+| [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no third-party requirement; a package that needs one is its own module | **amended by D-036** | process & tooling |
 | [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | accepted | HTTP |
+| [D-035](D-035-a-prefix-only-breaks-a-collision.md) | A package is named for what it is; a prefix only breaks a collision, and it names the subsystem | accepted | process & tooling |
+| [D-036](D-036-the-root-module-takes-no-third-party-requirement.md) | The root module may require a first-party module; third-party requirements still become their own module | accepted | process & tooling |
+| [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
 
 ## By area
 
@@ -103,13 +106,9 @@ forms), D-010 (why MySQL re-reads).
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).
 
-**Process & tooling** — D-033 (one module per optional dependency, and how a
+**Process & tooling** — D-035 (naming), D-036 (first-party requirements), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
 still binds), D-018 (generated artefacts), D-020 (tests are the specification).
-
-**Process & tooling** — D-016 (one module, stdlib-only core),
-D-018 (codegen), D-020 (tests as the specification), D-014 (deterministic
-output).
 
 **Philosophy & docs** — D-021 (magic over orthodoxy), D-023 (guides lead with the
 result), D-020 (what a test is for).

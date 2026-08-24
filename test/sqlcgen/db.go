@@ -3,7 +3,7 @@
 // test/sqlc/ — regenerate with `sqlc generate` if you change them.
 //
 // It exists so the integration suite can prove the thing that matters: sqlc's
-// Queries and an rx-crud repository can be driven by the same *sql.Tx.
+// Queries and an vv repository can be driven by the same *sql.Tx.
 package sqlcgen
 
 import (

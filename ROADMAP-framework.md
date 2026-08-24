@@ -1,7 +1,7 @@
 # Roadmap — the framework
 
-**Status:** proposed. The rename to `ordo` is decided and not yet executed; the
-structure below is a target, not a description of the tree today.
+**Status:** the module rename, the naming rule and the enforcement are **done**
+and in the tree. The subsystems marked `?` below are still proposals.
 **Scope:** what `github.com/shardit-io/vv` is, how its modules are drawn, what
 enforces the boundaries, and what has to be settled before the first tag.
 
@@ -18,10 +18,9 @@ the structure below, and the module decisions here are the ones that expire.
 
 ---
 
-The repository was `go-rx-crud`, is `github.com/shardit-io/vv` on disk today, and
-is becoming **`github.com/shardit-io/vv`** — Latin for order, rank, and an
-official register, which is both halves of what this library does. §11 records why
-and what it costs; this document describes the target.
+The repository was `go-rx-crud` and is now **`github.com/shardit-io/vv`** —
+Velocity and Visibility. §11 records the renames it took to get here and what
+they cost.
 
 That is not a cosmetic rename: it changes what the repository is for. Today every
 package in it is CRUD. The target is a framework in which CRUD is **one subsystem
@@ -68,7 +67,7 @@ boundary:
 
 | | Rule | Where | Cost to a consumer |
 |---|---|---|---|
-| **Root module** | no third-party dependencies; `errs` is the one first-party require | `crud`, `query`, `port`, `repo/*`, `catalog`, `probe`, `adapter/crudsql`, `http/crudhttp`, `http/crudnet`, `ordoflag`, `cmd/ordo` | nothing beyond `errs`. Measured today: a root-module consumer resolves **2 modules and no `go.sum` at all** |
+| **Root module** | no third-party dependencies; `errs` is the one first-party require | `crud`, `query`, `port`, `repo/*`, `catalog`, `probe`, `adapter/crudsql`, `http/crudhttp`, `http/crudnet`, `vvflag`, `cmd/vv` | nothing beyond `errs`. Measured today: a root-module consumer resolves **2 modules and no `go.sum` at all** |
 | **Satellite modules** | one dependency decision each | `http/crudfiber`, `http/crudgin`, `adapter/crudpgx`, `rpc/crudgrpc` | only what you `go get`. Measured: a `crudgin` consumer resolves 58 modules, with fiber and pgx absent |
 | **Unpublished** | needs the world | `test/`, `_examples/` | never reaches a consumer |
 
@@ -126,7 +125,7 @@ ROOT MODULE — no third-party dependencies
   ✓ http/crudhttp/              the framework-free half of the HTTP layer
   ✓ http/crudnet/               the net/http binding
   ✓ crud/crudtest/              an in-memory source for unit tests
-  ✓ cmd/rxcrud/ → cmd/ordo/     the CLI, generalised past codegen
+  ✓ cmd/vv/ + internal/codegen/  the CLI, and the generator it drives
 
 SATELLITE MODULES — one dependency decision each
   ✓ http/crudfiber/   + fiber/v3
@@ -138,9 +137,9 @@ UNPUBLISHED
   ✓ test/         the integration suite: ent, gorm, sqlx, sqlc, four engines
   ✓ _examples/    every stack the guides demonstrate
 
-ADOPTED FROM `old-rx` — see below
-  → ordoflag/         generic flag parsing. stdlib only, so root module.
-  → tools/ordocfg/    config loading over cleanenv. one decision, so a satellite.
+ADOPTED FROM `old-rx` (§4)
+  ✓ vvflag/           generic flag parsing. stdlib only, so root module.
+  ✓ tools/vvcfg/      config loading over cleanenv. one decision, so a satellite.
 
 ?  log, i18n, health, migrate, app, portkafka, obsotel, authjwt   — see §12
 ```
@@ -154,8 +153,9 @@ signatures. Both were packages invented to fill a column.
 
 ## 4. What comes from `old-rx`, and what configuration actually is
 
-`../old-rx` (module `github.com/shardit-io/go-rx`) already holds two working
-packages, and they settle the argument the reviews had about `config` — by
+`../old-rx` (module `github.com/shardit-io/go-rx`) held two working packages.
+They are **adopted** — `vvflag/` in the root module and `tools/vvcfg/` as a
+satellite — and they settle the argument the reviews had about `config` by
 showing it was the wrong argument.
 
 The reviews said a tier-0 `config` contract is meaningless: precedence is the
@@ -167,17 +167,17 @@ configuration is an implementation and never a contract**, which is exactly what
 
 | From `old-rx` | Lines | Dependencies | Lands in |
 |---|---|---|---|
-| `v0/native-utils/rxflag` — `Parse[T](name, default) (T, bool)` | 171 | **none** — `os`, `strconv`, `strings` | root module as `ordoflag/` |
-| `v0/tools/rxcfg` — `MustLoad[T](path) *T` over `cleanenv` | 54 | `cleanenv` (→ TOML, YAML, env, edn) | a satellite, `tools/ordocfg/` |
+| `v0/native-utils/rxflag` — `Parse[T](name, default) (T, bool)` | 171 | **none** — `os`, `strconv`, `strings` | root module as `vvflag/` |
+| `v0/tools/rxcfg` — `MustLoad[T](path) *T` over `cleanenv` | 54 | `cleanenv` (→ TOML, YAML, env, edn) | a satellite, `tools/vvcfg/` |
 
 That split is the "one dependency decision" rule doing its job rather than a tier
-being asserted: `ordoflag` costs a consumer nothing, `ordocfg` costs them cleanenv,
+being asserted: `vvflag` costs a consumer nothing, `vvcfg` costs them cleanenv,
 and **neither needs an interface** because nobody will implement flag parsing
 twice. It also dissolves the YAML objection — the format support comes from
 cleanenv, in the module that already declared that dependency.
 
-Bringing them to framework level is small and mostly means fixing things that are
-wrong now. Named, because "port it over" is not a plan:
+Bringing them to framework level was mostly fixing what was wrong. Each of these
+is now pinned by a test that fails if the defect returns:
 
 - **`rxflag.Parse` cannot tell "absent" from "malformed."** Both return
   `(zero, false)`, so `--port=abc` silently becomes the zero value. That is a
@@ -242,13 +242,13 @@ which is why OpenTelemetry's contrib packages are `otelgin`, `otelhttp`,
 `otelfiber`. A prefix is necessary.
 
 A draft of this section proposed unifying every satellite on the *project*
-prefix — `ordofiber`, `ordogin`, `ordopgx` — on the grounds that the ecosystem
+prefix — `vvfiber`, `vvgin`, `vvpgx` — on the grounds that the ecosystem
 convention is `<project><library>`. **That reading of the convention is wrong, and
 the owner caught it.** In `otelgin`, `otel` is not the *project* prefix; it is the
 *subsystem*. OpenTelemetry happens to be single-purpose, so the two coincide. A
 framework with several subsystems has to generalise the subsystem, not the
 project — otherwise the first time a second subsystem needs a Fiber integration
-there is nowhere to put it. `ordofiber` would claim the whole project×`fiber` cell for
+there is nowhere to put it. `vvfiber` would claim the whole project×`fiber` cell for
 whichever subsystem got there first.
 
 **The rule is `<subsystem><library>`**, which is what the existing code already
@@ -270,7 +270,7 @@ worth testing before the module exists.
 
 **Root-module packages take no prefix at all** — `crud`, `query`, `errs`, `port`
 — because nothing collides. A prefix appears only where an identifier would clash:
-`ordoflag` cannot be `package flag` because the standard library owns that name, and `ordo` is short enough to be its own prefix so no abbreviation is invented.
+`vvflag` cannot be `package flag` because the standard library owns that name, and `vv` is short enough to be its own prefix so no abbreviation is invented.
 That is the same rule as `crudfiber`, applied to a different collision, and it is
 the whole of the naming convention:
 
@@ -279,10 +279,12 @@ the whole of the naming convention:
 
 ---
 
-## 7. The enforcement is broken today, and that is the finding that matters most
+## 7. The enforcement — what was broken, and what checks it now
 
 Rule 2 of the old draft said `make tidy` and D-033's `go list -deps` check were
-the enforcement. Neither works. All three were measured on this tree:
+the enforcement. Neither worked. All three were measured on this tree, and all
+three are now fixed — this section keeps the diagnosis, and `make check` is the
+answer:
 
 - **D-033's own proof command prints 17 lines on a clean tree.** It ends in
   `grep '\.'`, which matches standard-library paths like
@@ -304,7 +306,16 @@ the enforcement. Neither works. All three were measured on this tree:
   root-module package — and this document adds eight — reopens the window, because
   a submodule resolves the library from the *previous* tag.
 
-So the enforcement rules are these, and they are Makefile work, not prose:
+**One correction to what a transient `replace` buys.** It makes `go.mod` correct
+and `go mod tidy -diff` a usable gate. It cannot mint a `go.sum` hash, which only
+a published version can — so `GOWORK=off go build` in a satellite stays broken
+until the first tag exists, and `make tidy` says so rather than pretending
+otherwise. There is no remote configured and no `github.com/shardit-io/vv`
+repository yet, so that half is waited for rather than worked around.
+
+So the enforcement rules are these. They are Makefile work rather than prose, and
+they are in the tree — `make check` runs the first three, and each was verified by
+breaking the invariant deliberately and watching it fail:
 
 1. The `.Standard` check above, per module, in CI.
 2. `GOWORK=off` builds and `go mod tidy -diff` per module, so what a consumer
@@ -369,7 +380,7 @@ failures in 34 days. Their own summary of how they got there, from a maintainer
 in the thread arguing to leave: *"We got into the staging mess… TL;DR; this is not
 a technical problem."*
 
-Three things follow for `ordo`, and the third is the uncomfortable one:
+Three things follow for `vv`, and the third is the uncomfortable one:
 
 - **Two module sets, not one version.** `stable` and `experimental`, so a
   designed-yesterday package cannot ship under the same number as a `crud` tested
@@ -432,82 +443,57 @@ diagram.
 
 ---
 
-## 11. The renames — one done, one decided
+## 11. The renames — done
 
-There are two, and conflating them is how a reader ends up editing the wrong
-import path.
+Three names, two renames, and the useful part is what each one cost.
 
-**Rename 1: `go-rx-crud` → `rx`. Done.** Across every module, every document and
-every import. It settled three things that were open while this document was
-being written:
+**`go-rx-crud` → `rx`.** It settled three things that were open while this
+document was being written: `crudport` became `port`, `cmd/rxcrud` became a CLI
+with room for subcommands, and the argument that `errs`' import path looked odd
+died — which is what let §5's remaining question be answered on release cadence
+instead.
 
-- **`crudport` became `port`.** Under `go-rx-crud` the `crud` prefix carried its
-  weight; the transport-neutral layer is not CRUD-specific and should not claim
-  to be.
-- **`cmd/rxcrud` became `cmd/rx`**, one CLI with subcommands — and becomes
-  `cmd/ordo` under rename 2.
-- **The `errs` import path stopped being an argument.** the errors roadmap §4 had conceded that a
-  service wanting only the error contract had to import a CRUD library. That
-  objection died here, and the errors roadmap §4's remaining question — whether `errs` is its own
-  module — was then answered yes on release-cadence grounds.
+**`rx` → `vv`.** `rx` in Go means ReactiveX: `ReactiveX/RxGo` has roughly 5,100
+stars and its package is literally `rx`. `qq` was considered and rejected for the
+same reason in a louder form — Tencent QQ tooling owns that search space at
+31k/19k/4k stars. `vv` — Velocity and Visibility — was verified free: proxy 404,
+repository 404, and the loudest Go repository matching it has 40 stars. At two
+letters it is also its own prefix, so `vvflag` and `vvcfg` need no invented
+abbreviation.
 
-**Rename 2: `rx` → `ordo`. Decided, not yet executed.** `github.com/shardit-io/vv`.
+### What it actually cost, twice
 
-The reason is discoverability, and it is not a matter of taste. **`rx` in Go means
-ReactiveX.** `ReactiveX/RxGo` has roughly 5,100 stars and its package is literally
-named `rx`; `reactivego/rx` and `si3nloong/rx` exist too. Every search for "go rx"
-lands on reactive streams, which is a permanent tax on a framework whose adoption
-depends on being found at all.
+Both renames leaked, in the same place and in the same way: **a string that is
+not an import**.
 
-`ordo` is Latin for order, rank, and an official register — the ordering of
-queries and the registry of models, which is both halves of what this library
-does, and `ORDER BY` makes it land for anyone writing SQL. Verified rather than
-assumed: `proxy.golang.org` returns 404 for the module path, no Go package uses
-the identifier with any adoption, and it collides with nothing in the standard
-library. It also satisfies the constraint the owner set — **at four letters it is
-its own prefix**, so `ordoflag` and `ordocfg` need no invented abbreviation, which
-`stele`→`ste` or `pinax`→`pnx` would have.
-
-The organisation stays `shardit-io` for now. It is a weak name — "shard it"
-promises horizontal sharding this library does not do, and does not own the
-caller's connection either — but renaming the organisation and the module at once
-doubles the breakage. §12 keeps it.
-
-### What makes both renames cheap, and what ends it
-
-**No tag has been pushed.** [[D-033]]'s "rough edge" note and `make tidy`'s error
-message both turn on that, so each rename costs a `sed` and nothing else. Had a
-single version been released first, every consumer would have needed a v1
-forwarding module of type aliases, and the old path would have had to keep
-publishing.
-
-**The first tag is the point of no return for every naming question in §6.**
-After `v0.1.0`, `rx → ordo` costs a deprecation cycle instead of a search and
-replace, and a module boundary — `errs` moving out — costs more than a name.
-That is the reason §1 is first in this document and why §12's remaining naming
-question has a deadline rather than a priority.
-
-### Three names are in play, not two
-
-`github.com/shardit-io/go-rx` exists on GitHub as an older version and is the
-module path `../old-rx` still declares; `go-rx-crud` is vacated; `rx` is current;
-`ordo` is the target. The proxy and the checksum database remember `go-rx` at
-whatever it was tagged, so that path is not free to reuse for something with a
-different meaning. When `rxflag` and `rxcfg` move across as `ordoflag` and
-`ordocfg` (§4), they should arrive as a deliberate copy with the old path left
-alone, not a redirect.
-
-### The lesson from doing it once
-
-Rename 1 took two commits, and the gap between them is the useful part.
 `b70cd71` changed every import and left `make release`'s lockstep check grepping
-each submodule's `go.mod` for the **old** module path — a release would have
-failed on every submodule with a message about the wrong version, which is not
-what the message says. `7ac4724` caught it. A `sed` across a repository is one
-edit; the things that break are the strings that are **not** imports, and a check
-that greps for a module path is exactly that shape. Rename 2 should start by
-listing those: `Makefile` (`version`, `release`), `go.work`, every `go.mod`,
-`//go:generate` lines, `docs/`, `README.md` and `_examples/`.
+each submodule's `go.mod` for the old module path. `7ac4724` caught it. Then the
+`rx` → `ordo` pass reintroduced the identical bug at the identical line, and it
+was still there when this work started.
+
+A `sed` across a repository is one edit. What breaks is everything that is not an
+import: a `grep` pattern in the Makefile, a `//go:generate` line duplicated as a
+string literal in a test, a compose project name, a database user, an environment
+variable, a savepoint name emitted into SQL. The guard that worked was
+`assertDirective`, which compares the generate lines byte-for-byte and fails the
+integration suite rather than failing silently.
+
+The full list, for whoever renames next: `Makefile` (`version`, `release`),
+`go.work`, every `go.mod`, `//go:generate` lines **and their copies in test
+literals**, `exec.Command` arguments, `docker-compose.yml` (project name and
+credentials), DSN environment variables, the generated-file name and its `Code
+generated by` header, runtime SQL identifiers, and test function names that carry
+the product name.
+
+### What is still free, and for how long
+
+**No tag has been pushed, and there is no remote.** That is what made both
+renames cost a `sed` and nothing else. It is also why the naming questions in §6
+and the module boundary in §5 are still cheap.
+
+**The first tag ends that.** After `v0.1.0` a rename costs a deprecation cycle
+instead of a search-and-replace, and a module boundary costs more than a name.
+The organisation stays `shardit-io` for now; §12 keeps it.
 
 ---
 
@@ -521,16 +507,16 @@ Left open on purpose. Both expire at the first tag (§11).
   the standard library already contracts the thing. `log` fails on the second
   clause outright — `slog.Handler` is the seam. `i18n` is `errs.MessageSource`
   until a second subsystem wants it, and then it is a move, not a design.
-  Configuration is **settled and off this list**: `ordoflag` and `ordocfg` are
+  Configuration is **settled and off this list**: `vvflag` and `vvcfg` are
   implementations, adopted from `old-rx`, with no contract at all (§4).
 - **Whether the organisation is renamed too.** `shardit-io` stays for now (§11).
   "Shard it" promises horizontal sharding this library does not do, and
   `github.com/shardit` is held by another account, so the `-io` suffix is a
   workaround rather than a choice. If it is ever fixed, the cheap moment is the
   same one §11 names — before the first tag, and ideally in the same change as
-  `rx → ordo` rather than as a third rename.
+  `rx → vv` rather than as a third rename.
 
   The three naming questions that used to sit here are settled: the satellite
   prefix is `<subsystem><library>` (§6), `errs` gets its own module with [[D-033]]
   amended to *no third-party requirement* (the errors roadmap §4), and `rx` becomes
-  `ordo` (§11).
+  `vv` (§11).

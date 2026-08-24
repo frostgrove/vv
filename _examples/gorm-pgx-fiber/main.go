@@ -1,11 +1,11 @@
-// Command gorm-pgx-fiber is rx-crud with gorm: one struct carries both gorm's
-// tags and rx-crud's `db` tags, gorm owns migrations and seeding, rx-crud
+// Command gorm-pgx-fiber is vv with gorm: one struct carries both gorm's
+// tags and vv's `db` tags, gorm owns migrations and seeding, vv
 // serves reads and writes over the same *sql.DB.
 //
-// This is what an existing gorm project actually does to adopt rx-crud: add
+// This is what an existing gorm project actually does to adopt vv: add
 // tags to the model it already has, nothing more. It also shows the pool is
-// shared, not duplicated — gorm's AutoMigrate and rx-crud's queries run
-// through the same underlying *sql.DB, so a gorm transaction and an rx-crud
+// shared, not duplicated — gorm's AutoMigrate and vv's queries run
+// through the same underlying *sql.DB, so a gorm transaction and an vv
 // call can be the same transaction.
 //
 //	go get github.com/shardit-io/vv
@@ -36,10 +36,10 @@ import (
 	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
 
 // Product is an ordinary gorm model. The `gorm` tags are what the project
-// already had; the `db` tags are the only addition rx-crud needs, sitting on
+// already had; the `db` tags are the only addition vv needs, sitting on
 // the same fields rather than a parallel struct.
 type Product struct {
 	ID        int64         `gorm:"primaryKey" db:"id,pk,auto" json:"id"`
@@ -64,7 +64,7 @@ var Products = basic.Define[Product, int64, ProductUpdate]("gorm_fiber_products"
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://rxcrud:rxcrud@localhost:55432/rxcrud?sslmode=disable"
+const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -86,7 +86,7 @@ func main() {
 	// crudsql.Postgres wraps the same *sql.DB gorm holds — one pool, two
 	// libraries. No connection or transaction changes hands, so a caller free
 	// to reach in with crud.WithExecutor can put a gorm transaction and an
-	// rx-crud call in the same one.
+	// vv call in the same one.
 	repo := specs.Executor(Products.Bind(crudsql.Postgres(sqlDB)))
 
 	app := fiber.New()
@@ -103,7 +103,7 @@ func main() {
 }
 
 // bootstrap lets gorm own the schema, the way it already does in a project
-// that has not adopted rx-crud. A real application would use its own
+// that has not adopted vv. A real application would use its own
 // migration tool instead of AutoMigrate; the delete-then-seed keeps this
 // example idempotent since AutoMigrate never drops rows on its own.
 func bootstrap(db *gorm.DB) error {

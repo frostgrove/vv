@@ -1,10 +1,10 @@
-// Command sqlx-pgx-gin is rx-crud with sqlx over pgx, and the Gin binding.
+// Command sqlx-pgx-gin is vv with sqlx over pgx, and the Gin binding.
 //
-// sqlx and rx-crud both read struct tags to map Go fields onto columns, and
+// sqlx and vv both read struct tags to map Go fields onto columns, and
 // they read the same tag: `db`. There is one tag set on Product, not two —
-// sqlx's own tag conventions and rx-crud's `pk`/`auto`/`generated` markers
+// sqlx's own tag conventions and vv's `pk`/`auto`/`generated` markers
 // live side by side in the same `db:"..."` string. sqlx keeps the job it is
-// good at, the connection and the bootstrap DDL; rx-crud serves the CRUD
+// good at, the connection and the bootstrap DDL; vv serves the CRUD
 // surface the handler exposes, because crud.Opt[int] is not a shape sqlx's
 // struct scanner understands.
 //
@@ -38,10 +38,10 @@ import (
 	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
 
-// Product carries one tag set, `db`, read by both sqlx and rx-crud: sqlx maps
-// columns onto fields with it, and rx-crud reads the same tag for the pk,
+// Product carries one tag set, `db`, read by both sqlx and vv: sqlx maps
+// columns onto fields with it, and vv reads the same tag for the pk,
 // auto and generated markers. Two libraries, one struct, no duplication.
 type Product struct {
 	ID        int64         `db:"id,pk,auto" json:"id"`
@@ -62,7 +62,7 @@ var Products = basic.Define[Product, int64, ProductUpdate]("sqlx_gin_products",
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://rxcrud:rxcrud@localhost:55432/rxcrud?sslmode=disable"
+const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -77,7 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// sqlx.DB embeds the *sql.DB rx-crud needs, so the same pool serves both:
+	// sqlx.DB embeds the *sql.DB vv needs, so the same pool serves both:
 	// sqlx for the bootstrap statements below, crudsql for everything the API
 	// serves.
 	repo := specs.Executor(Products.Bind(crudsql.Postgres(db.DB)))

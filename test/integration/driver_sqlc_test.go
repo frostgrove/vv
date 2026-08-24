@@ -17,7 +17,7 @@ import (
 	"github.com/shardit-io/vv/test/sqlcpgx"
 )
 
-// sqlc generates hand-written queries; rx-crud does the boring CRUD. The point
+// sqlc generates hand-written queries; vv does the boring CRUD. The point
 // of these tests is that they can share one transaction, so a handler can mix
 // both without a second connection or a second commit.
 
@@ -44,7 +44,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// rx-crud reads what sqlc wrote.
+	// vv reads what sqlc wrote.
 	got, err := repo.GetByID(txCtx, created.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +56,8 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 		t.Fatalf("age = %v", got.Age)
 	}
 
-	// And sqlc reads what rx-crud wrote.
-	u := User{TenantID: 1, Email: "rxcrud@x.io", Name: "ByRxCrud", Active: true}
+	// And sqlc reads what vv wrote.
+	u := User{TenantID: 1, Email: "vv@x.io", Name: "ByVV", Active: true}
 	if err := repo.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Name != "ByRxCrud" || back.Age.Valid {
+	if back.Name != "ByVV" || back.Age.Valid {
 		t.Fatalf("sqlc read back %+v", back)
 	}
 	n, err := q.CountUsersByTenant(ctx, 1)
@@ -95,7 +95,7 @@ func TestSqlcPgx(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 
-	// pgx.Tx satisfies sqlc's DBTX and rx-crud's Queryer at the same time, so
+	// pgx.Tx satisfies sqlc's DBTX and vv's Queryer at the same time, so
 	// the exact same object goes into both.
 	q := sqlcpgx.New(tx)
 	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
@@ -115,7 +115,7 @@ func TestSqlcPgx(t *testing.T) {
 		t.Fatalf("github.com/shardit-io/vv read back %+v", got)
 	}
 
-	u := User{TenantID: 2, Email: "rxcrud-pgx@x.io", Name: "ByRxCrud", Age: crud.Set(7)}
+	u := User{TenantID: 2, Email: "vv-pgx@x.io", Name: "ByVV", Age: crud.Set(7)}
 	if err := repo.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestSqlcPgx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Name != "ByRxCrud" || !back.Age.Valid || back.Age.Int32 != 7 {
+	if back.Name != "ByVV" || !back.Age.Valid || back.Age.Int32 != 7 {
 		t.Fatalf("sqlc read back %+v", back)
 	}
 	if n, err := q.CountUsersByTenant(ctx, 2); err != nil || n != 2 {
@@ -168,7 +168,7 @@ func TestSqlcMySQL(t *testing.T) {
 		t.Fatalf("github.com/shardit-io/vv read back %+v", got)
 	}
 
-	u := User{TenantID: 3, Email: "rxcrud-my@x.io", Name: "ByRxCrud", Active: true}
+	u := User{TenantID: 3, Email: "vv-my@x.io", Name: "ByVV", Active: true}
 	if err := repo.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestSqlcMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Name != "ByRxCrud" {
+	if back.Name != "ByVV" {
 		t.Fatalf("sqlc read back %+v", back)
 	}
 	if n, err := q.CountUsersByTenant(ctx, 3); err != nil || n != 2 {

@@ -3,7 +3,7 @@
 **Entry point:** `crud/executor.go:InTx` and `crud/executor.go:ExecutorFor`
 **Implements:** [[UC-005]] [[UC-012]] · **Governed by:** [[D-009]] [[D-016]] [[D-017]]
 
-rx-crud never owns a transaction it did not open, and it will not open one if
+vv never owns a transaction it did not open, and it will not open one if
 somebody else already did. The whole mechanism is a linked list of bindings in
 the context and one question asked against it: *is there an executor here that
 my database would accept?*
@@ -60,10 +60,10 @@ my database would accept?*
    fn(push(ctx, ownScope(src), tx))
    ```
    Joining means the outer owner keeps control of commit and rollback — which is
-   what makes an rx-crud call inside somebody else's transaction safe.
+   what makes an vv call inside somebody else's transaction safe.
 
 7. **`ownScope`** — `crud/executor.go:184`
-   For a transaction rx-crud opens itself, nobody named a database. An
+   For a transaction vv opens itself, nobody named a database. An
    `Identified` source scopes the binding to itself, so the transaction reaches
    every repository over that database and no others. A source that cannot say
    which database it is binds **unscoped** — the old, unconditional join —
@@ -78,7 +78,7 @@ my database would accept?*
 
 - **`crudsql`** — `adapter/crudsql/crudsql.go:145`
   `database/sql` has no nested transactions, so `Tx.Begin` issues
-  `SAVEPOINT rxcrud_sp_<n>` with an atomic counter, and returns a `savepoint`
+  `SAVEPOINT vv_sp_<n>` with an atomic counter, and returns a `savepoint`
   (`crudsql.go:153`) whose `Commit` is `RELEASE SAVEPOINT` and whose `Rollback`
   is `ROLLBACK TO SAVEPOINT`. `savepoint.Begin` delegates back to the parent
   `Tx`, so the counter is shared and names never collide.
@@ -91,7 +91,7 @@ my database would accept?*
 
 ## The ORM-owned-transaction pattern
 
-The ORM opens and owns the transaction; rx-crud is handed a handle and joins.
+The ORM opens and owns the transaction; vv is handed a handle and joins.
 
 ```go
 // gorm
@@ -111,8 +111,8 @@ ctx = crud.WithExecutor(ctx, crudpgx.From(tx))
 
 The wrapper is a plain `crud.Executor`, not a `Beginner`, so `InTx` on it can
 only *join* — `ErrNoTxSupport` if there is nothing to join. That is the correct
-answer: rx-crud must not open a transaction on a handle whose lifetime somebody
-else owns. When a rollback happens on the ORM's side, the rx-crud writes go with
+answer: vv must not open a transaction on a handle whose lifetime somebody
+else owns. When a rollback happens on the ORM's side, the vv writes go with
 it, because they were the same transaction all along.
 
 With more than one database in the process, name the one you mean:
@@ -177,7 +177,7 @@ transaction, and reports success.
 - `TestInTxDoesNotJoinAnotherDatabasesTransaction` — `crud/executor_test.go`.
 - `TestInTxWithoutABeginnerIsRefused` — `crud/executor_test.go`.
 - `TestTransactionJoinsAnAmbientExecutor` / `TestTransactionRollsBackOnError` — `repo/basic/repository_test.go`.
-- `TestGormRollbackTakesRxCrudWithIt` — `test/integration/driver_gorm_test.go` — the ORM-owned pattern.
+- `TestGormRollbackTakesVVWithIt` — `test/integration/driver_gorm_test.go` — the ORM-owned pattern.
 - `TestAnEntTransactionJoinsButCannotOpenASavepoint` — `test/integration/driver_ent_test.go`.
 - `TestSavepointsRollBackAndReleaseIndependently` / `TestASavepointInsideASavepointUnwindsOneLevelAtATime` — `test/integration/edge_test.go`.
 - `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` — `test/integration/driver_sqlite_test.go`.

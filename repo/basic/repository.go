@@ -564,7 +564,7 @@ func (r *repository[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (
 			cols = r.meta.Fields
 		}
 		b.Raw("SELECT count(*) FROM (SELECT DISTINCT ").Columns(cols).Raw(" FROM ").Table().
-			Where(r.scoped(o)).Raw(") AS rxcrud_distinct")
+			Where(r.scoped(o)).Raw(") AS vv_distinct")
 	} else {
 		b.Raw(r.countFrom).Where(r.scoped(o))
 	}

@@ -193,7 +193,7 @@ func TestTheDeclarationAGeneratorProducesForAVersionedModelIsAccepted(t *testing
 		Title   string `db:"title"`
 		Version int    `db:"version,version"`
 	}
-	// Exactly what cmd/rxcrud emits now: every writable column, and not the lock.
+	// Exactly what cmd/vv emits now: every writable column, and not the lock.
 	type DocUpdate struct {
 		Title *string
 	}

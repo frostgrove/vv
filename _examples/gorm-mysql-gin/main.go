@@ -1,12 +1,12 @@
-// Command gorm-mysql-gin is rx-crud with gorm as the model layer, MySQL as the
+// Command gorm-mysql-gin is vv with gorm as the model layer, MySQL as the
 // engine and the Gin binding.
 //
 // This is the same declaration as the other examples, run against a database
-// that has no RETURNING clause: rx-crud reads the written row back by primary
+// that has no RETURNING clause: vv reads the written row back by primary
 // key instead of asking the statement for it — see [[D-019]]. The caller
 // cannot tell the difference; Save and Create both hand back the full row
 // either way. The model is an ordinary gorm struct that also carries `db`
-// tags, so one type serves both gorm and rx-crud without an adapter struct in
+// tags, so one type serves both gorm and vv without an adapter struct in
 // between.
 //
 //	go get github.com/shardit-io/vv
@@ -37,10 +37,10 @@ import (
 	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
 
 // Product is an ordinary gorm model carrying `db` tags alongside the `gorm`
-// ones — gorm owns migration and seeding, rx-crud owns the CRUD API, and
+// ones — gorm owns migration and seeding, vv owns the CRUD API, and
 // neither reads the other's tag. The unique index needs a bounded size:
 // MySQL cannot index an unbounded TEXT column.
 type Product struct {
@@ -53,7 +53,7 @@ type Product struct {
 	CreatedAt time.Time     `gorm:"autoCreateTime;default:CURRENT_TIMESTAMP(3)" db:"created_at,generated" json:"createdAt"`
 }
 
-// TableName pins the table gorm migrates and rx-crud queries to the same
+// TableName pins the table gorm migrates and vv queries to the same
 // name; without it gorm would pluralise the type name instead.
 func (Product) TableName() string { return "gorm_mysql_products" }
 
@@ -66,7 +66,7 @@ var Products = basic.Define[Product, int64, ProductUpdate]("gorm_mysql_products"
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "rxcrud:rxcrud@tcp(localhost:53306)/rxcrud?parseTime=true&loc=UTC"
+const dsn = "vv:vv@tcp(localhost:53306)/vv?parseTime=true&loc=UTC"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -85,7 +85,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// crudsql.MySQL wraps the *sql.DB gorm already opened. rx-crud sends its
+	// crudsql.MySQL wraps the *sql.DB gorm already opened. vv sends its
 	// own statements over it; gorm's callback chain never runs on them.
 	repo := specs.Executor(Products.Bind(crudsql.MySQL(sqlDB)))
 

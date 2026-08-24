@@ -30,7 +30,7 @@ type (
 	MemberUpdate = gormstore.MemberUpdate
 )
 
-// Soft deletes are a gorm-layer feature; rx-crud sees the raw table, so the
+// Soft deletes are a gorm-layer feature; vv sees the raw table, so the
 // tombstone filter is declared once, here, and no query option can widen it.
 var (
 	GormTeams = basic.Define[Team, uint, TeamUpdate]("teams",
@@ -56,7 +56,7 @@ func gormDB(t *testing.T) *gorm.DB {
 }
 
 // A gorm model maps to exactly the columns gorm itself would use.
-func TestGormModelIsAnRxCrudModel(t *testing.T) {
+func TestGormModelIsAVVModel(t *testing.T) {
 	s, err := crud.SchemaOf[Member]()
 	if err != nil {
 		t.Fatalf("a gorm model should be usable as-is: %v", err)
@@ -89,7 +89,7 @@ func TestGormModelIsAnRxCrudModel(t *testing.T) {
 	}
 }
 
-// The mapping self-check every gorm project should copy: rx-crud derives column
+// The mapping self-check every gorm project should copy: vv derives column
 // names from the Go field names, gorm's schema parser knows the real ones.
 func TestGormMappingMatchesGorm(t *testing.T) {
 	db := gormDB(t)
@@ -111,8 +111,8 @@ func TestGormMappingMatchesGorm(t *testing.T) {
 	}
 }
 
-// gorm writes, rx-crud reads — including the DSL, relations and preloads.
-func TestGormModelThroughRxCrud(t *testing.T) {
+// gorm writes, vv reads — including the DSL, relations and preloads.
+func TestGormModelThroughVV(t *testing.T) {
 	ctx := context.Background()
 	db := gormDB(t)
 	src := crudsql.Postgres(pgDB)
@@ -180,7 +180,7 @@ func TestGormModelThroughRxCrud(t *testing.T) {
 	}
 }
 
-// The scope keeps gorm's tombstones out of every rx-crud read.
+// The scope keeps gorm's tombstones out of every vv read.
 func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	ctx := context.Background()
 	db := gormDB(t)
@@ -225,7 +225,7 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	}
 }
 
-// One transaction, gorm's builder and rx-crud's repository writing into it.
+// One transaction, gorm's builder and vv's repository writing into it.
 func TestGormModelInsideGormTransaction(t *testing.T) {
 	ctx := context.Background()
 	db := gormDB(t)
@@ -243,7 +243,7 @@ func TestGormModelInsideGormTransaction(t *testing.T) {
 		if err := tx.Create(&m).Error; err != nil {
 			return err
 		}
-		name := "PatchedByRxCrud"
+		name := "PatchedByVV"
 		if _, err := members.Update(txCtx, m.ID, MemberUpdate{Name: &name}); err != nil {
 			return err
 		}
@@ -251,7 +251,7 @@ func TestGormModelInsideGormTransaction(t *testing.T) {
 		if err := tx.First(&seen, m.ID).Error; err != nil {
 			return err
 		}
-		if seen.Name != "PatchedByRxCrud" {
+		if seen.Name != "PatchedByVV" {
 			t.Errorf("gorm read back %q", seen.Name)
 		}
 		return nil
@@ -347,11 +347,11 @@ func mxTeamNames(teams []Team) []string {
 }
 
 // docs/gorm.md §16 tells a reader that gorm's hooks, callbacks and defaults do
-// not run on rx-crud writes: rx-crud sends one statement to the driver and never
+// not run on vv writes: vv sends one statement to the driver and never
 // enters gorm's callback chain. That is a promise about what does *not* happen,
 // which is exactly the kind that rots unnoticed — so here it is, from both
 // sides, with a hook that leaves a mark on the row.
-func TestGormHooksDoNotRunOnRxCrudWrites(t *testing.T) {
+func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -370,24 +370,24 @@ func TestGormHooksDoNotRunOnRxCrudWrites(t *testing.T) {
 				t.Fatalf("slug = %q, want the hook's default", viaGorm.Slug)
 			}
 
-			// rx-crud's Save is one INSERT. The hook does not run, so the column
+			// vv's Save is one INSERT. The hook does not run, so the column
 			// gets the zero value the model carried — which is the whole point of
 			// the warning in the guide.
 			before = gormstore.LabelCreations.Load()
-			viaRxCrud := Label{}
-			if err := labels.Save(ctx, &viaRxCrud); err != nil {
+			viaVV := Label{}
+			if err := labels.Save(ctx, &viaVV); err != nil {
 				t.Fatal(err)
 			}
 			if n := gormstore.LabelCreations.Load(); n != before {
-				t.Fatalf("the hook fired %d time(s) on an rx-crud write; docs/gorm.md §16 says it does not", n-before)
+				t.Fatalf("the hook fired %d time(s) on an vv write; docs/gorm.md §16 says it does not", n-before)
 			}
-			if viaRxCrud.Slug != "" {
-				t.Fatalf("slug = %q: a gorm-side default reached an rx-crud write", viaRxCrud.Slug)
+			if viaVV.Slug != "" {
+				t.Fatalf("slug = %q: a gorm-side default reached an vv write", viaVV.Slug)
 			}
 
 			// And the row on disk agrees — this is not a difference in what was
 			// read back afterwards.
-			stored, err := labels.GetByID(ctx, viaRxCrud.ID)
+			stored, err := labels.GetByID(ctx, viaVV.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

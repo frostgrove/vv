@@ -1,49 +1,16 @@
-// Command rxcrud generates the two things you would otherwise copy out of your
-// model by hand: the partial-update DTO and the typed metamodel.
-//
-//	//go:generate go run github.com/shardit-io/vv/cmd/rxcrud
-//
-// Point it at a package; it reads every struct that carries `db` or `rel` tags
-// and writes rxcrud_gen.go next to them:
-//
-//	type ArticleUpdate struct { … }   // pointers for optional, Opt for nullable
-//	type ArticleAttrs  struct { … }   // including nested relation paths
-//	var  Article_ = specs.Metamodel[Article, ArticleAttrs]()
-//
-// After that `Article_.Author.Name.Eq("Ann")` is a compile-time-checked filter
-// on a joined column, and a renamed field breaks the build instead of a request.
-//
-// Flags:
-//
-//	-dir     package directory (default ".")
-//	-out     output file name (default "rxcrud_gen.go")
-//	-types   comma-separated list; default is every tagged struct
-//	-depth   how far to expand relation paths into the metamodel (default 2)
-//	-skip    comma-separated field names to leave out entirely (like db:"-")
-//	-readonly comma-separated field names kept out of the update DTO but still
-//	         filterable and sortable (like db:",immutable")
-//	-into    write into this directory instead of -dir
-//	-import  import path of -dir, so model types are qualified when written
-//	         somewhere else
-//	-no-dto  skip the update DTOs
-//	-no-meta skip the metamodels
-//
-// With -types the named structs are taken as models even without db tags, which
-// is what makes ent's generated entities work as-is. Write the result into your
-// own package rather than into ent's, where the names would collide:
-//
-//	go run github.com/shardit-io/vv/cmd/rxcrud -dir ./ent -types User,Article -skip CreatedAt \
-//	    -import myapp/ent -into ./internal/store
-package main
+// Package codegen generates the update DTO and the typed metamodel from a
+// package's model structs. It is the half of `vv generate` that has nothing to
+// do with the command line, so it can be tested without one.
+package codegen
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,57 +18,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-func main() {
-	var (
-		dir      = flag.String("dir", ".", "package directory")
-		out      = flag.String("out", "rxcrud_gen.go", "output file name")
-		only     = flag.String("types", "", "comma-separated model names; default is every tagged struct")
-		skip     = flag.String("skip", "", "comma-separated field names to leave out entirely")
-		readonly = flag.String("readonly", "", "comma-separated field names to keep out of the update DTO")
-		into     = flag.String("into", "", "write into this directory instead of -dir")
-		impPath  = flag.String("import", "", "import path of -dir, used to qualify model types written elsewhere")
-		depth    = flag.Int("depth", 2, "how far to expand relation paths into the metamodel")
-		noDTO    = flag.Bool("no-dto", false, "skip update DTOs")
-		noMeta   = flag.Bool("no-meta", false, "skip metamodels")
-		specsPkg = flag.String("specs", "github.com/shardit-io/vv/repo/decorators/specs", "import path of the specs package")
-		crudPkg  = flag.String("crud", "github.com/shardit-io/vv/crud", "import path of the crud package")
-	)
-	flag.Parse()
-
-	g := &generator{
-		dir:      *dir,
-		depth:    *depth,
-		withDTO:  !*noDTO,
-		withMeta: !*noMeta,
-		specsPkg: *specsPkg,
-		crudPkg:  *crudPkg,
-	}
-	if *only != "" {
-		g.only = map[string]bool{}
-		for _, n := range strings.Split(*only, ",") {
-			g.only[strings.TrimSpace(n)] = true
-		}
-	}
-	g.into = *into
-	g.modelImport = *impPath
-	if g.modelImport != "" {
-		g.modelAlias = filepath.Base(g.modelImport)
-	}
-	g.skip = names(*skip)
-	g.readonly = names(*readonly)
-	outDir := *dir
-	if *into != "" {
-		outDir = *into
-	}
-	if err := g.run(filepath.Join(outDir, *out)); err != nil {
-		fmt.Fprintln(os.Stderr, "rxcrud:", err)
-		os.Exit(1)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// model discovery
 
 type field struct {
 	Name      string
@@ -148,6 +64,10 @@ type generator struct {
 	// imports collected from the source files, so generated field types keep
 	// resolving (time.Time, uuid.UUID, …).
 	imports map[string]string // package name -> import path
+
+	// Where the "wrote …" line goes. Nil is silent, which is what a test wants;
+	// swapping os.Stdout to get that made every test share global state.
+	log io.Writer
 }
 
 func (g *generator) run(outPath string) error {
@@ -173,7 +93,9 @@ func (g *generator) run(outPath string) error {
 	if err := os.WriteFile(outPath, src, 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("rxcrud: wrote %s (%d models)\n", outPath, len(g.order))
+	if g.log != nil {
+		fmt.Fprintf(g.log, "vv: wrote %s (%d models)\n", outPath, len(g.order))
+	}
 	return nil
 }
 
@@ -475,4 +397,55 @@ func (g *generator) embedded(typ string) ([]field, bool) {
 		return m.Fields, true
 	}
 	return nil, false
+}
+
+// Options is one invocation, as the command line describes it.
+type Options struct {
+	Dir      string // package directory to read
+	Out      string // output file name, written into Dir unless Into is set
+	Into     string // write into this directory instead of Dir
+	Types    string // comma-separated model names; empty means every tagged struct
+	Skip     string // comma-separated field names to leave out entirely
+	Readonly string // comma-separated field names to keep out of the update DTO
+	Import   string // import path of Dir, to qualify models written elsewhere
+	Depth    int    // how far to expand relation paths into the metamodel
+	WithDTO  bool
+	WithMeta bool
+	SpecsPkg string
+	CrudPkg  string
+
+	// Log receives the one line the command prints on success. Nil is silent.
+	Log io.Writer
+}
+
+// Run generates from o and writes the result. The output path is Out resolved
+// against Into when set, Dir otherwise.
+func Run(o Options) error {
+	g := &generator{
+		dir:      o.Dir,
+		depth:    o.Depth,
+		withDTO:  o.WithDTO,
+		withMeta: o.WithMeta,
+		specsPkg: o.SpecsPkg,
+		crudPkg:  o.CrudPkg,
+		into:     o.Into,
+		skip:     names(o.Skip),
+		readonly: names(o.Readonly),
+		log:      o.Log,
+	}
+	if o.Types != "" {
+		g.only = map[string]bool{}
+		for _, n := range strings.Split(o.Types, ",") {
+			g.only[strings.TrimSpace(n)] = true
+		}
+	}
+	g.modelImport = o.Import
+	if g.modelImport != "" {
+		g.modelAlias = filepath.Base(g.modelImport)
+	}
+	outDir := o.Dir
+	if o.Into != "" {
+		outDir = o.Into
+	}
+	return g.run(filepath.Join(outDir, o.Out))
 }

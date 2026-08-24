@@ -405,7 +405,7 @@ func TestARequestSurvivesBeingWrittenBackOutAsJSON(t *testing.T) {
 	}
 	var second query.Request
 	if err := json.Unmarshal(out, &second); err != nil {
-		t.Fatalf("the document rx-crud wrote is not one it can read: %v\n%s", err, out)
+		t.Fatalf("the document vv wrote is not one it can read: %v\n%s", err, out)
 	}
 
 	// The proof is not that the bytes match — key order and whitespace are free

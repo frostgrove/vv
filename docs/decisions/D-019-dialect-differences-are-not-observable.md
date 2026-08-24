@@ -35,7 +35,7 @@ The compensations, and what each one costs:
 | bind markers | `$n` vs `?` | none |
 | `ILIKE` | `crud.LikeIgnoreCase` renders `LOWER(col) LIKE LOWER(?)`, which works on both | a functional index is needed for it to use one |
 | a generated key on insert | `RETURNING` where available, `LastInsertID` on MySQL | none |
-| `count(DISTINCT a, b)` is MySQL-only | a derived table, which MySQL insists on being able to name (`AS rxcrud_distinct`) | none |
+| `count(DISTINCT a, b)` is MySQL-only | a derived table, which MySQL insists on being able to name (`AS vv_distinct`) | none |
 
 ## Where the difference *is* observable
 

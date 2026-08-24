@@ -100,11 +100,11 @@ This decision is about the tests, so its evidence is the tests themselves:
   example in the tree. Grep the file for `proves nothing`.
 - `TestAPreloadIsNotNarrowedWithoutTheDeclaration` in
   `repo/decorators/security/relscope_test.go`.
-- `TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites` in
+- `TestEntsGoSideDefaultsDoNotApplyToVVWrites` in
   `test/integration/ent_model_test.go` and
-  `TestGormHooksDoNotRunOnRxCrudWrites` in
+  `TestGormHooksDoNotRunOnVVWrites` in
   `test/integration/gorm_model_test.go` — both prove the ORM's own path works
-  before proving rx-crud's does not go through it.
+  before proving vv's does not go through it.
 - `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` in
   `repo/decorators/security/gate_edge_test.go`.
 - `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` in

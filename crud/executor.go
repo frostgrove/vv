@@ -1,12 +1,12 @@
 // Package crud holds the contracts and value types shared by every layer of
-// rx-crud: the datasource seam (Executor/Source/Dialect), the model metadata
+// vv: the datasource seam (Executor/Source/Dialect), the model metadata
 // reader, the predicate AST, pagination types and the three-state Opt.
 //
 // It has zero dependencies outside the standard library — deliberately. Only
 // two things ever cross the abstraction boundary: "run this statement" and
 // "give me rows". Scanning stays with the mapper, dialect stays with the
 // repository. That is why any foreign transaction can be pushed into a context:
-// all rx-crud asks of it is Exec and Query.
+// all vv asks of it is Exec and Query.
 package crud
 
 import (
@@ -14,7 +14,7 @@ import (
 	"reflect"
 )
 
-// Rows is the minimal cursor rx-crud needs. pgx.Rows satisfies it as-is;
+// Rows is the minimal cursor vv needs. pgx.Rows satisfies it as-is;
 // *sql.Rows needs a two-line wrapper because its Close returns an error.
 type Rows interface {
 	Next() bool
@@ -31,7 +31,7 @@ type Result struct {
 	HasLastInsertID bool
 }
 
-// Executor is everything rx-crud requires from a connection, a pool or a
+// Executor is everything vv requires from a connection, a pool or a
 // foreign transaction.
 type Executor interface {
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
@@ -47,7 +47,7 @@ type Tx interface {
 
 // Beginner is implemented by executors that can start their own transaction.
 // It is optional: an Executor handed over by a foreign framework usually is not
-// one, and rx-crud simply joins whatever transaction it was given.
+// one, and vv simply joins whatever transaction it was given.
 type Beginner interface {
 	Begin(ctx context.Context) (Tx, error)
 }
@@ -236,7 +236,7 @@ func keyOf(v any) any {
 	return v
 }
 
-// ownScope is keyOf for a transaction rx-crud opens itself, where nobody named
+// ownScope is keyOf for a transaction vv opens itself, where nobody named
 // anything. A source that cannot say which database it is gets an unscoped
 // binding — the old, unconditional join — because the alternative is worse:
 // scoping it to itself would quietly stop a sibling repository from joining a

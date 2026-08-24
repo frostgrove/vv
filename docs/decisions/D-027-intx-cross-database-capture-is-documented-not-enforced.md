@@ -40,7 +40,7 @@ executor handed over by an ent or gorm transaction is `crudsql.From(tx)`, and it
 `Queryer` is the `*sql.Tx` (or `*ent.Tx`, or the `*gorm.DB`) — the transaction
 handle, not the pool. `database/sql` offers no way to get from a `*sql.Tx` back
 to its `*sql.DB`, and neither ORM exposes one through the two-method interface
-rx-crud sees. So the identity a foreign executor can supply never equals a
+vv sees. So the identity a foreign executor can supply never equals a
 repository's, which is what `WithExecutor`'s comment means by "no check could
 pass". The binding is therefore pushed with `ds = nil` on purpose, and the
 executor's own `DataSource()` is deliberately not consulted.

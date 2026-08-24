@@ -6,4 +6,5 @@ use (
 	./http/crudfiber
 	./http/crudgin
 	./test
+	./tools/vvcfg
 )

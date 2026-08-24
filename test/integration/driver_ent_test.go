@@ -18,7 +18,7 @@ import (
 )
 
 // With the sql/execquery feature, *ent.Client and *ent.Tx both expose
-// ExecContext/QueryContext — which is exactly crudsql.Queryer. So rx-crud can
+// ExecContext/QueryContext — which is exactly crudsql.Queryer. So vv can
 // run straight on ent's driver, transactions included.
 var (
 	_ crudsql.Queryer = (*ent.Client)(nil)
@@ -81,7 +81,7 @@ func TestEnt(t *testing.T) {
 	}
 }
 
-// ent owns the transaction and the entity API; rx-crud joins through the
+// ent owns the transaction and the entity API; vv joins through the
 // context. One physical transaction, both libraries writing into it.
 func TestEntSharedTransaction(t *testing.T) {
 	ctx := context.Background()
@@ -105,7 +105,7 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// rx-crud sees it inside the transaction.
+	// vv sees it inside the transaction.
 	got, err := repo.GetByID(txCtx, byEnt.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +117,8 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatalf("age = %v", got.Age)
 	}
 
-	// rx-crud writes, ent reads.
-	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByRxCrud", Active: true}
+	// vv writes, ent reads.
+	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", Active: true}
 	if err := repo.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +126,11 @@ func TestEntSharedTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Name != "ByRxCrud" || back.Age != nil {
+	if back.Name != "ByVV" || back.Age != nil {
 		t.Fatalf("ent read back %+v", back)
 	}
 
-	// rx-crud's partial update is visible to ent.
+	// vv's partial update is visible to ent.
 	if _, err := repo.Update(txCtx, byEnt.ID, UserUpdate{Name: ptr("Renamed"), Age: crud.Null[int]()}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	}
 }
 
-// An ent rollback has to undo rx-crud's writes as well.
+// An ent rollback has to undo vv's writes as well.
 func TestEntRollback(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -169,7 +169,7 @@ func TestEntRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n, err := repo.Count(ctx); err != nil || n != 0 {
-		t.Fatalf("count = %d err = %v: the rollback missed rx-crud's write", n, err)
+		t.Fatalf("count = %d err = %v: the rollback missed vv's write", n, err)
 	}
 }
 

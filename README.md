@@ -1,4 +1,4 @@
-# rx-crud
+# vv
 
 A generic CRUD repository for Go with JPA-shaped semantics, a Specifications /
 Criteria API, and a security gate — over any driver, without owning your
@@ -7,7 +7,7 @@ connection or your transaction.
 Only two things ever cross the abstraction boundary: **run this statement** and
 **give me rows**. Scanning stays with the mapper, dialect stays with the
 repository. That is why any foreign transaction can be pushed into a context —
-all rx-crud asks of it is `Exec` and `Query`.
+all vv asks of it is `Exec` and `Query`.
 
 ```
 crud/                       core: contracts, metadata, relations, predicates, Opt, pagination — stdlib only
@@ -17,7 +17,7 @@ repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
 http/crudhttp/              the transport-neutral half: status mapping, id coercion, sanitising
 http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
-cmd/rxcrud/                 generates the update DTO and the metamodel from your model
+cmd/vv/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
 crud/crudtest/              an in-memory source for unit-testing repositories
 
@@ -434,7 +434,7 @@ func Log() crud.Middleware[User, int64] {
 
 ### specs — JPA Specifications and the Criteria API
 
-| JPA | rx-crud |
+| JPA | vv |
 | --- | --- |
 | `Specification<T>` | `specs.Specification[M]` |
 | `Root<T>`, `CriteriaBuilder` | `specs.Root[M]`, `specs.Builder` |
@@ -792,10 +792,10 @@ httprouter can register them one by one instead of calling `Mount`.
 ## Codegen
 
 The update DTO and the metamodel are mechanical restatements of the model, so
-`cmd/rxcrud` writes them:
+`cmd/vv` writes them:
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud
+//go:generate go run github.com/shardit-io/vv/cmd/vv
 ```
 
 From this:
@@ -842,7 +842,7 @@ request. Relation expansion stops at `-depth` (2 by default) and never walks
 back into a model already on the path.
 
 `example/blog` is the worked example: `model.go` is what you write,
-`rxcrud_gen.go` is what comes out, and a test regenerates and diffs so the two
+`vv_gen.go` is what comes out, and a test regenerates and diffs so the two
 cannot drift.
 
 ---
@@ -859,7 +859,7 @@ One adapter covers everything that speaks `database/sql`:
 | gorm | `crudsql.From(tx.Statement.ConnPool)` inside `db.Transaction` |
 | ent (`--feature sql/execquery`) | `crudsql.From(entTx)` — `*ent.Tx` has `ExecContext`/`QueryContext` |
 | sqlc (database/sql) | `crudsql.From(tx)`; the same `*sql.Tx` goes to `sqlc.New(tx)` |
-| sqlc (pgx) | `crudpgx.From(tx)`; `pgx.Tx` satisfies sqlc's `DBTX` and rx-crud's `Queryer` at once |
+| sqlc (pgx) | `crudpgx.From(tx)`; `pgx.Tx` satisfies sqlc's `DBTX` and vv's `Queryer` at once |
 | bun, squirrel, dbr, … | `crudsql.From(tx)` |
 
 The interop point is exactly one function:
@@ -905,7 +905,7 @@ err := users.Tx(ctx, func(ctx context.Context) error {
 ### Transactions
 
 ```go
-// rx-crud owns it
+// vv owns it
 err := users.Tx(ctx, func(ctx context.Context) error {
     u, err := users.GetByID(ctx, 42)
     if err != nil { return err }
@@ -951,7 +951,7 @@ column derived from the Go name in `snake_case`.
 | `noauto` | opt an integer primary key out of that default |
 | `immutable` | written on insert, never on update (`created_at`, `tenant_id`) |
 | `generated` | never written; read back after every write (computed columns, triggers) |
-| `version` | optimistic lock: an integer rx-crud advances and checks on every update |
+| `version` | optimistic lock: an integer vv advances and checks on every update |
 | `-` | ignore the field |
 
 Embedded structs are flattened. `time.Time`, `sql.Null[T]`, `crud.Opt[T]` and
@@ -1006,8 +1006,8 @@ like MySQL, and no row locks at all.
 
 sqlc is not in that table on purpose: it generates queries, it is not a
 `crud.Source`. What is worth proving about it — that one transaction can feed
-sqlc's generated queries and an rx-crud repository at once — is proved three
-times below, on pgx, on `database/sql` and on MySQL. The rx-crud code path
+sqlc's generated queries and an vv repository at once — is proved three
+times below, on pgx, on `database/sql` and on MySQL. The vv code path
 underneath is byte-for-byte the pgx and `database/sql` one.
 
 Plus, on both databases:

@@ -1,7 +1,7 @@
 # D-033 — Every optional dependency is its own module
 
-**Status:** accepted
-**Invariant:** the published root module must have no external requirements at all, and a package that imports one must live in its own module under the same repository, versioned in lockstep with the root and reachable without a `replace`.
+**Status:** accepted — the *external requirement* half amended by [[D-036]]
+**Invariant:** the published root module must have no **third-party** requirement ([[D-036]] narrowed this from *no external requirement at all*), and a package that imports one must live in its own module under the same repository, versioned in lockstep with the root and reachable without a `replace`.
 
 ## The decision
 
@@ -72,9 +72,15 @@ it has three parts:
 **Why lockstep versions.** Go is happy to let a consumer select the base at
 v0.3.0 and a binding at v0.1.0, and the binding will still build, because MVS
 raises the base to the higher version. That is the incoherent combination D-016
-worried about and it is real. The answer is process, not mechanism: one release
-tags everything at one version, and `make release` refuses to run if a
-submodule's `go.mod` does not name the version being cut.
+worried about and it is real. The answer is process, not mechanism — and mechanism is not merely unchosen, it
+is unavailable. MVS has no upper bound, so nothing can stop a consumer selecting
+`vv@v0.2.0` with `vv/http/crudgin@v0.1.0`; the binding's own requirement raises
+the library, and only the *other* direction — old binding, new library — is
+dangerous, which is exactly what a bare `go get -u` produces. What the repository
+can do is refuse to *publish* an incoherent set: `make release` will not run if a
+satellite's `go.mod` does not name the version being cut, it creates tags
+idempotently, and it pushes them in one `git push --atomic` so a release cannot
+half-land. `retract` in the root `go.mod` is the only remedy after the fact.
 
 ## What it forbids
 
@@ -123,10 +129,16 @@ dependencies the way a consumer would — so a `require` naming a version that
 does not exist fails there and only there. Building, testing and vetting all
 work from the workspace with no tag at all.
 
-The fix is to cut the first tag rather than to work around it, and `make tidy`
-says so when it hits this. Working around it with a `replace` would put a
-directive in a published `go.mod` that consumers ignore, which hides the problem
-instead of solving it.
+This does not disappear after the first tag, as this section originally claimed.
+Every release that adds a package to the root reopens the window, because a
+satellite resolves the library from the *previous* tag.
+
+`make tidy` handles it without putting a `replace` in anything published: it adds
+one, tidies, and drops it again, so the directive never survives into a released
+`go.mod`. That fixes `go.mod`. It cannot mint a `go.sum` hash, which only a
+published version can — so `GOWORK=off go build` in a satellite stays broken
+until the first tag exists, and that half is waited for rather than worked
+around.
 
 ## Proven by
 
@@ -137,12 +149,26 @@ every module, so a package that drifts into the wrong one stops compiling.
 Two checks are worth running by hand, and both are cheap:
 
 ```
-go list -deps ./... | grep -v '^github.com/shardit-io/vv' | grep '\.'
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... \
+  | grep -v '^github.com/shardit-io/vv'
 ```
 
-run from the repository root, should print nothing but standard-library paths —
-the root module has no external dependency. And from a binding's directory, the
-same command must not name the other binding's framework.
+run from the repository root, must print nothing. `make check-deps` is that
+command, and it runs the same question against each satellite so a binding
+cannot pick up the other binding's framework.
+
+**The command this file used to give was broken and never had pass/fail
+meaning.** It ended in `grep '\.'`, which matches standard-library paths — a
+clean tree printed seventeen lines of `crypto/internal/entropy/v1.0.0` and
+`vendor/golang.org/x/crypto/...`. `.Standard` is the question that was meant.
+[[D-016]] carried the same defect and has the same fix.
+
+**And `go build` is not the check this section says it is.** Under `go.work` the
+build list is the union of every member, so a root-module package importing a
+satellite's dependency compiles, vets and tests green while `go.mod` stays
+empty — a consumer then gets `no required module provides package`. `make unit`
+and `make vet` cannot see it. That is why the check is a Makefile target rather
+than a sentence.
 
 The dependency isolation itself is visible in the `go.mod` files: gin's
 transitive set (sonic, validator/v10, quic-go, protobuf, mongo-driver) appears

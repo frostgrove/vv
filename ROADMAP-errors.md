@@ -155,7 +155,7 @@ NOT NULL and CHECK are `23502` and `23514` — class 23 — so today the adapter
 wrap them in `crud.ErrConflict` and every one answers **409**. Putting `required`
 and `check` in the 422 row means the adapters stop wrapping those two states in
 `ErrConflict`, which is a change to [[D-015]]'s own table and needs its successor
-(D-043), not a footnote. Shipping both mappings — 409 from the sentinel, 422 from
+(D-046), not a footnote. Shipping both mappings — 409 from the sentinel, 422 from
 the `Kind` — is the one outcome that must not happen.
 
 Class 22 needs its own answer rather than silence, because D-015 already gave
@@ -313,7 +313,7 @@ ROOT MODULE  github.com/shardit-io/vv               (errs is its one require)
 ├── adapter/crudsql/          extended — richer by-shape extraction
 ├── http/crudhttp/            extended — Kind→status, the envelope, the renderer seam
 ├── http/crudnet/             extended — error middleware; stdlib only, so it stays here
-└── cmd/ordo/                 extended — DTO, mapper + inverse map, service, wiring
+└── cmd/vv/                 extended — DTO, mapper + inverse map, service, wiring
 
 SATELLITES — one dependency decision each, per [[D-033]]
 ├── http/crudfiber/    + fiber/v3   error middleware, shell over `port`
@@ -617,7 +617,7 @@ func (f *Fault) Unwrap() []error { return f.wrapped }
 ```
 
 `Detail` and `Source` say "internal only" in a comment, and a comment is not an
-enforcement. The proposed D-041 is a rule the types have to carry: `Violation` and `Fault`
+enforcement. The proposed D-044 is a rule the types have to carry: `Violation` and `Fault`
 get their own `MarshalJSON` that emits the public shape and nothing else. Without
 it the first person who logs a fault as JSON ships the constraint names this work
 exists to hide — and `Detail.Driver error` makes the default marshal fail anyway.
@@ -656,7 +656,7 @@ type Renderer    interface {
 
 `Classifier` returns a `*Fault`, and `wrapped` is unexported — so as declared, a
 third-party classifier cannot make `errors.Is(err, crud.ErrConflict)` true, which
-is D-035's entire invariant. The builder therefore exports a `Wrapping(errs
+is D-038's entire invariant. The builder therefore exports a `Wrapping(errs
 ...error)` step, and that is the only way a sentinel gets attached.
 
 `Chain(rs ...Resolver) Resolver` composes the hops. Every one of these is wired
@@ -995,7 +995,7 @@ that is correct. Measured against PostgreSQL 17: the probe says violation, the
 insert succeeds. Composite FKs are worse — *any* NULL column disables the check
 entirely, so the guard is "every column non-null", not "this one". A probe that
 invents violations is strictly worse than the single-violation status quo it
-replaces, which is why the proposed D-039 lets the probe only ever **narrow** the
+replaces, which is why the proposed D-042 lets the probe only ever **narrow** the
 truth, never widen it.
 
 **Results are read by column position, not by alias.** PostgreSQL truncates
@@ -1124,7 +1124,7 @@ enrichment — otherwise the most failure-prone part of the design downgrades a
 correct 409 into an opaque 500, which is the opposite of the point. And it is
 genuinely failure-prone: it re-binds values from a write that already failed, so
 a write rejected for a bad type re-binds the same value and fails again. Probe
-error ⇒ keep what the driver said, set `Partial: true`, log. The proposed D-039 says so.
+error ⇒ keep what the driver said, set `Partial: true`, log. The proposed D-042 says so.
 
 Bound the constraints probed per request, the rows probed per batch, the total
 probe time, and the catalog load time. The defaults have to be numbers rather
@@ -1225,7 +1225,7 @@ Both must be safe to install twice. A response rendered by the CRUD handler and
 then rendered again by the middleware is the most likely way to get this wrong.
 The marker lives on the response-writer wrapper the middleware already needs —
 not on the `Fault`, which is a value that two goroutines may render at once and
-which the proposed D-039 treats as immutable. `crudgin` reads `c.Writer.Written()` for the
+which the proposed D-042 treats as immutable. `crudgin` reads `c.Writer.Written()` for the
 same reason.
 
 ### Rendering edge cases worth naming now
@@ -1255,7 +1255,7 @@ adding gRPC requires changing `errs`, the contract was wrong.
 
 ## 10. Codegen
 
-`cmd/rxcrud` already generates the update DTO and the typed metamodel ([[D-018]],
+`cmd/vv` already generates the update DTO and the typed metamodel ([[D-018]],
 [[FL-010]]). It grows to generate the rest of a resource's skeleton, which is what
 makes the adapter layer worth having rather than a chore:
 
@@ -1329,18 +1329,19 @@ New decisions this work needs:
 
 | id | Invariant |
 |---|---|
-| D-035 | A fault is additive: the `crud` sentinel it wraps stays reachable with `errors.Is` |
-| D-036 | Message text is not an interface. Columns come from the catalog; a value parsed from a driver message is best-effort |
-| D-037 | A retryable class is not a client error. It gets its own `Kind` and 503, and the framework does not retry on the caller's behalf |
-| D-038 | The catalog is per physical handle, loaded once, never global, and its absence is a start-up failure |
-| D-039 | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation |
-| D-040 | A path is translated one hop per layer, and no layer guesses a hop it does not own |
-| D-041 | The public payload names nothing internal — no constraint, no table, no column, no SQLSTATE, and no `Params` entry or CHECK expression derived from one |
-| D-042 | The shared half is transport-neutral; a binding is a shell over `port` (supersedes [[D-034]]) |
-| D-043 | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate (supersedes [[D-015]]'s class-23 sentence) |
-| D-044 | A package is named for what it is; a prefix is added only to break a collision, and the prefix names the subsystem (the framework roadmap) |
-| D-045 | The root module takes no **third-party** requirement; a first-party zero-dependency module is permitted (amends [[D-033]]) |
-| D-046 | `app` never resolves a component by type and never holds a `map[reflect.Type]any` (the framework roadmap) |
+| D-038 | A fault is additive: the `crud` sentinel it wraps stays reachable with `errors.Is` |
+| D-039 | Message text is not an interface. Columns come from the catalog; a value parsed from a driver message is best-effort |
+| D-040 | A retryable class is not a client error. It gets its own `Kind` and 503, and the framework does not retry on the caller's behalf |
+| D-041 | The catalog is per physical handle, loaded once, never global, and its absence is a start-up failure |
+| D-042 | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation |
+| D-043 | A path is translated one hop per layer, and no layer guesses a hop it does not own |
+| D-044 | The public payload names nothing internal — no constraint, no table, no column, no SQLSTATE, and no `Params` entry or CHECK expression derived from one |
+| D-045 | The shared half is transport-neutral; a binding is a shell over `port` (supersedes [[D-034]]) |
+| D-046 | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate (supersedes [[D-015]]'s class-23 sentence) |
+
+The framework's own decisions are written and are not this document's to number:
+[[D-035]] (naming), [[D-036]] (first-party requirements, amending [[D-033]]) and
+[[D-037]] (`app` resolves nothing by type).
 
 New and changed docs — the changed ones matter more, because `CLAUDE.md` makes a
 stale flow a defect rather than untidiness:
@@ -1431,7 +1432,7 @@ not done because the code works.
 
 | # | Phase | Ships | The control case that fails without it |
 |---|---|---|---|
-| 0 | Corpus, placeholders **and** decisions | the captured-message corpus first; a `TODO.md` in every directory the framework roadmap marks `→` or `·` (rule 6); then D-035…D-043, the supersedes of [[D-015]] and [[D-034]], the [[D-019]] additions, UC-017, UC-004, FL-011, FL-013, FL-014, FL-015 | a corpus entry that must stay unclassified (`42P01`, `08006`, MySQL `1044`) does |
+| 0 | Corpus, placeholders **and** decisions | the captured-message corpus first; a `TODO.md` in every directory the framework roadmap marks `→` or `·` (rule 6); then D-038…D-046, the supersedes of [[D-015]] and [[D-034]], the [[D-019]] additions, UC-017, UC-004, FL-011, FL-013, FL-014, FL-015 | a corpus entry that must stay unclassified (`42P01`, `08006`, MySQL `1044`) does |
 | 1 | `errs/` | codes, `Kind`, `Path`, `Violation`, `Fault`, the SPI, the message source | a `Fault` wrapping a sentinel matches it — **and one wrapping none does not**. Without the negative the test passes for `errors.Join` and proves nothing |
 | 2 | `errs/sqlerr/` | four parsers over the phase-0 corpus | the class is derived from `(dialect, sqlstate, native)` alone — a parser that reads message text fails a corpus entry whose text is localised |
 | 3 | Driver extraction | `crudsql` by shape (and its `errors.Unwrap` walk fixed), `crudpgx` typed | an unclassifiable state stays a 500. **Depends on phase 6** for `Source.Columns` on SQLite FKs and PG `22001`, which carry no column — ship it knowing those two are blank until the catalog lands |
@@ -1464,7 +1465,7 @@ vacuously carries a control case next to it, in the pattern
 | What | How it is tested | The control that fails without the feature |
 |---|---|---|
 | the parsers | table-driven over the phase-0 corpus | a **negative** corpus entry — `42P01`, `08006`, MySQL `1044` — that must stay unclassified. "A misclassified entry fails" is a tautology: the corpus supplies both input and expectation, so it tests the harness |
-| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is the proposed D-036's actual invariant and nothing else tests it |
+| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is the proposed D-039's actual invariant and nothing else tests it |
 | driver extraction | live, all four engines, through every adapter | an unclassifiable state stays a 500 — the existing `TestOnlyIntegrityErrorsBecomeConflicts` pattern. Plus: a MySQL CHECK violation is now classified, which it is not today |
 | the envelope | unit, all three bindings, triplet suites | removing an arm from the shared `Status` fails all three identically |
 | the precedence table | unit | a fault mixing `Forbidden` and `Conflict` answers 403, and one mixing `Internal` with anything answers 500 with an empty body. Untested, this table is decoration |
@@ -1497,7 +1498,7 @@ Left open on purpose. Each needs a decision before the phase that touches it.
 
 - **Whether pre-flight probing should ever be the default** for a named endpoint
   shape (a signup form), or stay entirely the application's call.
-- **Whether the framework retries a retryable class.** D-037 says no. The
+- **Whether the framework retries a retryable class.** D-040 says no. The
   argument for yes is that a serialisation failure inside a repository-owned
   transaction is the framework's own to retry, and nobody else can see it.
 - **The cap defaults** — constraints per request, rows per batch, probe time,

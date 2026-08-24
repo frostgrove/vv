@@ -47,7 +47,7 @@ type mxProvider struct {
 // separate bindings on a read: sqlx.NewDb(db, …).DB is db, and gorm's DB()
 // returns the very *sql.DB it was handed, so those rows would be the same
 // struct over the same pointer as the database/sql row beside them. That both
-// libraries can lend rx-crud their pool is proven where it is observable, in
+// libraries can lend vv their pool is proven where it is observable, in
 // driver_sqlx_test.go and driver_gorm_test.go. The MySQL row alias is likewise
 // a write-path difference — it only rewrites the upsert clause — and it is
 // covered by driver_sql_test.go, which runs the whole conformance suite with it.
@@ -72,7 +72,7 @@ func mxProviders() []mxProvider {
 //
 // The text is all one case on purpose. MySQL's default collation makes LIKE
 // case-insensitive and Postgres' does not, so a fixture that mixed cases would
-// be measuring the engines' collations rather than rx-crud.
+// be measuring the engines' collations rather than vv.
 func mxUsers() []User {
 	return []User{
 		{ID: 1, TenantID: 1, Email: "ada@x.io", Name: "Ada Lovelace", Age: crud.Set(36), Active: true},
@@ -268,11 +268,11 @@ func mxSlugs(labels []Label) []string {
 	return out
 }
 
-// gorm creates the schema and writes every row; rx-crud answers the query. The
+// gorm creates the schema and writes every row; vv answers the query. The
 // Postgres half of this is gorm_model_test.go — what is proven here is that
 // none of it was Postgres: the same models, the same DSL document and the same
 // generated metamodel work against a schema MySQL's AutoMigrate produced.
-func TestGormModelThroughRxCrudOnBothEngines(t *testing.T) {
+func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -351,7 +351,7 @@ func TestGormModelThroughRxCrudOnBothEngines(t *testing.T) {
 	}
 }
 
-// gorm's tombstones are invisible to rx-crud because the repository declares a
+// gorm's tombstones are invisible to vv because the repository declares a
 // scope, and a scope is a property of the declaration, not of the engine.
 func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
@@ -400,7 +400,7 @@ func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 // ent's generated entity, on both engines
 
 // mxEnt is one database reached both ways: through ent's client and through
-// rx-crud's source.
+// vv's source.
 type mxEnt struct {
 	name    string
 	db      *sql.DB
@@ -416,8 +416,8 @@ func mxEnts() []mxEnt {
 }
 
 // ent's generated struct is the model, on either engine: ent writes, the DSL
-// and the generated metamodel read, rx-crud patches, ent reads back.
-func TestEntModelThroughRxCrudOnBothEngines(t *testing.T) {
+// and the generated metamodel read, vv patches, ent reads back.
+func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 	for _, e := range mxEnts() {
 		t.Run(e.name, func(t *testing.T) {
 			ctx := context.Background()

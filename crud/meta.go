@@ -16,7 +16,7 @@ import (
 // reaching for a fake database.
 var NowFunc = time.Now
 
-// TagKey is the struct tag rx-crud reads. `db:"column,option,option"`.
+// TagKey is the struct tag vv reads. `db:"column,option,option"`.
 //
 // Options:
 //
@@ -328,7 +328,7 @@ func checkVersion(t reflect.Type, s *Schema, f *Field) error {
 	case f.Immutable:
 		return deny("`version` and `immutable` contradict each other: the lock has to advance")
 	case f.Generated:
-		return deny("`version` and `generated` contradict each other: the lock is written by rx-crud, not read back from a default")
+		return deny("`version` and `generated` contradict each other: the lock is written by vv, not read back from a default")
 	case !isIntKind(ElemType(f.Type).Kind()):
 		// A timestamp version would need a clock, and two application servers
 		// do not share one. An integer counter needs nothing but the row.

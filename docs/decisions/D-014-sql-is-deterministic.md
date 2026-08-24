@@ -12,7 +12,7 @@ places: the filter object's keys (`compiler.node`) and an operator object's keys
 is a slice in declaration order.
 
 The generator does the same for its own output (`generator.load` sorts model
-names, `cmd/rxcrud/render.go` sorts imports).
+names, `internal/codegen/render.go` sorts imports).
 
 ## Why
 
@@ -64,8 +64,8 @@ same way every time.
 - `crud/meta.go:buildSchema` — the primary key sorts first, the rest keep
   declaration order; `Field.Ordinal` records it.
 - `crud/predicate.go:writer.nextAlias` — aliases are numbered by walk order.
-- `cmd/rxcrud/main.go:generator.load` — `sort.Strings(g.order)`.
-- `cmd/rxcrud/render.go:generator.render` — sorts the import block.
+- `cmd/vv/main.go:generator.load` — `sort.Strings(g.order)`.
+- `internal/codegen/render.go:generator.render` — sorts the import block.
 
 ## Proven by
 
@@ -77,7 +77,7 @@ same way every time.
 - `TestDeterministicOutput` in `query/query_test.go`.
 - `TestKeyOrderDoesNotFollowTheDocument` in `query/compile_test.go` — states the
   half that surprises people: sorted order, not document order.
-- `TestOutputIsByteIdenticalAcrossRuns` in `cmd/rxcrud/gen_test.go` — the
+- `TestOutputIsByteIdenticalAcrossRuns` in `internal/codegen/codegen_test.go` — the
   generator half.
 - `TestGeneratedFileIsUpToDate` in `example/blog/blog_test.go` and
   `TestTheGeneratedStoresAreUpToDate` in `test/integration/codegen_test.go` —

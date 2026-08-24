@@ -58,14 +58,14 @@ func shardDSN(t *testing.T, database string) string {
 	return u.String()
 }
 
-// openShards creates rxcrud_shard_a and rxcrud_shard_b if they are not there
+// openShards creates vv_shard_a and vv_shard_b if they are not there
 // yet and returns a live handle to each. CREATE DATABASE cannot run inside a
 // transaction and has no IF NOT EXISTS, so a duplicate is simply expected.
 func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 
-	for _, name := range []string{"rxcrud_shard_a", "rxcrud_shard_b"} {
+	for _, name := range []string{"vv_shard_a", "vv_shard_b"} {
 		if _, err := pgDB.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
 			if !strings.Contains(err.Error(), "already exists") {
 				t.Fatalf("creating %s: %v", name, err)
@@ -92,7 +92,7 @@ func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 		}
 		return db
 	}
-	return open("rxcrud_shard_a"), open("rxcrud_shard_b")
+	return open("vv_shard_a"), open("vv_shard_b")
 }
 
 // names reads a shard directly, so the assertion never goes through the seam

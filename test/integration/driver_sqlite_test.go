@@ -21,7 +21,7 @@ import (
 // writers anyway, and a queue is a friendlier failure than SQLITE_BUSY.
 func openSQLite(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "rxcrud.db"))
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "vv.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

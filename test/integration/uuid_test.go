@@ -342,13 +342,13 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 	}
 }
 
-// ent generates its UUIDs and timestamps in Go, and rx-crud does not run ent's
+// ent generates its UUIDs and timestamps in Go, and vv does not run ent's
 // builders. The good news, pinned here because it is the difference between a
 // clear error and a table full of zero keys: a model whose key is declared
 // `noauto` and left unset is refused before any SQL runs. The bad news is the
 // other half — nothing fills in a Go-side time default, so a NOT NULL timestamp
 // column has to be set by the caller or defaulted by the database.
-func TestAGoSideDefaultIsNotAppliedByRxCrud(t *testing.T) {
+func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 	ctx := context.Background()
 	uuSetup(t)
 

@@ -49,7 +49,7 @@ func (uc teamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *quer
 	var out promoteResult
 	// 2. gorm owns the transaction.
 	err = uc.db.Transaction(func(tx *gorm.DB) error {
-		// 3. rx-crud joins it — one line, and every repository call made with
+		// 3. vv joins it — one line, and every repository call made with
 		//    txCtx now runs on this transaction.
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
@@ -136,7 +136,7 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 	}
 }
 
-// A failure anywhere in the usecase takes the ORM's work and rx-crud's with it.
+// A failure anywhere in the usecase takes the ORM's work and vv's with it.
 func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	ctx := context.Background()
 	db := gormDB(t)
@@ -276,7 +276,7 @@ func TestEntUsecaseDSLInsideTransaction(t *testing.T) {
 		t.Fatalf("result = %+v", got)
 	}
 
-	// ent's bulk update and rx-crud's per-row update both committed.
+	// ent's bulk update and vv's per-row update both committed.
 	still, err := client.User.Query().Where(entuser.ActiveEQ(true)).All(ctx)
 	if err != nil {
 		t.Fatal(err)

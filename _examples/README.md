@@ -31,11 +31,11 @@ both live in the library.
 | Example | Data layer | Adapter | Engine | HTTP | What it shows that the others do not |
 |---|---|---|---|---|---|
 | [`pgx-fiber`](pgx-fiber/) | none | `crudpgx` | PostgreSQL | Fiber | The shortest path: a pgx pool, a struct with `db` tags, no ORM and no `database/sql` in the way. |
-| [`ent-pgx-fiber`](ent-pgx-fiber/) | ent | `crudsql` | PostgreSQL | Fiber | An ent project keeps its generated entity, its migration and its builders; rx-crud binds the generated struct as-is and serves from the same pool. |
+| [`ent-pgx-fiber`](ent-pgx-fiber/) | ent | `crudsql` | PostgreSQL | Fiber | An ent project keeps its generated entity, its migration and its builders; vv binds the generated struct as-is and serves from the same pool. |
 | [`ent-pgx-gin`](ent-pgx-gin/) | ent | `crudsql` | PostgreSQL | Gin | The same model, the same declaration and the same options as the example above — only the mount and the engine differ. |
-| [`gorm-pgx-fiber`](gorm-pgx-fiber/) | gorm | `crudsql` | PostgreSQL | Fiber | One struct carrying both gorm and rx-crud tags: no second model, no adapter type, and gorm and rx-crud share one `*sql.DB`. |
-| [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so rx-crud reads the written row back; the caller cannot tell ([`D-019`](../docs/decisions/D-019-dialect-differences-are-not-observable.md)). |
-| [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and rx-crud read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, rx-crud serves the CRUD surface. |
+| [`gorm-pgx-fiber`](gorm-pgx-fiber/) | gorm | `crudsql` | PostgreSQL | Fiber | One struct carrying both gorm and vv tags: no second model, no adapter type, and gorm and vv share one `*sql.DB`. |
+| [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so vv reads the written row back; the caller cannot tell ([`D-019`](../docs/decisions/D-019-dialect-differences-are-not-observable.md)). |
+| [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and vv read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, vv serves the CRUD surface. |
 | [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
@@ -43,7 +43,7 @@ surface in one file — model, DTO, declaration, metamodel, security policy —
 with tests that run it against `crud/crudtest`, so it needs no database.
 
 [`entmodel/`](entmodel/) and [`entstore/`](entstore/) are shared by the two ent
-examples: ent's generated package, and the rx-crud DTO and metamodel generated
+examples: ent's generated package, and the vv DTO and metamodel generated
 from it. In your own project both live in your own tree; they are shared here
 only so the same ent code is not checked in twice.
 
@@ -65,7 +65,7 @@ register them one by one instead of calling `Mount`.
 
 ## Two things the responses will show you
 
-**A column `DEFAULT` does not fire.** rx-crud writes every mapped column, so an
+**A column `DEFAULT` does not fire.** vv writes every mapped column, so an
 INSERT it builds names `active`, and creating a product without one stores
 `false` rather than the column's `true`. A default only reaches rows the
 database makes on its own. Where the server must own a value, mark the column

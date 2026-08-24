@@ -1,15 +1,15 @@
-# D-017 — An ORM's Go-side defaults, hooks and privacy rules do not run on rx-crud writes
+# D-017 — An ORM's Go-side defaults, hooks and privacy rules do not run on vv writes
 
 **Status:** accepted
-**Invariant:** A write issued through rx-crud must be exactly the statement rx-crud built; it must not enter an ORM's builder, callback chain or privacy layer.
+**Invariant:** A write issued through vv must be exactly the statement vv built; it must not enter an ORM's builder, callback chain or privacy layer.
 
 ## The decision
 
-rx-crud shares the ORM's connection and transaction, and nothing else. It builds
+vv shares the ORM's connection and transaction, and nothing else. It builds
 a statement and hands it to `Exec` or `Query`. Anything the ORM implements in Go
 around its own builders — `field.Bool("active").Default(true)`,
 `field.Time(…).Default(time.Now)`, a gorm `BeforeCreate` hook, an ent hook,
-interceptor or privacy rule — is on a code path rx-crud never enters.
+interceptor or privacy rule — is on a code path vv never enters.
 
 This is a consequence of [[D-009]], not an independent choice: the whole reason
 the seam works with *any* framework is that it asks for `Exec` and `Query` and
@@ -37,15 +37,15 @@ consequence at the point where a reader would otherwise be bitten.
 **The safe shapes**, best first:
 
 1. **Put the invariant in the database.** `DEFAULT now()`, `NOT NULL`, a `CHECK`,
-   a trigger. Mark the column `generated` on the model and rx-crud never writes
+   a trigger. Mark the column `generated` on the model and vv never writes
    it and always reads it back. This is the only shape that holds no matter which
    code path writes the row.
 2. **Put it in a `security.Policy`.** `Scope`, `Inspect` and `Immutable` are
-   enforced by rx-crud itself, so they apply to every rx-crud write.
+   enforced by vv itself, so they apply to every vv write.
 3. **Put it in `BeforeSave` / `BeforeUpdate`** on the handler, or in a service
-   layer that embeds the repository ([[D-022]]). This covers the rx-crud path
+   layer that embeds the repository ([[D-022]]). This covers the vv path
    only, so it is a defaulting mechanism rather than an invariant.
-4. **Keep that operation on the ORM's builder** and let rx-crud own the rest.
+4. **Keep that operation on the ORM's builder** and let vv own the rest.
    The two share a transaction, so the split can run through a single request
    handler.
 
@@ -86,19 +86,19 @@ guard — it lands.
 Which half is executed differs by ORM, and this is worth being precise about:
 
 **gorm — both halves are executed.**
-- `TestGormHooksDoNotRunOnRxCrudWrites` in
+- `TestGormHooksDoNotRunOnVVWrites` in
   `test/integration/gorm_model_test.go` — `test/gormstore/model.go:Label` has a
   real `BeforeCreate` hook that increments a counter and defaults a column. The
   test drives gorm's own `Create` first and asserts the hook fired, so a passing
-  run cannot be vacuous; then it drives rx-crud's `Save` and asserts the counter
+  run cannot be vacuous; then it drives vv's `Save` and asserts the counter
   did not move and the stored row carries the zero value.
 
 **ent — the defaults half is executed, the hook half is reasoned.**
-- `TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites` in
+- `TestEntsGoSideDefaultsDoNotApplyToVVWrites` in
   `test/integration/ent_model_test.go` — `field.Bool("active").Default(true)`.
-  ent's builder fills it in, rx-crud's `Save` writes the model's `false`, and the
+  ent's builder fills it in, vv's `Save` writes the model's `false`, and the
   row is re-read *through ent* so the difference is the stored value and not
-  something rx-crud failed to read back.
+  something vv failed to read back.
 - No schema in `test/ent/schema/` declares `Hooks()` or `Policy()`, so the hook
   and privacy half of the claim is **reasoned, not executed**. The reasoning is
   that it is the same code path as the defaults — ent's builder — and the gorm
@@ -106,7 +106,7 @@ Which half is executed differs by ORM, and this is worth being precise about:
   `docs/usage-guides/ent.md` §16 both say so in as many words.
 
 **The UUID shape.**
-- `TestAGoSideDefaultIsNotAppliedByRxCrud` in `test/integration/uuid_test.go` —
+- `TestAGoSideDefaultIsNotAppliedByVV` in `test/integration/uuid_test.go` —
   the `ErrMissingID` net catching a missing Go-side key default.
 
 **What still works across the boundary.**

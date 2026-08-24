@@ -1,9 +1,9 @@
 // Package gormstore is the gorm half of the integration: ordinary gorm models,
-// with `rel` tags alongside the `gorm` ones so rx-crud can navigate the same
+// with `rel` tags alongside the `gorm` ones so vv can navigate the same
 // associations. It is what docs/gorm.md tells a gorm project to do, executed.
 package gormstore
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly UpdatedAt,DeletedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly UpdatedAt,DeletedAt
 
 import (
 	"sync/atomic"
@@ -12,7 +12,7 @@ import (
 )
 
 // Team is an ordinary gorm model. The only additions are the `rel` tags, which
-// gorm ignores and rx-crud reads — one struct, two libraries.
+// gorm ignores and vv reads — one struct, two libraries.
 type Team struct {
 	gorm.Model
 	Name string `gorm:"size:120"`
@@ -36,7 +36,7 @@ type Label struct {
 }
 
 // LabelCreations counts the gorm callbacks that fired. docs/gorm.md §16 says
-// gorm hooks do not run on rx-crud writes — rx-crud sends one statement to the
+// gorm hooks do not run on vv writes — vv sends one statement to the
 // driver and never goes through gorm's callback chain — and no model in the
 // tree declared a hook, so the claim was pinned by nothing.
 var LabelCreations atomic.Int64

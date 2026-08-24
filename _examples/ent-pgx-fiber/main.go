@@ -1,12 +1,12 @@
-// Command ent-pgx-fiber is rx-crud with ent as the model source: an ent
+// Command ent-pgx-fiber is vv with ent as the model source: an ent
 // client and a database/sql pool over the same pgx stdlib connection, the
 // crudsql adapter, and the Fiber binding.
 //
 // The point is what does not change. An ent project already owns a generated
 // entity struct, a migration and a set of builders; nothing here asks it to
-// give any of that up. rx-crud binds to entmodel.Product as generated, and
+// give any of that up. vv binds to entmodel.Product as generated, and
 // the *sql.DB that ent's driver wraps is the same one crudsql serves from —
-// one pool, ent migrating and seeding through it, rx-crud reading and writing
+// one pool, ent migrating and seeding through it, vv reading and writing
 // through it.
 //
 //	go get github.com/shardit-io/vv
@@ -44,7 +44,7 @@ import (
 
 // The model is ent's own generated struct, entmodel.Product, bound as-is —
 // nothing declared here. entstore.ProductUpdate and entstore.Product_ are the
-// rx-crud update DTO and metamodel generated from it; see entstore/doc.go for
+// vv update DTO and metamodel generated from it; see entstore/doc.go for
 // how.
 
 // Products is validated when this package initialises: a mistyped tag, a DTO
@@ -57,7 +57,7 @@ var Products = basic.Define[entmodel.Product, int64, entstore.ProductUpdate]("pr
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://rxcrud:rxcrud@localhost:55432/rxcrud?sslmode=disable"
+const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -87,9 +87,9 @@ func main() {
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
 			Searchable: []string{"Sku", "Name"},
 		}),
-		// ent's Go-side defaults never run on an rx-crud write, and ent's
+		// ent's Go-side defaults never run on an vv write, and ent's
 		// generated struct carries no `db` tags, so there is nowhere to mark
-		// created_at as the server's to fill. rx-crud maps it like any other
+		// created_at as the server's to fill. vv maps it like any other
 		// column and writes what the struct holds — the zero time on a create,
 		// and the column's DEFAULT never fires because the INSERT names it.
 		// This is the second of the three ways out that
@@ -110,7 +110,7 @@ func main() {
 
 // bootstrap runs ent's own migration and seeds through ent's own builders, so
 // the example runs against an empty database. A real application would use
-// its own migrations; the point here is that rx-crud takes no part in either
+// its own migrations; the point here is that vv takes no part in either
 // step and needs none.
 func bootstrap(ctx context.Context, client *entmodel.Client) error {
 	if err := client.Schema.Create(ctx); err != nil {

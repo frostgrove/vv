@@ -145,21 +145,21 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", "github.com/shardit-io/vv/cmd/rxcrud", "-dir", dir)
+	cmd := exec.Command("go", "run", "github.com/shardit-io/vv/cmd/vv", "-dir", dir)
 	cmd.Dir = mustRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)
 	}
-	fresh, err := os.ReadFile(filepath.Join(dir, "rxcrud_gen.go"))
+	fresh, err := os.ReadFile(filepath.Join(dir, "vv_gen.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := os.ReadFile("rxcrud_gen.go")
+	current, err := os.ReadFile("vv_gen.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(fresh) != string(current) {
-		t.Fatal("rxcrud_gen.go is stale; run `go generate ./example/blog`")
+		t.Fatal("vv_gen.go is stale; run `go generate ./example/blog`")
 	}
 }
 

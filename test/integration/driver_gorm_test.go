@@ -27,7 +27,7 @@ type GormUser struct {
 
 func (GormUser) TableName() string { return "users" }
 
-// gormPGDialector reuses the shared *sql.DB, so gorm and rx-crud pool together.
+// gormPGDialector reuses the shared *sql.DB, so gorm and vv pool together.
 func gormPGDialector() gorm.Dialector { return gormpg.New(gormpg.Config{Conn: pgDB}) }
 
 func openGorm(t *testing.T, d gorm.Dialector) *gorm.DB {
@@ -72,19 +72,19 @@ func TestGormSharedTransaction(t *testing.T) {
 	err := db.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
-		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByRxCrud", Active: true}
+		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByVV", Active: true}
 		if err := repo.Save(txCtx, &u); err != nil {
 			return err
 		}
-		// gorm sees the row rx-crud wrote, in the same transaction.
+		// gorm sees the row vv wrote, in the same transaction.
 		var got GormUser
 		if err := tx.First(&got, u.ID).Error; err != nil {
 			return err
 		}
-		if got.Name != "ByRxCrud" {
+		if got.Name != "ByVV" {
 			t.Errorf("gorm read back %q", got.Name)
 		}
-		// And rx-crud sees gorm's write.
+		// And vv sees gorm's write.
 		if err := tx.Create(&GormUser{TenantID: 1, Email: "by-gorm@x.io", Name: "ByGorm", Active: true}).Error; err != nil {
 			return err
 		}
@@ -110,8 +110,8 @@ func TestGormSharedTransaction(t *testing.T) {
 	}
 }
 
-// A gorm transaction that rolls back must take rx-crud's writes with it.
-func TestGormRollbackTakesRxCrudWithIt(t *testing.T) {
+// A gorm transaction that rolls back must take vv's writes with it.
+func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	db := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
@@ -130,7 +130,7 @@ func TestGormRollbackTakesRxCrudWithIt(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if n, _ := repo.Count(ctx); n != 0 {
-		t.Fatalf("count = %d: the rollback did not reach rx-crud's write", n)
+		t.Fatalf("count = %d: the rollback did not reach vv's write", n)
 	}
 }
 

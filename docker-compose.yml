@@ -5,21 +5,21 @@
 #
 # Ports are deliberately non-standard so this never collides with a local
 # PostgreSQL or MySQL.
-name: rx-crud
+name: vv
 
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: rxcrud
-      POSTGRES_PASSWORD: rxcrud
-      POSTGRES_DB: rxcrud
+      POSTGRES_USER: vv
+      POSTGRES_PASSWORD: vv
+      POSTGRES_DB: vv
     command: >
       postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=off
     ports:
       - "55432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rxcrud -d rxcrud"]
+      test: ["CMD-SHELL", "pg_isready -U vv -d vv"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -29,17 +29,17 @@ services:
   mysql:
     image: mysql:8.4
     environment:
-      MYSQL_ROOT_PASSWORD: rxcrud
-      MYSQL_DATABASE: rxcrud
-      MYSQL_USER: rxcrud
-      MYSQL_PASSWORD: rxcrud
+      MYSQL_ROOT_PASSWORD: vv
+      MYSQL_DATABASE: vv
+      MYSQL_USER: vv
+      MYSQL_PASSWORD: vv
     command: >
       --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
       --innodb-flush-log-at-trx-commit=0
     ports:
       - "53306:3306"
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u rxcrud -prxcrud --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u vv -pvv --silent"]
       interval: 2s
       timeout: 3s
       retries: 40

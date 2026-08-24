@@ -32,7 +32,7 @@ func TestSqlx(t *testing.T) {
 	}
 }
 
-// One transaction, two APIs: sqlx's StructScan and rx-crud's repository.
+// One transaction, two APIs: sqlx's StructScan and vv's repository.
 func TestSqlxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)

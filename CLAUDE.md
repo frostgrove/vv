@@ -1,4 +1,4 @@
-# Working on rx-crud
+# Working on vv
 
 A generic CRUD repository for Go: JPA-shaped semantics, a Specifications /
 Criteria API, a security gate, a wire DSL and a Fiber handler — over any driver,
@@ -177,7 +177,7 @@ repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
 http/crudhttp/              the transport-neutral half of the HTTP layer
 http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
-cmd/rxcrud/                 generates the update DTO and the metamodel from your model
+cmd/vv/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun
 crud/crudtest/              an in-memory source for unit-testing repositories
 docs/                       decisions, use cases, flows, usage guides

@@ -43,7 +43,7 @@ caller forgot to set it, the alternatives are:
 - refuse: the caller finds out at the call site.
 
 The second one is the only one that names the actual mistake. It is also the
-safety net the ent and gorm guides lean on: rx-crud does not run an ORM's Go-side
+safety net the ent and gorm guides lean on: vv does not run an ORM's Go-side
 `Default(uuid.New)` ([[D-017]]), so this refusal is what stops a zero UUID
 landing. Note the limit of the net — a zero `time.Time` is a legal value, so a
 Go-side time default has no equivalent guard.
@@ -103,7 +103,7 @@ predicate to narrow. That is documented on `basic.Scope`, and it is why
   `TestSaveOnMySQLUsesLastInsertID` in `repo/basic/repository_test.go`.
 - `TestSaveRequiresAssignedKeyWhenNotGenerated` in
   `repo/basic/repository_test.go` — the `ErrMissingID` branch.
-- `TestAUUIDPrimaryKeyWorksEverywhere` and `TestAGoSideDefaultIsNotAppliedByRxCrud`
+- `TestAUUIDPrimaryKeyWorksEverywhere` and `TestAGoSideDefaultIsNotAppliedByVV`
   in `test/integration/uuid_test.go` — the refusal doing its job on the shape it
   exists for.
 - `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` in

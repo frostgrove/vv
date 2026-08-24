@@ -1,7 +1,7 @@
 // Package schema is the ent declaration the two ent examples share.
 //
 // In your own project this is simply your ent schema; nothing here is
-// rx-crud-specific. The generated entity struct next door is what rx-crud
+// vv-specific. The generated entity struct next door is what vv
 // binds to, as-is.
 package schema
 

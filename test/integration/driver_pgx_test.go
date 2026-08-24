@@ -15,7 +15,7 @@ func TestPgx(t *testing.T) {
 	RunSuite(t, Target{Name: "pgx", DB: "postgres", Source: crudpgx.Open(pgPool)})
 }
 
-// pgx owns the transaction; rx-crud joins it through the context. One physical
+// pgx owns the transaction; vv joins it through the context. One physical
 // transaction, two APIs.
 func TestPgxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
@@ -32,7 +32,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	if err := repo.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
-	// A raw pgx statement in the same transaction sees the row rx-crud wrote.
+	// A raw pgx statement in the same transaction sees the row vv wrote.
 	var name string
 	if err := tx.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", u.ID).Scan(&name); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	if name != "Joined" {
 		t.Fatalf("pgx read back %q", name)
 	}
-	// And rx-crud sees what pgx writes.
+	// And vv sees what pgx writes.
 	if _, err := tx.Exec(ctx, "UPDATE users SET name = 'ByPgx' WHERE id = $1", u.ID); err != nil {
 		t.Fatal(err)
 	}

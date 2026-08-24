@@ -25,7 +25,7 @@ import (
 	"github.com/shardit-io/vv/crud"
 )
 
-// Queryer is the database/sql shape rx-crud needs. *sql.DB, *sql.Tx, *sql.Conn,
+// Queryer is the database/sql shape vv needs. *sql.DB, *sql.Tx, *sql.Conn,
 // gorm's ConnPool, sqlx's handles and ent's execquery clients all satisfy it.
 type Queryer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -143,7 +143,7 @@ func (t *Tx) Tx() *sql.Tx { return t.tx }
 
 // Begin opens a savepoint inside the transaction.
 func (t *Tx) Begin(ctx context.Context) (crud.Tx, error) {
-	name := "rxcrud_sp_" + strconv.FormatInt(t.depth.Add(1), 10)
+	name := "vv_sp_" + strconv.FormatInt(t.depth.Add(1), 10)
 	if _, err := t.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
 		return nil, err
 	}

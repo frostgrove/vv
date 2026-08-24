@@ -5,7 +5,7 @@
 
 ## The decision
 
-rx-crud reflects over structs instead of asking for hand-written mappings,
+vv reflects over structs instead of asking for hand-written mappings,
 generates code instead of asking for hand-written DTOs, and leans on type
 inference so call sites carry no explicit generics. That is deliberate and it is
 the owner's stated position, not an accident of implementation.
@@ -80,7 +80,7 @@ against the ORM's own.
   declaration time.
 - `repo/decorators/specs/metamodel.go:Metamodel` — attribute-struct validation at
   declaration time.
-- `cmd/rxcrud` — the codegen half ([[D-018]]).
+- `cmd/vv` — the codegen half ([[D-018]]).
 - `crud/repo.go` — the inference half ([[D-001]]).
 - `prompt` — the original brief, including the sentence quoted above.
 

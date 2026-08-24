@@ -14,7 +14,7 @@ import (
 	"github.com/shardit-io/vv/repo/basic"
 )
 
-// The two engines rx-crud supports disagree about more than syntax: MySQL has no
+// The two engines vv supports disagree about more than syntax: MySQL has no
 // RETURNING, its default collation ignores case, it orders NULLs the other way
 // round and it spells identifiers with backticks. Every one of those is
 // something a caller must not have to know about — and the ones that still leak
@@ -420,7 +420,7 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 // collation
 
 // LIKE is the one predicate whose answer belongs to the column's collation
-// rather than to rx-crud: MySQL's default is case-insensitive and PostgreSQL's
+// rather than to vv: MySQL's default is case-insensitive and PostgreSQL's
 // is not. LikeIgnoreCase exists precisely so a caller who means "ignore case"
 // can say it and get it on both.
 func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
@@ -477,7 +477,7 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 // ---------------------------------------------------------------------------
 // NULL ordering
 
-// Where a NULL sorts is the engine's decision, not rx-crud's: PostgreSQL puts
+// Where a NULL sorts is the engine's decision, not vv's: PostgreSQL puts
 // NULLs last on ASC and first on DESC, MySQL does the opposite. crud.Order can
 // say which it wants — and that request is rendered for PostgreSQL only, because
 // MySQL has no NULLS LAST clause. So `Asc(f).WithNullsLast()` is honoured on one
@@ -598,7 +598,7 @@ func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 
 // Both engines refuse a SELECT DISTINCT ordered by a column outside the select
 // list — 42P10 on PostgreSQL, ER_FIELD_IN_ORDER_NOT_SELECT on MySQL — and all
-// three of distinct, select and sort arrive from the wire together. rx-crud
+// three of distinct, select and sort arrive from the wire together. vv
 // answers before the database does, with a *crud.SchemaError that a transport
 // turns into a 400 naming the column, rather than passing the combination on to
 // be refused as a 500.

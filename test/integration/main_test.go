@@ -17,8 +17,8 @@ import (
 
 // Defaults match docker-compose.yml. Override to point at your own databases.
 var (
-	pgDSN    = env("RXCRUD_PG_DSN", "postgres://rxcrud:rxcrud@127.0.0.1:55432/rxcrud?sslmode=disable")
-	mysqlDSN = env("RXCRUD_MYSQL_DSN", "rxcrud:rxcrud@tcp(127.0.0.1:53306)/rxcrud?parseTime=true")
+	pgDSN    = env("VV_PG_DSN", "postgres://vv:vv@127.0.0.1:55432/vv?sslmode=disable")
+	mysqlDSN = env("VV_MYSQL_DSN", "vv:vv@tcp(127.0.0.1:53306)/vv?parseTime=true")
 )
 
 func env(key, def string) string {

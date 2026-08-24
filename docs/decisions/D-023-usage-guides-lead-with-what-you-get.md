@@ -69,22 +69,22 @@ A document structure is not something a Go test can assert, and none does. What
 that would otherwise rot:
 
 - `TestEntGeneratedStructIsAModel`, `TestEntGeneratedMetamodel`,
-  `TestEntStructReadsThroughRxCrud` and `TestEntStructWritesThroughRxCrud` in
+  `TestEntStructReadsThroughVV` and `TestEntStructWritesThroughVV` in
   `test/integration/ent_model_test.go`, plus
-  `TestEntModelThroughRxCrudOnBothEngines` in
+  `TestEntModelThroughVVOnBothEngines` in
   `test/integration/matrix_test.go` — Part I of the ent guide, executed.
 - `TestEntUsecaseDSLInsideTransaction` in `test/integration/usecase_test.go` —
   §5 of the ent guide, executed.
 - `TestTheGormGuidesHeadlineDocumentRuns` in
   `test/integration/gorm_model_test.go` — the gorm guide's headline query
   document, run against a live database. The name says what it is for.
-- `TestGormModelThroughRxCrudOnBothEngines` and
+- `TestGormModelThroughVVOnBothEngines` and
   `TestGormUsecaseDSLInsideTransactionOnBothEngines` in
   `test/integration/matrix_test.go`.
 - `TestGormMappingMatchesGorm` in `test/integration/gorm_model_test.go` — the
   per-entity mapping test both guides tell the reader to copy.
-- `TestEntsGoSideDefaultsDoNotApplyToRxCrudWrites` and
-  `TestGormHooksDoNotRunOnRxCrudWrites` — §16 of each guide ([[D-017]]).
+- `TestEntsGoSideDefaultsDoNotApplyToVVWrites` and
+  `TestGormHooksDoNotRunOnVVWrites` — §16 of each guide ([[D-017]]).
 
 Note a live inconsistency worth fixing, though it is outside this decision's
 scope: `README.md` links the guides as `docs/ent.md` and `docs/gorm.md`, and

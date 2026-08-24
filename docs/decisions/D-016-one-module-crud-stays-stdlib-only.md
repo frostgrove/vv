@@ -45,7 +45,7 @@ after every release where a consumer can select an incoherent combination.
 consumer imports them. Module graph pruning keeps them out of a consumer's own
 `go.mod` when they do not import them, but they still take part in minimal
 version selection: a consumer pinning an older Fiber v3 will have MVS raise it
-to the version rx-crud asks for. That is a real cost and it is stated in the
+to the version vv asks for. That is a real cost and it is stated in the
 README and in both usage guides, at the point where the reader is about to run
 `go get`.
 
@@ -98,12 +98,16 @@ and it is not a test that can be pointed at.
 The stdlib-only rule is checkable and worth checking:
 
 ```
-go list -deps ./crud | grep -v '^internal/\|/internal/' | grep '\.'
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./crud \
+  | grep -v '^github.com/shardit-io/vv/crud$'
 ```
 
-should print nothing but `github.com/shardit-io/vv/crud` itself. Adding
-that as a `go vet`-style check would close the one gap in this decision's
-enforcement.
+should print nothing. It is part of `make check-deps`, which closes the gap this
+paragraph used to describe as open.
+
+The command given here before ended in `grep '\.'` and so matched
+standard-library paths — it printed a page of them on a clean tree and could
+never have failed. [[D-033]] carried the same defect.
 
 Indirectly relevant: `Makefile:unit` runs `go test ./...` with no database and no
 Docker, which fails the moment the library picks up something the test module was

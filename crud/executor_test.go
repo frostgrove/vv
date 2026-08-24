@@ -136,7 +136,7 @@ func TestAnUncomparableDataSourceDoesNotPanic(t *testing.T) {
 	}
 }
 
-// A transaction rx-crud opens itself is scoped to the source that opened it, so
+// A transaction vv opens itself is scoped to the source that opened it, so
 // it reaches siblings on the same database and nothing else.
 func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}

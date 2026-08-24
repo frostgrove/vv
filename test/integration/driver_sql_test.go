@@ -31,7 +31,7 @@ func TestDatabaseSQLMySQLRowAlias(t *testing.T) {
 	})
 }
 
-// A transaction owned by the caller, shared with rx-crud through the context.
+// A transaction owned by the caller, shared with vv through the context.
 func TestDatabaseSQLSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)

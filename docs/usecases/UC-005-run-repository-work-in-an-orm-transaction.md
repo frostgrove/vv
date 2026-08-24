@@ -60,7 +60,7 @@ call — and either way a rollback has to take everything.
 - **Which database the transaction belongs to.** In a process with one database
   this never comes up; in a process with two it is the whole problem, and it is
   UC-012.
-- **Handing an rx-crud-owned transaction back to the ORM.** The context flows
+- **Handing an vv-owned transaction back to the ORM.** The context flows
   inward. The adapters expose the underlying handle, but joining in that
   direction is the author's plumbing.
 - **The ORM's callbacks.** A statement issued here does not travel through the

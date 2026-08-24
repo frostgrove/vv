@@ -1,8 +1,8 @@
-// Command pgx-fiber is rx-crud with no ORM at all: a pgx v5 pool, the crudpgx
+// Command pgx-fiber is vv with no ORM at all: a pgx v5 pool, the crudpgx
 // adapter, and the Fiber binding.
 //
 // This is the shortest path there is. There is no ORM to adopt and no
-// database/sql in the way — rx-crud talks to the pool directly, and the model
+// database/sql in the way — vv talks to the pool directly, and the model
 // is an ordinary struct with `db` tags.
 //
 //	go get github.com/shardit-io/vv
@@ -32,7 +32,7 @@ import (
 	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
 
 // Product is the model: a plain struct, `db` tags, nothing generated and
 // nothing embedded. `auto` says the database owns the key, so a create request
@@ -56,7 +56,7 @@ var Products = basic.Define[Product, int64, ProductUpdate]("pgx_fiber_products",
 	basic.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://rxcrud:rxcrud@localhost:55432/rxcrud?sslmode=disable"
+const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -72,7 +72,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// crudpgx.Open is the whole adapter: rx-crud asks the pool to run a
+	// crudpgx.Open is the whole adapter: vv asks the pool to run a
 	// statement and to give back rows, and never opens a connection of its own.
 	repo := specs.Executor(Products.Bind(crudpgx.Open(pool)))
 
@@ -92,7 +92,7 @@ func main() {
 // bootstrap creates the table and seeds it, so the example runs against an
 // empty database. A real application would use its own migrations.
 //
-// The `active` default is worth a word, because the responses show it. rx-crud
+// The `active` default is worth a word, because the responses show it. vv
 // writes every mapped column, so an INSERT it builds names `active` and the
 // column DEFAULT never fires: create a product without one and it is stored
 // false, not true. A column default only reaches rows the database makes on its

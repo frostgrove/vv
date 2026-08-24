@@ -1,9 +1,9 @@
 // Package blog is a worked example of the generator: model.go is what you
-// write, rxcrud_gen.go is what rxcrud produces from it. The test next door
+// write, vv_gen.go is what vv produces from it. The test next door
 // regenerates and diffs, so the two can never drift.
 package blog
 
-//go:generate go run github.com/shardit-io/vv/cmd/rxcrud
+//go:generate go run github.com/shardit-io/vv/cmd/vv
 
 import (
 	"time"

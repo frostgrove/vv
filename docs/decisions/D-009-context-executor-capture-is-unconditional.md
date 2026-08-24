@@ -125,7 +125,7 @@ key.
   `TestSqlxSharedTransaction` in `test/integration/driver_sqlx_test.go` and
   `TestDatabaseSQLSharedTransaction` in `test/integration/driver_sql_test.go` —
   the seam itself, once per driver.
-- `TestGormRollbackTakesRxCrudWithIt` in `test/integration/driver_gorm_test.go`
+- `TestGormRollbackTakesVVWithIt` in `test/integration/driver_gorm_test.go`
   and `TestEntRollback` in `test/integration/driver_ent_test.go` — a rollback
   takes both halves.
 

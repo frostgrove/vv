@@ -333,7 +333,7 @@ type egTarget struct {
 
 // egTargets is every distinct crud.Source these two databases can be reached
 // through, on the same reasoning as mxProviders in matrix_test.go: sqlx and
-// gorm hand rx-crud the very *sql.DB that is already in this list, so an entry
+// gorm hand vv the very *sql.DB that is already in this list, so an entry
 // for either would run the same code a second time.
 func egTargets() []egTarget {
 	return []egTarget{

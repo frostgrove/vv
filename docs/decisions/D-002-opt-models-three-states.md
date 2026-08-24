@@ -58,7 +58,7 @@ undefined fields on the way back out.
   Go `nil` for diffing.
 - `crud/update.go:planField.read` — where the DTO's three states turn into
   "write this / write NULL / write nothing".
-- `cmd/rxcrud/main.go:dtoType` — the generator picks `crud.Opt[T]` for a
+- `cmd/vv/main.go:dtoType` — the generator picks `crud.Opt[T]` for a
   nullable column and `*T` for the rest.
 
 ## Proven by
