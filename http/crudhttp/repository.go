@@ -13,7 +13,7 @@ package crudhttp
 import (
 	"context"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // Repository is everything a transport binding needs. crud.Repo[M, ID, U]

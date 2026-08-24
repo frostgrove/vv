@@ -11,7 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // ---------------------------------------------------------------------------

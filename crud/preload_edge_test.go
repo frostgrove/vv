@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/crudtest"
 )
 
 // Two articles by the same author must not end up holding the same *Author.

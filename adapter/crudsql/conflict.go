@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // conflict tags a driver's integrity error as crud.ErrConflict, so a duplicate

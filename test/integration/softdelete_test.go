@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/repo/basic"
 )
 
 // Written by hand, a soft delete is two declarations: a scope that hides the

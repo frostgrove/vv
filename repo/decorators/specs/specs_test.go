@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/crud/crudtest"
-	"github.com/shardit-io/qq/repo/basic"
-	"github.com/shardit-io/qq/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
 type User struct {

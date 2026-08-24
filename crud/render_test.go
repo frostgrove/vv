@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // done asserts the whole statement at once: text, binds and the resolution

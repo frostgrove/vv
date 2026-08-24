@@ -9,8 +9,8 @@
 // tags, so one type serves both gorm and rx-crud without an adapter struct in
 // between.
 //
-//	go get github.com/shardit-io/qq
-//	go get github.com/shardit-io/qq/http/crudgin
+//	go get github.com/shardit-io/vv
+//	go get github.com/shardit-io/vv/http/crudgin
 //	go get gorm.io/gorm
 //	go get gorm.io/driver/mysql
 //
@@ -29,15 +29,15 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/http/crudgin"
-	"github.com/shardit-io/qq/query"
-	"github.com/shardit-io/qq/repo/basic"
-	"github.com/shardit-io/qq/repo/decorators/specs"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/http/crudgin"
+	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
 
 // Product is an ordinary gorm model carrying `db` tags alongside the `gorm`
 // ones — gorm owns migration and seeding, rx-crud owns the CRUD API, and

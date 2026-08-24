@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/query"
 )
 
 // widgetDTO is what the API is willing to show. Secret is not in it, which is

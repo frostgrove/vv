@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/repo/basic"
-	"github.com/shardit-io/qq/repo/decorators/security"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/repo/decorators/security"
 )
 
 // basic.RelationScope closes the preload leak for a narrowing that belongs to

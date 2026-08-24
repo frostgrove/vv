@@ -15,10 +15,10 @@ import (
 
 	"entgo.io/ent/dialect"
 
-	"github.com/shardit-io/qq/adapter/crudpgx"
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/vv/adapter/crudpgx"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/repo/basic"
 )
 
 // This file and dialect_edge_test.go are the edge-case half of the integration

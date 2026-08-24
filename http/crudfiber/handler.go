@@ -28,9 +28,9 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/http/crudhttp"
-	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/http/crudhttp"
+	"github.com/shardit-io/vv/query"
 )
 
 // Repository is everything the handler needs. crud.Repo[M, ID, U] satisfies it,

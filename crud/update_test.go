@@ -3,7 +3,7 @@ package crud_test
 import (
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 type Item struct {

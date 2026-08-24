@@ -36,18 +36,18 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 		{
 			name:      "ent",
 			pkg:       filepath.Join(root, "test", "entstore"),
-			directive: "//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -dir ../ent -types User -readonly CreatedAt -import github.com/shardit-io/qq/test/ent -into .",
+			directive: "//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -dir ../ent -types User -readonly CreatedAt -import github.com/shardit-io/vv/test/ent -into .",
 			regen: func(t *testing.T, pkg, dir string) {
 				// The model lives in another package and is named through
 				// -import, so only the destination has to move.
 				run(t, pkg, "-dir", "../ent", "-types", "User",
-					"-readonly", "CreatedAt", "-import", "github.com/shardit-io/qq/test/ent", "-into", dir)
+					"-readonly", "CreatedAt", "-import", "github.com/shardit-io/vv/test/ent", "-into", dir)
 			},
 		},
 		{
 			name:      "gorm",
 			pkg:       filepath.Join(root, "test", "gormstore"),
-			directive: "//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -readonly UpdatedAt,DeletedAt",
+			directive: "//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly UpdatedAt,DeletedAt",
 			regen: func(t *testing.T, pkg, dir string) {
 				// This one generates beside its own model, and -into is refused
 				// without -import for exactly that reason: the generated file
@@ -87,7 +87,7 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 
 func run(t *testing.T, wd string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"run", "github.com/shardit-io/qq/cmd/rxcrud"}, args...)...)
+	cmd := exec.Command("go", append([]string{"run", "github.com/shardit-io/vv/cmd/rxcrud"}, args...)...)
 	cmd.Dir = wd
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)

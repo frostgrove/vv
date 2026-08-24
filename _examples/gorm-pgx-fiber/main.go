@@ -8,8 +8,8 @@
 // through the same underlying *sql.DB, so a gorm transaction and an rx-crud
 // call can be the same transaction.
 //
-//	go get github.com/shardit-io/qq
-//	go get github.com/shardit-io/qq/http/crudfiber
+//	go get github.com/shardit-io/vv
+//	go get github.com/shardit-io/vv/http/crudfiber
 //	go get gorm.io/gorm
 //	go get gorm.io/driver/postgres
 //
@@ -28,15 +28,15 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/http/crudfiber"
-	"github.com/shardit-io/qq/query"
-	"github.com/shardit-io/qq/repo/basic"
-	"github.com/shardit-io/qq/repo/decorators/specs"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/http/crudfiber"
+	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/qq/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/vv/cmd/rxcrud -readonly CreatedAt
 
 // Product is an ordinary gorm model. The `gorm` tags are what the project
 // already had; the `db` tags are the only addition rx-crud needs, sitting on

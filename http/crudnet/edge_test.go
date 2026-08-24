@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/query"
 )
 
 // failed decodes the error envelope every failing request answers with. A body

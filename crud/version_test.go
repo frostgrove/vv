@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // A `version` column is an optimistic lock, and every part of that has to be

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 // ScopeField is the multi-tenant one-liner: every query is narrowed to rows

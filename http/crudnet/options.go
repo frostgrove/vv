@@ -5,9 +5,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/http/crudhttp"
-	"github.com/shardit-io/qq/query"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/http/crudhttp"
+	"github.com/shardit-io/vv/query"
 )
 
 type options[M any, ID comparable, U any] struct {

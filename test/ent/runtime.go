@@ -5,8 +5,8 @@ package ent
 import (
 	"time"
 
-	"github.com/shardit-io/qq/test/ent/schema"
-	"github.com/shardit-io/qq/test/ent/user"
+	"github.com/shardit-io/vv/test/ent/schema"
+	"github.com/shardit-io/vv/test/ent/user"
 )
 
 // The init function reads all schema descriptors with runtime code

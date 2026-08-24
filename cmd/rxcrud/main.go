@@ -1,7 +1,7 @@
 // Command rxcrud generates the two things you would otherwise copy out of your
 // model by hand: the partial-update DTO and the typed metamodel.
 //
-//	//go:generate go run github.com/shardit-io/qq/cmd/rxcrud
+//	//go:generate go run github.com/shardit-io/vv/cmd/rxcrud
 //
 // Point it at a package; it reads every struct that carries `db` or `rel` tags
 // and writes rxcrud_gen.go next to them:
@@ -32,7 +32,7 @@
 // is what makes ent's generated entities work as-is. Write the result into your
 // own package rather than into ent's, where the names would collide:
 //
-//	go run github.com/shardit-io/qq/cmd/rxcrud -dir ./ent -types User,Article -skip CreatedAt \
+//	go run github.com/shardit-io/vv/cmd/rxcrud -dir ./ent -types User,Article -skip CreatedAt \
 //	    -import myapp/ent -into ./internal/store
 package main
 
@@ -64,8 +64,8 @@ func main() {
 		depth    = flag.Int("depth", 2, "how far to expand relation paths into the metamodel")
 		noDTO    = flag.Bool("no-dto", false, "skip update DTOs")
 		noMeta   = flag.Bool("no-meta", false, "skip metamodels")
-		specsPkg = flag.String("specs", "github.com/shardit-io/qq/repo/decorators/specs", "import path of the specs package")
-		crudPkg  = flag.String("crud", "github.com/shardit-io/qq/crud", "import path of the crud package")
+		specsPkg = flag.String("specs", "github.com/shardit-io/vv/repo/decorators/specs", "import path of the specs package")
+		crudPkg  = flag.String("crud", "github.com/shardit-io/vv/crud", "import path of the crud package")
 	)
 	flag.Parse()
 

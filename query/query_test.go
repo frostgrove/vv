@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/crud/crudtest"
-	"github.com/shardit-io/qq/query"
-	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/repo/basic"
 )
 
 type Author struct {

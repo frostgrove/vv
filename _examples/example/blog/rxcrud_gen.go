@@ -5,8 +5,8 @@ package blog
 import (
 	"time"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
 // ArticleUpdate is the partial-update DTO for Article.

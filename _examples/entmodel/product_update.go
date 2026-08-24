@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/shardit-io/qq/_examples/entmodel/predicate"
-	"github.com/shardit-io/qq/_examples/entmodel/product"
+	"github.com/shardit-io/vv/_examples/entmodel/predicate"
+	"github.com/shardit-io/vv/_examples/entmodel/product"
 )
 
 // ProductUpdate is the builder for updating Product entities.

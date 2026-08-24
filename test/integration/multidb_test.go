@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/repo/basic"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/repo/basic"
 )
 
 // Two databases on one engine, reached through two *sql.DB handles. Everything

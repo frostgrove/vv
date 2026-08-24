@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/crud/crudtest"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/crudtest"
 )
 
 // UpdateAll is Update's filtered partner, and the whole point of it is that

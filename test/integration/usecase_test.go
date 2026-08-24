@@ -11,12 +11,12 @@ import (
 	"entgo.io/ent/dialect"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/query"
-	entpkg "github.com/shardit-io/qq/test/ent"
-	entuser "github.com/shardit-io/qq/test/ent/user"
-	"github.com/shardit-io/qq/test/entstore"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/query"
+	entpkg "github.com/shardit-io/vv/test/ent"
+	entuser "github.com/shardit-io/vv/test/ent/user"
+	"github.com/shardit-io/vv/test/entstore"
 )
 
 // These are the shapes the docs show: a DSL filter arrives over HTTP, a usecase
@@ -177,7 +177,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 		t.Fatalf("gorm's write survived the rollback: %q", reloaded.Name)
 	}
 	if n, _ := members.Count(ctx); n != 1 {
-		t.Fatalf("github.com/shardit-io/qq's write survived the rollback: count = %d", n)
+		t.Fatalf("github.com/shardit-io/vv's write survived the rollback: count = %d", n)
 	}
 }
 

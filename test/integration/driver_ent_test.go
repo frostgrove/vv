@@ -11,10 +11,10 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
-	"github.com/shardit-io/qq/adapter/crudsql"
-	"github.com/shardit-io/qq/crud"
-	"github.com/shardit-io/qq/test/ent"
-	entuser "github.com/shardit-io/qq/test/ent/user"
+	"github.com/shardit-io/vv/adapter/crudsql"
+	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/test/ent"
+	entuser "github.com/shardit-io/vv/test/ent/user"
 )
 
 // With the sql/execquery feature, *ent.Client and *ent.Tx both expose
@@ -111,7 +111,7 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Name != "ByEnt" {
-		t.Fatalf("github.com/shardit-io/qq read back %+v", got)
+		t.Fatalf("github.com/shardit-io/vv read back %+v", got)
 	}
 	if age, ok := got.Age.Get(); !ok || age != 28 {
 		t.Fatalf("age = %v", got.Age)

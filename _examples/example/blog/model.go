@@ -3,12 +3,12 @@
 // regenerates and diffs, so the two can never drift.
 package blog
 
-//go:generate go run github.com/shardit-io/qq/cmd/rxcrud
+//go:generate go run github.com/shardit-io/vv/cmd/rxcrud
 
 import (
 	"time"
 
-	"github.com/shardit-io/qq/crud"
+	"github.com/shardit-io/vv/crud"
 )
 
 type Author struct {
