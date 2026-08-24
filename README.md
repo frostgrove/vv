@@ -65,9 +65,9 @@ you can curl. Each one is a single file you can read top to bottom.
 ## Install
 
 ```bash
-go get github.com/shardit-io/ordo                    # the library — and, on net/http, the whole of it
-go get github.com/shardit-io/ordo/http/crudgin       # …plus your HTTP framework, if you use one
-go get github.com/shardit-io/ordo/adapter/crudpgx    # …and pgx, if that is your driver
+go get github.com/shardit-io/qq                    # the library — and, on net/http, the whole of it
+go get github.com/shardit-io/qq/http/crudgin       # …plus your HTTP framework, if you use one
+go get github.com/shardit-io/qq/adapter/crudpgx    # …and pgx, if that is your driver
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
@@ -795,7 +795,7 @@ The update DTO and the metamodel are mechanical restatements of the model, so
 `cmd/rxcrud` writes them:
 
 ```go
-//go:generate go run github.com/shardit-io/ordo/cmd/rxcrud
+//go:generate go run github.com/shardit-io/qq/cmd/rxcrud
 ```
 
 From this:

@@ -1,12 +1,12 @@
 // The pgx adapter is its own module so a consumer on database/sql, ent or gorm
 // never takes pgx as a dependency. See D-033.
-module github.com/shardit-io/ordo/adapter/crudpgx
+module github.com/shardit-io/qq/adapter/crudpgx
 
 go 1.26
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6
-	github.com/shardit-io/ordo v0.0.0
+	github.com/shardit-io/qq v0.0.0
 )
 
 require (

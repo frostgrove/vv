@@ -18,7 +18,7 @@ stop being free.
 
 ## What is settled
 
-- The repository becomes **`github.com/shardit-io/ordo`** — decided, not yet
+- The repository becomes **`github.com/shardit-io/qq`** — decided, not yet
   executed. `rx` means ReactiveX to every Go search there is.
 - **`errs` gets its own module and its own version line**, with [[D-033]] amended
   from *no external requirement* to *no third-party requirement*.
