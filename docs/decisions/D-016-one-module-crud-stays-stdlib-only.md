@@ -1,7 +1,7 @@
 # D-016 — One published module; package `crud` stays stdlib-only
 
 **Status:** superseded by [[D-033]] — the module half only. The stdlib rule stands.
-**Invariant:** `go get github.com/shardit-io/go-rx-crud` must be the whole installation — no `replace` directive — and no file in `crud/` outside `_test.go` may import anything but the standard library.
+**Invariant:** `go get github.com/shardit-io/rx` must be the whole installation — no `replace` directive — and no file in `crud/` outside `_test.go` may import anything but the standard library.
 
 > **What changed.** The single-module half of this decision was reversed: an
 > optional dependency now lives in its own module under the same repository, so
@@ -78,7 +78,7 @@ and a field instead.
 
 ## Where it lives
 
-- `go.mod` — module `github.com/shardit-io/go-rx-crud`, `go 1.26`, two direct
+- `go.mod` — module `github.com/shardit-io/rx`, `go 1.26`, two direct
   requirements: `fiber/v3` and `pgx/v5`.
 - `test/go.mod` — the unpublished test module, with the comment explaining why
   it exists and the `replace` to `../`.
@@ -101,7 +101,7 @@ The stdlib-only rule is checkable and worth checking:
 go list -deps ./crud | grep -v '^internal/\|/internal/' | grep '\.'
 ```
 
-should print nothing but `github.com/shardit-io/go-rx-crud/crud` itself. Adding
+should print nothing but `github.com/shardit-io/rx/crud` itself. Adding
 that as a `go vet`-style check would close the one gap in this decision's
 enforcement.
 

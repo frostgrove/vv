@@ -141,8 +141,23 @@ surface to test, document and keep honest, for a choice almost nobody changes.
 422 is new. 400 keeps exactly the meaning it has now: the request itself was
 malformed — a body that would not decode, an id that would not parse, a query
 document naming a field the model lacks. 422 is for a request that was
-well-formed and whose *values* were rejected. A client can tell "I sent
-nonsense" from "I sent something you refused", which it cannot do today.
+well-formed and whose *values* were rejected. A client can tell "I sent nonsense"
+from "I sent something you refused", which it cannot do today.
+
+**This moves two statuses, and that is a breaking change, not a refinement.**
+NOT NULL and CHECK are `23502` and `23514` — class 23 — so today the adapters
+wrap them in `crud.ErrConflict` and every one answers **409**. Putting `required`
+and `check` in the 422 row means the adapters stop wrapping those two states in
+`ErrConflict`, which is a change to [[D-015]]'s own table and needs its successor
+(D-043), not a footnote. Shipping both mappings — 409 from the sentinel, 422 from
+the `Kind` — is the one outcome that must not happen.
+
+Class 22 needs its own answer rather than silence, because D-015 already gave
+one: *"class 22 (data exception) is a coercion bug."* `too_long` from a client
+value that genuinely exceeds the column is a 422; a `22P02` from a value rx-crud
+itself coerced is a 500. The classifier cannot tell those apart from the SQLSTATE
+alone, so the rule is the write path: a value that arrived in the payload is the
+client's, and one the library produced is ours.
 
 **Precedence when one fault mixes kinds**, highest first:
 
@@ -152,10 +167,10 @@ Internal → NotFound → Forbidden → Retryable → Conflict → Validation �
 
 The order is by how much the answer must conceal or defer:
 
-- **Internal first.** If any part of building the violation set failed for an
-  infrastructure reason, the set is incomplete and possibly misleading. A
-  truthful answer is 500 with nothing in it. Returning a partial 422 that looks
-  whole is worse than returning no detail at all.
+- **Internal first**, and narrowly. If the *original classification* failed, the
+  set is incomplete and possibly misleading, and 500 with nothing in it is the
+  truthful answer. This does **not** cover a failed probe: enrichment failing
+  must never downgrade a correct 409 into an opaque 500 (§8).
 - **NotFound before Forbidden** is [[D-008]] verbatim: never confirm that a
   hidden row exists.
 - **Conflict before Validation** because a collision is a fact about the world
@@ -279,7 +294,7 @@ Read before designing around it:
 ## 4. Packages and modules
 
 ```
-ROOT MODULE  github.com/shardit-io/go-rx-crud                 (stays zero-dependency)
+ROOT MODULE  github.com/shardit-io/rx                 (stays zero-dependency)
 ├── crud/                     unchanged — every sentinel stays exactly as it is
 ├── errs/                     NEW  the contract. stdlib only.
 ├── errs/sqlerr/              NEW  four dialect parsers. pure functions, stdlib only.
@@ -310,7 +325,7 @@ Two module facts that are not negotiable:
 - **`errs` lives in the root module, not its own.** [[D-033]] says the published
   root module must have no external requirement *at all*, and a first-party
   module would still be one. A service that wants only the error contract does
-  import `github.com/shardit-io/go-rx-crud/errs`, which looks odd and costs
+  import `github.com/shardit-io/rx/errs`, which looks odd and costs
   nothing: the root module has zero dependencies, and Go compiles only what is
   imported. The tension is real and the exit is §12 — in the `shradit/rx`
   monorepo it becomes `rx/errs` and the oddness goes away.
@@ -368,10 +383,15 @@ const (
 )
 ```
 
-A code is declared once with its `Kind` and its default message. Declaring the
-same code twice with a different `Kind` panics at package initialisation — the
-[[D-021]] instinct: a contradiction in the error vocabulary is a start-up
-failure, not a surprise on one endpoint in production.
+A code is declared once with its `Kind` and its default message, in an
+`errs.Codes` **value** that is wired in like everything else in this package — not
+in a package-level table mutated by imports. The distinction matters and an
+earlier draft got it wrong: a process-wide registry that panics on double
+registration is exactly the `init()`-time global the SPI section refuses four
+paragraphs later, and two libraries each declaring `too_long` with different
+kinds would kill the binary depending on link order. `Codes.Add` returns an error
+for a redeclaration with a different `Kind`, and the wiring decides whether that
+is fatal.
 
 ### Kind
 
@@ -398,6 +418,135 @@ pointer, the envelope wants the array.
 
 ### Violation and Fault
 
+### Two origins, one list
+
+A constraint violation (unique, foreign key, check) and a validation failure
+(`go-playground/validator`, or a service-layer rule) are **the same type in the
+same list**, told apart by an `Origin` field rather than kept in separate ones:
+
+```go
+type Origin uint8
+
+const (
+    OriginInput Origin = iota // the payload alone was wrong. no stored state was read.
+    OriginState               // it collided with what is stored. Source is populated.
+)
+```
+
+**Unify the type**, because merging is the entire point of this work. A payload
+with a malformed email *and* a taken email is two violations at one path, and a
+client making two round trips to learn that is the problem §1 opens with. The
+envelope already assumes it: a 409 unique conflict appears under
+`errors.validation` because the group describes what the client can act on, not
+where the failure came from.
+
+Ecto and Rails converged on the same thing, and it is worth stating precisely
+rather than as an appeal to authority: **an error that came from the database
+lands in the same collection as an input-validation error, keyed by field, and is
+rendered with it.** In Rails, `validates_format_of` adds to `ActiveModel::Errors`,
+and a rescued `ActiveRecord::RecordNotUnique` adds to the same place via
+`errors.add(:email, :taken)` — the controller reads one `errors` and gets both. In
+Ecto, `validate_format/3` and `unique_constraint/3` both append to
+`changeset.errors`, one keyword list.
+
+Two things we do **not** take from them, so §11's table is not misread. Ecto
+*declares* the constraint-to-field mapping by hand; we derive it from the catalog
+and keep declaration as an override, so what we borrow is the idea, not its
+primacy. And Rails' `validates_uniqueness_of` is exactly the racy application-side
+pre-check §11 refuses as a primary mechanism: the index is the truth and the probe
+is advice.
+
+**Separate the origin**, because three rules key off it and none has a good hook
+otherwise:
+
+- **Status.** `OriginInput` field rules are 422; `OriginState` collisions are
+  409. That is §2's split, and `Origin` is the reason for it rather than a
+  special case in a table.
+- **The oracle.** Only `OriginState` reveals stored state, so the
+  never-echo-the-value default and the code-only mode key off `Origin`
+  automatically and completely — better than §8's per-constraint opt-out, which
+  is only as good as whoever remembers to name a constraint.
+- **Short-circuit.** If any `OriginInput` violation exists, **the probe does not
+  run.** The payload is already known bad, and probing would bind values that
+  had already failed validation — which §8 names as the probe's most likely
+  self-inflicted error. This is free and it removes a class of wasted round
+  trips.
+
+Ordering within one path puts `OriginInput` first: a malformed value explains a
+failed lookup, and the reverse reads as nonsense.
+
+### The validation bridge, with no dependency
+
+A converter is **required**, not optional. Our envelope is the only shape that
+goes on the wire, and `validator.FieldError` is a different shape, so something
+has to translate. `go-playground/validator` is also not optional in practice —
+Gin's binder already runs it ([[D-034]]), so a `crudgin` consumer gets its errors
+whether or not they asked for them.
+
+What is *not* required is a **module** for that converter. [[D-033]] puts a
+package in its own module when it imports an external dependency, and this one
+imports nothing: `errs` declares the shape, and `validator.FieldError` satisfies
+it structurally, because Go's interfaces are implicit. Neither package needs to
+know the other exists. Same trick and same reason as `crudsql.sqlState` asking a
+driver error for a SQLSTATE by shape ([[D-015]]):
+
+```go
+// FieldViolation is the shape a validation library's error already has.
+// validator.FieldError satisfies it structurally, so neither package imports
+// the other.
+type FieldViolation interface {
+    Namespace() string
+    Tag() string
+    Param() string
+    Value() any
+}
+
+func FromFieldViolations[T FieldViolation](root string, vs ...T) []Violation
+```
+
+`Namespace()` is why this works. With `RegisterTagNameFunc` reading the `json`
+tag, validator reports the **wire** names rather than the Go ones. Measured
+against v10.30.1 with this document's own input DTO:
+
+```
+namespace=In.smth          tag=required  param=     value=
+namespace=In.user.email    tag=email     param=     value=nope
+namespace=In.user.age      tag=gte       param=18   value=15
+```
+
+Strip the root struct name and `In.user.email` is `["user","email"]` — the target
+shape, with no reflection of ours involved. `Tag()` becomes the `Code`, `Param()`
+and `Value()` become `Params`, and `Namespace()`'s `Items[3].Email` spelling
+parses straight into an index `Step`. The one thing a consumer must do is register
+the tag-name function; without it `Namespace()` returns Go field names and every
+path is silently wrong, so that is a start-up check rather than a runtime
+surprise.
+
+The call site is one line, and the generic parameter is what buys that — Go
+infers `T` as `validator.FieldError`, and `ValidationErrors` (underlying
+`[]FieldError`) passes straight through as the variadic:
+
+```go
+verrs := err.(validator.ValidationErrors)
+vs := errs.FromFieldViolations("CreateUserRequest", verrs...)
+```
+
+Structural satisfaction has one cost and it should be named: our interface has to
+match the library's signatures exactly, and if `Namespace()` ever changes shape
+the failure is not a compile error here — it is a failed type assertion at the
+call site. So `errs`' test package carries
+`var _ FieldViolation = (validator.FieldError)(nil)`. That assertion is the only
+place in the whole design that imports the validator, and it lives in a
+`_test.go`, which is what keeps [[D-033]] satisfied.
+
+A service-layer rule produces `OriginInput` violations through the same builder,
+so `{field:["user","age"], code:"too_young"}` sorts and renders beside a database
+violation with no special case anywhere.
+
+`Violation` carries no `Kind` — `Kind` is one per `Fault` — so §8's sort derives
+each violation's kind from its `Code` through the wired `Codes` value. That is
+also why the sort cannot be a free function.
+
 ```go
 type Source struct {                 // storage-side provenance. internal only.
     Table, Schema string
@@ -408,9 +557,10 @@ type Source struct {                 // storage-side provenance. internal only.
 type Violation struct {
     Path    Path
     Code    Code
+    Origin  Origin                   // payload alone, or a collision with stored state
     Message string
     Params  map[string]any           // for message templating: {"max":255}
-    Source  Source
+    Source  Source                   // populated only when Origin is OriginState
 }
 
 type Detail struct {                 // never rendered publicly
@@ -444,7 +594,13 @@ func (f *Fault) Error() string
 func (f *Fault) Unwrap() []error { return f.wrapped }
 ```
 
-`Unwrap() []error` is the whole trick. A fault built by the pgx adapter wraps
+`Detail` and `Source` say "internal only" in a comment, and a comment is not an
+enforcement. The proposed D-041 is a rule the types have to carry: `Violation` and `Fault`
+get their own `MarshalJSON` that emits the public shape and nothing else. Without
+it the first person who logs a fault as JSON ships the constraint names this work
+exists to hide — and `Detail.Driver error` makes the default marshal fail anyway.
+
+`Unwrap() []error` is the mechanism. A fault built by the pgx adapter wraps
 `crud.ErrConflict` and the `*pgconn.PgError`, so all three of these are true at
 once:
 
@@ -471,8 +627,15 @@ type CodeMapper  interface { CodeFor(*Fault, Violation) (Code, bool) }
 type MessageSource interface {
     Message(ctx context.Context, v Violation, locale string) (string, bool)
 }
-type Renderer    interface { Render(ctx context.Context, err error) (status int, body any) }
+type Renderer    interface {
+    Render(ctx context.Context, err error) (status int, header http.Header, body any)
+}
 ```
+
+`Classifier` returns a `*Fault`, and `wrapped` is unexported — so as declared, a
+third-party classifier cannot make `errors.Is(err, crud.ErrConflict)` true, which
+is D-035's entire invariant. The builder therefore exports a `Wrapping(errs
+...error)` step, and that is the only way a sentinel gets attached.
 
 `Chain(rs ...Resolver) Resolver` composes the hops. Every one of these is wired
 **explicitly**, at the call site, by the consumer. There is no `init()` registry
@@ -810,7 +973,7 @@ that is correct. Measured against PostgreSQL 17: the probe says violation, the
 insert succeeds. Composite FKs are worse — *any* NULL column disables the check
 entirely, so the guard is "every column non-null", not "this one". A probe that
 invents violations is strictly worse than the single-violation status quo it
-replaces, which is why [[D-039]] says the probe may only ever **narrow** the
+replaces, which is why the proposed D-039 lets the probe only ever **narrow** the
 truth, never widen it.
 
 **Results are read by column position, not by alias.** PostgreSQL truncates
@@ -939,7 +1102,7 @@ enrichment — otherwise the most failure-prone part of the design downgrades a
 correct 409 into an opaque 500, which is the opposite of the point. And it is
 genuinely failure-prone: it re-binds values from a write that already failed, so
 a write rejected for a bad type re-binds the same value and fails again. Probe
-error ⇒ keep what the driver said, set `Partial: true`, log. [[D-039]] says so.
+error ⇒ keep what the driver said, set `Partial: true`, log. The proposed D-039 says so.
 
 Bound the constraints probed per request, the rows probed per batch, the total
 probe time, and the catalog load time. The defaults have to be numbers rather
@@ -1037,8 +1200,11 @@ is written:
   gorilla/mux router alike.
 
 Both must be safe to install twice. A response rendered by the CRUD handler and
-then rendered again by the middleware is the most likely way to get this wrong,
-so the fault carries a rendered marker and the second render is a no-op.
+then rendered again by the middleware is the most likely way to get this wrong.
+The marker lives on the response-writer wrapper the middleware already needs —
+not on the `Fault`, which is a value that two goroutines may render at once and
+which the proposed D-039 treats as immutable. `crudgin` reads `c.Writer.Written()` for the
+same reason.
 
 ### Rendering edge cases worth naming now
 
@@ -1110,6 +1276,7 @@ Named explicitly so nobody re-litigates it.
 | Constraint names in the public payload | Exactly the leak `docs/usecases/Index.md` gap 16 records |
 | `init()`-time global registration | Multi-database makes a global registry wrong on day one |
 | A single-error-only API | The whole point of the work |
+| Two parallel error channels, one for validation and one for constraints | Ecto and Rails both put them in one list; two lists cannot be merged, ordered or rendered as one payload, which is what a client actually needs |
 | Duplicating the database's validation in Go | Two implementations of one constraint disagree eventually, and MySQL's `sql_mode` proves it |
 
 ---
@@ -1248,7 +1415,7 @@ not done because the code works.
 | 6 | `catalog/` | per-handle introspection on four dialects, the negative cache | an unknown constraint name does not re-introspect in a loop |
 | 7 | `probe/` | `Simple`, `Full`, bulk attribution, caps, the savepoint mode, the `owned` seam flag, scope-awareness from `security.Policy` | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
 | 8 | Codegen | DTOs, mapper, inverse map, service, wiring | regenerate-and-diff; a column the DTO misses refuses start-up |
-| 9 | Ecosystem | `rpc/crudgrpc`, validator bridges, i18n catalogues, SQL Server / Oracle / CockroachDB | adding a transport requires no change to `errs` |
+| 9 | Ecosystem | `rpc/crudgrpc`, i18n catalogues, SQL Server / Oracle / CockroachDB | adding a transport requires no change to `errs`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
 
 ### Infrastructure this needs first
 
@@ -1272,7 +1439,7 @@ vacuously carries a control case next to it, in the pattern
 | What | How it is tested | The control that fails without the feature |
 |---|---|---|
 | the parsers | table-driven over the phase-0 corpus | a **negative** corpus entry — `42P01`, `08006`, MySQL `1044` — that must stay unclassified. "A misclassified entry fails" is a tautology: the corpus supplies both input and expectation, so it tests the harness |
-| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is [[D-036]]'s actual invariant and nothing else tests it |
+| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is the proposed D-036's actual invariant and nothing else tests it |
 | driver extraction | live, all four engines, through every adapter | an unclassifiable state stays a 500 — the existing `TestOnlyIntegrityErrorsBecomeConflicts` pattern. Plus: a MySQL CHECK violation is now classified, which it is not today |
 | the envelope | unit, all three bindings, triplet suites | removing an arm from the shared `Status` fails all three identically |
 | the precedence table | unit | a fault mixing `Forbidden` and `Conflict` answers 403, and one mixing `Internal` with anything answers 500 with an empty body. Untested, this table is decoration |
@@ -1309,7 +1476,7 @@ than one CRUD library. Nothing in this roadmap should make that harder, so:
 - `errs` is the package most likely to be imported by services that are not
   rx-crud consumers, and it is the one whose import path looks worst today. That
   is the strongest single argument for doing the rename sooner rather than later.
-- The migration path is a v1 shim: `github.com/shardit-io/go-rx-crud` keeps
+- The migration path is a v1 shim: `github.com/shardit-io/rx` keeps
   publishing type aliases pointing at the new module, so a consumer's code keeps
   compiling while imports move. Go's generic type aliases make this work across
   modules — the same mechanism [[D-034]] already relies on for
@@ -1329,10 +1496,24 @@ Left open on purpose. Each needs a decision before the phase that touches it.
   transaction is the framework's own to retry, and nobody else can see it.
 - **Whether `errs` becomes its own module before the rename**, accepting a
   first-party requirement in the root `go.mod` and the [[D-033]] amendment that
-  needs.
+  needs. §4 states the current answer; it is a decision, not a law, and the
+  argument that `crud/` may not import a sibling in its own zero-dependency
+  module rests on [[D-016]]'s letter rather than its stated reason.
+- **The cap defaults** — constraints per request, rows per batch, probe time,
+  catalog load time. A cap without a number is not a cap.
+- **Whether `crud/crudtest`'s recorder grows a `DataSource()`**, which is the
+  difference between the probe having a unit-test seam and being
+  integration-only.
+- **Whether the envelope ever splits the two origins into separate groups.** The
+  default is one list; a consumer whose UI treats "fix your input" and "someone
+  took it" differently may want `errors.validation` and `errors.conflict`. The
+  data is there either way — this is a rendering choice, and it should be made
+  once rather than per endpoint.
 - **Composite primary keys.** Unsupported today, and the probe's
   exclude-my-own-row clause assumes a single-column key. The probe should not be
   what forces the decision, but it will be what makes it urgent.
-- **Where a validation-library bridge lives.** `go-playground/validator` is the
-  obvious first one, it carries a dependency, and by [[D-033]] that means its own
-  module — which is a lot of ceremony for an adapter of about eighty lines.
+- ~~Where a validation-library bridge lives.~~ **Settled** (§5): it is
+  dependency-free, so it lives in `errs` and needs no module. The open remainder
+  is whether `errs` should ship the `RegisterTagNameFunc` helper itself, which
+  would mean naming the `json` tag in a package that otherwise knows nothing
+  about transports.

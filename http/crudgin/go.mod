@@ -1,12 +1,12 @@
 // The Gin binding is its own module so a consumer on Fiber, Echo or net/http
 // never takes Gin as a dependency. See D-033.
-module github.com/shardit-io/go-rx-crud/http/crudgin
+module github.com/shardit-io/rx/http/crudgin
 
 go 1.26
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/shardit-io/go-rx-crud v0.0.0
+	github.com/shardit-io/rx v0.0.0
 )
 
 require (

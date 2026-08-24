@@ -8,13 +8,13 @@
 Six modules in one repository, four of them published:
 
 ```
-github.com/shardit-io/go-rx-crud                    crud, query, repo, cmd,
+github.com/shardit-io/rx                    crud, query, repo, cmd,
                                                     adapter/crudsql, http/crudhttp
-github.com/shardit-io/go-rx-crud/http/crudfiber     + fiber/v3
-github.com/shardit-io/go-rx-crud/http/crudgin       + gin
-github.com/shardit-io/go-rx-crud/adapter/crudpgx    + pgx/v5
-github.com/shardit-io/go-rx-crud/test               unpublished, replace ../
-github.com/shardit-io/go-rx-crud/_examples          unpublished, replace ../
+github.com/shardit-io/rx/http/crudfiber     + fiber/v3
+github.com/shardit-io/rx/http/crudgin       + gin
+github.com/shardit-io/rx/adapter/crudpgx    + pgx/v5
+github.com/shardit-io/rx/test               unpublished, replace ../
+github.com/shardit-io/rx/_examples          unpublished, replace ../
 ```
 
 The two unpublished modules exist for the same reason and use the same mechanism:
@@ -27,8 +27,8 @@ examples` rather than by `make unit`.
 A consumer installs the base and then only the plugins it uses:
 
 ```bash
-go get github.com/shardit-io/go-rx-crud
-go get github.com/shardit-io/go-rx-crud/http/crudgin
+go get github.com/shardit-io/rx
+go get github.com/shardit-io/rx/http/crudgin
 ```
 
 `adapter/crudsql` stays in the root because it is `database/sql`, which is the
@@ -60,7 +60,7 @@ breaks every existing import path or strands them on a dead version line.
 it has three parts:
 
 - *No `replace` in anything published.* Each submodule's `go.mod` carries a
-  plain `require github.com/shardit-io/go-rx-crud vX.Y.Z`. The only `replace` in
+  plain `require github.com/shardit-io/rx vX.Y.Z`. The only `replace` in
   the tree is in `test/go.mod`, which is not published.
 - *Tags carry the directory prefix.* The root is `vX.Y.Z`; a submodule is
   `http/crudgin/vX.Y.Z`. This is how Go maps a subdirectory module to a commit;
@@ -100,7 +100,7 @@ submodule's `go.mod` does not name the version being cut.
 
 ## Where it lives
 
-- `go.mod` — module `github.com/shardit-io/go-rx-crud`, `go 1.26`, no `require`
+- `go.mod` — module `github.com/shardit-io/rx`, `go 1.26`, no `require`
   block at all.
 - `http/crudfiber/go.mod`, `http/crudgin/go.mod`, `adapter/crudpgx/go.mod` —
   one external requirement each, plus the library.
@@ -137,7 +137,7 @@ every module, so a package that drifts into the wrong one stops compiling.
 Two checks are worth running by hand, and both are cheap:
 
 ```
-go list -deps ./... | grep -v '^github.com/shardit-io/go-rx-crud' | grep '\.'
+go list -deps ./... | grep -v '^github.com/shardit-io/rx' | grep '\.'
 ```
 
 run from the repository root, should print nothing but standard-library paths —

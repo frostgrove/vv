@@ -4,7 +4,7 @@ A generic CRUD repository for Go: JPA-shaped semantics, a Specifications /
 Criteria API, a security gate, a wire DSL and a Fiber handler — over any driver,
 without owning the caller's connection or transaction.
 
-Module: `github.com/shardit-io/go-rx-crud`, and it has no external dependencies.
+Module: `github.com/shardit-io/rx`, and it has no external dependencies.
 Anything that would add one is a module of its own under the same repository —
 `http/crudfiber`, `http/crudgin`, `adapter/crudpgx` — so a consumer downloads
 only the binding and driver it imports. `test/` and `_examples/` are two more,

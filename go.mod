@@ -1,3 +1,3 @@
-module github.com/shardit-io/go-rx-crud
+module github.com/shardit-io/rx
 
 go 1.26
