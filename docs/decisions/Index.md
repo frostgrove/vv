@@ -27,6 +27,15 @@ replaced decision `superseded by D-0NN` rather than deleting it.
 **Mark it `open`** when the tension is real and unresolved. An open decision
 still says what not to do while it is open — see D-024 through D-027.
 
+**Mark it `in force from phase N`** when the rule is settled but the code it
+governs is not written yet. A bare `accepted` reads as *the tree obeys this*, and
+a binding rule the code visibly breaks teaches the next reader that decisions are
+aspirational. The rule still binds: it forbids working around it in the meantime,
+and it is what the implementing phase has to satisfy. Such a decision heads its
+evidence section `Proven by (owed)` and names the tests that phase must write —
+so an agent checking that every symbol a doc names still exists knows those are
+deliberate rather than rot. D-038 and D-041 through D-045 are the current set.
+
 ## Index
 
 | ID | Invariant (one line) | Status | Area |
@@ -64,10 +73,19 @@ still says what not to do while it is open — see D-024 through D-027.
 | [D-031](D-031-soft-delete-is-a-statement-not-a-decorator.md) | Declaring a soft delete declares both the stamp and the read filter | accepted | querying |
 | [D-032](D-032-a-replica-never-decides-a-write.md) | A read inside a transaction, or one that decides a write, always goes to the primary | accepted | transactions & datasources |
 | [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no third-party requirement; a package that needs one is its own module | **amended by D-036** | process & tooling |
-| [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | accepted | HTTP |
+| [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | **superseded by D-045 from phase 5** | HTTP |
 | [D-035](D-035-a-prefix-only-breaks-a-collision.md) | A package is named for what it is; a prefix only breaks a collision, and it names the subsystem | accepted | process & tooling |
 | [D-036](D-036-the-root-module-takes-no-third-party-requirement.md) | The root module may require a first-party module; third-party requirements still become their own module | accepted | process & tooling |
 | [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
+| [D-038](D-038-a-fault-is-additive.md) | A fault wraps and never replaces; the `crud` sentinel underneath stays reachable with `errors.Is` | **in force from phase 1** | errors |
+| [D-039](D-039-message-text-is-not-an-interface.md) | No classification and no field path comes from a driver's message text | accepted | errors |
+| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification in force; kind from phase 1** | errors |
+| [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | **in force from phase 6** | errors |
+| [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | **in force from phase 7** | errors |
+| [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | **in force from phase 4** | errors |
+| [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **in force from phase 4** | errors |
+| [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | **in force from phase 5** | HTTP |
+| [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 
 ## By area
 
@@ -97,7 +115,11 @@ between them).
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
 
-**Errors** — D-015 (the sentinel list and the HTTP mapping), D-034 (why the
+**Errors** — D-015 (the sentinel list and the HTTP mapping), D-046 (how a driver
+error is classified, and why the class alone is not a gate), D-039 (message text
+is not an interface), D-040 (retryable is not a client error), D-044 (a body
+names nothing internal), D-038 (a fault is additive), D-043 (one hop per layer),
+D-041 (the catalog), D-042 (the probe), D-034 (why the
 mapping is in one place rather than one per binding).
 
 **Dialects** — D-019 (what is hidden and what is observable), D-011 (the upsert

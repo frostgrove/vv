@@ -1,6 +1,8 @@
 # Roadmap — the error subsystem
 
-**Status:** proposed. Nothing here is built yet.
+**Status:** phase 0 done — MariaDB, the captured corpus, the nine decisions.
+Phases 1–9 are proposed. What is built is marked in §14, and §6's engine matrix
+is now measurement rather than design input.
 **Scope:** one cross-dialect error contract, its four dialect implementations, a
 per-database schema catalog, a multi-violation probe engine, a transport-neutral
 port layer, and the renderers and decorators that put a public payload on the
@@ -300,12 +302,17 @@ Read before designing around it:
 ## 4. Packages and modules
 
 ```
-ERRS MODULE  github.com/shardit-io/vv/errs        (its own version line)
-├── errs/                     NEW  the contract. stdlib only.
-└── errs/sqlerr/              NEW  four dialect parsers. pure functions, stdlib only.
-
-ROOT MODULE  github.com/shardit-io/vv               (errs is its one require)
+ROOT MODULE  github.com/shardit-io/vv               (no third-party requirement)
 ├── crud/                     unchanged — every sentinel stays exactly as it is
+├── errs/                     NEW  the contract. stdlib only. phase 1.
+├── errs/sqlerr/              the corpus types are HERE ALREADY (phase 0); the four
+│                             dialect parsers join them at phase 2. pure functions,
+│                             stdlib only. The corpus lives in this module rather
+│                             than in test/ because the parsers are unit-tested and
+│                             a unit test here cannot import the test module — the
+│                             generator, which needs the drivers, goes the other way.
+│                             ↑ the whole of errs/ becomes its own module at the
+│                               first tag, not before: see D-036, which measured why.
 ├── catalog/                  NEW  per-database schema catalog and introspection
 ├── probe/                    NEW  Simple and Full violation handlers
 ├── port/                     NEW  commands, Service, Mapper, the path chain
@@ -314,6 +321,10 @@ ROOT MODULE  github.com/shardit-io/vv               (errs is its one require)
 ├── http/crudhttp/            extended — Kind→status, the envelope, the renderer seam
 ├── http/crudnet/             extended — error middleware; stdlib only, so it stays here
 └── cmd/vv/                 extended — DTO, mapper + inverse map, service, wiring
+
+UNPUBLISHED
+└── test/corpus/       + the four drivers   provokes every violation and captures it
+    test/cmd/corpus/                        `make corpus`
 
 SATELLITES — one dependency decision each, per [[D-033]]
 ├── http/crudfiber/    + fiber/v3   error middleware, shell over `port`
@@ -617,7 +628,7 @@ func (f *Fault) Unwrap() []error { return f.wrapped }
 ```
 
 `Detail` and `Source` say "internal only" in a comment, and a comment is not an
-enforcement. The proposed D-044 is a rule the types have to carry: `Violation` and `Fault`
+enforcement. [[D-044]] is a rule the types have to carry: `Violation` and `Fault`
 get their own `MarshalJSON` that emits the public shape and nothing else. Without
 it the first person who logs a fault as JSON ships the constraint names this work
 exists to hide — and `Detail.Driver error` makes the default marshal fail anyway.
@@ -656,7 +667,7 @@ type Renderer    interface {
 
 `Classifier` returns a `*Fault`, and `wrapped` is unexported — so as declared, a
 third-party classifier cannot make `errors.Is(err, crud.ErrConflict)` true, which
-is D-038's entire invariant. The builder therefore exports a `Wrapping(errs
+is [[D-038]]'s entire invariant. The builder therefore exports a `Wrapping(errs
 ...error)` step, and that is the only way a sentinel gets attached.
 
 `Chain(rs ...Resolver) Resolver` composes the hops. Every one of these is wired
@@ -740,48 +751,66 @@ blind to every fault the new code produces.
 
 ### What each engine actually tells us
 
-**This table was measured, not remembered.** Every PostgreSQL 17 and MySQL 8.4
-cell below was provoked against the running containers; SQLite cells come from
-the driver's own constant definitions. MariaDB is the one column that is still
-asserted, because there is no MariaDB container yet — which is why §14 makes
-adding one a blocker rather than a nicety.
+**This table was measured, not remembered.** Every cell below was provoked
+against a live server and is checked in under
+[errs/sqlerr/testdata/corpus](errs/sqlerr/testdata/corpus): PostgreSQL 17.11,
+MySQL 8.4.11, MariaDB 11.4.12, SQLite 3.53.3. MariaDB is no longer the asserted
+column — the container landed with phase 0 and settled it.
 
-| Class | PostgreSQL 17 | MySQL 8.4 | MariaDB *(unverified)* | SQLite |
+Three cells came back different from what this table said when it was written
+from documentation, and they are marked. One of them was a live bug.
+
+| Class | PostgreSQL 17 | MySQL 8.4 | MariaDB 11.4 | SQLite |
 |---|---|---|---|---|
-| unique | `23505`; `ConstraintName`, `TableName`, `SchemaName`; `Detail` has key and value | `1062` / `23000`; index name in the message, table-prefixed since 8.0.19 | `1062`, index name **not** table-prefixed | ext `2067`; names `table.column`, no constraint name |
+| unique | `23505`; `ConstraintName`, `TableName`, `SchemaName`; `Detail` has key and value | `1062` / `23000`; index name in the message, table-prefixed since 8.0.19 | `1062` / `23000`; index name **not** table-prefixed — confirmed | ext `2067`; names `table.column`, no constraint name |
 | primary key | `23505` on the pk index | `1062` on `PRIMARY` — and `PRIMARY` is the name on *every* InnoDB table | same | ext `1555`; ext `2579` for a duplicate implicit rowid |
 | FK, parent missing | `23503`; `Detail`: *is not present in table "…"* | `1452` / `23000`; also `1216` when the caller lacks privileges on the parent | `1452` | ext `787`, **no detail at all** |
 | FK, child referencing | `23503` — **not** `23001` | `1451` / `23000`; also `1217`. `TableName` is the **child** | `1451` | ext `787`, no detail |
 | NOT NULL | `23502`; `ColumnName` and `TableName` populated | `1048` / `23000` | same | ext `1299`; names `table.column` |
-| missing default | n/a | **`1364` / `HY000`** — not class 23 | same | n/a |
-| CHECK | `23514`; `ConstraintName` | **`3819` / `HY000`** — not class 23 | **`4025`**, reportedly `23000` | ext `275`; named → the name, **unnamed → the expression source text** |
+| missing default | **collapses into `23502`** — PostgreSQL gives an omitted NOT NULL column the same error as an explicit NULL | **`1364` / `HY000`** — not class 23, and a distinct condition | same | **collapses into ext `1299`**, like PostgreSQL |
+| CHECK | `23514`; `ConstraintName` | **`3819` / `HY000`** — not class 23 | **`4025` / `23000`** — confirmed: class 23 already covers it, so no number entry is needed | ext `275`; named → the name, **unnamed → the expression source text** |
 | exclusion | `23P01`; `ConstraintName` | — | — | — |
-| too long | `22001` — **no column and no table** | `1406` / `22001`; column **and** `at row N` | same | **not enforced at all** — a `VARCHAR(3)` stores 20 chars |
-| out of range | `22003` | `1264` / `22003`; column and row | same | — |
-| bad syntax for type | `22P02` | `1366` / `HY000`; column and row | same | not enforced; ext `3091` on STRICT tables only |
+| too long | `22001` — **no column and no table** | `1406` / `22001`; column **and** `at row N` | same | **not enforced at all** — a `VARCHAR(8)` stores 27 chars, confirmed |
+| out of range | `22003` | `1264` / `22003`; column and row | same | **not enforced**: 99999 is stored as sent |
+| bad syntax for type | `22P02` | `1366` / `HY000`; column and row | **`1366` / `22007`** — *not* the same. Same number, different class | **not enforced at all**: `'abc'` is stored as text in an INTEGER column |
 | deadlock | `40P01` | `1213` / `40001` | same | — |
-| serialisation failure | `40001` | covered by `1213` | same | ext `517` busy-snapshot |
-| lock timeout | `55P03` | `1205` / `HY000` | same | ext `773` busy-timeout |
+| serialisation failure | `40001` | covered by `1213` | same | ext `517` busy-snapshot — still unprovoked, see below |
+| lock timeout | `55P03` | `1205` / `HY000` | same | **`5`** — the *primary* `SQLITE_BUSY`, not the ext `773` this table predicted |
 | tx aborted | **`25P02`** — see §8 | n/a, statement-level rollback | n/a | n/a |
 
-Seven consequences, and they are what the whole design turns on.
+Eight consequences, and they are what the whole design turns on.
 
-1. **SQLSTATE class is not a usable gate, and [[D-015]] is wrong about this.**
-   D-015 says class 23 is *"unique key, foreign key, NOT NULL and CHECK … and
-   nothing else does, so the classification needs no per-driver table."* Measured
-   on MySQL 8.4, a CHECK violation is `3819 / HY000` and a missing default is
-   `1364 / HY000`. Neither starts with `23`, so
-   [`adapter/crudsql/conflict.go`](adapter/crudsql/conflict.go)'s
-   `strings.HasPrefix(sqlState(err), "23")` does not classify them **today** — a
-   MySQL CHECK violation reaches a client as a bare 500 with an empty body, and
-   [[FL-011]]'s failure-mode table promises 409. That is a live bug in the
-   shipped library, not a roadmap problem, and phase 0 has to fix D-015's
-   sentence and FL-011's row before anything is built on top of them. The
-   classifier key is `(dialect, sqlstate, native)`, and no arm of it is a prefix
-   test.
-2. **SQLite has no SQLSTATE**, so a dialect-specific path is the only path, and
-   its extended result codes are not interchangeable with primary ones —
-   `SQLITE_BUSY` is 5, but busy-snapshot is 517 and busy-timeout is 773.
+1. **SQLSTATE class is not a usable gate, and [[D-015]] was wrong about this.**
+   D-015 said class 23 is *"unique key, foreign key, NOT NULL and CHECK … and
+   nothing else does, so the classification needs no per-driver table."* That
+   sentence is now superseded by [[D-046]], and phase 0 fixed the two live bugs
+   it had caused. The evidence, in ascending order of how much it cost:
+
+   - **MySQL** answers a CHECK violation with `3819 / HY000` and a missing
+     default with `1364 / HY000`. Neither starts with `23`, so neither was
+     classified: a client got a bare 500 where [[FL-011]] promises 409.
+   - **MariaDB** answers the same CHECK with `4025 / 23000` — inside class 23. So
+     the identical constraint on two engines sharing a driver, a dialect and a
+     wire protocol needs two different arms. A number list alone is wrong about
+     MariaDB; a class test alone is wrong about MySQL. D-015's forbid was right
+     to leave `4025` out, and wrong about why.
+   - **SQLite reports no SQLSTATE at all**, so for a quarter of the supported
+     engines the gate was simply absent. **Every** SQLite constraint violation —
+     unique, primary key, foreign key, NOT NULL, CHECK, all seven classes — was
+     an unclassified 500, for as long as the dialect had been supported. Phase 0
+     found this on the corpus's first run.
+
+   Why nothing caught the SQLite half: `TestIntegrityViolationsAreClassifiedByEveryAdapter`
+   walks `egTargets()`, and SQLite is not on that list. The dialect arrived with
+   a conformance suite that exercises reads and writes, and a constraint
+   violation is not part of conformance. That is the argument for the corpus in
+   one sentence.
+2. **SQLite's extended result codes are not interchangeable with primary ones**,
+   and the corpus corrects this table's own guess about which arrives. Contending
+   for a write returns the **primary** `SQLITE_BUSY` (5), not the ext `773` this
+   table predicted. What is stable is the low byte: every `SQLITE_CONSTRAINT_*`
+   code is `19 | (n<<8)`, so `19` is the test and the subcodes need no list —
+   which is what [[D-046]]'s SQLite arm does.
 3. **SQLite's foreign-key error carries nothing.** `FOREIGN KEY constraint
    failed`, and that is the whole message. Only the catalog, or
    `PRAGMA foreign_key_check`, can say which key.
@@ -803,36 +832,71 @@ Seven consequences, and they are what the whole design turns on.
    with `-`, which is ambiguous the moment a value contains a hyphen — `('x-1','y')`
    reports `'x-1-y'`. On a prefix index, `UNIQUE KEY (v(5))`, the reported value
    is the *truncated prefix*, not what was sent.
-7. **`too_long` is unreachable on SQLite**, which does not enforce declared
-   widths. The same payload is 422 on PostgreSQL and MySQL and 200 on SQLite.
-   That is an observable dialect difference and [[D-019]] governs it — see §12.
+7. **Three data-class violations are unreachable on SQLite**, not one. It
+   enforces neither a declared width (a `VARCHAR(8)` stores 27 characters), nor a
+   declared range (99999 into a small column), nor a declared type (`'abc'` into
+   an integer column, kept as text). The same payloads are 422 on the two servers
+   and 200 on SQLite, and the stored row then holds what the schema says it
+   cannot. [[D-019]] governs it and now names all three — see §12.
+
+8. **The same engine number can carry different classes.** MySQL's `1366` is
+   `HY000` and MariaDB's is `22007`. A parser keyed on the number alone would
+   agree with itself while describing two different classifications — which is
+   the other half of consequence 1, and the reason the key is a triple.
 
 Two gaps the table does not cover and the design must: **deferred constraints**
 (`SET CONSTRAINTS … DEFERRED` fires `23505`/`23503` at `COMMIT`, with no
 statement, no payload and no `Op`), and **`25P02`** (§8), which is already an
 unclassified 500 today.
-### The corpus, not the table
+### The corpus, not the table — **built**
 
 The matrix above is design input, and half of it was wrong the first time it was
 written. Message text and error numbering drift by server version, and a table
 written from memory is the wrong thing to build a classifier on.
 
-So the **captured-message corpus** moves to **phase 0**, ahead of the decisions
-rather than after them: a checked-in fixture file per engine, generated by a small
-program that provokes every violation class against a live server and records the
-driver error verbatim along with the server version. The parsers are table-driven
-over it. When a server version changes a message, the corpus is regenerated and
-the diff says exactly what changed, instead of one integration test failing for a
-reason nobody can see.
+So the **captured-message corpus** came first, ahead of the decisions rather than
+after them: a checked-in fixture per engine, generated by a program that provokes
+every violation class against a live server and records the driver error verbatim
+along with the server version. Fifteen cases, four engines,
+[errs/sqlerr/testdata/corpus](errs/sqlerr/testdata/corpus). `make corpus`
+recaptures; recapturing unchanged servers is byte-identical, so a diff is always
+a real change.
 
-It is phase 0 because [[D-015]]'s class-23 sentence and the whole of §2's status
-table are resting on cells the corpus is the only honest source for. Writing the
-decisions first would pin a mistake.
+It was phase 0 because [[D-015]]'s class-23 sentence and the whole of §2's status
+table rested on cells the corpus is the only honest source for. Writing the
+decisions first would have pinned a mistake — and it would have pinned three:
+consequence 1 above lists what came back different, including an entire dialect's
+worth of unclassified 500s that no amount of re-reading the specification would
+have surfaced.
+
+**What is asserted and what is only recorded.** The guard compares the tuple a
+classifier dispatches on — driver type, SQLSTATE, native number, and which
+structured fields the driver populated. It does **not** compare the message or
+the server version. [docker-compose.yml](docker-compose.yml) tracks floating tags
+(`mysql:8.4`, `postgres:17-alpine`), so a patch release that rewords one sentence
+would otherwise turn the suite red over a change no parser can see — and the fix
+would be to stop reading the failure. Text is captured and checked in, for the
+human reading a diff and for phase 2's *message text is not an interface* test,
+and `make corpus` still reports every key that moved.
+
+**The negatives, and one correction.** Three entries must stay unclassified: a
+`42P01` (PostgreSQL) / `1146` (MySQL, MariaDB) undefined table, a `1044` access
+denied, and a connection that never reaches a server. That last one replaces the
+`08006` this section used to name: a client that cannot reach the host produces a
+`*net.OpError` or a `*pgconn.ConnectError`, not a server-issued SQLSTATE.
+Capturing it verbatim is the better negative — an error carrying **no SQLSTATE at
+all** must stay unclassified — but the cell was wrong and is corrected rather than
+faked. PostgreSQL contributes a fourth: `28P01`, a real server error in class 28.
+
+**What is deferred to phase 2**, named here rather than dropped: `deadlock`,
+`serialisation_failure`, `25P02` and deferred constraints. A deadlock needs two
+goroutines racing through a barrier, and a corpus entry that depends on
+scheduling regenerates differently every run. `lock_timeout` — two sequential
+connections and a session variable — is deterministic and carries the retryable
+class for now.
 
 The corpus is also where the `errors.Unwrap`-versus-tree-walk fix (above) gets
-its regression test, and where the negative entries live: a `42P01`, an `08006`,
-a MySQL `1044` that must stay **unclassified**, because a parser that classifies
-everything is worse than one that classifies nothing.
+its regression test.
 
 ---
 
@@ -995,7 +1059,7 @@ that is correct. Measured against PostgreSQL 17: the probe says violation, the
 insert succeeds. Composite FKs are worse — *any* NULL column disables the check
 entirely, so the guard is "every column non-null", not "this one". A probe that
 invents violations is strictly worse than the single-violation status quo it
-replaces, which is why the proposed D-042 lets the probe only ever **narrow** the
+replaces, which is why [[D-042]] lets the probe only ever **narrow** the
 truth, never widen it.
 
 **Results are read by column position, not by alias.** PostgreSQL truncates
@@ -1124,7 +1188,7 @@ enrichment — otherwise the most failure-prone part of the design downgrades a
 correct 409 into an opaque 500, which is the opposite of the point. And it is
 genuinely failure-prone: it re-binds values from a write that already failed, so
 a write rejected for a bad type re-binds the same value and fails again. Probe
-error ⇒ keep what the driver said, set `Partial: true`, log. The proposed D-042 says so.
+error ⇒ keep what the driver said, set `Partial: true`, log. [[D-042]] says so.
 
 Bound the constraints probed per request, the rows probed per batch, the total
 probe time, and the catalog load time. The defaults have to be numbers rather
@@ -1225,7 +1289,7 @@ Both must be safe to install twice. A response rendered by the CRUD handler and
 then rendered again by the middleware is the most likely way to get this wrong.
 The marker lives on the response-writer wrapper the middleware already needs —
 not on the `Fault`, which is a value that two goroutines may render at once and
-which the proposed D-042 treats as immutable. `crudgin` reads `c.Writer.Written()` for the
+which [[D-042]] treats as immutable. `crudgin` reads `c.Writer.Written()` for the
 same reason.
 
 ### Rendering edge cases worth naming now
@@ -1325,19 +1389,21 @@ change, it says so and names the successor rather than quietly working around it
 | [[D-009]] context executor capture is unconditional | The probe resolves its executor through `crud.ExecutorFor(ctx, src)`; that is what makes "never probe on another connection" enforceable rather than aspirational |
 | [[D-010]] update is load-diff-write | The change set says which constraints matter; the loaded row supplies the values |
 
-New decisions this work needs:
+New decisions this work needs — **all nine written in phase 0**. Four govern code
+that does not exist yet and say so in their status line rather than reading as
+rules the tree already follows:
 
 | id | Invariant |
 |---|---|
-| D-038 | A fault is additive: the `crud` sentinel it wraps stays reachable with `errors.Is` |
-| D-039 | Message text is not an interface. Columns come from the catalog; a value parsed from a driver message is best-effort |
-| D-040 | A retryable class is not a client error. It gets its own `Kind` and 503, and the framework does not retry on the caller's behalf |
-| D-041 | The catalog is per physical handle, loaded once, never global, and its absence is a start-up failure |
-| D-042 | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation |
-| D-043 | A path is translated one hop per layer, and no layer guesses a hop it does not own |
-| D-044 | The public payload names nothing internal — no constraint, no table, no column, no SQLSTATE, and no `Params` entry or CHECK expression derived from one |
-| D-045 | The shared half is transport-neutral; a binding is a shell over `port` (supersedes [[D-034]]) |
-| D-046 | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate (supersedes [[D-015]]'s class-23 sentence) |
+| [[D-038]] | A fault is additive: the `crud` sentinel it wraps stays reachable with `errors.Is` |
+| [[D-039]] | Message text is not an interface. Columns come from the catalog; a value parsed from a driver message is best-effort |
+| [[D-040]] | A retryable class is not a client error. It gets its own `Kind` and 503, and the framework does not retry on the caller's behalf |
+| [[D-041]] | The catalog is per physical handle, loaded once, never global, and its absence is a start-up failure |
+| [[D-042]] | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation |
+| [[D-043]] | A path is translated one hop per layer, and no layer guesses a hop it does not own |
+| [[D-044]] | The public payload names nothing internal — no constraint, no table, no column, no SQLSTATE, and no `Params` entry or CHECK expression derived from one |
+| [[D-045]] | The shared half is transport-neutral; a binding is a shell over `port` (supersedes [[D-034]]) |
+| [[D-046]] | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate (supersedes [[D-015]]'s class-23 sentence) |
 
 The framework's own decisions are written and are not this document's to number:
 [[D-035]] (naming), [[D-036]] (first-party requirements, amending [[D-033]]) and
@@ -1432,26 +1498,42 @@ not done because the code works.
 
 | # | Phase | Ships | The control case that fails without it |
 |---|---|---|---|
-| 0 | Corpus, placeholders **and** decisions | the captured-message corpus first; a `TODO.md` in every directory the framework roadmap marks `→` or `·` (rule 6); then D-038…D-046, the supersedes of [[D-015]] and [[D-034]], the [[D-019]] additions, UC-017, UC-004, FL-011, FL-013, FL-014, FL-015 | a corpus entry that must stay unclassified (`42P01`, `08006`, MySQL `1044`) does |
+| 0 | Corpus, placeholders **and** decisions — **done** | MariaDB as a fourth engine; the captured corpus (15 cases × 4 engines) and its two live guards; D-038…D-046; the supersedes of [[D-015]] and [[D-034]]; the [[D-019]] additions; UC-017; the UC-015 and UC-004 amendments; FL-011. Two live bugs fixed on the way: MySQL's `3819`/`1364`, and every SQLite constraint violation | a corpus entry that must stay unclassified (undefined table, access denied, a connection that never reached a server) does |
 | 1 | `errs/` | codes, `Kind`, `Path`, `Violation`, `Fault`, the SPI, the message source | a `Fault` wrapping a sentinel matches it — **and one wrapping none does not**. Without the negative the test passes for `errors.Join` and proves nothing |
-| 2 | `errs/sqlerr/` | four parsers over the phase-0 corpus | the class is derived from `(dialect, sqlstate, native)` alone — a parser that reads message text fails a corpus entry whose text is localised |
-| 3 | Driver extraction | `crudsql` by shape (and its `errors.Unwrap` walk fixed), `crudpgx` typed | an unclassifiable state stays a 500. **Depends on phase 6** for `Source.Columns` on SQLite FKs and PG `22001`, which carry no column — ship it knowing those two are blank until the catalog lands |
-| 4 | Render + decorators | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes |
-| 5 | `port/` + adapters | commands, `Service`, `Mapper`, bindings become shells | the same service mounts on all three bindings and compiles — the [[D-034]] check |
+| 2 | `errs/sqlerr/` | four parsers over the phase-0 corpus; **and the corpus entries phase 0 deferred** — `deadlock`, `serialisation_failure`, `25P02`, deferred constraints | the class is derived from `(dialect, sqlstate, native)` alone — a parser that reads message text fails a corpus entry whose text is localised |
+| 3 | Driver extraction | `crudsql` by shape (and its `errors.Unwrap` walk fixed), `crudpgx` typed; **FL-014** | an unclassifiable state stays a 500. **Depends on phase 6** for `Source.Columns` on SQLite FKs and PG `22001`, which carry no column — ship it knowing those two are blank until the catalog lands |
+| 4 | Render + decorators | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware; **[[D-043]] and [[D-044]] come into force**, closing UC-015's guarantee 11 and gap 16 | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes |
+| 5 | `port/` + adapters | commands, `Service`, `Mapper`, bindings become shells; **FL-015**; [[D-045]] comes into force and [[D-034]] becomes history | the same service mounts on all three bindings and compiles — the [[D-034]] check |
 | 6 | `catalog/` | per-handle introspection on four dialects, the negative cache | an unknown constraint name does not re-introspect in a loop |
 | 7 | `probe/` | `Simple`, `Full`, bulk attribution, caps, the savepoint mode, the `owned` seam flag, scope-awareness from `security.Policy` | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
 | 8 | Codegen | DTOs, mapper, inverse map, service, wiring | regenerate-and-diff; a column the DTO misses refuses start-up |
-| 9 | Ecosystem | `rpc/crudgrpc`, i18n catalogues, SQL Server / Oracle / CockroachDB | adding a transport requires no change to `errs`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
+| 9 | Ecosystem | `rpc/crudgrpc`, i18n catalogues, SQL Server / Oracle / CockroachDB; **FL-013**'s fourth-transport row | adding a transport requires no change to `errs`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
 
-### Infrastructure this needs first
+### Infrastructure — **in place**
 
-[docker-compose.yml](docker-compose.yml) runs `postgres:17-alpine` and
-`mysql:8.4`. SQLite is already covered — `test/integration/driver_sqlite_test.go`
-exists, `test/go.mod` requires `modernc.org/sqlite`, and `crud/dialect.go`
-declares `SQLite`. **Only MariaDB is missing**, and it has to land before the
-corpus can be built, because MariaDB-versus-MySQL divergence is the whole reason
-they are separate parsers. `Makefile` gains its `up` and shell targets, and
+[docker-compose.yml](docker-compose.yml) runs `postgres:17-alpine`, `mysql:8.4`
+and `mariadb:11.4`; `make mariadb` opens a shell and `make corpus` recaptures.
+SQLite needs no container. MariaDB was the blocker and it earned its place three
+times over: it settled the `4025` question, it turned up a divergence this
+roadmap did not predict (`1366` is `22007` there and `HY000` on MySQL), and it
+gave `crud.MySQL`'s "targets MySQL and MariaDB" its first test — 19 conformance
+subtests and 110 engine-behaviour subtests, none of which had ever run.
+
 `MODULES` gains `rpc/crudgrpc` at phase 9.
+
+### Why FL-014 and FL-015 are not in phase 0
+
+Both are flows, and `CLAUDE.md` is explicit that *a flow is the only place file
+paths and symbols appear*. Neither's files exist yet, so writing them in phase 0
+would produce two documents that fail at the one job a flow has. FL-014 lands
+with phase 3 and FL-015 with phase 5, and [[FL-013]]'s pending change — a fourth
+transport's row in the per-binding table — waits for phase 9 with gRPC.
+
+The nine decisions were written in phase 0 regardless, because a decision governs
+code rather than describing it. The four that govern unwritten subsystems carry
+`in force from phase N` in their status line and head their evidence section
+`Proven by (owed)`, so a reader can tell a rule the tree obeys from a rule the
+tree owes.
 
 ---
 
@@ -1465,7 +1547,7 @@ vacuously carries a control case next to it, in the pattern
 | What | How it is tested | The control that fails without the feature |
 |---|---|---|
 | the parsers | table-driven over the phase-0 corpus | a **negative** corpus entry — `42P01`, `08006`, MySQL `1044` — that must stay unclassified. "A misclassified entry fails" is a tautology: the corpus supplies both input and expectation, so it tests the harness |
-| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is the proposed D-039's actual invariant and nothing else tests it |
+| message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is [[D-039]]'s actual invariant and nothing else tests it |
 | driver extraction | live, all four engines, through every adapter | an unclassifiable state stays a 500 — the existing `TestOnlyIntegrityErrorsBecomeConflicts` pattern. Plus: a MySQL CHECK violation is now classified, which it is not today |
 | the envelope | unit, all three bindings, triplet suites | removing an arm from the shared `Status` fails all three identically |
 | the precedence table | unit | a fault mixing `Forbidden` and `Conflict` answers 403, and one mixing `Internal` with anything answers 500 with an empty body. Untested, this table is decoration |
@@ -1481,7 +1563,8 @@ vacuously carries a control case next to it, in the pattern
 | double rendering | unit, all three bindings | a handler that already wrote a response is left alone; installing the middleware twice renders once |
 | the message hierarchy | unit | each of the four levels resolves, and a missing translation falls back rather than emitting `{max}` |
 | the transaction matrix | live, all four engines | inside a transaction without savepoints `Full` degrades to one violation rather than erroring; **with** `WithSavepoints()` it does not degrade; and a foreign transaction is never given a savepoint |
-| MariaDB detection | live | a MariaDB CHECK violation classifies as `check`, which needs `4025` and not MySQL's `3819` |
+| MariaDB detection | live | a MariaDB CHECK violation classifies as `check`, which needs `4025` and not MySQL's `3819`. **Phase 0 measured it and the answer was not what this row assumed**: MariaDB reports `4025` with SQLSTATE `23000`, so class 23 already covers it and no number entry is needed. The divergence that does need the split is `1366` — `HY000` on MySQL, `22007` on MariaDB. Held by `TestEveryCorpusCaseClassifiesAsTheCorpusSays` |
+| the corpus itself | live, all four engines | recapturing and diffing the key. Its control is that the negatives stay unclassified; without them the corpus supplies both input and expectation and only tests the harness |
 
 Never `t.Parallel()` in `test/integration` — every test shares the same physical
 tables. Errors are compared with `errors.Is` against the exported sentinels, never
@@ -1493,27 +1576,34 @@ module.
 
 ## 16. Not decided yet
 
-Left open on purpose. Each needs a decision before the phase that touches it.
+Left open on purpose. Each needs a decision before the phase that touches it, and
+each now names the decision it feeds so the phase cannot start without noticing.
 
 
 - **Whether pre-flight probing should ever be the default** for a named endpoint
-  shape (a signup form), or stay entirely the application's call.
-- **Whether the framework retries a retryable class.** D-040 says no. The
-  argument for yes is that a serialisation failure inside a repository-owned
-  transaction is the framework's own to retry, and nobody else can see it.
+  shape (a signup form), or stay entirely the application's call. Feeds
+  [[D-042]], which currently says not by default.
+- **Whether the framework retries a retryable class.** [[D-040]] says no, and is
+  written. The argument for yes is that a serialisation failure inside a
+  repository-owned transaction is the framework's own to retry and nobody else
+  can see it; D-040 records that argument rather than dismissing it, and would
+  have to be superseded rather than bent.
 - **The cap defaults** — constraints per request, rows per batch, probe time,
-  catalog load time. A cap without a number is not a cap.
+  catalog load time. A cap without a number is not a cap. Feeds [[D-042]], which
+  requires the truthfulness and leaves the numbers here.
 - **Whether `crud/crudtest`'s recorder grows a `DataSource()`**, which is the
   difference between the probe having a unit-test seam and being
-  integration-only.
-- **Whether the envelope ever splits the two origins into separate groups.** The
+  integration-only. Feeds [[D-041]] (a source that cannot name its database gets
+  no catalog) and [[D-042]] (what can be tested without a server).
+- **Whether the envelope ever splits the two origins into separate groups.**
+  Feeds [[UC-017]] guarantee 9, which currently says one list. The
   default is one list; a consumer whose UI treats "fix your input" and "someone
   took it" differently may want `errors.validation` and `errors.conflict`. The
   data is there either way — this is a rendering choice, and it should be made
   once rather than per endpoint.
 - **Composite primary keys.** Unsupported today, and the probe's
   exclude-my-own-row clause assumes a single-column key. The probe should not be
-  what forces the decision, but it will be what makes it urgent.
+  what forces the decision, but it will be what makes it urgent. Feeds [[D-042]].
 - ~~Where a validation-library bridge lives.~~ **Settled** (§5): it is
   dependency-free, so it lives in `errs` and needs no module. The open remainder
   is whether `errs` should ship the `RegisterTagNameFunc` helper itself, which

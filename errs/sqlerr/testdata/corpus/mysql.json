@@ -1,0 +1,187 @@
+{
+  "engine": "mysql",
+  "server": "8.4.11",
+  "driver": "github.com/go-sql-driver/mysql",
+  "cases": [
+    {
+      "name": "unique",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (10, 'anchor', 'y')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1062,
+        "message": "Error 1062 (23000): Duplicate entry 'anchor' for key 'cp_parent.slug'"
+      }
+    },
+    {
+      "name": "unique_composite",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, a, b) VALUES (11, 's11', 'y', 'p', 'q')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1062,
+        "message": "Error 1062 (23000): Duplicate entry 'p-q' for key 'cp_parent.cp_ab'"
+      }
+    },
+    {
+      "name": "primary_key",
+      "kind": "integrity",
+      "want": "primary_key",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (1, 's1', 'y')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1062,
+        "message": "Error 1062 (23000): Duplicate entry '1' for key 'cp_parent.PRIMARY'"
+      }
+    },
+    {
+      "name": "foreign_key",
+      "kind": "integrity",
+      "want": "foreign_key",
+      "stmt": "INSERT INTO cp_child (id, parent) VALUES (12, 424242)",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1452,
+        "message": "Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`vv`.`cp_child`, CONSTRAINT `cp_fk` FOREIGN KEY (`parent`) REFERENCES `cp_parent` (`id`))"
+      }
+    },
+    {
+      "name": "restrict",
+      "kind": "integrity",
+      "want": "restrict",
+      "stmt": "DELETE FROM cp_parent WHERE id = 1",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1451,
+        "message": "Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`vv`.`cp_child`, CONSTRAINT `cp_fk` FOREIGN KEY (`parent`) REFERENCES `cp_parent` (`id`))"
+      }
+    },
+    {
+      "name": "not_null",
+      "kind": "integrity",
+      "want": "not_null",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (13, 's13', NULL)",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1048,
+        "message": "Error 1048 (23000): Column 'need' cannot be null"
+      }
+    },
+    {
+      "name": "check",
+      "kind": "integrity",
+      "want": "check",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (14, 's14', 'x', -1)",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "HY000",
+        "native": 3819,
+        "message": "Error 3819 (HY000): Check constraint 'cp_pos' is violated."
+      }
+    },
+    {
+      "name": "missing_default",
+      "kind": "integrity",
+      "want": "missing_default",
+      "stmt": "INSERT INTO cp_parent (id, slug) VALUES (15, 's15')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "HY000",
+        "native": 1364,
+        "message": "Error 1364 (HY000): Field 'need' doesn't have a default value"
+      }
+    },
+    {
+      "name": "too_long",
+      "kind": "data",
+      "want": "too_long",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (16, 'far-too-long-for-the-column', 'x')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "22001",
+        "native": 1406,
+        "message": "Error 1406 (22001): Data too long for column 'slug' at row 1"
+      }
+    },
+    {
+      "name": "out_of_range",
+      "kind": "data",
+      "want": "out_of_range",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, small) VALUES (17, 's17', 'x', 99999)",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "22003",
+        "native": 1264,
+        "message": "Error 1264 (22003): Out of range value for column 'small' at row 1"
+      }
+    },
+    {
+      "name": "bad_type",
+      "kind": "data",
+      "want": "bad_type",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (18, 's18', 'x', 'abc')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "HY000",
+        "native": 1366,
+        "message": "Error 1366 (HY000): Incorrect integer value: 'abc' for column 'num' at row 1"
+      }
+    },
+    {
+      "name": "lock_timeout",
+      "kind": "retryable",
+      "want": "lock_timeout",
+      "stmt": "",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "HY000",
+        "native": 1205,
+        "message": "Error 1205 (HY000): Lock wait timeout exceeded; try restarting transaction"
+      }
+    },
+    {
+      "name": "undefined_table",
+      "kind": "none",
+      "want": "",
+      "stmt": "SELECT id FROM cp_nope",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "42S02",
+        "native": 1146,
+        "message": "Error 1146 (42S02): Table 'vv.cp_nope' doesn't exist"
+      }
+    },
+    {
+      "name": "access_denied",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "42000",
+        "native": 1044,
+        "message": "Error 1044 (42000): Access denied for user 'vv'@'%' to database 'mysql'"
+      }
+    },
+    {
+      "name": "connect_failure",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "err": {
+        "type": "*net.OpError",
+        "sqlstate": "",
+        "native": 0,
+        "message": "dial tcp 127.0.0.1:1: connect: connection refused"
+      }
+    }
+  ]
+}

@@ -45,6 +45,11 @@ branch on and, where the mistake is its own, enough detail to fix it.
 10. The transport never needs to import the layer that raised the error. Access
     control, the query compiler and the repository all speak in the same
     sentinels.
+11. No response body names anything internal. Not at 500, where nothing is said
+    at all, and not at 409 or 400 either: no constraint name, table name, column
+    name, engine error number, or message parameter derived from one. What a
+    client is told is a code, a path into the request it sent, and a sentence
+    written for a person.
 
 ## Out of scope
 
@@ -65,8 +70,11 @@ branch on and, where the mistake is its own, enough detail to fix it.
 | [[FL-011]] | the sentinel-to-status table, the body shapes, and the point at which a 500 stops carrying detail |
 | [[FL-013]] | that a second and a third binding inherit the table rather than restating it |
 
+Guarantee 11 is [[UC-017]]'s territory as well: the two use cases share the
+envelope, and the same decision governs both.
+
 ## Status
-**covered, with one deliberate leak worth knowing about.**
+**covered except for guarantee 11.**
 
 Every status in guarantee 1 has a test, including the branches no route reaches
 with a real repository behind it; the "same refusal from every route" table and
@@ -77,12 +85,20 @@ Guarantee 8 — that the mapping is a function an application can reuse — is n
 also what keeps the bindings honest rather than only a convenience: there is one
 switch, and removing an arm from it fails every binding's suite identically.
 
-The leak: every status *except* 500 puts the error's own text in the response
-body. That is what makes guarantee 5 useful, and for a 400 the text is the query
-compiler's. For a 409 it is the driver's — the adapters classify an integrity
-violation by SQLSTATE and keep the driver error underneath, so a duplicate-key
-409 can carry a constraint name, a column name and the driver's own prefix out to
-the client. That is the current design (a test asserts a 409 says *something*),
-but it is a wider disclosure than "a 500 must leak nothing" implies, and an
+Guarantee 11 does not hold. Every status *except* 500 puts the error's own text
+in the response body. That is what makes guarantee 5 useful, and for a 400 the
+text is the query compiler's. For a 409 it is the driver's — the adapters
+classify an integrity violation and keep the driver error underneath, so a
+duplicate-key 409 carries a constraint name, a column name and the driver's own
+prefix out to the client.
+
+How wide that is has been measured rather than estimated. The captured error
+corpus records, among others, PostgreSQL's `Key (slug)=(anchor) already exists.`
+— column and submitted value — and MySQL naming the database, both tables and
+both columns of a foreign key in a single sentence.
+
+This was previously written here as a deliberate design leak awaiting a
+decision. It now has one: [[D-044]] refuses it, and phase 4 of
+`ROADMAP-errors.md` is where the render layer closes it. Until then an
 application that treats constraint names as internal has to install its own
-mapping to close it.
+mapping.

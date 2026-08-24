@@ -72,7 +72,7 @@ undefined fields on the way back out.
 - `TestUpdateCarriesAnExplicitNullThrough` in `http/crudfiber/handler_test.go`.
 - `TestOnlyOmitzeroDropsAnUndefinedFieldOnMarshal` in `crud/opt_edge_test.go`.
 - `TestFromPtrOfAZeroValueIsAValueNotAnAbsence` in `crud/opt_edge_test.go`.
-- `TestGeneratedDTOTypesFollowNullability` in `example/blog/blog_test.go` — would
+- `TestGeneratedDTOTypesFollowNullability` in `_examples/example/blog/blog_test.go` — would
   catch the generator emitting `*T` for a nullable column.
 
 ## See also

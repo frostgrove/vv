@@ -148,3 +148,81 @@ func TestANumberIsOnlyTrustedUnderHY000(t *testing.T) {
 		t.Fatal("the number was trusted outside HY000, where it means nothing")
 	}
 }
+
+// sqliteish has the shape modernc.org/sqlite's *Error has: a Code method and no
+// SQLSTATE at all. mattnish has mattn/go-sqlite3's: integer fields. Neither
+// driver may be imported here, so the test asserts the shapes rather than the
+// types, exactly as the pgx and MySQL cases above do.
+type sqliteish struct{ code int }
+
+func (e *sqliteish) Error() string { return "constraint failed" }
+func (e *sqliteish) Code() int     { return e.code }
+
+type mattnish struct {
+	Code         int
+	ExtendedCode int
+}
+
+func (e *mattnish) Error() string { return "constraint failed" }
+
+func TestSQLiteConstraintViolationsBecomeConflicts(t *testing.T) {
+	// SQLite has no SQLSTATE and never will, so a classifier keyed on SQLSTATE
+	// alone cannot see any of these. Every one of them was a bare 500 — seven
+	// classes on a shipped dialect — because the one live test that would have
+	// caught it runs over a target list SQLite is not on.
+	//
+	// The numbers are extended result codes, measured against the running
+	// driver, and all of them carry SQLITE_CONSTRAINT (19) in the low byte.
+	for _, tc := range []struct {
+		name string
+		code int
+	}{
+		{"unique", 2067},
+		{"primary key", 1555},
+		{"foreign key", 787},
+		{"not null", 1299},
+		{"check", 275},
+		{"the bare primary code", 19},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := conflict(&sqliteish{code: tc.code}); !errors.Is(got, crud.ErrConflict) {
+				t.Fatalf("SQLite %d is a constraint violation and did not classify as one: %v", tc.code, got)
+			}
+			if got := conflict(&mattnish{Code: 19, ExtendedCode: tc.code}); !errors.Is(got, crud.ErrConflict) {
+				t.Fatalf("SQLite %d through an integer-field driver did not classify: %v", tc.code, got)
+			}
+		})
+	}
+}
+
+func TestAnOrdinarySQLiteErrorIsStillNotAConflict(t *testing.T) {
+	// The control. Without it the test above would pass for a classifier that
+	// treated every SQLite error as a conflict — and SQLITE_BUSY in particular
+	// is retryable, not the caller's to fix.
+	for _, tc := range []struct {
+		name string
+		code int
+	}{
+		{"busy", 5},
+		{"busy snapshot", 517},
+		{"cannot open", 14},
+		{"generic error", 1},
+		{"readonly, which shares no low byte with constraint", 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := conflict(&sqliteish{code: tc.code}); errors.Is(got, crud.ErrConflict) {
+				t.Fatalf("SQLite %d is not an integrity violation", tc.code)
+			}
+		})
+	}
+}
+
+func TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE(t *testing.T) {
+	// pgconn spells the SQLSTATE in a field called Code. Reading that as a
+	// number would classify by coincidence, so this arm is reached only when
+	// there is no SQLSTATE — which for pgconn there always is.
+	got := conflict(&pgErr{state: "42P01"})
+	if errors.Is(got, crud.ErrConflict) {
+		t.Fatal("a missing relation classified as a conflict")
+	}
+}

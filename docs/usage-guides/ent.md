@@ -936,6 +936,27 @@ value to sort by.
 **`Save` is an upsert.** No key → INSERT; key set → `ON CONFLICT DO UPDATE`.
 Columns tagged `immutable` survive the conflict.
 
+**An upsert swallows a different set of conflicts on each engine, and this one
+can lose a row.** PostgreSQL's `ON CONFLICT (pk) DO UPDATE` swallows the primary
+key only. MySQL's and MariaDB's `ON DUPLICATE KEY UPDATE` fires on *any* unique
+key. So for a table keyed on `id` and unique on `email`, saving
+`{id: 3, email: "taken@x.io"}` where that address belongs to row 1 is a 409 on
+PostgreSQL with nothing written, and on MySQL **overwrites row 1** — row 3 is
+never created. There is no portable spelling; a per-unique-key conflict target
+is not in MySQL's grammar. If you upsert into a table with a second unique key,
+read the row first or keep to one engine.
+
+**SQLite does not enforce a declared width, range or type.** `VARCHAR(8)` stores
+a 27-character value, an out-of-range number is stored as sent, and `'abc'` in
+an integer column is kept as text. The same payload is 422 on PostgreSQL and
+MySQL and 200 there. Use `CHECK` constraints if you need SQLite to refuse.
+
+**MySQL and MariaDB are not interchangeable in their error text.** A duplicate
+key names its index as `users.email` on MySQL and `email` on MariaDB, and a
+failed `CHECK` is error 3819 with SQLSTATE `HY000` on MySQL and 4025 with
+`23000` on MariaDB. vv classifies both as a conflict, so a 409 is a 409 —
+but do not parse the message.
+
 ---
 
 ## Reference

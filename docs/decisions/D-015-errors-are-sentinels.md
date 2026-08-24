@@ -51,29 +51,37 @@ a transport that has never heard of optimistic locking still answers 409. A
 caller who wants to retry checks the more specific sentinel. Both work at once,
 which is the point of wrapping.
 
-**Why the adapters classify SQLSTATE class 23.** A duplicate key used to reach
-the client as a 500 with an empty body — the class of bug where the client
-retries forever and the server logs nothing useful. Class 23 is *integrity
-constraint violation*: unique key, foreign key, NOT NULL and CHECK belong there.
+**Why the adapters classify integrity violations at all.** A duplicate key used
+to reach the client as a 500 with an empty body — the class of bug where the
+client retries forever and the server logs nothing useful.
 
-**That last claim was wrong about MySQL, and it cost a 500.** "Nothing else does,
-so the classification needs no per-driver table" held for PostgreSQL and not for
-MySQL, which reports a CHECK violation as `3819` and a missing column default as
-`1364`, both with SQLSTATE `HY000` — its "no more specific state" code. Neither
-was classified, so a client got a bare 500 where the table below promises 409.
-Measured on MySQL 8.4.11, not remembered.
+**How they classify is [[D-046]]'s, and the sentence that used to be here was
+wrong.** It read: *"Class 23 is integrity constraint violation: unique key,
+foreign key, NOT NULL and CHECK belong there … and nothing else does, so the
+classification needs no per-driver table."* That was tested against PostgreSQL
+and generalised, and all four engines were later provoked and recorded. It fails
+on three of them:
 
-The classifier therefore reads class 23 **and** a short list of MySQL numbers,
-and it only trusts a number when the state is exactly `HY000`, so a numeric field
-on another driver's error cannot be mistaken for a MySQL code. The list is two
-entries long and each one was provoked against a live server. The driver
-error is kept underneath, so a caller who wants the constraint name still
-`errors.As`-es their way to it.
+- MySQL reports a CHECK violation as `3819` and a missing column default as
+  `1364`, both with SQLSTATE `HY000`.
+- MariaDB reports the same CHECK as `4025` with SQLSTATE `23000` — the identical
+  constraint on the other engine, reached through the other arm.
+- SQLite has no SQLSTATE at all, so the gate simply is not there. Every SQLite
+  constraint violation — all seven classes — was an unclassified 500 for as long
+  as the dialect had been supported.
+
+D-046 supersedes that sentence. The classifier is keyed on
+`(dialect, sqlstate, native)` and no arm of it is a prefix test. The driver error
+is still kept underneath, so a caller who wants the constraint name still
+`errors.As`-es their way to it — and [[D-044]] is why it must not reach a
+response body.
 
 **Why `crudsql` asks by shape.** `adapter/crudsql` may not name a driver's error
 type. It looks for a `SQLState() string` method (pgx, lib/pq) and then for an
 exported `SQLState` field (go-sql-driver/mysql), handling both the `string` and
-the `[5]byte` spelling. `adapter/crudpgx` can name `*pgconn.PgError` and does.
+the `[5]byte` spelling; for SQLite it reaches a `Code() int` method
+(modernc.org/sqlite) or integer `Code`/`ExtendedCode` fields (mattn/go-sqlite3).
+`adapter/crudpgx` can name `*pgconn.PgError` and does.
 
 **Why a 500 says nothing.** The underlying message can be a SQL string, a column
 list, or a connection string fragment. `DefaultErrorHandler` fills `Message` only
@@ -84,13 +92,16 @@ for statuses below 500.
 - Do not replace a sentinel with a new error. Wrap it.
 - Do not stop `ErrStaleVersion` wrapping `ErrConflict`.
 - Do not add to the MySQL number list from documentation. Each entry is there
-  because the error was provoked against a running server and the SQLSTATE was
-  observed to be `HY000`. MariaDB's `4025` is deliberately absent for that
-  reason.
-- Do not broaden the SQLSTATE classifier past class 23. Class 40 (serialisation
-  failure) is retryable and is *not* a client error; class 22 (data exception) is
-  a coercion bug. Adding either to 409 tells the client to fix something it
-  cannot fix.
+  because the error was provoked against a running server, captured in the
+  corpus, and observed to carry `HY000`. MariaDB's `4025` is absent for a
+  different reason than this file used to give: it was measured, and it carries
+  SQLSTATE `23000`, so class 23 already covers it and a number would be
+  redundant.
+- Do not classify class 40, `55P03`, `1205` or `SQLITE_BUSY` as a conflict. A
+  retryable failure is not a client error, and [[D-040]] owns it.
+- Do not classify class 22 (data exception). A value too long or of the wrong
+  type is the caller's to fix, but it is not a collision, and 409 tells them the
+  wrong thing about it.
 - Do not put the driver's message into a 500 response body.
 - Do not delete `crud.ErrReadOnly` because nothing uses it, and do not wire it
   into `security.ReadOnly` — that would turn a 403 into a 500.
@@ -106,7 +117,10 @@ for statuses below 500.
 - `crud/errors.go:UnknownFieldError` / `crud/errors.go:SchemaError` — the two
   structured ones.
 - `adapter/crudsql/conflict.go:conflict` / `adapter/crudsql/conflict.go:sqlState`
-  / `adapter/crudsql/conflict.go:sqlStateField` — the shape-based classifier.
+  / `adapter/crudsql/conflict.go:sqlStateField` /
+  `adapter/crudsql/conflict.go:nativeNumber` /
+  `adapter/crudsql/conflict.go:sqliteResultCode` — the shape-based classifier,
+  whose three arms are [[D-046]]'s.
 - `adapter/crudpgx/conflict.go:conflict` — the typed one.
 - `repo/decorators/security/security.go:ErrForbidden` and
   `repo/decorators/security/security.go:Denied`.
@@ -140,7 +154,15 @@ for statuses below 500.
   `adapter/crudpgx/conflict_test.go`.
 - `TestIntegrityViolationsAreClassifiedByEveryAdapter` in
   `test/integration/dialect_edge_test.go` — against live PostgreSQL and MySQL,
-  through every adapter.
+  through every adapter. Note what it does *not* cover: it walks `egTargets()`,
+  which has no SQLite entry, which is how a whole dialect's worth of
+  misclassification went unnoticed.
+- `TestEveryCorpusCaseClassifiesAsTheCorpusSays` in
+  `test/integration/corpus_test.go` — fifteen cases against four live engines,
+  both directions, which is what closed that gap.
+- `TestSQLiteConstraintViolationsBecomeConflicts` and
+  `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
+  `adapter/crudsql/conflict_test.go`.
 - `TestAnIntegrityConflictIsA409WithAMessage` in
   `http/crudfiber/write_edge_test.go` — end to end.
 - `TestAScopeThatFailsIsMappedLikeAnyOtherError` in `http/crudfiber/edge_test.go`.
@@ -148,4 +170,4 @@ for statuses below 500.
 
 ## See also
 
-[[D-008]] [[D-010]] [[D-011]] [[D-013]] [[D-019]] [[D-034]]
+[[D-008]] [[D-010]] [[D-011]] [[D-013]] [[D-019]] [[D-034]] [[D-038]] [[D-039]] [[D-040]] [[D-044]] [[D-046]]

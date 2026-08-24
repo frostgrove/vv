@@ -35,10 +35,23 @@ thirty-eight of them never import. **Lockstep couples release cadence across
 subsystems that have nothing to do with each other, and it lands hardest on the
 one with the widest intended audience.**
 
-**Why now and not later.** Module boundaries are far harder to move after the
-first tag than names are. Splitting `errs` out afterwards either strands every
-import or requires a forwarding module that has to keep publishing forever. The
-window is open precisely because nothing has been tagged.
+**Why the rule now, and the split at the first tag.** The rule belongs here now
+because module boundaries are far harder to argue after a release than before
+one. The *split itself* has to wait, and that is a toolchain constraint rather
+than a preference — measured, not assumed.
+
+Before the first tag the root would require `errs@v0.0.0`. Every module that
+requires the root then fails to walk its module graph: `go list -m all` tries to
+read `errs/go.mod` at a revision that does not exist, and the workspace does not
+substitute for it. Resolving `errs` on its own succeeds; the full graph walk is
+what fails. An explicit `require` in each satellite does not help, `go mod tidy`
+under a transient replace does not help, and `go work edit -replace` is refused —
+*"workspace module … is replaced"*. Only a fetchable version fixes it.
+
+So `errs` lives as a package in the root module until the first tag, and the
+`go.mod` that makes it a module lands in the same change as `v0.1.0`. The
+contract does not change; only its packaging does, and this decision is what
+makes that packaging legal when it arrives.
 
 **What this does not license.** It is not an opening for `crud` to import a
 sibling. [[D-016]]'s surviving half is unchanged and unrelated: no file in
@@ -62,8 +75,8 @@ attached by the caller.
 ## Where it lives
 
 - `go.mod` — the root; its only permitted requirement is a first-party one.
-- `errs/TODO.md` — records that the module is decided and why, until the code
-  lands.
+- `errs/TODO.md` — records the decision, and that the split waits for the first
+  tag.
 - `Makefile:check-deps` — the mechanical check, which filters on the module path
   prefix and so passes a first-party requirement and fails a third-party one.
 

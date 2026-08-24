@@ -12,7 +12,7 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | Sentinel / type | Declared | Produced by |
 |---|---|---|
 | `crud.ErrNotFound` | `crud/errors.go:10` | `repository.GetByID` (`repo/basic/repository.go:121`), `repository.refresh` (`:526`), the `Update` load (`:554`), `missedRow` (`:661`), `gate.loadScoped` (`repo/decorators/security/security.go:258`), `Handler.Delete` when 0 rows went away (`http/crudfiber/handler.go:279`, `http/crudgin/handler.go:318`), `specs.FindOne`/`FindFirst` |
-| `crud.ErrConflict` | `crud/errors.go:31` | the adapters only — `adapter/crudsql/conflict.go:20` and `adapter/crudpgx/conflict.go:20`, on SQLSTATE class 23 |
+| `crud.ErrConflict` | `crud/errors.go:31` | the adapters — `adapter/crudsql/conflict.go:conflict` and `adapter/crudpgx/conflict.go:conflict`. The key is `(dialect, sqlstate, native)` and not a class test ([[D-046]]) |
 | `crud.ErrStaleVersion` (wraps `ErrConflict`) | `crud/errors.go:36` | `repository.missedRow` (`repo/basic/repository.go:659`) |
 | `specs.ErrNotUnique` (wraps `ErrConflict`) | `repo/decorators/specs/errors.go:13` | `specs.FindOne` when two rows match |
 | `crud.ErrForbidden` | `crud/errors.go:25` | wrapped by `security.ErrForbidden` (`security.go:27`) and produced by `security.Denied` (`security.go:141`); a service layer is expected to wrap it too |
@@ -122,10 +122,18 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | unset `noauto` primary key on save | `ErrMissingID` | 400 |
 | row absent or out of scope | `ErrNotFound` | 404 `{"error":"not_found"}` |
 | policy denial | `security.Denied` → `ErrForbidden` | 403 |
-| duplicate key / FK / NOT NULL / CHECK | adapter `conflict()` — SQLSTATE class 23, plus MySQL `3819` and `1364`, which are integrity violations it reports as `HY000` | 409 with the driver's message |
+| duplicate key / FK / NOT NULL / CHECK, PostgreSQL or MariaDB | adapter `conflict()` — SQLSTATE class 23 | 409 with the driver's message |
+| the same on MySQL, where a CHECK is `3819` and a missing default `1364` | `conflict()`'s `HY000` arm, which reads the number only under that state | 409. Both were an unclassified 500 before the number list ([[D-046]]) |
+| the same on SQLite, which reports no SQLSTATE at all | `conflict()`'s no-state arm, on `SQLITE_CONSTRAINT` in the low byte of the extended result code | 409. All seven classes were an unclassified 500 until that arm existed |
+| a value too long, out of range, or of the wrong type | nothing classifies it — class 22 is deliberately refused ([[D-015]]) | 500. It is the caller's input to fix, but it is not a collision; [[UC-017]] is where it becomes a 422 |
+| a lock timeout, a deadlock, a serialisation failure | nothing classifies it | 500 today. [[D-040]] gives it its own kind and a 503 from phase 1 |
 | stale optimistic-lock version | `ErrStaleVersion` | 409 |
 | `FindOne` matched several rows | `specs.ErrNotUnique` | 409 |
 | driver failure, closed pool, context cancelled | nothing classifies it | 500 `{"error":"internal_error"}` and no detail |
+
+Every row above that carries "the driver's message" is a disclosure [[D-044]]
+refuses and phase 4 of `ROADMAP-errors.md` closes. It is recorded as
+[[UC-015]]'s guarantee 11, which does not hold today.
 
 ## Files
 
@@ -136,7 +144,11 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `fail`, and the DELETE asymmetry |
 | `crud/errors.go` | every sentinel, `UnknownFieldError`, `SchemaError` |
 | `query/compile.go` | `query.Error` — path and reason, safe to hand back |
-| `adapter/crudsql/conflict.go` | SQLSTATE 23 → `ErrConflict`, by error shape |
+| `adapter/crudsql/conflict.go` | driver error → `ErrConflict`, by error shape. `isIntegrity` has three arms — class 23, MySQL's `HY000` numbers, SQLite's result code — because the four engines answer in three ways ([[D-046]]) |
+| `errs/sqlerr/corpus.go` | the corpus types: what a captured driver error holds, and `SameKey`, which is what a classifier is allowed to depend on |
+| `errs/sqlerr/testdata/corpus/*.json` | four files, one per engine, fifteen provoked violations each. The evidence every arm above rests on |
+| `test/corpus/` | what provokes them — `Engine`, its case table, and the capture. Lives in the test module because it needs the drivers |
+| `test/cmd/corpus/` | `make corpus`, and the report of what moved since the last capture |
 | `adapter/crudpgx/conflict.go`, `adapter/crudpgx/crudpgx.go` | the same for pgx, including `rows.Err` |
 | `repo/decorators/security/security.go` | `ErrForbidden`, `Denied` |
 | `repo/decorators/specs/errors.go` | `ErrNotUnique`, `ErrUnboundedDelete`, `ErrUnboundedUpdate` |
@@ -162,7 +174,11 @@ it is shared rather than copied.
 - `TestAClassifiedConflictIsNotAnyOtherSentinel` — `adapter/crudsql/conflict_test.go`.
 - `TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt` — `adapter/crudpgx/conflict_test.go` — including `rows.Err`.
 - `TestOnlyIntegrityErrorsBecomeConflicts` — `adapter/crudpgx/conflict_test.go`.
-- `TestIntegrityViolationsAreClassifiedByEveryAdapter` — `test/integration/dialect_edge_test.go`.
+- `TestIntegrityViolationsAreClassifiedByEveryAdapter` — `test/integration/dialect_edge_test.go` — through every adapter, on PostgreSQL, MySQL and MariaDB. It walks `egTargets()`, which has **no SQLite entry**; that is how an entire dialect's misclassification went unnoticed, and why the two below exist.
+- `TestEveryCorpusCaseClassifiesAsTheCorpusSays` — `test/integration/corpus_test.go` — fifteen provoked violations against four live engines, asserting both that an integrity case is a conflict and that a data, retryable or unclassifiable one is not.
+- `TestTheCorpusStillDescribesTheseServers` — `test/integration/corpus_test.go` — recaptures and compares the key a classifier dispatches on. Deliberately not the message: see [[D-039]].
+- `TestSQLiteConstraintViolationsBecomeConflicts` / `TestAnOrdinarySQLiteErrorIsStillNotAConflict` / `TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE` — `adapter/crudsql/conflict_test.go` — the SQLite arm and its two controls.
+- `TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts` / `TestAnOrdinaryHY000IsStillNotAConflict` / `TestANumberIsOnlyTrustedUnderHY000` — `adapter/crudsql/conflict_test.go` — the MySQL arm and its two controls.
 - `TestWithErrorHandlerReplacesTheMapping` — `http/crudfiber/options_test.go`.
 - `TestAScopeThatFailsIsMappedLikeAnyOtherError` — `http/crudfiber/edge_test.go`.
 - `TestHTTPRejections` — `test/integration/http_test.go` — end to end against a database.
@@ -172,3 +188,4 @@ it is shared rather than copied.
 ## See also
 
 [[FL-001]] [[FL-002]] [[FL-003]] [[FL-007]] [[FL-008]] [[FL-012]] [[FL-013]]
+[[UC-015]] [[UC-017]] [[D-046]] [[D-039]] [[D-040]] [[D-044]]

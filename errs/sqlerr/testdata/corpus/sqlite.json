@@ -1,0 +1,171 @@
+{
+  "engine": "sqlite",
+  "server": "3.53.3",
+  "driver": "modernc.org/sqlite",
+  "cases": [
+    {
+      "name": "unique",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (10, 'anchor', 'y')",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 2067,
+        "message": "constraint failed: UNIQUE constraint failed: cp_parent.slug (2067)"
+      }
+    },
+    {
+      "name": "unique_composite",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, a, b) VALUES (11, 's11', 'y', 'p', 'q')",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 2067,
+        "message": "constraint failed: UNIQUE constraint failed: cp_parent.a, cp_parent.b (2067)"
+      }
+    },
+    {
+      "name": "primary_key",
+      "kind": "integrity",
+      "want": "primary_key",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (1, 's1', 'y')",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 1555,
+        "message": "constraint failed: UNIQUE constraint failed: cp_parent.id (1555)"
+      }
+    },
+    {
+      "name": "foreign_key",
+      "kind": "integrity",
+      "want": "foreign_key",
+      "stmt": "INSERT INTO cp_child (id, parent) VALUES (12, 424242)",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 787,
+        "message": "constraint failed: FOREIGN KEY constraint failed (787)"
+      }
+    },
+    {
+      "name": "restrict",
+      "kind": "integrity",
+      "want": "restrict",
+      "stmt": "DELETE FROM cp_parent WHERE id = 1",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 787,
+        "message": "constraint failed: FOREIGN KEY constraint failed (787)"
+      }
+    },
+    {
+      "name": "not_null",
+      "kind": "integrity",
+      "want": "not_null",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (13, 's13', NULL)",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 1299,
+        "message": "constraint failed: NOT NULL constraint failed: cp_parent.need (1299)"
+      }
+    },
+    {
+      "name": "check",
+      "kind": "integrity",
+      "want": "check",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (14, 's14', 'x', -1)",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 275,
+        "message": "constraint failed: CHECK constraint failed: cp_pos (275)"
+      }
+    },
+    {
+      "name": "missing_default",
+      "kind": "integrity",
+      "want": "not_null",
+      "stmt": "INSERT INTO cp_parent (id, slug) VALUES (15, 's15')",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 1299,
+        "message": "constraint failed: NOT NULL constraint failed: cp_parent.need (1299)"
+      }
+    },
+    {
+      "name": "too_long",
+      "kind": "none",
+      "want": "",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (16, 'far-too-long-for-the-column', 'x')",
+      "unreachable": "SQLite ignores a declared VARCHAR width and stores the value whole",
+      "err": null
+    },
+    {
+      "name": "out_of_range",
+      "kind": "none",
+      "want": "",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, small) VALUES (17, 's17', 'x', 99999)",
+      "unreachable": "SQLite has no fixed-width integer columns, so nothing is out of range",
+      "err": null
+    },
+    {
+      "name": "bad_type",
+      "kind": "none",
+      "want": "",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (18, 's18', 'x', 'abc')",
+      "unreachable": "SQLite type affinity keeps a string that will not convert, rather than refusing it",
+      "err": null
+    },
+    {
+      "name": "lock_timeout",
+      "kind": "retryable",
+      "want": "lock_timeout",
+      "stmt": "",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 5,
+        "message": "database is locked (5) (SQLITE_BUSY)"
+      }
+    },
+    {
+      "name": "undefined_table",
+      "kind": "none",
+      "want": "",
+      "stmt": "SELECT id FROM cp_nope",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 1,
+        "message": "SQL logic error: no such table: cp_nope (1)"
+      }
+    },
+    {
+      "name": "access_denied",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "SQLite has no users; the file's permissions are the whole gate",
+      "err": null
+    },
+    {
+      "name": "connect_failure",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 14,
+        "message": "unable to open database file (14)"
+      }
+    }
+  ]
+}

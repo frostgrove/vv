@@ -1,4 +1,4 @@
-.PHONY: help test unit integration examples up down logs psql mysql mariadb fmt vet tidy generate ent version release clean \
+.PHONY: help test unit integration examples up down logs psql mysql mariadb fmt vet tidy generate corpus ent version release clean \
         work check check-deps check-tiers check-todo check-tidy
 
 GO  ?= go
@@ -57,6 +57,9 @@ psql: ## Open a psql shell
 
 mysql: ## Open a mysql shell
 	docker compose exec mysql mysql -uvv -pvv vv
+
+mariadb: ## Open a mariadb shell
+	docker compose exec mariadb mariadb -uvv -pvv vv
 
 fmt: ## gofmt everything
 	gofmt -l -w .
@@ -153,28 +156,57 @@ work: ## Regenerate go.work from the modules on disk
 	@for m in $(MODULES) ./test; do $(GO) work use $$m; done
 	@echo "go.work: $$($(GO) work edit -json | grep -c '"DiskPath"') modules"
 
-# A published satellite resolves the library the way a consumer does, so
-# until the first tag exists `go mod tidy` cannot see it. A transient
-# replace is added and dropped around the tidy, so nothing survives in a
-# published go.mod — D-033 forbids that, because a replace is invisible to
-# consumers and hides the fact that the version does not exist yet.
+# Any module here that requires a sibling resolves it the way a consumer would,
+# so until the first tag exists `go mod tidy` cannot see it. That is not only the
+# satellites: the moment the root requires a first-party module (D-036), the root
+# has the same problem. So every module gets the same treatment — a transient
+# replace for each sibling it requires, added and dropped around the tidy, so
+# nothing survives in a published go.mod. D-033 forbids that, because a replace
+# is invisible to consumers and hides the fact that the version does not exist.
+#
+# The path is recorded before the edit and the drops run unconditionally: an
+# earlier version bailed out mid-loop on a failed edit and left the replaces it
+# had already added sitting in a published go.mod — a silent D-033 violation,
+# which is the one failure this target must not have.
+#
+# The replace goes on every sibling, not only the ones this go.mod names: a
+# satellite reaches `errs` through the root, so requiring it directly is not the
+# test. A replace for a module nothing needs is inert and is dropped either way.
+#
+# A sibling that already carries a permanent replace — test/ and _examples/ have
+# them by design — is left alone.
 #
 # This fixes go.mod. It cannot mint a go.sum entry, which only a published
 # version can, so `GOWORK=off go build` in a satellite stays broken until
 # the first tag. That half is not worked around; it is waited for.
 tidy: ## Tidy every module
-	@echo "==> ."
-	@GOWORK=off $(GO) mod tidy
-	@for m in $(SATELLITES); do \
+	@for m in $(ALL_MODULES); do \
 		echo "==> $$m"; \
-		root=$$(realpath --relative-to="$$m" .); \
-		(cd $$m \
-			&& GOWORK=off $(GO) mod edit -replace $(MOD)=$$root \
-			&& GOWORK=off $(GO) mod tidy \
-			&& GOWORK=off $(GO) mod edit -dropreplace $(MOD)) || exit 1; \
+		( cd $$m || exit 1; \
+		  added=""; rc=0; \
+		  for o in $(ALL_MODULES); do \
+			[ "$$o" = "$$m" ] && continue; \
+			case "$$o" in .) op="$(MOD)";; *) op="$(MOD)/$${o#./}";; esac; \
+			grep -q "^replace $$op " go.mod && continue; \
+			added="$$added $$op"; \
+			GOWORK=off $(GO) mod edit -replace "$$op=$(CURDIR)/$${o#./}" || rc=1; \
+		  done; \
+		  [ $$rc -eq 0 ] && { GOWORK=off $(GO) mod tidy || rc=1; }; \
+		  for op in $$added; do GOWORK=off $(GO) mod edit -dropreplace "$$op"; done; \
+		  exit $$rc \
+		) || exit 1; \
 	done
-	# test/ and _examples/ carry permanent replaces by design and tidy as they are.
-	@for m in $(UNPUBLISHED); do echo "==> $$m"; (cd $$m && GOWORK=off $(GO) mod tidy) || exit 1; done
+
+# The corpus is captured, not written. Every entry is a real driver error from a
+# real server, because the engine matrix this replaced was written from memory
+# and half of it was wrong — MySQL reports a failed CHECK as 3819/HY000, which
+# no reading of the SQLSTATE specification would have predicted.
+#
+# It needs the servers, so it is not part of `generate`: a target that silently
+# produced an empty corpus when the containers were down would be worse than one
+# that cannot run at all.
+corpus: up ## Recapture the SQL error corpus from the live servers
+	cd test && $(GO) run ./cmd/corpus
 
 generate: ## Regenerate the update DTOs and metamodels
 	$(GO) generate ./...

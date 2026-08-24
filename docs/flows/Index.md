@@ -78,6 +78,8 @@ tables here — the index and the reverse index.
 | `crud/dialect.go` | FL-002, FL-003, FL-009 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
 | `crud/executor.go` | FL-002, FL-009 |
+| `errs/sqlerr/corpus.go` | FL-011 |
+| `errs/sqlerr/testdata/corpus/` | FL-011 |
 | `crud/meta.go` | FL-002, FL-003, FL-004, FL-010, FL-012 |
 | `crud/options.go` | FL-001, FL-007, FL-008 |
 | `crud/opt.go` | FL-002 |
@@ -113,6 +115,10 @@ tables here — the index and the reverse index.
 | `repo/decorators/specs/errors.go` | FL-011 |
 | `repo/decorators/specs/executor.go` | FL-011 |
 | `repo/decorators/specs/metamodel.go` | FL-010 |
+| `test/cmd/corpus/main.go` | FL-011 |
+| `test/corpus/cases.go` | FL-011 |
+| `test/corpus/capture.go` | FL-011 |
+| `test/corpus/corpus.go` | FL-011 |
 
 `repo/basic/repository.go` is in ten of the thirteen. It is the layer everything
 else decorates, and almost no change to it is local.

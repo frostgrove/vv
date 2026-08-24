@@ -13,25 +13,30 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/shardit-io/vv/test/corpus"
 )
 
-// Defaults match docker-compose.yml. Override to point at your own databases.
+// Where the databases are. The corpus generator reads the same variables and
+// the same defaults, from the one place that declares them: two copies would
+// mean pointing the suite at another server silently left the corpus behind.
 var (
-	pgDSN    = env("VV_PG_DSN", "postgres://vv:vv@127.0.0.1:55432/vv?sslmode=disable")
-	mysqlDSN = env("VV_MYSQL_DSN", "vv:vv@tcp(127.0.0.1:53306)/vv?parseTime=true")
+	pgDSN    = corpus.PostgresDSN()
+	mysqlDSN = corpus.MySQLDSN()
+	mariaDSN = corpus.MariaDBDSN()
 )
-
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 // Package-level handles, opened once for the whole run.
+//
+// MariaDB is a fourth engine and not a second MySQL. It answers a failed CHECK
+// with 4025 and SQLSTATE 23000 where MySQL answers 3819 and HY000, and it names
+// a duplicated index without its table where MySQL prefixes one. crud.MySQL
+// claims to target both and, until this handle existed, had never been run
+// against it.
 var (
 	pgDB    *sql.DB
 	myDB    *sql.DB
+	mariaDB *sql.DB
 	pgPool  *pgxpool.Pool
 	skipMsg string
 )
@@ -58,6 +63,9 @@ func setup() error {
 	if myDB, err = openAndWait(ctx, "mysql", mysqlDSN); err != nil {
 		return fmt.Errorf("mysql: %w", err)
 	}
+	if mariaDB, err = openAndWait(ctx, "mysql", mariaDSN); err != nil {
+		return fmt.Errorf("mariadb: %w", err)
+	}
 	if pgPool, err = pgxpool.New(ctx, pgDSN); err != nil {
 		return fmt.Errorf("pgx pool: %w", err)
 	}
@@ -68,11 +76,16 @@ func setup() error {
 	if _, err := pgDB.ExecContext(ctx, schemaPostgres); err != nil {
 		return fmt.Errorf("postgres schema: %w", err)
 	}
-	if _, err := myDB.ExecContext(ctx, "DROP TABLE IF EXISTS users"); err != nil {
-		return fmt.Errorf("mysql drop: %w", err)
-	}
-	if _, err := myDB.ExecContext(ctx, schemaMySQL); err != nil {
-		return fmt.Errorf("mysql schema: %w", err)
+	for _, db := range []struct {
+		name string
+		db   *sql.DB
+	}{{"mysql", myDB}, {"mariadb", mariaDB}} {
+		if _, err := db.db.ExecContext(ctx, "DROP TABLE IF EXISTS users"); err != nil {
+			return fmt.Errorf("%s drop: %w", db.name, err)
+		}
+		if _, err := db.db.ExecContext(ctx, schemaMySQL); err != nil {
+			return fmt.Errorf("%s schema: %w", db.name, err)
+		}
 	}
 
 	if _, err := pgDB.ExecContext(ctx, schemaBlogPostgres); err != nil {
@@ -108,7 +121,7 @@ func teardown() {
 	if pgPool != nil {
 		pgPool.Close()
 	}
-	for _, db := range []*sql.DB{pgDB, myDB} {
+	for _, db := range []*sql.DB{pgDB, myDB, mariaDB} {
 		if db != nil {
 			_ = db.Close()
 		}

@@ -58,8 +58,9 @@ this page is the roadmap.
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | Talk to more than one database in one process | application author | covered |
 | [UC-013](UC-013-business-rules-between-handler-and-repository.md) | Insert business rules between the handler and the repository | application author | covered |
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | partially covered |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | covered |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | partially covered |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | HTTP client rendering a form, and application author | not covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -80,6 +81,7 @@ this page is the roadmap.
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] |
 
 ## Gaps
 
@@ -110,6 +112,15 @@ a decision.
    one. Deliberate and tested. The unguarded twin is not: a create colliding on a
    unique index over another column returns a 409 carrying the driver's
    constraint name, for a row the caller cannot see.
+
+   Both halves now have a decision, and they are different decisions. The
+   constraint name leaving the process is [[D-044]]'s, closing at phase 4 of
+   `ROADMAP-errors.md`. The oracle itself is [[D-042]]'s, and D-042 does **not**
+   close it — a unique constraint a public endpoint can trigger is an oracle by
+   construction. What phase 7 adds is that the disclosure becomes adjustable
+   (per-constraint opt-out, scope-aware probing, code-only mode) and that the
+   default never echoes the offending value. The gate's own unnarrowed existence
+   probe — the first half — does not move.
 
 4. **[UC-008] A caller-supplied limit desynchronises a policy's row-level check
    from the statement.** The inspected rows honour the limit; the `UPDATE` and
@@ -174,6 +185,12 @@ a decision.
     makes a 400 useful; for a 409 it means the driver's constraint and column
     names reach the client. An application that treats those as internal has to
     install its own mapping.
+
+    **No longer awaiting a decision.** [[D-044]] settles it — a body names
+    nothing internal at any status — and phase 4 of `ROADMAP-errors.md` closes
+    it. It is now UC-015's guarantee 11, and belongs with the guarantees that do
+    not hold rather than here; it keeps its number because the numbers are cited
+    elsewhere.
 
 17. **[UC-016] A create can resurrect a hidden row.** The rule cannot reach an
     upsert, so a save carrying a tombstone's key overwrites it — and under a gate

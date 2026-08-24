@@ -93,19 +93,19 @@ holder or somebody else's bookkeeping, never a column. That is what keeps ent's
   depth bound and a cycle guard.
 - `Makefile:generate` — regenerates the library's own examples and both test
   stores.
-- `example/blog/vv_gen.go`, `test/entstore/vv_gen.go`,
+- `_examples/example/blog/vv_gen.go`, `test/entstore/vv_gen.go`,
   `test/gormstore/vv_gen.go` — the checked-in outputs.
 
 ## Proven by
 
-- `TestGeneratedFileIsUpToDate` in `example/blog/blog_test.go` and
+- `TestGeneratedFileIsUpToDate` in `_examples/example/blog/blog_test.go` and
   `TestTheGeneratedStoresAreUpToDate` in `test/integration/codegen_test.go` —
   regenerate and diff. These are what make the checked-in files trustworthy.
 - `TestGeneratedCodeCompilesAndValidates` in `internal/codegen/codegen_test.go` — the
   output is not just text; it compiles and the resulting DTO validates against
   the model's schema.
 - `TestOutputIsByteIdenticalAcrossRuns` in `internal/codegen/codegen_test.go`.
-- `TestGeneratedDTOTypesFollowNullability` in `example/blog/blog_test.go` and
+- `TestGeneratedDTOTypesFollowNullability` in `_examples/example/blog/blog_test.go` and
   `TestUpdateDTOFollowsNullability` in `internal/codegen/codegen_test.go`.
 - `TestUpdateDTOLeavesOutWhatCannotBeWritten` in `internal/codegen/codegen_test.go`.
 - `TestReadonlyKeepsAFieldQueryableButNotWritable` and

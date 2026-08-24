@@ -14,9 +14,8 @@ import (
 // that deliberately says nothing. The driver error is kept underneath: whoever
 // needs the SQLSTATE or the constraint name can still errors.As their way to it.
 //
-// The classification is SQLSTATE class 23 — integrity constraint violation —
-// plus a short list of MySQL numbers that belong there and are not reported
-// there. See isIntegrity.
+// The classification has three arms, one per way an engine answers the
+// question, and SQLSTATE alone is not a gate for any of them. See isIntegrity.
 func conflict(err error) error {
 	if err == nil || !isIntegrity(err) {
 		return err
@@ -40,20 +39,81 @@ var mysqlIntegrityNumbers = map[uint64]bool{
 // isIntegrity answers whether the driver is describing a constraint the
 // database refused to break.
 //
-// Class 23 is the portable half. The rest is MySQL: its CHECK and
-// missing-default errors carry HY000, so the number is the only thing telling
-// them apart from an ordinary server error. The number is only trusted when the
-// state is exactly HY000, so a numeric field on some other driver's error type
-// cannot be mistaken for a MySQL error code.
+// Three arms, because the four engines answer in three different ways, and the
+// state is what selects between them rather than what decides:
+//
+//   - Class 23 is the portable half, and PostgreSQL's whole answer.
+//   - HY000 is MySQL saying it has nothing more specific. Its CHECK and
+//     missing-default errors land there, so the number is the only thing
+//     separating them from an ordinary server error. MariaDB needs no entry: it
+//     answers the same CHECK with 4025 and SQLSTATE 23000, which class 23
+//     already covers.
+//   - No state at all is SQLite, which has no SQLSTATE and never will. Every
+//     one of its constraint violations was a bare 500 until this arm existed —
+//     seven classes on a shipped dialect, because the one test that would have
+//     caught it runs over a target list SQLite is not on.
+//
+// A number is only ever read once the state has already narrowed which engine
+// is speaking, so a numeric field on some other driver's error cannot be
+// mistaken for a MySQL code or a SQLite one.
 func isIntegrity(err error) bool {
 	state := sqlState(err)
-	if strings.HasPrefix(state, "23") {
+	switch {
+	case strings.HasPrefix(state, "23"):
 		return true
+	case state == "HY000":
+		return mysqlIntegrityNumbers[nativeNumber(err)]
+	case state == "":
+		code, ok := sqliteResultCode(err)
+		return ok && code&0xff == sqliteConstraint
 	}
-	if state != "HY000" {
-		return false
+	return false
+}
+
+// sqliteConstraint is SQLITE_CONSTRAINT. Every constraint violation carries it
+// in the low byte of an extended result code — 2067 for unique, 787 for a
+// foreign key, 1299 for NOT NULL, 275 for CHECK — so the low byte is the test
+// and the subcodes need no list. An extended code is not interchangeable with a
+// primary one: SQLITE_BUSY is 5, busy-snapshot is 517.
+const sqliteConstraint = 19
+
+// sqliteResultCode digs out SQLite's own result code, by shape like everything
+// else here. modernc.org/sqlite exposes a Code method; mattn/go-sqlite3 exposes
+// Code and ExtendedCode as integer fields.
+//
+// pgconn also has a field named Code, and it holds the SQLSTATE as a string.
+// That is why the kind is checked and not only the name — and why this arm is
+// reached only when there is no SQLSTATE, which for pgconn there always is.
+func sqliteResultCode(err error) (int, bool) {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if c, ok := e.(interface{ Code() int }); ok {
+			return c.Code(), true
+		}
+		v := reflect.ValueOf(e)
+		for v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				break
+			}
+			v = v.Elem()
+		}
+		if v.Kind() != reflect.Struct {
+			continue
+		}
+		// The extended code first: it is the one that names the constraint.
+		for _, name := range []string{"ExtendedCode", "Code"} {
+			f := v.FieldByName(name)
+			if !f.IsValid() || !f.CanInterface() {
+				continue
+			}
+			switch f.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				return int(f.Int()), true
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				return int(f.Uint()), true
+			}
+		}
 	}
-	return mysqlIntegrityNumbers[nativeNumber(err)]
+	return 0, false
 }
 
 // nativeNumber reads the driver's own error number by shape, for the same

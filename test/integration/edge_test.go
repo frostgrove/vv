@@ -345,12 +345,18 @@ func egTargets() []egTarget {
 	}
 }
 
-// egEngines is the two databases once each, for the cases where the driver
-// cannot change the answer and five of them would only cost time.
+// egEngines is each database once, for the cases where the driver cannot change
+// the answer and five of them would only cost time.
+//
+// MariaDB is here and not in egTargets. What it can differ about is the engine's
+// own answer — a failed CHECK is 4025 here and 3819 on MySQL — and never the
+// adapter's, which is the same database/sql code either way. An entry in
+// egTargets would run that code a fourth time and learn nothing.
 func egEngines() []egTarget {
 	return []egTarget{
 		{"postgres", "postgres", crudsql.Postgres(pgDB)},
 		{"mysql", "mysql", crudsql.MySQL(myDB)},
+		{"mariadb", "mysql", crudsql.MySQL(mariaDB)},
 	}
 }
 

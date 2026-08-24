@@ -86,9 +86,9 @@ that would otherwise rot:
 - `TestEntsGoSideDefaultsDoNotApplyToVVWrites` and
   `TestGormHooksDoNotRunOnVVWrites` — §16 of each guide ([[D-017]]).
 
-Note a live inconsistency worth fixing, though it is outside this decision's
-scope: `README.md` links the guides as `docs/ent.md` and `docs/gorm.md`, and
-they now live at `docs/usage-guides/ent.md` and `docs/usage-guides/gorm.md`.
+This file used to record a live inconsistency here — `README.md` linking the
+guides at their old top-level paths after they moved into
+`docs/usage-guides/`. It is fixed; README links both correctly.
 
 ## See also
 

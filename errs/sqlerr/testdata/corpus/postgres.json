@@ -1,0 +1,235 @@
+{
+  "engine": "postgres",
+  "server": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "driver": "github.com/jackc/pgx/v5/stdlib",
+  "cases": [
+    {
+      "name": "unique",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (10, 'anchor', 'y')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23505",
+        "native": 0,
+        "message": "ERROR: duplicate key value violates unique constraint \"cp_parent_slug_key\" (SQLSTATE 23505)",
+        "fields": {
+          "ConstraintName": "cp_parent_slug_key",
+          "Detail": "Key (slug)=(anchor) already exists.",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "unique_composite",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, a, b) VALUES (11, 's11', 'y', 'p', 'q')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23505",
+        "native": 0,
+        "message": "ERROR: duplicate key value violates unique constraint \"cp_ab\" (SQLSTATE 23505)",
+        "fields": {
+          "ConstraintName": "cp_ab",
+          "Detail": "Key (a, b)=(p, q) already exists.",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "primary_key",
+      "kind": "integrity",
+      "want": "primary_key",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (1, 's1', 'y')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23505",
+        "native": 0,
+        "message": "ERROR: duplicate key value violates unique constraint \"cp_parent_pkey\" (SQLSTATE 23505)",
+        "fields": {
+          "ConstraintName": "cp_parent_pkey",
+          "Detail": "Key (id)=(1) already exists.",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "foreign_key",
+      "kind": "integrity",
+      "want": "foreign_key",
+      "stmt": "INSERT INTO cp_child (id, parent) VALUES (12, 424242)",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23503",
+        "native": 0,
+        "message": "ERROR: insert or update on table \"cp_child\" violates foreign key constraint \"cp_fk\" (SQLSTATE 23503)",
+        "fields": {
+          "ConstraintName": "cp_fk",
+          "Detail": "Key (parent)=(424242) is not present in table \"cp_parent\".",
+          "SchemaName": "public",
+          "TableName": "cp_child"
+        }
+      }
+    },
+    {
+      "name": "restrict",
+      "kind": "integrity",
+      "want": "restrict",
+      "stmt": "DELETE FROM cp_parent WHERE id = 1",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23503",
+        "native": 0,
+        "message": "ERROR: update or delete on table \"cp_parent\" violates foreign key constraint \"cp_fk\" on table \"cp_child\" (SQLSTATE 23503)",
+        "fields": {
+          "ConstraintName": "cp_fk",
+          "Detail": "Key (id)=(1) is still referenced from table \"cp_child\".",
+          "SchemaName": "public",
+          "TableName": "cp_child"
+        }
+      }
+    },
+    {
+      "name": "not_null",
+      "kind": "integrity",
+      "want": "not_null",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (13, 's13', NULL)",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23502",
+        "native": 0,
+        "message": "ERROR: null value in column \"need\" of relation \"cp_parent\" violates not-null constraint (SQLSTATE 23502)",
+        "fields": {
+          "ColumnName": "need",
+          "Detail": "Failing row contains (13, s13, null, null, null, null, null).",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "check",
+      "kind": "integrity",
+      "want": "check",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (14, 's14', 'x', -1)",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23514",
+        "native": 0,
+        "message": "ERROR: new row for relation \"cp_parent\" violates check constraint \"cp_pos\" (SQLSTATE 23514)",
+        "fields": {
+          "ConstraintName": "cp_pos",
+          "Detail": "Failing row contains (14, s14, x, -1, null, null, null).",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "missing_default",
+      "kind": "integrity",
+      "want": "not_null",
+      "stmt": "INSERT INTO cp_parent (id, slug) VALUES (15, 's15')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23502",
+        "native": 0,
+        "message": "ERROR: null value in column \"need\" of relation \"cp_parent\" violates not-null constraint (SQLSTATE 23502)",
+        "fields": {
+          "ColumnName": "need",
+          "Detail": "Failing row contains (15, s15, null, null, null, null, null).",
+          "SchemaName": "public",
+          "TableName": "cp_parent"
+        }
+      }
+    },
+    {
+      "name": "too_long",
+      "kind": "data",
+      "want": "too_long",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (16, 'far-too-long-for-the-column', 'x')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "22001",
+        "native": 0,
+        "message": "ERROR: value too long for type character varying(8) (SQLSTATE 22001)"
+      }
+    },
+    {
+      "name": "out_of_range",
+      "kind": "data",
+      "want": "out_of_range",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, small) VALUES (17, 's17', 'x', 99999)",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "22003",
+        "native": 0,
+        "message": "ERROR: smallint out of range (SQLSTATE 22003)"
+      }
+    },
+    {
+      "name": "bad_type",
+      "kind": "data",
+      "want": "bad_type",
+      "stmt": "INSERT INTO cp_parent (id, slug, need, num) VALUES (18, 's18', 'x', 'abc')",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "22P02",
+        "native": 0,
+        "message": "ERROR: invalid input syntax for type integer: \"abc\" (SQLSTATE 22P02)"
+      }
+    },
+    {
+      "name": "lock_timeout",
+      "kind": "retryable",
+      "want": "lock_timeout",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "55P03",
+        "native": 0,
+        "message": "ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)"
+      }
+    },
+    {
+      "name": "undefined_table",
+      "kind": "none",
+      "want": "",
+      "stmt": "SELECT id FROM cp_nope",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "42P01",
+        "native": 0,
+        "message": "ERROR: relation \"cp_nope\" does not exist (SQLSTATE 42P01)"
+      }
+    },
+    {
+      "name": "access_denied",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "28P01",
+        "native": 0,
+        "message": "failed to connect to `user=vv database=vv`: 127.0.0.1:55432 (127.0.0.1): failed SASL auth: FATAL: password authentication failed for user \"vv\" (SQLSTATE 28P01)"
+      }
+    },
+    {
+      "name": "connect_failure",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.ConnectError",
+        "sqlstate": "",
+        "native": 0,
+        "message": "failed to connect to `user=vv database=vv`: 127.0.0.1:1 (127.0.0.1): dial error: dial tcp 127.0.0.1:1: connect: connection refused"
+      }
+    }
+  ]
+}

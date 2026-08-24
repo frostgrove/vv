@@ -129,7 +129,26 @@ contradicts guarantee 3 and should be read as an exception to it.
 create colliding on a unique index over some *other* column surfaces as a 409
 carrying the driver's message, including the constraint name — for a row the
 caller cannot see. Nothing in the gate addresses it and no test covers it. Read
-with UC-015's note on 409 bodies.
+with UC-015's guarantee 11.
+
+The gap has two halves and they close differently, which is worth separating
+because only one of them ever closes.
+
+*The constraint name leaving the process* is [[D-044]]'s. A body names nothing
+internal at any status, and phase 4 of `ROADMAP-errors.md` is where the render
+layer enforces it. That half does close.
+
+*The oracle itself* does not. [[D-042]] is explicit that a unique constraint a
+public endpoint can trigger is an oracle by construction: the only complete fix
+is not to have such an endpoint. What phase 7 adds is that the disclosure becomes
+adjustable — a per-constraint opt-out, scope-aware probing driven by the policy
+rather than by the request, a code-only mode — and that the offending value is
+never echoed by default. It also widens the exposure before it narrows it, since
+reporting *every* violation reports every collision, and D-042 says so rather
+than presenting the feature as free.
+
+Gap 2 — the gate's own unnarrowed existence probe — is unaffected by either. It
+is the gate's trade and it stays.
 
 **Gap 4 — the page total can be computed without the relation narrowing.** The
 count that produces a list's total is built from a copy of the query options that

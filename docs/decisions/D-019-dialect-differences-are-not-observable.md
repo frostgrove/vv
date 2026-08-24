@@ -39,8 +39,10 @@ The compensations, and what each one costs:
 
 ## Where the difference *is* observable
 
-Four places. They are documented rather than hidden because hiding them would
-mean emulating an engine, which is worse than saying so.
+Eight places. They are documented rather than hidden because hiding them would
+mean emulating an engine, which is worse than saying so. The last four were
+measured while building the error corpus, and were observable before anyone
+wrote them down.
 
 1. **`Order.WithNullsLast` / `WithNullsFirst` are PostgreSQL-only.** `NULLS LAST`
    is not in MySQL's grammar. MySQL keeps its own rule — NULLs first ascending,
@@ -59,6 +61,40 @@ mean emulating an engine, which is worse than saying so.
    case-insensitive and PostgreSQL's is not, so `crud.Contains` gives different
    answers. That is the column's business, not the library's — and it is exactly
    why `LikeIgnoreCase` exists as the portable spelling.
+5. **An upsert swallows a different set of conflicts per engine, and this is the
+   worst one on the list.** `Save` is the upsert path ([[D-011]]). PostgreSQL
+   emits `ON CONFLICT (pk) DO UPDATE`, which swallows the primary key only;
+   MySQL and MariaDB emit `ON DUPLICATE KEY UPDATE`, which fires on **any**
+   unique key. Measured with a table keyed on `id` and unique on `email`, saving
+   `{id: 3, email: "a@x.io"}` where `a@x.io` belongs to row 1:
+
+   | | PostgreSQL 17 | MySQL 8.4 |
+   |---|---|---|
+   | result | 409, nothing written | success |
+   | table after | rows 1 and 2, untouched | **row 1 overwritten**; row 3 never created |
+
+   So the same call is a refusal on one engine and a silent write to a row the
+   caller never named on the other. There is nothing to normalise against: a
+   per-unique-key conflict target is not in MySQL's grammar, and emulating
+   PostgreSQL would mean a read before every save. An application that upserts
+   on a table with a second unique key has to know which engine it is on.
+6. **A declared width, a declared range and a declared type are not enforced on
+   SQLite.** `VARCHAR(8)` stores a 27-character value; a column that MySQL and
+   PostgreSQL refuse a 99999 into accepts it; `'abc'` into an integer column is
+   kept as text. So the same payload is 422 on the two servers and 200 on SQLite,
+   and the row afterwards holds something the schema says it cannot. This is
+   SQLite's documented type affinity and cannot be compensated for without a
+   Go-side length check, which [[D-042]] refuses for its own reasons.
+7. **A duplicate-key error names its index differently on MySQL and MariaDB.**
+   MySQL prefixes the table (`for key 'users.email'`); MariaDB does not (`for
+   key 'email'`). Both are reached through `crud.MySQL`. This is invisible today
+   only because nothing reads it — and visible in a 409 body, because a 409
+   currently carries the driver's own message ([[UC-015]] guarantee 11).
+8. **A failed CHECK is class 23 on MariaDB and not on MySQL.** `4025`/`23000`
+   against `3819`/`HY000`, on two engines that share a driver, a dialect and a
+   wire protocol. It is not observable through the API because [[D-046]]'s
+   classifier covers both, and it is on this list because the version that
+   covered only one of them shipped.
 
 ## What it forbids
 
@@ -71,8 +107,12 @@ mean emulating an engine, which is worse than saying so.
   package must keep compiling; that is what `OffsetLimiter` demonstrates.
 - Do not skip the MySQL re-read to save a round trip. It has been tried; see
   [[D-011]] and [[D-010]].
-- Do not add a fifth observable difference without adding it to the list above
+- Do not add a ninth observable difference without adding it to the list above
   and to both usage guides.
+- Do not compensate for difference 6 with a Go-side length, range or type check.
+  [[D-042]] has the argument: MySQL under a laxer `sql_mode` truncates where it
+  otherwise errors, so a Go-side check reports violations the server would never
+  raise on a deployment the library cannot see.
 
 ## Where it lives
 
@@ -93,6 +133,11 @@ mean emulating an engine, which is worse than saying so.
 - `repo/basic/repository.go:repository.Count` — the derived table for a DISTINCT
   count.
 - `crud/repo.go:Repo.UpdateAll` — documents observable difference 2.
+- `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — where
+  difference 5 comes from.
+- `errs/sqlerr/testdata/corpus/` — differences 6, 7 and 8 as captured entries:
+  `too_long`, `out_of_range` and `bad_type` are marked unreachable on SQLite,
+  and `check` differs between `mysql.json` and `mariadb.json`.
 
 ## Proven by
 

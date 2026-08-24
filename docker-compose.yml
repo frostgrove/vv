@@ -5,6 +5,9 @@
 #
 # Ports are deliberately non-standard so this never collides with a local
 # PostgreSQL or MySQL.
+#
+# Three servers, four engines: SQLite needs no container, because
+# modernc.org/sqlite is pure Go and every SQLite test builds its own file.
 name: vv
 
 services:
@@ -40,6 +43,37 @@ services:
       - "53306:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u vv -pvv --silent"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+    tmpfs:
+      - /var/lib/mysql
+
+  # The fourth engine, and not a duplicate of the one above it. MariaDB and
+  # MySQL report the same violations with different numbers — a failed CHECK is
+  # 3819 on MySQL and 4025 here — so a classifier written against one of them is
+  # wrong about the other. That divergence is the whole reason they get separate
+  # parsers, and it cannot be measured without a server.
+  #
+  # sql_mode matches the MySQL service deliberately. Under a laxer mode a
+  # missing column default is a warning rather than error 1364, so a difference
+  # the corpus recorded would be this file's doing rather than the engine's.
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: vv
+      MARIADB_DATABASE: vv
+      MARIADB_USER: vv
+      MARIADB_PASSWORD: vv
+    command: >
+      --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+      --innodb-flush-log-at-trx-commit=0
+    ports:
+      - "53307:3306"
+    # The image ships its own probe. mysqladmin is a deprecated alias here and
+    # the MySQL service's spelling of this line would rot without warning.
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
       interval: 2s
       timeout: 3s
       retries: 40

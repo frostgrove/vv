@@ -1,7 +1,14 @@
 # D-034 — A transport binding is a shell over `crudhttp`
 
-**Status:** accepted
+**Status:** accepted — superseded by [[D-045]], in force from phase 5 (`ROADMAP-errors.md` §14)
 **Invariant:** everything a transport binding does that is not routing, body binding or writing a response must come from `http/crudhttp`; no binding may re-derive the status table, the bad-request sentinel or the create-time field clearing.
+
+D-045 keeps the rule and changes the address. Every binding today is an HTTP
+binding, so `http/crudhttp` is the right home and this decision is what the tree
+obeys. A gRPC binding breaks it literally — gRPC cannot implement a renderer
+returning an `http.Header` — so at phase 5 the transport-neutral half moves to
+`port` and `http/crudhttp` keeps what is genuinely HTTP. Until then, read this
+file; it is not history yet.
 
 ## The decision
 
