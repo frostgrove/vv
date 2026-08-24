@@ -76,7 +76,7 @@ version: ## Point every submodule at a library version: make version V=v0.1.0
 	@test -n "$(V)" || (echo "usage: make version V=v0.1.0" && exit 1)
 	@for m in $(MODULES); do \
 		test "$$m" = "." && continue; \
-		(cd $$m && $(GO) mod edit -require=github.com/shardit-io/rx@$(V)) || exit 1; \
+		(cd $$m && $(GO) mod edit -require=github.com/shardit-io/ordo@$(V)) || exit 1; \
 		echo "$$m -> $(V)"; \
 	done
 
@@ -101,10 +101,10 @@ release: test ## Tag a release: make release V=v0.1.0
 		git tag -a "$$m/$(V)" -m "$$m/$(V)" && git push origin "$$m/$(V)" || exit 1; \
 	done
 	@echo "consumers:"
-	@echo "  go get github.com/shardit-io/rx@$(V)"
+	@echo "  go get github.com/shardit-io/ordo@$(V)"
 	@for m in $(MODULES); do \
 		test "$$m" = "." && continue; \
-		echo "  go get github.com/shardit-io/rx/$$m@$(V)"; \
+		echo "  go get github.com/shardit-io/ordo/$$m@$(V)"; \
 	done
 
 clean: down ## Stop the databases and clear the test cache

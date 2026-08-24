@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/crud/crudtest"
-	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/crud/crudtest"
+	"github.com/shardit-io/ordo/repo/basic"
 )
 
 // Note carries the optimistic lock. Update is load-then-write, so between the

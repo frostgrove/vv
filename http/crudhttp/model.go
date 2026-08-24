@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/crud"
 )
 
 // Sanitize clears what a client is not allowed to choose on create: a

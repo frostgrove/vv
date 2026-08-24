@@ -4,19 +4,19 @@
 //
 // The leading underscore keeps the whole tree out of `go build ./...` at the
 // repository root; `make examples` builds it.
-module github.com/shardit-io/rx/_examples
+module github.com/shardit-io/ordo/_examples
 
 go 1.26
 
-replace github.com/shardit-io/rx => ../
+replace github.com/shardit-io/ordo => ../
 
-replace github.com/shardit-io/rx/http/crudfiber => ../http/crudfiber
+replace github.com/shardit-io/ordo/http/crudfiber => ../http/crudfiber
 
-replace github.com/shardit-io/rx/http/crudgin => ../http/crudgin
+replace github.com/shardit-io/ordo/http/crudgin => ../http/crudgin
 
-replace github.com/shardit-io/rx/adapter/crudpgx => ../adapter/crudpgx
+replace github.com/shardit-io/ordo/adapter/crudpgx => ../adapter/crudpgx
 
-require github.com/shardit-io/rx v0.0.0
+require github.com/shardit-io/ordo v0.0.0
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
@@ -82,9 +82,9 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
-	github.com/shardit-io/rx/adapter/crudpgx v0.0.0
-	github.com/shardit-io/rx/http/crudfiber v0.0.0
-	github.com/shardit-io/rx/http/crudgin v0.0.0
+	github.com/shardit-io/ordo/adapter/crudpgx v0.0.0
+	github.com/shardit-io/ordo/http/crudfiber v0.0.0
+	github.com/shardit-io/ordo/http/crudgin v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.36.0 // indirect

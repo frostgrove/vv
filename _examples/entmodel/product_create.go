@@ -10,7 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/shardit-io/rx/_examples/entmodel/product"
+	"github.com/shardit-io/ordo/_examples/entmodel/product"
 )
 
 // ProductCreate is the builder for creating a Product entity.

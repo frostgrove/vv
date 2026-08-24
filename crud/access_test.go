@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/crud"
 )
 
 // Robot is deliberately awkward: a narrow integer key (drivers report int64),

@@ -15,7 +15,7 @@ package basic
 import (
 	"reflect"
 
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/crud"
 )
 
 // DefaultPageSize is the page size used when a query does not ask for one.

@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/query"
 )
 
 // widgetDTO is what the API is willing to show. Secret is not in it, which is

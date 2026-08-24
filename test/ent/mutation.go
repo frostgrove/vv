@@ -11,8 +11,8 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/shardit-io/rx/test/ent/predicate"
-	"github.com/shardit-io/rx/test/ent/user"
+	"github.com/shardit-io/ordo/test/ent/predicate"
+	"github.com/shardit-io/ordo/test/ent/user"
 )
 
 const (

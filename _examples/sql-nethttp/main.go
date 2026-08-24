@@ -7,7 +7,7 @@
 // library's own module. There is no second `go get` for the transport the way
 // there is for Fiber or Gin, and no framework in anybody's build.
 //
-//	go get github.com/shardit-io/rx
+//	go get github.com/shardit-io/ordo
 //	go get github.com/jackc/pgx/v5
 //
 // The driver is the only other line, and only because PostgreSQL needs one.
@@ -27,15 +27,15 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/rx/adapter/crudsql"
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/http/crudnet"
-	"github.com/shardit-io/rx/query"
-	"github.com/shardit-io/rx/repo/basic"
-	"github.com/shardit-io/rx/repo/decorators/specs"
+	"github.com/shardit-io/ordo/adapter/crudsql"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/http/crudnet"
+	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/ordo/repo/basic"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/rx/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/ordo/cmd/rxcrud -readonly CreatedAt
 
 // Product is the model: a plain struct with `db` tags, the same shape every
 // other example serves.

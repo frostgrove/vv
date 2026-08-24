@@ -1,12 +1,12 @@
 // Integration tests live in their own module so the library never picks up a
 // driver, an ORM or a test helper as a dependency.
-module github.com/shardit-io/rx/test
+module github.com/shardit-io/ordo/test
 
 go 1.26
 
 // The library is the repository this test module lives in, so it is used from
 // disk rather than fetched. Nothing else here is published.
-replace github.com/shardit-io/rx => ../
+replace github.com/shardit-io/ordo => ../
 
 require (
 	entgo.io/ent v0.14.6
@@ -15,7 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/shardit-io/rx v0.0.0
+	github.com/shardit-io/ordo v0.0.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
@@ -61,9 +61,9 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
-	github.com/shardit-io/rx/adapter/crudpgx v0.0.0
-	github.com/shardit-io/rx/http/crudfiber v0.0.0
-	github.com/shardit-io/rx/http/crudgin v0.0.0
+	github.com/shardit-io/ordo/adapter/crudpgx v0.0.0
+	github.com/shardit-io/ordo/http/crudfiber v0.0.0
+	github.com/shardit-io/ordo/http/crudgin v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
@@ -72,8 +72,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/shardit-io/rx/http/crudfiber => ../http/crudfiber
+replace github.com/shardit-io/ordo/http/crudfiber => ../http/crudfiber
 
-replace github.com/shardit-io/rx/http/crudgin => ../http/crudgin
+replace github.com/shardit-io/ordo/http/crudgin => ../http/crudgin
 
-replace github.com/shardit-io/rx/adapter/crudpgx => ../adapter/crudpgx
+replace github.com/shardit-io/ordo/adapter/crudpgx => ../adapter/crudpgx

@@ -12,7 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-	"github.com/shardit-io/rx/_examples/entmodel/product"
+	"github.com/shardit-io/ordo/_examples/entmodel/product"
 )
 
 // ent aliases to avoid import conflicts in user's code.

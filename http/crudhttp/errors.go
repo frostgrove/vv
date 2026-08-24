@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/query"
 )
 
 // ErrBadRequest marks a failure the binding itself produced — an id that does

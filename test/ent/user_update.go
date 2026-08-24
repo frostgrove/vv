@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/shardit-io/rx/test/ent/predicate"
-	"github.com/shardit-io/rx/test/ent/user"
+	"github.com/shardit-io/ordo/test/ent/predicate"
+	"github.com/shardit-io/ordo/test/ent/user"
 )
 
 // UserUpdate is the builder for updating User entities.

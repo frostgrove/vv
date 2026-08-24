@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/crud/crudtest"
-	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/crud/crudtest"
+	"github.com/shardit-io/ordo/repo/basic"
 )
 
 // A tree of soft-deletable rows, all in one table. The scope is the whole point

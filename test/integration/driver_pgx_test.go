@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/rx/adapter/crudpgx"
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/adapter/crudpgx"
+	"github.com/shardit-io/ordo/crud"
 )
 
 func TestPgx(t *testing.T) {
@@ -49,7 +49,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Name != "ByPgx" {
-		t.Fatalf("github.com/shardit-io/rx read back %q", got.Name)
+		t.Fatalf("github.com/shardit-io/ordo read back %q", got.Name)
 	}
 	// Outside the transaction the row does not exist yet.
 	if _, err := repo.GetByID(ctx, u.ID); !errors.Is(err, crud.ErrNotFound) {

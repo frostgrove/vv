@@ -18,15 +18,15 @@ import (
 	gormpg "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/rx/adapter/crudpgx"
-	"github.com/shardit-io/rx/adapter/crudsql"
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/query"
-	"github.com/shardit-io/rx/repo/decorators/specs"
-	entpkg "github.com/shardit-io/rx/test/ent"
-	entuser "github.com/shardit-io/rx/test/ent/user"
-	"github.com/shardit-io/rx/test/entstore"
-	"github.com/shardit-io/rx/test/gormstore"
+	"github.com/shardit-io/ordo/adapter/crudpgx"
+	"github.com/shardit-io/ordo/adapter/crudsql"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
+	entpkg "github.com/shardit-io/ordo/test/ent"
+	entuser "github.com/shardit-io/ordo/test/ent/user"
+	"github.com/shardit-io/ordo/test/entstore"
+	"github.com/shardit-io/ordo/test/gormstore"
 )
 
 // This file is the provider matrix. Every other test in this package proves one

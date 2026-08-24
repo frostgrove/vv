@@ -11,8 +11,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/query"
 )
 
 // widgetDTO is what the API is willing to show. Secret is not in it, which is

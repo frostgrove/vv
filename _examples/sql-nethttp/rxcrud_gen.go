@@ -5,8 +5,8 @@ package main
 import (
 	"time"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/repo/decorators/specs"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
 )
 
 // ProductUpdate is the partial-update DTO for Product.

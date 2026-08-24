@@ -20,7 +20,7 @@ curl 'localhost:8080/products?f=price:gte:100&sort=-price'
 Every example serves the same resource at `/products` with the same ten routes,
 so you can diff any two files and see only what the stack changes.
 
-All of them need `go get github.com/shardit-io/rx`. Beyond that each
+All of them need `go get github.com/shardit-io/ordo`. Beyond that each
 needs only what its own stack uses: the Fiber ones add `.../http/crudfiber`, the
 Gin ones `.../http/crudgin`, `pgx-fiber` adds `.../adapter/crudpgx`, and
 `sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so

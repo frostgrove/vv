@@ -5,9 +5,9 @@ package entstore
 import (
 	"time"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/repo/decorators/specs"
-	"github.com/shardit-io/rx/test/ent"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
+	"github.com/shardit-io/ordo/test/ent"
 )
 
 // UserUpdate is the partial-update DTO for ent.User.

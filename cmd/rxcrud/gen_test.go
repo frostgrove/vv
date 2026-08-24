@@ -27,8 +27,8 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		depth:    2,
 		withDTO:  true,
 		withMeta: true,
-		specsPkg: "github.com/shardit-io/rx/repo/decorators/specs",
-		crudPkg:  "github.com/shardit-io/rx/crud",
+		specsPkg: "github.com/shardit-io/ordo/repo/decorators/specs",
+		crudPkg:  "github.com/shardit-io/ordo/crud",
 	}
 	if tweak != nil {
 		tweak(g)
@@ -93,7 +93,7 @@ const blogModel = `package blog
 import (
 	"time"
 
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/crud"
 )
 
 type Author struct {
@@ -461,7 +461,7 @@ func TestGeneratingOnlyOneHalf(t *testing.T) {
 		t.Fatalf("-no-dto took the metamodel with it:\n%s", noDTO)
 	}
 	// With no DTO nothing needs crud, and the import goes away with it.
-	if strings.Contains(noDTO, `"github.com/shardit-io/rx/crud"`) {
+	if strings.Contains(noDTO, `"github.com/shardit-io/ordo/crud"`) {
 		t.Fatalf("an unused import would not compile:\n%s", noDTO)
 	}
 
@@ -533,7 +533,7 @@ func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module gencheck\n\ngo 1.24\n\nrequire github.com/shardit-io/rx v0.0.0\n\nreplace github.com/shardit-io/rx => "+root+"\n")
+	write("go.mod", "module gencheck\n\ngo 1.24\n\nrequire github.com/shardit-io/ordo v0.0.0\n\nreplace github.com/shardit-io/ordo => "+root+"\n")
 	write(filepath.Join("model", "model.go"), tags(blogModel))
 	write(filepath.Join("model", "rxcrud_gen.go"), out)
 	write("main.go", "package main\n\nimport _ \"gencheck/model\"\n\nfunc main() {}\n")

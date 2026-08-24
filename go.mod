@@ -1,3 +1,3 @@
-module github.com/shardit-io/rx
+module github.com/shardit-io/ordo
 
 go 1.26

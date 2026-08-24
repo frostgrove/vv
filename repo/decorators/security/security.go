@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/ordo/crud"
 )
 
 // ErrForbidden is what the gate returns when a policy denies an operation. It

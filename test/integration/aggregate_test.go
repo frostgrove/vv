@@ -7,9 +7,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/repo/basic"
-	"github.com/shardit-io/rx/repo/decorators/security"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/repo/basic"
+	"github.com/shardit-io/ordo/repo/decorators/security"
 )
 
 // A GROUP BY written by hand runs outside every narrowing the repository

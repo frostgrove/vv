@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/query"
 )
 
 // The failure this guards against is the quiet one: a client misspells the key

@@ -3,9 +3,9 @@ package crudgin
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/http/crudhttp"
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/http/crudhttp"
+	"github.com/shardit-io/ordo/query"
 )
 
 type options[M any, ID comparable, U any] struct {

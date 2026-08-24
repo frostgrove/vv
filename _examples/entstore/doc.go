@@ -5,4 +5,4 @@
 // It is what docs/usage-guides/ent.md tells an ent project to do, executed.
 package entstore
 
-//go:generate go run github.com/shardit-io/rx/cmd/rxcrud -dir ../entmodel -types Product -readonly CreatedAt -import github.com/shardit-io/rx/_examples/entmodel -into .
+//go:generate go run github.com/shardit-io/ordo/cmd/rxcrud -dir ../entmodel -types Product -readonly CreatedAt -import github.com/shardit-io/ordo/_examples/entmodel -into .

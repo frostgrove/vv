@@ -11,10 +11,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/shardit-io/rx/adapter/crudsql"
-	"github.com/shardit-io/rx/http/crudnet"
-	"github.com/shardit-io/rx/query"
-	"github.com/shardit-io/rx/repo/decorators/specs"
+	"github.com/shardit-io/ordo/adapter/crudsql"
+	"github.com/shardit-io/ordo/http/crudnet"
+	"github.com/shardit-io/ordo/query"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
 )
 
 // The net/http binding holds the same interface as the other two, so the very

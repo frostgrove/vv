@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/repo/decorators/security"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/repo/decorators/security"
 )
 
 // SaveAll exists to turn N round trips into one. These are about it still being

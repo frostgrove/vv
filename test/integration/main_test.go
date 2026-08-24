@@ -38,7 +38,7 @@ var (
 
 func TestMain(m *testing.M) {
 	if err := setup(); err != nil {
-		fmt.Fprintf(os.Stderr, "github.com/shardit-io/rx integration setup failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "github.com/shardit-io/ordo integration setup failed: %v\n", err)
 		fmt.Fprintln(os.Stderr, "start the databases with: docker compose up -d --wait")
 		os.Exit(1)
 	}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/ordo/query"
 )
 
 // A preload compiles against the related model but keeps the *root's*

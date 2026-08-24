@@ -8,9 +8,9 @@ package integration
 import (
 	"time"
 
-	"github.com/shardit-io/rx/crud"
-	"github.com/shardit-io/rx/repo/basic"
-	"github.com/shardit-io/rx/repo/decorators/specs"
+	"github.com/shardit-io/ordo/crud"
+	"github.com/shardit-io/ordo/repo/basic"
+	"github.com/shardit-io/ordo/repo/decorators/specs"
 )
 
 // User is the model under test. It exercises every mapping feature at once: a
