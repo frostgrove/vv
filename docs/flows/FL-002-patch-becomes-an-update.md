@@ -1,6 +1,6 @@
 # FL-002 — A PATCH becomes an UPDATE
 
-**Entry point:** `http/crudfiber/handler.go:Update`
+**Entry point:** `http/crudfiber/handler.go:Update` (and `http/crudgin/handler.go:Update`)
 **Implements:** [[UC-003]] [[UC-009]] · **Governed by:** [[D-002]] [[D-010]] [[D-019]]
 
 The read-modify-write that most hand-written handlers get wrong. Three states in
@@ -9,14 +9,15 @@ differs by dialect.
 
 ## The path
 
-1. **`Handler.Update`** — `http/crudfiber/handler.go:221`
+1. **`Handler.Update`** — `http/crudfiber/handler.go:206`, `http/crudgin/handler.go:232`
    `h.id(c)` coerces the path parameter to `ID` (`handler.go:367`, via
    `query.Coerce`), then `c.Bind().Body(&dto)` decodes the body into `U`.
-   `BeforeUpdate` runs here if configured (`http/crudfiber/options.go:67`).
+   `BeforeUpdate` runs here if configured (`http/crudfiber/options.go:64`).
    **The trap:** the call is `h.repo.Update(ctx, id, dto)` — no options. A
    `WithScope` narrowing reaches every read and *nothing* on this path. Row-level
    rules on writes belong in `security.Gate`, whose scope does reach the UPDATE
-   ([[FL-008]]); the asymmetry is documented at `http/crudfiber/options.go:47`.
+   ([[FL-008]]); the asymmetry is documented at `http/crudfiber/options.go:44`, and
+   word for word at `http/crudgin/options.go:46`.
 
 2. **`crud.Repo.Update`** — `crud/repo.go:71`
    The typed façade. It only re-types `dto U` down to `any` for the `Core`
@@ -141,8 +142,9 @@ differs by dialect.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go` | `Update`, id coercion, response |
-| `http/crudfiber/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `Update`, id coercion, response |
+| `http/crudfiber/options.go`, `http/crudgin/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
+| `http/crudhttp/request.go` | `CoerceID` — the id coercion both bindings call |
 | `crud/repo.go` | the typed `Update` façade |
 | `crud/update.go` | `UpdatePlan`, `Changes`, `planField.read`, `valuesEqual` |
 | `crud/opt.go` | the three states themselves |
@@ -153,6 +155,8 @@ differs by dialect.
 | `repo/decorators/security/security.go` | the gated variant |
 
 ## Tests that walk this flow
+
+Both below have an identical twin in `http/crudgin/handler_test.go`.
 
 - `TestUpdateForwardsOnlyTheFieldsTheBodyCarried` — `http/crudfiber/handler_test.go` — the wire half.
 - `TestUpdateCarriesAnExplicitNullThrough` — `http/crudfiber/handler_test.go` — `null` is not absence.
@@ -172,4 +176,4 @@ differs by dialect.
 
 ## See also
 
-[[FL-003]] [[FL-004]] [[FL-008]] [[FL-009]] [[FL-011]]
+[[FL-003]] [[FL-004]] [[FL-008]] [[FL-009]] [[FL-011]] [[FL-013]]

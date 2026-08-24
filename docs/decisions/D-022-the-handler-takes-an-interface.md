@@ -1,14 +1,19 @@
 # D-022 — The HTTP handler takes an interface, not a struct
 
 **Status:** accepted
-**Invariant:** `crudfiber.New` must accept anything satisfying `crudfiber.Repository[M, ID, U]`, and the handler must never reach past that interface to a concrete repository type.
+**Invariant:** a binding's `New` must accept anything satisfying its `Repository[M, ID, U]`, and the handler must never reach past that interface to a concrete repository type.
 
 ## The decision
 
-`crudfiber.Repository[M, ID, U]` declares the seven methods the handler calls:
+`crudhttp.Repository[M, ID, U]` declares the eight methods the handler calls:
 `Meta`, `GetByID`, `Get`, `GetAll`, `Save`, `Update`, `Delete`, `Count`.
 `crud.Repo[M, ID, U]` satisfies it, `specs.Repo` satisfies it, and so does any
 struct that embeds either. `Handler` stores the interface and nothing else.
+
+`crudfiber.Repository` and `crudgin.Repository` are type aliases for it, not
+separate declarations ([[D-034]]). A generic alias is the same type, so a service
+written for one binding satisfies the other with no change — which is what keeps
+"the repository is transport-neutral" true rather than merely plausible.
 
 ## Why
 
@@ -45,7 +50,8 @@ middleware inference ([[D-001]]) and does not reach this far up.
 
 **Why all three type parameters are inferred.** `New[M, ID, U](repo …)` takes the
 repository as its first argument, so Go infers all three from it. That is why
-`crudfiber.New(articles).Routes()` is the whole mount. It is also why the option
+`crudfiber.New(articles).Routes()` and `crudgin.New(articles).Mount(r, "/articles")`
+are each the whole mount. It is also why the option
 type is `Option[M, ID, U]` rather than a plain closure — an option written inline
 in the same call infers too, and `WithQuery[…]` only needs its parameters
 spelled when the option is built separately.
@@ -65,11 +71,16 @@ spelled when the option is built separately.
 
 ## Where it lives
 
-- `http/crudfiber/handler.go:Repository` — the interface, with the reason on it.
-- `http/crudfiber/handler.go:Handler` — holds `repo Repository[M, ID, U]`.
-- `http/crudfiber/handler.go:New` — infers all three parameters.
-- `http/crudfiber/options.go:Option` — parameterised the same way so inline
-  options infer.
+- `http/crudhttp/repository.go:Repository` — the interface, with the reason on
+  it.
+- `http/crudfiber/handler.go:Repository` / `http/crudgin/handler.go:Repository`
+  — the per-binding aliases.
+- `http/crudfiber/handler.go:Handler` / `http/crudgin/handler.go:Handler` — each
+  holds `repo Repository[M, ID, U]`.
+- `http/crudfiber/handler.go:New` / `http/crudgin/handler.go:New` — infer all
+  three parameters.
+- `http/crudfiber/options.go:Option` / `http/crudgin/options.go:Option` —
+  parameterised the same way so inline options infer.
 - `crud/repo.go:Repo` — the struct that satisfies it and that a service embeds.
 - `repo/decorators/specs/executor.go:Repo` — embeds `crud.Repo`, so it satisfies
   the interface too and adds the specification methods.
@@ -79,18 +90,22 @@ spelled when the option is built separately.
 ## Proven by
 
 - `TestAServiceLayerCanStandInForTheRepository` in
-  `http/crudfiber/handler_test.go` — the decision, stated as a test.
-- `TestHTTPServiceLayerIsHonoured` in `test/integration/http_test.go` — the same
-  thing end to end against a live database, so a service override that is
-  bypassed by a route shows up.
+  `http/crudfiber/handler_test.go` and `http/crudgin/handler_test.go` — the
+  decision, stated as a test, once per binding.
+- `TestHTTPServiceLayerIsHonoured` in `test/integration/http_test.go` and
+  `TestGinHTTPServiceLayerIsHonoured` in `test/integration/http_gin_test.go` —
+  the same thing end to end against a live database, so a service override that
+  is bypassed by a route shows up. Both mount the *same* `articleService`, which
+  only compiles because the two `Repository` types are one type.
 - `TestNewInfersItsTypeParametersFromTheRepository` in
-  `http/crudfiber/options_test.go` — the inference half.
+  `http/crudfiber/options_test.go` and `http/crudgin/options_test.go` — the
+  inference half.
 - `TestRoutesMountEveryDocumentedEndpoint` and
-  `TestRegisterMountsOnAnExistingRouter` in `http/crudfiber/handler_test.go`.
-- `TestEveryRouteMapsARefusalTheSameWay` in `http/crudfiber/edge_test.go` — a
+  `TestRegisterMountsOnAnExistingRouter` in both bindings' `handler_test.go`.
+- `TestEveryRouteMapsARefusalTheSameWay` in both bindings' `edge_test.go` — a
   route that reached past the interface would show up as a route that handles
   errors differently.
 
 ## See also
 
-[[D-001]] [[D-012]] [[D-017]] [[D-021]]
+[[D-001]] [[D-012]] [[D-017]] [[D-021]] [[D-034]]

@@ -4,8 +4,11 @@ A generic CRUD repository for Go: JPA-shaped semantics, a Specifications /
 Criteria API, a security gate, a wire DSL and a Fiber handler — over any driver,
 without owning the caller's connection or transaction.
 
-Module: `github.com/shardit-io/go-rx-crud`. One module; `test/` is a second one
-so drivers and ORMs never become dependencies of the library.
+Module: `github.com/shardit-io/go-rx-crud`, and it has no external dependencies.
+Anything that would add one is a module of its own under the same repository —
+`http/crudfiber`, `http/crudgin`, `adapter/crudpgx` — so a consumer downloads
+only the binding and driver it imports. `test/` is a fifth, unpublished, so
+drivers and ORMs never become dependencies of the library. See `[[D-033]]`.
 
 ---
 
@@ -102,13 +105,17 @@ that names a symbol which no longer exists has failed at the one job it has.
 The databases run in Docker and are expected to be up (`make up`).
 
 ```bash
-make unit          # go test ./...            — 12 packages, no database
+make unit          # go test ./... in every module, no database
 make integration   # go test -tags=integration ./test/...  — PostgreSQL + MySQL
 make test          # both
-make vet           # both modules
+make vet           # every module
 make fmt           # gofmt
 make generate      # regenerate DTOs and metamodels
+make tidy          # go mod tidy in every module
 ```
+
+`make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`. A new
+module has to be added there or it is silently never built.
 
 Before reporting a task done: unit green, integration green **twice in a row**
 (a test that passes once and fails on rerun is a real defect), `gofmt -l` silent,
@@ -132,6 +139,10 @@ Tests are the specification; see `[[D-020]]`.
   closes it the control fails and tells you the positive test now proves nothing.
 - **Never `t.Parallel()` in `test/integration`** — every test shares the same
   physical tables.
+- **A change to one HTTP binding is a change to both.** `http/crudfiber` and
+  `http/crudgin` carry the same test names, file for file. If a new test only
+  makes sense for one of them, it belongs in `http/crudgin/routing_test.go` or
+  the equivalent, and the difference it pins belongs in `[[FL-013]]`.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
 - The failure message states what broke in plain words, not `got != want`.
@@ -149,7 +160,8 @@ The code has a voice. Match it rather than averaging toward generic Go.
 - Prefer the boring construct. The magic in this library is deliberate and
   concentrated (reflection over models, codegen, type inference at the seam) —
   see `[[D-021]]`. Everywhere else, be ordinary.
-- `crud/` imports the standard library only. Keep it that way.
+- `crud/` imports the standard library only — and so does the whole root module.
+  A package that needs an external dependency becomes a module. `[[D-033]]`.
 
 ---
 
@@ -161,11 +173,14 @@ repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
-http/crudfiber/             a full CRUD API on Fiber v3
+http/crudhttp/              the transport-neutral half of the HTTP layer
 cmd/rxcrud/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun
-adapter/crudpgx/            pgx v5
 crud/crudtest/              an in-memory source for unit-testing repositories
-test/                       a separate module: integration suite, ent/gorm fixtures
 docs/                       decisions, use cases, flows, usage guides
+
+http/crudfiber/             MODULE — a full CRUD API on Fiber v3
+http/crudgin/               MODULE — the same API on Gin
+adapter/crudpgx/            MODULE — pgx v5
+test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
 ```

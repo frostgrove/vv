@@ -64,8 +64,8 @@ this page is the roadmap.
 ## Coverage map
 | Use case | Flows |
 |---|---|
-| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] |
-| [UC-002](UC-002-let-an-untrusted-client-query.md) | [[FL-001]] [[FL-012]] [[FL-011]] |
+| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] |
+| [UC-002](UC-002-let-an-untrusted-client-query.md) | [[FL-001]] [[FL-012]] [[FL-011]] [[FL-013]] |
 | [UC-003](UC-003-partial-update-absent-vs-null.md) | [[FL-002]] [[FL-004]] [[FL-010]] [[FL-011]] |
 | [UC-004](UC-004-isolate-tenants.md) | [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]] |
 | [UC-005](UC-005-run-repository-work-in-an-orm-transaction.md) | [[FL-009]] [[FL-002]] |
@@ -76,9 +76,9 @@ this page is the roadmap.
 | [UC-010](UC-010-adopt-an-existing-orm-model.md) | [[FL-004]] [[FL-003]] [[FL-009]] [[FL-010]] |
 | [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | [[FL-001]] [[FL-002]] [[FL-004]] |
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] |
-| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] |
+| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] |
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 
 ## Gaps
@@ -205,6 +205,10 @@ a decision.
     typo silently protects nothing. Contrast the scope and relation-path
     declarations, which fail at start-up.
 
-22. **[UC-001] There is one HTTP binding.** Everything else in this directory is
-    transport-neutral; a project not on Fiber v3 writes its own routes and reuses
-    only the exported status mapping.
+22. **[UC-001] There are two HTTP bindings, Fiber and Gin, and no more.** A
+    project on net/http, Echo, chi or gRPC still writes its own routes — but the
+    transport-neutral half is now a package of its own, so what it writes is
+    routing, body decoding and response writing rather than a second copy of the
+    status table, the id coercion and the create-time field clearing. The two
+    bindings differ in four named ways ([[FL-013]]); a third would have to say
+    where it differs too.

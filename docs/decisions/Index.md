@@ -46,7 +46,7 @@ still says what not to do while it is open — see D-024 through D-027.
 | [D-013](D-013-unknown-field-is-a-rejection.md) | Every field path resolves or the whole request fails before any SQL | accepted | querying |
 | [D-014](D-014-sql-is-deterministic.md) | The same request compiles to byte-identical SQL and the same argument order | accepted | querying |
 | [D-015](D-015-errors-are-sentinels.md) | Every branchable failure is reachable with `errors.Is` against a `crud` sentinel | accepted | errors |
-| [D-016](D-016-one-module-crud-stays-stdlib-only.md) | One `go get`, no `replace`; `crud/` imports only the standard library | accepted | process & tooling |
+| [D-016](D-016-one-module-crud-stays-stdlib-only.md) | One `go get`, no `replace`; `crud/` imports only the standard library | **superseded by D-033** (module half; the stdlib rule stands) | process & tooling |
 | [D-017](D-017-orm-go-side-behaviour-does-not-run.md) | An rx-crud write is exactly the statement rx-crud built; no ORM builder, hook or privacy rule runs | accepted | interop |
 | [D-018](D-018-dtos-and-metamodels-are-generated.md) | `rxcrud_gen.go` is generated output, reproducible from the model source | accepted | process & tooling |
 | [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for four named differences | accepted | dialects |
@@ -63,6 +63,8 @@ still says what not to do while it is open — see D-024 through D-027.
 | [D-030](D-030-a-new-verb-on-the-seam-is-a-decorator-obligation.md) | Every method added to `crud.Core` is overridden by the gate or has a written reason not to be | accepted | core seam, security |
 | [D-031](D-031-soft-delete-is-a-statement-not-a-decorator.md) | Declaring a soft delete declares both the stamp and the read filter | accepted | querying |
 | [D-032](D-032-a-replica-never-decides-a-write.md) | A read inside a transaction, or one that decides a write, always goes to the primary | accepted | transactions & datasources |
+| [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no external requirement; a package that needs one is its own module | accepted | process & tooling |
+| [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | accepted | HTTP |
 
 ## By area
 
@@ -85,18 +87,24 @@ JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
 D-019 (dialect differences), D-027 (**open** — cross-database capture).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
-D-013 (400 for an unknown field).
+D-013 (400 for an unknown field), D-034 (what a binding owns and what `crudhttp`
+owns — there are two bindings, Fiber and Gin, and one mapping between them).
 
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
 
-**Errors** — D-015 (the sentinel list and the HTTP mapping).
+**Errors** — D-015 (the sentinel list and the HTTP mapping), D-034 (why the
+mapping is in one place rather than one per binding).
 
 **Dialects** — D-019 (what is hidden and what is observable), D-011 (the upsert
 forms), D-010 (why MySQL re-reads).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).
+
+**Process & tooling** — D-033 (one module per optional dependency, and how a
+release is tagged), D-016 (**superseded** in its module half; its stdlib rule
+still binds), D-018 (generated artefacts), D-020 (tests are the specification).
 
 **Process & tooling** — D-016 (one module, stdlib-only core),
 D-018 (codegen), D-020 (tests as the specification), D-014 (deterministic

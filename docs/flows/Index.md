@@ -34,6 +34,7 @@ through it.
 | `cmd/rxcrud` and anything generated | [[FL-010]] |
 | sentinels, HTTP statuses, what a 500 may say | [[FL-011]] |
 | operators, coercion, timestamps, the two front doors | [[FL-012]] |
+| the Gin binding, mounting, or anything the two bindings do differently | [[FL-013]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -58,8 +59,9 @@ tables here — the index and the reverse index.
 | [FL-008](FL-008-a-write-through-the-security-gate.md) | A write through the security gate | `repo/decorators/security/security.go:gate.Save` | [[UC-004]] [[UC-008]] |
 | [FL-009](FL-009-transactions-joining-opening-which-database.md) | Transactions: joining, opening, and which database | `crud/executor.go:InTx` | [[UC-005]] [[UC-012]] |
 | [FL-010](FL-010-codegen-model-to-dto-and-metamodel.md) | Codegen: a model becomes a DTO and a metamodel | `cmd/rxcrud/main.go:main` | [[UC-014]] [[UC-010]] [[UC-007]] |
-| [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `http/crudfiber/options.go:Status` | [[UC-015]] |
+| [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `http/crudhttp/errors.go:Status` | [[UC-015]] |
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
+| [FL-013](FL-013-a-request-through-the-gin-binding.md) | A request through the Gin binding | `http/crudgin/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
 
 ## By file — which flows touch this file
 
@@ -86,9 +88,15 @@ tables here — the index and the reverse index.
 | `crud/repo.go` | FL-002, FL-007 |
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010 |
-| `example/blog/rxcrud_gen.go` | FL-010 |
+| `_examples/example/blog/rxcrud_gen.go` | FL-010 |
 | `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012 |
 | `http/crudfiber/options.go` | FL-002, FL-011 |
+| `http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013 |
+| `http/crudgin/options.go` | FL-002, FL-011, FL-013 |
+| `http/crudhttp/errors.go` | FL-011, FL-013 |
+| `http/crudhttp/model.go` | FL-003, FL-013 |
+| `http/crudhttp/repository.go` | FL-013 |
+| `http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013 |
 | `query/coerce.go` | FL-012 |
 | `query/compile.go` | FL-001, FL-006, FL-011 |
 | `query/filter.go` | FL-001, FL-005, FL-012 |
@@ -103,7 +111,7 @@ tables here — the index and the reverse index.
 | `repo/decorators/specs/executor.go` | FL-011 |
 | `repo/decorators/specs/metamodel.go` | FL-010 |
 
-`repo/basic/repository.go` is in ten of the twelve. It is the layer everything
+`repo/basic/repository.go` is in ten of the thirteen. It is the layer everything
 else decorates, and almost no change to it is local.
 
 ## Not yet written

@@ -193,6 +193,11 @@ The other options on the same call:
 
 Depth, condition and preload limits apply whether or not you set the lists.
 
+Every name above exists in `crudgin` too, spelled the same, taking the same
+arguments — the only difference is that the five callback options carry a
+`*gin.Context` instead of a `fiber.Ctx`, and the ones that write a response
+return nothing because a `gin.HandlerFunc` does not.
+
 ---
 
 ## 4. Typed queries in Go
@@ -343,6 +348,24 @@ app.Post("/users/deactivate", func(c fiber.Ctx) error {
 })
 ```
 
+On Gin, with `crudgin.DefaultErrorHandler` doing the same job:
+
+```go
+r.POST("/users/deactivate", func(c *gin.Context) {
+    var req query.Request
+    if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+        crudgin.DefaultErrorHandler(c, err)
+        return
+    }
+    out, err := uc.DeactivateUsers(c.Request.Context(), tenantOf(c), &req)
+    if err != nil {
+        crudgin.DefaultErrorHandler(c, err)
+        return
+    }
+    c.JSON(http.StatusOK, out)
+})
+```
+
 Three things worth noticing:
 
 - **`crud.WithExecutor` is the whole integration.** rx-crud never opens a
@@ -389,27 +412,29 @@ follows on its own.
 ## Before you start: adding the module
 
 ```bash
-go get github.com/shardit-io/go-rx-crud
+go get github.com/shardit-io/go-rx-crud                 # the library
+go get github.com/shardit-io/go-rx-crud/http/crudfiber  # …and your HTTP framework
 ```
 
-One module, one line. The Fiber handler (`.../http/crudfiber`) and the pgx
-adapter (`.../adapter/crudpgx`) are packages inside it, so there is nothing else
-to add and no `replace` to write.
+The library itself has **no external dependencies**. Anything that would add one
+is a module of its own in the same repository, so you take the Fiber binding or
+the Gin binding — `.../http/crudgin` — and neither drags the other in. On ent
+over `database/sql` there is no driver package to add either: `crudsql` is part
+of the library.
 
 ```go
 import (
     "github.com/shardit-io/go-rx-crud/crud"
     "github.com/shardit-io/go-rx-crud/repo/basic"
     "github.com/shardit-io/go-rx-crud/adapter/crudsql"
-    "github.com/shardit-io/go-rx-crud/http/crudfiber"
+    "github.com/shardit-io/go-rx-crud/http/crudfiber"   // or .../http/crudgin
 )
 ```
 
-The one thing worth knowing about the single-module layout: its `../../go.mod` requires
-Fiber v3 and pgx v5 whether or not you import them. Module graph pruning keeps
-them out of *your* `../../go.mod` when you do not, but they still take part in version
-selection — pin an older Fiber v3 and MVS will raise it to the one rx-crud asks
-for.
+The one thing worth knowing about the multi-module layout: the library and every
+binding are tagged together and are meant to be used at the same version. There
+is never a `replace` to write — the bindings name a published version of the
+library, and `go get` resolves it like any other dependency.
 
 ## 7. Enable `sql/execquery`
 
@@ -661,6 +686,25 @@ func main() {
 }
 ```
 
+On Gin it is the same two lines with a different verb, because Gin has no
+mountable sub-application:
+
+```go
+    r := gin.New()
+    crudgin.New(store.Users.Bind(src)).Mount(r, "/users")
+    crudgin.New(store.Articles.Bind(src)).Mount(r, "/articles")
+
+    log.Fatal(r.Run(":8080"))
+```
+
+`Register(r)` takes a group you already built, when the routes need middleware:
+`crudgin.New(…).Register(r.Group("/users", authMiddleware))`.
+
+Everything from here on — every option, every status, every response shape — is
+identical between the two. The four places they differ are listed in
+`docs/flows/FL-013-a-request-through-the-gin-binding.md`; the one most likely to
+matter is that the Gin binding accepts JSON request bodies only.
+
 ## 12. Your business rules: the service layer
 
 The handler takes an **interface**, not a struct. Embed the repository, override
@@ -842,7 +886,8 @@ func TestServiceRejectsBadEmail(t *testing.T) {
 }
 ```
 
-For the HTTP layer, Fiber's `app.Test(req)` drives the whole handler.
+For the HTTP layer, Fiber's `app.Test(req)` drives the whole handler; on Gin
+it is `httptest.NewRecorder()` and `engine.ServeHTTP(w, req)`.
 
 ## 16. Gotchas
 

@@ -1,6 +1,6 @@
 # FL-003 — Save: insert versus upsert
 
-**Entry point:** `repo/basic/repository.go:Save` (reached from `http/crudfiber/handler.go:Create` and `:Replace`)
+**Entry point:** `repo/basic/repository.go:Save` (reached from `Handler.Create` and `Handler.Replace` in `http/crudfiber` and `http/crudgin` alike)
 **Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]]
 
 One method, two statements, and a fork decided entirely by whether the model's
@@ -8,7 +8,7 @@ primary key holds a value.
 
 ## The path
 
-1. **`Handler.Create`** — `http/crudfiber/handler.go:201`
+1. **`Handler.Create`** — `http/crudfiber/handler.go:186`, `http/crudgin/handler.go:208`
    Binds the body straight onto `M`, then `sanitize` (`handler.go:385`):
    - when `meta.PK.Auto` and `AllowClientID` was not set, the key is zeroed —
      a client cannot pick its own id;
@@ -120,7 +120,8 @@ primary key holds a value.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go` | `Create`, `Replace`, `sanitize`, `clearGenerated` |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `Create`, `Replace` |
+| `http/crudhttp/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for both bindings ([[D-034]]) |
 | `repo/basic/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
@@ -139,7 +140,9 @@ primary key holds a value.
 - `TestSaveNeverWindsTheVersionBack` — `repo/basic/version_test.go` — the version stays out of the conflict clause.
 - `TestDialectUpsert` — `crud/dialect_test.go` — the clause each dialect renders.
 - `TestUpsertClauseCarriesItsOwnLeadingSpace` — `crud/dialect_test.go` — concatenation contract with `insertFull`.
-- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` — `http/crudfiber/handler_test.go` — `sanitize`.
+Each `http/crudfiber/` test below has an identical twin in `http/crudgin/`.
+
+- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` — `http/crudfiber/handler_test.go` — `Sanitize`.
 - `TestPutIsNotAWayAroundAllowClientID` — `http/crudfiber/write_edge_test.go` — the PUT probe.
 - `TestReplaceTakesTheIDFromThePathNotTheBody` — `http/crudfiber/handler_test.go`.
 - `TestUpsertLeavesTheSameRowInEveryDialect` — `test/integration/dialect_edge_test.go`.
@@ -149,4 +152,4 @@ primary key holds a value.
 
 ## See also
 
-[[FL-002]] [[FL-004]] [[FL-008]] [[FL-011]]
+[[FL-002]] [[FL-004]] [[FL-008]] [[FL-011]] [[FL-013]]

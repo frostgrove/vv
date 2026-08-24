@@ -85,6 +85,7 @@ the model before any SQL exists.
 | [[FL-001]] | the document becoming repository options and then a statement |
 | [[FL-012]] | resolving a name against the model and coercing a value to its column's type |
 | [[FL-011]] | a rejection becoming a 400 that names the path |
+| [[FL-013]] | that both front doors behave the same under the second binding — including repeated query-string terms |
 
 ## Status
 **partially covered.** The core claim — a name is resolved before any SQL exists,

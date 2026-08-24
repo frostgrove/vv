@@ -1,7 +1,19 @@
 # D-016 — One published module; package `crud` stays stdlib-only
 
-**Status:** accepted
+**Status:** superseded by [[D-033]] — the module half only. The stdlib rule stands.
 **Invariant:** `go get github.com/shardit-io/go-rx-crud` must be the whole installation — no `replace` directive — and no file in `crud/` outside `_test.go` may import anything but the standard library.
+
+> **What changed.** The single-module half of this decision was reversed: an
+> optional dependency now lives in its own module under the same repository, so
+> a consumer takes only the bindings and adapters it imports. The reasoning that
+> was wrong is the paragraph below headed *What was accepted in exchange* — the
+> cost it prices as "paid only by consumers who pin one of two libraries" is in
+> fact one MVS floor per optional dependency, paid by everybody. [[D-033]] has
+> the new arrangement and answers the `replace` problem this file raises.
+>
+> **The second half is untouched and still binding:** no file in `crud/` outside
+> `_test.go` may import anything but the standard library. [[D-033]] widens it
+> to the whole root module rather than relaxing it.
 
 ## The decision
 

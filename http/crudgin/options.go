@@ -1,7 +1,7 @@
-package crudfiber
+package crudgin
 
 import (
-	"github.com/gofiber/fiber/v3"
+	"github.com/gin-gonic/gin"
 
 	"github.com/shardit-io/go-rx-crud/crud"
 	"github.com/shardit-io/go-rx-crud/http/crudhttp"
@@ -10,11 +10,11 @@ import (
 
 type options[M any, ID comparable, U any] struct {
 	query         *query.Config
-	errorHandler  func(fiber.Ctx, error) error
-	transform     func(fiber.Ctx, M) any
-	scope         func(fiber.Ctx) ([]crud.Option, error)
-	beforeSave    func(fiber.Ctx, *M) error
-	beforeUpdate  func(fiber.Ctx, ID, *U) error
+	errorHandler  func(*gin.Context, error)
+	transform     func(*gin.Context, M) any
+	scope         func(*gin.Context) ([]crud.Option, error)
+	beforeSave    func(*gin.Context, *M) error
+	beforeUpdate  func(*gin.Context, ID, *U) error
 	readOnly      bool
 	allowClientID bool
 	maxBulk       int
@@ -30,14 +30,15 @@ func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] 
 	return func(o *options[M, ID, U]) { o.query = cfg }
 }
 
-// WithErrorHandler replaces the error-to-response mapping.
-func WithErrorHandler[M any, ID comparable, U any](fn func(fiber.Ctx, error) error) Option[M, ID, U] {
+// WithErrorHandler replaces the error-to-response mapping. Reuse Status rather
+// than reimplementing the table, or the two will drift.
+func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.errorHandler = fn }
 }
 
 // WithTransform renders each entity through a presenter — the place to hide
 // columns the API should not expose.
-func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Option[M, ID, U] {
+func WithTransform[M any, ID comparable, U any](fn func(*gin.Context, M) any) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.transform = fn }
 }
 
@@ -51,17 +52,17 @@ func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Optio
 // of TenantID = 7, GET /:id on somebody else's row is 404 while DELETE /:id on
 // the same row answers 200. Row-level rules on writes belong in security.Gate,
 // whose scope really does reach the DELETE and the UPDATE.
-func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U] {
+func WithScope[M any, ID comparable, U any](fn func(*gin.Context) ([]crud.Option, error)) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.scope = fn }
 }
 
 // BeforeSave runs on create and replace, after binding and sanitising.
-func BeforeSave[M any, ID comparable, U any](fn func(fiber.Ctx, *M) error) Option[M, ID, U] {
+func BeforeSave[M any, ID comparable, U any](fn func(*gin.Context, *M) error) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.beforeSave = fn }
 }
 
 // BeforeUpdate runs on PATCH, after binding the DTO.
-func BeforeUpdate[M any, ID comparable, U any](fn func(fiber.Ctx, ID, *U) error) Option[M, ID, U] {
+func BeforeUpdate[M any, ID comparable, U any](fn func(*gin.Context, ID, *U) error) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.beforeUpdate = fn }
 }
 
@@ -96,7 +97,13 @@ func Status(err error) int { return crudhttp.Status(err) }
 
 // DefaultErrorHandler writes the mapped status and a small JSON body. A 500
 // deliberately says nothing: the underlying message could be a SQL error.
-func DefaultErrorHandler(c fiber.Ctx, err error) error {
+//
+// The error is also attached to the context, so Gin's own logging middleware
+// reports the cause the response body is not allowed to carry.
+func DefaultErrorHandler(c *gin.Context, err error) {
 	status, body := crudhttp.Body(err)
-	return c.Status(status).JSON(body)
+	if err != nil {
+		_ = c.Error(err)
+	}
+	c.AbortWithStatusJSON(status, body)
 }

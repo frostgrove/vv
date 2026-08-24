@@ -9,7 +9,7 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 
 ## The path
 
-1. **`Handler.List`** — `http/crudfiber/handler.go:102`
+1. **`Handler.List`** — `http/crudfiber/handler.go:91`
    Reads the query string through `queryValues` (`handler.go:347`), which walks
    `QueryArgs().VisitAll` rather than Fiber's `Queries()`. `Queries()` collapses
    repeats into a map, so the second `f=` would vanish silently — a narrower
@@ -157,6 +157,8 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 | File | Role |
 |---|---|
 | `http/crudfiber/handler.go` | routes, query-string reading, option assembly |
+| `http/crudgin/handler.go` | the same, for Gin — `URL.Query()` in place of the `queryValues` workaround ([[FL-013]]) |
+| `http/crudhttp/request.go` | `NarrowForCount`, `NarrowForEntity`, `DecodeJSON` — shared by both bindings |
 | `query/querystring.go` | `ParseQuery`, `ParseTerm`, flat-term compilation |
 | `query/request.go` | the `Request` document and its forgiving JSON shapes |
 | `query/compile.go` | `Compile`, the allow-lists, budgets, path resolution |
@@ -168,6 +170,8 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 | `crud/page.go` | the response envelope |
 
 ## Tests that walk this flow
+
+Each of the four below has an identical twin in `http/crudgin/handler_test.go`.
 
 - `TestListCompilesQueryStringPagingAndSorting` — `http/crudfiber/handler_test.go` — the query-string door end to end.
 - `TestQueryBodyCompilesTheWholeDSL` — `http/crudfiber/handler_test.go` — the JSON door.
@@ -186,4 +190,4 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 
 ## See also
 
-[[FL-005]] [[FL-006]] [[FL-007]] [[FL-011]] [[FL-012]]
+[[FL-005]] [[FL-006]] [[FL-007]] [[FL-011]] [[FL-012]] [[FL-013]]

@@ -1,7 +1,7 @@
 # FL-011 — An error becomes an HTTP status
 
-**Entry point:** `http/crudfiber/options.go:Status` (via `http/crudfiber/handler.go:fail`)
-**Implements:** [[UC-015]] · **Governed by:** [[D-015]] [[D-008]] [[D-019]]
+**Entry point:** `http/crudhttp/errors.go:Status` (via each binding's `Handler.fail`)
+**Implements:** [[UC-015]] · **Governed by:** [[D-015]] [[D-008]] [[D-019]] [[D-034]]
 
 Every handler ends in `h.fail(c, err)`. One function decides the status, one
 decides the body, and everything the library knows how to classify is a client
@@ -11,7 +11,7 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 
 | Sentinel / type | Declared | Produced by |
 |---|---|---|
-| `crud.ErrNotFound` | `crud/errors.go:10` | `repository.GetByID` (`repo/basic/repository.go:121`), `repository.refresh` (`:526`), the `Update` load (`:554`), `missedRow` (`:661`), `gate.loadScoped` (`repo/decorators/security/security.go:258`), `Handler.Delete` when 0 rows went away (`http/crudfiber/handler.go:294`), `specs.FindOne`/`FindFirst` |
+| `crud.ErrNotFound` | `crud/errors.go:10` | `repository.GetByID` (`repo/basic/repository.go:121`), `repository.refresh` (`:526`), the `Update` load (`:554`), `missedRow` (`:661`), `gate.loadScoped` (`repo/decorators/security/security.go:258`), `Handler.Delete` when 0 rows went away (`http/crudfiber/handler.go:279`, `http/crudgin/handler.go:318`), `specs.FindOne`/`FindFirst` |
 | `crud.ErrConflict` | `crud/errors.go:31` | the adapters only — `adapter/crudsql/conflict.go:20` and `adapter/crudpgx/conflict.go:20`, on SQLSTATE class 23 |
 | `crud.ErrStaleVersion` (wraps `ErrConflict`) | `crud/errors.go:36` | `repository.missedRow` (`repo/basic/repository.go:659`) |
 | `specs.ErrNotUnique` (wraps `ErrConflict`) | `repo/decorators/specs/errors.go:13` | `specs.FindOne` when two rows match |
@@ -20,7 +20,7 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | `*query.Error` | `query/compile.go:13` | every rejection in the wire DSL, carrying `Path` and `Reason` |
 | `*crud.UnknownFieldError` | `crud/errors.go:41` | `Schema.Field` misses in the repository and the SQL writer |
 | `*crud.SchemaError` | `crud/errors.go:52` | declaration-time and render-time refusals |
-| `errBadRequest` | `http/crudfiber/handler.go:418` | `badRequest` / `badRequestf` (`options.go:151`) — malformed body, unparseable id, `MaxBulk` exceeded |
+| `crudhttp.ErrBadRequest` | `http/crudhttp/errors.go:16` | `BadRequest` / `BadRequestf` (`errors.go:19`) — malformed body, unparseable id, `MaxBulk` exceeded. One sentinel for every binding, so a 400 raised by one is recognised by the shared switch ([[D-034]]) |
 | `crud.ErrNoTxSupport` | `crud/errors.go:13` | `crud.InTx` on a handle that cannot begin — **not classified**, so 500 |
 | `crud.ErrReadOnly` | `crud/errors.go:22` | nothing in the tree; it exists for a decorator that wants to say "read-only" rather than "forbidden" — **not classified**, so 500 |
 
@@ -40,11 +40,12 @@ mistake or an access decision. Everything else is a 500 that says nothing.
    error — and on PostgreSQL every insert and update runs as
    `… RETURNING`, i.e. as a query.
 
-2. **`Handler.fail`** — `http/crudfiber/handler.go:414` → `h.opt.errorHandler`,
-   which is `DefaultErrorHandler` unless `WithErrorHandler` replaced it
-   (`http/crudfiber/options.go:37`).
+2. **`Handler.fail`** — `http/crudfiber/handler.go:369`,
+   `http/crudgin/handler.go:404` → `h.opt.errorHandler`, which is that binding's
+   `DefaultErrorHandler` unless `WithErrorHandler` replaced it. Every route in
+   both bindings ends here; no route has its own mapping.
 
-3. **`Status`** — `http/crudfiber/options.go:99`
+3. **`Status`** — `http/crudhttp/errors.go:39`
    A single ordered switch, using `errors.Is`/`errors.As` so wrapped errors
    classify:
    ```
@@ -52,7 +53,7 @@ mistake or an access decision. Everything else is a 500 that says nothing.
    ErrNotFound                              -> 404
    ErrForbidden                             -> 403
    ErrConflict                              -> 409     (ErrStaleVersion, ErrNotUnique)
-   errBadRequest | *query.Error |
+   ErrBadRequest | *query.Error |
    *UnknownFieldError | *SchemaError |
    ErrMissingID                             -> 400
    anything else                            -> 500
@@ -129,8 +130,9 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/options.go` | `Status`, `DefaultErrorHandler`, `statusText`, `ErrorBody`, `badRequest` |
-| `http/crudfiber/handler.go` | `fail`, `errBadRequest`, the DELETE asymmetry |
+| `http/crudhttp/errors.go` | `Status`, `Body`, `StatusText`, `ErrorBody`, `ErrBadRequest`, `BadRequest` — the whole mapping, shared by every binding |
+| `http/crudfiber/options.go`, `http/crudgin/options.go` | the exported `Status` and `DefaultErrorHandler` per binding: one line and one response write each |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `fail`, and the DELETE asymmetry |
 | `crud/errors.go` | every sentinel, `UnknownFieldError`, `SchemaError` |
 | `query/compile.go` | `query.Error` — path and reason, safe to hand back |
 | `adapter/crudsql/conflict.go` | SQLSTATE 23 → `ErrConflict`, by error shape |
@@ -140,6 +142,12 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | `repo/decorators/specs/executor.go` | `FindOne` / `FindFirst` — where `ErrNotFound` and `ErrNotUnique` are raised |
 
 ## Tests that walk this flow
+
+Every test below that names `http/crudfiber/` has an identical twin in
+`http/crudgin/`, same name, same file name. The two suites are ported one to one
+and the mapping they exercise is one switch ([[D-034]]) — removing an arm from
+`crudhttp.Status` fails both, which is the check that it is shared rather than
+copied.
 
 - `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` — the switch, arm by arm.
 - `TestRepositoryErrorsBecomeStatusCodes` — `http/crudfiber/edge_test.go`.
@@ -157,7 +165,8 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 - `TestWithErrorHandlerReplacesTheMapping` — `http/crudfiber/options_test.go`.
 - `TestAScopeThatFailsIsMappedLikeAnyOtherError` — `http/crudfiber/edge_test.go`.
 - `TestHTTPRejections` — `test/integration/http_test.go` — end to end against a database.
+- `TestGinHTTPRejections` — `test/integration/http_gin_test.go` — the same, through the Gin binding.
 
 ## See also
 
-[[FL-001]] [[FL-002]] [[FL-003]] [[FL-007]] [[FL-008]] [[FL-012]]
+[[FL-001]] [[FL-002]] [[FL-003]] [[FL-007]] [[FL-008]] [[FL-012]] [[FL-013]]

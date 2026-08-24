@@ -81,7 +81,8 @@ planner may refuse to index.
    an error and never a wrapped one. `[]byte` columns take the raw bytes.
 
 5. **`Coerce`** — `query/coerce.go:80` — the exported wrapper. Transports need it
-   for path parameters: `Handler.id` (`http/crudfiber/handler.go:373`) coerces
+   for path parameters: `crudhttp.CoerceID` (`http/crudhttp/request.go:18`), which
+   both bindings' `Handler.id` is a one-line call to, coerces
    `:id` to the repository's `ID` type through it, which is why a uuid key works
    in a URL with no extra code.
 
@@ -155,7 +156,8 @@ query.
 | `query/querystring.go` | the query-string door; `ParseTerm`, `terms`, `coerceAll` |
 | `crud/meta.go` | `ElemType` — the coercion target |
 | `crud/predicate.go` | `escapeLike`, and the nodes that bind rather than concatenate |
-| `http/crudfiber/handler.go` | `id` — the path-parameter user of `Coerce` |
+| `http/crudhttp/request.go` | `CoerceID` — the path-parameter user of `Coerce` |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `id` — reads the path parameter and hands it over |
 
 ## Tests that walk this flow
 
@@ -177,9 +179,9 @@ query.
 - `TestQueryStringTermEdges` — `query/edge_test.go`.
 - `TestWildcardsInAPatternAreEscaped` — `query/hostile_test.go`.
 - `TestPayloadsInValuePositionsAreBoundNotWritten` — `query/hostile_test.go`.
-- `TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository` — `http/crudfiber/edge_test.go`.
+- `TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository` — `http/crudfiber/edge_test.go`, and its twin in `http/crudgin/edge_test.go`.
 - `TestTheDSLCoercesAUUIDFromTheWire` — `test/integration/uuid_test.go` — the `TextUnmarshaler` branch, end to end.
 
 ## See also
 
-[[FL-001]] [[FL-005]] [[FL-011]]
+[[FL-001]] [[FL-005]] [[FL-011]] [[FL-013]]

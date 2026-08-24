@@ -54,7 +54,8 @@ branch on and, where the mistake is its own, enough detail to fix it.
 - **Validation of business rules.** Wrapping the right sentinel is the service
   layer's job (UC-013). The mapping honours whatever it is handed.
 - **Non-HTTP transports.** The sentinels are transport-neutral, but only the HTTP
-  mapping is written and tested.
+  mapping is written and tested. Within HTTP the mapping is written once and
+  every binding calls it, so it does not multiply as bindings are added.
 - **Problem+JSON, i18n, error codes per field.** The body is a small fixed shape:
   an error tag, an optional path, an optional message.
 
@@ -62,13 +63,19 @@ branch on and, where the mistake is its own, enough detail to fix it.
 | Flow | What it contributes |
 |---|---|
 | [[FL-011]] | the sentinel-to-status table, the body shapes, and the point at which a 500 stops carrying detail |
+| [[FL-013]] | that a second binding inherits the table rather than restating it |
 
 ## Status
 **covered, with one deliberate leak worth knowing about.**
 
 Every status in guarantee 1 has a test, including the branches no route reaches
 with a real repository behind it; the "same refusal from every route" table and
-the 500-leaks-nothing assertion are both exhaustive over the route set.
+the 500-leaks-nothing assertion are both exhaustive over the route set, and both
+are run once per HTTP binding.
+
+Guarantee 8 — that the mapping is a function an application can reuse — is now
+also what keeps the bindings honest rather than only a convenience: there is one
+switch, and removing an arm from it fails both bindings' suites identically.
 
 The leak: every status *except* 500 puts the error's own text in the response
 body. That is what makes guarantee 5 useful, and for a 400 the text is the query

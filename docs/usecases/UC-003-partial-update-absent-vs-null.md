@@ -81,3 +81,10 @@ stored row" halves hold on dialects with and without `RETURNING`.
 Guarantee 12 is the weakest link and is worth restating rather than trusting: the
 handler binds the body onto the same DTO type the repository was declared with,
 so there is one path by construction, but nothing asserts the two cannot diverge.
+
+There are now two HTTP bindings, and they decode bodies differently — one
+dispatches on Content-Type, the other takes JSON only — so the guarantee is
+worth more than it was and is worth watching harder. Both run the same
+absent-versus-null tests, including the explicit `null`, so the three states
+survive both decoders today. A third binding would have to bring those tests
+with it.

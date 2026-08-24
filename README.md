@@ -15,17 +15,22 @@ repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
-http/crudfiber/             a full CRUD API on Fiber v3
+http/crudhttp/              the transport-neutral half: status mapping, id coercion, sanitising
 cmd/rxcrud/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
-adapter/crudpgx/            pgx v5
 crud/crudtest/              an in-memory source for unit-testing repositories
+
+  ── separate modules, so you only download the one you use ──────────────────
+http/crudfiber/             a full CRUD API on Fiber v3
+http/crudgin/               the same API on Gin
+adapter/crudpgx/            pgx v5
 ```
 
 Declare a model, get a filtered, sorted, paginated, relation-loading HTTP API:
 
 ```go
-app.Use("/articles", crudfiber.New(articles).Routes())
+app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber
+crudgin.New(articles).Mount(r, "/articles")              // or Gin
 ```
 
 ```http
@@ -53,14 +58,20 @@ would need a test schema that declares one, and none does.
 ## Install
 
 ```bash
-go get github.com/shardit-io/go-rx-crud
+go get github.com/shardit-io/go-rx-crud                    # the library
+go get github.com/shardit-io/go-rx-crud/http/crudgin       # …and your HTTP framework
+go get github.com/shardit-io/go-rx-crud/adapter/crudpgx    # …and pgx, if that is your driver
 ```
 
-One module. `http/crudfiber` and `adapter/crudpgx` are packages inside it, not
-separate modules, so a single `go get` is the whole installation and there is
-never a `replace` to write. The trade is in the other direction: the module
-requires Fiber v3 and pgx v5 even when you import neither, so they take part in
-version selection.
+The library has **no external dependencies at all**. Anything that would add one
+is a module of its own in the same repository, so you download the Fiber binding
+or the Gin binding or neither, and pgx only if you use pgx. On `database/sql` —
+which is how ent, gorm, sqlx, sqlc and bun are reached — there is nothing to add
+past the first line.
+
+Versions move in lockstep: the library and every binding are tagged together, so
+`@v0.1.0` means the same thing everywhere. No `replace` is ever needed
+([`D-033`](docs/decisions/D-033-optional-dependencies-are-their-own-modules.md)).
 
 ## Quick start
 
@@ -688,9 +699,13 @@ apply either way.
 
 ## The HTTP handler
 
+Two bindings, one API. Pick the one your project already uses:
+
 ```go
 articles := specs.Executor(Articles.Bind(db, security.Gate(policy)))
-app.Use("/articles", crudfiber.New(articles).Routes())
+
+app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber v3
+crudgin.New(articles).Mount(r, "/articles")              // Gin
 ```
 
 | Route | Does |
@@ -732,6 +747,10 @@ func (s articleService) Save(ctx context.Context, a *Article) error {
 app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 ```
 
+`crudfiber.Repository` and `crudgin.Repository` are the same type, so the service
+above satisfies both without a line of change — the integration suite mounts one
+service on both engines to keep that honest.
+
 On create the body binds straight onto the model, then a database-generated key
 and every `generated` column are cleared — a client cannot choose its own id or
 forge a server-side timestamp. `PUT /:id` is held to the same rule from the other
@@ -745,7 +764,18 @@ the rest: `WithQuery`,
 Errors map by sentinel, so the transport never imports the decorator that raised
 them: `crud.ErrNotFound` → 404, `crud.ErrForbidden` (which `security.ErrForbidden`
 wraps) → 403, `crud.ErrConflict` → 409, query and schema errors → 400 with the
-offending path named, everything else → 500 with no detail.
+offending path named, everything else → 500 with no detail. The table lives in
+`http/crudhttp` and both bindings call it, so there is one mapping rather than
+one per framework — and `Status(err) int` is exported if you render your own
+bodies.
+
+The two bindings differ in four ways, all named in
+[`FL-013`](docs/flows/FL-013-a-request-through-the-gin-binding.md): Gin has no
+mountable sub-application (`Mount(r, prefix)` instead of `Routes()`), its
+collection route carries no trailing slash, it accepts JSON bodies only where
+Fiber also takes XML and form encodings, and an unmounted route is 404 unless you
+set `HandleMethodNotAllowed`. Everything else — every option, every status, every
+response shape — is identical.
 
 ---
 

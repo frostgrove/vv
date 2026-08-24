@@ -1,8 +1,8 @@
-// Package crudfiber mounts a full CRUD API on a Fiber v3 router.
+// Package crudgin mounts a full CRUD API on a Gin router.
 //
 // The whole set-up is one line:
 //
-//	app.Use("/articles", crudfiber.New(articles).Routes())
+//	crudgin.New(articles).Mount(r, "/articles")
 //
 // where `articles` is anything satisfying Repository — a crud.Repo, a
 // specs.Repo, or your own service struct that embeds one and adds business
@@ -21,12 +21,17 @@
 //	PUT    /:id         create-or-replace
 //	DELETE /:id         delete one
 //	POST   /bulk-delete delete many, {"ids": […]}
-package crudfiber
+//
+// Request bodies are JSON only. The sibling Fiber binding also accepts XML and
+// form encodings, because Fiber's binder dispatches on Content-Type; this one
+// decodes with encoding/json so that a `binding:"…"` tag on a model cannot make
+// the same request behave differently under the two transports.
+package crudgin
 
 import (
-	"net/url"
+	"net/http"
 
-	"github.com/gofiber/fiber/v3"
+	"github.com/gin-gonic/gin"
 
 	"github.com/shardit-io/go-rx-crud/crud"
 	"github.com/shardit-io/go-rx-crud/http/crudhttp"
@@ -58,29 +63,33 @@ func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[
 	return h
 }
 
-// Routes returns a standalone app to mount with app.Use("/prefix", …).
-func (h *Handler[M, ID, U]) Routes() *fiber.App {
-	app := fiber.New()
-	h.Register(app)
-	return app
+// Mount groups the routes under a prefix. Gin has no mountable sub-application,
+// so this is the counterpart of Fiber's app.Use("/prefix", …).
+func (h *Handler[M, ID, U]) Mount(r gin.IRouter, prefix string) {
+	h.Register(r.Group(prefix))
 }
 
-// Register mounts the routes on an existing router or group. `/count` is
-// registered before `/:id` so it is not swallowed by the parameter route.
-func (h *Handler[M, ID, U]) Register(r fiber.Router) {
+// Register mounts the routes on an existing router or group.
+//
+// The collection routes are registered as "" rather than "/": on a group of
+// /widgets the latter produces /widgets/, which does not match GET /widgets.
+// Registering both forms is not an option — on the engine itself they collapse
+// to the same path and Gin panics. The trailing-slash form is left to Gin's own
+// RedirectTrailingSlash, which is on by default.
+func (h *Handler[M, ID, U]) Register(r gin.IRoutes) {
 	if !h.opt.readOnly {
-		r.Post("/", h.Create)
-		r.Post("/bulk-delete", h.BulkDelete)
+		r.POST("", h.Create)
+		r.POST("/bulk-delete", h.BulkDelete)
 	}
-	r.Post("/query", h.Query)
-	r.Get("/count", h.CountGet)
-	r.Post("/count", h.CountPost)
-	r.Get("/", h.List)
-	r.Get("/:id", h.GetByID)
+	r.POST("/query", h.Query)
+	r.GET("/count", h.CountGet)
+	r.POST("/count", h.CountPost)
+	r.GET("", h.List)
+	r.GET("/:id", h.GetByID)
 	if !h.opt.readOnly {
-		r.Patch("/:id", h.Update)
-		r.Put("/:id", h.Replace)
-		r.Delete("/:id", h.Delete)
+		r.PATCH("/:id", h.Update)
+		r.PUT("/:id", h.Replace)
+		r.DELETE("/:id", h.Delete)
 	}
 }
 
@@ -88,93 +97,106 @@ func (h *Handler[M, ID, U]) Register(r fiber.Router) {
 // reads
 
 // List answers GET / using the query-string DSL.
-func (h *Handler[M, ID, U]) List(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) List(c *gin.Context) {
 	req, err := h.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.list(c, req)
+	h.list(c, req)
 }
 
 // Query answers POST /query using the full JSON DSL.
-func (h *Handler[M, ID, U]) Query(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) Query(c *gin.Context) {
 	req, err := h.parseBody(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.list(c, req)
+	h.list(c, req)
 }
 
-func (h *Handler[M, ID, U]) list(c fiber.Ctx, req *query.Request) error {
+func (h *Handler[M, ID, U]) list(c *gin.Context, req *query.Request) {
 	opts, err := h.compile(c, req)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	page, err := h.repo.Get(c.Context(), opts...)
+	page, err := h.repo.Get(c.Request.Context(), opts...)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	if h.opt.transform == nil {
-		return c.Status(fiber.StatusOK).JSON(page)
+		c.JSON(http.StatusOK, page)
+		return
 	}
-	return c.Status(fiber.StatusOK).JSON(crud.MapPage(page, func(m M) any {
+	c.JSON(http.StatusOK, crud.MapPage(page, func(m M) any {
 		return h.opt.transform(c, m)
 	}))
 }
 
 // CountGet answers GET /count.
-func (h *Handler[M, ID, U]) CountGet(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) CountGet(c *gin.Context) {
 	req, err := h.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.count(c, req)
+	h.count(c, req)
 }
 
 // CountPost answers POST /count.
-func (h *Handler[M, ID, U]) CountPost(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) CountPost(c *gin.Context) {
 	req, err := h.parseBody(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.count(c, req)
+	h.count(c, req)
 }
 
-func (h *Handler[M, ID, U]) count(c fiber.Ctx, req *query.Request) error {
+func (h *Handler[M, ID, U]) count(c *gin.Context, req *query.Request) {
 	crudhttp.NarrowForCount(req)
 
 	opts, err := h.compile(c, req)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	n, err := h.repo.Count(c.Context(), opts...)
+	n, err := h.repo.Count(c.Request.Context(), opts...)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"count": n})
+	c.JSON(http.StatusOK, gin.H{"count": n})
 }
 
 // GetByID answers GET /:id, honouring ?preload= and ?select=.
-func (h *Handler[M, ID, U]) GetByID(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) GetByID(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	req, err := h.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	crudhttp.NarrowForEntity(req)
 
 	opts, err := h.compile(c, req)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	m, err := h.repo.GetByID(c.Context(), id, opts...)
+	m, err := h.repo.GetByID(c.Request.Context(), id, opts...)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	h.entity(c, http.StatusOK, m)
 }
 
 // ---------------------------------------------------------------------------
@@ -183,45 +205,53 @@ func (h *Handler[M, ID, U]) GetByID(c fiber.Ctx) error {
 // Create answers POST /. The body is bound straight onto the model; a
 // database-generated key and every `generated` column are cleared first, so a
 // client cannot pick its own id or forge a server-side timestamp.
-func (h *Handler[M, ID, U]) Create(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) Create(c *gin.Context) {
 	var m M
-	if err := c.Bind().Body(&m); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+	if err := crudhttp.DecodeJSON(c.Request.Body, &m); err != nil {
+		h.fail(c, err)
+		return
 	}
 	if err := h.sanitize(&m); err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	if h.opt.beforeSave != nil {
 		if err := h.opt.beforeSave(c, &m); err != nil {
-			return h.fail(c, err)
+			h.fail(c, err)
+			return
 		}
 	}
-	if err := h.repo.Save(c.Context(), &m); err != nil {
-		return h.fail(c, err)
+	if err := h.repo.Save(c.Request.Context(), &m); err != nil {
+		h.fail(c, err)
+		return
 	}
-	return h.entity(c, fiber.StatusCreated, m)
+	h.entity(c, http.StatusCreated, m)
 }
 
 // Update answers PATCH /:id with the partial-update DTO.
-func (h *Handler[M, ID, U]) Update(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) Update(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	var dto U
-	if err := c.Bind().Body(&dto); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+	if err := crudhttp.DecodeJSON(c.Request.Body, &dto); err != nil {
+		h.fail(c, err)
+		return
 	}
 	if h.opt.beforeUpdate != nil {
 		if err := h.opt.beforeUpdate(c, id, &dto); err != nil {
-			return h.fail(c, err)
+			h.fail(c, err)
+			return
 		}
 	}
-	m, err := h.repo.Update(c.Context(), id, dto)
+	m, err := h.repo.Update(c.Request.Context(), id, dto)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	h.entity(c, http.StatusOK, m)
 }
 
 // Replace answers PUT /:id: the body becomes the whole row, with the id taken
@@ -234,79 +264,93 @@ func (h *Handler[M, ID, U]) Update(c fiber.Ctx) error {
 // advance the sequence, so the next POST collides on the primary key and keeps
 // colliding until somebody repairs the sequence by hand. A key the client owns
 // (a uuid, a slug) is a different matter and PUT still creates those.
-func (h *Handler[M, ID, U]) Replace(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) Replace(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	var m M
-	if err := c.Bind().Body(&m); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+	if err := crudhttp.DecodeJSON(c.Request.Body, &m); err != nil {
+		h.fail(c, err)
+		return
 	}
 	if h.meta.PK.Auto && !h.opt.allowClientID {
-		if _, err := h.repo.GetByID(c.Context(), id); err != nil {
-			return h.fail(c, err)
+		if _, err := h.repo.GetByID(c.Request.Context(), id); err != nil {
+			h.fail(c, err)
+			return
 		}
 	}
 	if err := h.clearGenerated(&m); err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	if err := h.meta.SetID(&m, id); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		h.fail(c, crudhttp.BadRequest(err))
+		return
 	}
 	if h.opt.beforeSave != nil {
 		if err := h.opt.beforeSave(c, &m); err != nil {
-			return h.fail(c, err)
+			h.fail(c, err)
+			return
 		}
 	}
-	if err := h.repo.Save(c.Context(), &m); err != nil {
-		return h.fail(c, err)
+	if err := h.repo.Save(c.Request.Context(), &m); err != nil {
+		h.fail(c, err)
+		return
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	h.entity(c, http.StatusOK, m)
 }
 
 // Delete answers DELETE /:id.
-func (h *Handler[M, ID, U]) Delete(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) Delete(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	n, err := h.repo.Delete(c.Context(), id)
+	n, err := h.repo.Delete(c.Request.Context(), id)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
 	if n == 0 {
-		return h.fail(c, crud.ErrNotFound)
+		h.fail(c, crud.ErrNotFound)
+		return
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": n})
+	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }
 
 // BulkDeleteRequest is the body of POST /bulk-delete.
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 // BulkDelete answers POST /bulk-delete.
-func (h *Handler[M, ID, U]) BulkDelete(c fiber.Ctx) error {
+func (h *Handler[M, ID, U]) BulkDelete(c *gin.Context) {
 	var req BulkDeleteRequest[ID]
-	if err := c.Bind().Body(&req); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+	if err := crudhttp.DecodeJSON(c.Request.Body, &req); err != nil {
+		h.fail(c, err)
+		return
 	}
 	if len(req.IDs) == 0 {
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": 0})
+		c.JSON(http.StatusOK, gin.H{"deleted": 0})
+		return
 	}
 	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
-		return h.fail(c, crudhttp.BadRequestf("at most %d ids per request", h.opt.maxBulk))
+		h.fail(c, crudhttp.BadRequestf("at most %d ids per request", h.opt.maxBulk))
+		return
 	}
-	n, err := h.repo.Delete(c.Context(), req.IDs...)
+	n, err := h.repo.Delete(c.Request.Context(), req.IDs...)
 	if err != nil {
-		return h.fail(c, err)
+		h.fail(c, err)
+		return
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": n})
+	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }
 
 // ---------------------------------------------------------------------------
 // plumbing
 
-func (h *Handler[M, ID, U]) compile(c fiber.Ctx, req *query.Request) ([]crud.Option, error) {
+func (h *Handler[M, ID, U]) compile(c *gin.Context, req *query.Request) ([]crud.Option, error) {
 	opts, err := req.Compile(h.meta, h.cfg)
 	if err != nil {
 		return nil, err
@@ -321,34 +365,24 @@ func (h *Handler[M, ID, U]) compile(c fiber.Ctx, req *query.Request) ([]crud.Opt
 	return opts, nil
 }
 
-func (h *Handler[M, ID, U]) parseQueryString(c fiber.Ctx) (*query.Request, error) {
-	return query.ParseQuery(queryValues(c))
+// parseQueryString reads the raw query args. Gin's Query() returns the last
+// value for a key, which would quietly drop the second `f=` filter; URL.Query()
+// keeps every repeat, and the filter is the AND of all of them.
+func (h *Handler[M, ID, U]) parseQueryString(c *gin.Context) (*query.Request, error) {
+	return query.ParseQuery(c.Request.URL.Query())
 }
 
-// queryValues reads the raw query args. Fiber's Queries() collapses repeats
-// into a map, which would quietly drop the second `f=` filter.
-func queryValues(c fiber.Ctx) url.Values {
-	v := url.Values{}
-	c.Request().URI().QueryArgs().VisitAll(func(key, val []byte) {
-		v.Add(string(key), string(val))
-	})
-	return v
-}
-
-func (h *Handler[M, ID, U]) parseBody(c fiber.Ctx) (*query.Request, error) {
+func (h *Handler[M, ID, U]) parseBody(c *gin.Context) (*query.Request, error) {
 	req := &query.Request{}
-	if len(c.Body()) == 0 {
-		return req, nil
-	}
-	if err := c.Bind().Body(req); err != nil {
-		return nil, crudhttp.BadRequest(err)
+	if err := crudhttp.DecodeJSON(c.Request.Body, req); err != nil {
+		return nil, err
 	}
 	return req, nil
 }
 
 // id reads and converts the :id path parameter.
-func (h *Handler[M, ID, U]) id(c fiber.Ctx) (ID, error) {
-	return crudhttp.CoerceID[ID](c.Params("id"))
+func (h *Handler[M, ID, U]) id(c *gin.Context) (ID, error) {
+	return crudhttp.CoerceID[ID](c.Param("id"))
 }
 
 func (h *Handler[M, ID, U]) sanitize(m *M) error {
@@ -359,13 +393,14 @@ func (h *Handler[M, ID, U]) clearGenerated(m *M) error {
 	return crudhttp.ClearGenerated(h.meta, m)
 }
 
-func (h *Handler[M, ID, U]) entity(c fiber.Ctx, status int, m M) error {
+func (h *Handler[M, ID, U]) entity(c *gin.Context, status int, m M) {
 	if h.opt.transform != nil {
-		return c.Status(status).JSON(h.opt.transform(c, m))
+		c.JSON(status, h.opt.transform(c, m))
+		return
 	}
-	return c.Status(status).JSON(m)
+	c.JSON(status, m)
 }
 
-func (h *Handler[M, ID, U]) fail(c fiber.Ctx, err error) error {
-	return h.opt.errorHandler(c, err)
+func (h *Handler[M, ID, U]) fail(c *gin.Context, err error) {
+	h.opt.errorHandler(c, err)
 }
