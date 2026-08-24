@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/go-rx-crud/crud/crudtest"
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/crud/crudtest"
+	"github.com/shardit-io/rx/query"
 )
 
 // tryDoc compiles a JSON document and hands back the statement the repository

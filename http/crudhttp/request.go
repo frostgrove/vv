@@ -5,7 +5,7 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/query"
 )
 
 // BulkDeleteRequest is the body of POST /bulk-delete.

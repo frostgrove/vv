@@ -3,7 +3,7 @@ package crud_test
 import (
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // The dialect is the only place SQL syntax differences are allowed to live, so

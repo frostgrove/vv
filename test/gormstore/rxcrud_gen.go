@@ -3,10 +3,11 @@
 package gormstore
 
 import (
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
-	"gorm.io/gorm"
 	"time"
+
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/decorators/specs"
+	"gorm.io/gorm"
 )
 
 // LabelUpdate is the partial-update DTO for Label.

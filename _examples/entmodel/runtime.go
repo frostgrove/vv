@@ -5,8 +5,8 @@ package entmodel
 import (
 	"time"
 
-	"github.com/shardit-io/go-rx-crud/_examples/entmodel/product"
-	"github.com/shardit-io/go-rx-crud/_examples/entmodel/schema"
+	"github.com/shardit-io/rx/_examples/entmodel/product"
+	"github.com/shardit-io/rx/_examples/entmodel/schema"
 )
 
 // The init function reads all schema descriptors with runtime code

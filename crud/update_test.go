@@ -3,7 +3,7 @@ package crud_test
 import (
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 type Item struct {

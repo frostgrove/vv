@@ -5,8 +5,8 @@ package integration
 import (
 	"time"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/basic"
 )
 
 // The blog schema exercises every relation kind at once: belongs_to, has_many,

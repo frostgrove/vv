@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // TestMain silences Gin's start-up banner and per-route debug lines, which

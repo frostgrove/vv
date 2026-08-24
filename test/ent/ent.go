@@ -12,7 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-	"github.com/shardit-io/go-rx-crud/test/ent/user"
+	"github.com/shardit-io/rx/test/ent/user"
 )
 
 // ent aliases to avoid import conflicts in user's code.

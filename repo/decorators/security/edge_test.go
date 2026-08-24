@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/crud/crudtest"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/security"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/crud/crudtest"
+	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/rx/repo/decorators/security"
 )
 
 func ptrTo[T any](v T) *T { return &v }

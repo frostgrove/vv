@@ -3,9 +3,10 @@
 package blog
 
 import (
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
 	"time"
+
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/decorators/specs"
 )
 
 // ArticleUpdate is the partial-update DTO for Article.

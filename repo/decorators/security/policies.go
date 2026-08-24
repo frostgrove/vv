@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // ScopeField is the multi-tenant one-liner: every query is narrowed to rows

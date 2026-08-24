@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
-	"github.com/shardit-io/go-rx-crud/_examples/entmodel/predicate"
+	"github.com/shardit-io/rx/_examples/entmodel/predicate"
 )
 
 // ID filters vertices based on their ID field.

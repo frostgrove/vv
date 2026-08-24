@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/go-rx-crud/_examples/entmodel"
+	"github.com/shardit-io/rx/_examples/entmodel"
 )
 
 // The ProductFunc type is an adapter to allow the use of ordinary

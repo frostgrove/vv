@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/basic"
 )
 
 // Two databases on one engine, reached through two *sql.DB handles. Everything

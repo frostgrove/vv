@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/query"
 )
 
 // Offset paging answers "skip 10, take 10", and what those ten rows are depends

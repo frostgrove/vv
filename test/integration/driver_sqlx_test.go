@@ -8,8 +8,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
 )
 
 // sqlx handles are *sql.DB and *sql.Tx underneath, so crudsql takes them as is.

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // Error is a rejected query document. Everything in it is safe to hand back to

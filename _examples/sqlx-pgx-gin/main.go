@@ -8,9 +8,9 @@
 // surface the handler exposes, because crud.Opt[int] is not a shape sqlx's
 // struct scanner understands.
 //
-//	go get github.com/shardit-io/go-rx-crud
-//	go get github.com/shardit-io/go-rx-crud/adapter/crudsql
-//	go get github.com/shardit-io/go-rx-crud/http/crudgin
+//	go get github.com/shardit-io/rx
+//	go get github.com/shardit-io/rx/adapter/crudsql
+//	go get github.com/shardit-io/rx/http/crudgin
 //	go get github.com/jmoiron/sqlx
 //	go get github.com/jackc/pgx/v5
 //
@@ -30,15 +30,15 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/http/crudgin"
-	"github.com/shardit-io/go-rx-crud/query"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/http/crudgin"
+	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/rx/repo/decorators/specs"
 )
 
-//go:generate go run github.com/shardit-io/go-rx-crud/cmd/rxcrud -readonly CreatedAt
+//go:generate go run github.com/shardit-io/rx/cmd/rxcrud -readonly CreatedAt
 
 // Product carries one tag set, `db`, read by both sqlx and rx-crud: sqlx maps
 // columns onto fields with it, and rx-crud reads the same tag for the pk,

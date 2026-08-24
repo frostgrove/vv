@@ -13,11 +13,11 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/http/crudfiber"
-	"github.com/shardit-io/go-rx-crud/query"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/http/crudfiber"
+	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/rx/repo/decorators/specs"
 )
 
 // articleService is what a real application would put between the handler and

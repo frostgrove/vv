@@ -13,10 +13,10 @@ import (
 
 	"entgo.io/ent/dialect"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudpgx"
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/adapter/crudpgx"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/query"
 )
 
 // blog is one database's worth of bound repositories.

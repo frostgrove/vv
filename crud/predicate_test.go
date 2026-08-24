@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // mustRender renders a predicate on its own, with no surrounding statement, so

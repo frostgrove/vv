@@ -9,8 +9,8 @@
 // one pool, ent migrating and seeding through it, rx-crud reading and writing
 // through it.
 //
-//	go get github.com/shardit-io/go-rx-crud
-//	go get github.com/shardit-io/go-rx-crud/http/crudfiber
+//	go get github.com/shardit-io/rx
+//	go get github.com/shardit-io/rx/http/crudfiber
 //	go get entgo.io/ent
 //	go get github.com/jackc/pgx/v5
 //
@@ -32,14 +32,14 @@ import (
 	"github.com/gofiber/fiber/v3"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/go-rx-crud/_examples/entmodel"
-	"github.com/shardit-io/go-rx-crud/_examples/entstore"
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/http/crudfiber"
-	"github.com/shardit-io/go-rx-crud/query"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/rx/_examples/entmodel"
+	"github.com/shardit-io/rx/_examples/entstore"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/http/crudfiber"
+	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/rx/repo/decorators/specs"
 )
 
 // The model is ent's own generated struct, entmodel.Product, bound as-is —

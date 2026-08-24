@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/basic"
 )
 
 // A real replica lags, which is exactly what makes routing hard to test: you

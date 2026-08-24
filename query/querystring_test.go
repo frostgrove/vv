@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/query"
 )
 
 // Every operator spelling has to mean the same thing on both front doors. A

@@ -10,13 +10,13 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/go-rx-crud/test/gormstore"
+	"github.com/shardit-io/rx/test/gormstore"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/query"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
-	"github.com/shardit-io/go-rx-crud/repo/decorators/specs"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/rx/repo/basic"
+	"github.com/shardit-io/rx/repo/decorators/specs"
 )
 
 // The models live in test/gormstore, next to their generated DTOs and
@@ -103,7 +103,7 @@ func TestGormMappingMatchesGorm(t *testing.T) {
 	}
 	for _, f := range s.Fields {
 		if stmt.Schema.LookUpField(f.Column) == nil {
-			t.Errorf("github.com/shardit-io/go-rx-crud maps %q, gorm has no such column", f.Column)
+			t.Errorf("github.com/shardit-io/rx maps %q, gorm has no such column", f.Column)
 		}
 	}
 	if GormMembers.Meta().Table != stmt.Schema.Table {

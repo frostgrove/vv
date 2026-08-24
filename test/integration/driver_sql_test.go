@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/adapter/crudsql"
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/adapter/crudsql"
+	"github.com/shardit-io/rx/crud"
 )
 
 // database/sql over pgx's stdlib driver.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/query"
 )
 
 // The failure this guards against is the quiet one: a client misspells the key

@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/query"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/query"
+	"github.com/shardit-io/rx/repo/basic"
 )
 
 // A UUID primary key is a different animal from an integer one, and every layer

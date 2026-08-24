@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/repo/basic"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/repo/basic"
 )
 
 // A scope is a WHERE clause, and a WHERE clause only ever constrains its own

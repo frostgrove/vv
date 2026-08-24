@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/query"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/query"
 )
 
 // ErrBadRequest marks a failure the binding itself produced — an id that does

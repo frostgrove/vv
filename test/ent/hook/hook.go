@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/go-rx-crud/test/ent"
+	"github.com/shardit-io/rx/test/ent"
 )
 
 // The UserFunc type is an adapter to allow the use of ordinary

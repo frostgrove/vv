@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shardit-io/go-rx-crud/_examples/example"
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/rx/_examples/example"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/crud/crudtest"
 )
 
 var (

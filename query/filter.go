@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shardit-io/go-rx-crud/crud"
+	"github.com/shardit-io/rx/crud"
 )
 
 // node compiles one filter object. Keys are either logical combinators

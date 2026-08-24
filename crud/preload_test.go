@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/go-rx-crud/crud"
-	"github.com/shardit-io/go-rx-crud/crud/crudtest"
+	"github.com/shardit-io/rx/crud"
+	"github.com/shardit-io/rx/crud/crudtest"
 )
 
 func runPreloads(t *testing.T, rec *crudtest.Recorder, m *crud.Meta, items any, specs ...crud.PreloadSpec) {

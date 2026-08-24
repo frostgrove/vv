@@ -8,8 +8,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/shardit-io/go-rx-crud/test/ent/predicate"
-	"github.com/shardit-io/go-rx-crud/test/ent/user"
+	"github.com/shardit-io/rx/test/ent/predicate"
+	"github.com/shardit-io/rx/test/ent/user"
 )
 
 // UserDelete is the builder for deleting a User entity.

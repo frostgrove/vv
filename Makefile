@@ -88,7 +88,7 @@ release: test ## Tag a release: make release V=v0.1.0
 	# the binding against a library it was never tested with.
 	@for m in $(MODULES); do \
 		test "$$m" = "." && continue; \
-		grep -q "go-rx-crud $(V)$$" $$m/go.mod || \
+		grep -q "shardit-io/rx $(V)$$" $$m/go.mod || \
 			(echo "$$m/go.mod does not require the library at $(V); run make version V=$(V)" && exit 1); \
 	done
 	# The library is tagged first: the submodule tags carry go.mod files that
