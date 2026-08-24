@@ -141,10 +141,10 @@ Tests are the specification; see `[[D-020]]`.
   closes it the control fails and tells you the positive test now proves nothing.
 - **Never `t.Parallel()` in `test/integration`** — every test shares the same
   physical tables.
-- **A change to one HTTP binding is a change to both.** `http/crudfiber` and
-  `http/crudgin` carry the same test names, file for file. If a new test only
-  makes sense for one of them, it belongs in `http/crudgin/routing_test.go` or
-  the equivalent, and the difference it pins belongs in `[[FL-013]]`.
+- **A change to one HTTP binding is a change to all three.** `http/crudfiber`,
+  `http/crudgin` and `http/crudnet` carry the same test names, file for file. If
+  a new test only makes sense for one of them, it belongs in that binding's
+  `routing_test.go`, and the difference it pins belongs in `[[FL-013]]`.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
 - The failure message states what broke in plain words, not `got != want`.
@@ -176,6 +176,7 @@ repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
 http/crudhttp/              the transport-neutral half of the HTTP layer
+http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
 cmd/rxcrud/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun
 crud/crudtest/              an in-memory source for unit-testing repositories

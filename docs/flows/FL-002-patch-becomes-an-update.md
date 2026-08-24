@@ -142,9 +142,9 @@ differs by dialect.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `Update`, id coercion, response |
-| `http/crudfiber/options.go`, `http/crudgin/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
-| `http/crudhttp/request.go` | `CoerceID` — the id coercion both bindings call |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Update`, id coercion, response |
+| `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
+| `http/crudhttp/request.go` | `CoerceID` — the id coercion every binding calls |
 | `crud/repo.go` | the typed `Update` façade |
 | `crud/update.go` | `UpdatePlan`, `Changes`, `planField.read`, `valuesEqual` |
 | `crud/opt.go` | the three states themselves |
@@ -156,7 +156,8 @@ differs by dialect.
 
 ## Tests that walk this flow
 
-Both below have an identical twin in `http/crudgin/handler_test.go`.
+Both below have an identical twin in `http/crudgin/handler_test.go` and
+`http/crudnet/handler_test.go`.
 
 - `TestUpdateForwardsOnlyTheFieldsTheBodyCarried` — `http/crudfiber/handler_test.go` — the wire half.
 - `TestUpdateCarriesAnExplicitNullThrough` — `http/crudfiber/handler_test.go` — `null` is not absence.

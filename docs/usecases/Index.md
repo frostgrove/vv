@@ -205,10 +205,12 @@ a decision.
     typo silently protects nothing. Contrast the scope and relation-path
     declarations, which fail at start-up.
 
-22. **[UC-001] There are two HTTP bindings, Fiber and Gin, and no more.** A
-    project on net/http, Echo, chi or gRPC still writes its own routes — but the
-    transport-neutral half is now a package of its own, so what it writes is
-    routing, body decoding and response writing rather than a second copy of the
-    status table, the id coercion and the create-time field clearing. The two
-    bindings differ in four named ways ([[FL-013]]); a third would have to say
-    where it differs too.
+22. **[UC-001] There are three HTTP bindings — Fiber, Gin and net/http — and no
+    other transport.** The `net/http` one is free: it needs no dependency, so it
+    ships in the library rather than as a module of its own. A project on Echo
+    or gRPC still writes its own routes, and one on chi or gorilla/mux can
+    register the `net/http` handler methods individually instead. What none of
+    them writes is the status table, the id coercion or the create-time field
+    clearing — writing the third binding is the evidence, because it needed
+    nothing added to the shared package. Where the three differ is a table in
+    [[FL-013]]; a fourth would have to add its row.

@@ -40,10 +40,11 @@ mistake or an access decision. Everything else is a 500 that says nothing.
    error — and on PostgreSQL every insert and update runs as
    `… RETURNING`, i.e. as a query.
 
-2. **`Handler.fail`** — `http/crudfiber/handler.go:369`,
-   `http/crudgin/handler.go:404` → `h.opt.errorHandler`, which is that binding's
-   `DefaultErrorHandler` unless `WithErrorHandler` replaced it. Every route in
-   both bindings ends here; no route has its own mapping.
+2. **`Handler.fail`** — one per binding, in `http/crudfiber/handler.go`,
+   `http/crudgin/handler.go` and `http/crudnet/handler.go` → `h.opt.errorHandler`,
+   which is that binding's `DefaultErrorHandler` unless `WithErrorHandler`
+   replaced it. Every route in every binding ends here; no route has its own
+   mapping.
 
 3. **`Status`** — `http/crudhttp/errors.go:39`
    A single ordered switch, using `errors.Is`/`errors.As` so wrapped errors
@@ -131,8 +132,8 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 | File | Role |
 |---|---|
 | `http/crudhttp/errors.go` | `Status`, `Body`, `StatusText`, `ErrorBody`, `ErrBadRequest`, `BadRequest` — the whole mapping, shared by every binding |
-| `http/crudfiber/options.go`, `http/crudgin/options.go` | the exported `Status` and `DefaultErrorHandler` per binding: one line and one response write each |
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `fail`, and the DELETE asymmetry |
+| `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | the exported `Status` and `DefaultErrorHandler` per binding: one line and one response write each |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `fail`, and the DELETE asymmetry |
 | `crud/errors.go` | every sentinel, `UnknownFieldError`, `SchemaError` |
 | `query/compile.go` | `query.Error` — path and reason, safe to hand back |
 | `adapter/crudsql/conflict.go` | SQLSTATE 23 → `ErrConflict`, by error shape |
@@ -144,10 +145,10 @@ mistake or an access decision. Everything else is a 500 that says nothing.
 ## Tests that walk this flow
 
 Every test below that names `http/crudfiber/` has an identical twin in
-`http/crudgin/`, same name, same file name. The two suites are ported one to one
-and the mapping they exercise is one switch ([[D-034]]) — removing an arm from
-`crudhttp.Status` fails both, which is the check that it is shared rather than
-copied.
+`http/crudgin/` and `http/crudnet/`, same name, same file name. The three suites
+are ported one to one and the mapping they exercise is one switch ([[D-034]]) —
+removing an arm from `crudhttp.Status` fails all three, which is the check that
+it is shared rather than copied.
 
 - `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` — the switch, arm by arm.
 - `TestRepositoryErrorsBecomeStatusCodes` — `http/crudfiber/edge_test.go`.
@@ -166,6 +167,7 @@ copied.
 - `TestAScopeThatFailsIsMappedLikeAnyOtherError` — `http/crudfiber/edge_test.go`.
 - `TestHTTPRejections` — `test/integration/http_test.go` — end to end against a database.
 - `TestGinHTTPRejections` — `test/integration/http_gin_test.go` — the same, through the Gin binding.
+- `TestNetHTTPRejections` — `test/integration/http_net_test.go` — and through the net/http binding.
 
 ## See also
 

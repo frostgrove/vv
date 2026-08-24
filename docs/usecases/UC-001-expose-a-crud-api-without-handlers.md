@@ -61,9 +61,10 @@ resource, and wants the twentieth resource to cost exactly what the first did.
   does not invent the endpoint.
 - **The response shape of an entity.** It is the model, as JSON, unless a
   presenter is installed (UC-013).
-- **Any transport but Fiber v3 and Gin v1.** The repository is transport-neutral
-  and the transport-shaped half of the binding is a package of its own, but only
-  those two bindings are written and tested.
+- **Any transport but HTTP.** Three HTTP bindings are written and tested —
+  Fiber, Gin and `net/http` — and the transport-shaped half of a binding is a
+  package of its own, so a fourth is small. gRPC, GraphQL and a message queue
+  are not written.
 
 ## Covered by
 | Flow | What it contributes |
@@ -84,21 +85,22 @@ mount all have unit tests against a recording datasource, and the create /
 patch / delete lifecycle plus pagination and the rejection paths are re-run end
 to end against live PostgreSQL and MySQL.
 
-There are two bindings, Fiber and Gin, and they answer the same 147 unit tests
-and the same end-to-end suite. Mounting one or the other is the same line of
-code with a different package name, and a service type written against one
-satisfies the other unchanged — the interface is literally the same type, which
-the integration suite proves by mounting one service on both.
+There are three bindings — Fiber, Gin and `net/http` — and they answer the same
+147 unit tests and the same end-to-end suite. Mounting one or another is the
+same line of code with a different package name, and a service type written
+against one satisfies the others unchanged: the interface is literally the same
+type, which the integration suite proves by mounting one service on all three.
+The `net/http` binding costs nothing to have, because it needs no dependency.
 
-The gap that remains is narrower than it was and is still one of breadth. A
-project on net/http, Echo, chi or gRPC still writes its own routes. What it no
-longer has to write is the interesting part: the status table, the bad-request
-sentinel, the create-time clearing of a generated key, the id coercion and the
-count/entity narrowing are all in a package with no framework in it, so a third
-binding is routing, body decoding and response writing — a few hundred lines,
-not a re-derivation.
+The gap that remains is narrower than it was. A project on Echo, chi or gRPC
+still writes its own routes — though one on chi or gorilla/mux can register the
+`net/http` binding's handler methods one by one instead, because they are
+ordinary `http.HandlerFunc`s. What nobody has to write is the interesting part:
+the status table, the bad-request sentinel, the create-time clearing of a
+generated key, the id coercion and the count/entity narrowing all live in a
+package with no framework in it. Writing the third binding is the evidence: it
+needed nothing added to that package.
 
-The four differences between the two bindings are named rather than papered
-over: Gin has no mountable sub-application, its collection route is registered
-without a trailing slash, it accepts JSON bodies only, and an unmounted route is
-404 unless the application turns on 405. All four are in [[FL-013]].
+Where the three differ is named rather than papered over — mounting, body
+encodings, and what each router does with a trailing slash or a method it does
+not have. [[FL-013]] carries the table.

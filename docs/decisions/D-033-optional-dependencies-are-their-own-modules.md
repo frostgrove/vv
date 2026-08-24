@@ -33,7 +33,9 @@ go get github.com/shardit-io/go-rx-crud/http/crudgin
 
 `adapter/crudsql` stays in the root because it is `database/sql`, which is the
 standard library — and it is therefore how ent, gorm, sqlx, sqlc and bun are
-reached with no plugin at all.
+reached with no plugin at all. `http/crudnet`, the `net/http` binding, stays for
+the same reason: the rule is about dependencies, not about layers, so a binding
+with no dependency is not a module.
 
 This supersedes [[D-016]], which chose one module and accepted the opposite
 trade. D-016's own escape clause is the route taken here: *"If a dependency is
@@ -78,6 +80,11 @@ submodule's `go.mod` does not name the version being cut.
 
 - Do not add an external requirement to the root `go.mod`. If a package needs
   one, the package moves into a module of its own.
+- Do not give a package its own module because of what layer it is in. A binding
+  or an adapter that imports only the standard library belongs in the library:
+  a second `go get` bought for no dependency is a cost with nothing on the other
+  side of it. `adapter/crudsql` and `http/crudnet` are both in the root for that
+  reason.
 - Do not put a `replace` in a published `go.mod`. It is invisible to consumers
   and it hides the fact that the required version does not exist yet.
 - Do not tag a submodule before the root tag it requires is pushed. A binding
@@ -97,6 +104,8 @@ submodule's `go.mod` does not name the version being cut.
   block at all.
 - `http/crudfiber/go.mod`, `http/crudgin/go.mod`, `adapter/crudpgx/go.mod` —
   one external requirement each, plus the library.
+- `http/crudnet/` and `adapter/crudsql/` — no `go.mod`, because there is no
+  dependency to isolate.
 - `test/go.mod`, `_examples/go.mod` — the unpublished modules, each with a
   `replace` per published module.
 - `go.work` — joins the four published modules and `test`.

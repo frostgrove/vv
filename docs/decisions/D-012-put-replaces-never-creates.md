@@ -54,14 +54,13 @@ and the out-of-step configuration is exactly the hole this closes.
 
 ## Where it lives
 
-- `http/crudfiber/handler.go:Handler.Replace` and
-  `http/crudgin/handler.go:Handler.Replace` — the existence check, the
-  `clearGenerated`, the `SetID` from the path. Both bindings, in that order.
+- `Handler.Replace` in `http/crudfiber/handler.go`, `http/crudgin/handler.go`
+  and `http/crudnet/handler.go` — the existence check, the `ClearGenerated`, the
+  `SetID` from the path. Every binding, in that order.
 - `http/crudhttp/model.go:Sanitize` — the `POST` half.
 - `http/crudhttp/model.go:ClearGenerated` — shared by both routes and both
   bindings ([[D-034]]).
-- `http/crudfiber/options.go:AllowClientID` /
-  `http/crudgin/options.go:AllowClientID` — the switch.
+- `AllowClientID` in each binding's `options.go` — the switch.
 - `crud/meta.go:Field.Auto` — set for an integer primary key unless `noauto` says
   otherwise; this is what the branch reads.
 
@@ -70,14 +69,15 @@ and the out-of-step configuration is exactly the hole this closes.
 - `TestPutIsNotAWayAroundAllowClientID` in `http/crudfiber/write_edge_test.go`
   and `http/crudgin/write_edge_test.go` — the whole point of the decision,
   stated as a test, once per binding.
-- `TestReplaceTakesTheIDFromThePathNotTheBody` in both bindings'
+- `TestReplaceTakesTheIDFromThePathNotTheBody` in every binding's
   `handler_test.go`.
-- `TestAllowClientIDLetsTheClientChooseTheKey` in both bindings'
+- `TestAllowClientIDLetsTheClientChooseTheKey` in every binding's
   `options_test.go` — the opt-in still works.
-- `TestHTTPReplace` in `test/integration/http_test.go` and `TestGinHTTPReplace`
-  in `test/integration/http_gin_test.go` — against a live database, which is
-  the only place the PostgreSQL sequence hazard is real.
-- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` in both bindings'
+- `TestHTTPReplace`, `TestGinHTTPReplace` and `TestNetHTTPReplace` in
+  `test/integration/http_test.go`, `http_gin_test.go` and `http_net_test.go` —
+  against a live database, which is the only place the PostgreSQL sequence
+  hazard is real.
+- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` in every binding's
   `handler_test.go` — the `POST` half this exists to defend.
 
 ## See also

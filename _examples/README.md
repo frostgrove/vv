@@ -20,6 +20,12 @@ curl 'localhost:8080/products?f=price:gte:100&sort=-price'
 Every example serves the same resource at `/products` with the same ten routes,
 so you can diff any two files and see only what the stack changes.
 
+All of them need `go get github.com/shardit-io/go-rx-crud`. Beyond that each
+needs only what its own stack uses: the Fiber ones add `.../http/crudfiber`, the
+Gin ones `.../http/crudgin`, `pgx-fiber` adds `.../adapter/crudpgx`, and
+`sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so
+both live in the library.
+
 ## The matrix
 
 | Example | Data layer | Adapter | Engine | HTTP | What it shows that the others do not |
@@ -30,6 +36,7 @@ so you can diff any two files and see only what the stack changes.
 | [`gorm-pgx-fiber`](gorm-pgx-fiber/) | gorm | `crudsql` | PostgreSQL | Fiber | One struct carrying both gorm and rx-crud tags: no second model, no adapter type, and gorm and rx-crud share one `*sql.DB`. |
 | [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so rx-crud reads the written row back; the caller cannot tell ([`D-019`](../docs/decisions/D-019-dialect-differences-are-not-observable.md)). |
 | [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and rx-crud read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, rx-crud serves the CRUD surface. |
+| [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
 surface in one file — model, DTO, declaration, metamodel, security policy —
@@ -39,6 +46,22 @@ with tests that run it against `crud/crudtest`, so it needs no database.
 examples: ent's generated package, and the rx-crud DTO and metamodel generated
 from it. In your own project both live in your own tree; they are shared here
 only so the same ent code is not checked in twice.
+
+## If your project is on neither Fiber nor Gin
+
+Read [`sql-nethttp`](sql-nethttp/). It mounts `http/crudnet`, the `net/http`
+binding, and it is the same one-liner the other examples use:
+
+```go
+mux := http.NewServeMux()
+crudnet.New(repo).Mount(mux, "/products")
+```
+
+`crudnet` imports nothing outside the standard library, so unlike the Fiber and
+Gin bindings it is not a module of its own — it ships in the library and costs
+nothing to have. Its route methods are ordinary `http.HandlerFunc`s, so a router
+that is neither `ServeMux` nor a framework — chi, gorilla/mux, httprouter — can
+register them one by one instead of calling `Mount`.
 
 ## Two things the responses will show you
 

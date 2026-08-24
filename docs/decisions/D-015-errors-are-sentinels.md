@@ -81,7 +81,7 @@ for statuses below 500.
   into `security.ReadOnly` — that would turn a 403 into a 500.
 - Do not map `ErrNoTxSupport` to a 4xx. The caller asked for a transaction from
   something that cannot give one; that is a wiring bug, not a request problem.
-- Do not re-derive the table in a second transport binding. There is one switch
+- Do not re-derive the table in another transport binding. There is one switch
   and every binding calls it ([[D-034]]); two copies drift the day a sentinel is
   added, and nothing fails when they do.
 
@@ -102,8 +102,9 @@ for statuses below 500.
 - `http/crudhttp/errors.go:Status` — the whole mapping in one switch, shared by
   every transport binding ([[D-034]]).
 - `http/crudhttp/errors.go:Body` — the response body, and the 500 silence.
-- `http/crudfiber/options.go:Status` / `http/crudgin/options.go:Status` — the
-  exported per-binding entry points, both one line over the shared switch.
+- `http/crudfiber/options.go:Status`, `http/crudgin/options.go:Status`,
+  `http/crudnet/options.go:Status` — the exported per-binding entry points, each
+  one line over the shared switch.
 
 ## Proven by
 

@@ -157,8 +157,8 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 | File | Role |
 |---|---|
 | `http/crudfiber/handler.go` | routes, query-string reading, option assembly |
-| `http/crudgin/handler.go` | the same, for Gin — `URL.Query()` in place of the `queryValues` workaround ([[FL-013]]) |
-| `http/crudhttp/request.go` | `NarrowForCount`, `NarrowForEntity`, `DecodeJSON` — shared by both bindings |
+| `http/crudgin/handler.go`, `http/crudnet/handler.go` | the same, for Gin and `net/http` — `URL.Query()` in place of the `queryValues` workaround ([[FL-013]]) |
+| `http/crudhttp/request.go` | `NarrowForCount`, `NarrowForEntity`, `DecodeJSON` — shared by every binding |
 | `query/querystring.go` | `ParseQuery`, `ParseTerm`, flat-term compilation |
 | `query/request.go` | the `Request` document and its forgiving JSON shapes |
 | `query/compile.go` | `Compile`, the allow-lists, budgets, path resolution |
@@ -171,7 +171,8 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 
 ## Tests that walk this flow
 
-Each of the four below has an identical twin in `http/crudgin/handler_test.go`.
+Each of the four below has an identical twin in `http/crudgin/handler_test.go`
+and `http/crudnet/handler_test.go`.
 
 - `TestListCompilesQueryStringPagingAndSorting` — `http/crudfiber/handler_test.go` — the query-string door end to end.
 - `TestQueryBodyCompilesTheWholeDSL` — `http/crudfiber/handler_test.go` — the JSON door.

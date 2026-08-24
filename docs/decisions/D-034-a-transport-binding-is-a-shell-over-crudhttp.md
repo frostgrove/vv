@@ -18,8 +18,8 @@
 | `DecodeJSON` | a body read, with an empty body meaning "no narrowing" |
 | `BulkDeleteRequest[ID]` | the bulk-delete body |
 
-A binding — `crudfiber`, `crudgin`, or one a consumer writes — owns exactly
-three things: which routes exist and how they are mounted, how a body becomes a
+A binding — `crudfiber`, `crudgin`, `crudnet`, or one a consumer writes — owns
+exactly three things: which routes exist and how they are mounted, how a body becomes a
 Go value, and how a response is written. `crudfiber.Repository`,
 `crudfiber.ErrorBody` and their `crudgin` counterparts are type aliases, and
 `Status` is a one-line call, so the exported surface of each binding is
@@ -45,12 +45,18 @@ and accepts XML and form encodings; Gin's binder runs `validator/v10` over
 `binding:"…"` tags, which would let a tag on a model change what the CRUD routes
 accept under one transport and not the other. `crudgin` therefore decodes with
 `encoding/json` through `crudhttp.DecodeJSON`, and accepts JSON only. That is a
-real difference between the two bindings and it is named in [[FL-013]] rather
+real difference between the bindings and it is named in [[FL-013]] rather
 than smoothed over.
 
 **Why `crudhttp` is in the root module.** It imports `crud`, `query` and the
 standard library, and nothing else. Putting it anywhere else would make one
 binding depend on the other's module ([[D-033]]).
+
+**Why `crudnet` is too.** The `net/http` binding imports nothing outside the
+standard library either, so [[D-033]]'s rule puts it in the library: a module of
+its own would be a second `go get` bought for no dependency. It is the shape
+this decision predicts — a binding is thin enough that when the framework is
+free, the binding is free.
 
 ## What it forbids
 
@@ -85,19 +91,38 @@ binding depend on the other's module ([[D-033]]).
 
 ## Proven by
 
-The two bindings run the same test suite: `http/crudfiber` and `http/crudgin`
-have the same 147 test and subtest names, ported one to one, and both are green.
+All three bindings run the same test suite: `http/crudfiber`, `http/crudgin`
+and `http/crudnet` have the same 147 test and subtest names, ported one to one,
+and all three are green.
 
 - Removing the `crud.ErrNotFound` arm from `crudhttp.Status` fails
   `TestRepositoryErrorsBecomeStatusCodes`, `TestDeletingNothingIs404ForOneRowAndZeroForASet`
-  and `TestPutIsNotAWayAroundAllowClientID` in **both** packages, identically.
-  That is the check that the shared half is genuinely shared rather than
-  duplicated.
-- `TestGinHTTPServiceLayerIsHonoured` in `test/integration/http_gin_test.go`
-  mounts the same `articleService` declared in `test/integration/http_test.go`,
-  which only compiles because the two `Repository` types are one type.
-- `TestStatusMapsWhatItPromisesTo` in `http/crudfiber/edge_test.go` and
-  `http/crudgin/edge_test.go` — the table, arm by arm, from both sides.
+  and `TestPutIsNotAWayAroundAllowClientID` in **all three** packages,
+  identically. That is the check that the shared half is genuinely shared rather
+  than duplicated.
+- `TestGinHTTPServiceLayerIsHonoured` and `TestNetHTTPServiceLayerIsHonoured`
+  mount the same `articleService` declared in `test/integration/http_test.go`,
+  which only compiles because the three `Repository` types are one type.
+- `TestStatusMapsWhatItPromisesTo` in every binding's `edge_test.go` — the
+  table, arm by arm, from every side.
+
+The sharper check is the third binding. `http/crudnet` was written against this
+package and needed nothing added to it: it holds `crudhttp.Repository` and calls
+`Body`, `CoerceID`, `Sanitize`, `ClearGenerated`, `NarrowForCount`,
+`NarrowForEntity`, `DecodeJSON` and `BulkDeleteRequest` for everything that is
+not routing, body decoding or writing a response. If the split in this decision
+were in the wrong place, writing that package is where it would have shown.
+
+It carries the same 147 test and subtest names as the other two, name for name,
+and `test/integration/http_net_test.go` runs the same nine end-to-end tests
+against live PostgreSQL and MySQL — mounting the very same `articleService` the
+other two suites mount, which only compiles because all three `Repository` types
+are one type.
+
+One divergence did show up and was closed rather than tolerated: writing the
+response with `json.Encoder` appends a newline, so `crudnet`'s bodies were a
+byte different from the other two. `writeJSON` marshals first instead, which
+also lets an unencodable value become a 500 rather than a half-written 200.
 
 ## See also
 

@@ -198,10 +198,11 @@ The other options on the same call:
 
 Depth, condition and preload limits apply whether or not you set the lists.
 
-Every name above exists in `crudgin` too, spelled the same, taking the same
-arguments — the only difference is that the five callback options carry a
-`*gin.Context` instead of a `fiber.Ctx`, and the ones that write a response
-return nothing because a `gin.HandlerFunc` does not.
+Every name above exists in `crudgin` and `crudnet` too, spelled the same, taking
+the same arguments. The only difference is what the five callback options carry:
+a `fiber.Ctx`, a `*gin.Context`, or an `*http.Request`. The ones that write a
+response return nothing outside the Fiber binding, because neither
+`gin.HandlerFunc` nor `http.HandlerFunc` returns an error.
 
 ---
 
@@ -385,7 +386,9 @@ go get github.com/shardit-io/go-rx-crud/http/crudfiber  # …and your HTTP frame
 
 The library itself has **no external dependencies**. Anything that would add one
 is a module of its own in the same repository, so you take the Fiber binding or
-the Gin binding — `.../http/crudgin` — and neither drags the other in. On gorm
+the Gin binding — `.../http/crudgin` — and neither drags the other in. If you
+are on neither, take `.../http/crudnet`: it is `net/http` and imports nothing, so
+it ships in the library and there is no second `go get` at all. On gorm
 over `database/sql` there is no driver package to add either: `crudsql` is part
 of the library.
 
@@ -394,7 +397,7 @@ import (
     "github.com/shardit-io/go-rx-crud/crud"
     "github.com/shardit-io/go-rx-crud/repo/basic"
     "github.com/shardit-io/go-rx-crud/adapter/crudsql"
-    "github.com/shardit-io/go-rx-crud/http/crudfiber"   // or .../http/crudgin
+    "github.com/shardit-io/go-rx-crud/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
 )
 ```
 
@@ -626,10 +629,19 @@ mountable sub-application:
 `Register(r)` takes a group you already built, when the routes need middleware:
 `crudgin.New(…).Register(r.Group("/members", authMiddleware))`.
 
+On plain `net/http` there is no framework to add at all:
+
+```go
+    mux := http.NewServeMux()
+    crudnet.New(store.Members.Bind(src)).Mount(mux, "/members")
+
+    log.Fatal(http.ListenAndServe(":8080", mux))
+```
+
 Everything from here on — every option, every status, every response shape — is
-identical between the two. The four places they differ are listed in
-`docs/flows/FL-013-a-request-through-the-gin-binding.md`; the one most likely to
-matter is that the Gin binding accepts JSON request bodies only.
+identical across the three. Where they differ is a table in
+`docs/flows/FL-013-a-request-through-another-binding.md`; the one most likely to
+matter is that the Gin and `net/http` bindings accept JSON request bodies only.
 
 ## 12. Your business rules: the service layer
 
@@ -799,8 +811,8 @@ func TestServiceRejectsEmptyName(t *testing.T) {
 }
 ```
 
-For the HTTP layer, Fiber's `app.Test(req)` drives the whole handler; on Gin
-it is `httptest.NewRecorder()` and `engine.ServeHTTP(w, req)`.
+For the HTTP layer, Fiber's `app.Test(req)` drives the whole handler; on Gin and
+`net/http` it is `httptest.NewRecorder()` and `ServeHTTP(w, req)`.
 
 ## 16. Gotchas
 

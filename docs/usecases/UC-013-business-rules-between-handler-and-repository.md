@@ -70,7 +70,7 @@ handler itself.
 | [[FL-002]] | the update hook's position relative to the DTO binding |
 | [[FL-003]] | the create hook's position relative to clearing server-owned fields |
 | [[FL-011]] | a service refusal becoming a status |
-| [[FL-013]] | the same hooks under the second binding, with the request type its framework uses |
+| [[FL-013]] | the same hooks under the other two bindings, each with the request type its framework uses |
 
 ## Status
 **covered.** The stand-in interface, the embedding shortcut, both hooks (mutation

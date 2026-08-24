@@ -82,9 +82,9 @@ Guarantee 12 is the weakest link and is worth restating rather than trusting: th
 handler binds the body onto the same DTO type the repository was declared with,
 so there is one path by construction, but nothing asserts the two cannot diverge.
 
-There are now two HTTP bindings, and they decode bodies differently — one
-dispatches on Content-Type, the other takes JSON only — so the guarantee is
-worth more than it was and is worth watching harder. Both run the same
+There are now three HTTP bindings, and they do not decode bodies the same way —
+one dispatches on Content-Type, the other two take JSON only — so the guarantee
+is worth more than it was and is worth watching harder. All three run the same
 absent-versus-null tests, including the explicit `null`, so the three states
-survive both decoders today. A third binding would have to bring those tests
+survive every decoder today. A fourth binding would have to bring those tests
 with it.

@@ -1,16 +1,20 @@
-# FL-013 — A request through the Gin binding
+# FL-013 — A request through the Gin and net/http bindings
 
-**Entry point:** `http/crudgin/handler.go:List` (and every sibling route method)
+**Entry point:** `http/crudgin/handler.go:List` and `http/crudnet/handler.go:List` (and every sibling route method)
 **Implements:** [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] · **Governed by:** [[D-034]] [[D-033]] [[D-022]] [[D-012]] [[D-015]]
 
-There are two HTTP bindings and one path. This flow is the short document that
-says where they part company: what `crudgin` does that `crudfiber` does not, and
-where a reader should stop reading this file and go read [[FL-001]], [[FL-002]],
-[[FL-003]], [[FL-011]] or [[FL-012]] instead.
+There are three HTTP bindings and one path. This flow is the short document that
+says where they part company: what `crudgin` and `crudnet` do that `crudfiber`
+does not, and where a reader should stop reading this file and go read
+[[FL-001]], [[FL-002]], [[FL-003]], [[FL-011]] or [[FL-012]] instead.
 
 Everything from `compile` onwards is identical, by construction rather than by
-discipline — the shared half is one package, `http/crudhttp`, and both bindings
-call into it ([[D-034]]).
+discipline — the shared half is one package, `http/crudhttp`, and all three
+bindings call into it ([[D-034]]).
+
+`crudnet` is the one that costs nothing. It imports only the standard library,
+so unlike the other two it is not a module of its own: it ships inside the
+library ([[D-033]]).
 
 ## The path
 
@@ -40,10 +44,24 @@ call into it ([[D-034]]).
    cause for Gin's logging middleware and `c.AbortWithStatusJSON` writes the
    response. The error text still never reaches a 500 body ([[FL-011]]).
 
-## Where the two bindings differ
+## Where the bindings differ
 
-Four differences, all of them deliberate. Nothing else about the two APIs is
-different, including every option name and every status code.
+Every option name, every status code and every response shape is the same in all
+three. What differs is mounting, body decoding and what the router does with a
+path or a method it does not have.
+
+| | `crudfiber` | `crudgin` | `crudnet` |
+|---|---|---|---|
+| module | its own | its own | the library's — stdlib only |
+| mount | `app.Use(prefix, h.Routes())` | `h.Mount(r, prefix)` | `h.Mount(mux, prefix)` |
+| handler type | `func(fiber.Ctx) error` | `gin.HandlerFunc` | `http.HandlerFunc` |
+| hooks carry | `fiber.Ctx` | `*gin.Context` | `*http.Request` |
+| request bodies | JSON, XML, form | JSON | JSON |
+| `/x` vs `/x/` | both | `/x`, and 301 from `/x/` | both |
+| unmounted verb | 405 | 404, or 405 with `HandleMethodNotAllowed` | 405 |
+| unclaimed path | 404 | 404 | 404 |
+
+The Gin-specific detail behind that table:
 
 - **Mounting.** Gin has no mountable sub-application, so there is no counterpart
   to `Routes() *fiber.App`. `Mount(r gin.IRouter, prefix string)` is the
@@ -64,6 +82,18 @@ different, including every option name and every status code.
 - **An unmounted route is 404, not 405.** Gin answers 404 for a path that exists
   under another verb unless `Engine.HandleMethodNotAllowed` is set. That is the
   application's setting to make, and the handler does not touch it.
+
+And the two that are specific to `crudnet`:
+
+- **The collection is registered under both spellings.** `ServeMux` has no
+  trailing-slash redirect of its own — `/articles` and `/articles/` are two
+  patterns and the unregistered one answers 404 — so `Mount` registers both.
+  Gin needed the opposite treatment: registering both there collapses to one
+  path and panics.
+- **At the root the collection is `"/{$}"`, never `"/"`.** A bare `/` is
+  `ServeMux`'s catch-all: mounted at the root it would answer for every path in
+  the process that no other pattern claims, returning 200 and a page of rows
+  where the application meant 404. `{$}` matches the root path and nothing else.
 
 ## Where the decisions bite
 
@@ -101,11 +131,14 @@ different, including every option name and every status code.
 |---|---|
 | `http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, option assembly |
 | `http/crudgin/options.go` | the nine options, `Status`, `DefaultErrorHandler` |
-| `http/crudhttp/repository.go` | `Repository` — the interface both bindings alias |
+| `http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
+| `http/crudnet/options.go` | the nine options, `Status`, `DefaultErrorHandler`, `writeJSON` |
+| `http/crudhttp/repository.go` | `Repository` — the interface every binding aliases |
 | `http/crudhttp/errors.go` | `Status`, `StatusText`, `Body`, `ErrBadRequest`, `BadRequest`, `BadRequestf` |
 | `http/crudhttp/request.go` | `CoerceID`, `NarrowForCount`, `NarrowForEntity`, `DecodeJSON`, `BulkDeleteRequest` |
 | `http/crudhttp/model.go` | `Sanitize`, `ClearGenerated` |
 | `http/crudgin/go.mod` | the module boundary that keeps Gin off everybody else |
+| — | `crudnet` has no `go.mod`: there is no dependency to keep off anybody |
 
 Everything the request touches after `compile` is in [[FL-001]]'s file table.
 
@@ -130,9 +163,23 @@ Everything the request touches after `compile` is in [[FL-001]]'s file table.
   against live PostgreSQL and MySQL, mounting the same service type the Fiber
   suite mounts.
 
-The two bindings' unit suites carry the same 147 test and subtest names. A
-change that makes them diverge is either a bug or a fifth entry in *Where the
-two bindings differ*.
+And the `crudnet` half:
+
+- `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `http/crudnet/routing_test.go`
+  — the same guarantee, with the same control case.
+- `TestBothSpellingsOfTheCollectionAnswer` — `http/crudnet/routing_test.go` —
+  `/widgets` and `/widgets/` both reach the list handler, and a create through
+  either reaches `Save`.
+- `TestMountingAtTheRootClaimsOnlyTheRootPath` — `http/crudnet/routing_test.go`
+  — the catch-all the `{$}` choice avoids. Its control asserts that an
+  unregistered path is a 404 that never reaches the repository; with a bare `/`
+  it is a 200 and a page of rows, which is why the control is the test.
+- `TestNetHTTP*` — `test/integration/http_net_test.go` — the same nine tests end
+  to end, mounting the same service type again.
+
+All three unit suites carry the same 147 test and subtest names, plus the
+routing tests each router needs. A change that makes the shared 147 diverge is
+either a bug or a new row in the table above.
 
 ## See also
 

@@ -10,10 +10,11 @@
 `crud.Repo[M, ID, U]` satisfies it, `specs.Repo` satisfies it, and so does any
 struct that embeds either. `Handler` stores the interface and nothing else.
 
-`crudfiber.Repository` and `crudgin.Repository` are type aliases for it, not
-separate declarations ([[D-034]]). A generic alias is the same type, so a service
-written for one binding satisfies the other with no change — which is what keeps
-"the repository is transport-neutral" true rather than merely plausible.
+`crudfiber.Repository`, `crudgin.Repository` and `crudnet.Repository` are type
+aliases for it, not separate declarations ([[D-034]]). A generic alias is the
+same type, so a service written for one binding satisfies the other two with no
+change — which is what keeps "the repository is transport-neutral" true rather
+than merely plausible.
 
 ## Why
 
@@ -73,8 +74,8 @@ spelled when the option is built separately.
 
 - `http/crudhttp/repository.go:Repository` — the interface, with the reason on
   it.
-- `http/crudfiber/handler.go:Repository` / `http/crudgin/handler.go:Repository`
-  — the per-binding aliases.
+- `http/crudfiber/handler.go:Repository`, `http/crudgin/handler.go:Repository`,
+  `http/crudnet/handler.go:Repository` — the per-binding aliases.
 - `http/crudfiber/handler.go:Handler` / `http/crudgin/handler.go:Handler` — each
   holds `repo Repository[M, ID, U]`.
 - `http/crudfiber/handler.go:New` / `http/crudgin/handler.go:New` — infer all
@@ -89,20 +90,20 @@ spelled when the option is built separately.
 
 ## Proven by
 
-- `TestAServiceLayerCanStandInForTheRepository` in
-  `http/crudfiber/handler_test.go` and `http/crudgin/handler_test.go` — the
-  decision, stated as a test, once per binding.
+- `TestAServiceLayerCanStandInForTheRepository` in every binding's
+  `handler_test.go` — the decision, stated as a test, once per binding.
 - `TestHTTPServiceLayerIsHonoured` in `test/integration/http_test.go` and
   `TestGinHTTPServiceLayerIsHonoured` in `test/integration/http_gin_test.go` —
   the same thing end to end against a live database, so a service override that
-  is bypassed by a route shows up. Both mount the *same* `articleService`, which
-  only compiles because the two `Repository` types are one type.
-- `TestNewInfersItsTypeParametersFromTheRepository` in
-  `http/crudfiber/options_test.go` and `http/crudgin/options_test.go` — the
-  inference half.
+  is bypassed by a route shows up. `TestNetHTTPServiceLayerIsHonoured` in
+  `test/integration/http_net_test.go` is the third. All three mount the *same*
+  `articleService`, which only compiles because the three `Repository` types are
+  one type.
+- `TestNewInfersItsTypeParametersFromTheRepository` in every binding's
+  `options_test.go` — the inference half.
 - `TestRoutesMountEveryDocumentedEndpoint` and
-  `TestRegisterMountsOnAnExistingRouter` in both bindings' `handler_test.go`.
-- `TestEveryRouteMapsARefusalTheSameWay` in both bindings' `edge_test.go` — a
+  `TestRegisterMountsOnAnExistingRouter` in every binding's `handler_test.go`.
+- `TestEveryRouteMapsARefusalTheSameWay` in every binding's `edge_test.go` — a
   route that reached past the interface would show up as a route that handles
   errors differently.
 

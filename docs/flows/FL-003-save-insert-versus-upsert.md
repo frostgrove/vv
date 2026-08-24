@@ -120,8 +120,8 @@ primary key holds a value.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | `Create`, `Replace` |
-| `http/crudhttp/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for both bindings ([[D-034]]) |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Create`, `Replace` |
+| `http/crudhttp/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding ([[D-034]]) |
 | `repo/basic/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
@@ -140,7 +140,8 @@ primary key holds a value.
 - `TestSaveNeverWindsTheVersionBack` — `repo/basic/version_test.go` — the version stays out of the conflict clause.
 - `TestDialectUpsert` — `crud/dialect_test.go` — the clause each dialect renders.
 - `TestUpsertClauseCarriesItsOwnLeadingSpace` — `crud/dialect_test.go` — concatenation contract with `insertFull`.
-Each `http/crudfiber/` test below has an identical twin in `http/crudgin/`.
+Each `http/crudfiber/` test below has an identical twin in `http/crudgin/` and
+`http/crudnet/`.
 
 - `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` — `http/crudfiber/handler_test.go` — `Sanitize`.
 - `TestPutIsNotAWayAroundAllowClientID` — `http/crudfiber/write_edge_test.go` — the PUT probe.

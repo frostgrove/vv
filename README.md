@@ -16,6 +16,7 @@ repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
 http/crudhttp/              the transport-neutral half: status mapping, id coercion, sanitising
+http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
 cmd/rxcrud/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
 crud/crudtest/              an in-memory source for unit-testing repositories
@@ -30,7 +31,8 @@ Declare a model, get a filtered, sorted, paginated, relation-loading HTTP API:
 
 ```go
 app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber
-crudgin.New(articles).Mount(r, "/articles")              // or Gin
+crudgin.New(articles).Mount(r, "/articles")              // Gin
+crudnet.New(articles).Mount(mux, "/articles")            // or net/http, no dependency at all
 ```
 
 ```http
@@ -54,25 +56,26 @@ would need a test schema that declares one, and none does.
   and associations included
 
 **Prefer running code?** [`_examples/`](_examples/) has one small, complete program per
-stack — ent, gorm, sqlx and no-ORM-at-all, across both HTTP bindings and both engines.
-Start the databases with `make up` and `go run ./<example>` serves a real API you can
-curl. Each one is a single file you can read top to bottom.
+stack — ent, gorm, sqlx and no-ORM-at-all, across all three HTTP bindings and both
+engines. Start the databases with `make up` and `go run ./<example>` serves a real API
+you can curl. Each one is a single file you can read top to bottom.
 
 ---
 
 ## Install
 
 ```bash
-go get github.com/shardit-io/go-rx-crud                    # the library
-go get github.com/shardit-io/go-rx-crud/http/crudgin       # …and your HTTP framework
+go get github.com/shardit-io/go-rx-crud                    # the library — and, on net/http, the whole of it
+go get github.com/shardit-io/go-rx-crud/http/crudgin       # …plus your HTTP framework, if you use one
 go get github.com/shardit-io/go-rx-crud/adapter/crudpgx    # …and pgx, if that is your driver
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
 is a module of its own in the same repository, so you download the Fiber binding
-or the Gin binding or neither, and pgx only if you use pgx. On `database/sql` —
-which is how ent, gorm, sqlx, sqlc and bun are reached — there is nothing to add
-past the first line.
+or the Gin binding or neither, and pgx only if you use pgx. The `net/http`
+binding and the `database/sql` adapter need nothing, so they ship in the library
+— on `net/http` over `database/sql`, which is how ent, gorm, sqlx, sqlc and bun
+are reached, the first line is the whole installation.
 
 Versions move in lockstep: the library and every binding are tagged together, so
 `@v0.1.0` means the same thing everywhere. No `replace` is ever needed
@@ -704,13 +707,14 @@ apply either way.
 
 ## The HTTP handler
 
-Two bindings, one API. Pick the one your project already uses:
+Three bindings, one API. Pick the one your project already uses:
 
 ```go
 articles := specs.Executor(Articles.Bind(db, security.Gate(policy)))
 
 app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber v3
 crudgin.New(articles).Mount(r, "/articles")              // Gin
+crudnet.New(articles).Mount(mux, "/articles")            // net/http
 ```
 
 | Route | Does |
@@ -752,9 +756,9 @@ func (s articleService) Save(ctx context.Context, a *Article) error {
 app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 ```
 
-`crudfiber.Repository` and `crudgin.Repository` are the same type, so the service
-above satisfies both without a line of change — the integration suite mounts one
-service on both engines to keep that honest.
+`crudfiber.Repository`, `crudgin.Repository` and `crudnet.Repository` are the
+same type, so the service above satisfies all three without a line of change —
+the integration suite mounts one service on all three to keep that honest.
 
 On create the body binds straight onto the model, then a database-generated key
 and every `generated` column are cleared — a client cannot choose its own id or
@@ -774,13 +778,14 @@ offending path named, everything else → 500 with no detail. The table lives in
 one per framework — and `Status(err) int` is exported if you render your own
 bodies.
 
-The two bindings differ in four ways, all named in
-[`FL-013`](docs/flows/FL-013-a-request-through-the-gin-binding.md): Gin has no
-mountable sub-application (`Mount(r, prefix)` instead of `Routes()`), its
-collection route carries no trailing slash, it accepts JSON bodies only where
-Fiber also takes XML and form encodings, and an unmounted route is 404 unless you
-set `HandleMethodNotAllowed`. Everything else — every option, every status, every
-response shape — is identical.
+Every option, every status and every response shape is identical across the
+three. What differs is mounting, which body encodings are accepted, and what each
+router does with a trailing slash or a method it does not have;
+[`FL-013`](docs/flows/FL-013-a-request-through-another-binding.md) has the table.
+
+`crudnet` is worth a look even if your router is not `ServeMux`: every route
+method on it is an ordinary `http.HandlerFunc`, so chi, gorilla/mux or
+httprouter can register them one by one instead of calling `Mount`.
 
 ---
 
@@ -1013,9 +1018,11 @@ Plus, on both databases:
 - **relation tests** — every edge kind, two-hop paths, negation, nested sorts,
   batched and filtered preloads, and a check that a to-many filter neither
   duplicates rows nor inflates `COUNT`;
-- **HTTP tests** — the handler driven end to end through Fiber, including the
-  full JSON DSL, pagination arithmetic, the create/patch/delete lifecycle, a
-  service layer intercepting a write, and every rejection path.
+- **HTTP tests** — the handler driven end to end through Fiber, Gin and
+  `net/http`, including the full JSON DSL, pagination arithmetic, the
+  create/patch/delete lifecycle, a service layer intercepting a write, and every
+  rejection path. The three bindings answer the same 147 unit tests, name for
+  name.
 
 Adding a driver means adding a `Target`, never a test.
 

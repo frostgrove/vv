@@ -88,7 +88,8 @@ D-019 (dialect differences), D-027 (**open** — cross-database capture).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
 D-013 (400 for an unknown field), D-034 (what a binding owns and what `crudhttp`
-owns — there are two bindings, Fiber and Gin, and one mapping between them).
+owns — there are three bindings, Fiber, Gin and net/http, and one mapping
+between them).
 
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
