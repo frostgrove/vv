@@ -356,3 +356,30 @@ func sortTerms(o *crud.Options) []string {
 	}
 	return out
 }
+
+// ---------------------------------------------------------------------------
+// the port layer
+
+// widgetInput is a request body that is not the model: it calls the model's
+// Name column "label" and leaves "price" alone. One renamed field and one not
+// renamed is what makes the path-chain control in edge_test.go mean something.
+type widgetInput struct {
+	Label string `json:"label"`
+	Price int    `json:"price"`
+}
+
+// widgetMapper is the resource adapter — it turns this transport's shape into
+// the model before the service sees it.
+type widgetMapper struct{}
+
+func (widgetMapper) Model(_ context.Context, in widgetInput) (Widget, error) {
+	return Widget{Name: in.Label, Price: in.Price}, nil
+}
+
+// mountHandler mounts a handler the caller built, for the tests that use a
+// constructor other than New.
+func mountHandler[In any](h *HandlerFor[Widget, int64, WidgetUpdate, In]) *fiber.App {
+	app := fiber.New()
+	app.Use("/widgets", h.Routes())
+	return app
+}

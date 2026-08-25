@@ -1,14 +1,14 @@
 # D-034 — A transport binding is a shell over `crudhttp`
 
-**Status:** accepted — superseded by [[D-045]], in force from phase 5 (`ROADMAP-errors.md` §14)
+**Status:** superseded by [[D-045]]
 **Invariant:** everything a transport binding does that is not routing, body binding or writing a response must come from `http/crudhttp`; no binding may re-derive the status table, the bad-request sentinel or the create-time field clearing.
 
-D-045 keeps the rule and changes the address. Every binding today is an HTTP
-binding, so `http/crudhttp` is the right home and this decision is what the tree
-obeys. A gRPC binding breaks it literally — gRPC cannot implement a renderer
-returning an `http.Header` — so at phase 5 the transport-neutral half moves to
-`port` and `http/crudhttp` keeps what is genuinely HTTP. Until then, read this
-file; it is not history yet.
+D-045 keeps the rule and changes the address. Phase 5 moved the transport-neutral
+half to `port` and left `http/crudhttp` what is genuinely HTTP, so the addresses
+in this file are no longer where the code is — read [[D-045]] for those.
+
+What follows is the argument, not the map, and it is left as it was written. It
+is why the rule exists, and it survives its own address changing.
 
 ## The decision
 
@@ -82,7 +82,12 @@ free, the binding is free.
 - Do not add a symbol to `crudhttp` that only one binding uses. It is the shared
   half by definition; a one-caller helper belongs in that binding.
 
-## Where it lives
+## Where it lived
+
+The addresses below were correct when this decision was in force. `Status`,
+`StatusText` and `Body` are the shape phase 4's renderer replaced, and the rest
+moved to `port` at phase 5. [[D-045]] and [[FL-015]] carry the current map.
+
 
 - `http/crudhttp/repository.go:Repository` — the interface.
 - `http/crudhttp/errors.go:Status` — the whole mapping in one switch.

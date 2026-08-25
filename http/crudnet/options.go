@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/http/crudhttp"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
@@ -28,7 +30,50 @@ type options[M any, ID comparable, U any] struct {
 // Option configures a handler. Type parameters are inferred from New's
 // repository argument, so options never need explicit generics at the call site
 // when written inline.
+//
+// Three parameters and not four. Nothing an option sets mentions the input
+// type, so a handler with one of its own takes the same options as any other,
+// and no existing call site has to be touched ([[D-045]]).
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
+
+// collect applies the options once, so the four constructors read the same
+// configuration.
+func collect[M any, ID comparable, U any](opts []Option[M, ID, U]) options[M, ID, U] {
+	var o options[M, ID, U]
+	for _, fn := range opts {
+		fn(&o)
+	}
+	return o
+}
+
+// service translates the options that are about rules rather than about
+// transport into the ones the default service takes.
+func (o options[M, ID, U]) service() []port.ServiceOption {
+	var out []port.ServiceOption
+	if o.query != nil {
+		out = append(out, port.WithQuery(o.query))
+	}
+	if o.allowClientID {
+		out = append(out, port.AllowClientID())
+	}
+	return out
+}
+
+// refuseServiceOptions panics when a service-shaped option is handed to a
+// constructor that was given a finished service.
+//
+// A panic and not a silent no-op, named after the option so the message is the
+// fix. Serving means the rules are the service's; an ignored WithQuery would
+// leave an API accepting everything while its author believed it was bounded,
+// and that is exactly the failure [[D-021]] says must happen at start-up.
+func (o options[M, ID, U]) refuseServiceOptions(who string) {
+	switch {
+	case o.query != nil:
+		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")
+	case o.allowClientID:
+		panic(who + ": AllowClientID configures the service, which is already built — pass port.AllowClientID to it instead")
+	}
+}
 
 // WithQuery bounds what clients may filter, sort, select and preload.
 func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] {
@@ -107,6 +152,17 @@ type Renderer = crudhttp.Renderer
 // built once: a Renderer holds a vocabulary and a catalogue and nothing
 // per-request, so sharing it is what makes the zero-config case free.
 var defaultRenderer = crudhttp.NewRenderer()
+
+// rendererFor answers the renderer a handler with these path hops needs. No
+// hops is the ordinary case and keeps the shared value, so the zero-config case
+// stays free; a service or a mapper that declares one gets a renderer of its
+// own, wired ahead of the raw-body fallback ([[D-043]]).
+func rendererFor(hops []errs.Resolver) crudhttp.Renderer {
+	if len(hops) == 0 {
+		return defaultRenderer
+	}
+	return crudhttp.NewRenderer(crudhttp.WithResolvers(hops...))
+}
 
 // Status maps a repository or query error to an HTTP status code. Everything it
 // recognises is a client mistake or an access decision; anything else is 500.

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
@@ -51,89 +53,82 @@ func TestEveryKindGetsTheStatusTheTableGivesIt(t *testing.T) {
 	}
 }
 
-// The precedence table, and the two rows `ROADMAP-errors.md` §15 names as the
-// control: a fault mixing Forbidden and Conflict answers 403, and one mixing
-// Internal with anything answers 500 with an empty body.
-func TestThePrecedenceTableResolvesAMixedFault(t *testing.T) {
-	t.Run("forbidden beats conflict", func(t *testing.T) {
-		f := errs.Forbidden().Code(errs.CodeForbidden).
-			Field("Email").Code(errs.CodeUnique).Fault()
-		if got := Status(f); got != http.StatusForbidden {
-			t.Fatalf("a fault mixing forbidden and conflict answered %d, want 403", got)
-		}
-	})
-
-	t.Run("internal beats everything, and says nothing", func(t *testing.T) {
-		for _, other := range []errs.Code{errs.CodeUnique, errs.CodeRequired, errs.CodeNotFound, errs.CodeDeadlock} {
-			f := errs.Conflict().Code(other).
-				Field("Email").Code(other).
-				General().Code(errs.CodeInternal).
-				Wrapping(crud.ErrConflict).Fault()
-
-			status, _, body := NewRenderer().Render(context.Background(), f)
-			if status != http.StatusInternalServerError {
-				t.Fatalf("a fault mixing internal with %s answered %d, want 500", other, status)
-			}
-			raw, err := json.Marshal(body)
-			if err != nil {
-				t.Fatalf("marshalling the 500 body: %v", err)
-			}
-			if string(raw) != `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` {
-				t.Fatalf("the 500 mixed with %s answered %s, want nothing but the status", other, raw)
-			}
-		}
-	})
-
-	// Every adjacent pair of the order, in both build orders. An implementation
-	// keyed on slice position rather than on precedence passes one and fails
-	// the other, which is the whole point of building it twice.
-	order := []struct {
-		kind errs.Kind
-		code errs.Code
+// The seam, from the HTTP side. Status is this package's table over port's
+// answer, and the two halves have to agree arm for arm: the classification
+// moved to port with the vocabulary it belongs to, and a status did not.
+//
+// It asserts the concrete status as well as the composition. Comparing Status
+// to StatusFor(port.KindOf(...)) alone would agree with itself whatever both
+// said, and a table that answered 500 to everything would pass.
+func TestStatusIsTheKindTableOverThePortsAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
 	}{
-		{errs.KindInternal, errs.CodeInternal},
-		{errs.KindNotFound, errs.CodeNotFound},
-		{errs.KindUnauthorized, errs.CodeUnauthenticated},
-		{errs.KindForbidden, errs.CodeForbidden},
-		{errs.KindRetryable, errs.CodeDeadlock},
-		{errs.KindConflict, errs.CodeUnique},
-		{errs.KindValidation, errs.CodeTooLong},
-		{errs.KindBadRequest, errs.CodeBadQuery},
-	}
-	for i := 0; i+1 < len(order); i++ {
-		high, low := order[i], order[i+1]
-		t.Run(fmt.Sprintf("%v beats %v", high.kind, low.kind), func(t *testing.T) {
-			// Each alone answers its own status, or "the higher one wins" is
-			// being measured against a table that answers one thing always.
-			for _, one := range []struct {
-				kind errs.Kind
-				code errs.Code
-			}{high, low} {
-				f := errs.New(one.kind).Code(one.code).General().Code(one.code).Fault()
-				if got := Status(f); got != StatusFor(one.kind) {
-					t.Fatalf("%v alone answered %d, want %d", one.kind, got, StatusFor(one.kind))
-				}
+		{"no error at all", nil, http.StatusOK},
+		{"a missing row", crud.ErrNotFound, http.StatusNotFound},
+		{"a denial", crud.ErrForbidden, http.StatusForbidden},
+		{"a collision", crud.ErrConflict, http.StatusConflict},
+		{"a stale write", crud.ErrStaleVersion, http.StatusConflict},
+		{"a save with no key", crud.ErrMissingID, http.StatusBadRequest},
+		{"a rejected query document", &query.Error{Path: "filter", Reason: "unknown field"}, http.StatusBadRequest},
+		{"a field the model lacks", &crud.UnknownFieldError{Model: "Widget", Field: "nope"}, http.StatusBadRequest},
+		{"a declaration that does not hold together", &crud.SchemaError{Model: "Widget", Reason: "no primary key"}, http.StatusBadRequest},
+		{"a binding's own refusal", BadRequestf("nope"), http.StatusBadRequest},
+		{"a classified value violation", errs.Validation().Code(errs.CodeTooLong).Fault(), http.StatusUnprocessableEntity},
+		{"a deadlock", errs.Retryable().Code(errs.CodeDeadlock).Fault(), http.StatusServiceUnavailable},
+		{"an error nobody recognises", fmt.Errorf("boom"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Status(tc.err); got != tc.want {
+				t.Fatalf("Status(%v) = %d, want %d", tc.err, got, tc.want)
 			}
-			first := errs.New(high.kind).Code(high.code).
-				General().Code(high.code).General().Code(low.code).Fault()
-			second := errs.New(low.kind).Code(low.code).
-				General().Code(low.code).General().Code(high.code).Fault()
-			for _, f := range []*errs.Fault{first, second} {
-				if got := Status(f); got != StatusFor(high.kind) {
-					t.Fatalf("%v mixed with %v answered %d, want %v's %d",
-						high.kind, low.kind, got, high.kind, StatusFor(high.kind))
-				}
+			if tc.err == nil {
+				return
+			}
+			if got, want := Status(tc.err), StatusFor(port.KindOf(tc.err)); got != want {
+				t.Fatalf("Status answered %d and the kind table over port's answer said %d — the seam has drifted", got, want)
 			}
 		})
 	}
+}
 
-	// A code the vocabulary never heard of contributes no kind. A service that
-	// declared "too_young" and forgot to wire it must not have its own 422
-	// turned into a 500 by the omission — KindInternal is the zero value, so
-	// reading an unknown code as a kind is exactly that mistake.
-	novel := errs.Validation().Code("too_young").Field("Age").Code("too_young").Fault()
-	if got := Status(novel); got != http.StatusUnprocessableEntity {
-		t.Fatalf("a fault carrying an undeclared code answered %d, want its own kind's 422", got)
+// The composition where it matters most: port decides that internal beats every
+// other kind, and this package renders that decision as a body with nothing in
+// it. A mixed fault is the case that would leak — the violations are there, and
+// the 500 must still say nothing ([[D-015]]).
+func TestAnInternalKindRendersNothingWhateverElseTheFaultCarries(t *testing.T) {
+	for _, other := range []errs.Code{errs.CodeUnique, errs.CodeRequired, errs.CodeNotFound, errs.CodeDeadlock} {
+		f := errs.Conflict().Code(other).
+			Field("Email").Code(other).
+			General().Code(errs.CodeInternal).
+			Wrapping(crud.ErrConflict).Fault()
+
+		status, _, body := NewRenderer().Render(context.Background(), f)
+		if status != http.StatusInternalServerError {
+			t.Fatalf("a fault mixing internal with %s answered %d, want 500", other, status)
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshalling the 500 body: %v", err)
+		}
+		if string(raw) != `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` {
+			t.Fatalf("the 500 mixed with %s answered %s, want nothing but the status", other, raw)
+		}
+	}
+
+	// The control: the same fault without the internal violation renders the
+	// violations it carries, so the silence above is the internal kind's doing
+	// and not this renderer's habit.
+	f := errs.Conflict().Code(errs.CodeUnique).Field("Email").Code(errs.CodeUnique).Fault()
+	status, _, body := NewRenderer().Render(context.Background(), f)
+	if status != http.StatusConflict {
+		t.Fatalf("a conflict answered %d, want 409", status)
+	}
+	raw, _ := json.Marshal(body)
+	if !strings.Contains(string(raw), "unique") {
+		t.Fatalf("a 409 answered %s, want the violation it carries", raw)
 	}
 }
 
@@ -201,34 +196,5 @@ func TestAFaultsKindDecidesAndTheSentinelIsTheFallback(t *testing.T) {
 	missing := errs.NotFound().Code(errs.CodeNotFound).Wrapping(crud.ErrNotFound).Fault()
 	if got := Status(missing); got != http.StatusNotFound {
 		t.Fatalf("a fault wrapping crud.ErrNotFound answered %d, not 404", got)
-	}
-}
-
-// Status is exported for handlers that render their own bodies, so the sentinel
-// half has to hold on its own — including the branches no route reaches with a
-// real repository behind it.
-func TestStatusMapsEverySentinelWithoutAFault(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-		want int
-	}{
-		{"no error at all", nil, http.StatusOK},
-		{"a missing row", crud.ErrNotFound, http.StatusNotFound},
-		{"a denial", crud.ErrForbidden, http.StatusForbidden},
-		{"a collision", crud.ErrConflict, http.StatusConflict},
-		{"a stale write", crud.ErrStaleVersion, http.StatusConflict},
-		{"a save with no key", crud.ErrMissingID, http.StatusBadRequest},
-		{"a rejected query document", &query.Error{Path: "filter", Reason: "unknown field"}, http.StatusBadRequest},
-		{"a field the model lacks", &crud.UnknownFieldError{Model: "Widget", Field: "nope"}, http.StatusBadRequest},
-		{"a declaration that does not hold together", &crud.SchemaError{Model: "Widget", Reason: "no primary key"}, http.StatusBadRequest},
-		{"a binding's own refusal", BadRequestf("nope"), http.StatusBadRequest},
-		{"an error nobody recognises", fmt.Errorf("boom"), http.StatusInternalServerError},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := Status(tc.err); got != tc.want {
-				t.Fatalf("Status(%v) = %d, want %d", tc.err, got, tc.want)
-			}
-		})
 	}
 }

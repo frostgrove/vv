@@ -1,6 +1,6 @@
 # FL-003 — Save: insert versus upsert
 
-**Entry point:** `repo/basic/repository.go:Save` (reached from `Handler.Create` and `Handler.Replace` in `http/crudfiber` and `http/crudgin` alike)
+**Entry point:** `repo/basic/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command)
 **Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]]
 
 One method, two statements, and a fork decided entirely by whether the model's
@@ -8,19 +8,25 @@ primary key holds a value.
 
 ## The path
 
-1. **`Handler.Create`** — `http/crudfiber/handler.go:186`, `http/crudgin/handler.go:208`
-   Binds the body straight onto `M`, then `sanitize` (`handler.go:385`):
+1. **`HandlerFor.Create`** — `http/crudfiber/handler.go:Create` and its two
+   twins. The body is decoded into the handler's input type, mapped onto `M`,
+   and handed to the service as a `port.CreateCommand` ([[FL-015]]).
+
+   **`DefaultService.Create`** — `port/service.go:Create` — `port.Sanitize`
+   (`port/model.go`):
    - when `meta.PK.Auto` and `AllowClientID` was not set, the key is zeroed —
      a client cannot pick its own id;
-   - `clearGenerated` (`handler.go:394`) zeroes every `generated` column by
-     offset, so a client cannot forge a server-side timestamp.
-   Then `BeforeSave`, then `repo.Save`, then 201.
+   - `ClearGenerated` zeroes every `generated` column by offset, so a client
+     cannot forge a server-side timestamp.
+   Then the `BeforeSave` hook the command carried, then `repo.Save`, then 201.
+   The hook runs *after* the clearing and that order is the guarantee, not an
+   accident of where the code sits ([[UC-013]] guarantee 7).
 
-   **`Handler.Replace` (PUT)** — `handler.go:252` — takes a different route to
-   the same call. When the key is database-generated and `AllowClientID` is off
-   it first does a `GetByID` probe: PUT then **replaces and never creates**.
-   The reason is spelled out at `handler.go:242`: PUT would otherwise be the way
-   around `AllowClientID`, and on PostgreSQL an explicit insert into a serial
+   **`DefaultService.Replace` (PUT)** — `port/service.go:Replace` — takes a
+   different route to the same call. When the key is database-generated and
+   `AllowClientID` is off it first does a `GetByID` probe: PUT then **replaces
+   and never creates**. The reason is on the method: PUT would otherwise be the
+   way around `AllowClientID`, and on PostgreSQL an explicit insert into a serial
    column does not advance the sequence, so the next POST collides on the
    primary key and keeps colliding until somebody repairs the sequence by hand.
    A client-owned key (a uuid, a slug) is a different matter and PUT still
@@ -91,8 +97,8 @@ primary key holds a value.
 
 - **`HasID` is the whole fork.** Not a flag, not a method on the model — the
   zero-ness of the primary key. Anything that zeroes or fills the key before
-  `Save` changes the statement: that is exactly what `Handler.sanitize` and
-  `Handler.Replace` are doing, deliberately.
+  `Save` changes the statement: that is exactly what `port.Sanitize` and
+  `DefaultService.Replace` are doing, deliberately.
 - **`Save` has no WHERE clause, so no scope can narrow it.** `basic.Scope`
   cannot apply (`repo/basic/blueprint.go:71`) and `security.Gate` therefore has
   to probe for the target row and refuse — [[FL-008]]. Do not "fix" this by
@@ -101,8 +107,9 @@ primary key holds a value.
   what `immutable` means. The compensating read-back is what keeps the returned
   model honest, so the two changes travel together.
 - **A generated key is never client-chosen unless someone opted in.** Two
-  independent guards, `sanitize` on POST and the existence probe on PUT, because
-  PUT bypasses the first.
+  independent guards, `Sanitize` on POST and the existence probe on PUT, because
+  PUT bypasses the first. Both are in the service, so a fourth binding gets them
+  by calling ([[D-045]]).
 
 ## Failure modes
 
@@ -110,7 +117,7 @@ primary key holds a value.
 |---|---|---|
 | `nil` model | `Save` (`repository.go:443`) | 400 (`SchemaError`) |
 | `noauto` key left at zero | `Save` (`repository.go:454`) | 400 `ErrMissingID` |
-| PUT to an unused id with a generated key | `Handler.Replace` probe (`handler.go:261`) | 404 |
+| PUT to an unused id with a generated key | `DefaultService.Replace`'s probe (`port/service.go`) | 404 |
 | duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The message is the fault's classification text where the source named its engine, and the driver's own sentence where it did not |
 | `ON CONFLICT DO NOTHING` matched an existing row | `insert` (`repository.go:482`) | 200/201 with the *stored* row |
 | the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
@@ -121,7 +128,8 @@ primary key holds a value.
 | File | Role |
 |---|---|
 | `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Create`, `Replace` |
-| `http/crudhttp/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding ([[D-034]]) |
+| `port/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding and every transport ([[D-045]]). `crudhttp.Sanitize` and `:ClearGenerated` forward to it |
+| `port/service.go` | `DefaultService.Create` / `:Replace` — where the clearing runs, and the one place the hook order is decided ([[FL-015]]) |
 | `repo/basic/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |

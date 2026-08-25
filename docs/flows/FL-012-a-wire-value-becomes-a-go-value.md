@@ -81,8 +81,8 @@ planner may refuse to index.
    an error and never a wrapped one. `[]byte` columns take the raw bytes.
 
 5. **`Coerce`** — `query/coerce.go:80` — the exported wrapper. Transports need it
-   for path parameters: `crudhttp.CoerceID` (`http/crudhttp/request.go:18`), which
-   every binding's `Handler.id` is a one-line call to, coerces
+   for path parameters: `port.CoerceID` (`port/request.go`), which every
+   binding's `HandlerFor.id` is a one-line call to, coerces
    `:id` to the repository's `ID` type through it, which is why a uuid key works
    in a URL with no extra code.
 
@@ -143,7 +143,7 @@ query.
 | `{"between": [1,2,3]}` | `buildMulti` (`filter.go:287`) | 400 `between expects exactly two values` |
 | unknown operator spelling | `normalizeOp` → `filter.go:197` / `querystring.go:62` | 400 `unknown operator "…"` |
 | `?f=title` (one segment) | `ParseTerm` (`querystring.go:39`) | 400 `… is not field:op:value` |
-| `:id` that does not coerce | `Handler.id` (`handler.go:374`) | 400 `"…" is not a valid id` |
+| `:id` that does not coerce | `HandlerFor.id` → `port.CoerceID` | 400, `invalid_id`, with the offending text |
 | `{"in": []}` | not an error — `inNode.render` (`crud/predicate.go:197`) | `1 = 0`; `notIn` of nothing is `1 = 1` |
 
 ## Files
@@ -156,7 +156,7 @@ query.
 | `query/querystring.go` | the query-string door; `ParseTerm`, `terms`, `coerceAll` |
 | `crud/meta.go` | `ElemType` — the coercion target |
 | `crud/predicate.go` | `escapeLike`, and the nodes that bind rather than concatenate |
-| `http/crudhttp/request.go` | `CoerceID` — the path-parameter user of `Coerce` |
+| `port/request.go` | `CoerceID` — the path-parameter user of `Coerce`. `crudhttp.CoerceID` forwards to it |
 | `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `id` — reads the path parameter and hands it over |
 
 ## Tests that walk this flow

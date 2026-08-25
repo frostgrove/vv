@@ -12,6 +12,7 @@ import (
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
@@ -464,6 +465,55 @@ func TestAScopeThatFailsIsMappedLikeAnyOtherError(t *testing.T) {
 		}
 		if len(fake.calls) != 0 {
 			t.Fatalf("a request whose scope never resolved still reached the repository: %v", fake.methods())
+		}
+	})
+}
+
+// pathService is a Service that declares its own hop of the path chain — the
+// model's field names to the ones its commands use. It is what a generated
+// service will be, and the reason Serving exists.
+type pathService struct {
+	*port.DefaultService[Widget, int64, WidgetUpdate]
+	fields port.Fields
+}
+
+func (s *pathService) Paths() errs.Resolver { return s.fields }
+
+// The service's hop of the path chain reaches the rendered body: a violation
+// the repository raised at a model field arrives as the key the client actually
+// sent, because the service declared the mapping and the renderer applies it
+// before the raw-body fallback ([[D-043]]).
+func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
+	mounted := func(t *testing.T, field string) response {
+		t.Helper()
+		fake := newFake()
+		fake.err = errs.Conflict().Code(errs.CodeUnique).
+			Field(field).Code(errs.CodeUnique).Fault()
+		svc := &pathService{
+			DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
+			fields:         port.Fields{"Name": errs.Path{errs.Named("label")}},
+		}
+		app := mountHandler(ServingFor(Service[Widget, int64, WidgetUpdate](svc), widgetMapper{}))
+		r := do(t, app, http.MethodPost, "/widgets", `{"label":"bolt","price":250}`)
+		if r.status != http.StatusConflict {
+			t.Fatalf("a duplicate key answered %d, want 409: %s", r.status, r.body)
+		}
+		return r
+	}
+
+	t.Run("a declared field is rewritten", func(t *testing.T) {
+		if got := failed(t, mounted(t, "Name")).path(); got != "label" {
+			t.Fatalf("the violation names %q, want the key the client sent", got)
+		}
+	})
+
+	// The control, and the reason an undeclared head passes through instead of
+	// declining: the hop behind it still runs. A declining hop would poison the
+	// chain, the raw-body fallback would never see the path, and the client
+	// would get the model's own "Price" back.
+	t.Run("and the control: an undeclared field reaches the body index", func(t *testing.T) {
+		if got := failed(t, mounted(t, "Price")).path(); got != "price" {
+			t.Fatalf("the violation names %q, want the lower-case key the client sent; %q means the service hop stopped the chain", got, "Price")
 		}
 	})
 }

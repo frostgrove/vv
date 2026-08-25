@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"reflect"
 
 	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
@@ -16,37 +16,17 @@ type BulkDeleteRequest[ID comparable] struct {
 }
 
 // CoerceID converts a path parameter to the repository's key type, which is why
-// a uuid or a slug key works in a URL with no extra code.
-func CoerceID[ID comparable](raw string) (ID, error) {
-	var zero ID
-	if raw == "" {
-		return zero, BadRequestAs(errs.CodeInvalidID, nil, "missing id")
-	}
-	v, err := query.Coerce(raw, reflect.TypeOf(zero))
-	if err != nil {
-		return zero, BadRequestAs(errs.CodeInvalidID, nil, "%q is not a valid id", raw)
-	}
-	id, ok := v.(ID)
-	if !ok {
-		return zero, BadRequestAs(errs.CodeInvalidID, nil, "%q is not a valid id", raw)
-	}
-	return id, nil
-}
+// a uuid or a slug key works in a URL with no extra code. The compatibility hop
+// over port.CoerceID.
+func CoerceID[ID comparable](raw string) (ID, error) { return port.CoerceID[ID](raw) }
 
-// NarrowForCount drops everything that means nothing to a COUNT. Leaving paging
-// in would make the answer the size of one page rather than of the result.
-func NarrowForCount(req *query.Request) {
-	req.Page, req.Limit, req.Offset = 0, 0, 0
-	req.Sort, req.Preload, req.Select = nil, nil, nil
-}
+// NarrowForCount drops everything that means nothing to a COUNT. The service
+// applies it now; this is the compatibility hop over port.NarrowForCount.
+func NarrowForCount(req *query.Request) { port.NarrowForCount(req) }
 
-// NarrowForEntity keeps only the shaping options. A single entity is addressed
-// by its key, so a filter or a sort on the way to it is meaningless, and paging
-// it would be a way to ask for row two of one row.
-func NarrowForEntity(req *query.Request) {
-	req.Filter, req.Terms, req.Search, req.Sort = query.Filter{}, nil, "", nil
-	req.Page, req.Limit, req.Offset = 0, 0, 0
-}
+// NarrowForEntity keeps only the shaping options. The service applies it now;
+// this is the compatibility hop over port.NarrowForEntity.
+func NarrowForEntity(req *query.Request) { port.NarrowForEntity(req) }
 
 // DecodeJSON reads a JSON body onto v. An empty body is not an error: POST
 // /count and POST /query both mean "no narrowing" when sent with no body.
@@ -111,9 +91,9 @@ func KeepBody(b []byte) []byte {
 
 // MalformedBody marks a body that would not decode. It is here rather than in
 // each binding so the three agree on the code as well as on the status
-// ([[D-034]]).
+// ([[D-045]]).
 func MalformedBody(err error) error {
-	return BadRequestAs(errs.CodeMalformedBody, nil, "%s", err)
+	return port.BadRequestAs(errs.CodeMalformedBody, nil, "%s", err)
 }
 
 type ctxKey int

@@ -9,13 +9,13 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 
 ## The path
 
-1. **`Handler.List`** — `http/crudfiber/handler.go:91`
-   Reads the query string through `queryValues` (`handler.go:347`), which walks
+1. **`HandlerFor.List`** — `http/crudfiber/handler.go:List`
+   Reads the query string through `queryValues`, which walks
    `QueryArgs().VisitAll` rather than Fiber's `Queries()`. `Queries()` collapses
    repeats into a map, so the second `f=` would vanish silently — a narrower
    filter than the client asked for, with a 200 on it.
-   **`Handler.Query`** — `handler.go:111` — reads the JSON body instead
-   (`parseBody`, `handler.go:355`; an empty body is a legal empty request).
+   **`HandlerFor.Query`** — `handler.go:Query` — reads the JSON body instead
+   (`parseBody`; an empty body is a legal empty request).
 
 2. **`query.ParseQuery`** — `query/querystring.go:143`
    Query string → `query.Request`. Numbers are parsed here and a non-number is
@@ -26,10 +26,13 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
    malformed document here would turn a bad filter into an unfiltered answer,
    which is the one failure a client cannot see.
 
-3. **`Handler.list` → `Handler.compile`** — `handler.go:119`, `handler.go:326`
-   `compile` calls `Request.Compile` and then appends whatever `WithScope`
-   returns. The scope is appended, not prepended — harmless, because `crud.Where`
-   ANDs (`crud/options.go:65`) and nothing in the option list can subtract.
+3. **`HandlerFor.list` → `port.ListCommand` → `DefaultService.List`** —
+   `http/crudfiber/handler.go:list`, `port/service.go:List`
+   The binding reads `WithScope`, if any, into the command's `Options` and hands
+   the parsed document over. The service calls `Request.Compile` and then appends
+   those options. Appended, not prepended — harmless, because `crud.Where` ANDs
+   (`crud/options.go:65`) and nothing in the option list can subtract. [[FL-015]]
+   is the rest of this hop.
 
 4. **`Request.Compile`** — `query/compile.go:105`
    The whole validation pass. Nothing reaches SQL that did not resolve against
@@ -117,8 +120,8 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
     Derives `TotalPages`, `HasNext`, `HasPrev`. A nil item slice becomes `[]`,
     so the JSON is an array and never `null`.
 
-14. Back in `Handler.list`: `c.JSON(page)`, or `crud.MapPage` when a
-    `WithTransform` presenter is configured (`handler.go:128`).
+14. Back in `HandlerFor.list`: `c.JSON(page)`, or `crud.MapPage` when a
+    `WithTransform` presenter is configured.
 
 ## Where the decisions bite
 
@@ -158,7 +161,9 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 |---|---|
 | `http/crudfiber/handler.go` | routes, query-string reading, option assembly |
 | `http/crudgin/handler.go`, `http/crudnet/handler.go` | the same, for Gin and `net/http` — `URL.Query()` in place of the `queryValues` workaround ([[FL-013]]) |
-| `http/crudhttp/request.go` | `NarrowForCount`, `NarrowForEntity`, `DecodeJSON` — shared by every binding |
+| `http/crudhttp/request.go` | `DecodeJSON` — shared by every binding |
+| `port/service.go` | `DefaultService.List` / `:Count` / `:Get` — where the document is narrowed and compiled ([[FL-015]]) |
+| `port/request.go` | `NarrowForCount`, `NarrowForEntity` — what a count and a keyed read drop |
 | `query/querystring.go` | `ParseQuery`, `ParseTerm`, flat-term compilation |
 | `query/request.go` | the `Request` document and its forgiving JSON shapes |
 | `query/compile.go` | `Compile`, the allow-lists, budgets, path resolution |

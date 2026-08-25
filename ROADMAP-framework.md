@@ -110,17 +110,17 @@ THE ERROR CONTRACT — its own module and version line at the first tag ([[D-036
 a package of the root module until then, stdlib-only and sealed by `check-tiers`
   ✓ errs/                       codes, Kind, Path, Violation, Fault, the SPI, the
                                 message source, the validation bridge
-  → errs/sqlerr/                the four dialect parsers — phase 0's captured
-                                corpus is in the tree, no parser is
+  ✓ errs/sqlerr/                the four dialect parsers, over phase 0's
+                                captured corpus
 
 ROOT MODULE — no third-party dependencies
   ✓ crud/                       the datasource seam, metadata, predicates, Opt, pagination
   ✓ query/                      the wire query DSL
-  → port/                       transport-neutral commands, Service, Mapper, the path chain
+  ✓ port/                       transport-neutral commands, Service, Mapper, the path chain
   ✓ repo/basic/                 the repository that speaks SQL
   ✓ repo/decorators/specs/      Specifications, Criteria, metamodel
   ✓ repo/decorators/security/   row scope, authorization, per-entity checks
-  → repo/decorators/faults/     integrity errors become rich Faults
+  ✓ repo/decorators/faults/     integrity errors become rich Faults
   ✓ catalog/                    per-database schema introspection
   ✓ sqlfault/                   the tree walk, by-shape extraction, the integrity
                                 gate and fault assembly — the layer that has both
@@ -129,7 +129,7 @@ ROOT MODULE — no third-party dependencies
                                 manifest: one implementation ([[D-048]])
   → probe/                      Simple and Full violation handlers
   ✓ adapter/crudsql/            database/sql — and so ent, gorm, sqlx, sqlc, bun
-  ✓ http/crudhttp/              the framework-free half of the HTTP layer
+  ✓ http/crudhttp/              the HTTP half of a binding: status, envelope, renderer
   ✓ http/crudnet/               the net/http binding
   ✓ crud/crudtest/              an in-memory source for unit tests
   ✓ cmd/vv/ + internal/codegen/  the CLI, and the generator it drives

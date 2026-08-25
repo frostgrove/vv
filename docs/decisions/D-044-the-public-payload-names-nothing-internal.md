@@ -86,8 +86,8 @@ is [[D-043]]'s, and it is the one place the two vocabularies touch.
   violations, partial. `Detail` never leaves the process.
 - `errs/fault.go:Fault.Error` — the other channel a body can reach, governed by
   [[D-047]].
-- `http/crudhttp/errors.go:Body` — the existing 500 silence, which this extends
-  to every status.
+- `http/crudhttp/envelope.go:Internal` — the 500 silence, which this extends to
+  every status. It is a value with nowhere for a message to go.
 - `errs/sqlerr/testdata/corpus/*.json` — what the driver hands over, and
   therefore what must not pass through. The corpus is an internal fixture: it
   records `Detail`, usernames and constraint names on purpose, and nothing in it

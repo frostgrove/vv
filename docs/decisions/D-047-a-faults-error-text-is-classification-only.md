@@ -15,10 +15,11 @@ error, or through `Fault.MarshalJSON`, which emits the public projection.
 
 ## Why
 
-**Because `Error()` is already wired to a response body.**
-`http/crudhttp/errors.go:Body` copies the *outermost* `err.Error()` into the body
-of every status below 500 today — that is the existing behaviour, and phase 4 is
-what replaces it. **Phase 3 made this live rather than prospective.** A
+**Because `Error()` was already wired to a response body.**
+`crudhttp`'s old `Body` copied the *outermost* `err.Error()` into the body
+of every status below 500, and phase 4 replaced that body with the envelope —
+`port.FaultOf` reads no error text at all now. **Phase 3 made this live rather
+than prospective.** A
 classified 409 now reads `{"error":"conflict","message":"errs: conflict: unique
 (1 violation)"}`; an unclassified one — an unlisted class-23 number, a joined
 foreign transaction, a source that named no engine — still carries the driver's
@@ -74,7 +75,9 @@ branch on. The violation *count* is a number, not the violations.
   `Fault` value does not satisfy `error` and fmt falls through to the struct
   printer.
 - `errs/violation.go:Violation.String` — the same rule one level down.
-- `http/crudhttp/errors.go:Body` — the reason, until phase 4 replaces it.
+- `http/crudhttp/render.go:EnvelopeRenderer.Render` and `port/kind.go:FaultOf` —
+  what replaced the body that copied `Error()`. The rule survives its own reason:
+  a fault's text still reaches a log, a `%w` chain and an operator's screen.
 
 ## Proven by
 

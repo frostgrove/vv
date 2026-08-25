@@ -34,9 +34,10 @@ aspirational. The rule still binds: it forbids working around it in the meantime
 and it is what the implementing phase has to satisfy. Such a decision heads its
 evidence section `Proven by (owed)` and names the tests that phase must write —
 so an agent checking that every symbol a doc names still exists knows those are
-deliberate rather than rot. D-042, D-043 and D-045 are the current set; D-038 left
-it when phase 1 landed `errs` and D-041 when phase 6 landed `catalog`, and D-040
-and D-044 are now partly in force — see their rows. An *accepted* decision may
+deliberate rather than rot. D-042 and D-043 are the current set; D-038 left
+it when phase 1 landed `errs`, D-041 when phase 6 landed `catalog` and D-045 when
+phase 5 landed `port`, and D-040 and D-044 are now partly in force — see their
+rows. An *accepted* decision may
 still owe evidence: D-039 did and phase 2 paid it, D-038 did — the tree walk
 through a multi-error — and phase 3 paid that, so nothing in `docs/` heads a
 section `Proven by (owed)` for a reason other than an unwritten subsystem.
@@ -78,7 +79,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-031](D-031-soft-delete-is-a-statement-not-a-decorator.md) | Declaring a soft delete declares both the stamp and the read filter | accepted | querying |
 | [D-032](D-032-a-replica-never-decides-a-write.md) | A read inside a transaction, or one that decides a write, always goes to the primary | accepted | transactions & datasources |
 | [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no third-party requirement; a package that needs one is its own module | **amended by D-036** | process & tooling |
-| [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | **superseded by D-045 from phase 5** | HTTP |
+| [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | **superseded by D-045** | HTTP |
 | [D-035](D-035-a-prefix-only-breaks-a-collision.md) | A package is named for what it is; a prefix only breaks a collision, and it names the subsystem | accepted | process & tooling |
 | [D-036](D-036-the-root-module-takes-no-third-party-requirement.md) | The root module may require a first-party module; third-party requirements still become their own module | accepted | process & tooling |
 | [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
@@ -89,7 +90,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | **in force from phase 7** | errors |
 | [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | **in force from phase 4** | errors |
 | [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **marshal and print in force; the rendered body from phase 4** | errors |
-| [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | **in force from phase 5** | HTTP |
+| [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | accepted | HTTP |
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 | [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
 | [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted | process & tooling |
@@ -118,9 +119,9 @@ differences), D-027 (**open** — cross-database capture), D-041 (what else keys
 on that identity).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
-D-013 (400 for an unknown field), D-034 (what a binding owns and what `crudhttp`
-owns — there are three bindings, Fiber, Gin and net/http, and one mapping
-between them).
+D-013 (400 for an unknown field), D-045 (what a binding owns and what `port`
+owns — there are three bindings, Fiber, Gin and net/http, and one service seam
+between them; D-034 is its superseded first draft, kept for the argument).
 
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
@@ -131,7 +132,7 @@ is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
 D-038 (a fault is additive), D-043 (one hop per layer),
 D-041 (the catalog, and which unique keys it can tell apart per engine),
-D-042 (the probe), D-034 (why the
+D-042 (the probe), D-045 (why the
 mapping is in one place rather than one per binding).
 
 **Dialects** — D-019 (what is hidden and what is observable, now ten

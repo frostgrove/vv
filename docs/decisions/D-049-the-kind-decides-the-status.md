@@ -11,7 +11,7 @@ cannot be true, and the roadmap says so: *"shipping both mappings — 409 from t
 sentinel, 422 from the Kind — is the one outcome that must not happen."*
 
 The kind wins. `crudhttp.StatusFor` is the §2 table written out arm by arm, and
-`kindOf` resolves one kind from the fault plus its violations' codes. A refusal
+`port.KindOf` resolves one kind from the fault plus its violations' codes. A refusal
 with no fault falls through to the sentinel table, unchanged.
 
 The observable consequence, measured:
@@ -63,10 +63,11 @@ engine.
 ## Where it lives
 
 - `http/crudhttp/errors.go:StatusFor` — the §2 table, arm by arm.
-- `http/crudhttp/errors.go:kindOf` / `KindOf` — the precedence resolution.
-- `http/crudhttp/errors.go:Status` — the seam whose signature is unchanged
-  ([[UC-015]] guarantee 8, [[D-034]]'s forbid).
-- `http/crudhttp/sentinel.go:faultOf` — what a non-fault error becomes.
+- `port/kind.go:KindOfWith` / `:KindOf` — the precedence resolution. It moved
+  with the vocabulary at phase 5: a kind is not HTTP and a status is ([[D-045]]).
+- `http/crudhttp/errors.go:Status` — the seam whose signature is unchanged, now
+  `StatusFor(port.KindOf(err))` ([[UC-015]] guarantee 8, [[D-045]]'s forbid).
+- `port/kind.go:FaultOf` — what a non-fault error becomes.
 
 ## Proven by
 
@@ -75,6 +76,11 @@ engine.
 - `TestEveryRouteMapsARefusalTheSameWay` — a route that skipped the mapping
   would slip past a per-route test.
 - `TestA500NeverEchoesTheInternalError` — the silence, extended to the envelope.
+- `TestStatusIsTheKindTableOverThePortsAnswer` — `http/crudhttp/errors_test.go` —
+  the seam from the HTTP side, asserting the concrete status as well as the
+  composition, so a table answering one status to everything cannot pass.
+- `TestThePrecedenceTableResolvesAMixedFault` — `port/kind_test.go` — every
+  adjacent pair of the order, in both build orders.
 
 ## See also
 

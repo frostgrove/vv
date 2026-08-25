@@ -1,35 +1,22 @@
 package crudhttp
 
 import (
-	"reflect"
-	"unsafe"
-
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/port"
 )
 
 // Sanitize clears what a client is not allowed to choose on create: a
-// database-generated key, and every column declared `generated`. Without it a
-// client picks its own id and forges a server-side timestamp by putting them in
-// the create body.
+// database-generated key, and every column declared `generated`.
+//
+// The rule moved to port with the service that applies it; this is the
+// compatibility hop, kept because an application that writes its own create
+// route calls it ([[D-045]]).
 func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error {
-	if meta.PK.Auto && !allowClientID {
-		if err := meta.SetID(m, reflect.Zero(meta.PK.Type).Interface()); err != nil {
-			return err
-		}
-	}
-	return ClearGenerated(meta, m)
+	return port.Sanitize(meta, m, allowClientID)
 }
 
-// ClearGenerated zeroes every `generated` column by offset.
+// ClearGenerated zeroes every `generated` column by offset. The compatibility
+// hop over port.ClearGenerated.
 func ClearGenerated[M any](meta *crud.Meta, m *M) error {
-	if !meta.HasGen {
-		return nil
-	}
-	base := reflect.ValueOf(m).UnsafePointer()
-	for _, f := range meta.Fields {
-		if f.Generated {
-			reflect.NewAt(f.Type, unsafe.Add(base, f.Offset)).Elem().SetZero()
-		}
-	}
-	return nil
+	return port.ClearGenerated(meta, m)
 }

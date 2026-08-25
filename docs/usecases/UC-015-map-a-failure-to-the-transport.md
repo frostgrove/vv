@@ -70,6 +70,7 @@ branch on and, where the mistake is its own, enough detail to fix it.
 | [[FL-011]] | the sentinel-to-status table, the body shapes, and the point at which a 500 stops carrying detail |
 | [[FL-013]] | that a second and a third binding inherit the table rather than restating it |
 | [[FL-014]] | where a driver error becomes a classified failure, and why a classified 409 says less than an unclassified one |
+| [[FL-015]] | which half of the mapping is transport-neutral and which is HTTP, and the path chain's middle hops |
 
 Guarantee 11 is [[UC-017]]'s territory as well: the two use cases share the
 envelope, and the same decision governs both.

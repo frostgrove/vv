@@ -76,6 +76,7 @@ resource, and wants the twentieth resource to cost exactly what the first did.
 | [[FL-011]] | every route's failure path |
 | [[FL-012]] | the path id and the query-string values becoming Go values |
 | [[FL-013]] | the second binding: what it shares and the four things it does differently |
+| [[FL-015]] | the shared half every binding routes into, and the seam a service takes the repository's place at |
 
 ## Status
 **covered.** The route set, the mounting shapes, the page envelope arithmetic,

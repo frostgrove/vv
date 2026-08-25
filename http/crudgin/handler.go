@@ -26,6 +26,13 @@
 // form encodings, because Fiber's binder dispatches on Content-Type; this one
 // decodes with encoding/json so that a `binding:"…"` tag on a model cannot make
 // the same request behave differently under the two transports.
+//
+// Everything this package does that is not routing, decoding or writing a
+// response comes from port: the commands, the service, the field clearing
+// ([[D-045]]). Three more constructors follow from that. NewFor takes a mapper
+// when the request body is not the model's own JSON shape; Serving and
+// ServingFor mount a port.Service that is already built, which is how one
+// service value serves Gin, Fiber and net/http at once.
 package crudgin
 
 import (
@@ -36,46 +43,96 @@ import (
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/http/crudhttp"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
-// Repository is everything the handler needs. crud.Repo[M, ID, U] satisfies it,
-// and so does specs.Repo and any struct that embeds either — which is how a
-// service layer with extra checks takes the repository's place.
+// Repository is everything the default service needs. crud.Repo[M, ID, U]
+// satisfies it, and so does specs.Repo and any struct that embeds either —
+// which is how a service layer with extra checks takes the repository's place.
 type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
 
-// Handler is the mounted API.
-type Handler[M any, ID comparable, U any] struct {
-	repo Repository[M, ID, U]
-	meta *crud.Meta
-	cfg  *query.Config
-	opt  options[M, ID, U]
+// Service is the transport-neutral seam every route talks to. One value of it
+// mounts on this binding, on Fiber and on net/http, because a generic alias is
+// the same type ([[D-045]]).
+type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
+
+// Mapper turns this transport's input type into the model, for a resource whose
+// request body is not the model's own JSON shape.
+type Mapper[In, M any] = port.Mapper[In, M]
+
+// HandlerFor is the mounted API for a resource whose input type is In.
+//
+// The fourth parameter is what lets New keep inferring three: [Handler] is an
+// alias that fills In in with the model, so every existing signature still
+// compiles and only NewFor has to name a fourth type ([[D-022]]).
+type HandlerFor[M any, ID comparable, U any, In any] struct {
+	svc    Service[M, ID, U]
+	mapper Mapper[In, M]
+	opt    options[M, ID, U]
 }
 
-// New builds a handler. All three type parameters are inferred from the
-// repository, so the call site carries no generics.
+// Handler is the mounted API — a HandlerFor whose input type is the model,
+// which is what New means.
+type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+
+// New builds a handler over a repository. All three type parameters are
+// inferred from it, so the call site carries no generics.
+//
+// The service it builds is the default one, configured from the options that
+// are about rules rather than about transport.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
-	h := &Handler[M, ID, U]{repo: repo, meta: repo.Meta()}
-	for _, o := range opts {
-		o(&h.opt)
-	}
+	o := collect(opts)
+	return build(port.NewService(repo, o.service()...), port.Identity[M](), o)
+}
+
+// NewFor builds a handler whose request body is a type of its own, mapped onto
+// the model before the service sees it. All four type parameters are inferred
+// from the repository and the mapper.
+func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	o := collect(opts)
+	return build(port.NewService(repo, o.service()...), mapper, o)
+}
+
+// Serving mounts a service that is already built — the one a generator wrote,
+// or one an application assembled itself.
+//
+// An option that configures the service is refused here rather than ignored:
+// the service is already made, and a silent no-op is the wrong answer to
+// "bound what clients may ask for" ([[D-021]]).
+func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
+	o := collect(opts)
+	o.refuseServiceOptions("crudgin.Serving")
+	return build(svc, port.Identity[M](), o)
+}
+
+// ServingFor mounts an already-built service behind an input type of its own.
+func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	o := collect(opts)
+	o.refuseServiceOptions("crudgin.ServingFor")
+	return build(svc, mapper, o)
+}
+
+// build is the one place a handler is assembled, so the four constructors
+// cannot drift in what they wire.
+func build[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Mapper[In, M], o options[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	h := &HandlerFor[M, ID, U, In]{svc: svc, mapper: mapper, opt: o}
 	if h.opt.errorHandler == nil {
 		// After the options, not before: WithRenderer has to be able to reach
 		// the handler the routes actually call, and a default installed first
 		// would have closed over the wrong renderer.
 		rd := h.opt.renderer
 		if rd == nil {
-			rd = defaultRenderer
+			rd = rendererFor(port.Hops(svc, mapper))
 		}
 		h.opt.errorHandler = func(c *gin.Context, err error) { render(rd, c, err) }
 	}
-	h.cfg = h.opt.query
 	return h
 }
 
 // Mount groups the routes under a prefix. Gin has no mountable sub-application,
 // so this is the counterpart of Fiber's app.Use("/prefix", …).
-func (h *Handler[M, ID, U]) Mount(r gin.IRouter, prefix string) {
+func (h *HandlerFor[M, ID, U, In]) Mount(r gin.IRouter, prefix string) {
 	h.Register(r.Group(prefix))
 }
 
@@ -86,7 +143,7 @@ func (h *Handler[M, ID, U]) Mount(r gin.IRouter, prefix string) {
 // Registering both forms is not an option — on the engine itself they collapse
 // to the same path and Gin panics. The trailing-slash form is left to Gin's own
 // RedirectTrailingSlash, which is on by default.
-func (h *Handler[M, ID, U]) Register(r gin.IRoutes) {
+func (h *HandlerFor[M, ID, U, In]) Register(r gin.IRoutes) {
 	if !h.opt.readOnly {
 		r.POST("", h.Create)
 		r.POST("/bulk-delete", h.BulkDelete)
@@ -107,7 +164,7 @@ func (h *Handler[M, ID, U]) Register(r gin.IRoutes) {
 // reads
 
 // List answers GET / using the query-string DSL.
-func (h *Handler[M, ID, U]) List(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) List(c *gin.Context) {
 	req, err := h.parseQueryString(c)
 	if err != nil {
 		h.fail(c, err)
@@ -117,7 +174,7 @@ func (h *Handler[M, ID, U]) List(c *gin.Context) {
 }
 
 // Query answers POST /query using the full JSON DSL.
-func (h *Handler[M, ID, U]) Query(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) Query(c *gin.Context) {
 	req, err := h.parseBody(c)
 	if err != nil {
 		h.fail(c, err)
@@ -126,13 +183,13 @@ func (h *Handler[M, ID, U]) Query(c *gin.Context) {
 	h.list(c, req)
 }
 
-func (h *Handler[M, ID, U]) list(c *gin.Context, req *query.Request) {
-	opts, err := h.compile(c, req)
+func (h *HandlerFor[M, ID, U, In]) list(c *gin.Context, req *query.Request) {
+	scope, err := h.scope(c)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	page, err := h.repo.Get(c.Request.Context(), opts...)
+	page, err := h.svc.List(c.Request.Context(), port.ListCommand{Query: req, Options: scope})
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -147,7 +204,7 @@ func (h *Handler[M, ID, U]) list(c *gin.Context, req *query.Request) {
 }
 
 // CountGet answers GET /count.
-func (h *Handler[M, ID, U]) CountGet(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) CountGet(c *gin.Context) {
 	req, err := h.parseQueryString(c)
 	if err != nil {
 		h.fail(c, err)
@@ -157,7 +214,7 @@ func (h *Handler[M, ID, U]) CountGet(c *gin.Context) {
 }
 
 // CountPost answers POST /count.
-func (h *Handler[M, ID, U]) CountPost(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) CountPost(c *gin.Context) {
 	req, err := h.parseBody(c)
 	if err != nil {
 		h.fail(c, err)
@@ -166,15 +223,13 @@ func (h *Handler[M, ID, U]) CountPost(c *gin.Context) {
 	h.count(c, req)
 }
 
-func (h *Handler[M, ID, U]) count(c *gin.Context, req *query.Request) {
-	crudhttp.NarrowForCount(req)
-
-	opts, err := h.compile(c, req)
+func (h *HandlerFor[M, ID, U, In]) count(c *gin.Context, req *query.Request) {
+	scope, err := h.scope(c)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	n, err := h.repo.Count(c.Request.Context(), opts...)
+	n, err := h.svc.Count(c.Request.Context(), port.CountCommand{Query: req, Options: scope})
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -183,7 +238,7 @@ func (h *Handler[M, ID, U]) count(c *gin.Context, req *query.Request) {
 }
 
 // GetByID answers GET /:id, honouring ?preload= and ?select=.
-func (h *Handler[M, ID, U]) GetByID(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) GetByID(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
 		h.fail(c, err)
@@ -194,14 +249,12 @@ func (h *Handler[M, ID, U]) GetByID(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	crudhttp.NarrowForEntity(req)
-
-	opts, err := h.compile(c, req)
+	scope, err := h.scope(c)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	m, err := h.repo.GetByID(c.Request.Context(), id, opts...)
+	m, err := h.svc.Get(c.Request.Context(), port.GetCommand[ID]{ID: id, Query: req, Options: scope})
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -212,28 +265,25 @@ func (h *Handler[M, ID, U]) GetByID(c *gin.Context) {
 // ---------------------------------------------------------------------------
 // writes
 
-// Create answers POST /. The body is bound straight onto the model; a
-// database-generated key and every `generated` column are cleared first, so a
-// client cannot pick its own id or forge a server-side timestamp.
-func (h *Handler[M, ID, U]) Create(c *gin.Context) {
-	var m M
-	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &m)
+// Create answers POST /. The body is decoded into this handler's input type and
+// mapped onto the model; the service then clears a database-generated key and
+// every `generated` column, so a client cannot pick its own id or forge a
+// server-side timestamp.
+func (h *HandlerFor[M, ID, U, In]) Create(c *gin.Context) {
+	var in In
+	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &in)
 	keep(c, raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	if err := h.sanitize(&m); err != nil {
+	m, err := h.mapper.Model(c.Request.Context(), in)
+	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	if h.opt.beforeSave != nil {
-		if err := h.opt.beforeSave(c, &m); err != nil {
-			h.fail(c, err)
-			return
-		}
-	}
-	if err := h.repo.Save(c.Request.Context(), &m); err != nil {
+	m, err = h.svc.Create(c.Request.Context(), port.CreateCommand[M]{Model: m, Before: h.beforeSave(c)})
+	if err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -241,7 +291,7 @@ func (h *Handler[M, ID, U]) Create(c *gin.Context) {
 }
 
 // Update answers PATCH /:id with the partial-update DTO.
-func (h *Handler[M, ID, U]) Update(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) Update(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
 		h.fail(c, err)
@@ -254,13 +304,7 @@ func (h *Handler[M, ID, U]) Update(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	if h.opt.beforeUpdate != nil {
-		if err := h.opt.beforeUpdate(c, id, &dto); err != nil {
-			h.fail(c, err)
-			return
-		}
-	}
-	m, err := h.repo.Update(c.Request.Context(), id, dto)
+	m, err := h.svc.Update(c.Request.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dto, Before: h.beforeUpdate(c, id)})
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -278,40 +322,26 @@ func (h *Handler[M, ID, U]) Update(c *gin.Context) {
 // advance the sequence, so the next POST collides on the primary key and keeps
 // colliding until somebody repairs the sequence by hand. A key the client owns
 // (a uuid, a slug) is a different matter and PUT still creates those.
-func (h *Handler[M, ID, U]) Replace(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) Replace(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	var m M
-	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &m)
+	var in In
+	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &in)
 	keep(c, raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	if h.meta.PK.Auto && !h.opt.allowClientID {
-		if _, err := h.repo.GetByID(c.Request.Context(), id); err != nil {
-			h.fail(c, err)
-			return
-		}
-	}
-	if err := h.clearGenerated(&m); err != nil {
+	m, err := h.mapper.Model(c.Request.Context(), in)
+	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	if err := h.meta.SetID(&m, id); err != nil {
-		h.fail(c, crudhttp.BadRequestAs(errs.CodeInvalidID, nil, "%s", err))
-		return
-	}
-	if h.opt.beforeSave != nil {
-		if err := h.opt.beforeSave(c, &m); err != nil {
-			h.fail(c, err)
-			return
-		}
-	}
-	if err := h.repo.Save(c.Request.Context(), &m); err != nil {
+	m, err = h.svc.Replace(c.Request.Context(), port.ReplaceCommand[ID, M]{ID: id, Model: m, Before: h.beforeSave(c)})
+	if err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -319,19 +349,15 @@ func (h *Handler[M, ID, U]) Replace(c *gin.Context) {
 }
 
 // Delete answers DELETE /:id.
-func (h *Handler[M, ID, U]) Delete(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) Delete(c *gin.Context) {
 	id, err := h.id(c)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	n, err := h.repo.Delete(c.Request.Context(), id)
+	n, err := h.svc.Delete(c.Request.Context(), port.DeleteCommand[ID]{ID: id})
 	if err != nil {
 		h.fail(c, err)
-		return
-	}
-	if n == 0 {
-		h.fail(c, crud.ErrNotFound)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": n})
@@ -341,21 +367,17 @@ func (h *Handler[M, ID, U]) Delete(c *gin.Context) {
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 // BulkDelete answers POST /bulk-delete.
-func (h *Handler[M, ID, U]) BulkDelete(c *gin.Context) {
+func (h *HandlerFor[M, ID, U, In]) BulkDelete(c *gin.Context) {
 	var req BulkDeleteRequest[ID]
 	if err := crudhttp.DecodeJSON(c.Request.Body, &req); err != nil {
 		h.fail(c, err)
-		return
-	}
-	if len(req.IDs) == 0 {
-		c.JSON(http.StatusOK, gin.H{"deleted": 0})
 		return
 	}
 	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
 		h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
 		return
 	}
-	n, err := h.repo.Delete(c.Request.Context(), req.IDs...)
+	n, err := h.svc.DeleteMany(c.Request.Context(), port.BulkDeleteCommand[ID]{IDs: req.IDs})
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -366,29 +388,42 @@ func (h *Handler[M, ID, U]) BulkDelete(c *gin.Context) {
 // ---------------------------------------------------------------------------
 // plumbing
 
-func (h *Handler[M, ID, U]) compile(c *gin.Context, req *query.Request) ([]crud.Option, error) {
-	opts, err := req.Compile(h.meta, h.cfg)
-	if err != nil {
-		return nil, err
+// scope is the transport's own narrowing, handed to the service as options it
+// appends after the query document compiles. Appended and not merged, because
+// crud.Where ANDs ([[D-004]]).
+func (h *HandlerFor[M, ID, U, In]) scope(c *gin.Context) ([]crud.Option, error) {
+	if h.opt.scope == nil {
+		return nil, nil
 	}
-	if h.opt.scope != nil {
-		extra, err := h.opt.scope(c)
-		if err != nil {
-			return nil, err
-		}
-		opts = append(opts, extra...)
+	return h.opt.scope(c)
+}
+
+// beforeSave binds the create-and-replace hook to this request, so the service
+// can run it in the one place the order is documented: after the server-owned
+// fields are cleared ([[UC-013]] guarantee 7).
+func (h *HandlerFor[M, ID, U, In]) beforeSave(c *gin.Context) func(*M) error {
+	if h.opt.beforeSave == nil {
+		return nil
 	}
-	return opts, nil
+	return func(m *M) error { return h.opt.beforeSave(c, m) }
+}
+
+// beforeUpdate binds the PATCH hook to this request and its path id.
+func (h *HandlerFor[M, ID, U, In]) beforeUpdate(c *gin.Context, id ID) func(*U) error {
+	if h.opt.beforeUpdate == nil {
+		return nil
+	}
+	return func(dto *U) error { return h.opt.beforeUpdate(c, id, dto) }
 }
 
 // parseQueryString reads the raw query args. Gin's Query() returns the last
 // value for a key, which would quietly drop the second `f=` filter; URL.Query()
 // keeps every repeat, and the filter is the AND of all of them.
-func (h *Handler[M, ID, U]) parseQueryString(c *gin.Context) (*query.Request, error) {
+func (h *HandlerFor[M, ID, U, In]) parseQueryString(c *gin.Context) (*query.Request, error) {
 	return query.ParseQuery(c.Request.URL.Query())
 }
 
-func (h *Handler[M, ID, U]) parseBody(c *gin.Context) (*query.Request, error) {
+func (h *HandlerFor[M, ID, U, In]) parseBody(c *gin.Context) (*query.Request, error) {
 	req := &query.Request{}
 	if err := crudhttp.DecodeJSON(c.Request.Body, req); err != nil {
 		return nil, err
@@ -397,19 +432,11 @@ func (h *Handler[M, ID, U]) parseBody(c *gin.Context) (*query.Request, error) {
 }
 
 // id reads and converts the :id path parameter.
-func (h *Handler[M, ID, U]) id(c *gin.Context) (ID, error) {
-	return crudhttp.CoerceID[ID](c.Param("id"))
+func (h *HandlerFor[M, ID, U, In]) id(c *gin.Context) (ID, error) {
+	return port.CoerceID[ID](c.Param("id"))
 }
 
-func (h *Handler[M, ID, U]) sanitize(m *M) error {
-	return crudhttp.Sanitize(h.meta, m, h.opt.allowClientID)
-}
-
-func (h *Handler[M, ID, U]) clearGenerated(m *M) error {
-	return crudhttp.ClearGenerated(h.meta, m)
-}
-
-func (h *Handler[M, ID, U]) entity(c *gin.Context, status int, m M) {
+func (h *HandlerFor[M, ID, U, In]) entity(c *gin.Context, status int, m M) {
 	if h.opt.transform != nil {
 		c.JSON(status, h.opt.transform(c, m))
 		return
@@ -417,7 +444,7 @@ func (h *Handler[M, ID, U]) entity(c *gin.Context, status int, m M) {
 	c.JSON(status, m)
 }
 
-func (h *Handler[M, ID, U]) fail(c *gin.Context, err error) {
+func (h *HandlerFor[M, ID, U, In]) fail(c *gin.Context, err error) {
 	h.opt.errorHandler(c, err)
 }
 

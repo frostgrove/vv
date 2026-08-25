@@ -114,7 +114,7 @@ for statuses below 500.
 - Do not map `ErrNoTxSupport` to a 4xx. The caller asked for a transaction from
   something that cannot give one; that is a wiring bug, not a request problem.
 - Do not re-derive the table in another transport binding. There is one switch
-  and every binding calls it ([[D-034]]); two copies drift the day a sentinel is
+  and every binding calls it ([[D-045]]); two copies drift the day a sentinel is
   added, and nothing fails when they do.
 
 ## Where it lives
@@ -136,8 +136,11 @@ for statuses below 500.
 - `repo/decorators/specs/errors.go` — `ErrNotUnique` (wraps `crud.ErrConflict`),
   `ErrUnboundedDelete`, `ErrUnboundedUpdate`.
 - `http/crudhttp/errors.go:Status` — the whole mapping in one switch, shared by
-  every transport binding ([[D-034]]).
-- `http/crudhttp/errors.go:Body` — the response body, and the 500 silence.
+  every transport binding ([[D-045]]).
+- `http/crudhttp/render.go:EnvelopeRenderer.Render` and
+  `http/crudhttp/envelope.go:Internal` — the response body, and the 500 silence.
+  `Internal` has nowhere for a message to go, so the silence holds by
+  construction rather than by a case somebody may edit.
 - `http/crudfiber/options.go:Status`, `http/crudgin/options.go:Status`,
   `http/crudnet/options.go:Status` — the exported per-binding entry points, each
   one line over the shared switch.
@@ -182,4 +185,4 @@ for statuses below 500.
 
 ## See also
 
-[[D-008]] [[D-010]] [[D-011]] [[D-013]] [[D-019]] [[D-034]] [[D-038]] [[D-039]] [[D-040]] [[D-044]] [[D-046]]
+[[D-008]] [[D-010]] [[D-011]] [[D-013]] [[D-019]] [[D-045]] [[D-038]] [[D-039]] [[D-040]] [[D-044]] [[D-046]]

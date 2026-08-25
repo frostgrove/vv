@@ -104,7 +104,8 @@ empty.
    the only thing that knows the positional convention, and again in `fill`
    because `Columns` is a third-party interface.
 
-9. **Out through `crudhttp.Status`, unedited.** The fault wraps the sentinel, so
+9. **Out through `crudhttp.Status`, unedited.** It is `StatusFor(port.KindOf(err))`
+   now, and neither half needed an arm for this: the fault wraps the sentinel, so
    `errors.Is(err, crud.ErrConflict)` is still true and the switch answers 409
    with no new arm ([[D-038]]). See [[FL-011]] from here.
 
@@ -137,14 +138,17 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
   carry no classifier at all. The only reachable failure is *no* code, never a
   wrong one.
 - **A fault must not become a status by being a fault** ([[D-038]]). `22001`
-  classifies as `too_long` and wraps no sentinel, so it is still a 500 until
-  phase 4. `sqlfault/gate_test.go`'s sentinel-no/code-yes cell is that claim.
+  classifies as `too_long` and wraps no sentinel at all, so nothing in the
+  sentinel half would give it a 4xx; it reaches 422 because its *kind* does
+  ([[D-049]]). `sqlfault/gate_test.go`'s sentinel-no/code-yes cell is that
+  claim.
 - **Nothing reads message text** ([[D-039]]). `Detail` and `Hint` are carried
   and never read; `errs.Detail.Value` ships empty for exactly that reason.
-- **A fault's `Error()` reaches a client today** ([[D-047]]). `crudhttp.Body`
-  copies the outermost `err.Error()` into every body below 500, which is why the
-  fault is the outermost error rather than something hung underneath a
-  `fmt.Errorf`.
+- **A fault's `Error()` is classification only** ([[D-047]]). The body that
+  copied the outermost `err.Error()` into every response below 500 is gone —
+  `port.FaultOf` reads no error text at all — but the rule stands, because the
+  fault being the outermost error is what lets `errs.AsFault` find it rather than
+  something hung underneath a `fmt.Errorf`.
 - **The path is not this layer's** ([[D-043]]). `Violation.Path` is nil, not
   approximate: no hop was attempted. The column-to-model-field hop belongs to
   the decorator that has `crud.Meta`.
@@ -229,7 +233,7 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
 | `catalog/catalog.go` | `Catalog.Constraint`, what `FromCatalog` reads |
 | `test/corpus/cases.go` | the probes behind the failure-mode table — `Session`, `Tx`, `RaceA`/`RaceB`, `Volatile` and `Engine.Restore`, the shapes that make the deferred constraint, `25P02` and the deadlock fire on every capture rather than one in ten |
 | `test/corpus/capture.go` | the capture, now `sqlfault.Extract` plus the volatile substitution |
-| `http/crudhttp/errors.go` | `Status` and `Body` — unedited, and the reason [[D-047]] is live |
+| `http/crudhttp/errors.go` | `Status` and `StatusFor` — unedited by phase 3, and one line over `port.KindOf` since phase 5 |
 
 ## Tests that walk this flow
 

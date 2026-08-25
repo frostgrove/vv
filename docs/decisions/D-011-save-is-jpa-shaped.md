@@ -93,8 +93,9 @@ predicate to narrow. That is documented on `basic.Scope`, and it is why
   conflict spellings, including the `DO NOTHING` and the MySQL no-op assignment
   for an empty update list ([[D-019]]).
 - `crud/errors.go:ErrMissingID` — maps to 400 over HTTP.
-- `http/crudfiber/handler.go:Handler.sanitize` — on `POST`, a generated key and
-  every `generated` column are cleared before the bind reaches `Save`.
+- `port/service.go:DefaultService.Create` — on `POST`, `port.Sanitize` clears a
+  generated key and every `generated` column before anything reaches `Save`. It
+  moved out of the three bindings at phase 5 ([[D-045]], [[FL-015]]).
 
 ## Proven by
 

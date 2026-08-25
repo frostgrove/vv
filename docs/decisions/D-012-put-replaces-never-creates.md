@@ -5,13 +5,13 @@
 
 ## The decision
 
-`Handler.Replace` checks `h.meta.PK.Auto && !h.opt.allowClientID` and, when both
+`DefaultService.Replace` checks `meta.PK.Auto && !allowClientID` and, when both
 hold, does a `GetByID` first. A missing row fails there with `crud.ErrNotFound`,
 which is a 404, and no write happens. When the key is not database-generated —
 a UUID, a slug, a natural key — PUT creates as well as replaces, as it should.
 
 `AllowClientID` is the single switch. It also governs `POST`, where
-`Handler.sanitize` otherwise clears the key before binding.
+`port.Sanitize` otherwise clears the key on create.
 
 ## Why
 
@@ -47,19 +47,22 @@ and the out-of-step configuration is exactly the hole this closes.
 - Do not add a separate switch for PUT. One option, both routes.
 - Do not take the id from the body. `Replace` binds the body, clears `generated`
   columns, then writes the path id over whatever arrived
-  (`Handler.Replace`), in that order.
-- Do not drop the `clearGenerated` call on `Replace`. A client could otherwise
+  (`DefaultService.Replace`), in that order.
+- Do not drop the `ClearGenerated` call on `Replace`. A client could otherwise
   forge a server-owned timestamp on the replace path even though `POST` clears
   it.
 
 ## Where it lives
 
-- `Handler.Replace` in `http/crudfiber/handler.go`, `http/crudgin/handler.go`
-  and `http/crudnet/handler.go` — the existence check, the `ClearGenerated`, the
-  `SetID` from the path. Every binding, in that order.
-- `http/crudhttp/model.go:Sanitize` — the `POST` half.
-- `http/crudhttp/model.go:ClearGenerated` — shared by both routes and both
-  bindings ([[D-034]]).
+- `port/service.go:DefaultService.Replace` — the existence check, the
+  `ClearGenerated`, the `SetID` from the command's key, in that order and in one
+  place for all three bindings since phase 5 ([[D-045]], [[FL-015]]).
+- `Replace` in `http/crudfiber/handler.go`, `http/crudgin/handler.go` and
+  `http/crudnet/handler.go` — the routes that build the command and do nothing
+  else.
+- `port/model.go:Sanitize` — the `POST` half.
+- `port/model.go:ClearGenerated` — shared by both routes and every binding
+  ([[D-045]]).
 - `AllowClientID` in each binding's `options.go` — the switch.
 - `crud/meta.go:Field.Auto` — set for an integer primary key unless `noauto` says
   otherwise; this is what the branch reads.
@@ -82,4 +85,4 @@ and the out-of-step configuration is exactly the hole this closes.
 
 ## See also
 
-[[D-011]] [[D-022]] [[D-015]] [[D-034]]
+[[D-011]] [[D-022]] [[D-015]] [[D-045]]

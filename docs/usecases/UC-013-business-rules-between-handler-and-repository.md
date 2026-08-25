@@ -1,7 +1,7 @@
 # UC-013 — Insert business rules between the handler and the repository
 
 **Actor:** the application author
-**Covered by:** [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]]
+**Covered by:** [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]]
 
 ## Scenario
 The generated endpoints are right for eighteen of twenty resources. The other two
@@ -34,7 +34,9 @@ handler itself.
 7. For rules that do not need a whole layer, the handler exposes hooks: one that
    runs on create and replace after the body is bound and the server-owned fields
    are cleared, and one that runs on a partial update after the DTO is bound. A
-   hook sees the request, can mutate the value, and can refuse.
+   hook sees the request, can mutate the value, and can refuse. That ordering is
+   the guarantee and not an accident of where the code sits: the hook runs where
+   the clearing runs, so moving one moves the other.
 8. A hook's mutation reaches the repository, and a hook's refusal maps like any
    other error.
 9. A per-request read narrowing is available for genuinely transport-shaped rules
@@ -47,6 +49,14 @@ handler itself.
     to the access-control gate (UC-004), not here.
 11. A presenter can render every entity on its way out, on every read and write
     route, so a column can exist in the model and never reach the wire.
+12. The request body may be a type of its own rather than the model, mapped onto
+    the model before any rule runs, and choosing one costs none of the generated
+    routes. The mapping is declared once and the same routes, options, hooks and
+    error mapping apply to it.
+13. The seam a rule is written against is one value on every transport. A layer
+    written once mounts on each of the bindings unchanged — no per-transport
+    interface, no second copy of a rule, and adding a transport does not ask the
+    author to write anything.
 
 ## Out of scope
 
@@ -71,6 +81,7 @@ handler itself.
 | [[FL-003]] | the create hook's position relative to clearing server-owned fields |
 | [[FL-011]] | a service refusal becoming a status |
 | [[FL-013]] | the same hooks under the other two bindings, each with the request type its framework uses |
+| [[FL-015]] | the service seam itself, the distinct input type, and where the hook ordering is now enforced |
 
 ## Status
 **covered.** The stand-in interface, the embedding shortcut, both hooks (mutation
@@ -80,3 +91,13 @@ guarantee 10 all have tests. The asymmetry is pinned deliberately — a test fai
 if writes ever start being narrowed — so the documentation and the behaviour
 cannot drift apart. A service layer intercepting a write is also exercised end to
 end through the HTTP suite against a live database.
+
+Guarantees 12 and 13 arrived with the transport-neutral service seam. The
+distinct input type has a test in each binding whose control is the same body
+through the plain constructor, where the input type's keys mean nothing; the
+one-value-on-every-transport claim has a test that mounts one service on all
+three and compares what each of them asked the service for, not merely that they
+compiled. Guarantee 7's ordering
+moved from three bindings to one service and is pinned in both places — in the
+service directly, and through each binding with a control that hands the key
+space back to the client and watches the hook see it.

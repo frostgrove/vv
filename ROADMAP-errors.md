@@ -268,7 +268,8 @@ working at all.
 Two honest limits, stated here rather than discovered later:
 
 - It is JSON only. Fiber's `Bind().Body()` dispatches on Content-Type and accepts
-  XML and form encodings ([[D-034]]), and a form body has no nesting to index. A
+  XML and form encodings ([[D-045]], and [[D-034]] before it), and a form body
+  has no nesting to index. A
   non-JSON body degrades to the model field name.
 - Value matching disambiguates repeated key names in nested or array payloads.
   Where the driver gives no value — SQLite's foreign-key error gives nothing at
@@ -324,7 +325,7 @@ ROOT MODULE  github.com/shardit-io/vv               (no third-party requirement)
 │                               first tag, not before: see D-036, which measured why.
 ├── catalog/                  NEW  per-database schema catalog and introspection
 ├── probe/                    NEW  Simple and Full violation handlers
-├── port/                     NEW  commands, Service, Mapper, the path chain
+├── port/                     phase 5 — commands, Service, Mapper, the path chain
 ├── repo/decorators/faults/   NEW  the decorator that enriches integrity errors
 ├── sqlfault/                 NEW (phase 3) — not in this inventory when it was
 │                             written. The layer errs/sqlerr's doc says a
@@ -348,7 +349,7 @@ UNPUBLISHED
     test/cmd/corpus/                        `make corpus`
 
 SATELLITES — one dependency decision each, per [[D-033]]
-├── http/crudfiber/    + fiber/v3   error middleware, shell over `port`
+├── http/crudfiber/    + fiber/v3   error middleware, shell over `port` (phase 5)
 ├── http/crudgin/      + gin        the same, ported one to one
 ├── adapter/crudpgx/   + pgx/v5     typed extraction from *pgconn.PgError
 └── rpc/crudgrpc/      + grpc       NEW, phase 9
@@ -543,7 +544,7 @@ failed lookup, and the reverse reads as nonsense.
 A converter is **required**, not optional. Our envelope is the only shape that
 goes on the wire, and `validator.FieldError` is a different shape, so something
 has to translate. `go-playground/validator` is also not optional in practice —
-Gin's binder already runs it ([[D-034]]), so a `crudgin` consumer gets its errors
+Gin's binder already runs it ([[D-045]], and [[D-034]] before it), so a `crudgin` consumer gets its errors
 whether or not they asked for them.
 
 What is *not* required is a **module** for that converter. [[D-033]] puts a
@@ -1431,10 +1432,11 @@ byte-identical run to run.
 
 ### The generic layer
 
-`http/crudhttp` keeps its role as the half with no framework in it ([[D-034]]) and
-grows the envelope, the `Kind` → status table, the 422 arm and the `Renderer`
-seam. `Status` stays one switch, exported, and every binding still calls it
-rather than re-deriving it.
+`http/crudhttp` keeps its role as the half with no framework in it ([[D-045]],
+and [[D-034]] before it) and grows the envelope, the `Kind` → status table, the
+422 arm and the `Renderer` seam. `Status` stays one function, exported, and every
+binding still calls it rather than re-deriving it. Phase 5 then split it once
+more: the *kind* is `port`'s and the *status* is this package's.
 
 There are three bindings now, not two: `crudnet` landed while this roadmap was
 being written, and it is the useful case to design against. It imports nothing
@@ -1454,7 +1456,7 @@ crudfiber.New(users, crudfiber.WithRenderer(myRenderer)).Routes()
 ```
 
 **The author's own handlers** need middleware, and the three frameworks differ
-in exactly the way [[D-034]] says a binding is allowed to differ — how a response
+in exactly the way [[D-045]] says a binding is allowed to differ — how a response
 is written:
 
 - Fiber handlers return an `error`, so the decorator is a wrapper — or the app's
@@ -1562,7 +1564,7 @@ change, it says so and names the successor rather than quietly working around it
 | [[D-015]] errors are sentinels | A `Fault` **wraps**, never replaces. `ErrStaleVersion` keeps wrapping `ErrConflict`. A 500 says nothing. **But D-015's class-23 sentence is factually wrong** (§6) and phase 0 supersedes it: the classifier key is `(dialect, sqlstate, native)` and no arm is a prefix test |
 | [[D-016]] `crud/` is stdlib-only | `crud` cannot import `errs`. The sentinel is attached by the caller |
 | [[D-033]] optional deps are their own modules | **Amended** (the framework roadmap): the invariant becomes *no third-party requirement*, so `errs` gets its own module and its own version line. `catalog`, `probe`, `port` stay in the root; gRPC is a satellite |
-| [[D-034]] a binding is a shell over `crudhttp` | **Superseded**, not extended. Its invariant says everything shared *must come from `crudhttp`*; moving the shared half to `port` breaks that literally, so it needs a successor rather than a hand-wave |
+| [[D-034]] a binding is a shell over `crudhttp` | **Superseded** by [[D-045]] at phase 5, not extended. Its invariant said everything shared *must come from `crudhttp`*; moving the shared half to `port` broke that literally, so it needed a successor rather than a hand-wave |
 | [[D-022]] the handler takes an interface | The port layer is the natural next step. Type aliases keep every current signature compiling |
 | [[D-008]] out of scope is 404 | The probe must not confirm a hidden row. 404 stays ahead of 403 |
 | [[D-032]] a replica never decides a write | The probe runs on the primary |
@@ -1574,11 +1576,11 @@ change, it says so and names the successor rather than quietly working around it
 | [[D-009]] context executor capture is unconditional | The probe resolves its executor through `crud.ExecutorFor(ctx, src)`; that is what makes "never probe on another connection" enforceable rather than aspirational |
 | [[D-010]] update is load-diff-write | The change set says which constraints matter; the loaded row supplies the values |
 
-New decisions this work needs — **all nine written in phase 0**. Three still
-govern code that does not exist yet — [[D-042]], [[D-043]] and [[D-045]] — and
-say so in their status line rather than reading as rules the tree already
-follows; [[D-038]] left that set when phase 1 landed `errs` and [[D-041]] when
-phase 6 landed `catalog`:
+New decisions this work needs — **all nine written in phase 0**. Two still
+govern code that does not exist yet — [[D-042]] and [[D-043]] — and say so in
+their status line rather than reading as rules the tree already follows;
+[[D-038]] left that set when phase 1 landed `errs`, [[D-041]] when phase 6
+landed `catalog` and [[D-045]] when phase 5 landed `port`:
 
 | id | Invariant |
 |---|---|
@@ -1697,7 +1699,7 @@ not done because the code works.
 | 2 | `errs/sqlerr/` — **done** | `Classify` over four dialect tables — `postgres.go`, `mysql.go`, `mariadb.go`, `sqlite.go` — keyed three different ways, table-driven over the corpus, stdlib only; the four corpus entries phase 0 deferred (`deadlock`, `serialization_failure`, `25P02`, deferred constraints) plus a fifth, the same duplicate key captured from a server answering in Russian; `errs.CodeTransactionAborted`; the corpus grows 15 → 20 per engine. One live bug fixed on the way: a deferred constraint fires at `COMMIT`, and `crudsql.Tx.Commit` and `crudpgx.Tx.Commit` returned it unclassified — a 409 through the statement and a 500 through the commit. `crudsql.savepoint.Commit` classifies too, but as a symmetry measure and not a bug fix: no engine raises integrity at `RELEASE SAVEPOINT`, and pgx's nested `Begin` returns the same `Tx` whose `Commit` classifies. Two things deliberately **not** shipped: no class-23 fallback (a MySQL class-23 number nobody provoked stays unclassified, and phase 3 must keep the class test for the sentinel) and no `23P01` arm, so `CodeExclusion` is reachable from no engine until somebody provokes an `EXCLUDE` | the class is derived from `(dialect, sqlstate, native)` alone — a parser that reads message text fails a corpus entry whose text is localised |
 | 3 | Driver extraction — **done** | one new root-module package, `sqlfault`, holding the tree walk, by-shape extraction, the dialect-free integrity gate and fault assembly; `crudsql` by shape with its three `errors.Unwrap` walks replaced by one tree walk, `crudpgx` typed over `*pgconn.PgError`; the engine declared by four named `crudsql` constructors (`MariaDB` is new) and refused by `Open`/`From`/`Source`, with `WithFaults` as the way in; a `Columns` SPI over `catalog`; **FL-014**. Deliberately **not** shipped: no `Detail.Value`, no `Violation.Path`, no `Fault.Op`, no `Detail.RefTable`/`RefColumns`, no `Kind`→status arm, and no fault at all from `Open`/`From`/`Source`. Two corrections carried back. Phase 2's row calls `crudsql.savepoint.Commit` "a symmetry measure and not a bug fix" because no engine raises *integrity* at `RELEASE SAVEPOINT` — true, and not the whole reason: a statement the server refuses inside the savepoint poisons the transaction and PostgreSQL refuses the `RELEASE` with `25P02`, so that door is what gives a nested `Commit` a code instead of an anonymous 500, and `TestANestedCommitOnAPoisonedTransactionCarriesItsCode` measures it. And one correction to this row's own dependency note: `Source.Columns` on a SQLite foreign key and a PostgreSQL `22001` is **not** blocked on the catalog. Both errors carry no table and no constraint, so there is nothing to look one up by, and phase 6 landing does not unblock them; the catalog fills a *composite unique* violation on PostgreSQL instead, which is what it turned out to be for | an unclassifiable state stays a 500 — `TestOnlyIntegrityErrorsBecomeConflicts`, extended so a `42601` produces no fault on all three pgx paths while a `40001` beside it does. Plus the two gates held apart in a 2×2 with a counter per cell, the tree walk through a multi-error and through a fault, and a classified 409's body carrying nothing internal in all three bindings |
 | 4 | Render + decorators — **done** | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware; **[[D-043]] and [[D-044]] come into force**, closing UC-015's guarantee 11 and gap 16 | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes |
-| 5 | `port/` + adapters | commands, `Service`, `Mapper`, bindings become shells; **FL-015**; [[D-045]] comes into force and [[D-034]] becomes history | the same service mounts on all three bindings and compiles — the [[D-034]] check |
+| 5 | `port/` — **done** | `Service`, `DefaultService`, the eight commands, `Mapper`/`Identity`, `Fields`/`Hops`, and the moved half of `crudhttp` — `Repository`, `Sanitize`/`ClearGenerated`, `CoerceID`/`NarrowFor*`, `ErrBadRequest` and the code vocabulary. Four constructors per binding — `New`, `NewFor`, `Serving`, `ServingFor` — with `Handler[M, ID, U]` a parameterised alias over `HandlerFor[M, ID, U, In]`, so no existing signature changed and `make examples` compiles the seven stacks untouched. **FL-015**; [[D-045]] in force, [[D-034]] history. Deliberately **not** shipped: the violations pipeline stays in `http/crudhttp` until a second implementation asks ([[D-048]], named as the follow-up in D-045's *Where it lives*); no patch-side mapper, because the generated DTO already is the transport shape ([[D-018]]); and `port.Fields` passes an undeclared head through rather than declining, because a declining hop poisons `errs.Chain` and would make a path the raw-body index resolves today *worse* — strictness belongs to phase 8's generated map, which is total by construction. One observable change, small and stated rather than found: `WithScope` now runs before the query document compiles, so a request with both a failing scope and a malformed filter reports the scope | the same service mounts on all three bindings **and they hand it the same command** — the [[D-034]] check in its D-045 form. A compile-only assertion would pass whatever the bindings did |
 | 6 | `catalog/` — **done** (out of order, before 3, 4 and 5) | `Catalog`, `Load`, a caller-owned `Set` keyed with `crud.KeyOf`, an optional `Reloader` with a two-guard negative cache, and four back-ends — `postgres`, `mysql`, `mariadb`, `sqlite`, all through `Query`. `crud.keyOf`/`sameDataSource` become `crud.KeyOf`/`crud.SameDataSource` rather than being copied, because a second implementation of the identity rule is the drift [[D-041]] exists to prevent. [[D-041]] comes into force; [[D-019]] gains difference 9. §16's recorder question is answered **no**. Four of §7's claims were measured false and are corrected there rather than coded around, and its *What it holds* list is narrowed to what a reader has | an unknown constraint name does not re-introspect in a loop — and its twin, a name that turns up resets, plus the per-handle floor for fifty *different* names |
 | 7 | `probe/` | `Simple`, `Full`, bulk attribution, caps, the savepoint mode, the `owned` seam flag, scope-awareness from `security.Policy` | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
 | 8 | Codegen | DTOs, mapper, inverse map, service, wiring | regenerate-and-diff; a column the DTO misses refuses start-up |
@@ -1718,24 +1720,24 @@ subtests and 110 engine-behaviour subtests, none of which had ever run.
 ### Why FL-014 and FL-015 are not in phase 0
 
 Both are flows, and `CLAUDE.md` is explicit that *a flow is the only place file
-paths and symbols appear*. Neither's files exist yet, so writing them in phase 0
-would produce two documents that fail at the one job a flow has. FL-014 lands
-with phase 3 and FL-015 with phase 5, and [[FL-013]]'s pending change — a fourth
-transport's row in the per-binding table — waits for phase 9 with gRPC.
+paths and symbols appear*. Neither's files existed in phase 0, so writing them
+then would have produced two documents that fail at the one job a flow has.
+FL-014 landed with phase 3 and FL-015 with phase 5, and [[FL-013]]'s pending
+change — a fourth transport's row in the per-binding table — waits for phase 9
+with gRPC.
 
-Those two numbers are reserved rather than free, which matters because
+Both numbers were reserved rather than free, which mattered because
 `docs/flows/Index.md` tells the next author to take the next number free. Phase 6
 landed before phase 3 and took **FL-016** for that reason; a flow number is
-identity rather than order. The reservation is now written on that line too, so a
-numberer reads it where they look.
+identity rather than order. Both reservations are now spent.
 
 The nine decisions were written in phase 0 regardless, because a decision governs
-code rather than describing it. The three still waiting on their code —
-[[D-042]], [[D-043]] and [[D-045]] — carry `in force from phase N` in their
-status line and head their evidence section `Proven by (owed)`, so a reader can
-tell a rule the tree obeys from a rule the tree owes. [[D-038]] became plain
-`accepted` when phase 1 landed `errs` and [[D-041]] when phase 6 landed
-`catalog`.
+code rather than describing it. The ones still waiting on their code —
+[[D-042]] and [[D-043]] — carry `in force from phase N` in their status line and
+head their evidence section `Proven by (owed)`, so a reader can tell a rule the
+tree obeys from a rule the tree owes. [[D-038]] became plain `accepted` when
+phase 1 landed `errs`, [[D-041]] when phase 6 landed `catalog` and [[D-045]] when
+phase 5 landed `port`.
 
 ---
 

@@ -178,7 +178,8 @@ query/                      the wire DSL: one JSON document -> crud.Options
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
 errs/sqlerr/                a driver error becomes a code, one table per dialect
 catalog/                    per-handle schema introspection, four dialects
-http/crudhttp/              the transport-neutral half of the HTTP layer
+port/                       the transport-neutral half: commands, Service, Mapper, the path chain
+http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
 http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
 cmd/vv/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun

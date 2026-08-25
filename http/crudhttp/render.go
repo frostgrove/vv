@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"sync"
 
 	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/port"
 )
 
 // A Renderer turns an error into a response. It is the seam a consumer replaces
@@ -30,12 +30,6 @@ const MaxViolations = 100
 // does not retry on the caller's behalf ([[D-040]]); this is the smallest
 // honest hint that retrying is the right thing at all.
 const DefaultRetryAfter = 1
-
-// standardCodes is the vocabulary Status and an unwired renderer resolve
-// through. It is built once and never handed out: a *Codes a caller could reach
-// is a package-level registry two libraries would fight over, which is the
-// fourth thing errs/doc.go refuses.
-var standardCodes = sync.OnceValue(errs.StandardCodes)
 
 // An EnvelopeRenderer renders [Envelope]. It is the default in every binding.
 type EnvelopeRenderer struct {
@@ -89,9 +83,13 @@ func NewRenderer(opts ...RenderOption) *EnvelopeRenderer {
 	return r
 }
 
-func (r *EnvelopeRenderer) vocabulary() *errs.Codes {
-	if r == nil || r.codes == nil {
-		return standardCodes()
+// codes is the vocabulary this renderer resolves through, or nil for the
+// standard one. It is never a value: port answers the kind and the default
+// message through behaviour, so a *errs.Codes a caller could reach never
+// exists to be fought over.
+func (r *EnvelopeRenderer) codesOrNil() *errs.Codes {
+	if r == nil {
+		return nil
 	}
 	return r.codes
 }
@@ -102,7 +100,7 @@ func (r *EnvelopeRenderer) Status(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
-	return StatusFor(kindOf(err, r.vocabulary()))
+	return StatusFor(port.KindOfWith(err, r.codesOrNil()))
 }
 
 // Render implements [Renderer].
@@ -123,8 +121,8 @@ func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Hea
 	if err == nil {
 		return http.StatusOK, nil, nil
 	}
-	f := faultOf(err)
-	status := StatusFor(kindOf(err, r.vocabulary()))
+	f := port.FaultOf(err)
+	status := StatusFor(port.KindOfWith(err, r.codesOrNil()))
 	if status == http.StatusInternalServerError {
 		return status, nil, Internal()
 	}
@@ -154,7 +152,7 @@ func (r *EnvelopeRenderer) violations(ctx context.Context, f *errs.Fault) []errs
 		// client can branch on, so the fault's own code becomes one violation.
 		code := f.Code
 		if code == "" {
-			code = codeForKind(f.Kind)
+			code = port.CodeForKind(f.Kind)
 		}
 		vs = append(vs, errs.Violation{Code: code, Message: f.Message})
 	}
@@ -192,8 +190,17 @@ func (r *EnvelopeRenderer) message(ctx context.Context, v errs.Violation, locale
 	if v.Message != "" {
 		return v.Message
 	}
-	if m, ok := r.vocabulary().MessageFor(v.Code); ok {
+	if m, ok := r.defaultMessage(v.Code); ok {
 		return m
 	}
 	return string(v.Code)
+}
+
+// defaultMessage is the rung below the catalogue: what the vocabulary declares
+// for the code.
+func (r *EnvelopeRenderer) defaultMessage(code errs.Code) (string, bool) {
+	if c := r.codesOrNil(); c != nil {
+		return c.MessageFor(code)
+	}
+	return port.DefaultMessage(code)
 }

@@ -3,6 +3,7 @@ package crudnet
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
 
@@ -374,4 +376,114 @@ func TestNewInfersItsTypeParametersFromTheRepository(t *testing.T) {
 	if got := preloadPaths(fake.only(t, "Get").Opts); !slices.Equal(got, []string{"Owner"}) {
 		t.Fatalf("without a query config every mapped relation is preloadable, got %v", got)
 	}
+}
+
+// NewFor's fourth type parameter is inferred like the other three, from the
+// mapper rather than from the repository. The twin above,
+// TestNewInfersItsTypeParametersFromTheRepository, is the half a fourth
+// parameter on New would have broken ([[D-022]]).
+func TestNewForInfersItsInputFromTheMapper(t *testing.T) {
+	fake := newFake()
+	app := mountHandler(NewFor(fake, widgetMapper{}))
+
+	ok(t, app, http.MethodPost, "/widgets", `{"label":"bolt","price":250}`, http.StatusCreated)
+
+	if got := fake.only(t, "Save").Model; got.Name != "bolt" || got.Price != 250 {
+		t.Fatalf("the mapper's output reached the repository as %+v, want the label as the name", got)
+	}
+}
+
+// The hook runs after the fields a client may not choose have been cleared, and
+// it stayed that way when the clearing moved into the service ([[UC-013]]
+// guarantee 7). A hook that ran first would be handed a client-chosen key and a
+// forged timestamp, and whatever it stamped on top of them would be saved.
+func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
+	var seen Widget
+	hook := BeforeSave[Widget, int64, WidgetUpdate](func(_ *http.Request, w *Widget) error {
+		seen = *w
+		return nil
+	})
+
+	t.Run("on create", func(t *testing.T) {
+		seen = Widget{}
+		app, _ := mount(t, hook)
+
+		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`, http.StatusCreated)
+
+		if seen.ID != 0 {
+			t.Fatalf("the hook was handed id %d; it runs after the clearing, so a client-chosen key must not reach it", seen.ID)
+		}
+		if !seen.CreatedAt.IsZero() {
+			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
+		}
+	})
+
+	t.Run("on replace, where the key comes from the path", func(t *testing.T) {
+		seen = Widget{}
+		app, _ := mount(t, hook)
+
+		ok(t, app, http.MethodPut, "/widgets/42", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`, http.StatusOK)
+
+		if seen.ID != 42 {
+			t.Fatalf("the hook was handed id %d, want the 42 from the path", seen.ID)
+		}
+		if !seen.CreatedAt.IsZero() {
+			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
+		}
+	})
+
+	t.Run("and the control: with AllowClientID it sees the client's key", func(t *testing.T) {
+		seen = Widget{}
+		app, _ := mount(t, hook, AllowClientID[Widget, int64, WidgetUpdate]())
+
+		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt"}`, http.StatusCreated)
+
+		if seen.ID != 999 {
+			t.Fatalf("with the key space handed over the hook saw id %d, want 999 — without this leg the two above would pass for a hook that never sees anything", seen.ID)
+		}
+	})
+}
+
+// Serving is handed a service that is already built, so an option that
+// configures one has nowhere to go. It is refused by name at declaration rather
+// than ignored at run time: an API whose author believed it was bounded and is
+// not is the failure [[D-021]] says must happen at start-up.
+func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
+	svc := port.NewService[Widget, int64, WidgetUpdate](newFake())
+
+	for _, tc := range []struct {
+		name string
+		opt  Option[Widget, int64, WidgetUpdate]
+	}{
+		{"WithQuery", WithQuery[Widget, int64, WidgetUpdate](&query.Config{})},
+		{"AllowClientID", AllowClientID[Widget, int64, WidgetUpdate]()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				p := recover()
+				if p == nil {
+					t.Fatal("Serving accepted an option that configures the service; it would have been silently ignored")
+				}
+				if !strings.Contains(fmt.Sprint(p), tc.name) {
+					t.Fatalf("the refusal does not name the option that has to be moved: %v", p)
+				}
+			}()
+			Serving[Widget, int64, WidgetUpdate](svc, tc.opt)
+		})
+	}
+
+	// The control: through New the same two options are honoured. Without it
+	// the legs above would pass for a binding that refused every option.
+	t.Run("and the control: through New both are honoured", func(t *testing.T) {
+		app, fake := mount(t, AllowClientID[Widget, int64, WidgetUpdate]())
+		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt"}`, http.StatusCreated)
+		if got := fake.only(t, "Save").Model.ID; got != 999 {
+			t.Fatalf("AllowClientID through New was ignored: the repository was asked to write id %d", got)
+		}
+
+		bounded, _ := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{Filterable: []string{"Name"}}))
+		if r := do(t, bounded, http.MethodGet, "/widgets?f=price:gte:100", ""); r.status != http.StatusBadRequest {
+			t.Fatalf("WithQuery through New was ignored: a filter outside the allow-list answered %d", r.status)
+		}
+	})
 }

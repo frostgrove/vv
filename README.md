@@ -15,7 +15,8 @@ repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
-http/crudhttp/              the transport-neutral half: status mapping, id coercion, sanitising
+port/                       the transport-neutral half: commands, Service, Mapper, the path chain
+http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
 http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
 cmd/vv/                 generates the update DTO and the metamodel from your model
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel

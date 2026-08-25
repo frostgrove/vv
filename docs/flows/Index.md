@@ -35,6 +35,7 @@ through it.
 | sentinels, HTTP statuses, what a 500 may say | [[FL-011]] |
 | operators, coercion, timestamps, the two front doors | [[FL-012]] |
 | the Gin or net/http binding, mounting, or anything the three bindings do differently | [[FL-013]] |
+| `port`, a command, the service seam, a mapper, or the path chain's middle hops | [[FL-015]] |
 | a driver error, the two gates, `sqlfault`, either adapter's `conflict` | [[FL-014]] |
 | schema introspection, the per-handle catalog key, the negative cache | [[FL-016]] |
 
@@ -45,9 +46,9 @@ wrong. If the change makes a step disappear, delete the step; if it adds a trap,
 add it to *Where the decisions bite* or *Traps*.
 
 When adding a flow: `FL-NNN-kebab-slug.md`, next number free, and add it to both
-tables here — the index and the reverse index. Two numbers are not free:
-`ROADMAP-errors.md` §14 reserves **FL-015** for phase 5; phase 6 took FL-016
-before phase 3 landed FL-014, so a flow number is identity rather than order.
+tables here — the index and the reverse index. A flow number is identity rather
+than order, and this directory has the precedent: phase 6 took **FL-016** before
+phase 3 landed FL-014 and before phase 5 landed FL-015.
 
 ## Index
 
@@ -67,6 +68,7 @@ before phase 3 landed FL-014, so a flow number is identity rather than order.
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
 | [FL-013](FL-013-a-request-through-another-binding.md) | A request through the Gin and net/http bindings | `http/crudgin/handler.go:List` / `http/crudnet/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
 | [FL-014](FL-014-a-driver-error-becomes-a-public-violation.md) | A driver error becomes a public violation | `sqlfault/classify.go:Wrap` | [[UC-015]] [[UC-017]] |
+| [FL-015](FL-015-a-request-through-the-port-layer.md) | A request through the port layer | `http/crudnet/handler.go:Create` | [[UC-001]] [[UC-013]] [[UC-015]] |
 | [FL-016](FL-016-a-schema-becomes-a-catalog.md) | A schema becomes a catalog | `catalog/load.go:Load` | [[UC-012]] |
 
 ## By file — which flows touch this file
@@ -125,16 +127,31 @@ before phase 3 landed FL-014, so a flow number is identity rather than order.
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010 |
 | `*/vv_gen.go` — nine checked-in files under `test/` and `_examples/` | FL-010 |
-| `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012 |
-| `http/crudfiber/options.go` | FL-002, FL-011 |
-| `http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013 |
-| `http/crudgin/options.go` | FL-002, FL-011, FL-013 |
-| `http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013 |
-| `http/crudnet/options.go` | FL-002, FL-011, FL-013 |
-| `http/crudhttp/errors.go` | FL-011, FL-013, FL-014 |
+| `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-015 |
+| `http/crudfiber/options.go` | FL-002, FL-011, FL-015 |
+| `http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
+| `http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015 |
+| `http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
+| `http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015 |
+| `http/crudhttp/doc.go` | FL-013, FL-015 |
+| `http/crudhttp/errors.go` | FL-011, FL-013, FL-014, FL-015 |
 | `http/crudhttp/model.go` | FL-003, FL-013 |
 | `http/crudhttp/repository.go` | FL-013 |
-| `http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013 |
+| `http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
+| `http/crudhttp/render.go` | FL-011, FL-015 |
+| `http/crudhttp/envelope.go` | FL-011 |
+| `http/crudhttp/bodyindex.go` | FL-011, FL-015 |
+| `port/doc.go` | FL-015 |
+| `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015 |
+| `port/command.go` | FL-002, FL-015 |
+| `port/mapper.go` | FL-015 |
+| `port/path.go` | FL-011, FL-015 |
+| `port/repository.go` | FL-013, FL-015 |
+| `port/model.go` | FL-003, FL-015 |
+| `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
+| `port/sentinel.go` | FL-011, FL-015 |
+| `port/kind.go` | FL-011, FL-014, FL-015 |
+| `repo/decorators/faults/faults.go` | FL-011, FL-014, FL-015 |
 | `query/coerce.go` | FL-012 |
 | `query/compile.go` | FL-001, FL-006, FL-011 |
 | `query/filter.go` | FL-001, FL-005, FL-012 |
@@ -161,6 +178,8 @@ before phase 3 landed FL-014, so a flow number is identity rather than order.
 | `test/integration/dialect_edge_test.go` | FL-014 |
 | `test/integration/catalog_test.go` | FL-016 |
 | `test/integration/catalog_schema_test.go` | FL-016 |
+| `test/integration/http_port_test.go` | FL-013, FL-015 |
+| `test/portmount/mount_test.go` | FL-013, FL-015 |
 
 `repo/basic/repository.go` is in ten of them. It is the layer everything else
 decorates, and almost no change to it is local.

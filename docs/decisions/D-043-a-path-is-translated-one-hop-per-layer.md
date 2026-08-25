@@ -45,7 +45,8 @@ driver supplied one — the offending value. Two limits, stated here rather than
 discovered later:
 
 - It is JSON only. Fiber's `Bind().Body()` dispatches on Content-Type and accepts
-  XML and form encodings ([[D-034]]), and a form body has no nesting to index. A
+  XML and form encodings ([[D-045]], and [[D-034]] before it), and a form body
+  has no nesting to index. A
   non-JSON body degrades to the model field name.
 - Where the driver gives no value the index falls back to the first key folding
   to the column name and **marks the path approximate**. SQLite is the case that
@@ -111,4 +112,4 @@ and the generated mappers are phase 8's.
 
 ## See also
 
-[[D-021]] [[D-034]] [[D-039]] [[D-044]] [[D-045]] [[UC-012]]
+[[D-021]] [[D-039]] [[D-044]] [[D-045]] [[UC-012]]

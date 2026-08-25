@@ -65,7 +65,7 @@ this page is the roadmap.
 ## Coverage map
 | Use case | Flows |
 |---|---|
-| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] |
+| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] [[FL-015]] |
 | [UC-002](UC-002-let-an-untrusted-client-query.md) | [[FL-001]] [[FL-012]] [[FL-011]] [[FL-013]] |
 | [UC-003](UC-003-partial-update-absent-vs-null.md) | [[FL-002]] [[FL-004]] [[FL-010]] [[FL-011]] |
 | [UC-004](UC-004-isolate-tenants.md) | [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]] |
@@ -77,9 +77,9 @@ this page is the roadmap.
 | [UC-010](UC-010-adopt-an-existing-orm-model.md) | [[FL-004]] [[FL-003]] [[FL-009]] [[FL-010]] |
 | [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | [[FL-001]] [[FL-002]] [[FL-004]] |
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] [[FL-016]] |
-| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] |
+| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 | [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] |
 

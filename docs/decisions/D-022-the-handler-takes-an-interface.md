@@ -11,10 +11,11 @@
 struct that embeds either. `Handler` stores the interface and nothing else.
 
 `crudfiber.Repository`, `crudgin.Repository` and `crudnet.Repository` are type
-aliases for it, not separate declarations ([[D-034]]). A generic alias is the
+aliases for it, not separate declarations ([[D-045]]). A generic alias is the
 same type, so a service written for one binding satisfies the other two with no
 change — which is what keeps "the repository is transport-neutral" true rather
-than merely plausible.
+than merely plausible. Phase 5 re-pointed all three at `port.Repository` and
+nothing at a call site changed, which is the property this paragraph is about.
 
 ## Why
 
@@ -70,16 +71,37 @@ spelled when the option is built separately.
   that must hold regardless of the transport belongs in the embedding struct or
   in a `security.Policy` ([[D-017]]).
 
+## What phase 5 changed, and what it did not
+
+The handler no longer holds the repository. It holds a `port.Service` built over
+it, and the repository reaches the routes through that ([[D-045]], [[FL-015]]).
+
+The invariant is unchanged and the reason is worth stating rather than inferring:
+`New` still takes anything satisfying `Repository` in the first parameter
+position, still infers all three type parameters from it, and still never reaches
+past the interface. What moved is where the orchestration runs, not what the
+handler is allowed to know. The seam this decision exists to keep open is now two
+seams — a repository a service stands in for, and a service a binding stands in
+front of — and `Serving` is the second one's door.
+
+The fourth type parameter that arrived with `HandlerFor[M, ID, U, In]` is behind
+an alias for exactly this decision's sake: `Handler[M, ID, U]` fills it in with
+the model, so `New` keeps inferring three. A fourth parameter on `New` itself
+would have been `cannot infer In` at every existing call site.
+
 ## Where it lives
 
-- `http/crudhttp/repository.go:Repository` — the interface, with the reason on
-  it.
+- `port/repository.go:Repository` — the interface, with the reason on it.
+- `http/crudhttp/repository.go:Repository` — the alias that keeps the old
+  address working.
+- `port/service.go:Service` — the seam this decision predicted, made explicit.
 - `http/crudfiber/handler.go:Repository`, `http/crudgin/handler.go:Repository`,
   `http/crudnet/handler.go:Repository` — the per-binding aliases.
-- `http/crudfiber/handler.go:Handler` / `http/crudgin/handler.go:Handler` — each
-  holds `repo Repository[M, ID, U]`.
+- `http/crudfiber/handler.go:HandlerFor` / `http/crudgin/handler.go:HandlerFor` /
+  `http/crudnet/handler.go:HandlerFor` — each holds `svc Service[M, ID, U]` and
+  the mapper in front of it; `Handler[M, ID, U]` is the alias over it.
 - `http/crudfiber/handler.go:New` / `http/crudgin/handler.go:New` — infer all
-  three parameters.
+  three parameters. `:NewFor` infers a fourth from the mapper.
 - `http/crudfiber/options.go:Option` / `http/crudgin/options.go:Option` —
   parameterised the same way so inline options infer.
 - `crud/repo.go:Repo` — the struct that satisfies it and that a service embeds.
@@ -100,7 +122,9 @@ spelled when the option is built separately.
   `articleService`, which only compiles because the three `Repository` types are
   one type.
 - `TestNewInfersItsTypeParametersFromTheRepository` in every binding's
-  `options_test.go` — the inference half.
+  `options_test.go` — the inference half, and
+  `TestNewForInfersItsInputFromTheMapper` beside it, which is the half phase 5
+  could have broken.
 - `TestRoutesMountEveryDocumentedEndpoint` and
   `TestRegisterMountsOnAnExistingRouter` in every binding's `handler_test.go`.
 - `TestEveryRouteMapsARefusalTheSameWay` in every binding's `edge_test.go` — a
@@ -109,4 +133,4 @@ spelled when the option is built separately.
 
 ## See also
 
-[[D-001]] [[D-012]] [[D-017]] [[D-021]] [[D-034]]
+[[D-001]] [[D-012]] [[D-017]] [[D-021]] [[D-045]] [[FL-015]]

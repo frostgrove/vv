@@ -9,15 +9,20 @@ differs by dialect.
 
 ## The path
 
-1. **`Handler.Update`** — `http/crudfiber/handler.go:206`, `http/crudgin/handler.go:232`
-   `h.id(c)` coerces the path parameter to `ID` (`handler.go:367`, via
-   `query.Coerce`), then `c.Bind().Body(&dto)` decodes the body into `U`.
-   `BeforeUpdate` runs here if configured (`http/crudfiber/options.go:64`).
-   **The trap:** the call is `h.repo.Update(ctx, id, dto)` — no options. A
-   `WithScope` narrowing reaches every read and *nothing* on this path. Row-level
-   rules on writes belong in `security.Gate`, whose scope does reach the UPDATE
-   ([[FL-008]]); the asymmetry is documented at `http/crudfiber/options.go:44`, and
-   word for word at `http/crudgin/options.go:46`.
+1. **`HandlerFor.Update`** — `http/crudfiber/handler.go:Update`,
+   `http/crudgin/handler.go:Update`
+   `h.id(c)` coerces the path parameter to `ID` (via `port.CoerceID` and
+   `query.Coerce`), then the body is decoded into `U`. The binding closes
+   `BeforeUpdate` over the request and the path key and puts it on the command
+   (`http/crudfiber/options.go:BeforeUpdate`); the service runs it. PATCH is the
+   one route with no mapper: the body decodes straight into `U`, because the
+   generated DTO already is the transport shape ([[D-018]], and `port/doc.go`
+   states the limit).
+   **The trap:** the service's call is `repo.Update(ctx, id, dto)` — no options.
+   A `WithScope` narrowing reaches every read and *nothing* on this path.
+   Row-level rules on writes belong in `security.Gate`, whose scope does reach
+   the UPDATE ([[FL-008]]); the asymmetry is documented at
+   `http/crudfiber/options.go:WithScope`, and word for word in the other two.
 
 2. **`crud.Repo.Update`** — `crud/repo.go:71`
    The typed façade. It only re-types `dto U` down to `any` for the `Core`
@@ -102,8 +107,8 @@ differs by dialect.
     again and reapply). `ErrStaleVersion` wraps `ErrConflict`, so a transport
     answers 409 without knowing versions exist (`crud/errors.go:36`).
 
-12. **`Handler.entity`** — `handler.go:407` — 200 with the refreshed model, or
-    the `WithTransform` presenter's view of it.
+12. **`HandlerFor.entity`** — `handler.go:entity` — 200 with the refreshed model,
+    or the `WithTransform` presenter's view of it.
 
 ## Where the decisions bite
 
@@ -129,8 +134,8 @@ differs by dialect.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| `:id` does not parse as `ID` | `Handler.id` (`handler.go:367`) | 400 `"…is not a valid id"` |
-| malformed JSON body | `c.Bind().Body` → `badRequest` | 400 |
+| `:id` does not parse as `ID` | `HandlerFor.id` → `port.CoerceID` | 400, `invalid_id` |
+| malformed JSON body | the binding's decode → `crudhttp.MalformedBody` | 400, `malformed_body` |
 | DTO field names a column the model lacks | `PlanFor` at `Define` time | panic at start-up, not a request |
 | no row with that id, or it is outside the narrowing | the load (`repository.go:553`) | 404 |
 | row deleted between the load and the write | `missedRow` → `ErrNotFound` | 404 |
@@ -142,9 +147,11 @@ differs by dialect.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Update`, id coercion, response |
+| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Update`, id coercion, the hook closure, response |
 | `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
-| `http/crudhttp/request.go` | `CoerceID` — the id coercion every binding calls |
+| `port/command.go` | `UpdateCommand` — the key, the patch and the hook |
+| `port/service.go` | `DefaultService.Update` — where the hook runs and the repository is called |
+| `port/request.go` | `CoerceID` — the id coercion every binding calls |
 | `crud/repo.go` | the typed `Update` façade |
 | `crud/update.go` | `UpdatePlan`, `Changes`, `planField.read`, `valuesEqual` |
 | `crud/opt.go` | the three states themselves |

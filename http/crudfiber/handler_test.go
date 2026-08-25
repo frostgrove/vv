@@ -526,3 +526,43 @@ func (s *widgetService) Save(ctx context.Context, w *Widget) error {
 	w.Name = strings.ToUpper(w.Name)
 	return s.fakeRepo.Save(ctx, w)
 }
+
+// A request body that is not the model reaches the repository as the model,
+// because the mapper ran in between. That is the resource adapter of the
+// layering, and it is the whole of what NewFor buys.
+func TestADistinctInputDTOReachesTheModelThroughTheMapper(t *testing.T) {
+	t.Run("on create", func(t *testing.T) {
+		fake := newFake()
+		app := mountHandler(NewFor(fake, widgetMapper{}))
+
+		ok(t, app, http.MethodPost, "/widgets", `{"label":"bolt","price":250}`, http.StatusCreated)
+
+		if got := fake.only(t, "Save").Model; got.Name != "bolt" || got.Price != 250 {
+			t.Fatalf("the repository stored %+v, want the mapped label and price", got)
+		}
+	})
+
+	t.Run("on replace", func(t *testing.T) {
+		fake := newFake()
+		app := mountHandler(NewFor(fake, widgetMapper{}))
+
+		ok(t, app, http.MethodPut, "/widgets/42", `{"label":"replaced","price":10}`, http.StatusOK)
+
+		if got := fake.only(t, "Save").Model; got.ID != 42 || got.Name != "replaced" {
+			t.Fatalf("the repository stored %+v, want the mapped label at the path's key", got)
+		}
+	})
+
+	// The control: the same body through New, where the input type is the model
+	// and "label" is a key the model has never heard of. Without it a NewFor
+	// that had quietly bound onto the model would pass both legs above.
+	t.Run("and the control: the same body through New means nothing", func(t *testing.T) {
+		app, fake := mount(t)
+
+		ok(t, app, http.MethodPost, "/widgets", `{"label":"bolt","price":250}`, http.StatusCreated)
+
+		if got := fake.only(t, "Save").Model; got.Name != "" {
+			t.Fatalf("a body in the input type's shape bound onto the model as %+v; the mapper is not what carried it", got)
+		}
+	})
+}

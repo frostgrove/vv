@@ -679,6 +679,53 @@ app.Use("/members", crudfiber.New(MemberService{
 `crud.ErrForbidden` maps to 403, `crud.ErrNotFound` to 404, `crud.ErrConflict`
 to 409 — wrap whichever fits.
 
+### A request body that is not the model
+
+`New` binds the body straight onto the model. When the API's shape and the
+model's shape are not the same thing, write a mapper and use `NewFor` — the
+routes, the options, the hooks and the error mapping are unchanged, and all four
+type parameters are still inferred:
+
+```go
+type CreateMember struct {
+    Name  string `json:"fullName"`
+    Email string `json:"email"`
+}
+
+type memberMapper struct{}
+
+func (memberMapper) Model(ctx context.Context, in CreateMember) (Member, error) {
+    return Member{Name: in.Name, Email: in.Email}, nil
+}
+
+app.Use("/members", crudfiber.NewFor(members, memberMapper{}).Routes())
+```
+
+The mapper runs before anything else, so a service layer and the hooks below see
+a model and never a wire type. `PATCH` is the exception and it is deliberate:
+the generated update DTO already *is* the transport shape, so it decodes
+straight into it.
+
+### The same service on more than one transport
+
+Everything that is not routing, decoding or writing a response lives in
+`port`, so a service can be written once against `port.Service` and mounted with
+`Serving` on whichever binding an application uses:
+
+```go
+svc := port.NewService[Member, uint, store.MemberUpdate](members,
+    port.WithQuery(cfg),
+)
+
+app.Use("/members", crudfiber.Serving(svc).Routes())  // and crudgin.Serving,
+                                                      // and crudnet.Serving
+```
+
+`port.WithQuery` and `port.AllowClientID` configure the service, so pass them
+there. Handing the binding's own `WithQuery` to `Serving` panics at start-up
+rather than being ignored — an API you believe is bounded and is not is worse
+than a failed boot.
+
 ## 13. Multi-tenancy and authorization
 
 gorm's global scopes live in gorm's builder, so vv needs its own gate:
