@@ -80,8 +80,14 @@ response body.
 type. It looks for a `SQLState() string` method (pgx, lib/pq) and then for an
 exported `SQLState` field (go-sql-driver/mysql), handling both the `string` and
 the `[5]byte` spelling; for SQLite it reaches a `Code() int` method
-(modernc.org/sqlite) or integer `Code`/`ExtendedCode` fields (mattn/go-sqlite3).
-`adapter/crudpgx` can name `*pgconn.PgError` and does.
+(modernc.org/sqlite) or integer `Code`/`ExtendedCode` fields (mattn/go-sqlite3);
+for the structured extras it reads a fixed whitelist of exported string fields.
+The rule is a prohibition — *may not name a driver's error type* — and not a
+location, so it still holds now that the shapes are reached in
+`sqlfault/extract.go`: `crudsql` imports no driver and `make check-deps` is what
+proves it. `adapter/crudpgx` can name `*pgconn.PgError` and does, in
+`adapter/crudpgx/conflict.go:extract`, so a field pgx renames breaks that build
+where the by-shape reader would go quietly blank.
 
 **Why a 500 says nothing.** The underlying message can be a SQL string, a column
 list, or a connection string fragment. `DefaultErrorHandler` fills `Message` only
@@ -116,12 +122,13 @@ for statuses below 500.
 - `crud/errors.go` — every sentinel, each with the reason it exists.
 - `crud/errors.go:UnknownFieldError` / `crud/errors.go:SchemaError` — the two
   structured ones.
-- `adapter/crudsql/conflict.go:conflict` / `adapter/crudsql/conflict.go:sqlState`
-  / `adapter/crudsql/conflict.go:sqlStateField` /
-  `adapter/crudsql/conflict.go:nativeNumber` /
-  `adapter/crudsql/conflict.go:sqliteResultCode` — the shape-based classifier,
-  whose three arms are [[D-046]]'s.
-- `adapter/crudpgx/conflict.go:conflict` — the typed one.
+- `adapter/crudsql/conflict.go:Executor.conflict` — one line over
+  `sqlfault/classify.go:Wrap`. The shapes it reaches are
+  `sqlfault/extract.go:Extract`'s and the three arms are
+  `sqlfault/gate.go:Integrity`'s, which is [[D-046]]'s.
+- `adapter/crudpgx/conflict.go:Executor.conflict` and
+  `adapter/crudpgx/conflict.go:extract` — the same seam, with typed extraction
+  from `*pgconn.PgError`.
 - `repo/decorators/security/security.go:ErrForbidden` and
   `repo/decorators/security/security.go:Denied`.
 - `repo/basic/repository.go:repository.missedRow` — the one place `ErrNotFound`
@@ -150,6 +157,11 @@ for statuses below 500.
   as 500.
 - `TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses` in
   `adapter/crudsql/conflict_test.go` — method, string field and `[5]byte` field.
+- `TestTheExtractorReachesTheStructuredFieldsByShape` in
+  `adapter/crudsql/conflict_test.go` — the constraint, table and schema fields
+  reached by name and kind rather than by type, with a lib/pq-shaped fake whose
+  `Constraint`/`Table`/`Column` spellings are deliberately unread as the control:
+  it still classifies, and fills in nothing.
 - `TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt` in
   `adapter/crudpgx/conflict_test.go`.
 - `TestIntegrityViolationsAreClassifiedByEveryAdapter` in
@@ -158,7 +170,7 @@ for statuses below 500.
   which has no SQLite entry, which is how a whole dialect's worth of
   misclassification went unnoticed.
 - `TestEveryCorpusCaseClassifiesAsTheCorpusSays` in
-  `test/integration/corpus_test.go` — fifteen cases against four live engines,
+  `test/integration/corpus_test.go` — twenty cases against four live engines,
   both directions, which is what closed that gap.
 - `TestSQLiteConstraintViolationsBecomeConflicts` and
   `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in

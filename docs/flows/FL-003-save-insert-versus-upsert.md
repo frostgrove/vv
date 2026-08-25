@@ -111,7 +111,7 @@ primary key holds a value.
 | `nil` model | `Save` (`repository.go:443`) | 400 (`SchemaError`) |
 | `noauto` key left at zero | `Save` (`repository.go:454`) | 400 `ErrMissingID` |
 | PUT to an unused id with a generated key | `Handler.Replace` probe (`handler.go:261`) | 404 |
-| duplicate key / FK / NOT NULL / CHECK | adapter `conflict()` — `adapter/crudsql/conflict.go:20`, `adapter/crudpgx/conflict.go:20` | 409 with a message |
+| duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The message is the fault's classification text where the source named its engine, and the driver's own sentence where it did not |
 | `ON CONFLICT DO NOTHING` matched an existing row | `insert` (`repository.go:482`) | 200/201 with the *stored* row |
 | the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
 | gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |
@@ -127,7 +127,7 @@ primary key holds a value.
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
 | `crud/dialect.go` | `Upsert`, `SupportsReturning` |
 | `crud/errors.go` | `ErrMissingID`, `ErrConflict` |
-| `adapter/crudsql/conflict.go`, `adapter/crudpgx/conflict.go` | integrity errors → `ErrConflict` |
+| `adapter/crudsql/conflict.go`, `adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
 | `repo/decorators/security/security.go` | the gated variant |
 
 ## Tests that walk this flow

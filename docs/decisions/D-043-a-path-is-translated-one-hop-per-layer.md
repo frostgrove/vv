@@ -76,7 +76,15 @@ under load, which is the worst possible way for this to fail.
 
 ## Where it lives
 
-Nothing yet. Phase 4 creates the render layer and phase 8 the generated mappers.
+The mechanism exists from phase 1; the render layer that uses it is phase 4's
+and the generated mappers are phase 8's.
+
+- `errs/violation.go:Violation.Approximate` — the marker. A path that could not
+  be resolved says so rather than being invented, and the field is on the
+  contract struct from the first tag because adding one afterwards is exactly
+  what that tag exists to prevent.
+- `errs/spi.go:Chain` — the composition. A declined hop returns the path as it
+  was transformed so far, plus `false`, so the caller has something to mark.
 
 - `crud/meta.go` — the `Meta`/`Schema` split this rests on.
 - `http/crudhttp/request.go:DecodeJSON` — a pure function whose `io.ReadAll`
@@ -86,6 +94,14 @@ Nothing yet. Phase 4 creates the render layer and phase 8 the generated mappers.
 
 ## Proven by (owed)
 
+- Phase 1 shipped the mechanism and `TestAChainReportsWhenAHopDeclined` in
+  `errs/spi_test.go` pins it — a declined hop reports false and keeps the
+  earlier hops' work, with the every-hop-accepts twin as its control. The
+  evidence this decision actually rests on is still owed, because nothing
+  translates a path yet.
+- `TestTheStepsThatWriteNothingElseReadsStillWrite` in `errs/build_test.go` pins
+  `Builder.Approximate` onto the violation, with the unwritten violation as its
+  control. That the marker can be set is not that anything sets it.
 - Phase 4 owes: a path resolved through a generated mapper; and a renamed JSON
   key with no mapper entry produces the **approximate** marker, not a wrong path.
   Without the second, a fallback that always guessed the first matching key would

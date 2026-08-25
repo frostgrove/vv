@@ -35,6 +35,8 @@ through it.
 | sentinels, HTTP statuses, what a 500 may say | [[FL-011]] |
 | operators, coercion, timestamps, the two front doors | [[FL-012]] |
 | the Gin or net/http binding, mounting, or anything the three bindings do differently | [[FL-013]] |
+| a driver error, the two gates, `sqlfault`, either adapter's `conflict` | [[FL-014]] |
+| schema introspection, the per-handle catalog key, the negative cache | [[FL-016]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -43,7 +45,9 @@ wrong. If the change makes a step disappear, delete the step; if it adds a trap,
 add it to *Where the decisions bite* or *Traps*.
 
 When adding a flow: `FL-NNN-kebab-slug.md`, next number free, and add it to both
-tables here — the index and the reverse index.
+tables here — the index and the reverse index. Two numbers are not free:
+`ROADMAP-errors.md` §14 reserves **FL-015** for phase 5; phase 6 took FL-016
+before phase 3 landed FL-014, so a flow number is identity rather than order.
 
 ## Index
 
@@ -62,24 +66,53 @@ tables here — the index and the reverse index.
 | [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `http/crudhttp/errors.go:Status` | [[UC-015]] |
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
 | [FL-013](FL-013-a-request-through-another-binding.md) | A request through the Gin and net/http bindings | `http/crudgin/handler.go:List` / `http/crudnet/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
+| [FL-014](FL-014-a-driver-error-becomes-a-public-violation.md) | A driver error becomes a public violation | `sqlfault/classify.go:Wrap` | [[UC-015]] [[UC-017]] |
+| [FL-016](FL-016-a-schema-becomes-a-catalog.md) | A schema becomes a catalog | `catalog/load.go:Load` | [[UC-012]] |
 
 ## By file — which flows touch this file
 
 | File | Flows |
 |---|---|
-| `adapter/crudpgx/conflict.go` | FL-003, FL-011 |
-| `adapter/crudpgx/crudpgx.go` | FL-009, FL-011 |
-| `adapter/crudsql/conflict.go` | FL-003, FL-011 |
-| `adapter/crudsql/crudsql.go` | FL-009 |
+| `adapter/crudpgx/conflict.go` | FL-003, FL-011, FL-014 |
+| `adapter/crudpgx/crudpgx.go` | FL-009, FL-011, FL-014 |
+| `adapter/crudsql/conflict.go` | FL-003, FL-011, FL-014 |
+| `adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014 |
 | `cmd/vv/main.go` | FL-010 |
 | `internal/codegen/codegen.go` | FL-010 |
 | `internal/codegen/render.go` | FL-010 |
+| `catalog/doc.go` | FL-016 |
+| `catalog/catalog.go` | FL-014, FL-016 |
+| `catalog/errors.go` | FL-016 |
+| `catalog/load.go` | FL-016 |
+| `catalog/set.go` | FL-016 |
+| `catalog/reload.go` | FL-016 |
+| `catalog/postgres.go` | FL-016 |
+| `catalog/mysql.go` | FL-016 |
+| `catalog/mariadb.go` | FL-016 |
+| `catalog/sqlite.go` | FL-016 |
 | `crud/access.go` | FL-001, FL-003, FL-004, FL-006, FL-008 |
+| `crud/crudtest/recorder.go` | FL-016 |
 | `crud/dialect.go` | FL-002, FL-003, FL-009 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
-| `crud/executor.go` | FL-002, FL-009 |
-| `errs/sqlerr/corpus.go` | FL-011 |
-| `errs/sqlerr/testdata/corpus/` | FL-011 |
+| `crud/executor.go` | FL-002, FL-009, FL-016 |
+| `errs/doc.go` | FL-011 |
+| `errs/code.go` | FL-011 |
+| `errs/codes.go` | FL-011, FL-014 |
+| `errs/path.go` | FL-011 |
+| `errs/violation.go` | FL-011, FL-014 |
+| `errs/fault.go` | FL-011, FL-014 |
+| `errs/build.go` | FL-011, FL-014 |
+| `errs/spi.go` | FL-011, FL-014 |
+| `errs/message.go` | FL-011 |
+| `errs/bridge.go` | FL-011 |
+| `errs/sqlerr/doc.go` | FL-011, FL-014 |
+| `errs/sqlerr/classify.go` | FL-011, FL-014 |
+| `errs/sqlerr/postgres.go` | FL-011, FL-014 |
+| `errs/sqlerr/mysql.go` | FL-011, FL-014 |
+| `errs/sqlerr/mariadb.go` | FL-011, FL-014 |
+| `errs/sqlerr/sqlite.go` | FL-011, FL-014 |
+| `errs/sqlerr/corpus.go` | FL-011, FL-014 |
+| `errs/sqlerr/testdata/corpus/` | FL-011, FL-014 |
 | `crud/meta.go` | FL-002, FL-003, FL-004, FL-010, FL-012 |
 | `crud/options.go` | FL-001, FL-007, FL-008 |
 | `crud/opt.go` | FL-002 |
@@ -98,7 +131,7 @@ tables here — the index and the reverse index.
 | `http/crudgin/options.go` | FL-002, FL-011, FL-013 |
 | `http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013 |
 | `http/crudnet/options.go` | FL-002, FL-011, FL-013 |
-| `http/crudhttp/errors.go` | FL-011, FL-013 |
+| `http/crudhttp/errors.go` | FL-011, FL-013, FL-014 |
 | `http/crudhttp/model.go` | FL-003, FL-013 |
 | `http/crudhttp/repository.go` | FL-013 |
 | `http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013 |
@@ -115,13 +148,22 @@ tables here — the index and the reverse index.
 | `repo/decorators/specs/errors.go` | FL-011 |
 | `repo/decorators/specs/executor.go` | FL-011 |
 | `repo/decorators/specs/metamodel.go` | FL-010 |
+| `sqlfault/doc.go` | FL-011, FL-014 |
+| `sqlfault/extract.go` | FL-011, FL-014 |
+| `sqlfault/gate.go` | FL-011, FL-014 |
+| `sqlfault/classify.go` | FL-011, FL-014 |
+| `sqlfault/catalog.go` | FL-011, FL-014 |
 | `test/cmd/corpus/main.go` | FL-011 |
-| `test/corpus/cases.go` | FL-011 |
-| `test/corpus/capture.go` | FL-011 |
+| `test/corpus/cases.go` | FL-011, FL-014 |
+| `test/corpus/capture.go` | FL-011, FL-014 |
 | `test/corpus/corpus.go` | FL-011 |
+| `test/integration/corpus_test.go` | FL-011, FL-014 |
+| `test/integration/dialect_edge_test.go` | FL-014 |
+| `test/integration/catalog_test.go` | FL-016 |
+| `test/integration/catalog_schema_test.go` | FL-016 |
 
-`repo/basic/repository.go` is in ten of the thirteen. It is the layer everything
-else decorates, and almost no change to it is local.
+`repo/basic/repository.go` is in ten of them. It is the layer everything else
+decorates, and almost no change to it is local.
 
 ## Not yet written
 

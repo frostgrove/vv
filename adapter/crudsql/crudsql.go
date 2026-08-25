@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/sqlfault"
 )
 
 // Queryer is the database/sql shape vv needs. *sql.DB, *sql.Tx, *sql.Conn,
@@ -33,10 +35,46 @@ type Queryer interface {
 }
 
 // Executor turns a Queryer into a crud.Executor.
-type Executor struct{ q Queryer }
+//
+// faults is what turns a refused statement into an errs.Fault, and it is nil
+// unless the caller named an engine. The field is an interface holding a
+// pointer, so an Executor stays comparable — crud.KeyOf and catalog.Set both
+// key on the value.
+type Executor struct {
+	q      Queryer
+	faults errs.Classifier
+}
+
+// An Option wires one part of an executor.
+type Option func(*config)
+
+type config struct{ faults errs.Classifier }
+
+// WithFaults hands an executor a classifier. It is how a handle this package
+// cannot name an engine for — a joined ent, gorm or sqlx transaction — gets one
+// anyway:
+//
+//	crudsql.From(tx, crudsql.WithFaults(sqlfault.New("postgres")))
+func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = c } }
+
+func classifier(def errs.Classifier, opts []Option) errs.Classifier {
+	o := config{faults: def}
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	return o.faults
+}
 
 // From wraps a foreign handle — most often somebody else's transaction.
-func From(q Queryer) Executor { return Executor{q: q} }
+//
+// It names no engine and so gets no classifier: a violation through it is the
+// sentinel and no code. Deriving the engine from the dialect is what [[D-046]]
+// forbids, because crud.MySQL is MariaDB too. Pass WithFaults to say which.
+func From(q Queryer, opts ...Option) Executor {
+	return Executor{q: q, faults: classifier(nil, opts)}
+}
 
 // Unwrap returns the wrapped handle.
 func (e Executor) Unwrap() Queryer { return e.q }
@@ -50,7 +88,7 @@ func (e Executor) DataSource() any { return e.q }
 func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
 	res, err := e.q.ExecContext(ctx, query, args...)
 	if err != nil {
-		return crud.Result{}, conflict(err)
+		return crud.Result{}, e.conflict(err)
 	}
 	out := crud.Result{}
 	if n, err := res.RowsAffected(); err == nil {
@@ -67,7 +105,7 @@ func (e Executor) Query(ctx context.Context, query string, args ...any) (crud.Ro
 	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
 	rs, err := e.q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, conflict(err)
+		return nil, e.conflict(err)
 	}
 	return rows{rs}, nil
 }
@@ -89,7 +127,11 @@ func (s source) Dialect() crud.Dialect { return s.d }
 // Source builds a crud.Source over any Queryer. Use it when a framework hands
 // you a handle rather than a *sql.DB and you want to build repositories on it
 // directly; use Open when you have the *sql.DB and want transactions too.
-func Source(q Queryer, d crud.Dialect) crud.Source { return source{Executor{q}, d} }
+//
+// It names no engine either, for the same reason From does not.
+func Source(q Queryer, d crud.Dialect, opts ...Option) crud.Source {
+	return source{Executor{q: q, faults: classifier(nil, opts)}, d}
+}
 
 // DB is a full crud.Source over a *sql.DB: executes, knows its dialect and can
 // start transactions.
@@ -102,12 +144,26 @@ type DB struct {
 }
 
 // Open binds a *sql.DB to a dialect.
-func Open(db *sql.DB, d crud.Dialect) DB { return DB{Executor{db}, db, d, nil} }
+//
+// crud.Dialect says how to write SQL and not which server is answering —
+// crud.MySQL targets MySQL and MariaDB both — so Open cannot name an engine and
+// gets no classifier. The four constructors below each name theirs.
+func Open(db *sql.DB, d crud.Dialect, opts ...Option) DB {
+	return DB{Executor{q: db, faults: classifier(nil, opts)}, db, d, nil}
+}
 
-// Postgres and MySQL are the two shorthands.
-func Postgres(db *sql.DB) DB { return Open(db, crud.Postgres{}) }
-func MySQL(db *sql.DB) DB    { return Open(db, crud.MySQL{}) }
-func SQLite(db *sql.DB) DB   { return Open(db, crud.SQLite{}) }
+// The four engine shorthands. Each writes its engine string here, as a literal,
+// because that string is a declaration and not something to be derived: MariaDB
+// and MySQL share a driver, a dialect and a wire protocol, and answer a failed
+// CHECK with two different numbers ([[D-046]]).
+func Postgres(db *sql.DB, opts ...Option) DB { return engine(db, crud.Postgres{}, "postgres", opts) }
+func MySQL(db *sql.DB, opts ...Option) DB    { return engine(db, crud.MySQL{}, "mysql", opts) }
+func MariaDB(db *sql.DB, opts ...Option) DB  { return engine(db, crud.MySQL{}, "mariadb", opts) }
+func SQLite(db *sql.DB, opts ...Option) DB   { return engine(db, crud.SQLite{}, "sqlite", opts) }
+
+func engine(db *sql.DB, d crud.Dialect, name string, opts []Option) DB {
+	return DB{Executor{q: db, faults: classifier(sqlfault.New(name), opts)}, db, d, nil}
+}
 
 func (d DB) Dialect() crud.Dialect { return d.d }
 
@@ -123,7 +179,10 @@ func (d DB) Begin(ctx context.Context) (crud.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{Executor: Executor{tx}, tx: tx}, nil
+	// The classifier goes into the transaction. A deferred constraint fires at
+	// COMMIT, and a Tx without it would make that one shape of conflict a
+	// sentinel with no code while the immediate shape carried one.
+	return &Tx{Executor: Executor{q: tx, faults: d.faults}, tx: tx}, nil
 }
 
 // Tx is a database/sql transaction. database/sql has no nested transactions, so
@@ -135,7 +194,11 @@ type Tx struct {
 	depth atomic.Int64
 }
 
-func (t *Tx) Commit(ctx context.Context) error   { return t.tx.Commit() }
+// Commit classifies too. A DEFERRABLE INITIALLY DEFERRED constraint is checked
+// here and not at the statement, so a duplicate key or a missing parent arrives
+// with no statement having just failed — and returning it untouched made that
+// one shape of conflict a 500 while the immediate shape was a 409.
+func (t *Tx) Commit(ctx context.Context) error   { return t.conflict(t.tx.Commit()) }
 func (t *Tx) Rollback(ctx context.Context) error { return t.tx.Rollback() }
 
 // Tx returns the underlying *sql.Tx, e.g. to hand it to another library.
@@ -156,9 +219,20 @@ type savepoint struct {
 	name   string
 }
 
+// Commit releases the savepoint, and classifies — though not for a deferred
+// constraint. PostgreSQL hands a deferred check to the parent transaction and
+// fires it at the top-level COMMIT; RELEASE returns clean, measured, and the
+// other three engines have no deferred constraints at all.
+//
+// What is reachable here is a transaction an earlier statement poisoned:
+// PostgreSQL refuses the RELEASE with 25P02, and unclassified that reaches a
+// caller as an anonymous 500 instead of errs.CodeTransactionAborted. It also
+// keeps the two PostgreSQL adapters in step, because crudpgx's nested Begin
+// returns the same Tx whose Commit classifies and one nested write must not be a
+// 409 through pgx and a 500 through database/sql.
 func (s *savepoint) Commit(ctx context.Context) error {
 	_, err := s.parent.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+s.name)
-	return err
+	return s.conflict(err)
 }
 
 func (s *savepoint) Rollback(ctx context.Context) error {

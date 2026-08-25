@@ -10,6 +10,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/sqlfault"
 )
 
 // POST refuses a client-chosen key when the database generates it, and PUT is
@@ -168,5 +170,127 @@ func TestAMisspelledQueryParameterIs400(t *testing.T) {
 	ok(t, app, http.MethodGet, "/widgets?filtr=name:eq:x", "", http.StatusBadRequest)
 	if len(fake.calls) != 0 {
 		t.Fatalf("%d repository calls: the unfiltered read went out anyway", len(fake.calls))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// what a classified conflict tells the client
+
+// leaky is a driver error shaped like PostgreSQL's, and everything on it is
+// something a response body must not carry.
+type leaky struct {
+	Code                                  string
+	Message                               string
+	ConstraintName, TableName, SchemaName string
+	ColumnName                            string
+}
+
+func (e *leaky) Error() string    { return e.Message }
+func (e *leaky) SQLState() string { return e.Code }
+
+// mysqlish is the other shape, and it is here for one assertion the PostgreSQL
+// one cannot make: the engine's own number. Searching a body for a zero would be
+// matched by any digit it prints.
+type mysqlish struct {
+	Number   uint16
+	SQLState [5]byte
+	Message  string
+}
+
+func (e *mysqlish) Error() string { return e.Message }
+
+// [[D-047]] under live load, and [[D-038]]'s seam control against a real
+// produced fault: crudhttp.Status is not edited, and a fault still answers 409
+// because the sentinel it wraps is still reachable.
+//
+// http/crudhttp:Body copies the outermost err.Error() into the body of every
+// status below 500, so whatever a fault prints is what a client reads on a 409
+// today — three phases before the rule that forbids it comes into force.
+func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
+	driver := &leaky{
+		Code:           "23505",
+		Message:        `ERROR: duplicate key value violates unique constraint "widgets_name_key" (INSERT INTO widgets (name) VALUES ($1)) [host=db.internal user=vv password=hunter2]`,
+		ConstraintName: "widgets_name_key",
+		TableName:      "widgets",
+		SchemaName:     "public",
+		ColumnName:     "name",
+	}
+	leaks := map[string]string{
+		"the constraint":        "widgets_name_key",
+		"the schema":            "public",
+		"the SQLSTATE":          "23505",
+		"the statement":         "INSERT INTO widgets",
+		"the connection string": "host=db.internal",
+	}
+	// The control: every fragment has to be in the fixture, or finding it absent
+	// from the body proves nothing.
+	for name, leak := range leaks {
+		var found bool
+		for _, said := range []string{driver.Message, driver.Code, driver.ConstraintName, driver.TableName, driver.SchemaName, driver.ColumnName} {
+			found = found || strings.Contains(said, leak)
+		}
+		if !found {
+			t.Fatalf("%s (%q) is not in the fixture, so searching the body for it says nothing", name, leak)
+		}
+	}
+
+	app, fake := mount(t)
+	fake.err = sqlfault.Wrap(sqlfault.New("postgres"), driver)
+
+	r := do(t, app, http.MethodPost, "/widgets", `{"name":"bolt"}`)
+	if r.status != http.StatusConflict {
+		t.Fatalf("a classified duplicate key answered %d, want 409: %s", r.status, r.body)
+	}
+	got := failed(t, r)
+	for name, leak := range leaks {
+		if strings.Contains(got.Message, leak) {
+			t.Fatalf("the 409 body names %s: %s", name, r.body)
+		}
+	}
+	// And it is not merely empty: a client still learns what went wrong.
+	if !strings.Contains(got.Message, "unique") || !strings.Contains(got.Message, "conflict") {
+		t.Fatalf("the 409 body says %q, and a client has to be able to branch on it", got.Message)
+	}
+
+	// The engine's own number, guarded separately: it is an int, and zero
+	// searched for as "0" would be matched by any digit the body prints.
+	my := &mysqlish{Number: 1062, Message: "Duplicate entry 'bolt' for key 'widgets.name'"}
+	copy(my.SQLState[:], "23000")
+	app, fake = mount(t)
+	fake.err = sqlfault.Wrap(sqlfault.New("mysql"), my)
+	// The control this leg needs, and the one the loop above gets for free: the
+	// number has to be in a produced fault. Unclassified, the sentinel gate
+	// alone answers the same 409 and the body carries the driver's message,
+	// which never named the number either — so the assertion below would pass
+	// with MySQL classification deleted.
+	mf, isFault := errs.AsFault(fake.err)
+	if !isFault {
+		t.Fatal("the MySQL fixture did not classify, so the 409 below comes from the sentinel gate and searching its body says nothing")
+	}
+	if mf.Detail.Native != 1062 {
+		t.Fatalf("the fault's Detail.Native = %d, so searching the body for 1062 proves nothing", mf.Detail.Native)
+	}
+	r = do(t, app, http.MethodPost, "/widgets", `{"name":"bolt"}`)
+	if r.status != http.StatusConflict {
+		t.Fatalf("a classified MySQL duplicate key answered %d, want 409: %s", r.status, r.body)
+	}
+	if strings.Contains(failed(t, r).Message, "1062") {
+		t.Fatalf("the 409 body names the engine's own number: %s", r.body)
+	}
+
+	// The second control, and the one that keeps this test honest: the same
+	// driver error with nothing classified still answers 409 *with the
+	// constraint name in the body*. The leak is asserted to exist where nothing
+	// closed it, so if something else ever closes it this fails and says the
+	// positive above now proves nothing. This is exactly the shape
+	// TestAnIntegrityConflictIsA409WithAMessage uses.
+	app, fake = mount(t)
+	fake.err = errors.Join(crud.ErrConflict, driver)
+	r = do(t, app, http.MethodPost, "/widgets", `{"name":"bolt"}`)
+	if r.status != http.StatusConflict {
+		t.Fatalf("an unclassified duplicate key answered %d, want 409: %s", r.status, r.body)
+	}
+	if !strings.Contains(failed(t, r).Message, "widgets_name_key") {
+		t.Fatalf("an unclassified conflict no longer carries the driver's message, so the test above measures nothing: %s", r.body)
 	}
 }

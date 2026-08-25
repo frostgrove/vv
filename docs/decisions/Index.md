@@ -34,7 +34,12 @@ aspirational. The rule still binds: it forbids working around it in the meantime
 and it is what the implementing phase has to satisfy. Such a decision heads its
 evidence section `Proven by (owed)` and names the tests that phase must write —
 so an agent checking that every symbol a doc names still exists knows those are
-deliberate rather than rot. D-038 and D-041 through D-045 are the current set.
+deliberate rather than rot. D-042, D-043 and D-045 are the current set; D-038 left
+it when phase 1 landed `errs` and D-041 when phase 6 landed `catalog`, and D-040
+and D-044 are now partly in force — see their rows. An *accepted* decision may
+still owe evidence: D-039 did and phase 2 paid it, D-038 did — the tree walk
+through a multi-error — and phase 3 paid that, so nothing in `docs/` heads a
+section `Proven by (owed)` for a reason other than an unwritten subsystem.
 
 ## Index
 
@@ -58,7 +63,7 @@ deliberate rather than rot. D-038 and D-041 through D-045 are the current set.
 | [D-016](D-016-one-module-crud-stays-stdlib-only.md) | One `go get`, no `replace`; `crud/` imports only the standard library | **superseded by D-033** (module half; the stdlib rule stands) | process & tooling |
 | [D-017](D-017-orm-go-side-behaviour-does-not-run.md) | An vv write is exactly the statement vv built; no ORM builder, hook or privacy rule runs | accepted | interop |
 | [D-018](D-018-dtos-and-metamodels-are-generated.md) | `vv_gen.go` is generated output, reproducible from the model source | accepted | process & tooling |
-| [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for four named differences | accepted | dialects |
+| [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for ten named differences | accepted | dialects |
 | [D-020](D-020-tests-are-the-specification.md) | A test that could pass vacuously carries a control case that fails without the behaviour | accepted | process & tooling |
 | [D-021](D-021-magic-is-preferred-to-go-orthodoxy.md) | Boilerplate is removed from the consumer; the magic must fail at build or start-up, never at request time | accepted | philosophy |
 | [D-022](D-022-the-handler-takes-an-interface.md) | The handler holds `Repository[M, ID, U]` and never reaches past it | accepted | HTTP |
@@ -77,15 +82,17 @@ deliberate rather than rot. D-038 and D-041 through D-045 are the current set.
 | [D-035](D-035-a-prefix-only-breaks-a-collision.md) | A package is named for what it is; a prefix only breaks a collision, and it names the subsystem | accepted | process & tooling |
 | [D-036](D-036-the-root-module-takes-no-third-party-requirement.md) | The root module may require a first-party module; third-party requirements still become their own module | accepted | process & tooling |
 | [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
-| [D-038](D-038-a-fault-is-additive.md) | A fault wraps and never replaces; the `crud` sentinel underneath stays reachable with `errors.Is` | **in force from phase 1** | errors |
+| [D-038](D-038-a-fault-is-additive.md) | A fault wraps and never replaces; the `crud` sentinel underneath stays reachable with `errors.Is` | accepted | errors |
 | [D-039](D-039-message-text-is-not-an-interface.md) | No classification and no field path comes from a driver's message text | accepted | errors |
-| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification in force; kind from phase 1** | errors |
-| [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | **in force from phase 6** | errors |
+| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification and kind in force; 503 from phase 4** | errors |
+| [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | accepted | errors |
 | [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | **in force from phase 7** | errors |
 | [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | **in force from phase 4** | errors |
-| [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **in force from phase 4** | errors |
+| [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **marshal and print in force; the rendered body from phase 4** | errors |
 | [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | **in force from phase 5** | HTTP |
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
+| [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
+| [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted | process & tooling |
 
 ## By area
 
@@ -104,8 +111,10 @@ of one), D-026 (**open** — `Inspect` and caller paging).
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
 
-**Transactions & datasources** — D-009 (unconditional capture, opt-in scoping),
-D-019 (dialect differences), D-027 (**open** — cross-database capture).
+**Transactions & datasources** — D-009 (unconditional capture, opt-in scoping,
+and the two identity rules `crud.KeyOf` and `ownScope`), D-019 (dialect
+differences), D-027 (**open** — cross-database capture), D-041 (what else keys
+on that identity).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
 D-013 (400 for an unknown field), D-034 (what a binding owns and what `crudhttp`
@@ -118,17 +127,21 @@ transaction is shared), D-018 (`-types`, `-into`, `-import`).
 **Errors** — D-015 (the sentinel list and the HTTP mapping), D-046 (how a driver
 error is classified, and why the class alone is not a gate), D-039 (message text
 is not an interface), D-040 (retryable is not a client error), D-044 (a body
-names nothing internal), D-038 (a fault is additive), D-043 (one hop per layer),
-D-041 (the catalog), D-042 (the probe), D-034 (why the
+names nothing internal), D-047 (and neither does a fault's `Error()` text),
+D-038 (a fault is additive), D-043 (one hop per layer),
+D-041 (the catalog, and which unique keys it can tell apart per engine),
+D-042 (the probe), D-034 (why the
 mapping is in one place rather than one per binding).
 
-**Dialects** — D-019 (what is hidden and what is observable), D-011 (the upsert
-forms), D-010 (why MySQL re-reads).
+**Dialects** — D-019 (what is hidden and what is observable, now ten
+differences), D-011 (the upsert forms), D-010 (why MySQL re-reads), D-041 (the
+per-engine half of difference 9), D-046 (difference 10 — what a classified
+violation can say, and which constructor decided the engine).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).
 
-**Process & tooling** — D-035 (naming), D-036 (first-party requirements), D-033 (one module per optional dependency, and how a
+**Process & tooling** — D-048 (what joins the contract manifest, and why nothing on the roadmap's `?` list does), D-035 (naming), D-036 (first-party requirements), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
 still binds), D-018 (generated artefacts), D-020 (tests are the specification).
 

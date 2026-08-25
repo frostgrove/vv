@@ -18,6 +18,7 @@ import (
 	"github.com/shardit-io/vv/adapter/crudpgx"
 	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/repo/basic"
 )
 
@@ -329,6 +330,11 @@ type egTarget struct {
 	name string
 	db   string // "postgres" or "mysql"
 	src  crud.Source
+	// classifies says whether this source was given an engine to classify
+	// against. The two ent entries are not: they are built on crudsql.From,
+	// which names no engine and therefore gets no classifier ([[D-046]]). A
+	// violation through them is the sentinel and no code.
+	classifies bool
 }
 
 // egTargets is every distinct crud.Source these two databases can be reached
@@ -337,11 +343,11 @@ type egTarget struct {
 // for either would run the same code a second time.
 func egTargets() []egTarget {
 	return []egTarget{
-		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB)},
-		{"database/sql+mysql", "mysql", crudsql.MySQL(myDB)},
-		{"pgx", "postgres", crudpgx.Open(pgPool)},
-		{"ent+postgres", "postgres", newEntSource(entClient(pgDB, dialect.Postgres), crud.Postgres{})},
-		{"ent+mysql", "mysql", newEntSource(entClient(myDB, dialect.MySQL), crud.MySQL{})},
+		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB), true},
+		{"database/sql+mysql", "mysql", crudsql.MySQL(myDB), true},
+		{"pgx", "postgres", crudpgx.Open(pgPool), true},
+		{"ent+postgres", "postgres", newEntSource(entClient(pgDB, dialect.Postgres), crud.Postgres{}), false},
+		{"ent+mysql", "mysql", newEntSource(entClient(myDB, dialect.MySQL), crud.MySQL{}), false},
 	}
 }
 
@@ -354,9 +360,11 @@ func egTargets() []egTarget {
 // egTargets would run that code a fourth time and learn nothing.
 func egEngines() []egTarget {
 	return []egTarget{
-		{"postgres", "postgres", crudsql.Postgres(pgDB)},
-		{"mysql", "mysql", crudsql.MySQL(myDB)},
-		{"mariadb", "mysql", crudsql.MySQL(mariaDB)},
+		{"postgres", "postgres", crudsql.Postgres(pgDB), true},
+		{"mysql", "mysql", crudsql.MySQL(myDB), true},
+		// MariaDB through crudsql.MariaDB, which is the constructor that names
+		// the engine crud.MySQL cannot tell from MySQL.
+		{"mariadb", "mysql", crudsql.MariaDB(mariaDB), true},
 	}
 }
 
@@ -365,9 +373,9 @@ func egEngines() []egTarget {
 // ent tests already drive; what is on trial in this file is the two adapters.
 func egBeginners() []egTarget {
 	return []egTarget{
-		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB)},
-		{"database/sql+mysql", "mysql", crudsql.MySQL(myDB)},
-		{"pgx", "postgres", crudpgx.Open(pgPool)},
+		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB), true},
+		{"database/sql+mysql", "mysql", crudsql.MySQL(myDB), true},
+		{"pgx", "postgres", crudpgx.Open(pgPool), true},
 	}
 }
 
@@ -1152,6 +1160,69 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 			want := []string{"outer", "middle", "after the inner rollback"}
 			if !eq(egNames(got), want) {
 				t.Fatalf("rows = %v, want %v: the inner rollback took a level it did not own", egNames(got), want)
+			}
+		})
+	}
+}
+
+// The savepoint door classifies, and this is the shape that reaches it. A
+// deferred constraint does not: PostgreSQL hands it to the parent transaction and
+// fires it at the top-level COMMIT. A statement the server refuses inside a
+// savepoint poisons the whole transaction, and the RELEASE that follows is
+// refused with 25P02 — so a nested Commit either carries
+// errs.CodeTransactionAborted or is a bare driver error a caller can say nothing
+// about.
+//
+// PostgreSQL only, and that is the engine's doing rather than the adapter's:
+// MySQL rolls the failed statement back and leaves the transaction usable, so
+// there is nothing there to poison. Both PostgreSQL adapters are walked, because
+// the whole reason crudsql.savepoint.Commit classifies is that crudpgx's nested
+// Begin returns the same Tx whose Commit does ([[FL-009]]).
+func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
+	ctx := context.Background()
+	egSetup(t)
+
+	for _, tg := range egBeginners() {
+		if tg.db != "postgres" {
+			continue
+		}
+		t.Run(tg.name, func(t *testing.T) {
+			egWipe(t, tg.src)
+
+			tx, err := tg.src.(crud.Beginner).Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+
+			// The control, and it runs first: a nested transaction over a healthy
+			// one releases cleanly. Without it everything below passes for an
+			// implementation whose RELEASE always fails.
+			healthy, err := tx.(crud.Beginner).Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := healthy.Commit(ctx); err != nil {
+				t.Fatalf("a nested commit over a healthy transaction was refused: %v", err)
+			}
+
+			inner, err := tx.(crud.Beginner).Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := inner.Exec(ctx, "SELECT 1/0"); err == nil {
+				t.Fatal("the division was accepted, so nothing poisoned the transaction")
+			}
+			err = inner.Commit(ctx)
+			if err == nil {
+				t.Fatal("the nested commit succeeded on a transaction the server had already aborted")
+			}
+			f, ok := errs.AsFault(err)
+			if !ok {
+				t.Fatalf("the nested commit came back unclassified, so 25P02 reaches a caller as an anonymous 500: %T: %v", err, err)
+			}
+			if f.Code != errs.CodeTransactionAborted || f.Kind != errs.KindRetryable {
+				t.Fatalf("the nested commit says %v/%v, want %v/%v", f.Kind, f.Code, errs.KindRetryable, errs.CodeTransactionAborted)
 			}
 		})
 	}

@@ -1,7 +1,7 @@
 # UC-012 — Talk to more than one database in one process
 
 **Actor:** the application author
-**Covered by:** [[FL-009]]
+**Covered by:** [[FL-009]] [[FL-016]]
 
 ## Scenario
 The service writes its own tables to the primary database and events to an
@@ -41,6 +41,15 @@ reports success.
    on another database, and the write succeeds. This is stated as a guarantee
    because it is the behaviour, not because it is desirable: it is what makes the
    seam work with any framework, and it is the reason guarantee 1 exists.
+10. A feature that needs to know a database's schema reads each database's own
+    schema and never merges two, on the same identity as everything above: two
+    datasources over one handle share one reading, two handles do not — even two
+    handles to the same server, because they can resolve the same bare table name
+    to different tables. It is read once, when the feature is declared, and never
+    again during a request. A handle whose identity cannot be compared is refused
+    at that declaration rather than taking the process down later, and a schema
+    that cannot be read at all is a refusal too rather than a feature that
+    silently reports nothing for the rest of the process's life.
 
 ## Out of scope
 
@@ -58,21 +67,32 @@ reports success.
 | Flow | What it contributes |
 |---|---|
 | [[FL-009]] | how a binding is keyed to a database, what matches it, and how an opened transaction scopes itself |
+| [[FL-016]] | how one database's schema is read once and kept per handle, and what happens when it cannot be |
 
 ## Status
 **covered, with the sharp edge pinned and two blind spots.**
 
-All nine guarantees have tests, and four of them run against two real PostgreSQL
+All ten guarantees have tests, and four of them run against two real PostgreSQL
 databases with the assertions read through raw handles so they never go through
 the seam under test. Guarantee 9 has a test of its own whose purpose is to keep
 the behaviour a decision rather than a surprise.
 
+Guarantee 10 arrived with the schema catalog and is the first thing outside the
+transaction seam to key on this identity. Its refusals are tested, and its
+two-handles-one-server half runs live against two connections that resolve the
+same bare table name to different tables — which is the case a key made from a
+connection string would have merged without a word. One half of it is owed to a
+later phase and named there: nothing yet *declares* a feature that needs a
+schema, so "refuses to start" has no declaration site to be tested at.
+
 Blind spots the owner should weigh:
 
-1. **Only one adapter is proven end to end.** The multi-database integration
-   tests are `database/sql` on PostgreSQL. The pgx adapter implements the same
-   identification and is unit-covered, but scoped bindings with pgx, and any
-   combination across two different engines, are untested.
+1. **Only one adapter is proven end to end for the transaction half.** The
+   multi-database integration tests are `database/sql` on PostgreSQL. The pgx
+   adapter implements the same identification and is unit-covered, but scoped
+   bindings with pgx, and any combination across two different engines, are
+   untested. Guarantee 10 is the exception: the schema half runs live through
+   both adapters and on all four engines.
 2. **Two ways to write a scoped binding do nothing, silently.** Naming a
    *transaction* rather than the database keys the binding on the transaction
    handle, which no repository bound to the pool matches — the binding is

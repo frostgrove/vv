@@ -61,14 +61,19 @@ code on upgrade rather than on the day someone adds a second database.
 `crud/executor.go:ownScope` is where that choice is made.
 
 **Why identity is compared by shape, not by `==` directly.**
-`sameDataSource` checks the types match and are comparable before comparing. A
+`SameDataSource` checks the types match and are comparable before comparing. A
 datasource handle is a pointer in practice, but nothing in the contract says it
-must be, and `==` on an uncomparable dynamic type panics.
+must be, and `==` on an uncomparable dynamic type panics. It answers about the
+static type, which is as far as it can see: a struct holding an interface is
+comparable and `==` on it still panics when that interface holds a slice. A
+caller that must not panic guards the comparison — `catalog/set.go:findable`
+does, and [[D-041]] says why.
 
-**Why `keyOf` takes an unidentified value at face value.** If a caller names
+**Why `KeyOf` takes an unidentified value at face value.** If a caller names
 something that cannot identify itself, the caller said it, so it is the key.
 Both spellings — the raw `*sql.DB` and a `Source` over it — reduce to the same
-key.
+key. It never answers nil, which is what makes it safe to key a catalog on
+([[D-041]]); `ownScope`, right beside it, is the rule that does.
 
 ## What it forbids
 
@@ -93,9 +98,12 @@ key.
   all", which is a different question from "is there one for MY database"; the
   repository always asks the second one.
 - `crud/executor.go:Identified` — the optional interface.
-- `crud/executor.go:keyOf` / `crud/executor.go:ownScope` — the two identity
-  rules, and the comment that records why they differ.
-- `crud/executor.go:sameDataSource` — never panics on an uncomparable handle.
+- `crud/executor.go:KeyOf` / `crud/executor.go:ownScope` — the two identity
+  rules, and the comment that records why they differ. `KeyOf` is exported and
+  `ownScope` is not: phase 6's `catalog` keys on the first and has no business
+  with the second.
+- `crud/executor.go:SameDataSource` — never panics on an uncomparable handle,
+  as far as its static type goes.
 - `crud/executor.go:InTx` — join-or-open.
 - `repo/basic/repository.go:repository.exec` — every statement in the basic
   repository goes through it.

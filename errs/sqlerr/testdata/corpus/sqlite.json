@@ -54,7 +54,7 @@
     {
       "name": "restrict",
       "kind": "integrity",
-      "want": "restrict",
+      "want": "foreign_key",
       "stmt": "DELETE FROM cp_parent WHERE id = 1",
       "err": {
         "type": "*sqlite.Error",
@@ -134,6 +134,58 @@
         "native": 5,
         "message": "database is locked (5) (SQLITE_BUSY)"
       }
+    },
+    {
+      "name": "deadlock",
+      "kind": "retryable",
+      "want": "lock_timeout",
+      "stmt": "",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 5,
+        "message": "database is locked (5) (SQLITE_BUSY)"
+      }
+    },
+    {
+      "name": "serialization_failure",
+      "kind": "retryable",
+      "want": "lock_timeout",
+      "stmt": "",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 5,
+        "message": "database is locked (5) (SQLITE_BUSY)"
+      }
+    },
+    {
+      "name": "transaction_aborted",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "the statement rolls back and the transaction stays usable; only PostgreSQL poisons the whole of it",
+      "err": null
+    },
+    {
+      "name": "deferred_constraint",
+      "kind": "integrity",
+      "want": "foreign_key",
+      "stmt": "",
+      "err": {
+        "type": "*sqlite.Error",
+        "sqlstate": "",
+        "native": 787,
+        "message": "constraint failed: FOREIGN KEY constraint failed (787)"
+      }
+    },
+    {
+      "name": "unique_in_another_locale",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "SQLite ships one set of English strings and has no locale setting to change them",
+      "err": null
     },
     {
       "name": "undefined_table",

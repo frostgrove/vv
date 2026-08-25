@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/sqlfault"
 )
 
 // Queryer is the pgx shape: *pgxpool.Pool, *pgx.Conn and pgx.Tx all satisfy it.
@@ -40,10 +42,39 @@ type beginner interface {
 }
 
 // Executor turns any pgx handle into a crud.Executor.
-type Executor struct{ q Queryer }
+type Executor struct {
+	q      Queryer
+	faults errs.Classifier
+}
+
+// An Option wires one part of an executor.
+type Option func(*config)
+
+type config struct{ faults errs.Classifier }
+
+// WithFaults replaces the classifier — a vocabulary of the caller's own, or a
+// catalog to fill in the columns a unique violation does not name:
+//
+//	crudpgx.Open(pool, crudpgx.WithFaults(sqlfault.New("postgres",
+//		sqlfault.WithColumns(sqlfault.FromCatalog(cat)))))
+func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = c } }
+
+// faults is the default, and unlike database/sql there is no ambiguity to
+// refuse: pgx speaks to PostgreSQL and nothing else, so the engine is a literal
+// here and derived from nothing. The typed extractor is wired in because this
+// module may name *pgconn.PgError.
+func faults(opts []Option) errs.Classifier {
+	o := config{faults: sqlfault.New("postgres", sqlfault.WithExtractor(sqlfault.ExtractorFunc(extract)))}
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	return o.faults
+}
 
 // From wraps a pgx handle — typically a transaction owned by somebody else.
-func From(q Queryer) Executor { return Executor{q: q} }
+func From(q Queryer, opts ...Option) Executor { return Executor{q: q, faults: faults(opts)} }
 
 // Unwrap returns the wrapped handle.
 func (e Executor) Unwrap() Queryer { return e.q }
@@ -56,7 +87,7 @@ func (e Executor) DataSource() any { return e.q }
 func (e Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
 	tag, err := e.q.Exec(ctx, sql, args...)
 	if err != nil {
-		return crud.Result{}, conflict(err)
+		return crud.Result{}, e.conflict(err)
 	}
 	return crud.Result{RowsAffected: tag.RowsAffected()}, nil
 }
@@ -65,9 +96,9 @@ func (e Executor) Query(ctx context.Context, sql string, args ...any) (crud.Rows
 	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
 	rs, err := e.q.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, conflict(err)
+		return nil, e.conflict(err)
 	}
-	return rows{rs}, nil
+	return rows{rs, e}, nil
 }
 
 // rows exists for one reason: pgx does not report a failed statement from
@@ -76,9 +107,12 @@ func (e Executor) Query(ctx context.Context, sql string, args ...any) (crud.Rows
 // runs as INSERT/UPDATE ... RETURNING, Err is the only place the classification
 // can happen. Without it a duplicate key reached the client as a bare 500 while
 // the same statement through database/sql answered 409.
-type rows struct{ pgx.Rows }
+type rows struct {
+	pgx.Rows
+	e Executor
+}
 
-func (r rows) Err() error { return conflict(r.Rows.Err()) }
+func (r rows) Err() error { return r.e.conflict(r.Rows.Err()) }
 
 // CopyFrom implements crud.BulkInserter when the underlying handle supports
 // COPY, which every pool, connection and transaction does.
@@ -100,14 +134,17 @@ func (e Executor) Begin(ctx context.Context) (crud.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Tx{Executor: Executor{tx}, tx: tx}, nil
+	// The classifier goes into the transaction. A deferred constraint fires at
+	// COMMIT, and a Tx without it would make that one shape of conflict a
+	// sentinel with no code while the immediate shape carried one.
+	return Tx{Executor: Executor{q: tx, faults: e.faults}, tx: tx}, nil
 }
 
 // Dialect makes any wrapped handle a full crud.Source.
 func (Executor) Dialect() crud.Dialect { return crud.Postgres{} }
 
 // Open binds a pool (or connection) as a datasource.
-func Open(q Queryer) Executor { return Executor{q: q} }
+func Open(q Queryer, opts ...Option) Executor { return Executor{q: q, faults: faults(opts)} }
 
 // Tx is a pgx transaction. A nested Begin issues a SAVEPOINT, courtesy of pgx.
 type Tx struct {
@@ -115,7 +152,10 @@ type Tx struct {
 	tx pgx.Tx
 }
 
-func (t Tx) Commit(ctx context.Context) error   { return t.tx.Commit(ctx) }
+// Commit classifies too. A deferred constraint fires here rather than at the
+// statement, and both PostgreSQL adapters have to answer the same or the same
+// write is a 409 through database/sql and a 500 through pgx.
+func (t Tx) Commit(ctx context.Context) error   { return t.conflict(t.tx.Commit(ctx)) }
 func (t Tx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
 
 // Tx returns the underlying pgx.Tx, e.g. to hand to sqlc.

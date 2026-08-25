@@ -75,10 +75,35 @@ attached by the caller.
 ## Where it lives
 
 - `go.mod` — the root; its only permitted requirement is a first-party one.
-- `errs/TODO.md` — records the decision, and that the split waits for the first
-  tag.
+- `errs/doc.go` — records what the first tag freezes, and the packaging note
+  the package's placeholder carried until phase 1 replaced it with real code.
 - `Makefile:check-deps` — the mechanical check, which filters on the module path
   prefix and so passes a first-party requirement and fails a third-party one.
+- `Makefile:TIER0_SEALED` — the other half, added with phase 1. This decision's
+  case rests on `errs` having an **empty** require block and therefore being
+  taggable first, and nothing enforced that: `check-tiers` filters out every
+  contract package, so `errs` importing `crud` passed build, vet, tidy and every
+  check, and would have become a require cycle at the tag. The sealed arm lets
+  `errs/...` import the standard library and itself and nothing else. Scoped to
+  the prefix because phase 2's parsers in `errs/sqlerr` will import `errs`, and
+  both end up in the same module. It is the one arm that passes `-test`: `go mod
+  tidy` counts test imports, so `crud` imported from `errs`' *test* package is
+  the same require cycle, and it is the case no other check can see — the import
+  is intra-module, so `check-tidy` stays green and `check-deps` finds nothing
+  third-party.
+- `Makefile:TIER0_STDLIB` — the same seal in the other direction, and owed to
+  [[D-016]] rather than to this decision: `crud` may import only the standard
+  library, which is what makes it unable to import `errs`. Both directions are
+  recorded here because this is where the "crud cannot import errs" sentence
+  lives. It runs without `-test`: `crud`'s own tests import `repo/basic`, legal
+  inside one module.
+- `test/bridge/fieldviolation_test.go` — where the validator assertion lives,
+  and not `errs`' own test package where `ROADMAP-errors.md` §5 put it. Until
+  the first tag `errs` is a package **of the root module**; `go mod tidy` counts
+  test imports and `make check-tidy` runs `go mod tidy -diff` on `.`, so that
+  line would either fail the check or put the root's first third-party
+  requirement into `go.mod`. `make check-deps` runs `go list -deps` without
+  `-test` and would not have seen it.
 
 ## Proven by
 
@@ -93,6 +118,16 @@ watching it fail, while `go build ./...` and `go vet ./...` stayed green because
 
 That last part is the reason this check exists at all: the workspace hides
 exactly the mistake the invariant forbids.
+
+```
+make check-tiers
+```
+
+prints nothing for `errs` and fails when it reaches outside `errs/...` —
+verified both ways, with `import _ "github.com/shardit-io/vv/crud"` in a file of
+`package errs` and again in one of `package errs_test`. The second is the one
+worth having: it is invisible to `go build`, `go vet`, `make check-deps` and
+`make check-tidy`, and would first appear as a require cycle at the tag.
 
 ## See also
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/repo/basic"
 )
 
@@ -155,9 +156,11 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 	egSetup(t)
 
 	targets := []egTarget{
-		{"postgres", "postgres", crudsql.Postgres(pgDB)},
-		{"mysql", "mysql", crudsql.MySQL(myDB)},
-		{"mysql(row alias)", "mysql", crudsql.Open(myDB, crud.MySQL{RowAlias: true})},
+		{"postgres", "postgres", crudsql.Postgres(pgDB), true},
+		{"mysql", "mysql", crudsql.MySQL(myDB), true},
+		// Open takes a dialect and not an engine, so this one names none and
+		// classifies nothing. Nothing in this test asks it to.
+		{"mysql(row alias)", "mysql", crudsql.Open(myDB, crud.MySQL{RowAlias: true}), false},
 	}
 
 	for _, tg := range targets {
@@ -757,15 +760,16 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 
 			for _, tc := range []struct {
 				name string
+				code errs.Code
 				run  func() error
 			}{
-				{"a duplicate unique key", func() error {
+				{"a duplicate unique key", errs.CodeUnique, func() error {
 					return cons.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("other")})
 				}},
-				{"a foreign key that points nowhere", func() error {
+				{"a foreign key that points nowhere", errs.CodeForeignKey, func() error {
 					return cons.Save(ctx, &EgCons{Slug: "free", Tag: crud.Set("t"), Parent: crud.Set(int64(987654))})
 				}},
-				{"a NULL in a NOT NULL column", func() error {
+				{"a NULL in a NOT NULL column", errs.CodeRequired, func() error {
 					_, err := cons.Update(ctx, anchor.ID, EgConsUpdate{Tag: crud.Null[string]()})
 					return err
 				}},
@@ -787,11 +791,25 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 					// Mistaken for something else would be worse still. A
 					// violation must never look like a missing row or a
 					// malformed request, because a transport turns those into a
-					// 404 and a 400.
+					// 404 and a 400. This loop is the control on the leg below:
+					// it holds whatever the classifier learned or failed to.
 					for _, sentinel := range []error{crud.ErrNotFound, crud.ErrMissingID, crud.ErrReadOnly, crud.ErrForbidden} {
 						if errors.Is(err, sentinel) {
 							t.Fatalf("a constraint violation came back as %v", sentinel)
 						}
+					}
+
+					// And it arrives carrying which violation it was — except
+					// through ent, which is reached with crudsql.From and
+					// therefore names no engine. That is the degradation
+					// [[D-046]]'s last forbid buys, here against a real ORM: the
+					// status never moves, the code is absent rather than wrong.
+					f, has := errs.AsFault(err)
+					if has != tg.classifies {
+						t.Fatalf("a fault reached the caller = %v, want %v: %T: %v", has, tg.classifies, err, err)
+					}
+					if has && f.Code != tc.code {
+						t.Fatalf("the fault says %q, want %q", f.Code, tc.code)
 					}
 
 					// Nothing was written, and the repository still works: a

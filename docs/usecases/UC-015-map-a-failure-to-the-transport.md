@@ -2,7 +2,7 @@
 
 **Actor:** an HTTP client reading the status code, and the application author who
 does not want to write the mapping once per endpoint
-**Covered by:** [[FL-011]]
+**Covered by:** [[FL-011]] [[FL-014]]
 
 ## Scenario
 Every endpoint fails in the same handful of ways: the row is not there, the
@@ -69,6 +69,7 @@ branch on and, where the mistake is its own, enough detail to fix it.
 |---|---|
 | [[FL-011]] | the sentinel-to-status table, the body shapes, and the point at which a 500 stops carrying detail |
 | [[FL-013]] | that a second and a third binding inherit the table rather than restating it |
+| [[FL-014]] | where a driver error becomes a classified failure, and why a classified 409 says less than an unclassified one |
 
 Guarantee 11 is [[UC-017]]'s territory as well: the two use cases share the
 envelope, and the same decision governs both.
@@ -85,20 +86,36 @@ Guarantee 8 — that the mapping is a function an application can reuse — is n
 also what keeps the bindings honest rather than only a convenience: there is one
 switch, and removing an arm from it fails every binding's suite identically.
 
-Guarantee 11 does not hold. Every status *except* 500 puts the error's own text
-in the response body. That is what makes guarantee 5 useful, and for a 400 the
-text is the query compiler's. For a 409 it is the driver's — the adapters
-classify an integrity violation and keep the driver error underneath, so a
-duplicate-key 409 carries a constraint name, a column name and the driver's own
-prefix out to the client.
+Guarantee 11 does not hold, and the set it fails on is narrower than it was.
+Every status *except* 500 puts the error's own text in the response body. That is
+what makes guarantee 5 useful, and for a 400 the text is the query compiler's.
 
-How wide that is has been measured rather than estimated. The captured error
-corpus records, among others, PostgreSQL's `Key (slug)=(anchor) already exists.`
-— column and submitted value — and MySQL naming the database, both tables and
-both columns of a foreign key in a single sentence.
+For a 409 it now depends on whether the failure was **classified**. A classified
+one carries a code and a kind and no driver text at all: the body reads
+`conflict` and the classification, and names no constraint, no table, no column,
+no engine number and no submitted value. One that was not classified still
+carries the driver's own sentence — and there are three ways to be one: the
+engine reported a violation number nobody has provoked, the write went through a
+transaction the application owns and joined, or the datasource was built without
+naming which engine it speaks to. In all three the status is right and the body
+is the old one.
+
+How wide the remaining leak is has been measured rather than estimated. The
+captured error corpus records, among others, PostgreSQL's
+`Key (slug)=(anchor) already exists.` — column and submitted value — and MySQL
+naming the database, both tables and both columns of a foreign key in a single
+sentence.
 
 This was previously written here as a deliberate design leak awaiting a
 decision. It now has one: [[D-044]] refuses it, and phase 4 of
-`ROADMAP-errors.md` is where the render layer closes it. Until then an
-application that treats constraint names as internal has to install its own
-mapping.
+`ROADMAP-errors.md` is where the render layer closes it — for every 409 and not
+only the classified ones. Until then an application that treats constraint names
+as internal has to install its own mapping.
+
+Two things that came with the classification are worth stating because they look
+like guarantee failures and are not. A failure the engine calls a data error —
+a value too long, out of range, of the wrong type — and one it calls retryable —
+a deadlock, a lock timeout, a serialisation failure — now arrive carrying a code
+and a class, and both are still 500 with a silent body. Nothing maps the class to
+a status yet, and shipping a second mapping beside the sentinel one would let one
+failure answer two ways.

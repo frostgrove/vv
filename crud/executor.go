@@ -182,7 +182,7 @@ func WithExecutor(ctx context.Context, e Executor) context.Context {
 // With a plain WithExecutor that second call would have gone to mainDB, inside
 // the transaction, and reported success.
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context {
-	return push(ctx, keyOf(ds), e)
+	return push(ctx, KeyOf(ds), e)
 }
 
 // ExecutorFrom returns the innermost executor bound to ctx, scoped or not. It
@@ -204,7 +204,7 @@ func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
 	if !ok {
 		return nil, false
 	}
-	want := keyOf(src)
+	want := KeyOf(src)
 	var fallback Executor
 	var found bool
 	for ; b != nil; b = b.prev {
@@ -214,18 +214,18 @@ func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
 			}
 			continue
 		}
-		if sameDataSource(b.ds, want) {
+		if SameDataSource(b.ds, want) {
 			return b.e, true
 		}
 	}
 	return fallback, found
 }
 
-// keyOf reduces a Source or a raw handle to the value that identifies the
+// KeyOf reduces a Source or a raw handle to the value that identifies the
 // database, so both spellings land on the same key. Naming something that
 // cannot identify itself is taken at face value — the caller said it, so it is
 // the key.
-func keyOf(v any) any {
+func KeyOf(v any) any {
 	if id, ok := v.(Identified); ok {
 		// A wrapper that forwards an identity it does not have answers nil; that
 		// is "I cannot say", not "my identity is nil".
@@ -236,7 +236,7 @@ func keyOf(v any) any {
 	return v
 }
 
-// ownScope is keyOf for a transaction vv opens itself, where nobody named
+// ownScope is KeyOf for a transaction vv opens itself, where nobody named
 // anything. A source that cannot say which database it is gets an unscoped
 // binding — the old, unconditional join — because the alternative is worse:
 // scoping it to itself would quietly stop a sibling repository from joining a
@@ -256,10 +256,16 @@ var (
 	_ Beginner    = readWriteTx{}
 )
 
-// sameDataSource compares two identities without ever panicking on an
-// uncomparable one — a datasource handle is a pointer in practice, but nothing
-// in the contract says it must be.
-func sameDataSource(a, b any) bool {
+// SameDataSource compares two identities without panicking on an uncomparable
+// one — a datasource handle is a pointer in practice, but nothing in the
+// contract says it must be.
+//
+// It asks reflect, so it answers about the *static* type, which is as far as it
+// can see: a struct holding an interface is comparable and == on it still panics
+// once that interface turns out to hold a slice. A caller that must not panic on
+// anything a user hands it guards the comparison itself — catalog does, and
+// [[D-041]] says why.
+func SameDataSource(a, b any) bool {
 	if a == nil || b == nil {
 		return false
 	}

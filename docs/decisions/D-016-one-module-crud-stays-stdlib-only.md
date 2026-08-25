@@ -85,7 +85,10 @@ and a field instead.
 - `go.work` — joins `.` and `./test`.
 - `crud/executor.go` — the package doc that states the stdlib-only rule and the
   "only Exec and Query cross the boundary" principle it serves.
-- `adapter/crudsql/conflict.go:sqlStateField` — the visible consequence.
+- `sqlfault/extract.go:sqlState` — the visible consequence: a driver's SQLSTATE
+  is reached by shape rather than by naming its type. It moved out of
+  `adapter/crudsql` at phase 3 and the rule did not: `crudsql` still imports no
+  driver, and `make check-deps` is what proves it.
 - `Makefile` — `tidy` tidies both modules; `unit` runs the library's tests with
   no database, `integration` runs the test module with `-tags=integration`.
 - `README.md` — "Install", which states the trade.
@@ -103,7 +106,17 @@ go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./crud \
 ```
 
 should print nothing. It is part of `make check-deps`, which closes the gap this
-paragraph used to describe as open.
+paragraph used to describe as open — for a *third-party* import. A first-party
+one is invisible to it, because it filters on the module path prefix.
+
+`Makefile:TIER0_STDLIB`, checked by `make check-tiers`, is the arm that catches
+that half, and it is the one the rule needs: `errs/doc.go` states that `crud` may
+not import `errs` at all, since a library-origin error with two classification
+paths would have them disagree. Verified by adding
+`_ "github.com/shardit-io/vv/errs"` to `crud/errors.go` and watching the arm name
+it, while `go build ./...` and `make check-deps` both stayed green — the manifest
+arm above it filters every contract package out of its own result, so `errs` is
+exactly what it cannot see.
 
 The command given here before ended in `grep '\.'` and so matched
 standard-library paths — it printed a page of them on a clean tree and could

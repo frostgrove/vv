@@ -39,10 +39,11 @@ The compensations, and what each one costs:
 
 ## Where the difference *is* observable
 
-Eight places. They are documented rather than hidden because hiding them would
-mean emulating an engine, which is worse than saying so. The last four were
-measured while building the error corpus, and were observable before anyone
-wrote them down.
+Ten places. They are documented rather than hidden because hiding them would
+mean emulating an engine, which is worse than saying so. Differences 5 through 8
+were measured while building the error corpus, and were observable before anyone
+wrote them down; difference 9 was measured while building the catalog, and
+difference 10 arrived with the classifier that reads it.
 
 1. **`Order.WithNullsLast` / `WithNullsFirst` are PostgreSQL-only.** `NULLS LAST`
    is not in MySQL's grammar. MySQL keeps its own rule — NULLs first ascending,
@@ -85,16 +86,88 @@ wrote them down.
    and the row afterwards holds something the schema says it cannot. This is
    SQLite's documented type affinity and cannot be compensated for without a
    Go-side length check, which [[D-042]] refuses for its own reasons.
+
+   The catalog carries the consequence: a SQLite column declared `VARCHAR(255)`
+   reports that text as its declared type and **never** as a maximum length,
+   because a maximum length is a claim that the engine enforces one. On the other
+   three engines the same column reports 255.
 7. **A duplicate-key error names its index differently on MySQL and MariaDB.**
    MySQL prefixes the table (`for key 'users.email'`); MariaDB does not (`for
-   key 'email'`). Both are reached through `crud.MySQL`. This is invisible today
-   only because nothing reads it — and visible in a 409 body, because a 409
-   currently carries the driver's own message ([[UC-015]] guarantee 11).
+   key 'email'`). Both are reached through `crud.MySQL`. Nothing in the library
+   reads it. It is still visible in a 409 body, but the condition is narrower
+   since phase 3: only where the failure was **not** classified — an unlisted
+   class-23 number, or a source built with `crudsql.Open`/`From`/`Source`, which
+   name no engine. Where it was classified the body carries the classification
+   and no driver text at all ([[D-047]], [[UC-015]] guarantee 11).
 8. **A failed CHECK is class 23 on MariaDB and not on MySQL.** `4025`/`23000`
    against `3819`/`HY000`, on two engines that share a driver, a dialect and a
    wire protocol. It is not observable through the API because [[D-046]]'s
    classifier covers both, and it is on this list because the version that
    covered only one of them shipped.
+9. **Which unique keys can be told apart, and which kinds of key exist at all,
+   differs per engine — and the catalog says so rather than smoothing it over.**
+   Measured on PostgreSQL 17, MySQL 8.4, MariaDB 11.4 and SQLite 3.53:
+
+   | | PostgreSQL | MySQL | MariaDB | SQLite |
+   |---|---|---|---|---|
+   | a declared `UNIQUE` told apart from a bare `CREATE UNIQUE INDEX` | yes | **no** | **no** | yes |
+   | the declared constraint name survives | yes | yes | yes | **no** |
+   | partial (`WHERE`) indexes | yes | **no** | **no** | yes |
+   | prefix (`col(10)`) indexes | **no** | yes | yes | **no** |
+   | expression indexes | yes | yes | **no** | yes |
+   | the expression's text is readable | yes | yes | — | **no** |
+   | a partial index's predicate is readable | yes | — | — | **no** |
+   | CHECK constraints are listed at all | yes | yes | yes | **no** |
+   | a CHECK's own columns are readable | yes | **no** | **no** | — |
+   | a key can be DEFERRABLE at all | yes | **no** | **no** | **no** |
+   | one name can be two objects on one table | yes, a CHECK and an index | yes, an index and a foreign key | yes, the same | **no** |
+
+   PostgreSQL separates the first row by whether a `pg_constraint` row backs the
+   index and SQLite by `pragma_index_list.origin`; MySQL and MariaDB list every
+   unique index in `information_schema.TABLE_CONSTRAINTS` as `UNIQUE`, so on
+   those two there is nothing to tell apart. SQLite reports the kind and loses
+   the name: a `CONSTRAINT uc UNIQUE (a, b)` comes back as
+   `sqlite_autoindex_t_2`, so a lookup by the name the author wrote misses there
+   and nowhere else. And SQLite answers *partial, predicate unknown* — the flag
+   is in the pragma and the `WHERE` clause exists only in the index's DDL, which
+   nothing parses.
+
+   PostgreSQL reads a CHECK's columns out of `conkey`; the MySQL family hands
+   back the clause and no columns, so those come back nil — not known, rather
+   than none. Only PostgreSQL has a `DEFERRABLE` key, which is exactly the key a
+   pre-flight probe must not claim to have checked, since the server does not
+   apply it until COMMIT. And the last row is a namespace fact rather than a
+   feature: an index name and a foreign-key name are separate namespaces on the
+   MySQL family, a constraint name and an index name are on PostgreSQL, so one
+   table can carry two objects of one name — `Catalog.Constraint` answers one of
+   them and both are in `Table.Constraints`.
+
+   None of it is normalisable, because three of those rows are about a key kind
+   an engine does not have: `CREATE UNIQUE INDEX ... WHERE` is error 1064 on
+   MySQL and MariaDB, and `((lower(col)))` is error 1064 on MariaDB. What the
+   catalog does instead is record what the engine said and mark what it could not
+   say, so a reader can tell "no" from "not known" ([[D-041]]).
+10. **What a classified violation can say about itself, and which engine it says
+    it on.** Two halves under one number, because they are the same fact seen
+    from two sides.
+
+    (a) *The driver's limit.* A classified fault carries a constraint, a table
+    and a schema on PostgreSQL and none of the three on MySQL, MariaDB or
+    SQLite. `mysql.MySQLError` has `Number`, `SQLState` and `Message` and nothing
+    else; SQLite's foreign-key error is the sentence `FOREIGN KEY constraint
+    failed` and nothing else. Only pgconn populates structured fields at all.
+    Where the driver names a table and a constraint the columns can be filled
+    from the catalog; where it names neither there is nothing to look one up by,
+    so a PostgreSQL `22001` and a SQLite foreign key stay blank whatever is
+    wired. The status is the same on all four engines; the richness is not.
+
+    (b) *The caller's declaration.* Whether a MariaDB server is classified as
+    MariaDB depends on which `crudsql` constructor declared it, because nothing
+    in the tree tells the two servers apart at run time and guessing would answer
+    "mysql" ([[D-046]]). One failed CHECK on one server is a 409 reading
+    `errs: conflict: check` through `crudsql.MariaDB` and a 409 carrying the
+    driver's own sentence through `crudsql.MySQL`. The status never moves; the
+    code does.
 
 ## What it forbids
 
@@ -107,7 +180,7 @@ wrote them down.
   package must keep compiling; that is what `OffsetLimiter` demonstrates.
 - Do not skip the MySQL re-read to save a round trip. It has been tried; see
   [[D-011]] and [[D-010]].
-- Do not add a ninth observable difference without adding it to the list above
+- Do not add a tenth observable difference without adding it to the list above
   and to both usage guides.
 - Do not compensate for difference 6 with a Go-side length, range or type check.
   [[D-042]] has the argument: MySQL under a laxer `sql_mode` truncates where it
@@ -135,6 +208,11 @@ wrote them down.
 - `crud/repo.go:Repo.UpdateAll` — documents observable difference 2.
 - `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — where
   difference 5 comes from.
+- `catalog/postgres.go`, `catalog/mysql.go`, `catalog/mariadb.go`,
+  `catalog/sqlite.go` — difference 9, one file per engine, each naming what its
+  server cannot answer.
+- `catalog/catalog.go:Constraint` — `Kind`, `Partial`, `Predicate`, `Prefixes`
+  and `Expressions` are the fields difference 9 is expressed in.
 - `errs/sqlerr/testdata/corpus/` — differences 6, 7 and 8 as captured entries:
   `too_long`, `out_of_range` and `bad_type` are marked unreachable on SQLite,
   and `check` differs between `mysql.json` and `mariadb.json`.
@@ -163,6 +241,28 @@ wrote them down.
 - `TestQuotedIdentifiersSurviveEveryClause` in
   `test/integration/dialect_edge_test.go`.
 
+- `TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApart`
+  in `test/integration/catalog_test.go` — difference 9's first two rows, asserted
+  in both directions per engine, so a catalog reporting the split everywhere and
+  one reporting it nowhere each fail.
+- `TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot` in
+  `test/integration/catalog_test.go` — the partial/prefix rows, with the twin
+  that stops "mark everything" from passing.
+- `TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot` in
+  `test/integration/catalog_test.go` — difference 9's two expression rows: the
+  index exists on three engines and not on MariaDB, and its text is readable on
+  two of those three.
+- `TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot` in
+  `test/integration/catalog_test.go` — the DEFERRABLE row, asserted from both
+  sides: the pair on PostgreSQL, and nothing invented on the other three.
+- `TestTwoObjectsSharingOneNameStayTwoConstraints` in
+  `test/integration/catalog_test.go` — the two-objects-one-name row, in each
+  engine's own spelling of the collision and in SQLite's inability to produce it.
+- `TestEachEngineReportsWhatTheProbeWillNeed` in
+  `test/integration/catalog_test.go` — the `MaxLength` half of difference 6,
+  difference 9's CHECK rows including nil-is-not-empty on a CHECK's columns, and
+  the engines' own column ordinals.
+
 The four observable differences each have their own test, so a future change
 that accidentally *hides* one is also caught:
 
@@ -178,6 +278,16 @@ that accidentally *hides* one is also caught:
   is documented on the method rather than asserted, because asserting it means
   asserting a driver's behaviour.
 
+- `TestAMariaDBCheckIsOnlyClassifiedWhenTheSourceSaysMariaDB` in
+  `test/integration/corpus_test.go` — difference 10(b), live: `4025` through
+  `crudsql.MariaDB` carries `check`, and the same violation on the same server
+  through `crudsql.MySQL` is still a 409 and carries no code. The second half is
+  the control; without it the test says nothing about why the constructor exists.
+- `TestACatalogFillsTheColumnsAUniqueViolationDoesNotName` and
+  `TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames` in the same file
+  — difference 10(a): what each engine's violation can say about itself, and
+  what only the catalog can add.
+
 ## See also
 
-[[D-010]] [[D-011]] [[D-015]] [[D-020]] [[D-024]]
+[[D-010]] [[D-011]] [[D-015]] [[D-020]] [[D-024]] [[D-041]]

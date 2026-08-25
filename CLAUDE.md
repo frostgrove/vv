@@ -175,6 +175,9 @@ repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
 query/                      the wire DSL: one JSON document -> crud.Options
+errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
+errs/sqlerr/                a driver error becomes a code, one table per dialect
+catalog/                    per-handle schema introspection, four dialects
 http/crudhttp/              the transport-neutral half of the HTTP layer
 http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
 cmd/vv/                 generates the update DTO and the metamodel from your model

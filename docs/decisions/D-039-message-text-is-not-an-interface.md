@@ -28,11 +28,23 @@ measured, from the corpus:
 | | MySQL 8.4.11 | MariaDB 11.4.12 |
 |---|---|---|
 | duplicate key | `Duplicate entry 'anchor' for key 'cp_parent.slug'` | `Duplicate entry 'anchor' for key 'slug'` |
+| the same, `lc_messages = 'ru_RU'` | `Дублирующаяся запись 'anchor' по ключу 'cp_parent.slug'` | `Дублирующаяся запись 'anchor' по ключу 'slug'` |
 | CHECK | `Check constraint 'cp_pos' is violated.` | ``CONSTRAINT `cp_pos` failed for `vv`.`cp_parent` `` |
 | bad type | `… for column 'num' at row 1` | ``… for column `vv`.`cp_parent`.`num` at row 1`` |
 
 The index name is table-prefixed on MySQL and bare on MariaDB. A regex written
-against one silently extracts the wrong identifier from the other.
+against one silently extracts the wrong identifier from the other. The Russian
+row is the corpus's `unique_in_another_locale` case, captured from the same
+servers in the same run: not one word of it survives, and the key does not move.
+
+**Which engines localise, measured rather than assumed.** `postgres:17-alpine`
+is built without NLS, so it *accepts* `SET lc_messages` and answers in English
+anyway. SQLite ships one set of English strings and has no setting at all. MySQL
+and MariaDB localise the duplicate-key and NOT NULL sentences and leave the CHECK
+and foreign-key ones in English. So the localised twin is capturable on two
+engines out of four, and only for one violation — which is why the invariant
+rests on a total substitution test and the twin is what says that test is
+substituting something real.
 
 **Because even the value is untrustworthy.** MySQL joins a composite key's
 values with `-`, so `('x-1','y')` is reported as `'x-1-y'` and cannot be split
@@ -68,23 +80,67 @@ having. Recording it and asserting on it are different things.
   out because they are the key; `Message` sits beside them and is not.
 - `errs/sqlerr/corpus.go:Err.SameKey` — the comparison, and the comment saying
   what it leaves out.
-- `test/corpus/capture.go:carried` — the whitelist of structured fields a parser
+- `sqlfault/extract.go:carried` — the whitelist of structured fields a parser
   may read. It excludes pgconn's `File`, `Line` and `Routine`, which name
-  PostgreSQL's own C source.
+  PostgreSQL's own C source. `Detail` and `Hint` are *carried* and never read:
+  they hold the offending value, and they are the two fields the server
+  localises. Since phase 3 this list is also what `test/corpus/capture.go` uses
+  — the corpus supplies the expectations the adapters are tested against, so a
+  second copy of the rule there could stay green while the shipped one was
+  broken.
+- `adapter/crudpgx/conflict.go:extract` — the same seven fields, spelled by name
+  because that module may name `*pgconn.PgError`.
+- `errs/sqlerr/classify.go:Classify` — the parser takes the whole `Err`, message
+  included, and reads none of it. Passing only the key would make the invariant
+  unfalsifiable: there would be nothing for a test to substitute.
+- `test/corpus/cases.go:Probe.Session` — how the second capture is provoked. The
+  locale has to be set on the same session as the statement, on a handle of the
+  probe's own, or it outlives the probe and the *next* case is recorded in
+  Russian. That happened on the first run.
 
 ## Proven by
 
 - `TestTheCorpusStillDescribesTheseServers` in
   `test/integration/corpus_test.go` — asserts the key across four live engines
   and does not assert the text.
+- `TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently` in
+  `errs/sqlerr/corpus_test.go` — the comparator the guard above rests on, and
+  the only thing that pins the omission of the message: the localised twin and
+  the English capture have to read as one key, with their differing sentences
+  asserted first so the leg cannot go vacuous. Its negatives move the SQLSTATE,
+  the number, the driver type and one field name in turn, each with the
+  precondition that the rest of the pair did not move. Without it a comparator
+  narrowed to the driver type alone leaves the live guard green while MySQL
+  answers a CHECK under a new SQLSTATE.
 - `errs/sqlerr/testdata/corpus/mysql.json` and `mariadb.json` — the two files
   are the evidence: identical keys for `unique`, different sentences.
 
-## Proven by (owed)
-
-- Phase 2 owes the parser test that pins this rather than merely respecting it:
-  the same violation captured with `lc_messages` set to a non-English locale
-  classifies identically. Nothing else tests this invariant directly.
+- `TestNothingInExtractionOrClassificationReadsMessageDetailOrHint` in
+  `sqlfault/classify_test.go` — the **extraction** half, which nothing tested
+  before phase 3: the fault built from a driver error and the fault built from
+  the same error with `Message`, `Detail` and `Hint` replaced by unrelated text
+  agree in code, kind, source and every `Detail` field but the driver error
+  itself. Its control asserts each substituted string was non-empty on the
+  fixture and differs from its replacement, or it compares two identical inputs.
+- `TestAParserAnswersTheSameWhateverTheServerSaid` in
+  `errs/sqlerr/classify_test.go` — **the invariant**. Every case on every engine
+  is classified as captured, with the message replaced by a Russian sentence,
+  with the message emptied, and with `Detail` and `Hint` replaced by another
+  engine's text; all four verdicts must agree, code, source and all. It reaches
+  PostgreSQL and SQLite, which cannot produce a localised twin, and it is what
+  fails the day somebody reads `Detail` to tell `foreign_key` from `restrict`.
+  Its control is that every engine classified at least one case as captured: a
+  refusal agrees with a refusal, so without it a parser answering false to
+  everything satisfies every comparison the test makes.
+- `TestTheSameViolationInAnotherLocaleClassifiesIdentically` in the same file —
+  **the evidence** that the invariant is about something real. The corpus's
+  `unique_in_another_locale` case is a duplicate key captured from a server
+  answering in Russian, and it classifies as the English one does. Its three
+  controls: the twin's message must differ from the plain case's; at least two
+  engines must have a differing twin, so an `lc_messages` setting that quietly
+  stopped taking effect turns this red rather than leaving it green; and the
+  English capture must itself classify, because two refusals agree as readily as
+  two duplicate-key verdicts do.
 
 ## See also
 

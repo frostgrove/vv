@@ -78,7 +78,7 @@
     {
       "name": "restrict",
       "kind": "integrity",
-      "want": "restrict",
+      "want": "foreign_key",
       "stmt": "DELETE FROM cp_parent WHERE id = 1",
       "err": {
         "type": "*pgconn.PgError",
@@ -194,6 +194,76 @@
         "native": 0,
         "message": "ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)"
       }
+    },
+    {
+      "name": "deadlock",
+      "kind": "retryable",
+      "want": "deadlock",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "40P01",
+        "native": 0,
+        "message": "ERROR: deadlock detected (SQLSTATE 40P01)",
+        "fields": {
+          "Detail": "(varies between runs)",
+          "Hint": "See server log for query details."
+        }
+      }
+    },
+    {
+      "name": "serialization_failure",
+      "kind": "retryable",
+      "want": "serialization_failure",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "40001",
+        "native": 0,
+        "message": "ERROR: could not serialize access due to read/write dependencies among transactions (SQLSTATE 40001)",
+        "fields": {
+          "Detail": "Reason code: Canceled on identification as a pivot, during commit attempt.",
+          "Hint": "The transaction might succeed if retried."
+        }
+      }
+    },
+    {
+      "name": "transaction_aborted",
+      "kind": "retryable",
+      "want": "transaction_aborted",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "25P02",
+        "native": 0,
+        "message": "ERROR: current transaction is aborted, commands ignored until end of transaction block (SQLSTATE 25P02)"
+      }
+    },
+    {
+      "name": "deferred_constraint",
+      "kind": "integrity",
+      "want": "foreign_key",
+      "stmt": "",
+      "err": {
+        "type": "*pgconn.PgError",
+        "sqlstate": "23503",
+        "native": 0,
+        "message": "ERROR: insert or update on table \"cp_deferred\" violates foreign key constraint \"cp_dfk\" (SQLSTATE 23503)",
+        "fields": {
+          "ConstraintName": "cp_dfk",
+          "Detail": "Key (parent)=(424242) is not present in table \"cp_parent\".",
+          "SchemaName": "public",
+          "TableName": "cp_deferred"
+        }
+      }
+    },
+    {
+      "name": "unique_in_another_locale",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "postgres:17-alpine is built without NLS, so it accepts lc_messages and answers in English anyway",
+      "err": null
     },
     {
       "name": "undefined_table",

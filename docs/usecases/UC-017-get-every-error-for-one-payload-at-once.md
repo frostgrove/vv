@@ -71,18 +71,66 @@ database disagree eventually and the database is the one that is right.
 | Flow | What it contributes |
 |---|---|
 | [[FL-011]] | the sentinel-to-status table this extends, and the point at which a body stops carrying detail |
+| [[FL-014]] | where the one violation is produced from what the database reported, and what it may carry |
 
 ## Status
 **not covered.**
 
 Nothing in the tree reports more than one violation. A refused write reaches a
-client as a single 409 whose body carries the driver's own message — which is
-also the leak UC-015 records.
+client as a single 409, and there is exactly one violation underneath it —
+merging several is the extra work phase 7 does.
 
-Guarantee 5 is the one that is actively false today rather than merely absent:
-a duplicate-key 409 currently carries the constraint name and the driver's
-prefix out to the client.
+What changed is that the one violation is now *produced from the driver error*
+rather than by nothing at all. A classified refusal arrives as a structured
+failure carrying a stable code, the class the code belongs to, and where the
+violation came from; an unclassified one still arrives as the sentinel and the
+sentence.
+
+Guarantee 5 is no longer actively false for a classified refusal: a duplicate key
+that was classified reaches the client as a code and nothing internal. It stays
+false for an unclassified one, which still carries the constraint name and the
+driver's prefix — the leak UC-015 records, now narrower.
+
+One marker that matters later is now actually set: every violation derived from a
+driver error is marked as having come from the stored state rather than from the
+payload. That is what the open question about whether the response ever splits
+the two kinds into separate groups keys on, and what the never-echo-the-value
+default keys on, so it had to be set from the first violation rather than
+retrofitted.
 
 `ROADMAP-errors.md` owns the work. Its phase 7 is where guarantees 1, 6, 7 and
 10 arrive, phase 4 where 2, 3, 4, 5 and 8 do, and phase 0 — the captured error
 corpus and the decisions — is what the rest is built on.
+
+Phase 1 changed none of that, and it is worth being precise about what it did
+change. The contract that guarantees 2, 3, 4, 5, 6, 8 and 9 will be expressed
+in now exists: a violation is one type carrying a path, a stable code, a message
+and where it came from, and the projection that reaches a client is the type's
+own rather than a renderer's habit. Nothing produces one yet, so no guarantee
+flips.
+
+Guarantee 8 is half owned. Message expansion and the public projection are
+deterministic and tested as such; the *order* of a list of violations is not
+settled — the roadmap states two different total orders in two sections — and
+phase 1 shipped no sort rather than freeze the wrong one. The phase that
+resolves the contradiction owes it.
+
+Phase 2 also flips nothing, and for a plainer reason: it added the four dialect
+parsers, and nothing on any request path calls one. What it does buy is the
+half of guarantee 3 that has to be true before any of the rest can be — the
+stable code a client branches on is now derived on every supported engine, from
+the key alone and never from the sentence the server wrote, and a violation the
+engines describe four different ways arrives as one word. It also closed a
+matching hole in the *existing* 409: a constraint deferred to `COMMIT` was a 500
+where the same violation raised at the statement was a 409.
+
+One thing phase 2 deliberately does not do, and it matters for guarantee 4's
+wording later: on PostgreSQL and SQLite a row that is still referred to and a
+row that refers to nothing are one and the same key. Both classify as
+`foreign_key`. Telling them apart needs the verb, not the error, and the phase
+that sets it owes the distinction. Phase 3 did not set it either: the verb is not
+something an adapter has, and the field is left empty rather than guessed.
+
+Phase 3 flips no guarantee on its own. It is the first phase whose output a
+client can see at all — the body of a classified 409 changed — and the rest of
+the list waits on the render layer and the probe.

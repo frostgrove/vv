@@ -1,0 +1,106 @@
+package errs
+
+import "strconv"
+
+// A Code is what a client branches on. It is stable, machine-readable, and
+// never derived from anything a driver said — a code built out of a CHECK
+// expression's source text carries the column names with it ([[D-044]]).
+//
+// The constants below are the standard set. A consumer declares its own of the
+// same type and wires them into a [Codes] value; nothing here is a closed set.
+type Code string
+
+const (
+	// storage-shaped
+	CodeUnique        Code = "unique"
+	CodeNotUnique     Code = "not_unique" // a lookup that had to match one row matched several
+	CodeForeignKey    Code = "foreign_key"
+	CodeRestrict      Code = "restrict"
+	CodeRequired      Code = "required"
+	CodeCheck         Code = "check"
+	CodeExclusion     Code = "exclusion"
+	CodeTooLong       Code = "too_long"
+	CodeOutOfRange    Code = "out_of_range"
+	CodeInvalidFormat Code = "invalid_format"
+	CodeInvalidEnum   Code = "invalid_enum"
+	CodeStaleVersion  Code = "stale_version"
+
+	// request-shaped
+	CodeMalformedBody Code = "malformed_body"
+	CodeInvalidID     Code = "invalid_id"
+	CodeUnknownField  Code = "unknown_field"
+	CodeBadQuery      Code = "bad_query"
+
+	// decision-shaped
+	CodeNotFound        Code = "not_found"
+	CodeForbidden       Code = "forbidden"
+	CodeUnauthenticated Code = "unauthenticated"
+
+	// infrastructure-shaped
+	CodeDeadlock             Code = "deadlock"
+	CodeSerializationFailure Code = "serialization_failure"
+	CodeLockTimeout          Code = "lock_timeout"
+	// CodeTransactionAborted is a transaction poisoned by an earlier failure:
+	// PostgreSQL's 25P02, where every statement is refused until a rollback.
+	// It reaches a caller after a truthful answer to the statement that
+	// actually failed, so without a code of its own the second half of one
+	// InTx is an opaque 500 the caller cannot tell from a bug.
+	CodeTransactionAborted Code = "transaction_aborted"
+	CodeUnavailable        Code = "unavailable"
+	CodeInternal           Code = "internal"
+)
+
+// A Kind is the transport class. Transports map the kind and never the code,
+// which is what lets a service declare fifty codes of its own without touching
+// a status table.
+//
+// The declaration order is the precedence order in ROADMAP-errors.md §2 —
+// KindUnauthorized excepted, which that list omits and phase 4 owes a place
+// for. The numeric values are not API: a kind is compared to a constant, never
+// to a number, and nothing serialises one as an integer.
+//
+// KindInternal is zero on purpose. A kind that lost its meaning — a zero value
+// somebody forgot to set, a number read out of a stale table — then says 500
+// rather than claiming a 4xx it cannot support.
+type Kind uint8
+
+const (
+	KindInternal Kind = iota
+	KindNotFound
+	KindUnauthorized
+	KindForbidden
+	KindRetryable
+	KindConflict
+	KindValidation
+	KindBadRequest
+)
+
+// String is total: an unrecognised kind renders as internal, so a value that
+// escaped its own table cannot be rendered as something a client may act on.
+func (k Kind) String() string {
+	switch k {
+	case KindNotFound:
+		return "not_found"
+	case KindUnauthorized:
+		return "unauthorized"
+	case KindForbidden:
+		return "forbidden"
+	case KindRetryable:
+		return "retryable"
+	case KindConflict:
+		return "conflict"
+	case KindValidation:
+		return "validation"
+	case KindBadRequest:
+		return "bad_request"
+	default:
+		return "internal"
+	}
+}
+
+// MarshalJSON is on the value receiver, like every other renderer here: a
+// pointer receiver is bypassed when the value is marshalled as a field, a map
+// entry or on its own. See [Violation.MarshalJSON].
+func (k Kind) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(k.String())), nil
+}

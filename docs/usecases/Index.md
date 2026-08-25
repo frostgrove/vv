@@ -76,12 +76,12 @@ this page is the roadmap.
 | [UC-009](UC-009-survive-concurrent-writers.md) | [[FL-002]] [[FL-003]] [[FL-009]] [[FL-011]] |
 | [UC-010](UC-010-adopt-an-existing-orm-model.md) | [[FL-004]] [[FL-003]] [[FL-009]] [[FL-010]] |
 | [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | [[FL-001]] [[FL-002]] [[FL-004]] |
-| [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] |
+| [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] [[FL-016]] |
 | [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] |
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] |
 
 ## Gaps
 
@@ -178,19 +178,25 @@ a decision.
 
 15. **[UC-012] Multi-database is proven for one adapter on one engine.** Scoped
     bindings with pgx, and any combination across two engines, are untested.
+    Guarantee 10, the per-handle schema catalog, is the exception: it runs live
+    through both adapters and on all four engines.
 
 ### Sharp edges that need a decision, not a test
 
 16. **[UC-015] Every status but 500 echoes the error's own text.** That is what
     makes a 400 useful; for a 409 it means the driver's constraint and column
-    names reach the client. An application that treats those as internal has to
-    install its own mapping.
+    names reach the client — but only where the failure was **not** classified.
+    A classified 409 now carries a code and no driver text. Three cases are still
+    unclassified: a violation number nobody has provoked, a write inside a
+    transaction the application owns and joined, and a datasource built without
+    naming which engine it speaks to. An application that treats constraint names
+    as internal still has to install its own mapping.
 
     **No longer awaiting a decision.** [[D-044]] settles it — a body names
     nothing internal at any status — and phase 4 of `ROADMAP-errors.md` closes
-    it. It is now UC-015's guarantee 11, and belongs with the guarantees that do
-    not hold rather than here; it keeps its number because the numbers are cited
-    elsewhere.
+    it for every 409 rather than only the classified ones. It is now UC-015's
+    guarantee 11, and belongs with the guarantees that do not hold rather than
+    here; it keeps its number because the numbers are cited elsewhere.
 
 17. **[UC-016] A create can resurrect a hidden row.** The rule cannot reach an
     upsert, so a save carrying a tombstone's key overwrites it — and under a gate

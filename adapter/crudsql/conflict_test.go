@@ -6,7 +6,14 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 )
+
+// gate is an executor with no classifier: the sentinel gate on its own, which is
+// what every test below this line is about. An executor built by Postgres or
+// MySQL answers the same sentinel and also carries a code — that half is
+// classify_test.go's.
+var gate = From(nil)
 
 // The classifier has to find a SQLSTATE in an error whose type this package is
 // not allowed to name — the module has no dependencies, drivers included — so it
@@ -63,7 +70,7 @@ func TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses(t *testing.T) {
 		{"a SQLState field of the wrong type", oddErr{SQLState: 23}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := conflict(tc.err)
+			got := gate.conflict(tc.err)
 			if errors.Is(got, crud.ErrConflict) != tc.conflict {
 				t.Fatalf("errors.Is(%v, crud.ErrConflict) = %v, want %v", got, !tc.conflict, tc.conflict)
 			}
@@ -83,7 +90,7 @@ func TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses(t *testing.T) {
 // into a 404, a 400 or a 403 — those are all answers that tell the client to
 // stop trying, and a duplicate key is not one of them.
 func TestAClassifiedConflictIsNotAnyOtherSentinel(t *testing.T) {
-	err := conflict(pgErr{"23505"})
+	err := gate.conflict(pgErr{"23505"})
 	for _, sentinel := range []error{crud.ErrNotFound, crud.ErrMissingID, crud.ErrReadOnly, crud.ErrForbidden} {
 		if errors.Is(err, sentinel) {
 			t.Fatalf("a constraint violation also reads as %v", sentinel)
@@ -122,7 +129,7 @@ func TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts(t *testing.T) {
 		{"missing default", 1364, "Field 'nodef' doesn't have a default value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := conflict(newMySQLish(tc.number, "HY000", tc.msg))
+			got := gate.conflict(newMySQLish(tc.number, "HY000", tc.msg))
 			if !errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("MySQL %d is an integrity violation and did not classify as one: %v", tc.number, got)
 			}
@@ -134,7 +141,7 @@ func TestAnOrdinaryHY000IsStillNotAConflict(t *testing.T) {
 	// The control. Without it the test above would pass for a classifier that
 	// treated every HY000 as a conflict, which would turn ordinary server
 	// errors into 409s.
-	got := conflict(newMySQLish(1146, "HY000", "Table 'x.y' doesn't exist"))
+	got := gate.conflict(newMySQLish(1146, "HY000", "Table 'x.y' doesn't exist"))
 	if errors.Is(got, crud.ErrConflict) {
 		t.Fatal("a missing table is not an integrity violation")
 	}
@@ -143,9 +150,24 @@ func TestAnOrdinaryHY000IsStillNotAConflict(t *testing.T) {
 func TestANumberIsOnlyTrustedUnderHY000(t *testing.T) {
 	// A numeric Number field on some other driver's error must not be read as a
 	// MySQL error code.
-	got := conflict(newMySQLish(3819, "08006", "connection failure"))
+	got := gate.conflict(newMySQLish(3819, "08006", "connection failure"))
 	if errors.Is(got, crud.ErrConflict) {
 		t.Fatal("the number was trusted outside HY000, where it means nothing")
+	}
+
+	// And with no state at all it must not be read as a SQLite result code. The
+	// SQLSTATE is optional in MySQL's ERR packet and go-sql-driver/mysql leaves
+	// the [5]byte unset when the '#' marker is absent, so this is the shape a
+	// connection-phase failure arrives in: 1043 is ER_HANDSHAKE_ERROR and 0x413
+	// carries 19, SQLITE_CONSTRAINT, in its low byte.
+	got = gate.conflict(newMySQLish(1043, "", "Bad handshake"))
+	if errors.Is(got, crud.ErrConflict) {
+		t.Fatal("a MySQL error with no SQLSTATE reached the SQLite arm: a refused handshake answers 409 with the driver's text in the body")
+	}
+	// The control: the arm still fires for the engine it is for. Without it the
+	// line above passes for an arm nothing reaches at all.
+	if !errors.Is(gate.conflict(&sqliteish{code: 2067}), crud.ErrConflict) {
+		t.Fatal("the SQLite arm stopped classifying a unique violation")
 	}
 }
 
@@ -185,10 +207,10 @@ func TestSQLiteConstraintViolationsBecomeConflicts(t *testing.T) {
 		{"the bare primary code", 19},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := conflict(&sqliteish{code: tc.code}); !errors.Is(got, crud.ErrConflict) {
+			if got := gate.conflict(&sqliteish{code: tc.code}); !errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("SQLite %d is a constraint violation and did not classify as one: %v", tc.code, got)
 			}
-			if got := conflict(&mattnish{Code: 19, ExtendedCode: tc.code}); !errors.Is(got, crud.ErrConflict) {
+			if got := gate.conflict(&mattnish{Code: 19, ExtendedCode: tc.code}); !errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("SQLite %d through an integer-field driver did not classify: %v", tc.code, got)
 			}
 		})
@@ -210,7 +232,7 @@ func TestAnOrdinarySQLiteErrorIsStillNotAConflict(t *testing.T) {
 		{"readonly, which shares no low byte with constraint", 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := conflict(&sqliteish{code: tc.code}); errors.Is(got, crud.ErrConflict) {
+			if got := gate.conflict(&sqliteish{code: tc.code}); errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("SQLite %d is not an integrity violation", tc.code)
 			}
 		})
@@ -221,8 +243,165 @@ func TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE(t *testing.T) {
 	// pgconn spells the SQLSTATE in a field called Code. Reading that as a
 	// number would classify by coincidence, so this arm is reached only when
 	// there is no SQLSTATE — which for pgconn there always is.
-	got := conflict(&pgErr{state: "42P01"})
+	got := gate.conflict(&pgErr{state: "42P01"})
 	if errors.Is(got, crud.ErrConflict) {
 		t.Fatal("a missing relation classified as a conflict")
+	}
+}
+
+// [[D-038]]'s owed regression, at the gate rather than in the walk.
+//
+// errors.Unwrap returns nil for a multi-error, and fmt.Errorf("%w: %w", …) is
+// what this package's own conflict() builds — so a plain loop went blind on the
+// layer's own output the moment anything wrapped twice. The three readers it
+// replaced all walked that way and all three are covered here, because the
+// forbid is general: the MySQL number and the SQLite result code were separate
+// walks with the same blindness, and they are the two arms phase 0 added.
+//
+// The fault leg is the idempotency guard rather than the walk: an error already
+// carrying a fault is returned untouched, so the walk never runs on it. That the
+// walk *can* see through errs.Fault.Unwrap() []error is
+// TestADriverErrorIsFoundThroughEveryWrappingShape's, in sqlfault.
+func TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		driver   error
+		code     errs.Code
+		unwanted error
+	}{
+		{"a PostgreSQL duplicate key", pgErr{"23505"}, errs.CodeUnique, pgErr{"42P01"}},
+		{"a MySQL CHECK under HY000", newMySQLish(3819, "HY000", "Check constraint 'ck' is violated."),
+			errs.CodeCheck, newMySQLish(1146, "HY000", "Table 'x.y' doesn't exist")},
+		// The negatives have to be errors nothing classifies at all. SQLITE_BUSY
+		// would not do: it is not a violation and it *is* classified —
+		// lock_timeout — which is the sentinel-no/code-yes cell rather than a
+		// control on this one.
+		{"a SQLite unique violation", &sqliteish{code: 2067}, errs.CodeUnique, &sqliteish{code: 14}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := Postgres(nil)
+			switch tc.driver.(type) {
+			case *mysqlish:
+				src = MySQL(nil)
+			case *sqliteish:
+				src = SQLite(nil)
+			}
+
+			t.Run("through a multi-error", func(t *testing.T) {
+				got := src.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.driver))
+				f, ok := errs.AsFault(got)
+				if !ok {
+					t.Fatalf("no code was learned, so the SQLSTATE was not found through the multi-error: %v", got)
+				}
+				if f.Code != tc.code {
+					t.Fatalf("Code = %q, want %q", f.Code, tc.code)
+				}
+				if !errors.Is(got, crud.ErrConflict) || !errors.Is(got, tc.driver) {
+					t.Fatalf("the sentinel or the driver error was lost: %v", got)
+				}
+
+				// The control. The same shape over an error that is not a
+				// violation must learn nothing — the sentinel in it came from
+				// the fixture, so errors.Is says nothing here and only the
+				// absence of a code does.
+				if f, ok := errs.AsFault(src.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.unwanted))); ok {
+					t.Fatalf("a code (%q) was learned for something that is not a violation", f.Code)
+				}
+			})
+
+			t.Run("through errors.Join, which carries no sentinel of its own", func(t *testing.T) {
+				got := gate.conflict(errors.Join(errors.New("saving user"), tc.driver))
+				if !errors.Is(got, crud.ErrConflict) {
+					t.Fatalf("the violation was not found through errors.Join: %v", got)
+				}
+				// The control, and this one can use the sentinel: nothing in the
+				// fixture carries it.
+				got = gate.conflict(errors.Join(errors.New("saving user"), tc.unwanted))
+				if errors.Is(got, crud.ErrConflict) {
+					t.Fatalf("%v became a conflict", tc.unwanted)
+				}
+			})
+
+			t.Run("an error that already carries a fault is left alone", func(t *testing.T) {
+				already := errs.Conflict().Code(tc.code).Wrapping(crud.ErrConflict, tc.driver).Fault()
+				got := src.conflict(already)
+				if got != error(already) {
+					t.Fatalf("the fault was classified a second time: %v", got)
+				}
+				if !errors.Is(got, crud.ErrConflict) || !errors.Is(got, tc.driver) {
+					t.Fatalf("the sentinel or the driver error was lost: %v", got)
+				}
+			})
+		})
+	}
+}
+
+// pgconnish is the pgconn shape: a SQLState method and named string fields. The
+// spellings are pgconn's own — ConstraintName, TableName, SchemaName — and
+// getting one wrong produces a silently empty Source that no compiler catches.
+type pgconnish struct {
+	Code                                string
+	Message                             string
+	ConstraintName, TableName           string
+	SchemaName, ColumnName              string
+	DataTypeName, Detail, Hint, Routine string
+}
+
+func (e *pgconnish) Error() string    { return e.Message }
+func (e *pgconnish) SQLState() string { return e.Code }
+
+// pqish is lib/pq's shape, which spells the same three fields differently. No
+// capture exists for it, so nothing here reads them — deliberately, and this is
+// where that refusal is written down rather than left to look like an oversight
+// ([[D-046]]: provoke it, capture it, let the entry be the citation).
+type pqish struct {
+	state                     string
+	Constraint, Table, Column string
+}
+
+func (e *pqish) Error() string    { return "pq: duplicate key" }
+func (e *pqish) SQLState() string { return e.state }
+
+func TestTheExtractorReachesTheStructuredFieldsByShape(t *testing.T) {
+	driver := &pgconnish{
+		Code:           "23505",
+		Message:        `duplicate key value violates unique constraint "users_email_key"`,
+		ConstraintName: "users_email_key",
+		TableName:      "users",
+		SchemaName:     "public",
+	}
+	got := Postgres(nil).conflict(driver)
+
+	// The three assertions, in the form this module can write them: errors.As
+	// against a driver type is a name adapter/crudsql may not spell.
+	if !errors.Is(got, crud.ErrConflict) {
+		t.Fatalf("not a conflict: %v", got)
+	}
+	if !errors.Is(got, error(driver)) {
+		t.Fatalf("the driver error was replaced rather than wrapped: %v", got)
+	}
+	f, ok := errs.AsFault(got)
+	if !ok {
+		t.Fatalf("no fault: %v", got)
+	}
+	if f.Detail.Constraint != "users_email_key" || f.Detail.Table != "users" {
+		t.Fatalf("Detail = %+v, want the constraint and table pgconn named", f.Detail)
+	}
+	if f.Violations[0].Source.Schema != "public" {
+		t.Fatalf("Source = %+v, want the schema pgconn named", f.Violations[0].Source)
+	}
+
+	// The control: the other driver's spellings classify — the SQLState method
+	// still works — and fill in nothing. What is pinned is the refusal.
+	got = Postgres(nil).conflict(&pqish{state: "23505", Constraint: "users_email_key", Table: "users", Column: "email"})
+	f, ok = errs.AsFault(got)
+	if !ok {
+		t.Fatalf("a lib/pq-shaped error stopped classifying at all: %v", got)
+	}
+	if src := f.Violations[0].Source; src.Constraint != "" || src.Table != "" || src.Schema != "" || src.Columns != nil {
+		t.Fatalf("Source = %+v: lib/pq's spellings are read, and no capture exists for them", src)
+	}
+	if f.Detail.Constraint != "" || f.Detail.Table != "" {
+		t.Fatalf("Detail = %+v, want nothing carried across", f.Detail)
 	}
 }

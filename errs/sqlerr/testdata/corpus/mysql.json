@@ -148,6 +148,58 @@
       }
     },
     {
+      "name": "deadlock",
+      "kind": "retryable",
+      "want": "deadlock",
+      "stmt": "",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "40001",
+        "native": 1213,
+        "message": "Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction"
+      }
+    },
+    {
+      "name": "serialization_failure",
+      "kind": "retryable",
+      "want": "deadlock",
+      "stmt": "",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "40001",
+        "native": 1213,
+        "message": "Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction"
+      }
+    },
+    {
+      "name": "transaction_aborted",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "the statement rolls back and the transaction stays usable; only PostgreSQL poisons the whole of it",
+      "err": null
+    },
+    {
+      "name": "deferred_constraint",
+      "kind": "none",
+      "want": "",
+      "stmt": "",
+      "unreachable": "no deferrable constraints: DEFERRABLE is parsed and ignored, so a foreign key is always checked per statement",
+      "err": null
+    },
+    {
+      "name": "unique_in_another_locale",
+      "kind": "integrity",
+      "want": "unique",
+      "stmt": "INSERT INTO cp_parent (id, slug, need) VALUES (10, 'anchor', 'y')",
+      "err": {
+        "type": "*mysql.MySQLError",
+        "sqlstate": "23000",
+        "native": 1062,
+        "message": "Error 1062 (23000): Дублирующаяся запись 'anchor' по ключу 'cp_parent.slug'"
+      }
+    },
+    {
       "name": "undefined_table",
       "kind": "none",
       "want": "",

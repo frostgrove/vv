@@ -129,6 +129,53 @@ func TestAQueuedErrorSurfacesAndTheStatementIsStillRecorded(t *testing.T) {
 	}
 }
 
+// The other shape of a failed read, and the one Err cannot express: pgx hands a
+// refused statement back as a live Rows that yields what it has and then reports
+// the failure from Err. A caller that loops without asking at the end reads a
+// truncated result as a complete one, so the double has to be able to produce it.
+func TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem(t *testing.T) {
+	ctx := context.Background()
+	cut := errors.New("terminating connection due to administrator command")
+	rec := crudtest.Postgres().Push(
+		crudtest.RowsFailing(cut, []any{int64(1)}, []any{int64(2)}),
+		crudtest.Rows([]any{int64(3)}),
+	)
+
+	rows, err := rec.Query(ctx, "SELECT n FROM t")
+	if err != nil {
+		t.Fatalf("Query refused outright: %v — RowsErr is the failure that arrives after the rows", err)
+	}
+	seen := 0
+	for rows.Next() {
+		var n int64
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+	}
+	if seen != 2 {
+		t.Errorf("the failing result set yielded %d rows, want the 2 it was given", seen)
+	}
+	if !errors.Is(rows.Err(), cut) {
+		t.Errorf("Rows.Err answered %v after the rows ran out, want the queued failure", rows.Err())
+	}
+	rows.Close()
+
+	// The control. Without it a Recorder that reported every result set as
+	// failing would pass the half above, and every test in the tree that reads
+	// rows would still be green because almost none of them ask Err at all.
+	plain, err := rec.Query(ctx, "SELECT n FROM t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	for plain.Next() {
+	}
+	if plain.Err() != nil {
+		t.Errorf("a plain Rows result reports %v from Err, so the failure above says nothing", plain.Err())
+	}
+}
+
 func TestExecResultAndOneShotFailure(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 3, LastInsertID: 7, HasLastInsertID: true})
@@ -394,3 +441,69 @@ func TestNormalize(t *testing.T) {
 		t.Fatalf("normalized = %q", got)
 	}
 }
+
+// The recorder does not name a database, and that is the answer to §16's open
+// question rather than an oversight. crud.KeyOf takes a source that cannot
+// identify itself at face value, so a recorder already keys as itself: two
+// recorders are two catalogs and one recorder is one, which is the whole of the
+// unit-test seam a catalog needs.
+//
+// Giving it a DataSource() would change something else entirely. crud.InTx binds
+// the transaction it opens to the source's own datasource when the source is
+// Identified, so every existing test that wraps a recorder in InTx would go from
+// an unscoped binding — which every repository joins — to one only repositories
+// over that recorder join. Nothing in the tree fails today if that changed,
+// which is exactly why it is pinned here.
+func TestTheRecorderStaysUnidentified(t *testing.T) {
+	ctx := context.Background()
+	rec := crudtest.Postgres()
+	other := crudtest.Postgres()
+
+	if _, ok := any(rec).(crud.Identified); ok {
+		t.Fatal("the recorder names a datasource now — read D-041 before keeping that, because crud.InTx over a recorder stops binding unscoped")
+	}
+	if crud.KeyOf(rec) != any(rec) {
+		t.Errorf("crud.KeyOf answered %v for a recorder, want the recorder itself", crud.KeyOf(rec))
+	}
+
+	var joined bool
+	if err := crud.InTx(ctx, rec, func(ctx context.Context) error {
+		_, joined = crud.ExecutorFor(ctx, other)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !joined {
+		t.Error("a transaction opened over a recorder was not joined by a repository bound elsewhere — the binding stopped being unscoped")
+	}
+
+	// The control, and it is what shows the difference the added method would
+	// make: the same double with a DataSource() binds scoped, and the sibling
+	// above no longer joins.
+	named := identifiedRecorder{Recorder: crudtest.Postgres(), handle: new(int)}
+	if _, ok := any(named).(crud.Identified); !ok {
+		t.Fatal("the identified double does not implement crud.Identified, so this control asserts nothing")
+	}
+	if crud.KeyOf(named) != any(named.handle) {
+		t.Errorf("crud.KeyOf answered %v for an identified source, want its handle", crud.KeyOf(named))
+	}
+
+	joined = false
+	if err := crud.InTx(ctx, named, func(ctx context.Context) error {
+		_, joined = crud.ExecutorFor(ctx, other)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if joined {
+		t.Error("a transaction opened over an identified source was joined by a repository bound elsewhere — then the two cases are the same and this test proves nothing")
+	}
+}
+
+// identifiedRecorder is the recorder with the one method it does not have.
+type identifiedRecorder struct {
+	*crudtest.Recorder
+	handle any
+}
+
+func (r identifiedRecorder) DataSource() any { return r.handle }

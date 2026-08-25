@@ -67,7 +67,7 @@ boundary:
 
 | | Rule | Where | Cost to a consumer |
 |---|---|---|---|
-| **Root module** | no third-party dependencies; `errs` is the one first-party require | `crud`, `query`, `port`, `repo/*`, `catalog`, `probe`, `adapter/crudsql`, `http/crudhttp`, `http/crudnet`, `vvflag`, `cmd/vv` | nothing beyond `errs`. Measured today: a root-module consumer resolves **2 modules and no `go.sum` at all** |
+| **Root module** | no third-party dependencies; `errs` is the one first-party require | `crud`, `query`, `port`, `repo/*`, `catalog`, `sqlfault`, `probe`, `adapter/crudsql`, `http/crudhttp`, `http/crudnet`, `vvflag`, `cmd/vv` | nothing beyond `errs`. Measured today: a root-module consumer resolves **2 modules and no `go.sum` at all** |
 | **Satellite modules** | one dependency decision each | `http/crudfiber`, `http/crudgin`, `adapter/crudpgx`, `rpc/crudgrpc` | only what you `go get`. Measured: a `crudgin` consumer resolves 58 modules, with fiber and pgx absent |
 | **Unpublished** | needs the world | `test/`, `_examples/` | never reaches a consumer |
 
@@ -103,13 +103,15 @@ titled "Abandoned packages."
 
 ## 3. The framework as it stands
 
-`✓` exists · `→` designed in this document · `?` proposed, and must clear the bar
-in §12 before it is more than a name
+`✓` exists · `→` designed in this document · `✗` proposed and refused ([[D-048]])
 
 ```
-SEPARATE MODULE — the error contract, on its own version line
-  → errs/                       codes, Kind, Path, Violation, Fault, the SPI
-  → errs/sqlerr/                the four dialect parsers
+THE ERROR CONTRACT — its own module and version line at the first tag ([[D-036]]);
+a package of the root module until then, stdlib-only and sealed by `check-tiers`
+  ✓ errs/                       codes, Kind, Path, Violation, Fault, the SPI, the
+                                message source, the validation bridge
+  → errs/sqlerr/                the four dialect parsers — phase 0's captured
+                                corpus is in the tree, no parser is
 
 ROOT MODULE — no third-party dependencies
   ✓ crud/                       the datasource seam, metadata, predicates, Opt, pagination
@@ -119,7 +121,12 @@ ROOT MODULE — no third-party dependencies
   ✓ repo/decorators/specs/      Specifications, Criteria, metamodel
   ✓ repo/decorators/security/   row scope, authorization, per-entity checks
   → repo/decorators/faults/     integrity errors become rich Faults
-  → catalog/                    per-database schema introspection
+  ✓ catalog/                    per-database schema introspection
+  ✓ sqlfault/                   the tree walk, by-shape extraction, the integrity
+                                gate and fault assembly — the layer that has both
+                                the parsers and `crud`, which neither may have
+                                ([[D-016]], and `errs` is sealed). Not on the
+                                manifest: one implementation ([[D-048]])
   → probe/                      Simple and Full violation handlers
   ✓ adapter/crudsql/            database/sql — and so ent, gorm, sqlx, sqlc, bun
   ✓ http/crudhttp/              the framework-free half of the HTTP layer
@@ -141,7 +148,7 @@ ADOPTED FROM `old-rx` (§4)
   ✓ vvflag/           generic flag parsing. stdlib only, so root module.
   ✓ tools/vvcfg/      config loading over cleanenv. one decision, so a satellite.
 
-?  log, i18n, health, migrate, app, portkafka, obsotel, authjwt   — see §12
+✗  log, i18n, health, migrate, app, portkafka, obsotel, authjwt   — refused, [[D-048]]
 ```
 
 `i18n` is not a subsystem: `errs.MessageSource` (the errors roadmap §5) already is it, at the right
@@ -499,16 +506,22 @@ The organisation stays `shardit-io` for now; §12 keeps it.
 
 ## 12. Not decided yet
 
-Left open on purpose. Both expire at the first tag (§11).
+One item, and it expires at the first tag (§11). The other was settled by
+applying the bar §2 already stated.
 
-- **The bar for everything on §3's `?` list.** `log`, `i18n`, `health`, `migrate`,
-  `app`, `portkafka`, `obsotel`, `authjwt`. The bar is the one §2 states: a package joins
-  the contract manifest when a **second** implementation needs it, and never when
-  the standard library already contracts the thing. `log` fails on the second
-  clause outright — `slog.Handler` is the seam. `i18n` is `errs.MessageSource`
-  until a second subsystem wants it, and then it is a move, not a design.
-  Configuration is **settled and off this list**: `vvflag` and `vvcfg` are
-  implementations, adopted from `old-rx`, with no contract at all (§4).
+- ~~**The bar for everything on §3's `?` list.**~~ **Settled — [[D-048]].** The
+  bar is the one §2 states, and applied to the list it admits nothing: the
+  manifest stays `crud query errs port` and is closed. `log` fails outright
+  (`slog.Handler` *is* the seam), `i18n` is `errs.MessageSource` until a second
+  subsystem wants it, `health` and `migrate` have zero implementations, `app` has
+  exactly one by construction ([[D-037]]), `obsotel` would contract what
+  OpenTelemetry already contracts, and `authjwt` sits behind `security.Policy`,
+  which exists. `portkafka` is refused twice over — it fails the
+  second-implementation rule **and** its name violates [[D-035]], because a
+  prefix names the subsystem and `port` is a layer; a Kafka binding for CRUD
+  would be `crudkafka`. None of this forbids the *package*; it forbids the
+  contract. Configuration was already off the list: `vvflag` and `vvcfg` are
+  implementations with no contract at all (§4).
 - **Whether the organisation is renamed too.** `shardit-io` stays for now (§11).
   "Shard it" promises horizontal sharding this library does not do, and
   `github.com/shardit` is held by another account, so the `-io` suffix is a
@@ -520,3 +533,8 @@ Left open on purpose. Both expire at the first tag (§11).
   prefix is `<subsystem><library>` (§6), `errs` gets its own module with [[D-033]]
   amended to *no third-party requirement* (the errors roadmap §4), and `rx` becomes
   `vv` (§11).
+
+**This is the only thing left in this document**, and it is not a thing an agent
+can decide — it is a choice about a name the owner will live with. Everything
+else here is built: the module boundary, the manifest and its three enforced
+arms, the naming rule, `vvflag` and `vvcfg`, and the enforcement §7 asked for.

@@ -106,6 +106,12 @@ Nothing yet. `probe/TODO.md` holds the place; phase 7 creates it.
 
 ## Proven by (owed)
 
+Phase 1 shipped the marker: `TestTheStepsThatWriteNothingElseReadsStillWrite` in
+`errs/build_test.go` pins `Builder.Partial` onto the fault and onto the wire as
+`"partial":true`, with the uncapped fault — no `partial` key at all — as its
+control. Nothing sets it yet, so the evidence this decision rests on is still
+owed.
+
 Phase 7 owes both halves, and the second is the one that catches the NULL bug:
 
 - probe off ⇒ one violation; probe on ⇒ **three distinct codes at three distinct
@@ -126,10 +132,14 @@ Phase 7 owes both halves, and the second is the one that catches the NULL bug:
 
 `ROADMAP-errors.md` §16 owns them and each needs answering before phase 7:
 the cap defaults (a cap without a number is not a cap), composite primary keys
-(the exclude-my-own-row clause assumes a single-column key), whether
-`crud/crudtest`'s recorder grows a `DataSource()` — which is the difference
-between the probe having a unit-test seam and being integration-only — and
-whether pre-flight is ever a default for a named endpoint shape.
+(the exclude-my-own-row clause assumes a single-column key), and whether
+pre-flight is ever a default for a named endpoint shape.
+
+One of them is answered. Whether `crud/crudtest`'s recorder grows a
+`DataSource()` was listed here because it read as the difference between the
+probe having a unit-test seam and being integration-only. Phase 6 settled it:
+**no**, and the seam exists anyway, because `crud.KeyOf` keys an unidentifiable
+source as itself. [[D-041]] has the argument and the test that pins it.
 
 ## See also
 

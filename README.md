@@ -116,7 +116,8 @@ Bind it to a datasource:
 ```go
 db    := crudpgx.Open(pool)                  // pgx
 db    := crudsql.Postgres(sqlDB)             // database/sql
-db    := crudsql.Open(sqlDB, crud.MySQL{})   // MySQL
+db    := crudsql.MySQL(sqlDB)                // MySQL
+db    := crudsql.MariaDB(sqlDB)              // MariaDB — same dialect, different error numbers
 
 users := Users.Bind(db)
 ```
@@ -853,7 +854,7 @@ One adapter covers everything that speaks `database/sql`:
 
 | Stack | How |
 | --- | --- |
-| `*sql.DB` / `*sql.Tx` / `*sql.Conn` | `crudsql.Open(db, crud.Postgres{})`, `crudsql.From(tx)` |
+| `*sql.DB` / `*sql.Tx` / `*sql.Conn` | `crudsql.Postgres(db)` / `MySQL` / `MariaDB` / `SQLite`, or `crudsql.Open(db, crud.Postgres{})`; `crudsql.From(tx)` |
 | pgx v5 (`*pgxpool.Pool`, `*pgx.Conn`, `pgx.Tx`) | `crudpgx.Open(pool)`, `crudpgx.From(tx)` |
 | sqlx | `crudsql.From(sqlxTx)` — it is a `*sql.Tx` underneath |
 | gorm | `crudsql.From(tx.Statement.ConnPool)` inside `db.Transaction` |
@@ -861,6 +862,16 @@ One adapter covers everything that speaks `database/sql`:
 | sqlc (database/sql) | `crudsql.From(tx)`; the same `*sql.Tx` goes to `sqlc.New(tx)` |
 | sqlc (pgx) | `crudpgx.From(tx)`; `pgx.Tx` satisfies sqlc's `DBTX` and vv's `Queryer` at once |
 | bun, squirrel, dbr, … | `crudsql.From(tx)` |
+
+The four named constructors say which *engine* is answering, and that is what
+lets a refused statement come back carrying a code — `unique`, `foreign_key`,
+`required` — as well as `crud.ErrConflict`. `Open`, `From` and `Source` are given
+a `crud.Dialect`, which says how to write SQL and not which server is speaking:
+`crud.MySQL` is MariaDB too, and the two answer a failed `CHECK` with different
+numbers. So those three classify the status and not the code, and vv refuses to
+guess rather than answering "mysql" for a MariaDB server. Pass
+`crudsql.WithFaults(sqlfault.New("postgres"))` — or `"mysql"`, `"mariadb"`,
+`"sqlite"` — to say which engine a joined transaction is talking to.
 
 The interop point is exactly one function:
 

@@ -26,13 +26,27 @@ func (s Statement) String() string { return fmt.Sprintf("%s %v", s.SQL, s.Args) 
 
 // Result is a canned query response. Values are assigned to scan destinations
 // positionally, converting where Go allows and honouring sql.Scanner.
+//
+// Err and RowsErr are two different failures because the drivers this doubles
+// for report one failure in two places. Err is Query itself refusing, which is
+// database/sql's shape. RowsErr is pgx's: a statement the server refused arrives
+// as a live Rows that yields what it has and then answers Err. A double that
+// could only express the first cannot drive the arm a read has to end with, and
+// a loop that never asks reads a truncated schema as a complete one.
 type Result struct {
-	Rows [][]any
-	Err  error
+	Rows    [][]any
+	Err     error
+	RowsErr error
 }
 
 // Rows builds a Result from row literals.
 func Rows(rows ...[]any) Result { return Result{Rows: rows} }
+
+// RowsFailing builds a Result that yields its rows and then reports err from
+// Rows.Err — the mid-stream failure, not the refusal Err carries.
+func RowsFailing(err error, rows ...[]any) Result {
+	return Result{Rows: rows, RowsErr: err}
+}
 
 // Recorder is a crud.Source that records everything and answers from a queue.
 type Recorder struct {
@@ -141,7 +155,7 @@ func (r *Recorder) Query(_ context.Context, q string, args ...any) (crud.Rows, e
 	if res.Err != nil {
 		return nil, res.Err
 	}
-	return &rows{data: res.Rows}, nil
+	return &rows{data: res.Rows, err: res.RowsErr}, nil
 }
 
 // Begin hands out a transaction that records into the same recorder.

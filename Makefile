@@ -28,6 +28,34 @@ WORKSPACE := $(filter-out ./_examples,$(ALL_MODULES))
 # aspirational.
 TIER0 := crud query errs port
 
+# `errs` is sealed tighter than the rest of the manifest. D-036's case rests on
+# it having an empty require block at the first tag, and the arm above cannot
+# see an import of `crud`: the filter drops every contract package, so the
+# violation would stay invisible until the tag turned it into a require cycle
+# against a root that requires `errs`. Scoped to the prefix rather than the
+# package, because phase 2's parsers in `errs/sqlerr` legitimately import `errs`
+# and both end up inside the same module.
+#
+# The sealed arm alone passes `-test`. `go mod tidy` counts test imports, so a
+# `crud` import in `errs`' test package becomes a require in the module `errs`
+# is split into, and today nothing else sees it: the import is intra-module, so
+# `check-tidy` stays green and `check-deps` finds nothing third-party. `-test`
+# adds the synthetic `errs.test` binary and the `errs_test` external package to
+# the list, which the second `sed` normalises away. The plain arm above stays
+# without it on purpose — `crud`'s own tests import `repo/basic`, which is legal
+# inside one module and only illegal across a module boundary.
+TIER0_SEALED := errs
+
+# `crud` is sealed in the other direction, and by D-016's surviving half rather
+# than D-036: no file in `crud/` outside `_test.go` imports anything but the
+# standard library, and that is what makes `crud` unable to import `errs` —
+# the one rule `errs/doc.go` states and cannot express in a signature. The plain
+# arm cannot see that import either: its filter drops every contract package, so
+# the two classification paths `errs/doc.go` warns about would first disagree at
+# run time. Without `-test`: `crud`'s own tests import `repo/basic`, which is
+# legal inside one module.
+TIER0_STDLIB := crud
+
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
@@ -97,15 +125,44 @@ check-deps: ## The root module has no third-party dependency (D-016, D-033)
 	done
 	@echo "check-deps: ok"
 
+# Every arm lists first and filters second, rather than piping a silenced
+# `go list` straight into grep. Silenced, a package that does not compile
+# produces no output, an empty result reads as "imports nothing outside the
+# manifest", and the check reports ok on a tree that does not build — which is
+# the one answer it must never give.
 check-tiers: ## A contract package imports only stdlib and other contract packages
 	@fail=0; re=$$(echo "$(TIER0)" | tr ' ' '|'); \
 	for p in $(TIER0); do \
 		[ -d "$$p" ] || continue; \
-		bad=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>/dev/null \
-		      | grep "^$(MOD)/" | sed 's|^$(MOD)/||' \
+		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>&1) \
+		  || { echo "cannot list $$p — it does not build:"; echo "$$deps" | sed 's/^/  /'; fail=1; continue; }; \
+		bad=$$(echo "$$deps" | grep "^$(MOD)/" | sed 's|^$(MOD)/||' \
 		      | grep -Ev "^($$re)(/|$$)" || true); \
 		if [ -n "$$bad" ]; then \
 			echo "contract package $$p imports non-contract packages:"; \
+			echo "$$bad" | sort -u | sed 's/^/  /'; fail=1; \
+		fi; \
+	done; \
+	for p in $(TIER0_STDLIB); do \
+		[ -d "$$p" ] || continue; \
+		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>&1) \
+		  || { echo "cannot list $$p — it does not build:"; echo "$$deps" | sed 's/^/  /'; fail=1; continue; }; \
+		bad=$$(echo "$$deps" | grep "^$(MOD)" | sed 's|^$(MOD)/||' \
+		      | grep -Ev "^$$p(/|$$)" || true); \
+		if [ -n "$$bad" ]; then \
+			echo "stdlib-only package $$p may import only the standard library and $$p/...:"; \
+			echo "$$bad" | sort -u | sed 's/^/  /'; fail=1; \
+		fi; \
+	done; \
+	for p in $(TIER0_SEALED); do \
+		[ -d "$$p" ] || continue; \
+		deps=$$($(GO) list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>&1) \
+		  || { echo "cannot list $$p — it does not build:"; echo "$$deps" | sed 's/^/  /'; fail=1; continue; }; \
+		bad=$$(echo "$$deps" | grep "^$(MOD)" | sed 's|^$(MOD)/||' \
+		      | sed -E 's/ \[.*\]$$//; s/\.test$$//; s/_test$$//' \
+		      | grep -Ev "^$$p(/|$$)" || true); \
+		if [ -n "$$bad" ]; then \
+			echo "sealed package $$p may import only the standard library and $$p/...:"; \
 			echo "$$bad" | sort -u | sed 's/^/  /'; fail=1; \
 		fi; \
 	done; \

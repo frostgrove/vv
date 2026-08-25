@@ -951,11 +951,80 @@ a 27-character value, an out-of-range number is stored as sent, and `'abc'` in
 an integer column is kept as text. The same payload is 422 on PostgreSQL and
 MySQL and 200 there. Use `CHECK` constraints if you need SQLite to refuse.
 
+**Which unique keys the library can reason about differs per engine.** The
+schema reading that error handling is built on records what the server itself
+says, and the servers do not say the same things. PostgreSQL and SQLite tell a
+declared `UNIQUE` constraint apart from a bare `CREATE UNIQUE INDEX`; MySQL and
+MariaDB list both as `UNIQUE` and there is nothing to tell apart. SQLite reports
+the kind and loses the name — a `CONSTRAINT uc UNIQUE (a, b)` comes back as
+`sqlite_autoindex_t_2`, so the name you wrote is not the name it answers to.
+Partial indexes (`... WHERE deleted_at IS NULL`) exist on PostgreSQL and SQLite
+only; prefix indexes (`slug(10)`) on MySQL and MariaDB only; expression indexes
+everywhere but MariaDB. And on SQLite a partial index's `WHERE` clause is not
+readable at all, only the fact that there is one. None of it is normalisable —
+half those rows are about a key kind an engine does not have — so what the
+library does is record what the server said and mark what it could not say.
+
 **MySQL and MariaDB are not interchangeable in their error text.** A duplicate
 key names its index as `users.email` on MySQL and `email` on MariaDB, and a
 failed `CHECK` is error 3819 with SQLSTATE `HY000` on MySQL and 4025 with
 `23000` on MariaDB. vv classifies both as a conflict, so a 409 is a 409 —
-but do not parse the message.
+but do not parse the message. On a MariaDB server open the datasource with
+`crudsql.MariaDB(db)` rather than `crudsql.MySQL(db)`: they share a dialect, so
+the SQL is the same either way, but the error numbers are not and the finer
+classification stops at the status otherwise.
+
+**A classified failure and an unclassified one answer the same status and say
+different things.** Where vv knows which engine it is talking to it turns a
+refused statement into a code — `unique`, `foreign_key`, `required`, `check` —
+and the 409 body then carries the code and nothing the driver said. Where it
+does not, the 409 carries the driver's own sentence, constraint name included.
+Which one you get is decided by how the datasource was built:
+
+```go
+crudsql.Postgres(db)                  // classifies
+crudsql.MySQL(db)                     // classifies
+crudsql.MariaDB(db)                   // classifies, and knows 4025
+crudsql.SQLite(db)                    // classifies
+crudpgx.Open(pool)                    // classifies; pgx is PostgreSQL only
+
+crudsql.Open(db, crud.Postgres{})     // does not: a dialect is not an engine
+crudsql.From(handle)                  // does not
+crudsql.Source(handle, dialect)       // does not
+```
+
+`crud.Dialect` says how to write SQL, and `crud.MySQL` is MariaDB too — so
+`Open`, `From` and `Source` have nothing to derive an engine from, and vv
+refuses to guess rather than answering "mysql" for a MariaDB server. The status
+never depends on this; only the code does.
+
+**Wiring the classification into a joined transaction.** The shared-transaction
+pattern above uses ``crudsql.From(tx)``, which names no engine — so a write inside it is a
+409 without a code while the same write outside it carries one. Say which engine
+it is:
+
+```go
+txCtx := crud.WithExecutor(ctx, crudsql.From(tx,
+    crudsql.WithFaults(sqlfault.New("postgres"))))
+```
+
+The same option takes a loaded catalog, which fills in the columns a violation
+does not name — PostgreSQL reports a composite unique violation with the
+constraint and the table and no columns at all:
+
+```go
+cat, err := catalog.Load(ctx, src)
+if err != nil {
+    return err
+}
+src := crudsql.Postgres(db, crudsql.WithFaults(
+    sqlfault.New("postgres", sqlfault.WithColumns(sqlfault.FromCatalog(cat)))))
+```
+
+MySQL, MariaDB and SQLite name no constraint and no table at all, so on those
+three there is nothing to look up by and the columns stay unknown. PostgreSQL's
+"value too long" and SQLite's foreign-key error are the same: they carry no
+table and no constraint, so a catalog cannot help them either.
 
 ---
 

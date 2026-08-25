@@ -20,6 +20,11 @@ violation the payload would cause.
 - Placeholders and quoting go through `crud.Dialect`. `$1` is PostgreSQL-only.
 - A probe that errors keeps the driver's violation and sets `Partial: true`. It
   must never downgrade a correct 409 into an opaque 500.
-- It has no unit-test seam: `crud/crudtest`'s recorder has no `DataSource()`.
+- It has a unit-test seam and needs no change to `crud/crudtest`. Phase 6
+  measured it: `crud.KeyOf` takes a source that cannot name its database at face
+  value and returns the source itself, so a recorder keys as itself, two
+  recorders are two catalogs, and the §16 question about growing a
+  `DataSource()` is answered **no** ([[D-041]]). Adding one would rescope
+  `crud.InTx` over every recorder in the tree.
 
 **Governed by:** [ROADMAP-errors.md](../ROADMAP-errors.md) §8, and its phase 7.

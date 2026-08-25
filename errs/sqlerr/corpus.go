@@ -1,11 +1,3 @@
-// Package sqlerr turns what a database driver reports into what the error
-// contract can carry. It holds no driver import and opens no connection: every
-// parser is a pure function over (dialect, sqlstate, native, message), and the
-// inputs come from the corpus in testdata.
-//
-// The corpus is here rather than in the test module because the parsers are
-// unit-tested, and a unit test in this module cannot import the test module.
-// The program that captures it can go the other way, and does.
 package sqlerr
 
 import (
@@ -48,8 +40,9 @@ const (
 	// to fix, but it is not a conflict, and [[D-015]] refuses to widen the
 	// conflict classifier to cover it.
 	KindData = "data"
-	// KindRetryable is a lock or serialisation failure. Nothing the caller sent
-	// is wrong, so answering 4xx would tell them to fix something they cannot.
+	// KindRetryable is a lock failure, a serialisation failure, or a transaction
+	// the engine aborted out from under the caller. Nothing the caller sent is
+	// wrong, so answering 4xx would tell them to fix something they cannot.
 	KindRetryable = "retryable"
 	// KindNone is an error that must stay unclassified. Without these the corpus
 	// only proves that a classifier says yes, never that it knows when to say
@@ -76,7 +69,14 @@ type Case struct {
 	Err         *Err   `json:"err"`
 }
 
-// An Err is a driver error, flattened.
+// An Err is a driver error, flattened. It is the corpus's record of what a
+// server said and it is also what [Classify] takes: the parsers are written
+// against these entries and then run on them, so nothing separates the thing
+// tested from the thing shipped.
+//
+// Message is carried and never read. It is here so a test can prove that — a
+// parser handed an Err whose Message says something else entirely must answer
+// the same ([[D-039]]).
 type Err struct {
 	// Type is the driver's own type name. An error carrying no SQLSTATE at all
 	// is a legitimate corpus entry, and the type is then the only thing that
@@ -94,6 +94,10 @@ type Err struct {
 	Message string `json:"message"`
 	// Fields are the driver's structured extras — constraint, table, schema,
 	// column, detail. This is where a column name may honestly come from.
+	//
+	// A value may be a fixed marker where the server's own changes every run:
+	// PostgreSQL's deadlock detail names the backend pids. The field name is
+	// what SameKey compares, so redacting the value costs the guard nothing.
 	Fields map[string]string `json:"fields,omitempty"`
 }
 
