@@ -244,7 +244,7 @@ func replay(ctx context.Context, t *testing.T, e corpus.Engine, db *sql.DB, p co
 func TestADeferredConstraintArrivesFromTheCommitAndNotTheStatement(t *testing.T) {
 	ctx := context.Background()
 	for _, e := range corpus.Engines(t.TempDir()) {
-		p, ok := probe(e, "deferred_constraint")
+		p, ok := corpusProbe(e, "deferred_constraint")
 		if !ok {
 			t.Fatalf("%s has no deferred_constraint probe", e.Name)
 		}
@@ -280,7 +280,7 @@ func TestADeferredConstraintArrivesFromTheCommitAndNotTheStatement(t *testing.T)
 					// The control: the same violation raised immediately does
 					// fail at the statement. Without it this test passes for a
 					// table whose foreign key was never deferrable.
-					immediate, _ := probe(e, "foreign_key")
+					immediate, _ := corpusProbe(e, "foreign_key")
 					tx2, err := b.begin(ctx)
 					if err != nil {
 						t.Fatal(err)
@@ -295,7 +295,7 @@ func TestADeferredConstraintArrivesFromTheCommitAndNotTheStatement(t *testing.T)
 	}
 }
 
-func probe(e corpus.Engine, name string) (corpus.Probe, bool) {
+func corpusProbe(e corpus.Engine, name string) (corpus.Probe, bool) {
 	for _, p := range e.Cases {
 		if p.Name == name {
 			return p, true
@@ -432,7 +432,7 @@ func TestAMariaDBCheckIsOnlyClassifiedWhenTheSourceSaysMariaDB(t *testing.T) {
 	if maria.Name == "" {
 		t.Fatal("no mariadb engine in the corpus")
 	}
-	check, ok := probe(maria, "check")
+	check, ok := corpusProbe(maria, "check")
 	if !ok {
 		t.Fatal("mariadb has no check probe")
 	}
@@ -574,11 +574,11 @@ func TestACatalogFillsTheColumnsAUniqueViolationDoesNotName(t *testing.T) {
 			pg = e
 		}
 	}
-	composite, ok := probe(pg, "unique_composite")
+	composite, ok := corpusProbe(pg, "unique_composite")
 	if !ok {
 		t.Fatal("postgres has no unique_composite probe")
 	}
-	notNull, ok := probe(pg, "not_null")
+	notNull, ok := corpusProbe(pg, "not_null")
 	if !ok {
 		t.Fatal("postgres has no not_null probe")
 	}

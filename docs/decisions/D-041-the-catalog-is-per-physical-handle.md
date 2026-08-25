@@ -193,6 +193,17 @@ D-039 forbids.
   rules this reuses rather than reinvents. They were unexported until phase 6 and
   `catalog` is what exports them.
 - `crud/executor.go:Identified` — the only identity the seam offers.
+- `catalog/catalog.go:Referrers` and `catalog/load.go:snapshot.refs` /
+  `:loaded.ReferencedBy` — the inbound direction, added by phase 7 for the same
+  reason `Reloader` is separate: `Catalog` is the interface a consumer
+  implements and it stays the small one. A constraint is recorded on the table
+  that declares it, so no lookup on `Catalog` can answer "which foreign keys
+  point *at* this table" — which is what a `restrict` violation needs. The order
+  is the order the tables and their constraints were read in, which every
+  loading statement fixes with an `ORDER BY`.
+- `probe/declare.go` — the declaration-time refusal this decision owed. It is
+  where a table the catalog does not know, and a model key that is not a row
+  identity, stop the process.
 - `sqlfault/catalog.go:FromCatalog` — the first consumer of a loaded catalog
   outside `catalog` itself. It holds the catalog on the classifier *value* the
   caller declared and never in a package-level variable, and its lookup does no
@@ -282,18 +293,27 @@ D-039 forbids.
 - `TestOneSetHoldsFourLiveDatabasesWithoutMergingThem` in
   `test/integration/catalog_test.go` — the identity rule against real handles.
 
-### Owed by phase 7
+### Paid by phase 7
 
-The invariant has two halves and phase 6 pays one. There is no repository
-declaration that needs a catalog until `probe/` lands, so *"a repository declared
-with a feature that needs a catalog refuses to start when the catalog cannot be
-loaded"* has no site to be tested at. Phase 7 owes that test, and with it the one
-case phase 6 could not close: a MySQL user with no `information_schema` grants
-reads zero rows rather than being refused, so `Load` succeeds and the catalog is
-empty. Phase 7 can tell the two apart, because by then a declaration names a
-table the catalog must know.
+The invariant has two halves and phase 6 paid one. There was no repository
+declaration that needed a catalog until `probe/` landed, so *"a repository
+declared with a feature that needs a catalog refuses to start when the catalog
+cannot be loaded"* had no site to be tested at. Phase 7 built the site and the
+tests:
+
+- `TestADeclarationAgainstACatalogWithoutTheTableRefusesToStart` in
+  `test/integration/probe_test.go` — live on all four engines, with the table the
+  catalog does know as its control.
+- `TestADeclarationWhoseTableTheCatalogDoesNotKnowRefusesToStart` in
+  `probe/declare_test.go` — the same refusal against a catalog that read **zero
+  rows**, which is what a MySQL user with no `information_schema` grants gets:
+  `Load` succeeds and the catalog is empty. Its control is the loaded twin.
+- `TestADeclarationAgainstACatalogWithoutTheTableRefusesAtBindTime` in
+  `repo/decorators/faults/probe_test.go` — the refusal at the seam a consumer
+  actually writes, which is a panic at `Bind` and not an error at request time
+  ([[D-021]]).
 
 ## See also
 
 [[D-009]] [[D-014]] [[D-019]] [[D-021]] [[D-027]] [[D-032]] [[D-039]] [[D-042]]
-[[D-044]] [[UC-012]] [[FL-016]]
+[[D-044]] [[UC-012]] [[FL-016]] [[FL-017]]

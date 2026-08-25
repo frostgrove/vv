@@ -2,7 +2,7 @@
 
 **Actor:** a client rendering a form, and the application author who does not
 want to write the same validation twice
-**Covered by:** [[FL-011]]
+**Covered by:** [[FL-017]] [[FL-014]] [[FL-011]]
 
 ## Scenario
 A signup form is submitted. The email is taken, the organisation the caller
@@ -72,65 +72,66 @@ database disagree eventually and the database is the one that is right.
 |---|---|
 | [[FL-011]] | the sentinel-to-status table this extends, and the point at which a body stops carrying detail |
 | [[FL-014]] | where the one violation is produced from what the database reported, and what it may carry |
+| [[FL-017]] | where the rest of them are found: the plan, the statement, the caps, the transaction matrix and the merge that gives an unnamed violation a field |
 
 ## Status
-**not covered.**
 
-Nothing in the tree reports more than one violation. A refused write reaches a
-client as a single 409, and there is exactly one violation underneath it —
-merging several is the extra work phase 7 does.
+**Covered.**
 
-What changed is that the one violation is now *produced from the driver error*
-rather than by nothing at all. A classified refusal arrives as a structured
-failure carrying a stable code, the class the code belongs to, and where the
-violation came from; an unclassified one still arrives as the sentinel and the
-sentence.
+A refused write now reports every violation the payload caused, keyed to the
+fields the client sent, in one response.
 
-Guarantee 5 is no longer actively false for a classified refusal: a duplicate key
-that was classified reaches the client as a code and nothing internal. It stays
-false for an unclassified one, which still carries the constraint name and the
-driver's prefix — the leak UC-015 records, now narrower.
+| # | holds | since |
+|---|---|---|
+| 1 — every violation, not only the first | yes | phase 7 |
+| 2 — a path into the request, not a column | yes | phase 4, extended by phase 7 with the row index a batch needs |
+| 3 — a stable machine-readable code | yes | phase 2 derived it, phase 4 rendered it |
+| 4 — a message for a person, falling back rather than emitting a template | yes | phase 1 and 4 |
+| 5 — nothing internal in the response | yes | phase 4 ([[D-044]]) |
+| 6 — complete, or explicitly marked incomplete | yes | phase 7 |
+| 7 — never invented | yes | phase 7 |
+| 8 — byte-identical output for the same failing request | yes | phase 4 fixed the order, phase 7 is the first thing that produces enough violations for it to matter |
+| 9 — input and state violations in one list, told apart by code | yes | phase 4 |
+| 10 — off by default where it costs the most | yes | phase 7: a bulk write gets the cheap answer unless the author names the verb |
+| 11 — no per-endpoint code to turn on, no fork to turn off | yes | phase 7: one option at the repository declaration, and one per verb |
 
-One marker that matters later is now actually set: every violation derived from a
-driver error is marked as having come from the stored state rather than from the
-payload. That is what the open question about whether the response ever splits
-the two kinds into separate groups keys on, and what the never-echo-the-value
-default keys on, so it had to be set from the first violation rather than
-retrofitted.
+Three things are worth being precise about, because they are where the guarantee
+is narrower than it reads.
 
-`ROADMAP-errors.md` owns the work. Its phase 7 is where guarantees 1, 6, 7 and
-10 arrive, phase 4 where 2, 3, 4, 5 and 8 do, and phase 0 — the captured error
-corpus and the decisions — is what the rest is built on.
+**"Every violation" means every violation the probe can reproduce from a value.**
+CHECK constraints, NOT NULL, length, range and enum membership are not in the
+set, and that is [[D-042]]'s argument rather than an omission: a Go-side copy of
+a rule disagrees with the server eventually, and the copy is the one that is
+wrong. Four kinds of unique key are not in the set either — partial, prefix,
+expression-keyed and deferrable — because none of them can be replayed from a
+value without claiming a check that did not happen. Every one of those is a
+narrowing: the answer is short, never wrong.
 
-Phase 1 changed none of that, and it is worth being precise about what it did
-change. The contract that guarantees 2, 3, 4, 5, 6, 8 and 9 will be expressed
-in now exists: a violation is one type carrying a path, a stable code, a message
-and where it came from, and the projection that reaches a client is the type's
-own rather than a renderer's habit. Nothing produces one yet, so no guarantee
-flips.
+**Guarantee 1 has a per-engine ceiling.** Inside a transaction, PostgreSQL
+reports one violation unless the application asked for the savepoint mode, and
+inside a *foreign* transaction it reports one whatever the mode says. MySQL,
+MariaDB and SQLite report the full set with no extra statement. [[D-019]]
+difference 11 names it, and both usage guides carry it.
 
-Guarantee 8 is half owned. Message expansion and the public projection are
-deterministic and tested as such; the *order* of a list of violations is not
-settled — the roadmap states two different total orders in two sections — and
-phase 1 shipped no sort rather than freeze the wrong one. The phase that
-resolves the contradiction owes it.
+**Guarantee 4's foreign-key wording is still owed.** On PostgreSQL and SQLite a
+row that is still referred to and a row that refers to nothing are one and the
+same key, and phase 2 said telling them apart needs the verb rather than the
+error. The probe now tells them apart from the *other* side — it builds a
+`restrict` term only for the inbound direction and a `foreign_key` term only for
+the outbound one — so a probed violation carries the right one of the two. A
+violation the driver reported and the probe did not cover still carries whatever
+the classifier decided.
 
-Phase 2 also flips nothing, and for a plainer reason: it added the four dialect
-parsers, and nothing on any request path calls one. What it does buy is the
-half of guarantee 3 that has to be true before any of the rest can be — the
-stable code a client branches on is now derived on every supported engine, from
-the key alone and never from the sentence the server wrote, and a violation the
-engines describe four different ways arrives as one word. It also closed a
-matching hole in the *existing* 409: a constraint deferred to `COMMIT` was a 500
-where the same violation raised at the statement was a 409.
+### What each phase contributed
 
-One thing phase 2 deliberately does not do, and it matters for guarantee 4's
-wording later: on PostgreSQL and SQLite a row that is still referred to and a
-row that refers to nothing are one and the same key. Both classify as
-`foreign_key`. Telling them apart needs the verb, not the error, and the phase
-that sets it owes the distinction. Phase 3 did not set it either: the verb is not
-something an adapter has, and the field is left empty rather than guessed.
-
-Phase 3 flips no guarantee on its own. It is the first phase whose output a
-client can see at all — the body of a classified 409 changed — and the rest of
-the list waits on the render layer and the probe.
+Phase 0 captured the corpus and wrote the decisions. Phase 1 built the contract:
+a violation is one type carrying a path, a stable code, a message and where it
+came from, and the projection that reaches a client is the type's own rather than
+a renderer's habit. Phase 2 made the code derivable on all four engines from the
+key alone and never from the sentence the server wrote, and closed a matching
+hole in the *existing* 409 — a constraint deferred to `COMMIT` was a 500 where
+the same violation raised at the statement was a 409. Phase 3 produced the first
+violation from a driver error rather than from nothing. Phase 4 rendered it, and
+closed the disclosure: no body names anything internal at any status. Phase 6
+read the schema the probe needs. Phase 7 is the one that makes the list longer
+than one.

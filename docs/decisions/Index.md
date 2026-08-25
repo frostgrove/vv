@@ -34,10 +34,10 @@ aspirational. The rule still binds: it forbids working around it in the meantime
 and it is what the implementing phase has to satisfy. Such a decision heads its
 evidence section `Proven by (owed)` and names the tests that phase must write —
 so an agent checking that every symbol a doc names still exists knows those are
-deliberate rather than rot. D-042 and D-043 are the current set; D-038 left
-it when phase 1 landed `errs`, D-041 when phase 6 landed `catalog` and D-045 when
-phase 5 landed `port`, and D-040 and D-044 are now partly in force — see their
-rows. An *accepted* decision may
+deliberate rather than rot. **D-043 is the only one left**; D-038 left the set
+when phase 1 landed `errs`, D-041 when phase 6 landed `catalog`, D-045 when
+phase 5 landed `port` and D-042 when phase 7 landed `probe`, and D-040 and D-044
+are now partly in force — see their rows. An *accepted* decision may
 still owe evidence: D-039 did and phase 2 paid it, D-038 did — the tree walk
 through a multi-error — and phase 3 paid that, so nothing in `docs/` heads a
 section `Proven by (owed)` for a reason other than an unwritten subsystem.
@@ -64,7 +64,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-016](D-016-one-module-crud-stays-stdlib-only.md) | One `go get`, no `replace`; `crud/` imports only the standard library | **superseded by D-033** (module half; the stdlib rule stands) | process & tooling |
 | [D-017](D-017-orm-go-side-behaviour-does-not-run.md) | An vv write is exactly the statement vv built; no ORM builder, hook or privacy rule runs | accepted | interop |
 | [D-018](D-018-dtos-and-metamodels-are-generated.md) | `vv_gen.go` is generated output, reproducible from the model source | accepted | process & tooling |
-| [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for ten named differences | accepted | dialects |
+| [D-019](D-019-dialect-differences-are-not-observable.md) | The same call answers the same on every engine, except for eleven named differences | accepted | dialects |
 | [D-020](D-020-tests-are-the-specification.md) | A test that could pass vacuously carries a control case that fails without the behaviour | accepted | process & tooling |
 | [D-021](D-021-magic-is-preferred-to-go-orthodoxy.md) | Boilerplate is removed from the consumer; the magic must fail at build or start-up, never at request time | accepted | philosophy |
 | [D-022](D-022-the-handler-takes-an-interface.md) | The handler holds `Repository[M, ID, U]` and never reaches past it | accepted | HTTP |
@@ -87,7 +87,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-039](D-039-message-text-is-not-an-interface.md) | No classification and no field path comes from a driver's message text | accepted | errors |
 | [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification and kind in force; 503 from phase 4** | errors |
 | [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | accepted | errors |
-| [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | **in force from phase 7** | errors |
+| [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | accepted | errors |
 | [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | **in force from phase 4** | errors |
 | [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **marshal and print in force; the rendered body from phase 4** | errors |
 | [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | accepted | HTTP |
@@ -114,9 +114,10 @@ of one), D-026 (**open** — `Inspect` and caller paging).
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
 
 **Transactions & datasources** — D-009 (unconditional capture, opt-in scoping,
-and the two identity rules `crud.KeyOf` and `ownScope`), D-019 (dialect
+the two identity rules `crud.KeyOf` and `ownScope`, and — since phase 7 — which
+transactions vv opened and the savepoint budget on them), D-019 (dialect
 differences), D-027 (**open** — cross-database capture), D-041 (what else keys
-on that identity).
+on that identity), D-042 (why the ownership flag exists at all).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
 D-013 (400 for an unknown field), D-045 (what a binding owns and what `port`
@@ -132,13 +133,17 @@ is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
 D-038 (a fault is additive), D-043 (one hop per layer),
 D-041 (the catalog, and which unique keys it can tell apart per engine),
-D-042 (the probe), D-045 (why the
+D-042 (the probe: what it may narrow, what it must never invent, the cap
+numbers, and the three answers §16 owed it), D-045 (why the
 mapping is in one place rather than one per binding).
 
-**Dialects** — D-019 (what is hidden and what is observable, now ten
+**Dialects** — D-019 (what is hidden and what is observable, now eleven
 differences), D-011 (the upsert forms), D-010 (why MySQL re-reads), D-041 (the
 per-engine half of difference 9), D-046 (difference 10 — what a classified
-violation can say, and which constructor decided the engine).
+violation can say, and which constructor decided the engine), D-042
+(difference 11 — which violations the probe can find on which engine, whether it
+runs inside a transaction at all, and how much a folded violation is known to
+mean).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).

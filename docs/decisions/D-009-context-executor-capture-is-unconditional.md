@@ -92,8 +92,27 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 
 - `crud/executor.go:WithExecutor` — the unconditional push.
 - `crud/executor.go:WithExecutorFor` — the scoped push.
-- `crud/executor.go:binding` / `crud/executor.go:push` — the chain.
-- `crud/executor.go:ExecutorFor` — scoped match first, unscoped fallback.
+- `crud/executor.go:binding` / `crud/executor.go:push` — the chain, and the two
+  fields phase 7 added to it: `owned` and `saves`.
+- `crud/executor.go:ExecutorFor` — scoped match first, unscoped fallback. One
+  line over `OwnedExecutorFor` since phase 7.
+- `crud/executor.go:OwnedExecutorFor` — the same walk with the second answer:
+  whether vv opened the transaction it found. Capture stays unconditional; the
+  binding now records who opened it. Nothing needed the answer until something
+  wanted to take a savepoint inside a transaction, and `WithExecutor` and `InTx`
+  are otherwise indistinguishable from the inside ([[D-042]], [[FL-017]]).
+- `crud/executor.go:ClaimSavepoint` — the savepoint budget, counted on the
+  binding a transaction pushed. It counts up and never down, because
+  PostgreSQL's subxid cache counts subtransactions that were assigned XIDs and
+  releasing a savepoint does not give the entry back.
+- `crud/executor.go:bindingFor` — the one walk both of them share, so `found`
+  and `owned` cannot disagree about which binding they describe.
+- `crud/executor.go:Sourced` — the optional interface a repository implements to
+  hand back the datasource it was bound to. It is on the concrete repository and
+  not on `Core`, because a middleware embeds `Core` as an interface and an
+  interface embedded in a struct promotes only its own method set — so a
+  decorator that is not innermost does not forward it, which is the honest
+  answer.
 - `crud/executor.go:ExecutorFrom` — answers "is there a transaction here at
   all", which is a different question from "is there one for MY database"; the
   repository always asks the second one.
@@ -107,6 +126,8 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 - `crud/executor.go:InTx` — join-or-open.
 - `repo/basic/repository.go:repository.exec` — every statement in the basic
   repository goes through it.
+- `repo/basic/repository.go:repository.Source` — three lines, and the whole of
+  `crud.Sourced`.
 
 ## Proven by
 
@@ -136,7 +157,18 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 - `TestGormRollbackTakesVVWithIt` in `test/integration/driver_gorm_test.go`
   and `TestEntRollback` in `test/integration/driver_ent_test.go` — a rollback
   takes both halves.
+- `TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot` in
+  `crud/executor_test.go` — both halves, plus a joined `InTx` staying ours and
+  the trap this exists for: a foreign transaction scoped to *another* handle is
+  not this repository's transaction at all, however much `ExecutorFrom` says
+  there is one.
+- `TestASavepointClaimCountsPerTransactionAndNotPerRepository` in
+  `crud/executor_test.go` — two repositories over one transaction share the
+  budget, and a second transaction starts again at one.
+- `TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne` in
+  `crud/executor_test.go` — with our own transaction handing one out as the
+  control.
 
 ## See also
 
-[[D-027]] [[D-010]] [[D-016]] [[D-017]]
+[[D-027]] [[D-010]] [[D-016]] [[D-017]] [[D-042]] [[FL-009]] [[FL-017]]

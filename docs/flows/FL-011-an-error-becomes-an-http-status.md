@@ -189,6 +189,14 @@ is.
 | stale optimistic-lock version | `ErrStaleVersion` | 409 |
 | `FindOne` matched several rows | `specs.ErrNotUnique` | 409 |
 | driver failure, closed pool, context cancelled | nothing classifies it | 500, `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` and no detail |
+| one payload that breaks several constraints at once | the database reports the first one it reaches; the probe finds the rest ([[FL-017]]) | one status, and a violations list with more than one entry in it — `errors.validation` renders them all, in the order `errs.SortViolations` fixes |
+| a probe that hit a cap or failed | `probe` sets `Fault.Partial` | the same status and the same violations, plus `"partial":true` — the set is incomplete and says so ([[D-042]]) |
+
+The violations list is no longer one entry long. Until phase 7 every row above
+produced exactly one violation, so the envelope's array and its ordering were
+untested by anything but a unit fixture; a probed write is the first thing that
+fills it, and `EnvelopeRenderer.violations` is where the cap and `Partial` meet
+([[FL-017]]).
 
 Phase 4 closed the last of the disclosure: no row above reaches a client with a
 driver's message any more. `port.FaultOf` never reads `err.Error()` — a sentinel
@@ -329,8 +337,10 @@ classification half of them into `port`.
 - `TestAChainReportsWhenAHopDeclined` — `errs/spi_test.go` — [[D-043]]'s mechanism.
 - `TestTheMeasuredValidatorNamespacesBecomePaths` / `TestARootThatDoesNotMatchKeepsEverySegment` / `TestAnIndexedNamespaceBecomesAnIndexStep` / `TestNoFieldViolationsConvertToNoSlice` — `errs/bridge_test.go` — over a hand-written fake, so `errs` imports nothing.
 - `TestValidatorFieldErrorSatisfiesFieldViolation` / `TestWithoutTheTagNameFuncEveryPathIsGoFieldNames` — `test/bridge/fieldviolation_test.go` — the live validator, in the one module allowed to import it.
+- `TestTheSameFailingRequestTwiceProducesTheSameBody` — `test/integration/probe_test.go` — the envelope's ordering under a body that really does carry three violations, with a count of them as the control that byte equality is measuring an order.
 
 ## See also
 
 [[FL-001]] [[FL-002]] [[FL-003]] [[FL-007]] [[FL-008]] [[FL-012]] [[FL-013]]
-[[UC-015]] [[UC-017]] [[D-046]] [[D-039]] [[D-040]] [[D-044]] [[D-047]] [[D-038]]
+[[FL-014]] [[FL-017]]
+[[UC-015]] [[UC-017]] [[D-046]] [[D-039]] [[D-040]] [[D-042]] [[D-044]] [[D-047]] [[D-038]]

@@ -247,6 +247,10 @@ type snapshot struct {
 	tables []Table
 	byName map[string]int
 	byCons map[consKey]*Constraint
+	// refs is the inbound direction: which foreign keys point at a table. Built
+	// here rather than walked per lookup because the walk is over every table in
+	// the database and a lookup does no work ([[D-041]]).
+	refs map[string][]*Constraint
 }
 
 type consKey struct{ table, name string }
@@ -256,6 +260,7 @@ func newSnapshot(tables []Table) *snapshot {
 		tables: tables,
 		byName: make(map[string]int, len(tables)),
 		byCons: map[consKey]*Constraint{},
+		refs:   map[string][]*Constraint{},
 	}
 	for i := range tables {
 		// A bare name resolves to whatever this connection resolved it to. The
@@ -275,6 +280,9 @@ func newSnapshot(tables []Table) *snapshot {
 			// run because every statement carries its ORDER BY ([[D-014]]).
 			if _, seen := s.byCons[k]; !seen {
 				s.byCons[k] = c
+			}
+			if c.Kind == KindForeignKey && c.RefTable != "" {
+				s.refs[c.RefTable] = append(s.refs[c.RefTable], c)
 			}
 		}
 	}
@@ -305,6 +313,13 @@ func (c *loaded) Table(name string) (*Table, bool) {
 	return &s.tables[i], true
 }
 
+// ReferencedBy answers the inbound direction. A table nothing points at answers
+// nil rather than an empty slice, because the two mean the same thing to every
+// reader and one of them costs an allocation per lookup.
+func (c *loaded) ReferencedBy(table string) []*Constraint {
+	return c.snap.Load().refs[table]
+}
+
 func (c *loaded) Constraint(table, name string) (*Constraint, bool) {
 	s := c.snap.Load()
 	con, ok := s.byCons[consKey{table: table, name: name}]
@@ -312,6 +327,7 @@ func (c *loaded) Constraint(table, name string) (*Constraint, bool) {
 }
 
 var (
-	_ Catalog  = (*loaded)(nil)
-	_ Reloader = (*loaded)(nil)
+	_ Catalog   = (*loaded)(nil)
+	_ Reloader  = (*loaded)(nil)
+	_ Referrers = (*loaded)(nil)
 )

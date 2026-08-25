@@ -331,3 +331,32 @@ func DefinedFields(s *Schema, dto any) ([]string, error) {
 	}
 	return p.Defined(dto)
 }
+
+// DefinedChanges is DefinedFields with the values as well as the names. It is
+// the entry point for a decorator that holds only a Meta and has to know what
+// an update would have written — the probe binds those values, and a name on
+// its own binds nothing.
+//
+// It is Writes and not Changes: a decorator has no loaded row to diff against,
+// and the probe does not need one. The unchanged half of a composite key is
+// read from the stored row in SQL rather than carried here ([[D-010]]).
+func DefinedChanges(s *Schema, dto any) ([]Change, error) {
+	t := reflect.TypeOf(dto)
+	if t == nil {
+		return nil, &SchemaError{Model: s.Name, Reason: "nil update DTO"}
+	}
+	key := planKey{t, s.Type}
+	if v, ok := planCache.Load(key); ok {
+		r := v.(planResult)
+		if r.err != nil {
+			return nil, r.err
+		}
+		return r.p.Writes(dto)
+	}
+	p, err := buildPlan(t, s)
+	planCache.Store(key, planResult{p, err})
+	if err != nil {
+		return nil, err
+	}
+	return p.Writes(dto)
+}

@@ -12,6 +12,7 @@ package crud
 import (
 	"context"
 	"reflect"
+	"sync/atomic"
 )
 
 // Rows is the minimal cursor vv needs. pgx.Rows satisfies it as-is;
@@ -137,20 +138,48 @@ type Identified interface {
 	DataSource() any
 }
 
+// Sourced is the optional interface a repository implements to hand back the
+// datasource it was bound to. A decorator that has to run its own statement —
+// the probe is the only one — needs the source to resolve an executor through
+// ExecutorFor, and a decorator holds a Core, which does not carry one.
+//
+// It is on the concrete repository rather than on Core because a middleware
+// embeds Core as an interface, and an interface embedded in a struct promotes
+// only its own method set. A decorator that is not innermost therefore does not
+// forward it, and that is the honest answer: it does not know.
+type Sourced interface {
+	Source() Source
+}
+
 type ctxKey struct{}
 
 // binding is one executor pushed into a context. ds is the datasource it belongs
 // to, or nil for "whoever asks". They chain rather than replace so an inner
 // scoped binding cannot hide an outer unscoped one from a different repository.
+//
+// owned says vv opened this transaction. Nothing in the seam needed the
+// answer until something wanted to take a savepoint inside it: issuing
+// ROLLBACK TO SAVEPOINT in the middle of somebody else's unit of work can
+// discard work its owner has not finished with, and WithExecutor and InTx are
+// otherwise indistinguishable from the inside.
+//
+// saves counts the savepoints claimed against this transaction. It counts up
+// and never down, which is the shape of the limit rather than an oversight:
+// PostgreSQL's 64-entry subxid cache overflows on the number of subtransactions
+// a top-level transaction has assigned XIDs to, and releasing a savepoint does
+// not give the entry back. The overflow is not a round trip — it forces
+// pg_subtrans lookups on every reader in the cluster.
 type binding struct {
-	ds   any
-	e    Executor
-	prev *binding
+	ds    any
+	e     Executor
+	prev  *binding
+	owned bool
+	saves atomic.Int64
 }
 
-func push(ctx context.Context, ds any, e Executor) context.Context {
+func push(ctx context.Context, ds any, e Executor, owned bool) context.Context {
 	prev, _ := ctx.Value(ctxKey{}).(*binding)
-	return context.WithValue(ctx, ctxKey{}, &binding{ds: ds, e: e, prev: prev})
+	return context.WithValue(ctx, ctxKey{}, &binding{ds: ds, e: e, prev: prev, owned: owned})
 }
 
 // WithExecutor pushes a foreign executor (usually somebody else's transaction)
@@ -163,7 +192,7 @@ func push(ctx context.Context, ds any, e Executor) context.Context {
 // When a process talks to more than one database, name the one you mean with
 // WithExecutorFor instead.
 func WithExecutor(ctx context.Context, e Executor) context.Context {
-	return push(ctx, nil, e)
+	return push(ctx, nil, e, false)
 }
 
 // WithExecutorFor is WithExecutor scoped to one database. Only repositories
@@ -182,7 +211,7 @@ func WithExecutor(ctx context.Context, e Executor) context.Context {
 // With a plain WithExecutor that second call would have gone to mainDB, inside
 // the transaction, and reported success.
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context {
-	return push(ctx, KeyOf(ds), e)
+	return push(ctx, KeyOf(ds), e, false)
 }
 
 // ExecutorFrom returns the innermost executor bound to ctx, scoped or not. It
@@ -200,25 +229,60 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 // innermost binding scoped to src's datasource, or failing that the innermost
 // unscoped one. src may be the Source itself or the raw handle.
 func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
+	e, found, _ := OwnedExecutorFor(ctx, src)
+	return e, found
+}
+
+// OwnedExecutorFor is ExecutorFor with the answer to the second question:
+// whether vv opened the transaction it found. One walk rather than two, so
+// found and owned cannot disagree about which binding they describe.
+//
+// Ask this rather than ExecutorFrom. With a foreign transaction scoped to
+// another handle, ExecutorFrom says "in a transaction" while this repository's
+// write runs outside one.
+func OwnedExecutorFor(ctx context.Context, src any) (e Executor, found, owned bool) {
+	b := bindingFor(ctx, src)
+	if b == nil {
+		return nil, false, false
+	}
+	return b.e, true, b.owned
+}
+
+// ClaimSavepoint reserves one savepoint against the transaction a repository
+// bound to src is running in, and reports how many have been claimed against it
+// including this one. It answers false when there is no transaction here, or
+// when the one there is belongs to somebody else.
+//
+// The budget lives with the transaction and the limit lives with the caller:
+// two repositories sharing one transaction share one count, and two
+// transactions do not.
+func ClaimSavepoint(ctx context.Context, src any) (int64, bool) {
+	b := bindingFor(ctx, src)
+	if b == nil || !b.owned {
+		return 0, false
+	}
+	return b.saves.Add(1), true
+}
+
+func bindingFor(ctx context.Context, src any) *binding {
 	b, ok := ctx.Value(ctxKey{}).(*binding)
 	if !ok {
-		return nil, false
+		return nil
 	}
 	want := KeyOf(src)
-	var fallback Executor
-	var found bool
+	var fallback *binding
 	for ; b != nil; b = b.prev {
 		if b.ds == nil {
-			if !found {
-				fallback, found = b.e, true
+			if fallback == nil {
+				fallback = b
 			}
 			continue
 		}
 		if SameDataSource(b.ds, want) {
-			return b.e, true
+			return b
 		}
 	}
-	return fallback, found
+	return fallback
 }
 
 // KeyOf reduces a Source or a raw handle to the value that identifies the
@@ -309,7 +373,7 @@ func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (er
 			panic(p)
 		}
 	}()
-	if err := fn(push(ctx, ownScope(src), tx)); err != nil {
+	if err := fn(push(ctx, ownScope(src), tx, true)); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
 			return errJoin(err, rbErr)
 		}

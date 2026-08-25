@@ -224,3 +224,105 @@ func TestInTxWithoutABeginnerIsRefused(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoTxSupport", err)
 	}
 }
+
+// Rows 2 and 3 of the probe's transaction matrix differ on who owns the
+// transaction, and until this flag existed the seam could not tell them apart:
+// InTx and WithExecutorFor pushed the same binding.
+func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}
+	src := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+
+	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
+		if _, found, owned := crud.OwnedExecutorFor(ctx, src); !found || !owned {
+			t.Errorf("a transaction vv opened reports found=%v owned=%v", found, owned)
+		}
+		// Joining it keeps it ours: InTx joins rather than nests, so the
+		// binding underneath is still the one InTx pushed.
+		return crud.InTx(ctx, src, func(inner context.Context) error {
+			if _, _, owned := crud.OwnedExecutorFor(inner, src); !owned {
+				t.Error("joining our own transaction gave up ownership of it")
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The control, and the whole reason for the flag: an ent or gorm transaction
+	// pushed in with WithExecutor is found and is not ours.
+	foreign := crud.WithExecutor(context.Background(), tx)
+	if _, found, owned := crud.OwnedExecutorFor(foreign, src); !found || owned {
+		t.Fatalf("a foreign transaction reports found=%v owned=%v", found, owned)
+	}
+	scoped := crud.WithExecutorFor(context.Background(), dbA, tx)
+	if _, found, owned := crud.OwnedExecutorFor(scoped, src); !found || owned {
+		t.Fatalf("a foreign transaction named by handle reports found=%v owned=%v", found, owned)
+	}
+	// And the trap the matrix names: a foreign transaction scoped to another
+	// handle is not this repository's transaction at all, however much
+	// ExecutorFrom says there is one.
+	elsewhere := crud.WithExecutorFor(context.Background(), dbB, tx)
+	if _, found, _ := crud.OwnedExecutorFor(elsewhere, src); found {
+		t.Fatal("a transaction on another database was reported as this repository's")
+	}
+	if _, ok := crud.ExecutorFrom(elsewhere); !ok {
+		t.Fatal("ExecutorFrom stopped seeing the binding, so the trap above is not the one described")
+	}
+}
+
+// The budget lives with the transaction, because that is what PostgreSQL's
+// subxid cache counts.
+func TestASavepointClaimCountsPerTransactionAndNotPerRepository(t *testing.T) {
+	one := beginnerSource{named: srcOn(dbA, "one"), tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
+	two := srcOn(dbA, "two") // a second repository over the same database
+
+	err := crud.InTx(context.Background(), one, func(ctx context.Context) error {
+		if n, ok := crud.ClaimSavepoint(ctx, one); !ok || n != 1 {
+			t.Fatalf("the first claim reported %d, ok=%v", n, ok)
+		}
+		if n, ok := crud.ClaimSavepoint(ctx, two); !ok || n != 2 {
+			t.Fatalf("a second repository over the same transaction reported %d, ok=%v: "+
+				"the budget is per transaction, not per repository", n, ok)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: a second transaction starts again at one, or the cap would
+	// shut the feature off for the life of the process.
+	other := beginnerSource{named: srcOn(dbA, "one"), tx: &fakeTx{fakeExec: fakeExec{name: "tx2"}}}
+	err = crud.InTx(context.Background(), other, func(ctx context.Context) error {
+		if n, ok := crud.ClaimSavepoint(ctx, other); !ok || n != 1 {
+			t.Fatalf("a fresh transaction started its budget at %d", n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Nothing claims a savepoint inside somebody else's unit of work.
+func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
+	src := srcOn(dbA, "a")
+	if _, ok := crud.ClaimSavepoint(context.Background(), src); ok {
+		t.Error("a savepoint was claimed with no transaction in sight")
+	}
+	foreign := crud.WithExecutor(context.Background(), fakeExec{name: "ent"})
+	if _, ok := crud.ClaimSavepoint(foreign, src); ok {
+		t.Error("a savepoint was claimed inside a transaction vv does not own")
+	}
+	// The control: our own transaction hands one out.
+	own := beginnerSource{named: src, tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
+	if err := crud.InTx(context.Background(), own, func(ctx context.Context) error {
+		if _, ok := crud.ClaimSavepoint(ctx, own); !ok {
+			t.Error("our own transaction refused a savepoint, so the refusals above say nothing")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

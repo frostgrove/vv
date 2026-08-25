@@ -60,7 +60,7 @@ this page is the roadmap.
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | partially covered |
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | covered |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | HTTP client rendering a form, and application author | not covered |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | HTTP client rendering a form, and application author | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -81,7 +81,7 @@ this page is the roadmap.
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] [[FL-017]] |
 
 ## Gaps
 
@@ -117,10 +117,16 @@ a decision.
    constraint name leaving the process was [[D-044]]'s, and phase 4 closed it:
    no body names a constraint any more. The oracle itself is [[D-042]]'s, and D-042 does **not**
    close it — a unique constraint a public endpoint can trigger is an oracle by
-   construction. What phase 7 adds is that the disclosure becomes adjustable
-   (per-constraint opt-out, scope-aware probing, code-only mode) and that the
-   default never echoes the offending value. The gate's own unnarrowed existence
-   probe — the first half — does not move.
+   construction. **Phase 7 landed the adjustability it promised** and the second
+   half narrows accordingly: the disclosure is now per-constraint opt-out
+   (`probe.Skip`), scope-aware probing from the `security.Policy`
+   (`probe.WithScope`), code-only mode (`probe.CodeOnly`), and a default that
+   never echoes the offending value (`probe.WithValues` is opt-in, pinned live by
+   `TestTheOffendingValueReachesTheBodyOnlyWhenAsked`). The scope narrows the
+   probe's *unique* terms only: a foreign-key term reads the parent table and a
+   restrict term the child, and the model's own predicate names neither, so
+   `Skip` is the control there. The gate's own unnarrowed existence probe — the
+   first half — does not move.
 
 4. **[UC-008] A caller-supplied limit desynchronises a policy's row-level check
    from the statement.** The inspected rows honour the limit; the `UPDATE` and

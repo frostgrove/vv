@@ -19,6 +19,22 @@ type Catalog interface {
 	Dialect() string
 }
 
+// Referrers is the optional interface a Catalog implements to answer which
+// foreign keys point *at* a table — the inbound direction, which no lookup on
+// Catalog can express because a constraint is recorded on the table that
+// declares it.
+//
+// It is separate from Catalog for the reason Reloader is: the interface a
+// consumer implements has to stay the small one. What Load returns implements
+// this; a Catalog written elsewhere need not, and a reader that asks and is
+// refused simply reports fewer violations.
+//
+// The order is the order the tables and their constraints were read in, which
+// every loading statement fixes with an ORDER BY ([[D-014]]).
+type Referrers interface {
+	ReferencedBy(table string) []*Constraint
+}
+
 // Kind is what the engine said a constraint is.
 //
 // KindUnique and KindUniqueIndex are separate because two of the four engines

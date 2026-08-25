@@ -33,6 +33,35 @@ type OffsetLimiter interface {
 	LimitAll() string
 }
 
+// UpsertScope is the optional interface a Dialect implements to say how much
+// its own Upsert clause swallows. A conflict the upsert absorbs is never
+// reported, so nothing may claim it as a violation.
+//
+// Only a dialect whose clause names a target implements it: PostgreSQL and
+// SQLite emit ON CONFLICT (pk) DO UPDATE, which swallows the primary key and
+// nothing else. MySQL deliberately does not — ON DUPLICATE KEY UPDATE swallows
+// every unique key — and neither does a dialect written outside this package.
+//
+// "Swallows every unique key" is therefore the default, and that direction is
+// the safe one: a reader that guessed the other way would claim a conflict the
+// server absorbed.
+type UpsertScope interface {
+	UpsertSwallowsPrimaryKeyOnly() bool
+}
+
+// StatementRollback is the optional interface a Dialect implements to say that
+// a refused statement rolls back only itself and leaves the transaction usable.
+//
+// MySQL and SQLite do. PostgreSQL does not — a constraint error aborts the
+// whole transaction with SQLSTATE 25P02 and nothing runs until ROLLBACK or
+// ROLLBACK TO SAVEPOINT — so it does not implement this, and neither does a
+// dialect written elsewhere. The default is therefore "the transaction is
+// poisoned", which is the direction that only ever costs a second statement
+// nobody runs.
+type StatementRollback interface {
+	RollsBackStatementOnly() bool
+}
+
 // Postgres targets PostgreSQL (and CockroachDB).
 type Postgres struct{}
 
@@ -42,7 +71,11 @@ func (Postgres) Quote(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 func (Postgres) SupportsReturning() bool { return true }
-func (Postgres) LockClause() string      { return " FOR UPDATE" }
+
+// UpsertSwallowsPrimaryKeyOnly reports what ON CONFLICT (pk) DO UPDATE covers:
+// the named target and nothing else. A second unique key still refuses.
+func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool { return true }
+func (Postgres) LockClause() string                 { return " FOR UPDATE" }
 
 func (d Postgres) Upsert(pk string, cols []string) string {
 	var b strings.Builder
@@ -85,6 +118,10 @@ func (MySQL) Quote(ident string) string {
 // LimitAll is MySQL's documented spelling of "everything from here on": the
 // largest unsigned 64-bit integer, because the grammar demands a row count.
 func (MySQL) LimitAll() string { return " LIMIT 18446744073709551615" }
+
+// RollsBackStatementOnly reports InnoDB's behaviour on a refused statement: it
+// is undone on its own and the transaction stays usable.
+func (MySQL) RollsBackStatementOnly() bool { return true }
 
 func (d MySQL) Upsert(pk string, cols []string) string {
 	var b strings.Builder
@@ -131,13 +168,25 @@ func (SQLite) LockClause() string { return "" }
 
 // LimitAll is SQLite's spelling: a negative row count means "no limit".
 func (SQLite) LimitAll() string { return " LIMIT -1" }
+
+// UpsertSwallowsPrimaryKeyOnly is Postgres's answer, because Upsert renders
+// Postgres's clause.
+func (SQLite) UpsertSwallowsPrimaryKeyOnly() bool { return true }
+
+// RollsBackStatementOnly reports SQLite's ON CONFLICT ABORT default: the
+// statement is undone and the transaction carries on.
+func (SQLite) RollsBackStatementOnly() bool { return true }
 func (d SQLite) Quote(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 func (d SQLite) Upsert(pk string, cols []string) string { return Postgres{}.Upsert(pk, cols) }
 
 var (
-	_ Dialect = Postgres{}
-	_ Dialect = MySQL{}
-	_ Dialect = SQLite{}
+	_ Dialect           = Postgres{}
+	_ Dialect           = MySQL{}
+	_ Dialect           = SQLite{}
+	_ UpsertScope       = Postgres{}
+	_ UpsertScope       = SQLite{}
+	_ StatementRollback = MySQL{}
+	_ StatementRollback = SQLite{}
 )

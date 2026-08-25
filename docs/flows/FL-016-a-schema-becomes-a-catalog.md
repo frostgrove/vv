@@ -92,6 +92,15 @@ that has to still exist.
 
 ## The reload path
 
+**`Referrers` is the second optional interface, and it is there for the same
+reason.** A constraint is recorded on the table that *declares* it, so no lookup
+on `Catalog` can answer "which foreign keys point at this table" — which is
+exactly what a `restrict` violation needs ([[FL-017]]). `catalog/load.go`
+builds the reverse index once, in `newSnapshot`, rather than walking every table
+per lookup, because a lookup does no work. `Catalog` itself does not carry it:
+the interface a consumer implements stays the small one, and a catalog written
+elsewhere that does not implement it simply produces no `restrict` terms.
+
 `catalog/reload.go:66:loaded.Reload` — an optional `Reloader`, not part of
 `Catalog`. A caller that met a constraint name the catalog has never heard of
 asks for one more look; a rolling migration is the case it exists for.
@@ -209,9 +218,9 @@ test that sleeps.
 | File | Role |
 |---|---|
 | `catalog/doc.go` | what a catalog is, nil-versus-empty, the two rules a signature cannot carry |
-| `catalog/catalog.go` | `Catalog`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
+| `catalog/catalog.go` | `Catalog`, `Referrers`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
 | `catalog/errors.go` | `ErrUncomparableHandle`, `ErrUnknownDialect`, `ErrIntrospection` |
-| `catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, `loaded` |
+| `catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, `snapshot.refs`, `loaded`, `loaded.ReferencedBy` |
 | `catalog/set.go` | `Set`, `Set.Load`, `Set.For`, `findable` |
 | `catalog/reload.go` | `Reloader`, `loaded.Reload`, `loaded.clock`, `negative`, `minBackoff`, `maxBackoff`, `reloadFloor` |
 | `catalog/postgres.go` | `readPostgres`, `pgColumns`, `pgConstraints`, `pgUniqueIndexes`, `pgKind` |

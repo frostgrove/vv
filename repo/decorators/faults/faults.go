@@ -44,15 +44,31 @@ import (
 // call site because nothing else in the signature carries them:
 //
 //	faults.Enrich[User, int64]()
-func Enrich[M any, ID comparable]() crud.Middleware[M, ID] {
+//
+// With no options it does exactly what it always did. [WithProbe] is what turns
+// one violation into every violation the payload caused:
+//
+//	faults.Enrich[User, int64](faults.WithProbe(probe.Full(cat)))
+func Enrich[M any, ID comparable](opts ...Option) crud.Middleware[M, ID] {
+	var s settings
+	for _, o := range opts {
+		o(&s)
+	}
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] {
-		return &enricher[M, ID]{Core: next, meta: next.Meta()}
+		e := &enricher[M, ID]{Core: next, meta: next.Meta(), onProbeErr: s.onErr}
+		e.declare(next, s)
+		return e
 	}
 }
 
 type enricher[M any, ID comparable] struct {
 	crud.Core[M, ID]
 	meta *crud.Meta
+	// src is the datasource the probe runs its own statement on, and nil when no
+	// probe is wired.
+	src        crud.Source
+	probes     map[string]probeCfg
+	onProbeErr func(op string, err error)
 }
 
 // enrich is the whole of this package. Everything below it is one line per verb.
@@ -69,6 +85,17 @@ func (e *enricher[M, ID]) enrich(op string, err error) error {
 	if !ok {
 		return err
 	}
+	return e.finish(op, f, false)
+}
+
+// finish is the last hop: the verb, the entity, the column-to-field translation
+// and the order the body renders in.
+//
+// partial is set by the caller when something was cut out before the fault got
+// here — a savepoint budget refused, a probe that failed. A capped answer says
+// so rather than listing four violations in a way that implies there are four
+// ([[D-042]]).
+func (e *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) error {
 	g := *f
 	g.Violations = make([]errs.Violation, len(f.Violations))
 	copy(g.Violations, f.Violations)
@@ -81,9 +108,16 @@ func (e *enricher[M, ID]) enrich(op string, err error) error {
 	if g.Entity == "" && e.meta != nil {
 		g.Entity = e.meta.Schema.Name
 	}
+	if partial {
+		g.Partial = true
+	}
 	for i := range g.Violations {
 		e.resolve(&g.Violations[i])
 	}
+	// One order for the fault and for the body. http/crudhttp sorts what it
+	// renders, so without this a consumer reading Fault.Violations would read a
+	// different order from the one it was about to serialise.
+	errs.SortViolations(g.Violations)
 
 	// The copy has to keep wrapping what the original wrapped, or errors.Is
 	// stops finding crud.ErrConflict one layer above the adapter that attached
@@ -104,22 +138,35 @@ func (e *enricher[M, ID]) resolve(v *errs.Violation) {
 	if v.Source.Table == "" || len(v.Source.Columns) == 0 {
 		return // nothing to translate; not knowing is not being wrong
 	}
-	// Folded rather than compared byte for byte: PostgreSQL lowercases an
-	// unquoted identifier, so a model declared `Users` and a driver reporting
-	// `users` are one table.
-	if !strings.EqualFold(v.Source.Table, e.meta.Table) {
-		// The right column name on the wrong table. Two tables in one database
-		// have a `name`, and translating this one would name a field of a model
-		// that had nothing to do with the write.
+	p, ok := e.resolvePath(v.Source.Table, v.Source.Columns)
+	if !ok {
 		v.Approximate = true
 		return
 	}
-	paths := make([]errs.Path, 0, len(v.Source.Columns))
-	for _, col := range v.Source.Columns {
+	v.Path = p
+}
+
+// resolvePath is the hop on its own, so the probe can compose a row index in
+// front of it without learning what a model field is called ([[D-043]]). It is
+// handed in as probe.Request.Resolve.
+func (e *enricher[M, ID]) resolvePath(table string, columns []string) (errs.Path, bool) {
+	if e.meta == nil {
+		return nil, false
+	}
+	// Folded rather than compared byte for byte: PostgreSQL lowercases an
+	// unquoted identifier, so a model declared `Users` and a driver reporting
+	// `users` are one table.
+	if !strings.EqualFold(table, e.meta.Table) {
+		// The right column name on the wrong table. Two tables in one database
+		// have a `name`, and translating this one would name a field of a model
+		// that had nothing to do with the write.
+		return nil, false
+	}
+	paths := make([]errs.Path, 0, len(columns))
+	for _, col := range columns {
 		f := e.meta.Schema.Field(col)
 		if f == nil {
-			v.Approximate = true
-			return
+			return nil, false
 		}
 		paths = append(paths, errs.Path{errs.Named(f.Name)})
 	}
@@ -129,7 +176,7 @@ func (e *enricher[M, ID]) resolve(v *errs.Violation) {
 	// actually true — "this slug is taken in this workspace". The per-column
 	// form is what a form-binding UI wants and it says two things that are each
 	// false on their own, so it is a policy nothing asks for yet.
-	v.Path = commonPrefix(paths)
+	return commonPrefix(paths), true
 }
 
 func commonPrefix(ps []errs.Path) errs.Path {
@@ -174,16 +221,36 @@ func (e *enricher[M, ID]) GetAll(ctx context.Context, opts ...crud.Option) ([]M,
 }
 
 func (e *enricher[M, ID]) Save(ctx context.Context, m *M) error {
-	return e.enrich("Save", e.Core.Save(ctx, m))
+	pc, ok := e.probes["Save"]
+	if !ok {
+		return e.enrich("Save", e.Core.Save(ctx, m))
+	}
+	return e.probed(ctx, "Save", pc, e.insertRequest(false, m),
+		func(ctx context.Context) error { return e.Core.Save(ctx, m) })
 }
 
 func (e *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
-	return e.enrich("SaveAll", e.Core.SaveAll(ctx, ms))
+	pc, ok := e.probes["SaveAll"]
+	if !ok {
+		return e.enrich("SaveAll", e.Core.SaveAll(ctx, ms))
+	}
+	return e.probed(ctx, "SaveAll", pc, e.insertRequest(true, ms...),
+		func(ctx context.Context) error { return e.Core.SaveAll(ctx, ms) })
 }
 
 func (e *enricher[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.Option) (M, error) {
-	m, err := e.Core.Update(ctx, id, dto, opts...)
-	return m, e.enrich("Update", err)
+	pc, ok := e.probes["Update"]
+	if !ok {
+		m, err := e.Core.Update(ctx, id, dto, opts...)
+		return m, e.enrich("Update", err)
+	}
+	var m M
+	err := e.probed(ctx, "Update", pc, e.updateRequest(id, dto), func(ctx context.Context) error {
+		var err error
+		m, err = e.Core.Update(ctx, id, dto, opts...)
+		return err
+	})
+	return m, err
 }
 
 func (e *enricher[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Option) (int64, error) {

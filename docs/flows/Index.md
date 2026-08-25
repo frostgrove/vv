@@ -38,6 +38,7 @@ through it.
 | `port`, a command, the service seam, a mapper, or the path chain's middle hops | [[FL-015]] |
 | a driver error, the two gates, `sqlfault`, either adapter's `conflict` | [[FL-014]] |
 | schema introspection, the per-handle catalog key, the negative cache | [[FL-016]] |
+| the probe, the caps, the savepoint mode, or anything that turns one violation into several | [[FL-017]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -70,6 +71,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-014](FL-014-a-driver-error-becomes-a-public-violation.md) | A driver error becomes a public violation | `sqlfault/classify.go:Wrap` | [[UC-015]] [[UC-017]] |
 | [FL-015](FL-015-a-request-through-the-port-layer.md) | A request through the port layer | `http/crudnet/handler.go:Create` | [[UC-001]] [[UC-013]] [[UC-015]] |
 | [FL-016](FL-016-a-schema-becomes-a-catalog.md) | A schema becomes a catalog | `catalog/load.go:Load` | [[UC-012]] |
+| [FL-017](FL-017-a-failed-write-becomes-every-violation.md) | A failed write becomes every violation it caused | `repo/decorators/faults/probe.go:enricher.probed` | [[UC-017]] [[UC-004]] |
 
 ## By file — which flows touch this file
 
@@ -83,9 +85,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `internal/codegen/codegen.go` | FL-010 |
 | `internal/codegen/render.go` | FL-010 |
 | `catalog/doc.go` | FL-016 |
-| `catalog/catalog.go` | FL-014, FL-016 |
+| `catalog/catalog.go` | FL-014, FL-016, FL-017 |
 | `catalog/errors.go` | FL-016 |
-| `catalog/load.go` | FL-016 |
+| `catalog/load.go` | FL-016, FL-017 |
 | `catalog/set.go` | FL-016 |
 | `catalog/reload.go` | FL-016 |
 | `catalog/postgres.go` | FL-016 |
@@ -94,15 +96,15 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `catalog/sqlite.go` | FL-016 |
 | `crud/access.go` | FL-001, FL-003, FL-004, FL-006, FL-008 |
 | `crud/crudtest/recorder.go` | FL-016 |
-| `crud/dialect.go` | FL-002, FL-003, FL-009 |
+| `crud/dialect.go` | FL-002, FL-003, FL-009, FL-017 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
-| `crud/executor.go` | FL-002, FL-009, FL-016 |
+| `crud/executor.go` | FL-002, FL-009, FL-016, FL-017 |
 | `errs/doc.go` | FL-011 |
 | `errs/code.go` | FL-011 |
 | `errs/codes.go` | FL-011, FL-014 |
 | `errs/path.go` | FL-011 |
-| `errs/violation.go` | FL-011, FL-014 |
-| `errs/fault.go` | FL-011, FL-014 |
+| `errs/violation.go` | FL-011, FL-014, FL-017 |
+| `errs/fault.go` | FL-011, FL-014, FL-017 |
 | `errs/build.go` | FL-011, FL-014 |
 | `errs/spi.go` | FL-011, FL-014 |
 | `errs/message.go` | FL-011 |
@@ -122,10 +124,10 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/predicate.go` | FL-005, FL-007, FL-012 |
 | `crud/preload.go` | FL-006 |
 | `crud/relation.go` | FL-001, FL-004, FL-005, FL-006 |
-| `crud/render.go` | FL-001, FL-004, FL-005 |
+| `crud/render.go` | FL-001, FL-004, FL-005, FL-017 |
 | `crud/repo.go` | FL-002, FL-007 |
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
-| `crud/update.go` | FL-002, FL-004, FL-008, FL-010 |
+| `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
 | `*/vv_gen.go` — nine checked-in files under `test/` and `_examples/` | FL-010 |
 | `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-015 |
 | `http/crudfiber/options.go` | FL-002, FL-011, FL-015 |
@@ -151,7 +153,16 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
 | `port/sentinel.go` | FL-011, FL-015 |
 | `port/kind.go` | FL-011, FL-014, FL-015 |
-| `repo/decorators/faults/faults.go` | FL-011, FL-014, FL-015 |
+| `probe/doc.go` | FL-017 |
+| `probe/probe.go` | FL-017 |
+| `probe/full.go` | FL-017 |
+| `probe/plan.go` | FL-017 |
+| `probe/sql.go` | FL-017 |
+| `probe/dup.go` | FL-017 |
+| `probe/options.go` | FL-017 |
+| `probe/declare.go` | FL-017 |
+| `repo/decorators/faults/faults.go` | FL-011, FL-014, FL-015, FL-017 |
+| `repo/decorators/faults/probe.go` | FL-017 |
 | `query/coerce.go` | FL-012 |
 | `query/compile.go` | FL-001, FL-006, FL-011 |
 | `query/filter.go` | FL-001, FL-005, FL-012 |
@@ -159,7 +170,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `query/querystring.go` | FL-001, FL-012 |
 | `query/request.go` | FL-001 |
 | `repo/basic/blueprint.go` | FL-003, FL-004, FL-006, FL-007 |
-| `repo/basic/repository.go` | FL-001, FL-002, FL-003, FL-004, FL-005, FL-006, FL-007, FL-008, FL-009, FL-011 |
+| `repo/basic/repository.go` | FL-001, FL-002, FL-003, FL-004, FL-005, FL-006, FL-007, FL-008, FL-009, FL-011, FL-017 |
 | `repo/decorators/security/policies.go` | FL-004, FL-007, FL-008 |
 | `repo/decorators/security/security.go` | FL-002, FL-003, FL-007, FL-008, FL-011 |
 | `repo/decorators/specs/errors.go` | FL-011 |
@@ -178,10 +189,12 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `test/integration/dialect_edge_test.go` | FL-014 |
 | `test/integration/catalog_test.go` | FL-016 |
 | `test/integration/catalog_schema_test.go` | FL-016 |
+| `test/integration/probe_test.go` | FL-017 |
+| `test/integration/probe_schema_test.go` | FL-017 |
 | `test/integration/http_port_test.go` | FL-013, FL-015 |
 | `test/portmount/mount_test.go` | FL-013, FL-015 |
 
-`repo/basic/repository.go` is in ten of them. It is the layer everything else
+`repo/basic/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.
 
 ## Not yet written

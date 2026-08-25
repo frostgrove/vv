@@ -29,9 +29,11 @@ type Reloader interface {
 // How long an unknown name is remembered as unknown, and how long two whole
 // introspection passes must be apart.
 //
-// These numbers are this phase's own choice. §16 of ROADMAP-errors.md still
-// lists the cap defaults as undecided and names catalog load time among them; if
-// they are decided there, they move.
+// These numbers are decided rather than provisional. Phase 7 chose the probe's
+// caps and answered the catalog half of that question with "no cap": Load runs
+// once at declaration on a context the application owns, and a default timeout
+// there turns a slow but healthy start-up into the fatal refusal [[D-041]] makes
+// it. Nothing above the reload path decides these, so they stay.
 const (
 	minBackoff   = time.Second
 	maxBackoff   = 5 * time.Minute

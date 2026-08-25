@@ -139,3 +139,41 @@ func TestPlanRejectsAForeignDTO(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// The probe binds values, and a name on its own binds nothing.
+func TestDefinedChangesCarriesTheValuesDefinedFieldsOnlyNames(t *testing.T) {
+	s, err := crud.SchemaOf[Item]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto := ItemPatch{Name: ptr("x"), Note: crud.Null[string]()}
+
+	names, err := crud.DefinedFields(s, dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := crud.DefinedChanges(s, dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != len(names) {
+		t.Fatalf("DefinedChanges listed %d columns and DefinedFields %d: they describe the same set",
+			len(changes), len(names))
+	}
+	got := map[string]any{}
+	for _, c := range changes {
+		got[c.Field.Name] = c.Value
+	}
+	if got["Name"] != "x" {
+		t.Fatalf("Name came back as %#v, and a probe cannot bind a field name", got["Name"])
+	}
+	v, ok := got["Note"]
+	if !ok || v != nil {
+		t.Fatalf("an explicit null came back as %#v, want an entry holding nil", v)
+	}
+	// The control: a field the DTO left out has no value here either, so the
+	// probe never binds one the statement did not write.
+	if _, ok := got["Ratio"]; ok {
+		t.Fatal("a field the DTO never defined turned up with a value")
+	}
+}

@@ -103,3 +103,66 @@ func TestUpsertClauseCarriesItsOwnLeadingSpace(t *testing.T) {
 		}
 	}
 }
+
+// The probe's skip set comes from what a dialect's own Upsert clause swallows,
+// and never from a hard-coded rule per engine.
+func TestOnlyADialectThatSaysSoSwallowsThePrimaryKeyOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    crud.Dialect
+		want bool // implements UpsertScope and says primary key only
+	}{
+		// ON CONFLICT (pk) DO UPDATE names its target.
+		{"postgres", crud.Postgres{}, true},
+		{"sqlite", crud.SQLite{}, true},
+		// ON DUPLICATE KEY UPDATE names nothing and swallows every unique key.
+		{"mysql", crud.MySQL{}, false},
+		// The control that matters most: a dialect written outside this package
+		// answers "swallows everything", which is the narrowing default.
+		{"a dialect that never heard of the question", other{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			us, ok := tc.d.(crud.UpsertScope)
+			got := ok && us.UpsertSwallowsPrimaryKeyOnly()
+			if got != tc.want {
+				t.Fatalf("primary key only = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The other half of the same idea: which engines leave a transaction usable
+// after a refused statement.
+func TestOnlyADialectThatSaysSoRollsBackTheStatementAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    crud.Dialect
+		want bool
+	}{
+		{"mysql", crud.MySQL{}, true},
+		{"sqlite", crud.SQLite{}, true},
+		// PostgreSQL aborts the whole transaction with 25P02.
+		{"postgres", crud.Postgres{}, false},
+		{"a dialect that never heard of the question", other{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sr, ok := tc.d.(crud.StatementRollback)
+			got := ok && sr.RollsBackStatementOnly()
+			if got != tc.want {
+				t.Fatalf("statement-scoped rollback = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// other is a Dialect and neither of the two optional interfaces. It is written
+// out rather than embedding one of the three, because embedding would promote
+// the very methods this is here to be missing.
+type other struct{}
+
+func (other) Name() string                   { return "other" }
+func (other) Placeholder(int) string         { return "?" }
+func (other) Quote(ident string) string      { return ident }
+func (other) Upsert(string, []string) string { return "" }
+func (other) SupportsReturning() bool        { return false }
+func (other) LockClause() string             { return "" }

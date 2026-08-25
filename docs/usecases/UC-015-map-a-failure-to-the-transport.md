@@ -50,6 +50,8 @@ branch on and, where the mistake is its own, enough detail to fix it.
     name, engine error number, or message parameter derived from one. What a
     client is told is a code, a path into the request it sent, and a sentence
     written for a person.
+12. One status may carry more than one violation. A refusal is a status and a
+    *list*, and the list is either complete or says it is not.
 
 ## Out of scope
 
@@ -124,3 +126,11 @@ decides is [[D-049]]: the kind decides the status where a fault exists, and the
 sentinel table decides only where none does. The cost is stated there and is
 real — a violation the engine reported but nothing classified still answers 409,
 so the status depends on whether classification succeeded.
+
+**Guarantee 12 arrived with phase 7**, and it is a change in shape rather than in
+mapping: one failed write can now answer one status carrying several violations,
+because the database reports the first constraint it reaches and a second
+statement finds the rest ([[FL-017]], [[UC-017]]). Nothing about the status
+moved. What is new is that the array a client iterates is no longer one entry
+long, and that a set the probe could not complete carries `"partial":true` rather
+than reading as complete ([[D-042]]).

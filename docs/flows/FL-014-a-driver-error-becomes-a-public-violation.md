@@ -1,14 +1,13 @@
 # FL-014 — A driver error becomes a public violation
 
 **Entry point:** `sqlfault/classify.go:Wrap`, called by each adapter's `Executor.conflict`
-**Implements:** [[UC-015]] [[UC-017]] · **Governed by:** [[D-046]] [[D-038]] [[D-039]] [[D-047]] [[D-044]] [[D-043]] [[D-041]] [[D-015]] [[D-019]] [[D-040]]
+**Implements:** [[UC-015]] [[UC-017]] · **Governed by:** [[D-046]] [[D-038]] [[D-039]] [[D-047]] [[D-044]] [[D-043]] [[D-041]] [[D-042]] [[D-015]] [[D-019]] [[D-040]]
 
-**The last hop is not here yet.** This flow carries a driver error as far as an
-`errs.Fault` with one `errs.Violation` in it. Turning that violation into a
-*public* one — the envelope, the 422 arm, the `field` path a client reads — is
-phase 4's, and [[FL-011]] is where the fault meets the status table. The title
-names the whole path because that is what the path is for; today it stops one
-hop short.
+**This flow makes one violation.** Turning it into a *public* one — the
+envelope, the 422 arm, the `field` path a client reads — is [[FL-011]]'s, where
+the fault meets the status table. Finding the **rest** of the violations one
+payload caused is [[FL-017]]'s: a database reports the first constraint it
+reaches and stops, and a second statement is what finds the others.
 
 ## The two gates, and which answers what
 
@@ -104,7 +103,22 @@ empty.
    the only thing that knows the positional convention, and again in `fill`
    because `Columns` is a third-party interface.
 
-9. **Out through `crudhttp.Status`, unedited.** It is `StatusFor(port.KindOf(err))`
+9. **The probe joins, where one is wired.** `repo/decorators/faults/probe.go`
+   hands the fault to a `probe.Handler` before the path hop of step 8 runs, so
+   the column-to-field translation is applied once over the driver's violation
+   and the probe's alike ([[D-043]], one hop, one owner). Two rules the join
+   never breaks: the driver's violation stays in the answer whatever the probe
+   found, and a probe that failed keeps it and marks the fault incomplete rather
+   than downgrading a truthful 409 ([[D-042]]).
+
+   What the join *adds* is a `field` where the driver named no constraint. MySQL,
+   MariaDB and SQLite carry no constraint in their structured error at all —
+   "Which engine can say what", above — so a duplicate key arrived with nothing
+   on it but a code. Where the probe found exactly one violation of that code,
+   the driver's violation is folded into it and takes its path. [[FL-017]] has
+   the whole of it.
+
+10. **Out through `crudhttp.Status`, unedited.** It is `StatusFor(port.KindOf(err))`
    now, and neither half needed an arm for this: the fault wraps the sentinel, so
    `errors.Is(err, crud.ErrConflict)` is still true and the switch answers 409
    with no new arm ([[D-038]]). See [[FL-011]] from here.
@@ -207,6 +221,7 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
 | a driver whose vocabulary was never wired (`errs.NewCodes()`) | the kind lookup refuses | the sentinel, no fault. Never a fault claiming `KindInternal` |
 | an engine nothing has a table for (`sqlfault.New("cockroach")`) | `sqlerr.Classify`'s dialect switch | the sentinel, no fault |
 | a violation whose columns only the schema knows | the `Columns` SPI, when wired | `Source.Columns` filled; nil, not empty, when it is not — and nil for a key with an expression part, because `""` is not a column name |
+| a duplicate key on MySQL, MariaDB or SQLite, where the driver names no constraint | the probe's merge rule, when a probe is wired | the driver's own violation, now carrying the `field` the probe resolved ([[FL-017]]) |
 
 ## Files
 
@@ -272,5 +287,5 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
 
 ## See also
 
-[[FL-011]] [[FL-003]] [[FL-009]] [[FL-016]] [[UC-015]] [[UC-017]]
-[[D-046]] [[D-038]] [[D-039]] [[D-047]] [[D-044]] [[D-043]] [[D-041]] [[D-015]]
+[[FL-011]] [[FL-003]] [[FL-009]] [[FL-016]] [[FL-017]] [[UC-015]] [[UC-017]]
+[[D-046]] [[D-038]] [[D-039]] [[D-047]] [[D-044]] [[D-043]] [[D-041]] [[D-042]] [[D-015]]

@@ -1191,6 +1191,26 @@ func Simple() Handler                              // wrap and return. no extra 
 func Full(cat catalog.Catalog, o ...Option) Handler // one query, every violation.
 ```
 
+**Phase 7 fixed the vocabulary at three codes: `unique`, `foreign_key` and
+`restrict`.** Nothing else is probed, and the one that looks missing is CHECK.
+`catalog.Constraint` carries a CHECK only as `Definition`, whose shape differs
+per engine — `pg_get_constraintdef` hands back `CHECK ((qty > 0))`,
+`information_schema.CHECK_CONSTRAINTS` the bare clause, SQLite nothing at all —
+and recovering the expression from that text is the DDL parsing [[D-041]] forbids
+in as many words. Evaluating one against a synthesised candidate row also needs
+the defaults and generated-column expressions no catalog here holds, and every
+gap in that is a chance to *widen*, which [[D-042]] rules out. The route for a
+later phase is named rather than left as an omission: a parsed `Expression` on
+`catalog.Constraint`, filled by `pg_get_expr(conbin, conrelid)` and
+`CHECK_CLAUSE`, which parses nothing.
+
+The third code is the one that needed a seam. `restrict` is the *inbound*
+direction — an update that changes a column another table's foreign key points at
+under `ON UPDATE RESTRICT` or `NO ACTION` — and a constraint is recorded on the
+table that declares it, so no lookup on `catalog.Catalog` can answer "which
+foreign keys point at this table". Phase 7 added `catalog.Referrers`, an optional
+interface in `Reloader`'s shape.
+
 Defaults: **`Full` for single-row `Save` and `Update`; `Simple` for `SaveAll`,
 `UpdateAll`, `DeleteAll` and the bulk routes.** Swappable per resource and per
 verb. A batch write is where the cost multiplies and where a client is least
@@ -1255,8 +1275,37 @@ values come straight off the model.
 state reaches the planner as a nil value, and `WHERE email = NULL` is never true,
 so a probe that binds it reports clean for a column about to fail NOT NULL.
 
-An update also excludes its own row (`AND id <> $n`), and a bulk probe uses a
-`VALUES`-derived table so each violation carries a row index.
+**Phase 7 corrected that, and the correction is a narrowing.** A key part that is
+NULL takes the whole constraint out of the plan rather than binding `IS NULL`.
+PostgreSQL 15+ has `UNIQUE … NULLS NOT DISTINCT` and the catalog does not record
+which semantics a key has, so binding `IS NULL` reports a violation under the
+default `NULLS DISTINCT` — a false positive on a correct field, which is the one
+thing [[D-042]] forbids. Skipping loses a violation only under
+`NULLS NOT DISTINCT`. The sentence above survives aimed at the NOT NULL check
+this work does not ship: nothing reports clean *instead of* a NOT NULL failure,
+because nothing checks NOT NULL at all.
+
+An update also excludes its own row (`AND id <> $n`) — and so does a keyed
+`Save`, which phase 7 found the earlier draft had missed: an upsert that rewrites
+a key with the value it already holds otherwise reports the row colliding with
+itself.
+
+**The bulk shape is not a `VALUES`-derived table. It cannot be, and that was
+measured.** A `UNION ALL` of one-row `SELECT`s does run on all four engines — but
+PostgreSQL resolves an untyped parameter inside it to `text`, so a comparison
+against a `bigint` column is `operator does not exist: bigint = text`, SQLSTATE
+`42883`. Casting the first arm fixes PostgreSQL and breaks MySQL, whose `CAST`
+target vocabulary is not its column types: `CAST(? AS varchar(64))` is a syntax
+error there. So a batch probe is **one flat statement of one term per constraint
+per row**, binding every row's values directly: no type is needed anywhere, the
+row index is known by position in Go rather than read back, and the caps bound
+what it costs. That also means MySQL's row index is not an observable dialect
+difference after all — §12's row is corrected.
+
+**A `restrict` term fires only on a real change.** The change set is every column
+the DTO defined, not the diff, so a column written with the value it already
+holds is in it. `AND cur.col <> $n` is what keeps that from becoming a violation
+the server never raised.
 
 ### What needs no query at all
 
@@ -1303,6 +1352,21 @@ not pretend otherwise. Detection also has to ask `ExecutorFor(ctx, src)`, not
 one. And `InTx` joins rather than nests, so row 2 is really two situations —
 opened by this call, or joined from an outer one — with different savepoint
 owners.
+
+**Phase 7 made that change and one more beside it.** `crud.OwnedExecutorFor`
+answers both questions in one walk, so `found` and `owned` cannot disagree about
+which binding they describe; `crud.ClaimSavepoint` reserves one against the
+binding a transaction pushed and reports the running count, so the budget lives
+with the transaction and two repositories sharing one transaction share one
+count. Two things the table did not say and the code has to: **which side of it a
+dialect is on comes from `crud.StatementRollback`** rather than from its name
+([[D-019]] forbids a name check standing in for a dialect check), and **the
+savepoint is taken before the write** rather than around the failure — a
+savepoint cannot be taken after the fact, so the wrapping lives in the faults
+decorator and the probe is told whether the transaction was restored. A third
+thing the table implies and phase 7 measured: `crudsql`'s savepoint shares the
+parent transaction's executor, so the write does not have to be re-bound to it
+and nothing new goes into the context.
 
 | The write ran… | PostgreSQL | MySQL / SQLite |
 |---|---|---|
@@ -1363,9 +1427,17 @@ error ⇒ keep what the driver said, set `Partial: true`, log. [[D-042]] says so
 
 Bound the constraints probed per request, the rows probed per batch, the total
 probe time, and the catalog load time. The defaults have to be numbers rather
-than adjectives, and §16 lists choosing them as open. A hostile client that POSTs a 10 000-row
+than adjectives. A hostile client that POSTs a 10 000-row
 batch must not be able to turn one failed write into a 10 000-way probe, and a
 table with forty unique indexes must not either.
+
+**Phase 7 chose them**, and §16's line is struck: 16 constraints per request, 50
+rows per batch, 250ms around the probe statement, 32 savepoints per transaction,
+and **no cap at all** on the catalog load — it runs once at declaration on a
+context the application owns, and a default timeout there turns a slow but
+healthy start-up into the fatal refusal [[D-041]] makes it. [[D-042]] carries
+what each number is measured against. They are exported constants, so a reader
+finds them from the API rather than from a comment.
 
 When a cap is hit the answer is **truthful, never silently partial**. The fault
 carries `Partial: true` and the envelope says the set is incomplete, rather than
@@ -1411,20 +1483,30 @@ Names sort before indices at the same depth; a shorter path sorts first. So the
 same failing request twice produces byte-identical output — the violation-order
 analogue of [[D-014]], and the thing that makes a response body testable at all.
 
-**This order and §5's contradict each other, and phase 1 shipped neither.** §5
-says ordering within one path puts `OriginInput` first; the order above has no
-`Origin` key at all, and §2 puts Conflict ahead of Validation — so at
-`["user","email"]` a `unique` (OriginState, Conflict) would sort *before* an
-`email` (OriginInput, Validation), which is the exact reverse. A second problem
-comes with it: the last tiebreaker is the constraint name, which exists only on
-`Violation.Source.Constraint` and only when `Origin` is `OriginState`, so the
-stated order is not total across two input violations that agree on path and
-code. Phase 1 owns `Violation` and `Codes` — the pieces both readings need — and
-deliberately shipped no `Sort`: a method is additive at the first tag and a wrong
-order is not. The phase that resolves this owes the sort, and owes correcting
-whichever of the two sections is wrong. What phase 1 did pin is the narrower
-half: message expansion never iterates `Params`, and the public projection is
-byte-identical run to run.
+**This order and §5's contradicted each other, and phase 4 resolved it — §5's
+reading won.** `errs.SortViolations` orders by `Path`, then `Origin`, then
+`Code`, then `Message`: a client renders a form by field, so grouping by anything
+else scatters one field's two violations; at one path an input violation comes
+before a collision, because a malformed value explains a failed lookup and the
+reverse reads as nonsense. Two keys the paragraph above named are deliberately
+absent. **Kind** is not one: it is what the status is chosen from, one per
+response, and sorting by it would put a path's `unique` before the same path's
+`invalid_format`. **The constraint name** is not the last tiebreaker: it exists
+only on `Violation.Source` and only for `OriginState`, so it is not total across
+two input violations, and it would let an internal name decide a public order.
+`errs/violation.go` carries the argument; the paragraph above is superseded by
+it.
+
+What was left after that was narrower than "the sort", and it is phase 7's:
+**the probe's own production order has to be deterministic**, because
+`SortViolations` is stable and two violations equal on all four keys keep the
+order they were produced in. Terms are produced in catalog order and rows in
+payload order, the duplicate map is walked in first-appearance order rather than
+map order, and the answer is sorted before it is returned so a consumer reading
+`Fault.Violations` reads the order the body renders in.
+
+Phase 4 also wrote the eight-violation test the row in §15 asks for; phase 7 is
+the first thing that produces eight violations for it to order.
 
 ---
 
@@ -1572,15 +1654,15 @@ change, it says so and names the successor rather than quietly working around it
 | [[D-021]] magic fails at build or start-up | The inverse path map, the code registry and the catalog all fail at declaration time |
 | [[D-002]] `Opt` has three states | The probe reads the change set, not the DTO |
 | [[D-011]] `Save` is JPA-shaped | `Save` **is** the upsert path, so the probe runs but skips the constraints the `ON CONFLICT` target covers — a set that differs per dialect (§8) |
-| [[D-019]] dialect differences are not observable | The work adds at least four new ones: the upsert-swallow divergence, `too_long` unreachable on SQLite, MySQL's row index for bulk attribution, and per-engine constraint skipping. D-019 forbids adding one without naming it there **and in both usage guides**. Phase 6 paid the last of those as **difference 9** — which unique keys each engine can tell apart, and which kinds of key it has at all — and it turned out to be observable one phase early, because `catalog.Constraint` answers a different `Kind` for the same two DDL statements depending on the engine |
+| [[D-019]] dialect differences are not observable | The work adds at least four new ones: the upsert-swallow divergence, `too_long` unreachable on SQLite, MySQL's row index for bulk attribution, and per-engine constraint skipping. D-019 forbids adding one without naming it there **and in both usage guides**. Phase 6 paid the last of those as **difference 9** — which unique keys each engine can tell apart, and which kinds of key it has at all — and it turned out to be observable one phase early, because `catalog.Constraint` answers a different `Kind` for the same two DDL statements depending on the engine. Phase 7 paid the rest as **difference 11**, in three halves: which violations the probe can find on which engine (the upsert-swallow divergence and the four unreproducible key kinds), whether it runs inside a transaction at all, and how much a folded violation is known to mean. The "MySQL row index" half turned out not to be a dialect difference: the bulk shape binds every row's values directly and the index is known by position in Go, so it is the same on all four engines |
 | [[D-009]] context executor capture is unconditional | The probe resolves its executor through `crud.ExecutorFor(ctx, src)`; that is what makes "never probe on another connection" enforceable rather than aspirational |
 | [[D-010]] update is load-diff-write | The change set says which constraints matter; the loaded row supplies the values |
 
-New decisions this work needs — **all nine written in phase 0**. Two still
-govern code that does not exist yet — [[D-042]] and [[D-043]] — and say so in
-their status line rather than reading as rules the tree already follows;
-[[D-038]] left that set when phase 1 landed `errs`, [[D-041]] when phase 6
-landed `catalog` and [[D-045]] when phase 5 landed `port`:
+New decisions this work needs — **all nine written in phase 0**. One still
+governs code that does not exist yet — [[D-043]] — and says so in its status line
+rather than reading as a rule the tree already follows; [[D-038]] left that set
+when phase 1 landed `errs`, [[D-041]] when phase 6 landed `catalog`, [[D-045]]
+when phase 5 landed `port` and [[D-042]] when phase 7 landed `probe`:
 
 | id | Invariant |
 |---|---|
@@ -1588,7 +1670,7 @@ landed `catalog` and [[D-045]] when phase 5 landed `port`:
 | [[D-039]] | Message text is not an interface. Columns come from the catalog; a value parsed from a driver message is best-effort |
 | [[D-040]] | A retryable class is not a client error. It gets its own `Kind` and 503, and the framework does not retry on the caller's behalf |
 | [[D-041]] | The catalog is per physical handle, loaded once, never global, and its absence is a start-up failure |
-| [[D-042]] | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation |
+| [[D-042]] | The probe is advisory. The index is the truth, and a probe that finds nothing never suppresses the driver's own violation. **In force since phase 7**, with the three §16 answers folded in |
 | [[D-043]] | A path is translated one hop per layer, and no layer guesses a hop it does not own |
 | [[D-044]] | The public payload names nothing internal — no constraint, no table, no column, no SQLSTATE, and no `Params` entry or CHECK expression derived from one |
 | [[D-045]] | The shared half is transport-neutral; a binding is a shell over `port` (supersedes [[D-034]]) |
@@ -1701,7 +1783,7 @@ not done because the code works.
 | 4 | Render + decorators — **done** | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware; **[[D-043]] and [[D-044]] come into force**, closing UC-015's guarantee 11 and gap 16 | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes |
 | 5 | `port/` — **done** | `Service`, `DefaultService`, the eight commands, `Mapper`/`Identity`, `Fields`/`Hops`, and the moved half of `crudhttp` — `Repository`, `Sanitize`/`ClearGenerated`, `CoerceID`/`NarrowFor*`, `ErrBadRequest` and the code vocabulary. Four constructors per binding — `New`, `NewFor`, `Serving`, `ServingFor` — with `Handler[M, ID, U]` a parameterised alias over `HandlerFor[M, ID, U, In]`, so no existing signature changed and `make examples` compiles the seven stacks untouched. **FL-015**; [[D-045]] in force, [[D-034]] history. Deliberately **not** shipped: the violations pipeline stays in `http/crudhttp` until a second implementation asks ([[D-048]], named as the follow-up in D-045's *Where it lives*); no patch-side mapper, because the generated DTO already is the transport shape ([[D-018]]); and `port.Fields` passes an undeclared head through rather than declining, because a declining hop poisons `errs.Chain` and would make a path the raw-body index resolves today *worse* — strictness belongs to phase 8's generated map, which is total by construction. One observable change, small and stated rather than found: `WithScope` now runs before the query document compiles, so a request with both a failing scope and a malformed filter reports the scope | the same service mounts on all three bindings **and they hand it the same command** — the [[D-034]] check in its D-045 form. A compile-only assertion would pass whatever the bindings did |
 | 6 | `catalog/` — **done** (out of order, before 3, 4 and 5) | `Catalog`, `Load`, a caller-owned `Set` keyed with `crud.KeyOf`, an optional `Reloader` with a two-guard negative cache, and four back-ends — `postgres`, `mysql`, `mariadb`, `sqlite`, all through `Query`. `crud.keyOf`/`sameDataSource` become `crud.KeyOf`/`crud.SameDataSource` rather than being copied, because a second implementation of the identity rule is the drift [[D-041]] exists to prevent. [[D-041]] comes into force; [[D-019]] gains difference 9. §16's recorder question is answered **no**. Four of §7's claims were measured false and are corrected there rather than coded around, and its *What it holds* list is narrowed to what a reader has | an unknown constraint name does not re-introspect in a loop — and its twin, a name that turns up resets, plus the per-handle floor for fifty *different* names |
-| 7 | `probe/` | `Simple`, `Full`, bulk attribution, caps, the savepoint mode, the `owned` seam flag, scope-awareness from `security.Policy` | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
+| 7 | `probe/` — **done** | `Simple`, `Full`, bulk attribution, caps with real numbers, the savepoint mode, the `owned` seam flag and the savepoint budget on it, scope-awareness from `security.Policy`, and the three §16 answers ([[D-042]] in force). Three seam additions the design needed and this row's earlier draft did not predict: `crud.UpsertScope` and `crud.StatementRollback`, because the upsert skip set and the transaction matrix must both come from the dialect rather than its name ([[D-019]] difference 11); and `catalog.Referrers`, because `restrict` reads the inbound half of the schema and no lookup on `Catalog` can express it. Deliberately **not** shipped: no CHECK evaluation (the catalog carries a CHECK only as engine text, and parsing it is what [[D-041]] forbids), no NOT NULL/length/range/enum, no pre-flight, and no inbound-FK probe on delete. One correction carried back into §8: the bulk shape is **not** a `VALUES`-derived table — measured, it cannot be — see there | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
 | 8 | Codegen | DTOs, mapper, inverse map, service, wiring | regenerate-and-diff; a column the DTO misses refuses start-up |
 | 9 | Ecosystem | `rpc/crudgrpc`, i18n catalogues, SQL Server / Oracle / CockroachDB; **FL-013**'s fourth-transport row | adding a transport requires no change to `errs`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
 
@@ -1732,12 +1814,12 @@ landed before phase 3 and took **FL-016** for that reason; a flow number is
 identity rather than order. Both reservations are now spent.
 
 The nine decisions were written in phase 0 regardless, because a decision governs
-code rather than describing it. The ones still waiting on their code —
-[[D-042]] and [[D-043]] — carry `in force from phase N` in their status line and
-head their evidence section `Proven by (owed)`, so a reader can tell a rule the
-tree obeys from a rule the tree owes. [[D-038]] became plain `accepted` when
-phase 1 landed `errs`, [[D-041]] when phase 6 landed `catalog` and [[D-045]] when
-phase 5 landed `port`.
+code rather than describing it. The one still waiting on its code — [[D-043]] —
+carries `in force from phase N` in its status line and heads its evidence section
+`Proven by (owed)`, so a reader can tell a rule the tree obeys from a rule the
+tree owes. [[D-038]] became plain `accepted` when phase 1 landed `errs`,
+[[D-041]] when phase 6 landed `catalog`, [[D-045]] when phase 5 landed `port` and
+[[D-042]] when phase 7 landed `probe`.
 
 ---
 
@@ -1760,14 +1842,14 @@ vacuously carries a control case next to it, in the pattern
 | the catalog | live, all four engines | a unique key the probe cannot reproduce is **recorded as such** and a key of the same shape that it can is not. Without the twin, a catalog that marks everything passes. **Reworded by phase 6, twice.** *Skipping* is §13.4's and belongs to the probe; phase 6 records flags and verbatim text and decides nothing. And the twin cannot be partial-versus-plain on four engines: `CREATE UNIQUE INDEX ... WHERE` is error 1064 on MySQL 8.4 and MariaDB 11.4, so it is partial-versus-plain on two engines and prefix-versus-full-length on the other two, under one shared predicate. A counter closed over by the subtests fails the loop if the fixture silently did not take |
 | catalog identity | unit | two `crud.ReadWrite` sources whose primaries differ do not share a catalog, and an uncomparable handle is refused at declaration rather than panicking. Both twins matter: two sources over *one* handle share one catalog and are introspected once — a `Set` that never reuses anything passes the first half on its own — and a comparable handle is accepted and found again, or a `Set` that refused everything passes the second. Uncomparable has two shapes and both are tested: a handle `reflect` calls uncomparable, and a source whose type `reflect` calls comparable and whose `==` panics anyway |
 | the catalog's negative cache | unit, against an injected clock | the same unknown name fifty times is **one** introspection pass, and past the window it is two — a permanent cache and a correct one are otherwise indistinguishable, and a permanent one breaks the rolling migration the cache exists for. Plus the loop the per-name entry does not close: fifty *different* unknown names inside one floor window are one pass, and the same fifty with the clock advanced between them are fifty. And a pass that finds the name resets its backoff where one that does not grow it — asserted as one test with two arms, same clock, opposite outcome |
-| the probe, positive | live, all four engines | probe off ⇒ one violation; probe on ⇒ **three distinct codes at three distinct paths**. Counting to three passes for one violation repeated |
-| the probe, negative | live, all four engines | a payload with exactly one real violation yields **exactly one** — the control that catches an unguarded NULL foreign key, a partial index replayed wrongly, or a prefix index |
-| caps and truthfulness | unit + live | past the cap the answer carries `Partial: true`; a probe that errors keeps the driver's violation instead of becoming a 500 |
-| the oracle controls | unit + live | with the value-echo mode on the value appears; with the default it does not |
-| determinism | unit | at least eight violations spanning names, indices and equal-prefix paths, built in reverse, render byte-identically. Two violations pass by luck half the time — [[D-014]] made this argument already. **Half of it is owed to the phase that resolves the sort** (§8): phase 1 pinned message expansion and the marshalled projection over an eight-entry `Params` map, and shipped no ordering |
+| the probe, positive | live, five targets (four engines, PostgreSQL through both drivers) | probe off ⇒ one violation; probe on ⇒ **three distinct codes at three distinct paths**. Counting to three passes for one violation repeated, so the assertion is on the *set* of `(code, path)` pairs and on its size. Held by `TestOneFailedWriteBecomesEveryViolationItCaused`, with a per-engine counter so a target that stops running cannot leave the loop green. The third code is `restrict`, and it is what made `catalog.Referrers` necessary |
+| the probe, negative | live, five targets | a payload with exactly one real violation yields **exactly one** — the control that catches an unguarded NULL foreign key, a composite one with a NULL column, a NULL half of a composite unique key, and a partial index replayed wrongly. Held by `TestAPayloadWithOneRealViolationYieldsExactlyOne`, whose own control is `TestTheSamePayloadWithARealMissingParentYieldsTwo`: a probe that closed the NULL hole by dropping foreign keys altogether fails there. **One correction to this row.** A prefix key has no bait: replaying a partial index as plain equality *invents* a violation, because the stored row it matches is not in the index, while replaying a prefix key can only *miss* one, since equal whole values are equal in their first n characters too. So the bait is per engine, and the assertion that the unreproducible key is never claimed holds on all five targets regardless. `TestAnUpdateDoesNotReportARowCollidingWithItself` is the second negative and it was not predicted here: an upsert or an update that rewrites a key with the value it already holds |
+| caps and truthfulness | unit + live | past the cap the answer carries `Partial: true`, with the cap raised as the control; a probe that errors keeps the driver's violation instead of becoming a 500, with the healthy twin as the control and both asserted to be 409. The live probe failure is a catalog naming a table the database no longer has, which is what a rolling migration produces. Every other live test binds through a helper that turns a probe error into a test failure, so a probe that silently refused every statement could not leave the file green |
+| the oracle controls | unit + live | with the value-echo mode on the value appears in the rendered body through a template naming `{value}`; with the default it does not. The other three — the per-constraint opt-out, the scope predicate and code-only mode — are unit, each with the unopted twin beside it |
+| determinism | unit + live | at least eight violations spanning names, indices and equal-prefix paths, built in reverse, render byte-identically. Two violations pass by luck half the time — [[D-014]] made this argument already. Phase 1 pinned message expansion and the marshalled projection; phase 4 shipped `errs.SortViolations` and the eight-violation test; phase 7 is the first thing that produces more than one violation for it to order, and adds the live half: the same failing request five times, byte for byte, with a count of violations in the body as the control that the comparison measures an order at all |
 | double rendering | unit, all three bindings | a handler that already wrote a response is left alone; installing the middleware twice renders once |
 | the message hierarchy | unit | each of the four levels resolves, and a missing translation falls back rather than emitting `{max}`. Held by `TestEachLevelOfTheMessageLadderResolves` and `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` in `errs/message_test.go`. The scope is derived from the violation's own path, because a `Violation` carries no entity (§5) |
-| the transaction matrix | live, all four engines | inside a transaction without savepoints `Full` degrades to one violation rather than erroring; **with** `WithSavepoints()` it does not degrade; and a foreign transaction is never given a savepoint |
+| the transaction matrix | live, five targets × four arms, with a counter | inside a transaction without savepoints `Full` degrades to one violation rather than erroring on PostgreSQL — and does **not** degrade on MySQL, MariaDB and SQLite, which is the control that the degrade is about the engine and not about being in a transaction; **with** `WithSavepoints()` it does not degrade; and a foreign transaction is never given a savepoint, asserted live by the answer degrading with the option on and by a savepoint count of zero in `repo/decorators/faults/probe_test.go` |
 | MariaDB detection | live | a MariaDB CHECK violation classifies as `check`, which needs `4025` and not MySQL's `3819`. **Phase 0 measured it and the answer was not what this row assumed**: MariaDB reports `4025` with SQLSTATE `23000`, so class 23 already covers it and no number entry is needed. The divergence that does need the split is `1366` — `HY000` on MySQL, `22007` on MariaDB. Held by `TestEveryCorpusCaseClassifiesAsTheCorpusSays` |
 | the corpus itself | live, all four engines | recapturing and diffing the key — twenty cases per engine. Its control is that the negatives stay unclassified; without them the corpus supplies both input and expectation and only tests the harness |
 
@@ -1785,20 +1867,27 @@ Left open on purpose. Each needs a decision before the phase that touches it, an
 each now names the decision it feeds so the phase cannot start without noticing.
 
 
-- **Whether pre-flight probing should ever be the default** for a named endpoint
-  shape (a signup form), or stay entirely the application's call. Feeds
-  [[D-042]], which currently says not by default.
+- ~~**Whether pre-flight probing should ever be the default** for a named endpoint
+  shape.~~ **Settled by phase 7: no, for any endpoint shape**, and no pre-flight
+  mechanism ships at all. It costs a query on every happy-path request; the
+  TOCTOU window between the check and the insert makes a clean answer a lie under
+  concurrency; and the framework cannot know an endpoint is a signup form, which
+  is application knowledge and what [[D-037]] already refuses to infer. [[D-042]]
+  records the settled default for whichever later phase builds it.
 - **Whether the framework retries a retryable class.** [[D-040]] says no, and is
   written. The argument for yes is that a serialisation failure inside a
   repository-owned transaction is the framework's own to retry and nobody else
   can see it; D-040 records that argument rather than dismissing it, and would
   have to be superseded rather than bent.
-- **The cap defaults** — constraints per request, rows per batch, probe time,
-  catalog load time. A cap without a number is not a cap. Feeds [[D-042]], which
-  requires the truthfulness and leaves the numbers here. Phase 6 therefore gave
-  `catalog.Load` no timeout and no options — the caller's context is the only
-  bound — and chose its own reload intervals (1s doubling to 5 minutes, with a
-  1s floor between passes). If these are decided here, those numbers move.
+- ~~**The cap defaults** — constraints per request, rows per batch, probe time,
+  catalog load time.~~ **Settled by phase 7**, and the numbers are exported
+  constants rather than comments: 16 constraints per request, 50 rows per batch,
+  250ms for the probe statement, 32 savepoints per transaction, and **no cap at
+  all** on the catalog load, because it runs once at declaration on a context the
+  application owns and a default timeout there turns a slow but healthy start-up
+  into the fatal refusal [[D-041]] makes it. Phase 6's reload intervals — 1s
+  doubling to 5 minutes, with a 1s floor between passes — are decided rather than
+  provisional; they do not move. [[D-042]] carries the reasoning for each number.
 - ~~Whether `crud/crudtest`'s recorder grows a `DataSource()`.~~ **Settled by
   phase 6: no.** The premise was wrong. `crud.KeyOf` takes a source that cannot
   name its database at face value and returns the source itself, so a recorder
@@ -1814,9 +1903,15 @@ each now names the decision it feeds so the phase cannot start without noticing.
   client, it makes `errors.validation` mean two different things depending on
   deployment, and two lists cannot be rendered as one form, which is [[UC-017]]'s
   entire premise. Guarantee 9 stands as written.
-- **Composite primary keys.** Unsupported today, and the probe's
-  exclude-my-own-row clause assumes a single-column key. The probe should not be
-  what forces the decision, but it will be what makes it urgent. Feeds [[D-042]].
+- ~~**Composite primary keys.**~~ **Settled by phase 7: the probe does not force
+  the decision, and it refuses rather than being silently wrong.** `crud.Schema`
+  has one `PK` field, so a composite key is not declarable and the
+  exclude-my-own-row clause is exactly as general as the repository already is.
+  The reachable harm is a model whose single `pk` field is mapped onto a table
+  whose *real* key is composite — where the repository's own `WHERE pk = ?` is
+  already wrong — so a declaration refuses unless the catalog confirms the key
+  column is a row identity on its own. General composite-key support stays a
+  `crud` seam question that nothing here opens. [[D-042]] has the argument.
 - ~~Where a validation-library bridge lives.~~ **Settled** (§5): it is
   dependency-free, so it lives in `errs` and needs no module. The open remainder
   is whether `errs` should ship the `RegisterTagNameFunc` helper itself, which

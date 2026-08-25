@@ -116,6 +116,41 @@ my database would accept?*
   renders nothing and the serialisation a caller wanted comes from the
   transaction instead.
 
+### Who opened it, and how many savepoints it may hold
+
+Two things phase 7 added to the binding, because the probe needed them and the
+seam could not answer either ([[FL-017]], [[D-042]]).
+
+- **`binding.owned`.** `crud.InTx` pushes `owned: true`; `crud.WithExecutor` and
+  `crud.WithExecutorFor` push `false`. Before that they pushed the same
+  `binding{ds, e, prev}` and nothing could tell an ent transaction from one vv
+  opened. `crud.OwnedExecutorFor(ctx, src)` answers both questions in one walk,
+  so `found` and `owned` cannot disagree about which binding they describe.
+
+  It matters because **a foreign transaction is never given a savepoint.** An ent
+  or gorm transaction has its own savepoint stack and its own expectations about
+  what runs inside it, and `ROLLBACK TO SAVEPOINT` in the middle of somebody
+  else's unit of work can discard work its owner has not finished with.
+
+  Ask `OwnedExecutorFor` and never `ExecutorFrom`: with a foreign transaction
+  scoped to a *different* handle, `ExecutorFrom` says "in a transaction" while
+  this repository's write runs outside one.
+
+- **`binding.saves`.** `crud.ClaimSavepoint(ctx, src)` reserves one against the
+  transaction the binding names and reports the running count. The budget lives
+  with the transaction and the policy lives with the caller, so two repositories
+  sharing one transaction share one count and two transactions do not.
+
+  It counts up and never down, and that is the shape of the limit rather than an
+  oversight: PostgreSQL's 64-entry subxid cache overflows on the number of
+  subtransactions a top-level transaction has assigned XIDs to, and releasing a
+  savepoint does not give the entry back. The overflow is not a round trip — it
+  forces pg_subtrans lookups on every reader in the cluster.
+
+The probe never issues `SAVEPOINT` itself. It calls `Beginner.Begin`, so the
+counter `crudsql.Tx.Begin` owns is the only thing naming savepoints and a
+hand-rolled name cannot collide with one the seam issued.
+
 ## The ORM-owned-transaction pattern
 
 The ORM opens and owns the transaction; vv is handed a handle and joins.
@@ -183,12 +218,15 @@ transaction, and reports success.
 | a finished transaction still in the context | the driver | the driver's error, surfaced as-is |
 | a deferred constraint fires at `COMMIT` rather than at the statement | the adapter's `Commit` → `Executor.conflict` → `sqlfault.Wrap` | `ErrConflict` → 409, with the code where the source named its engine ([[FL-011]], [[FL-014]]) |
 | a write inside a transaction opened by `From` or `Open` | nothing classifies the engine — by design | 409 with the driver's message and no code; pass `crudsql.WithFaults` ([[FL-014]]) |
+| a probe wanting a savepoint inside a **foreign** transaction | `OwnedExecutorFor` reports `owned == false` | no savepoint is taken, and on an engine that poisons its transaction the answer is one violation ([[FL-017]]) |
+| a probe wanting a savepoint past the budget | `ClaimSavepoint` | no savepoint, and the fault is marked incomplete rather than silently short ([[D-042]]) |
 
 ## Files
 
 | File | Role |
 |---|---|
-| `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, the binding stack, `WithExecutor(For)`, `ExecutorFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
+| `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, `Sourced`, the binding stack with its `owned` flag and savepoint counter, `WithExecutor(For)`, `ExecutorFor`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
+| `repo/decorators/faults/probe.go` | `enricher.savepoint` — the only caller of `ClaimSavepoint`, and the four conditions a savepoint needs ([[FL-017]]) |
 | `repo/basic/repository.go` | `exec` — every statement's executor choice; `Tx` |
 | `adapter/crudsql/crudsql.go` | `From`, `Open`, `Source`, `Postgres`/`MySQL`/`MariaDB`/`SQLite`, `WithFaults`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource`; `Tx.Commit` and `savepoint.Commit` classify, and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
 | `adapter/crudpgx/crudpgx.go` | `From`, `Open`, `WithFaults`, `Begin`, `DataSource`, `CopyFrom`; `Tx.Commit` classifies and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
@@ -213,6 +251,10 @@ transaction, and reports success.
 - `TestAnEntTransactionJoinsButCannotOpenASavepoint` — `test/integration/driver_ent_test.go`.
 - `TestSavepointsRollBackAndReleaseIndependently` / `TestASavepointInsideASavepointUnwindsOneLevelAtATime` — `test/integration/edge_test.go`.
 - `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` — `test/integration/driver_sqlite_test.go`.
+- `TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot` — `crud/executor_test.go` — the `owned` flag from both sides, plus the `ExecutorFrom` trap.
+- `TestASavepointClaimCountsPerTransactionAndNotPerRepository` / `TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne` — `crud/executor_test.go` — the budget's shape, each with its control.
+- `TestAForeignTransactionIsNeverGivenASavepoint` / `TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns` / `TestPastTheSavepointBudgetTheAnswerIsPartial` — `repo/decorators/faults/probe_test.go` — the savepoint wrap at the seam that uses it.
+- `TestTheTransactionMatrix` — `test/integration/probe_test.go` — the whole table live, twenty arms with a counter.
 - `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` — `test/integration/multidb_test.go`.
 - `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` — `test/integration/multidb_test.go` — the documented hazard, executed.
 - `TestATransactionThatFailsHalfwayLeavesNothingBehind` — `test/integration/edge_test.go`.
@@ -222,4 +264,4 @@ transaction, and reports success.
 
 ## See also
 
-[[FL-002]] [[FL-003]] [[FL-006]] [[FL-011]]
+[[FL-002]] [[FL-003]] [[FL-006]] [[FL-011]] [[FL-014]] [[FL-017]] [[D-042]]

@@ -1073,6 +1073,101 @@ three there is nothing to look up by and the columns stay unknown. PostgreSQL's
 "value too long" and SQLite's foreign-key error are the same: they carry no
 table and no constraint, so a catalog cannot help them either.
 
+**Every violation for one payload, in one response.** A database reports the
+first constraint it reaches and stops, so a signup form with a taken email *and*
+a missing organisation gets one red field, then another on the next attempt.
+`probe.Full` issues one extra statement after a failed write and reports the
+rest:
+
+```go
+cat, err := catalog.Load(ctx, src)   // once, at start-up
+if err != nil {
+    return err
+}
+
+users := Users.Bind(src,
+    security.Gate(policy),
+    faults.Enrich[User, int64](           // innermost: last in the list
+        faults.WithProbe(probe.Full(cat)),
+        faults.WithProbeError(func(op string, err error) { log.Printf("probe %s: %v", op, err) }),
+    ),
+)
+```
+
+`faults.Enrich` has to be **last** in the `Bind` list. It is the innermost
+middleware, and it is the only one under which the repository can hand back the
+datasource the extra statement runs on; anywhere else it refuses at start-up and
+tells you so. `faults.WithSource(src)` is the way out if you need it elsewhere.
+
+`WithProbe` covers `Save` and `Update` — the two single-row writes. Batch verbs
+keep the cheap answer, because that is where the cost multiplies and where a
+client is least likely to be a form; `faults.WithProbeFor("SaveAll", …)` turns
+one on. The probe's own failure never reaches the client: the answer keeps the
+409 and gains `"partial": true`, which is why `WithProbeError` is worth wiring.
+
+Four things it will not tell you, each for a reason: it does not evaluate
+`CHECK` constraints, does not check NOT NULL, length, range or enum membership,
+does not probe before the write, and does not replay a unique key it cannot
+reproduce from a value — a partial index, a prefix key, an expression index, or a
+deferrable constraint. Every one of those is a *narrowing*: the answer can be
+short, never wrong.
+
+Four controls over what it discloses. A unique-violation response tells the
+caller a value exists, and that is inherent to a unique constraint on a public
+endpoint rather than something this closes:
+
+```go
+probe.Full(cat,
+    probe.WithValues(),                 // put the offending value in {value}; off by default
+    probe.Skip("users_ssn_key"),        // never probe this constraint
+    probe.WithScope(policy.Scope),      // narrow the unique terms the way reads are narrowed
+    probe.CodeOnly(),                   // the code, without the field
+)
+```
+
+`WithScope` reaches this table's own unique keys and nothing else — a foreign-key
+term reads the parent table and the model's predicate does not name it — so
+`Skip` is the control where that matters.
+
+The caps are numbers and they are overridable: 16 constraints per request, 50
+rows per batch, 250ms for the probe statement, 32 savepoints per transaction.
+Past any of them the answer carries `"partial": true` rather than reading as
+complete.
+
+**Inside a transaction, PostgreSQL reports one violation and the other three
+report all of them.** A constraint error aborts a PostgreSQL transaction
+outright — nothing else runs until a rollback — so a probe inside one needs a
+savepoint taken *before* the write. That costs two extra statements on every
+write, failures included, so it is opt-in:
+
+```go
+probe.Full(cat, probe.WithSavepoints())
+```
+
+MySQL, MariaDB and SQLite roll back the failed statement alone and need none of
+this. And a transaction **your** code opened and handed over with
+`crud.WithExecutor` never gets a savepoint, whatever the option says: an ORM
+transaction has its own savepoint stack, and rolling back to one of ours in the
+middle of it can discard work you have not finished with. There the answer is one
+violation on PostgreSQL, whichever way it is wired.
+
+**What the probe finds on a keyed `Save` differs per engine, and it follows the
+upsert difference above.** PostgreSQL's and SQLite's `ON CONFLICT (pk) DO UPDATE`
+swallows the primary key only, so a second unique key still refuses and the probe
+reports it. MySQL's and MariaDB's `ON DUPLICATE KEY UPDATE` swallows every unique
+key, so the same payload succeeds there and there is nothing to report. The
+library asks the dialect rather than the engine's name, and a dialect that does
+not answer is treated as swallowing everything — the answer that can only be
+short, never wrong.
+
+One more, smaller: PostgreSQL names the violated constraint in its structured
+error and the other three do not. Where the probe finds exactly one violation of
+the code the driver reported, the driver's own violation takes the field the
+probe resolved — which is the first time a MySQL duplicate key names a field at
+all. Where it finds two of that code there is no way to tell which one the engine
+stopped at, so the driver's violation is left as it was and you get one entry
+with no `field` beside the ones that have it.
+
 ---
 
 ## Reference

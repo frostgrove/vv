@@ -115,6 +115,12 @@ func (r *repository[M, ID, U]) read(ctx context.Context, o *crud.Options) crud.E
 
 func (r *repository[M, ID, U]) Meta() *crud.Meta { return r.meta }
 
+// Source hands back the datasource this repository was bound to, satisfying
+// crud.Sourced. The probe needs it to resolve its executor through
+// crud.ExecutorFor, which is what makes "never probe on another connection"
+// enforceable rather than aspirational ([[D-009]]).
+func (r *repository[M, ID, U]) Source() crud.Source { return r.src }
+
 // relScopes folds the narrowings this query carries into the repository's own
 // permanent ones. The blueprint's are a property of the table; a query's arrive
 // from a decorator whose answer depends on who is asking, and the two AND.

@@ -1,7 +1,7 @@
 # D-019 — A dialect difference must not be observable through the API
 
 **Status:** accepted
-**Invariant:** The same repository call against PostgreSQL, MySQL and SQLite must return the same result, the same error and the same refreshed model, except where a difference is named in this file.
+**Invariant:** The same repository call against PostgreSQL, MySQL and SQLite must return the same result, the same error and the same refreshed model, except where a difference is named in this file. There are eleven.
 
 ## The decision
 
@@ -39,11 +39,12 @@ The compensations, and what each one costs:
 
 ## Where the difference *is* observable
 
-Ten places. They are documented rather than hidden because hiding them would
+Eleven places. They are documented rather than hidden because hiding them would
 mean emulating an engine, which is worse than saying so. Differences 5 through 8
 were measured while building the error corpus, and were observable before anyone
-wrote them down; difference 9 was measured while building the catalog, and
-difference 10 arrived with the classifier that reads it.
+wrote them down; difference 9 was measured while building the catalog,
+difference 10 arrived with the classifier that reads it, and difference 11 with
+the probe.
 
 1. **`Order.WithNullsLast` / `WithNullsFirst` are PostgreSQL-only.** `NULLS LAST`
    is not in MySQL's grammar. MySQL keeps its own rule — NULLs first ascending,
@@ -176,6 +177,46 @@ difference 10 arrived with the classifier that reads it.
     correctly rather than a cosmetic one. `crudsql.Open`, `From` and `Source`
     refuse to guess for exactly this reason.
 
+11. **The probe.** Two halves, in difference 10's shape.
+
+    (a) *Which violations it can find.* The probe replays a constraint from a
+    value, and each engine has a kind of key it cannot replay. A **partial**
+    index is PostgreSQL's and SQLite's; a **prefix** key is MySQL's and
+    MariaDB's; an **expression** key part is PostgreSQL's, MySQL's and SQLite's
+    and does not exist on MariaDB 11.4; a **deferrable** constraint is
+    PostgreSQL's alone. Each of them is skipped, so one payload that breaks a
+    partial index gets a violation naming it on no engine, while the same payload
+    breaking the plain key beside it gets one everywhere. The two directions of
+    the loss are not the same: replaying a partial index would *invent* a
+    violation the server never raises, and replaying a prefix key could only ever
+    *miss* one, because equal whole values are equal in their first n characters
+    too.
+
+    The upsert skip set follows difference 5 and is the sharpest of these. `Save`
+    with a key is the upsert path ([[D-011]]): PostgreSQL and SQLite emit
+    `ON CONFLICT (pk) DO UPDATE` and swallow the primary key only, so a second
+    unique key still refuses and the probe reports it; MySQL and MariaDB emit
+    `ON DUPLICATE KEY UPDATE` and swallow every unique key, so the same payload
+    succeeds there and there is nothing to report. The probe asks
+    `crud.UpsertScope` rather than the engine's name, and a dialect that does not
+    implement it is treated as swallowing everything — the narrowing default.
+
+    (b) *Whether it runs inside a transaction at all.* PostgreSQL aborts the
+    whole transaction on a constraint error, so a write inside one reports a
+    single violation unless the application asked for the savepoint mode. MySQL,
+    MariaDB and SQLite roll back the statement alone and report the full set with
+    no extra statement and no option. The side a dialect is on comes from
+    `crud.StatementRollback`, and a dialect that does not implement it is treated
+    as poisoning — again the narrowing default. A **foreign** transaction reports
+    a single violation on PostgreSQL whatever the mode says, because vv does
+    not take savepoints inside somebody else's unit of work.
+
+    (c) *What a folded violation can say.* PostgreSQL names the constraint in its
+    structured error and the other three do not, so the merge that gives a
+    duplicate key its `field` is by name there and by code — and only an
+    unambiguous one — everywhere else. The `field` is the same; the certainty
+    behind it is not.
+
 ## What it forbids
 
 - Do not branch on `Dialect.Name()` in a repository or a builder. Add a method
@@ -187,7 +228,7 @@ difference 10 arrived with the classifier that reads it.
   package must keep compiling; that is what `OffsetLimiter` demonstrates.
 - Do not skip the MySQL re-read to save a round trip. It has been tried; see
   [[D-011]] and [[D-010]].
-- Do not add a tenth observable difference without adding it to the list above
+- Do not add a twelfth observable difference without adding it to the list above
   and to both usage guides.
 - Do not compensate for difference 6 with a Go-side length, range or type check.
   [[D-042]] has the argument: MySQL under a laxer `sql_mode` truncates where it
@@ -198,6 +239,9 @@ difference 10 arrived with the classifier that reads it.
 
 - `crud/dialect.go:Dialect` — the interface; the whole difference surface.
 - `crud/dialect.go:OffsetLimiter` — the optional-capability pattern.
+- `crud/dialect.go:UpsertScope` / `:StatementRollback` — difference 11's two
+  halves as optional interfaces rather than name checks, each with a narrowing
+  default for a dialect that implements neither.
 - `crud/dialect.go:Postgres`, `crud/dialect.go:MySQL`, `crud/dialect.go:SQLite`.
 - `crud/dialect.go:MySQL.LimitAll` / `crud/dialect.go:SQLite.LimitAll`.
 - `crud/dialect.go:SQLite.LockClause` — empty, with the reason.
@@ -294,7 +338,25 @@ that accidentally *hides* one is also caught:
   `TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames` in the same file
   — difference 10(a): what each engine's violation can say about itself, and
   what only the catalog can add.
+- `TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows` in `probe/full_test.go` —
+  difference 11(a)'s sharpest half, asserted from both sides in one table: the
+  same keyed `Save` probes the second unique key on PostgreSQL and does not on
+  MySQL. Its control is `TestAKeylessSaveProbesEveryKeyOnEveryEngine`, where the
+  statement carries no conflict clause and both engines probe everything.
+- `TestOnlyADialectThatSaysSoSwallowsThePrimaryKeyOnly` and
+  `TestOnlyADialectThatSaysSoRollsBackTheStatementAlone` in `crud/dialect_test.go`
+  — both halves at the seam, each with a dialect implementing neither interface
+  as the control that the defaults are the narrowing ones.
+- `TestTheTransactionMatrix` in `test/integration/probe_test.go` — difference
+  11(b), live, twenty arms with a counter.
+- `TestTheUnreproducibleKeyIsNeverProbedAndItsPlainTwinIs` in
+  `test/integration/probe_test.go` — difference 11(a)'s first half, live, under
+  one shared predicate: partial on PostgreSQL and SQLite, a prefix key on MySQL
+  and MariaDB.
+- `TestTheDriversUnnamedViolationIsNotDoubledWhenTheProbeCoveredIt` in
+  `probe/full_test.go` — difference 11(c), with both controls: two candidates of
+  one code are not folded, and a named constraint folds only into its own.
 
 ## See also
 
-[[D-010]] [[D-011]] [[D-015]] [[D-020]] [[D-024]] [[D-041]]
+[[D-010]] [[D-011]] [[D-015]] [[D-020]] [[D-024]] [[D-041]] [[D-042]] [[FL-017]]
