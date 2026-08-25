@@ -1090,11 +1090,13 @@ Plus, on both databases:
 - **relation tests** — every edge kind, two-hop paths, negation, nested sorts,
   batched and filtered preloads, and a check that a to-many filter neither
   duplicates rows nor inflates `COUNT`;
-- **HTTP tests** — the handler driven end to end through Fiber, Gin and
-  `net/http`, including the full JSON DSL, pagination arithmetic, the
+- **transport tests** — the handler driven end to end through Fiber, Gin,
+  `net/http` and gRPC, including the full JSON DSL, pagination arithmetic, the
   create/patch/delete lifecycle, a service layer intercepting a write, and every
-  rejection path. The three bindings answer the same 147 unit tests, name for
-  name.
+  rejection path. The three HTTP bindings answer the same 147 unit tests, name
+  for name; the gRPC one answers the subset of them that is not about HTTP, and
+  one test mounts a single service value on all four and compares the *command*
+  each handed over.
 
 Adding a driver means adding a `Target`, never a test.
 

@@ -1,6 +1,6 @@
 # FL-015 — A request through the port layer
 
-**Entry point:** `http/crudnet/handler.go:Create` (and every sibling route, in all three bindings)
+**Entry point:** `http/crudnet/handler.go:Create` (and every sibling route, in all four bindings)
 **Implements:** [[UC-001]] [[UC-013]] [[UC-015]] · **Governed by:** [[D-045]] [[D-022]] [[D-043]] [[D-050]] [[D-012]] [[D-004]] [[D-021]]
 
 A transport binding owns three things: which routes exist, how a body becomes a
@@ -259,9 +259,9 @@ approximate rather than guessed.
 ## Tests that walk this flow
 
 - `TestOneServiceMountsOnAllThreeBindings` — `test/portmount/mount_test.go` —
-  [[D-045]]'s control. One `port.Service` value, three bindings, same status,
-  same body **bytes**, same *command*. The command is the assertion with teeth: a
-  compile-only check would pass whatever the bindings did.
+  [[D-045]]'s control. One `port.Service` value, three HTTP bindings, same
+  status, same body **bytes**, same *command*. The command is the assertion with
+  teeth: a compile-only check would pass whatever the bindings did.
 - `TestTheServiceIsWhereTheRulesRan` — beside it — and the other half, because
   three bindings that had all forgotten to narrow a count would agree with each
   other.

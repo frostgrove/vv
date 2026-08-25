@@ -195,8 +195,10 @@ is the same one; everything below is the door.
   a binding declared its own.
 - **PUT still refuses to create, and the binding is not where it happens.**
   `DefaultService.Replace` does the existence probe, the `ClearGenerated` and the
-  `SetID` from the command's key, in that order ([[D-012]]). The three bindings
-  each hand it the same `port.ReplaceCommand` and do nothing else. The
+  `SetID` from the command's key, in that order ([[D-012]]). The four bindings
+  each hand it the same `port.ReplaceCommand` and do nothing else — on gRPC the
+  method is `Replace` and the key comes off the request document rather than a
+  URL, which is the whole of the difference. The
   PostgreSQL sequence hazard the decision exists for is engine-level, so it
   reaches every binding unchanged.
 - **Gin is not a dependency of anybody else.** `http/crudgin` is its own module

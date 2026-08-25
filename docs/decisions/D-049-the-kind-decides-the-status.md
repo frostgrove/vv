@@ -68,11 +68,19 @@ engine.
 - `http/crudhttp/errors.go:Status` — the seam whose signature is unchanged, now
   `StatusFor(port.KindOf(err))` ([[UC-015]] guarantee 8, [[D-045]]'s forbid).
 - `port/kind.go:FaultOf` — what a non-fault error becomes.
+- `rpc/crudgrpc/status.go:CodeFor` — the same table in gRPC's words, added at
+  phase 9. Two tables, one answer: the kind is resolved once and each transport
+  spells it.
 
 ## Proven by
 
 - `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` and its two
-  twins: the table, arm by arm, in all three bindings.
+  twins: the table, arm by arm, in all three HTTP bindings.
+- `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — the
+  second vocabulary over the same answer, which is what says the kind decides
+  rather than the status table being the decision. Two of the eight kinds
+  collapse into one `codes.Code` there, and that is the cost [[D-052]] records
+  rather than a per-code refinement this decision forbids.
 - `TestEveryRouteMapsARefusalTheSameWay` — a route that skipped the mapping
   would slip past a per-route test.
 - `TestA500NeverEchoesTheInternalError` — the silence, extended to the envelope.
