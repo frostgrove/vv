@@ -107,7 +107,7 @@ matches nothing — a fault built for a validation failure must not answer yes t
   a real produced fault: `crudhttp.Status` was not edited and a classified
   conflict is still a 409.
 - `TestAFaultKeepsItsSentinelReachableThroughStatus` and
-  `TestAFaultWrappingNoSentinelIsStillAnInternalError` in
+  `TestAFaultsKindDecidesAndTheSentinelIsTheFallback` in
   `http/crudhttp/errors_test.go` — the same claim against a real `crud`
   sentinel, through the unedited `Status`. This is the only place in the tree
   where that runs, and it is here rather than in `errs`' own test package

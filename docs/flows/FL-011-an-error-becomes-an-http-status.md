@@ -302,7 +302,7 @@ no handler and no database; they are listed here because this is the flow that
 inherits them. Phase 3 made two of them live rather than theoretical — a fault
 does now reach `Status`, from either adapter.
 
-- `TestAFaultKeepsItsSentinelReachableThroughStatus` / `TestAFaultWrappingNoSentinelIsStillAnInternalError` — `http/crudhttp/errors_test.go` — [[D-038]] against a real `crud` sentinel, through the unedited `Status`.
+- `TestAFaultKeepsItsSentinelReachableThroughStatus` / `TestAFaultsKindDecidesAndTheSentinelIsTheFallback` — `http/crudhttp/errors_test.go` — [[D-038]] against a real `crud` sentinel, through the unedited `Status`. The second was named `…IsStillAnInternalError` until [[D-049]] made that false: a fault wrapping no sentinel now answers the status its kind names, and a class-22 one is 422 where it used to be an opaque 500.
 - `TestAFaultWrappingASentinelMatchesIt` / `TestAFaultWrappingNothingMatchesNothing` — `errs/fault_test.go` — the mechanism and its negative, which is the load-bearing half.
 - `TestAFaultSurvivesBeingWrappedAgain` — `errs/fault_test.go` — all three of `errors.Is`, `AsFault` and `errors.As(driver)` through a further `fmt.Errorf`.
 - `TestAsFaultAnswersFalseForAnythingThatIsNotAFault` — `errs/fault_test.go` — the control the three `if !ok` call sites need: an `AsFault` that always reported true handed every one of them a nil `*Fault` with the suite green.

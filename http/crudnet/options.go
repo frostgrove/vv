@@ -1,9 +1,11 @@
 package crudnet
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/http/crudhttp"
@@ -12,6 +14,7 @@ import (
 
 type options[M any, ID comparable, U any] struct {
 	query         *query.Config
+	renderer      crudhttp.Renderer
 	errorHandler  func(http.ResponseWriter, *http.Request, error)
 	transform     func(*http.Request, M) any
 	scope         func(*http.Request) ([]crud.Option, error)
@@ -36,6 +39,13 @@ func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] 
 // than reimplementing the table, or the two will drift.
 func WithErrorHandler[M any, ID comparable, U any](fn func(http.ResponseWriter, *http.Request, error)) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.errorHandler = fn }
+}
+
+// WithRenderer replaces the body every failed request answers with — the seam
+// for RFC 9457, or for a shape a client already speaks. The status table stays
+// shared either way ([[D-045]]).
+func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U] {
+	return func(o *options[M, ID, U]) { o.renderer = r }
 }
 
 // WithTransform renders each entity through a presenter — the place to hide
@@ -87,8 +97,16 @@ func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U] {
 // ---------------------------------------------------------------------------
 // errors
 
-// ErrorBody is the JSON shape of a failed request.
-type ErrorBody = crudhttp.ErrorBody
+// Envelope is the JSON shape of a failed request.
+type Envelope = crudhttp.Envelope
+
+// Renderer is the seam WithRenderer replaces.
+type Renderer = crudhttp.Renderer
+
+// defaultRenderer is what a handler and the middleware fall back to. One value,
+// built once: a Renderer holds a vocabulary and a catalogue and nothing
+// per-request, so sharing it is what makes the zero-config case free.
+var defaultRenderer = crudhttp.NewRenderer()
 
 // Status maps a repository or query error to an HTTP status code. Everything it
 // recognises is a client mistake or an access decision; anything else is 500.
@@ -97,11 +115,42 @@ type ErrorBody = crudhttp.ErrorBody
 // statuses without reimplementing the table.
 func Status(err error) int { return crudhttp.Status(err) }
 
-// DefaultErrorHandler writes the mapped status and a small JSON body. A 500
+// DefaultErrorHandler writes the mapped status and the error envelope. A 500
 // deliberately says nothing: the underlying message could be a SQL error.
-func DefaultErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
-	status, body := crudhttp.Body(err)
+func DefaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	render(defaultRenderer, w, r, err)
+}
+
+// render is the one place a failure leaves this package, whichever renderer
+// produced it.
+func render(rd crudhttp.Renderer, w http.ResponseWriter, r *http.Request, err error) {
+	ctx := context.Background()
+	if r != nil {
+		// The locale is a rendering parameter, read here rather than carried on
+		// the fault: a fault crossing a queue must not carry the locale of the
+		// request that made it. First tag only — q-values pick between
+		// translations we do not have.
+		ctx = crudhttp.WithLocale(r.Context(), firstTag(r.Header.Get("Accept-Language")))
+	}
+	status, header, body := rd.Render(ctx, err)
+	for k, vs := range header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	if body == nil {
+		w.WriteHeader(status)
+		return
+	}
 	writeJSON(w, status, body)
+}
+
+// firstTag reads the first language tag out of an Accept-Language header.
+func firstTag(h string) string {
+	if i := strings.IndexAny(h, ",;"); i >= 0 {
+		h = h[:i]
+	}
+	return strings.TrimSpace(h)
 }
 
 // writeJSON is the one place a response leaves this package.
@@ -116,7 +165,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("crudnet: encoding the response: %v", err)
-		status, body = http.StatusInternalServerError, []byte(`{"error":"internal_error"}`)
+		status = http.StatusInternalServerError
+		body, _ = json.Marshal(crudhttp.Internal())
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

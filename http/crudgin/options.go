@@ -1,6 +1,8 @@
 package crudgin
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/shardit-io/vv/crud"
@@ -10,6 +12,7 @@ import (
 
 type options[M any, ID comparable, U any] struct {
 	query         *query.Config
+	renderer      crudhttp.Renderer
 	errorHandler  func(*gin.Context, error)
 	transform     func(*gin.Context, M) any
 	scope         func(*gin.Context) ([]crud.Option, error)
@@ -34,6 +37,13 @@ func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] 
 // than reimplementing the table, or the two will drift.
 func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) { o.errorHandler = fn }
+}
+
+// WithRenderer replaces the body every failed request answers with — the seam
+// for RFC 9457, or for a shape a client already speaks. The status table stays
+// shared either way ([[D-045]]).
+func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U] {
+	return func(o *options[M, ID, U]) { o.renderer = r }
 }
 
 // WithTransform renders each entity through a presenter — the place to hide
@@ -85,8 +95,16 @@ func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U] {
 // ---------------------------------------------------------------------------
 // errors
 
-// ErrorBody is the JSON shape of a failed request.
-type ErrorBody = crudhttp.ErrorBody
+// Envelope is the JSON shape of a failed request.
+type Envelope = crudhttp.Envelope
+
+// Renderer is the seam WithRenderer replaces.
+type Renderer = crudhttp.Renderer
+
+// defaultRenderer is what a handler and the middleware fall back to. One value,
+// built once: a Renderer holds a vocabulary and a catalogue and nothing
+// per-request, so sharing it is what makes the zero-config case free.
+var defaultRenderer = crudhttp.NewRenderer()
 
 // Status maps a repository or query error to an HTTP status code. Everything it
 // recognises is a client mistake or an access decision; anything else is 500.
@@ -95,15 +113,49 @@ type ErrorBody = crudhttp.ErrorBody
 // statuses without reimplementing the table.
 func Status(err error) int { return crudhttp.Status(err) }
 
-// DefaultErrorHandler writes the mapped status and a small JSON body. A 500
+// DefaultErrorHandler writes the mapped status and the error envelope. A 500
 // deliberately says nothing: the underlying message could be a SQL error.
 //
 // The error is also attached to the context, so Gin's own logging middleware
 // reports the cause the response body is not allowed to carry.
 func DefaultErrorHandler(c *gin.Context, err error) {
-	status, body := crudhttp.Body(err)
+	render(defaultRenderer, c, err)
+}
+
+// render is the one place a failure leaves this package, whichever renderer
+// produced it.
+func render(rd crudhttp.Renderer, c *gin.Context, err error) {
 	if err != nil {
 		_ = c.Error(err)
 	}
+	write(rd, c, err)
+}
+
+// write renders without filing the error in c.Errors. The middleware reads that
+// bag, so filing there again would grow it by one entry per render.
+func write(rd crudhttp.Renderer, c *gin.Context, err error) {
+	// The locale is a rendering parameter, read here rather than carried on the
+	// fault: a fault crossing a queue must not carry the locale of the request
+	// that made it. First tag only — q-values pick between translations we do
+	// not have.
+	ctx := crudhttp.WithLocale(c.Request.Context(), firstTag(c.GetHeader("Accept-Language")))
+	status, header, body := rd.Render(ctx, err)
+	for k, vs := range header {
+		for _, v := range vs {
+			c.Writer.Header().Add(k, v)
+		}
+	}
+	if body == nil {
+		c.AbortWithStatus(status)
+		return
+	}
 	c.AbortWithStatusJSON(status, body)
+}
+
+// firstTag reads the first language tag out of an Accept-Language header.
+func firstTag(h string) string {
+	if i := strings.IndexAny(h, ",;"); i >= 0 {
+		h = h[:i]
+	}
+	return strings.TrimSpace(h)
 }

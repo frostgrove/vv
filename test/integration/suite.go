@@ -763,3 +763,25 @@ func tenantOf(ctx context.Context) (any, error) {
 	}
 	return t, nil
 }
+
+// The error envelope as a client actually sees it.
+//
+// Not crudhttp.Envelope: errs.Violation writes error_code through a
+// hand-written MarshalJSON and declares no UnmarshalJSON, so decoding a
+// response back through the library's own types silently yields zero values.
+// A test that did that would pass against any body, which is the one thing
+// these tests must not do.
+type wireEnvelope struct {
+	Type    string `json:"type"`
+	Partial bool   `json:"partial"`
+	Errors  struct {
+		Validation []wireViolation `json:"validation"`
+		General    []wireViolation `json:"general"`
+	} `json:"errors"`
+}
+
+type wireViolation struct {
+	Field   []any  `json:"field"`
+	Code    string `json:"error_code"`
+	Message string `json:"message"`
+}

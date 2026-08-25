@@ -9,20 +9,72 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/query"
 )
 
-// failed decodes the error envelope every failing request answers with. A body
-// that is not that envelope is itself the bug: a client cannot branch on a
-// stack trace.
-func failed(t *testing.T, r response) ErrorBody {
+// wireViolation is one entry of the envelope exactly as a client reads it.
+//
+// The tests decode the wire shape rather than errs.Violation, and that is not a
+// stylistic choice: the Go type marshals into this and has no UnmarshalJSON, so
+// decoding a response into it would answer the zero value for every field and
+// every assertion below would pass against an empty body.
+type wireViolation struct {
+	Field   []any  `json:"field"`
+	Code    string `json:"error_code"`
+	Message string `json:"message"`
+}
+
+// path renders the field array the dotted way, so a test can say
+// "filter.Price" instead of building a slice.
+func (v wireViolation) path() string {
+	var b strings.Builder
+	for i, step := range v.Field {
+		if n, ok := step.(float64); ok {
+			fmt.Fprintf(&b, "[%d]", int(n))
+			continue
+		}
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		fmt.Fprintf(&b, "%v", step)
+	}
+	return b.String()
+}
+
+type wireEnvelope struct {
+	Type    string `json:"type"`
+	Partial bool   `json:"partial"`
+	Errors  struct {
+		Validation []wireViolation `json:"validation"`
+		General    []wireViolation `json:"general"`
+	} `json:"errors"`
+}
+
+// envelope decodes the body every failing request answers with. A body that is
+// not that envelope is itself the bug: a client cannot branch on a stack trace.
+func envelope(t *testing.T, r response) wireEnvelope {
 	t.Helper()
-	var body ErrorBody
-	r.decode(t, &body)
-	if body.Error == "" {
+	var env wireEnvelope
+	r.decode(t, &env)
+	if env.Type != "error" {
+		t.Fatalf("a %d answered a body that is not the error envelope: %s", r.status, r.body)
+	}
+	return env
+}
+
+// failed is the single violation almost every test here is about.
+func failed(t *testing.T, r response) wireViolation {
+	t.Helper()
+	env := envelope(t, r)
+	vs := append(append([]wireViolation{}, env.Errors.Validation...), env.Errors.General...)
+	if len(vs) == 0 {
 		t.Fatalf("a %d answered without naming the error: %s", r.status, r.body)
 	}
-	return body
+	if vs[0].Code == "" {
+		t.Fatalf("a %d answered without an error_code: %s", r.status, r.body)
+	}
+	return vs[0]
 }
 
 // ---------------------------------------------------------------------------
@@ -54,8 +106,8 @@ func TestAMalformedBodyIsRejectedWithoutTouchingTheRepository(t *testing.T) {
 			if r.status != http.StatusBadRequest {
 				t.Fatalf("%s %s with %s answered %d, want 400: %s", tc.method, tc.target, tc.body, r.status, r.body)
 			}
-			if body := failed(t, r); body.Error != "bad_request" || body.Message == "" {
-				t.Fatalf("the envelope was %+v, want a bad_request that says what went wrong", body)
+			if body := failed(t, r); body.Code != "malformed_body" || body.Message == "" {
+				t.Fatalf("the envelope was %+v, want a malformed_body that says what went wrong", body)
 			}
 			if len(fake.calls) != 0 {
 				t.Fatalf("a body that never parsed still reached the repository: %v", fake.methods())
@@ -131,7 +183,7 @@ func TestAQueryThatNamesSomethingTheModelLacksIsABadRequest(t *testing.T) {
 				t.Fatalf("%s answered %d, want 400: %s", tc.target, r.status, r.body)
 			}
 			body := failed(t, r)
-			if body.Error != "bad_request" || body.Path != tc.path || body.Message != tc.message {
+			if body.Code != "bad_query" || body.path() != tc.path || body.Message != tc.message {
 				t.Fatalf("the envelope was %+v, want bad_request at %q saying %q", body, tc.path, tc.message)
 			}
 			if len(fake.calls) != 0 {
@@ -181,13 +233,14 @@ func TestRepositoryErrorsBecomeStatusCodes(t *testing.T) {
 	}{
 		{"a missing row", crud.ErrNotFound, http.StatusNotFound, "not_found"},
 		{"an access decision", crud.ErrForbidden, http.StatusForbidden, "forbidden"},
-		{"a collision", crud.ErrConflict, http.StatusConflict, "conflict"},
-		{"a save with no key", crud.ErrMissingID, http.StatusBadRequest, "bad_request"},
+		{"a collision nothing finer was learned about", crud.ErrConflict, http.StatusConflict, "conflict"},
+		{"a stale write", crud.ErrStaleVersion, http.StatusConflict, "stale_version"},
+		{"a save with no key", crud.ErrMissingID, http.StatusBadRequest, "invalid_id"},
 		{"a field the model lacks", &crud.UnknownFieldError{Model: "Widget", Field: "nope"},
-			http.StatusBadRequest, "bad_request"},
+			http.StatusBadRequest, "unknown_field"},
 		{"a sentinel with context wrapped around it", fmt.Errorf("loading widget 42: %w", crud.ErrNotFound),
 			http.StatusNotFound, "not_found"},
-		{"anything else", errors.New("the disk is on fire"), http.StatusInternalServerError, "internal_error"},
+		{"anything else", errors.New("the disk is on fire"), http.StatusInternalServerError, "internal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, fake := mount(t)
@@ -198,7 +251,7 @@ func TestRepositoryErrorsBecomeStatusCodes(t *testing.T) {
 			if r.status != tc.status {
 				t.Fatalf("%v answered %d, want %d: %s", tc.err, r.status, tc.status, r.body)
 			}
-			if got := failed(t, r).Error; got != tc.tag {
+			if got := failed(t, r).Code; got != tc.tag {
 				t.Fatalf("the envelope names the error %q, want %q", got, tc.tag)
 			}
 		})
@@ -228,7 +281,7 @@ func TestEveryRouteMapsARefusalTheSameWay(t *testing.T) {
 			if r.status != http.StatusForbidden {
 				t.Fatalf("%s %s answered %d, want 403: %s", tc.method, tc.target, r.status, r.body)
 			}
-			if got := failed(t, r).Error; got != "forbidden" {
+			if got := failed(t, r).Code; got != "forbidden" {
 				t.Fatalf("the envelope names the error %q, want forbidden", got)
 			}
 		})
@@ -242,6 +295,18 @@ func TestA500NeverEchoesTheInternalError(t *testing.T) {
 	secret := errors.New(`pq: password authentication failed for user "reporting" (host=10.0.0.5 db=prod)`)
 	leaks := []string{"pq:", "password", "reporting", "10.0.0.5", "prod"}
 
+	// The same secret, arriving through a fault instead of a bare error: a
+	// classified failure carries Detail and Params, and those are the two
+	// channels a renderer could copy into a body without ever touching
+	// err.Error(). [[D-044]] owed this extension to phase 4.
+	rich := errs.Internal().Op("Save").Entity("Widget").Code(errs.CodeInternal).
+		Message(secret.Error()).
+		Field("Name").Code(errs.CodeInternal).Message(secret.Error()).
+		Params(errs.P{"host": "10.0.0.5", "user": "reporting"}).
+		Source(errs.Source{Table: "widgets", Schema: "prod", Constraint: "widgets_name_key", Columns: []string{"name"}}).
+		Detail(errs.Detail{Dialect: "postgres", SQLState: "28P01", Constraint: "widgets_name_key", Table: "widgets", Driver: secret}).
+		Wrapping(secret).Fault()
+
 	for _, tc := range []struct{ name, method, target, body string }{
 		{"list", http.MethodGet, "/widgets", ""},
 		{"one entity", http.MethodGet, "/widgets/42", ""},
@@ -251,21 +316,30 @@ func TestA500NeverEchoesTheInternalError(t *testing.T) {
 		{"delete", http.MethodDelete, "/widgets/42", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app, fake := mount(t)
-			fake.err = fmt.Errorf("querying widgets: %w", secret)
+			for _, arrival := range []struct {
+				how string
+				err error
+			}{
+				{"a bare error", fmt.Errorf("querying widgets: %w", secret)},
+				{"a fault carrying Detail and Params", rich},
+			} {
+				app, fake := mount(t)
+				fake.err = arrival.err
 
-			r := do(t, app, tc.method, tc.target, tc.body)
+				r := do(t, app, tc.method, tc.target, tc.body)
 
-			if r.status != http.StatusInternalServerError {
-				t.Fatalf("%s %s answered %d, want 500: %s", tc.method, tc.target, r.status, r.body)
-			}
-			if got := string(r.body); got != `{"error":"internal_error"}` {
-				t.Fatalf("a 500 answered %s, want nothing but the status", got)
-			}
-			for _, fragment := range leaks {
-				if strings.Contains(string(r.body), fragment) {
-					t.Fatalf("the response leaks %q from the internal error: %s", fragment, r.body)
+				if r.status != http.StatusInternalServerError {
+					t.Fatalf("%s %s with %s answered %d, want 500: %s", tc.method, tc.target, arrival.how, r.status, r.body)
 				}
+				if got := string(r.body); got != `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` {
+					t.Fatalf("a 500 answered %s, want nothing but the status", got)
+				}
+				for _, fragment := range leaks {
+					if strings.Contains(string(r.body), fragment) {
+						t.Fatalf("the response leaks %q from the internal error: %s", fragment, r.body)
+					}
+				}
+				_ = fake
 			}
 		})
 	}
@@ -285,6 +359,8 @@ func TestStatusMapsWhatItPromisesTo(t *testing.T) {
 		{"a declaration that does not hold together", &crud.SchemaError{Model: "Widget", Reason: "no primary key"},
 			http.StatusBadRequest},
 		{"an error nobody recognises", errors.New("boom"), http.StatusInternalServerError},
+		{"a classified value violation", errs.Validation().Code(errs.CodeTooLong).Fault(), http.StatusUnprocessableEntity},
+		{"a lock the engine gave up on", errs.Retryable().Code(errs.CodeLockTimeout).Fault(), http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Status(tc.err); got != tc.want {
@@ -326,7 +402,7 @@ func TestDeletingNothingIs404ForOneRowAndZeroForASet(t *testing.T) {
 		if r.status != http.StatusNotFound {
 			t.Fatalf("deleting a row that was not there answered %d, want 404: %s", r.status, r.body)
 		}
-		if got := failed(t, r).Error; got != "not_found" {
+		if got := failed(t, r).Code; got != "not_found" {
 			t.Fatalf("the envelope names the error %q, want not_found", got)
 		}
 		if ids := fake.only(t, "Delete").IDs; len(ids) != 1 || ids[0] != 42 {
@@ -381,7 +457,7 @@ func TestAScopeThatFailsIsMappedLikeAnyOtherError(t *testing.T) {
 		if r.status != http.StatusInternalServerError {
 			t.Fatalf("a scope that could not run answered %d, want 500: %s", r.status, r.body)
 		}
-		if got := string(r.body); got != `{"error":"internal_error"}` {
+		if got := string(r.body); got != `{"type":"error","errors":{"general":[{"error_code":"internal"}]}}` {
 			t.Fatalf("a 500 answered %s, want nothing but the status", got)
 		}
 		if len(fake.calls) != 0 {

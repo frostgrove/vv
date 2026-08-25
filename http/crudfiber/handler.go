@@ -29,6 +29,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/http/crudhttp"
 	"github.com/shardit-io/vv/query"
 )
@@ -50,9 +51,18 @@ type Handler[M any, ID comparable, U any] struct {
 // repository, so the call site carries no generics.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	h := &Handler[M, ID, U]{repo: repo, meta: repo.Meta()}
-	h.opt.errorHandler = DefaultErrorHandler
 	for _, o := range opts {
 		o(&h.opt)
+	}
+	if h.opt.errorHandler == nil {
+		// After the options, not before: WithRenderer has to be able to reach
+		// the handler the routes actually call, and a default installed first
+		// would have closed over the wrong renderer.
+		rd := h.opt.renderer
+		if rd == nil {
+			rd = defaultRenderer
+		}
+		h.opt.errorHandler = func(c fiber.Ctx, err error) error { return render(rd, c, err) }
 	}
 	h.cfg = h.opt.query
 	return h
@@ -185,8 +195,9 @@ func (h *Handler[M, ID, U]) GetByID(c fiber.Ctx) error {
 // client cannot pick its own id or forge a server-side timestamp.
 func (h *Handler[M, ID, U]) Create(c fiber.Ctx) error {
 	var m M
+	keep(c)
 	if err := c.Bind().Body(&m); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		return h.fail(c, crudhttp.MalformedBody(err))
 	}
 	if err := h.sanitize(&m); err != nil {
 		return h.fail(c, err)
@@ -209,8 +220,9 @@ func (h *Handler[M, ID, U]) Update(c fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	var dto U
+	keep(c)
 	if err := c.Bind().Body(&dto); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		return h.fail(c, crudhttp.MalformedBody(err))
 	}
 	if h.opt.beforeUpdate != nil {
 		if err := h.opt.beforeUpdate(c, id, &dto); err != nil {
@@ -240,8 +252,9 @@ func (h *Handler[M, ID, U]) Replace(c fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	var m M
+	keep(c)
 	if err := c.Bind().Body(&m); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		return h.fail(c, crudhttp.MalformedBody(err))
 	}
 	if h.meta.PK.Auto && !h.opt.allowClientID {
 		if _, err := h.repo.GetByID(c.Context(), id); err != nil {
@@ -252,7 +265,7 @@ func (h *Handler[M, ID, U]) Replace(c fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	if err := h.meta.SetID(&m, id); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		return h.fail(c, crudhttp.BadRequestAs(errs.CodeInvalidID, nil, "%s", err))
 	}
 	if h.opt.beforeSave != nil {
 		if err := h.opt.beforeSave(c, &m); err != nil {
@@ -288,13 +301,13 @@ type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 func (h *Handler[M, ID, U]) BulkDelete(c fiber.Ctx) error {
 	var req BulkDeleteRequest[ID]
 	if err := c.Bind().Body(&req); err != nil {
-		return h.fail(c, crudhttp.BadRequest(err))
+		return h.fail(c, crudhttp.MalformedBody(err))
 	}
 	if len(req.IDs) == 0 {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": 0})
 	}
 	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
-		return h.fail(c, crudhttp.BadRequestf("at most %d ids per request", h.opt.maxBulk))
+		return h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
 	}
 	n, err := h.repo.Delete(c.Context(), req.IDs...)
 	if err != nil {
@@ -341,7 +354,7 @@ func (h *Handler[M, ID, U]) parseBody(c fiber.Ctx) (*query.Request, error) {
 		return req, nil
 	}
 	if err := c.Bind().Body(req); err != nil {
-		return nil, crudhttp.BadRequest(err)
+		return nil, crudhttp.MalformedBody(err)
 	}
 	return req, nil
 }
@@ -368,4 +381,29 @@ func (h *Handler[M, ID, U]) entity(c fiber.Ctx, status int, m M) error {
 
 func (h *Handler[M, ID, U]) fail(c fiber.Ctx, err error) error {
 	return h.opt.errorHandler(c, err)
+}
+
+// bodyKey is where the retained request body lives on this binding. Locals and
+// not the context: Fiber's Bind().Body dispatches on Content-Type and still has
+// to accept XML and form encodings, so the copy is taken here rather than
+// inside crudhttp's JSON decoder.
+type bodyKeyType struct{}
+
+var bodyKey = bodyKeyType{}
+
+// keep copies the request body for the raw-body path fallback ([[D-043]]).
+//
+// A copy and never a reference. Fiber documents c.Body() as valid only within
+// the handler and this binding builds its app with a plain fiber.New(), so
+// Immutable is off — a stored reference is a use-after-free that would surface
+// as a corrupted field path under load.
+//
+// One copy per write request, capped, and only on the three routes whose body
+// carries field values: a bulk delete carries ids, and a restrict violation
+// raised by one names a column of the child table, which this model's Meta
+// could not translate anyway.
+func keep(c fiber.Ctx) {
+	if raw := crudhttp.KeepBody(c.Body()); len(raw) > 0 {
+		fiber.Locals(c, bodyKey, raw)
+	}
 }

@@ -71,6 +71,7 @@ func StandardCodes() *Codes {
 		{CodeRestrict, KindConflict, "this record is still referred to"},
 		{CodeStaleVersion, KindConflict, "the record was changed by someone else"},
 		{CodeExclusion, KindConflict, "this value overlaps one that is already there"},
+		{CodeConflict, KindConflict, "the request conflicts with the current state"},
 
 		{CodeRequired, KindValidation, "this field is required"},
 		{CodeCheck, KindValidation, "this value is not allowed"},

@@ -75,7 +75,7 @@ Guarantee 11 is [[UC-017]]'s territory as well: the two use cases share the
 envelope, and the same decision governs both.
 
 ## Status
-**covered except for guarantee 11.**
+**covered.**
 
 Every status in guarantee 1 has a test, including the branches no route reaches
 with a real repository behind it; the "same refusal from every route" table and
@@ -100,22 +100,26 @@ transaction the application owns and joined, or the datasource was built without
 naming which engine it speaks to. In all three the status is right and the body
 is the old one.
 
-How wide the remaining leak is has been measured rather than estimated. The
-captured error corpus records, among others, PostgreSQL's
-`Key (slug)=(anchor) already exists.` — column and submitted value — and MySQL
-naming the database, both tables and both columns of a foreign key in a single
-sentence.
+Guarantee 11 holds as of phase 4. `err.Error()` no longer reaches a body:
+`crudhttp` renders one envelope built from the fault's public projection, and a
+refusal that carries no fault is turned into a synthesised one first, so there is
+nowhere for a driver's sentence to arrive from. The 500 body is a fixed value
+with no message field at all, so [[D-015]]'s silence holds by construction rather
+than by a case in a switch somebody may edit.
 
-This was previously written here as a deliberate design leak awaiting a
-decision. It now has one: [[D-044]] refuses it, and phase 4 of
-`ROADMAP-errors.md` is where the render layer closes it — for every 409 and not
-only the classified ones. Until then an application that treats constraint names
-as internal has to install its own mapping.
+What proves it is not one hand-written case: a body is rendered from **every**
+entry in the captured error corpus and asserted to contain no substring of that
+entry's constraint name, table, column, SQLSTATE or native number. Asserting one
+violation would have passed for a renderer that leaked a different field. How
+wide the leak had been was measured the same way — the corpus records
+PostgreSQL's `Key (slug)=(anchor) already exists.` and MySQL naming a database,
+two tables and two columns in one sentence.
 
-Two things that came with the classification are worth stating because they look
-like guarantee failures and are not. A failure the engine calls a data error —
-a value too long, out of range, of the wrong type — and one it calls retryable —
-a deadlock, a lock timeout, a serialisation failure — now arrive carrying a code
-and a class, and both are still 500 with a silent body. Nothing maps the class to
-a status yet, and shipping a second mapping beside the sentinel one would let one
-failure answer two ways.
+Two statuses moved in the same change, and the earlier version of this section
+said they had not. A data error — a value too long, out of range, of the wrong
+type — is now **422**, and a retryable one — a deadlock, a lock timeout, a
+serialisation failure — is **503**. Both were 500 with a silent body. What
+decides is [[D-049]]: the kind decides the status where a fault exists, and the
+sentinel table decides only where none does. The cost is stated there and is
+real — a violation the engine reported but nothing classified still answers 409,
+so the status depends on whether classification succeeded.

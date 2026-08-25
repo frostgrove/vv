@@ -93,6 +93,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 | [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
 | [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted | process & tooling |
+| [D-049](D-049-the-kind-decides-the-status.md) | The kind decides the status; the sentinel decides only when there is no fault | accepted | errors |
 
 ## By area
 
@@ -124,7 +125,7 @@ between them).
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
 
-**Errors** — D-015 (the sentinel list and the HTTP mapping), D-046 (how a driver
+**Errors** — D-015 (the sentinel list and the HTTP mapping), D-049 (which of the two decides a status), D-046 (how a driver
 error is classified, and why the class alone is not a gate), D-039 (message text
 is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),

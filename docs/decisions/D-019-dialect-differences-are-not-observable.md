@@ -164,10 +164,17 @@ difference 10 arrived with the classifier that reads it.
     (b) *The caller's declaration.* Whether a MariaDB server is classified as
     MariaDB depends on which `crudsql` constructor declared it, because nothing
     in the tree tells the two servers apart at run time and guessing would answer
-    "mysql" ([[D-046]]). One failed CHECK on one server is a 409 reading
-    `errs: conflict: check` through `crudsql.MariaDB` and a 409 carrying the
-    driver's own sentence through `crudsql.MySQL`. The status never moves; the
-    code does.
+    "mysql" ([[D-046]]). One failed CHECK on one server reads
+    `errs: conflict: check` through `crudsql.MariaDB` and carries the driver's
+    own sentence through `crudsql.MySQL`.
+
+    **This paragraph used to end "the status never moves; the code does", and
+    phase 4 made that false.** The kind now decides the status ([[D-049]]), and a
+    `NOT NULL` or a `CHECK` classified as `required` or `check` answers **422**
+    where an unclassified one answers 409 — measured. So a misdeclared engine
+    moves the status too, and it is the sharpest reason to declare the engine
+    correctly rather than a cosmetic one. `crudsql.Open`, `From` and `Source`
+    refuse to guess for exactly this reason.
 
 ## What it forbids
 

@@ -1,6 +1,6 @@
 # D-043 — A path is translated one hop per layer, and no layer guesses a hop it does not own
 
-**Status:** accepted — in force from phase 4 (`ROADMAP-errors.md` §14)
+**Status:** accepted
 **Invariant:** Each layer translates only the hop it already knows about. A layer that would have to guess a mapping it did not perform must not translate it; where a path cannot be resolved, it is marked approximate rather than invented.
 
 ## The decision
@@ -90,9 +90,9 @@ and the generated mappers are phase 8's.
 - `http/crudhttp/request.go:DecodeJSON` — a pure function whose `io.ReadAll`
   result dies at return, so the carrier phase 4 owes (`DecodeJSONKeep`) has to be
   added rather than reached for.
-- `repo/decorators/faults/TODO.md` — where the first hop will live.
+- `repo/decorators/faults/faults.go` — the first hop, constraint and table to model field, through `crud.Meta`.
 
-## Proven by (owed)
+## Proven by
 
 - Phase 1 shipped the mechanism and `TestAChainReportsWhenAHopDeclined` in
   `errs/spi_test.go` pins it — a declined hop reports false and keeps the

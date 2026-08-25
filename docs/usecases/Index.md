@@ -58,7 +58,7 @@ this page is the roadmap.
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | Talk to more than one database in one process | application author | covered |
 | [UC-013](UC-013-business-rules-between-handler-and-repository.md) | Insert business rules between the handler and the repository | application author | covered |
 | [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | partially covered |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | partially covered |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | covered |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
 | [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | HTTP client rendering a form, and application author | not covered |
 
@@ -114,8 +114,8 @@ a decision.
    constraint name, for a row the caller cannot see.
 
    Both halves now have a decision, and they are different decisions. The
-   constraint name leaving the process is [[D-044]]'s, closing at phase 4 of
-   `ROADMAP-errors.md`. The oracle itself is [[D-042]]'s, and D-042 does **not**
+   constraint name leaving the process was [[D-044]]'s, and phase 4 closed it:
+   no body names a constraint any more. The oracle itself is [[D-042]]'s, and D-042 does **not**
    close it — a unique constraint a public endpoint can trigger is an oracle by
    construction. What phase 7 adds is that the disclosure becomes adjustable
    (per-constraint opt-out, scope-aware probing, code-only mode) and that the
@@ -183,20 +183,14 @@ a decision.
 
 ### Sharp edges that need a decision, not a test
 
-16. **[UC-015] Every status but 500 echoes the error's own text.** That is what
-    makes a 400 useful; for a 409 it means the driver's constraint and column
-    names reach the client — but only where the failure was **not** classified.
-    A classified 409 now carries a code and no driver text. Three cases are still
-    unclassified: a violation number nobody has provoked, a write inside a
-    transaction the application owns and joined, and a datasource built without
-    naming which engine it speaks to. An application that treats constraint names
-    as internal still has to install its own mapping.
-
-    **No longer awaiting a decision.** [[D-044]] settles it — a body names
-    nothing internal at any status — and phase 4 of `ROADMAP-errors.md` closes
-    it for every 409 rather than only the classified ones. It is now UC-015's
-    guarantee 11, and belongs with the guarantees that do not hold rather than
-    here; it keeps its number because the numbers are cited elsewhere.
+16. ~~**[UC-015] Every status but 500 echoes the error's own text.**~~
+    **Closed by phase 4.** `err.Error()` reaches no body any more, classified or
+    not: the render layer builds one envelope from the fault's public
+    projection, and a refusal carrying no fault is turned into a synthesised one
+    first, so there is nowhere for a driver's sentence to arrive from. [[D-044]]
+    is the decision; the proof is a render over **every** captured corpus entry
+    rather than one hand-written case. It is UC-015's guarantee 11 and it holds.
+    The entry keeps its number because the numbers are cited elsewhere.
 
 17. **[UC-016] A create can resurrect a hidden row.** The rule cannot reach an
     upsert, so a save carrying a tombstone's key overwrites it — and under a gate

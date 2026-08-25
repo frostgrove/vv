@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -249,6 +250,10 @@ func mount(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*fiber.Ap
 type response struct {
 	status int
 	body   []byte
+	// header is what a status carries besides a body — Retry-After on a 503 is
+	// the only one the library sets, and a test that could not see it would
+	// have to trust the renderer's word for it.
+	header http.Header
 }
 
 func (r response) decode(t *testing.T, into any) {
@@ -279,7 +284,7 @@ func do(t *testing.T, app *fiber.App, method, target, body string) response {
 	if err != nil {
 		t.Fatalf("%s %s: reading the response: %v", method, target, err)
 	}
-	return response{status: res.StatusCode, body: raw}
+	return response{status: res.StatusCode, body: raw, header: res.Header}
 }
 
 // ok sends a request and insists it succeeded, so a test that is about what

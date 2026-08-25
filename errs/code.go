@@ -32,6 +32,12 @@ const (
 	CodeBadQuery      Code = "bad_query"
 
 	// decision-shaped
+	// CodeConflict is a collision nothing finer was learned about: an engine
+	// number no parser lists, or a source built without naming its engine. It
+	// is KindConflict's twin of CodeInternal — without it an unclassified 409
+	// has no code to render, and a client that branches on error_code would
+	// read an empty one at the one status it is most likely to handle.
+	CodeConflict        Code = "conflict"
 	CodeNotFound        Code = "not_found"
 	CodeForbidden       Code = "forbidden"
 	CodeUnauthenticated Code = "unauthenticated"

@@ -366,10 +366,21 @@ func TestNetHTTPRejections(t *testing.T) {
 			if r.status != tc.want {
 				t.Fatalf("status %d (want %d): %s", r.status, tc.want, r.body)
 			}
-			var body crudnet.ErrorBody
+			var body wireEnvelope
 			r.decode(t, &body)
-			if body.Error == "" {
-				t.Fatalf("no error code in %s", r.body)
+			// Decoded into the wire shape and not into crudhttp.Envelope,
+			// because errs.Violation writes error_code through a hand-written
+			// MarshalJSON and has no UnmarshalJSON — reading the response back
+			// through the library's own type yields an empty Code and this
+			// assertion would pass on any body at all.
+			vs := append(append([]wireViolation{}, body.Errors.Validation...), body.Errors.General...)
+			if len(vs) == 0 {
+				t.Fatalf("no violations in %s", r.body)
+			}
+			for _, v := range vs {
+				if v.Code == "" {
+					t.Fatalf("a violation with no error_code in %s", r.body)
+				}
 			}
 		})
 	}

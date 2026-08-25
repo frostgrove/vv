@@ -248,6 +248,10 @@ func mount(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*http.Ser
 type response struct {
 	status int
 	body   []byte
+	// header is what a status carries besides a body — Retry-After on a 503 is
+	// the only one the library sets, and a test that could not see it would
+	// have to trust the renderer's word for it.
+	header http.Header
 }
 
 func (r response) decode(t *testing.T, into any) {
@@ -271,7 +275,7 @@ func do(t *testing.T, mux *http.ServeMux, method, target, body string) response 
 	}
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	return response{status: w.Code, body: w.Body.Bytes()}
+	return response{status: w.Code, body: w.Body.Bytes(), header: w.Header()}
 }
 
 // ok sends a request and insists it succeeded, so a test that is about what

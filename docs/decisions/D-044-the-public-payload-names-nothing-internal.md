@@ -1,6 +1,6 @@
 # D-044 — The public payload names nothing internal
 
-**Status:** accepted — the types carry it now: `Violation` and `Fault` marshal and print the public projection only; the rendered body comes into force with phase 4 (`ROADMAP-errors.md` §14)
+**Status:** accepted
 **Invariant:** A response body carries no constraint name, table name, column name, SQLSTATE, native error number, CHECK expression, or any message parameter derived from one. What reaches a client is a code, a path into the request it sent, and a message written for a human.
 
 ## The decision
@@ -157,7 +157,7 @@ is [[D-043]]'s, and it is the one place the two vocabularies touch.
   driver error's own `Detail` field is excluded, because fmt renders an
   error-typed field through `Error()` and asserting its absence would be free.
 
-## Proven by (owed)
+## Proven by
 
 - Phase 4 owes the render test: a body built from every corpus entry contains no
   substring of the entry's constraint name, table name, column name, SQLSTATE or

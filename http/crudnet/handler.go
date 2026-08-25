@@ -38,6 +38,7 @@ import (
 	"strings"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/http/crudhttp"
 	"github.com/shardit-io/vv/query"
 )
@@ -59,9 +60,18 @@ type Handler[M any, ID comparable, U any] struct {
 // repository, so the call site carries no generics.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	h := &Handler[M, ID, U]{repo: repo, meta: repo.Meta()}
-	h.opt.errorHandler = DefaultErrorHandler
 	for _, o := range opts {
 		o(&h.opt)
+	}
+	if h.opt.errorHandler == nil {
+		// After the options, not before: WithRenderer has to be able to reach
+		// the handler the routes actually call, and a default installed first
+		// would have closed over the wrong renderer.
+		rd := h.opt.renderer
+		if rd == nil {
+			rd = defaultRenderer
+		}
+		h.opt.errorHandler = func(w http.ResponseWriter, r *http.Request, err error) { render(rd, w, r, err) }
 	}
 	h.cfg = h.opt.query
 	return h
@@ -224,7 +234,9 @@ func (h *Handler[M, ID, U]) GetByID(w http.ResponseWriter, r *http.Request) {
 // client cannot pick its own id or forge a server-side timestamp.
 func (h *Handler[M, ID, U]) Create(w http.ResponseWriter, r *http.Request) {
 	var m M
-	if err := crudhttp.DecodeJSON(r.Body, &m); err != nil {
+	raw, err := crudhttp.DecodeJSONKeep(r.Body, &m)
+	r = keep(r, raw)
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -253,7 +265,9 @@ func (h *Handler[M, ID, U]) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var dto U
-	if err := crudhttp.DecodeJSON(r.Body, &dto); err != nil {
+	raw, err := crudhttp.DecodeJSONKeep(r.Body, &dto)
+	r = keep(r, raw)
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -288,7 +302,9 @@ func (h *Handler[M, ID, U]) Replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var m M
-	if err := crudhttp.DecodeJSON(r.Body, &m); err != nil {
+	raw, err := crudhttp.DecodeJSONKeep(r.Body, &m)
+	r = keep(r, raw)
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -303,7 +319,7 @@ func (h *Handler[M, ID, U]) Replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.meta.SetID(&m, id); err != nil {
-		h.fail(w, r, crudhttp.BadRequest(err))
+		h.fail(w, r, crudhttp.BadRequestAs(errs.CodeInvalidID, nil, "%s", err))
 		return
 	}
 	if h.opt.beforeSave != nil {
@@ -353,7 +369,7 @@ func (h *Handler[M, ID, U]) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
-		h.fail(w, r, crudhttp.BadRequestf("at most %d ids per request", h.opt.maxBulk))
+		h.fail(w, r, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
 		return
 	}
 	n, err := h.repo.Delete(r.Context(), req.IDs...)
@@ -419,4 +435,16 @@ func (h *Handler[M, ID, U]) entity(w http.ResponseWriter, r *http.Request, statu
 
 func (h *Handler[M, ID, U]) fail(w http.ResponseWriter, r *http.Request, err error) {
 	h.opt.errorHandler(w, r, err)
+}
+
+// keep carries the decoded bytes to the renderer, for the raw-body path
+// fallback ([[D-043]]). One copy per write request, capped, and only on the
+// three routes whose body carries field values — a bulk delete carries ids, and
+// a restrict violation raised by one names a column of the child table, which
+// this model's Meta could not translate anyway.
+func keep(r *http.Request, raw []byte) *http.Request {
+	if len(raw) == 0 {
+		return r
+	}
+	return r.WithContext(crudhttp.WithBody(r.Context(), raw))
 }

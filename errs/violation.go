@@ -2,6 +2,7 @@ package errs
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -124,4 +125,88 @@ func (v Violation) String() string {
 		b.WriteString(v.Message)
 	}
 	return b.String()
+}
+
+// SortViolations puts a list into the total order the envelope renders in, so
+// the same failing request twice produces byte-identical output — the
+// violation-order analogue of [[D-014]], and what makes a response body
+// testable at all.
+//
+// The order is Path, then Origin, then Code, then Message:
+//
+//   - Path first, because a client renders a form by field. Grouping by
+//     anything else scatters one field's two violations, which is exactly what
+//     a form cannot use. Names sort before indices at the same depth and a
+//     shorter path sorts first.
+//   - Origin second: at one path an input violation comes before a collision. A
+//     malformed value explains a failed lookup, and the reverse reads as
+//     nonsense.
+//   - Code, then Message, to make it total.
+//
+// Two keys `ROADMAP-errors.md` §8 named are deliberately absent, and this is
+// the phase that owed the resolution. **Kind** is not a key: it is what the
+// status is chosen from, one per response, and sorting by it would put a
+// path's `unique` before the same path's `invalid_format` — the reverse of the
+// rule above. **The constraint name** is not the last tiebreaker: it exists
+// only on [Source] and only for [OriginState], so it is not total across two
+// input violations, and it would let an internal name decide a public order.
+//
+// The sort is stable, so two violations equal on all four keys keep the order
+// they were produced in.
+func SortViolations(vs []Violation) {
+	sort.SliceStable(vs, func(i, j int) bool { return less(vs[i], vs[j]) })
+}
+
+func less(a, b Violation) bool {
+	if c := comparePaths(a.Path, b.Path); c != 0 {
+		return c < 0
+	}
+	if a.Origin != b.Origin {
+		return a.Origin < b.Origin
+	}
+	if a.Code != b.Code {
+		return a.Code < b.Code
+	}
+	return a.Message < b.Message
+}
+
+// comparePaths orders two paths step by step. A name outranks an index at the
+// same depth because a client reading `["items", 0]` beside `["items","name"]`
+// is reading one object's field list, and the named half is the half it has a
+// label for.
+func comparePaths(a, b Path) int {
+	for i := range a {
+		if i >= len(b) {
+			return 1 // b is a prefix of a, so b is shorter and sorts first
+		}
+		x, y := a[i], b[i]
+		switch {
+		case !x.IsIndex && y.IsIndex:
+			return -1
+		case x.IsIndex && !y.IsIndex:
+			return 1
+		case x.IsIndex && y.IsIndex:
+			if x.Index != y.Index {
+				return cmp(x.Index, y.Index)
+			}
+		default:
+			if x.Name != y.Name {
+				return strings.Compare(x.Name, y.Name)
+			}
+		}
+	}
+	if len(b) > len(a) {
+		return -1
+	}
+	return 0
+}
+
+func cmp(a, b int) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
