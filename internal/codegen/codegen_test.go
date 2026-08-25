@@ -29,6 +29,10 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		withMeta: true,
 		specsPkg: "github.com/shardit-io/vv/repo/decorators/specs",
 		crudPkg:  "github.com/shardit-io/vv/crud",
+		portPkg:  DefaultPortPkg,
+		errsPkg:  DefaultErrsPkg,
+		netPkg:   DefaultNetPkg,
+		binding:  "net",
 	}
 	if tweak != nil {
 		tweak(g)
@@ -169,16 +173,30 @@ func TestReadonlyKeepsAFieldQueryableButNotWritable(t *testing.T) {
 	}
 }
 
-// -skip is the flag for a field the generated code should not know about.
+// -skip is the flag for a field the generated code should not know about — with
+// one exception the flag cannot avoid. Reflection reads the struct and never the
+// command line, so a skipped column is an ordinary writable column at run time
+// and the coverage assertion has to be told about it by name.
 func TestSkipRemovesAFieldEverywhere(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) {
 		g.skip = names("Title,Comments")
 	})
-	if strings.Contains(out, "Title") {
-		t.Fatalf("a skipped field survived:\n%s", out)
+	for _, header := range []string{"type ArticleUpdate struct {", "type ArticleAttrs struct {"} {
+		if declares(decl(t, out, header), "Title") {
+			t.Fatalf("a skipped field survived in %s:\n%s", header, out)
+		}
 	}
 	if strings.Contains(out, "ArticleCommentsAttrs") {
 		t.Fatalf("a skipped relation still has a metamodel:\n%s", out)
+	}
+	// The exception, asserted rather than tolerated.
+	if !strings.Contains(out, `port.MustCoverUpdate[Article, ArticleUpdate]("Title")`) {
+		t.Fatalf("the skipped column is not declared as an exclusion, so start-up refuses it:\n%s", out)
+	}
+	// And its control: a skipped *relation* is not a column, so there is nothing
+	// for reflection to disagree about and nothing to declare.
+	if strings.Contains(out, `"Comments"`) {
+		t.Fatalf("a skipped relation was declared as a column exclusion:\n%s", out)
 	}
 }
 
@@ -488,6 +506,23 @@ type Event struct {
 			t.Fatalf("run %d produced different bytes:\n%s\n---\n%s", i+2, first, got)
 		}
 	}
+
+	// The adapter half has two more map iterations in it — the inverse map and
+	// the exclusion list — so it gets the same treatment rather than inheriting
+	// the claim.
+	firstAdapter := gen(t, files, func(g *generator) {
+		g.adapter = true
+		g.readonly = names("Views,Title")
+	})
+	for i := range 8 {
+		got := gen(t, files, func(g *generator) {
+			g.adapter = true
+			g.readonly = names("Views,Title")
+		})
+		if got != firstAdapter {
+			t.Fatalf("adapter run %d produced different bytes:\n%s\n---\n%s", i+2, firstAdapter, got)
+		}
+	}
 	// Models are emitted in a stable order, not the order the parser found them.
 	order := []string{"ArticleUpdate", "AuthorUpdate", "CommentUpdate", "EventUpdate", "TagUpdate"}
 	at := 0
@@ -500,11 +535,14 @@ type Event struct {
 	}
 }
 
-// The proof that matters: the generated file builds, and the metamodel's
-// package-init check agrees with the model it was generated from.
-func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
-	out := gen(t, map[string]string{"model.go": blogModel}, nil)
-
+// runGenerated builds a throwaway module holding nothing but a model and the
+// file the generator wrote for it, and runs it.
+//
+// Package initialisation is the whole point: the metamodel's check, the inverse
+// path map and the update-coverage assertion all live there, so "it starts" and
+// "it refuses to start" are the two answers this can give.
+func runGenerated(t *testing.T, model, generated string) (string, error) {
+	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -520,15 +558,181 @@ func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 		}
 	}
 	write("go.mod", "module gencheck\n\ngo 1.26\n\nrequire github.com/shardit-io/vv v0.0.0\n\nreplace github.com/shardit-io/vv => "+root+"\n")
-	write(filepath.Join("model", "model.go"), tags(blogModel))
-	write(filepath.Join("model", "vv_gen.go"), out)
+	write(filepath.Join("model", "model.go"), model)
+	write(filepath.Join("model", "vv_gen.go"), generated)
 	write("main.go", "package main\n\nimport _ \"gencheck/model\"\n\nfunc main() {}\n")
 
 	cmd := exec.Command("go", "run", ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off")
-	if res, err := cmd.CombinedOutput(); err != nil {
+	res, err := cmd.CombinedOutput()
+	return string(res), err
+}
+
+// The proof that matters: the generated file builds, and the metamodel's
+// package-init check agrees with the model it was generated from.
+func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": blogModel}, nil)
+	if res, err := runGenerated(t, tags(blogModel), out); err != nil {
 		t.Fatalf("the generated code does not build and run: %v\n%s\n---- generated ----\n%s", err, res, out)
+	}
+}
+
+// resourceModel is the fixture for the adapter half: a key the database
+// generates, two ordinary columns and one the database fills.
+const resourceModel = `package m
+
+import "time"
+
+type Doc struct {
+	ID        int64     @db:"id,pk,auto"@
+	Title     string    @db:"title"@
+	Body      string    @db:"body"@
+	CreatedAt time.Time @db:"created_at,generated"@
+}
+`
+
+func withAdapter(g *generator) { g.adapter = true }
+
+// The phase's load-bearing test. A column the generated artefacts do not cover
+// refuses to start, and it does so with nothing regenerated — which is the half
+// regenerate-and-diff cannot reach, because that comparison only ever measures
+// the generator against itself.
+func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go toolchain")
+	}
+
+	// The control. Without it a binary that never builds for some unrelated
+	// reason would pass both arms below by failing for the wrong cause.
+	t.Run("the untampered resource starts", func(t *testing.T) {
+		out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
+		if res, err := runGenerated(t, tags(resourceModel), out); err != nil {
+			t.Fatalf("the generated resource refused to start: %v\n%s\n---- generated ----\n%s", err, res, out)
+		}
+	})
+
+	// The scenario UC-014 gap 1 describes: somebody adds a column and does not
+	// regenerate. The generator read the model's source text; the assertion
+	// reads the compiled struct. That is what makes this a check rather than a
+	// tautology.
+	t.Run("a column the model gained without regenerating", func(t *testing.T) {
+		out := gen(t, map[string]string{"model.go": resourceModel}, nil)
+		grown := strings.Replace(tags(resourceModel),
+			"\tBody      string    `db:\"body\"`",
+			"\tBody      string    `db:\"body\"`\n\tColour    string    `db:\"colour\"`", 1)
+		if grown == tags(resourceModel) {
+			t.Fatal("the fixture did not gain a column, so this measures nothing")
+		}
+		res, err := runGenerated(t, grown, out)
+		if err == nil {
+			t.Fatalf("a column the DTO does not cover started cleanly; it is silently unpatchable:\n%s", res)
+		}
+		if !strings.Contains(res, "Colour") {
+			t.Fatalf("the refusal does not name the column somebody has to act on:\n%s", res)
+		}
+	})
+
+	// The other direction: the map is edited by hand, which is what
+	// DO NOT EDIT is there to stop and what nothing could catch before.
+	t.Run("an entry deleted from the inverse map", func(t *testing.T) {
+		out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
+		cut := strings.Replace(out, "\t\"Title\": port.At(\"title\"),\n", "", 1)
+		if cut == out {
+			t.Fatalf("the fixture has no Title entry to delete:\n%s", out)
+		}
+		res, err := runGenerated(t, tags(resourceModel), cut)
+		if err == nil {
+			t.Fatalf("a map missing a column started cleanly; the wrong path would ship:\n%s", res)
+		}
+		if !strings.Contains(res, "Title") {
+			t.Fatalf("the refusal does not name the column:\n%s", res)
+		}
+	})
+}
+
+// The map's domain, asserted against what a client can and cannot send.
+func TestTheGeneratedMapCoversEveryWritableColumn(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
+	block := decl(t, out, "var DocPaths = port.MustPathMap[Doc](port.PathMap{")
+
+	for _, want := range []string{`"ID"`, `"Title"`, `"Body"`} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("the map has no entry for %s:\n%s", want, block)
+		}
+	}
+	// The control: a column the database fills is deliberately outside the
+	// domain, so a generator that emitted every column fails here rather than
+	// passing the loop above.
+	if strings.Contains(block, `"CreatedAt"`) {
+		t.Fatalf("a generated column has an entry; no client sends a key for one:\n%s", block)
+	}
+	// And the input body agrees with the map, which is what the start-up check
+	// measures the two halves against.
+	input := decl(t, out, "type DocInput struct {")
+	if !declares(input, "Title") || declares(input, "CreatedAt") {
+		t.Fatalf("the entity body and the map disagree:\n%s", input)
+	}
+}
+
+// The exclusion list is what carries a command-line flag into a file that
+// reflection reads. Without it the assertion refuses a column dropped on purpose.
+func TestTheGeneratedAssertionNamesTheReadonlyExclusions(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": resourceModel}, func(g *generator) {
+		g.adapter = true
+		g.readonly = names("Body")
+	})
+	if !strings.Contains(out, `port.MustCoverUpdate[Doc, DocUpdate]("Body")`) {
+		t.Fatalf("the coverage assertion does not declare the -readonly column:\n%s", out)
+	}
+	if !strings.Contains(out, `}, "Body")`) {
+		t.Fatalf("the inverse map does not declare the -readonly column:\n%s", out)
+	}
+	// The control: with no flag the list is empty, so this is not a generator
+	// that names every column whatever it was told.
+	plain := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
+	if !strings.Contains(plain, `port.MustCoverUpdate[Doc, DocUpdate]()`) {
+		t.Fatalf("an exclusion appeared with nothing declared:\n%s", plain)
+	}
+}
+
+// The lock, end to end: the artefacts a versioned model produces are ones that
+// start. This is the case that had no model in the tree at all.
+func TestAVersionedModelGeneratesAResourceThatStarts(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go toolchain")
+	}
+	src := `package m
+
+type Doc struct {
+	ID      int64  @db:"id,pk,auto"@
+	Title   string @db:"title"@
+	Version int    @db:"version,version"@
+}
+`
+	out := gen(t, map[string]string{"model.go": src}, withAdapter)
+	if res, err := runGenerated(t, tags(src), out); err != nil {
+		t.Fatalf("a versioned model produced a package that does not start: %v\n%s\n---- generated ----\n%s", err, res, out)
+	}
+
+	if declares(decl(t, out, "type DocInput struct {"), "Version") {
+		t.Fatalf("the lock reached the entity body:\n%s", out)
+	}
+
+	// The control: name the lock in the map and the package refuses to start,
+	// because no request carries that key. Without it, a validator that accepted
+	// anything would pass the arm above.
+	named := strings.Replace(out, "\t\"Title\": port.At(\"title\"),\n",
+		"\t\"Title\":   port.At(\"title\"),\n\t\"Version\": port.At(\"version\"),\n", 1)
+	if named == out {
+		t.Fatalf("the fixture has no Title entry to extend:\n%s", out)
+	}
+	res, err := runGenerated(t, tags(src), named)
+	if err == nil {
+		t.Fatalf("a map claiming the lock as a request key started cleanly:\n%s", res)
+	}
+	if !strings.Contains(res, "Version") {
+		t.Fatalf("the refusal does not name the entry:\n%s", res)
 	}
 }
 

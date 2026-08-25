@@ -68,8 +68,13 @@ under load, which is the worst possible way for this to fail.
 - Do not translate a hop through `crud.Schema`. Use `Meta`.
 - Do not resolve a path from a driver's message text — [[D-039]].
 - Do not emit a guessed path as if it were resolved. An unresolvable path is
-  marked approximate, and a consumer is told in the release note that `field` is
-  approximate until the generated mappers land.
+  marked approximate. That caveat is discharged for a *generated* resource since
+  phase 8, where the map is total and validated at start-up ([[D-050]]); it still
+  stands for a hand-written endpoint, which has only the raw-body index.
+- Do not let the raw-body fallback rewrite a path a declared hop already
+  translated. The index matches on a violation's last step, so over a translated
+  path it can land on a same-named key elsewhere in the payload — a guess
+  overturning a declaration.
 - Do not hold a reference to a request body past the handler. Copy, and cap the
   copy.
 - Do not add a per-transport error code so a binding can shortcut the chain.
@@ -77,8 +82,8 @@ under load, which is the worst possible way for this to fail.
 
 ## Where it lives
 
-The mechanism exists from phase 1; the render layer that uses it is phase 4's
-and the generated mappers are phase 8's.
+The mechanism exists from phase 1, the render layer that uses it from phase 4,
+and the generated mappers from phase 8.
 
 - `errs/violation.go:Violation.Approximate` — the marker. A path that could not
   be resolved says so rather than being invented, and the field is on the
@@ -92,24 +97,38 @@ and the generated mappers are phase 8's.
   result dies at return, so the carrier phase 4 owes (`DecodeJSONKeep`) has to be
   added rather than reached for.
 - `repo/decorators/faults/faults.go` — the first hop, constraint and table to model field, through `crud.Meta`.
+- `port/path.go:Fields` — the second hop, the service's, hand-written and
+  therefore partial: an undeclared head passes through.
+- `port/pathmap.go:PathMap` — the third hop, the adapter's, generated and
+  therefore total: an undeclared head declines ([[D-050]]).
+- `http/crudhttp/render.go:EnvelopeRenderer.violations` — where the chain is
+  applied, and where the fallback is held back from a path a declared hop owned.
+- `internal/codegen/adapter.go` — where the inverse is written, beside the
+  mapping it inverts.
 
 ## Proven by
 
 - Phase 1 shipped the mechanism and `TestAChainReportsWhenAHopDeclined` in
   `errs/spi_test.go` pins it — a declined hop reports false and keeps the
-  earlier hops' work, with the every-hop-accepts twin as its control. The
-  evidence this decision actually rests on is still owed, because nothing
-  translates a path yet.
+  earlier hops' work, with the every-hop-accepts twin as its control.
 - `TestTheStepsThatWriteNothingElseReadsStillWrite` in `errs/build_test.go` pins
   `Builder.Approximate` onto the violation, with the unwritten violation as its
-  control. That the marker can be set is not that anything sets it.
-- Phase 4 owes: a path resolved through a generated mapper; and a renamed JSON
-  key with no mapper entry produces the **approximate** marker, not a wrong path.
-  Without the second, a fallback that always guessed the first matching key would
-  pass.
-- Phase 4 also owes the non-JSON body degrading to the model field name.
-- Phase 8 owes the start-up refusal for a column the DTO does not cover.
+  control.
+- `TestAServicePathHopReachesTheRenderedField` — `edge_test.go` in all three
+  bindings — the service's hop reaching the rendered field, with the control
+  that an undeclared one still reaches the body index.
+- `TestADeclaredMapBeatsTheRawBodyGuess` in `http/crudhttp/render_test.go` — the
+  hop a generated adapter contributes, ahead of the fallback, with a no-map
+  control on every arm. It also pins the half this decision owed since phase 4:
+  a key no hop declares produces the **approximate** marker rather than a wrong
+  path.
+- `TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings` in
+  `test/portmount/mount_test.go` — one generated mapper, three transports, one
+  answer, with the unmapped control.
+- `TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing` in
+  `internal/codegen/codegen_test.go` — the start-up refusal phase 8 owed, in
+  both directions and with the untampered control ([[D-050]]).
 
 ## See also
 
-[[D-021]] [[D-039]] [[D-044]] [[D-045]] [[UC-012]]
+[[D-021]] [[D-039]] [[D-044]] [[D-045]] [[D-050]] [[UC-012]]

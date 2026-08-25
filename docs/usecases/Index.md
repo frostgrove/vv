@@ -45,11 +45,11 @@ this page is the roadmap.
 | ID | Use case | Actor | Status |
 |----|----------|-------|--------|
 | [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | Expose a full CRUD API for a resource without writing handlers | application author | covered |
-| [UC-002](UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted HTTP client | partially covered |
-| [UC-003](UC-003-partial-update-absent-vs-null.md) | Apply a partial update that tells absent from null | HTTP client sending a PATCH | covered |
+| [UC-002](UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted client, HTTP or gRPC | partially covered |
+| [UC-003](UC-003-partial-update-absent-vs-null.md) | Apply a partial update that tells absent from null | client sending a partial update | covered |
 | [UC-004](UC-004-isolate-tenants.md) | Isolate tenants so a caller cannot see or touch another's rows | application author | partially covered |
 | [UC-005](UC-005-run-repository-work-in-an-orm-transaction.md) | Run repository work inside a transaction the ORM owns | application author | covered |
-| [UC-006](UC-006-query-and-sort-across-relations.md) | Query and sort across relations, from the wire and from Go | HTTP client and application author | covered |
+| [UC-006](UC-006-query-and-sort-across-relations.md) | Query and sort across relations, from the wire and from Go | client and application author | covered |
 | [UC-007](UC-007-write-typed-compile-checked-queries.md) | Write typed, compile-checked queries in Go | application author | covered |
 | [UC-008](UC-008-write-many-rows-in-one-statement.md) | Write many rows in one statement | application author | partially covered |
 | [UC-009](UC-009-survive-concurrent-writers.md) | Survive concurrent writers | application author | covered |
@@ -57,10 +57,10 @@ this page is the roadmap.
 | [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | Test repository behaviour without a database | application author writing tests | partially covered |
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | Talk to more than one database in one process | application author | covered |
 | [UC-013](UC-013-business-rules-between-handler-and-repository.md) | Insert business rules between the handler and the repository | application author | covered |
-| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | partially covered |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | HTTP client and application author | covered |
+| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | covered |
+| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | client reading a status, HTTP or gRPC, and application author | covered |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | HTTP client rendering a form, and application author | covered |
+| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | client rendering a form, and application author | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -78,16 +78,17 @@ this page is the roadmap.
 | [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | [[FL-001]] [[FL-002]] [[FL-004]] |
 | [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] [[FL-016]] |
 | [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
-| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] |
+| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] [[FL-015]] |
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 | [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] [[FL-017]] |
 
 ## Gaps
 
-The roadmap, worst first. The first five are behaviour that does not match a
-stated guarantee; the rest are missing proof or documented sharp edges that need
-a decision.
+The roadmap, worst first. The first group is behaviour that does not match a
+stated guarantee — four of it live, with entry 5 kept as a closed one because
+the numbers are cited elsewhere; the rest are missing proof or documented sharp
+edges that need a decision.
 
 ### Guarantees that do not hold
 
@@ -133,21 +134,30 @@ a decision.
    `DELETE` do not carry one. So a filtered write with a limit inspects one row
    and writes every matching row.
 
-5. **[UC-014] The generator does not know about the version column.** A model
-   declaring one generates a DTO containing it, which the repository declaration
-   then refuses at start-up. The generated output for such a model does not work,
-   and no model in the test tree has a version column to notice.
+5. ~~**[UC-014] The generator does not know about the version column.**~~
+   **Closed, and it was half stale when it was written.** The generator did learn
+   the `version`/`lock` option, and both halves have been pinned for some time:
+   the lock leaves the DTO and stays in the metamodel, and the declaration the
+   generated DTO implies is one the repository accepts, with a DTO naming the
+   lock refused as the control. What stayed true was the second sentence — no
+   model in the test tree carried a version column, so none of that ran against a
+   real generated artefact. Phase 8 added one, generated with the resource half
+   as well, so the case is reachable rather than argued. The entry keeps its
+   number because the numbers are cited elsewhere.
 
 ### Guarantees that hold but are not proven
 
-6. **[UC-014] The drift test only catches a *removed* field, and its harder half
-   is behind Docker.** Nothing checks that the generated artefacts cover every
-   *current* column, so a new column is silently invisible to updates and to the
-   typed query API. Only the regenerate-and-diff test catches it — and the half
-   covering the real flag combinations lives in the integration suite, whose
-   harness aborts without PostgreSQL and MySQL, though that test needs no
-   database at all. Moving it into the unit suite is cheap and closes the most
-   likely stale-artefact path.
+6. ~~**[UC-014] The drift test only catches a *removed* field, and its harder
+   half is behind Docker.**~~ **Closed by phase 8, both halves.** A generated
+   artefact now asserts at package initialisation that it covers every writable
+   column, and that check reads the *compiled* model rather than the generator's
+   own view of the source — two independent derivations, which is what
+   regenerate-and-diff could never be, since it only ever measures the generator
+   against itself. And the flag-driven drift test moved out of the integration
+   suite: it needs no database, it runs under `make unit`, and its own control
+   tampers with the regenerated copy so a helper that read one file twice cannot
+   stay green. [[D-050]] is the decision. The entry keeps its number because the
+   numbers are cited elsewhere.
 
 7. **[UC-005] The reverse rollback is unproven.** No test writes through an ORM
    *inside* a repository-owned transaction and shows the rollback taking the
@@ -228,12 +238,19 @@ a decision.
     typo silently protects nothing. Contrast the scope and relation-path
     declarations, which fail at start-up.
 
-22. **[UC-001] There are three HTTP bindings — Fiber, Gin and net/http — and no
-    other transport.** The `net/http` one is free: it needs no dependency, so it
-    ships in the library rather than as a module of its own. A project on Echo
-    or gRPC still writes its own routes, and one on chi or gorilla/mux can
-    register the `net/http` handler methods individually instead. What none of
-    them writes is the status table, the id coercion or the create-time field
-    clearing — writing the third binding is the evidence, because it needed
-    nothing added to the shared package. Where the three differ is a table in
-    [[FL-013]]; a fourth would have to add its row.
+22. ~~**[UC-001] There are three HTTP bindings — Fiber, Gin and net/http — and
+    no other transport.**~~ **Closed by phase 9**, which added the fourth and
+    the first one that is not HTTP. There are now four bindings — Fiber, Gin,
+    net/http and gRPC — and what is left unwritten is GraphQL and a queue
+    consumer. The `net/http` one is free: it needs
+    no dependency, so it ships in the library rather than as a module of its
+    own. A project on Echo still writes its own routes, and one on chi or
+    gorilla/mux can register the `net/http` handler methods individually
+    instead. What none of them writes is the status table, the key coercion, the
+    violations pipeline or the create-time field clearing — and the fourth
+    binding is the evidence rather than the claim, because writing a whole
+    transport on another protocol needed nothing added to the shared half.
+    Where the four differ is a table in [[FL-013]]; a fifth would have to add
+    its column. What remains genuinely unwritten is a queue consumer, and it is
+    a different shape: no request, no key in a path and no status to map, so it
+    calls a service directly and never builds a command.

@@ -249,6 +249,20 @@ func (p *UpdatePlan) Defined(dto any) ([]string, error) {
 	return out, nil
 }
 
+// Covers answers the model columns this plan can write.
+//
+// It exists so "does the DTO cover every writable column" is a question the
+// runtime answers rather than a second resolution rule somebody keeps in step
+// by hand: the plan already resolved every DTO field to a model field, tags,
+// embedding and all.
+func (p *UpdatePlan) Covers() []*Field {
+	out := make([]*Field, 0, len(p.Fields))
+	for _, pf := range p.Fields {
+		out = append(out, pf.Target)
+	}
+	return out
+}
+
 // Apply writes the changes into a model in place. The repository uses it on
 // dialects without RETURNING when no refresh round trip is needed.
 func (p *UpdatePlan) Apply(changes []Change, model any) {

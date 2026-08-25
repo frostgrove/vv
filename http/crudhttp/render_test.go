@@ -10,6 +10,7 @@ import (
 
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/shardit-io/vv/port"
 )
 
 // render is what every test here measures: the bytes a client would read.
@@ -153,103 +154,6 @@ func kindOfCode(c errs.Code) errs.Kind {
 }
 
 // ---------------------------------------------------------------------------
-// determinism
-
-// [[D-014]] one layer up: the same failing request twice produces byte-identical
-// output, so a response body can be asserted on at all.
-//
-// Eight violations spanning names, indices and equal-prefix paths, built in
-// reverse. Two would pass by luck half the time.
-func TestTheViolationOrderIsTotalAndByteIdentical(t *testing.T) {
-	paths := []errs.Path{
-		{errs.Named("email")},
-		{errs.Named("items")},
-		{errs.Named("items"), errs.Indexed(0)},
-		{errs.Named("items"), errs.Indexed(2)},
-		{errs.Named("items"), errs.Named("total")},
-		{errs.Named("user"), errs.Named("email")},
-		{errs.Named("user"), errs.Named("emailAddress")},
-		{errs.Named("user"), errs.Named("name")},
-	}
-
-	// The control on the fixture itself. Without it the eight could be eight
-	// copies of one path, and a sort that did nothing would render identically
-	// every time and pass.
-	seen := map[string]bool{}
-	var equalPrefix, indexed bool
-	for _, p := range paths {
-		if seen[p.String()] {
-			t.Fatalf("the fixture repeats %s, so the order below is not being exercised", p)
-		}
-		seen[p.String()] = true
-		for _, s := range p {
-			indexed = indexed || s.IsIndex
-		}
-	}
-	for i := range paths {
-		for j := range paths {
-			if i != j && strings.HasPrefix(paths[j].String(), paths[i].String()) {
-				equalPrefix = true
-			}
-		}
-	}
-	if !equalPrefix || !indexed {
-		t.Fatalf("the fixture has no equal-prefix pair (%v) or no index step (%v); it is not the fixture this test needs", equalPrefix, indexed)
-	}
-
-	forwards := errs.Validation().Code(errs.CodeCheck)
-	for _, p := range paths {
-		forwards = forwards.At(p).Code(errs.CodeCheck)
-	}
-	backwards := errs.Validation().Code(errs.CodeCheck)
-	for i := len(paths) - 1; i >= 0; i-- {
-		backwards = backwards.At(paths[i]).Code(errs.CodeCheck)
-	}
-
-	_, want, _ := render(t, forwards.Fault())
-	_, got, _ := render(t, backwards.Fault())
-	if string(got) != string(want) {
-		t.Fatalf("the same eight violations built in reverse rendered differently:\n forwards %s\n backwards %s", want, got)
-	}
-
-	// Fifty renders of one fault, byte for byte. A map iterated anywhere in the
-	// pipeline shows up here and nowhere else.
-	f := forwards.Fault()
-	for i := 0; i < 50; i++ {
-		_, again, _ := render(t, f)
-		if string(again) != string(want) {
-			t.Fatalf("render %d differed:\n first %s\n then  %s", i, want, again)
-		}
-	}
-
-	// The control on the comparison: a deliberately different set has to come
-	// out different, or the two bodies above agreeing means nothing.
-	other := errs.Validation().Code(errs.CodeCheck).Field("zzz").Code(errs.CodeCheck).Fault()
-	if _, differs, _ := render(t, other); string(differs) == string(want) {
-		t.Fatal("a different set of violations rendered identically, so byte equality above measures nothing")
-	}
-}
-
-// Within one path an input violation comes before a collision: a malformed
-// value explains a failed lookup, and the reverse reads as nonsense. This is
-// the half `ROADMAP-errors.md` §5 states and §8 omitted.
-func TestAtOnePathTheInputViolationComesFirst(t *testing.T) {
-	f := errs.Validation().Code(errs.CodeCheck).
-		Field("email").Code(errs.CodeUnique).Origin(errs.OriginState).
-		Field("email").Code(errs.CodeInvalidFormat).Origin(errs.OriginInput).
-		Fault()
-
-	_, _, env := render(t, f)
-	if len(env.Errors.Validation) != 2 {
-		t.Fatalf("two violations at one path rendered as %d", len(env.Errors.Validation))
-	}
-	if env.Errors.Validation[0].Code != errs.CodeInvalidFormat {
-		t.Fatalf("the order is %v then %v, want the input one first",
-			env.Errors.Validation[0].Code, env.Errors.Validation[1].Code)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // the envelope's own shape
 
 // The group describes what the client can act on, not where the failure came
@@ -266,22 +170,6 @@ func TestAViolationWithAFieldIsValidationAndOneWithoutIsGeneral(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"field":["email"]`) {
 		t.Fatalf("the field is not the array a client reads: %s", raw)
-	}
-}
-
-// A 404 carries no violation at all, and a status alone is not something a
-// client can branch on.
-func TestAFaultWithNoViolationsStillNamesItsCode(t *testing.T) {
-	_, raw, env := render(t, errs.NotFound().Code(errs.CodeNotFound).Fault())
-	if len(env.Errors.General) != 1 || env.Errors.General[0].Code != errs.CodeNotFound {
-		t.Fatalf("a fault with no violations rendered %s", raw)
-	}
-
-	// The control: a fault with no code either still names something rather
-	// than emitting an empty error_code.
-	_, raw, env = render(t, errs.Forbidden().Fault())
-	if len(env.Errors.General) != 1 || env.Errors.General[0].Code == "" {
-		t.Fatalf("a fault with neither violations nor a code rendered %s", raw)
 	}
 }
 
@@ -315,74 +203,108 @@ func TestACappedListSaysItIsPartial(t *testing.T) {
 type catalogue map[string]string
 
 func (c catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
-	var last string
-	for _, s := range v.Path {
-		if !s.IsIndex {
-			last = s.Name
-		}
-	}
-	m, ok := c[last+"."+string(v.Code)]
+	m, ok := c[v.Path.String()+"."+string(v.Code)]
 	return m, ok
 }
 
-// Messages are expanded after the path is translated, because the ladder is
-// derived from the path. Expanding first would key a catalogue entry on the
-// model's field name on one deployment and on the client's on another, for the
-// same violation.
-func TestTheMessageLadderSeesTheTranslatedPath(t *testing.T) {
-	cat := catalogue{
-		"email.unique": "that address is taken",
-		"Email.unique": "the model field name won",
-	}
+// The ladder itself is port's and is measured there. What this pins is the
+// wiring: WithMessages has to reach the pipeline, and a renderer that dropped
+// the catalogue on the floor would still answer a well-formed body.
+func TestTheCatalogueReachesTheRenderedBody(t *testing.T) {
 	f := errs.Conflict().Code(errs.CodeUnique).
-		Field("Email").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
+		Field("email").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
 
-	ctx := WithBody(context.Background(), []byte(`{"user":{"email":"a@b.c"}}`))
-	_, raw, env := renderCtx(t, ctx, f, WithMessages(cat))
-
+	_, raw, env := render(t, f, WithMessages(catalogue{"email.unique": "that address is taken"}))
 	if got := env.Errors.Validation[0].Message; got != "that address is taken" {
-		t.Fatalf("the message is %q; the ladder saw the untranslated path: %s", got, raw)
+		t.Fatalf("the catalogue did not reach the body: message = %q: %s", got, raw)
 	}
 
-	// The control: the pre-translation key is in the catalogue and must not
-	// win. Without it the assertion above passes for a catalogue with one
-	// entry.
-	if _, ok := cat["Email.unique"]; !ok {
-		t.Fatal("the pre-translation key is not in the catalogue, so it losing proves nothing")
-	}
-}
-
-// No catalogue entry falls back to the code's declared default, and then to the
-// code itself. Never to the driver's text — there is nowhere left for it to
-// come from.
-func TestAMessageFallsBackToTheCodesDefaultAndThenToTheCode(t *testing.T) {
-	f := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
-	_, _, env := render(t, f)
-	if got := env.Errors.Validation[0].Message; got != "this value is already taken" {
-		t.Fatalf("the message is %q, want the declared default", got)
-	}
-
-	novel := errs.Validation().Code("too_young").Field("age").Code("too_young").Fault()
-	_, _, env = render(t, novel)
-	if got := env.Errors.Validation[0].Message; got != "too_young" {
-		t.Fatalf("an undeclared code's message is %q, want the code itself", got)
+	// The control: with no catalogue the same violation carries the code's
+	// declared default, so the assertion above measures the wiring rather than
+	// a body that says that sentence whatever it is handed.
+	if _, _, env := render(t, f); env.Errors.Validation[0].Message != "this value is already taken" {
+		t.Fatalf("without a catalogue the message is %q, want the code's default", env.Errors.Validation[0].Message)
 	}
 }
 
-// A renderer holds no per-request state, so rendering the same fault twice must
-// not change it. A resolved path or an expanded message written through to the
-// fault would make the second render depend on the first ([[D-042]]).
-func TestRenderingDoesNotWriteThroughToTheFault(t *testing.T) {
-	f := errs.Conflict().Code(errs.CodeUnique).
-		Field("Email").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
+// A declared mapping beats a guess, which is the whole reason a generated map
+// is wired ahead of the raw-body fallback ([[D-043]], [[D-050]]).
+//
+// It is also the first hop in the tree that *declines*, so this is where
+// WithResolvers-before-fallback is measured with one: a declining hop stops the
+// chain and the fallback behind it never runs.
+func TestADeclaredMapBeatsTheRawBodyGuess(t *testing.T) {
+	body := []byte(`{"contact":{"email":"a@b.c"},"nickname":"ann"}`)
+	ctx := WithBody(context.Background(), body)
+	declared := port.PathMap{"Email": port.At("contact", "email")}
 
-	ctx := WithBody(context.Background(), []byte(`{"user":{"email":"a@b.c"}}`))
-	renderCtx(t, ctx, f)
-
-	if got := f.Violations[0].Path.String(); got != "Email" {
-		t.Fatalf("rendering rewrote the fault's own path to %q", got)
+	unique := func(field string) error {
+		return errs.Conflict().Code(errs.CodeUnique).
+			Field(field).Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
 	}
-	if f.Violations[0].Message != "" {
-		t.Fatalf("rendering wrote a message onto the fault: %q", f.Violations[0].Message)
+
+	_, raw, env := renderCtx(t, ctx, unique("Email"), WithResolvers(declared))
+	if got := env.Errors.Validation[0].Path.String(); got != "contact.email" {
+		t.Fatalf("field = %q, want the declared mapping: %s", got, raw)
+	}
+	if env.Errors.Validation[0].Approximate {
+		t.Fatal("a path the map declared was marked approximate")
+	}
+
+	// The control. With no map the same render falls to the body index, which
+	// matches on the folded key name and answers the nested path it found — so
+	// the assertion above measures the declared mapping rather than a renderer
+	// that ignores WithResolvers entirely.
+	_, _, guess := renderCtx(t, ctx, unique("Email"))
+	if got := guess.Errors.Validation[0].Path.String(); got != "contact.email" {
+		t.Fatalf("without a map the field is %q, want the body index's own answer", got)
+	}
+
+	// And the half that says which of the two ran: a body the index cannot
+	// disambiguate. Two keys fold to the same name, so the fallback declines
+	// and marks the path approximate, while the declared map still answers.
+	twice := WithBody(context.Background(), []byte(`{"contact":{"email":"a@b.c"},"backup":{"email":"b@c.d"}}`))
+	_, _, mapped := renderCtx(t, twice, unique("Email"), WithResolvers(declared))
+	if got := mapped.Errors.Validation[0].Path.String(); got != "contact.email" || mapped.Errors.Validation[0].Approximate {
+		t.Fatalf("with two candidates the declared map answered %q (approximate %v), want contact.email exactly",
+			got, mapped.Errors.Validation[0].Approximate)
+	}
+	_, _, ambiguous := renderCtx(t, twice, unique("Email"))
+	if !ambiguous.Errors.Validation[0].Approximate {
+		t.Fatal("the body index resolved an ambiguous name, so the map answering it proves nothing")
+	}
+
+	// A declared path the client did not send. The index would otherwise fold
+	// the last step and match a same-named key somewhere else in the payload,
+	// which is a guess overturning a declaration — the case a NOT NULL
+	// violation on an omitted column produces.
+	elsewhere := WithBody(context.Background(), []byte(`{"other":{"email":"x@y.z"}}`))
+	_, _, kept := renderCtx(t, elsewhere, unique("Email"), WithResolvers(declared))
+	if got := kept.Errors.Validation[0].Path.String(); got != "contact.email" {
+		t.Fatalf("a declared path was rewritten to %q by the fallback behind it", got)
+	}
+	// Its control: without the map, that same body is exactly what the index
+	// does match — so the arm above measures the guard rather than an index
+	// that had nothing to say.
+	_, _, grabbed := renderCtx(t, elsewhere, unique("Email"))
+	if got := grabbed.Errors.Validation[0].Path.String(); got != "other.email" {
+		t.Fatalf("the index answered %q for the omitted column, so the guard above proves nothing", got)
+	}
+
+	// And the other half of being total: a field the map does not declare
+	// declines, so the violation is marked approximate rather than taking the
+	// fallback's guess. The body carries a matching key, so the fallback could
+	// have answered — which is what makes the decline visible.
+	_, _, declined := renderCtx(t, ctx, unique("Nickname"), WithResolvers(declared))
+	if got := declined.Errors.Validation[0].Path.String(); got != "Nickname" {
+		t.Fatalf("an undeclared field resolved to %q; the declining hop was not honoured", got)
+	}
+	if !declined.Errors.Validation[0].Approximate {
+		t.Fatal("an undeclared field was not marked approximate, so the decline was silently a guess")
+	}
+	// Its own control: without the map that same field reaches the body index.
+	_, _, fell := renderCtx(t, ctx, unique("Nickname"))
+	if got := fell.Errors.Validation[0].Path.String(); got != "nickname" {
+		t.Fatalf("the fallback answered %q for a field nothing declared, so the decline above proves nothing", got)
 	}
 }

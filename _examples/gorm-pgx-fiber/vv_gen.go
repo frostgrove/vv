@@ -4,6 +4,7 @@ package main
 
 import (
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/repo/decorators/specs"
 	"time"
 )
@@ -33,3 +34,12 @@ type ProductAttrs struct {
 // Product_ is the metamodel of Product: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Product_ = specs.Metamodel[Product, ProductAttrs]()
+
+// A writable column the update DTO does not name refuses to start, rather than
+// becoming a column updates silently cannot reach ([[D-050]]). The generator
+// read the model's source text and this reads the compiled struct, so the two
+// can drift apart — and this is what says so when they do, with nothing
+// regenerated.
+func init() {
+	port.MustCoverUpdate[Product, ProductUpdate]()
+}

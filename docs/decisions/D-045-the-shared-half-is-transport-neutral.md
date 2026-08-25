@@ -88,18 +88,28 @@ The neutral half, all of it in the root module and all of it stdlib plus
 - `port/sentinel.go` — `ErrBadRequest` and its three builders.
 - `port/kind.go` — the code vocabulary: `FaultOf`, `KindOf`, `KindOfWith`,
   `CodeForKind`, `DefaultMessage`, and the precedence table behind them.
+- `port/violations.go` — `Violations`, `ViolationOptions` and `MaxViolations`:
+  the copy, the path chain, the sort, the cap and the message ladder. Moved down
+  from `http/crudhttp` at phase 9 — see *The named follow-up*, which this
+  discharges.
+- `port/locale.go` — `WithLocale`, `LocaleFrom` and `FirstLanguageTag`. One
+  context key for every transport, because two would each be invisible to the
+  other's renderer.
 
 The HTTP half, unchanged in what it exports:
 
 - `http/crudhttp/errors.go:Status` / `:StatusFor` — the status table, over
   `port`'s answer.
-- `http/crudhttp/render.go` — the `Renderer` seam and `EnvelopeRenderer`. It
-  stays here on purpose; see the second *Why* above.
+- `http/crudhttp/render.go` — the `Renderer` seam and `EnvelopeRenderer`: the
+  status, the envelope, the `Retry-After` header, the 500 short-circuit and
+  every `RenderOption`. The seam stays here on purpose — see the second *Why*
+  above — while the pipeline it used to own is `port.Violations`.
 - `http/crudhttp/envelope.go`, `:bodyindex.go` — the body and the fallback.
 - `http/crudhttp/repository.go`, `:model.go`, `:request.go`, `:errors.go` — the
-  aliases and one-line forwarders that keep every current signature compiling.
+  aliases and one-line forwarders that keep every current signature compiling,
+  now including `WithLocale`, `LocaleFrom` and `AcceptLanguage`.
 
-The three shells:
+The four shells — three HTTP and one that is not:
 
 - `http/crudfiber/handler.go`, `http/crudgin/handler.go`,
   `http/crudnet/handler.go` — `HandlerFor[M, ID, U, In]`, the `Handler` alias
@@ -107,16 +117,29 @@ The three shells:
   `ServingFor`.
 - `http/crudfiber/options.go` and its two counterparts — `collect`, `service`,
   `refuseServiceOptions`, `rendererFor`.
+- `rpc/crudgrpc/handler.go`, `:options.go`, `:service.go` — the same four
+  constructors and the same option set on gRPC, with a `context.Context` where
+  the HTTP ones take a request.
+- `rpc/crudgrpc/status.go` — the renderer this transport needs, which is not
+  and cannot be `crudhttp.Renderer` ([[D-052]]).
 
 [[FL-015]] traces one request through all of it.
 
-**The named follow-up.** The violations pipeline — `EnvelopeRenderer.violations`,
-the chain application, the sort, the cap and the message ladder — is equally
-neutral and phase 9's gRPC binding will want it verbatim. It stayed in
-`http/crudhttp` this phase, on [[D-048]]'s own count rule: there is one
-implementation of it, and a second is what would settle its shape. Move it when
-`rpc/crudgrpc` exists, not before, and read this paragraph rather than
-rediscovering the question.
+**The named follow-up, discharged at phase 9.** The violations pipeline —
+`EnvelopeRenderer.violations`, the chain application, the sort, the cap and the
+message ladder — is equally neutral, and the instruction was: move it when
+`rpc/crudgrpc` exists, not before, on [[D-048]]'s count rule. It exists, and the
+pipeline is now `port.Violations` with `port.ViolationOptions` naming what it
+needs. The second implementation settled two things the first could not: the
+transport's own guess is a separate `Fallback` field rather than a last
+resolver, because a declaration must always beat it; and the locale is read from
+the context rather than passed, so one key serves every transport.
+
+Two things deliberately did **not** move with it. The `Renderer` seam stayed —
+it answers an `http.Header` and gRPC cannot implement it, which is this
+decision's own test. And "the list was cut short" stayed with each transport:
+the *cap* is `port`'s, and how a client is told is the envelope's `partial` flag
+on one side and an `ErrorInfo` metadata key on the other.
 
 ## Proven by
 
@@ -147,8 +170,37 @@ rediscovering the question.
   `options_test.go` — the move cost no inference, which is [[D-022]]'s half.
 - `make examples` — the seven example stacks compile untouched. That is the
   no-breaking-change claim, measured rather than asserted.
-- Phase 9 owes the last one: adding a transport requires no change to `errs`.
+- **Adding a transport requires no change to `errs`.** Phase 9 paid this, and
+  the measurement is worth spelling out because the claim has a strict and a
+  loose reading. Phase 9 landed in three parts. The first executed the move this
+  decision scheduled above — `port/violations.go`, `port/locale.go` — and is
+  behaviour-preserving: every existing test in `http/crudhttp` and in the three
+  binding suites passes **unedited**, and `errs/` and `errs/sqlerr/` are
+  untouched. The second wrote `rpc/crudgrpc`, and its diff over `errs/`,
+  `errs/sqlerr/`, `port/` **and** `http/crudhttp/` is empty: a whole binding on
+  a second protocol, with no line changed in anything shared. The third added
+  message catalogues to `errs`, which is additive and touches no transport. So
+  the strict reading holds, once the move this decision itself ordered has
+  landed — and a `port` diff in the first part is this decision executing its
+  own instruction rather than gRPC forcing one.
+- `TestTheSameServiceMountsOnAllFourTransports` —
+  `test/portmount/grpcmount_test.go` — the claim above with teeth. One
+  `port.Service` value on Fiber, Gin, net/http and gRPC; the same command
+  recorded by all four and the same answer document. Verified by putting
+  `NarrowForCount` back into `crudgrpc`'s Count method: the recorded command
+  diverges and the test names the offender.
+- `TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports` and
+  `TestTheSameCodeIsSpelledTheSameOnBothTransports` — the same file — the path
+  chain and the code vocabulary reach a fourth transport without a second copy
+  of either.
+- `TestOnePortServiceAlsoMountsOnGRPC` — `test/integration/rpc_grpc_test.go` —
+  the same service value `http_port_test.go` mounts on the three HTTP bindings,
+  answering over gRPC against every live engine.
+- `TestALocaleSetByOneTransportIsReadByAnother` —
+  `http/crudhttp/locale_test.go` — the bug the move could have introduced: a
+  second context key left behind in `crudhttp` would be invisible to a gRPC
+  renderer, and both packages' own suites would still have passed.
 
 ## See also
 
-[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]]
+[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]] [[D-051]] [[D-052]]

@@ -1,8 +1,6 @@
 package crudfiber
 
 import (
-	"strings"
-
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
@@ -186,7 +184,7 @@ func render(rd crudhttp.Renderer, c fiber.Ctx, err error) error {
 	// fault: a fault crossing a queue must not carry the locale of the request
 	// that made it. First tag only — q-values pick between translations we do
 	// not have.
-	ctx = crudhttp.WithLocale(ctx, firstTag(c.Get(fiber.HeaderAcceptLanguage)))
+	ctx = crudhttp.WithLocale(ctx, crudhttp.AcceptLanguage(c.Get(fiber.HeaderAcceptLanguage)))
 	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
 		for _, v := range vs {
@@ -197,12 +195,4 @@ func render(rd crudhttp.Renderer, c fiber.Ctx, err error) error {
 		return c.SendStatus(status)
 	}
 	return c.Status(status).JSON(body)
-}
-
-// firstTag reads the first language tag out of an Accept-Language header.
-func firstTag(h string) string {
-	if i := strings.IndexAny(h, ",;"); i >= 0 {
-		h = h[:i]
-	}
-	return strings.TrimSpace(h)
 }

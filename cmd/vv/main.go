@@ -27,8 +27,22 @@
 //	         somewhere else
 //	-no-dto  skip the update DTOs
 //	-no-meta skip the metamodels
+//	-adapter also generate the resource adapter: the entity-body DTO, the
+//	         mapper, its inverse path map, the service shell and the wiring
+//	-binding which transport the wiring is written for: net (default) or none
 //	-specs   import path of the specs package
 //	-crud    import path of the crud package
+//
+// With -adapter the resource gets a wire shape of its own — <Model>Input, a
+// <Model>Mapper onto the model, and <Model>Paths, the inverse of that mapping.
+// The inverse is what makes an error body name the key the client sent rather
+// than the model's field name, and it is generated rather than written because
+// a hand-written one is wrong the first time somebody renames a key.
+//
+// Whether or not -adapter is on, the generated file asserts at package
+// initialisation that the update DTO covers every writable column. Add a column
+// and forget to regenerate, and the package refuses to start instead of leaving
+// the column silently unpatchable.
 //
 // With -types the named structs are taken as models even without db tags, which
 // is what makes ent's generated entities work as-is. Write the result into your
@@ -58,6 +72,8 @@ func main() {
 	flag.IntVar(&o.Depth, "depth", 2, "how far to expand relation paths into the metamodel")
 	flag.StringVar(&o.SpecsPkg, "specs", "github.com/shardit-io/vv/repo/decorators/specs", "import path of the specs package")
 	flag.StringVar(&o.CrudPkg, "crud", "github.com/shardit-io/vv/crud", "import path of the crud package")
+	flag.BoolVar(&o.Adapter, "adapter", false, "also generate the resource adapter: input DTO, mapper, inverse path map, service and wiring")
+	flag.StringVar(&o.Binding, "binding", "net", "which transport the generated wiring is written for: net or none")
 	noDTO := flag.Bool("no-dto", false, "skip update DTOs")
 	noMeta := flag.Bool("no-meta", false, "skip metamodels")
 	flag.Parse()

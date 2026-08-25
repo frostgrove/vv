@@ -22,7 +22,8 @@ so you can diff any two files and see only what the stack changes.
 
 All of them need `go get github.com/shardit-io/vv`. Beyond that each
 needs only what its own stack uses: the Fiber ones add `.../http/crudfiber`, the
-Gin ones `.../http/crudgin`, `pgx-fiber` adds `.../adapter/crudpgx`, and
+Gin ones `.../http/crudgin`, `pgx-grpc` adds `.../rpc/crudgrpc`, `pgx-fiber`
+adds `.../adapter/crudpgx`, and
 `sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so
 both live in the library.
 
@@ -37,6 +38,7 @@ both live in the library.
 | [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so vv reads the written row back; the caller cannot tell ([`D-019`](../docs/decisions/D-019-dialect-differences-are-not-observable.md)). |
 | [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and vv read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, vv serves the CRUD surface. |
 | [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
+| [`pgx-grpc`](pgx-grpc/) | none | `crudpgx` | PostgreSQL | gRPC | `pgx-fiber` with one line changed — the mount. The transport is not HTTP and everything below it is the same value: eight methods under `vv.crud.v1.Product`, `google.protobuf.Struct` documents, and no `.proto` to write. |
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
 surface in one file — model, DTO, declaration, metamodel, security policy —

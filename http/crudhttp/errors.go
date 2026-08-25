@@ -72,3 +72,12 @@ func StatusFor(k errs.Kind) int {
 // KindOf resolves the one kind that decides the status, using the standard
 // vocabulary. A wired renderer resolves through its own ([EnvelopeRenderer]).
 func KindOf(err error) errs.Kind { return port.KindOf(err) }
+
+// AcceptLanguage reads the language a request asked for out of an
+// Accept-Language header. The compatibility hop over port.FirstLanguageTag,
+// under the name an HTTP binding looks for.
+//
+// The parser is port's because gRPC metadata carries the same syntax under
+// grpc-accept-language, and a copy here would be a string split two transports
+// could disagree about ([[D-045]]).
+func AcceptLanguage(header string) string { return port.FirstLanguageTag(header) }

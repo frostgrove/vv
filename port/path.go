@@ -13,9 +13,16 @@ import "github.com/shardit-io/vv/errs"
 // An undeclared head passes through rather than declining, and that is the one
 // judgement in this type. A declining hop poisons errs.Chain: everything after
 // it is dropped and the violation is marked approximate, which would take a
-// path the raw-body index resolves today and make it worse. Strictness belongs
-// to a generated map, which is total by construction and can refuse start-up
-// for a column it does not cover. A hand-written Fields is partial by nature.
+// path the raw-body index resolves today and make it worse. A hand-written
+// Fields is partial by nature, so an undeclared head is an ordinary gap.
+//
+// Strictness belongs to [PathMap], which is generated, total by construction
+// and checked against the model at package initialisation — so for it an
+// undeclared head is not a gap and declining is the honest answer ([[D-050]]).
+// The two also differ under a leading index: PathMap translates the first named
+// step past one, Fields returns the path unchanged, because a hand-written map
+// may declare a key called "3" and silently ignoring it would be worse than not
+// looking.
 type Fields map[string]errs.Path
 
 // Resolve implements errs.Resolver.

@@ -34,13 +34,17 @@ aspirational. The rule still binds: it forbids working around it in the meantime
 and it is what the implementing phase has to satisfy. Such a decision heads its
 evidence section `Proven by (owed)` and names the tests that phase must write —
 so an agent checking that every symbol a doc names still exists knows those are
-deliberate rather than rot. **D-043 is the only one left**; D-038 left the set
-when phase 1 landed `errs`, D-041 when phase 6 landed `catalog`, D-045 when
-phase 5 landed `port` and D-042 when phase 7 landed `probe`, and D-040 and D-044
-are now partly in force — see their rows. An *accepted* decision may
-still owe evidence: D-039 did and phase 2 paid it, D-038 did — the tree walk
-through a multi-error — and phase 3 paid that, so nothing in `docs/` heads a
-section `Proven by (owed)` for a reason other than an unwritten subsystem.
+deliberate rather than rot. **The set is now empty.** D-038 left it when phase 1
+landed `errs`, D-045 when phase 5 landed `port`, D-041 when phase 6 landed
+`catalog`, D-042 when phase 7 landed `probe`, and D-043 when phase 8 landed the
+generated mappers and the start-up refusal it owed; D-045's own named follow-up
+— move the violations pipeline when a second transport wants it — was
+discharged by phase 9 and is recorded there rather than left as a paragraph to
+rediscover; D-040 and D-044 are partly
+in force — see their rows. An *accepted* decision may still owe evidence: D-039
+did and phase 2 paid it, D-038 did — the tree walk through a multi-error — and
+phase 3 paid that. Nothing in `docs/` heads a section `Proven by (owed)` today,
+and the next decision written before its code does should say so here.
 
 ## Index
 
@@ -78,7 +82,7 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-030](D-030-a-new-verb-on-the-seam-is-a-decorator-obligation.md) | Every method added to `crud.Core` is overridden by the gate or has a written reason not to be | accepted | core seam, security |
 | [D-031](D-031-soft-delete-is-a-statement-not-a-decorator.md) | Declaring a soft delete declares both the stamp and the read filter | accepted | querying |
 | [D-032](D-032-a-replica-never-decides-a-write.md) | A read inside a transaction, or one that decides a write, always goes to the primary | accepted | transactions & datasources |
-| [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no third-party requirement; a package that needs one is its own module | **amended by D-036** | process & tooling |
+| [D-033](D-033-optional-dependencies-are-their-own-modules.md) | The root module has no third-party requirement; a package that needs one is its own module | **amended by D-036 and D-051** | process & tooling |
 | [D-034](D-034-a-transport-binding-is-a-shell-over-crudhttp.md) | A transport binding owns routing, body binding and the response — everything else comes from `crudhttp` | **superseded by D-045** | HTTP |
 | [D-035](D-035-a-prefix-only-breaks-a-collision.md) | A package is named for what it is; a prefix only breaks a collision, and it names the subsystem | accepted | process & tooling |
 | [D-036](D-036-the-root-module-takes-no-third-party-requirement.md) | The root module may require a first-party module; third-party requirements still become their own module | accepted | process & tooling |
@@ -88,13 +92,16 @@ section `Proven by (owed)` for a reason other than an unwritten subsystem.
 | [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification and kind in force; 503 from phase 4** | errors |
 | [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | accepted | errors |
 | [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | accepted | errors |
-| [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | **in force from phase 4** | errors |
+| [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | accepted | errors |
 | [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **marshal and print in force; the rendered body from phase 4** | errors |
 | [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | accepted | HTTP |
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 | [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
 | [D-048](D-048-the-contract-manifest-is-closed.md) | A package joins the contract manifest only when a second implementation asks, and never when the standard library already contracts it | accepted | process & tooling |
 | [D-049](D-049-the-kind-decides-the-status.md) | The kind decides the status; the sentinel decides only when there is no fault | accepted | errors |
+| [D-050](D-050-the-generated-adapter-is-total.md) | A generated artefact covers every column its side of the wire carries, and a gap is a start-up refusal; hand-written stays partial | accepted | process & tooling, errors |
+| [D-051](D-051-a-satellite-carries-one-dependency-decision.md) | A satellite isolates one dependency *decision*; several requires are one decision when no consumer can take one without the others | accepted | process & tooling |
+| [D-052](D-052-a-grpc-resource-carries-documents-not-a-schema.md) | A gRPC resource carries `google.protobuf.Struct` documents, no generated message and no reflection; a code is spelled the same on every transport | accepted | RPC, errors |
 
 ## By area
 
@@ -121,8 +128,15 @@ on that identity), D-042 (why the ownership flag exists at all).
 
 **HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
 D-013 (400 for an unknown field), D-045 (what a binding owns and what `port`
-owns — there are three bindings, Fiber, Gin and net/http, and one service seam
-between them; D-034 is its superseded first draft, kept for the argument).
+owns — there are three HTTP bindings, Fiber, Gin and net/http, and one service
+seam between them and the gRPC one; D-034 is its superseded first draft, kept
+for the argument).
+
+**RPC** — D-052 (the document wire shape, the absent schema and reflection, the
+code spelling and the empty-field violation), D-045 (what `rpc/crudgrpc` is a
+shell over, and the phase-9 measurement that adding it changed nothing shared),
+D-049 (why one `codes.Code` per kind and never per code), D-051 (why three
+requires are one decision).
 
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).
@@ -131,11 +145,14 @@ transaction is shared), D-018 (`-types`, `-into`, `-import`).
 error is classified, and why the class alone is not a gate), D-039 (message text
 is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
-D-038 (a fault is additive), D-043 (one hop per layer),
+D-038 (a fault is additive), D-043 (one hop per layer), D-050 (which of those
+hops may decline, and why only a generated one may),
 D-041 (the catalog, and which unique keys it can tell apart per engine),
 D-042 (the probe: what it may narrow, what it must never invent, the cap
 numbers, and the three answers §16 owed it), D-045 (why the
-mapping is in one place rather than one per binding).
+mapping is in one place rather than one per binding, and where the violations
+pipeline lives now), D-052 (the second vocabulary the same kinds are rendered
+into, and what it costs).
 
 **Dialects** — D-019 (what is hidden and what is observable, now eleven
 differences), D-011 (the upsert forms), D-010 (why MySQL re-reads), D-041 (the
@@ -148,12 +165,15 @@ mean).
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).
 
-**Process & tooling** — D-048 (what joins the contract manifest, and why nothing on the roadmap's `?` list does), D-035 (naming), D-036 (first-party requirements), D-033 (one module per optional dependency, and how a
+**Process & tooling** — D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
-still binds), D-018 (generated artefacts), D-020 (tests are the specification).
+still binds), D-018 (generated artefacts, and every flag's reason), D-050 (why a
+generated one is held to a standard a hand-written one is not, and what the
+generator has to declare because reflection cannot see a flag), D-020 (tests are
+the specification).
 
-**Philosophy & docs** — D-021 (magic over orthodoxy), D-023 (guides lead with the
-result), D-020 (what a test is for).
+**Philosophy & docs** — D-021 (magic over orthodoxy, and D-050 as its newest
+application), D-023 (guides lead with the result), D-020 (what a test is for).
 
 ## Open tensions
 

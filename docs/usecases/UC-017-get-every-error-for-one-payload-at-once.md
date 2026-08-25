@@ -84,7 +84,7 @@ fields the client sent, in one response.
 | # | holds | since |
 |---|---|---|
 | 1 — every violation, not only the first | yes | phase 7 |
-| 2 — a path into the request, not a column | yes | phase 4, extended by phase 7 with the row index a batch needs |
+| 2 — a path into the request, not a column | yes | phase 4, extended by phase 7 with the row index a batch needs, and **exact rather than recognised** for a generated resource since phase 8 |
 | 3 — a stable machine-readable code | yes | phase 2 derived it, phase 4 rendered it |
 | 4 — a message for a person, falling back rather than emitting a template | yes | phase 1 and 4 |
 | 5 — nothing internal in the response | yes | phase 4 ([[D-044]]) |
@@ -95,8 +95,17 @@ fields the client sent, in one response.
 | 10 — off by default where it costs the most | yes | phase 7: a bulk write gets the cheap answer unless the author names the verb |
 | 11 — no per-endpoint code to turn on, no fork to turn off | yes | phase 7: one option at the repository declaration, and one per verb |
 
-Three things are worth being precise about, because they are where the guarantee
+Four things are worth being precise about, because they are where the guarantee
 is narrower than it reads.
+
+**Guarantee 2 is exact for a generated resource and best-effort otherwise.**
+Where the resource's wire shape is generated, the path comes from the inverse of
+a mapping that was checked against the model at start-up, so it is the key the
+client sent and it is not marked approximate. Where the endpoint is
+hand-written, the path comes from walking the request body and matching on the
+folded key name: it is right most of the time, it declines rather than guessing
+when two keys fold the same way or the body is not JSON, and a violation whose
+path could not be resolved says so ([[D-050]], [[D-043]]).
 
 **"Every violation" means every violation the probe can reproduce from a value.**
 CHECK constraints, NOT NULL, length, range and enum membership are not in the

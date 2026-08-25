@@ -367,6 +367,16 @@ r.POST("/users/deactivate", func(c *gin.Context) {
 })
 ```
 
+On gRPC the same job is an interceptor, which covers this binding's own methods
+and any you wrote yourself:
+
+```go
+srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors()))
+```
+
+Installing it twice renders once, and an error your own method already turned
+into a `status.Error` is passed through untouched.
+
 Three things worth noticing:
 
 - **`crud.WithExecutor` is the whole integration.** vv never opens a
@@ -415,13 +425,17 @@ follows on its own.
 ```bash
 go get github.com/shardit-io/vv                 # the library
 go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
+go get github.com/shardit-io/vv/rpc/crudgrpc    # …or gRPC instead
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
 is a module of its own in the same repository, so you take the Fiber binding or
 the Gin binding — `.../http/crudgin` — and neither drags the other in. If you
 are on neither, take `.../http/crudnet`: it is `net/http` and imports nothing, so
-it ships in the library and there is no second `go get` at all. On ent
+it ships in the library and there is no second `go get` at all. If you are not
+on HTTP, `.../rpc/crudgrpc` is the same API on gRPC and brings grpc, protobuf and
+genproto — three requires and one decision, because no consumer of one of them
+can avoid the other two. On ent
 over `database/sql` there is no driver package to add either: `crudsql` is part
 of the library.
 
@@ -672,6 +686,80 @@ reason PATCH handlers are annoying to write by hand.
 | `-readonly CreatedAt` | server-owned: still filterable and sortable, never patchable |
 | `-skip Internal` | drop a field entirely, like `db:"-"` |
 | `-no-meta` | DTOs only |
+| `-adapter` | also generate the resource: its own request body, the mapper, the inverse path map, the service shell and the wiring |
+| `-binding net` \| `none` | which transport the generated wiring is for. `none` when you mount on Fiber or Gin yourself |
+
+Whatever flags you pass, the file ends with one more thing:
+
+```go
+func init() {
+    port.MustCoverUpdate[ent.User, UserUpdate]("CreatedAt")
+}
+```
+
+That is the drift check, and it runs at start-up rather than at generation time.
+Add a column to the entity and forget to regenerate, and the package **refuses to
+start**, naming the column — instead of leaving it silently unpatchable. It reads
+the compiled struct, not the generator's view of the source, which is why it can
+disagree with the checked-in file at all. `"CreatedAt"` is there because
+`-readonly` is a command-line flag and reflection cannot see one, so the
+generator writes the exclusion down; a reader of the file can see what the flags
+did.
+
+### Generating the resource, not only the DTO
+
+`-adapter` adds the rest of the skeleton — the API's own request body, the
+mapping onto the entity, the inverse of that mapping, a service shell and the
+wiring:
+
+```go
+//go:generate go run github.com/shardit-io/vv/cmd/vv -dir ../ent -types User \
+//    -readonly CreatedAt -import myapp/ent -into . -adapter
+```
+
+```go
+type UserInput struct {            // the create/replace body
+    ID       int64  `json:"id"`
+    TenantID int64  `json:"tenantID"`
+    Email    string `json:"email"`
+    Name     string `json:"name"`
+    Age      *int   `json:"age"`
+    Active   bool   `json:"active"`
+}
+
+type UserMapper struct{}                        // satisfies port.Mapper …
+func (UserMapper) Model(context.Context, UserInput) (ent.User, error)
+func (UserMapper) Resolve(errs.Path) (errs.Path, bool)   // … and errs.Resolver
+
+var UserPaths = port.MustPathMap[ent.User](port.PathMap{ … }, "CreatedAt")
+
+type UserService struct{ *port.DefaultService[ent.User, int64, UserUpdate] }
+func NewUserService(repo, opts ...port.ServiceOption) *UserService
+
+func MountUser(mux *http.ServeMux, prefix string, svc, opts ...)
+```
+
+`UserPaths` is the point of the flag. It is the **inverse** of the mapping — the
+model's field name back to the key the client sent — and because the mapper is
+generated, the inverse is generated with it. `MustPathMap` checks it against the
+entity at start-up: a column it does not cover, or an entry for something no
+request carries, refuses to boot. A hand-written inverse is wrong the first time
+somebody renames a key, and the symptom is a wrong `field` in a production error
+body.
+
+What it buys at run time: an error body names **the key the client sent**,
+exactly, rather than the model's field name recognised out of the raw request.
+
+> **The generated body has its own names.** `UserInput` derives its JSON names
+> from the Go field names — `TenantID` becomes `tenantID` — the same rule
+> `UserUpdate` already uses. It does **not** read the entity's own `json` tags.
+> That is deliberate: one naming rule serves both bodies, so one inverse map
+> serves the resource. If you want the model's own JSON shape on the wire, do not
+> generate an adapter — mount with `New` and let the body bind onto the model.
+
+`-binding net` (the default) writes `net/http` wiring. `-binding none` writes the
+resource without it, which is what to use when you mount on Fiber or Gin: build
+the service, then `crudfiber.ServingFor(svc, store.UserMapper{})`.
 
 ## 11. Mount it
 
@@ -712,10 +800,86 @@ On plain `net/http` there is no framework to add at all:
     log.Fatal(http.ListenAndServe(":8080", mux))
 ```
 
-Everything from here on — every option, every status, every response shape — is
-identical across the three. Where they differ is a table in
-`docs/flows/FL-013-a-request-through-another-binding.md`; the one most likely to
-matter is that the Gin and `net/http` bindings accept JSON request bodies only.
+And on gRPC, which is the one that is not HTTP:
+
+```go
+    srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors()))
+    crudgrpc.New(store.Users.Bind(src)).Register(srv, "User")
+    crudgrpc.New(store.Articles.Bind(src)).Register(srv, "Article")
+
+    lis, _ := net.Listen("tcp", ":9090")
+    log.Fatal(srv.Serve(lis))
+```
+
+That registers `vv.crud.v1.User` with eight methods — `List`, `Count`, `Get`,
+`Create`, `Update`, `Replace`, `Delete`, `BulkDelete` — one per command. Every
+request and response is a `google.protobuf.Struct` carrying the same JSON
+document the HTTP bindings speak, so there is no `.proto` to write and no
+`protoc` to install. Three things are worth knowing before you mount it: a key
+travels as a **string** (`{"id": "42"}`), because a protobuf number is a double
+and an `int64` above 2^53 would not survive one; there is no server reflection,
+because a generic resource has no compiled descriptor, so clients call by full
+method name; and a failure arrives as a status code plus `BadRequest`,
+`ErrorInfo` and `RetryInfo` details rather than as the JSON envelope.
+
+Everything from here on — every option, every rule, every code — is identical
+across the four. Where they differ is a table in
+`docs/flows/FL-013-a-request-through-another-binding.md`; the two most likely to
+matter are that the Gin and `net/http` bindings accept JSON request bodies only,
+and that gRPC has one code for "the request was wrong", so a 422 and a 400 are
+both `InvalidArgument` and the machine code in the details is what tells them
+apart.
+
+## Translating the messages
+
+A violation carries a machine code — `unique`, `too_long`, `check` — and a
+sentence for a person. The sentence comes off a four-rung ladder, and every rung
+is optional:
+
+```
+user.email.unique  ->  user.unique  ->  email.unique  ->  unique  ->  the code's own default
+```
+
+Write one flat JSON file per locale, embed the directory, and load it:
+
+```go
+//go:embed messages
+var messages embed.FS
+
+cat, err := errs.LoadMessages(errs.StandardCodes(), messages, "messages")
+if err != nil {
+    log.Fatal(err)   // a disagreeing redeclaration, or a file that is not flat
+}
+```
+
+```
+messages/default.json   {"unique": "that value is already taken",
+                         "email.unique": "that address is already registered"}
+messages/fr.json        {"unique": "cette valeur est deja prise"}
+```
+
+`default.json` is the fallback locale. A request asking for `fr-CA` reads
+`fr-CA`, then `fr`, then the default, then the code's own message — so a partial
+catalogue is the normal case rather than a broken one, and
+`cat.Missing("fr")` lists what falls all the way through if you want a start-up
+check of your own.
+
+**The keys are flat, and that matters.** The ladder only ever asks for the
+path's *first* and *last* named step, so a key like `order.items.email.unique`
+is accepted and never consulted — your override would silently never appear. A
+nested file is refused at load time for exactly that reason.
+
+Wire it into the renderer:
+
+```go
+crudfiber.WithRenderer[User, int64, store.UserUpdate](
+    crudhttp.NewRenderer(crudhttp.WithMessages(cat)))
+```
+
+The locale comes off the request: `Accept-Language` on the three HTTP bindings,
+and `grpc-accept-language`, `accept-language` or `x-locale` metadata on gRPC.
+First tag only — q-values choose between translations this library does not
+have.
 
 ## 12. Your business rules: the service layer
 
@@ -773,6 +937,20 @@ The mapper runs before anything else, so a service layer and the hooks below see
 a model and never a wire type. `PATCH` is the exception and it is deliberate:
 the generated update DTO already *is* the transport shape, so it decodes
 straight into it.
+
+**Or generate it.** `-adapter` (§10) writes `UserInput`, `UserMapper` and — the
+part that matters — `UserPaths`, the inverse of the mapping, checked against the
+entity at start-up. A hand-written mapper can also implement `errs.Resolver` and
+contribute that hop itself; it is an optional interface precisely so you are not
+forced to write a path map you have no use for. The difference is that a
+generated one is *total*: an error body names the key the client sent, and a
+column it stops covering refuses to boot instead of answering a wrong path.
+
+One thing to know before you switch: a generated `UserInput` takes its JSON names
+from the Go field names, not from the entity's own `json` tags, so
+`TenantID` is `tenantID` on the wire whatever the tag says. One naming rule for
+both bodies is what lets one inverse map serve the resource. If the entity's own
+tags are the API you want, write the mapper by hand or mount with `New`.
 
 ### The same service on more than one transport
 

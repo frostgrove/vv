@@ -21,9 +21,11 @@ const (
 // walks the raw request body into a leaf-path index and matches a model field
 // name against the keys the client actually sent.
 //
-// It is the fallback, not the mechanism. A generated inverse map ([[D-043]],
-// phase 8) is wired ahead of it with WithResolvers and wins every time, because
-// it knows the mapping instead of recognising it.
+// It is the fallback, not the mechanism. A generated port.PathMap ([[D-043]],
+// [[D-050]]) is wired ahead of it with WithResolvers and wins every time,
+// because it knows the mapping instead of recognising it — and the renderer
+// runs this hop only over a path the declared ones left unchanged, so a guess
+// cannot overturn a declaration.
 //
 // Three limits, stated rather than discovered:
 //

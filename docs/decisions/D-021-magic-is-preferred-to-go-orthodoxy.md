@@ -81,6 +81,9 @@ against the ORM's own.
 - `repo/decorators/specs/metamodel.go:Metamodel` — attribute-struct validation at
   declaration time.
 - `cmd/vv` — the codegen half ([[D-018]]).
+- `port/pathmap.go:MustPathMap` / `:MustCoverUpdate` — the same rule applied to
+  the part of the design most likely to rot: a generated artefact that no longer
+  covers its model refuses to start ([[D-050]]).
 - `crud/repo.go` — the inference half ([[D-001]]).
 - `prompt` — the original brief, including the sentence quoted above.
 
@@ -109,7 +112,11 @@ against the ORM's own.
   once, which is the other half of the trade.
 - `TestHTTPWorksWithoutExtraDeclarations` in `test/integration/http_test.go` —
   the payoff, stated as a test.
+- `TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing` in
+  `internal/codegen/codegen_test.go` — the newest application of "fail at
+  build or start-up, never at request time", and the one that had to compare two
+  independent derivations to mean anything ([[D-050]]).
 
 ## See also
 
-[[D-001]] [[D-018]] [[D-013]] [[D-022]] [[D-023]]
+[[D-001]] [[D-018]] [[D-013]] [[D-022]] [[D-023]] [[D-050]]

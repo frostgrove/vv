@@ -145,6 +145,11 @@ Tests are the specification; see `[[D-020]]`.
   `http/crudgin` and `http/crudnet` carry the same test names, file for file. If
   a new test only makes sense for one of them, it belongs in that binding's
   `routing_test.go`, and the difference it pins belongs in `[[FL-013]]`.
+  **`rpc/crudgrpc` is a fourth transport and is not in that triplet**: it carries
+  the subset of those names that is about `port` rather than about HTTP, and
+  spells the rest in its own vocabulary because there is no 404 and no `PUT`
+  here to name. A test that only makes sense for gRPC belongs in
+  `rpc/crudgrpc/`, and the difference it pins belongs in `[[FL-013]]` too.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
 - The failure message states what broke in plain words, not `got != want`.
@@ -188,6 +193,7 @@ docs/                       decisions, use cases, flows, usage guides
 
 http/crudfiber/             MODULE — a full CRUD API on Fiber v3
 http/crudgin/               MODULE — the same API on Gin
+rpc/crudgrpc/               MODULE — the same API on gRPC
 adapter/crudpgx/            MODULE — pgx v5
 test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
 _examples/                  MODULE (unpublished) — runnable examples, one per stack

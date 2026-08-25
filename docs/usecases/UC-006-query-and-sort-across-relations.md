@@ -1,6 +1,6 @@
 # UC-006 — Query and sort across relations, from the wire and from Go
 
-**Actor:** an HTTP client asking a question about related rows, and the
+**Actor:** a client asking a question about related rows, and the
 application author asking the same question in Go
 **Covered by:** [[FL-005]] [[FL-006]] [[FL-001]] [[FL-012]]
 

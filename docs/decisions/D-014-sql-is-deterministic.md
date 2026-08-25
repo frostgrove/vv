@@ -80,7 +80,7 @@ same way every time.
 - `TestOutputIsByteIdenticalAcrossRuns` in `internal/codegen/codegen_test.go` — the
   generator half.
 - `TestGeneratedFileIsUpToDate` in `_examples/example/blog/blog_test.go` and
-  `TestTheGeneratedStoresAreUpToDate` in `test/integration/codegen_test.go` —
+  `TestTheGeneratedStoresAreUpToDate` in `test/codegen/codegen_test.go` —
   these only work because the generator is deterministic; a nondeterministic one
   would make them flap.
 

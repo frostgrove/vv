@@ -18,13 +18,14 @@ query/                      the wire DSL: one JSON document -> crud.Options
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
 http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
 http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
-cmd/vv/                 generates the update DTO and the metamodel from your model
+cmd/vv/                 generates the update DTO, the metamodel and — with -adapter — the resource
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
 crud/crudtest/              an in-memory source for unit-testing repositories
 
   ── separate modules, so you only download the one you use ──────────────────
 http/crudfiber/             a full CRUD API on Fiber v3
 http/crudgin/               the same API on Gin
+rpc/crudgrpc/               the same API on gRPC
 adapter/crudpgx/            pgx v5
 ```
 
@@ -34,6 +35,7 @@ Declare a model, get a filtered, sorted, paginated, relation-loading HTTP API:
 app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber
 crudgin.New(articles).Mount(r, "/articles")              // Gin
 crudnet.New(articles).Mount(mux, "/articles")            // or net/http, no dependency at all
+crudgrpc.New(articles).Register(srv, "Article")          // or gRPC, which is not HTTP at all
 ```
 
 ```http
@@ -68,6 +70,7 @@ you can curl. Each one is a single file you can read top to bottom.
 ```bash
 go get github.com/shardit-io/vv                    # the library — and, on net/http, the whole of it
 go get github.com/shardit-io/vv/http/crudgin       # …plus your HTTP framework, if you use one
+go get github.com/shardit-io/vv/rpc/crudgrpc       # …or gRPC instead of an HTTP framework
 go get github.com/shardit-io/vv/adapter/crudpgx    # …and pgx, if that is your driver
 ```
 
@@ -709,7 +712,7 @@ apply either way.
 
 ## The HTTP handler
 
-Three bindings, one API. Pick the one your project already uses:
+Four bindings, one API. Pick the one your project already uses:
 
 ```go
 articles := specs.Executor(Articles.Bind(db, security.Gate(policy)))
@@ -717,6 +720,7 @@ articles := specs.Executor(Articles.Bind(db, security.Gate(policy)))
 app.Use("/articles", crudfiber.New(articles).Routes())   // Fiber v3
 crudgin.New(articles).Mount(r, "/articles")              // Gin
 crudnet.New(articles).Mount(mux, "/articles")            // net/http
+crudgrpc.New(articles).Register(srv, "Article")          // gRPC
 ```
 
 | Route | Does |
@@ -758,9 +762,10 @@ func (s articleService) Save(ctx context.Context, a *Article) error {
 app.Use("/articles", crudfiber.New(articleService{…}).Routes())
 ```
 
-`crudfiber.Repository`, `crudgin.Repository` and `crudnet.Repository` are the
-same type, so the service above satisfies all three without a line of change —
-the integration suite mounts one service on all three to keep that honest.
+`crudfiber.Repository`, `crudgin.Repository`, `crudnet.Repository` and
+`crudgrpc.Repository` are the same type, so the service above satisfies all four
+without a line of change — the integration suite mounts one service on all four
+to keep that honest.
 
 On create the body binds straight onto the model, then a database-generated key
 and every `generated` column are cleared — a client cannot choose its own id or
@@ -775,19 +780,30 @@ the rest: `WithQuery`,
 Errors map by sentinel, so the transport never imports the decorator that raised
 them: `crud.ErrNotFound` → 404, `crud.ErrForbidden` (which `security.ErrForbidden`
 wraps) → 403, `crud.ErrConflict` → 409, query and schema errors → 400 with the
-offending path named, everything else → 500 with no detail. The table lives in
-`http/crudhttp` and both bindings call it, so there is one mapping rather than
-one per framework — and `Status(err) int` is exported if you render your own
-bodies.
+offending path named, everything else → 500 with no detail. What kind of failure it is is decided once, in
+`port`, and each transport spells it: `http/crudhttp` has the status table and
+`rpc/crudgrpc` has the `codes.Code` one, so there is one classification rather
+than one per framework — and `Status(err) int` (or `crudgrpc.Code(err)`) is
+exported if you render your own bodies.
 
-Every option, every status and every response shape is identical across the
-three. What differs is mounting, which body encodings are accepted, and what each
-router does with a trailing slash or a method it does not have;
+Every option, every rule and every machine code is identical across the four.
+What differs is mounting, which body encodings are accepted, what each router
+does with a trailing slash or a method it does not have, and — on gRPC — that a
+failure arrives as a status code plus `BadRequest` / `ErrorInfo` / `RetryInfo`
+details rather than as the JSON envelope;
 [`FL-013`](docs/flows/FL-013-a-request-through-another-binding.md) has the table.
 
 `crudnet` is worth a look even if your router is not `ServeMux`: every route
 method on it is an ordinary `http.HandlerFunc`, so chi, gorilla/mux or
 httprouter can register them one by one instead of calling `Mount`.
+
+`crudgrpc` mounts eight methods — one per command — under
+`vv.crud.v1.<Name>`, and every request and response is a
+`google.protobuf.Struct` carrying the same JSON document the HTTP bindings
+speak. There is no `.proto` to write and no `protoc` to install, which is also
+why there is no server reflection: a resource generic over its model has no
+compiled descriptor. Keys travel as strings, because a protobuf number is a
+double.
 
 ---
 
@@ -843,9 +859,53 @@ package initialisation, so a renamed column breaks the build rather than a
 request. Relation expansion stops at `-depth` (2 by default) and never walks
 back into a model already on the path.
 
+The file also ends with an assertion that the DTO still covers every writable
+column:
+
+```go
+func init() {
+    port.MustCoverUpdate[Article, ArticleUpdate]()
+}
+```
+
+Add a column and forget to regenerate, and the package **refuses to start**,
+naming the column. It reads the compiled struct rather than the generator's view
+of the source, which is what lets it disagree with the checked-in file at all —
+regenerating and diffing only ever measures the generator against itself.
+
+### `-adapter`: the rest of the resource
+
+Off by default. With it, the generator also writes the API's own request body,
+the mapper onto the model, **the inverse of that mapping**, a service shell and
+`net/http` wiring:
+
+```go
+type ArticleInput struct{ … }                       // the create/replace body
+type ArticleMapper struct{}                         // port.Mapper + errs.Resolver
+var  ArticlePaths = port.MustPathMap[Article](port.PathMap{ … })
+type ArticleService struct{ *port.DefaultService[Article, int64, ArticleUpdate] }
+func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
+```
+
+`ArticlePaths` is why the flag exists. It maps a model field back to the key the
+client sent, so an error body names `authorID` rather than `AuthorID` — and
+because it is generated with the mapping it inverts, `MustPathMap` can insist it
+covers every column a request carries, and refuse to boot when it stops.
+A hand-written inverse is wrong the first time somebody renames a key, and the
+symptom is a wrong `field` in a production error body.
+
+The generated body derives its JSON names from the Go field names, not from the
+model's own `json` tags. That is deliberate — one rule for both bodies, so one
+inverse map serves the resource — and it means a generated resource has a wire
+shape of its own. Mount with `New` and generate no adapter if the model's shape
+is the API you want.
+
+`-binding net` (the default) writes the `net/http` wiring; `-binding none` leaves
+it out, for mounting on Fiber or Gin with `ServingFor` yourself.
+
 `example/blog` is the worked example: `model.go` is what you write,
-`vv_gen.go` is what comes out, and a test regenerates and diffs so the two
-cannot drift.
+`vv_gen.go` is what comes out — with `-adapter`, so both halves are visible —
+and a test regenerates and diffs so the two cannot drift.
 
 ---
 

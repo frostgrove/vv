@@ -33,11 +33,49 @@ type field struct {
 	// a field a caller may set — and a DTO that names it is refused at Define
 	// time, which is why the generator has to know about it too.
 	Version bool
+	// Excluded records that the command line, rather than the model's own tags,
+	// is what keeps this column out of the generated artefacts. Reflection reads
+	// the struct and never the flags, so the generated file has to carry the
+	// list or the coverage assertion refuses a column its author dropped on
+	// purpose.
+	Excluded bool
+}
+
+// tagDropped reports whether the model's own tags already keep this column out
+// of the update DTO — the half the runtime can see for itself.
+func (f field) tagDropped() bool {
+	return f.Skip || f.PK || f.Generated || f.Immutable || f.Version
 }
 
 type model struct {
 	Name   string
 	Fields []field
+}
+
+// pk answers the primary key, which the adapter half needs to name the id type.
+func (m *model) pk() (field, bool) {
+	for _, f := range m.Fields {
+		if f.PK {
+			return f, true
+		}
+	}
+	return field{}, false
+}
+
+// excluded lists the columns the command line keeps out of the artefacts, in a
+// stable order — the output has to be byte-identical across runs ([[D-014]]).
+func (m *model) excluded() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range m.Fields {
+		if !f.Excluded || seen[f.Name] {
+			continue
+		}
+		seen[f.Name] = true
+		out = append(out, f.Name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type generator struct {
@@ -47,8 +85,13 @@ type generator struct {
 	depth    int
 	withDTO  bool
 	withMeta bool
+	adapter  bool
+	binding  string
 	specsPkg string
 	crudPkg  string
+	portPkg  string
+	errsPkg  string
+	netPkg   string
 
 	models   map[string]*model
 	order    []string
@@ -85,6 +128,12 @@ func (g *generator) run(outPath string) error {
 	}
 	if len(g.order) == 0 {
 		return fmt.Errorf("no tagged models found in %s", g.dir)
+	}
+	if g.adapter && !g.withDTO {
+		// The mapper, the service and the wiring all name <Model>Update. Emitting
+		// them without it produces a file that does not compile, which is a worse
+		// answer than this one.
+		return fmt.Errorf("-adapter needs the update DTO; drop -no-dto")
 	}
 	src, err := g.render()
 	if err != nil {
@@ -192,13 +241,10 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 			tagged = true
 		}
 		for _, ident := range f.Names {
-			if !ident.IsExported() || g.skip[ident.Name] {
+			if !ident.IsExported() {
 				continue
 			}
 			fl := field{Name: ident.Name, Type: exprString(f.Type), Tag: db, Rel: rel}
-			if g.readonly[ident.Name] {
-				fl.Immutable = true
-			}
 			// A field whose type is another struct from this package is either a
 			// relation or somebody else's bookkeeping; it is never a column.
 			if !hasRel {
@@ -207,6 +253,11 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 				}
 			}
 			if hasRel && rel != "-" {
+				// A relation is not a column, so dropping one leaves nothing for
+				// reflection to disagree about and nothing to declare.
+				if g.skip[ident.Name] {
+					continue
+				}
 				m.Fields = append(m.Fields, fl)
 				continue
 			}
@@ -230,6 +281,9 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 			if fl.Name == "ID" && !fl.PK && db != "-" {
 				fl.PK = true
 			}
+			// After the tags, not before: whether the flag is the only reason
+			// the column leaves is a question the tags have to have answered.
+			g.exclude(&fl)
 			m.Fields = append(m.Fields, fl)
 		}
 	}
@@ -237,6 +291,23 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 		return nil
 	}
 	return m
+}
+
+// exclude applies -skip and -readonly, and records when a flag is the only
+// reason the column leaves the generated artefacts. A skipped column stays in
+// the model with Skip set rather than being dropped: it is absent from the DTO
+// and the metamodel either way, and the name is still needed for the exclusion
+// list.
+func (g *generator) exclude(f *field) {
+	skipped, readonly := g.skip[f.Name], g.readonly[f.Name]
+	if !skipped && !readonly {
+		return
+	}
+	if !f.tagDropped() {
+		f.Excluded = true
+	}
+	f.Skip = f.Skip || skipped
+	f.Immutable = f.Immutable || readonly
 }
 
 func exprString(e ast.Expr) string {
@@ -350,6 +421,14 @@ func packageNameOf(dir string) string {
 	return strings.ReplaceAll(filepath.Base(dir), "-", "")
 }
 
+// cmpOr answers the first non-empty string.
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 // names parses a comma-separated flag into a set.
 func names(csv string) map[string]bool {
 	out := map[string]bool{}
@@ -363,12 +442,17 @@ func names(csv string) map[string]bool {
 
 // wellKnownEmbeds are embedded types from other packages whose fields the
 // generator cannot read but that are common enough to be worth knowing.
+//
+// The three timestamps are marked Excluded as well as Immutable, and the two
+// are not the same claim. gorm.Model carries no `db` tags, so reflection sees
+// three ordinary writable columns where this table sees server-owned ones —
+// only the generated file can say which, so it declares them.
 var wellKnownEmbeds = map[string][]field{
 	"gorm.Model": {
 		{Name: "ID", Type: "uint", PK: true, Auto: true},
-		{Name: "CreatedAt", Type: "time.Time", Immutable: true},
-		{Name: "UpdatedAt", Type: "time.Time", Immutable: true},
-		{Name: "DeletedAt", Type: "gorm.DeletedAt", Immutable: true},
+		{Name: "CreatedAt", Type: "time.Time", Immutable: true, Excluded: true},
+		{Name: "UpdatedAt", Type: "time.Time", Immutable: true, Excluded: true},
+		{Name: "DeletedAt", Type: "gorm.DeletedAt", Immutable: true, Excluded: true},
 	},
 }
 
@@ -379,12 +463,7 @@ func (g *generator) embedded(typ string) ([]field, bool) {
 	if fields, ok := wellKnownEmbeds[typ]; ok {
 		out := make([]field, 0, len(fields))
 		for _, f := range fields {
-			if g.skip[f.Name] {
-				continue
-			}
-			if g.readonly[f.Name] {
-				f.Immutable = true
-			}
+			g.exclude(&f)
 			out = append(out, f)
 		}
 		return out, true
@@ -411,23 +490,57 @@ type Options struct {
 	Depth    int    // how far to expand relation paths into the metamodel
 	WithDTO  bool
 	WithMeta bool
+	Adapter  bool   // also generate the resource adapter: input DTO, mapper, inverse map, service, wiring
+	Binding  string // which transport the wiring is written for: "net" or "none"
 	SpecsPkg string
 	CrudPkg  string
+
+	// The adapter half names three more packages than the DTO half does, and
+	// they are fields rather than flags. -crud and -specs exist because a
+	// consumer may point the generated file at a vendored copy of those two;
+	// nobody has asked for the same over these, and five import-path flags is
+	// five ways to produce a file that does not compile.
+	PortPkg string
+	ErrsPkg string
+	NetPkg  string
 
 	// Log receives the one line the command prints on success. Nil is silent.
 	Log io.Writer
 }
 
+// The packages the adapter half names. See Options.
+const (
+	DefaultPortPkg = "github.com/shardit-io/vv/port"
+	DefaultErrsPkg = "github.com/shardit-io/vv/errs"
+	DefaultNetPkg  = "github.com/shardit-io/vv/http/crudnet"
+)
+
 // Run generates from o and writes the result. The output path is Out resolved
 // against Into when set, Dir otherwise.
 func Run(o Options) error {
+	binding := o.Binding
+	if binding == "" {
+		binding = "net"
+	}
+	if binding != "net" && binding != "none" {
+		// Fiber and Gin wiring would import a satellite module, which a
+		// consumer may do and the library's own generated files may not
+		// ([[D-033]]). Refused rather than emitted, so the failure is a message
+		// and not a build error in the output.
+		return fmt.Errorf("-binding %s: only net and none are generated today", binding)
+	}
 	g := &generator{
 		dir:      o.Dir,
 		depth:    o.Depth,
 		withDTO:  o.WithDTO,
 		withMeta: o.WithMeta,
+		adapter:  o.Adapter,
+		binding:  binding,
 		specsPkg: o.SpecsPkg,
 		crudPkg:  o.CrudPkg,
+		portPkg:  cmpOr(o.PortPkg, DefaultPortPkg),
+		errsPkg:  cmpOr(o.ErrsPkg, DefaultErrsPkg),
+		netPkg:   cmpOr(o.NetPkg, DefaultNetPkg),
 		into:     o.Into,
 		skip:     names(o.Skip),
 		readonly: names(o.Readonly),

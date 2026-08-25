@@ -1,6 +1,6 @@
 # UC-003 — Apply a partial update that tells absent from null
 
-**Actor:** an HTTP client sending a `PATCH` body, and the application author who
+**Actor:** a client sending a partial update — a `PATCH` body or a gRPC patch document — and the application author who
 holds the same DTO in Go
 **Covered by:** [[FL-002]] [[FL-004]] [[FL-010]] [[FL-011]]
 
@@ -45,8 +45,9 @@ without a `map[string]any` anywhere and without writing the diffing by hand.
     optional is *always* applied, including its zero value. This is a property of
     the declaration, not of the request, and the caller can observe it: an empty
     body still writes that column.
-12. The same rules apply whether the DTO arrives from an HTTP body or is
-    constructed in Go. There is no separate wire path with different semantics.
+12. The same rules apply whether the DTO arrives from an HTTP body, from a gRPC
+    request document or is constructed in Go. There is no separate wire path
+    with different semantics.
 
 ## Out of scope
 
@@ -82,9 +83,13 @@ Guarantee 12 is the weakest link and is worth restating rather than trusting: th
 handler binds the body onto the same DTO type the repository was declared with,
 so there is one path by construction, but nothing asserts the two cannot diverge.
 
-There are now three HTTP bindings, and they do not decode bodies the same way —
-one dispatches on Content-Type, the other two take JSON only — so the guarantee
-is worth more than it was and is worth watching harder. All three run the same
-absent-versus-null tests, including the explicit `null`, so the three states
-survive every decoder today. A fourth binding would have to bring those tests
-with it.
+There are now four bindings, and they do not decode bodies the same way — one
+dispatches on Content-Type, two take JSON only, and the fourth takes a
+`google.protobuf.Struct` where an absent key and an explicit null are a missing
+map entry and a `NullValue` entry. So the guarantee is worth more than it was
+and is worth watching harder. All four run an absent-versus-null test, including
+the explicit null, so the three states survive every decoder today. The gRPC
+one carries its own control — an absent key and a null must produce two
+different states — because a document format that folded them would otherwise
+be indistinguishable from one that kept them. A fifth binding would have to
+bring those tests with it.

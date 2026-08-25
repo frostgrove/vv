@@ -108,13 +108,32 @@ is.
    `Status` is `StatusFor(port.KindOf(err))`. This is the only step of the path
    that is HTTP, which is why it is the only step that stayed here ([[D-045]]).
 
+   **And there is a second vocabulary now.** `rpc/crudgrpc/status.go:CodeFor` is
+   the same table in gRPC's words, over the same `port.KindOfWith` answer:
+   `NotFound`, `Unauthenticated`, `PermissionDenied`, `Unavailable`,
+   `AlreadyExists`, `InvalidArgument`, `Internal`. Two of the eight kinds
+   collapse into `InvalidArgument` — a validation failure and a malformed request
+   are one code here — and every conflict is `AlreadyExists`. Both are costs
+   [[D-052]] records rather than bugs; the kind is decided once and each
+   transport spells it ([[D-049]]).
+
 5. **The body** — `http/crudhttp/render.go:EnvelopeRenderer.Render`.
    The order of its steps is load-bearing: the fault (or one synthesised from the
    sentinel by `port.FaultOf`), then the status, then **the internal
    short-circuit** — before anything is copied out of the fault, so a 500 cannot
-   carry a violation, a param or a path — then path translation, the sort, the
-   cap and the messages. `crudhttp.Internal()` is the one body a 500 ever has and
-   there is nowhere in it for a driver's sentence to go ([[D-015]], [[D-044]]).
+   carry a violation, a param or a path — then `port.Violations`, which is path
+   translation, the sort, the cap and the messages. `crudhttp.Internal()` is the
+   one body a 500 ever has and there is nowhere in it for a driver's sentence to
+   go ([[D-015]], [[D-044]]).
+
+   `rpc/crudgrpc/status.go:StatusRenderer.Render` is the same five steps in the
+   same order, ending in the same `port.Violations` call and a different final
+   shape: `BadRequest` with one `FieldViolation` per violation, `ErrorInfo`
+   carrying the fault's own code as the reason, and `RetryInfo` when the answer
+   is `Unavailable`. An `Internal` status says `internal` and carries no details
+   at all — the same silence, by the same construction. The pipeline moved down
+   to `port` at phase 9 precisely so those two renderers could not drift
+   ([[D-045]]).
 
 6. **The response.** The [[UC-017]] envelope:
    `{"type":"error","errors":{"validation":[…],"general":[…]}}` —
@@ -195,8 +214,10 @@ is.
 The violations list is no longer one entry long. Until phase 7 every row above
 produced exactly one violation, so the envelope's array and its ordering were
 untested by anything but a unit fixture; a probed write is the first thing that
-fills it, and `EnvelopeRenderer.violations` is where the cap and `Partial` meet
-([[FL-017]]).
+fills it, and `port.Violations` is where the cap is applied. How the client is
+told the list was cut short stays with each transport: the envelope's
+`"partial":true` on HTTP, and an `ErrorInfo` metadata key on gRPC — the only key
+that map ever carries ([[FL-017]], [[D-052]]).
 
 Phase 4 closed the last of the disclosure: no row above reaches a client with a
 driver's message any more. `port.FaultOf` never reads `err.Error()` — a sentinel
@@ -208,9 +229,14 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | File | Role |
 |---|---|
 | `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
-| `http/crudhttp/render.go` | the `Renderer` seam, `EnvelopeRenderer`, the violations pipeline and the message ladder |
+| `http/crudhttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, the `Retry-After` header and the 500 short-circuit |
+| `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the path chain, the sort, the cap and the message ladder, shared by every renderer since phase 9 |
+| `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — the locale the ladder is asked for, one key for every transport |
+| `rpc/crudgrpc/status.go` | the second vocabulary: `Code`, `CodeFor`, `Renderer`, `StatusRenderer`, and the `BadRequest`/`ErrorInfo`/`RetryInfo` details |
+| `rpc/crudgrpc/locale.go` | `LocaleKeys` — where a gRPC caller's language comes from |
 | `http/crudhttp/envelope.go` | `Envelope`, `Groups`, `Internal` — the one body a 500 ever has |
-| `http/crudhttp/bodyindex.go` | `BodyResolver` — the raw-body fallback, behind every declared hop |
+| `http/crudhttp/bodyindex.go` | `BodyResolver` — the raw-body fallback, behind every declared hop and only over a path they left unchanged ([[FL-015]]) |
+| `port/path.go`, `port/pathmap.go` | the two declared hops: `Fields`, hand-written and partial, and `PathMap`, generated and total ([[D-050]]) |
 | `port/kind.go` | `KindOf`, `KindOfWith`, `FaultOf`, `CodeForKind`, `DefaultMessage`, `rank`, `sentinelKind` — the classification half, shared by every transport ([[D-045]]) |
 | `port/sentinel.go` | `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
 | `port/service.go` | `DefaultService.Delete` — the one place the DELETE asymmetry is decided |
@@ -234,6 +260,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `errs/build.go` | `Builder` and `P` — the hand-built fault, and `Wrapping`, the only way a sentinel is attached. The rule that resolves the chain's ambiguity, which the plan was silent on: `Code`, `Params` and `Message` apply to the violation the most recent `Field`/`At`/`General` opened; with none open, `Code` and `Message` fall to the fault, and the four steps with no fault-level meaning — `Params`, `Origin`, `Source`, `Approximate` — open a general violation rather than dropping what they were given, so a misordered chain produces a visibly odd fault instead of a silently empty one ([[D-021]]). `Fault()` copies path, params and column lists deep, so a resolver rewriting a hop in place cannot reach a fault the builder already handed back |
 | `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, `Chain`. No `Renderer`: it is HTTP-shaped and stays in `http/crudhttp` ([[D-045]]) |
 | `errs/message.go` | `Messages` — the four-level ladder, the locale fallback and the template expansion. The four levels come from the path's first and last **named** steps and not from its depth, so a key spelling a whole nested path is accepted by `Add` and never consulted |
+| `errs/catalogue.go` | `LoadMessages`, `Messages.Load`, `Messages.Locales`, `Messages.Missing`, `DefaultLocaleFile` — the same catalogue read from one flat JSON file per locale. Flat because a nested file invites exactly the key `errs/message.go` warns is never consulted; `Missing` is a report and not a refusal, because falling through the ladder is the designed case ([[D-048]]) |
 | `errs/bridge.go` | `FieldViolation` and `FromFieldViolations` — a validation library's errors, with no import of one |
 | `errs/sqlerr/doc.go` | what a parser takes and produces, why the four files are keyed differently, the contract/fixture split, and why these are not an `errs.Classifier` |
 | `errs/sqlerr/classify.go` | `Classify` — the one exported entry point, a switch on the four dialect strings, total on a nil error and on a dialect it does not know |
@@ -257,6 +284,10 @@ Every test below that names `http/crudfiber/` has an identical twin in
 are ported one to one and the mapping they exercise is one table ([[D-045]]) —
 removing an arm from `crudhttp.StatusFor` fails all three, which is the check
 that it is shared rather than copied.
+
+`rpc/crudgrpc` is not in that triplet and does not carry those names: there is no
+404 here to assert. What it carries is the same claims in its own vocabulary,
+listed at the end.
 
 - `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` — the switch, arm by arm.
 - `TestRepositoryErrorsBecomeStatusCodes` — `http/crudfiber/edge_test.go`.
@@ -338,6 +369,46 @@ classification half of them into `port`.
 - `TestTheMeasuredValidatorNamespacesBecomePaths` / `TestARootThatDoesNotMatchKeepsEverySegment` / `TestAnIndexedNamespaceBecomesAnIndexStep` / `TestNoFieldViolationsConvertToNoSlice` — `errs/bridge_test.go` — over a hand-written fake, so `errs` imports nothing.
 - `TestValidatorFieldErrorSatisfiesFieldViolation` / `TestWithoutTheTagNameFuncEveryPathIsGoFieldNames` — `test/bridge/fieldviolation_test.go` — the live validator, in the one module allowed to import it.
 - `TestTheSameFailingRequestTwiceProducesTheSameBody` — `test/integration/probe_test.go` — the envelope's ordering under a body that really does carry three violations, with a count of them as the control that byte equality is measuring an order.
+
+
+And the second vocabulary, plus the pipeline both share:
+
+- `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — the gRPC
+  table arm by arm, with a control asserting it covers exactly the kinds `errs`
+  declares, so a ninth kind fails rather than being mapped to `Internal`.
+- `TestAnInternalStatusSaysNothing` and
+  `TestAStatusMessageNamesNoEntityAndNoDriverText` — the same file — the
+  disclosure guard on this transport. The second is the one with teeth:
+  `status.New(code, err.Error())` is the natural wrong answer and it ships the
+  table name.
+- `TestAClassifiedConflictReachesAGrpcClientWithNothingInternal` — the same
+  file, over every entry of the captured corpus on all four engines, and again
+  in `test/integration/rpc_grpc_test.go` against errors a live server raised.
+- `TestEveryViolationBecomesAFieldViolationInTheSameOrder`,
+  `TestAViolationWithNoPathIsStillInTheOneList`,
+  `TestTheReasonIsTheCodeSpelledTheUsualWay`,
+  `TestARetryableStatusCarriesRetryInfo`,
+  `TestTheFrameworkDoesNotRetryOnTheCallersBehalf` and
+  `TestPartialIsTheOnlyMetadataKey` — the details and what they may say.
+- `TestTheViolationOrderIsTotalAndByteIdentical`,
+  `TestAtOnePathTheInputViolationComesFirst`,
+  `TestACappedListKeepsTheFrontOfTheOrder`,
+  `TestTheMessageLadderSeesTheTranslatedPath`,
+  `TestADeclaredHopBeatsTheFallback` and
+  `TestRenderingDoesNotWriteThroughToTheFault` — `port/violations_test.go` — the
+  pipeline itself, measured once for every transport.
+- `TestTheSameCodeIsSpelledTheSameOnBothTransports` and
+  `TestARefusalIsTheSameClassOnBothTransports` —
+  `test/portmount/grpcmount_test.go` — the envelope's `error_code` and the
+  status detail's `Reason` are the identical string.
+- `TestACatalogueLoadedFromFilesResolvesTheSameLadder`,
+  `TestTwoFilesDisagreeingOnOneKeyAreRefused`,
+  `TestANestedCatalogueFileIsRefused`,
+  `TestMissingNamesTheCodesWithNoTemplate`,
+  `TestLocalesNamesEveryFileThatDeclaredSomething` and
+  `TestTheCatalogueLoadsInADeterministicOrder` — `errs/catalogue_test.go` — the
+  message catalogue read from files, measured against the in-code path rather
+  than against nothing.
 
 ## See also
 

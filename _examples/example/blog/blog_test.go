@@ -131,6 +131,11 @@ func articleRow() []any {
 	return []any{int64(1), int64(7), "old", "body", 3, 4.5, nil, int64(1), nil}
 }
 
+// generateDirective is the line model.go carries, checked verbatim: change it
+// without changing the command below and the staleness check would quietly be
+// measuring a command nobody runs.
+const generateDirective = "//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter"
+
 // The checked-in generated file must match what the generator produces now.
 func TestGeneratedFileIsUpToDate(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
@@ -145,7 +150,9 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", "github.com/shardit-io/vv/cmd/vv", "-dir", dir)
+	assertDirective(t, "model.go", generateDirective)
+
+	cmd := exec.Command("go", "run", "github.com/shardit-io/vv/cmd/vv", "-dir", dir, "-adapter")
 	cmd.Dir = mustRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)
@@ -161,6 +168,23 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 	if string(fresh) != string(current) {
 		t.Fatal("vv_gen.go is stale; run `go generate ./example/blog`")
 	}
+}
+
+func assertDirective(t *testing.T, file, want string) {
+	t.Helper()
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(line, "//go:generate") {
+			if strings.TrimSpace(line) != want {
+				t.Fatalf("%s carries\n  %s\nbut this test regenerates with\n  %s", file, strings.TrimSpace(line), want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no //go:generate line in %s", file)
 }
 
 func mustRepoRoot(t *testing.T) string {

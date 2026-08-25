@@ -4,6 +4,7 @@ package gormstore
 
 import (
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/repo/decorators/specs"
 	"gorm.io/gorm"
 	"time"
@@ -104,3 +105,14 @@ type TeamAttrs struct {
 // Team_ is the metamodel of Team: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Team_ = specs.Metamodel[Team, TeamAttrs]()
+
+// A writable column the update DTO does not name refuses to start, rather than
+// becoming a column updates silently cannot reach ([[D-050]]). The generator
+// read the model's source text and this reads the compiled struct, so the two
+// can drift apart — and this is what says so when they do, with nothing
+// regenerated.
+func init() {
+	port.MustCoverUpdate[Label, LabelUpdate]("CreatedAt", "DeletedAt", "UpdatedAt")
+	port.MustCoverUpdate[Member, MemberUpdate]("CreatedAt", "DeletedAt", "UpdatedAt")
+	port.MustCoverUpdate[Team, TeamUpdate]("CreatedAt", "DeletedAt", "UpdatedAt")
+}

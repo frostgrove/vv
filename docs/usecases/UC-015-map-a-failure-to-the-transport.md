@@ -1,6 +1,6 @@
 # UC-015 — Map a failure to the transport correctly
 
-**Actor:** an HTTP client reading the status code, and the application author who
+**Actor:** a client reading the status code — HTTP or gRPC — and the application author who
 does not want to write the mapping once per endpoint
 **Covered by:** [[FL-011]] [[FL-014]]
 
@@ -52,6 +52,11 @@ branch on and, where the mistake is its own, enough detail to fix it.
     written for a person.
 12. One status may carry more than one violation. A refusal is a status and a
     *list*, and the list is either complete or says it is not.
+13. The same failure answers the same **class** on every transport, and each
+    transport's own vocabulary is derived from that one class in one place. A
+    client that speaks two of them branches on one code, spelled identically in
+    both. Where a transport has fewer words than the class table has classes,
+    the collapse is stated rather than discovered.
 
 ## Out of scope
 
@@ -60,9 +65,9 @@ branch on and, where the mistake is its own, enough detail to fix it.
   404, not 403" is UC-004's guarantee; this one only promises 404 renders as 404.
 - **Validation of business rules.** Wrapping the right sentinel is the service
   layer's job (UC-013). The mapping honours whatever it is handed.
-- **Non-HTTP transports.** The sentinels are transport-neutral, but only the HTTP
-  mapping is written and tested. Within HTTP the mapping is written once and
-  every binding calls it, so it does not multiply as bindings are added.
+- **GraphQL and message queues.** HTTP and gRPC are written and tested. Each
+  transport's vocabulary is derived in one place from one classification, so a
+  third does not multiply anything — but it is not written.
 - **Problem+JSON, i18n, error codes per field.** The body is a small fixed shape:
   an error tag, an optional path, an optional message.
 
@@ -70,7 +75,7 @@ branch on and, where the mistake is its own, enough detail to fix it.
 | Flow | What it contributes |
 |---|---|
 | [[FL-011]] | the sentinel-to-status table, the body shapes, and the point at which a 500 stops carrying detail |
-| [[FL-013]] | that a second and a third binding inherit the table rather than restating it |
+| [[FL-013]] | that a second, a third and a fourth binding inherit the classification rather than restating it, and the two answers that differ once the transport is not HTTP |
 | [[FL-014]] | where a driver error becomes a classified failure, and why a classified 409 says less than an unclassified one |
 | [[FL-015]] | which half of the mapping is transport-neutral and which is HTTP, and the path chain's middle hops |
 
@@ -84,6 +89,22 @@ Every status in guarantee 1 has a test, including the branches no route reaches
 with a real repository behind it; the "same refusal from every route" table and
 the 500-leaks-nothing assertion are both exhaustive over the route set, and both
 are run once per HTTP binding, of which there are three.
+
+**Guarantee 13 arrived with phase 9**, and it is the one the gRPC binding
+existed to test. `port.KindOfWith` answers the class; `crudhttp.StatusFor` and
+`crudgrpc.CodeFor` are two tables over that one answer, and the violations
+pipeline they both render from — the path chain, the sort, the cap, the message
+ladder — is `port.Violations`, one implementation. What a client branches on is
+the code, and `TestTheSameCodeIsSpelledTheSameOnBothTransports` asserts the
+envelope's `error_code` and the status detail's `Reason` are the identical
+string, literally `unique`, so an implementation that UPPER_SNAKE_CASEs one side
+fails rather than passing a both-non-empty check.
+
+The collapse the guarantee promises to state: gRPC has one code for "the request
+was wrong", so 422 and 400 are both `InvalidArgument`, and every conflict is
+`AlreadyExists` including `restrict` and `stale_version`. On that transport the
+machine code carries the distinction the status carries over HTTP. Both costs
+are [[D-052]]'s, accepted the way this use case already accepts [[D-049]]'s.
 
 Guarantee 8 — that the mapping is a function an application can reuse — is now
 also what keeps the bindings honest rather than only a convenience: there is one

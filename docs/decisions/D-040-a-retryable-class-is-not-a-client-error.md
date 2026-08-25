@@ -164,12 +164,22 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   control. Nothing else exercises `Save`; `make corpus` writes the files and no
   target diffs the result.
 
-## Proven by (owed)
+## Proven by
 
-- Phase 4 owes the 503 and the `Retry-After`. Phase 1 deliberately shipped no
-  status table: a `Kind` → status map in `errs` means an HTTP type in the
-  transport-neutral half, which [[D-045]] forbids, and `ROADMAP-errors.md` §14
-  gives the table to phase 4.
+- `TestEveryCorpusCaseClassifiesAsTheCorpusSays` in
+  `test/integration/corpus_test.go` — the `lock_timeout` arm on four live
+  engines asserts it is **not** a conflict.
+- `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
+  `adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
+  by number.
+- `TestTheRetryableCodesAreTheirOwnKind` — the `Kind`, which phase 1 shipped.
+- `TestARetryableFailureIsA503WithRetryAfter` — the status and the header, which
+  phase 4 shipped. `errs` still declares no status table: a `Kind` → status map
+  there would put an HTTP type in the transport-neutral half, which [[D-045]]
+  forbids, so the table lives in `http/crudhttp` and [[D-049]] decides which of
+  it and the sentinel wins.
+- `TestARetryableCaseNeverAnswersAConflictOrValidationCode` — the forbid, as a
+  test rather than a sentence.
 
 ## See also
 

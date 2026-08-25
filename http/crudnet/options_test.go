@@ -1,16 +1,20 @@
 package crudnet
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/http/crudhttp"
 	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/query"
 )
@@ -486,4 +490,78 @@ func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 			t.Fatalf("WithQuery through New was ignored: a filter outside the allow-list answered %d", r.status)
 		}
 	})
+}
+
+// localeCatalogue declares one key in two locales, so the test can say which
+// one the ladder was asked for. The real errs.Messages rather than a fake, so
+// the locale ladder — fr-CA, then fr, then the default — is the one a consumer
+// gets.
+func localeCatalogue(t *testing.T) *errs.Messages {
+	t.Helper()
+	m := errs.NewMessages(nil)
+	for _, e := range []struct{ locale, text string }{
+		{"fr", "cette adresse est deja prise"},
+		{"", "that address is taken"},
+	} {
+		if err := m.Add(e.locale, "name.unique", e.text); err != nil {
+			t.Fatalf("declaring the %q message: %v", e.locale, err)
+		}
+	}
+	return m
+}
+
+// The locale a client asked for reaches the message ladder. Nothing tested this
+// end to end through a binding before phase 9, and it is the arm the gRPC
+// metadata test mirrors.
+func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
+	taken := errs.Conflict().Code(errs.CodeUnique).
+		Field("Name").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
+
+	message := func(t *testing.T, header string) string {
+		t.Helper()
+		app, f := mount(t, WithRenderer[Widget, int64, WidgetUpdate](
+			crudhttp.NewRenderer(crudhttp.WithMessages(localeCatalogue(t)))))
+		f.err = taken
+		r := localeRequest(t, app, header)
+		if r.status != http.StatusConflict {
+			t.Fatalf("a duplicate key answered %d: %s", r.status, r.body)
+		}
+		var env struct {
+			Errors struct {
+				Validation []struct {
+					Message string `json:"message"`
+				} `json:"validation"`
+			} `json:"errors"`
+		}
+		r.decode(t, &env)
+		if len(env.Errors.Validation) != 1 {
+			t.Fatalf("the body carries %d validation violations: %s", len(env.Errors.Validation), r.body)
+		}
+		return env.Errors.Validation[0].Message
+	}
+
+	if got := message(t, "fr-CA,fr;q=0.9"); got != "cette adresse est deja prise" {
+		t.Fatalf("with Accept-Language fr-CA the message is %q; the first tag is what the ladder is asked for", got)
+	}
+
+	// The control: with no Accept-Language the default entry wins. Without it a
+	// catalogue that answered the same sentence whatever it was asked would
+	// pass the leg above.
+	if got := message(t, ""); got != "that address is taken" {
+		t.Fatalf("with no Accept-Language the message is %q, want the default-locale entry", got)
+	}
+}
+
+// localeRequest sends one create through the mounted mux with the header under
+// test, or without it when the header is empty.
+func localeRequest(t *testing.T, mux *http.ServeMux, header string) response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/widgets", bytes.NewReader([]byte(`{"name":"bolt"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	if header != "" {
+		req.Header.Set("Accept-Language", header)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return response{status: w.Code, body: w.Body.Bytes(), header: w.Header()}
 }

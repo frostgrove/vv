@@ -352,7 +352,8 @@ SATELLITES — one dependency decision each, per [[D-033]]
 ├── http/crudfiber/    + fiber/v3   error middleware, shell over `port` (phase 5)
 ├── http/crudgin/      + gin        the same, ported one to one
 ├── adapter/crudpgx/   + pgx/v5     typed extraction from *pgconn.PgError
-└── rpc/crudgrpc/      + grpc       NEW, phase 9
+└── rpc/crudgrpc/      + grpc       phase 9 — SHIPPED. Three requires and one
+                                   decision: grpc, protobuf, genproto ([[D-051]])
 ```
 
 Three module facts, and the framework roadmap argues the first two — they are
@@ -384,9 +385,23 @@ repeated here only because every package above depends on them:
   It also had a deadline: the framework roadmap §11 says the first tag is the point of no return, and
   module boundaries are far harder to move afterwards than names.
 
-This is the the framework roadmap tier structure applied to one subsystem. `Makefile:MODULES`
-gains `rpc/crudgrpc` when phase 9 lands, and every existing
-target loops over it for free.
+This is the the framework roadmap tier structure applied to one subsystem.
+
+**A correction this section carried until phase 9:** `Makefile:MODULES` does not
+"gain" anything. It is discovered by `find`, so `unit`, `vet`, `tidy`,
+`check-tidy`, `check-deps`, `version`, `release` and `work` picked
+`rpc/crudgrpc` up the moment its `go.mod` existed and the Makefile needed no
+edit at all. A hand-written list is how a new module escapes all of those at
+once, which this repository has been bitten by, and the discovery is the fix.
+What did need doing by hand: `make work` to regenerate `go.work`, and a
+`require` plus `replace` in `test/go.mod`.
+
+Two files phase 5 left in `http/crudhttp` moved down at phase 9, because the
+second transport is what settled their shape: `port/violations.go` — the copy,
+the path chain, the sort, the cap and the message ladder, which both renderers
+call — and `port/locale.go`, one context key and one language-tag parser for
+every transport. [[D-045]] scheduled the first move itself and its *Proven by*
+records the measurement.
 
 ---
 
@@ -1576,13 +1591,38 @@ same reason.
 - **A missing translation, or a placeholder whose param is absent** → fall back
   one level up the message hierarchy rather than emitting `{max}` to a client.
 
-### gRPC, later
+### gRPC — shipped at phase 9
 
 `rpc/crudgrpc` maps `Kind` → `codes.Code` and renders a `google.rpc.Status` with
-`BadRequest.FieldViolation` entries carrying `Path.String()`. The reason this is
+`BadRequest.FieldViolation` entries carrying `Path.String()`. The reason this was
 a phase-9 item and not a design risk is §3: the fault is already
 transport-neutral and the path chain already ends one hop before the wire. If
 adding gRPC requires changing `errs`, the contract was wrong.
+
+**It did not.** The binding's own commit changed no line of `errs`, `errs/sqlerr`,
+`port` or `http/crudhttp` — see [[D-045]]'s *Proven by*, where the measurement is
+spelled out in full, including why the `port` diff belongs to the move that
+decision itself scheduled rather than to gRPC.
+
+Four things the paragraph above did not predict, all recorded in [[D-052]]:
+
+- **The wire shape is `google.protobuf.Struct`, not a generated message.** A
+  resource is generic over its model, so no compiled proto message for it can
+  exist in a library. The document inside is exactly the JSON the HTTP bindings
+  carry, which is what makes the four-transport comparison possible at all.
+- **Two codes collapse.** `KindValidation` and `KindBadRequest` are both
+  `InvalidArgument`, and every conflict is `AlreadyExists`. The machine code in
+  the details is what separates them, and it is spelled identically on both
+  transports.
+- **There is no server reflection**, because a generic resource has no
+  descriptor. Synthesising one is named as a deferred follow-up.
+- **A key travels as a string.** A protobuf number is a double, so an `int64`
+  above 2^53 would not survive one. Keys are strings; entity fields are not, and
+  that limit is measured rather than claimed.
+
+And one thing it did predict correctly and is worth saying out loud: the
+violations pipeline was wanted verbatim, which is why it is now
+`port.Violations` rather than a second copy.
 
 ---
 
@@ -1606,6 +1646,26 @@ update plan at `Define` time precisely "so a broken DTO fails at start-up rather
 than on the first request". The inverse map is validated the same way, at the
 same moment.
 
+**Shipped in phase 8, with three corrections to the paragraph above.**
+
+The check has to compare two *independent* derivations or it means nothing. The
+generator reads the model's source text with `go/parser`; the start-up check
+reads the compiled struct through `crud.Schema`. `Schema.Update` is already every
+non-PK, non-generated, non-immutable, non-version field — the generator's
+keep-set, arrived at from the other side. A check that instead read the
+generator's own view of the model would be the regenerate-and-diff test again,
+which passes forever for a generator that silently skips a column.
+
+The strictness is on the generated artefact, never on `basic.Define`. A
+hand-narrowed DTO is a supported shape and a totality arm in `crud.PlanFor` would
+refuse every one of them, in this tree and in every consumer's.
+
+And the map has to be exact as well as total: an entry for a `generated` column
+or for the optimistic lock names a key no request carries, which is the same
+wrong path as a missing entry approached from the other side. `port.NewPathMap`
+refuses both. [[D-050]] is the decision; the flags are `-adapter` and `-binding`,
+and the coverage assertion is emitted with or without them.
+
 ---
 
 ## 11. Prior art — what we take and what we refuse
@@ -1619,14 +1679,14 @@ Named explicitly so nobody re-litigates it.
 | A field path with indices as first-class nodes | Bean Validation `Path.Node`, Zod `path`, DRF | Independently converged on by four ecosystems; it is the shape clients want |
 | Vendor code tables, not only SQLSTATE classes | Spring `sql-error-codes.xml` | MySQL's 23000 collision makes SQLSTATE alone insufficient |
 | **Declaring** which constraint maps to which field and message | Ecto `unique_constraint/3` | The reliable half of the mapping. Introspection is the fallback, not the mechanism |
-| Structured field violations under one envelope key | DRF, Laravel, `ValidationProblemDetails` | Clients want one parser, not a shape per status |
-| A stable machine code separate from the human message | gRPC `ErrorInfo.reason`, Prisma `P2002` | i18n and UI branching are different jobs |
-| Retryable as its own class, not an error | gRPC `RetryInfo` | Keeps [[D-015]]'s rule that a retryable class is not a client error |
+| Structured field violations under one envelope key | DRF, Laravel, `ValidationProblemDetails` | Clients want one parser, not a shape per status. **Exercised on two transports since phase 9**: the envelope's `errors` object and a single `google.rpc.BadRequest`, both built from one list, and a violation naming no field is in the same list with an empty field rather than in a second one |
+| A stable machine code separate from the human message | gRPC `ErrorInfo.reason`, Prisma `P2002` | i18n and UI branching are different jobs. **Exercised since phase 9**, and "stable" turned out to have teeth: the code is spelled the same in an HTTP envelope and in a gRPC `FieldViolation.Reason`, against AIP's UPPER_SNAKE_CASE convention, because a client speaking both would otherwise need two tables ([[D-052]]) |
+| Retryable as its own class, not an error | gRPC `RetryInfo` | Keeps [[D-015]]'s rule that a retryable class is not a client error. **Exercised since phase 9** as the literal `errdetails.RetryInfo`, one second, the counterpart of the `Retry-After` a 503 carries — and the framework still does not retry ([[D-040]]) |
 
 | Refuse | Why |
 |---|---|
 | i18n baked into the error value | The locale is a rendering concern. A fault crossing a queue must not carry the locale of the request that made it |
-| Status codes hard-wired into the error | The same fault is 409 over HTTP and `ALREADY_EXISTS` over gRPC |
+| Status codes hard-wired into the error | The same fault is 409 over HTTP and `ALREADY_EXISTS` over gRPC. Since phase 9 that sentence is a test rather than an example |
 | Rails' `validates_uniqueness_of` as the primary mechanism | It has a documented race. The index is the truth; the probe is advice |
 | Constraint names in the public payload | Exactly the leak `docs/usecases/Index.md` gap 16 records |
 | `init()`-time global registration | Multi-database makes a global registry wrong on day one |
@@ -1645,24 +1705,25 @@ change, it says so and names the successor rather than quietly working around it
 |---|---|
 | [[D-015]] errors are sentinels | A `Fault` **wraps**, never replaces. `ErrStaleVersion` keeps wrapping `ErrConflict`. A 500 says nothing. **But D-015's class-23 sentence is factually wrong** (§6) and phase 0 supersedes it: the classifier key is `(dialect, sqlstate, native)` and no arm is a prefix test |
 | [[D-016]] `crud/` is stdlib-only | `crud` cannot import `errs`. The sentinel is attached by the caller |
-| [[D-033]] optional deps are their own modules | **Amended** (the framework roadmap): the invariant becomes *no third-party requirement*, so `errs` gets its own module and its own version line. `catalog`, `probe`, `port` stay in the root; gRPC is a satellite |
+| [[D-033]] optional deps are their own modules | **Amended twice.** By [[D-036]] (the framework roadmap): the invariant becomes *no third-party requirement*, so `errs` gets its own module and its own version line. And by [[D-051]] at phase 9: the unit a satellite isolates is one dependency *decision*, not one `require` — `rpc/crudgrpc` needs grpc, protobuf and genproto, and no consumer can take one without the other two. `catalog`, `probe`, `port` stay in the root; gRPC is a satellite |
 | [[D-034]] a binding is a shell over `crudhttp` | **Superseded** by [[D-045]] at phase 5, not extended. Its invariant said everything shared *must come from `crudhttp`*; moving the shared half to `port` broke that literally, so it needed a successor rather than a hand-wave |
+| [[D-045]] the shared half is transport-neutral | Phase 9 paid the one claim it owed — adding a transport requires no change to `errs` — and discharged the follow-up it scheduled for itself: the violations pipeline is `port.Violations`, called by both renderers. The `Renderer` seam stayed in `http/crudhttp`, which is the same decision's own test |
 | [[D-022]] the handler takes an interface | The port layer is the natural next step. Type aliases keep every current signature compiling |
 | [[D-008]] out of scope is 404 | The probe must not confirm a hidden row. 404 stays ahead of 403 |
 | [[D-032]] a replica never decides a write | The probe runs on the primary |
 | [[D-014]] SQL is deterministic | Extended to violation order |
-| [[D-021]] magic fails at build or start-up | The inverse path map, the code registry and the catalog all fail at declaration time |
+| [[D-021]] magic fails at build or start-up | The inverse path map, the code registry and the catalog all fail at declaration time. Phase 8 paid the first of those, and had to make the check compare two *independent* derivations — the generator reads source text, the check reads the compiled struct — because a check reading the generator's own view of the model would be one derivation agreeing with itself ([[D-050]]) |
 | [[D-002]] `Opt` has three states | The probe reads the change set, not the DTO |
 | [[D-011]] `Save` is JPA-shaped | `Save` **is** the upsert path, so the probe runs but skips the constraints the `ON CONFLICT` target covers — a set that differs per dialect (§8) |
 | [[D-019]] dialect differences are not observable | The work adds at least four new ones: the upsert-swallow divergence, `too_long` unreachable on SQLite, MySQL's row index for bulk attribution, and per-engine constraint skipping. D-019 forbids adding one without naming it there **and in both usage guides**. Phase 6 paid the last of those as **difference 9** — which unique keys each engine can tell apart, and which kinds of key it has at all — and it turned out to be observable one phase early, because `catalog.Constraint` answers a different `Kind` for the same two DDL statements depending on the engine. Phase 7 paid the rest as **difference 11**, in three halves: which violations the probe can find on which engine (the upsert-swallow divergence and the four unreproducible key kinds), whether it runs inside a transaction at all, and how much a folded violation is known to mean. The "MySQL row index" half turned out not to be a dialect difference: the bulk shape binds every row's values directly and the index is known by position in Go, so it is the same on all four engines |
 | [[D-009]] context executor capture is unconditional | The probe resolves its executor through `crud.ExecutorFor(ctx, src)`; that is what makes "never probe on another connection" enforceable rather than aspirational |
 | [[D-010]] update is load-diff-write | The change set says which constraints matter; the loaded row supplies the values |
 
-New decisions this work needs — **all nine written in phase 0**. One still
-governs code that does not exist yet — [[D-043]] — and says so in its status line
-rather than reading as a rule the tree already follows; [[D-038]] left that set
-when phase 1 landed `errs`, [[D-041]] when phase 6 landed `catalog`, [[D-045]]
-when phase 5 landed `port` and [[D-042]] when phase 7 landed `probe`:
+New decisions this work needs — **all nine written in phase 0**, and none of them
+now governs code that does not exist. [[D-038]] left that set when phase 1 landed
+`errs`, [[D-045]] when phase 5 landed `port`, [[D-041]] when phase 6 landed
+`catalog`, [[D-042]] when phase 7 landed `probe`, and [[D-043]] when phase 8
+landed the generated mappers and the start-up refusal it owed:
 
 | id | Invariant |
 |---|---|
@@ -1780,12 +1841,13 @@ not done because the code works.
 | 1 | `errs/` — **done** | codes, `Kind`, `Path`, `Violation`, `Fault`, the SPI, `Chain` and its `Approximate` marker ([[D-043]]), the message source and the dependency-free validation bridge, as a package of the root module ([[D-036]]); [[D-047]]; the two `check-tiers` arms that make "`errs` imports nothing" and "`crud` imports no `errs`" mechanical rather than written down. Two things deliberately **not** shipped: no `Kind` → status table (phase 4's, and an HTTP type in the neutral half is [[D-045]]'s forbid) and no violation sort (§5 and §8 state contradictory orders) | a `Fault` wrapping a sentinel matches it — **and one wrapping none does not**. Without the negative the test passes for `errors.Join` and proves nothing |
 | 2 | `errs/sqlerr/` — **done** | `Classify` over four dialect tables — `postgres.go`, `mysql.go`, `mariadb.go`, `sqlite.go` — keyed three different ways, table-driven over the corpus, stdlib only; the four corpus entries phase 0 deferred (`deadlock`, `serialization_failure`, `25P02`, deferred constraints) plus a fifth, the same duplicate key captured from a server answering in Russian; `errs.CodeTransactionAborted`; the corpus grows 15 → 20 per engine. One live bug fixed on the way: a deferred constraint fires at `COMMIT`, and `crudsql.Tx.Commit` and `crudpgx.Tx.Commit` returned it unclassified — a 409 through the statement and a 500 through the commit. `crudsql.savepoint.Commit` classifies too, but as a symmetry measure and not a bug fix: no engine raises integrity at `RELEASE SAVEPOINT`, and pgx's nested `Begin` returns the same `Tx` whose `Commit` classifies. Two things deliberately **not** shipped: no class-23 fallback (a MySQL class-23 number nobody provoked stays unclassified, and phase 3 must keep the class test for the sentinel) and no `23P01` arm, so `CodeExclusion` is reachable from no engine until somebody provokes an `EXCLUDE` | the class is derived from `(dialect, sqlstate, native)` alone — a parser that reads message text fails a corpus entry whose text is localised |
 | 3 | Driver extraction — **done** | one new root-module package, `sqlfault`, holding the tree walk, by-shape extraction, the dialect-free integrity gate and fault assembly; `crudsql` by shape with its three `errors.Unwrap` walks replaced by one tree walk, `crudpgx` typed over `*pgconn.PgError`; the engine declared by four named `crudsql` constructors (`MariaDB` is new) and refused by `Open`/`From`/`Source`, with `WithFaults` as the way in; a `Columns` SPI over `catalog`; **FL-014**. Deliberately **not** shipped: no `Detail.Value`, no `Violation.Path`, no `Fault.Op`, no `Detail.RefTable`/`RefColumns`, no `Kind`→status arm, and no fault at all from `Open`/`From`/`Source`. Two corrections carried back. Phase 2's row calls `crudsql.savepoint.Commit` "a symmetry measure and not a bug fix" because no engine raises *integrity* at `RELEASE SAVEPOINT` — true, and not the whole reason: a statement the server refuses inside the savepoint poisons the transaction and PostgreSQL refuses the `RELEASE` with `25P02`, so that door is what gives a nested `Commit` a code instead of an anonymous 500, and `TestANestedCommitOnAPoisonedTransactionCarriesItsCode` measures it. And one correction to this row's own dependency note: `Source.Columns` on a SQLite foreign key and a PostgreSQL `22001` is **not** blocked on the catalog. Both errors carry no table and no constraint, so there is nothing to look one up by, and phase 6 landing does not unblock them; the catalog fills a *composite unique* violation on PostgreSQL instead, which is what it turned out to be for | an unclassifiable state stays a 500 — `TestOnlyIntegrityErrorsBecomeConflicts`, extended so a `42601` produces no fault on all three pgx paths while a `40001` beside it does. Plus the two gates held apart in a 2×2 with a counter per cell, the tree walk through a multi-error and through a fault, and a classified 409's body carrying nothing internal in all three bindings |
-| 4 | Render + decorators — **done** | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware; **[[D-043]] and [[D-044]] come into force**, closing UC-015's guarantee 11 and gap 16 | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes |
+| 4 | Render + decorators — **done** | the envelope, the 422 arm, `crudfiber` / `crudgin` / `crudnet` middleware; **[[D-043]] and [[D-044]] come into force**, closing UC-015's guarantee 11 and gap 16 | a 500 still says nothing; every route maps a refusal the same way; the precedence table, arm by arm. **`field` is approximate until phase 8** — say so in the release note rather than letting consumers parse a path that later changes. Phase 8 discharged that for a *generated* resource, where the map is total and checked at start-up; a hand-written endpoint still has only the raw-body index and the caveat still stands there |
 | 5 | `port/` — **done** | `Service`, `DefaultService`, the eight commands, `Mapper`/`Identity`, `Fields`/`Hops`, and the moved half of `crudhttp` — `Repository`, `Sanitize`/`ClearGenerated`, `CoerceID`/`NarrowFor*`, `ErrBadRequest` and the code vocabulary. Four constructors per binding — `New`, `NewFor`, `Serving`, `ServingFor` — with `Handler[M, ID, U]` a parameterised alias over `HandlerFor[M, ID, U, In]`, so no existing signature changed and `make examples` compiles the seven stacks untouched. **FL-015**; [[D-045]] in force, [[D-034]] history. Deliberately **not** shipped: the violations pipeline stays in `http/crudhttp` until a second implementation asks ([[D-048]], named as the follow-up in D-045's *Where it lives*); no patch-side mapper, because the generated DTO already is the transport shape ([[D-018]]); and `port.Fields` passes an undeclared head through rather than declining, because a declining hop poisons `errs.Chain` and would make a path the raw-body index resolves today *worse* — strictness belongs to phase 8's generated map, which is total by construction. One observable change, small and stated rather than found: `WithScope` now runs before the query document compiles, so a request with both a failing scope and a malformed filter reports the scope | the same service mounts on all three bindings **and they hand it the same command** — the [[D-034]] check in its D-045 form. A compile-only assertion would pass whatever the bindings did |
 | 6 | `catalog/` — **done** (out of order, before 3, 4 and 5) | `Catalog`, `Load`, a caller-owned `Set` keyed with `crud.KeyOf`, an optional `Reloader` with a two-guard negative cache, and four back-ends — `postgres`, `mysql`, `mariadb`, `sqlite`, all through `Query`. `crud.keyOf`/`sameDataSource` become `crud.KeyOf`/`crud.SameDataSource` rather than being copied, because a second implementation of the identity rule is the drift [[D-041]] exists to prevent. [[D-041]] comes into force; [[D-019]] gains difference 9. §16's recorder question is answered **no**. Four of §7's claims were measured false and are corrected there rather than coded around, and its *What it holds* list is narrowed to what a reader has | an unknown constraint name does not re-introspect in a loop — and its twin, a name that turns up resets, plus the per-handle floor for fifty *different* names |
 | 7 | `probe/` — **done** | `Simple`, `Full`, bulk attribution, caps with real numbers, the savepoint mode, the `owned` seam flag and the savepoint budget on it, scope-awareness from `security.Policy`, and the three §16 answers ([[D-042]] in force). Three seam additions the design needed and this row's earlier draft did not predict: `crud.UpsertScope` and `crud.StatementRollback`, because the upsert skip set and the transaction matrix must both come from the dialect rather than its name ([[D-019]] difference 11); and `catalog.Referrers`, because `restrict` reads the inbound half of the schema and no lookup on `Catalog` can express it. Deliberately **not** shipped: no CHECK evaluation (the catalog carries a CHECK only as engine text, and parsing it is what [[D-041]] forbids), no NOT NULL/length/range/enum, no pre-flight, and no inbound-FK probe on delete. One correction carried back into §8: the bulk shape is **not** a `VALUES`-derived table — measured, it cannot be — see there | probe off ⇒ one violation; probe on ⇒ three **distinct codes at three distinct paths** — and the negative twin, a payload with one real violation yielding exactly one, which is what catches an unguarded NULL foreign key |
-| 8 | Codegen | DTOs, mapper, inverse map, service, wiring | regenerate-and-diff; a column the DTO misses refuses start-up |
-| 9 | Ecosystem | `rpc/crudgrpc`, i18n catalogues, SQL Server / Oracle / CockroachDB; **FL-013**'s fourth-transport row | adding a transport requires no change to `errs`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
+| 8 | Codegen — **done** | `-adapter` over `internal/codegen`: `<Model>Input`, `<Model>Mapper` — which satisfies `errs.Resolver`, so `port.Hops` picks it up and no binding changed at all — `<Model>Paths`, `<Model>Service` and `Mount<Model>`; `port.PathMap` with `MustPathMap`, and `port.CoversUpdate`/`MustCoverUpdate` emitted **whether or not `-adapter` is on**, because that is the half every consumer gets; `crud.UpdatePlan.Covers`, so the coverage question is answered by the plan the repository already builds rather than by a second resolution rule; **[[D-050]]**, and [[D-043]] becomes plain `accepted`. One correction to the design as planned: `PathMap` has to be *exact* as well as total — an entry for a `generated` column or for the lock would translate a violation to a key the client cannot find in its own body, which is the same wrong answer as a missing entry from the other side. And one live bug found on the way: the raw-body fallback re-matched a violation's last step even over a path a declared hop had already translated, so a `not_null` on an omitted column could be moved onto a same-named key elsewhere in the payload — a guess overturning a declaration, which is [[D-043]] backwards. The renderer now runs the fallback only over a path the declared hops left unchanged. Two things deliberately **not** shipped: `-adapter` is off by default, because turning it on rewrites the wire shape of every resource that switches to the generated wiring; and `-binding` writes `net` or nothing, because Fiber and Gin wiring would import a satellite module, which a consumer may do and the library's own generated files may not ([[D-033]]) — they wait for phase 9. Two corrections carried back: [[UC-014]] gap 3 and `docs/usecases/Index.md` gap 5 said the generator did not know about the version column, and only their second sentence was still true — the generator learned it, but no model in the test tree had one, so `test/versionstore` is new and is generated with the adapter; and D-043's index row still read `in force from phase 4` after phase 4 landed | regenerate-and-diff **and** the half it cannot reach: a column the DTO does not cover refuses start-up, with the untampered resource as the control. The diff alone would pass forever, because it only ever measures the generator against itself |
+| 9a | Ecosystem: a fourth transport and message catalogues — **done** | `rpc/crudgrpc` as a satellite ([[D-051]], [[D-052]]) — eight methods, one per `port` command, over `google.protobuf.Struct` documents; `CodeFor`, the `BadRequest`/`ErrorInfo`/`RetryInfo` details, `Errors` and the metadata locale. The violations pipeline moved to `port.Violations` and the locale key to `port.WithLocale`, which is [[D-045]]'s own scheduled follow-up discharged. `errs/catalogue.go` — `LoadMessages`, `Messages.Load`, `Locales`, `Missing` — one flat JSON file per locale, stdlib only, **not** a package and **not** a manifest entry ([[D-048]]). **FL-013**'s fourth-transport column, and the triplet rule written down: the three HTTP bindings carry 175 shared names, gRPC carries the subset that is not about HTTP | adding a transport requires no change to `errs`: the binding's commit has an empty diff over `errs/`, `errs/sqlerr/`, `port/` and `http/crudhttp/`, and `TestTheSameServiceMountsOnAllFourTransports` compares the *command* rather than the answer, so a binding that re-derives a rule is named. Verified by putting `NarrowForCount` back into `crudgrpc`. The validator bridge is **not** here — it is dependency-free (§5) and ships with phase 1 |
+| 9b | Ecosystem: more engines | SQL Server / Oracle / CockroachDB. Split out of 9a rather than dropped: each needs a live server in `docker-compose.yml`, a corpus *capture* (§6 — the corpus is captured, not written), a `crud.Dialect`, a `catalog` back-end and a `probe` matrix row, and none of it can be done without the servers | every new engine's corpus is captured from a real server, and `TestEveryClassifiableCorpusCaseGetsTheCodeItsClassNames` holds for it |
 
 ### Infrastructure — **in place**
 
@@ -1797,7 +1859,10 @@ roadmap did not predict (`1366` is `22007` there and `HY000` on MySQL), and it
 gave `crud.MySQL`'s "targets MySQL and MariaDB" its first test — 19 conformance
 subtests and 110 engine-behaviour subtests, none of which had ever run.
 
-`MODULES` gains `rpc/crudgrpc` at phase 9.
+`MODULES` is discovered by `find` and needed no edit when `rpc/crudgrpc`
+landed — the sentence that used to stand here said otherwise and was wrong.
+What phase 9 did need was `make work` and a `require`/`replace` in
+`test/go.mod`.
 
 ### Why FL-014 and FL-015 are not in phase 0
 
@@ -1805,8 +1870,9 @@ Both are flows, and `CLAUDE.md` is explicit that *a flow is the only place file
 paths and symbols appear*. Neither's files existed in phase 0, so writing them
 then would have produced two documents that fail at the one job a flow has.
 FL-014 landed with phase 3 and FL-015 with phase 5, and [[FL-013]]'s pending
-change — a fourth transport's row in the per-binding table — waits for phase 9
-with gRPC.
+change — a fourth transport's column in the per-binding table — landed with
+phase 9 and gRPC, along with its title and entry point, which named only the two
+HTTP bindings.
 
 Both numbers were reserved rather than free, which mattered because
 `docs/flows/Index.md` tells the next author to take the next number free. Phase 6
@@ -1814,12 +1880,13 @@ landed before phase 3 and took **FL-016** for that reason; a flow number is
 identity rather than order. Both reservations are now spent.
 
 The nine decisions were written in phase 0 regardless, because a decision governs
-code rather than describing it. The one still waiting on its code — [[D-043]] —
-carries `in force from phase N` in its status line and heads its evidence section
-`Proven by (owed)`, so a reader can tell a rule the tree obeys from a rule the
-tree owes. [[D-038]] became plain `accepted` when phase 1 landed `errs`,
-[[D-041]] when phase 6 landed `catalog`, [[D-045]] when phase 5 landed `port` and
-[[D-042]] when phase 7 landed `probe`.
+code rather than describing it. Each carried `in force from phase N` in its
+status line and headed its evidence section `Proven by (owed)` until its code
+landed, so a reader could tell a rule the tree obeys from a rule the tree owes.
+[[D-038]] became plain `accepted` when phase 1 landed `errs`, [[D-045]] when
+phase 5 landed `port`, [[D-041]] when phase 6 landed `catalog`, [[D-042]] when
+phase 7 landed `probe`, and [[D-043]] when phase 8 landed the generated mappers.
+The set is empty; the next decision written ahead of its code goes back into it.
 
 ---
 
@@ -1836,9 +1903,13 @@ vacuously carries a control case next to it, in the pattern
 | message text is not read | table-driven | the same violation captured with `lc_messages` set to a non-English locale classifies identically. This is [[D-039]]'s actual invariant and nothing else tests it. Held by two tests and they are not the same one: `TestAParserAnswersTheSameWhateverTheServerSaid` is the invariant — every case on four engines, with the message and the `Detail`/`Hint` substituted — and `TestTheSameViolationInAnotherLocaleClassifiesIdentically` is the evidence, on the two engines measured to localise anything |
 | driver extraction | live, all four engines, through every adapter | an unclassifiable state stays a 500 — the existing `TestOnlyIntegrityErrorsBecomeConflicts` pattern, extended so a `42601` and a dead connection produce **no fault** on all three pgx paths while a `40001` in the same table does. The MySQL CHECK line this row used to carry was wrong about what it buys: `3819`/`HY000` has been a conflict since phase 0, and what phase 3 pays is the same violation arriving carrying `errs.CodeCheck`. Held live by `TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames`, whose controls are a per-engine count of faults produced and of negatives walked |
 | the envelope | unit, all three bindings, triplet suites | removing an arm from the shared `Status` fails all three identically |
+| **a fourth transport that is not HTTP** | unit, all four mounted from one service value; live, over every engine | the *command* each binding handed the service, compared rather than the answer — equal answers pass for four bindings that reached the service by different routes. `TestTheSameServiceMountsOnAllFourTransports` in `test/portmount/grpcmount_test.go`, verified by putting `NarrowForCount` back into `crudgrpc`'s Count method and watching the recorded command diverge and the test name the offender. Plus the diff itself: the binding's own commit touches no line of `errs/`, `errs/sqlerr/`, `port/` or `http/crudhttp/`, which is what "adding a transport requires no change to `errs`" actually means |
+| **the gRPC status guard** | unit over the whole corpus, four engines; live over every classifying target | a status rendered from every corpus entry names none of that entry's constraint, table, column, SQLSTATE or native number — with the per-engine counters that stop an emptied loop passing, and with the assertion that the status still *says* something, since a blank status names nothing perfectly. Its control is `TestAStatusMessageNamesNoEntityAndNoDriverText`, which asserts the fault's own `Error()` **does** name the entity, so avoiding it measures something. `status.New(code, err.Error())` is the natural wrong answer and it ships the table name |
+| **the message catalogue on disk** | unit over `fstest.MapFS` | the loaded catalogue resolves the *same* ladder as one declared with `Add` — measured against the in-code path rather than against nothing, because a loader's way of failing is to key an entry somewhere the walk never looks. Plus: two files disagreeing on one key are refused and two agreeing are not; a nested file is refused and its flat spelling is not; `Missing` empties once the codes are declared; and twenty loads of one filesystem render identically, because `fstest.MapFS` iterates randomly and one load would prove nothing |
 | the precedence table | unit | a fault mixing `Forbidden` and `Conflict` answers 403, and one mixing `Internal` with anything answers 500 with an empty body. Untested, this table is decoration |
 | the 500 guard | unit, against a message built out of a SQL string, a constraint name and a connection string | the existing `TestA500NeverEchoesTheInternalError`, extended to `Detail` and `Params` |
-| path resolution | unit over a generated mapper; unit over the raw-body fallback | a renamed JSON key with no mapper entry produces the *approximate* marker, not a wrong path |
+| path resolution | unit over a generated mapper; unit over the raw-body fallback; unit over all three bindings at once | a renamed JSON key with no mapper entry produces the *approximate* marker, not a wrong path. **Phase 8 pays it three times over**, and the third is the one this row did not predict. `TestADeclaredMapBeatsTheRawBodyGuess` renders the same violation with and without a declared map, so the map is measured against the fallback rather than against nothing — including a body the index cannot disambiguate, where the map still answers and the fallback marks the path approximate. `TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings` does it on Fiber, Gin and net/http with the `New`-mounted control answering the model's own field name. And `TestAGeneratedMapDeclinesWhereFieldsPassesThrough` is the one whose control *is* the contrast: the same undeclared head through `port.Fields` and through `port.PathMap`, with a recording hop behind each, so "passes through" and "declines" are two measured outcomes rather than two sentences |
+| a generated artefact that stopped matching its model | unit, by building and running a throwaway module | the untampered resource starts — without that control, a binary failing to build for an unrelated reason passes every refusal arm below it. Then two arms in opposite directions: a column added to the *model source* with nothing regenerated, and an entry deleted from the generated map by hand. The first is the case regenerate-and-diff structurally cannot see |
 | the catalog | live, all four engines | a unique key the probe cannot reproduce is **recorded as such** and a key of the same shape that it can is not. Without the twin, a catalog that marks everything passes. **Reworded by phase 6, twice.** *Skipping* is §13.4's and belongs to the probe; phase 6 records flags and verbatim text and decides nothing. And the twin cannot be partial-versus-plain on four engines: `CREATE UNIQUE INDEX ... WHERE` is error 1064 on MySQL 8.4 and MariaDB 11.4, so it is partial-versus-plain on two engines and prefix-versus-full-length on the other two, under one shared predicate. A counter closed over by the subtests fails the loop if the fixture silently did not take |
 | catalog identity | unit | two `crud.ReadWrite` sources whose primaries differ do not share a catalog, and an uncomparable handle is refused at declaration rather than panicking. Both twins matter: two sources over *one* handle share one catalog and are introspected once — a `Set` that never reuses anything passes the first half on its own — and a comparable handle is accepted and found again, or a `Set` that refused everything passes the second. Uncomparable has two shapes and both are tested: a handle `reflect` calls uncomparable, and a source whose type `reflect` calls comparable and whose `==` panics anyway |
 | the catalog's negative cache | unit, against an injected clock | the same unknown name fifty times is **one** introspection pass, and past the window it is two — a permanent cache and a correct one are otherwise indistinguishable, and a permanent one breaks the rolling migration the cache exists for. Plus the loop the per-name entry does not close: fifty *different* unknown names inside one floor window are one pass, and the same fifty with the clock advanced between them are fifty. And a pass that finds the name resets its backoff where one that does not grow it — asserted as one test with two arms, same clock, opposite outcome |
@@ -1847,7 +1918,7 @@ vacuously carries a control case next to it, in the pattern
 | caps and truthfulness | unit + live | past the cap the answer carries `Partial: true`, with the cap raised as the control; a probe that errors keeps the driver's violation instead of becoming a 500, with the healthy twin as the control and both asserted to be 409. The live probe failure is a catalog naming a table the database no longer has, which is what a rolling migration produces. Every other live test binds through a helper that turns a probe error into a test failure, so a probe that silently refused every statement could not leave the file green |
 | the oracle controls | unit + live | with the value-echo mode on the value appears in the rendered body through a template naming `{value}`; with the default it does not. The other three — the per-constraint opt-out, the scope predicate and code-only mode — are unit, each with the unopted twin beside it |
 | determinism | unit + live | at least eight violations spanning names, indices and equal-prefix paths, built in reverse, render byte-identically. Two violations pass by luck half the time — [[D-014]] made this argument already. Phase 1 pinned message expansion and the marshalled projection; phase 4 shipped `errs.SortViolations` and the eight-violation test; phase 7 is the first thing that produces more than one violation for it to order, and adds the live half: the same failing request five times, byte for byte, with a count of violations in the body as the control that the comparison measures an order at all |
-| double rendering | unit, all three bindings | a handler that already wrote a response is left alone; installing the middleware twice renders once |
+| double rendering | unit, all three bindings, and the gRPC one | a handler that already wrote a response is left alone; installing the middleware twice renders once. On gRPC the marker differs and so does its control: a response is a return value rather than a half-written stream, so the guard is "the error already carries a status", and the control is an error the application itself turned into a status being passed through unchanged |
 | the message hierarchy | unit | each of the four levels resolves, and a missing translation falls back rather than emitting `{max}`. Held by `TestEachLevelOfTheMessageLadderResolves` and `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` in `errs/message_test.go`. The scope is derived from the violation's own path, because a `Violation` carries no entity (§5) |
 | the transaction matrix | live, five targets × four arms, with a counter | inside a transaction without savepoints `Full` degrades to one violation rather than erroring on PostgreSQL — and does **not** degrade on MySQL, MariaDB and SQLite, which is the control that the degrade is about the engine and not about being in a transaction; **with** `WithSavepoints()` it does not degrade; and a foreign transaction is never given a savepoint, asserted live by the answer degrading with the option on and by a savepoint count of zero in `repo/decorators/faults/probe_test.go` |
 | MariaDB detection | live | a MariaDB CHECK violation classifies as `check`, which needs `4025` and not MySQL's `3819`. **Phase 0 measured it and the answer was not what this row assumed**: MariaDB reports `4025` with SQLSTATE `23000`, so class 23 already covers it and no number entry is needed. The divergence that does need the split is `1366` — `HY000` on MySQL, `22007` on MariaDB. Held by `TestEveryCorpusCaseClassifiesAsTheCorpusSays` |
@@ -1921,3 +1992,10 @@ each now names the decision it feeds so the phase cannot start without noticing.
   asserts that a consumer who forgets the registration gets Go field names in
   every path, which makes the cost of leaving this open visible rather than
   theoretical.
+
+  **Still open after phase 9, and the catalogue work did not settle it.**
+  `errs/catalogue.go` reads message *templates* off a filesystem; it names no
+  struct tag and knows nothing about a wire shape. The question is unchanged and
+  is now slightly sharper, because a fourth transport exists whose wire names are
+  not the `json` tag either — a helper naming one tag would have been wrong for
+  it on the day it landed.

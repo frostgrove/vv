@@ -1,6 +1,6 @@
 # UC-001 — Expose a full CRUD API for a resource without writing handlers
 
-**Actor:** the application author, on behalf of every HTTP client of the resource
+**Actor:** the application author, on behalf of every client of the resource — HTTP or gRPC
 **Covered by:** [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]]
 
 ## Scenario
@@ -61,10 +61,11 @@ resource, and wants the twentieth resource to cost exactly what the first did.
   does not invent the endpoint.
 - **The response shape of an entity.** It is the model, as JSON, unless a
   presenter is installed (UC-013).
-- **Any transport but HTTP.** Three HTTP bindings are written and tested —
-  Fiber, Gin and `net/http` — and the transport-shaped half of a binding is a
-  package of its own, so a fourth is small. gRPC, GraphQL and a message queue
-  are not written.
+- **GraphQL and message queues.** Four bindings are written and tested — Fiber,
+  Gin, `net/http` and gRPC — and the transport-shaped half of a binding is a
+  package of its own, so a fifth is small. A queue consumer has no request, no
+  key in a path and no status to map, so it calls a service directly and never
+  builds a command; nothing is written for it, and nothing has to be.
 
 ## Covered by
 | Flow | What it contributes |
@@ -86,12 +87,14 @@ mount all have unit tests against a recording datasource, and the create /
 patch / delete lifecycle plus pagination and the rejection paths are re-run end
 to end against live PostgreSQL and MySQL.
 
-There are three bindings — Fiber, Gin and `net/http` — and they answer the same
-147 unit tests and the same end-to-end suite. Mounting one or another is the
-same line of code with a different package name, and a service type written
-against one satisfies the others unchanged: the interface is literally the same
-type, which the integration suite proves by mounting one service on all three.
-The `net/http` binding costs nothing to have, because it needs no dependency.
+There are four bindings — Fiber, Gin, `net/http` and gRPC. The three HTTP ones
+answer the same 147 unit tests and the same end-to-end suite; the gRPC one
+answers the subset that is not about HTTP, in its own vocabulary. Mounting one
+or another is the same line of code with a different package name, and a service
+type written against one satisfies the others unchanged: the interface is
+literally the same type, which the integration suite proves by mounting one
+service on all four. The `net/http` binding costs nothing to have, because it
+needs no dependency.
 
 The gap that remains is narrower than it was. A project on Echo, chi or gRPC
 still writes its own routes — though one on chi or gorilla/mux can register the

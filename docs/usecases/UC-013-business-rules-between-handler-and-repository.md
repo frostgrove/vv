@@ -53,10 +53,10 @@ handler itself.
     the model before any rule runs, and choosing one costs none of the generated
     routes. The mapping is declared once and the same routes, options, hooks and
     error mapping apply to it.
-13. The seam a rule is written against is one value on every transport. A layer
-    written once mounts on each of the bindings unchanged — no per-transport
-    interface, no second copy of a rule, and adding a transport does not ask the
-    author to write anything.
+13. The seam a rule is written against is one value on every transport,
+    including one that is not HTTP. A layer written once mounts on each of the
+    bindings unchanged — no per-transport interface, no second copy of a rule,
+    and adding a transport does not ask the author to write anything.
 
 ## Out of scope
 
@@ -97,7 +97,15 @@ distinct input type has a test in each binding whose control is the same body
 through the plain constructor, where the input type's keys mean nothing; the
 one-value-on-every-transport claim has a test that mounts one service on all
 three and compares what each of them asked the service for, not merely that they
-compiled. Guarantee 7's ordering
+compiled.
+
+Guarantee 13's "adding a transport does not ask the author to write anything"
+was an argument until phase 9 and is now measured. A fourth binding on a
+protocol that is not HTTP mounts the same service value, is handed the same
+commands, and asked for nothing new: the whole of it was written without a line
+changed in the shared half. One test runs the same request through all four and
+compares the *command* each handed over, so a binding that started re-deriving a
+rule the service owns is named rather than merely suspected. Guarantee 7's ordering
 moved from three bindings to one service and is pinned in both places — in the
 service directly, and through each binding with a control that hands the key
 space back to the client and watches the hook see it.

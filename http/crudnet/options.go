@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/errs"
@@ -186,7 +185,7 @@ func render(rd crudhttp.Renderer, w http.ResponseWriter, r *http.Request, err er
 		// the fault: a fault crossing a queue must not carry the locale of the
 		// request that made it. First tag only — q-values pick between
 		// translations we do not have.
-		ctx = crudhttp.WithLocale(r.Context(), firstTag(r.Header.Get("Accept-Language")))
+		ctx = crudhttp.WithLocale(r.Context(), crudhttp.AcceptLanguage(r.Header.Get("Accept-Language")))
 	}
 	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
@@ -199,14 +198,6 @@ func render(rd crudhttp.Renderer, w http.ResponseWriter, r *http.Request, err er
 		return
 	}
 	writeJSON(w, status, body)
-}
-
-// firstTag reads the first language tag out of an Accept-Language header.
-func firstTag(h string) string {
-	if i := strings.IndexAny(h, ",;"); i >= 0 {
-		h = h[:i]
-	}
-	return strings.TrimSpace(h)
 }
 
 // writeJSON is the one place a response leaves this package.

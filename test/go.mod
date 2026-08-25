@@ -18,6 +18,9 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/shardit-io/vv v0.0.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688
+	google.golang.org/grpc v1.83.1
+	google.golang.org/protobuf v1.36.12
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
@@ -46,7 +49,6 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
 )
 
 require (
@@ -91,6 +93,7 @@ require (
 	github.com/shardit-io/vv/adapter/crudpgx v0.0.0
 	github.com/shardit-io/vv/http/crudfiber v0.0.0
 	github.com/shardit-io/vv/http/crudgin v0.0.0
+	github.com/shardit-io/vv/rpc/crudgrpc v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
@@ -104,3 +107,5 @@ replace github.com/shardit-io/vv/http/crudfiber => ../http/crudfiber
 replace github.com/shardit-io/vv/http/crudgin => ../http/crudgin
 
 replace github.com/shardit-io/vv/adapter/crudpgx => ../adapter/crudpgx
+
+replace github.com/shardit-io/vv/rpc/crudgrpc => ../rpc/crudgrpc

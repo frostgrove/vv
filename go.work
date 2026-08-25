@@ -1,10 +1,11 @@
-go 1.26
+go 1.26.6
 
 use (
 	.
 	./adapter/crudpgx
 	./http/crudfiber
 	./http/crudgin
+	./rpc/crudgrpc
 	./test
 	./tools/vvcfg
 )

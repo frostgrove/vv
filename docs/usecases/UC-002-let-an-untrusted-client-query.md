@@ -1,6 +1,6 @@
 # UC-002 — Let an untrusted client filter, sort, page and search
 
-**Actor:** an HTTP client the service does not control, and the application
+**Actor:** a client the service does not control — HTTP or gRPC — and the application
 author who has to be comfortable exposing the endpoint
 **Covered by:** [[FL-001]] [[FL-012]] [[FL-011]]
 

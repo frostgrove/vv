@@ -9,11 +9,14 @@ package portmount
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +83,10 @@ type repoCall struct {
 
 type fakeRepo struct {
 	calls []repoCall
+	// err is what Save answers, for the path-translation test: the whole chain
+	// below the binding has to be real for the field it renders to mean
+	// anything.
+	err error
 }
 
 func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
@@ -117,6 +124,9 @@ func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) 
 
 func (f *fakeRepo) Save(_ context.Context, m *Widget) error {
 	f.calls = append(f.calls, repoCall{Method: "Save", Model: *m})
+	if f.err != nil {
+		return f.err
+	}
 	m.CreatedAt = savedAt
 	if m.ID == 0 {
 		m.ID = 7
@@ -230,6 +240,9 @@ func (s *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[in
 type binding struct {
 	name  string
 	serve func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
+	// mappedServe mounts the same service behind a generated mapper, which is
+	// the only difference between the two halves of the path-translation test.
+	mappedServe func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
 }
 
 func request(method, target, body string) *http.Request {
@@ -245,37 +258,71 @@ func request(method, target, body string) *http.Request {
 }
 
 var bindings = []binding{
-	{"crudnet", func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
-		t.Helper()
-		mux := http.NewServeMux()
-		crudnet.Serving(svc).Mount(mux, "/widgets")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, request(method, target, body))
-		return w.Code, w.Body.Bytes()
-	}},
-	{"crudgin", func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
-		t.Helper()
-		r := gin.New()
-		crudgin.Serving(svc).Mount(r, "/widgets")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, request(method, target, body))
-		return w.Code, w.Body.Bytes()
-	}},
-	{"crudfiber", func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
-		t.Helper()
-		app := fiber.New()
-		app.Use("/widgets", crudfiber.Serving(svc).Routes())
-		res, err := app.Test(request(method, target, body), fiber.TestConfig{Timeout: 0})
-		if err != nil {
-			t.Fatalf("crudfiber: %s %s: %v", method, target, err)
-		}
-		defer res.Body.Close()
-		raw, err := io.ReadAll(res.Body)
-		if err != nil {
-			t.Fatalf("crudfiber: reading the response: %v", err)
-		}
-		return res.StatusCode, raw
-	}},
+	{
+		name: "crudnet",
+		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			mux := http.NewServeMux()
+			crudnet.Serving(svc).Mount(mux, "/widgets")
+			return throughMux(mux, method, target, body)
+		},
+		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			mux := http.NewServeMux()
+			crudnet.ServingFor(svc, WidgetMapper{}).Mount(mux, "/widgets")
+			return throughMux(mux, method, target, body)
+		},
+	},
+	{
+		name: "crudgin",
+		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			r := gin.New()
+			crudgin.Serving(svc).Mount(r, "/widgets")
+			return throughMux(r, method, target, body)
+		},
+		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			r := gin.New()
+			crudgin.ServingFor(svc, WidgetMapper{}).Mount(r, "/widgets")
+			return throughMux(r, method, target, body)
+		},
+	},
+	{
+		name: "crudfiber",
+		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			app := fiber.New()
+			app.Use("/widgets", crudfiber.Serving(svc).Routes())
+			return throughFiber(t, app, method, target, body)
+		},
+		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+			t.Helper()
+			app := fiber.New()
+			app.Use("/widgets", crudfiber.ServingFor(svc, WidgetMapper{}).Routes())
+			return throughFiber(t, app, method, target, body)
+		},
+	},
+}
+
+func throughMux(h http.Handler, method, target, body string) (int, []byte) {
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, request(method, target, body))
+	return w.Code, w.Body.Bytes()
+}
+
+func throughFiber(t *testing.T, app *fiber.App, method, target, body string) (int, []byte) {
+	t.Helper()
+	res, err := app.Test(request(method, target, body), fiber.TestConfig{Timeout: 0})
+	if err != nil {
+		t.Fatalf("crudfiber: %s %s: %v", method, target, err)
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("crudfiber: reading the response: %v", err)
+	}
+	return res.StatusCode, raw
 }
 
 // ---------------------------------------------------------------------------
@@ -403,4 +450,103 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// a generated resource
+
+// WidgetInput, WidgetMapper and widgetPaths are what `vv -adapter` writes: a
+// wire shape of the resource's own, a mapper onto the model, and the inverse of
+// that mapping. Written out by hand here because the generator cannot run
+// against a model declared inside a test file.
+type WidgetInput struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"label"`
+	Price int    `json:"price"`
+}
+
+type WidgetMapper struct{}
+
+func (WidgetMapper) Model(_ context.Context, in WidgetInput) (Widget, error) {
+	return Widget{ID: in.ID, Name: in.Name, Price: in.Price}, nil
+}
+
+func (WidgetMapper) Resolve(p errs.Path) (errs.Path, bool) { return widgetPaths.Resolve(p) }
+
+var widgetPaths = port.MustPathMap[Widget](port.PathMap{
+	"ID":    port.At("id"),
+	"Name":  port.At("label"),
+	"Price": port.At("price"),
+})
+
+// [[D-050]]'s control on the transports: the generated hop is wired the same
+// way by all three bindings, so the same violation names the same client key
+// wherever it is mounted.
+//
+// It lives here because this is the only package that can import Fiber, Gin and
+// net/http at once, and it needs no database.
+func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) {
+	fault := func() error {
+		return errs.Conflict().Code(errs.CodeUnique).
+			Field("Name").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
+	}
+	const body = `{"label":"bolt","price":250}`
+
+	// The mapper's key is what the client sent, on every binding.
+	mapped := map[string]string{}
+	for _, b := range bindings {
+		svc := newRecorder()
+		svc.repo.err = fault()
+		status, raw := b.mappedServe(t, svc, http.MethodPost, "/widgets", body)
+		if status != http.StatusConflict {
+			t.Fatalf("%s answered %d for a duplicate key: %s", b.name, status, raw)
+		}
+		mapped[b.name] = fieldOf(t, b.name, raw)
+	}
+	for name, got := range mapped {
+		if got != "label" {
+			t.Fatalf("%s rendered the field as %q, want the key the client sent", name, got)
+		}
+	}
+
+	// The control. Mounted with New — Identity, no map — the same violation on
+	// the same body has nothing to translate it: the body carries no key that
+	// folds to "Name", so the raw-body index declines and the client is handed
+	// the model's own field name back. Without this the test above passes for a
+	// binding that never wired the hop at all.
+	for _, b := range bindings {
+		svc := newRecorder()
+		svc.repo.err = fault()
+		status, raw := b.serve(t, svc, http.MethodPost, "/widgets", body)
+		if status != http.StatusConflict {
+			t.Fatalf("%s answered %d for a duplicate key: %s", b.name, status, raw)
+		}
+		if got := fieldOf(t, b.name, raw); got != "Name" {
+			t.Fatalf("%s without a map rendered %q; the generated map answering %q proves nothing unless the two differ",
+				b.name, got, mapped[b.name])
+		}
+	}
+}
+
+// fieldOf reads the dotted field path out of the first validation violation.
+func fieldOf(t *testing.T, binding string, raw []byte) string {
+	t.Helper()
+	var env struct {
+		Errors struct {
+			Validation []struct {
+				Field []any `json:"field"`
+			} `json:"validation"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("%s answered a body that is not the envelope: %v\n%s", binding, err, raw)
+	}
+	if len(env.Errors.Validation) != 1 {
+		t.Fatalf("%s rendered %d validation violations, want one: %s", binding, len(env.Errors.Validation), raw)
+	}
+	parts := make([]string, 0, len(env.Errors.Validation[0].Field))
+	for _, step := range env.Errors.Validation[0].Field {
+		parts = append(parts, fmt.Sprint(step))
+	}
+	return strings.Join(parts, ".")
 }

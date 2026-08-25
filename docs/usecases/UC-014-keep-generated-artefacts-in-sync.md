@@ -1,14 +1,16 @@
 # UC-014 — Keep generated artefacts in sync with the model
 
 **Actor:** the application author, and whoever reviews the pull request
-**Covered by:** [[FL-010]] [[FL-004]]
+**Covered by:** [[FL-010]] [[FL-004]] [[FL-015]]
 
 ## Scenario
-The partial-update DTO and the typed metamodel are mechanical restatements of the
-model, so they are generated. Generated code has one failure mode: somebody
-changes the model and does not regenerate. The author wants that to be a red
-build, not a surprise in production — and wants the generator's output to be
-stable enough that a diff of it is reviewable rather than noise.
+The partial-update DTO, the typed metamodel and — when the author asks for them
+— the resource's own wire shape, the mapping onto the model and the inverse of
+that mapping are mechanical restatements of the model, so they are generated.
+Generated code has one failure mode: somebody changes the model and does not
+regenerate. The author wants that to be a red build or a refusal to start, not a
+surprise in production — and wants the generator's output to be stable enough
+that a diff of it is reviewable rather than noise.
 
 ## What must hold
 
@@ -43,6 +45,23 @@ stable enough that a diff of it is reviewable rather than noise.
     generate — rather than emitting a file that does not compile.
 12. The generator ignores test files and its own previous output, so it is
     idempotent and does not feed on itself.
+13. And guarantee 9 in the other direction. A column the model has and a
+    generated artefact does not cover is a **start-up refusal naming the
+    column**, not a silent omission — and it fires with nothing regenerated,
+    because the check is made against the *compiled* model rather than against
+    the generator's own reading of the source. Without it, a column added and
+    never regenerated for is quietly invisible to updates and to the typed query
+    API, and only a regenerate-and-diff test would ever notice.
+14. When a wire shape is generated, the mapping from the client's keys to the
+    model is total and its inverse is checked to name every column a request can
+    carry and nothing else. A column it does not cover, and an entry for
+    something no request carries, both refuse to start. That is what makes an
+    error body name the key the client sent rather than the model's field name.
+15. Columns the author took out of the artefacts through the command line rather
+    than through the model are declared in the generated output. Nothing at run
+    time can see a command-line flag, so the generated file has to carry the
+    list — which has a second benefit: a reader of the output can see what the
+    flags did.
 
 ## Out of scope
 
@@ -52,7 +71,12 @@ stable enough that a diff of it is reviewable rather than noise.
 - **Detecting drift between the model and the actual table.** Whether the model's
   columns exist is the database's answer, not the generator's.
 - **Editing the output.** It is generated; changes belong in the model or in the
-  flags.
+  flags. Hand-editing the inverse mapping in particular is what the start-up
+  check refuses.
+- **Making the generated wire shape match the model's own JSON tags.** A
+  generated resource has a wire shape of its own, derived from the Go field
+  names, and that is the point of having an adapter layer at all. An author who
+  wants the model's shape on the wire does not generate one.
 - **Relations across packages.** A relation whose target model lives in another
   package is dropped from the expansion.
 
@@ -61,42 +85,43 @@ stable enough that a diff of it is reviewable rather than noise.
 |---|---|
 | [[FL-010]] | the derivation rules, the flags, the relation expansion and its bounds |
 | [[FL-004]] | the start-up validation that catches a stale artefact naming a field the model lost |
+| [[FL-015]] | what the generated mapping and its inverse are for once the process is running |
 
 ## Status
-**partially covered — guarantee 8 has a hole in exactly the direction that
-matters, and guarantee 2 has a bug.**
+**covered.**
 
 Proven: every derivation rule in guarantee 2, pinned byte-for-byte, including
 which columns are absent from the DTO but present in the metamodel; the
 drop-entirely and keep-queryable flags; embedded-struct flattening and the
 well-known ORM base struct; relation expansion, the depth bound and the cycle
-cut; determinism over repeated runs and stable model ordering; that the output
-compiles and its start-up validation passes, checked by actually building it; the
-refusals in guarantee 11; and the package-joining behaviour in guarantee 10.
+cut; determinism over repeated runs and stable model ordering, for both halves of
+the output; that the output compiles and its start-up validation passes, checked
+by actually building and running it; the refusals in guarantee 11; and the
+package-joining behaviour in guarantee 10.
 
-**Gap 1 — the drift test only catches a *removed* field.** Both validations in
-guarantee 9 check that everything the artefact names still exists on the model.
-Neither checks the other direction. Add a column and forget to regenerate, and
-the application starts cleanly with a column that is simply invisible to updates
-and to the typed query API — no error, no warning, no failing build. Only the
-regenerate-and-diff test in guarantee 8 catches it.
+**Gap 1 — closed.** Guarantees 9a and 9b are the direction that was missing, and
+the check is deliberately made against the *compiled* model rather than against
+the generator's own reading of the source: the two derivations have to be
+independent or the check is one derivation agreeing with itself. Proven with the
+untampered artefact as its control, and in both directions — a column added to
+the model, and an entry deleted from the artefact.
 
-**Gap 2 — and that test is split, with the harder half behind Docker.** The
-in-repository worked example is diffed in the plain unit suite, so a default-flag
-regression is caught by an ordinary test run. The two artefacts generated with
-*real* flag combinations — into another package, with read-only fields, over an
-ORM's generated types — are diffed only in the integration suite, whose harness
-opens PostgreSQL and MySQL and aborts the whole binary if either is unreachable.
-A contributor with no containers runs the unit suite, sees green, and does not
-learn that the flag-driven artefacts are stale. That test needs no database at
-all; it is gated by the suite it happens to live in.
+**Gap 2 — closed.** The drift test needed no database and is no longer gated by a
+suite that opens two. Both halves — the worked example and the flag-driven
+stores — now run in the plain unit suite, each checking the regeneration command
+against the directive the package actually carries, and the comparison itself has
+a control so a helper that read one file twice could not stay green.
 
-**Gap 3 — the generator does not know about the version column.** A model
-declaring one generates a DTO containing it, and the repository declaration then
-refuses that DTO at start-up. So the generated output for such a model does not
-work, and nothing in the test tree has a version column to notice. This is a bug
-in guarantee 2, not a documented limitation.
+**Gap 3 — history, and it was half stale when it was written.** The generator did
+learn about the version column, and both halves are pinned: the lock leaves the
+DTO and stays in the metamodel, and the declaration the generated DTO implies is
+one the repository accepts, with a DTO naming the lock refused as the control.
+What remained true was the second sentence — no model in the test tree carried a
+version column, so none of that ran against a real generated artefact. There is
+one now, generated with the wire shape as well, so the case is reachable rather
+than argued.
 
-One smaller thing: the metamodel attribute type is chosen from the field type's
-*spelling*, so a named type over an integer, or a timestamp reached through an
-alias, gets the generic attribute and loses its range operators. Untested.
+One smaller thing, still open: the metamodel attribute type is chosen from the
+field type's *spelling*, so a named type over an integer, or a timestamp reached
+through an alias, gets the generic attribute and loses its range operators.
+Untested.

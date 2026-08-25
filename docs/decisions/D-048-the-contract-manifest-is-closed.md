@@ -12,7 +12,7 @@ nothing on the framework roadmap's `?` list joins.
 | candidate | verdict | why |
 |---|---|---|
 | `log` | **refused** | `slog.Handler` *is* the seam. A facade in front of it is what every pre-1.21 Go logging facade tried and lost |
-| `i18n` | **refused as a subsystem** | `errs.MessageSource` already is it, at the right size. If a second subsystem ever wants it, that is a move, not a design — and stdlib-only i18n cannot reach CLDR plural rules anyway, because `golang.org/x/text` is external, so it would be a satellite the day it existed |
+| `i18n` | **refused as a subsystem**, and phase 9 demonstrated it | `errs.MessageSource` already is it, at the right size. Phase 9 needed catalogues on disk and they are `errs/catalogue.go` — one file, `io/fs` and `encoding/json`, no package and no manifest entry. If a second subsystem ever wants it, that is a move, not a design — and stdlib-only i18n cannot reach CLDR plural rules anyway, because `golang.org/x/text` is external, so it would be a satellite the day it existed |
 | `health` | **refused** | three method signatures and zero implementations. A health endpoint is application code |
 | `migrate` | **refused** | zero implementations, and [[D-041]] already forbids the one package that could drift into it — *"not a migration tool, not a full DDL model"*. A migration tool is a product |
 | `catalog` | **refused; it is the package that row is about** | it shipped in phase 6 with one implementation and four back-ends, which is one implementation of a reader, not a contract a third party writes against. `Catalog` is an interface because the four engines answer it four ways, and that is polymorphism inside a package rather than a manifest entry |
@@ -32,8 +32,9 @@ go through it, and nothing is ever swapped behind it.
 **Because the two rules have already been tested against this repository and
 they discriminate.** `crud` has four adapters. `errs.Classifier` will have four
 dialects. `query` has two doors — JSON and query string — that must agree.
-`port` will have three transports and then a fourth on another protocol. Those
-earn it. Nothing on the `?` list has two of anything.
+`port` has three HTTP transports and, since phase 9, a fourth on another
+protocol — `rpc/crudgrpc`, which is the one that proved the point rather than
+restating it. Those earn it. Nothing on the `?` list has two of anything.
 
 **Because the draft's own heuristic got it backwards.** It flagged `codegen`,
 which should never have a contract, and passed `config`, which had no
@@ -45,6 +46,17 @@ need a *subsystem* — it needs `errs.MessageSource`, one interface, in the pack
 that raises the messages. The moment a second subsystem wants translations, the
 interface moves and the manifest gains a name. That is a five-line change, and
 doing it now would be paying for it years early.
+
+Phase 9 is where that stopped being an argument. It shipped what a consumer
+actually asked for — a catalogue read from files, one per locale — as
+`errs.LoadMessages` and `Messages.Load` in `errs/catalogue.go`: stdlib only,
+inside the package that raises the messages, no new name anywhere. The manifest
+did not move.
+
+**And `crudgrpc` does not join it either.** It is an implementation of a
+transport, not a contract: what a third party writes against is `port.Service`,
+which is already on the manifest. A fourth binding is the count rule's evidence
+for `port`, not a candidate of its own.
 
 **What this does not forbid.** A package may exist without being on the manifest.
 `vvflag`, `tools/vvcfg`, `internal/codegen` and `app` are all implementations

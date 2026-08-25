@@ -1,9 +1,13 @@
 // Package blog is a worked example of the generator: model.go is what you
 // write, vv_gen.go is what vv produces from it. The test next door
 // regenerates and diffs, so the two can never drift.
+//
+// It is generated with -adapter, so the file also carries the resource half:
+// the entity body a client sends, the mapper onto the model, the inverse of
+// that mapping, the service shell and the net/http wiring.
 package blog
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv
+//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter
 
 import (
 	"time"

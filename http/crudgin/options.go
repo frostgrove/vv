@@ -1,8 +1,6 @@
 package crudgin
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/shardit-io/vv/crud"
@@ -194,7 +192,7 @@ func write(rd crudhttp.Renderer, c *gin.Context, err error) {
 	// fault: a fault crossing a queue must not carry the locale of the request
 	// that made it. First tag only — q-values pick between translations we do
 	// not have.
-	ctx := crudhttp.WithLocale(c.Request.Context(), firstTag(c.GetHeader("Accept-Language")))
+	ctx := crudhttp.WithLocale(c.Request.Context(), crudhttp.AcceptLanguage(c.GetHeader("Accept-Language")))
 	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
 		for _, v := range vs {
@@ -206,12 +204,4 @@ func write(rd crudhttp.Renderer, c *gin.Context, err error) {
 		return
 	}
 	c.AbortWithStatusJSON(status, body)
-}
-
-// firstTag reads the first language tag out of an Accept-Language header.
-func firstTag(h string) string {
-	if i := strings.IndexAny(h, ",;"); i >= 0 {
-		h = h[:i]
-	}
-	return strings.TrimSpace(h)
 }

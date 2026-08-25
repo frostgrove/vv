@@ -138,7 +138,7 @@ SATELLITE MODULES — one dependency decision each
   ✓ http/crudfiber/   + fiber/v3
   ✓ http/crudgin/     + gin
   ✓ adapter/crudpgx/  + pgx/v5
-  → rpc/crudgrpc/     + grpc, genproto, protobuf   (one decision, three requires)
+  ✓ rpc/crudgrpc/     + grpc, genproto, protobuf   (one decision, three requires — [[D-051]])
 
 UNPUBLISHED
   ✓ test/         the integration suite: ent, gorm, sqlx, sqlc, four engines
@@ -153,7 +153,10 @@ ADOPTED FROM `old-rx` (§4)
 
 `i18n` is not a subsystem: `errs.MessageSource` (the errors roadmap §5) already is it, at the right
 size, and stdlib-only i18n cannot reach CLDR plural rules anyway because
-`golang.org/x/text` is an external dependency. `health` is three method
+`golang.org/x/text` is an external dependency. The errors roadmap's phase 9
+needed message catalogues and shipped them **inside `errs`** —
+`errs/catalogue.go`, one flat JSON file per locale over `io/fs`, no package and
+no manifest entry — which is the refusal demonstrated rather than restated. `health` is three method
 signatures. Both were packages invented to fill a column.
 
 ---
@@ -263,7 +266,7 @@ does and what makes the grid work:
 
 | | fiber | gin | net/http | pgx | database/sql | grpc |
 |---|---|---|---|---|---|---|
-| **crud** | `crudfiber` ✓ | `crudgin` ✓ | `crudnet` ✓ | `crudpgx` ✓ | `crudsql` ✓ | `crudgrpc` → |
+| **crud** | `crudfiber` ✓ | `crudgin` ✓ | `crudnet` ✓ | `crudpgx` ✓ | `crudsql` ✓ | `crudgrpc` ✓ |
 | **i18n** | `i18nfiber` | `i18ngin` | — | — | — | — |
 | **auth** | — | — | — | — | — | — |
 
@@ -428,6 +431,10 @@ document schedules already breaks it: `rpc/crudgrpc` needs `grpc`, `genproto` an
 *decision***, one upstream project a consumer either wants or does not. Six
 OpenTelemetry modules are one decision; grpc plus genproto plus protobuf is one
 decision. That is checkable by prefix, which a count is not.
+
+**This is now [[D-051]]**, written when `rpc/crudgrpc` landed at the errors
+roadmap's phase 9 and the literal reading came apart for the first time. Both
+halves of the argument below are in it, including the otel/gin case.
 
 The same amendment settles a shape the draft did not notice: observability is
 cross-cutting, so an OpenTelemetry middleware for Gin needs gin *and* otel — two

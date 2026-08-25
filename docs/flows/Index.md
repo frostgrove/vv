@@ -31,10 +31,11 @@ through it.
 | the security gate on reads | [[FL-007]] |
 | the security gate on writes | [[FL-008]] |
 | `context` executors, `InTx`, adapters, savepoints | [[FL-009]] |
-| `cmd/vv` and anything generated | [[FL-010]] |
+| `cmd/vv`, the generated adapter, or anything else generated | [[FL-010]] |
 | sentinels, HTTP statuses, what a 500 may say | [[FL-011]] |
 | operators, coercion, timestamps, the two front doors | [[FL-012]] |
-| the Gin or net/http binding, mounting, or anything the three bindings do differently | [[FL-013]] |
+| the Gin or net/http binding, mounting, or anything the four bindings do differently | [[FL-013]] |
+| the gRPC binding, a Struct payload, a status code or an error detail | [[FL-013]] |
 | `port`, a command, the service seam, a mapper, or the path chain's middle hops | [[FL-015]] |
 | a driver error, the two gates, `sqlfault`, either adapter's `conflict` | [[FL-014]] |
 | schema introspection, the per-handle catalog key, the negative cache | [[FL-016]] |
@@ -67,7 +68,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-010](FL-010-codegen-model-to-dto-and-metamodel.md) | Codegen: a model becomes a DTO and a metamodel | `internal/codegen.Run` | [[UC-014]] [[UC-010]] [[UC-007]] |
 | [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `http/crudhttp/errors.go:Status` | [[UC-015]] |
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
-| [FL-013](FL-013-a-request-through-another-binding.md) | A request through the Gin and net/http bindings | `http/crudgin/handler.go:List` / `http/crudnet/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
+| [FL-013](FL-013-a-request-through-another-binding.md) | A request through another binding | `http/crudgin/handler.go:List` / `http/crudnet/handler.go:List` / `rpc/crudgrpc/handler.go:List` | [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] |
 | [FL-014](FL-014-a-driver-error-becomes-a-public-violation.md) | A driver error becomes a public violation | `sqlfault/classify.go:Wrap` | [[UC-015]] [[UC-017]] |
 | [FL-015](FL-015-a-request-through-the-port-layer.md) | A request through the port layer | `http/crudnet/handler.go:Create` | [[UC-001]] [[UC-013]] [[UC-015]] |
 | [FL-016](FL-016-a-schema-becomes-a-catalog.md) | A schema becomes a catalog | `catalog/load.go:Load` | [[UC-012]] |
@@ -84,6 +85,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `cmd/vv/main.go` | FL-010 |
 | `internal/codegen/codegen.go` | FL-010 |
 | `internal/codegen/render.go` | FL-010 |
+| `internal/codegen/adapter.go` | FL-010 |
 | `catalog/doc.go` | FL-016 |
 | `catalog/catalog.go` | FL-014, FL-016, FL-017 |
 | `catalog/errors.go` | FL-016 |
@@ -108,6 +110,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `errs/build.go` | FL-011, FL-014 |
 | `errs/spi.go` | FL-011, FL-014 |
 | `errs/message.go` | FL-011 |
+| `errs/catalogue.go` | FL-011 |
 | `errs/bridge.go` | FL-011 |
 | `errs/sqlerr/doc.go` | FL-011, FL-014 |
 | `errs/sqlerr/classify.go` | FL-011, FL-014 |
@@ -128,15 +131,16 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/repo.go` | FL-002, FL-007 |
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
-| `*/vv_gen.go` — nine checked-in files under `test/` and `_examples/` | FL-010 |
+| `*/vv_gen.go` — ten checked-in files under `test/` and `_examples/` | FL-010 |
 | `http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-015 |
-| `http/crudfiber/options.go` | FL-002, FL-011, FL-015 |
+| `http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
 | `http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
 | `http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `http/crudhttp/doc.go` | FL-013, FL-015 |
 | `http/crudhttp/errors.go` | FL-011, FL-013, FL-014, FL-015 |
+| `http/crudhttp/locale_test.go` | FL-013, FL-015 |
 | `http/crudhttp/model.go` | FL-003, FL-013 |
 | `http/crudhttp/repository.go` | FL-013 |
 | `http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
@@ -148,11 +152,22 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/command.go` | FL-002, FL-015 |
 | `port/mapper.go` | FL-015 |
 | `port/path.go` | FL-011, FL-015 |
+| `port/pathmap.go` | FL-010, FL-011, FL-015 |
 | `port/repository.go` | FL-013, FL-015 |
 | `port/model.go` | FL-003, FL-015 |
 | `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
 | `port/sentinel.go` | FL-011, FL-015 |
 | `port/kind.go` | FL-011, FL-014, FL-015 |
+| `port/violations.go` | FL-011, FL-013, FL-015 |
+| `port/locale.go` | FL-011, FL-013, FL-015 |
+| `rpc/crudgrpc/doc.go` | FL-013 |
+| `rpc/crudgrpc/handler.go` | FL-013, FL-015 |
+| `rpc/crudgrpc/service.go` | FL-013 |
+| `rpc/crudgrpc/message.go` | FL-013 |
+| `rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015 |
+| `rpc/crudgrpc/options.go` | FL-011, FL-013, FL-015 |
+| `rpc/crudgrpc/interceptor.go` | FL-013 |
+| `rpc/crudgrpc/locale.go` | FL-011, FL-013 |
 | `probe/doc.go` | FL-017 |
 | `probe/probe.go` | FL-017 |
 | `probe/full.go` | FL-017 |
@@ -185,6 +200,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `test/corpus/cases.go` | FL-011, FL-014 |
 | `test/corpus/capture.go` | FL-011, FL-014 |
 | `test/corpus/corpus.go` | FL-011 |
+| `test/codegen/codegen_test.go` | FL-010 |
+| `test/versionstore/` | FL-010 |
 | `test/integration/corpus_test.go` | FL-011, FL-014 |
 | `test/integration/dialect_edge_test.go` | FL-014 |
 | `test/integration/catalog_test.go` | FL-016 |
@@ -192,7 +209,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `test/integration/probe_test.go` | FL-017 |
 | `test/integration/probe_schema_test.go` | FL-017 |
 | `test/integration/http_port_test.go` | FL-013, FL-015 |
+| `test/integration/rpc_grpc_test.go` | FL-011, FL-013, FL-015 |
 | `test/portmount/mount_test.go` | FL-013, FL-015 |
+| `test/portmount/grpcmount_test.go` | FL-011, FL-013, FL-015 |
 
 `repo/basic/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

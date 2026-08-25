@@ -49,6 +49,9 @@
 //
 // Fields passes an undeclared head through rather than declining. A declining
 // hop poisons errs.Chain and would mark approximate a violation the raw-body
-// index resolves today. Strictness belongs to a generated map, which is total
-// by construction and refuses start-up when a column is missing (phase 8).
+// index resolves today. Strictness belongs to PathMap, the generated map: it is
+// total by construction, checked against the model at package initialisation,
+// and refuses to start when a column is missing ([[D-050]]). That asymmetry is
+// deliberate and is the difference between a map somebody typed and a map a
+// generator owes the model.
 package port

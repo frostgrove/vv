@@ -98,10 +98,7 @@ func MalformedBody(err error) error {
 
 type ctxKey int
 
-const (
-	bodyKey ctxKey = iota
-	localeKey
-)
+const bodyKey ctxKey = iota
 
 // WithBody carries the retained request body to the renderer. One context key
 // for all three bindings, so the fallback works the same whichever framework
@@ -122,21 +119,17 @@ func BodyFrom(ctx context.Context) []byte {
 	return b
 }
 
-// WithLocale carries the request's language to the renderer. The locale is a
-// rendering parameter and never a field on the fault: a fault crossing a queue
-// must not carry the locale of the request that made it.
+// WithLocale carries the request's language to the renderer. The compatibility
+// hop over port.WithLocale.
+//
+// A forwarder and not a second key. The key is port's because a gRPC renderer
+// reads the same one, and two keys would each be invisible to the other: both
+// packages' tests would pass and the catalogue would answer in the default
+// locale on one protocol.
 func WithLocale(ctx context.Context, locale string) context.Context {
-	if locale == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, localeKey, locale)
+	return port.WithLocale(ctx, locale)
 }
 
-// LocaleFrom answers the request's language, or "".
-func LocaleFrom(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	s, _ := ctx.Value(localeKey).(string)
-	return s
-}
+// LocaleFrom answers the request's language, or "". The compatibility hop over
+// port.LocaleFrom.
+func LocaleFrom(ctx context.Context) string { return port.LocaleFrom(ctx) }

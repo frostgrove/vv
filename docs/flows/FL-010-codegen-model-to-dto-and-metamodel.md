@@ -1,7 +1,7 @@
 # FL-010 — Codegen: a model becomes a DTO and a metamodel
 
 **Entry point:** `cmd/vv/main.go:main` → `internal/codegen.Run`
-**Implements:** [[UC-014]] [[UC-010]] [[UC-007]] · **Governed by:** [[D-018]] [[D-002]] [[D-014]]
+**Implements:** [[UC-014]] [[UC-010]] [[UC-007]] · **Governed by:** [[D-018]] [[D-002]] [[D-014]] [[D-050]]
 
 `vv` reads Go source, not compiled types. It never imports the package it
 generates for, which is what lets it run on `ent`'s output directory and on a
@@ -41,9 +41,11 @@ package that does not compile yet.
    entity from another tool qualify.
    Per field:
    - anonymous → `g.embedded` (below), and the flattened fields are spliced in.
-   - unexported, or named in `-skip` → dropped.
+   - unexported → dropped.
+   - named in `-skip` → kept with `Skip` set, so it is absent from every
+     declaration and its name still reaches the exclusion list (step 7).
    - named in `-readonly` → `Immutable`, so it stays filterable and sortable but
-     leaves the update DTO.
+     leaves both wire shapes.
    - **no `rel` tag and a base type that is a struct in this package → dropped**
      (`internal/codegen/codegen.go:278-282`). Neither a column nor an edge.
    - `rel` tag other than `-` → kept as a relation field.
@@ -79,11 +81,20 @@ package that does not compile yet.
    The JSON name comes from `lowerFirst` (`internal/codegen/codegen.go:387`), which keeps an
    all-caps prefix together: `ID` → `id`, `HTTPCode` → `httpCode`.
 
-7. **`renderDTO`** — `internal/codegen/render.go:96`
-   Skips relations, the primary key, `generated` and `immutable` columns —
-   exactly the set `crud.PlanFor` would refuse at `Define` time
-   (`crud/update.go:113`). That alignment is why the generated DTO always
-   validates ([[FL-004]]).
+7. **`renderDTO`** — `internal/codegen/render.go:renderDTO`
+   Skips relations, the primary key, `generated`, `immutable` and `version`
+   columns — exactly the set `crud.PlanFor` would refuse at `Define` time
+   (`crud/update.go:collectPlanFields`). That alignment is why the generated DTO
+   always validates ([[FL-004]]).
+
+   **Which flag dropped it is recorded, not only that it was dropped.**
+   `generator.exclude` (`internal/codegen/codegen.go`) applies `-skip` and
+   `-readonly` *after* the tags are read and sets `field.Excluded` only when
+   `field.tagDropped` is false — that is, only when the model's own tags do not
+   already keep the column out. Reflection reads the struct and never the
+   command line, so that is exactly the set the generated file has to declare.
+   A `-skip`ped column stays in `model.Fields` with `Skip` set rather than being
+   dropped, because its *name* is still needed for the list.
 
 8. **Metamodel attribute types** — `attrType`, `internal/codegen/codegen.go:363`
    | element type | attribute |
@@ -110,8 +121,34 @@ package that does not compile yet.
    attribute struct against the model at package initialisation — a renamed
    field then breaks the build rather than a request.
 
-10. **`render` and the import block** — `internal/codegen/render.go:11`
-    `used` flags decide `time`, the `crud` package and the `specs` package.
+10. **The adapter half** — `internal/codegen/adapter.go:renderAdapter`, only
+    under `-adapter`
+    Five artefacts per model, in this order:
+    | artefact | shape |
+    |---|---|
+    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock and not on the exclusion list — under `lowerFirst` JSON names |
+    | `<Model>Mapper` | `Model(ctx, in) (M, error)`, a field-for-field assignment, plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
+    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "CreatedAt")` — the inverse, plus the exclusions |
+    | `<Model>Service` | a struct embedding `*port.DefaultService[M, ID, U]`, with `var _ port.Service[…]` beside it so an override that changes a signature is a build failure |
+    | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `options.refuseServiceOptions` |
+    The id type comes from the primary key's `Type` as written, through
+    `model.pk`; a model the generator cannot find a key on is an error rather
+    than a file that does not compile. The name is `Mount<Model>` singular:
+    pluralising in a generator is a guess, and `MountCategorys` is what guessing
+    looks like.
+
+11. **The coverage assertion** — `internal/codegen/adapter.go:renderCoverage`,
+    whenever the DTO half runs
+    One `init` at the end of the file, one line per model:
+    `port.MustCoverUpdate[Model, ModelUpdate]("CreatedAt")`. This is the half
+    that ships with or without `-adapter`, and the half that fires with nothing
+    regenerated ([[D-050]]).
+
+12. **`render` and the import block** — `internal/codegen/render.go:render`
+    `used` flags decide `context`, `net/http`, `time`, and the `crud`, `errs`,
+    `crudnet`, `port` and `specs` packages. A flag per package rather than a
+    scan of the rendered text: the text is what the flags produced, so reading
+    it back to decide would be one derivation checking itself.
     `-import` is added when the output lands elsewhere. `extraImports`
     (`internal/codegen/render.go:75`) walks every column type for a `pkg.Type` prefix and pulls
     the matching path out of the import map collected in `load` — a `uuid.UUID`
@@ -125,6 +162,19 @@ package that does not compile yet.
   what `collectPlanFields` refuses. Add a tag option that the plan rejects, and
   the generator has to learn it in the same change or `Define` panics on
   generated code.
+- **The domain is derived twice, on purpose.** The generator reads the model's
+  *source text*; `port.CoversUpdate` and `port.NewPathMap` read the *compiled
+  struct* through `crud.Schema`. That duplication is the whole point: a check
+  that read the generator's own view of the model would be one derivation
+  agreeing with itself, and `TestTheGeneratedStoresAreUpToDate` already is that
+  test. Do not "simplify" the start-up check by having it call into
+  `internal/codegen` ([[D-050]]).
+- **A flag is invisible to reflection.** `-skip` and `-readonly` take a column
+  out of the artefacts and leave it an ordinary writable column at run time, so
+  the exclusion list has to be emitted or the start-up check refuses a column
+  dropped on purpose. That is why `field.Excluded` exists and why it is set only
+  when the tags do not already do the job — a redundant `-readonly` on a
+  `generated` column emits nothing.
 - **Nullable means `Opt`, always.** Collapsing it to `*T` because "the field is
   already a pointer" is the one edit that silently removes a feature.
 - **The output must be byte-identical across runs.** Sorted model order, sorted
@@ -150,6 +200,11 @@ package that does not compile yet.
 | a column type from an unimported package | not caught | the output does not compile |
 | an embedded type from an unknown package | `embedded` returns false | the field is silently absent from DTO and metamodel |
 | metamodel field that no longer maps | `specs.Metamodel` at package init | panic at start-up in the consumer's package |
+| a column the model gained, with nothing regenerated | `port.MustCoverUpdate` at package init | panic at start-up naming the column ([[D-050]]) |
+| a column the inverse map does not cover, or an entry naming one no request carries | `port.MustPathMap` at package init | panic at start-up naming the entry |
+| `-adapter` on a model with no key the generator can name | `renderAdapter` | `-adapter needs a key it can name: tag one field of X db:",pk"` |
+| `-adapter` with `-no-dto` | `run` | `-adapter needs the update DTO; drop -no-dto` |
+| `-binding` naming anything but `net` or `none` | `Run` | `-binding X: only net and none are generated today` |
 
 ## Files
 
@@ -157,11 +212,14 @@ package that does not compile yet.
 |---|---|
 | `cmd/vv/main.go` | the flags, and nothing else — it fills a `codegen.Options` and calls `Run` |
 | `internal/codegen/codegen.go` | `Options`, `Run`, the two-pass load, `parseModel`, `embedded`, `elem`, `dtoType`, `attrType`, `qual` |
-| `internal/codegen/render.go` | `render`, `renderDTO`, `renderMetamodel`, `renderAttrs`, `extraImports` |
+| `internal/codegen/render.go` | `render`, `used`, `renderDTO`, `renderMetamodel`, `renderAttrs`, `extraImports` |
+| `internal/codegen/adapter.go` | `inputFields`, `renderAdapter`, `renderCoverage`, `quoteList` — the `-adapter` half, kept separate so the DTO half stays readable |
+| `port/pathmap.go` | `PathMap`, `At`, `NewPathMap`/`MustPathMap`, `CoversUpdate`/`MustCoverUpdate` — what the generated file calls at package initialisation |
+| `crud/update.go` | `UpdatePlan.Covers` — the model columns a DTO resolves to, through the plan the repository already builds |
 | `crud/update.go` | `collectPlanFields` — the rules the DTO has to satisfy |
 | `crud/meta.go` | the tag vocabulary and the runtime's own embedded-struct flattening |
 | `repo/decorators/specs/metamodel.go` | `Metamodel`, and the attribute types the generator emits |
-| `_examples/example/blog/vv_gen.go`, `test/entstore/`, `test/gormstore/` | checked-in output, verified up to date by tests |
+| `_examples/example/blog/vv_gen.go`, `test/entstore/`, `test/gormstore/`, `test/versionstore/` | checked-in output, verified up to date by tests. `blog` and `versionstore` are the two generated with `-adapter`; `versionstore` is the only model in the tree with a `version` column |
 | `_examples/entstore/`, and the `vv_gen.go` in each `_examples/*-*/` stack | the same generator run the usage guides tell a consumer to run, checked in so an example is readable without running anything |
 
 ## Tests that walk this flow
@@ -184,10 +242,15 @@ package that does not compile yet.
 - `TestGeneratingOnlyOneHalf` — `internal/codegen/codegen_test.go` — `-no-dto` / `-no-meta`.
 - `TestOutputIsByteIdenticalAcrossRuns` — `internal/codegen/codegen_test.go`.
 - `TestGeneratedCodeCompilesAndValidates` — `internal/codegen/codegen_test.go` — the end-to-end guarantee.
-- `TestGeneratedFileIsUpToDate` — `_examples/example/blog/blog_test.go`.
-- `TestTheGeneratedStoresAreUpToDate` — `test/integration/codegen_test.go` — the ent and gorm stores.
+- `TestGeneratedFileIsUpToDate` — `_examples/example/blog/blog_test.go` — and it checks the `//go:generate` line verbatim, so the command it runs cannot drift from the one the tree carries.
+- `TestTheGeneratedStoresAreUpToDate` — `test/codegen/codegen_test.go` — the ent, gorm and version stores. It has no build tag: it needs no database, and living in the integration suite is what hid it from a contributor with no containers. Its own control tampers with the regenerated copy, so a helper that read one file twice could not stay green.
+- `TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing` — `internal/codegen/codegen_test.go` — the phase's load-bearing test: untampered starts (control), a column added to the model source refuses, an entry deleted from the map refuses.
+- `TestTheGeneratedMapCoversEveryWritableColumn` — `internal/codegen/codegen_test.go` — with a `generated` column as the control that the domain is not "every column".
+- `TestTheGeneratedAssertionNamesTheReadonlyExclusions` — `internal/codegen/codegen_test.go` — with the no-flag twin.
+- `TestAVersionedModelGeneratesAResourceThatStarts` — `internal/codegen/codegen_test.go` — with a map claiming the lock as its refused control.
+- `TestTheGeneratedDeclarationForAVersionedModelIsAccepted`, `TestTheGeneratedWireShapesLeaveOutWhatTheClientDoesNotOwn`, `TestTheGeneratedMapperAndItsInverseAgree` — `test/versionstore/versionstore_test.go`.
 - `TestGeneratedDTOTypesFollowNullability` — `_examples/example/blog/blog_test.go` — the generated types, from the consumer's side.
 
 ## See also
 
-[[FL-004]] [[FL-002]]
+[[FL-004]] [[FL-002]] [[FL-015]]

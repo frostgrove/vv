@@ -24,7 +24,10 @@ type Renderer interface {
 
 // MaxViolations is how many violations one body carries before the rest are
 // dropped and Partial is set. A response body is not a log.
-const MaxViolations = 100
+//
+// The number is port's: a gRPC status detail list is capped by the same rule,
+// and two constants would drift the first time one was raised.
+const MaxViolations = port.MaxViolations
 
 // DefaultRetryAfter is the Retry-After a 503 carries, in seconds. The framework
 // does not retry on the caller's behalf ([[D-040]]); this is the smallest
@@ -127,7 +130,13 @@ func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Hea
 		return status, nil, Internal()
 	}
 
-	vs := r.violations(ctx, f)
+	vs := port.Violations(ctx, f, port.ViolationOptions{
+		Resolvers: r.resolvers,
+		Fallback:  bodyResolverFrom(ctx),
+		Messages:  r.messages,
+		Codes:     r.codesOrNil(),
+		Max:       r.max,
+	})
 	env := Envelope{Type: "error", Partial: f.Partial, Errors: group(vs)}
 	if len(vs) < len(f.Violations) {
 		env.Partial = true
@@ -138,69 +147,4 @@ func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Hea
 		h = http.Header{"Retry-After": []string{strconv.Itoa(r.retryAfter)}}
 	}
 	return status, h, env
-}
-
-// violations is the copy every later step works on. The fault is a value two
-// goroutines may render at once ([[D-042]]), so nothing here writes through to
-// it — a resolved path or an expanded message landing on the shared fault would
-// make the second render depend on the first.
-func (r *EnvelopeRenderer) violations(ctx context.Context, f *errs.Fault) []errs.Violation {
-	vs := make([]errs.Violation, 0, max(len(f.Violations), 1))
-	vs = append(vs, f.Violations...)
-	if len(vs) == 0 {
-		// A 404 and a bare 403 carry none. The status alone is not a thing a
-		// client can branch on, so the fault's own code becomes one violation.
-		code := f.Code
-		if code == "" {
-			code = port.CodeForKind(f.Kind)
-		}
-		vs = append(vs, errs.Violation{Code: code, Message: f.Message})
-	}
-
-	hops := errs.Chain(append(append([]errs.Resolver{}, r.resolvers...), bodyResolverFrom(ctx))...)
-	for i := range vs {
-		p, ok := hops.Resolve(vs[i].Path)
-		vs[i].Path = p
-		if !ok {
-			vs[i].Approximate = true
-		}
-	}
-
-	errs.SortViolations(vs)
-	if r.max > 0 && len(vs) > r.max {
-		vs = vs[:r.max]
-	}
-	locale := LocaleFrom(ctx)
-	for i := range vs {
-		vs[i].Message = r.message(ctx, vs[i], locale)
-	}
-	return vs
-}
-
-// message is §9's ladder: the catalogue, then the code's declared default, then
-// the code itself. Never the driver's text, and never a template with an
-// unexpanded placeholder still in it — errs.Messages falls back one level up
-// rather than emitting {max}.
-func (r *EnvelopeRenderer) message(ctx context.Context, v errs.Violation, locale string) string {
-	if r.messages != nil {
-		if m, ok := r.messages.Message(ctx, v, locale); ok && m != "" {
-			return m
-		}
-	}
-	if v.Message != "" {
-		return v.Message
-	}
-	if m, ok := r.defaultMessage(v.Code); ok {
-		return m
-	}
-	return string(v.Code)
-}
-
-// defaultMessage is the rung below the catalogue: what the vocabulary declares
-// for the code.
-func (r *EnvelopeRenderer) defaultMessage(code errs.Code) (string, bool) {
-	if c := r.codesOrNil(); c != nil {
-		return c.MessageFor(code)
-	}
-	return port.DefaultMessage(code)
 }
