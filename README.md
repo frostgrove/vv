@@ -627,7 +627,7 @@ parser := authjwt.New[MyClaims](authjwt.HMAC(secret),
     authjwt.Issuer("https://id.example.com"),
     authjwt.Audience("articles-api"))
 
-claims, err := parser.Parse(ctx, token)   // MyClaims
+claims, err := parser.Parse(ctx, token)
 ```
 
 Stop there if a parser is all you wanted. The bridge to `Principal` is a

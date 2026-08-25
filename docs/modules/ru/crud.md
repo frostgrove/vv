@@ -184,6 +184,17 @@ type Article struct {
 значения для сортировки, поэтому она отклоняется, а не молча выбирает
 какое-то одно.
 
+Путь здесь строка, потому что обычно строкой и приходит — из query string, от
+клиента. Написанный на Go, тот же путь отдаётся сгенерированной метамоделью как
+идентификатор, поэтому переименование связи ломает сборку:
+
+```go
+crud.Preload(Article_.Comments.Path(), Article_.Comments.Author.Path())
+crud.PreloadWhere(Article_.Comments.Path(), crud.Where(specs.Predicate(Comment_.Approved.Eq(true))))
+```
+
+Про хэндл и его единственный случай затенения — см. [specs](specs.md).
+
 ## Пагинация
 
 ```go
@@ -224,6 +235,10 @@ rows, err := orders.Aggregate(ctx,
 `CountAll`, `CountOf`, `CountDistinct`, `Sum`, `Avg`, `Min`, `Max`. Они
 выполняются под тем же сужением, что и чтение, поэтому security-скоуп
 применяется и здесь ([[D-029]]).
+
+Имена полей тоже принимают метамодель — `crud.GroupBy(Order_.Status.Name())`,
+`crud.Sum("total", Order_.Amount.Name())`. Имя самого агрегата — это ключ, под
+которым возвращается значение, поэтому оно остаётся строкой.
 
 ## Шов исполнителя
 

@@ -70,7 +70,10 @@ Both lead with what you get and only then how to set it up.
 
 ## Roadmap
 
-One document, and it holds only what is still open:
-[roadmaps/Roadmap.md](roadmaps/Roadmap.md). It also carries the map from the two
-retired root roadmaps' section numbers — which comments in the tree still cite —
-to where each one's content now lives.
+[roadmaps/Roadmap.md](roadmaps/Roadmap.md) holds **only what is not built**.
+Anything finished is deleted from it rather than marked done, so its length is
+the size of the remaining work.
+
+[roadmaps/retired-sections.md](roadmaps/retired-sections.md) is reference, not a
+plan: the map from the two retired root roadmaps' section numbers — which
+comments in the tree still cite — to where each one's content now lives.

@@ -47,6 +47,23 @@
 | [security](security.md) | `vv/repo/decorators/security` | Скоуп на уровне строк, авторизация, проверка на уровне сущности |
 | [faults](faults.md) | `vv/repo/decorators/faults` | Превращает один отклонённый write в полный список нарушений, вызванных payload |
 
+## Auth — кто вызывает и что ему позволено
+
+| Модуль | Импорт | Что это |
+|---|---|---|
+| [auth](auth.md) | `vv/auth` | Контракт: `Principal`, `Role`, `Permission`, `Credential`, `Authenticator`, `Guard`, ключ контекста, 401 |
+| [authjwt](authjwt.md) | `vv/auth/authjwt` | **Модуль** — проверка JWT, generic по *вашей* структуре клеймов; HMAC, RSA, ECDSA, EdDSA, JWKS |
+| [apikey](apikey.md) | `vv/auth/apikey` | `Authenticator` по общему секрету, сравнение за постоянное время |
+| [authhttp](authhttp.md) | `vv/http/authhttp` | HTTP-половина middleware: рендерер и отказ |
+| [authnet](authnet.md) | `vv/http/authnet` | Middleware для `net/http`. Стандартная библиотека, поэтому в составе библиотеки |
+| [authgin](authgin.md) | `vv/http/authgin` | **Модуль** — middleware для Gin |
+| [authfiber](authfiber.md) | `vv/http/authfiber` | **Модуль** — middleware для Fiber v3 |
+| [authgrpc](authgrpc.md) | `vv/rpc/authgrpc` | **Модуль** — unary- и stream-интерсепторы gRPC |
+
+`auth` намеренно **не** входит в манифест контрактов. Это пакет с двумя
+реализациями собственного интерфейса — нормальный случай, а не исключение
+([[D-048]], [[D-055]]).
+
 ## Запрос — один документ, четыре транспорта
 
 | Модуль | Импорт | Что это |

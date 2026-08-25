@@ -272,3 +272,124 @@ func TestASpecificationCannotEscapeARepositoryScope(t *testing.T) {
 		t.Fatalf("bound %#v, want the scope's value first and the specification's second", args)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// relation handles
+
+// A second model set: User has no relations, and a relation handle is the one
+// thing a metamodel cannot describe without one.
+type Post struct {
+	ID       int64    `db:"id,pk,auto"`
+	AuthorID int64    `db:"author_id"`
+	Title    string   `db:"title"`
+	Author   *Writer  `rel:"belongs_to"`
+	Comments []Remark `rel:"has_many"`
+}
+
+type Writer struct {
+	ID   int64  `db:"id,pk,auto"`
+	Name string `db:"name"`
+}
+
+type Remark struct {
+	ID       int64   `db:"id,pk,auto"`
+	PostID   int64   `db:"post_id"`
+	AuthorID int64   `db:"author_id"`
+	Body     string  `db:"body"`
+	Author   *Writer `rel:"belongs_to"`
+}
+
+type writerAttrs struct {
+	specs.Rel[Post, Writer]
+	Name specs.Str[Post]
+}
+
+type remarkAttrs struct {
+	specs.Rel[Post, Remark]
+	Body   specs.Str[Post]
+	Author writerAttrs
+}
+
+// The group sits under a Go field name that is *not* the relation's, so the
+// path the handle answers can only have come from binding.
+type postAttrs struct {
+	Title specs.Str[Post]
+	Comm  remarkAttrs `attr:"Comments"`
+}
+
+// A relation handle is the typed spelling of a path that is otherwise a string
+// literal: basic.RelationScope, crud.Preload and a relation policy all take one.
+func TestARelationHandleAnswersItsCanonicalPath(t *testing.T) {
+	m := specs.Metamodel[Post, postAttrs]()
+
+	for _, spelling := range []struct {
+		how  string
+		path string
+	}{
+		{"Path", m.Comm.Path()},
+		{"RelPath", m.Comm.RelPath()},
+		{"String", m.Comm.String()},
+	} {
+		if spelling.path != "Comments" {
+			t.Errorf("%s() answered %q, want the canonical Comments — the handle took its "+
+				"path from the Go field name instead of the relation", spelling.how, spelling.path)
+		}
+	}
+
+	// A handle one hop further carries the whole path, which is what a nested
+	// preload and a nested relation scope are addressed by.
+	if got := m.Comm.Author.Path(); got != "Comments.Author" {
+		t.Errorf("the nested handle answered %q, want Comments.Author", got)
+	}
+
+	// The attributes beside it still describe the *root*, so the group is not
+	// two things at once.
+	if got := m.Comm.Body.Name(); got != "Comments.Body" {
+		t.Errorf("the attribute beside the handle answered %q, want Comments.Body", got)
+	}
+}
+
+// A handle declaring the wrong target would narrow a table nobody meant to
+// narrow, and the path itself would still look right — so it has to be refused
+// where every other metamodel mistake is, at declaration time.
+func TestARelationHandleDeclaringTheWrongTargetIsRefused(t *testing.T) {
+	type wrongTarget struct {
+		Comments struct {
+			specs.Rel[Post, Writer] // Comments lands on Remark
+		}
+	}
+	type rightTarget struct {
+		Comments struct {
+			specs.Rel[Post, Remark]
+		}
+	}
+
+	assertPanics(t, "a handle pointing at the wrong model",
+		func() { specs.Metamodel[Post, wrongTarget]() })
+
+	// The control: without it, the refusal above could be about anything.
+	m := specs.Metamodel[Post, rightTarget]()
+	if got := m.Comments.Path(); got != "Comments" {
+		t.Fatalf("the right target bound to %q, so the refusal above proves nothing", got)
+	}
+}
+
+// A handle stands for the group it sits in. At the root there is no group and
+// no relation, so there is no path it could honestly answer.
+func TestARelationHandleAtTheRootIsRefused(t *testing.T) {
+	type atRoot struct {
+		specs.Rel[Post, Remark]
+		Title specs.Str[Post]
+	}
+	type withoutIt struct {
+		Title specs.Str[Post]
+	}
+
+	assertPanics(t, "a handle at the root", func() { specs.Metamodel[Post, atRoot]() })
+
+	// The control: the same struct minus the handle binds, so the refusal is
+	// about the handle and not about Post.
+	if got := specs.Metamodel[Post, withoutIt]().Title.Name(); got != "Title" {
+		t.Fatalf("the same metamodel without the handle bound Title to %q", got)
+	}
+}

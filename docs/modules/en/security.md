@@ -140,6 +140,81 @@ are declared, **both apply**.
 freeze and a role check are four values that compose rather than one function
 with four branches.
 
+Every `field` and `path` above is a model field name or a relation path, and a
+policy that narrows nothing because somebody renamed a column is the worst
+failure this package has — it reads as protection and is not. The generated
+metamodel answers both as identifiers:
+
+```go
+security.Combine(
+    security.ScopeField[Article, int64](Article_.TenantID.Name(), tenantOf),
+    security.ScopeRelationField[Article, int64](
+        Article_.Comments.Path(), Comment_.TenantID.Name(), tenantOf),
+    security.Freeze[Article, int64](Article_.TenantID.Name()),
+)
+```
+
+As with a blueprint's relation scope, the *path* comes from the root's metamodel
+and the *field* from the target's own — see [specs](specs.md).
+
+## Driven by the authenticated caller
+
+Every constructor above takes a `valueFn` — a `func(context.Context) (any,
+error)` you write, over a context key you invented. That still works and is
+still the escape hatch. But the value almost always *is* the caller, and
+[auth](auth.md) is the vocabulary for saying so:
+
+| Constructor | Does |
+|---|---|
+| `RequirePermission[M, ID](perms...)` | refuse unless the caller holds **all** of them |
+| `RequireAnyPermission[M, ID](perms...)` | refuse unless the caller holds **at least one** |
+| `RequireRole[M, ID](roles...)` | refuse unless the caller is in one of the roles |
+| `PerAction[M, ID](map[Action]auth.Permission)` | one permission per verb; a verb the map does not name is refused |
+| `ScopeAttr[M, ID](field, claim)` | `ScopeField` narrowed by a claim off the principal |
+| `ScopeRelationAttr[M, ID](path, field, claim)` | the same across a relation |
+| `ScopeSubject[M, ID](field)` | narrow to rows the caller owns |
+| `ScopeRelationSubject[M, ID](path, field)` | the same across a relation |
+| `InspectOwner[M, ID](allow)` | a row-level check that sees the principal and the row |
+
+```go
+policy := security.Combine(
+    security.PerAction[Article, int64](map[security.Action]auth.Permission{
+        security.Read:   "article:read",
+        security.Create: "article:write",
+        security.Update: "article:write",
+        security.Delete: "article:delete",
+    }),
+    security.ScopeAttr[Article, int64]("TenantID", "tenant"),
+)
+articles := Articles.Bind(db, security.Gate(policy))
+```
+
+`ScopeAttr` **wraps `ScopeField`** rather than reimplementing it, so it inherits
+the row check and the frozen column. That matters more than it sounds: a
+principal-driven scope written by hand is the shape [[UC-004]] records as Gap 1
+— it narrows reads and leaves a create into another tenant wide open.
+
+Four things that are easy to get wrong and are decided here:
+
+- **A claim the principal does not carry is a denial, not a zero value.** A
+  missing tenant must never compile to `WHERE tenant_id = 0`, which matches
+  nothing on most schemas and everything on one where 0 is a real tenant.
+- **An absent principal is a 401 from every one of them, with no statement
+  executed.** Nothing has been decided yet, so it is not a 403 — and it is
+  [[UC-004]]'s guarantee 16.
+- **`PerAction` refuses a verb it does not name**, even for a caller holding
+  every permission in the map. A verb added to the seam later is refused rather
+  than inherited ([[D-030]]).
+- **The two quantifiers disagree about the empty case.** Naming no permission in
+  `RequirePermission` refuses nothing, so a list built from configuration that
+  happens to be empty adds no rule; naming none in `RequireAnyPermission`
+  refuses everything, because "any of nothing" is not satisfiable.
+
+Getting a principal *into* the context is a transport's job — see
+[authnet](authnet.md), [authgin](authgin.md), [authfiber](authfiber.md) or
+[authgrpc](authgrpc.md). The import runs one way: this package knows about
+`auth`, and `auth` knows nothing about a repository ([[D-055]]).
+
 ## Two permissions that are separate on purpose
 
 ```go

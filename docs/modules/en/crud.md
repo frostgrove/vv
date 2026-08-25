@@ -180,6 +180,17 @@ batched load would truncate some parents' children and not others.
 Sorting through a to-many is refused too: a collection has no single value to
 sort by, so it is declined rather than silently picking one.
 
+A path is a string here because it usually arrives as one — from a query string,
+from a client. Written in Go, the generated metamodel answers the same path as an
+identifier, so a renamed relation breaks the build:
+
+```go
+crud.Preload(Article_.Comments.Path(), Article_.Comments.Author.Path())
+crud.PreloadWhere(Article_.Comments.Path(), crud.Where(specs.Predicate(Comment_.Approved.Eq(true))))
+```
+
+See [specs](specs.md) for the handle and its one shadowing case.
+
 ## Pagination
 
 ```go
@@ -219,6 +230,10 @@ rows, err := orders.Aggregate(ctx,
 
 `CountAll`, `CountOf`, `CountDistinct`, `Sum`, `Avg`, `Min`, `Max`. They run
 under the same narrowing as a read, so a security scope applies ([[D-029]]).
+
+The field names take the metamodel too — `crud.GroupBy(Order_.Status.Name())`,
+`crud.Sum("total", Order_.Amount.Name())`. The aggregate's own name is the key
+the value comes back under, so that one stays a string.
 
 ## The executor seam
 

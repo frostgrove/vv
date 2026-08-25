@@ -27,12 +27,14 @@ type ArticleUpdate struct {
 
 // ArticleAuthorAttrs reaches Article through Author.
 type ArticleAuthorAttrs struct {
+	specs.Rel[Article, Author]
 	ID   specs.Ord[Article, int64]
 	Name specs.Str[Article]
 }
 
 // ArticleCommentsAttrs reaches Article through Comments.
 type ArticleCommentsAttrs struct {
+	specs.Rel[Article, Comment]
 	ID        specs.Ord[Article, int64]
 	ArticleID specs.Ord[Article, int64]
 	AuthorID  specs.Ord[Article, int64]
@@ -42,6 +44,7 @@ type ArticleCommentsAttrs struct {
 
 // ArticleTagsAttrs reaches Article through Tags.
 type ArticleTagsAttrs struct {
+	specs.Rel[Article, Tag]
 	ID   specs.Ord[Article, int64]
 	Slug specs.Str[Article]
 }
@@ -151,6 +154,7 @@ type AuthorUpdate struct {
 
 // AuthorArticlesAttrs reaches Author through Articles.
 type AuthorArticlesAttrs struct {
+	specs.Rel[Author, Article]
 	ID          specs.Ord[Author, int64]
 	AuthorID    specs.Ord[Author, int64]
 	Title       specs.Str[Author]
@@ -243,6 +247,7 @@ type CommentUpdate struct {
 
 // CommentAuthorAttrs reaches Comment through Author.
 type CommentAuthorAttrs struct {
+	specs.Rel[Comment, Author]
 	ID   specs.Ord[Comment, int64]
 	Name specs.Str[Comment]
 }

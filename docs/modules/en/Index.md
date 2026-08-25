@@ -30,6 +30,12 @@ long form of it.
 
    remote ◄── crudhttp.Transport · crudgrpc.Transport
    the same thing backwards: another service's resource, as a repository
+
+   auth ──► authjwt · apikey ──► authnet · authgin · authfiber · authgrpc
+                                            │
+                                            ▼
+                                    security.Gate
+   who is calling, established once at the door and read by every policy
 ```
 
 ## Core — you always import these
@@ -46,6 +52,23 @@ long form of it.
 | [specs](specs.md) | `vv/repo/decorators/specs` | JPA Specifications, the Criteria API and a compile-checked metamodel |
 | [security](security.md) | `vv/repo/decorators/security` | Row-level scope, authorization, per-entity inspection |
 | [faults](faults.md) | `vv/repo/decorators/faults` | Turns one refused write into every violation the payload caused |
+
+## Auth — who the caller is, and what they may do
+
+| Module | Import | What it is |
+|---|---|---|
+| [auth](auth.md) | `vv/auth` | The contract: `Principal`, `Role`, `Permission`, `Credential`, `Authenticator`, `Guard`, the context key, the 401 |
+| [authjwt](authjwt.md) | `vv/auth/authjwt` | **Module** — JWT verification, generic over *your* claims struct; HMAC, RSA, ECDSA, EdDSA, JWKS |
+| [apikey](apikey.md) | `vv/auth/apikey` | An `Authenticator` over a shared secret, compared in constant time |
+| [authhttp](authhttp.md) | `vv/http/authhttp` | The HTTP half of the middleware: the renderer and the refusal |
+| [authnet](authnet.md) | `vv/http/authnet` | The `net/http` middleware. Stdlib, so it ships in the library |
+| [authgin](authgin.md) | `vv/http/authgin` | **Module** — the Gin middleware |
+| [authfiber](authfiber.md) | `vv/http/authfiber` | **Module** — the Fiber v3 middleware |
+| [authgrpc](authgrpc.md) | `vv/rpc/authgrpc` | **Module** — the gRPC unary and stream interceptors |
+
+`auth` is deliberately **not** on the contract manifest. It is a package with
+two implementations of its own interface, which is the normal case rather than
+the exception ([[D-048]], [[D-055]]).
 
 ## The request — one document, four transports
 

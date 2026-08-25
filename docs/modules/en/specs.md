@@ -96,6 +96,59 @@ Pick the narrowest one — it decides which methods exist.
 Every method returns a `Specification[M]`, so they compose with `Where`, `AllOf`,
 `AnyOf` and `Not`.
 
+`Name()` on any attribute answers the canonical model field name it bound to.
+That is what the settings and options taking a *name* rather than a predicate
+are addressed by:
+
+```go
+basic.SoftDelete(Doc_.DeletedAt.Name())
+crud.GroupBy(Order_.Status.Name())
+crud.Sum("total", Order_.Amount.Name())
+security.Freeze[Doc, int64](Doc_.TenantID.Name())
+```
+
+## Relation handles
+
+A generated relation group carries its own path, so a relation is addressed by an
+identifier too:
+
+```go
+Article_.Comments.Path()          // "Comments"
+Article_.Comments.Author.Path()   // "Comments.Author"
+```
+
+That is what `basic.RelationScope`, `crud.Preload`, `crud.PreloadWhere` and
+`security.ScopeRelationField` take instead of a literal. The handle also records
+the model the path lands on, so pointing one at the wrong model fails at package
+initialisation rather than narrowing the wrong table.
+
+`Path`, `RelPath` and `String` all answer the same string, and the reason there
+are three is the embedding. The handle is embedded in the group, so `Path` is
+promoted one level out, while every column of the *target* model is a field of
+that same group one level nearer — and Go resolves the nearer one. A target with
+a column called `Path` therefore shadows the method, and `Folder_.Files.Path()`
+stops compiling for that one relation. The generated file says so in that group's
+doc comment; `RelPath()` is the spelling nothing shadows.
+
+A group only exists where the generator expanded the relation, which `-depth`
+controls, and a relation whose target model lives in another package is not
+expanded at all ([[UC-007]]).
+
+### The far side of a relation is a different metamodel
+
+A relation scope's predicate is written against the *target* model, so it comes
+from the target's own metamodel:
+
+```go
+basic.RelationScope(
+    Article_.Comments.Path(),                    // "Comments"
+    specs.Predicate(Comment_.Approved.Eq(true))) // "approved" = $1
+```
+
+Not `Article_.Comments.Approved` — that is an attribute of an *Article*, bound to
+`Comments.Approved`, and it filters articles by their comments as a correlated
+`EXISTS` ([[D-005]]). Both are useful; they answer different questions.
+
 ## Composing
 
 ```go

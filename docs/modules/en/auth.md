@@ -74,9 +74,12 @@ var roles = auth.RoleMap{
 }
 
 p := auth.Claims{Roles: []auth.Role{"editor"}}.Grant(roles)
-p.Has("article:write")   // true
-p.Has("article:delete")  // false — admin grants it, and this caller is not one
+p.Has("article:write")
+p.Has("article:delete")
 ```
+
+The first is true. The second is false: `admin` grants it and this caller is not
+one, so expansion is scoped to the roles the token actually carried.
 
 **Expansion happens once, when the principal is built.** A `Has` that walked a
 role map at check time would answer differently depending on which map was
@@ -99,10 +102,13 @@ The three quantifiers disagree about the empty case, deliberately:
 ## The context
 
 ```go
-ctx = auth.WithPrincipal(ctx, p)      // the transport, once per request
-p, err := auth.Require(ctx)           // the policy, once per operation
-p, ok := auth.PrincipalFrom(ctx)      // when absence is a normal answer
+ctx = auth.WithPrincipal(ctx, p)
+p, err := auth.Require(ctx)
+p, ok := auth.PrincipalFrom(ctx)
 ```
+
+The first is a transport's, once per request. The second is a policy's, once per
+operation. The third is for the callers to whom absence is a normal answer.
 
 **One key for every transport.** A second key in an HTTP package would be
 invisible to the gRPC interceptor, both packages' tests would pass, and a policy
@@ -142,12 +148,15 @@ Everything a middleware does that is not framework-shaped:
 
 ```go
 guard := auth.NewGuard(authn,
-	auth.Header("X-Api-Key"),   // default: Authorization
-	auth.Optional(),            // default: a credential is required
+	auth.Header("X-Api-Key"),
+	auth.Optional(),
 )
 
 ctx, err := guard.Authenticate(r.Context(), r.Header.Get)
 ```
+
+Both options change a default: without them the credential is read from
+`Authorization`, and a request that presents none is refused.
 
 `Authenticate` takes a `func(name string) string`. `http.Header.Get`,
 `gin.Context.GetHeader`, `fiber.Ctx.Get` and gRPC metadata can all supply one,

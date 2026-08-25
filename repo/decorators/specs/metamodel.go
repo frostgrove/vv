@@ -133,6 +133,63 @@ func (a Cmp[M, T]) Between(low, high T) Specification[M] {
 	return Lift[M](crud.Between(a.name, low, high))
 }
 
+// ---------------------------------------------------------------------------
+// relations
+
+// Rel is the handle of one relation: its canonical path, as an identifier the
+// compiler resolves rather than a string literal. The generator embeds one in
+// every attribute group it writes for a relation, so
+//
+//	Article_.Comments.Path()          // "Comments"
+//	Article_.Comments.Author.Path()   // "Comments.Author"
+//
+// which is what basic.RelationScope, crud.Preload and a relation policy take
+// instead of a literal. Renaming the relation and regenerating then breaks the
+// build at every call site.
+//
+// The second type parameter is the model the path lands on. It is checked
+// against the relation at package initialisation, so a handle pointing at the
+// wrong model fails at start-up rather than narrowing the wrong table.
+//
+// Path, RelPath and String all answer the same string, and the reason there are
+// three is the embedding. The handle is embedded, so Path is promoted at depth
+// one, while every column of the *target* model is a field of the same group at
+// depth zero — and Go resolves the shallower one. A target with a column called
+// Path therefore shadows the method, and Folder_.Files.Path() stops compiling
+// for that one relation. String is the second chance; RelPath is the spelling
+// nothing shadows.
+type Rel[M any, T any] struct{ path string }
+
+// Path returns the canonical relation path.
+func (r Rel[M, T]) Path() string { return r.path }
+
+// RelPath returns the same path under a name no column shadows.
+func (r Rel[M, T]) RelPath() string { return r.path }
+
+func (r Rel[M, T]) String() string { return r.path }
+
+func (r *Rel[M, T]) setPath(s string) { r.path = s }
+
+func (r *Rel[M, T]) targetType() reflect.Type {
+	var z T
+	return reflect.TypeOf(&z).Elem()
+}
+
+// relType answers the handle's own struct type. It exists because the handle is
+// embedded: a group that embeds one promotes these methods, so the group
+// satisfies relSettable too, and without this the root metamodel reads its
+// first relation group as a misplaced handle.
+func (r *Rel[M, T]) relType() reflect.Type { return reflect.TypeOf(*r) }
+
+type relSettable interface {
+	setPath(string)
+	targetType() reflect.Type
+	relType() reflect.Type
+}
+
+// ---------------------------------------------------------------------------
+// binding
+
 // Metamodel fills a struct of attribute declarations from the model schema.
 // Each field is matched by name (override with `attr:"FieldName"`, skip with
 // `attr:"-"`) and its value type is checked against the model. A mismatch
@@ -143,6 +200,9 @@ func (a Cmp[M, T]) Between(low, high T) Specification[M] {
 // ends up filtering articles by their author's name. The type parameter of the
 // nested attributes stays the root model, because the predicate they build
 // still selects root rows.
+//
+// An embedded Rel inside such a group is the group's own path, and it is
+// checked against the relation it stands for.
 func Metamodel[M any, A any]() A {
 	var out A
 	meta, err := crud.NewMeta[M]("")
@@ -153,17 +213,30 @@ func Metamodel[M any, A any]() A {
 	if v.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("specs: metamodel %s must be a struct", v.Type()))
 	}
-	bindMetamodel(meta, v, "")
+	bindMetamodel(meta, v, "", nil)
 	return out
 }
 
-func bindMetamodel(meta *crud.Meta, v reflect.Value, prefix string) {
+// bindMetamodel walks one attribute group. rel is the relation this group was
+// reached through, nil at the root — it is what a relation handle inside the
+// group is checked against.
+func bindMetamodel(meta *crud.Meta, v reflect.Value, prefix string, rel *crud.Relation) {
 	t := v.Type()
 	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
 		}
+
+		// Before the tag lookup, because the handle is embedded and its field
+		// name is the type name — reading "Rel" as an attribute name would
+		// send us looking for a column called Comments.Rel. The type check is
+		// what separates the handle from a group that merely embeds one.
+		if h, ok := v.Field(i).Addr().Interface().(relSettable); ok && sf.Type == h.relType() {
+			bindRel(t, sf, h, prefix, rel)
+			continue
+		}
+
 		name := sf.Name
 		if tag, ok := sf.Tag.Lookup("attr"); ok {
 			if tag == "-" {
@@ -191,16 +264,30 @@ func bindMetamodel(meta *crud.Meta, v reflect.Value, prefix string) {
 
 		if sf.Type.Kind() == reflect.Struct {
 			// A nested attribute struct names a relation.
-			if _, canonical, err := meta.RelationAt(path); err != nil {
+			if r, canonical, err := meta.RelationAt(path); err != nil {
 				panic(fmt.Sprintf("specs: metamodel %s.%s: %s", t.Name(), sf.Name, err))
 			} else {
-				bindMetamodel(meta, v.Field(i), canonical)
+				bindMetamodel(meta, v.Field(i), canonical, r)
 			}
 			continue
 		}
 		panic(fmt.Sprintf("specs: metamodel %s.%s is %s, expected specs.Attr/Ord/Str/Cmp or a nested attribute struct",
 			t.Name(), sf.Name, sf.Type))
 	}
+}
+
+// bindRel fills a relation handle with the path of the group it sits in, and
+// refuses one whose declared target is not where that relation lands.
+func bindRel(t reflect.Type, sf reflect.StructField, h relSettable, prefix string, rel *crud.Relation) {
+	if rel == nil {
+		panic(fmt.Sprintf("specs: metamodel %s.%s: a relation handle stands for the group it sits in, and the root model is not a relation",
+			t.Name(), sf.Name))
+	}
+	if want, got := rel.Elem, h.targetType(); want != got {
+		panic(fmt.Sprintf("specs: metamodel %s.%s: %s reaches %s, handle declares %s",
+			t.Name(), sf.Name, prefix, want, got))
+	}
+	h.setPath(prefix)
 }
 
 // bindAttr validates a standalone attribute declaration against the model.

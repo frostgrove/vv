@@ -426,6 +426,8 @@ follows on its own.
 go get github.com/shardit-io/vv                 # the library
 go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
 go get github.com/shardit-io/vv/rpc/crudgrpc    # …or gRPC instead
+go get github.com/shardit-io/vv/auth/authjwt   # …and JWT, if that is how you authenticate
+go get github.com/shardit-io/vv/http/authgin   # …plus the auth middleware for your framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
@@ -1018,6 +1020,17 @@ var Articles = basic.Define[Article, int64, ArticleUpdate]("articles",
     basic.RelationScope("Comments", crud.Eq("Published", true)))
 ```
 
+The path and the column are names, and a declaration that narrows nothing because
+somebody renamed one reads as protection and is not. Where the metamodel covers
+them, spell them as identifiers instead and a rename becomes a build failure:
+
+```go
+basic.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Published.Eq(true)))
+```
+
+The path comes from the root's metamodel, the predicate from the target's own —
+see [specs](../modules/en/specs.md).
+
 A rule about the *principal* cannot: the blueprint is built at start-up and the
 tenant arrives per request. That is `RelationScopes`, the companion to `Scope`:
 
@@ -1047,6 +1060,66 @@ Both narrowings apply where both are declared, and neither can be widened by
 anything the client sends. The safe shape, and the one to reach for first, is
 still a foreign key that already implies the tenant: children reached through
 their parent's key are the parent's children whatever the scope says.
+
+### Where the tenant comes from
+
+Above, `tenantKey{}` is yours: something upstream put a value there. That works
+and always has. What it costs is a context key, a role type and a token parser
+per service, and no two of them agree.
+
+`auth` is that vocabulary, and the tenant then comes off the authenticated
+caller:
+
+```go
+guard := auth.NewGuard(authjwt.Standard(
+    authjwt.HMAC(secret),
+    auth.RoleMap{"editor": {"user:read", "user:write"}},
+    authjwt.Issuer("https://id.example.com"),
+    authjwt.Audience("users-api"),
+))
+
+r.Use(crudgin.Errors(), authgin.Middleware(guard))
+```
+
+and the policy reads a claim instead of a key you invented:
+
+```go
+var policy = security.Combine(
+    security.PerAction[ent.User, int64](map[security.Action]auth.Permission{
+        security.Read:   "user:read",
+        security.Create: "user:write",
+        security.Update: "user:write",
+        security.Delete: "user:delete",
+    }),
+    security.ScopeAttr[ent.User, int64]("TenantID", "tenant"),
+)
+```
+
+`ScopeAttr` is `ScopeField` with the extractor filled in, so everything the list
+above promises still holds — including the refused create and the frozen column,
+which a hand-written principal-driven scope is easy to leave out.
+`ScopeRelationAttr` is the relation companion, `ScopeSubject` narrows to rows the
+caller owns, and `RequirePermission`, `RequireAnyPermission` and `RequireRole`
+are the coarse checks.
+
+Three things worth knowing before you wire it:
+
+- **A claim the token does not carry is a denial, not a zero value.** A missing
+  tenant must never compile to `WHERE tenant_id = 0`.
+- **An absent principal is a 401 at every policy, with no statement executed.**
+  So an optional guard in front of a gated repository is not an open door — the
+  401 simply arrives from the repository rather than from the door.
+- **A verb `PerAction` does not name is refused**, including one added to the
+  library later.
+
+**The parser is generic over your claims struct.** If your issuer spells things
+its own way, keep your type and write the two-line mapper instead of `Standard`
+— nothing of ours appears in it. And if a JWT is not how you authenticate,
+`auth/apikey` is the other provider and the seam is the same.
+
+Full detail: [modules/en/auth.md](../modules/en/auth.md), and
+[`_examples/auth-jwt-gin`](../../_examples/auth-jwt-gin/) is the whole chain
+running against a real database.
 
 ## 14. Relations: edges vs vv relations
 

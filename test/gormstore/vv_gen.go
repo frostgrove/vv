@@ -41,6 +41,7 @@ type MemberUpdate struct {
 
 // MemberTeamAttrs reaches Member through Team.
 type MemberTeamAttrs struct {
+	specs.Rel[Member, Team]
 	ID        specs.Ord[Member, uint]
 	CreatedAt specs.Cmp[Member, time.Time]
 	UpdatedAt specs.Cmp[Member, time.Time]
@@ -73,6 +74,7 @@ type TeamUpdate struct {
 
 // TeamMembersAttrs reaches Team through Members.
 type TeamMembersAttrs struct {
+	specs.Rel[Team, Member]
 	ID        specs.Ord[Team, uint]
 	CreatedAt specs.Cmp[Team, time.Time]
 	UpdatedAt specs.Cmp[Team, time.Time]
@@ -84,6 +86,7 @@ type TeamMembersAttrs struct {
 
 // TeamLabelsAttrs reaches Team through Labels.
 type TeamLabelsAttrs struct {
+	specs.Rel[Team, Label]
 	ID        specs.Ord[Team, uint]
 	CreatedAt specs.Cmp[Team, time.Time]
 	UpdatedAt specs.Cmp[Team, time.Time]

@@ -65,6 +65,22 @@ package initialisation, so **a renamed column breaks the build** rather than a
 request. Relation expansion stops at `-depth` (2 by default) and never walks back
 into a model already on the path.
 
+Each expanded relation also carries its own **path** as a handle, so the settings
+and options that take a path rather than a predicate are identifiers too:
+
+```go
+Article_.Comments.Path()                // "Comments"
+Article_.Comments.Author.Path()         // "Comments.Author"
+
+basic.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Approved.Eq(true)))
+crud.Preload(Article_.Comments.Path())
+```
+
+The handle records the model the path lands on, so pointing one at the wrong
+model is refused at package initialisation. It is embedded, so a target model
+with a column called `Path` shadows the method — the generated file says so in
+that group's doc comment, and `RelPath()` is the spelling nothing shadows.
+
 **And a coverage assertion**, whether or not `-adapter` is on:
 
 ```go

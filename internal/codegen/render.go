@@ -197,9 +197,21 @@ func (g *generator) renderAttrs(b *strings.Builder, root, on *model, suffix stri
 	}
 
 	var body strings.Builder
+	if suffix != "" {
+		// The group's own path, as an identifier. Embedded rather than named so
+		// the call site reads Article_.Comments.Path().
+		fmt.Fprintf(&body, "\tspecs.Rel[%s, %s]\n", g.qual(root.Name), g.qual(on.Name))
+	}
+	// A column of the target called Path or String sits at depth zero and
+	// shadows the promoted method, so the doc comment has to say which spelling
+	// still works here.
+	var shadows []string
 	for _, f := range on.Fields {
 		if f.Skip {
 			continue
+		}
+		if suffix != "" && !f.isRelation() && (f.Name == "Path" || f.Name == "String") {
+			shadows = append(shadows, f.Name)
 		}
 		if f.isRelation() {
 			if level+1 >= g.depth {
@@ -248,6 +260,11 @@ func (g *generator) renderAttrs(b *strings.Builder, root, on *model, suffix stri
 	} else {
 		fmt.Fprintf(b, "// %s reaches %s through %s.\n", typeName, root.Name,
 			strings.Join(splitCamelPath(suffix), "."))
+		if len(shadows) > 0 {
+			fmt.Fprintf(b, "// %s has a column called %s, which shadows the promoted method of\n",
+				on.Name, strings.Join(shadows, " and one called "))
+			fmt.Fprintf(b, "// that name: spell this relation's path RelPath() here.\n")
+		}
 	}
 	fmt.Fprintf(b, "type %s struct {\n%s}\n\n", typeName, body.String())
 }

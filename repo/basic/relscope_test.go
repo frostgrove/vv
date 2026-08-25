@@ -8,6 +8,7 @@ import (
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/crud/crudtest"
 	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/repo/decorators/specs"
 )
 
 // A tree of soft-deletable rows, all in one table. The scope is the whole point
@@ -220,5 +221,68 @@ func TestRelationScopeRefusesAPathTheModelDoesNotHave(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Remrks") {
 		t.Fatalf("err = %v, want a message naming the path that does not resolve", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the typed spelling of the same declaration
+
+// What the generator writes: the group carries the relation's path, and the
+// target model has a metamodel of its own. The two are different jobs —
+// Post_.Remarks.Spam is an attribute of a *Post*, spelled "Remarks.Spam", while
+// a relation scope's predicate is written against the target and spelled
+// "Spam". Only Remark_ can say the second one.
+type postRemarksAttrs struct {
+	specs.Rel[Post, Remark]
+	Spam specs.Attr[Post, bool]
+}
+
+type postAttrs struct {
+	Title   specs.Str[Post]
+	Remarks postRemarksAttrs
+}
+
+type remarkAttrs struct {
+	Spam specs.Attr[Remark, bool]
+	Body specs.Str[Remark]
+}
+
+var (
+	Post_   = specs.Metamodel[Post, postAttrs]()
+	Remark_ = specs.Metamodel[Remark, remarkAttrs]()
+)
+
+// A relation path is a string literal today, and a renamed relation therefore
+// narrows nothing while still reading as protection. Declared through the
+// metamodel instead, the same rename is a build failure at every call site.
+func TestARelationScopeAcceptsAGeneratedPath(t *testing.T) {
+	const want = `SELECT "id", "post_id", "spam", "body" FROM "remarks" ` +
+		`WHERE "post_id" IN ($1) AND "spam" = $2`
+
+	preload := func(t *testing.T, bp *basic.Blueprint[Post, int64, struct{}]) crudtest.Statement {
+		t.Helper()
+		rec := crudtest.Postgres().Push(
+			crudtest.Rows([]any{int64(1), "t", false, int64(0)}),
+			crudtest.Rows(),
+		)
+		if _, err := bp.Bind(rec).GetAll(context.Background(), crud.Preload(Post_.Remarks.Path())); err != nil {
+			t.Fatal(err)
+		}
+		return mustSQL(t, rec, 1)
+	}
+
+	typed := preload(t, basic.Define[Post, int64, struct{}]("posts",
+		basic.RelationScope(Post_.Remarks.Path(), specs.Predicate(Remark_.Spam.Eq(false)))))
+	wantSQL(t, typed.SQL, want)
+	if args := typed.Args; len(args) != 2 || args[1] != false {
+		t.Fatalf("the typed declaration bound %#v, want the relation scope's own value", args)
+	}
+
+	// The control: the literal spelling of the same declaration has to produce
+	// the identical statement, or the typed form is narrowing something else.
+	byName := preload(t, basic.Define[Post, int64, struct{}]("posts",
+		basic.RelationScope("Remarks", crud.Eq("Spam", false))))
+	if byName.SQL != typed.SQL {
+		t.Fatalf("the two spellings disagree:\ntyped   %s\nliteral %s", typed.SQL, byName.SQL)
 	}
 }

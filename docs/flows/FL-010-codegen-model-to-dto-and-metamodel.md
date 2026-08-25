@@ -121,6 +121,25 @@ package that does not compile yet.
    attribute struct against the model at package initialisation — a renamed
    field then breaks the build rather than a request.
 
+   **Every nested group opens with `specs.Rel[Root, Target]`**, the relation's
+   own path as a handle, so `Article_.Comments.Path()` is `"Comments"`. The root
+   group gets none: it is reached through no relation and has no path to answer.
+   While the group's fields are walked, a column named `Path` or `String` is
+   recorded — the handle is embedded, so such a column shadows the promoted
+   method — and the group's doc comment then names `RelPath()` as the spelling
+   that still works. The note is derived from field order, so the output stays
+   byte-identical across runs ([[D-014]]).
+
+   `specs.Metamodel` binds the handle in `bindRel`
+   (`repo/decorators/specs/metamodel.go`): the path is the group's own prefix,
+   and the handle's second type parameter is checked against `crud.Relation.Elem`
+   — the target struct type, which needs no `Resolve()` and is therefore safe
+   before any table is registered. Two refusals, both at package initialisation:
+   a handle at the root, and a handle whose declared target is not where the
+   relation lands. The check that the field *is* a handle compares its type
+   against `relType()`, because embedding promotes the setters and the group
+   would otherwise satisfy the same interface.
+
 10. **The adapter half** — `internal/codegen/adapter.go:renderAdapter`, only
     under `-adapter`
     Five artefacts per model, in this order:
@@ -200,6 +219,9 @@ package that does not compile yet.
 | a column type from an unimported package | not caught | the output does not compile |
 | an embedded type from an unknown package | `embedded` returns false | the field is silently absent from DTO and metamodel |
 | metamodel field that no longer maps | `specs.Metamodel` at package init | panic at start-up in the consumer's package |
+| a relation handle declaring the wrong target model | `bindRel` at package init | panic naming the path, the model it reaches and the one declared |
+| a relation handle in the root attribute group | `bindRel` at package init | panic saying the root model is not a relation |
+| a target model with a column called `Path` | not caught; the generated doc comment says so | `Article_.Comments.Path()` does not compile for that relation; `RelPath()` does |
 | a column the model gained, with nothing regenerated | `port.MustCoverUpdate` at package init | panic at start-up naming the column ([[D-050]]) |
 | a column the inverse map does not cover, or an entry naming one no request carries | `port.MustPathMap` at package init | panic at start-up naming the entry |
 | `-adapter` on a model with no key the generator can name | `renderAdapter` | `-adapter needs a key it can name: tag one field of X db:",pk"` |
@@ -218,7 +240,7 @@ package that does not compile yet.
 | `crud/update.go` | `UpdatePlan.Covers` — the model columns a DTO resolves to, through the plan the repository already builds |
 | `crud/update.go` | `collectPlanFields` — the rules the DTO has to satisfy |
 | `crud/meta.go` | the tag vocabulary and the runtime's own embedded-struct flattening |
-| `repo/decorators/specs/metamodel.go` | `Metamodel`, and the attribute types the generator emits |
+| `repo/decorators/specs/metamodel.go` | `Metamodel`, `bindMetamodel`, `bindRel`, `Rel` and the attribute types the generator emits |
 | `_examples/example/blog/vv_gen.go`, `test/entstore/`, `test/gormstore/`, `test/versionstore/` | checked-in output, verified up to date by tests. `blog` and `versionstore` are the two generated with `-adapter`; `versionstore` is the only model in the tree with a `version` column |
 | `_examples/entstore/`, and the `vv_gen.go` in each `_examples/*-*/` stack | the same generator run the usage guides tell a consumer to run, checked in so an example is readable without running anything |
 
@@ -231,6 +253,10 @@ package that does not compile yet.
 - `TestReadonlyKeepsAFieldQueryableButNotWritable` — `internal/codegen/codegen_test.go`.
 - `TestSkipRemovesAFieldEverywhere` — `internal/codegen/codegen_test.go`.
 - `TestRelationsBecomeNestedAttributeStructs` — `internal/codegen/codegen_test.go`.
+- `TestRelationGroupsCarryATypedPath` — `internal/codegen/codegen_test.go` — the handle, with the root as its control.
+- `TestATargetColumnNamedPathIsCalledOut` — `internal/codegen/codegen_test.go` — the shadowing note, with the unaffected direction of the same schema as its control.
+- `TestARelationHandleAnswersItsCanonicalPath`, `TestARelationHandleDeclaringTheWrongTargetIsRefused`, `TestARelationHandleAtTheRootIsRefused` — `repo/decorators/specs/edge_test.go` — the binding half.
+- `TestARelationScopeAcceptsAGeneratedPath` — `repo/basic/relscope_test.go` — the handle driving a real declaration, against the literal spelling as control.
 - `TestRelationCyclesAreCutShort` — `internal/codegen/codegen_test.go`.
 - `TestDepthBoundsHowFarRelationsExpand` — `internal/codegen/codegen_test.go`.
 - `TestEmbeddedStructsAreFlattened` — `internal/codegen/codegen_test.go`.

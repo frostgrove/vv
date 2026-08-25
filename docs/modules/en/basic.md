@@ -109,6 +109,10 @@ Passed to `Define`, `TryDefine` or `New`, and applied to every call.
 `Scope` here is the **per-table** narrowing — it applies to everyone. The
 **per-principal** form is [security](security.md), which reads the context.
 
+Every `field` and `path` above is a model field name or a relation path, and the
+generated metamodel answers both as identifiers — see [Typed, or by
+name](#typed-or-by-name--both-spellings-work) below.
+
 ### Soft delete
 
 ```go
@@ -131,11 +135,47 @@ hide ([[D-007]]).
 basic.RelationScope("Comments", crud.Eq("TenantID", 1))
 ```
 
-// TODO COMMENT: Можно ли через кодоген сделать чтобы у всего была типизация? Релейшн и название поля через строку не особо кайфово. + оставить и такой режим, кому то он нравится
-
 The path is resolved at declaration time, so a typo fails at start-up rather than
 leaking rows later. Where a blueprint scope and a security policy both declare a
 narrowing for the same path, **both apply**.
+
+### Typed, or by name — both spellings work
+
+Every setting above takes a name. The generated metamodel answers the same names
+as identifiers, so a rename becomes a build failure instead of a declaration that
+reads as protection and narrows nothing.
+
+```go
+basic.RelationScope(
+    Article_.Comments.Path(),                       // the path
+    specs.Predicate(Comment_.TenantID.Eq(1)))       // the far side
+```
+
+Two metamodels, because the two halves are different jobs. The **path** comes
+from the group on the root's metamodel — `Article_.Comments`. The **predicate**
+is written against the *target* model, so it comes from the target's own
+metamodel — `Comment_`, not `Article_.Comments`. `Article_.Comments.TenantID` is
+an attribute of an *Article*, spelled `Comments.TenantID`, and it filters
+articles by their comments; that is a different question ([[FL-005]]).
+
+The same identifiers serve the rest:
+
+```go
+basic.SoftDelete(Doc_.DeletedAt.Name())
+basic.Scope(specs.Predicate(Article_.Hidden.Eq(false)))
+basic.DefaultSort(Article_.CreatedAt.Desc())
+crud.Preload(Article_.Comments.Path(), Article_.Author.Path())
+```
+
+`Name()` answers an attribute's canonical name, `Path()` a relation's canonical
+path. Nothing is deprecated: a name that is only known at run time — one that
+arrived over the wire — is still a string, and an unknown one is a refusal
+rather than a clause that quietly disappears ([[D-013]], [[UC-007]]).
+
+A relation group only carries a handle when the generator expanded it, which
+`-depth` controls. And because the handle is embedded, a target model with a
+column called `Path` shadows the method — the generated file says so in that
+group's doc comment, and `RelPath()` is the spelling nothing shadows.
 
 ---
 

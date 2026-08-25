@@ -68,6 +68,21 @@ func decl(t *testing.T, src, header string) string {
 	return rest[:j+2]
 }
 
+// comment returns the doc comment block that starts with header, so a test can
+// assert what the generator said about a declaration rather than about the file.
+func comment(src, header string) string {
+	i := strings.Index(src, header)
+	if i < 0 {
+		return ""
+	}
+	rest := src[i:]
+	j := strings.Index(rest, "\ntype ")
+	if j < 0 {
+		return rest
+	}
+	return rest[:j]
+}
+
 // declares reports whether a generated struct has a field of that name.
 func declares(block, name string) bool {
 	for _, line := range strings.Split(block, "\n") {
@@ -206,6 +221,7 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 
 	want := `type ArticleAuthorAttrs struct {
+	specs.Rel[Article, Author]
 	ID   specs.Ord[Article, int64]
 	Name specs.Str[Article]
 }`
@@ -236,6 +252,61 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 		if !strings.Contains(root, want) {
 			t.Fatalf("the root metamodel is missing %q:\n%s", strings.TrimSpace(want), root)
 		}
+	}
+}
+
+// A relation group carries its own path as a handle, so basic.RelationScope,
+// crud.Preload and a relation policy take an identifier the compiler resolves
+// instead of a string literal.
+func TestRelationGroupsCarryATypedPath(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": blogModel}, nil)
+
+	for header, want := range map[string]string{
+		"type ArticleAuthorAttrs struct {":   "\tspecs.Rel[Article, Author]\n",
+		"type ArticleCommentsAttrs struct {": "\tspecs.Rel[Article, Comment]\n",
+	} {
+		if got := decl(t, out, header); !strings.Contains(got, want) {
+			t.Fatalf("%s carries no handle:\n%s", header, got)
+		}
+	}
+
+	// The control: the root is not reached through a relation, so it has no
+	// path to answer and must not be handed one.
+	if root := decl(t, out, "type ArticleAttrs struct {"); strings.Contains(root, "specs.Rel[") {
+		t.Fatalf("the root metamodel was given a relation handle:\n%s", root)
+	}
+}
+
+// The handle is embedded, so a column of the *target* called Path sits a level
+// nearer and shadows the promoted method. The generated file has to say so
+// where a reader is looking, not only in the module doc.
+func TestATargetColumnNamedPathIsCalledOut(t *testing.T) {
+	const model = `package files
+
+type File struct {
+	ID    int64  @db:"id,pk,auto"@
+	DirID int64  @db:"dir_id"@
+	Path  string @db:"path"@
+	Dir   *Dir   @rel:"belongs_to"@
+}
+
+type Dir struct {
+	ID    int64  @db:"id,pk,auto"@
+	Name  string @db:"name"@
+	Files []File @rel:"has_many"@
+}
+`
+	out := gen(t, map[string]string{"model.go": model}, nil)
+
+	const note = "spell this relation's path RelPath() here"
+	if !strings.Contains(comment(out, "// DirFilesAttrs"), note) {
+		t.Fatalf("the shadowed path is not called out where the group is declared:\n%s", out)
+	}
+
+	// The control: the other direction of the same schema reaches Dir, which has
+	// no such column, and must not carry the note.
+	if strings.Contains(comment(out, "// FileDirAttrs"), note) {
+		t.Fatalf("a group whose target has no Path column was warned about one:\n%s", out)
 	}
 }
 

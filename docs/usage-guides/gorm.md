@@ -393,6 +393,8 @@ follows on its own.
 go get github.com/shardit-io/vv                 # the library
 go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
 go get github.com/shardit-io/vv/rpc/crudgrpc    # …or gRPC instead
+go get github.com/shardit-io/vv/auth/authjwt   # …and JWT, if that is how you authenticate
+go get github.com/shardit-io/vv/http/authgin   # …plus the auth middleware for your framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
@@ -546,6 +548,17 @@ Without the second and third lines `?preload=posts` returns the tombstones, and
 `{"filter":{"posts.title":"…"}}` answers questions about them. A relation that
 points back at the *same* model needs no declaration — `basic.Scope` follows it
 at any depth, because there the answer is not in doubt.
+
+The path and the column are names, and a declaration that narrows nothing because
+somebody renamed one reads as protection and is not. Where the metamodel covers
+them, spell them as identifiers instead and a rename becomes a build failure:
+
+```go
+basic.RelationScope(Member_.Posts.Path(), specs.Predicate(Post_.DeletedAt.IsNull()))
+```
+
+The path comes from the root's metamodel, the predicate from the target's own —
+see [specs](../modules/en/specs.md).
 
 **Deletes** — `repo.Delete` issues a real `DELETE`. If you want gorm's soft
 delete, override the method in your service layer, which you have anyway:
@@ -959,6 +972,71 @@ rather than leaking rows in production. For anything the helper cannot express,
 `Policy.RelationScopes` takes a `func(ctx) (*crud.RelationScopes, error)`
 directly, with `AtPath` for one route and `ForModel` for a model wherever it is
 reached.
+
+### Where the tenant comes from
+
+Above, `tenantKey{}` is yours: something upstream put a value there. That works
+and always has. What it costs is a context key, a role type and a token parser
+per service, and no two of them agree.
+
+`auth` is that vocabulary, and the tenant then comes off the authenticated
+caller:
+
+```go
+guard := auth.NewGuard(authjwt.Standard(
+    authjwt.HMAC(secret),
+    auth.RoleMap{"editor": {"member:read", "member:write"}},
+    authjwt.Issuer("https://id.example.com"),
+    authjwt.Audience("members-api"),
+))
+
+app.Use(authfiber.Middleware(guard))
+```
+
+and the policy reads a claim instead of a key you invented:
+
+```go
+var policy = security.Combine(
+    security.PerAction[Member, uint](map[security.Action]auth.Permission{
+        security.Read:   "member:read",
+        security.Create: "member:write",
+        security.Update: "member:write",
+        security.Delete: "member:delete",
+    }),
+    security.ScopeAttr[Member, uint]("TenantID", "tenant"),
+)
+```
+
+`ScopeAttr` is `ScopeField` with the extractor filled in, so everything the list
+above promises still holds — including the refused create and the frozen column,
+which a hand-written principal-driven scope is easy to leave out.
+`ScopeRelationAttr` is the relation companion, `ScopeSubject` narrows to rows the
+caller owns, and `RequirePermission`, `RequireAnyPermission` and `RequireRole`
+are the coarse checks.
+
+Three things worth knowing before you wire it:
+
+- **A claim the token does not carry is a denial, not a zero value.** A missing
+  tenant must never compile to `WHERE tenant_id = 0`.
+- **An absent principal is a 401 at every policy, with no statement executed.**
+  So an optional guard in front of a gated repository is not an open door — the
+  401 simply arrives from the repository rather than from the door.
+- **A verb `PerAction` does not name is refused**, including one added to the
+  library later.
+
+**The parser is generic over your claims struct.** If your issuer spells things
+its own way, keep your type and write the two-line mapper instead of `Standard`
+— nothing of ours appears in it. And if a JWT is not how you authenticate,
+`auth/apikey` is the other provider and the seam is the same.
+
+Full detail: [modules/en/auth.md](../modules/en/auth.md), and
+[`_examples/auth-jwt-gin`](../../_examples/auth-jwt-gin/) is the whole chain
+running against a real database.
+
+One gorm-specific note: the tenant scope and the soft-delete scope stack the way
+[section 9](#9-soft-deletes) describes, and the principal-driven half changes
+nothing about that. `security.Combine` still ANDs them, and
+`basic.RelationScope` is still where the tombstone rule lives.
 
 ## 14. Associations, filters and preloads
 
