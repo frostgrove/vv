@@ -1,14 +1,19 @@
 # vv documentation
 
-Four sections, three of them cross-linked. Start with the one that matches your
+Six sections, three of them cross-linked. Start with the one that matches your
 question rather than reading in order.
 
 | I want to know | Go to |
 |---|---|
+| What can this package do, and how do I wire it? | [modules/](modules/Index.md) — [en](modules/en/Index.md) · [ru](modules/ru/Index.md) |
 | Why is it like this? May I change it? | [decisions/](decisions/Index.md) |
 | What does a consumer need? What must hold? | [usecases/](usecases/Index.md) |
 | Where does this happen? Which files? | [flows/](flows/Index.md) |
 | How do I set this up in my project? | [usage-guides/](usage-guides/) |
+| What is left to build? | [roadmaps/Roadmap.md](roadmaps/Roadmap.md) |
+
+`modules/` and `usage-guides/` face a consumer; the other three face whoever
+changes the code.
 
 ## How the three sections relate
 
@@ -46,6 +51,13 @@ it — do not implement around it.
 before the code, and update these files in the same change as the code, without
 being asked. Read it once at the start of a session.
 
+## Modules
+
+One page per importable package: what it does, everything it can do, and how to
+wire it. Declarative — the *why* is in `decisions/` and the *where in the source*
+is in `flows/`. Start at [modules/en/Index.md](modules/en/Index.md), which carries the
+map and the install matrix.
+
 ## Usage guides
 
 Task-oriented, for a consumer integrating the library into an existing project.
@@ -55,3 +67,10 @@ Both lead with what you get and only then how to set it up.
   the model, as-is
 - [usage-guides/gorm.md](usage-guides/gorm.md) — your gorm struct is the model,
   `gorm.Model` and associations included
+
+## Roadmap
+
+One document, and it holds only what is still open:
+[roadmaps/Roadmap.md](roadmaps/Roadmap.md). It also carries the map from the two
+retired root roadmaps' section numbers — which comments in the tree still cite —
+to where each one's content now lives.

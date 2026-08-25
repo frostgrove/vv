@@ -89,6 +89,40 @@ func CodeFor(k errs.Kind) codes.Code {
 	}
 }
 
+// KindForCode is [CodeFor] read backwards: the kind a client recovers from the
+// code a service answered.
+//
+// It lives beside the table it inverts because the two have to agree, and two
+// files would agree until the first time one of them gained a row.
+//
+// InvalidArgument is where the forward table is not injective — CodeFor sends
+// both KindValidation and KindBadRequest to it ([[D-052]]) — so this answers
+// the coarser of the two and the decoder sharpens it with the code the status
+// carried in its ErrorInfo. That is the machine code doing the job D-052 gave
+// it when it accepted the collapse: on this transport the code carries the
+// distinction the status carries over HTTP.
+//
+// Every other arm is exact. A code outside the table is [errs.KindInternal],
+// which is what an unrecognised failure means on this side too.
+func KindForCode(c codes.Code) errs.Kind {
+	switch c {
+	case codes.NotFound:
+		return errs.KindNotFound
+	case codes.Unauthenticated:
+		return errs.KindUnauthorized
+	case codes.PermissionDenied:
+		return errs.KindForbidden
+	case codes.Unavailable:
+		return errs.KindRetryable
+	case codes.AlreadyExists:
+		return errs.KindConflict
+	case codes.InvalidArgument:
+		return errs.KindBadRequest
+	default:
+		return errs.KindInternal
+	}
+}
+
 // Code maps a repository or query error to a gRPC code, using the standard
 // vocabulary.
 //

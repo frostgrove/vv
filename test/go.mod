@@ -109,3 +109,11 @@ replace github.com/shardit-io/vv/http/crudgin => ../http/crudgin
 replace github.com/shardit-io/vv/adapter/crudpgx => ../adapter/crudpgx
 
 replace github.com/shardit-io/vv/rpc/crudgrpc => ../rpc/crudgrpc
+
+replace github.com/shardit-io/vv/auth/authjwt => ../auth/authjwt
+
+replace github.com/shardit-io/vv/http/authgin => ../http/authgin
+
+replace github.com/shardit-io/vv/http/authfiber => ../http/authfiber
+
+replace github.com/shardit-io/vv/rpc/authgrpc => ../rpc/authgrpc

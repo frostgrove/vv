@@ -2,6 +2,7 @@ package errs
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -58,6 +59,51 @@ func (p Path) MarshalJSON() ([]byte, error) {
 	}
 	b.WriteByte(']')
 	return []byte(b.String()), nil
+}
+
+// UnmarshalJSON reads back what [Path.MarshalJSON] wrote: a JSON array whose
+// members are strings and numbers. A member of any other type is refused rather
+// than skipped — a path with a step missing addresses a different field, and a
+// client marking a form would mark the wrong one.
+//
+// This exists and [Violation.UnmarshalJSON] deliberately does not. A path is
+// the whole of itself on the wire, so reading one back loses nothing; a
+// violation is three public fields out of seven ([[D-044]]), so a method that
+// looked like the inverse of its marshaller would hand back a value whose
+// Origin, Params and Source are the zero value and say so nowhere. Whoever
+// reads a violation off a wire has to see that they are getting three fields,
+// which is why each transport spells its own shape out.
+func (p *Path) UnmarshalJSON(b []byte) error {
+	var steps []json.RawMessage
+	if err := json.Unmarshal(b, &steps); err != nil {
+		return fmt.Errorf("errs: a path is a JSON array: %w", err)
+	}
+	out := make(Path, 0, len(steps))
+	for i, raw := range steps {
+		switch {
+		case len(raw) > 0 && raw[0] == '"':
+			var name string
+			if err := json.Unmarshal(raw, &name); err != nil {
+				return fmt.Errorf("errs: path step %d: %w", i, err)
+			}
+			out = append(out, Named(name))
+		default:
+			var idx int
+			if err := json.Unmarshal(raw, &idx); err != nil {
+				return fmt.Errorf("errs: path step %d is neither a name nor an index: %w", i, err)
+			}
+			out = append(out, Indexed(idx))
+		}
+	}
+	if len(out) == 0 {
+		// An empty array is a violation that names no field, and nil is how
+		// that is spelled everywhere else here — len(v.Path) > 0 is what sorts
+		// it into the envelope's general group.
+		*p = nil
+		return nil
+	}
+	*p = out
+	return nil
 }
 
 // String renders items[3].email, for a log line.

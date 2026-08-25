@@ -1,7 +1,10 @@
 package port
 
 import (
+	"encoding"
+	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/query"
@@ -38,4 +41,33 @@ func NarrowForCount(req *query.Request) {
 func NarrowForEntity(req *query.Request) {
 	req.Filter, req.Terms, req.Search, req.Sort = query.Filter{}, nil, "", nil
 	req.Page, req.Limit, req.Offset = 0, 0, 0
+}
+
+// FormatID renders a key as the text a URL path or a request document carries.
+// It is [CoerceID]'s inverse, and the pair is what makes a key survive a round
+// trip through a transport that only speaks strings.
+//
+// The order matches CoerceID's arm for arm. encoding.TextMarshaler first,
+// because CoerceID tries encoding.TextUnmarshaler first, and a uuid or an enum
+// key that parses with its own rules has to render with them. time.Time before
+// that, for the same reason CoerceID puts it there.
+//
+// A type with neither falls through to fmt.Sprint, which is right for the
+// numbers and strings that are almost every primary key and is the wrong answer
+// for a struct — but a struct that is a key and cannot spell itself as text was
+// never going to survive CoerceID either, and the failure is visible in the URL
+// rather than silent.
+func FormatID[ID comparable](id ID) string {
+	switch v := any(id).(type) {
+	case string:
+		return v
+	case time.Time:
+		return v.Format(time.RFC3339Nano)
+	case encoding.TextMarshaler:
+		b, err := v.MarshalText()
+		if err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprint(id)
 }

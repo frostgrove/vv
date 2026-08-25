@@ -61,6 +61,9 @@ this page is the roadmap.
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | client reading a status, HTTP or gRPC, and application author | covered |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
 | [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | client rendering a form, and application author | covered |
+| [UC-018](UC-018-consume-another-services-crud-api.md) | Consume another service's CRUD API | the application author on the calling side | covered |
+| [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | Authenticate a request and let the repository see who it is | the application author, on behalf of every caller | covered |
+| [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -82,6 +85,9 @@ this page is the roadmap.
 | [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 | [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] [[FL-017]] |
+| [UC-018](UC-018-consume-another-services-crud-api.md) | [[FL-018]] [[FL-013]] [[FL-015]] |
+| [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | [[FL-019]] [[FL-007]] [[FL-008]] [[FL-011]] [[FL-013]] |
+| [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
 
 ## Gaps
 
@@ -106,6 +112,16 @@ edges that need a decision.
    policy that declares only the narrowing — which is what "row-level security in
    one line" looks like — leaves a create into another tenant unconstrained. No
    test covers that shape.
+
+   **Narrower since the `auth` subsystem landed.** `security.ScopeAttr` and
+   `ScopeSubject` are the principal-driven form, and they are built on
+   `ScopeField` rather than beside it, so they inherit the row check and the
+   frozen column — `TestScopeAttrNarrowsInSQLAndFreezesTheColumn` in
+   `repo/decorators/security/principal_test.go` pins the refused create and
+   carries the control that a create into the caller's own tenant still
+   succeeds. What remains open is the shape this entry names: a `Policy` written
+   by hand with `Scope` set and `Inspect` nil. Nothing refuses that, and nothing
+   tests it ([[UC-020]]).
 
 3. **[UC-004] A save is an existence oracle, and so is a unique-constraint
    collision.** To refuse overwriting an invisible row, the gate probes for it

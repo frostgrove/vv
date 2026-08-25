@@ -8,7 +8,14 @@
 Two rules, and the second is the one that is easy to get wrong.
 
 **A package is named for what it is.** `crud`, `query`, `errs`, `port`,
-`catalog`, `probe`. No prefix, because nothing collides.
+`catalog`, `probe`, `remote`. No prefix, because nothing collides.
+
+`remote` is the one that had a tempting alternative. What it holds is a client,
+and `client` is what a first draft called it — but a package named `client`
+imported beside `ent.Client` and `http.Client` is the reader's collision the
+`sqlfault` paragraph below already covers, and `client.New` says nothing at a
+call site. `remote.New` says where the repository is, which is the only thing
+about it that differs from a local one.
 
 **A prefix appears only to break a collision, and it names the subsystem.**
 `crudfiber` is the CRUD binding for Fiber. `crudpgx` is the CRUD adapter for
@@ -21,6 +28,13 @@ So the grid runs subsystem × library:
 |---|---|---|---|---|---|---|
 | **crud** | `crudfiber` | `crudgin` | `crudnet` | `crudpgx` | `crudsql` | `crudgrpc` |
 | **i18n** | `i18nfiber` | `i18ngin` | — | — | — | — |
+
+The client transports take no new cell, and that is [[D-053]]'s placement rule
+rather than an omission: a transport lives with the binding it calls, so
+`crudhttp.Transport` and `crudgrpc.Transport` are functions in packages that
+already exist. There is one HTTP client and not three, because a consumer
+calling out uses `net/http` whatever it serves with — so the fiber and gin cells
+have nothing to hold.
 
 ## Why
 
@@ -76,6 +90,8 @@ further from that reading needs its own entry here.
 - `adapter/crudsql/`, `adapter/crudpgx/` — the two adapters.
 - `vvflag/` — prefixed against the standard library.
 - `sqlfault/` — prefixed against `errs.Fault`, which every file in it names.
+- `remote/` — unprefixed, and named for where the repository is rather than for
+  what a caller does with it.
 - `tools/vvcfg/` — `cfg` alone is too vague to be a package name on its own.
 - `Makefile:TIER0` — the contract manifest the naming rule sorts, with
   `TIER0_SEALED` and `TIER0_STDLIB` beside it: the two arms that seal `errs`
@@ -97,4 +113,4 @@ fails when a contract package imports outside the manifest — verified by makin
 
 ## See also
 
-[[D-033]] [[D-034]] [[D-016]]
+[[D-033]] [[D-034]] [[D-016]] [[D-053]]

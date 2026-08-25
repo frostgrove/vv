@@ -228,7 +228,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 
 | File | Role |
 |---|---|
-| `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
+| `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindForStatus`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
 | `http/crudhttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, the `Retry-After` header and the 500 short-circuit |
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the path chain, the sort, the cap and the message ladder, shared by every renderer since phase 9 |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — the locale the ladder is asked for, one key for every transport |
@@ -237,7 +237,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `http/crudhttp/envelope.go` | `Envelope`, `Groups`, `Internal` — the one body a 500 ever has |
 | `http/crudhttp/bodyindex.go` | `BodyResolver` — the raw-body fallback, behind every declared hop and only over a path they left unchanged ([[FL-015]]) |
 | `port/path.go`, `port/pathmap.go` | the two declared hops: `Fields`, hand-written and partial, and `PathMap`, generated and total ([[D-050]]) |
-| `port/kind.go` | `KindOf`, `KindOfWith`, `FaultOf`, `CodeForKind`, `DefaultMessage`, `rank`, `sentinelKind` — the classification half, shared by every transport ([[D-045]]) |
+| `port/kind.go` | `KindOf`, `KindOfWith`, `FaultOf`, `CodeForKind`, `DefaultMessage`, `rank`, `sentinelKind` — the classification half, shared by every transport ([[D-045]]) — plus `FaultFrom` and `sentinelFor`, the same table read backwards for a client ([[FL-018]]) |
 | `port/sentinel.go` | `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
 | `port/service.go` | `DefaultService.Delete` — the one place the DELETE asymmetry is decided |
 | `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | the exported `Status`, `DefaultErrorHandler` and `render` per binding: one line and one response write each |

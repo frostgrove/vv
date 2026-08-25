@@ -36,10 +36,14 @@ type Widget struct {
 // WidgetUpdate is the patch DTO: a pointer for the two-state column and an Opt
 // for the nullable one, so "absent" and "explicitly null" stay distinguishable
 // all the way from the request document to the repository.
+// The tags are the ones cmd/vv writes. The Opt's `omitzero` is load-bearing on
+// the way out rather than the way in: an undefined Opt marshals to null, so a
+// patch built from this type and sent to a service would empty every column the
+// caller left alone. remote.New refuses a DTO without it.
 type WidgetUpdate struct {
-	Name  *string          `json:"name"`
-	Price *int             `json:"price"`
-	Note  crud.Opt[string] `json:"note"`
+	Name  *string          `json:"name,omitempty"`
+	Price *int             `json:"price,omitempty"`
+	Note  crud.Opt[string] `json:"note,omitzero"`
 }
 
 var widgetMeta = func() *crud.Meta {

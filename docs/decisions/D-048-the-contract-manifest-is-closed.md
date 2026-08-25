@@ -107,4 +107,8 @@ buried in a package list.
 
 ## See also
 
-[[D-033]] [[D-035]] [[D-036]] [[D-037]] [[D-041]] [[D-016]]
+[[D-055]] is this decision applied rather than amended: the `auth` subsystem
+shipped, `authjwt` as the satellite this table predicted, and `Makefile:TIER0`
+unchanged at four names.
+
+[[D-033]] [[D-035]] [[D-036]] [[D-037]] [[D-041]] [[D-016]] [[D-055]]

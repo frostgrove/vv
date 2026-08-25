@@ -37,6 +37,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -54,6 +55,8 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/shardit-io/vv/auth/authjwt v0.0.0-00010101000000-000000000000 // indirect
+	github.com/shardit-io/vv/http/authgin v0.0.0-00010101000000-000000000000 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
@@ -101,3 +104,11 @@ require (
 )
 
 replace github.com/shardit-io/vv/rpc/crudgrpc => ../rpc/crudgrpc
+
+replace github.com/shardit-io/vv/auth/authjwt => ../auth/authjwt
+
+replace github.com/shardit-io/vv/http/authgin => ../http/authgin
+
+replace github.com/shardit-io/vv/http/authfiber => ../http/authfiber
+
+replace github.com/shardit-io/vv/rpc/authgrpc => ../rpc/authgrpc

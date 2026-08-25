@@ -241,9 +241,9 @@ approximate rather than guessed.
 | `port/pathmap.go` | `PathMap` and its decline rule, `At`, and the two start-up checks `NewPathMap`/`MustPathMap` and `CoversUpdate`/`MustCoverUpdate` ([[D-050]]) |
 | `port/repository.go` | `Repository` — what a service is built over ([[D-022]]) |
 | `port/model.go` | `Sanitize`, `ClearGenerated` |
-| `port/request.go` | `CoerceID`, `NarrowForCount`, `NarrowForEntity` |
+| `port/request.go` | `CoerceID`, `FormatID`, `NarrowForCount`, `NarrowForEntity` |
 | `port/sentinel.go` | `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
-| `port/kind.go` | the code vocabulary: `FaultOf`, `KindOf`, `KindOfWith`, `CodeForKind`, `DefaultMessage` |
+| `port/kind.go` | the code vocabulary: `FaultOf`, `KindOf`, `KindOfWith`, `CodeForKind`, `DefaultMessage` — and `FaultFrom`, the inverse a client rebuilds through ([[FL-018]]) |
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the chain, the sort, the cap and the message ladder, called by every renderer |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — one context key and one tag parser for every transport |
 | `http/crudnet/handler.go` | the traced binding: routes, decode, the four constructors, `HandlerFor`/`Handler` |

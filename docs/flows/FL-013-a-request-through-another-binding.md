@@ -82,6 +82,37 @@ path or a method it does not have.
 | raw-body fallback | yes | yes | yes | **no** — declared hops only |
 | schema / reflection | n/a | n/a | n/a | **none** — a generic resource has no descriptor ([[D-052]]) |
 | double-install marker | the response writer | the response writer | the response writer | the error already carrying a status |
+| **client transport** | — | — | `crudhttp.Transport` | `crudgrpc.Transport` |
+
+### Calling out, and why there are two rows and not four
+
+The last row is the one that breaks the pattern the other rows keep. Every
+binding has a column because every binding serves; only two have a transport
+because **a consumer calling out uses `net/http` whatever it serves with**.
+`crudfiber` and `crudgin` are server frameworks, and a service on Fiber that
+calls another service does not call it through Fiber. The three HTTP bindings
+register the same routes, which their own `routing_test.go` triplets prove, so
+one HTTP client reaches all three.
+
+That makes the client the one thing in this repository outside the
+change-one-binding-change-all-three rule. `remote/roundtrip_test.go` exists once
+and runs against `crudnet`, which is the stdlib one and therefore the one where
+nothing in the path is a framework's doing.
+
+Three differences a caller can see, in the same direction the table above reads
+([[FL-018]]):
+
+| | over HTTP | over gRPC |
+|---|---|---|
+| the fault's own code | read off the first violation — the envelope carries one per violation and no field for the fault's | verbatim in `ErrorInfo.Reason` |
+| a narrowed preload on `GetByID` | **refused** — the entity route carries preload *paths* in a query string | sent, as part of the whole document |
+| a 422 and a 400 | distinct statuses | one `InvalidArgument`, undone by the code ([[D-052]]) |
+| an answer from elsewhere | `Envelope.Type` says whether this library wrote it | the `ErrorInfo` domain does |
+
+The last row is the same trap in two costumes. A router's 404 and an
+`Unimplemented` both look like an answer about a row and are answers about an
+address; a client that read the status alone would turn a wrong base URL or a
+read-only service into "the row is not there".
 
 The Gin-specific detail behind that table:
 
@@ -239,10 +270,13 @@ is the same one; everything below is the door.
 | `rpc/crudgrpc/handler.go` | the eight methods, the four constructors, `build`, the hooks and the scope |
 | `rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
 | `rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
-| `rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, the five `RenderOption`s, and the details |
+| `rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
 | `rpc/crudgrpc/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor` |
 | `rpc/crudgrpc/interceptor.go` | `Errors` and the double-install guard |
 | `rpc/crudgrpc/locale.go` | `LocaleKeys`, `WithLocale`, `withRequestLocale` |
+| `http/crudhttp/transport.go` | the HTTP client transport — `route`, `entityQuery`, `fault` ([[FL-018]]) |
+| `http/crudhttp/decode.go` | `KindForStatus`, `ParseEnvelope`, and the wire shapes a client reads |
+| `rpc/crudgrpc/transport.go` | the gRPC client transport — `requestFor`, `fault`, `kindOf` ([[FL-018]]) |
 | `port/service.go` | the service every binding hands its commands to |
 | `port/command.go` | the commands themselves |
 | `port/request.go` | `CoerceID`, `NarrowForCount`, `NarrowForEntity` |

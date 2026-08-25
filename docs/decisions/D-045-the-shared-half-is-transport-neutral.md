@@ -57,10 +57,34 @@ instead of one. `ROADMAP-errors.md` §13 names it as a hard problem rather than 
 free win, and this decision does not pretend otherwise. The price buys a second
 protocol without a second status table.
 
+## The split runs both ways
+
+A client is the same shape read backwards, and it inherits this rule rather than
+restating it. `port.FaultFrom` rebuilds a fault from a kind, a code, a list of
+violations and a partial marker; `crudhttp.KindForStatus` and
+`crudgrpc.KindForCode` are two tables that produce that kind, and each lives in
+the same file as the forward table it inverts.
+
+That placement is the whole of it. A client that kept its own copy of either
+table would agree with the server until the first time one of them gained a row,
+and the disagreement would be a status silently reclassified — which is the
+failure this decision exists to prevent, arriving from the other direction.
+
+It is also why the two client transports live beside their bindings rather than
+in `remote`: a transport lives with the binding it calls. On the gRPC side that
+is forced, since `remote` is in the root module and may not import grpc; on the
+HTTP side it is a choice, made so the rule is one sentence instead of two.
+
+`remote` itself is transport-neutral by the same test [[D-034]]'s successor
+applies here: nothing in it names a status, a header, a code or a connection,
+and its seam is a `Call` — the mirror of `port`'s commands.
+
 ## What it forbids
 
 - Do not put an HTTP type in the shared half. If gRPC cannot implement it, it is
   not shared.
+- Do not give a client its own copy of a status or code table. The inverse of
+  a table lives in the same file as the table.
 - Do not re-derive the status table, the code mapping, the bad-request sentinel
   or the create-time field clearing in a binding. That is D-034's forbid and it
   survives verbatim.
@@ -203,4 +227,4 @@ on one side and an `ErrorInfo` metadata key on the other.
 
 ## See also
 
-[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]] [[D-051]] [[D-052]]
+[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]] [[D-051]] [[D-052]] [[D-053]] [[FL-018]]

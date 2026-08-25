@@ -216,3 +216,81 @@ func CodeForKind(k errs.Kind) errs.Code {
 		return errs.CodeInternal
 	}
 }
+
+// FaultFrom rebuilds a fault from what a transport read off the wire: the kind
+// its own table answered, the fault's code, the violations, and whether the set
+// was cut short.
+//
+// It is [FaultOf]'s inverse and belongs beside it, because the two have to
+// agree about one thing in particular — the sentinel. A caller who wrote
+//
+//	errors.Is(err, crud.ErrNotFound)
+//
+// against a repository in this process keeps that branch when the repository
+// moves to another one, and this is the only place that is arranged. [FaultOf]
+// reads the sentinel out of an error; this puts it back.
+//
+// Only the kinds [sentinelKind] recognises get one. Validation, Unauthorized
+// and Retryable have no sentinel in this library and are not given an invented
+// one: they are reached through [errs.AsFault] and the [errs.Kind], which is
+// what a local fault of those kinds offers too.
+//
+// [errs.Violation.Origin] is not on the wire — [[D-044]] keeps it off — and the
+// zero value is [errs.OriginInput], which would claim a collision was the
+// payload's fault. It is derived from the kind instead: a conflict collided
+// with stored state, everything else is about the request. The field decides a
+// sort key ([errs.SortViolations]), so a gateway that re-renders a decoded
+// fault would otherwise order it differently from the service it came from.
+func FaultFrom(kind errs.Kind, code errs.Code, vs []errs.Violation, partial bool) *errs.Fault {
+	b := errs.New(kind)
+	if s := sentinelFor(kind, code); s != nil {
+		b = b.Wrapping(s)
+	}
+	if code != "" {
+		b = b.Code(code)
+	}
+	b = b.Partial(partial)
+
+	origin := errs.OriginInput
+	if kind == errs.KindConflict {
+		origin = errs.OriginState
+	}
+	for _, v := range vs {
+		b = b.At(v.Path).Origin(origin)
+		if v.Code != "" {
+			b = b.Code(v.Code)
+		}
+		if v.Message != "" {
+			b = b.Message(v.Message)
+		}
+		if v.Approximate {
+			b = b.Approximate(true)
+		}
+	}
+	return b.Fault()
+}
+
+// sentinelFor is sentinelKind read backwards: the error a caller matches with
+// errors.Is for each kind that has one.
+//
+// The stale-version arm is why this takes the code as well as the kind.
+// crud.ErrStaleVersion wraps crud.ErrConflict, so wrapping the finer one keeps
+// both branches working; wrapping the coarse one would lose the branch a caller
+// re-reads the row from.
+func sentinelFor(kind errs.Kind, code errs.Code) error {
+	switch kind {
+	case errs.KindNotFound:
+		return crud.ErrNotFound
+	case errs.KindForbidden:
+		return crud.ErrForbidden
+	case errs.KindConflict:
+		if code == errs.CodeStaleVersion {
+			return crud.ErrStaleVersion
+		}
+		return crud.ErrConflict
+	case errs.KindBadRequest:
+		return ErrBadRequest
+	default:
+		return nil
+	}
+}

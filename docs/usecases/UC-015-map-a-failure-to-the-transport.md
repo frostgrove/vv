@@ -57,6 +57,12 @@ branch on and, where the mistake is its own, enough detail to fix it.
     client that speaks two of them branches on one code, spelled identically in
     both. Where a transport has fewer words than the class table has classes,
     the collapse is stated rather than discovered.
+14. The mapping runs both ways. A calling service recovers the class, the code
+    and the violations from what a transport answered, and the failure it holds
+    matches the same sentinel it would have matched had the repository been in
+    its own process. Where a transport's word is coarser than the class table,
+    the code recovers what the word lost. An answer that did not come from this
+    library is never read as one of these classes.
 
 ## Out of scope
 
@@ -78,9 +84,11 @@ branch on and, where the mistake is its own, enough detail to fix it.
 | [[FL-013]] | that a second, a third and a fourth binding inherit the classification rather than restating it, and the two answers that differ once the transport is not HTTP |
 | [[FL-014]] | where a driver error becomes a classified failure, and why a classified 409 says less than an unclassified one |
 | [[FL-015]] | which half of the mapping is transport-neutral and which is HTTP, and the path chain's middle hops |
+| [[FL-018]] | the mapping inverted: a status or a code becomes a class, a fault and a sentinel again |
 
 Guarantee 11 is [[UC-017]]'s territory as well: the two use cases share the
-envelope, and the same decision governs both.
+envelope, and the same decision governs both. Guarantee 14 is [[UC-018]]'s: the
+same envelope and the same status table, read from the calling side.
 
 ## Status
 **covered.**
@@ -147,6 +155,28 @@ decides is [[D-049]]: the kind decides the status where a fault exists, and the
 sentinel table decides only where none does. The cost is stated there and is
 real — a violation the engine reported but nothing classified still answers 409,
 so the status depends on whether classification succeeded.
+
+**Guarantee 14 is the same mapping inverted**, and it arrived with the client.
+`port.FaultFrom` is `port.FaultOf`'s counterpart: it takes the class, the code,
+the violations and the partial marker and rebuilds the fault — sentinel
+included, which is the half nothing else arranges. `crudhttp.KindForStatus` and
+`crudgrpc.KindForCode` are the two inverse tables, each in the same file as the
+table it inverts ([[D-045]]).
+
+Two things it recovers less than exactly, and both are the wire's shape rather
+than a choice. The fault's own code arrives verbatim in a gRPC status's
+`ErrorInfo` and is read off the first violation over HTTP, because the envelope
+carries one code per violation and no separate field for the fault's. And
+`errs.Violation.Origin` is not on the wire at all — [[D-044]] keeps it off — so
+it is derived from the class rather than left at its zero value, which would
+blame the payload for a collision.
+
+The last sentence of the guarantee is the one with teeth. A wrong base URL gets
+`404 page not found` from a router and a JSON body from a gateway, and a client
+that read the status alone would answer `crud.ErrNotFound` for both — a
+misconfigured service reporting an empty table for as long as nobody looks. The
+envelope's `type` field and gRPC's `ErrorInfo` domain are what tell an answer
+from this library apart from an answer about it.
 
 **Guarantee 12 arrived with phase 7**, and it is a change in shape rather than in
 mapping: one failed write can now answer one status carrying several violations,

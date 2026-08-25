@@ -1,7 +1,7 @@
 # UC-004 — Isolate tenants so a caller cannot see or touch another's rows
 
 **Actor:** the application author, on behalf of every tenant of the service
-**Covered by:** [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]]
+**Covered by:** [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]] [[FL-020]]
 
 ## Scenario
 Every table has a tenant column and every request belongs to one tenant. The
@@ -16,7 +16,9 @@ it is forbidden.
 ## What must hold
 
 1. The rule is declared once, next to the repository, and derives its value from
-   the request. Nothing at the call site changes.
+   the request. Nothing at the call site changes. Where that value comes from is
+   the application's: a context key it set itself, or the authenticated
+   principal ([[UC-019]]).
 2. Every read is narrowed in SQL, not in Go: fetching one row, listing, listing
    unpaged, counting and existence-checking all carry the narrowing in the
    statement.
@@ -117,6 +119,14 @@ The provided tenant-scope helper installs one, so the documented path is safe.
 A policy that declares only the narrowing — which is what "row-level security in
 one line" reads like — leaves a create into another tenant completely
 unconstrained, and no test covers that case.
+
+*Narrower since the `auth` subsystem landed.* The principal-driven helpers —
+`security.ScopeAttr` and `security.ScopeSubject` — wrap the same tenant-scope
+helper rather than reimplementing it, so the row check and the frozen column
+come with them, and both halves are now tested including a create into another
+tenant that reaches no statement ([[UC-020]], [[FL-020]]). The gap that remains
+is the one this paragraph names and only that one: a `Policy` a consumer writes
+by hand with `Scope` set and `Inspect` left nil.
 
 **Gap 2 — a save is an existence oracle.** To refuse overwriting an invisible
 row, the gate checks for that row *without* the narrowing. So a save against an

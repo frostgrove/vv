@@ -161,3 +161,45 @@ func TestABracketedNegativeNumberStaysPartOfTheName(t *testing.T) {
 		t.Fatalf("a[1].b parsed to %+v, want the three %+v — nothing here makes an index step, so the row above proves nothing", []errs.Step(got), []errs.Step(want))
 	}
 }
+
+// A path is the whole of itself on the wire, so what a client reads back is
+// exactly what a service sent. Names and positions both, in the order they had
+// — an index that arrived as a name would address a member that does not exist.
+func TestAPathSurvivesTheWireExactly(t *testing.T) {
+	paths := map[string]errs.Path{
+		"empty":       nil,
+		"one name":    {errs.Named("email")},
+		"nested":      {errs.Named("items"), errs.Indexed(3), errs.Named("email")},
+		"first index": {errs.Indexed(0)},
+		"odd member":  {errs.Named("a.b[0]"), errs.Named(`say "hi"`)},
+		"deep":        {errs.Indexed(2), errs.Indexed(0), errs.Named("x")},
+	}
+
+	for name, want := range paths {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(want)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var got errs.Path
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("unmarshal %s: %v", raw, err)
+			}
+			if got.String() != want.String() || len(got) != len(want) {
+				t.Fatalf("%s came back as %s (%d steps, was %d)", raw, got.String(), len(got), len(want))
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("step %d came back as %+v, was %+v", i, got[i], want[i])
+				}
+			}
+		})
+	}
+
+	// The control. Without it every case above would also pass for a decoder
+	// that answered nil and a String() that answered "" for both sides.
+	var p errs.Path
+	if err := json.Unmarshal([]byte(`["a", true]`), &p); err == nil {
+		t.Fatal("a step that is neither a name nor an index was accepted, so the cases above prove nothing")
+	}
+}

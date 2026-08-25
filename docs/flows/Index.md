@@ -40,6 +40,9 @@ through it.
 | a driver error, the two gates, `sqlfault`, either adapter's `conflict` | [[FL-014]] |
 | schema introspection, the per-handle catalog key, the negative cache | [[FL-016]] |
 | the probe, the caps, the savepoint mode, or anything that turns one violation into several | [[FL-017]] |
+| `remote`, a client transport, `MarshalPredicate`, or calling another service's API | [[FL-018]] |
+| a token, an API key, a middleware, a JWKS key set, or how a caller is identified | [[FL-019]] |
+| a permission, a role, a claim-driven scope, or what an identified caller may do | [[FL-020]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -73,6 +76,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-015](FL-015-a-request-through-the-port-layer.md) | A request through the port layer | `http/crudnet/handler.go:Create` | [[UC-001]] [[UC-013]] [[UC-015]] |
 | [FL-016](FL-016-a-schema-becomes-a-catalog.md) | A schema becomes a catalog | `catalog/load.go:Load` | [[UC-012]] |
 | [FL-017](FL-017-a-failed-write-becomes-every-violation.md) | A failed write becomes every violation it caused | `repo/decorators/faults/probe.go:enricher.probed` | [[UC-017]] [[UC-004]] |
+| [FL-018](FL-018-a-call-through-the-client.md) | A call through the client | `remote/resource.go:Resource.Get` | [[UC-018]] [[UC-015]] |
+| [FL-019](FL-019-a-token-becomes-a-principal.md) | A token becomes a principal | `auth/guard.go:Guard.Authenticate` | [[UC-019]] |
+| [FL-020](FL-020-a-principal-becomes-a-policy-decision.md) | A principal becomes a policy decision | `repo/decorators/security/principal.go:ScopeAttr` | [[UC-020]] [[UC-004]] |
 
 ## By file — which flows touch this file
 
@@ -82,6 +88,25 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `adapter/crudpgx/crudpgx.go` | FL-009, FL-011, FL-014 |
 | `adapter/crudsql/conflict.go` | FL-003, FL-011, FL-014 |
 | `adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014 |
+| `auth/doc.go` | FL-019 |
+| `auth/principal.go` | FL-019, FL-020 |
+| `auth/context.go` | FL-019, FL-020 |
+| `auth/credential.go` | FL-019 |
+| `auth/guard.go` | FL-019 |
+| `auth/errors.go` | FL-019, FL-011 |
+| `auth/apikey/apikey.go` | FL-019 |
+| `auth/authjwt/parser.go` | FL-019 |
+| `auth/authjwt/key.go` | FL-019 |
+| `auth/authjwt/jwks.go` | FL-019 |
+| `auth/authjwt/claims.go` | FL-019 |
+| `auth/authjwt/authenticator.go` | FL-019 |
+| `http/authhttp/authhttp.go` | FL-019, FL-011 |
+| `http/authnet/authnet.go` | FL-019, FL-013 |
+| `http/authgin/authgin.go` | FL-019, FL-013 |
+| `http/authfiber/authfiber.go` | FL-019, FL-013 |
+| `http/authfiber/locale.go` | FL-019 |
+| `rpc/authgrpc/interceptor.go` | FL-019, FL-013 |
+| `repo/decorators/security/principal.go` | FL-020, FL-007, FL-008 |
 | `cmd/vv/main.go` | FL-010 |
 | `internal/codegen/codegen.go` | FL-010 |
 | `internal/codegen/render.go` | FL-010 |
@@ -104,7 +129,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `errs/doc.go` | FL-011 |
 | `errs/code.go` | FL-011 |
 | `errs/codes.go` | FL-011, FL-014 |
-| `errs/path.go` | FL-011 |
+| `errs/path.go` | FL-011, FL-018 |
 | `errs/violation.go` | FL-011, FL-014, FL-017 |
 | `errs/fault.go` | FL-011, FL-014, FL-017 |
 | `errs/build.go` | FL-011, FL-014 |
@@ -121,10 +146,11 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `errs/sqlerr/corpus.go` | FL-011, FL-014 |
 | `errs/sqlerr/testdata/corpus/` | FL-011, FL-014 |
 | `crud/meta.go` | FL-002, FL-003, FL-004, FL-010, FL-012 |
-| `crud/options.go` | FL-001, FL-007, FL-008 |
+| `crud/options.go` | FL-001, FL-007, FL-008, FL-018 |
 | `crud/opt.go` | FL-002 |
 | `crud/page.go` | FL-001 |
-| `crud/predicate.go` | FL-005, FL-007, FL-012 |
+| `crud/document.go` | FL-018 |
+| `crud/predicate.go` | FL-005, FL-007, FL-012, FL-018 |
 | `crud/preload.go` | FL-006 |
 | `crud/relation.go` | FL-001, FL-004, FL-005, FL-006 |
 | `crud/render.go` | FL-001, FL-004, FL-005, FL-017 |
@@ -139,7 +165,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
 | `http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `http/crudhttp/doc.go` | FL-013, FL-015 |
-| `http/crudhttp/errors.go` | FL-011, FL-013, FL-014, FL-015 |
+| `http/crudhttp/errors.go` | FL-011, FL-013, FL-014, FL-015, FL-018 |
 | `http/crudhttp/locale_test.go` | FL-013, FL-015 |
 | `http/crudhttp/model.go` | FL-003, FL-013 |
 | `http/crudhttp/repository.go` | FL-013 |
@@ -147,6 +173,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `http/crudhttp/render.go` | FL-011, FL-015 |
 | `http/crudhttp/envelope.go` | FL-011 |
 | `http/crudhttp/bodyindex.go` | FL-011, FL-015 |
+| `http/crudhttp/transport.go` | FL-018 |
+| `http/crudhttp/decode.go` | FL-018 |
 | `port/doc.go` | FL-015 |
 | `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015 |
 | `port/command.go` | FL-002, FL-015 |
@@ -155,19 +183,24 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/pathmap.go` | FL-010, FL-011, FL-015 |
 | `port/repository.go` | FL-013, FL-015 |
 | `port/model.go` | FL-003, FL-015 |
-| `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
+| `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015, FL-018 |
 | `port/sentinel.go` | FL-011, FL-015 |
-| `port/kind.go` | FL-011, FL-014, FL-015 |
+| `port/kind.go` | FL-011, FL-014, FL-015, FL-018 |
 | `port/violations.go` | FL-011, FL-013, FL-015 |
 | `port/locale.go` | FL-011, FL-013, FL-015 |
+| `remote/dto.go` | FL-018 |
+| `remote/options.go` | FL-018 |
+| `remote/resource.go` | FL-018 |
+| `remote/transport.go` | FL-018 |
 | `rpc/crudgrpc/doc.go` | FL-013 |
 | `rpc/crudgrpc/handler.go` | FL-013, FL-015 |
 | `rpc/crudgrpc/service.go` | FL-013 |
 | `rpc/crudgrpc/message.go` | FL-013 |
-| `rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015 |
+| `rpc/crudgrpc/status.go` | FL-011, FL-013, FL-015, FL-018 |
 | `rpc/crudgrpc/options.go` | FL-011, FL-013, FL-015 |
 | `rpc/crudgrpc/interceptor.go` | FL-013 |
 | `rpc/crudgrpc/locale.go` | FL-011, FL-013 |
+| `rpc/crudgrpc/transport.go` | FL-018 |
 | `probe/doc.go` | FL-017 |
 | `probe/probe.go` | FL-017 |
 | `probe/full.go` | FL-017 |

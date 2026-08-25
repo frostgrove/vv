@@ -58,9 +58,9 @@ type Part struct {
 // for the nullable one, so "absent" and "explicitly null" stay distinguishable
 // all the way from the JSON body to the repository.
 type WidgetUpdate struct {
-	Name  *string          `json:"name"`
-	Price *int             `json:"price"`
-	Note  crud.Opt[string] `json:"note"`
+	Name  *string          `json:"name,omitempty"`
+	Price *int             `json:"price,omitempty"`
+	Note  crud.Opt[string] `json:"note,omitzero"`
 }
 
 // widgetMeta is what the fake reports from Meta(). Building it directly, rather

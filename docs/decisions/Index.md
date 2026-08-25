@@ -102,6 +102,10 @@ and the next decision written before its code does should say so here.
 | [D-050](D-050-the-generated-adapter-is-total.md) | A generated artefact covers every column its side of the wire carries, and a gap is a start-up refusal; hand-written stays partial | accepted | process & tooling, errors |
 | [D-051](D-051-a-satellite-carries-one-dependency-decision.md) | A satellite isolates one dependency *decision*; several requires are one decision when no consumer can take one without the others | accepted | process & tooling |
 | [D-052](D-052-a-grpc-resource-carries-documents-not-a-schema.md) | A gRPC resource carries `google.protobuf.Struct` documents, no generated message and no reflection; a code is spelled the same on every transport | accepted | RPC, errors |
+| [D-053](D-053-a-client-refuses-what-changes-the-answer.md) | A client refuses an option that changes which rows come back and documents one that changes only their order or freshness | accepted | client, transports |
+| [D-054](D-054-the-closed-ast-gets-one-marshaller.md) | The closed predicate AST gets one marshaller inside `crud`; `Raw`, `EqField` and `False` are refused by name | accepted | client, query |
+| [D-055](D-055-a-principal-is-a-value-in-the-context.md) | A principal is a value in the context and the library never puts it there; `auth` is a package, not a manifest entry | accepted | auth, security |
+| [D-056](D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md) | A 401 is a fault wrapping `auth.ErrUnauthenticated`, and its reason never leaves the process | accepted | auth, errors |
 
 ## By area
 
@@ -115,7 +119,16 @@ rejection), D-014 (deterministic SQL), D-024 (**open** — `DISTINCT`).
 
 **Security** — D-007 (narrowing across relations), D-008 (404, not 403),
 D-004 (why a scope cannot be peeled off), D-003 (why a caller cannot compose out
-of one), D-026 (**open** — `Inspect` and caller paging).
+of one), D-026 (**open** — `Inspect` and caller paging), D-055 (where the
+principal a scope reads comes from, and why `security` imports `auth` and not
+the reverse).
+
+**Auth** — D-055 (the contract, the four satellites, why `auth` is not on the
+manifest and why a `Principal` is an interface), D-056 (the 401's shape, why the
+reason lives in the wrapped error, and where 401 sits between 403 and 404),
+D-048 (the rule D-055 obeys rather than amends), D-035 (the `auth` row of the
+naming grid), D-051 (why an `auth*` binding does not require its `crud*`
+sibling).
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).

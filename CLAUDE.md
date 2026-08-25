@@ -6,7 +6,8 @@ without owning the caller's connection or transaction.
 
 Module: `github.com/shardit-io/vv`, and it has no external dependencies.
 Anything that would add one is a module of its own under the same repository —
-`http/crudfiber`, `http/crudgin`, `adapter/crudpgx` — so a consumer downloads
+`http/crudfiber`, `http/crudgin`, `adapter/crudpgx`, `auth/authjwt` — so a
+consumer downloads
 only the binding and driver it imports. `test/` and `_examples/` are two more,
 unpublished, so drivers, ORMs and example stacks never become dependencies of
 the library. See `[[D-033]]`.
@@ -24,7 +25,9 @@ where the reasoning lives, and much of it is not recoverable from the source.
 | Why is it like this? May I change it? | `docs/decisions/` |
 | What is a consumer trying to do? What must hold? | `docs/usecases/` |
 | Where does this happen? Which files? | `docs/flows/` |
+| What can this package do, and how is it wired? | `docs/modules/` |
 | How does a consumer set this up? | `docs/usage-guides/` |
+| What is still open? | `docs/roadmaps/Roadmap.md` |
 
 Each directory has an `Index.md` built for exactly this lookup. Start there,
 not with `grep`.
@@ -86,7 +89,9 @@ failing test.
 | A call path, or moved/renamed a file or symbol | The flow(s) that name it, including the file table and the reverse index in `docs/flows/Index.md` |
 | Observable behaviour a caller can see | The use case whose **What must hold** covers it — and if no use case does, that is itself worth reporting |
 | Anything a decision doc forbids, permits or explains | That decision. If the answer changed, mark the old one `superseded by D-NNN` and write the new one; do not edit history into agreement |
-| Added a public API | The flow that exercises it, the use case it serves, and a decision if the shape was contentious |
+| Added a public API | The flow that exercises it, the use case it serves, `docs/modules/<package>.md`, and a decision if the shape was contentious |
+| Changed what a package can do, or an option's name or default | `docs/modules/<package>.md` — it is a consumer's reference and a wrong option name there is a compile error they hit and you did not |
+| Closed something the roadmap listed as open | `docs/roadmaps/Roadmap.md` — remove the item rather than annotating it done |
 | Resolved something marked `Status: open` | Flip the status, say what settled it, and remove it from the Open tensions list in the index |
 | Added or changed a test that pins an invariant | The **Proven by** section of the decision, and **Tests that walk this flow** |
 | Setup steps a consumer follows | `docs/usage-guides/` — both guides, they are parallel by design |
@@ -116,8 +121,12 @@ make tidy          # go mod tidy in every module
 make examples      # build, vet and test the runnable examples
 ```
 
-`make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`. A new
-module has to be added there or it is silently never built.
+`make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`, which is
+**discovered** — `find . -name go.mod` — not a hand-written list. A new module
+needs no Makefile edit; it needs `make work` (or `go work use ./<dir>`), a
+`replace` line in `test/go.mod` and `_examples/go.mod`, and its docs. A
+hand-written list is how a module escapes unit, vet, tidy and release at once,
+and this repository has already been bitten by exactly that.
 
 Before reporting a task done: unit green, integration green **twice in a row**
 (a test that passes once and fails on rerun is a real defect), `gofmt -l` silent,
@@ -150,6 +159,10 @@ Tests are the specification; see `[[D-020]]`.
   spells the rest in its own vocabulary because there is no 404 and no `PUT`
   here to name. A test that only makes sense for gRPC belongs in
   `rpc/crudgrpc/`, and the difference it pins belongs in `[[FL-013]]` too.
+- **The auth middleware is a second triplet with the same rule.**
+  `http/authnet`, `http/authgin` and `http/authfiber` carry the same test names
+  file for file, and `rpc/authgrpc` carries the subset that is about `port`
+  rather than about HTTP. What differs between them belongs in `[[FL-019]]`.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
 - The failure message states what broke in plain words, not `got != want`.
@@ -179,22 +192,37 @@ crud/                       core: contracts, metadata, relations, predicates, Op
 repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
+repo/decorators/faults/     the column -> model-field hop, and where the probe is wired in
+auth/                       who the caller is: Principal, Role, Permission, Guard, the 401
+auth/apikey/                an Authenticator over a shared secret — stdlib, so not a module
 query/                      the wire DSL: one JSON document -> crud.Options
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
 errs/sqlerr/                a driver error becomes a code, one table per dialect
+sqlfault/                   the tree walk, the integrity gate, fault assembly — what WithFaults takes
 catalog/                    per-handle schema introspection, four dialects
+probe/                      one extra statement finds every other violation the payload caused
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
 http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
 http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
-cmd/vv/                 generates the update DTO and the metamodel from your model
+http/authhttp/              the HTTP half of the auth middleware: the renderer, the refusal
+http/authnet/               the net/http auth middleware — stdlib, so not a module
+remote/                     the consuming half: another service's resource, held as a port.Repository
+cmd/vv/                     generates the update DTO and the metamodel from your model
+internal/codegen/           what cmd/vv is a front end for
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun
 crud/crudtest/              an in-memory source for unit-testing repositories
-docs/                       decisions, use cases, flows, usage guides
+vvflag/                     one typed flag, without owning the command line
+docs/                       modules, decisions, use cases, flows, usage guides, the roadmap
 
 http/crudfiber/             MODULE — a full CRUD API on Fiber v3
 http/crudgin/               MODULE — the same API on Gin
 rpc/crudgrpc/               MODULE — the same API on gRPC
+auth/authjwt/               MODULE — JWT verification, generic over your claims
+http/authgin/               MODULE — the Gin auth middleware
+http/authfiber/             MODULE — the Fiber auth middleware
+rpc/authgrpc/               MODULE — the gRPC auth interceptors
 adapter/crudpgx/            MODULE — pgx v5
+tools/vvcfg/                MODULE — a config struct, loaded and validated at start-up
 test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
 _examples/                  MODULE (unpublished) — runnable examples, one per stack
 ```

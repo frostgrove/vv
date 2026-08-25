@@ -22,7 +22,8 @@ so you can diff any two files and see only what the stack changes.
 
 All of them need `go get github.com/shardit-io/vv`. Beyond that each
 needs only what its own stack uses: the Fiber ones add `.../http/crudfiber`, the
-Gin ones `.../http/crudgin`, `pgx-grpc` adds `.../rpc/crudgrpc`, `pgx-fiber`
+Gin ones `.../http/crudgin`, `pgx-grpc` adds `.../rpc/crudgrpc`,
+`auth-jwt-gin` adds `.../http/authgin` and `.../auth/authjwt`, `pgx-fiber`
 adds `.../adapter/crudpgx`, and
 `sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so
 both live in the library.
@@ -39,6 +40,7 @@ both live in the library.
 | [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and vv read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, vv serves the CRUD surface. |
 | [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
 | [`pgx-grpc`](pgx-grpc/) | none | `crudpgx` | PostgreSQL | gRPC | `pgx-fiber` with one line changed — the mount. The transport is not HTTP and everything below it is the same value: eight methods under `vv.crud.v1.Product`, `google.protobuf.Struct` documents, and no `.proto` to write. |
+| [`auth-jwt-gin`](auth-jwt-gin/) | none | `crudpgx` | PostgreSQL | Gin | The whole authentication and authorization chain: a JWT at the door, a principal in the context, a tenant claim in the `WHERE`. The middleware knows nothing about tenants and the policy knows nothing about JWTs. It prints three tokens on start-up, so the 401, the tenant filter, the 404-not-403 and the 403 are four `curl`s away. |
 
 [`example/`](example/) is not a server. It is the library's whole user-facing
 surface in one file — model, DTO, declaration, metamodel, security policy —

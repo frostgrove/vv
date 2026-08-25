@@ -84,6 +84,26 @@ and a service declaring fifty codes of its own would then owe fifty rows. The
 cost is accepted the way [[UC-015]] already accepts D-049's: the kind decides,
 and the machine code in the details is what separates the cases.
 
+## The collapse, undone on the way back
+
+Accepting that `InvalidArgument` is two of HTTP's statuses put a job on the
+machine code, and a client is where that job is done. `crudgrpc.KindForCode`
+answers `KindBadRequest` for `InvalidArgument` — the coarser of the two — and
+the transport sharpens it with the `ErrorInfo.Reason` the status carried,
+resolved through `errs.Codes.KindOf`. A validation failure comes back as
+`errs.KindValidation` and a malformed request as `errs.KindBadRequest`, from the
+same wire code.
+
+That is the reason the reason field is lowercase and identical to the envelope's
+`error_code` rather than AIP's UPPER_SNAKE_CASE: a client with two transports
+resolves both through one vocabulary. Had the two spellings diverged, this
+would need a second table.
+
+A code the vocabulary does not declare contributes nothing and the coarse answer
+stands, which is the rule `port.KindOfWith` already follows on the way out — a
+service that declared a code and forgot to wire it must not have its 422 turned
+into something else by the omission.
+
 ## What it forbids
 
 - Do not add `protoc`, `buf` or any generated `.pb.go` to this repository to give
@@ -114,6 +134,14 @@ and the machine code in the details is what separates the cases.
 - [[FL-013]] — the per-binding difference table, with this transport's column.
 
 ## Proven by
+
+- `TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode` in
+  `rpc/crudgrpc/client_test.go` — the collapse undone, over a real client
+  against a real registered service. Its control is the second half: the same
+  wire code with a different fault code has to come back as the other kind, so a
+  client that answered `KindValidation` for every `InvalidArgument` passes the
+  first check and fails this one. Verified by removing the refinement and
+  watching a validation failure come back as `bad_request`.
 
 - `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — every
   arm, with a control asserting the table covers exactly the kinds `errs`

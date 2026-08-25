@@ -1266,7 +1266,7 @@ with no `field` beside the ones that have it.
 
 - [`../../README.md`](../../README.md) — the full library reference
 - [`ent.md`](ent.md) — the same guide for ent
-- [`../../example/blog`](../../example/blog) — a worked codegen example
+- [`_examples/example/blog`](../../_examples/example/blog) — a worked codegen example
 - [`../../test/integration/gorm_model_test.go`](../../test/integration/gorm_model_test.go) —
   every claim on this page against a live PostgreSQL: a gorm struct as a model,
   `gorm.Model` flattening, associations, soft deletes staying invisible, a shared

@@ -1,7 +1,8 @@
 # vv
 
 A generic CRUD repository for Go with JPA-shaped semantics, a Specifications /
-Criteria API, and a security gate — over any driver, without owning your
+Criteria API, a security gate and an error subsystem that tells a client
+everything wrong with one request at once — over any driver, without owning your
 connection or your transaction.
 
 Only two things ever cross the abstraction boundary: **run this statement** and
@@ -14,20 +15,33 @@ crud/                       core: contracts, metadata, relations, predicates, Op
 repo/basic/                 the plain repository: the layer that speaks SQL
 repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
 repo/decorators/security/   row-level scope, authorization, per-entity checks
+repo/decorators/faults/     names the field a violation happened at, and wires the probe in
 query/                      the wire DSL: one JSON document -> crud.Options
+errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI — stdlib only
+errs/sqlerr/                a driver error becomes a code, one table per dialect
+sqlfault/                   the tree walk, the integrity gate and fault assembly
+catalog/                    per-handle schema introspection, four dialects
+probe/                      one extra statement finds every other violation the payload caused
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
 http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
 http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
-cmd/vv/                 generates the update DTO, the metamodel and — with -adapter — the resource
+remote/                     the consuming half: another service's resource, held as a port.Repository
+cmd/vv/                     generates the update DTO, the metamodel and — with -adapter — the resource
 adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
 crud/crudtest/              an in-memory source for unit-testing repositories
+vvflag/                     one typed flag, without owning the command line
 
   ── separate modules, so you only download the one you use ──────────────────
 http/crudfiber/             a full CRUD API on Fiber v3
 http/crudgin/               the same API on Gin
 rpc/crudgrpc/               the same API on gRPC
 adapter/crudpgx/            pgx v5
+tools/vvcfg/                a config struct, loaded and validated at start-up
 ```
+
+**One page per package** — what it does, everything it can do, and how to wire
+it — is in [`docs/modules/`](docs/modules/Index.md)
+([English](docs/modules/en/Index.md) · [Русский](docs/modules/ru/Index.md)).
 
 Declare a model, get a filtered, sorted, paginated, relation-loading HTTP API:
 
@@ -47,6 +61,20 @@ POST /articles/query
   "page": 2, "limit": 20
 }
 ```
+
+And when a write is refused, the client is told **everything** that was wrong
+with it — not the first thing the database happened to reach:
+
+```http
+POST /users            →  422
+{ "type": "error", "errors": { "validation": [
+  { "field": ["user","email"],  "error_code": "unique",      "message": "that address is taken" },
+  { "field": ["user","org_id"], "error_code": "foreign_key", "message": "the organisation does not exist" },
+  { "field": ["user","age"],    "error_code": "check",       "message": "age must be at least 18" }
+]}}
+```
+
+No constraint name, no table name, no SQLSTATE, no driver prefix.
 
 **Already using an ORM?** Two task-oriented guides — bind the structs you
 already have, generate the update DTO, mount the API, share transactions with
@@ -72,6 +100,7 @@ go get github.com/shardit-io/vv                    # the library — and, on net
 go get github.com/shardit-io/vv/http/crudgin       # …plus your HTTP framework, if you use one
 go get github.com/shardit-io/vv/rpc/crudgrpc       # …or gRPC instead of an HTTP framework
 go get github.com/shardit-io/vv/adapter/crudpgx    # …and pgx, if that is your driver
+go get github.com/shardit-io/vv/auth/authjwt       # …and JWT, if that is how you authenticate
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
@@ -416,11 +445,17 @@ Decorators wrap a repository from the inside out, and every type parameter is
 inferred from the argument, so call sites stay free of explicit generics.
 
 ```go
-users := specs.Executor(Users.Bind(db, security.Gate(policy), audit.Log(l)))
+users := specs.Executor(Users.Bind(db,
+    security.Gate(policy),                                        // row-level scope
+    audit.Log(l),                                                 // your own
+    faults.Enrich[User, int64](faults.WithProbe(probe.Full(cat))), // every violation, not just the first
+))
 ```
 
-`Bind`'s first decorator ends up outermost. Writing your own is an embedded
-interface and one method:
+`Bind`'s first decorator ends up outermost — and `faults.Enrich` belongs **last**,
+so it wraps the repository directly and every driver error is enriched before
+anything above can see it. Writing your own is an embedded interface and one
+method:
 
 ```go
 type auditing struct{ crud.Core[User, int64] }
@@ -551,6 +586,114 @@ blueprint, and where both are declared both apply.
 Also available: `security.ReadOnly`, `security.Freeze(fields...)` and
 `security.Combine(policies...)`, which ANDs scopes, merges relation narrowings
 and chains checks.
+
+### faults — the field a violation happened at
+
+```go
+users := Users.Bind(db, faults.Enrich[User, int64]())
+```
+
+An adapter classifies a refused write but cannot name a path — a column is
+meaningless without the table it belongs to, and an adapter has no `crud.Meta`.
+This decorator is that hop, and it is where `probe.Full` plugs in to find every
+*other* violation the same payload caused. It is the innermost decorator, and it
+never invents a fault or a path.
+
+The whole subsystem is [its own section](#errors).
+
+---
+
+## auth — who the caller is
+
+`security.Policy` has always asked "who is calling?" and always got its answer
+from a closure over the context. `auth` is the vocabulary that closure can now
+share.
+
+Three layers, and you can take any one of them:
+
+**The contract** — `auth`. A `Principal` is four methods, a `Permission` is a
+string with a type, and the context key is one. Nothing else.
+
+**A provider** — `auth/authjwt` or `auth/apikey`. The JWT parser is generic over
+*your* claims struct and mentions nothing of ours:
+
+```go
+type MyClaims struct {
+    Subject string `json:"sub"`
+    Tenant  int64  `json:"tenant"`
+}
+
+parser := authjwt.New[MyClaims](authjwt.HMAC(secret),
+    authjwt.Issuer("https://id.example.com"),
+    authjwt.Audience("articles-api"))
+
+claims, err := parser.Parse(ctx, token)   // MyClaims
+```
+
+Stop there if a parser is all you wanted. The bridge to `Principal` is a
+separate call, and `authjwt.Standard` is both calls for the ordinary shape of
+token.
+
+**A transport** — `http/authnet`, `http/authgin`, `http/authfiber`,
+`rpc/authgrpc`. One line each:
+
+```go
+guard := auth.NewGuard(authjwt.Standard(authjwt.HMAC(secret), roles,
+    authjwt.Issuer("https://id.example.com"),
+    authjwt.Audience("articles-api")))
+
+r.Use(crudgin.Errors(), authgin.Middleware(guard))
+```
+
+Then the policy reads the principal instead of a key you invented:
+
+```go
+policy := security.Combine(
+    security.PerAction[Article, int64](map[security.Action]auth.Permission{
+        security.Read:   "article:read",
+        security.Create: "article:write",
+        security.Update: "article:write",
+        security.Delete: "article:delete",
+    }),
+    security.ScopeAttr[Article, int64]("TenantID", "tenant"),
+)
+
+articles := Articles.Bind(db, security.Gate(policy))
+```
+
+`ScopeAttr` is `ScopeField` with the extractor filled in, so it inherits the
+whole of that helper: reads narrowed in SQL, a create into another tenant
+refused, and `TenantID` frozen against updates. `ScopeSubject` narrows to rows
+the caller owns; `ScopeRelationAttr` carries the claim across a relation, which
+still has to be declared ([the reason](#security--the-gate)).
+
+What it refuses, and refuses loudly:
+
+- a signing algorithm nominated by the token — the key declares what it verifies,
+  so `alg: none` and the RSA-public-key-as-HMAC-secret forgery are both refused
+  before a key is consulted;
+- a JWT parser with no issuer and no audience — `New` panics at start-up, and
+  `AllowAnyIssuer()` / `AllowAnyAudience()` are how you say it is deliberate;
+- a token with no `exp`;
+- a claim the principal does not carry — a missing tenant is a denial, never a
+  zero value that compiles to `WHERE tenant_id = 0`;
+- an absent principal, at every policy, with no statement executed.
+
+And what it will not tell a client. Every authentication failure is one answer —
+`401`, `unauthenticated`, *"authentication is required"* — whether the token was
+absent, expired, forged, for another audience, or valid for a tenant that no
+longer exists. A 401 that distinguishes its reasons is a user-enumeration oracle
+in the same way a 403 on a hidden row is a row oracle
+([`D-056`](docs/decisions/D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md)).
+The reason is kept, inside, for a log.
+
+An optional guard is available and does not weaken that: a request with no
+credential proceeds anonymously, and a token that fails to verify is still
+refused. Note that anonymous plus a gated repository is still a 401 — it arrives
+from the repository rather than from the door.
+
+Running code: [`_examples/auth-jwt-gin`](_examples/auth-jwt-gin/) is the whole
+chain in one file and prints three tokens on start-up.
 
 ---
 
@@ -784,7 +927,9 @@ offending path named, everything else → 500 with no detail. What kind of failu
 `port`, and each transport spells it: `http/crudhttp` has the status table and
 `rpc/crudgrpc` has the `codes.Code` one, so there is one classification rather
 than one per framework — and `Status(err) int` (or `crudgrpc.Code(err)`) is
-exported if you render your own bodies.
+exported if you render your own bodies. Wire the [error
+subsystem](#errors) in and the same refusal also carries a machine code, the
+field it happened at, and every *other* violation the payload caused.
 
 Every option, every rule and every machine code is identical across the four.
 What differs is mounting, which body encodings are accepted, what each router
@@ -804,6 +949,237 @@ speak. There is no `.proto` to write and no `protoc` to install, which is also
 why there is no server reflection: a resource generic over its model has no
 compiled descriptor. Keys travel as strings, because a protobuf number is a
 double.
+
+---
+
+## Calling it from another service
+
+If one service declares a CRUD API, another consumes it. That side is
+`remote`, and the point is that it is not a client: it is a `port.Repository`,
+so the calling code is the code you would have written against a repository of
+your own.
+
+```go
+articles := remote.New[Article, int64, ArticleInput](
+    crudhttp.Transport("https://content.internal/articles"))
+
+page, err := articles.Get(ctx,
+    crud.Where(crud.Eq("Status", "draft")),
+    crud.OrderBy(crud.Desc("CreatedAt")),
+    crud.Limit(20))
+```
+
+Swap the transport for `crudgrpc.Transport(conn, "Article")` and nothing else
+changes. Both need no generated code: the gRPC binding is one
+`google.protobuf.Struct` in and out, so a call is `grpc.Invoke` with the
+document in it.
+
+**The filter crosses.** `crud.Where(crud.Eq(…))` is compiled into the same query
+document the DSL speaks, so the far side receives the narrowing a local
+repository would have received — not an approximation of it.
+
+**The error branch you already wrote keeps working.**
+
+```go
+if _, err := articles.GetByID(ctx, 42); errors.Is(err, crud.ErrNotFound) {
+    // the same branch, whichever side of the network the row is on
+}
+```
+
+A refusal arrives as an `*errs.Fault` with its class, its code and every
+violation it carried — path and machine code intact — and with nothing internal
+in it. What did *not* come from this library is never read as if it had: a wrong
+base URL, a proxy, an API gateway's own JSON 404 or a method a read-only service
+never registered all arrive as a `*remote.ProtocolError`, so a misconfiguration
+cannot masquerade as an empty table.
+
+**And it composes.** A remote resource is a repository, so it mounts:
+
+```go
+crudnet.New(articles).Mount(mux, "/articles")   // your service is now a gateway
+```
+
+What cannot cross is refused by name before anything is sent — a relation scope,
+a row lock, an aggregate, `crud.Raw` — because a narrowing that goes missing
+between two services answers with more rows than were asked for, over a 200,
+with nothing in the response to say so. The two options that *are* accepted and
+cannot be honoured are named in
+[`docs/modules/en/remote.md`](docs/modules/en/remote.md) rather than left to be
+discovered.
+
+---
+
+## Errors
+
+A database reports one violation at a time: the first constraint it reaches ends
+the statement. A form with a taken email, a missing organisation and an under-age
+user is three round trips, and the response echoes the driver.
+
+Five packages fix that, and they turn on one at a time.
+
+### 1. Say which engine is answering
+
+```go
+cls := sqlfault.New("postgres")            // or "mysql", "mariadb", "sqlite"
+db  := crudsql.Postgres(sqlDB, crudsql.WithFaults(cls))
+```
+
+Now a refused write carries a **machine code** — `unique`, `foreign_key`,
+`required`, `check`, `stale_version` — as well as `crud.ErrConflict`.
+
+The engine is declared and never derived: `crud.MySQL` is MariaDB too, and the
+two answer a failed `CHECK` with different numbers. So `crudsql.Open`, `From` and
+`Source` classify the status and not the code, and the four named constructors
+declare the engine.
+
+`errs/sqlerr` holds four dialect tables, keyed three different ways, driven by a
+corpus of 20 cases per engine **captured from live servers** rather than written
+from documentation. That matters: the table it replaced was half wrong, and its
+first run found that every SQLite constraint violation had been an unclassified
+500 for as long as the dialect had been supported.
+
+### 2. Name the field
+
+```go
+users := Users.Bind(db, faults.Enrich[User, int64]())
+```
+
+Adapters cannot fill in a path — a column is meaningless without the table it
+belongs to, and an adapter has no `crud.Meta`. This decorator is that one hop.
+
+### 3. Find the rest
+
+```go
+cat, err := catalog.Load(ctx, db)          // the schema, read once, at start-up
+if err != nil { log.Fatal(err) }
+
+users := Users.Bind(db, faults.Enrich[User, int64](
+    faults.WithProbe(probe.Full(cat)),
+))
+```
+
+`probe.Full` issues **one extra statement** — one boolean column per constraint
+the write could have broken — and reports every violation it finds beside the one
+the driver already reported. Three codes: `unique`, `foreign_key`, `restrict`,
+plus intra-payload duplicates found with a map and no statement at all.
+
+Everything it does is subordinate to the statement that actually failed. **The
+index is the truth and the probe is advice**: nothing is invented, a probe that
+fails keeps the driver's own violation and marks the answer `Partial`, and its
+error is for your log rather than for the client.
+
+CHECK expressions are not evaluated and NOT NULL, length and range are not
+re-derived — every gap in either is a chance to report a violation the server
+would not have raised.
+
+### 4. Render it
+
+The three HTTP bindings put one envelope on the wire:
+
+```json
+{ "type": "error", "partial": false, "errors": {
+  "validation": [ {"field": ["user","email"], "error_code": "unique", "message": "…"} ],
+  "general":    [ {"error_code": "restrict", "message": "…"} ]
+}}
+```
+
+The group says **what the client can act on**, not where the failure came from —
+which is why a 409 unique conflict appears under `validation`: it names a field
+the client sent, so a form can mark it. gRPC carries the same violations as
+`BadRequest` / `ErrorInfo` / `RetryInfo` details, with the same machine codes.
+
+`partial` is not decoration. A response listing four violations without it is
+claiming there were four.
+
+Statuses come from the kind, never from the code, so a service can declare fifty
+codes of its own without touching a status table:
+
+| Kind | HTTP | gRPC |
+|---|---|---|
+| `KindNotFound` | 404 | `NotFound` |
+| `KindUnauthorized` | 401 | `Unauthenticated` |
+| `KindForbidden` | 403 | `PermissionDenied` |
+| `KindRetryable` | 503 + `Retry-After` | `Unavailable` + `RetryInfo` |
+| `KindConflict` | 409 | `AlreadyExists` |
+| `KindValidation` | 422 | `InvalidArgument` |
+| `KindBadRequest` | 400 | `InvalidArgument` |
+| anything else | 500, **with no detail** | `Internal` |
+
+### 5. Say it in the client's words
+
+```go
+//go:embed messages
+var messages embed.FS
+
+codes := errs.StandardCodes()
+codes.Add("too_young", errs.KindValidation, "must be at least {min}")
+
+cat, _ := errs.LoadMessages(codes, messages, "messages")
+
+app.Use(crudfiber.Errors(crudhttp.WithCodes(codes), crudhttp.WithMessages(cat)))
+```
+
+One flat JSON file per locale, with a four-rung ladder per violation —
+`user.email.unique → user.unique → email.unique → unique`, then the code's own
+default. An override is as narrow or as broad as you need it, with no
+configuration schema to learn.
+
+### Your own service is a first-class producer
+
+Business rules are not a lesser kind of error:
+
+```go
+return errs.Validation().
+    Field("Age").Code("too_young").Params(errs.P{"min": 18}).
+    Field("Email").Code(errs.CodeInvalidFormat).
+    Fault()
+```
+
+And a validation library needs no adapter — `validator.FieldError` satisfies
+`errs.FieldViolation` structurally, so neither package imports the other:
+
+```go
+vs := errs.FromFieldViolations("CreateUserRequest", verrs...)
+```
+
+A rule a validator refused and a constraint the database refused end up in **the
+same list, of the same type**, told apart by `Origin`. Merging them is the point:
+a payload with a malformed email *and* a taken email is two violations at one
+path.
+
+### It wraps, it never replaces
+
+```go
+errors.Is(err, crud.ErrConflict)   // still true — a branch written before any of this keeps working
+
+if f, ok := errs.AsFault(err); ok {
+    for _, v := range f.Violations { … }
+}
+```
+
+Both on the same value, through as many further wrappings as a service layer
+adds.
+
+### Which field the client sees
+
+A violation happens at a column; a client wants to hear about the key it sent.
+Each layer translates **one hop and only its own**, and a layer that would have
+to guess says so instead — the violation comes back marked approximate rather
+than carrying an invented path.
+
+`cmd/vv -adapter` generates the last hop from the mapping it inverts, so it is
+*total*: `port.MustPathMap` refuses to boot if the map stops covering the model.
+Without it, the renderer indexes the raw request body and matches by name — a
+recognition rather than a mapping, and it declines rather than guessing when a
+name folds to two leaves.
+
+**None of this is on by default.** Wire nothing and a 409 is still a 409; you
+just get no `error_code` and no `field`.
+
+Full detail: [`docs/modules/en/errs.md`](docs/modules/en/errs.md),
+[`sqlerr`](docs/modules/en/sqlerr.md), [`sqlfault`](docs/modules/en/sqlfault.md),
+[`catalog`](docs/modules/en/catalog.md), [`probe`](docs/modules/en/probe.md),
+[`faults`](docs/modules/en/faults.md), [`crudhttp`](docs/modules/en/crudhttp.md).
 
 ---
 
@@ -903,7 +1279,7 @@ is the API you want.
 `-binding net` (the default) writes the `net/http` wiring; `-binding none` leaves
 it out, for mounting on Fiber or Gin with `ServingFor` yourself.
 
-`example/blog` is the worked example: `model.go` is what you write,
+[`_examples/example/blog`](_examples/example/blog) is the worked example: `model.go` is what you write,
 `vv_gen.go` is what comes out — with `-adapter`, so both halves are visible —
 and a test regenerates and diffs so the two cannot drift.
 
@@ -1076,6 +1452,13 @@ target:
 container), which is the third dialect: `RETURNING` like PostgreSQL, `?` markers
 like MySQL, and no row locks at all.
 
+**MariaDB is a fourth engine**, run through `crudsql.MariaDB` against
+`mariadb:11.4` in the compose file. It shares `crud.MySQL`'s dialect and does not
+share its error numbers, which is why it is a separate target rather than a
+footnote: it answers a failed `CHECK` with `4025 / 23000` where MySQL answers
+`3819 / HY000`, and `1366` is `22007` there and `HY000` on MySQL. The claim that
+`crud.MySQL` "targets MySQL and MariaDB" had never been run before it landed.
+
 sqlc is not in that table on purpose: it generates queries, it is not a
 `crud.Source`. What is worth proving about it — that one transaction can feed
 sqlc's generated queries and an vv repository at once — is proved three
@@ -1093,10 +1476,14 @@ Plus, on both databases:
 - **transport tests** — the handler driven end to end through Fiber, Gin,
   `net/http` and gRPC, including the full JSON DSL, pagination arithmetic, the
   create/patch/delete lifecycle, a service layer intercepting a write, and every
-  rejection path. The three HTTP bindings answer the same 147 unit tests, name
-  for name; the gRPC one answers the subset of them that is not about HTTP, and
-  one test mounts a single service value on all four and compares the *command*
-  each handed over.
+  rejection path. The three HTTP bindings answer the same tests, name for name
+  and file for file; the gRPC one answers the subset of them that is not about
+  HTTP, and one test mounts a single service value on all four and compares the
+  *command* each handed over;
+- **error tests** — the captured corpus replayed against each engine's parser,
+  the probe's positive and negative controls (probe on ⇒ three distinct codes at
+  three distinct paths; a payload with one real violation ⇒ exactly one), and a
+  classified 409's body carrying nothing internal in all three bindings.
 
 Adding a driver means adding a `Target`, never a test.
 
@@ -1139,3 +1526,32 @@ Adding a driver means adding a `Target`, never a test.
 - **Struct-shaped fields without a `rel` tag are skipped.** They are neither
   columns nor edges — which is what you want for a computed field, and a
   surprise if you expected an error.
+- **SQLite enforces neither width, nor range, nor declared type.** A
+  `VARCHAR(8)` stores 27 characters, 99999 goes into a small column, and `'abc'`
+  stays text in an INTEGER column. The same payload is 422 on the two servers
+  and 200 there, and the stored row then holds what the schema says it cannot.
+- **`restrict` is reported as `foreign_key` on PostgreSQL and SQLite.** Both
+  directions of a foreign-key violation are one error code with the same
+  constraint name, and telling them apart would mean reading localised message
+  text. MySQL and MariaDB report two numbers and keep the distinction.
+- **`CodeExclusion` is reachable from no engine yet** — declared and rendered,
+  produced by nothing, because no `EXCLUDE` has been provoked into the corpus.
+- **The probe is advice, not truth.** It never invents a violation, its own
+  failures go to your log rather than to the client, and a capped answer is
+  marked `partial` rather than presented as complete.
+- **A probe reads rows the caller may not be allowed to see.** A unique
+  violation reveals that a value exists. `WithScope`, `Skip`, `CodeOnly` and
+  leaving `WithValues` off narrow that; none of them closes it.
+
+---
+
+## Where to read next
+
+| | |
+| --- | --- |
+| Everything one package can do, and how to wire it | [`docs/modules/`](docs/modules/en/Index.md) |
+| Why is it like this? May I change it? | [`docs/decisions/`](docs/decisions/Index.md) |
+| What must hold, in a consumer's language | [`docs/usecases/`](docs/usecases/Index.md) |
+| Where does this happen, in which files? | [`docs/flows/`](docs/flows/Index.md) |
+| Adopting an ORM you already use | [`docs/usage-guides/`](docs/usage-guides/) |
+| What is left to build | [`docs/roadmaps/Roadmap.md`](docs/roadmaps/Roadmap.md) |

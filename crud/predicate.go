@@ -11,6 +11,11 @@ import (
 // cannot be peeled off by the caller.
 type Predicate interface {
 	render(w *writer)
+	// document renders the node as a query-DSL filter object, for a repository
+	// that is not in this process. It is on the interface rather than in a type
+	// switch so that a node added to this file and not to document.go fails to
+	// compile — a switch would fall through to a default and drop the clause.
+	document(w *docWriter)
 }
 
 // scope is the table a path segment is being resolved against. The root scope
