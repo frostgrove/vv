@@ -175,7 +175,7 @@ fallback.
 ```go
 vs := port.Violations(ctx, fault, port.ViolationOptions{
     Resolvers: port.Hops(svc, mapper),
-    Fallback:  crudhttp.BodyResolver(rawBody),
+    Fallback:  porthttp.BodyResolver(rawBody),
     Messages:  catalogue,
     Codes:     codes,
     Max:       port.MaxViolations,   // 100
@@ -209,7 +209,7 @@ port.CodeForKind(k)           errs.Code
 port.FaultOf(err)             *errs.Fault
 ```
 
-`http/crudhttp` turns a `Kind` into a status and `rpc/crudgrpc` turns it into a
+`port/porthttp` turns a `Kind` into a status and `crud/rpc/crudgrpc` turns it into a
 `codes.Code` — **one classification, spelled per transport**, rather than one per
 framework ([[UC-015]]).
 
@@ -230,7 +230,8 @@ wants the same rules:
 
 ## See also
 
-- [crudhttp](crudhttp.md) — the HTTP half and the status table
+- [porthttp](porthttp.md) — the HTTP projection of the error contract and the status table
+- [crudhttp](crudhttp.md) — what is HTTP *and* CRUD
 - [crudnet](crudnet.md) · [crudfiber](crudfiber.md) · [crudgin](crudgin.md) · [crudgrpc](crudgrpc.md)
 - [cmd/vv](vv-cli.md) — generates the mapper, the path map and a service shell
 - [[UC-013]] business rules between handler and repository · [[FL-015]] a request through the port layer

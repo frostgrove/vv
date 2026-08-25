@@ -14,16 +14,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
-	"github.com/shardit-io/vv/adapter/crudsql"
-	"github.com/shardit-io/vv/catalog"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/catalog"
+	"github.com/shardit-io/vv/crud/decorators/faults"
+	"github.com/shardit-io/vv/crud/http/crudhttp"
+	"github.com/shardit-io/vv/crud/probe"
+	"github.com/shardit-io/vv/crud/sqlfault"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/http/crudhttp"
-	"github.com/shardit-io/vv/probe"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/faults"
-	"github.com/shardit-io/vv/sqlfault"
 )
 
 // What the probe finds can only be checked against a server: the whole design
@@ -807,7 +807,7 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 // every table but not this one are the same value, and the first declaration
 // that names a table is what catches either.
 func TestADeclarationAgainstACatalogWithoutTheTableRefusesToStart(t *testing.T) {
-	Unknown := basic.Define[PbDoc, int64, PbDocUpdate]("pb_doc_that_is_not_there")
+	Unknown := sqlrepo.Define[PbDoc, int64, PbDocUpdate]("pb_doc_that_is_not_there")
 	engines := 0
 	for _, tg := range pbEngines(t) {
 		t.Run(tg.name, func(t *testing.T) {

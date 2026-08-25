@@ -1,6 +1,6 @@
 # FL-020 — A principal becomes a policy decision
 
-**Entry point:** `repo/decorators/security/principal.go` — `RequirePermission`, `PerAction`, `ScopeAttr`, `ScopeSubject` and their siblings
+**Entry point:** `crud/decorators/security/principal.go` — `RequirePermission`, `PerAction`, `ScopeAttr`, `ScopeSubject` and their siblings
 **Implements:** [[UC-020]] [[UC-004]] · **Governed by:** [[D-055]] [[D-056]] [[D-008]] [[D-004]] [[D-030]] [[D-021]]
 
 ## The path
@@ -9,37 +9,37 @@ A rule declared here is an ordinary `security.Policy`, so everything
 [[FL-007]] and [[FL-008]] describe happens unchanged. What this flow adds is
 where the *value* in that policy comes from.
 
-1. **declaration** — `repo/decorators/security/principal.go` — a package
+1. **declaration** — `crud/decorators/security/principal.go` — a package
    variable, built before any request. `ScopeAttr` resolves the model field at
    this moment through `ScopeField`, so a typo panics at start-up rather than
-   narrowing nothing later (`repo/decorators/security/policies.go:30`).
-2. **`Gate`** — `repo/decorators/security/security.go:117` — the policy becomes
+   narrowing nothing later (`crud/decorators/security/policies.go:30`).
+2. **`Gate`** — `crud/decorators/security/security.go:117` — the policy becomes
    a `crud.Middleware`, installed by `Bind`.
 3. **`auth.Require`** — `auth/context.go:45` — every helper's first act. No
    principal is `ErrUnauthenticated`, which is a 401 and not a 403: nothing has
    been decided yet.
 4. **the coarse check** — `gate.authorize`,
-   `repo/decorators/security/security.go:145` — calls `Policy.Authorize`, which
+   `crud/decorators/security/security.go:145` — calls `Policy.Authorize`, which
    is what `RequirePermission`, `RequireAnyPermission`, `RequireRole` and
    `PerAction` fill in. It runs once per operation, before any SQL.
 5. **`PerAction`'s undeclared verb** —
-   `repo/decorators/security/principal.go:116` — an action the map does not name
+   `crud/decorators/security/principal.go:116` — an action the map does not name
    is refused even for a caller holding every permission. A verb added to the
    seam later is refused rather than inherited ([[D-030]]).
 6. **the narrowing** — `gate.scoped`,
-   `repo/decorators/security/security.go:187` — `Policy.Scope` is called and the
+   `crud/decorators/security/security.go:187` — `Policy.Scope` is called and the
    predicate is *prepended*, so a caller cannot subtract it ([[D-004]]).
-7. **`attrOf`** — `repo/decorators/security/principal.go:175` — reads one claim
+7. **`attrOf`** — `crud/decorators/security/principal.go:175` — reads one claim
    off the principal. A claim that is absent, or present and nil, is a denial
    and never a zero value: read as zero, a missing tenant compiles to `WHERE
    tenant_id = 0`, which matches nothing on most schemas and everything on one
    where 0 is a real tenant.
 8. **`ScopeField`'s inherited half** —
-   `repo/decorators/security/policies.go:44` — the row check and the frozen
+   `crud/decorators/security/policies.go:44` — the row check and the frozen
    column. `ScopeAttr` is a wrapper rather than a fresh policy precisely to get
    them: a principal-driven scope written from scratch is [[UC-004]]'s Gap 1, a
    rule that narrows reads and leaves creates open.
-9. **the answer** — `Denied`, `repo/decorators/security/security.go:141`, which
+9. **the answer** — `Denied`, `crud/decorators/security/security.go:141`, which
    wraps `crud.ErrForbidden` → 403. A row the narrowing hid is `crud.ErrNotFound`
    → 404, and 404 outranks both ([[D-008]], `port/kind.go:rank`).
 
@@ -77,9 +77,9 @@ where the *value* in that policy comes from.
 
 | File | Role |
 |---|---|
-| `repo/decorators/security/principal.go` | every principal-driven policy, and `attrOf` |
-| `repo/decorators/security/policies.go` | `ScopeField` and `ScopeRelationField`, which the two scope helpers wrap |
-| `repo/decorators/security/security.go` | the gate itself — unchanged by this flow |
+| `crud/decorators/security/principal.go` | every principal-driven policy, and `attrOf` |
+| `crud/decorators/security/policies.go` | `ScopeField` and `ScopeRelationField`, which the two scope helpers wrap |
+| `crud/decorators/security/security.go` | the gate itself — unchanged by this flow |
 | `auth/context.go` | `Require`, the fail-closed door |
 | `auth/principal.go` | `HasAll`, `HasAny`, `InAny`, and the two quantifiers' different empty case |
 | `port/kind.go` | `rank`, where 404 outranks 403 |
@@ -87,7 +87,7 @@ where the *value* in that policy comes from.
 ## Tests that walk this flow
 
 - `TestEveryPrincipalPolicyFailsClosedWithoutOne` —
-  `repo/decorators/security/principal_test.go`. Six helpers, one subtest each,
+  `crud/decorators/security/principal_test.go`. Six helpers, one subtest each,
   asserting `auth.ErrUnauthenticated` **and** zero statements.
 - `TestRequirePermissionRefusesTheCallerThatLacksOne` — same file, with the
   control subtest that lets a qualifying caller through and asserts the
@@ -104,7 +104,7 @@ where the *value* in that policy comes from.
 - `TestAMissingClaimIsADenialAndNotAZeroValue` — same file. Verified by making
   `attrOf` answer `int64(0)` for an absent claim and watching it fail.
 - `TestScopeSubjectNarrowsToTheCallersOwnRows` — same file.
-- The whole of `repo/decorators/security/security_test.go` and
+- The whole of `crud/decorators/security/security_test.go` and
   `relscope_test.go` still passes unchanged, which is what says this flow added
   a source of values rather than a second mechanism.
 

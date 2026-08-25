@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
 )
 
 // database/sql over pgx's stdlib driver.

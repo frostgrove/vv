@@ -84,13 +84,13 @@ unscoped is check-then-act. See [[D-008]].
 
 ## Where it lives
 
-- `repo/basic/repository.go:repository.Update` — the load, the diff, the
+- `crud/sqlrepo/repository.go:repository.Update` — the load, the diff, the
   conditional `FOR UPDATE`, the version predicate, both dialect paths.
-- `repo/basic/repository.go:repository.versionCheck` — pins the row to the
+- `crud/sqlrepo/repository.go:repository.versionCheck` — pins the row to the
   version it was read at.
-- `repo/basic/repository.go:repository.missedRow` — `ErrNotFound` vs
+- `crud/sqlrepo/repository.go:repository.missedRow` — `ErrNotFound` vs
   `ErrStaleVersion`.
-- `repo/basic/repository.go:repository.UpdateAll` — the filtered write, and the
+- `crud/sqlrepo/repository.go:repository.UpdateAll` — the filtered write, and the
   version bump without a version check.
 - `crud/update.go:UpdatePlan.Changes` — the diff.
 - `crud/update.go:UpdatePlan.Writes` — the no-diff form `UpdateAll` uses.
@@ -106,28 +106,28 @@ unscoped is check-then-act. See [[D-008]].
 
 ## Proven by
 
-- `TestUpdateWritesOnlyChangedFields` in `repo/basic/repository_test.go`.
-- `TestUpdateWithNothingToDoSkipsTheWrite` in `repo/basic/repository_test.go`.
+- `TestUpdateWritesOnlyChangedFields` in `crud/sqlrepo/repository_test.go`.
+- `TestUpdateWithNothingToDoSkipsTheWrite` in `crud/sqlrepo/repository_test.go`.
 - `TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange` in
   `crud/edge_test.go`.
-- `TestUpdateChecksTheVersionItReadAndAdvancesIt` in `repo/basic/version_test.go`.
+- `TestUpdateChecksTheVersionItReadAndAdvancesIt` in `crud/sqlrepo/version_test.go`.
 - `TestAConcurrentWriteIsRefusedRatherThanLost` in
   `test/integration/dialect_edge_test.go` — two real writers, against both
   engines. This is the one that would catch a version predicate that renders but
   does not bind.
 - `TestAVanishedRowIsStillNotFoundRatherThanStale` in
-  `repo/basic/version_test.go` — the two answers stay distinct.
+  `crud/sqlrepo/version_test.go` — the two answers stay distinct.
 - `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` in
   `test/integration/dialect_edge_test.go` — the MySQL re-read.
 - `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` in
-  `repo/basic/repository_test.go`.
+  `crud/sqlrepo/repository_test.go`.
 - `TestAnUpdateWithNothingToDoLeavesTheVersionAlone` in
-  `repo/basic/version_test.go`.
+  `crud/sqlrepo/version_test.go`.
 - `TestAnUpdateDTOCannotSetTheVersion` in `crud/version_test.go`.
 - `TestADeclarationThatCannotBeALockIsRefused` in `crud/version_test.go` — every
   refused shape.
 - `TestUpdateAllAdvancesTheVersionOfEveryRowItWrites` in
-  `repo/basic/version_test.go`.
+  `crud/sqlrepo/version_test.go`.
 - `TestAFilteredUpdateIsAlsoNoticedByTheLock` in
   `test/integration/dialect_edge_test.go`.
 - `TestForUpdateMakesTwoTransactionsTakeTurns` in

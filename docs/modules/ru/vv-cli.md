@@ -73,7 +73,7 @@ Article_.Author.Name.Desc()             // ORDER BY (SELECT … LIMIT 1) DESC
 Article_.Comments.Path()                // "Comments"
 Article_.Comments.Author.Path()         // "Comments.Author"
 
-basic.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Approved.Eq(true)))
+sqlrepo.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Approved.Eq(true)))
 crud.Preload(Article_.Comments.Path())
 ```
 

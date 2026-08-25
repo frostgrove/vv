@@ -10,7 +10,7 @@
 // through it.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/http/crudfiber
+//	go get github.com/shardit-io/vv/crud/http/crudfiber
 //	go get entgo.io/ent
 //	go get github.com/jackc/pgx/v5
 //
@@ -34,12 +34,12 @@ import (
 
 	"github.com/shardit-io/vv/_examples/entmodel"
 	"github.com/shardit-io/vv/_examples/entstore"
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudfiber"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudfiber"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // The model is ent's own generated struct, entmodel.Product, bound as-is —
@@ -51,10 +51,10 @@ import (
 // field the model lacks or a wrong ID type fails here rather than at request
 // time. "products" is ent's own table name for Product — the two clients
 // share the table, not just the connection.
-var Products = basic.Define[entmodel.Product, int64, entstore.ProductUpdate]("products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[entmodel.Product, int64, entstore.ProductUpdate]("products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
 const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"

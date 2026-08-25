@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/query"
 )
 
 // The precedence table, arm by arm. It moved here with the vocabulary it is

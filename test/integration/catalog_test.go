@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
-	"github.com/shardit-io/vv/adapter/crudsql"
-	"github.com/shardit-io/vv/catalog"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/catalog"
 )
 
 // What a catalog claims about a schema can only be checked against a server, and
@@ -432,7 +432,7 @@ func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 //
 // The empty RefColumns entry is the whole of what is known, and it stays
 // parallel to Columns by position. Filling it in from the parent's own primary
-// key would be inventing, which catalog/sqlite.go's header forbids.
+// key would be inventing, which crud/catalog/sqlite.go's header forbids.
 func TestAShorthandReferencesRecordsNoParentColumnAndItsExplicitTwinDoes(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
@@ -950,7 +950,7 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 				// reproducible key. Written as a nil test and never as
 				// len() == 0: the len form passes under exactly the mutation
 				// this exists to catch.
-				t.Errorf("%s reported CHECK columns %#v — an empty non-nil slice here is the conflation catalog/doc.go forbids; if it grew a reader, that rule needs rewriting", tg.db, check.Columns)
+				t.Errorf("%s reported CHECK columns %#v — an empty non-nil slice here is the conflation crud/catalog/doc.go forbids; if it grew a reader, that rule needs rewriting", tg.db, check.Columns)
 			}
 
 			// The control for the line above: a constraint whose columns every

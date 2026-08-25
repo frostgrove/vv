@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudnet"
+	"github.com/shardit-io/vv/crud/http/crudnet"
 	"github.com/shardit-io/vv/port"
 )
 

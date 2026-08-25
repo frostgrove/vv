@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // The blog schema exercises every relation kind at once: belongs_to, has_many,
@@ -72,11 +72,11 @@ type CommentUpdate struct {
 }
 
 var (
-	Authors  = basic.Define[Author, int64, struct{}]("authors")
-	Articles = basic.Define[Article, int64, ArticleUpdate]("articles")
-	Comments = basic.Define[Comment, int64, CommentUpdate]("comments")
-	Tags     = basic.Define[Tag, int64, struct{}]("tags")
-	Stats    = basic.Define[ArticleStats, int64, struct{}]("article_stats")
+	Authors  = sqlrepo.Define[Author, int64, struct{}]("authors")
+	Articles = sqlrepo.Define[Article, int64, ArticleUpdate]("articles")
+	Comments = sqlrepo.Define[Comment, int64, CommentUpdate]("comments")
+	Tags     = sqlrepo.Define[Tag, int64, struct{}]("tags")
+	Stats    = sqlrepo.Define[ArticleStats, int64, struct{}]("article_stats")
 )
 
 const schemaBlogPostgres = `

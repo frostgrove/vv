@@ -6,7 +6,7 @@
 // a repository of its own:
 //
 //	articles := remote.New[Article, int64, ArticleInput](
-//	    crudhttp.Transport("https://content.internal/articles"))
+//	    remotehttp.Transport("https://content.internal/articles"))
 //
 //	page, err := articles.Get(ctx,
 //	    crud.Where(crud.Eq("Status", "draft")),
@@ -46,7 +46,7 @@ type Resource[M any, ID comparable, U any] struct {
 
 // New binds a model to a transport. It panics when the model cannot be
 // described or its key does not match ID, which is the same start-up failure
-// basic.Define answers with and for the same reason: both are program errors
+// sqlrepo.Define answers with and for the same reason: both are program errors
 // that no request can recover from.
 func New[M any, ID comparable, U any](tr Transport) *Resource[M, ID, U] {
 	r, err := TryNew[M, ID, U](tr)

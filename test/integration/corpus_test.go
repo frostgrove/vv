@@ -11,13 +11,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
-	"github.com/shardit-io/vv/adapter/crudsql"
-	"github.com/shardit-io/vv/catalog"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/catalog"
+	"github.com/shardit-io/vv/crud/sqlfault"
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/errs/sqlerr"
-	"github.com/shardit-io/vv/sqlfault"
 	"github.com/shardit-io/vv/test/corpus"
 )
 

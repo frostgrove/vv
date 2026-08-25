@@ -10,7 +10,7 @@ my database would accept?*
 
 ## The path
 
-1. **`repository.exec`** — `repo/basic/repository.go:92`
+1. **`repository.exec`** — `crud/sqlrepo/repository.go:92`
    Every statement in the repository starts here.
    ```go
    if e, ok := crud.ExecutorFor(ctx, r.src); ok { return e }
@@ -38,8 +38,8 @@ my database would accept?*
    value is not `Identified`, otherwise its `DataSource()`. Both spellings — the
    `*sql.DB` and any `crudsql.DB` over it — land on the same key, because
    `crudsql.Executor.DataSource` returns the wrapped `Queryer`
-   (`adapter/crudsql/crudsql.go:86`) and `crudpgx.Executor.DataSource` the pgx
-   handle (`adapter/crudpgx/crudpgx.go:85`).
+   (`crud/adapter/crudsql/crudsql.go:86`) and `crudpgx.Executor.DataSource` the pgx
+   handle (`crud/adapter/crudpgx/crudpgx.go:85`).
 
 5. **`ExecutorFor`** — `crud/executor.go:202`
    Walks the chain innermost-first. The first *unscoped* binding it meets is
@@ -71,12 +71,12 @@ my database would accept?*
    joining a transaction it used to join, and a write landing outside the
    transaction is no better than one landing in the wrong database.
 
-8. **`repository.Tx`** — `repo/basic/repository.go:128` — `crud.InTx(ctx,
+8. **`repository.Tx`** — `crud/sqlrepo/repository.go:128` — `crud.InTx(ctx,
    r.src, fn)`. `crud.Core.Tx` is on the interface, so a decorator can wrap it.
 
 ## Savepoints
 
-- **`crudsql`** — `adapter/crudsql/crudsql.go:208`
+- **`crudsql`** — `crud/adapter/crudsql/crudsql.go:208`
   `database/sql` has no nested transactions, so `Tx.Begin` issues
   `SAVEPOINT vv_sp_<n>` with an atomic counter, and returns a `savepoint`
   (`crudsql.go:216`) whose `Commit` is `RELEASE SAVEPOINT` and whose `Rollback`
@@ -106,7 +106,7 @@ my database would accept?*
   `crudsql.WithFaults` was passed. It is the one place in the tree where the same
   violation classifies differently depending on how the executor was built, and
   it is the price of never answering "mysql" for a MariaDB server.
-- **`crudpgx`** — `adapter/crudpgx/crudpgx.go:128`
+- **`crudpgx`** — `crud/adapter/crudpgx/crudpgx.go:128`
   `Begin` type-asserts the handle to pgx's own `Begin`; a nested one is already
   a savepoint, courtesy of pgx — and it comes back as the same `Tx` whose
   `Commit` (`crudpgx.go:158`) classifies. So a nested write cannot be a 409
@@ -214,7 +214,7 @@ transaction, and reports success.
 | `fn` panics | `InTx` (`executor.go:307`) | rollback, then the panic is re-raised |
 | plain `WithExecutor` with two databases in play | nothing catches it — by design | the write lands in the wrong database; use `WithExecutorFor` |
 | a source that is not `Identified` under `WithExecutorFor` | `KeyOf` takes the value at face value | matched only if the caller passes the same value |
-| uncomparable datasource identity | `SameDataSource` (`executor.go:268`) | no match, no panic — as far as the *static* type goes; a struct holding an interface is comparable and `==` on it still panics, which is why `catalog/set.go:findable` guards its own probe ([[FL-016]]) |
+| uncomparable datasource identity | `SameDataSource` (`executor.go:268`) | no match, no panic — as far as the *static* type goes; a struct holding an interface is comparable and `==` on it still panics, which is why `crud/catalog/set.go:findable` guards its own probe ([[FL-016]]) |
 | a finished transaction still in the context | the driver | the driver's error, surfaced as-is |
 | a deferred constraint fires at `COMMIT` rather than at the statement | the adapter's `Commit` → `Executor.conflict` → `sqlfault.Wrap` | `ErrConflict` → 409, with the code where the source named its engine ([[FL-011]], [[FL-014]]) |
 | a write inside a transaction opened by `From` or `Open` | nothing classifies the engine — by design | 409 with the driver's message and no code; pass `crudsql.WithFaults` ([[FL-014]]) |
@@ -226,10 +226,10 @@ transaction, and reports success.
 | File | Role |
 |---|---|
 | `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, `Sourced`, the binding stack with its `owned` flag and savepoint counter, `WithExecutor(For)`, `ExecutorFor`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
-| `repo/decorators/faults/probe.go` | `enricher.savepoint` — the only caller of `ClaimSavepoint`, and the four conditions a savepoint needs ([[FL-017]]) |
-| `repo/basic/repository.go` | `exec` — every statement's executor choice; `Tx` |
-| `adapter/crudsql/crudsql.go` | `From`, `Open`, `Source`, `Postgres`/`MySQL`/`MariaDB`/`SQLite`, `WithFaults`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource`; `Tx.Commit` and `savepoint.Commit` classify, and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
-| `adapter/crudpgx/crudpgx.go` | `From`, `Open`, `WithFaults`, `Begin`, `DataSource`, `CopyFrom`; `Tx.Commit` classifies and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
+| `crud/decorators/faults/probe.go` | `enricher.savepoint` — the only caller of `ClaimSavepoint`, and the four conditions a savepoint needs ([[FL-017]]) |
+| `crud/sqlrepo/repository.go` | `exec` — every statement's executor choice; `Tx` |
+| `crud/adapter/crudsql/crudsql.go` | `From`, `Open`, `Source`, `Postgres`/`MySQL`/`MariaDB`/`SQLite`, `WithFaults`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource`; `Tx.Commit` and `savepoint.Commit` classify, and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
+| `crud/adapter/crudpgx/crudpgx.go` | `From`, `Open`, `WithFaults`, `Begin`, `DataSource`, `CopyFrom`; `Tx.Commit` classifies and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
 | `crud/dialect.go` | `LockClause` per dialect |
 | `crud/errors.go` | `ErrNoTxSupport` |
 
@@ -246,14 +246,14 @@ transaction, and reports success.
 - `TestInTxJoinsRatherThanNests` — `crud/executor_test.go`.
 - `TestInTxDoesNotJoinAnotherDatabasesTransaction` — `crud/executor_test.go`.
 - `TestInTxWithoutABeginnerIsRefused` — `crud/executor_test.go`.
-- `TestTransactionJoinsAnAmbientExecutor` / `TestTransactionRollsBackOnError` — `repo/basic/repository_test.go`.
+- `TestTransactionJoinsAnAmbientExecutor` / `TestTransactionRollsBackOnError` — `crud/sqlrepo/repository_test.go`.
 - `TestGormRollbackTakesVVWithIt` — `test/integration/driver_gorm_test.go` — the ORM-owned pattern.
 - `TestAnEntTransactionJoinsButCannotOpenASavepoint` — `test/integration/driver_ent_test.go`.
 - `TestSavepointsRollBackAndReleaseIndependently` / `TestASavepointInsideASavepointUnwindsOneLevelAtATime` — `test/integration/edge_test.go`.
 - `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` — `test/integration/driver_sqlite_test.go`.
 - `TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot` — `crud/executor_test.go` — the `owned` flag from both sides, plus the `ExecutorFrom` trap.
 - `TestASavepointClaimCountsPerTransactionAndNotPerRepository` / `TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne` — `crud/executor_test.go` — the budget's shape, each with its control.
-- `TestAForeignTransactionIsNeverGivenASavepoint` / `TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns` / `TestPastTheSavepointBudgetTheAnswerIsPartial` — `repo/decorators/faults/probe_test.go` — the savepoint wrap at the seam that uses it.
+- `TestAForeignTransactionIsNeverGivenASavepoint` / `TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns` / `TestPastTheSavepointBudgetTheAnswerIsPartial` — `crud/decorators/faults/probe_test.go` — the savepoint wrap at the seam that uses it.
 - `TestTheTransactionMatrix` — `test/integration/probe_test.go` — the whole table live, twenty arms with a counter.
 - `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` — `test/integration/multidb_test.go`.
 - `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` — `test/integration/multidb_test.go` — the documented hazard, executed.

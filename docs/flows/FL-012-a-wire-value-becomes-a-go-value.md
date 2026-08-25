@@ -1,6 +1,6 @@
 # FL-012 — A wire value becomes a Go value
 
-**Entry point:** `query/coerce.go:decodeValue` (JSON) and `query/coerce.go:coerceString` (query string)
+**Entry point:** `crud/query/coerce.go:decodeValue` (JSON) and `crud/query/coerce.go:coerceString` (query string)
 **Implements:** [[UC-002]] [[UC-006]] · **Governed by:** [[D-013]] [[D-019]] [[D-003]]
 
 Two front doors, one meaning. A value arrives as a JSON token or as text, and
@@ -10,14 +10,14 @@ planner may refuse to index.
 
 ## The JSON door
 
-1. **`compiler.condition`** — `query/filter.go:119`
+1. **`compiler.condition`** — `crud/query/filter.go:119`
    Three shapes, decided by the first byte after trimming:
    - `{` → an operator object → `compiler.operators` (`filter.go:162`)
    - `[` → `decodeList` → `crud.In` (`filter.go:145`)
    - anything else → `null` becomes `crud.IsNull`, otherwise `decodeValue` →
      `crud.Eq` (`filter.go:150-157`)
 
-2. **`compiler.operator`** — `query/filter.go:194`
+2. **`compiler.operator`** — `crud/query/filter.go:194`
    `normalizeOp` first, then the null guard (`filter.go:204`):
    ```go
    if isNull(trim(raw)) && (kind.unary() || kind.textual() || kind.multi()) {
@@ -34,7 +34,7 @@ planner may refuse to index.
    LIKE pattern is text, whatever the column is), multi goes through
    `decodeList`, everything else through `decodeValue`.
 
-3. **`decodeValue`** — `query/coerce.go:19`
+3. **`decodeValue`** — `crud/query/coerce.go:19`
    `t := crud.ElemType(f.Type)` (`crud/meta.go:517`) — `Opt[int]` and `*int` both
    report `int` — then `json.Unmarshal` into a `reflect.New(t)`. So the bind
    argument has the column's own type, custom `UnmarshalJSON` included.
@@ -42,17 +42,17 @@ planner may refuse to index.
    re-read as a string and run through `parseTime`. Clients send date-only
    strings constantly.
 
-4. **`decodeList`** — `query/coerce.go:38` — element by element, with `null`
+4. **`decodeList`** — `crud/query/coerce.go:38` — element by element, with `null`
    elements preserved as Go `nil` so `{"in": [1, null]}` keeps its NULL.
 
 ## The query-string door
 
-1. **`ParseTerm`** — `query/querystring.go:28`
+1. **`ParseTerm`** — `crud/query/querystring.go:28`
    `field:op:value`, split on the **first two** colons only, so a timestamp
    survives. Two segments mean `eq` — an implicit `contains` would be convenient
    and occasionally very wrong.
 
-2. **`compiler.terms`** — `query/querystring.go:46`
+2. **`compiler.terms`** — `crud/query/querystring.go:46`
    Same four classes as the JSON door:
    - unary: the value is read as a bool (`strconv.ParseBool`), so
      `f=deletedAt:isNull:false` means `IS NOT NULL`;
@@ -60,12 +60,12 @@ planner may refuse to index.
    - multi: `coerceAll` over every value;
    - scalar: `coerceAll` over the first value only.
 
-3. **`compiler.coerceAll`** — `query/querystring.go:118`
+3. **`compiler.coerceAll`** — `crud/query/querystring.go:118`
    The literal `null` becomes Go `nil`; everything else goes to `coerceString`
    against `crud.ElemType(f.Type)`. A value the column cannot hold is a 400 that
    names the value and the type.
 
-4. **`coerceString`** — `query/coerce.go:85`
+4. **`coerceString`** — `crud/query/coerce.go:85`
    Order matters, and the first two lines are the reason:
    ```go
    if t == reflect.TypeOf(time.Time{}) { return parseTime(s) }        // before TextUnmarshaler
@@ -80,7 +80,7 @@ planner may refuse to index.
    `OverflowInt`/`OverflowUint`, so a value too large for an `int32` column is
    an error and never a wrapped one. `[]byte` columns take the raw bytes.
 
-5. **`Coerce`** — `query/coerce.go:80` — the exported wrapper. Transports need it
+5. **`Coerce`** — `crud/query/coerce.go:80` — the exported wrapper. Transports need it
    for path parameters: `port.CoerceID` (`port/request.go`), which every
    binding's `HandlerFor.id` is a one-line call to, coerces
    `:id` to the repository's `ID` type through it, which is why a uuid key works
@@ -88,7 +88,7 @@ planner may refuse to index.
 
 ## `timeLayouts` — the accepted timestamp forms
 
-`query/coerce.go:58`, tried in order:
+`crud/query/coerce.go:58`, tried in order:
 `RFC3339Nano`, `RFC3339`, `2006-01-02T15:04:05`, `2006-01-02 15:04:05`,
 `2006-01-02`. The two zoneless forms parse as UTC; an offset in the string is
 preserved. Both doors use this list — `decodeValue` via its retry,
@@ -96,18 +96,18 @@ preserved. Both doors use this list — `decodeValue` via its retry,
 `?f=createdAt:gte:2026-01-01` and `{"createdAt":{"gte":"2026-01-01"}}` the same
 query.
 
-## `query/ops.go` — the table that keeps the doors together
+## `crud/query/ops.go` — the table that keeps the doors together
 
-- **`opNames`** — `query/ops.go:30` — every spelling a client may send maps to
+- **`opNames`** — `crud/query/ops.go:30` — every spelling a client may send maps to
   one `opKind`: `eq = equals is`, `ne neq not != <>`, `gte >= ge`, `nin notin`,
   `contains search`, `startswith prefix`, `isnull null`, and so on.
-- **`normalizeOp`** — `query/ops.go:54` — strips a `$` prefix (Mongo style),
+- **`normalizeOp`** — `crud/query/ops.go:54` — strips a `$` prefix (Mongo style),
   tries the exact spelling, then the lowercased one. So `$gte`, `gte`, `GTE` and
   `>=` are one operator.
 - **`textual()` / `multi()` / `unary()`** — `ops.go:65-83` — the classification
   both compilers branch on, so neither can decide on its own that `contains`
   takes a list.
-- **`buildScalar` / `buildText` / `buildMulti`** — `query/filter.go:248`,
+- **`buildScalar` / `buildText` / `buildMulti`** — `crud/query/filter.go:248`,
   `:265`, `:282` — the single place an operator becomes a predicate. Both doors
   call these three functions. That is the whole mechanism against drift: a new
   operator is added to `opNames`, classified once, and built once.
@@ -150,36 +150,36 @@ query.
 
 | File | Role |
 |---|---|
-| `query/coerce.go` | `decodeValue`, `decodeList`, `coerceString`, `Coerce`, `parseTime`, `timeLayouts` |
-| `query/ops.go` | `opNames`, `normalizeOp`, the operator classes |
-| `query/filter.go` | the JSON door; `buildScalar` / `buildText` / `buildMulti` |
-| `query/querystring.go` | the query-string door; `ParseTerm`, `terms`, `coerceAll` |
+| `crud/query/coerce.go` | `decodeValue`, `decodeList`, `coerceString`, `Coerce`, `parseTime`, `timeLayouts` |
+| `crud/query/ops.go` | `opNames`, `normalizeOp`, the operator classes |
+| `crud/query/filter.go` | the JSON door; `buildScalar` / `buildText` / `buildMulti` |
+| `crud/query/querystring.go` | the query-string door; `ParseTerm`, `terms`, `coerceAll` |
 | `crud/meta.go` | `ElemType` — the coercion target |
 | `crud/predicate.go` | `escapeLike`, and the nodes that bind rather than concatenate |
 | `port/request.go` | `CoerceID` — the path-parameter user of `Coerce`. `crudhttp.CoerceID` forwards to it |
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `id` — reads the path parameter and hands it over |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `id` — reads the path parameter and hands it over |
 
 ## Tests that walk this flow
 
-- `TestBothDoorsBindTheSameValue` — `query/coerce_test.go` — the anti-drift test.
-- `TestEveryOperatorAliasMeansTheSameOnBothDoors` — `query/querystring_test.go` — the whole alias table.
-- `TestUnknownOperatorIsRefusedOnBothDoors` — `query/querystring_test.go`.
-- `TestNullMeansIsNullOnBothDoors` — `query/coerce_test.go`.
-- `TestListsCoerceEveryElement` — `query/coerce_test.go`.
-- `TestEveryTimestampLayoutIsAccepted` — `query/coerce_test.go`.
-- `TestTimestampZonesSurviveCoercion` — `query/edge_test.go`.
-- `TestCoerceHandlesEveryScalarKind` — `query/coerce_test.go`.
-- `TestCoerceRefusesValuesTheColumnCannotHold` — `query/coerce_test.go`.
-- `TestOverflowNeverWraps` — `query/coerce_test.go`.
-- `TestBadValuesAreRejectedByBothDoors` — `query/coerce_test.go`.
-- `TestUncoercibleValuesAreRejectedNotZeroed` — `query/edge_test.go`.
-- `TestNullOperandsAreRefusedWhereTheyHaveNoMeaning` — `query/edge_test.go`.
-- `TestValuesAreTypedByColumn` — `query/query_test.go`.
-- `TestQueryStringTermKeepsColons` — `query/query_test.go`.
-- `TestQueryStringTermEdges` — `query/edge_test.go`.
-- `TestWildcardsInAPatternAreEscaped` — `query/hostile_test.go`.
-- `TestPayloadsInValuePositionsAreBoundNotWritten` — `query/hostile_test.go`.
-- `TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository` — `http/crudfiber/edge_test.go`, and its twins in `http/crudgin/edge_test.go` and `http/crudnet/edge_test.go`.
+- `TestBothDoorsBindTheSameValue` — `crud/query/coerce_test.go` — the anti-drift test.
+- `TestEveryOperatorAliasMeansTheSameOnBothDoors` — `crud/query/querystring_test.go` — the whole alias table.
+- `TestUnknownOperatorIsRefusedOnBothDoors` — `crud/query/querystring_test.go`.
+- `TestNullMeansIsNullOnBothDoors` — `crud/query/coerce_test.go`.
+- `TestListsCoerceEveryElement` — `crud/query/coerce_test.go`.
+- `TestEveryTimestampLayoutIsAccepted` — `crud/query/coerce_test.go`.
+- `TestTimestampZonesSurviveCoercion` — `crud/query/edge_test.go`.
+- `TestCoerceHandlesEveryScalarKind` — `crud/query/coerce_test.go`.
+- `TestCoerceRefusesValuesTheColumnCannotHold` — `crud/query/coerce_test.go`.
+- `TestOverflowNeverWraps` — `crud/query/coerce_test.go`.
+- `TestBadValuesAreRejectedByBothDoors` — `crud/query/coerce_test.go`.
+- `TestUncoercibleValuesAreRejectedNotZeroed` — `crud/query/edge_test.go`.
+- `TestNullOperandsAreRefusedWhereTheyHaveNoMeaning` — `crud/query/edge_test.go`.
+- `TestValuesAreTypedByColumn` — `crud/query/query_test.go`.
+- `TestQueryStringTermKeepsColons` — `crud/query/query_test.go`.
+- `TestQueryStringTermEdges` — `crud/query/edge_test.go`.
+- `TestWildcardsInAPatternAreEscaped` — `crud/query/hostile_test.go`.
+- `TestPayloadsInValuePositionsAreBoundNotWritten` — `crud/query/hostile_test.go`.
+- `TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository` — `crud/http/crudfiber/edge_test.go`, and its twins in `crud/http/crudgin/edge_test.go` and `crud/http/crudnet/edge_test.go`.
 - `TestTheDSLCoercesAUUIDFromTheWire` — `test/integration/uuid_test.go` — the `TextUnmarshaler` branch, end to end.
 
 ## See also

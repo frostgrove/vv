@@ -169,7 +169,7 @@ func MustPathMap[M any](m PathMap, except ...string) PathMap {
 // independent: the generator reads the model's source text, this reads the
 // compiled struct ([[D-050]]).
 //
-// It is checked here and not in basic.Define, because a hand-narrowed DTO is a
+// It is checked here and not in sqlrepo.Define, because a hand-narrowed DTO is a
 // supported shape and refusing one would break every consumer that has written
 // its own. Totality is a property of a generated artefact.
 func CoversUpdate[M, U any](except ...string) error {

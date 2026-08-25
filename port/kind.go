@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/query"
 )
 
 // standardCodes is the vocabulary an unwired caller resolves through. It is

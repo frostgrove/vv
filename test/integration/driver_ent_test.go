@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
 	"github.com/shardit-io/vv/test/ent"
 	entuser "github.com/shardit-io/vv/test/ent/user"
 )

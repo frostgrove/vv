@@ -9,7 +9,7 @@ rest of D-015 stands.
 
 ## The decision
 
-The integrity gate — `sqlfault.Integrity` since phase 3, `adapter/crudsql`'s own
+The integrity gate — `sqlfault.Integrity` since phase 3, `crud/adapter/crudsql`'s own
 `isIntegrity` before it — has three arms, and the SQLSTATE selects between them
 rather than deciding:
 
@@ -27,7 +27,7 @@ That costs something to keep, because `sqlerr.Err` has **one** number field and
 the corpus is written against it: extraction merges `Number`, a `Code` method and
 `ExtendedCode`/`Code` fields into it, and the no-state arm is the one arm with no
 engine behind it. So the arm reads its own number rather than the merged one —
-`sqlfault/extract.go:sqliteNative`, SQLite's spellings only. "MySQL always
+`crud/sqlfault/extract.go:sqliteNative`, SQLite's spellings only. "MySQL always
 carries a state" is not a property of the driver: the SQLSTATE is optional in the
 ERR packet, go-sql-driver/mysql leaves the `[5]byte` unset when the `#` marker is
 absent, and `1043` carries 19 in its low byte.
@@ -143,30 +143,30 @@ class 23 and any low-byte-19 code a conflict. Phase 3 kept the class test for th
 `crud.ErrConflict` sentinel rather than narrowing it onto the parsers' tables, so
 a duplicate key on an engine nobody provoked is still a 409 — with no code. The
 two gates are held apart by `TestTheTwoGatesAnswerDifferentQuestions` in
-`sqlfault/gate_test.go`: a 2×2 with at least one case per cell and a counter per
+`crud/sqlfault/gate_test.go`: a 2×2 with at least one case per cell and a counter per
 cell asserted non-zero, so if either gate widens or narrows into the other a cell
 empties and the table cannot stay green with three rows.
 
 ## Where it lives
 
-- `sqlfault/gate.go:Integrity` — the three arms, moved out of `adapter/crudsql`
+- `crud/sqlfault/gate.go:Integrity` — the three arms, moved out of `crud/adapter/crudsql`
   at phase 3 so both adapters answer the question with the same code.
-- `sqlfault/gate.go:mysqlIntegrityNumbers` — the MySQL list, two entries, each
+- `crud/sqlfault/gate.go:mysqlIntegrityNumbers` — the MySQL list, two entries, each
   provoked.
-- `sqlfault/gate.go:sqliteConstraint` — the SQLite arm's low byte.
-- `sqlfault/extract.go:Extract` — where a state, a number and the structured
+- `crud/sqlfault/gate.go:sqliteConstraint` — the SQLite arm's low byte.
+- `crud/sqlfault/extract.go:Extract` — where a state, a number and the structured
   fields are reached by shape, and where the kind check keeps pgconn's string
   `Code` from being read as a number.
-- `sqlfault/extract.go:sqliteNative` — the SQLite arm's own number, kept apart
+- `crud/sqlfault/extract.go:sqliteNative` — the SQLite arm's own number, kept apart
   from the merged `Native`. `sqlerr.Err` has one number field and the corpus is
   written against it, so the provenance a three-reader extraction used to carry
   lives here instead: a `Code` method, then integer `ExtendedCode` and `Code`
   fields, and never `Number`. Without it the no-state arm — the one arm with no
   engine behind it — reads a MySQL number as a SQLite result code, and MySQL's
   SQLSTATE is optional in the ERR packet rather than always present.
-- `sqlfault/classify.go:Classifier` — the engine string, declared by the caller,
+- `crud/sqlfault/classify.go:Classifier` — the engine string, declared by the caller,
   and the refusal to build a fault without both a code and its kind.
-- `adapter/crudsql/crudsql.go:Postgres` / `:MySQL` / `:MariaDB` / `:SQLite` —
+- `crud/adapter/crudsql/crudsql.go:Postgres` / `:MySQL` / `:MariaDB` / `:SQLite` —
   the four declarations; `:Open`, `:From` and `:Source` — the three that decline
   to make one.
 - `errs/sqlerr/classify.go:Classify` — the dialect switch, and what no arm reads.
@@ -176,7 +176,7 @@ empties and the table cannot stay green with three rows.
   `(state, number)` key, differing at exactly two rows.
 - `errs/sqlerr/sqlite.go` — the low byte, then the high byte, and the SQLSTATE
   guard.
-- `adapter/crudpgx/conflict.go:extract` — the typed reader. It holds no class
+- `crud/adapter/crudpgx/conflict.go:extract` — the typed reader. It holds no class
   test since phase 3: `strings.HasPrefix(pg.SQLState(), "23")` was the sentence
   this decision supersedes, and it was still shipped in the one file named here
   as "the typed one".
@@ -186,7 +186,7 @@ empties and the table cannot stay green with three rows.
 
 ## Proven by
 
-- `TestTheTwoGatesAnswerDifferentQuestions` in `sqlfault/gate_test.go` — the
+- `TestTheTwoGatesAnswerDifferentQuestions` in `crud/sqlfault/gate_test.go` — the
   test this decision asked phase 3 for. Four cells, a counter each: both gates
   yes, sentinel-only (`{23000, 1216}` and an unproduced SQLite subcode),
   code-only (`SQLITE_BUSY`, `40001`, `22001` — the dangerous direction), neither.
@@ -197,20 +197,20 @@ empties and the table cannot stay green with three rows.
   visible and bounded.
 - `TestOnlyADeclaredEngineProducesACode` and
   `TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor` in
-  `adapter/crudsql/classify_test.go` — every constructor, and what each one
+  `crud/adapter/crudsql/classify_test.go` — every constructor, and what each one
   degrades to.
 - `TestANumberIsOnlyReadOnceTheStateSaysWhichEngineItIs` in
-  `sqlfault/gate_test.go` — the three forbids above, as three assertions, plus
+  `crud/sqlfault/gate_test.go` — the three forbids above, as three assertions, plus
   the fourth shape the merged `Native` field made reachable: `1043` with no
   SQLSTATE, which is `ER_HANDSHAKE_ERROR` and carries 19 in its low byte. Two
   controls beside it, because the assertion has two ways to pass vacuously — the
   SQLite arm still classifies `2067`, and `Extract` still records `1043` in
   `Native` for the corpus.
-- `TestANumberIsOnlyTrustedUnderHY000` in `adapter/crudsql/conflict_test.go` —
+- `TestANumberIsOnlyTrustedUnderHY000` in `crud/adapter/crudsql/conflict_test.go` —
   the same pair one layer up, through `Executor.conflict`.
 - `TestSQLiteConstraintViolationsBecomeConflicts` and
   `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
-  `adapter/crudsql/conflict_test.go` — the SQLite arm and its control, which
+  `crud/adapter/crudsql/conflict_test.go` — the SQLite arm and its control, which
   keeps `SQLITE_BUSY` out.
 - `TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE` in the same file — pgconn's
   string `Code` is not read as a number.

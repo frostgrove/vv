@@ -179,7 +179,7 @@ var ArticlePaths = port.MustPathMap[Article](port.PathMap{
 ```go
 vs := port.Violations(ctx, fault, port.ViolationOptions{
     Resolvers: port.Hops(svc, mapper),
-    Fallback:  crudhttp.BodyResolver(rawBody),
+    Fallback:  porthttp.BodyResolver(rawBody),
     Messages:  catalogue,
     Codes:     codes,
     Max:       port.MaxViolations,   // 100
@@ -214,7 +214,7 @@ port.CodeForKind(k)           errs.Code
 port.FaultOf(err)             *errs.Fault
 ```
 
-`http/crudhttp` превращает `Kind` в статус, а `rpc/crudgrpc` — в `codes.Code`
+`port/porthttp` превращает `Kind` в статус, а `crud/rpc/crudgrpc` — в `codes.Code`
 — **одна классификация, разложенная по транспортам**, а не по одной на
 каждый фреймворк ([[UC-015]]).
 
@@ -235,7 +235,8 @@ port.FaultOf(err)             *errs.Fault
 
 ## См. также
 
-- [crudhttp](crudhttp.md) — HTTP-половина и таблица статусов
+- [porthttp](porthttp.md) — HTTP-проекция контракта ошибок и таблица статусов
+- [crudhttp](crudhttp.md) — то, что одновременно HTTP и CRUD
 - [crudnet](crudnet.md) · [crudfiber](crudfiber.md) · [crudgin](crudgin.md) · [crudgrpc](crudgrpc.md)
 - [cmd/vv](vv-cli.md) — генерирует маппер, карту путей и оболочку сервиса
 - [[UC-013]] бизнес-правила между хендлером и репозиторием · [[FL-015]] запрос через слой port

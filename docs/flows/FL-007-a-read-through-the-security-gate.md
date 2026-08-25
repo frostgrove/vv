@@ -1,21 +1,21 @@
 # FL-007 — A read through the security gate
 
-**Entry point:** `repo/decorators/security/security.go:gate.GetByID` / `:gate.Get`
+**Entry point:** `crud/decorators/security/security.go:gate.GetByID` / `:gate.Get`
 **Implements:** [[UC-004]] [[UC-016]] · **Governed by:** [[D-008]] [[D-004]] [[D-003]] [[D-007]]
 
-The gate is a `crud.Middleware` wrapped around the basic repository at `Bind`
+The gate is a `crud.Middleware` wrapped around the SQL repository at `Bind`
 time. On a read it does four things in a fixed order: authorise, resolve the
 scopes, cancel the projection when it will have to look at rows, and inspect
 what came back.
 
 ## The path
 
-1. **`Blueprint.Bind`** — `repo/basic/blueprint.go:182`
+1. **`Blueprint.Bind`** — `crud/sqlrepo/blueprint.go:182`
    `crud.Chain(core, security.Gate(policy))` — the first middleware ends up
    outermost, so the gate sees the call before the repository does and there is
    no way around it from above.
 
-2. **`gate.GetByID`** — `repo/decorators/security/security.go:219`
+2. **`gate.GetByID`** — `crud/decorators/security/security.go:219`
    `authorize(ctx, Read)` first (`security.go:145`) — the coarse check, once per
    operation, before any SQL. A nil `Authorize` hook is skipped.
 
@@ -63,7 +63,7 @@ what came back.
    (`crud/predicate.go:12`), so there is no `Raw` route out either.
 
 7. **Into the repository** — [[FL-001]]
-   `repository.relScopes` (`repo/basic/repository.go:97`) merges the blueprint's
+   `repository.relScopes` (`crud/sqlrepo/repository.go:97`) merges the blueprint's
    permanent narrowings with the ones this query carries;
    `MergeRelationScopes` (`crud/scope.go:92`) ANDs where both declare the same
    path or model. `repository.scoped` (`repository.go:186`) ANDs the blueprint's
@@ -90,7 +90,7 @@ what came back.
 - **`Scope` stops at the statement's own `FROM`.** Rows of a second table reached
   by a preload ([[FL-006]]) or a nested filter ([[FL-005]]) are not covered by
   it. `RelationScopes` is the companion, and it has to be declared —
-  `security.ScopeRelationField` (`repo/decorators/security/policies.go:80`)
+  `security.ScopeRelationField` (`crud/decorators/security/policies.go:80`)
   writes one path's worth, `Combine` merges several.
 - **Combine of nothing is the zero policy.** `Combine`
   (`policies.go:145`) seeds `AllowUnscopedDeleteAll`/`UpdateAll` from
@@ -114,32 +114,32 @@ what came back.
 
 | File | Role |
 |---|---|
-| `repo/decorators/security/security.go` | `Gate`, `gate`, `scope`, `narrow`, `scoped`, `whole`, `loadScoped`, the read methods |
-| `repo/decorators/security/policies.go` | `ScopeField`, `ScopeRelationField`, `ReadOnly`, `Freeze`, `Combine` |
+| `crud/decorators/security/security.go` | `Gate`, `gate`, `scope`, `narrow`, `scoped`, `whole`, `loadScoped`, the read methods |
+| `crud/decorators/security/policies.go` | `ScopeField`, `ScopeRelationField`, `ReadOnly`, `Freeze`, `Combine` |
 | `crud/options.go` | `Where`, `SelectAll`, `NarrowRelations` |
 | `crud/scope.go` | `RelationScopes`, `MergeRelationScopes`, `At`, `under` |
 | `crud/predicate.go` | the closed AST that makes the scope unremovable |
-| `repo/basic/repository.go` | `scoped`, `relScopes` — where the policy meets the blueprint |
+| `crud/sqlrepo/repository.go` | `scoped`, `relScopes` — where the policy meets the blueprint |
 | `crud/repo.go` | `Middleware`, `Chain` — the decoration order |
 
 ## Tests that walk this flow
 
-- `TestScopeIsAppendedToEveryRead` — `repo/decorators/security/security_test.go`.
-- `TestOutOfScopeIDLooksMissing` — `repo/decorators/security/security_test.go` — 404 not 403.
-- `TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden` — `repo/decorators/security/edge_test.go`.
-- `TestAScopeThatFailsClosesEveryDoor` — `repo/decorators/security/edge_test.go` — fail-closed on every method.
-- `TestReadWithoutAPrincipalFails` — `repo/decorators/security/security_test.go`.
-- `TestAProjectionDoesNotTurnEveryScopedReadIntoADenial` — `repo/decorators/security/gate_edge_test.go` — the reason `whole` exists.
-- `TestAProjectionCannotBypassAnInspectRule` — `repo/decorators/security/gate_edge_test.go` — the other direction.
-- `TestAProjectionSurvivesAPolicyThatDoesNotInspect` — `repo/decorators/security/gate_edge_test.go` — the conditional half.
-- `TestInspectReadsFailsThePageInsteadOfTrimmingIt` — `repo/decorators/security/edge_test.go`.
-- `TestTheGateScopeAndTheRepositoryScopeBothApply` — `repo/decorators/security/edge_test.go`.
-- `TestAPreloadIsNarrowedByThePolicy` / `TestAPreloadIsNotNarrowedWithoutTheDeclaration` — `repo/decorators/security/relscope_test.go`.
-- `TestTheNarrowingReachesEveryReadPath` — `repo/decorators/security/relscope_test.go`.
-- `TestCountAndExistsNarrowTheirSubqueries` — `repo/decorators/security/relscope_test.go`.
-- `TestACallerCannotWidenARelationNarrowing` — `repo/decorators/security/relscope_test.go`.
-- `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` — `repo/decorators/security/gate_edge_test.go`.
-- `TestGateComposesWithOtherMiddleware` — `repo/decorators/security/security_test.go`.
+- `TestScopeIsAppendedToEveryRead` — `crud/decorators/security/security_test.go`.
+- `TestOutOfScopeIDLooksMissing` — `crud/decorators/security/security_test.go` — 404 not 403.
+- `TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden` — `crud/decorators/security/edge_test.go`.
+- `TestAScopeThatFailsClosesEveryDoor` — `crud/decorators/security/edge_test.go` — fail-closed on every method.
+- `TestReadWithoutAPrincipalFails` — `crud/decorators/security/security_test.go`.
+- `TestAProjectionDoesNotTurnEveryScopedReadIntoADenial` — `crud/decorators/security/gate_edge_test.go` — the reason `whole` exists.
+- `TestAProjectionCannotBypassAnInspectRule` — `crud/decorators/security/gate_edge_test.go` — the other direction.
+- `TestAProjectionSurvivesAPolicyThatDoesNotInspect` — `crud/decorators/security/gate_edge_test.go` — the conditional half.
+- `TestInspectReadsFailsThePageInsteadOfTrimmingIt` — `crud/decorators/security/edge_test.go`.
+- `TestTheGateScopeAndTheRepositoryScopeBothApply` — `crud/decorators/security/edge_test.go`.
+- `TestAPreloadIsNarrowedByThePolicy` / `TestAPreloadIsNotNarrowedWithoutTheDeclaration` — `crud/decorators/security/relscope_test.go`.
+- `TestTheNarrowingReachesEveryReadPath` — `crud/decorators/security/relscope_test.go`.
+- `TestCountAndExistsNarrowTheirSubqueries` — `crud/decorators/security/relscope_test.go`.
+- `TestACallerCannotWidenARelationNarrowing` — `crud/decorators/security/relscope_test.go`.
+- `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` — `crud/decorators/security/gate_edge_test.go`.
+- `TestGateComposesWithOtherMiddleware` — `crud/decorators/security/security_test.go`.
 - `TestTheGatesScopeFollowsAPreload` / `TestTheGatesScopeFollowsANestedFilter` — `test/integration/gate_relscope_test.go`.
 
 ## See also

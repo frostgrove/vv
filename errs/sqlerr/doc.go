@@ -54,7 +54,7 @@
 // written *over* these parsers, in the layer that has both — not by making them
 // implement it.
 //
-// That layer is github.com/shardit-io/vv/sqlfault, which has the parsers, crud
+// That layer is github.com/shardit-io/vv/crud/sqlfault, which has the parsers, crud
 // for the sentinel and catalog for the columns a driver did not name — none of
 // which this package may import. Extraction, the half that must name a driver
 // type or shape-match one, stays with the adapters.

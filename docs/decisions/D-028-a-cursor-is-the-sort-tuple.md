@@ -46,7 +46,7 @@ turns that into a refusal.
 
 **Why the sort must be unique.** "After this row" only names one place if no two
 rows share the tuple. A paged read already appends the primary key for the same
-reason ([[D-014]] neighbours this: stable pagination). `basic.UnstablePagination`
+reason ([[D-014]] neighbours this: stable pagination). `sqlrepo.UnstablePagination`
 removes the tiebreaker, and with it the ability to page by cursor — that is the
 trade, stated rather than worked around.
 
@@ -87,10 +87,10 @@ would invite it to render one.
 - `crud/options.go:After` / `crud/options.go:Before` — the options, and the
   implied `NoTotal`.
 - `crud/page.go:PaginatedResponse` — `NextCursor` / `PrevCursor`.
-- `repo/basic/repository.go:cursorWhere` — the primary-key requirement.
-- `repo/basic/repository.go:invertSort` — the backward read.
-- `repo/basic/repository.go:setCursors` — the edges of a page.
-- `query/request.go:Request` — `after` / `before` on the wire.
+- `crud/sqlrepo/repository.go:cursorWhere` — the primary-key requirement.
+- `crud/sqlrepo/repository.go:invertSort` — the backward read.
+- `crud/sqlrepo/repository.go:setCursors` — the edges of a page.
+- `crud/query/request.go:Request` — `after` / `before` on the wire.
 
 ## Proven by
 

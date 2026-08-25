@@ -106,6 +106,9 @@ and the next decision written before its code does should say so here.
 | [D-054](D-054-the-closed-ast-gets-one-marshaller.md) | The closed predicate AST gets one marshaller inside `crud`; `Raw`, `EqField` and `False` are refused by name | accepted | client, query |
 | [D-055](D-055-a-principal-is-a-value-in-the-context.md) | A principal is a value in the context and the library never puts it there; `auth` is a package, not a manifest entry | accepted | auth, security |
 | [D-056](D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md) | A 401 is a fault wrapping `auth.ErrUnauthenticated`, and its reason never leaves the process | accepted | auth, errors |
+| [D-057](D-057-the-application-opens-the-connection.md) | The application opens the connection and hands it over; `vvdb` imports nothing of vv and nothing in the seam reaches it | accepted | process & tooling |
+| [D-058](D-058-the-layout-axis-is-the-subsystem.md) | The top-level directory is the subsystem and the transport is the second level; `repo/basic` becomes `crud/sqlrepo`, and `utils/` may not import a subsystem | accepted | process & tooling |
+| [D-059](D-059-the-http-projection-of-the-error-contract-belongs-to-port.md) | The status table, the envelope, the `Renderer` seam and the body decode are `port/porthttp`'s, so an auth middleware does not import the repository | accepted | transports, errors |
 
 ## By area
 
@@ -146,7 +149,7 @@ seam between them and the gRPC one; D-034 is its superseded first draft, kept
 for the argument).
 
 **RPC** — D-052 (the document wire shape, the absent schema and reflection, the
-code spelling and the empty-field violation), D-045 (what `rpc/crudgrpc` is a
+code spelling and the empty-field violation), D-045 (what `crud/rpc/crudgrpc` is a
 shell over, and the phase-9 measurement that adding it changed nothing shared),
 D-049 (why one `codes.Code` per kind and never per code), D-051 (why three
 requires are one decision).
@@ -183,7 +186,16 @@ release is tagged), D-016 (**superseded** in its module half; its stdlib rule
 still binds), D-018 (generated artefacts, and every flag's reason), D-050 (why a
 generated one is held to a standard a hand-written one is not, and what the
 generator has to declare because reflection cannot see a flag), D-020 (tests are
-the specification).
+the specification), D-057 (who opens the connection, and the one case where a
+package may carry the project as a prefix), D-058 (the layout axis, why
+`repo/basic` became `crud/sqlrepo`, and the one line that keeps `utils/` from
+collecting the repository).
+
+**Transports** — D-034 (**superseded**), D-045 (the shared half is
+transport-neutral), D-059 (the HTTP projection of the error contract belongs to
+`port`, not to a subsystem, and what that costs a forwarder file), D-052 (a gRPC
+resource carries documents), D-049 (the kind decides the status), D-013
+(binding-level rejection).
 
 **Philosophy & docs** — D-021 (magic over orthodoxy, and D-050 as its newest
 application), D-023 (guides lead with the result), D-020 (what a test is for).

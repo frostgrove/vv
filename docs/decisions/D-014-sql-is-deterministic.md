@@ -24,7 +24,7 @@ That costs four things, in increasing order of how much they hurt:
 
 - **Test assertions.** A test that asserts on the rendered SQL is the clearest
   way to pin a rendering decision, and it is impossible to write against a
-  randomised clause. Untestable SQL is not worth having; the whole `query/` test
+  randomised clause. Untestable SQL is not worth having; the whole `crud/query/` test
   suite depends on this.
 - **Prepared-statement and plan caches.** PostgreSQL's plan cache and every
   connection pooler key on the statement text. A randomised clause is a cache
@@ -56,9 +56,9 @@ same way every time.
 
 ## Where it lives
 
-- `query/filter.go:compiler.node` — sorts the filter object's keys, with the
+- `crud/query/filter.go:compiler.node` — sorts the filter object's keys, with the
   reason in the comment above it.
-- `query/filter.go:compiler.operators` — sorts an operator object's keys.
+- `crud/query/filter.go:compiler.operators` — sorts an operator object's keys.
 - `crud/options.go:Options` — `Filter`, `Sort`, `Preloads`, `Fields` are all
   slices.
 - `crud/meta.go:buildSchema` — the primary key sorts first, the rest keep
@@ -69,13 +69,13 @@ same way every time.
 
 ## Proven by
 
-- `TestTheSameDocumentAlwaysCompilesToTheSameStatement` in `query/edge_test.go`
+- `TestTheSameDocumentAlwaysCompilesToTheSameStatement` in `crud/query/edge_test.go`
   — a document with eleven top-level keys, three nested operator objects, two
   relation hops and a many-to-many, asserted against the exact expected string
   *and* the exact argument slice. Many keys is the case that catches a forgotten
   sort, because two keys pass by luck half the time.
-- `TestDeterministicOutput` in `query/query_test.go`.
-- `TestKeyOrderDoesNotFollowTheDocument` in `query/compile_test.go` — states the
+- `TestDeterministicOutput` in `crud/query/query_test.go`.
+- `TestKeyOrderDoesNotFollowTheDocument` in `crud/query/compile_test.go` — states the
   half that surprises people: sorted order, not document order.
 - `TestOutputIsByteIdenticalAcrossRuns` in `internal/codegen/codegen_test.go` — the
   generator half.

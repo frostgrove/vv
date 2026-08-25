@@ -54,49 +54,49 @@ so the load has to stay neutral.
   and writing unscoped was exactly that bug: a row that left the scope between
   the two statements was updated anyway, and the fresh copy of somebody else's
   record was handed back with `err == nil`
-  (`repo/decorators/security/security.go:gate.Update`).
+  (`crud/decorators/security/security.go:gate.Update`).
 - Do not fold `Save`'s denial into a 404 for consistency. The upsert has no
   `WHERE`; silence there means a successful overwrite.
 
 ## Where it lives
 
-- `repo/decorators/security/security.go:gate.loadScoped` — the scoped fetch and
+- `crud/decorators/security/security.go:gate.loadScoped` — the scoped fetch and
   the `ErrNotFound`.
-- `repo/decorators/security/security.go:gate.GetByID` and
-  `repo/decorators/security/security.go:gate.Update` — both route through it.
-- `repo/decorators/security/security.go:gate.saveTarget` — the deliberate 403.
-- `repo/decorators/security/security.go:Denied` — wraps `security.ErrForbidden`,
+- `crud/decorators/security/security.go:gate.GetByID` and
+  `crud/decorators/security/security.go:gate.Update` — both route through it.
+- `crud/decorators/security/security.go:gate.saveTarget` — the deliberate 403.
+- `crud/decorators/security/security.go:Denied` — wraps `security.ErrForbidden`,
   which wraps `crud.ErrForbidden`.
-- `repo/basic/repository.go:repository.Delete` — the blueprint scope is in the
+- `crud/sqlrepo/repository.go:repository.Delete` — the blueprint scope is in the
   `DELETE`'s own `WHERE`, so a row that is invisible to `GET /:id` is not
   deletable by id either.
-- `http/crudfiber/options.go:Status` — `ErrNotFound` → 404, `ErrForbidden` → 403.
-- `http/crudfiber/options.go:WithScope` — documents the asymmetry it does *not*
+- `crud/http/crudfiber/options.go:Status` — `ErrNotFound` → 404, `ErrForbidden` → 403.
+- `crud/http/crudfiber/options.go:WithScope` — documents the asymmetry it does *not*
   fix: a handler-level scope reaches reads only, so `GET /:id` is 404 while
   `DELETE /:id` is 200. Row-level rules on writes belong in `security.Gate`.
 
 ## Proven by
 
 - `TestOutOfScopeIDLooksMissing` in
-  `repo/decorators/security/security_test.go`.
+  `crud/decorators/security/security_test.go`.
 - `TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden` in
-  `repo/decorators/security/edge_test.go`.
+  `crud/decorators/security/edge_test.go`.
 - `TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound` in
-  `repo/basic/blueprint_edge_test.go` — the same rule for the blueprint's own
+  `crud/sqlrepo/blueprint_edge_test.go` — the same rule for the blueprint's own
   permanent scope.
 - `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` in
-  `repo/decorators/security/gate_edge_test.go` — the check-then-act window.
+  `crud/decorators/security/gate_edge_test.go` — the check-then-act window.
 - `TestTheGateScopeIsInTheUpdatesOwnWhereClause` in
-  `repo/decorators/security/gate_edge_test.go`.
+  `crud/decorators/security/gate_edge_test.go`.
 - `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow` in
-  `repo/decorators/security/gate_edge_test.go` — the `Save` exception.
+  `crud/decorators/security/gate_edge_test.go` — the `Save` exception.
 - `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` in
-  `repo/decorators/security/gate_edge_test.go` — the control for the line above.
+  `crud/decorators/security/gate_edge_test.go` — the control for the line above.
 - `TestARowHiddenFromReadsIsStillDeletableByID` in
-  `http/crudfiber/write_edge_test.go` — pins the documented `WithScope`
+  `crud/http/crudfiber/write_edge_test.go` — pins the documented `WithScope`
   asymmetry so nobody mistakes it for protection.
-- `TestScopeReachesDeleteByID` in `repo/basic/paging_edge_test.go`.
-- `TestRepositoryErrorsBecomeStatusCodes` in `http/crudfiber/edge_test.go`.
+- `TestScopeReachesDeleteByID` in `crud/sqlrepo/paging_edge_test.go`.
+- `TestRepositoryErrorsBecomeStatusCodes` in `crud/http/crudfiber/edge_test.go`.
 
 ## See also
 

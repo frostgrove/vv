@@ -9,7 +9,7 @@ honest on a to-many filter.
 
 ## The path
 
-1. **The predicate arrives already canonical.** `query/filter.go:condition`
+1. **The predicate arrives already canonical.** `crud/query/filter.go:condition`
    resolved `comments.author.name` to `Comments.Author.Name` and built
    `crud.Contains("Comments.Author.Name", "an")` — a `likeNode`
    (`crud/predicate.go:243`). Every node's `render` calls `w.leaf(field, emit)`.
@@ -63,7 +63,7 @@ honest on a to-many filter.
    parens are correct however deep the path goes and however many binds the leaf
    contributed — count of hops, not count of anything else.
 
-   A worked result, from `repo/basic/relscope_test.go`:
+   A worked result, from `crud/sqlrepo/relscope_test.go`:
    ```sql
    SELECT … FROM "nodes"
    WHERE ("deleted" = $1
@@ -120,7 +120,7 @@ honest on a to-many filter.
   up its narrowing under a path spelled from the *second* segment — a
   `RelationScope("Manager.Department", …)` did not match there, and one declared
   for `Manager` matched twice. Model-scoped narrowings (`ForModel`, which is what
-  `basic.Scope` installs) applied either way, which is what kept it invisible.
+  `sqlrepo.Scope` installs) applied either way, which is what kept it invisible.
   `leaf` never had this shape; it updates the path inside the loop, before the
   next hop. If you touch this function, the assignment stays above the recursive
   call.
@@ -137,7 +137,7 @@ honest on a to-many filter.
 | path stops on a relation | `leaf` (`predicate.go:90`) | 400 "path names a relation, not a column" |
 | relation whose fk/ref names a missing field | `Relation.Resolve` inside `WalkPath` | 400 (`SchemaError`) |
 | sort through a `has_many` / `many_to_many` | `sortExpr` (`predicate.go:549`) | 400 (`SchemaError`) |
-| `DISTINCT` plus a sort through a relation | `repository.distinctSort` (`repo/basic/repository.go:343`) | 400 — the subquery can never be in the select list |
+| `DISTINCT` plus a sort through a relation | `repository.distinctSort` (`crud/sqlrepo/repository.go:343`) | 400 — the subquery can never be in the select list |
 | `crud.Raw` with mismatched `?` markers | `rawNode.render` (`predicate.go:361`) | 400 (`SchemaError`) — never a renumbered bind |
 
 ## Files
@@ -148,8 +148,8 @@ honest on a to-many filter.
 | `crud/relation.go` | `WalkPath`, `PathHop`, `Relation.Resolve`, join-table columns |
 | `crud/scope.go` | `RelationScopes.At` — path declaration wins over model |
 | `crud/render.go` | `SQL.RelationScopes`, `Where`, `OrderBy`, `Done` |
-| `query/filter.go` | where the canonical path and the operator become a node |
-| `repo/basic/repository.go` | attaches the repository's scopes to every statement |
+| `crud/query/filter.go` | where the canonical path and the operator become a node |
+| `crud/sqlrepo/repository.go` | attaches the repository's scopes to every statement |
 
 ## Tests that walk this flow
 
@@ -161,13 +161,13 @@ honest on a to-many filter.
 - `TestNestedSortIsAScalarSubquery` — `crud/predicate_test.go`.
 - `TestARelationScopeReachesTheHopItNames` — `crud/predicate_test.go` — a narrowing declared for the inner hop of a two-hop sort lands in the inner subquery and not the outer one. Its control is `TestATwoHopSortCarriesNoNarrowingWhenNoneIsDeclared`.
 - `TestSortThroughAToManyRelationIsRefused` — `crud/predicate_test.go`.
-- `TestARelationFilterCarriesTheScopeIntoItsSubquery` — `repo/basic/relscope_test.go` — the full expected statement.
-- `TestANestedSortCarriesTheScopeIntoItsSubquery` — `repo/basic/relscope_test.go`.
-- `TestRelationScopeNarrowsBothThePreloadAndTheFilterHop` — `repo/basic/relscope_test.go`.
-- `TestACallerCannotWidenARelationScope` — `repo/basic/relscope_test.go`.
+- `TestARelationFilterCarriesTheScopeIntoItsSubquery` — `crud/sqlrepo/relscope_test.go` — the full expected statement.
+- `TestANestedSortCarriesTheScopeIntoItsSubquery` — `crud/sqlrepo/relscope_test.go`.
+- `TestRelationScopeNarrowsBothThePreloadAndTheFilterHop` — `crud/sqlrepo/relscope_test.go`.
+- `TestACallerCannotWidenARelationScope` — `crud/sqlrepo/relscope_test.go`.
 - `TestToManyFilterDoesNotDuplicateOrInflateCount` — `test/integration/relations_test.go` — the reason for `EXISTS`.
 - `TestNestedFiltersAgainstDatabases` / `TestNestedSortAgainstDatabases` — `test/integration/relations_test.go`.
-- `TestDistinctRefusesASortThroughARelation` — `repo/basic/paging_edge_test.go`.
+- `TestDistinctRefusesASortThroughARelation` — `crud/sqlrepo/paging_edge_test.go`.
 
 ## See also
 

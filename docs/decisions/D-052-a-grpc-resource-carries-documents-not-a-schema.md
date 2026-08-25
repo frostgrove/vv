@@ -1,7 +1,7 @@
 # D-052 — A gRPC resource carries documents, not a schema
 
 **Status:** accepted
-**Invariant:** Every `rpc/crudgrpc` request and response is a `google.protobuf.Struct` carrying the same JSON document the HTTP bindings speak. There is no generated message per resource, no `protoc` in any build target, and no server reflection. What a client branches on — the code — is spelled identically on every transport.
+**Invariant:** Every `crud/rpc/crudgrpc` request and response is a `google.protobuf.Struct` carrying the same JSON document the HTTP bindings speak. There is no generated message per resource, no `protoc` in any build target, and no server reflection. What a client branches on — the code — is spelled identically on every transport.
 
 ## The decision
 
@@ -49,7 +49,7 @@ the binding.** It can be done — clone a `descriptorpb.FileDescriptorProto`, ru
 it through `protodesc.NewFile`, register it in `protoregistry.GlobalFiles` at
 `Register` time, about sixty lines — and it is legal under [[D-021]], which
 prefers magic that fails at start-up. It is deferred rather than refused: the
-limit is stated in `rpc/crudgrpc/doc.go` and in [[FL-013]], and a consumer who
+limit is stated in `crud/rpc/crudgrpc/doc.go` and in [[FL-013]], and a consumer who
 needs reflection registers a descriptor it generated itself. Write it when
 somebody asks, and add the row here.
 
@@ -109,7 +109,7 @@ into something else by the omission.
 - Do not add `protoc`, `buf` or any generated `.pb.go` to this repository to give
   a resource a message type. If a consumer wants one it generates it in its own
   build, over the document this binding already speaks.
-- Do not import `http/crudhttp` from `rpc/crudgrpc`. A non-HTTP transport
+- Do not import `crud/http/crudhttp` from `crud/rpc/crudgrpc`. A non-HTTP transport
   reaching into the HTTP package makes [[D-045]]'s sentence meaningless, and it
   is the shortcut the violations pipeline would have been taken through. That
   pipeline is `port.Violations`.
@@ -125,25 +125,25 @@ into something else by the omission.
 
 ## Where it lives
 
-- `rpc/crudgrpc/doc.go` — the method table and the four stated limits.
-- `rpc/crudgrpc/message.go` — the document conversion, the key spelling, and the
+- `crud/rpc/crudgrpc/doc.go` — the method table and the four stated limits.
+- `crud/rpc/crudgrpc/message.go` — the document conversion, the key spelling, and the
   number-precision limit.
-- `rpc/crudgrpc/status.go` — `CodeFor`, `Code`, `StatusRenderer` and the details.
-- `rpc/crudgrpc/service.go` — `ServiceName`, `ServicePrefix`, the hand-built
+- `crud/rpc/crudgrpc/status.go` — `CodeFor`, `Code`, `StatusRenderer` and the details.
+- `crud/rpc/crudgrpc/service.go` — `ServiceName`, `ServicePrefix`, the hand-built
   `grpc.ServiceDesc`.
 - [[FL-013]] — the per-binding difference table, with this transport's column.
 
 ## Proven by
 
 - `TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode` in
-  `rpc/crudgrpc/client_test.go` — the collapse undone, over a real client
+  `crud/rpc/crudgrpc/client_test.go` — the collapse undone, over a real client
   against a real registered service. Its control is the second half: the same
   wire code with a different fault code has to come back as the other kind, so a
   client that answered `KindValidation` for every `InvalidArgument` passes the
   first check and fails this one. Verified by removing the refinement and
   watching a validation failure come back as `bad_request`.
 
-- `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — every
+- `TestKindMapsToTheCodeItPromisesTo` — `crud/rpc/crudgrpc/status_test.go` — every
   arm, with a control asserting the table covers exactly the kinds `errs`
   declares, so a ninth kind fails rather than being mapped to `Internal`.
 - `TestAStatusMessageNamesNoEntityAndNoDriverText` — the same file — the
@@ -165,7 +165,7 @@ into something else by the omission.
   detail's `Reason` are the identical string, asserted to be literally
   `"unique"` so an implementation that UPPER_SNAKE_CASEs one side fails loudly.
 - `TestAbsentNullAndValueSurviveTheStructRoundTrip` —
-  `rpc/crudgrpc/handler_test.go` — [[UC-003]] on this wire shape, with the
+  `crud/rpc/crudgrpc/handler_test.go` — [[UC-003]] on this wire shape, with the
   control that an absent key and an explicit null produce two different states.
   Verified by making the decoder drop null-valued keys: both legs fail.
 - `TestAnInt64KeyIsCarriedAsAString` — the documented precision limit measured

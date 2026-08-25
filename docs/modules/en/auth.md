@@ -190,7 +190,7 @@ return auth.Unauthenticated("signature does not verify")
 ```
 
 - `errs.KindUnauthorized`, so every existing status table answers 401 —
-  `crudhttp.StatusFor` and `crudgrpc.CodeFor` both did already, with no new arm;
+  `porthttp.StatusFor` and `crudgrpc.CodeFor` both did already, with no new arm;
 - wraps `ErrUnauthenticated`, so `errors.Is` still branches;
 - **the reason never reaches the body.** It travels in the wrapped error.
 

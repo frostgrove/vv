@@ -9,7 +9,7 @@ import "github.com/shardit-io/vv/crud"
 
 The vocabulary every other package speaks. A model becomes metadata, a filter
 becomes a closed AST, an option becomes a query plan, and a connection becomes
-two methods. Nothing here runs SQL — `repo/basic` does that — and nothing here
+two methods. Nothing here runs SQL — `crud/sqlrepo` does that — and nothing here
 knows what a transport is.
 
 **Import it directly when** you write filters, hold a `crud.Opt`, wire a foreign
@@ -67,7 +67,7 @@ without a `rel` tag are skipped** — neither column nor edge, which is what you
 want for a computed field.
 
 `SchemaOf[M]()`, `MustSchemaOf[M]()` and `NewMeta[M](table)` build the metadata
-by hand if you need it; `basic.Define` does it for you and validates eagerly.
+by hand if you need it; `sqlrepo.Define` does it for you and validates eagerly.
 
 ## `Opt[T]` — three states, one type
 
@@ -167,7 +167,7 @@ type Article struct {
 | `rel:""` | inferred from the Go type | |
 | `rel:"-"` | never a relation | |
 
-Target tables resolve from `basic.Define`'s registration, then a `TableName()`
+Target tables resolve from `sqlrepo.Define`'s registration, then a `TableName()`
 method, then the snake_case plural. `RegisterTable[M](table)` registers one by
 hand.
 
@@ -327,7 +327,7 @@ the database rather than the row.
 
 ## See also
 
-- [basic](basic.md) — the repository that turns all of this into SQL
+- [sqlrepo](sqlrepo.md) — the repository that turns all of this into SQL
 - [crudtest](crudtest.md) — assert on the SQL without a database
 - [[FL-001]] a list request to rows · [[FL-012]] a wire value to a Go value
 - [[D-001]] the two-parameter seam · [[D-003]] the closed AST · [[D-016]] stdlib only

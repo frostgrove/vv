@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/security"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // Article is a typed view of the articles table.
@@ -35,10 +35,10 @@ type ArticleUpdate struct {
 }
 
 // Articles is validated at package initialisation: tags, ID type and DTO.
-var Articles = basic.Define[Article, int64, ArticleUpdate]("articles",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Articles = sqlrepo.Define[Article, int64, ArticleUpdate]("articles",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
 // Article_ is the metamodel, JPA style. A renamed field breaks the build here

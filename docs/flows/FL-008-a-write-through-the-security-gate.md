@@ -1,6 +1,6 @@
 # FL-008 — A write through the security gate
 
-**Entry point:** `repo/decorators/security/security.go:gate.Save` / `:gate.Update` / `:gate.Delete` / `:gate.DeleteAll` / `:gate.UpdateAll`
+**Entry point:** `crud/decorators/security/security.go:gate.Save` / `:gate.Update` / `:gate.Delete` / `:gate.DeleteAll` / `:gate.UpdateAll`
 **Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]]
 
 Reads have one shape. Writes have five, and each one has a different reason it
@@ -8,7 +8,7 @@ cannot simply AND a predicate into a statement.
 
 ## Save — the unscoped-existence probe
 
-1. **`gate.Save`** — `repo/decorators/security/security.go:337`
+1. **`gate.Save`** — `crud/decorators/security/security.go:337`
    `meta.HasID(m)` decides which action is being attempted, exactly as
    `repository.Save` does ([[FL-003]]). With no id it is a `Create`; with one it
    might be either, and the gate has to find out.
@@ -54,7 +54,7 @@ cannot simply AND a predicate into a statement.
 4. `Core.Update(ctx, id, dto, Where(scope), rel, opts…)` — **the scope is passed
    as an option, not just checked here.** `repository.Update` puts options into
    the load *and* into the UPDATE's own `WHERE`
-   (`repo/basic/repository.go:540`, `:584`). Checking here and writing unscoped
+   (`crud/sqlrepo/repository.go:540`, `:584`). Checking here and writing unscoped
    was check-then-act: a row that left the scope in between was updated anyway,
    and a fresh copy of somebody else's record was handed back with `err == nil`.
 
@@ -85,7 +85,7 @@ cannot simply AND a predicate into a statement.
 **`gate.Delete`** — `security.go:535`
 There is a fast path: with no scope and no `Inspect` it forwards to
 `Core.Delete(ids…)`, which still ANDs the *blueprint's* scope
-(`repo/basic/repository.go:720`).
+(`crud/sqlrepo/repository.go:720`).
 Otherwise it builds `within = And(scope, InAny(pk, ids))`, optionally scans the
 victims and inspects them, and then calls **`Core.DeleteAll(Where(within))`**,
 not `Core.Delete`. That is the whole trick: `Core.Delete` takes ids and no
@@ -127,34 +127,34 @@ scope are simply not matched, so the reported count is honest.
 
 | File | Role |
 |---|---|
-| `repo/decorators/security/security.go` | every write method, `saveTarget`, `checkImmutableSave`, `whole`, `scoped` |
-| `repo/decorators/security/policies.go` | `ScopeField` (scope + `Inspect` + frozen field), `ReadOnly`, `Freeze`, `Combine` |
+| `crud/decorators/security/security.go` | every write method, `saveTarget`, `checkImmutableSave`, `whole`, `scoped` |
+| `crud/decorators/security/policies.go` | `ScopeField` (scope + `Inspect` + frozen field), `ReadOnly`, `Freeze`, `Combine` |
 | `crud/update.go` | `DefinedFields` — the frozen check without a typed DTO |
 | `crud/access.go` | `HasID`, `ID`, `Values`, `ElemValue` |
-| `repo/basic/repository.go` | `Update` (options in both halves), `Delete`, `DeleteAll`, `UpdateAll` |
+| `crud/sqlrepo/repository.go` | `Update` (options in both halves), `Delete`, `DeleteAll`, `UpdateAll` |
 | `crud/options.go` | `Where` accumulating, which is what makes a prepended scope unremovable |
 
 ## Tests that walk this flow
 
-- `TestSaveRefusesToWriteIntoAnotherTenant` — `repo/decorators/security/security_test.go`.
-- `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow` — `repo/decorators/security/gate_edge_test.go` — the unscoped probe.
-- `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` — `repo/decorators/security/gate_edge_test.go` — the other branch of the probe.
-- `TestSaveWithoutAPrincipalWritesNothing` — `repo/decorators/security/edge_test.go`.
-- `TestSaveJudgesAFrozenFieldByItsValue` — `repo/decorators/security/edge_test.go`.
-- `TestAFrozenFieldIsRefusedOnUpdateEvenWhenTheValueIsUnchanged` — `repo/decorators/security/edge_test.go` — the asymmetry.
-- `TestFreezeRefusesAnUpdateThatNamesAFrozenField` — `repo/decorators/security/gate_edge_test.go`.
-- `TestTheGateScopeIsInTheUpdatesOwnWhereClause` — `repo/decorators/security/gate_edge_test.go`.
-- `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` — `repo/decorators/security/gate_edge_test.go`.
-- `TestUpdateIsScopedAndFreezesTheScopeField` — `repo/decorators/security/security_test.go`.
-- `TestDeleteIsScoped` — `repo/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
-- `TestUnscopedDeleteAllIsRefused` — `repo/decorators/security/security_test.go`.
-- `TestUpdateAllIsScopedInTheStatementItself` — `repo/decorators/security/updateall_test.go`.
-- `TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt` — `repo/decorators/security/updateall_test.go`.
-- `TestUpdateAllRefusesAFrozenField` — `repo/decorators/security/updateall_test.go`.
-- `TestUpdateAllInspectsEveryRowItIsAboutToWrite` — `repo/decorators/security/updateall_test.go`.
-- `TestUpdateAllIsRefusedByAReadOnlyPolicy` — `repo/decorators/security/updateall_test.go`.
-- `TestInspectAbortsTheWholeCall` — `repo/decorators/security/edge_test.go`.
-- `TestARowHiddenFromReadsIsStillDeletableByID` — `http/crudfiber/write_edge_test.go` — what happens *without* a gate, and why `WithScope` is not one.
+- `TestSaveRefusesToWriteIntoAnotherTenant` — `crud/decorators/security/security_test.go`.
+- `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow` — `crud/decorators/security/gate_edge_test.go` — the unscoped probe.
+- `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` — `crud/decorators/security/gate_edge_test.go` — the other branch of the probe.
+- `TestSaveWithoutAPrincipalWritesNothing` — `crud/decorators/security/edge_test.go`.
+- `TestSaveJudgesAFrozenFieldByItsValue` — `crud/decorators/security/edge_test.go`.
+- `TestAFrozenFieldIsRefusedOnUpdateEvenWhenTheValueIsUnchanged` — `crud/decorators/security/edge_test.go` — the asymmetry.
+- `TestFreezeRefusesAnUpdateThatNamesAFrozenField` — `crud/decorators/security/gate_edge_test.go`.
+- `TestTheGateScopeIsInTheUpdatesOwnWhereClause` — `crud/decorators/security/gate_edge_test.go`.
+- `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` — `crud/decorators/security/gate_edge_test.go`.
+- `TestUpdateIsScopedAndFreezesTheScopeField` — `crud/decorators/security/security_test.go`.
+- `TestDeleteIsScoped` — `crud/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
+- `TestUnscopedDeleteAllIsRefused` — `crud/decorators/security/security_test.go`.
+- `TestUpdateAllIsScopedInTheStatementItself` — `crud/decorators/security/updateall_test.go`.
+- `TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt` — `crud/decorators/security/updateall_test.go`.
+- `TestUpdateAllRefusesAFrozenField` — `crud/decorators/security/updateall_test.go`.
+- `TestUpdateAllInspectsEveryRowItIsAboutToWrite` — `crud/decorators/security/updateall_test.go`.
+- `TestUpdateAllIsRefusedByAReadOnlyPolicy` — `crud/decorators/security/updateall_test.go`.
+- `TestInspectAbortsTheWholeCall` — `crud/decorators/security/edge_test.go`.
+- `TestARowHiddenFromReadsIsStillDeletableByID` — `crud/http/crudfiber/write_edge_test.go` — what happens *without* a gate, and why `WithScope` is not one.
 
 ## See also
 

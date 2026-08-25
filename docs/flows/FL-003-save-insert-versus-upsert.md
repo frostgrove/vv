@@ -1,6 +1,6 @@
 # FL-003 — Save: insert versus upsert
 
-**Entry point:** `repo/basic/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command)
+**Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command)
 **Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]]
 
 One method, two statements, and a fork decided entirely by whether the model's
@@ -8,7 +8,7 @@ primary key holds a value.
 
 ## The path
 
-1. **`HandlerFor.Create`** — `http/crudfiber/handler.go:Create` and its two
+1. **`HandlerFor.Create`** — `crud/http/crudfiber/handler.go:Create` and its two
    twins. The body is decoded into the handler's input type, mapped onto `M`,
    and handed to the service as a `port.CreateCommand` ([[FL-015]]).
 
@@ -32,10 +32,10 @@ primary key holds a value.
    A client-owned key (a uuid, a slug) is a different matter and PUT still
    creates those.
 
-2. **(optional) `gate.Save`** — `repo/decorators/security/security.go:337`
+2. **(optional) `gate.Save`** — `crud/decorators/security/security.go:337`
    The unscoped-existence probe and the immutable-field check — [[FL-008]].
 
-3. **`repository.Save`** — `repo/basic/repository.go:442`
+3. **`repository.Save`** — `crud/sqlrepo/repository.go:442`
    The fork, in full:
    ```go
    hasID, err := r.meta.HasID(m)          // crud/access.go:53 — is the PK non-zero
@@ -73,7 +73,7 @@ primary key holds a value.
    When `meta.Update` is empty the clause degrades — Postgres to `DO NOTHING`,
    MySQL to a no-op `pk = pk` assignment — so the statement stays valid.
 
-6. **`repository.insert`** — `repo/basic/repository.go:462`
+6. **`repository.insert`** — `crud/sqlrepo/repository.go:462`
    `meta.Values` (`crud/access.go:31`) reads the bind arguments by field offset.
    Then the dialect fork:
    - **RETURNING** (`repository.go:469`): `Query(stmt + returning)` and `scanOne`
@@ -99,8 +99,8 @@ primary key holds a value.
   zero-ness of the primary key. Anything that zeroes or fills the key before
   `Save` changes the statement: that is exactly what `port.Sanitize` and
   `DefaultService.Replace` are doing, deliberately.
-- **`Save` has no WHERE clause, so no scope can narrow it.** `basic.Scope`
-  cannot apply (`repo/basic/blueprint.go:71`) and `security.Gate` therefore has
+- **`Save` has no WHERE clause, so no scope can narrow it.** `sqlrepo.Scope`
+  cannot apply (`crud/sqlrepo/blueprint.go:71`) and `security.Gate` therefore has
   to probe for the target row and refuse — [[FL-008]]. Do not "fix" this by
   adding options to `Save`; there is nowhere in an upsert for them to go.
 - **Immutable and version columns stay out of the conflict clause.** That is
@@ -127,37 +127,37 @@ primary key holds a value.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Create`, `Replace` |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `Create`, `Replace` |
 | `port/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding and every transport ([[D-045]]). `crudhttp.Sanitize` and `:ClearGenerated` forward to it |
 | `port/service.go` | `DefaultService.Create` / `:Replace` — where the clearing runs, and the one place the hook order is decided ([[FL-015]]) |
-| `repo/basic/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
+| `crud/sqlrepo/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
 | `crud/dialect.go` | `Upsert`, `SupportsReturning` |
 | `crud/errors.go` | `ErrMissingID`, `ErrConflict` |
-| `adapter/crudsql/conflict.go`, `adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
-| `repo/decorators/security/security.go` | the gated variant |
+| `crud/adapter/crudsql/conflict.go`, `crud/adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
+| `crud/decorators/security/security.go` | the gated variant |
 
 ## Tests that walk this flow
 
-- `TestSaveInsertsWithGeneratedKeyOnPostgres` — `repo/basic/repository_test.go` — the `insertGen` + RETURNING path.
-- `TestSaveUpsertsWhenKeyIsSet` — `repo/basic/repository_test.go` — the `insertFull` + conflict path.
-- `TestSaveOnMySQLUsesLastInsertID` — `repo/basic/repository_test.go` — the `LastInsertId` readback.
-- `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` — `repo/basic/repository_test.go` — pins the unconditional refresh.
-- `TestSaveRequiresAssignedKeyWhenNotGenerated` — `repo/basic/repository_test.go` — `ErrMissingID`.
-- `TestSaveNeverWindsTheVersionBack` — `repo/basic/version_test.go` — the version stays out of the conflict clause.
+- `TestSaveInsertsWithGeneratedKeyOnPostgres` — `crud/sqlrepo/repository_test.go` — the `insertGen` + RETURNING path.
+- `TestSaveUpsertsWhenKeyIsSet` — `crud/sqlrepo/repository_test.go` — the `insertFull` + conflict path.
+- `TestSaveOnMySQLUsesLastInsertID` — `crud/sqlrepo/repository_test.go` — the `LastInsertId` readback.
+- `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — pins the unconditional refresh.
+- `TestSaveRequiresAssignedKeyWhenNotGenerated` — `crud/sqlrepo/repository_test.go` — `ErrMissingID`.
+- `TestSaveNeverWindsTheVersionBack` — `crud/sqlrepo/version_test.go` — the version stays out of the conflict clause.
 - `TestDialectUpsert` — `crud/dialect_test.go` — the clause each dialect renders.
 - `TestUpsertClauseCarriesItsOwnLeadingSpace` — `crud/dialect_test.go` — concatenation contract with `insertFull`.
-Each `http/crudfiber/` test below has an identical twin in `http/crudgin/` and
-`http/crudnet/`.
+Each `crud/http/crudfiber/` test below has an identical twin in `crud/http/crudgin/` and
+`crud/http/crudnet/`.
 
-- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` — `http/crudfiber/handler_test.go` — `Sanitize`.
-- `TestPutIsNotAWayAroundAllowClientID` — `http/crudfiber/write_edge_test.go` — the PUT probe.
-- `TestReplaceTakesTheIDFromThePathNotTheBody` — `http/crudfiber/handler_test.go`.
+- `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` — `crud/http/crudfiber/handler_test.go` — `Sanitize`.
+- `TestPutIsNotAWayAroundAllowClientID` — `crud/http/crudfiber/write_edge_test.go` — the PUT probe.
+- `TestReplaceTakesTheIDFromThePathNotTheBody` — `crud/http/crudfiber/handler_test.go`.
 - `TestUpsertLeavesTheSameRowInEveryDialect` — `test/integration/dialect_edge_test.go`.
 - `TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine` — `test/integration/dialect_edge_test.go` — the reason the read-back exists.
 - `TestASaveCannotWindTheLockBack` — `test/integration/dialect_edge_test.go`.
-- `TestAnIntegrityConflictIsA409WithAMessage` — `http/crudfiber/write_edge_test.go`.
+- `TestAnIntegrityConflictIsA409WithAMessage` — `crud/http/crudfiber/write_edge_test.go`.
 
 ## See also
 

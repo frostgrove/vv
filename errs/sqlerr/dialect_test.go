@@ -186,7 +186,7 @@ func TestASQLiteResultCodeIsReadAsBytesAndNotWhole(t *testing.T) {
 // pgconn spells the SQLSTATE in a field named Code, so an extractor asking by
 // shape can hand a PostgreSQL error to this arm with a number that means
 // nothing. This is the parser-level twin of
-// TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE in adapter/crudsql.
+// TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE in crud/adapter/crudsql.
 func TestASQLiteCodeIsOnlyReadWhereThereIsNoSQLSTATE(t *testing.T) {
 	for _, state := range []string{"23505", "23000", "HY000", "42P01"} {
 		e := &sqlerr.Err{Type: "*sqlite.Error", SQLState: state, Native: 2067}

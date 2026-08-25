@@ -18,7 +18,7 @@ import (
 //
 // The precondition is that the sort is unique, or "after this one" is ambiguous.
 // It is: a paged read appends the primary key to the sort unless the caller has
-// already sorted by it (see basic.UnstablePagination for the opt-out, which also
+// already sorted by it (see sqlrepo.UnstablePagination for the opt-out, which also
 // opts out of cursors).
 
 // cursorPayload is what the opaque string carries. The field names travel with

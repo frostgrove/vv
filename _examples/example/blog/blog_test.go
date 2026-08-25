@@ -12,11 +12,11 @@ import (
 	"github.com/shardit-io/vv/_examples/example/blog"
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
-var Articles = basic.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
+var Articles = sqlrepo.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
 
 func sqlOf(t *testing.T, opts ...crud.Option) string {
 	t.Helper()

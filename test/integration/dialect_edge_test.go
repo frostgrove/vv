@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/repo/basic"
 )
 
 // The two engines vv supports disagree about more than syntax: MySQL has no
@@ -39,7 +39,7 @@ type EgOddUpdate struct {
 	Flag     *bool
 }
 
-var EgOdds = basic.Define[EgOdd, int64, EgOddUpdate]("eg_odd")
+var EgOdds = sqlrepo.Define[EgOdd, int64, EgOddUpdate]("eg_odd")
 
 // egRowText renders every column of an EgRow, telling undefined from null, so
 // that two engines' idea of the same row can be compared as one string.
@@ -197,7 +197,7 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 }
 
 // Save promises the model comes back describing the row. PostgreSQL keeps it
-// with RETURNING in the same round trip; MySQL has none, so repo/basic reads the
+// with RETURNING in the same round trip; MySQL has none, so crud/sqlrepo reads the
 // row back. The engines must be indistinguishable here, because the caller's
 // model is what a handler serialises: an upsert's conflict clause leaves every
 // immutable column out, and a model that kept the refused value would put it in
@@ -639,7 +639,7 @@ func TestDistinctRefusesASortOutsideItsProjectionOnBothEngines(t *testing.T) {
 }
 
 // Whatever the engine does with NULLs, paging over a nullable column must be a
-// partition of the table: the primary-key tiebreaker repo/basic appends is what
+// partition of the table: the primary-key tiebreaker crud/sqlrepo appends is what
 // stops two rows that tie from swapping places between one page and the next and
 // taking a row with them.
 func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {

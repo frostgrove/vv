@@ -512,7 +512,7 @@ type Options struct {
 const (
 	DefaultPortPkg = "github.com/shardit-io/vv/port"
 	DefaultErrsPkg = "github.com/shardit-io/vv/errs"
-	DefaultNetPkg  = "github.com/shardit-io/vv/http/crudnet"
+	DefaultNetPkg  = "github.com/shardit-io/vv/crud/http/crudnet"
 )
 
 // Run generates from o and writes the result. The output path is Out resolved

@@ -1,7 +1,7 @@
 # security — the gate
 
 ```go
-import "github.com/shardit-io/vv/repo/decorators/security"
+import "github.com/shardit-io/vv/crud/decorators/security"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library
@@ -121,7 +121,7 @@ RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
 },
 ```
 
-The per-table equivalent is `basic.RelationScope` on the blueprint. Where both
+The per-table equivalent is `sqlrepo.RelationScope` on the blueprint. Where both
 are declared, **both apply**.
 
 ---
@@ -240,7 +240,7 @@ field — is a 403, because they already know the row.
 
 ## See also
 
-- [basic](basic.md) — `Scope` and `RelationScope` for the per-table form
+- [sqlrepo](sqlrepo.md) — `Scope` and `RelationScope` for the per-table form
 - [probe](probe.md) — the probe is scope-aware and reads `security.Policy`
 - [[UC-004]] isolate tenants · [[FL-007]] a read through the gate · [[FL-008]] a write through it
 - [[D-007]] narrowing crosses a relation only when declared · [[D-008]] out of scope is 404

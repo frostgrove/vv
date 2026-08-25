@@ -11,9 +11,9 @@ import (
 	"entgo.io/ent/dialect"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/query"
 	entpkg "github.com/shardit-io/vv/test/ent"
 	entuser "github.com/shardit-io/vv/test/ent/user"
 	"github.com/shardit-io/vv/test/entstore"

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // User is the model under test. It exercises every mapping feature at once: a
@@ -36,7 +36,7 @@ type UserUpdate struct {
 }
 
 // Users is declared once and bound to whichever datasource a target provides.
-var Users = basic.Define[User, int64, UserUpdate]("users")
+var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
 
 // The metamodel, validated against User at package initialisation.
 type userAttrs struct {

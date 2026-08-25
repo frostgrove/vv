@@ -46,6 +46,14 @@ name.
 compares those lines byte for byte and fails the integration suite rather than
 failing silently.
 
+That list was exercised end to end by [[D-058]]'s layout move, which changed
+every package path but not the module path. It held: the generator defaults in
+`cmd/vv/main.go` and `internal/codegen/codegen.go` and the `//go:generate`
+copies in `test/codegen/codegen_test.go` are the two places a sweep forgets, and
+both are on it. A module rename has one entry more than a package move —
+`docker-compose.yml`, the DSNs and the SQL identifiers — and nothing on the list
+turned out to be missing.
+
 ## 2. `errs` gets its own module
 
 Decided, and deliberately not done yet. [[D-033]] is amended from *no external
@@ -76,7 +84,7 @@ on the list.
 ## 4. `retract` in the release vocabulary
 
 MVS has no upper bound, so lockstep **cannot** be mechanically enforced:
-`go get vv@v0.2.0` followed by `go get vv/http/crudgin@v0.1.0` builds fine, and
+`go get vv@v0.2.0` followed by `go get vv/crud/http/crudgin@v0.1.0` builds fine, and
 the dangerous direction — old binding, new library — is what a bare `go get -u`
 produces. `retract` in the root `go.mod` is the only lever, and there is nothing
 to retract until a tag exists.

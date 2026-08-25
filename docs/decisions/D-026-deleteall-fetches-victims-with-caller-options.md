@@ -23,7 +23,7 @@ So a caller who passes `crud.Limit(10)` to a gated `DeleteAll` gets `Inspect`
 called on ten rows and the whole matching set deleted.
 
 `gate.UpdateAll` has the same shape at
-`repo/decorators/security/security.go:gate.UpdateAll` — the target fetch uses
+`crud/decorators/security/security.go:gate.UpdateAll` — the target fetch uses
 `scoped`, and the `UPDATE` is unlimited.
 
 `gate.Delete` (by id) does **not** have the problem: it builds its own option
@@ -54,7 +54,7 @@ Which of these to do:
 2. **Refuse paging options on a gated `DeleteAll`/`UpdateAll` when `Inspect` is
    set.** Honest, cheap, and a behaviour change for a caller who is passing a
    `Limit` today and getting away with it.
-3. **Refuse paging options on `DeleteAll`/`UpdateAll` in the *basic* repository.**
+3. **Refuse paging options on `DeleteAll`/`UpdateAll` in the SQL repository.**
    They already do nothing there, so the option is meaningless on those two
    methods regardless of the gate. This is the widest fix and the one that
    removes the ambiguity rather than working around it. It also changes an API
@@ -84,17 +84,17 @@ While this is open, do not:
 
 ## Where it lives
 
-- `repo/decorators/security/security.go:gate.DeleteAll` — the victim fetch and
+- `crud/decorators/security/security.go:gate.DeleteAll` — the victim fetch and
   the unlimited `DELETE`.
-- `repo/decorators/security/security.go:gate.UpdateAll` — the same shape.
-- `repo/decorators/security/security.go:gate.Delete` — the id form, which does
+- `crud/decorators/security/security.go:gate.UpdateAll` — the same shape.
+- `crud/decorators/security/security.go:gate.Delete` — the id form, which does
   not forward caller options and is therefore unaffected.
-- `repo/decorators/security/security.go:gate.scoped` — builds the option list
+- `crud/decorators/security/security.go:gate.scoped` — builds the option list
   that carries the caller's paging through.
-- `repo/basic/repository.go:repository.GetAll` — returns everything only when no
+- `crud/sqlrepo/repository.go:repository.GetAll` — returns everything only when no
   paging option is present; this is the asymmetry.
-- `repo/basic/repository.go:repository.DeleteAll` /
-  `repo/basic/repository.go:repository.UpdateAll` — no `LIMIT`, ever.
+- `crud/sqlrepo/repository.go:repository.DeleteAll` /
+  `crud/sqlrepo/repository.go:repository.UpdateAll` — no `LIMIT`, ever.
 - `crud/options.go:Options.Resolved` — why `Unpaged()` alone would not fully
   close it.
 
@@ -103,14 +103,14 @@ While this is open, do not:
 The surrounding behaviour is tested; the hole itself is not.
 
 - `TestUpdateAllInspectsEveryRowItIsAboutToWrite` in
-  `repo/decorators/security/updateall_test.go` — asserts the intended invariant
+  `crud/decorators/security/updateall_test.go` — asserts the intended invariant
   for the no-paging case.
-- `TestInspectAbortsTheWholeCall` in `repo/decorators/security/edge_test.go`.
+- `TestInspectAbortsTheWholeCall` in `crud/decorators/security/edge_test.go`.
 - `TestUnscopedDeleteAllIsRefused` in
-  `repo/decorators/security/security_test.go` and
+  `crud/decorators/security/security_test.go` and
   `TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt` in
-  `repo/decorators/security/updateall_test.go`.
-- `TestGetAllIsNotCappedByMaxLimit` in `repo/basic/paging_edge_test.go` — the
+  `crud/decorators/security/updateall_test.go`.
+- `TestGetAllIsNotCappedByMaxLimit` in `crud/sqlrepo/paging_edge_test.go` — the
   neighbouring decision that `GetAll` without paging options really does return
   everything, which is what the decorators that read a whole set in order to
   check it depend on.

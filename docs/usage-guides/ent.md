@@ -47,7 +47,7 @@ about your existing ent code changes.
 Per entity, forever:
 
 ```go
-var Users = basic.Define[ent.User, int64, store.UserUpdate](entuser.Table)
+var Users = sqlrepo.Define[ent.User, int64, store.UserUpdate](entuser.Table)
 
 app.Use("/users", crudfiber.New(Users.Bind(src)).Routes())
 ```
@@ -424,18 +424,18 @@ follows on its own.
 
 ```bash
 go get github.com/shardit-io/vv                 # the library
-go get github.com/shardit-io/vv/http/crudfiber  # …and your HTTP framework
-go get github.com/shardit-io/vv/rpc/crudgrpc    # …or gRPC instead
+go get github.com/shardit-io/vv/crud/http/crudfiber  # …and your HTTP framework
+go get github.com/shardit-io/vv/crud/rpc/crudgrpc    # …or gRPC instead
 go get github.com/shardit-io/vv/auth/authjwt   # …and JWT, if that is how you authenticate
-go get github.com/shardit-io/vv/http/authgin   # …plus the auth middleware for your framework
+go get github.com/shardit-io/vv/auth/http/authgin   # …plus the auth middleware for your framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
 is a module of its own in the same repository, so you take the Fiber binding or
-the Gin binding — `.../http/crudgin` — and neither drags the other in. If you
-are on neither, take `.../http/crudnet`: it is `net/http` and imports nothing, so
+the Gin binding — `.../crud/http/crudgin` — and neither drags the other in. If you
+are on neither, take `.../crud/http/crudnet`: it is `net/http` and imports nothing, so
 it ships in the library and there is no second `go get` at all. If you are not
-on HTTP, `.../rpc/crudgrpc` is the same API on gRPC and brings grpc, protobuf and
+on HTTP, `.../crud/rpc/crudgrpc` is the same API on gRPC and brings grpc, protobuf and
 genproto — three requires and one decision, because no consumer of one of them
 can avoid the other two. On ent
 over `database/sql` there is no driver package to add either: `crudsql` is part
@@ -444,9 +444,9 @@ of the library.
 ```go
 import (
     "github.com/shardit-io/vv/crud"
-    "github.com/shardit-io/vv/repo/basic"
-    "github.com/shardit-io/vv/adapter/crudsql"
-    "github.com/shardit-io/vv/http/crudfiber"   // or .../http/crudgin, .../http/crudnet
+    "github.com/shardit-io/vv/crud/sqlrepo"
+    "github.com/shardit-io/vv/crud/adapter/crudsql"
+    "github.com/shardit-io/vv/crud/http/crudfiber"   // or .../crud/http/crudgin, .../crud/http/crudnet
 )
 ```
 
@@ -581,7 +581,7 @@ So:
 ```go
 import entuser "myapp/ent/user"
 
-var Users = basic.Define[ent.User, int64, store.UserUpdate](entuser.Table)
+var Users = sqlrepo.Define[ent.User, int64, store.UserUpdate](entuser.Table)
 ```
 
 `Define` validates eagerly — a broken mapping panics at package initialisation,
@@ -594,7 +594,7 @@ and `in`-lists take it, preloads index by it, and the DSL turns the string a
 client sends into one. Two things differ from an `int64` key:
 
 ```go
-var Rooms = basic.Define[ent.Room, uuid.UUID, store.RoomUpdate](entroom.Table)
+var Rooms = sqlrepo.Define[ent.Room, uuid.UUID, store.RoomUpdate](entroom.Table)
 ```
 
 The ID type parameter is `uuid.UUID`, and on a hand-written model struct the tag
@@ -765,9 +765,29 @@ the service, then `crudfiber.ServingFor(svc, store.UserMapper{})`.
 
 ## 11. Mount it
 
+The database itself is a configuration file rather than a constant. `vvdb` takes
+one struct with `yaml` and `env` tags and answers a `*sql.DB` for PostgreSQL,
+MySQL, MariaDB or SQLite — the driver stays your own blank import, and ent takes
+the handle exactly as it does today:
+
+```yaml
+db:
+  engine: postgres
+  host: localhost
+  port: 5432
+  user: vv
+  password: vv
+  name: app
+  pool: { max_open: 20 }
+```
+
+
 ```go
 func main() {
-    db, _ := sql.Open("pgx", dsn)
+    // vvdb builds the connection string and sizes the pool from a config file;
+    // the handle stays yours and ent gets the same one vv will use. Nothing in
+    // the library opens a connection ([[D-057]]).
+    db := vvdb.MustOpen(cfg.DB)
     client := ent.NewClient(ent.Driver(entsql.OpenDB(dialect.Postgres, db)))
     src := store.New(client, crud.Postgres{})
 
@@ -1016,8 +1036,8 @@ There are two places to say it, and which one is right depends on whose fact it
 is. A rule about the model goes on the blueprint, once:
 
 ```go
-var Articles = basic.Define[Article, int64, ArticleUpdate]("articles",
-    basic.RelationScope("Comments", crud.Eq("Published", true)))
+var Articles = sqlrepo.Define[Article, int64, ArticleUpdate]("articles",
+    sqlrepo.RelationScope("Comments", crud.Eq("Published", true)))
 ```
 
 The path and the column are names, and a declaration that narrows nothing because
@@ -1025,7 +1045,7 @@ somebody renamed one reads as protection and is not. Where the metamodel covers
 them, spell them as identifiers instead and a rename becomes a build failure:
 
 ```go
-basic.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Published.Eq(true)))
+sqlrepo.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Published.Eq(true)))
 ```
 
 The path comes from the root's metamodel, the predicate from the target's own —

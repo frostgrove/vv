@@ -16,11 +16,17 @@
 //
 // # What is not here
 //
-// The status table, the response envelope and the Renderer seam stay in
-// http/crudhttp. The test for the shared half is whether a non-HTTP transport
-// can implement it without importing net/http, and a renderer returning an
-// http.Header fails it. Something HTTP-shaped wearing a neutral name is worse
-// than an honest HTTP package.
+// The status table, the response envelope and the Renderer seam are not here.
+// The test for the shared half is whether a non-HTTP transport can implement it
+// without importing net/http, and a renderer returning an http.Header fails it.
+// Something HTTP-shaped wearing a neutral name is worse than an honest HTTP
+// package.
+//
+// They are in porthttp, one directory down — not in a subsystem's binding, which
+// is where they used to be. The auth middleware answers a 401 through the same
+// table, and reaching it through crudhttp made a token check depend on the SQL
+// repository ([[D-059]]). Nothing in this package imports net/http; porthttp is
+// where that import is allowed to start.
 //
 // # Four questions this package was asked before it was written
 //

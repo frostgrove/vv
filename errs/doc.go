@@ -11,7 +11,7 @@
 //
 // No transport type. The test is whether a non-HTTP transport can implement an
 // interface without importing net/http; a renderer returning an http.Header
-// cannot, so the renderer seam lives in http/crudhttp and not here ([[D-045]]).
+// cannot, so the renderer seam lives in port/porthttp and not here ([[D-045]], [[D-059]]).
 //
 // No storage type. A driver error reaches [Detail] as a plain error and is
 // never named. Nothing in this package knows what a SQLSTATE is.

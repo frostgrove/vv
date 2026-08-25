@@ -22,7 +22,7 @@ over status codes.
 
 ```go
 articles := remote.New[Article, int64, ArticleInput](
-    crudhttp.Transport("https://content.internal/articles"))
+    remotehttp.Transport("https://content.internal/articles"))
 
 page, err := articles.Get(ctx,
     crud.Where(crud.Eq("Status", "draft")),
@@ -39,7 +39,7 @@ articles := remote.New[Article, int64, ArticleInput](
 
 `New` panics when the model cannot be described, when its key does not match
 `ID`, or when the patch DTO would empty a column — the same start-up failures
-`basic.Define` answers with, and for the same reason. `TryNew` is the same
+`sqlrepo.Define` answers with, and for the same reason. `TryNew` is the same
 without the panic.
 
 ## What you get
@@ -160,8 +160,8 @@ type ArticleInput struct {
 
 | Transport | Where | Options |
 |---|---|---|
-| `crudhttp.Transport(baseURL, …)` | `vv/http/crudhttp` | `WithClient(*http.Client)`, `WithRequestHook(func(*http.Request) error)` |
-| `crudgrpc.Transport(conn, name, …)` | `vv/rpc/crudgrpc` | `WithVocabulary(*errs.Codes)`, `WithCallOptions(…)` |
+| `remotehttp.Transport(baseURL, …)` | `vv/crud/http/crudhttp` | `WithClient(*http.Client)`, `WithRequestHook(func(*http.Request) error)` |
+| `crudgrpc.Transport(conn, name, …)` | `vv/crud/rpc/crudgrpc` | `WithVocabulary(*errs.Codes)`, `WithCallOptions(…)` |
 
 A transport lives with the binding it calls, so the table that turns a status or
 a code back into a class sits in the same file as the one that produced it
@@ -174,7 +174,7 @@ whatever it serves with, and the three HTTP bindings register the same routes.
 `Accept-Language` goes:
 
 ```go
-crudhttp.Transport(base, crudhttp.WithRequestHook(func(r *http.Request) error {
+remotehttp.Transport(base, remotehttp.WithRequestHook(func(r *http.Request) error {
     r.Header.Set("Authorization", "Bearer "+token)
     return nil
 }))

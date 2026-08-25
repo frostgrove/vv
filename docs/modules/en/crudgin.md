@@ -1,11 +1,11 @@
 # crudgin — a full CRUD API on Gin
 
 ```go
-import "github.com/shardit-io/vv/http/crudgin"
+import "github.com/shardit-io/vv/crud/http/crudgin"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/http/crudgin
+go get github.com/shardit-io/vv/crud/http/crudgin
 ```
 
 **Module:** its own — so a consumer on Fiber, Echo or `net/http` never takes Gin

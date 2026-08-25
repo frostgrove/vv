@@ -7,15 +7,24 @@ Supersedes [[D-034]], which is right about the rule and wrong about the address.
 Phase 5 moved the shared half, so D-034 is history and this is what the tree
 obeys.
 
+**Narrowed by [[D-059]], on the same test asked one step wider.** This decision
+splits transport-neutral from HTTP. D-059 splits what is left: the part of the
+HTTP half that belongs to *no* subsystem — the status table, the envelope, the
+`Renderer` seam, the body decode, the raw-body fallback — is `port/porthttp`, and
+`crud/http/crudhttp` keeps only what is HTTP *and* CRUD. Every file named below
+under `crud/http/crudhttp` that D-059 lists has moved; `crudhttp` re-exports all
+of it, so the rule and the exported surface are both unchanged. Read the
+addresses below as D-059 leaves them.
+
 ## The decision
 
-D-034 says everything shared *must come from `http/crudhttp`*. That was true
+D-034 says everything shared *must come from `crud/http/crudhttp`*. That was true
 while every binding was HTTP. A gRPC binding breaks it literally: gRPC cannot
 implement a renderer returning `(status int, header http.Header, body any)`, so
 either gRPC re-derives the mapping — the exact duplication D-034 exists to
 prevent — or the shared half moves somewhere with no `net/http` in it.
 
-It moves to `port`. `http/crudhttp` keeps what is genuinely HTTP: the status
+It moves to `port`. `crud/http/crudhttp` keeps what is genuinely HTTP: the status
 table, the response body, the header. `port` holds what is not: the commands,
 the `Service` interface, the `Mapper`, the code vocabulary.
 
@@ -34,9 +43,11 @@ same measurement with a longer lever.
 can a non-HTTP transport implement this interface without importing `net/http`?
 A renderer returning an `http.Header` cannot be implemented by gRPC, so it is
 not the shared half — it is the HTTP half wearing a neutral name. That is why
-the renderer seam stays in `http/crudhttp` and does not migrate to `errs`, and
+the renderer seam stays on the HTTP side and does not migrate to `errs`, and
 it is worth saying because the obvious place to put a renderer is next to the
-errors it renders.
+errors it renders. [[D-059]] later asked the same question about the *subsystem*
+rather than the protocol and moved the seam to `port/porthttp` — still HTTP,
+still not `errs`, and no longer CRUD's.
 
 **Because type aliases make it a move rather than a break.** `crudfiber.Repository`
 and `crudfiber.Envelope` are already aliases; re-pointing an alias changes no
@@ -61,19 +72,23 @@ protocol without a second status table.
 
 A client is the same shape read backwards, and it inherits this rule rather than
 restating it. `port.FaultFrom` rebuilds a fault from a kind, a code, a list of
-violations and a partial marker; `crudhttp.KindForStatus` and
+violations and a partial marker; `porthttp.KindForStatus` and
 `crudgrpc.KindForCode` are two tables that produce that kind, and each lives in
-the same file as the forward table it inverts.
+the same package as the forward table it inverts.
 
 That placement is the whole of it. A client that kept its own copy of either
 table would agree with the server until the first time one of them gained a row,
 and the disagreement would be a status silently reclassified — which is the
 failure this decision exists to prevent, arriving from the other direction.
 
-It is also why the two client transports live beside their bindings rather than
-in `remote`: a transport lives with the binding it calls. On the gRPC side that
-is forced, since `remote` is in the root module and may not import grpc; on the
-HTTP side it is a choice, made so the rule is one sentence instead of two.
+This was stated as *a transport lives beside the binding it calls*, and it held
+while the tables were beside the binding. [[D-059]] moved the HTTP tables to
+`port/porthttp`, so the HTTP client transport moved to `remote/remotehttp` and
+reads them from there; the gRPC one stayed in `crud/rpc/crudgrpc`, because
+`remote` is in the root module and may not import grpc, so moving it would cost a
+module for one file. The rule that survives is the one that mattered: **one copy
+of each table, and the inverse never gets its own.** [[D-058]] records the
+asymmetry.
 
 `remote` itself is transport-neutral by the same test [[D-034]]'s successor
 applies here: nothing in it names a status, a header, a code or a connection,
@@ -90,7 +105,8 @@ and its seam is a `Call` — the mirror of `port`'s commands.
   survives verbatim.
 - Do not give a binding its own error codes so it can skip the chain — see
   [[D-043]].
-- Do not move the renderer out of `http/crudhttp`. It is HTTP-shaped on purpose.
+- Do not move the renderer out of the HTTP half. It is HTTP-shaped on purpose —
+  `port/porthttp` since [[D-059]], and never `port` itself or `errs`.
 - Do not break a binding's exported surface while moving. Alias, as D-034 did.
 
 ## Where it lives
@@ -106,7 +122,7 @@ The neutral half, all of it in the root module and all of it stdlib plus
 - `port/mapper.go` — `Mapper` and `Identity`.
 - `port/path.go` — `Fields`, the service's hop, and `Hops`, which a binding
   wires ahead of the raw-body fallback.
-- `port/repository.go` — `Repository`, moved from `http/crudhttp`.
+- `port/repository.go` — `Repository`, moved from `crud/http/crudhttp`.
 - `port/model.go` — `Sanitize` / `ClearGenerated`, the create-time clearing.
 - `port/request.go` — `CoerceID` / `NarrowForCount` / `NarrowForEntity`.
 - `port/sentinel.go` — `ErrBadRequest` and its three builders.
@@ -114,7 +130,7 @@ The neutral half, all of it in the root module and all of it stdlib plus
   `CodeForKind`, `DefaultMessage`, and the precedence table behind them.
 - `port/violations.go` — `Violations`, `ViolationOptions` and `MaxViolations`:
   the copy, the path chain, the sort, the cap and the message ladder. Moved down
-  from `http/crudhttp` at phase 9 — see *The named follow-up*, which this
+  from `crud/http/crudhttp` at phase 9 — see *The named follow-up*, which this
   discharges.
 - `port/locale.go` — `WithLocale`, `LocaleFrom` and `FirstLanguageTag`. One
   context key for every transport, because two would each be invisible to the
@@ -122,37 +138,41 @@ The neutral half, all of it in the root module and all of it stdlib plus
 
 The HTTP half, unchanged in what it exports:
 
-- `http/crudhttp/errors.go:Status` / `:StatusFor` — the status table, over
-  `port`'s answer.
-- `http/crudhttp/render.go` — the `Renderer` seam and `EnvelopeRenderer`: the
+- `port/porthttp/errors.go:Status` / `:StatusFor` — the status table, over
+  `port`'s answer. In `crud/http/crudhttp` until [[D-059]].
+- `port/porthttp/render.go` — the `Renderer` seam and `EnvelopeRenderer`: the
   status, the envelope, the `Retry-After` header, the 500 short-circuit and
-  every `RenderOption`. The seam stays here on purpose — see the second *Why*
-  above — while the pipeline it used to own is `port.Violations`.
-- `http/crudhttp/envelope.go`, `:bodyindex.go` — the body and the fallback.
-- `http/crudhttp/repository.go`, `:model.go`, `:request.go`, `:errors.go` — the
-  aliases and one-line forwarders that keep every current signature compiling,
-  now including `WithLocale`, `LocaleFrom` and `AcceptLanguage`.
+  every `RenderOption`. The seam stays on the HTTP side on purpose — see the
+  second *Why* above — while the pipeline it used to own is `port.Violations`.
+- `port/porthttp/envelope.go`, `:bodyindex.go`, `:decode.go`, `:body.go` — the
+  body, the fallback, the table read backwards, and the JSON decode.
+- `crud/http/crudhttp/repository.go`, `:model.go`, `:request.go` — what is HTTP
+  *and* CRUD: the `port.Repository` alias, the create-time clearing, and the
+  request shapes.
+- `crud/http/crudhttp/porthttp.go` — the aliases and one-line forwarders that
+  keep every current signature compiling, including `WithLocale`, `LocaleFrom`
+  and `AcceptLanguage`.
 
 The four shells — three HTTP and one that is not:
 
-- `http/crudfiber/handler.go`, `http/crudgin/handler.go`,
-  `http/crudnet/handler.go` — `HandlerFor[M, ID, U, In]`, the `Handler` alias
+- `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`,
+  `crud/http/crudnet/handler.go` — `HandlerFor[M, ID, U, In]`, the `Handler` alias
   over it, and the four constructors `New` / `NewFor` / `Serving` /
   `ServingFor`.
-- `http/crudfiber/options.go` and its two counterparts — `collect`, `service`,
+- `crud/http/crudfiber/options.go` and its two counterparts — `collect`, `service`,
   `refuseServiceOptions`, `rendererFor`.
-- `rpc/crudgrpc/handler.go`, `:options.go`, `:service.go` — the same four
+- `crud/rpc/crudgrpc/handler.go`, `:options.go`, `:service.go` — the same four
   constructors and the same option set on gRPC, with a `context.Context` where
   the HTTP ones take a request.
-- `rpc/crudgrpc/status.go` — the renderer this transport needs, which is not
-  and cannot be `crudhttp.Renderer` ([[D-052]]).
+- `crud/rpc/crudgrpc/status.go` — the renderer this transport needs, which is not
+  and cannot be `porthttp.Renderer` ([[D-052]]).
 
 [[FL-015]] traces one request through all of it.
 
 **The named follow-up, discharged at phase 9.** The violations pipeline —
 `EnvelopeRenderer.violations`, the chain application, the sort, the cap and the
 message ladder — is equally neutral, and the instruction was: move it when
-`rpc/crudgrpc` exists, not before, on [[D-048]]'s count rule. It exists, and the
+`crud/rpc/crudgrpc` exists, not before, on [[D-048]]'s count rule. It exists, and the
 pipeline is now `port.Violations` with `port.ViolationOptions` naming what it
 needs. The second implementation settled two things the first could not: the
 transport's own guess is a separate `Fallback` field rather than a last
@@ -181,7 +201,7 @@ on one side and an `ErrorInfo` metadata key on the other.
   `test/integration/http_port_test.go` — the same claim against a live database,
   across every engine.
 - The triplet suites keep their meaning: removing the `crud.ErrNotFound` arm from
-  `crudhttp.StatusFor` fails `TestRepositoryErrorsBecomeStatusCodes`,
+  `porthttp.StatusFor` fails `TestRepositoryErrorsBecomeStatusCodes`,
   `TestDeletingNothingIs404ForOneRowAndZeroForASet` and
   `TestPutIsNotAWayAroundAllowClientID` in **all three** packages, identically.
   Verified by breaking it.
@@ -198,10 +218,10 @@ on one side and an `ErrorInfo` metadata key on the other.
   the measurement is worth spelling out because the claim has a strict and a
   loose reading. Phase 9 landed in three parts. The first executed the move this
   decision scheduled above — `port/violations.go`, `port/locale.go` — and is
-  behaviour-preserving: every existing test in `http/crudhttp` and in the three
+  behaviour-preserving: every existing test in `crud/http/crudhttp` and in the three
   binding suites passes **unedited**, and `errs/` and `errs/sqlerr/` are
-  untouched. The second wrote `rpc/crudgrpc`, and its diff over `errs/`,
-  `errs/sqlerr/`, `port/` **and** `http/crudhttp/` is empty: a whole binding on
+  untouched. The second wrote `crud/rpc/crudgrpc`, and its diff over `errs/`,
+  `errs/sqlerr/`, `port/` **and** `crud/http/crudhttp/` is empty: a whole binding on
   a second protocol, with no line changed in anything shared. The third added
   message catalogues to `errs`, which is additive and touches no transport. So
   the strict reading holds, once the move this decision itself ordered has
@@ -221,10 +241,10 @@ on one side and an `ErrorInfo` metadata key on the other.
   the same service value `http_port_test.go` mounts on the three HTTP bindings,
   answering over gRPC against every live engine.
 - `TestALocaleSetByOneTransportIsReadByAnother` —
-  `http/crudhttp/locale_test.go` — the bug the move could have introduced: a
+  `port/porthttp/locale_test.go` — the bug the move could have introduced: a
   second context key left behind in `crudhttp` would be invisible to a gRPC
   renderer, and both packages' own suites would still have passed.
 
 ## See also
 
-[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]] [[D-051]] [[D-052]] [[D-053]] [[FL-018]]
+[[D-034]] [[D-022]] [[D-015]] [[D-043]] [[D-033]] [[D-051]] [[D-052]] [[D-053]] [[D-058]] [[D-059]] [[FL-018]]

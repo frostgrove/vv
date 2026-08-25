@@ -4,8 +4,8 @@ package entstore
 
 import (
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/decorators/specs"
 	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/repo/decorators/specs"
 	"github.com/shardit-io/vv/test/ent"
 	"time"
 )

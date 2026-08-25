@@ -1,12 +1,12 @@
 # authfiber — authenticate a Fiber v3 request
 
 ```go
-import "github.com/shardit-io/vv/http/authfiber"
+import "github.com/shardit-io/vv/auth/http/authfiber"
 ```
 
-**Module:** `github.com/shardit-io/vv/http/authfiber` — one dependency,
+**Module:** `github.com/shardit-io/vv/auth/http/authfiber` — one dependency,
 `github.com/gofiber/fiber/v3`
-· **Depends on:** `auth`, `authhttp`, `crudhttp`, fiber v3
+· **Depends on:** `auth`, `authhttp`, `porthttp`, fiber v3
 
 It does **not** require [crudfiber](crudfiber.md) ([[D-051]]).
 
@@ -82,7 +82,7 @@ so a principal in `Locals` is invisible to every policy. Both spellings compile,
 both look right in review, and only one of them narrows a query.
 
 `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` in
-`http/authfiber/middleware_test.go` is what fails when it is wrong.
+`auth/http/authfiber/middleware_test.go` is what fails when it is wrong.
 
 ## Everything else
 

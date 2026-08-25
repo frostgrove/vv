@@ -134,7 +134,7 @@ func (r *Relation) fieldValue(base unsafe.Pointer) reflect.Value {
 
 var tableRegistry sync.Map // reflect.Type -> string
 
-// RegisterTable pins the table name of a model type. basic.Define calls it, so
+// RegisterTable pins the table name of a model type. sqlrepo.Define calls it, so
 // declaring a repository is usually enough for relations to resolve.
 func RegisterTable[M any](table string) {
 	var zero M

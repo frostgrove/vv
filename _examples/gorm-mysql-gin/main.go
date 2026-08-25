@@ -10,7 +10,7 @@
 // between.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/http/crudgin
+//	go get github.com/shardit-io/vv/crud/http/crudgin
 //	go get gorm.io/gorm
 //	go get gorm.io/driver/mysql
 //
@@ -29,12 +29,13 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudgin"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudgin"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/shardit-io/vv/vvdb"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
@@ -60,18 +61,29 @@ func (Product) TableName() string { return "gorm_mysql_products" }
 // Products is validated when this package initialises: a mistyped tag, a DTO
 // field the model lacks or a wrong ID type fails here rather than at request
 // time.
-var Products = basic.Define[Product, int64, ProductUpdate]("gorm_mysql_products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[Product, int64, ProductUpdate]("gorm_mysql_products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "vv:vv@tcp(localhost:53306)/vv?parseTime=true&loc=UTC"
+// The database, described once. gorm takes a string rather than a handle, so
+// this is vvdb's first level and nothing more — parseTime is vvdb's default
+// and loc is the one parameter this example wants on top of it.
+var database = vvdb.Config{
+	Engine: vvdb.MySQL, Host: "localhost", Port: 53306,
+	User: "vv", Password: "vv", Name: "vv",
+	Params: map[string]string{"loc": "UTC"},
+}
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
+	dsn, err := vvdb.MySQLDSN(database)
+	if err != nil {
+		log.Fatal(err)
+	}
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)

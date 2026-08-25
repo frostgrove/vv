@@ -116,7 +116,7 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
   `Unauthenticatedf`.
 - `port/violations.go:55` — the synthesised violation that copies
   `Fault.Message`. Unchanged, and the reason this decision is written down.
-- `http/authhttp/authhttp.go` — `Refuse`, and the paragraph on
+- `auth/http/authhttp/authhttp.go` — `Refuse`, and the paragraph on
   `WWW-Authenticate`.
 - `auth/authjwt/parser.go` — `Parse`, where every verification failure collapses
   to one answer.
@@ -137,7 +137,7 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
   `Fault.Unwrap`.
 - `TestEveryRefusalIsTheSameAnswerToAClient` — `auth/authjwt/parser_test.go`.
 - `TestTheRefusalBodyIsTheSharedEnvelopeAndNamesNoReason` — carried file-for-file
-  by `http/authnet`, `http/authgin` and `http/authfiber`.
+  by `auth/http/authnet`, `auth/http/authgin` and `auth/http/authfiber`.
 - `TestAStoreFailureIsNotARefusal` — `auth/apikey/apikey_test.go`: an outage is
   the store's own error and renders as the 500 it is, not as a bad key.
 

@@ -2,14 +2,15 @@ go 1.26.6
 
 use (
 	.
-	./adapter/crudpgx
 	./auth/authjwt
-	./http/authfiber
-	./http/authgin
-	./http/crudfiber
-	./http/crudgin
-	./rpc/authgrpc
-	./rpc/crudgrpc
+	./auth/http/authfiber
+	./auth/http/authgin
+	./auth/rpc/authgrpc
+	./crud/adapter/crudpgx
+	./crud/http/crudfiber
+	./crud/http/crudgin
+	./crud/rpc/crudgrpc
 	./test
-	./tools/vvcfg
+	./utils/vvcfg
+	./vvdb/dbpgx
 )

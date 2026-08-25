@@ -1,7 +1,7 @@
 # faults — the decorator that names the field
 
 ```go
-import "github.com/shardit-io/vv/repo/decorators/faults"
+import "github.com/shardit-io/vv/crud/decorators/faults"
 ```
 
 **Module:** root · **Depends on:** `crud`, `errs`, `probe`

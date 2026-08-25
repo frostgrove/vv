@@ -27,7 +27,7 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		depth:    2,
 		withDTO:  true,
 		withMeta: true,
-		specsPkg: "github.com/shardit-io/vv/repo/decorators/specs",
+		specsPkg: "github.com/shardit-io/vv/crud/decorators/specs",
 		crudPkg:  "github.com/shardit-io/vv/crud",
 		portPkg:  DefaultPortPkg,
 		errsPkg:  DefaultErrsPkg,
@@ -255,7 +255,7 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 	}
 }
 
-// A relation group carries its own path as a handle, so basic.RelationScope,
+// A relation group carries its own path as a handle, so sqlrepo.RelationScope,
 // crud.Preload and a relation policy take an identifier the compiler resolves
 // instead of a string literal.
 func TestRelationGroupsCarryATypedPath(t *testing.T) {
@@ -829,7 +829,7 @@ type Doc struct {
 	dto := decl(t, out, "type DocUpdate struct {")
 	for _, f := range []string{"Version", "Revision"} {
 		if declares(dto, f) {
-			t.Fatalf("%s is in the update DTO; basic.Define will panic on it:\n%s", f, dto)
+			t.Fatalf("%s is in the update DTO; sqlrepo.Define will panic on it:\n%s", f, dto)
 		}
 	}
 	if !declares(dto, "Title") {

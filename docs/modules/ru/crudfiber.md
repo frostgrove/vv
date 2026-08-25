@@ -1,11 +1,11 @@
 # crudfiber — полноценный CRUD API на Fiber v3
 
 ```go
-import "github.com/shardit-io/vv/http/crudfiber"
+import "github.com/shardit-io/vv/crud/http/crudfiber"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/http/crudfiber
+go get github.com/shardit-io/vv/crud/http/crudfiber
 ```
 
 **Модуль:** отдельный — чтобы потребитель на Gin, Echo или `net/http` никогда не

@@ -27,12 +27,13 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudnet"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudnet"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/shardit-io/vv/vvdb"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
@@ -52,19 +53,25 @@ type Product struct {
 // Products is validated when this package initialises: a mistyped tag, a DTO
 // field the model lacks or a wrong ID type fails here rather than at request
 // time.
-var Products = basic.Define[Product, int64, ProductUpdate]("sql_nethttp_products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[Product, int64, ProductUpdate]("sql_nethttp_products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
+// The database, described once. vvdb builds the string and sizes the pool; the
+// driver is the blank import above, which is why vvdb needs no dependency of
+// its own.
+var database = vvdb.Config{
+	Engine: vvdb.Postgres, Host: "localhost", Port: 55432,
+	User: "vv", Password: "vv", Name: "vv", SSLMode: "disable",
+}
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := vvdb.Open(database)
 	if err != nil {
 		log.Fatal(err)
 	}

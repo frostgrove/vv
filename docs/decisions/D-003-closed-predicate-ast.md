@@ -21,7 +21,7 @@ imports `crud`; an unexported method makes it impossible to write such a node at
 all, and the audit is `grep -rn 'crud.Raw'` rather than a review of every type
 in the tree.
 
-The other half is the wire. `query/` compiles an untrusted JSON document into
+The other half is the wire. `crud/query/` compiles an untrusted JSON document into
 predicates. If the AST were open, "which node types can a compiled document
 produce" would be an ongoing question. Closed, it is answered once.
 
@@ -70,12 +70,12 @@ fail the statement.
 - `TestRawEscapesAQuestionMarkForPostgresJSONBOperators` in
   `test/integration/dialect_edge_test.go` — the `??` escape against a live
   PostgreSQL.
-- `TestPayloadsInEveryNamePositionAreRefused` in `query/hostile_test.go` — a
+- `TestPayloadsInEveryNamePositionAreRefused` in `crud/query/hostile_test.go` — a
   wire document cannot get text into a name position.
-- `TestPayloadsInValuePositionsAreBoundNotWritten` in `query/hostile_test.go`.
-- `TestOneClauseCannotEscapeAnother` in `query/hostile_test.go` — would catch a
+- `TestPayloadsInValuePositionsAreBoundNotWritten` in `crud/query/hostile_test.go`.
+- `TestOneClauseCannotEscapeAnother` in `crud/query/hostile_test.go` — would catch a
   node that renders unbalanced parentheses.
-- `TestWildcardsInAPatternAreEscaped` in `query/hostile_test.go`.
+- `TestWildcardsInAPatternAreEscaped` in `crud/query/hostile_test.go`.
 - `TestQuotedIdentifiersSurviveEveryClause` in
   `test/integration/dialect_edge_test.go`.
 

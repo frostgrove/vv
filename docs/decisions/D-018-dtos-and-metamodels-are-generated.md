@@ -33,7 +33,7 @@ DTO still compiles, a string filter still compiles, and the break shows up as a
 400 in production. Generated code breaks the build.
 
 **Why the relation path is generated too, and not only the columns.** The same
-argument, on the half that was left out. `basic.RelationScope("Comments", …)` and
+argument, on the half that was left out. `sqlrepo.RelationScope("Comments", …)` and
 a relation policy are declarations whose failure mode is worse than a 400:
 rename the relation and the declaration still compiles, still reads as
 protection, and narrows nothing at all. `Path()` makes that rename a build
@@ -134,11 +134,11 @@ holder or somebody else's bookkeeping, never a column. That is what keeps ent's
   to declare it.
 - `internal/codegen/codegen.go:dtoType` — the `*T` / `crud.Opt[T]` decision.
 - `internal/codegen/codegen.go:attrType` — `Str` / `Ord` / `Cmp` / `Attr`.
-- `repo/decorators/specs/metamodel.go:Rel` — the relation handle, its three
+- `crud/decorators/specs/metamodel.go:Rel` — the relation handle, its three
   accessors and the reason there are three.
-- `repo/decorators/specs/metamodel.go:bindRel` — the two refusals: a handle at
+- `crud/decorators/specs/metamodel.go:bindRel` — the two refusals: a handle at
   the root, and a handle whose declared target is not where the relation lands.
-- `repo/decorators/specs/metamodel.go:relType` — what separates the handle from
+- `crud/decorators/specs/metamodel.go:relType` — what separates the handle from
   a group that merely embeds one. Embedding promotes the setters, so without it
   the root metamodel reads its first relation group as a misplaced handle.
 - `internal/codegen/codegen.go:wellKnownEmbeds` — `gorm.Model`.
@@ -187,9 +187,9 @@ holder or somebody else's bookkeeping, never a column. That is what keeps ent's
 - `TestARelationHandleAnswersItsCanonicalPath`,
   `TestARelationHandleDeclaringTheWrongTargetIsRefused` and
   `TestARelationHandleAtTheRootIsRefused` in
-  `repo/decorators/specs/edge_test.go` — the group is declared under a Go field
+  `crud/decorators/specs/edge_test.go` — the group is declared under a Go field
   name that is *not* the relation's, so the path can only have come from binding.
-- `TestARelationScopeAcceptsAGeneratedPath` in `repo/basic/relscope_test.go` —
+- `TestARelationScopeAcceptsAGeneratedPath` in `crud/sqlrepo/relscope_test.go` —
   the other end of the seam, with the literal spelling of the same declaration as
   the control that the two render the identical statement.
 - `TestGeneratedDTOTypesFollowNullability` in `_examples/example/blog/blog_test.go` and

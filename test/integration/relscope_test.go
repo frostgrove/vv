@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // A scope is a WHERE clause, and a WHERE clause only ever constrains its own
@@ -20,9 +20,9 @@ import (
 // not in the driver: what is asserted here is the rows that come back.
 
 // egLiveParents narrows both ends: its own table, and the kids it reaches.
-var egLiveParents = basic.Define[EgParent, int64, struct{}]("eg_parents",
-	basic.Scope(crud.Ne("Name", "TOMBSTONE")),
-	basic.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
+var egLiveParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
+	sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE")),
+	sqlrepo.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
 
 func egSeedTree(t *testing.T, src crud.Source) {
 	t.Helper()
@@ -114,8 +114,8 @@ func TestARelationNobodyNarrowedIsStillReadWhole(t *testing.T) {
 			egWipe(t, tg.src)
 			egSeedTree(t, tg.src)
 
-			plain := basic.Define[EgParent, int64, struct{}]("eg_parents",
-				basic.Scope(crud.Ne("Name", "TOMBSTONE"))).Bind(tg.src)
+			plain := sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
+				sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE"))).Bind(tg.src)
 
 			got, err := plain.GetAll(ctx, crud.Preload("Kids"))
 			if err != nil {

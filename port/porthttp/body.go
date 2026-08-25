@@ -1,0 +1,116 @@
+package porthttp
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+
+	"github.com/shardit-io/vv/errs"
+	"github.com/shardit-io/vv/port"
+)
+
+// DecodeJSON reads a JSON body onto v. An empty body is not an error: POST
+// /count and POST /query both mean "no narrowing" when sent with no body.
+//
+// It decodes with encoding/json rather than a framework's binder because the
+// binders validate: a `binding:"required"` tag on the consumer's model would
+// start changing what the routes accept, and only under one transport.
+func DecodeJSON(r io.Reader, v any) error {
+	if r == nil {
+		return nil
+	}
+	_, err := DecodeJSONKeep(r, v)
+	return err
+}
+
+// MaxKeptBody caps the copy DecodeJSONKeep retains. Past it nothing is kept:
+// the raw-body fallback then declines and the path is marked approximate, which
+// is the honest outcome. Holding a megabyte of request per in-flight write so a
+// hypothetical error can name a field is the wrong trade.
+const MaxKeptBody = 64 << 10
+
+// DecodeJSONKeep decodes like [DecodeJSON] and hands back the bytes it decoded,
+// for the raw-body path fallback ([[D-043]]).
+//
+// The bytes are the caller's to keep: io.ReadAll allocates a fresh slice, so
+// nothing here aliases a framework buffer. A binding whose framework owns the
+// buffer — Fiber, whose c.Body() is documented valid only within the handler —
+// uses [KeepBody] instead.
+func DecodeJSONKeep(r io.Reader, v any) ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, MalformedBody(err)
+	}
+	if len(body) == 0 {
+		return nil, nil
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return KeepBody(body), MalformedBody(err)
+	}
+	return KeepBody(body), nil
+}
+
+// KeepBody returns a copy of b that outlives the handler, or nil when b is over
+// [MaxKeptBody].
+//
+// A copy and not a reference, and the roadmap has to say so because the obvious
+// version is a use-after-free: Fiber documents c.Body() as valid only within
+// the handler and crudfiber builds its app with a plain fiber.New(), so
+// Immutable is off. A stored reference surfaces as a corrupted field path under
+// load, which is the worst way for this to fail.
+func KeepBody(b []byte) []byte {
+	if len(b) == 0 || len(b) > MaxKeptBody {
+		return nil
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
+}
+
+// MalformedBody marks a body that would not decode. It is here rather than in
+// each binding so every transport agrees on the code as well as on the status
+// ([[D-045]], [[D-059]]).
+func MalformedBody(err error) error {
+	return port.BadRequestAs(errs.CodeMalformedBody, nil, "%s", err)
+}
+
+type ctxKey int
+
+const bodyKey ctxKey = iota
+
+// WithBody carries the retained request body to the renderer. One context key
+// for every binding, so the fallback works the same whichever framework
+// retained the bytes.
+func WithBody(ctx context.Context, body []byte) context.Context {
+	if len(body) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, bodyKey, body)
+}
+
+// BodyFrom answers the retained body, or nil.
+func BodyFrom(ctx context.Context) []byte {
+	if ctx == nil {
+		return nil
+	}
+	b, _ := ctx.Value(bodyKey).([]byte)
+	return b
+}
+
+// WithLocale carries the request's language to the renderer. The compatibility
+// hop over port.WithLocale.
+//
+// A forwarder and not a second key. The key is port's because a gRPC renderer
+// reads the same one, and two keys would each be invisible to the other: both
+// packages' tests would pass and the catalogue would answer in the default
+// locale on one protocol.
+func WithLocale(ctx context.Context, locale string) context.Context {
+	return port.WithLocale(ctx, locale)
+}
+
+// LocaleFrom answers the request's language, or "". The compatibility hop over
+// port.LocaleFrom.
+func LocaleFrom(ctx context.Context) string { return port.LocaleFrom(ctx) }

@@ -194,7 +194,7 @@ return auth.Unauthenticated("signature does not verify")
 ```
 
 - `errs.KindUnauthorized`, поэтому любая существующая таблица статусов отвечает
-  401 — `crudhttp.StatusFor` и `crudgrpc.CodeFor` умели это и раньше, новой
+  401 — `porthttp.StatusFor` и `crudgrpc.CodeFor` умели это и раньше, новой
   ветки не понадобилось;
 - оборачивает `ErrUnauthenticated`, поэтому `errors.Is` по-прежнему работает;
 - **причина никогда не попадает в тело.** Она едет в обёрнутой ошибке.

@@ -1,11 +1,11 @@
 # vvcfg — a configuration struct, loaded and validated at start-up
 
 ```go
-import "github.com/shardit-io/vv/tools/vvcfg"
+import "github.com/shardit-io/vv/utils/vvcfg"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/tools/vvcfg
+go get github.com/shardit-io/vv/utils/vvcfg
 ```
 
 **Module:** its own — cleanenv is a dependency and the root module takes none
@@ -59,7 +59,7 @@ type Validator interface{ Validate() error }
 
 **A configuration that is wrong should stop the process at start-up**, not
 surface as a confusing failure once traffic arrives ([[D-021]]). That is the same
-rule `basic.Define` follows for a broken model mapping and `probe.Full` follows
+rule `sqlrepo.Define` follows for a broken model mapping and `probe.Full` follows
 for an unknown table.
 
 ## The precedence

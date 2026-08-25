@@ -1,7 +1,7 @@
 # sqlfault — ошибка драйвера становится сбоем
 
 ```go
-import "github.com/shardit-io/vv/sqlfault"
+import "github.com/shardit-io/vv/crud/sqlfault"
 ```
 
 **Модуль:** корневой · **Зависит от:** `errs`, `errs/sqlerr`, `crud`, `catalog`

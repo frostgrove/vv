@@ -33,7 +33,7 @@ var sqliteConstraints = map[uint64]errs.Code{
 // with a number that means nothing; requiring the absence of a state before any
 // number is read is what [[D-046]] means by "a number is only trusted once the
 // state has said which engine is speaking", and it is the same guard
-// adapter/crudsql keeps.
+// crud/adapter/crudsql keeps.
 //
 // A constraint subcode the corpus never produced stays unclassified rather than
 // being guessed, and that has a cost worth naming: sqlfault.Integrity calls
@@ -41,7 +41,7 @@ var sqliteConstraints = map[uint64]errs.Code{
 // as crud.ErrConflict with no code at all. That is what phase 3 decided — the
 // sentinel gate stays the wider of the two, because narrowing it onto this table
 // would turn a duplicate key into a 500 on a subcode nobody has produced
-// ([[D-046]]). TestTheTwoGatesAnswerDifferentQuestions in sqlfault/gate_test.go
+// ([[D-046]]). TestTheTwoGatesAnswerDifferentQuestions in crud/sqlfault/gate_test.go
 // is where the divergence is written down, one case per cell of the 2x2.
 func sqlite(e *Err) (errs.Code, errs.Source, bool) {
 	if e.SQLState != "" {

@@ -1,6 +1,6 @@
 # FL-017 — A failed write becomes every violation it caused
 
-**Entry point:** `repo/decorators/faults/probe.go:enricher.probed`
+**Entry point:** `crud/decorators/faults/probe.go:enricher.probed`
 **Implements:** [[UC-017]] [[UC-004]] · **Governed by:** [[D-042]] [[D-041]] [[D-019]] [[D-009]] [[D-010]] [[D-011]] [[D-014]] [[D-032]] [[D-043]] [[D-044]] [[D-008]] [[D-021]] [[D-025]]
 
 [[FL-014]] carries a refused statement as far as a fault with **one** violation
@@ -14,26 +14,26 @@ keeps it and marks the answer incomplete, and nothing is ever invented
 
 ## The path
 
-1. **Declaration.** `basic.Blueprint.Bind` builds the middleware chain, and
+1. **Declaration.** `sqlrepo.Blueprint.Bind` builds the middleware chain, and
    `faults.Enrich` is last in it, so the layer underneath is the repository
-   itself. `repo/decorators/faults/probe.go:enricher.declare` runs then:
+   itself. `crud/decorators/faults/probe.go:enricher.declare` runs then:
 
-   - the datasource comes from `next.(crud.Sourced)` — `repo/basic/repository.go:repository.Source`.
+   - the datasource comes from `next.(crud.Sourced)` — `crud/sqlrepo/repository.go:repository.Source`.
      A `crud.Core` embedded in a decorator promotes only the interface's own
      methods, so a decorator that is *not* innermost does not forward it and the
      declaration refuses. `faults.WithSource` is the way out.
    - each wired handler is bound with `probe.Declarer.Declare`
-     (`probe/declare.go`), which refuses at start-up rather than at request time
+     (`crud/probe/declare.go`), which refuses at start-up rather than at request time
      ([[D-021]]): a table the catalog does not know (`probe.ErrUnknownTable`), a
      primary-key column that is not a row identity on its own
      (`probe.ErrKeyDoesNotIdentify`), an opt-out naming no constraint
      (`probe.ErrUnknownConstraint`).
-   - `probe/plan.go:candidatesFor` reads the catalog once and keeps every
+   - `crud/probe/plan.go:candidatesFor` reads the catalog once and keeps every
      constraint the probe can replay from a value.
 
 2. **A write runs, wrapped.** `enricher.Save` / `.SaveAll` / `.Update` build a
    `probe.Request` — `insertRequest` and `updateRequest` in
-   `repo/decorators/faults/probe.go` — and hand the write to
+   `crud/decorators/faults/probe.go` — and hand the write to
    `enricher.probed`. Under `probe.WithSavepoints()` on a transaction vv owns,
    `enricher.savepoint` takes one **before** the write through
    `crud.Beginner.Begin`, because a savepoint cannot be taken after the fact.
@@ -44,11 +44,11 @@ keeps it and marks the answer incomplete, and nothing is ever invented
    restored first (`Tx.Rollback`, which is `ROLLBACK TO SAVEPOINT`), and
    `Request.Recovered` records that it was.
 
-4. **`probe.Handler.Enrich`.** `probe/full.go:full.Enrich`.
+4. **`probe.Handler.Enrich`.** `crud/probe/full.go:full.Enrich`.
    `full.runs` answers the transaction matrix; `full.planFor`
-   (`probe/plan.go`) turns the candidates into terms; `full.duplicates`
-   (`probe/dup.go`) finds intra-payload duplicates with a map and no statement;
-   `full.statement` (`probe/sql.go`) renders one statement through
+   (`crud/probe/plan.go`) turns the candidates into terms; `full.duplicates`
+   (`crud/probe/dup.go`) finds intra-payload duplicates with a map and no statement;
+   `full.statement` (`crud/probe/sql.go`) renders one statement through
    `crud.NewSQL`; `full.run` sends it through `crud.ExecutorFor` under
    `context.WithTimeout`, and reads the answer **by position**.
 
@@ -115,13 +115,13 @@ instead ([[D-014]]).
 | `foreign_key` | `NOT EXISTS` over the parent | no referencing column was written; **any** referencing column is NULL |
 | `restrict` | `EXISTS` over the child, guarded by the value actually changing | the write is not an update; the referenced column was not written, or written NULL; `ON UPDATE` is `CASCADE`, `SET NULL` or `SET DEFAULT` |
 
-And, whatever the kind, `probe/plan.go:reproducible` drops four shapes the
+And, whatever the kind, `crud/probe/plan.go:reproducible` drops four shapes the
 catalog records flags for and nothing here can replay from a value: a **partial**
 index, a **prefix** key, an **expression** key part, and a **deferrable**
 constraint. Each of them would make the probe claim a check it did not perform.
 
 Nothing else is probed. CHECK constraints, NOT NULL, length, range and enum
-membership are named non-deliveries with reasons in `probe/doc.go` and
+membership are named non-deliveries with reasons in `crud/probe/doc.go` and
 [[D-042]].
 
 ## The transaction matrix
@@ -152,7 +152,7 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
   probe reports `foreign_key` on a field that is correct while the insert
   succeeds.
 - **[[D-011]] and [[D-019]] — the upsert skip set is the dialect's.**
-  `probe/plan.go:full.swallowed` asks `crud.UpsertScope`. PostgreSQL and SQLite
+  `crud/probe/plan.go:full.swallowed` asks `crud.UpsertScope`. PostgreSQL and SQLite
   emit `ON CONFLICT (pk) DO UPDATE` and swallow the primary key only; MySQL emits
   `ON DUPLICATE KEY UPDATE` and swallows every unique key, and does not implement
   the interface. "Swallows everything" is the default for a dialect that says
@@ -166,7 +166,7 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
   transport scope, so it cannot come from `crud.WithScope`.
 - **[[D-043]] — one hop per layer.** The probe owns the row index and nothing
   else; the column-to-field hop is handed in as `Request.Resolve`.
-- **[[D-025]] — a non-comparable key.** `probe/dup.go:keyOf` refuses to key a row
+- **[[D-025]] — a non-comparable key.** `crud/probe/dup.go:keyOf` refuses to key a row
   on a value it cannot render faithfully, rather than collapsing it onto a
   per-type constant and reporting the whole batch as duplicates of each other.
 
@@ -214,23 +214,23 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 
 | File | Role |
 |---|---|
-| `probe/doc.go` | the rules no signature carries: the three codes and the four named refusals, the transaction matrix, the cap numbers, the oracle controls, why the duplicate map is the one correct Go-side check |
-| `probe/probe.go` | `Handler`, `Declarer`, `Savepointer`, `Request`, `Row`, `Simple` |
-| `probe/full.go` | `Full`, `full`, `Enrich`, `runs`, `run`, `merge`, `same`, `fold`, `violation`, `path`, `valueOf`, `truthy` |
-| `probe/plan.go` | `candidate`, `term`, `plan`, `candidatesFor`, `reproducible`, `restricting`, `planFor`, `modeFor`, `swallowed`, `bind` |
-| `probe/sql.go` | `ref`, `statement`, `renderTerm`, `renderUnique`, `renderForeignKey`, `renderRestrict`, and the five aliases |
-| `probe/dup.go` | `finding`, `duplicates`, `keyOf`, `render` — the map, and [[D-025]]'s bug written down rather than repeated |
-| `probe/options.go` | `Option`, `WithSavepoints`, `WithScope`, `WithValues`, `CodeOnly`, `Skip`, `WithMaxConstraints`, `WithMaxRows`, `WithTimeout`, `WithMaxSavepoints`, and the four `Default*` numbers |
-| `probe/declare.go` | `Declare`, `identifies`, and the four sentinels |
-| `repo/decorators/faults/probe.go` | `Option`, `WithProbe`, `WithProbeFor`, `WithSource`, `WithProbeError`, `probeCfg`, `declare`, `probed`, `enrichProbed`, `savepoint`, `insertRequest`, `updateRequest` |
-| `repo/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, and the three probed verbs |
+| `crud/probe/doc.go` | the rules no signature carries: the three codes and the four named refusals, the transaction matrix, the cap numbers, the oracle controls, why the duplicate map is the one correct Go-side check |
+| `crud/probe/probe.go` | `Handler`, `Declarer`, `Savepointer`, `Request`, `Row`, `Simple` |
+| `crud/probe/full.go` | `Full`, `full`, `Enrich`, `runs`, `run`, `merge`, `same`, `fold`, `violation`, `path`, `valueOf`, `truthy` |
+| `crud/probe/plan.go` | `candidate`, `term`, `plan`, `candidatesFor`, `reproducible`, `restricting`, `planFor`, `modeFor`, `swallowed`, `bind` |
+| `crud/probe/sql.go` | `ref`, `statement`, `renderTerm`, `renderUnique`, `renderForeignKey`, `renderRestrict`, and the five aliases |
+| `crud/probe/dup.go` | `finding`, `duplicates`, `keyOf`, `render` — the map, and [[D-025]]'s bug written down rather than repeated |
+| `crud/probe/options.go` | `Option`, `WithSavepoints`, `WithScope`, `WithValues`, `CodeOnly`, `Skip`, `WithMaxConstraints`, `WithMaxRows`, `WithTimeout`, `WithMaxSavepoints`, and the four `Default*` numbers |
+| `crud/probe/declare.go` | `Declare`, `identifies`, and the four sentinels |
+| `crud/decorators/faults/probe.go` | `Option`, `WithProbe`, `WithProbeFor`, `WithSource`, `WithProbeError`, `probeCfg`, `declare`, `probed`, `enrichProbed`, `savepoint`, `insertRequest`, `updateRequest` |
+| `crud/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, and the three probed verbs |
 | `crud/executor.go` | `binding.owned`, `binding.saves`, `push`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `Sourced` |
 | `crud/dialect.go` | `UpsertScope`, `StatementRollback`, and their implementations |
 | `crud/update.go` | `DefinedChanges` — `DefinedFields` with the values as well as the names |
 | `crud/render.go` | `SQL` — the builder every term is rendered through |
-| `repo/basic/repository.go` | `repository.Source` — three lines, and the whole of `crud.Sourced` |
-| `catalog/catalog.go` | `Referrers` — the inbound direction of the schema |
-| `catalog/load.go` | `snapshot.refs`, `loaded.ReferencedBy` |
+| `crud/sqlrepo/repository.go` | `repository.Source` — three lines, and the whole of `crud.Sourced` |
+| `crud/catalog/catalog.go` | `Referrers` — the inbound direction of the schema |
+| `crud/catalog/load.go` | `snapshot.refs`, `loaded.ReferencedBy` |
 | `errs/violation.go` | `SortViolations` — the order the answer is returned in |
 | `errs/fault.go` | `Fault.Partial` — what a capped or failed probe sets |
 | `test/integration/probe_schema_test.go` | the live fixture, and why the hard/easy twin is per engine |
@@ -250,11 +250,11 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 - `TestABulkWriteAttributesEachViolationToItsRow` — row attribution and the intra-payload duplicate, live.
 - `TestADeclarationAgainstACatalogWithoutTheTableRefusesToStart` — [[D-041]]'s owed refusal, with the known table as its control.
 - `TestTheSameFailingRequestTwiceProducesTheSameBody` — byte-identical over five renders, with a count of violations in the body as the control that the comparison measures an order.
-- `probe/full_test.go` — the unit half: a probe that finds nothing, one that errors, the NULL guards and their controls, positional reads against two 61-character names, the dialect's placeholders, the upsert skip set per engine, the caps, the timeout, the scope predicate, code-only mode and the merge rule with both its controls.
-- `probe/dup_test.go` — row attribution, the duplicate map and the statement count beside it, an unkeyable row and its comparable twin.
-- `probe/declare_test.go` — each refusal with the declaration that starts beside it, and the transaction matrix as a unit table with a counter.
-- `probe/probe_test.go` — `Simple`: no statement, the driver's violation unchanged, and `Full` over the same request issuing one as the control.
-- `repo/decorators/faults/probe_test.go` — the per-verb defaults, the field hop, the bind-time refusals, the savepoint budget, the foreign transaction, and the probe error reaching `WithProbeError` and not the client.
+- `crud/probe/full_test.go` — the unit half: a probe that finds nothing, one that errors, the NULL guards and their controls, positional reads against two 61-character names, the dialect's placeholders, the upsert skip set per engine, the caps, the timeout, the scope predicate, code-only mode and the merge rule with both its controls.
+- `crud/probe/dup_test.go` — row attribution, the duplicate map and the statement count beside it, an unkeyable row and its comparable twin.
+- `crud/probe/declare_test.go` — each refusal with the declaration that starts beside it, and the transaction matrix as a unit table with a counter.
+- `crud/probe/probe_test.go` — `Simple`: no statement, the driver's violation unchanged, and `Full` over the same request issuing one as the control.
+- `crud/decorators/faults/probe_test.go` — the per-verb defaults, the field hop, the bind-time refusals, the savepoint budget, the foreign transaction, and the probe error reaching `WithProbeError` and not the client.
 - `crud/executor_test.go:TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot` / `:TestASavepointClaimCountsPerTransactionAndNotPerRepository` / `:TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne`.
 - `crud/dialect_test.go:TestOnlyADialectThatSaysSoSwallowsThePrimaryKeyOnly` / `:TestOnlyADialectThatSaysSoRollsBackTheStatementAlone` — each with a dialect implementing neither interface as its control.
 - `crud/update_test.go:TestDefinedChangesCarriesTheValuesDefinedFieldsOnlyNames`.

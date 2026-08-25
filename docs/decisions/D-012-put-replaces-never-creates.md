@@ -57,8 +57,8 @@ and the out-of-step configuration is exactly the hole this closes.
 - `port/service.go:DefaultService.Replace` — the existence check, the
   `ClearGenerated`, the `SetID` from the command's key, in that order and in one
   place for all three bindings since phase 5 ([[D-045]], [[FL-015]]).
-- `Replace` in `http/crudfiber/handler.go`, `http/crudgin/handler.go` and
-  `http/crudnet/handler.go` — the routes that build the command and do nothing
+- `Replace` in `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go` and
+  `crud/http/crudnet/handler.go` — the routes that build the command and do nothing
   else.
 - `port/model.go:Sanitize` — the `POST` half.
 - `port/model.go:ClearGenerated` — shared by both routes and every binding
@@ -69,8 +69,8 @@ and the out-of-step configuration is exactly the hole this closes.
 
 ## Proven by
 
-- `TestPutIsNotAWayAroundAllowClientID` in `http/crudfiber/write_edge_test.go`
-  and `http/crudgin/write_edge_test.go` — the whole point of the decision,
+- `TestPutIsNotAWayAroundAllowClientID` in `crud/http/crudfiber/write_edge_test.go`
+  and `crud/http/crudgin/write_edge_test.go` — the whole point of the decision,
   stated as a test, once per binding.
 - `TestReplaceTakesTheIDFromThePathNotTheBody` in every binding's
   `handler_test.go`.

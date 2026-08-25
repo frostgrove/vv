@@ -1,15 +1,18 @@
 # authhttp — the HTTP half of the auth middleware
 
 ```go
-import "github.com/shardit-io/vv/http/authhttp"
+import "github.com/shardit-io/vv/auth/http/authhttp"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing
-· **Depends on:** `crudhttp`
+· **Depends on:** `porthttp`
 
 What is HTTP but not framework. It stands to [authnet](authnet.md),
 [authgin](authgin.md) and [authfiber](authfiber.md) exactly as
-[crudhttp](crudhttp.md) stands to the three CRUD bindings.
+[crudhttp](crudhttp.md) stands to the three CRUD bindings — and both of them take
+the status table, the envelope and the `Renderer` from the same
+[porthttp](porthttp.md), which is what keeps a token check from importing the SQL
+repository ([[D-059]]).
 
 You rarely import it directly — a binding does. Import it to write a fourth HTTP
 binding, or to render a refusal yourself.
@@ -58,5 +61,6 @@ Nothing here knows what a credential is.
 ## See also
 
 - [auth](auth.md) — the transport-neutral half
+- [porthttp](porthttp.md) — the renderer, the envelope and the status table this refuses through
 - [crudhttp](crudhttp.md) — the same split, for the CRUD bindings
 - [[D-055]] · [[D-056]] · [[FL-019]]

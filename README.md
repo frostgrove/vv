@@ -12,31 +12,44 @@ all vv asks of it is `Exec` and `Query`.
 
 ```
 crud/                       core: contracts, metadata, relations, predicates, Opt, pagination — stdlib only
-repo/basic/                 the plain repository: the layer that speaks SQL
-repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
-repo/decorators/security/   row-level scope, authorization, per-entity checks
-repo/decorators/faults/     names the field a violation happened at, and wires the probe in
-query/                      the wire DSL: one JSON document -> crud.Options
-errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI — stdlib only
-errs/sqlerr/                a driver error becomes a code, one table per dialect
-sqlfault/                   the tree walk, the integrity gate and fault assembly
-catalog/                    per-handle schema introspection, four dialects
-probe/                      one extra statement finds every other violation the payload caused
+├── crudtest/               an in-memory source for unit-testing repositories
+├── query/                  the wire DSL: one JSON document -> crud.Options
+├── sqlrepo/                the repository that speaks SQL
+├── decorators/specs/       JPA Specifications + Criteria API + metamodel
+├── decorators/security/    row-level scope, authorization, per-entity checks
+├── decorators/faults/      names the field a violation happened at, and wires the probe in
+├── adapter/crudsql/        database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
+├── catalog/                per-handle schema introspection, four dialects
+├── probe/                  one extra statement finds every other violation the payload caused
+├── sqlfault/               the tree walk, the integrity gate and fault assembly
+├── http/crudhttp/          what is HTTP *and* CRUD: the request shapes, the model hop
+└── http/crudnet/           a full CRUD API on net/http — stdlib only, so it costs nothing
+auth/                       who the caller is: Principal, Role, Permission, Guard, the 401
+├── apikey/                 an Authenticator over a shared secret
+├── http/authhttp/          the HTTP half of the middleware: the renderer, the refusal
+└── http/authnet/           the net/http auth middleware — stdlib only
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
-http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
-http/crudnet/               a full CRUD API on net/http — stdlib only, so it costs nothing
+└── porthttp/               the HTTP projection of the error contract: the status table,
+                            the envelope, the Renderer seam — shared by every subsystem
 remote/                     the consuming half: another service's resource, held as a port.Repository
+└── remotehttp/             the HTTP client transport
+errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI — stdlib only
+└── sqlerr/                 a driver error becomes a code, one table per dialect
+vvdb/                       one config -> a DSN or a *sql.DB: postgres, mysql, mariadb, sqlite — stdlib only
+utils/vvflag/               one typed flag, without owning the command line
 cmd/vv/                     generates the update DTO, the metamodel and — with -adapter — the resource
-adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun, squirrel
-crud/crudtest/              an in-memory source for unit-testing repositories
-vvflag/                     one typed flag, without owning the command line
 
   ── separate modules, so you only download the one you use ──────────────────
-http/crudfiber/             a full CRUD API on Fiber v3
-http/crudgin/               the same API on Gin
-rpc/crudgrpc/               the same API on gRPC
-adapter/crudpgx/            pgx v5
-tools/vvcfg/                a config struct, loaded and validated at start-up
+crud/http/crudfiber/        a full CRUD API on Fiber v3
+crud/http/crudgin/          the same API on Gin
+crud/rpc/crudgrpc/          the same API on gRPC
+crud/adapter/crudpgx/       pgx v5
+auth/authjwt/               JWT verification, generic over your claims
+auth/http/authgin/          the Gin auth middleware
+auth/http/authfiber/        the Fiber auth middleware
+auth/rpc/authgrpc/          the gRPC auth interceptors
+vvdb/dbpgx/                 the same config, a pgx pool
+utils/vvcfg/                a config struct, loaded and validated at start-up
 ```
 
 **One page per package** — what it does, everything it can do, and how to wire
@@ -96,11 +109,12 @@ you can curl. Each one is a single file you can read top to bottom.
 ## Install
 
 ```bash
-go get github.com/shardit-io/vv                    # the library — and, on net/http, the whole of it
-go get github.com/shardit-io/vv/http/crudgin       # …plus your HTTP framework, if you use one
-go get github.com/shardit-io/vv/rpc/crudgrpc       # …or gRPC instead of an HTTP framework
-go get github.com/shardit-io/vv/adapter/crudpgx    # …and pgx, if that is your driver
-go get github.com/shardit-io/vv/auth/authjwt       # …and JWT, if that is how you authenticate
+go get github.com/shardit-io/vv                      # the library — and, on net/http, the whole of it
+go get github.com/shardit-io/vv/crud/http/crudgin   # …plus your HTTP framework, if you use one
+go get github.com/shardit-io/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
+go get github.com/shardit-io/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
+go get github.com/shardit-io/vv/vvdb/dbpgx          # …and a pgx pool opened from your config file
+go get github.com/shardit-io/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
@@ -138,11 +152,33 @@ type UserUpdate struct {
     Active *bool
 }
 
-var Users = basic.Define[User, int64, UserUpdate]("users")
+var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
 ```
 
 `Define` validates the tags, the ID type and the DTO **eagerly**, so a broken
 mapping panics at package initialisation rather than on the first request.
+
+Open the database — or hand vv one you already have. `vvdb` takes one struct
+with `yaml` and `env` tags and answers a handle for PostgreSQL, MySQL, MariaDB
+or SQLite; the driver stays your own blank import, and the connection stays
+yours ([`D-057`](docs/decisions/D-057-the-application-opens-the-connection.md)):
+
+```yaml
+db:
+  engine: postgres
+  host: localhost
+  port: 5432
+  user: vv
+  password: vv
+  name: app
+  pool: { max_open: 20 }
+  replica: { host: replica.internal }   # inherits everything it does not restate
+```
+
+```go
+sqlDB := vvdb.MustOpen(cfg.DB)               // database/sql, pool sized
+pool  := dbpgx.MustConnect(ctx, cfg.DB)      // or a pgx pool
+```
 
 Bind it to a datasource:
 
@@ -267,7 +303,7 @@ curl -XPOST /users/query -d '{"sort":["-createdAt"],"limit":20,"after":"eyJmIjpb
 `crud.Before` walks back. The token carries the sort's own field names, so a
 cursor made for one sort is refused under another rather than compared against
 whichever columns line up. It needs a unique sort — the primary key is appended
-to a paged sort already, so that is the default; `basic.UnstablePagination`
+to a paged sort already, so that is the default; `sqlrepo.UnstablePagination`
 removes it and gives up cursors with it. A nullable sort column is refused:
 `NULL > 'x'` is unknown, so the boundary would drop every row that has one.
 
@@ -333,8 +369,8 @@ means to publish.
 One declaration, both halves:
 
 ```go
-var Docs = basic.Define[Doc, int64, DocUpdate]("docs",
-    basic.SoftDelete("DeletedAt"))
+var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs",
+    sqlrepo.SoftDelete("DeletedAt"))
 ```
 
 `Delete` and `DeleteAll` stamp the column instead of removing rows, and every
@@ -580,7 +616,7 @@ policy := security.Combine(
 
 The path is resolved at declaration time, so a typo panics at start-up rather
 than leaking rows later, and it may be several hops (`"Comments.Author"`). This
-is the per-principal form; the per-table form is `basic.RelationScope` on the
+is the per-principal form; the per-table form is `sqlrepo.RelationScope` on the
 blueprint, and where both are declared both apply.
 
 Also available: `security.ReadOnly`, `security.Freeze(fields...)` and
@@ -634,8 +670,8 @@ Stop there if a parser is all you wanted. The bridge to `Principal` is a
 separate call, and `authjwt.Standard` is both calls for the ordinary shape of
 token.
 
-**A transport** — `http/authnet`, `http/authgin`, `http/authfiber`,
-`rpc/authgrpc`. One line each:
+**A transport** — `auth/http/authnet`, `auth/http/authgin`, `auth/http/authfiber`,
+`auth/rpc/authgrpc`. One line each:
 
 ```go
 guard := auth.NewGuard(authjwt.Standard(authjwt.HMAC(secret), roles,
@@ -722,7 +758,7 @@ type Article struct {
 | `rel:""` | inferred from the Go type | |
 | `rel:"-"` | never a relation | |
 
-Target tables resolve from `basic.Define`'s registration, then a `TableName()`
+Target tables resolve from `sqlrepo.Define`'s registration, then a `TableName()`
 method, then the snake_case plural. Struct-shaped fields *without* a `rel` tag
 are skipped entirely — never mapped as a column by accident.
 
@@ -924,10 +960,12 @@ Errors map by sentinel, so the transport never imports the decorator that raised
 them: `crud.ErrNotFound` → 404, `crud.ErrForbidden` (which `security.ErrForbidden`
 wraps) → 403, `crud.ErrConflict` → 409, query and schema errors → 400 with the
 offending path named, everything else → 500 with no detail. What kind of failure it is is decided once, in
-`port`, and each transport spells it: `http/crudhttp` has the status table and
-`rpc/crudgrpc` has the `codes.Code` one, so there is one classification rather
+`port`, and each protocol spells it: `port/porthttp` has the status table and
+`crud/rpc/crudgrpc` has the `codes.Code` one, so there is one classification rather
 than one per framework — and `Status(err) int` (or `crudgrpc.Code(err)`) is
-exported if you render your own bodies. Wire the [error
+exported if you render your own bodies. The status table lives in `port/` rather
+than under `crud/` because the auth middleware answers through the same one
+([[D-059]]); `crudhttp` re-exports every name it used to own. Wire the [error
 subsystem](#errors) in and the same refusal also carries a machine code, the
 field it happened at, and every *other* violation the payload caused.
 
@@ -961,7 +999,7 @@ your own.
 
 ```go
 articles := remote.New[Article, int64, ArticleInput](
-    crudhttp.Transport("https://content.internal/articles"))
+    remotehttp.Transport("https://content.internal/articles"))
 
 page, err := articles.Get(ctx,
     crud.Where(crud.Eq("Status", "draft")),
@@ -1116,7 +1154,7 @@ codes.Add("too_young", errs.KindValidation, "must be at least {min}")
 
 cat, _ := errs.LoadMessages(codes, messages, "messages")
 
-app.Use(crudfiber.Errors(crudhttp.WithCodes(codes), crudhttp.WithMessages(cat)))
+app.Use(crudfiber.Errors(porthttp.WithCodes(codes), porthttp.WithMessages(cat)))
 ```
 
 One flat JSON file per locale, with a four-rung ladder per violation —
@@ -1179,7 +1217,8 @@ just get no `error_code` and no `field`.
 Full detail: [`docs/modules/en/errs.md`](docs/modules/en/errs.md),
 [`sqlerr`](docs/modules/en/sqlerr.md), [`sqlfault`](docs/modules/en/sqlfault.md),
 [`catalog`](docs/modules/en/catalog.md), [`probe`](docs/modules/en/probe.md),
-[`faults`](docs/modules/en/faults.md), [`crudhttp`](docs/modules/en/crudhttp.md).
+[`faults`](docs/modules/en/faults.md), [`porthttp`](docs/modules/en/porthttp.md),
+[`crudhttp`](docs/modules/en/crudhttp.md).
 
 ---
 

@@ -1,11 +1,11 @@
 # crudgrpc — a full CRUD API on gRPC
 
 ```go
-import "github.com/shardit-io/vv/rpc/crudgrpc"
+import "github.com/shardit-io/vv/crud/rpc/crudgrpc"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/rpc/crudgrpc
+go get github.com/shardit-io/vv/crud/rpc/crudgrpc
 ```
 
 **Module:** its own — so a consumer on HTTP never takes gRPC, protobuf and

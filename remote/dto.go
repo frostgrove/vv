@@ -17,7 +17,7 @@ import (
 // SQL NULL to all of them — a PATCH of one column that empties the row, with a
 // 200 on it and nothing in the response to say so ([[UC-003]]).
 //
-// So it is a start-up failure, at the moment basic.Define's failures happen and
+// So it is a start-up failure, at the moment sqlrepo.Define's failures happen and
 // for the same reason: no request can recover from it, and by the time one has
 // been made the damage is in the database. cmd/vv already writes the tag on
 // every generated DTO, so this only ever fires on one written by hand.

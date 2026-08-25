@@ -1,6 +1,6 @@
 # FL-011 — An error becomes an HTTP status
 
-**Entry point:** `http/crudhttp/errors.go:Status` (via each binding's `HandlerFor.fail`)
+**Entry point:** `port/porthttp/errors.go:Status` (via each binding's `HandlerFor.fail`)
 **Implements:** [[UC-015]] · **Governed by:** [[D-015]] [[D-008]] [[D-019]] [[D-045]] [[D-038]] [[D-047]] [[D-046]] [[D-039]] [[D-040]] [[D-049]] [[D-044]]
 
 Every handler ends in `h.fail(c, err)`. One function decides the status, one
@@ -21,32 +21,34 @@ and no registration step.
 Phase 4 then made the kind decide ([[D-049]]) and replaced the old
 `{"error":…,"message":…}` body with the envelope, and phase 5 moved the
 classification itself out of this package: `port` answers what kind an error is,
-`http/crudhttp` answers what status that kind gets ([[D-045]]). The split is one
-line of code and it is the whole of the layering — a kind is not HTTP, and 404
-is.
+and the status table answers what status that kind gets ([[D-045]]). The split is
+one line of code and it is the whole of the layering — a kind is not HTTP, and
+404 is. [[D-059]] then moved the table itself out of the CRUD subsystem into
+`port/porthttp`, because the auth middleware answers through the same one;
+`crudhttp` re-exports `Status`, `StatusFor` and `KindOf` unchanged.
 
 ## Where each sentinel is produced
 
 | Sentinel / type | Declared | Produced by |
 |---|---|---|
-| `crud.ErrNotFound` | `crud/errors.go:10` | `repository.GetByID` (`repo/basic/repository.go:121`), `repository.refresh` (`:526`), the `Update` load (`:554`), `missedRow` (`:661`), `gate.loadScoped` (`repo/decorators/security/security.go:258`), `DefaultService.Delete` when 0 rows went away (`port/service.go`), `specs.FindOne`/`FindFirst` |
-| `crud.ErrConflict` | `crud/errors.go:31` | the adapters — `adapter/crudsql:Executor.conflict` and `adapter/crudpgx:Executor.conflict`, both one line over `sqlfault/classify.go:Wrap`. The gate is `sqlfault/gate.go:Integrity` and it is not a class test ([[D-046]], [[FL-014]]) |
-| `*errs.Fault` | `errs/fault.go:42` | `sqlfault/classify.go:Classifier.Classify`, through those same two methods. It **wraps** the sentinel rather than replacing it, which is why nothing below needed editing ([[D-038]]) |
-| `crud.ErrStaleVersion` (wraps `ErrConflict`) | `crud/errors.go:36` | `repository.missedRow` (`repo/basic/repository.go:659`) |
-| `specs.ErrNotUnique` (wraps `ErrConflict`) | `repo/decorators/specs/errors.go:13` | `specs.FindOne` when two rows match |
+| `crud.ErrNotFound` | `crud/errors.go:10` | `repository.GetByID` (`crud/sqlrepo/repository.go:121`), `repository.refresh` (`:526`), the `Update` load (`:554`), `missedRow` (`:661`), `gate.loadScoped` (`crud/decorators/security/security.go:258`), `DefaultService.Delete` when 0 rows went away (`port/service.go`), `specs.FindOne`/`FindFirst` |
+| `crud.ErrConflict` | `crud/errors.go:31` | the adapters — `crud/adapter/crudsql:Executor.conflict` and `crud/adapter/crudpgx:Executor.conflict`, both one line over `crud/sqlfault/classify.go:Wrap`. The gate is `crud/sqlfault/gate.go:Integrity` and it is not a class test ([[D-046]], [[FL-014]]) |
+| `*errs.Fault` | `errs/fault.go:42` | `crud/sqlfault/classify.go:Classifier.Classify`, through those same two methods. It **wraps** the sentinel rather than replacing it, which is why nothing below needed editing ([[D-038]]) |
+| `crud.ErrStaleVersion` (wraps `ErrConflict`) | `crud/errors.go:36` | `repository.missedRow` (`crud/sqlrepo/repository.go:659`) |
+| `specs.ErrNotUnique` (wraps `ErrConflict`) | `crud/decorators/specs/errors.go:13` | `specs.FindOne` when two rows match |
 | `crud.ErrForbidden` | `crud/errors.go:25` | wrapped by `security.ErrForbidden` (`security.go:27`) and produced by `security.Denied` (`security.go:141`); a service layer is expected to wrap it too |
 | `crud.ErrMissingID` | `crud/errors.go:16` | `repository.Save` on an unset `noauto` key (`repository.go:454`) |
-| `*query.Error` | `query/compile.go:13` | every rejection in the wire DSL, carrying `Path` and `Reason` |
+| `*query.Error` | `crud/query/compile.go:13` | every rejection in the wire DSL, carrying `Path` and `Reason` |
 | `*crud.UnknownFieldError` | `crud/errors.go:41` | `Schema.Field` misses in the repository and the SQL writer |
 | `*crud.SchemaError` | `crud/errors.go:52` | declaration-time and render-time refusals |
-| `port.ErrBadRequest` | `port/sentinel.go` | `BadRequest` / `BadRequestf` / `BadRequestAs` — malformed body, unparseable id, `MaxBulk` exceeded. One sentinel for every binding and every transport, so a 400 raised by one is recognised by the shared classification ([[D-045]]). `crudhttp.ErrBadRequest` is the same variable, not a copy |
+| `port.ErrBadRequest` | `port/sentinel.go` | `BadRequest` / `BadRequestf` / `BadRequestAs` — malformed body, unparseable id, `MaxBulk` exceeded. One sentinel for every binding and every transport, so a 400 raised by one is recognised by the shared classification ([[D-045]]). `porthttp.ErrBadRequest` is the same variable, not a copy |
 | `crud.ErrNoTxSupport` | `crud/errors.go:13` | `crud.InTx` on a handle that cannot begin — **not classified**, so 500 |
 | `crud.ErrReadOnly` | `crud/errors.go:22` | nothing in the tree; it exists for a decorator that wants to say "read-only" rather than "forbidden" — **not classified**, so 500 |
 
 ## The path
 
 1. **The adapters classify first, and there are two gates.**
-   `adapter/crudsql:Executor.conflict` and `adapter/crudpgx:Executor.conflict`
+   `crud/adapter/crudsql:Executor.conflict` and `crud/adapter/crudpgx:Executor.conflict`
    both call `sqlfault.Wrap`. `sqlfault.Integrity` decides `crud.ErrConflict` —
    class 23, MySQL's `HY000` numbers, SQLite's result code, and never a class
    test alone ([[D-046]]) — while `errs/sqlerr:Classify` decides the `errs.Code`
@@ -76,8 +78,8 @@ is.
    whose `Commit` classifies ([[FL-009]]), so a nested write cannot be a 409
    through pgx and a 500 through `database/sql`.
 
-2. **`HandlerFor.fail`** — one per binding, in `http/crudfiber/handler.go`,
-   `http/crudgin/handler.go` and `http/crudnet/handler.go` → `h.opt.errorHandler`,
+2. **`HandlerFor.fail`** — one per binding, in `crud/http/crudfiber/handler.go`,
+   `crud/http/crudgin/handler.go` and `crud/http/crudnet/handler.go` → `h.opt.errorHandler`,
    which renders through that binding's renderer unless `WithErrorHandler`
    replaced it. Every route in every binding ends here; no route has its own
    mapping.
@@ -104,11 +106,11 @@ is.
    first for the same reason: a classification that failed leaves a set that may
    be misleading, so the silent answer is the truthful one.
 
-4. **The status** — `http/crudhttp/errors.go:StatusFor`, one arm per kind, and
+4. **The status** — `port/porthttp/errors.go:StatusFor`, one arm per kind, and
    `Status` is `StatusFor(port.KindOf(err))`. This is the only step of the path
    that is HTTP, which is why it is the only step that stayed here ([[D-045]]).
 
-   **And there is a second vocabulary now.** `rpc/crudgrpc/status.go:CodeFor` is
+   **And there is a second vocabulary now.** `crud/rpc/crudgrpc/status.go:CodeFor` is
    the same table in gRPC's words, over the same `port.KindOfWith` answer:
    `NotFound`, `Unauthenticated`, `PermissionDenied`, `Unavailable`,
    `AlreadyExists`, `InvalidArgument`, `Internal`. Two of the eight kinds
@@ -117,16 +119,16 @@ is.
    [[D-052]] records rather than bugs; the kind is decided once and each
    transport spells it ([[D-049]]).
 
-5. **The body** — `http/crudhttp/render.go:EnvelopeRenderer.Render`.
+5. **The body** — `port/porthttp/render.go:EnvelopeRenderer.Render`.
    The order of its steps is load-bearing: the fault (or one synthesised from the
    sentinel by `port.FaultOf`), then the status, then **the internal
    short-circuit** — before anything is copied out of the fault, so a 500 cannot
    carry a violation, a param or a path — then `port.Violations`, which is path
-   translation, the sort, the cap and the messages. `crudhttp.Internal()` is the
+   translation, the sort, the cap and the messages. `porthttp.Internal()` is the
    one body a 500 ever has and there is nowhere in it for a driver's sentence to
    go ([[D-015]], [[D-044]]).
 
-   `rpc/crudgrpc/status.go:StatusRenderer.Render` is the same five steps in the
+   `crud/rpc/crudgrpc/status.go:StatusRenderer.Render` is the same five steps in the
    same order, ending in the same `port.Violations` call and a different final
    shape: `BadRequest` with one `FieldViolation` per violation, `ErrorInfo`
    carrying the fault's own code as the reason, and `RetryInfo` when the answer
@@ -137,17 +139,17 @@ is.
 
 6. **The response.** The [[UC-017]] envelope:
    `{"type":"error","errors":{"validation":[…],"general":[…]}}` —
-   `http/crudhttp/envelope.go`. Each binding's `render` is only the writer, plus
+   `port/porthttp/envelope.go`. Each binding's `render` is only the writer, plus
    the two things it alone can supply: the retained request body for the raw-body
-   path fallback and the request's locale. `http/crudfiber/options.go:render`,
-   `http/crudgin/options.go:render` (which also hands the error to Gin's logger
+   path fallback and the request's locale. `crud/http/crudfiber/options.go:render`,
+   `crud/http/crudgin/options.go:render` (which also hands the error to Gin's logger
    through `c.Error`, because the body is not allowed to carry it),
-   `http/crudnet/options.go:render`.
+   `crud/http/crudnet/options.go:render`.
 
 ## Where the decisions bite
 
 - **A 500 leaks nothing.** One short-circuit in `EnvelopeRenderer.Render`, and
-  `crudhttp.Internal()` has no field for a message at all. Giving the 500 branch
+  `porthttp.Internal()` has no field for a message at all. Giving the 500 branch
   a sentence is the change that turns an internal error into an information
   disclosure.
 - **`ErrConflict` is produced by adapters, never by the repository.** That is
@@ -228,29 +230,29 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 
 | File | Role |
 |---|---|
-| `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindForStatus`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
-| `http/crudhttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, the `Retry-After` header and the 500 short-circuit |
+| `port/porthttp/errors.go` | `Status`, `StatusFor`, `KindForStatus`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` — the status half, shared by every binding |
+| `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope, the `Retry-After` header and the 500 short-circuit |
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the path chain, the sort, the cap and the message ladder, shared by every renderer since phase 9 |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — the locale the ladder is asked for, one key for every transport |
-| `rpc/crudgrpc/status.go` | the second vocabulary: `Code`, `CodeFor`, `Renderer`, `StatusRenderer`, and the `BadRequest`/`ErrorInfo`/`RetryInfo` details |
-| `rpc/crudgrpc/locale.go` | `LocaleKeys` — where a gRPC caller's language comes from |
-| `http/crudhttp/envelope.go` | `Envelope`, `Groups`, `Internal` — the one body a 500 ever has |
-| `http/crudhttp/bodyindex.go` | `BodyResolver` — the raw-body fallback, behind every declared hop and only over a path they left unchanged ([[FL-015]]) |
+| `crud/rpc/crudgrpc/status.go` | the second vocabulary: `Code`, `CodeFor`, `Renderer`, `StatusRenderer`, and the `BadRequest`/`ErrorInfo`/`RetryInfo` details |
+| `crud/rpc/crudgrpc/locale.go` | `LocaleKeys` — where a gRPC caller's language comes from |
+| `port/porthttp/envelope.go` | `Envelope`, `Groups`, `Internal` — the one body a 500 ever has |
+| `port/porthttp/bodyindex.go` | `BodyResolver` — the raw-body fallback, behind every declared hop and only over a path they left unchanged ([[FL-015]]) |
 | `port/path.go`, `port/pathmap.go` | the two declared hops: `Fields`, hand-written and partial, and `PathMap`, generated and total ([[D-050]]) |
 | `port/kind.go` | `KindOf`, `KindOfWith`, `FaultOf`, `CodeForKind`, `DefaultMessage`, `rank`, `sentinelKind` — the classification half, shared by every transport ([[D-045]]) — plus `FaultFrom` and `sentinelFor`, the same table read backwards for a client ([[FL-018]]) |
 | `port/sentinel.go` | `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
 | `port/service.go` | `DefaultService.Delete` — the one place the DELETE asymmetry is decided |
-| `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | the exported `Status`, `DefaultErrorHandler` and `render` per binding: one line and one response write each |
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `fail` |
+| `crud/http/crudfiber/options.go`, `crud/http/crudgin/options.go`, `crud/http/crudnet/options.go` | the exported `Status`, `DefaultErrorHandler` and `render` per binding: one line and one response write each |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `fail` |
 | `crud/errors.go` | every sentinel, `UnknownFieldError`, `SchemaError` |
-| `query/compile.go` | `query.Error` — path and reason, safe to hand back |
-| `adapter/crudsql/conflict.go` | `Executor.conflict` — one line over `sqlfault.Wrap`, and the note that this package may not name a driver's error type |
-| `adapter/crudsql/crudsql.go` | the four engine-declaring constructors and the three that decline to name one, `WithFaults`, and the propagation into `Tx` and `savepoint` |
-| `sqlfault/gate.go` | `Integrity` — the `crud.ErrConflict` gate, three arms, because the four engines answer in three ways ([[D-046]]) |
-| `sqlfault/extract.go` | by-shape extraction and the tree walk that sees through a multi-error and through a fault ([[D-038]]) |
-| `sqlfault/classify.go` | `Classifier`, `Wrap` — where a fault is assembled and where the sentinel is guaranteed |
-| `sqlfault/catalog.go` | the one-method schema SPI that fills in columns a driver did not name |
-| `sqlfault/doc.go` | the two gates, what no arm may read, why the engine is declared |
+| `crud/query/compile.go` | `query.Error` — path and reason, safe to hand back |
+| `crud/adapter/crudsql/conflict.go` | `Executor.conflict` — one line over `sqlfault.Wrap`, and the note that this package may not name a driver's error type |
+| `crud/adapter/crudsql/crudsql.go` | the four engine-declaring constructors and the three that decline to name one, `WithFaults`, and the propagation into `Tx` and `savepoint` |
+| `crud/sqlfault/gate.go` | `Integrity` — the `crud.ErrConflict` gate, three arms, because the four engines answer in three ways ([[D-046]]) |
+| `crud/sqlfault/extract.go` | by-shape extraction and the tree walk that sees through a multi-error and through a fault ([[D-038]]) |
+| `crud/sqlfault/classify.go` | `Classifier`, `Wrap` — where a fault is assembled and where the sentinel is guaranteed |
+| `crud/sqlfault/catalog.go` | the one-method schema SPI that fills in columns a driver did not name |
+| `crud/sqlfault/doc.go` | the two gates, what no arm may read, why the engine is declared |
 | `errs/doc.go` | what the package is, what it refuses, which half of it the first tag freezes, and the two rules that are not visible in a signature |
 | `errs/code.go` | `Code` and its constants; `Kind`, its eight constants and `Kind.String` |
 | `errs/codes.go` | `Codes` — the wired vocabulary — `StandardCodes`, `Add`, `KindOf`, `MessageFor`, `ErrCodeRedeclared` |
@@ -258,7 +260,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `errs/violation.go` | `Origin`, `Source`, `Violation` and its public projection |
 | `errs/fault.go` | `Detail`, `Fault`, `Fault.Error`, `Fault.Unwrap`, `Fault.MarshalJSON`, `AsFault` |
 | `errs/build.go` | `Builder` and `P` — the hand-built fault, and `Wrapping`, the only way a sentinel is attached. The rule that resolves the chain's ambiguity, which the plan was silent on: `Code`, `Params` and `Message` apply to the violation the most recent `Field`/`At`/`General` opened; with none open, `Code` and `Message` fall to the fault, and the four steps with no fault-level meaning — `Params`, `Origin`, `Source`, `Approximate` — open a general violation rather than dropping what they were given, so a misordered chain produces a visibly odd fault instead of a silently empty one ([[D-021]]). `Fault()` copies path, params and column lists deep, so a resolver rewriting a hop in place cannot reach a fault the builder already handed back |
-| `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, `Chain`. No `Renderer`: it is HTTP-shaped and stays in `http/crudhttp` ([[D-045]]) |
+| `errs/spi.go` | `Classifier`, `Resolver`, `CodeMapper`, `MessageSource`, `Chain`. No `Renderer`: it is HTTP-shaped and lives in `port/porthttp` ([[D-045]], [[D-059]]) |
 | `errs/message.go` | `Messages` — the four-level ladder, the locale fallback and the template expansion. The four levels come from the path's first and last **named** steps and not from its depth, so a key spelling a whole nested path is accepted by `Add` and never consulted |
 | `errs/catalogue.go` | `LoadMessages`, `Messages.Load`, `Messages.Locales`, `Messages.Missing`, `DefaultLocaleFile` — the same catalogue read from one flat JSON file per locale. Flat because a nested file invites exactly the key `errs/message.go` warns is never consulted; `Missing` is a report and not a refusal, because falling through the ladder is the designed case ([[D-048]]) |
 | `errs/bridge.go` | `FieldViolation` and `FromFieldViolations` — a validation library's errors, with no import of one |
@@ -272,45 +274,45 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `errs/sqlerr/testdata/corpus/*.json` | four files, one per engine, twenty provoked violations each. The evidence every arm above rests on |
 | `test/corpus/` | what provokes them — `Engine`, its case table, and the capture. Lives in the test module because it needs the drivers |
 | `test/cmd/corpus/` | `make corpus`, and the report of what moved since the last capture |
-| `adapter/crudpgx/conflict.go`, `adapter/crudpgx/crudpgx.go` | the same for pgx, including `rows.Err`, plus `extract` — the typed reader for `*pgconn.PgError`, which this module may name |
-| `repo/decorators/security/security.go` | `ErrForbidden`, `Denied` |
-| `repo/decorators/specs/errors.go` | `ErrNotUnique`, `ErrUnboundedDelete`, `ErrUnboundedUpdate` |
-| `repo/decorators/specs/executor.go` | `FindOne` / `FindFirst` — where `ErrNotFound` and `ErrNotUnique` are raised |
+| `crud/adapter/crudpgx/conflict.go`, `crud/adapter/crudpgx/crudpgx.go` | the same for pgx, including `rows.Err`, plus `extract` — the typed reader for `*pgconn.PgError`, which this module may name |
+| `crud/decorators/security/security.go` | `ErrForbidden`, `Denied` |
+| `crud/decorators/specs/errors.go` | `ErrNotUnique`, `ErrUnboundedDelete`, `ErrUnboundedUpdate` |
+| `crud/decorators/specs/executor.go` | `FindOne` / `FindFirst` — where `ErrNotFound` and `ErrNotUnique` are raised |
 
 ## Tests that walk this flow
 
-Every test below that names `http/crudfiber/` has an identical twin in
-`http/crudgin/` and `http/crudnet/`, same name, same file name. The three suites
+Every test below that names `crud/http/crudfiber/` has an identical twin in
+`crud/http/crudgin/` and `crud/http/crudnet/`, same name, same file name. The three suites
 are ported one to one and the mapping they exercise is one table ([[D-045]]) —
-removing an arm from `crudhttp.StatusFor` fails all three, which is the check
+removing an arm from `porthttp.StatusFor` fails all three, which is the check
 that it is shared rather than copied.
 
-`rpc/crudgrpc` is not in that triplet and does not carry those names: there is no
+`crud/rpc/crudgrpc` is not in that triplet and does not carry those names: there is no
 404 here to assert. What it carries is the same claims in its own vocabulary,
 listed at the end.
 
-- `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` — the switch, arm by arm.
-- `TestRepositoryErrorsBecomeStatusCodes` — `http/crudfiber/edge_test.go`.
-- `TestEveryRouteMapsARefusalTheSameWay` — `http/crudfiber/edge_test.go` — no route has its own mapping.
-- `TestA500NeverEchoesTheInternalError` — `http/crudfiber/edge_test.go` — the disclosure guard.
-- `TestDeletingNothingIs404ForOneRowAndZeroForASet` — `http/crudfiber/edge_test.go`.
-- `TestAQueryThatNamesSomethingTheModelLacksIsABadRequest` — `http/crudfiber/edge_test.go`.
-- `TestEveryRejectionNamesThePathThatWasWrong` — `query/edge_test.go` — the `Path` field.
-- `TestAnIntegrityConflictIsA409WithAMessage` — `http/crudfiber/write_edge_test.go`.
-- `TestAClassifiedConflictsBodyCarriesNothingInternal` — `http/crudfiber/write_edge_test.go` — [[D-047]] under live load: the 409 body of a *classified* conflict names no constraint, no table, no schema, no SQLSTATE and no statement, and its control is the unclassified one beside it, asserted to still leak.
-- `TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses` — `adapter/crudsql/conflict_test.go`.
-- `TestAClassifiedConflictIsNotAnyOtherSentinel` — `adapter/crudsql/conflict_test.go`.
-- `TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault` — `adapter/crudsql/conflict_test.go` — [[D-038]]'s owed regression, on all three readers.
-- `TestTheExtractorReachesTheStructuredFieldsByShape` — `adapter/crudsql/conflict_test.go`.
-- `TestOnlyADeclaredEngineProducesACode` / `TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor` — `adapter/crudsql/classify_test.go` — what a 409 carries when no engine was named.
-- `TestTheTwoGatesAnswerDifferentQuestions` — `sqlfault/gate_test.go` — which gate decides the status and which decides the code, with a counter per cell of the 2×2.
-- `TestAFaultIsBuiltOnlyWhenACodeAndItsKindAreKnown` / `TestASentinelIsAttachedWhateverTheClassifierReturned` / `TestAnUnknownDialectStillAnswersTheIntegrityGate` — `sqlfault/classify_test.go`.
-- `TestAFaultCarriesNothingTheDriverSaidInItsErrorText` — `sqlfault/classify_test.go` — [[D-047]] at the producer, which is the one site that can break it.
-- `TestTheTypedExtractorReadsThePgErrorFieldsThatExist` / `TestBothExtractorsAgreeOnOnePgError` — `adapter/crudpgx/conflict_test.go`.
+- `TestStatusMapsWhatItPromisesTo` — `crud/http/crudfiber/edge_test.go` — the switch, arm by arm.
+- `TestRepositoryErrorsBecomeStatusCodes` — `crud/http/crudfiber/edge_test.go`.
+- `TestEveryRouteMapsARefusalTheSameWay` — `crud/http/crudfiber/edge_test.go` — no route has its own mapping.
+- `TestA500NeverEchoesTheInternalError` — `crud/http/crudfiber/edge_test.go` — the disclosure guard.
+- `TestDeletingNothingIs404ForOneRowAndZeroForASet` — `crud/http/crudfiber/edge_test.go`.
+- `TestAQueryThatNamesSomethingTheModelLacksIsABadRequest` — `crud/http/crudfiber/edge_test.go`.
+- `TestEveryRejectionNamesThePathThatWasWrong` — `crud/query/edge_test.go` — the `Path` field.
+- `TestAnIntegrityConflictIsA409WithAMessage` — `crud/http/crudfiber/write_edge_test.go`.
+- `TestAClassifiedConflictsBodyCarriesNothingInternal` — `crud/http/crudfiber/write_edge_test.go` — [[D-047]] under live load: the 409 body of a *classified* conflict names no constraint, no table, no schema, no SQLSTATE and no statement, and its control is the unclassified one beside it, asserted to still leak.
+- `TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses` — `crud/adapter/crudsql/conflict_test.go`.
+- `TestAClassifiedConflictIsNotAnyOtherSentinel` — `crud/adapter/crudsql/conflict_test.go`.
+- `TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault` — `crud/adapter/crudsql/conflict_test.go` — [[D-038]]'s owed regression, on all three readers.
+- `TestTheExtractorReachesTheStructuredFieldsByShape` — `crud/adapter/crudsql/conflict_test.go`.
+- `TestOnlyADeclaredEngineProducesACode` / `TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor` — `crud/adapter/crudsql/classify_test.go` — what a 409 carries when no engine was named.
+- `TestTheTwoGatesAnswerDifferentQuestions` — `crud/sqlfault/gate_test.go` — which gate decides the status and which decides the code, with a counter per cell of the 2×2.
+- `TestAFaultIsBuiltOnlyWhenACodeAndItsKindAreKnown` / `TestASentinelIsAttachedWhateverTheClassifierReturned` / `TestAnUnknownDialectStillAnswersTheIntegrityGate` — `crud/sqlfault/classify_test.go`.
+- `TestAFaultCarriesNothingTheDriverSaidInItsErrorText` — `crud/sqlfault/classify_test.go` — [[D-047]] at the producer, which is the one site that can break it.
+- `TestTheTypedExtractorReadsThePgErrorFieldsThatExist` / `TestBothExtractorsAgreeOnOnePgError` — `crud/adapter/crudpgx/conflict_test.go`.
 - `TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames` — `test/integration/corpus_test.go` — four engines, every case, the code compared against the checked-in corpus, with per-engine counters of faults produced and negatives walked.
 - `TestAMariaDBCheckIsOnlyClassifiedWhenTheSourceSaysMariaDB` / `TestACatalogFillsTheColumnsAUniqueViolationDoesNotName` — `test/integration/corpus_test.go`.
-- `TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt` — `adapter/crudpgx/conflict_test.go` — including `rows.Err`.
-- `TestOnlyIntegrityErrorsBecomeConflicts` — `adapter/crudpgx/conflict_test.go` — extended at phase 3: an unclassifiable state produces no fault on any of the three pgx paths, with a `40001` in the same table producing one as its control.
+- `TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt` — `crud/adapter/crudpgx/conflict_test.go` — including `rows.Err`.
+- `TestOnlyIntegrityErrorsBecomeConflicts` — `crud/adapter/crudpgx/conflict_test.go` — extended at phase 3: an unclassifiable state produces no fault on any of the three pgx paths, with a `40001` in the same table producing one as its control.
 - `TestIntegrityViolationsAreClassifiedByEveryAdapter` — `test/integration/dialect_edge_test.go` — through every adapter, on PostgreSQL, MySQL and MariaDB, and from phase 3 asserting the code as well as the sentinel. It walks `egTargets()`, which has **no SQLite entry**; that is how an entire dialect's misclassification went unnoticed, and why the two below exist. Its two ent entries are built on `crudsql.From` and are asserted to carry no fault at all, which is the declared-engine degradation against a real ORM.
 - `TestEveryCorpusCaseClassifiesAsTheCorpusSays` — `test/integration/corpus_test.go` — twenty provoked violations against four live engines, asserting both that an integrity case is a conflict and that a data, retryable or unclassifiable one is not.
 - `TestTheCorpusStillDescribesTheseServers` — `test/integration/corpus_test.go` — recaptures and compares the key a classifier dispatches on. Deliberately not the message: see [[D-039]]. It also asserts that a field the corpus records as redacted comes back redacted, with the count of redacted fields walked as the control ([[D-040]]).
@@ -330,10 +332,10 @@ listed at the end.
 - `TestARefusalFromOneEngineDoesNotClassifyThroughAnothersParser` — `errs/sqlerr/dialect_test.go` — the dialect half of [[D-046]]'s key, with the diagonal in the same loop.
 - `TestMySQLAndMariaDBDoNotAnswerForEachOtherWhereTheyDiffer` — `errs/sqlerr/dialect_test.go` — the only thing in the tree that forces `mariadb.go` to exist.
 - `TestASQLiteResultCodeIsReadAsBytesAndNotWhole` / `TestASQLiteCodeIsOnlyReadWhereThereIsNoSQLSTATE` — `errs/sqlerr/dialect_test.go` — the low byte, busy-snapshot 517, and the state guard.
-- `TestSQLiteConstraintViolationsBecomeConflicts` / `TestAnOrdinarySQLiteErrorIsStillNotAConflict` / `TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE` — `adapter/crudsql/conflict_test.go` — the SQLite arm and its two controls.
-- `TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts` / `TestAnOrdinaryHY000IsStillNotAConflict` / `TestANumberIsOnlyTrustedUnderHY000` — `adapter/crudsql/conflict_test.go` — the MySQL arm and its two controls.
-- `TestWithErrorHandlerReplacesTheMapping` — `http/crudfiber/options_test.go`.
-- `TestAScopeThatFailsIsMappedLikeAnyOtherError` — `http/crudfiber/edge_test.go`.
+- `TestSQLiteConstraintViolationsBecomeConflicts` / `TestAnOrdinarySQLiteErrorIsStillNotAConflict` / `TestASQLiteCodeIsOnlyTrustedWithoutASQLSTATE` — `crud/adapter/crudsql/conflict_test.go` — the SQLite arm and its two controls.
+- `TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts` / `TestAnOrdinaryHY000IsStillNotAConflict` / `TestANumberIsOnlyTrustedUnderHY000` — `crud/adapter/crudsql/conflict_test.go` — the MySQL arm and its two controls.
+- `TestWithErrorHandlerReplacesTheMapping` — `crud/http/crudfiber/options_test.go`.
+- `TestAScopeThatFailsIsMappedLikeAnyOtherError` — `crud/http/crudfiber/edge_test.go`.
 - `TestHTTPRejections` — `test/integration/http_test.go` — end to end against a database.
 - `TestGinHTTPRejections` — `test/integration/http_gin_test.go` — the same, through the Gin binding.
 - `TestNetHTTPRejections` — `test/integration/http_net_test.go` — and through the net/http binding.
@@ -344,7 +346,7 @@ inherits them. Phase 3 made two of them live rather than theoretical — a fault
 does now reach `Status`, from either adapter — and phase 5 moved the
 classification half of them into `port`.
 
-- `TestAFaultKeepsItsSentinelReachableThroughStatus` / `TestAFaultsKindDecidesAndTheSentinelIsTheFallback` — `http/crudhttp/errors_test.go` — [[D-038]] against a real `crud` sentinel, through the unedited `Status`. `TestStatusIsTheKindTableOverThePortsAnswer` beside them covers the seam from the HTTP side, and `TestThePrecedenceTableResolvesAMixedFault`, `TestEverySentinelGetsItsKindWithoutAFault` and `TestTheDefaultVocabularyIsNeverHandedOut` in `port/kind_test.go` cover the classification from the other. The second was named `…IsStillAnInternalError` until [[D-049]] made that false: a fault wrapping no sentinel now answers the status its kind names, and a class-22 one is 422 where it used to be an opaque 500.
+- `TestAFaultKeepsItsSentinelReachableThroughStatus` / `TestAFaultsKindDecidesAndTheSentinelIsTheFallback` — `port/porthttp/errors_test.go` — [[D-038]] against a real `crud` sentinel, through the unedited `Status`. `TestStatusIsTheKindTableOverThePortsAnswer` beside them covers the seam from the HTTP side, and `TestThePrecedenceTableResolvesAMixedFault`, `TestEverySentinelGetsItsKindWithoutAFault` and `TestTheDefaultVocabularyIsNeverHandedOut` in `port/kind_test.go` cover the classification from the other. The second was named `…IsStillAnInternalError` until [[D-049]] made that false: a fault wrapping no sentinel now answers the status its kind names, and a class-22 one is 422 where it used to be an opaque 500.
 - `TestAFaultWrappingASentinelMatchesIt` / `TestAFaultWrappingNothingMatchesNothing` — `errs/fault_test.go` — the mechanism and its negative, which is the load-bearing half.
 - `TestAFaultSurvivesBeingWrappedAgain` — `errs/fault_test.go` — all three of `errors.Is`, `AsFault` and `errors.As(driver)` through a further `fmt.Errorf`.
 - `TestAsFaultAnswersFalseForAnythingThatIsNotAFault` — `errs/fault_test.go` — the control the three `if !ok` call sites need: an `AsFault` that always reported true handed every one of them a nil `*Fault` with the suite green.
@@ -373,7 +375,7 @@ classification half of them into `port`.
 
 And the second vocabulary, plus the pipeline both share:
 
-- `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — the gRPC
+- `TestKindMapsToTheCodeItPromisesTo` — `crud/rpc/crudgrpc/status_test.go` — the gRPC
   table arm by arm, with a control asserting it covers exactly the kinds `errs`
   declares, so a ninth kind fails rather than being mapped to `Internal`.
 - `TestAnInternalStatusSaysNothing` and

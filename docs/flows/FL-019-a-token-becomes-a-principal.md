@@ -1,11 +1,11 @@
 # FL-019 — A token becomes a principal
 
-**Entry point:** `http/authnet/authnet.go:Middleware`, `http/authgin/authgin.go:Middleware`, `http/authfiber/authfiber.go:Middleware` and `rpc/authgrpc/interceptor.go:Unary`
+**Entry point:** `auth/http/authnet/authnet.go:Middleware`, `auth/http/authgin/authgin.go:Middleware`, `auth/http/authfiber/authfiber.go:Middleware` and `auth/rpc/authgrpc/interceptor.go:Unary`
 **Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-045]] [[D-021]] [[D-044]]
 
 ## The path
 
-1. **`Middleware`** — `http/authnet/authnet.go:43` — the binding's only
+1. **`Middleware`** — `auth/http/authnet/authnet.go:43` — the binding's only
    framework-shaped decision: which handler type it is and where the context
    comes from. It resolves a renderer once, at construction, and panics on a nil
    guard.
@@ -45,7 +45,7 @@
     `c.Request = c.Request.WithContext(ctx)`, `c.SetContext(ctx)`, or the
     replaced `grpc.ServerStream`. This is the step with a wrong answer that
     compiles; see the table below.
-14. **`authhttp.Refuse`** — `http/authhttp/authhttp.go:66` — on the refusing
+14. **`authhttp.Refuse`** — `auth/http/authhttp/authhttp.go:66` — on the refusing
     path, the status, the headers and the envelope, written here rather than
     deferred.
 
@@ -63,7 +63,7 @@ normally puts per-request state and it is the wrong place here: `crudfiber`
 hands `c.Context()` to the port layer, so a principal in `Locals` is invisible
 to every policy. Both spellings compile and both look right in review.
 `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` in
-`http/authfiber/middleware_test.go` is what fails when it is wrong — verified by
+`auth/http/authfiber/middleware_test.go` is what fails when it is wrong — verified by
 changing `SetContext` to `Locals` and watching it.
 
 `authgrpc` writes no status. The refusal is an error carrying
@@ -116,22 +116,23 @@ changing `SetContext` to `Locals` and watching it.
 | `auth/authjwt/jwks.go` | the fetched key set, its cache and its rate limit |
 | `auth/authjwt/claims.go` | the ready-made claims and `Grant` |
 | `auth/authjwt/authenticator.go` | the bridge, and `Standard` |
-| `http/authhttp/authhttp.go` | the shared renderer and `Refuse` |
-| `http/authnet/authnet.go` | the net/http middleware |
-| `http/authgin/authgin.go` | the Gin middleware |
-| `http/authfiber/authfiber.go` | the Fiber middleware, and `SetContext` |
-| `http/authfiber/locale.go` | the refusal's locale, read from the header |
-| `rpc/authgrpc/interceptor.go` | `Unary`, `Stream`, `Skip` |
+| `auth/http/authhttp/authhttp.go` | the shared renderer and `Refuse`, over `port/porthttp` — the same status table and envelope the CRUD bindings answer through, reached without importing CRUD ([[D-059]]) |
+| `auth/http/authnet/authnet.go` | the net/http middleware |
+| `auth/http/authgin/authgin.go` | the Gin middleware |
+| `auth/http/authfiber/authfiber.go` | the Fiber middleware, and `SetContext` |
+| `auth/http/authfiber/locale.go` | the refusal's locale, read from the header |
+| `auth/rpc/authgrpc/interceptor.go` | `Unary`, `Stream`, `Skip` |
 | `auth/authjwt/go.mod` | the module boundary that keeps golang-jwt off everybody else |
-| `http/authgin/go.mod`, `http/authfiber/go.mod`, `rpc/authgrpc/go.mod` | the same, per framework |
-| — | `auth`, `auth/apikey`, `http/authhttp` and `http/authnet` have no `go.mod`: there is no dependency to keep off anybody |
+| `auth/http/authgin/go.mod`, `auth/http/authfiber/go.mod`, `auth/rpc/authgrpc/go.mod` | the same, per framework |
+| — | `auth`, `auth/apikey`, `auth/http/authhttp` and `auth/http/authnet` have no `go.mod`: there is no dependency to keep off anybody |
+| `port/porthttp/render.go`, `:errors.go` | not auth's, and that is the point: the `Renderer` seam, the `RenderOption`s, the status table and `AcceptLanguage` are one implementation for every subsystem. Before [[D-059]] these were `crud/http/crudhttp`'s, so a middleware that checks a token transitively pulled the SQL repository, the predicate AST and an HTTP client to another service |
 
 ## Tests that walk this flow
 
 - `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` —
-  `http/authnet/middleware_test.go`, `http/authgin/middleware_test.go`,
-  `http/authfiber/middleware_test.go`; `TestAnAuthenticatedCallReachesTheMethodWithItsPrincipal`
-  — `rpc/authgrpc/interceptor_test.go`. The Fiber one is the `SetContext` guard.
+  `auth/http/authnet/middleware_test.go`, `auth/http/authgin/middleware_test.go`,
+  `auth/http/authfiber/middleware_test.go`; `TestAnAuthenticatedCallReachesTheMethodWithItsPrincipal`
+  — `auth/rpc/authgrpc/interceptor_test.go`. The Fiber one is the `SetContext` guard.
 - `TestAnUnauthenticatedRequestIs401AndTheHandlerNeverRuns` — all three HTTP
   bindings; `TestAnUnauthenticatedCallIsRefusedAndTheMethodNeverRuns` for gRPC.
 - `TestTheRefusalBodyIsTheSharedEnvelopeAndNamesNoReason` — all three;
@@ -157,7 +158,7 @@ changing `SetContext` to `Locals` and watching it.
   and watching twenty tokens cost twenty fetches.
 - `TestASymmetricKeyInAKeySetIsNotUsable` — same file.
 - `TestAStoreFailureIsNotARefusal` — `auth/apikey/apikey_test.go`.
-- `TestSkipLeavesTheNamedMethodAlone` — `rpc/authgrpc/interceptor_test.go`, with
+- `TestSkipLeavesTheNamedMethodAlone` — `auth/rpc/authgrpc/interceptor_test.go`, with
   the control that every unnamed method is still authenticated.
 
 ## See also

@@ -36,7 +36,7 @@ is the one failure a client cannot see.
 **Because `NarrowRelations` is a security boundary, not a performance hint.**
 `crud.Where` constrains a statement's own `FROM` and nothing else. A relation
 scope is what follows the narrowing into the tables a preload opens and a nested
-filter's `EXISTS` opens, and it is how `repo/decorators/security` hides rows that
+filter's `EXISTS` opens, and it is how `crud/decorators/security` hides rows that
 `Where` cannot reach. Stacking that gate over a remote resource has to fail. If
 it did not, the gate would appear to work — the root table would be scoped, the
 tests would pass — and the rows would leave through the preload.
@@ -86,7 +86,7 @@ consumer, and a key that means nothing is worse than an absent one.
 - `remote/resource.go:Resource.Update` — the same rule one level up. `Update`
   carries no query document on any route, so an option there is refused rather
   than ignored.
-- `http/crudhttp/transport.go:entityQuery` — one transport-specific refusal of
+- `remote/remotehttp/transport.go:entityQuery` — one transport-specific refusal of
   the same shape: `GET /{id}` carries preload *paths* in a query string, so a
   narrowed preload has nowhere to put its filter and is refused. gRPC sends the
   whole document and does not need this ([[FL-013]]).

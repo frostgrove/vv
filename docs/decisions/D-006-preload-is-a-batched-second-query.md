@@ -81,16 +81,16 @@ two runs of the same query.
   copy.
 - `crud/preload.go:DefaultPreloadDepth` — `= 5`; paths arrive from HTTP clients
   and `a.b.a.b.a.b` should not turn one request into a dozen queries.
-- `repo/basic/repository.go:repository.preload` — runs against the same executor,
+- `crud/sqlrepo/repository.go:repository.preload` — runs against the same executor,
   so a preload inside a transaction sees the transaction.
-- `repo/basic/repository.go:repository.projection` — a projection keeps the
+- `crud/sqlrepo/repository.go:repository.projection` — a projection keeps the
   columns a preload joins on, or the children have nothing to attach to.
 
 ## Proven by
 
 - `TestPreloadCannotBePaginated` in `crud/preload_test.go` and in
-  `query/preload_test.go` — the refusal at both doors.
-- `TestPreloadBatchesAndWires` in `query/preload_test.go`.
+  `crud/query/preload_test.go` — the refusal at both doors.
+- `TestPreloadBatchesAndWires` in `crud/query/preload_test.go`.
 - `TestPreloadChunksLargeKeySets` in `crud/preload_test.go`, and
   `TestPreloadBatchesSpanTheChunkBoundary` in
   `test/integration/matrix_test.go` — the second one is against a live database,

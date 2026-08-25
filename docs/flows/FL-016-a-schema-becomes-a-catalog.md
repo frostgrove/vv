@@ -1,13 +1,13 @@
 # FL-016 — A schema becomes a catalog
 
-**Entry point:** `catalog/load.go:Load` — usually through `catalog/set.go:Set.Load`
+**Entry point:** `crud/catalog/load.go:Load` — usually through `crud/catalog/set.go:Set.Load`
 **Implements:** [[UC-012]]
 
 One database's schema, read once at declaration time, answered from memory
 afterwards. Nothing in this path runs during a request: `Load` is the thing that
 can fail and it fails at start-up ([[D-021]], [[D-041]]).
 
-It has one reader outside its own tests since phase 3: `sqlfault/catalog.go`
+It has one reader outside its own tests since phase 3: `crud/sqlfault/catalog.go`
 takes a loaded `Catalog` and answers which columns a constraint covers, so a
 violation the driver named no column for can still say which fields it was about
 ([[FL-014]]). It reads and never loads, and it holds the catalog on a value the
@@ -18,7 +18,7 @@ that has to still exist.
 
 ## The path
 
-1. **`Set.Load`** — `catalog/set.go:46`
+1. **`Set.Load`** — `crud/catalog/set.go:46`
    `k := crud.KeyOf(src)`. A raw handle, a `Source` over it and a
    `crud.ReadWrite` pair over that all reduce to the same key, because
    `readWrite.DataSource` forwards the primary's identity
@@ -27,7 +27,7 @@ that has to still exist.
    distinction is the whole reason this keys on `KeyOf` and not on what
    `Identified` answers.
 
-2. **The refusal** — `catalog/set.go:95:findable`
+2. **The refusal** — `crud/catalog/set.go:95:findable`
    `crud.SameDataSource(k, k)`, guarded by a `recover`. A key that cannot be
    compared could be stored and never found again, so it is refused with
    `ErrUncomparableHandle` **before any statement runs**. The guard is there
@@ -35,16 +35,16 @@ that has to still exist.
    holding an interface is comparable and `==` on it panics once that interface
    holds a slice.
 
-3. **The scan** — `catalog/set.go:54`
+3. **The scan** — `crud/catalog/set.go:54`
    A slice compared with `crud.SameDataSource`, never a `map[any]` ([[D-041]]).
    A hit answers immediately. A miss loads outside the lock, then re-scans before
    appending, so two goroutines declaring over one handle end up with one
    catalog.
 
-4. **`backendFor`** — `catalog/load.go:58`
+4. **`backendFor`** — `crud/catalog/load.go:58`
    Picks the statements from `src.Dialect().Name()`. An unknown name is
    `ErrUnknownDialect`, again before any statement. `"mysql"` is two engines, so
-   this is where `isMariaDB` (`catalog/load.go:85`) sends one `SELECT VERSION()`
+   this is where `isMariaDB` (`crud/catalog/load.go:85`) sends one `SELECT VERSION()`
    and splits on a case-insensitive `mariadb`. It has to happen here rather than
    later: MariaDB's `information_schema.STATISTICS` has no `EXPRESSION` column
    and MySQL's statement fails there with error 1054.
@@ -54,13 +54,13 @@ that has to still exist.
 
    | engine | file | statements |
    |---|---|---|
-   | PostgreSQL | `catalog/postgres.go` | columns, `pg_constraint`, the unique indexes no constraint backs — 3 |
-   | MySQL | `catalog/mysql.go` | `VERSION`, `COLUMNS`, `TABLE_CONSTRAINTS`, `STATISTICS`, `KEY_COLUMN_USAGE`+`REFERENTIAL_CONSTRAINTS`, `CHECK_CONSTRAINTS` — 6 |
-   | MariaDB | `catalog/mariadb.go` | the same six, two of them spelled differently |
-   | SQLite | `catalog/sqlite.go` | `sqlite_master`, then the four `pragma_*()` table-valued functions — 5 |
+   | PostgreSQL | `crud/catalog/postgres.go` | columns, `pg_constraint`, the unique indexes no constraint backs — 3 |
+   | MySQL | `crud/catalog/mysql.go` | `VERSION`, `COLUMNS`, `TABLE_CONSTRAINTS`, `STATISTICS`, `KEY_COLUMN_USAGE`+`REFERENTIAL_CONSTRAINTS`, `CHECK_CONSTRAINTS` — 6 |
+   | MariaDB | `crud/catalog/mariadb.go` | the same six, two of them spelled differently |
+   | SQLite | `crud/catalog/sqlite.go` | `sqlite_master`, then the four `pragma_*()` table-valued functions — 5 |
 
-   Each read goes through `catalog/load.go:109:eachRow`, which follows
-   `repo/basic/repository.go`'s idiom exactly — `defer rows.Close()`, loop, then
+   Each read goes through `crud/catalog/load.go:109:eachRow`, which follows
+   `crud/sqlrepo/repository.go`'s idiom exactly — `defer rows.Close()`, loop, then
    `rows.Err()` — and wraps any failure in `ErrIntrospection`.
 
 6. **The schema is resolved once and recorded.** PostgreSQL scopes every
@@ -70,9 +70,9 @@ that has to still exist.
    SQLite uses `main`. Resolving a bare name lazily per connection is what
    [[D-041]] forbids.
 
-7. **The build** — `catalog/load.go:133:builder`
+7. **The build** — `crud/catalog/load.go:133:builder`
    Rows arrive over several statements and are collected by `(schema, table)` and
-   then, in `catalog/load.go:210:tableBuild.constraint`, by **name and family** —
+   then, in `crud/catalog/load.go:210:tableBuild.constraint`, by **name and family** —
    `conBuildKey`, whose `conFamily` puts the three key kinds together and leaves a
    foreign key and a check each on their own. By name alone, one name that is two
    objects folds into one; see the trap. First sight fixes position; nothing
@@ -80,13 +80,13 @@ that has to still exist.
    engine's and it is the same on every run ([[D-014]]) — which matters because a
    probe reads its results by column position ([[D-042]]).
 
-8. **The snapshot** — `catalog/load.go:254:newSnapshot`
+8. **The snapshot** — `crud/catalog/load.go:254:newSnapshot`
    One whole schema, stored through an `atomic.Pointer`. Lookup maps are built
    here; they feed no SQL and no output order, so they are maps. `byCons` is
    first-wins per `(table, name)`, because two objects can share a name and the
    lookup answers one.
 
-9. **A lookup** — `catalog/load.go:299:loaded.Table` / `:308:loaded.Constraint`
+9. **A lookup** — `crud/catalog/load.go:299:loaded.Table` / `:308:loaded.Constraint`
    No I/O, no `context`. `Constraint` takes the table as well as the name,
    because every InnoDB table's primary index is called `PRIMARY`.
 
@@ -95,13 +95,13 @@ that has to still exist.
 **`Referrers` is the second optional interface, and it is there for the same
 reason.** A constraint is recorded on the table that *declares* it, so no lookup
 on `Catalog` can answer "which foreign keys point at this table" — which is
-exactly what a `restrict` violation needs ([[FL-017]]). `catalog/load.go`
+exactly what a `restrict` violation needs ([[FL-017]]). `crud/catalog/load.go`
 builds the reverse index once, in `newSnapshot`, rather than walking every table
 per lookup, because a lookup does no work. `Catalog` itself does not carry it:
 the interface a consumer implements stays the small one, and a catalog written
 elsewhere that does not implement it simply produces no `restrict` terms.
 
-`catalog/reload.go:66:loaded.Reload` — an optional `Reloader`, not part of
+`crud/catalog/reload.go:66:loaded.Reload` — an optional `Reloader`, not part of
 `Catalog`. A caller that met a constraint name the catalog has never heard of
 asks for one more look; a rolling migration is the case it exists for.
 
@@ -117,7 +117,7 @@ Two guards under one mutex, and they close different loops:
   millisecond apart.
 
 A failed pass keeps the old snapshot and returns the wrapped error. The clock is
-`catalog/reload.go:115:loaded.clock`, injectable, because the alternative is a
+`crud/catalog/reload.go:115:loaded.clock`, injectable, because the alternative is a
 test that sleeps.
 
 ## Where the decisions bite
@@ -174,7 +174,7 @@ test that sleeps.
   for the key columns, their order, `SUB_PART` and `EXPRESSION`, which exist
   nowhere else.
 - **`crud.SameDataSource` can still panic**, on a statically comparable type
-  holding an uncomparable value. `catalog/set.go:findable` is what makes the
+  holding an uncomparable value. `crud/catalog/set.go:findable` is what makes the
   refusal a refusal.
 - **One name on one table can be two objects.** An index name and a foreign-key
   name live in different namespaces on MySQL and MariaDB, so `UNIQUE KEY k (a)`
@@ -202,31 +202,31 @@ test that sleeps.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| a datasource identity that cannot be compared | `findable` (`catalog/set.go:95`), before the scan | `Set.Load` fails with `ErrUncomparableHandle`. No statement sent, and no panic — which is the whole point of the `recover` |
-| a source with no dialect, or a dialect no back-end serves | `backendFor` (`catalog/load.go:58`) | `Load` fails with `ErrUnknownDialect`, before the first statement |
-| `SELECT VERSION()` refused, so MySQL and MariaDB cannot be told apart | `isMariaDB` (`catalog/load.go:85`) through `eachRow` | `Load` fails with `ErrIntrospection` rather than guessing an engine and sending a statement that cannot run |
-| an introspection statement refused — no `information_schema` grant, a proxy in the way | `eachRow` (`catalog/load.go:109`), on `Query`, on a scan and on `rows.Err` alike | `Load` fails at start-up wrapping the driver's error. Never a half-catalog, and never an empty one, which reads as "this database has no constraint problems" ([[D-021]]) |
+| a datasource identity that cannot be compared | `findable` (`crud/catalog/set.go:95`), before the scan | `Set.Load` fails with `ErrUncomparableHandle`. No statement sent, and no panic — which is the whole point of the `recover` |
+| a source with no dialect, or a dialect no back-end serves | `backendFor` (`crud/catalog/load.go:58`) | `Load` fails with `ErrUnknownDialect`, before the first statement |
+| `SELECT VERSION()` refused, so MySQL and MariaDB cannot be told apart | `isMariaDB` (`crud/catalog/load.go:85`) through `eachRow` | `Load` fails with `ErrIntrospection` rather than guessing an engine and sending a statement that cannot run |
+| an introspection statement refused — no `information_schema` grant, a proxy in the way | `eachRow` (`crud/catalog/load.go:109`), on `Query`, on a scan and on `rows.Err` alike | `Load` fails at start-up wrapping the driver's error. Never a half-catalog, and never an empty one, which reads as "this database has no constraint problems" ([[D-021]]) |
 | the driver's text names a constraint, a table or a column | nothing quotes it: `ErrIntrospection` says nothing itself ([[D-044]]) | a start-up log. No request exists yet, so no transport ever maps one of these to a status ([[FL-011]]) |
-| a table or a constraint the catalog has never heard of | `loaded.Table` / `loaded.Constraint` (`catalog/load.go:299`, `:308`) | `false`, no I/O, no error. That is the answer, not a failure |
-| a reload whose read fails | `loaded.Reload` (`catalog/reload.go:66`) | the wrapped `ErrIntrospection`. The old snapshot stays and the floor is armed anyway, so a database that is down does not turn every failed write into a pass. No transport recognises the error, so it renders as a 500 with a silent body |
+| a table or a constraint the catalog has never heard of | `loaded.Table` / `loaded.Constraint` (`crud/catalog/load.go:299`, `:308`) | `false`, no I/O, no error. That is the answer, not a failure |
+| a reload whose read fails | `loaded.Reload` (`crud/catalog/reload.go:66`) | the wrapped `ErrIntrospection`. The old snapshot stays and the floor is armed anyway, so a database that is down does not turn every failed write into a pass. No transport recognises the error, so it renders as a 500 with a silent body |
 | a name still unknown after a reload pass | `loaded.Reload`, after the pass | `nil`. The caller looks it up again and finds nothing. The negative entry arms and doubles to 5 min |
 | a MySQL user with no `information_schema` grants | nothing — the server answers zero rows rather than refusing | an empty catalog, indistinguishable from a database with no tables. Owed to phase 7 ([[D-041]]) |
-| a `(*Table)(nil)` reaching `Column` or `Constraint` | the accessors themselves (`catalog/catalog.go:100`, `:114`) | `false` rather than a panic — a component wired wrong degrades instead of taking the process down |
+| a `(*Table)(nil)` reaching `Column` or `Constraint` | the accessors themselves (`crud/catalog/catalog.go:100`, `:114`) | `false` rather than a panic — a component wired wrong degrades instead of taking the process down |
 
 ## Files
 
 | File | Role |
 |---|---|
-| `catalog/doc.go` | what a catalog is, nil-versus-empty, the two rules a signature cannot carry |
-| `catalog/catalog.go` | `Catalog`, `Referrers`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
-| `catalog/errors.go` | `ErrUncomparableHandle`, `ErrUnknownDialect`, `ErrIntrospection` |
-| `catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, `snapshot.refs`, `loaded`, `loaded.ReferencedBy` |
-| `catalog/set.go` | `Set`, `Set.Load`, `Set.For`, `findable` |
-| `catalog/reload.go` | `Reloader`, `loaded.Reload`, `loaded.clock`, `negative`, `minBackoff`, `maxBackoff`, `reloadFloor` |
-| `catalog/postgres.go` | `readPostgres`, `pgColumns`, `pgConstraints`, `pgUniqueIndexes`, `pgKind` |
-| `catalog/mysql.go` | `readMySQL`, the five MySQL statements, and the shaping both MySQL and MariaDB share: `myReadColumns`, `myReadTableConstraints`, `myReadStatistics`, `myReadForeignKeys`, `myReadChecks`, `myKind` |
-| `catalog/mariadb.go` | `readMariaDB` and MariaDB's own five statements |
-| `catalog/sqlite.go` | `readSQLite`, the five SQLite statements, `sqliteKind`, `sqliteFKName`, `pkPart` |
+| `crud/catalog/doc.go` | what a catalog is, nil-versus-empty, the two rules a signature cannot carry |
+| `crud/catalog/catalog.go` | `Catalog`, `Referrers`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
+| `crud/catalog/errors.go` | `ErrUncomparableHandle`, `ErrUnknownDialect`, `ErrIntrospection` |
+| `crud/catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, `snapshot.refs`, `loaded`, `loaded.ReferencedBy` |
+| `crud/catalog/set.go` | `Set`, `Set.Load`, `Set.For`, `findable` |
+| `crud/catalog/reload.go` | `Reloader`, `loaded.Reload`, `loaded.clock`, `negative`, `minBackoff`, `maxBackoff`, `reloadFloor` |
+| `crud/catalog/postgres.go` | `readPostgres`, `pgColumns`, `pgConstraints`, `pgUniqueIndexes`, `pgKind` |
+| `crud/catalog/mysql.go` | `readMySQL`, the five MySQL statements, and the shaping both MySQL and MariaDB share: `myReadColumns`, `myReadTableConstraints`, `myReadStatistics`, `myReadForeignKeys`, `myReadChecks`, `myKind` |
+| `crud/catalog/mariadb.go` | `readMariaDB` and MariaDB's own five statements |
+| `crud/catalog/sqlite.go` | `readSQLite`, the five SQLite statements, `sqliteKind`, `sqliteFKName`, `pkPart` |
 | `crud/executor.go` | `KeyOf` and `SameDataSource` — exported by this phase; also [[FL-002]] and [[FL-009]] |
 | `crud/crudtest/recorder.go` | `Result.RowsErr` and `RowsFailing` — the mid-stream failure the `rows.Err()` arm exists for, which `Result.Err` cannot express |
 | `test/integration/catalog_schema_test.go` | `catSchema`, `catSearchPathSchema` — the four-engine fixture |
@@ -234,7 +234,7 @@ test that sleeps.
 
 ## Tests that walk this flow
 
-- `catalog/set_test.go` — `TestTwoSourcesOverDifferentHandlesDoNotShareACatalog`,
+- `crud/catalog/set_test.go` — `TestTwoSourcesOverDifferentHandlesDoNotShareACatalog`,
   `TestTwoIndependentlyBuiltSourcesOverOneHandleShareOneCatalog`,
   `TestAReadWritePairAndItsPrimaryShareOneCatalog`,
   `TestAReadWritePairOverAnotherPrimaryGetsItsOwnCatalog`,
@@ -244,13 +244,13 @@ test that sleeps.
   `TestAComparableHandleIsAcceptedAndFoundAgain`,
   `TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog` — step 3's
   re-scan, under two goroutines held at one barrier.
-- `catalog/load_test.go` — `TestAnUnknownDialectIsRefusedBeforeAnyStatement`,
+- `crud/catalog/load_test.go` — `TestAnUnknownDialectIsRefusedBeforeAnyStatement`,
   `TestAKnownDialectLoadsAndIssuesItsStatements`,
   `TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog` — both
   axes, `Query` refusing and `Rows.Err` refusing —
   `TestARowThatCannotBeScannedFailsLoadRatherThanDroppingIt`,
   `TestAnUnblockedIntrospectionBuildsThePopulatedCatalog`.
-- `catalog/reload_test.go` — `TestALookupIssuesNoStatement`,
+- `crud/catalog/reload_test.go` — `TestALookupIssuesNoStatement`,
   `TestTheSameUnknownNameDoesNotReintrospectInALoop`,
   `TestOnceTheWindowPassesTheCatalogReadsAgain`,
   `TestManyDistinctUnknownNamesDoNotReintrospectOnceEach`,
@@ -258,7 +258,7 @@ test that sleeps.
   `TestAReloadThatFindsTheNameResetsTheBackoff`,
   `TestTheBackoffStopsDoublingAtTheCeiling`,
   `TestAFailedReloadKeepsTheSchemaAndSaysSo`.
-- `catalog/catalog_test.go` — `TestAConstraintIsKeyedOnItsTableAsWellAsItsName`,
+- `crud/catalog/catalog_test.go` — `TestAConstraintIsKeyedOnItsTableAsWellAsItsName`,
   `TestColumnsAndConstraintsKeepTheOrderTheEngineReported`,
   `TestANilTableAnswersFalseRatherThanPanicking`,
   `TestEveryKindPrintsItsOwnName`.

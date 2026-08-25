@@ -1,7 +1,7 @@
 # specs — спецификации и Criteria API
 
 ```go
-import "github.com/shardit-io/vv/repo/decorators/specs"
+import "github.com/shardit-io/vv/crud/decorators/specs"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки
@@ -101,7 +101,7 @@ Article_.Author.Name.Desc()          // ORDER BY (SELECT … LIMIT 1) DESC
 предикат:
 
 ```go
-basic.SoftDelete(Doc_.DeletedAt.Name())
+sqlrepo.SoftDelete(Doc_.DeletedAt.Name())
 crud.GroupBy(Order_.Status.Name())
 crud.Sum("total", Order_.Amount.Name())
 security.Freeze[Doc, int64](Doc_.TenantID.Name())
@@ -117,7 +117,7 @@ Article_.Comments.Path()          // "Comments"
 Article_.Comments.Author.Path()   // "Comments.Author"
 ```
 
-Именно это принимают `basic.RelationScope`, `crud.Preload`, `crud.PreloadWhere`
+Именно это принимают `sqlrepo.RelationScope`, `crud.Preload`, `crud.PreloadWhere`
 и `security.ScopeRelationField` вместо литерала. Хэндл также помнит модель, на
 которую путь приземляется, поэтому хэндл, указывающий на не ту модель, падает
 при инициализации пакета, а не сужает не ту таблицу.
@@ -140,7 +140,7 @@ Article_.Comments.Author.Path()   // "Comments.Author"
 собственной метамодели:
 
 ```go
-basic.RelationScope(
+sqlrepo.RelationScope(
     Article_.Comments.Path(),                    // "Comments"
     specs.Predicate(Comment_.Approved.Eq(true))) // "approved" = $1
 ```

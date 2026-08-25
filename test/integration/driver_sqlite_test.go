@@ -11,8 +11,8 @@ import (
 	// A pure-Go SQLite, so the third engine costs no cgo and no container.
 	_ "modernc.org/sqlite"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
 )
 
 // openSQLite builds a fresh, file-backed database for one test. Files rather

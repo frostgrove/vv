@@ -9,9 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
 	"github.com/shardit-io/vv/test/sqlcgen"
 	"github.com/shardit-io/vv/test/sqlcmysql"
 	"github.com/shardit-io/vv/test/sqlcpgx"

@@ -131,7 +131,7 @@ package that does not compile yet.
    byte-identical across runs ([[D-014]]).
 
    `specs.Metamodel` binds the handle in `bindRel`
-   (`repo/decorators/specs/metamodel.go`): the path is the group's own prefix,
+   (`crud/decorators/specs/metamodel.go`): the path is the group's own prefix,
    and the handle's second type parameter is checked against `crud.Relation.Elem`
    — the target struct type, which needs no `Resolve()` and is therefore safe
    before any table is registered. Two refusals, both at package initialisation:
@@ -240,7 +240,7 @@ package that does not compile yet.
 | `crud/update.go` | `UpdatePlan.Covers` — the model columns a DTO resolves to, through the plan the repository already builds |
 | `crud/update.go` | `collectPlanFields` — the rules the DTO has to satisfy |
 | `crud/meta.go` | the tag vocabulary and the runtime's own embedded-struct flattening |
-| `repo/decorators/specs/metamodel.go` | `Metamodel`, `bindMetamodel`, `bindRel`, `Rel` and the attribute types the generator emits |
+| `crud/decorators/specs/metamodel.go` | `Metamodel`, `bindMetamodel`, `bindRel`, `Rel` and the attribute types the generator emits |
 | `_examples/example/blog/vv_gen.go`, `test/entstore/`, `test/gormstore/`, `test/versionstore/` | checked-in output, verified up to date by tests. `blog` and `versionstore` are the two generated with `-adapter`; `versionstore` is the only model in the tree with a `version` column |
 | `_examples/entstore/`, and the `vv_gen.go` in each `_examples/*-*/` stack | the same generator run the usage guides tell a consumer to run, checked in so an example is readable without running anything |
 
@@ -249,14 +249,14 @@ package that does not compile yet.
 - `TestUpdateDTOFollowsNullability` — `internal/codegen/codegen_test.go` — `*T` vs `Opt[T]`.
 - `TestUpdateDTOLeavesOutWhatCannotBeWritten` — `internal/codegen/codegen_test.go` — PK, generated, immutable.
 - `TestTheVersionColumnIsLeftOutOfTheDTO` — `internal/codegen/codegen_test.go` — the lock leaves the DTO and stays in the metamodel.
-- `TestTheDeclarationAGeneratorProducesForAVersionedModelIsAccepted` — `repo/basic/version_test.go` — the other half of the loop: what the generator now emits is what `Define` accepts, with a control that naming the lock is still refused.
+- `TestTheDeclarationAGeneratorProducesForAVersionedModelIsAccepted` — `crud/sqlrepo/version_test.go` — the other half of the loop: what the generator now emits is what `Define` accepts, with a control that naming the lock is still refused.
 - `TestReadonlyKeepsAFieldQueryableButNotWritable` — `internal/codegen/codegen_test.go`.
 - `TestSkipRemovesAFieldEverywhere` — `internal/codegen/codegen_test.go`.
 - `TestRelationsBecomeNestedAttributeStructs` — `internal/codegen/codegen_test.go`.
 - `TestRelationGroupsCarryATypedPath` — `internal/codegen/codegen_test.go` — the handle, with the root as its control.
 - `TestATargetColumnNamedPathIsCalledOut` — `internal/codegen/codegen_test.go` — the shadowing note, with the unaffected direction of the same schema as its control.
-- `TestARelationHandleAnswersItsCanonicalPath`, `TestARelationHandleDeclaringTheWrongTargetIsRefused`, `TestARelationHandleAtTheRootIsRefused` — `repo/decorators/specs/edge_test.go` — the binding half.
-- `TestARelationScopeAcceptsAGeneratedPath` — `repo/basic/relscope_test.go` — the handle driving a real declaration, against the literal spelling as control.
+- `TestARelationHandleAnswersItsCanonicalPath`, `TestARelationHandleDeclaringTheWrongTargetIsRefused`, `TestARelationHandleAtTheRootIsRefused` — `crud/decorators/specs/edge_test.go` — the binding half.
+- `TestARelationScopeAcceptsAGeneratedPath` — `crud/sqlrepo/relscope_test.go` — the handle driving a real declaration, against the literal spelling as control.
 - `TestRelationCyclesAreCutShort` — `internal/codegen/codegen_test.go`.
 - `TestDepthBoundsHowFarRelationsExpand` — `internal/codegen/codegen_test.go`.
 - `TestEmbeddedStructsAreFlattened` — `internal/codegen/codegen_test.go`.

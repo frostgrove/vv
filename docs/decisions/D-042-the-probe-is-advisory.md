@@ -82,7 +82,7 @@ the API rather than from a comment.
 
 Every one of them is overridable, and hitting any of them sets `Partial`.
 
-The last row settles something phase 6 left provisional: `catalog/reload.go`'s
+The last row settles something phase 6 left provisional: `crud/catalog/reload.go`'s
 intervals — 1s doubling to 5 minutes, with a 1s floor between passes — are
 decided rather than waiting on this decision.
 
@@ -189,22 +189,22 @@ probe did not itself find.
 
 ## Where it lives
 
-- `probe/doc.go` — the rules no signature carries, including the four named
+- `crud/probe/doc.go` — the rules no signature carries, including the four named
   non-deliveries and the cap numbers.
-- `probe/probe.go` — `Handler`, `Declarer`, `Savepointer`, `Request`, `Row`,
+- `crud/probe/probe.go` — `Handler`, `Declarer`, `Savepointer`, `Request`, `Row`,
   `Simple`.
-- `probe/full.go` — `Full`, `Enrich`, `runs`, `run`, `merge`, `same`, `fold`,
+- `crud/probe/full.go` — `Full`, `Enrich`, `runs`, `run`, `merge`, `same`, `fold`,
   `violation`, `path`, `truthy`.
-- `probe/plan.go` — `candidatesFor`, `reproducible`, `restricting`, `planFor`,
+- `crud/probe/plan.go` — `candidatesFor`, `reproducible`, `restricting`, `planFor`,
   `swallowed`, `bind` — the skip set, and every narrowing this decision asks for.
-- `probe/sql.go` — the three term shapes and the statement they go into.
-- `probe/dup.go` — the one Go-side check, and [[D-025]]'s collapse written down
+- `crud/probe/sql.go` — the three term shapes and the statement they go into.
+- `crud/probe/dup.go` — the one Go-side check, and [[D-025]]'s collapse written down
   rather than repeated.
-- `probe/options.go` — the caps as exported constants, and the four oracle
+- `crud/probe/options.go` — the caps as exported constants, and the four oracle
   controls.
-- `probe/declare.go` — the declaration-time refusals, including [[D-041]]'s owed
+- `crud/probe/declare.go` — the declaration-time refusals, including [[D-041]]'s owed
   one and the composite-key answer above.
-- `repo/decorators/faults/probe.go` — the wiring: the per-verb defaults, the
+- `crud/decorators/faults/probe.go` — the wiring: the per-verb defaults, the
   savepoint wrap around the write, and the probe error's only way out.
 - `crud/executor.go:OwnedExecutorFor` / `:ClaimSavepoint` / `:Sourced` — the seam
   change the transaction matrix needed. The probe resolves its executor through
@@ -217,9 +217,9 @@ probe did not itself find.
   dialect is on, without a name check ([[D-019]]).
 - `crud/update.go:DefinedChanges` — the values, which `DefinedFields` does not
   carry.
-- `catalog/catalog.go:Referrers` — the inbound direction, which no lookup on
+- `crud/catalog/catalog.go:Referrers` — the inbound direction, which no lookup on
   `Catalog` can express and which `restrict` needs.
-- `repo/basic/repository.go:Source` — three lines, and the whole of
+- `crud/sqlrepo/repository.go:Source` — three lines, and the whole of
   `crud.Sourced`.
 
 ## Proven by
@@ -258,11 +258,11 @@ Both halves, and the second is the one that catches the NULL bug:
   renders, with a count of violations in the body as the control that the
   comparison measures an order.
 - `TestTheViolationOrderIsTotalAndByteIdentical` in
-  `http/crudhttp/render_test.go` — eight violations spanning names, indices and
+  `port/porthttp/render_test.go` — eight violations spanning names, indices and
   equal-prefix paths, built in reverse. Phase 4 wrote it; phase 7 is what
   produces eight violations for it to order.
-- The unit half, in `probe/full_test.go`, `probe/dup_test.go`,
-  `probe/declare_test.go` and `repo/decorators/faults/probe_test.go`: every skip
+- The unit half, in `crud/probe/full_test.go`, `crud/probe/dup_test.go`,
+  `crud/probe/declare_test.go` and `crud/decorators/faults/probe_test.go`: every skip
   with its unskipped twin, the merge rule with both its controls, the caps, the
   timeout, the savepoint budget, and the foreign transaction that is never given
   a savepoint.
@@ -283,7 +283,7 @@ A fourth was answered earlier. Whether `crud/crudtest`'s recorder grows a
 probe having a unit-test seam and being integration-only. Phase 6 settled it:
 **no**, and the seam exists anyway, because `crud.KeyOf` keys an unidentifiable
 source as itself. [[D-041]] has the argument and the test that pins it. Phase 7
-spent that seam: every unit test in `probe/` drives a recorder.
+spent that seam: every unit test in `crud/probe/` drives a recorder.
 
 ## See also
 

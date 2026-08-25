@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/query"
 )
 
 // CoerceID converts a path parameter to the repository's key type, which is why

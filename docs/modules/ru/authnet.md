@@ -1,11 +1,11 @@
 # authnet — аутентификация запроса net/http
 
 ```go
-import "github.com/shardit-io/vv/http/authnet"
+import "github.com/shardit-io/vv/auth/http/authnet"
 ```
 
 **Модуль:** корневой — импортирует только стандартную библиотеку, поэтому ничего
-не стоит · **Зависит от:** `auth`, `authhttp`, `crudhttp`, `net/http`
+не стоит · **Зависит от:** `auth`, `authhttp`, `porthttp`, `net/http`
 
 ---
 
@@ -68,7 +68,7 @@ http.ListenAndServe(":8080", crudnet.Errors()(authnet.Middleware(guard)(mux)))
 | `Middleware(guard, opts...)` | обычный `func(http.Handler) http.Handler` |
 | `Handler(guard, next, opts...)` | то же, применённое к одному обработчику |
 
-`opts` — это `crudhttp.RenderOption`, те же, что принимает `crudnet.Errors`, так
+`opts` — это `porthttp.RenderOption`, те же, что принимает `crudnet.Errors`, так
 что отказ рендерится через ваш словарь кодов и ваш каталог сообщений.
 
 ## Что он делает

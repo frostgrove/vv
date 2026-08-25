@@ -1,6 +1,6 @@
 # FL-013 — A request through another binding
 
-**Entry point:** `http/crudgin/handler.go:List`, `http/crudnet/handler.go:List` and `rpc/crudgrpc/handler.go:List` (and every sibling method)
+**Entry point:** `crud/http/crudgin/handler.go:List`, `crud/http/crudnet/handler.go:List` and `crud/rpc/crudgrpc/handler.go:List` (and every sibling method)
 **Implements:** [[UC-001]] [[UC-002]] [[UC-013]] [[UC-015]] · **Governed by:** [[D-045]] [[D-033]] [[D-022]] [[D-012]] [[D-015]] [[D-051]] [[D-052]]
 
 There are four bindings and one path. This flow is the short document that says
@@ -9,10 +9,12 @@ where they part company: what `crudgin`, `crudnet` and `crudgrpc` do that
 read [[FL-001]], [[FL-002]], [[FL-003]], [[FL-011]] or [[FL-012]] instead.
 
 Everything from the command onwards is identical, by construction rather than by
-discipline. The shared half is two packages — `port` for what is not HTTP and
-`http/crudhttp` for what is — and all four bindings call into `port`; the three
-HTTP ones call into `crudhttp` as well ([[D-045]]). [[FL-015]] traces that half;
-this file is only about the four doors into it.
+discipline. The shared half is three packages: `port` for what is not HTTP,
+`port/porthttp` for what is HTTP but belongs to no subsystem, and
+`crud/http/crudhttp` for what is HTTP *and* CRUD. All four bindings call into
+`port`; the three HTTP ones call into `porthttp` and `crudhttp` as well
+([[D-045]], [[D-059]]). [[FL-015]] traces that half; this file is only about the
+four doors into it.
 
 `crudnet` is the one that costs nothing. It imports only the standard library,
 so unlike the other three it is not a module of its own: it ships inside the
@@ -20,23 +22,23 @@ library ([[D-033]]).
 
 `crudgrpc` is the one that is not HTTP, and it is what phase 9 measured
 [[D-045]] with. Writing it changed no line of `errs`, `errs/sqlerr`, `port` or
-`http/crudhttp` — see that decision's *Proven by*, where the measurement is
+the HTTP half — see that decision's *Proven by*, where the measurement is
 spelled out.
 
 ## The path
 
-1. **`HandlerFor.List`** — `http/crudgin/handler.go:164` — a `gin.HandlerFunc`, so
+1. **`HandlerFor.List`** — `crud/http/crudgin/handler.go:164` — a `gin.HandlerFunc`, so
    `func(*gin.Context)` with no error return. Where the Fiber handler returns an
    error for the framework to render, this one writes the response and returns.
-2. **`HandlerFor.parseQueryString`** — `http/crudgin/handler.go:419` — reads
+2. **`HandlerFor.parseQueryString`** — `crud/http/crudgin/handler.go:419` — reads
    `c.Request.URL.Query()`, which is already a `url.Values` with every repeat
    intact. Fiber needed `queryValues` walking `QueryArgs().VisitAll` to get the
    same thing; Gin's own `c.Query` has the same collapsing hazard and is not
    used. From here it is `query.ParseQuery` and [[FL-001]].
-3. **`HandlerFor.parseBody`** — `http/crudgin/handler.go:423` —
-   `crudhttp.DecodeJSON` over `c.Request.Body`. An empty body is not an error:
+3. **`HandlerFor.parseBody`** — `crud/http/crudgin/handler.go:423` —
+   `porthttp.DecodeJSON` over `c.Request.Body`. An empty body is not an error:
    `POST /count` and `POST /query` both mean "no narrowing" when sent with none.
-4. **`HandlerFor.scope`** — `http/crudgin/handler.go:391` — `WithScope`'s
+4. **`HandlerFor.scope`** — `crud/http/crudgin/handler.go:391` — `WithScope`'s
    options, if any, and nothing else. It is the whole of what a binding
    contributes to a read now: the compile happens in the service, which
    *appends* these afterwards because `crud.Where` ANDs ([[D-004]]).
@@ -45,11 +47,11 @@ spelled out.
    application's own middleware puts it there with
    `c.Request = c.Request.WithContext(ctx)`. The handler contributes nothing but
    the pass-through ([[FL-007]]). From here it is [[FL-015]].
-6. **`HandlerFor.entity` / `c.JSON`** — `http/crudgin/handler.go:436` — one
+6. **`HandlerFor.entity` / `c.JSON`** — `crud/http/crudgin/handler.go:436` — one
    status, one body. `crud.MapPage` renders a page through `WithTransform`
    exactly as in [[FL-001]].
 7. **`HandlerFor.fail` → the error handler → `render`** —
-   `http/crudgin/options.go:183` — the renderer decides the status, any header
+   `crud/http/crudgin/options.go:183` — the renderer decides the status, any header
    and the body, then `c.Error(err)` records the cause for Gin's logging
    middleware and `write` puts the response on the wire. The error text still
    never reaches a 500 body ([[FL-011]]).
@@ -74,7 +76,7 @@ path or a method it does not have.
 | `/x` vs `/x/` | both | `/x`, and 301 from `/x/` | both | n/a |
 | unmounted verb | 405 | 404, or 405 with `HandleMethodNotAllowed` | 405 | `Unimplemented` |
 | unclaimed path | 404 | 404 | 404 | `Unimplemented` |
-| renderer | `crudhttp.Renderer` | `crudhttp.Renderer` | `crudhttp.Renderer` | `crudgrpc.Renderer` — a `*status.Status` |
+| renderer | `porthttp.Renderer` | `porthttp.Renderer` | `porthttp.Renderer` | `crudgrpc.Renderer` — a `*status.Status` |
 | failure shape | the envelope | the envelope | the envelope | a status code plus `BadRequest` / `ErrorInfo` / `RetryInfo` details |
 | status vocabulary | 404/401/403/503/409/422/400/500 | the same | the same | `NotFound`/`Unauthenticated`/`PermissionDenied`/`Unavailable`/`AlreadyExists`/`InvalidArgument`/`Internal` — **422 and 400 collapse** |
 | retry hint | `Retry-After: 1` | the same | the same | `RetryInfo{1s}` |
@@ -82,7 +84,7 @@ path or a method it does not have.
 | raw-body fallback | yes | yes | yes | **no** — declared hops only |
 | schema / reflection | n/a | n/a | n/a | **none** — a generic resource has no descriptor ([[D-052]]) |
 | double-install marker | the response writer | the response writer | the response writer | the error already carrying a status |
-| **client transport** | — | — | `crudhttp.Transport` | `crudgrpc.Transport` |
+| **client transport** | — | — | `remotehttp.Transport` | `crudgrpc.Transport` |
 
 ### Calling out, and why there are two rows and not four
 
@@ -164,7 +166,7 @@ is the same one; everything below is the door.
   is generic over its model, so no compiled proto message for it can exist in a
   library. The document inside the Struct is exactly the JSON the three HTTP
   bindings carry, which is what lets one `port.Service` value serve all four and
-  answer the same thing ([[D-052]]). `rpc/crudgrpc/message.go` converts through
+  answer the same thing ([[D-052]]). `crud/rpc/crudgrpc/message.go` converts through
   `protojson` and `encoding/json`, so the model's own `json` tags decide the
   document and `crud.Opt` keeps its three states: an absent key is not in
   `Struct.Fields`, an explicit null is a `NullValue` entry.
@@ -176,7 +178,7 @@ is the same one; everything below is the door.
   `TestAnInt64KeyIsCarriedAsAString`, whose control asserts the entity really
   does lose it.
 - **No query-string door and no raw-body fallback.** A read is the query
-  document or nothing, and `crudhttp.WithBody`'s index — which turns a column
+  document or nothing, and `porthttp.WithBody`'s index — which turns a column
   name back into the key the client sent — has no counterpart. The declared hops
   are the whole chain, so a path nothing owns is marked approximate rather than
   guessed ([[D-043]]).
@@ -199,11 +201,14 @@ is the same one; everything below is the door.
 
 ## Where the decisions bite
 
-- **The status table is not here.** `crudgin.Status` is one line over
-  `crudhttp.Status`, which is one line over `port.KindOf`. [[D-045]] forbids a
-  second copy, because two switches over the same sentinels drift the day one
-  gains an arm and nothing fails when they do — which is exactly what [[FL-011]]
-  predicted before the second binding existed.
+- **The status table is not here, and it is not in the CRUD subsystem either.**
+  `crudgin.Status` is one line over `porthttp.Status`, which is one line over
+  `port.KindOf`. [[D-045]] forbids a second copy, because two switches over the
+  same sentinels drift the day one gains an arm and nothing fails when they do —
+  which is exactly what [[FL-011]] predicted before the second binding existed.
+  [[D-059]] moved the table out from under `crud/` so the auth middleware could
+  read the same one without importing the repository; `crudhttp.Status` still
+  exists and still answers, as a forwarder.
 - **And neither is the gRPC one, in the half that matters.**
   `crudgrpc.CodeFor` is a second *vocabulary* — `codes.Code` instead of an HTTP
   status — over the same `port.KindOfWith` answer. The kind is decided once; each
@@ -232,9 +237,9 @@ is the same one; everything below is the door.
   URL, which is the whole of the difference. The
   PostgreSQL sequence hazard the decision exists for is engine-level, so it
   reaches every binding unchanged.
-- **Gin is not a dependency of anybody else.** `http/crudgin` is its own module
+- **Gin is not a dependency of anybody else.** `crud/http/crudgin` is its own module
   ([[D-033]]); sonic, validator/v10, quic-go, protobuf and mongo-driver arrive
-  with it and reach no other consumer. `rpc/crudgrpc` is its own module for the
+  with it and reach no other consumer. `crud/rpc/crudgrpc` is its own module for the
   same reason, with three requires that are one decision ([[D-051]]).
 
 ## Failure modes
@@ -244,7 +249,7 @@ is the same one; everything below is the door.
 | `GET /widgets/count` read as an entity named "count" | Gin's router gives a static segment priority over `:id` | it does not happen; pinned by `TestStaticRoutesAreNotSwallowedByTheIDRoute` |
 | `GET /widgets/` with the collection mounted at `""` | `Engine.RedirectTrailingSlash` | 301 to `/widgets` |
 | `GET /widgets/abc` where the key is `int64` | `port.CoerceID` (`port/request.go`) | 400, and the envelope names `invalid_id` ([[FL-011]]) |
-| a body that is not JSON | `crudhttp.DecodeJSONKeep` (`http/crudhttp/request.go`) | 400 `malformed_body`, and the service is never called |
+| a body that is not JSON | `porthttp.DecodeJSONKeep` (`port/porthttp/body.go`) | 400 `malformed_body`, and the service is never called |
 | an option that configures the service, handed to `Serving` | `options.refuseServiceOptions` | a panic at declaration naming the option ([[D-021]]) |
 | `?filtr=` — a parameter one edit from a real one | `query.ParseQuery` → `checkParams` | 400 with the offending path named |
 | a write verb on a `ReadOnly` handler | the route was never registered | 404, or 405 with `HandleMethodNotAllowed`; `Unimplemented` on gRPC |
@@ -256,76 +261,77 @@ is the same one; everything below is the door.
 
 | File | Role |
 |---|---|
-| `http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the four constructors |
-| `http/crudgin/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `Status`, `DefaultErrorHandler` |
-| `http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
-| `http/crudnet/options.go` | the same set again, plus `writeJSON` |
-| `http/crudhttp/doc.go` | where the line between the two shared halves is drawn |
-| `http/crudhttp/repository.go` | `Repository` — the alias every binding aliases in turn |
-| `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindOf`, and the forwarders for `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
-| `http/crudhttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which is the HTTP half |
-| `http/crudhttp/request.go` | `DecodeJSON`, `DecodeJSONKeep`, `KeepBody`, `MalformedBody`, `BulkDeleteRequest`, `WithBody`/`BodyFrom`, and the forwarders for `CoerceID` / `NarrowForCount` / `NarrowForEntity` / `WithLocale` / `LocaleFrom` |
-| `http/crudhttp/errors.go` | `Status`, `StatusFor`, `KindOf`, `AcceptLanguage`, and the bad-request forwarders |
-| `rpc/crudgrpc/doc.go` | the method table and the four stated limits |
-| `rpc/crudgrpc/handler.go` | the eight methods, the four constructors, `build`, the hooks and the scope |
-| `rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
-| `rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
-| `rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
-| `rpc/crudgrpc/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor` |
-| `rpc/crudgrpc/interceptor.go` | `Errors` and the double-install guard |
-| `rpc/crudgrpc/locale.go` | `LocaleKeys`, `WithLocale`, `withRequestLocale` |
-| `http/crudhttp/transport.go` | the HTTP client transport — `route`, `entityQuery`, `fault` ([[FL-018]]) |
-| `http/crudhttp/decode.go` | `KindForStatus`, `ParseEnvelope`, and the wire shapes a client reads |
-| `rpc/crudgrpc/transport.go` | the gRPC client transport — `requestFor`, `fault`, `kindOf` ([[FL-018]]) |
+| `crud/http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the four constructors |
+| `crud/http/crudgin/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `Status`, `DefaultErrorHandler` |
+| `crud/http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
+| `crud/http/crudnet/options.go` | the same set again, plus `writeJSON` |
+| `crud/http/crudhttp/doc.go` | where the lines between the three shared halves are drawn |
+| `crud/http/crudhttp/repository.go` | `Repository` — the alias every binding aliases in turn |
+| `crud/http/crudhttp/request.go` | `BulkDeleteRequest`, and the forwarders for `CoerceID` / `NarrowForCount` / `NarrowForEntity` |
+| `crud/http/crudhttp/porthttp.go` | the aliases and forwarders for everything [[D-059]] moved, so a binding written against the old names still compiles |
+| `port/porthttp/errors.go` | `Status`, `StatusFor`, `KindOf`, `AcceptLanguage`, `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
+| `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which is the HTTP half |
+| `port/porthttp/body.go` | `DecodeJSON`, `DecodeJSONKeep`, `KeepBody`, `MalformedBody`, `WithBody`/`BodyFrom`, `WithLocale`/`LocaleFrom` |
+| `crud/rpc/crudgrpc/doc.go` | the method table and the four stated limits |
+| `crud/rpc/crudgrpc/handler.go` | the eight methods, the four constructors, `build`, the hooks and the scope |
+| `crud/rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
+| `crud/rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
+| `crud/rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
+| `crud/rpc/crudgrpc/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor` |
+| `crud/rpc/crudgrpc/interceptor.go` | `Errors` and the double-install guard |
+| `crud/rpc/crudgrpc/locale.go` | `LocaleKeys`, `WithLocale`, `withRequestLocale` |
+| `remote/remotehttp/transport.go` | the HTTP client transport — `route`, `entityQuery`, `fault` ([[FL-018]]) |
+| `port/porthttp/decode.go` | `KindForStatus`, `ParseEnvelope`, and the wire shapes a client reads |
+| `crud/rpc/crudgrpc/transport.go` | the gRPC client transport — `requestFor`, `fault`, `kindOf` ([[FL-018]]) |
 | `port/service.go` | the service every binding hands its commands to |
 | `port/command.go` | the commands themselves |
 | `port/request.go` | `CoerceID`, `NarrowForCount`, `NarrowForEntity` |
 | `port/model.go` | `Sanitize`, `ClearGenerated` |
 | `port/violations.go` | the pipeline both renderers build from |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — one key and one parser for every transport |
-| `http/crudgin/go.mod` | the module boundary that keeps Gin off everybody else |
-| `rpc/crudgrpc/go.mod` | the same for grpc, protobuf and genproto |
+| `crud/http/crudgin/go.mod` | the module boundary that keeps Gin off everybody else |
+| `crud/rpc/crudgrpc/go.mod` | the same for grpc, protobuf and genproto |
 | — | `crudnet` has no `go.mod`: there is no dependency to keep off anybody |
 
 Everything the request touches after `compile` is in [[FL-001]]'s file table.
 
 ## Tests that walk this flow
 
-- `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `http/crudgin/routing_test.go`
+- `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `crud/http/crudgin/routing_test.go`
   — the fixed paths, with a control case showing the `:id` route really is live
   and really would have taken them.
 - `TestTheCollectionRouteAnswersWithoutATrailingSlash` —
-  `http/crudgin/routing_test.go` — `GET /widgets` is 200 and `/widgets/` is 301.
-- `TestMountingAtTheRootDoesNotCollide` — `http/crudgin/routing_test.go` — the
+  `crud/http/crudgin/routing_test.go` — `GET /widgets` is 200 and `/widgets/` is 301.
+- `TestMountingAtTheRootDoesNotCollide` — `crud/http/crudgin/routing_test.go` — the
   panic the `""` choice avoids.
-- `TestRoutesMountEveryDocumentedEndpoint` — `http/crudgin/handler_test.go` —
+- `TestRoutesMountEveryDocumentedEndpoint` — `crud/http/crudgin/handler_test.go` —
   every route, its verb, its status and the repository method behind it.
-- `TestRepeatedFilterTermsAllSurvive` — `http/crudgin/handler_test.go` — the
+- `TestRepeatedFilterTermsAllSurvive` — `crud/http/crudgin/handler_test.go` — the
   repeats `URL.Query()` keeps.
-- `TestAServiceLayerCanStandInForTheRepository` — `http/crudgin/handler_test.go`.
+- `TestAServiceLayerCanStandInForTheRepository` — `crud/http/crudgin/handler_test.go`.
 - `TestADistinctInputDTOReachesTheModelThroughTheMapper` —
-  `http/crudgin/handler_test.go` — the mapper, with the control that the same
+  `crud/http/crudgin/handler_test.go` — the mapper, with the control that the same
   body through `New` means nothing.
 - `TestNewForInfersItsInputFromTheMapper`,
   `TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared` and
   `TestAServiceShapedOptionOnServingIsRefusedAtDeclaration` —
-  `http/crudgin/options_test.go`.
-- `TestAServicePathHopReachesTheRenderedField` — `http/crudgin/edge_test.go`.
+  `crud/http/crudgin/options_test.go`.
+- `TestAServicePathHopReachesTheRenderedField` — `crud/http/crudgin/edge_test.go`.
 - `TestStatusMapsWhatItPromisesTo` and `TestA500NeverEchoesTheInternalError` —
-  `http/crudgin/edge_test.go` — the shared table, from this side.
-- `TestPutIsNotAWayAroundAllowClientID` — `http/crudgin/write_edge_test.go`.
+  `crud/http/crudgin/edge_test.go` — the shared table, from this side.
+- `TestPutIsNotAWayAroundAllowClientID` — `crud/http/crudgin/write_edge_test.go`.
 - `TestGinHTTP*` — `test/integration/http_gin_test.go` — nine tests end to end
   against live PostgreSQL and MySQL, mounting the same service type the Fiber
   suite mounts.
 
 And the `crudnet` half:
 
-- `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `http/crudnet/routing_test.go`
+- `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `crud/http/crudnet/routing_test.go`
   — the same guarantee, with the same control case.
-- `TestBothSpellingsOfTheCollectionAnswer` — `http/crudnet/routing_test.go` —
+- `TestBothSpellingsOfTheCollectionAnswer` — `crud/http/crudnet/routing_test.go` —
   `/widgets` and `/widgets/` both reach the list handler, and a create through
   either reaches `Save`.
-- `TestMountingAtTheRootClaimsOnlyTheRootPath` — `http/crudnet/routing_test.go`
+- `TestMountingAtTheRootClaimsOnlyTheRootPath` — `crud/http/crudnet/routing_test.go`
   — the catch-all the `{$}` choice avoids. Its control asserts that an
   unregistered path is a 404 that never reaches the repository; with a bare `/`
   it is a 200 and a page of rows, which is why the control is the test.
@@ -334,7 +340,7 @@ And the `crudnet` half:
 
 And the `crudgrpc` half:
 
-- `TestEveryCommandHasAMethod` — `rpc/crudgrpc/handler_test.go` — eight methods,
+- `TestEveryCommandHasAMethod` — `crud/rpc/crudgrpc/handler_test.go` — eight methods,
   each handing the recorder service the command `port` declares. Its control is
   `ReadOnly`: three reads registered, five writes answering `Unimplemented`.
 - `TestAbsentNullAndValueSurviveTheStructRoundTrip` — the same file — [[UC-003]]
@@ -363,13 +369,13 @@ And the `crudgrpc` half:
   `TestTheFrameworkDoesNotRetryOnTheCallersBehalf`,
   `TestPartialIsTheOnlyMetadataKey`, `TestTheErrorInfoNamesTheFaultsOwnCode` and
   `TestAClassifiedConflictReachesAGrpcClientWithNothingInternal` —
-  `rpc/crudgrpc/status_test.go` — the second vocabulary and what it may say.
+  `crud/rpc/crudgrpc/status_test.go` — the second vocabulary and what it may say.
   The last runs over every entry of the captured corpus on all four engines.
 - `TestInstallingTheInterceptorTwiceRendersOnce`,
   `TestTheInterceptorRendersAMethodOfYourOwn`,
   `TestTheRequestLocaleReachesTheMessageLadder` and
   `TestALocalizedMessageNamesTheRequestedLocale` —
-  `rpc/crudgrpc/handler_test.go`.
+  `crud/rpc/crudgrpc/handler_test.go`.
 - `TestOnePortServiceAlsoMountsOnGRPC` and
   `TestAClassifiedConflictReachesAGrpcClientWithNothingInternal` —
   `test/integration/rpc_grpc_test.go` — end to end against every live engine and
@@ -401,7 +407,7 @@ refusal, the clearing, the key coercion — under the same names, and spells the
 rest in its own vocabulary because there is no 404 and no `PUT` here to name. A
 test that only makes sense for one HTTP router still belongs in that binding's
 `routing_test.go`; a test that only makes sense for gRPC belongs in
-`rpc/crudgrpc/` and the difference it pins belongs in the table above.
+`crud/rpc/crudgrpc/` and the difference it pins belongs in the table above.
 
 ## See also
 

@@ -1,7 +1,7 @@
 # vvflag — один типизированный флаг, пока не всё захватил `flag.Parse`
 
 ```go
-import "github.com/shardit-io/vv/vvflag"
+import "github.com/shardit-io/vv/utils/vvflag"
 ```
 
 **Модуль:** корневой · **Зависит от:** стандартной библиотеки

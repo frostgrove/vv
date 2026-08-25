@@ -92,20 +92,20 @@ would have been `cannot infer In` at every existing call site.
 ## Where it lives
 
 - `port/repository.go:Repository` — the interface, with the reason on it.
-- `http/crudhttp/repository.go:Repository` — the alias that keeps the old
+- `crud/http/crudhttp/repository.go:Repository` — the alias that keeps the old
   address working.
 - `port/service.go:Service` — the seam this decision predicted, made explicit.
-- `http/crudfiber/handler.go:Repository`, `http/crudgin/handler.go:Repository`,
-  `http/crudnet/handler.go:Repository` — the per-binding aliases.
-- `http/crudfiber/handler.go:HandlerFor` / `http/crudgin/handler.go:HandlerFor` /
-  `http/crudnet/handler.go:HandlerFor` — each holds `svc Service[M, ID, U]` and
+- `crud/http/crudfiber/handler.go:Repository`, `crud/http/crudgin/handler.go:Repository`,
+  `crud/http/crudnet/handler.go:Repository` — the per-binding aliases.
+- `crud/http/crudfiber/handler.go:HandlerFor` / `crud/http/crudgin/handler.go:HandlerFor` /
+  `crud/http/crudnet/handler.go:HandlerFor` — each holds `svc Service[M, ID, U]` and
   the mapper in front of it; `Handler[M, ID, U]` is the alias over it.
-- `http/crudfiber/handler.go:New` / `http/crudgin/handler.go:New` — infer all
+- `crud/http/crudfiber/handler.go:New` / `crud/http/crudgin/handler.go:New` — infer all
   three parameters. `:NewFor` infers a fourth from the mapper.
-- `http/crudfiber/options.go:Option` / `http/crudgin/options.go:Option` —
+- `crud/http/crudfiber/options.go:Option` / `crud/http/crudgin/options.go:Option` —
   parameterised the same way so inline options infer.
 - `crud/repo.go:Repo` — the struct that satisfies it and that a service embeds.
-- `repo/decorators/specs/executor.go:Repo` — embeds `crud.Repo`, so it satisfies
+- `crud/decorators/specs/executor.go:Repo` — embeds `crud.Repo`, so it satisfies
   the interface too and adds the specification methods.
 - `docs/usage-guides/ent.md` §12 and `docs/usage-guides/gorm.md` §12 — the
   service-layer pattern.

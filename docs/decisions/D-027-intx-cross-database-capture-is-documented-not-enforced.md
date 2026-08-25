@@ -34,7 +34,7 @@ way:
 
 **The identity a foreign executor could give is not the one that would match.**
 `crudsql.Executor` *does* implement `crud.Identified` —
-`adapter/crudsql/crudsql.go:Executor.DataSource` returns the wrapped `Queryer`.
+`crud/adapter/crudsql/crudsql.go:Executor.DataSource` returns the wrapped `Queryer`.
 For a `DB` built by `Open` that is the `*sql.DB`, which is exactly right. But the
 executor handed over by an ent or gorm transaction is `crudsql.From(tx)`, and its
 `Queryer` is the `*sql.Tx` (or `*ent.Tx`, or the `*gorm.DB`) — the transaction
@@ -96,7 +96,7 @@ While this is open, do not:
 - `crud/executor.go:WithExecutorFor` — the answer a caller is expected to use.
 - `crud/executor.go:Identified` — optional, with the reason.
 - `crud/executor.go:ownScope` — the related choice, decided the other way.
-- `repo/basic/repository.go:repository.exec` — the same fallback on every
+- `crud/sqlrepo/repository.go:repository.exec` — the same fallback on every
   statement.
 - `docs/usage-guides/ent.md` §5 and `docs/usage-guides/gorm.md` §5 — the
   "be deliberate about this if you talk to a second database" note.

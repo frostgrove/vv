@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // A GROUP BY written by hand runs outside every narrowing the repository
@@ -122,8 +122,8 @@ func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
 
-	scoped := basic.Define[EgRow, int64, EgRowUpdate]("eg_rows",
-		basic.Scope(crud.Eq("Tenant", 1)))
+	scoped := sqlrepo.Define[EgRow, int64, EgRowUpdate]("eg_rows",
+		sqlrepo.Scope(crud.Eq("Tenant", 1)))
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {

@@ -99,7 +99,7 @@ the 500-leaks-nothing assertion are both exhaustive over the route set, and both
 are run once per HTTP binding, of which there are three.
 
 **Guarantee 13 arrived with phase 9**, and it is the one the gRPC binding
-existed to test. `port.KindOfWith` answers the class; `crudhttp.StatusFor` and
+existed to test. `port.KindOfWith` answers the class; `porthttp.StatusFor` and
 `crudgrpc.CodeFor` are two tables over that one answer, and the violations
 pipeline they both render from — the path chain, the sort, the cap, the message
 ladder — is `port.Violations`, one implementation. What a client branches on is
@@ -133,7 +133,7 @@ naming which engine it speaks to. In all three the status is right and the body
 is the old one.
 
 Guarantee 11 holds as of phase 4. `err.Error()` no longer reaches a body:
-`crudhttp` renders one envelope built from the fault's public projection, and a
+`porthttp` renders one envelope built from the fault's public projection, and a
 refusal that carries no fault is turned into a synthesised one first, so there is
 nowhere for a driver's sentence to arrive from. The 500 body is a fixed value
 with no message field at all, so [[D-015]]'s silence holds by construction rather
@@ -159,9 +159,9 @@ so the status depends on whether classification succeeded.
 **Guarantee 14 is the same mapping inverted**, and it arrived with the client.
 `port.FaultFrom` is `port.FaultOf`'s counterpart: it takes the class, the code,
 the violations and the partial marker and rebuilds the fault — sentinel
-included, which is the half nothing else arranges. `crudhttp.KindForStatus` and
-`crudgrpc.KindForCode` are the two inverse tables, each in the same file as the
-table it inverts ([[D-045]]).
+included, which is the half nothing else arranges. `porthttp.KindForStatus` and
+`crudgrpc.KindForCode` are the two inverse tables, each in the same package as
+the table it inverts ([[D-045]]).
 
 Two things it recovers less than exactly, and both are the wire's shape rather
 than a choice. The fault's own code arrives verbatim in a gRPC status's

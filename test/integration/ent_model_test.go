@@ -11,11 +11,11 @@ import (
 
 	"entgo.io/ent/dialect"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 	"github.com/shardit-io/vv/test/ent"
 	entuser "github.com/shardit-io/vv/test/ent/user"
 	"github.com/shardit-io/vv/test/entstore"
@@ -29,7 +29,7 @@ type EntUserUpdate = entstore.UserUpdate
 // The embedded config, the selectValues field and the Edges holder are all
 // ignored, and the column names fall out of the Go names exactly as ent's own
 // naming does.
-var EntUsers = basic.Define[ent.User, int64, EntUserUpdate](entuser.Table)
+var EntUsers = sqlrepo.Define[ent.User, int64, EntUserUpdate](entuser.Table)
 
 // The mapping self-check every ent project should copy: vv derives column
 // names from the Go field names, ent knows the real ones, so compare them and

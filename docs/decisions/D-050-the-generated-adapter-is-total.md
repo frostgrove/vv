@@ -44,7 +44,7 @@ updates and from the typed query API, and nothing says anything. That is
 [[D-021]] applied to the part of this design most likely to rot — a DTO and a
 table drift apart on an ordinary afternoon.
 
-**Because the check belongs on the generated artefact and not on `basic.Define`.**
+**Because the check belongs on the generated artefact and not on `sqlrepo.Define`.**
 A totality arm inside `crud.PlanFor` would refuse every hand-narrowed DTO in the
 tree and in every consumer's code, and a narrow DTO is a supported shape — a
 service that exposes three of nine columns is not broken. `port/path.go` already
@@ -118,7 +118,7 @@ adapter's. One owner per hop.
 
 ## What it forbids
 
-- Do not put a totality check in `crud.PlanFor` or `basic.Define`. A
+- Do not put a totality check in `crud.PlanFor` or `sqlrepo.Define`. A
   hand-narrowed DTO is a supported shape.
 - Do not make `port.PathMap` pass an undeclared head through. Its whole value
   over `Fields` is that an undeclared head means something.
@@ -148,7 +148,7 @@ adapter's. One owner per hop.
   `renderCoverage`.
 - `internal/codegen/codegen.go` — `field.Excluded`, `field.tagDropped`,
   `generator.exclude`, `model.excluded`, `wellKnownEmbeds`.
-- `http/crudhttp/render.go:EnvelopeRenderer.violations` — declared hops first,
+- `port/porthttp/render.go:EnvelopeRenderer.violations` — declared hops first,
   the fallback only over an untranslated path.
 - `cmd/vv/main.go` — `-adapter`, `-binding`.
 - `test/versionstore/` — the model that made the version case reachable.
@@ -172,7 +172,7 @@ adapter's. One owner per hop.
   behind the other.
 - `TestAGeneratedMapTranslatesUnderALeadingIndex` — with the undeclared-name
   twin. `TestAnEmptyFieldsMapIsTheIdentity` pins the opposite for `Fields`.
-- `TestADeclaredMapBeatsTheRawBodyGuess` in `http/crudhttp/render_test.go` — a
+- `TestADeclaredMapBeatsTheRawBodyGuess` in `port/porthttp/render_test.go` — a
   declared path is not overturned by the index, an ambiguous body the index
   declines is still resolved by the map, and an undeclared field declines and is
   marked approximate. Every arm has its no-map control.

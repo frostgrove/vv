@@ -6,8 +6,8 @@ import "context"
 // middleware can be written once and still infer both from its arguments; the
 // update DTO is erased to `any` here and re-typed by Repo above it.
 //
-// Implement it only if you are writing a decorator — the basic repository is in
-// repo/basic.
+// Implement it only if you are writing a decorator — the SQL repository is in
+// crud/sqlrepo.
 type Core[M any, ID comparable] interface {
 	// Meta describes the bound model and table.
 	Meta() *Meta

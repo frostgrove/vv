@@ -21,10 +21,10 @@ Every example serves the same resource at `/products` with the same ten routes,
 so you can diff any two files and see only what the stack changes.
 
 All of them need `go get github.com/shardit-io/vv`. Beyond that each
-needs only what its own stack uses: the Fiber ones add `.../http/crudfiber`, the
-Gin ones `.../http/crudgin`, `pgx-grpc` adds `.../rpc/crudgrpc`,
-`auth-jwt-gin` adds `.../http/authgin` and `.../auth/authjwt`, `pgx-fiber`
-adds `.../adapter/crudpgx`, and
+needs only what its own stack uses: the Fiber ones add `.../crud/http/crudfiber`, the
+Gin ones `.../crud/http/crudgin`, `pgx-grpc` adds `.../crud/rpc/crudgrpc`,
+`auth-jwt-gin` adds `.../auth/http/authgin` and `.../auth/authjwt`, `pgx-fiber`
+adds `.../crud/adapter/crudpgx`, and
 `sql-nethttp` adds nothing at all — `crudnet` and `crudsql` are both stdlib, so
 both live in the library.
 
@@ -53,7 +53,7 @@ only so the same ent code is not checked in twice.
 
 ## If your project is on neither Fiber nor Gin
 
-Read [`sql-nethttp`](sql-nethttp/). It mounts `http/crudnet`, the `net/http`
+Read [`sql-nethttp`](sql-nethttp/). It mounts `crud/http/crudnet`, the `net/http`
 binding, and it is the same one-liner the other examples use:
 
 ```go

@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/shardit-io/vv/crud/sqlrepo"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/repo/basic"
 	"github.com/shardit-io/vv/test/versionstore"
 )
 
@@ -16,9 +16,9 @@ import (
 // MustCoverUpdate — would never execute and the model would prove nothing.
 
 // The half UC-014 owed: the declaration the generated DTO implies is one
-// basic.Define accepts, for a model that carries a lock.
+// sqlrepo.Define accepts, for a model that carries a lock.
 func TestTheGeneratedDeclarationForAVersionedModelIsAccepted(t *testing.T) {
-	if _, err := basic.TryDefine[versionstore.Document, int64, versionstore.DocumentUpdate]("documents"); err != nil {
+	if _, err := sqlrepo.TryDefine[versionstore.Document, int64, versionstore.DocumentUpdate]("documents"); err != nil {
 		t.Fatalf("the generated DTO was refused at declaration: %v", err)
 	}
 
@@ -28,7 +28,7 @@ func TestTheGeneratedDeclarationForAVersionedModelIsAccepted(t *testing.T) {
 		Title    *string
 		Revision *int
 	}
-	if _, err := basic.TryDefine[versionstore.Document, int64, withLock]("documents"); err == nil {
+	if _, err := sqlrepo.TryDefine[versionstore.Document, int64, withLock]("documents"); err == nil {
 		t.Fatal("a DTO naming the version column was accepted; the generator's omission then proves nothing")
 	}
 }

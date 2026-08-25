@@ -1,8 +1,8 @@
 package corpus
 
 import (
+	"github.com/shardit-io/vv/crud/sqlfault"
 	"github.com/shardit-io/vv/errs/sqlerr"
-	"github.com/shardit-io/vv/sqlfault"
 )
 
 // capture flattens whatever a driver returned into a corpus entry.

@@ -61,7 +61,7 @@ row, and the model would be stale. The insert path detects the empty result and
 re-reads.
 
 **Why `Save` has no options.** It is an upsert; there is no `WHERE` clause for a
-predicate to narrow. That is documented on `basic.Scope`, and it is why
+predicate to narrow. That is documented on `sqlrepo.Scope`, and it is why
 `security.Gate` has to refuse rather than filter — see [[D-008]].
 
 ## What it forbids
@@ -77,13 +77,13 @@ predicate to narrow. That is documented on `basic.Scope`, and it is why
 
 ## Where it lives
 
-- `repo/basic/repository.go:repository.Save` — the three branches.
-- `repo/basic/repository.go:repository.insert` — `RETURNING` path, `LastInsertID`
+- `crud/sqlrepo/repository.go:repository.Save` — the three branches.
+- `crud/sqlrepo/repository.go:repository.insert` — `RETURNING` path, `LastInsertID`
   path, the `DO NOTHING` re-read, and the unconditional refresh.
-- `repo/basic/repository.go:repository.refresh` — re-reads through the narrowing,
+- `crud/sqlrepo/repository.go:repository.refresh` — re-reads through the narrowing,
   so a write that was allowed to touch only some rows cannot read back a row it
   was not allowed to touch.
-- `repo/basic/repository.go:newRepository` — `insertGen`, `insertFull` and
+- `crud/sqlrepo/repository.go:newRepository` — `insertGen`, `insertFull` and
   `upsertTail` are assembled once at bind time from `Meta.InsertGen`,
   `Meta.Insert` and `Meta.Update`.
 - `crud/meta.go:buildSchema` — which field lands in which list; `generated` is in
@@ -99,28 +99,28 @@ predicate to narrow. That is documented on `basic.Scope`, and it is why
 
 ## Proven by
 
-- `TestSaveUpsertsWhenKeyIsSet` in `repo/basic/repository_test.go`.
+- `TestSaveUpsertsWhenKeyIsSet` in `crud/sqlrepo/repository_test.go`.
 - `TestSaveInsertsWithGeneratedKeyOnPostgres` and
-  `TestSaveOnMySQLUsesLastInsertID` in `repo/basic/repository_test.go`.
+  `TestSaveOnMySQLUsesLastInsertID` in `crud/sqlrepo/repository_test.go`.
 - `TestSaveRequiresAssignedKeyWhenNotGenerated` in
-  `repo/basic/repository_test.go` — the `ErrMissingID` branch.
+  `crud/sqlrepo/repository_test.go` — the `ErrMissingID` branch.
 - `TestAUUIDPrimaryKeyWorksEverywhere` and `TestAGoSideDefaultIsNotAppliedByVV`
   in `test/integration/uuid_test.go` — the refusal doing its job on the shape it
   exists for.
 - `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` in
-  `repo/basic/repository_test.go`.
+  `crud/sqlrepo/repository_test.go`.
 - `TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine` in
   `test/integration/dialect_edge_test.go` — the correctness the round trip buys.
 - `TestUpsertLeavesTheSameRowInEveryDialect` in
   `test/integration/dialect_edge_test.go`.
-- `TestSaveNeverWindsTheVersionBack` in `repo/basic/version_test.go` and
+- `TestSaveNeverWindsTheVersionBack` in `crud/sqlrepo/version_test.go` and
   `TestASaveCannotWindTheLockBack` in `test/integration/dialect_edge_test.go`.
 - `TestSaveJudgesAFrozenFieldByItsValue` in
-  `repo/decorators/security/edge_test.go`.
-- `TestScopeCannotReachSave` in `repo/basic/blueprint_edge_test.go` — pins the
+  `crud/decorators/security/edge_test.go`.
+- `TestScopeCannotReachSave` in `crud/sqlrepo/blueprint_edge_test.go` — pins the
   documented gap rather than leaving it to be discovered.
 - `TestCreateRefusesAClientChosenKeyAndGeneratedColumns` in
-  `http/crudfiber/handler_test.go`.
+  `crud/http/crudfiber/handler_test.go`.
 
 ## See also
 

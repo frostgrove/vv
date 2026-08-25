@@ -5,7 +5,7 @@
 
 ## The decision
 
-`basic.SoftDelete("DeletedAt")` is a blueprint setting, not a decorator. It folds
+`sqlrepo.SoftDelete("DeletedAt")` is a blueprint setting, not a decorator. It folds
 `IsNull(field)` into the permanent scope and rewrites `Delete` / `DeleteAll` into
 one `UPDATE` that stamps the column, under exactly the narrowing the `DELETE`
 would have had.
@@ -22,7 +22,7 @@ feature is worth.
 
 The stamp is a statement. It belongs with the statements.
 
-**Why one setting rather than two.** The hand-written recipe is `basic.Scope` for
+**Why one setting rather than two.** The hand-written recipe is `sqlrepo.Scope` for
 the reads plus a service layer overriding two methods for the writes. Adding the
 first and forgetting the second fails silently in the worst direction: the reads
 hide rows the deletes are still destroying. One declaration cannot be half
@@ -45,9 +45,9 @@ has none, so every row would read as a tombstone the moment the scope is added.
 
 ## Where it lives
 
-- `repo/basic/blueprint.go:SoftDelete`
-- `repo/basic/blueprint.go:resolveSoftDelete` — the validation and the scope fold.
-- `repo/basic/repository.go:stamp` — the UPDATE both deletes become.
+- `crud/sqlrepo/blueprint.go:SoftDelete`
+- `crud/sqlrepo/blueprint.go:resolveSoftDelete` — the validation and the scope fold.
+- `crud/sqlrepo/repository.go:stamp` — the UPDATE both deletes become.
 - `crud/meta.go:NowFunc` — the clock.
 
 ## Proven by

@@ -8,9 +8,9 @@
 // name.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/adapter/crudpgx
-//	go get github.com/shardit-io/vv/http/crudgin
-//	go get github.com/shardit-io/vv/http/authgin
+//	go get github.com/shardit-io/vv/crud/adapter/crudpgx
+//	go get github.com/shardit-io/vv/crud/http/crudgin
+//	go get github.com/shardit-io/vv/auth/http/authgin
 //	go get github.com/shardit-io/vv/auth/authjwt
 //
 // Run it with the repository's own databases up (`make up` at the root):
@@ -42,16 +42,16 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
 	"github.com/shardit-io/vv/auth"
 	"github.com/shardit-io/vv/auth/authjwt"
+	"github.com/shardit-io/vv/auth/http/authgin"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/authgin"
-	"github.com/shardit-io/vv/http/crudgin"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/security"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudgin"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // Note is the model. TenantID is an ordinary column — nothing marks it as the
@@ -73,10 +73,10 @@ type NoteUpdate struct {
 	Body  *string `json:"body"`
 }
 
-var Notes = basic.Define[Note, int64, NoteUpdate]("auth_jwt_gin_notes",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Notes = sqlrepo.Define[Note, int64, NoteUpdate]("auth_jwt_gin_notes",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
 // roles is the whole permission model, and it is a value rather than a

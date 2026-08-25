@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // Two databases on one engine, reached through two *sql.DB handles. Everything
@@ -42,8 +42,8 @@ type ShardNoteUpdate struct {
 }
 
 var (
-	ShardRows  = basic.Define[ShardRow, int64, ShardRowUpdate]("shard_rows")
-	ShardNotes = basic.Define[ShardNote, int64, ShardNoteUpdate]("shard_notes")
+	ShardRows  = sqlrepo.Define[ShardRow, int64, ShardRowUpdate]("shard_rows")
+	ShardNotes = sqlrepo.Define[ShardNote, int64, ShardNoteUpdate]("shard_notes")
 )
 
 // shardDSN points the configured Postgres DSN at another database on the same

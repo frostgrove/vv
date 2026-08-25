@@ -10,13 +10,13 @@ import (
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/http/crudhttp"
 	"github.com/shardit-io/vv/remote"
+	"github.com/shardit-io/vv/remote/remotehttp"
 )
 
 func client(t *testing.T, base string) *remote.Resource[Widget, int64, WidgetUpdate] {
 	t.Helper()
-	return remote.New[Widget, int64, WidgetUpdate](crudhttp.Transport(base))
+	return remote.New[Widget, int64, WidgetUpdate](remotehttp.Transport(base))
 }
 
 // clause renders a narrowing the way the database would see it, which is how
@@ -462,7 +462,7 @@ func TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup(t *testing.T) {
 		Name *string          `json:"name,omitempty"`
 		Note crud.Opt[string] `json:"note"` // the missing tag
 	}
-	if _, err := remote.TryNew[Widget, int64, loose](crudhttp.Transport("http://x")); err == nil {
+	if _, err := remote.TryNew[Widget, int64, loose](remotehttp.Transport("http://x")); err == nil {
 		t.Fatal("a DTO that would null out every unset column was accepted")
 	} else if !strings.Contains(err.Error(), "omitzero") || !strings.Contains(err.Error(), "Note") {
 		t.Fatalf("the refusal does not say which field or what to do: %v", err)
@@ -471,13 +471,13 @@ func TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup(t *testing.T) {
 	// Two controls. The tag the generator writes is accepted, or the check is a
 	// blanket refusal; and a field that is never sent is not the check's
 	// business.
-	if _, err := remote.TryNew[Widget, int64, WidgetUpdate](crudhttp.Transport("http://x")); err != nil {
+	if _, err := remote.TryNew[Widget, int64, WidgetUpdate](remotehttp.Transport("http://x")); err != nil {
 		t.Fatalf("a generated DTO was refused: %v", err)
 	}
 	type skipped struct {
 		Note crud.Opt[string] `json:"-"`
 	}
-	if _, err := remote.TryNew[Widget, int64, skipped](crudhttp.Transport("http://x")); err != nil {
+	if _, err := remote.TryNew[Widget, int64, skipped](remotehttp.Transport("http://x")); err != nil {
 		t.Fatalf("a field that is never sent was refused: %v", err)
 	}
 }

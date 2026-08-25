@@ -10,7 +10,7 @@ dependency apiece.
 
 ## The decision
 
-`rpc/crudgrpc` requires three third-party modules:
+`crud/rpc/crudgrpc` requires three third-party modules:
 
 ```
 google.golang.org/grpc
@@ -68,7 +68,7 @@ answer is to find the seam rather than to publish the pair.
 
 ## Where it lives
 
-- `rpc/crudgrpc/go.mod` — the three requires, with the decision written at the
+- `crud/rpc/crudgrpc/go.mod` — the three requires, with the decision written at the
   top of the file where a reader meets it first.
 - `Makefile:SATELLITES` and `Makefile:check-deps` — the per-module external
   package count, which reports rather than caps.
@@ -78,11 +78,11 @@ answer is to find the seam rather than to publish the pair.
 ## Proven by
 
 - `make check-deps` — the root module lists zero non-standard packages and
-  `rpc/crudgrpc` lists 113. The first is the assertion; the second is what makes
+  `crud/rpc/crudgrpc` lists 113. The first is the assertion; the second is what makes
   it meaningful, because a satellite that isolated nothing would report zero too.
 - `make check-tidy` — every `go.mod` matches its own imports, so a require that
   is not actually needed cannot sit in a satellite unnoticed.
-- The whole of `rpc/crudgrpc` compiles against exactly those three, which is what
+- The whole of `crud/rpc/crudgrpc` compiles against exactly those three, which is what
   makes "one decision" checkable rather than asserted: adding a fourth
   third-party import fails `check-tidy` until somebody writes the require, and
   writing it is the moment this decision applies.

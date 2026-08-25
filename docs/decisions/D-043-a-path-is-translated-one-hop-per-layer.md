@@ -93,15 +93,15 @@ and the generated mappers from phase 8.
   was transformed so far, plus `false`, so the caller has something to mark.
 
 - `crud/meta.go` — the `Meta`/`Schema` split this rests on.
-- `http/crudhttp/request.go:DecodeJSON` — a pure function whose `io.ReadAll`
+- `crud/http/crudhttp/request.go:DecodeJSON` — a pure function whose `io.ReadAll`
   result dies at return, so the carrier phase 4 owes (`DecodeJSONKeep`) has to be
   added rather than reached for.
-- `repo/decorators/faults/faults.go` — the first hop, constraint and table to model field, through `crud.Meta`.
+- `crud/decorators/faults/faults.go` — the first hop, constraint and table to model field, through `crud.Meta`.
 - `port/path.go:Fields` — the second hop, the service's, hand-written and
   therefore partial: an undeclared head passes through.
 - `port/pathmap.go:PathMap` — the third hop, the adapter's, generated and
   therefore total: an undeclared head declines ([[D-050]]).
-- `http/crudhttp/render.go:EnvelopeRenderer.violations` — where the chain is
+- `port/porthttp/render.go:EnvelopeRenderer.violations` — where the chain is
   applied, and where the fallback is held back from a path a declared hop owned.
 - `internal/codegen/adapter.go` — where the inverse is written, beside the
   mapping it inverts.
@@ -117,7 +117,7 @@ and the generated mappers from phase 8.
 - `TestAServicePathHopReachesTheRenderedField` — `edge_test.go` in all three
   bindings — the service's hop reaching the rendered field, with the control
   that an undeclared one still reaches the body index.
-- `TestADeclaredMapBeatsTheRawBodyGuess` in `http/crudhttp/render_test.go` — the
+- `TestADeclaredMapBeatsTheRawBodyGuess` in `port/porthttp/render_test.go` — the
   hop a generated adapter contributes, ahead of the fallback, with a no-map
   control on every arm. It also pins the half this decision owed since phase 4:
   a key no hop declares produces the **approximate** marker rather than a wrong

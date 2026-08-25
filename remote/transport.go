@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/crud/query"
 )
 
 // A Method is one call a resource answers.
 //
-// The spellings are rpc/crudgrpc's registered method names, so that transport
+// The spellings are crud/rpc/crudgrpc's registered method names, so that transport
 // builds its full method out of one directly. An HTTP transport maps them to
 // verbs and paths, which is the mapping that has to exist somewhere and exists
 // once.

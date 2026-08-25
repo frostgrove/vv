@@ -323,7 +323,7 @@ func TestSortOnAnUnknownFieldIsReported(t *testing.T) {
 // so the second hop looked itself up as "Manager" instead of "Manager.Manager" —
 // a narrowing declared for the inner hop silently did not apply, and one
 // declared for the outer hop applied twice. Model-declared narrowings still
-// worked, which is what kept this out of sight: basic.Scope installs one of
+// worked, which is what kept this out of sight: sqlrepo.Scope installs one of
 // those, so a self-relation stayed covered while a path declaration did not.
 func TestARelationScopeReachesTheHopItNames(t *testing.T) {
 	m := metaOf[Person](t, "persons")

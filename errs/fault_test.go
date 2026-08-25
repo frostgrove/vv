@@ -13,7 +13,7 @@ import (
 // The sentinels are declared here rather than imported from crud on purpose.
 // What is being pinned is the mechanism — a fault wraps, so errors.Is walks
 // through it — and the mechanism does not care whose sentinel it is. The
-// version against a real crud sentinel lives in http/crudhttp/errors_test.go,
+// version against a real crud sentinel lives in port/porthttp/errors_test.go,
 // where the status mapping it has to keep working is; putting it here would put
 // a first-party import into this package's test dependencies, and at the first
 // tag that becomes errs requiring the root module that requires errs
@@ -185,7 +185,7 @@ func TestAFaultsErrorTextCarriesNothingInternal(t *testing.T) {
 	got := f.Error()
 	for what, s := range forbidden {
 		if strings.Contains(got, s) {
-			t.Fatalf("Error() carries %s (%q) — crudhttp.Body copies it into the body of every status below 500", what, s)
+			t.Fatalf("Error() carries %s (%q) — porthttp renders it into the body of every status below 500", what, s)
 		}
 	}
 

@@ -24,12 +24,12 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/http/crudfiber"
+	"github.com/shardit-io/vv/crud/http/crudgin"
+	"github.com/shardit-io/vv/crud/http/crudnet"
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/http/crudfiber"
-	"github.com/shardit-io/vv/http/crudgin"
-	"github.com/shardit-io/vv/http/crudnet"
 	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/query"
 )
 
 // TestMain silences Gin's start-up banner and per-route debug lines.

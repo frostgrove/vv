@@ -7,9 +7,9 @@
 
 Two separate declarations, both of which apply, neither of which can be widened.
 
-- `basic.Scope(p)` — a predicate over the repository's own model, ANDed into
+- `sqlrepo.Scope(p)` — a predicate over the repository's own model, ANDed into
   every statement whose `FROM` is that table.
-- `basic.RelationScope(path, p)` — a predicate over the *target* model of a
+- `sqlrepo.RelationScope(path, p)` — a predicate over the *target* model of a
   relation path, applied wherever this repository reaches that path.
 - `security.Policy.RelationScopes(ctx)` — the same thing, computed per request.
 
@@ -94,15 +94,15 @@ whose own path walks back into that model would otherwise recurse.
 - `crud/predicate.go:writer.hopScope` — renders the narrowing after each hop.
 - `crud/render.go:SQL.RelationScopes` — hands them to the writer.
 - `crud/preload.go:preloader.fetch` — ANDs the narrowing into the batched load.
-- `repo/basic/blueprint.go:Scope` / `repo/basic/blueprint.go:RelationScope` — the
+- `crud/sqlrepo/blueprint.go:Scope` / `crud/sqlrepo/blueprint.go:RelationScope` — the
   declarations.
-- `repo/basic/blueprint.go:Blueprint.resolveRelationScopes` — validation, and the
+- `crud/sqlrepo/blueprint.go:Blueprint.resolveRelationScopes` — validation, and the
   self-relation registration.
-- `repo/basic/repository.go:repository.relScopes` — the merge point.
-- `repo/decorators/security/security.go:Policy.RelationScopes` and
-  `repo/decorators/security/security.go:gate.narrow`.
-- `repo/decorators/security/policies.go:ScopeRelationField` and
-  `repo/decorators/security/policies.go:relationFieldName`.
+- `crud/sqlrepo/repository.go:repository.relScopes` — the merge point.
+- `crud/decorators/security/security.go:Policy.RelationScopes` and
+  `crud/decorators/security/security.go:gate.narrow`.
+- `crud/decorators/security/policies.go:ScopeRelationField` and
+  `crud/decorators/security/policies.go:relationFieldName`.
 
 ## Proven by
 
@@ -120,24 +120,24 @@ whose own path walks back into that model would otherwise recurse.
   `TestARelationNobodyNarrowedIsStillReadWhole` in
   `test/integration/relscope_test.go`.
 - `TestAPreloadIsNotNarrowedWithoutTheDeclaration` in
-  `repo/decorators/security/relscope_test.go` — the deliberate negative, with its
+  `crud/decorators/security/relscope_test.go` — the deliberate negative, with its
   own control.
-- `TestACallerCannotWidenARelationScope` in `repo/basic/relscope_test.go` and
+- `TestACallerCannotWidenARelationScope` in `crud/sqlrepo/relscope_test.go` and
   `TestACallerCannotWidenARelationNarrowing` in
-  `repo/decorators/security/relscope_test.go`.
+  `crud/decorators/security/relscope_test.go`.
 - `TestAPreloadOfTheRepositorysOwnModelCarriesItsScope` and
   `TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel` in
-  `repo/basic/relscope_test.go` — the self-relation case.
+  `crud/sqlrepo/relscope_test.go` — the self-relation case.
 - `TestRelationScopeRefusesAPathTheModelDoesNotHave` in
-  `repo/basic/relscope_test.go` — the typo fails at declaration time.
+  `crud/sqlrepo/relscope_test.go` — the typo fails at declaration time.
 - `TestARelationScopeErrorFailsClosed` in
-  `repo/decorators/security/relscope_test.go`.
+  `crud/decorators/security/relscope_test.go`.
 - `TestTwoNarrowingsOfOnePathAreBothApplied` and
   `TestCombineMergesRelationNarrowings` in
-  `repo/decorators/security/relscope_test.go`.
+  `crud/decorators/security/relscope_test.go`.
 - `TestARelationFilterCarriesTheScopeIntoItsSubquery` and
   `TestANestedSortCarriesTheScopeIntoItsSubquery` in
-  `repo/basic/relscope_test.go`.
+  `crud/sqlrepo/relscope_test.go`.
 
 ## See also
 

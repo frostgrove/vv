@@ -1,12 +1,12 @@
 # authgin — authenticate a Gin request
 
 ```go
-import "github.com/shardit-io/vv/http/authgin"
+import "github.com/shardit-io/vv/auth/http/authgin"
 ```
 
-**Module:** `github.com/shardit-io/vv/http/authgin` — one dependency,
+**Module:** `github.com/shardit-io/vv/auth/http/authgin` — one dependency,
 `github.com/gin-gonic/gin`
-· **Depends on:** `auth`, `authhttp`, `crudhttp`, gin
+· **Depends on:** `auth`, `authhttp`, `porthttp`, gin
 
 It does **not** require [crudgin](crudgin.md). Authenticating a request and
 serving a CRUD resource are two things you choose separately ([[D-051]]).
@@ -73,7 +73,7 @@ api := r.Group("/api", authgin.Middleware(guard))
 |---|---|
 | `Middleware(guard, opts...)` | a `gin.HandlerFunc` |
 
-`opts` are `crudhttp.RenderOption`s, the same ones `crudgin.Errors` takes.
+`opts` are `porthttp.RenderOption`s, the same ones `crudgin.Errors` takes.
 
 ## What it does
 

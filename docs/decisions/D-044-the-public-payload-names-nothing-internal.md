@@ -86,7 +86,7 @@ is [[D-043]]'s, and it is the one place the two vocabularies touch.
   violations, partial. `Detail` never leaves the process.
 - `errs/fault.go:Fault.Error` — the other channel a body can reach, governed by
   [[D-047]].
-- `http/crudhttp/envelope.go:Internal` — the 500 silence, which this extends to
+- `port/porthttp/envelope.go:Internal` — the 500 silence, which this extends to
   every status. It is a value with nowhere for a message to go.
 - `errs/sqlerr/testdata/corpus/*.json` — what the driver hands over, and
   therefore what must not pass through. The corpus is an internal fixture: it
@@ -108,7 +108,7 @@ is [[D-043]]'s, and it is the one place the two vocabularies touch.
   did not do it**: the only source is PostgreSQL's localised `Detail`
   ([[D-039]]), echoing a value is off by deployment default anyway, and every
   field filled is a field a future renderer could leak.
-- `sqlfault/catalog.go:Columns` — the one-method schema SPI that fills in the
+- `crud/sqlfault/catalog.go:Columns` — the one-method schema SPI that fills in the
   columns a driver did not name. One method, answering column names only: a
   third party can supply a schema without importing `catalog`, and cannot hand
   back a predicate, a constraint definition or a DDL text. Having a constraint

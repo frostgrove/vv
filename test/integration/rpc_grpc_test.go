@@ -17,8 +17,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/rpc/crudgrpc"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/rpc/crudgrpc"
 )
 
 // The fourth transport against a live database. http_port_test.go makes this

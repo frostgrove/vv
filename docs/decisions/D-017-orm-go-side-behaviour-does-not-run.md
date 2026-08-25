@@ -73,9 +73,9 @@ guard — it lands.
 - `crud/executor.go` — the package doc: only `Exec` and `Query` cross the
   boundary.
 - `crud/executor.go:Executor` — the whole surface an adapter has to supply.
-- `adapter/crudsql/crudsql.go` and `adapter/crudpgx/crudpgx.go` — neither imports
+- `crud/adapter/crudsql/crudsql.go` and `crud/adapter/crudpgx/crudpgx.go` — neither imports
   an ORM.
-- `repo/basic/repository.go:repository.Save` — one statement, straight to the
+- `crud/sqlrepo/repository.go:repository.Save` — one statement, straight to the
   executor.
 - `docs/usage-guides/ent.md` §16 and §8 — the gotcha, and the note that an
   ent-backed `Source` buys the *transaction*, not the callbacks.
@@ -112,7 +112,7 @@ Which half is executed differs by ORM, and this is worth being precise about:
 **What still works across the boundary.**
 - `TestGormSoftDeletesStayInvisibleOnBothEngines` in
   `test/integration/matrix_test.go` — gorm's soft deletes are a *column*
-  convention, so `basic.Scope(crud.IsNull("DeletedAt"))` reproduces them in SQL.
+  convention, so `sqlrepo.Scope(crud.IsNull("DeletedAt"))` reproduces them in SQL.
   That is the safe shape, demonstrated.
 - `TestEntStructInsideEntTransaction` and `TestGormModelInsideGormTransaction` —
   the transaction is shared even though the callbacks are not.

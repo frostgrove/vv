@@ -102,11 +102,11 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
 
 ## Where it lives
 
-- `sqlfault/gate.go:Integrity` — where these are refused. The classification
+- `crud/sqlfault/gate.go:Integrity` — where these are refused. The classification
   half of this decision is what that refusal *is*, and phase 3 moved it out of
-  `adapter/crudsql` without widening it: a lock timeout, a deadlock and a
+  `crud/adapter/crudsql` without widening it: a lock timeout, a deadlock and a
   serialisation failure are still not conflicts.
-- `sqlfault/classify.go:Classifier.Classify` — where a retryable failure now
+- `crud/sqlfault/classify.go:Classifier.Classify` — where a retryable failure now
   gets a `Fault` carrying `KindRetryable`. Nothing maps the kind to a status yet,
   so it is still a 500 with a silent body; the 503 this decision asks for is
   phase 4's and is **not** paid by phase 3.
@@ -125,7 +125,7 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
 
 ## Proven by
 
-- `TestTheTwoGatesAnswerDifferentQuestions` in `sqlfault/gate_test.go` — the
+- `TestTheTwoGatesAnswerDifferentQuestions` in `crud/sqlfault/gate_test.go` — the
   sentinel-no/code-yes cell is this decision in one row: `SQLITE_BUSY` and
   PostgreSQL's `40001` classify and are not conflicts, so a retryable failure
   cannot reach a client as a 409 by being classified.
@@ -134,7 +134,7 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   engines asserts it is **not** a conflict, which is this decision's whole
   content until the `Kind` exists.
 - `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
-  `adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
+  `crud/adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
   by number.
 
 - `TestTheRetryableCodesAreTheirOwnKind` in `errs/codes_test.go` — `deadlock`,
@@ -170,13 +170,13 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   `test/integration/corpus_test.go` — the `lock_timeout` arm on four live
   engines asserts it is **not** a conflict.
 - `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
-  `adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
+  `crud/adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
   by number.
 - `TestTheRetryableCodesAreTheirOwnKind` — the `Kind`, which phase 1 shipped.
 - `TestARetryableFailureIsA503WithRetryAfter` — the status and the header, which
   phase 4 shipped. `errs` still declares no status table: a `Kind` → status map
   there would put an HTTP type in the transport-neutral half, which [[D-045]]
-  forbids, so the table lives in `http/crudhttp` and [[D-049]] decides which of
+  forbids, so the table lives in `crud/http/crudhttp` and [[D-049]] decides which of
   it and the sentinel wins.
 - `TestARetryableCaseNeverAnswersAConflictOrValidationCode` — the forbid, as a
   test rather than a sentence.

@@ -6,7 +6,7 @@ import "strings"
 //
 // go-playground/validator's FieldError satisfies it structurally, so neither
 // package imports the other and the bridge costs no dependency ([[D-033]]).
-// Same trick and same reason as adapter/crudsql asking a driver error for a
+// Same trick and same reason as crud/adapter/crudsql asking a driver error for a
 // SQLSTATE by shape.
 //
 // The cost of structural satisfaction is worth naming: these signatures have to

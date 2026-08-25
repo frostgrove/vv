@@ -21,7 +21,7 @@ import "github.com/shardit-io/vv/remote"
 
 ```go
 articles := remote.New[Article, int64, ArticleInput](
-    crudhttp.Transport("https://content.internal/articles"))
+    remotehttp.Transport("https://content.internal/articles"))
 
 page, err := articles.Get(ctx,
     crud.Where(crud.Eq("Status", "draft")),
@@ -38,7 +38,7 @@ articles := remote.New[Article, int64, ArticleInput](
 
 `New` паникует, если модель не удаётся описать, если её ключ не совпадает с
 `ID`, или если DTO обновления опустошит колонку — те же отказы на старте, что и
-у `basic.Define`, и по той же причине. `TryNew` — то же самое без паники.
+у `sqlrepo.Define`, и по той же причине. `TryNew` — то же самое без паники.
 
 ## Что вы получаете
 
@@ -160,8 +160,8 @@ type ArticleInput struct {
 
 | Транспорт | Где | Опции |
 |---|---|---|
-| `crudhttp.Transport(baseURL, …)` | `vv/http/crudhttp` | `WithClient(*http.Client)`, `WithRequestHook(func(*http.Request) error)` |
-| `crudgrpc.Transport(conn, name, …)` | `vv/rpc/crudgrpc` | `WithVocabulary(*errs.Codes)`, `WithCallOptions(…)` |
+| `remotehttp.Transport(baseURL, …)` | `vv/crud/http/crudhttp` | `WithClient(*http.Client)`, `WithRequestHook(func(*http.Request) error)` |
+| `crudgrpc.Transport(conn, name, …)` | `vv/crud/rpc/crudgrpc` | `WithVocabulary(*errs.Codes)`, `WithCallOptions(…)` |
 
 Транспорт живёт рядом с тем биндингом, который он вызывает, поэтому таблица,
 превращающая статус или код обратно в класс, лежит в том же файле, что и
@@ -175,7 +175,7 @@ type ArticleInput struct {
 `Accept-Language`:
 
 ```go
-crudhttp.Transport(base, crudhttp.WithRequestHook(func(r *http.Request) error {
+remotehttp.Transport(base, remotehttp.WithRequestHook(func(r *http.Request) error {
     r.Header.Set("Authorization", "Bearer "+token)
     return nil
 }))

@@ -13,8 +13,8 @@ import (
 	"github.com/shardit-io/vv/auth"
 	"github.com/shardit-io/vv/auth/authjwt"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // The whole chain against a real database: a token is verified, its claims
@@ -49,7 +49,7 @@ var (
 		security.ScopeAttr[EgRow, int64]("Tenant", "tenant"),
 	)
 
-	AuthRows = basic.Define[EgRow, int64, struct{}]("eg_rows")
+	AuthRows = sqlrepo.Define[EgRow, int64, struct{}]("eg_rows")
 )
 
 // authenticate runs a token through the same authenticator a middleware would,

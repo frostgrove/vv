@@ -6,8 +6,8 @@
 // bounds and the rules are the same values.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/adapter/crudpgx
-//	go get github.com/shardit-io/vv/rpc/crudgrpc
+//	go get github.com/shardit-io/vv/crud/adapter/crudpgx
+//	go get github.com/shardit-io/vv/crud/rpc/crudgrpc
 //
 // Run it with the repository's own databases up (`make up` at the root):
 //
@@ -36,12 +36,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
-	"github.com/shardit-io/vv/rpc/crudgrpc"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/rpc/crudgrpc"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
@@ -62,10 +62,10 @@ type Product struct {
 // Products is validated when this package initialises: a mistyped tag, a DTO
 // field the model lacks or a wrong ID type fails here rather than at request
 // time.
-var Products = basic.Define[Product, int64, ProductUpdate]("pgx_grpc_products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[Product, int64, ProductUpdate]("pgx_grpc_products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
 const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"

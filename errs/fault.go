@@ -60,7 +60,7 @@ type Fault struct {
 // error.
 //
 // That is against the usual Go instinct and it is deliberate ([[D-047]]).
-// http/crudhttp/errors.go:Body copies the outermost err.Error() into the body of
+// port/porthttp/render.go copies the outermost err.Error() into the body of
 // every status below 500, and the adapters return a fault as that outermost
 // error — so what this method prints is what a client reads on a classified 409
 // today, phases before the rule that forbids naming anything internal comes into

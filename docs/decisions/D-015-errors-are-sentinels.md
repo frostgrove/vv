@@ -76,7 +76,7 @@ is still kept underneath, so a caller who wants the constraint name still
 `errors.As`-es their way to it — and [[D-044]] is why it must not reach a
 response body.
 
-**Why `crudsql` asks by shape.** `adapter/crudsql` may not name a driver's error
+**Why `crudsql` asks by shape.** `crud/adapter/crudsql` may not name a driver's error
 type. It looks for a `SQLState() string` method (pgx, lib/pq) and then for an
 exported `SQLState` field (go-sql-driver/mysql), handling both the `string` and
 the `[5]byte` spelling; for SQLite it reaches a `Code() int` method
@@ -84,9 +84,9 @@ the `[5]byte` spelling; for SQLite it reaches a `Code() int` method
 for the structured extras it reads a fixed whitelist of exported string fields.
 The rule is a prohibition — *may not name a driver's error type* — and not a
 location, so it still holds now that the shapes are reached in
-`sqlfault/extract.go`: `crudsql` imports no driver and `make check-deps` is what
-proves it. `adapter/crudpgx` can name `*pgconn.PgError` and does, in
-`adapter/crudpgx/conflict.go:extract`, so a field pgx renames breaks that build
+`crud/sqlfault/extract.go`: `crudsql` imports no driver and `make check-deps` is what
+proves it. `crud/adapter/crudpgx` can name `*pgconn.PgError` and does, in
+`crud/adapter/crudpgx/conflict.go:extract`, so a field pgx renames breaks that build
 where the by-shape reader would go quietly blank.
 
 **Why a 500 says nothing.** The underlying message can be a SQL string, a column
@@ -122,51 +122,51 @@ for statuses below 500.
 - `crud/errors.go` — every sentinel, each with the reason it exists.
 - `crud/errors.go:UnknownFieldError` / `crud/errors.go:SchemaError` — the two
   structured ones.
-- `adapter/crudsql/conflict.go:Executor.conflict` — one line over
-  `sqlfault/classify.go:Wrap`. The shapes it reaches are
-  `sqlfault/extract.go:Extract`'s and the three arms are
-  `sqlfault/gate.go:Integrity`'s, which is [[D-046]]'s.
-- `adapter/crudpgx/conflict.go:Executor.conflict` and
-  `adapter/crudpgx/conflict.go:extract` — the same seam, with typed extraction
+- `crud/adapter/crudsql/conflict.go:Executor.conflict` — one line over
+  `crud/sqlfault/classify.go:Wrap`. The shapes it reaches are
+  `crud/sqlfault/extract.go:Extract`'s and the three arms are
+  `crud/sqlfault/gate.go:Integrity`'s, which is [[D-046]]'s.
+- `crud/adapter/crudpgx/conflict.go:Executor.conflict` and
+  `crud/adapter/crudpgx/conflict.go:extract` — the same seam, with typed extraction
   from `*pgconn.PgError`.
-- `repo/decorators/security/security.go:ErrForbidden` and
-  `repo/decorators/security/security.go:Denied`.
-- `repo/basic/repository.go:repository.missedRow` — the one place `ErrNotFound`
+- `crud/decorators/security/security.go:ErrForbidden` and
+  `crud/decorators/security/security.go:Denied`.
+- `crud/sqlrepo/repository.go:repository.missedRow` — the one place `ErrNotFound`
   and `ErrStaleVersion` are told apart.
-- `repo/decorators/specs/errors.go` — `ErrNotUnique` (wraps `crud.ErrConflict`),
+- `crud/decorators/specs/errors.go` — `ErrNotUnique` (wraps `crud.ErrConflict`),
   `ErrUnboundedDelete`, `ErrUnboundedUpdate`.
-- `http/crudhttp/errors.go:Status` — the whole mapping in one switch, shared by
+- `port/porthttp/errors.go:Status` — the whole mapping in one switch, shared by
   every transport binding ([[D-045]]).
-- `http/crudhttp/render.go:EnvelopeRenderer.Render` and
-  `http/crudhttp/envelope.go:Internal` — the response body, and the 500 silence.
+- `port/porthttp/render.go:EnvelopeRenderer.Render` and
+  `port/porthttp/envelope.go:Internal` — the response body, and the 500 silence.
   `Internal` has nowhere for a message to go, so the silence holds by
   construction rather than by a case somebody may edit.
-- `http/crudfiber/options.go:Status`, `http/crudgin/options.go:Status`,
-  `http/crudnet/options.go:Status` — the exported per-binding entry points, each
+- `crud/http/crudfiber/options.go:Status`, `crud/http/crudgin/options.go:Status`,
+  `crud/http/crudnet/options.go:Status` — the exported per-binding entry points, each
   one line over the shared switch.
 
 ## Proven by
 
-- `TestStatusMapsWhatItPromisesTo` in `http/crudfiber/edge_test.go` — the table
+- `TestStatusMapsWhatItPromisesTo` in `crud/http/crudfiber/edge_test.go` — the table
   above, as a test.
-- `TestRepositoryErrorsBecomeStatusCodes` in `http/crudfiber/edge_test.go`.
-- `TestEveryRouteMapsARefusalTheSameWay` in `http/crudfiber/edge_test.go` — a
+- `TestRepositoryErrorsBecomeStatusCodes` in `crud/http/crudfiber/edge_test.go`.
+- `TestEveryRouteMapsARefusalTheSameWay` in `crud/http/crudfiber/edge_test.go` — a
   route that forgot to route through `fail` would slip past a per-route test.
-- `TestA500NeverEchoesTheInternalError` in `http/crudfiber/edge_test.go`.
+- `TestA500NeverEchoesTheInternalError` in `crud/http/crudfiber/edge_test.go`.
 - `TestAClassifiedConflictIsNotAnyOtherSentinel` in
-  `adapter/crudsql/conflict_test.go`.
-- `TestOnlyIntegrityErrorsBecomeConflicts` in `adapter/crudpgx/conflict_test.go`
+  `crud/adapter/crudsql/conflict_test.go`.
+- `TestOnlyIntegrityErrorsBecomeConflicts` in `crud/adapter/crudpgx/conflict_test.go`
   — the control: a non-integrity SQLSTATE stays a plain error and reaches HTTP
   as 500.
 - `TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses` in
-  `adapter/crudsql/conflict_test.go` — method, string field and `[5]byte` field.
+  `crud/adapter/crudsql/conflict_test.go` — method, string field and `[5]byte` field.
 - `TestTheExtractorReachesTheStructuredFieldsByShape` in
-  `adapter/crudsql/conflict_test.go` — the constraint, table and schema fields
+  `crud/adapter/crudsql/conflict_test.go` — the constraint, table and schema fields
   reached by name and kind rather than by type, with a lib/pq-shaped fake whose
   `Constraint`/`Table`/`Column` spellings are deliberately unread as the control:
   it still classifies, and fills in nothing.
 - `TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt` in
-  `adapter/crudpgx/conflict_test.go`.
+  `crud/adapter/crudpgx/conflict_test.go`.
 - `TestIntegrityViolationsAreClassifiedByEveryAdapter` in
   `test/integration/dialect_edge_test.go` — against live PostgreSQL and MySQL,
   through every adapter. Note what it does *not* cover: it walks `egTargets()`,
@@ -177,10 +177,10 @@ for statuses below 500.
   both directions, which is what closed that gap.
 - `TestSQLiteConstraintViolationsBecomeConflicts` and
   `TestAnOrdinarySQLiteErrorIsStillNotAConflict` in
-  `adapter/crudsql/conflict_test.go`.
+  `crud/adapter/crudsql/conflict_test.go`.
 - `TestAnIntegrityConflictIsA409WithAMessage` in
-  `http/crudfiber/write_edge_test.go` — end to end.
-- `TestAScopeThatFailsIsMappedLikeAnyOtherError` in `http/crudfiber/edge_test.go`.
+  `crud/http/crudfiber/write_edge_test.go` — end to end.
+- `TestAScopeThatFailsIsMappedLikeAnyOtherError` in `crud/http/crudfiber/edge_test.go`.
 - `TestInTxWithoutABeginnerIsRefused` in `crud/executor_test.go`.
 
 ## See also

@@ -95,7 +95,7 @@ attached by the caller.
   [[D-016]] rather than to this decision: `crud` may import only the standard
   library, which is what makes it unable to import `errs`. Both directions are
   recorded here because this is where the "crud cannot import errs" sentence
-  lives. It runs without `-test`: `crud`'s own tests import `repo/basic`, legal
+  lives. It runs without `-test`: `crud`'s own tests import `crud/sqlrepo`, legal
   inside one module.
 - `test/bridge/fieldviolation_test.go` — where the validator assertion lives,
   and not `errs`' own test package where `ROADMAP-errors.md` §5 put it. Until

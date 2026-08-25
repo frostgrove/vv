@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
-	"github.com/shardit-io/vv/http/crudgin"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudgin"
+	"github.com/shardit-io/vv/crud/query"
 )
 
 // The Gin binding holds the same interface as the Fiber one, so the very same

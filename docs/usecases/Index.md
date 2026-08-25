@@ -64,6 +64,7 @@ this page is the roadmap.
 | [UC-018](UC-018-consume-another-services-crud-api.md) | Consume another service's CRUD API | the application author on the calling side | covered |
 | [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | Authenticate a request and let the repository see who it is | the application author, on behalf of every caller | covered |
 | [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | covered |
+| [UC-021](UC-021-configure-a-database-once-in-one-file.md) | Configure a database once, in one file, for any engine | the application author | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -88,6 +89,7 @@ this page is the roadmap.
 | [UC-018](UC-018-consume-another-services-crud-api.md) | [[FL-018]] [[FL-013]] [[FL-015]] |
 | [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | [[FL-019]] [[FL-007]] [[FL-008]] [[FL-011]] [[FL-013]] |
 | [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
+| [UC-021](UC-021-configure-a-database-once-in-one-file.md) | [[FL-021]] |
 
 ## Gaps
 
@@ -117,7 +119,7 @@ edges that need a decision.
    `ScopeSubject` are the principal-driven form, and they are built on
    `ScopeField` rather than beside it, so they inherit the row check and the
    frozen column — `TestScopeAttrNarrowsInSQLAndFreezesTheColumn` in
-   `repo/decorators/security/principal_test.go` pins the refused create and
+   `crud/decorators/security/principal_test.go` pins the refused create and
    carries the control that a create into the caller's own tenant still
    succeeds. What remains open is the shape this entry names: a `Policy` written
    by hand with `Scope` set and `Inspect` nil. Nothing refuses that, and nothing

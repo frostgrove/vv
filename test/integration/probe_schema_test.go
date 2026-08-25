@@ -4,7 +4,7 @@ package integration
 
 import (
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // The fixture the probe tests read.
@@ -200,4 +200,4 @@ type PbDocUpdate struct {
 	Zone     crud.Opt[string]
 }
 
-var PbDocs = basic.Define[PbDoc, int64, PbDocUpdate]("pb_doc")
+var PbDocs = sqlrepo.Define[PbDoc, int64, PbDocUpdate]("pb_doc")

@@ -1,12 +1,12 @@
 # authfiber — аутентификация запроса Fiber v3
 
 ```go
-import "github.com/shardit-io/vv/http/authfiber"
+import "github.com/shardit-io/vv/auth/http/authfiber"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/http/authfiber` — одна зависимость,
+**Модуль:** `github.com/shardit-io/vv/auth/http/authfiber` — одна зависимость,
 `github.com/gofiber/fiber/v3`
-· **Зависит от:** `auth`, `authhttp`, `crudhttp`, fiber v3
+· **Зависит от:** `auth`, `authhttp`, `porthttp`, fiber v3
 
 Он **не** требует [crudfiber](crudfiber.md) ([[D-051]]).
 
@@ -83,7 +83,7 @@ api := app.Group("/api", authfiber.Middleware(guard))
 сужает запрос.
 
 `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` в
-`http/authfiber/middleware_test.go` — то, что падает, когда это сделано не так.
+`auth/http/authfiber/middleware_test.go` — то, что падает, когда это сделано не так.
 
 ## Всё остальное
 

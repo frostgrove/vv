@@ -70,8 +70,8 @@ type switch per driver.
 - `crud/aggregate.go:AggregateSpec.Render` — the projection.
 - `crud/aggregate.go:AggregateRow` — the result, with the driver-shape accessors.
 - `crud/repo.go:Core` — the seam.
-- `repo/basic/repository.go:Aggregate` — the statement, under `scoped(o)`.
-- `repo/decorators/security/security.go:Aggregate` — the override.
+- `crud/sqlrepo/repository.go:Aggregate` — the statement, under `scoped(o)`.
+- `crud/decorators/security/security.go:Aggregate` — the override.
 
 ## Proven by
 

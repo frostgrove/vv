@@ -92,20 +92,20 @@ empty body ([[D-015]]).
 
 ## Where it lives
 
-- `query/request.go:Request.UnmarshalJSON` — the document's own keys, refused
+- `crud/query/request.go:Request.UnmarshalJSON` — the document's own keys, refused
   with `DisallowUnknownFields` before any path is looked at.
-- `query/querystring.go:checkParams` / `query/querystring.go:isOneTypoAway` — the
+- `crud/query/querystring.go:checkParams` / `crud/query/querystring.go:isOneTypoAway` — the
   query string's narrow half: a near-miss of one of ours is a typo, anything else
   belongs to the application.
-- `query/compile.go:Request.Compile` — every path, resolved before any option is
+- `crud/query/compile.go:Request.Compile` — every path, resolved before any option is
   emitted.
-- `query/compile.go:compiler.path` — resolution plus the depth bound.
-- `query/compile.go:allowed` — the allow-lists, with `*` and `Comments.*`.
-- `query/compile.go:compiler.preloadOpts` — sub-filter and sub-sort compile
+- `crud/query/compile.go:compiler.path` — resolution plus the depth bound.
+- `crud/query/compile.go:allowed` — the allow-lists, with `*` and `Comments.*`.
+- `crud/query/compile.go:compiler.preloadOpts` — sub-filter and sub-sort compile
   against the *target* model but keep the root's allow-lists, qualified by
   `compiler.prefix`.
-- `query/compile.go:Error` — path plus reason, safe to echo.
-- `query/filter.go:compiler.condition` / `query/filter.go:compiler.operator` —
+- `crud/query/compile.go:Error` — path plus reason, safe to echo.
+- `crud/query/filter.go:compiler.condition` / `crud/query/filter.go:compiler.operator` —
   an unknown operator is refused too, and a `null` operand is refused where it
   has no meaning (`{"contains": null}` used to become `LIKE '%%'`, and
   `{"notIn": null}` `NOT IN ()` — a narrowing the client asked for turning into
@@ -114,42 +114,42 @@ empty body ([[D-015]]).
 - `crud/predicate.go:writer.leaf` — the Go-side half: record the error, render
   `1 = 0`, never a bare name.
 - `crud/render.go:SQL.Done` — surfaces the first resolution failure.
-- `http/crudfiber/options.go:Status` — `*query.Error`, `*crud.UnknownFieldError`
+- `crud/http/crudfiber/options.go:Status` — `*query.Error`, `*crud.UnknownFieldError`
   and `*crud.SchemaError` all map to 400.
 
 ## Proven by
 
-- `TestAMisspelledDocumentKeyIsRefused` in `query/strict_test.go` — the document's
+- `TestAMisspelledDocumentKeyIsRefused` in `crud/query/strict_test.go` — the document's
   own keys, with `TestEveryDocumentKeyStillParses` as the control that the
   strictness did not simply reject everything, and
   `TestTheOfferedKeyListMatchesTheStruct` so the message cannot drift from the
   struct.
-- `TestAMisspelledQueryParameterIsRefused` in `query/strict_test.go`, and its
+- `TestAMisspelledQueryParameterIsRefused` in `crud/query/strict_test.go`, and its
   control `TestAnApplicationsOwnParametersArePassedThrough` — the rule is narrow
   on purpose, and without the second test the first could be satisfied by
   rejecting every parameter the handler does not own.
 - `TestAMisspelledQueryKeyIs400` / `TestAMisspelledQueryParameterIs400` in
-  `http/crudfiber/write_edge_test.go` — the refusal survives Fiber's binding and
+  `crud/http/crudfiber/write_edge_test.go` — the refusal survives Fiber's binding and
   no repository call is made.
-- `TestUnknownFieldNeverReachesTheDatabase` in `query/query_test.go`.
-- `TestARejectedDocumentCompilesToNoOptions` in `query/hostile_test.go` — the
+- `TestUnknownFieldNeverReachesTheDatabase` in `crud/query/query_test.go`.
+- `TestARejectedDocumentCompilesToNoOptions` in `crud/query/hostile_test.go` — the
   "no partial output" half.
-- `TestEveryRejectionNamesThePathThatWasWrong` in `query/edge_test.go`.
+- `TestEveryRejectionNamesThePathThatWasWrong` in `crud/query/edge_test.go`.
 - `TestAQueryThatNamesSomethingTheModelLacksIsABadRequest` in
-  `http/crudfiber/edge_test.go` — the status and the body.
+  `crud/http/crudfiber/edge_test.go` — the status and the body.
 - `TestAPredicateOnAnUnknownFieldBindsNothing` in `crud/edge_test.go` and
   `TestUnknownFieldIsReportedNotRendered` in `crud/render_test.go` — the Go-side
   half.
-- `TestUnknownFieldIsAnError` in `repo/basic/repository_test.go`.
+- `TestUnknownFieldIsAnError` in `crud/sqlrepo/repository_test.go`.
 - `TestAnAmbiguousAliasResolvesToNothing` in `crud/schema_edge_test.go`.
-- `TestADeniedColumnStaysDeniedHoweverItIsSpelled` in `query/hostile_test.go` —
+- `TestADeniedColumnStaysDeniedHoweverItIsSpelled` in `crud/query/hostile_test.go` —
   the folded-spelling attack on an allow-list.
-- `TestClientSpellingNeverReachesTheStatement` in `query/edge_test.go`.
+- `TestClientSpellingNeverReachesTheStatement` in `crud/query/edge_test.go`.
 - `TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath` and
-  `TestAPreloadSortObeysTheSortableList` in `query/preload_allowlist_test.go`.
-- `TestNullOperandsAreRefusedWhereTheyHaveNoMeaning` in `query/edge_test.go`.
-- `TestUnknownOperatorIsRefusedOnBothDoors` in `query/querystring_test.go`.
-- `TestAMalformedFilterParameterIsRefusedNotDropped` in `query/edge_test.go` —
+  `TestAPreloadSortObeysTheSortableList` in `crud/query/preload_allowlist_test.go`.
+- `TestNullOperandsAreRefusedWhereTheyHaveNoMeaning` in `crud/query/edge_test.go`.
+- `TestUnknownOperatorIsRefusedOnBothDoors` in `crud/query/querystring_test.go`.
+- `TestAMalformedFilterParameterIsRefusedNotDropped` in `crud/query/edge_test.go` —
   the query-string door, where "dropped" is the easy mistake.
 
 ## See also

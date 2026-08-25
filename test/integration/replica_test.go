@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // A real replica lags, which is exactly what makes routing hard to test: you
@@ -17,7 +17,7 @@ import (
 // one holds different rows. Whichever rows come back name the datasource the
 // statement actually reached.
 
-var ReplicaRows = basic.Define[ShardRow, int64, ShardRowUpdate]("shard_rows")
+var ReplicaRows = sqlrepo.Define[ShardRow, int64, ShardRowUpdate]("shard_rows")
 
 func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 	ctx := context.Background()

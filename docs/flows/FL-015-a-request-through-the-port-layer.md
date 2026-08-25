@@ -1,6 +1,6 @@
 # FL-015 — A request through the port layer
 
-**Entry point:** `http/crudnet/handler.go:Create` (and every sibling route, in all four bindings)
+**Entry point:** `crud/http/crudnet/handler.go:Create` (and every sibling route, in all four bindings)
 **Implements:** [[UC-001]] [[UC-013]] [[UC-015]] · **Governed by:** [[D-045]] [[D-022]] [[D-043]] [[D-050]] [[D-012]] [[D-004]] [[D-021]]
 
 A transport binding owns three things: which routes exist, how a body becomes a
@@ -27,9 +27,9 @@ column -> model field -> command field -> transport field -> wire
 
 ## The path — a create
 
-1. **`HandlerFor.Create`** — `http/crudnet/handler.go:Create`
+1. **`HandlerFor.Create`** — `crud/http/crudnet/handler.go:Create`
    `var in In` — the handler's *input* type, which is the model itself unless
-   `NewFor` gave it one of its own. `crudhttp.DecodeJSONKeep` decodes it and
+   `NewFor` gave it one of its own. `porthttp.DecodeJSONKeep` decodes it and
    hands back the bytes; `keep` puts a capped copy on the context for the
    raw-body path fallback ([[D-043]], [[FL-011]]).
 
@@ -57,7 +57,7 @@ column -> model field -> command field -> transport field -> wire
    - `repo.Save` — [[FL-003]] from here.
 
 5. **The repository**, through whatever decorators the model was bound with:
-   the security gate ([[FL-008]]), the faults decorator, `repo/basic`, the
+   the security gate ([[FL-008]]), the faults decorator, `crud/sqlrepo`, the
    adapter, the driver.
 
 6. **The response** — `HandlerFor.entity` → `writeJSON`. 201 and the stored row,
@@ -87,7 +87,7 @@ request), body decoding, and writing the response.
 Four hops and a fallback. Every one translates only what it already knows and
 declines rather than guessing ([[D-043]]).
 
-1. **column → model field** — `repo/decorators/faults/faults.go:resolve`
+1. **column → model field** — `crud/decorators/faults/faults.go:resolve`
    Through `crud.Meta` and never `crud.Schema`: `Schema` is cached per type and
    table-independent, so it cannot tell two databases' `users` apart. A column on
    another table marks the violation approximate rather than naming a field of a
@@ -120,18 +120,18 @@ declines rather than guessing ([[D-043]]).
 
    Declining is safe for a `PathMap` precisely because it is total: an
    undeclared head can only be a column of another table — which
-   `repo/decorators/faults/faults.go:resolve` already leaves unset — or a column
+   `crud/decorators/faults/faults.go:resolve` already leaves unset — or a column
    no request carries. Neither has a client key to name.
 
 4. **path → wire** — `port/violations.go:Violations`, which applies the chain and
    then the sort, the cap and the message ladder. Both renderers call it: the
-   JSON array in the envelope is `http/crudhttp/render.go`'s rendering of the
-   result, and `rpc/crudgrpc/status.go` renders the same `errs.Path` as
+   JSON array in the envelope is `port/porthttp/render.go`'s rendering of the
+   result, and `crud/rpc/crudgrpc/status.go` renders the same `errs.Path` as
    `BadRequest_FieldViolation.Field`, dotted. Since phase 9 that sentence is
    present tense — the fourth transport exists and this hop is where it and the
    envelope stop differing.
 
-**The fallback** — `http/crudhttp/bodyindex.go:BodyResolver` — runs *after* every
+**The fallback** — `port/porthttp/bodyindex.go:BodyResolver` — runs *after* every
 declared hop, and only over a path the declared hops left **unchanged**. It
 reaches the pipeline as `port.ViolationOptions.Fallback`, a field of its own
 rather than a last resolver, because a declaration must always beat a guess. The
@@ -142,7 +142,7 @@ payload — a `not_null` violation on a column the client omitted is the case th
 produces it. A guess must not overturn a declaration ([[D-043]]).
 `rendererFor` in each binding's `options.go` builds a per-handler renderer only
 when `port.Hops` returns something; with no hops the shared `defaultRenderer` is
-kept and the zero-config case stays free. `rpc/crudgrpc/options.go` has the same
+kept and the zero-config case stays free. `crud/rpc/crudgrpc/options.go` has the same
 function over its own renderer, and passes **no** fallback: that transport has no
 retained request bytes to index, so a path nothing declared is marked
 approximate rather than guessed.
@@ -166,24 +166,30 @@ approximate rather than guessed.
   client cannot widen a scope by sending a filter.
 - **`port` may import the standard library, `crud`, `query` and `errs`, and
   nothing else.** `Makefile:TIER0` and `make check-tiers` are what make that
-  mechanical. The arrow is `crudhttp → port` and never back.
-- **The renderer seam stayed behind; the pipeline came down.** Two halves, and
-  the distinction is the one most likely to be misremembered. The `Renderer`
-  *interface* and `EnvelopeRenderer` are still in `http/crudhttp`, because
-  [[D-045]]'s test is whether a non-HTTP transport can implement the interface
-  without importing `net/http` and one returning an `http.Header` cannot —
+  mechanical. `port/porthttp` is a manifest entry too, under the same rule and
+  for a sharper reason: it is what the auth middleware imports, and an import of
+  `crud/sqlrepo` from it would put the repository back into a token check
+  ([[D-059]]). The arrows are `crudhttp → porthttp → port` and never back.
+- **The renderer seam stayed on the HTTP side; the pipeline came down.** Two
+  halves, and the distinction is the one most likely to be misremembered. The
+  `Renderer` *interface* and `EnvelopeRenderer` are HTTP-shaped and stayed that
+  way — in `crud/http/crudhttp` until [[D-059]], in `port/porthttp` since —
+  because [[D-045]]'s test is whether a non-HTTP transport can implement the
+  interface without importing `net/http` and one returning an `http.Header`
+  cannot —
   `errs/spi.go` says so where its absence would otherwise look like an oversight,
-  and `rpc/crudgrpc` has a `Renderer` of its own answering a `*status.Status`.
+  and `crud/rpc/crudgrpc` has a `Renderer` of its own answering a `*status.Status`.
   What did move, at phase 9 and by that decision's own scheduled instruction, is
   the *violations pipeline*: `port.Violations` and `port.ViolationOptions`. Both
   renderers call it. So do not read "the renderer stayed" as "everything in
   render.go stayed".
 - **One context key for the locale, in `port`.** `port.WithLocale` /
-  `port.LocaleFrom` in `port/locale.go`, with `crudhttp.WithLocale` a forwarder.
+  `port.LocaleFrom` in `port/locale.go`, with `porthttp.WithLocale` a forwarder
+  and `crudhttp.WithLocale` a forwarder over that.
   A second key left in an HTTP package would be invisible to a gRPC renderer and
   vice versa, and both packages' own suites would still pass —
   `TestALocaleSetByOneTransportIsReadByAnother` in
-  `http/crudhttp/locale_test.go` is what catches it. `port.FirstLanguageTag`
+  `port/porthttp/locale_test.go` is what catches it. `port.FirstLanguageTag`
   parses the tag list for both, because `grpc-accept-language` carries the same
   syntax an `Accept-Language` header does.
 
@@ -215,7 +221,7 @@ approximate rather than guessed.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| a body that will not decode | the binding's decode → `crudhttp.MalformedBody` | 400, `malformed_body`, and the service is never called |
+| a body that will not decode | the binding's decode → `porthttp.MalformedBody` | 400, `malformed_body`, and the service is never called |
 | a mapper that refuses the input | `Mapper.Model` | whatever it returned, through the ordinary mapping ([[FL-011]]) |
 | a path key that does not coerce | `port.CoerceID` | 400, `invalid_id` |
 | a query document naming a field the model lacks | `Request.Compile`, inside the service | 400 with the offending path ([[FL-001]]) |
@@ -246,15 +252,16 @@ approximate rather than guessed.
 | `port/kind.go` | the code vocabulary: `FaultOf`, `KindOf`, `KindOfWith`, `CodeForKind`, `DefaultMessage` — and `FaultFrom`, the inverse a client rebuilds through ([[FL-018]]) |
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the chain, the sort, the cap and the message ladder, called by every renderer |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — one context key and one tag parser for every transport |
-| `http/crudnet/handler.go` | the traced binding: routes, decode, the four constructors, `HandlerFor`/`Handler` |
-| `http/crudnet/options.go` | `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `render`, `writeJSON` |
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go` | the same two files each, name for name ([[FL-013]]) |
-| `http/crudhttp/doc.go` | where the line between the two shared halves is drawn |
-| `http/crudhttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which are HTTP-shaped on purpose |
-| `http/crudhttp/request.go` | the forwarders, including `WithLocale` / `LocaleFrom` over `port` |
-| `http/crudhttp/bodyindex.go` | the raw-body fallback, behind every declared hop |
-| `rpc/crudgrpc/status.go` | the other renderer over the same pipeline: `codes.Code` and the error details ([[D-052]]) |
-| `repo/decorators/faults/faults.go` | `Enrich`, `enricher.resolve` — the chain's first hop ([[FL-014]]) |
+| `crud/http/crudnet/handler.go` | the traced binding: routes, decode, the four constructors, `HandlerFor`/`Handler` |
+| `crud/http/crudnet/options.go` | `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `render`, `writeJSON` |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go` | the same two files each, name for name ([[FL-013]]) |
+| `crud/http/crudhttp/doc.go` | where the lines between the three shared halves are drawn |
+| `crud/http/crudhttp/porthttp.go` | the forwarders over everything [[D-059]] moved |
+| `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which are HTTP-shaped on purpose |
+| `port/porthttp/body.go` | the decode, the retained body, and `WithLocale` / `LocaleFrom` over `port` |
+| `port/porthttp/bodyindex.go` | the raw-body fallback, behind every declared hop |
+| `crud/rpc/crudgrpc/status.go` | the other renderer over the same pipeline: `codes.Code` and the error details ([[D-052]]) |
+| `crud/decorators/faults/faults.go` | `Enrich`, `enricher.resolve` — the chain's first hop ([[FL-014]]) |
 
 ## Tests that walk this flow
 
@@ -286,7 +293,7 @@ approximate rather than guessed.
   pipeline itself, moved down with it at phase 9 and now measured once for every
   transport rather than once per renderer.
 - `TestALocaleSetByOneTransportIsReadByAnother` —
-  `http/crudhttp/locale_test.go` — one context key, read from both sides, with
+  `port/porthttp/locale_test.go` — one context key, read from both sides, with
   the control that an unset context reads empty.
 - `TestTheDefaultServiceAppliesTheRulesInOrder` — `port/service_test.go` — the
   sanitise / hook / save order, the replace probe, and the control that with
@@ -304,7 +311,7 @@ approximate rather than guessed.
   the contrast in the table above, with a recording hop behind each type showing
   that one kept the chain running and the other stopped it. The rest of that
   file pins the start-up checks.
-- `TestADeclaredMapBeatsTheRawBodyGuess` — `http/crudhttp/render_test.go` — the
+- `TestADeclaredMapBeatsTheRawBodyGuess` — `port/porthttp/render_test.go` — the
   ordering of hop 3 and the fallback, including a declared path the index would
   otherwise have rewritten, each arm with its no-map control.
 - `TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings` —

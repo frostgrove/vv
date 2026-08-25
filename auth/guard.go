@@ -70,7 +70,7 @@ func Lookup(fn func(get func(name string) string) (Credential, bool)) Option {
 // with a stale session would then see an empty list rather than a prompt.
 //
 // What comes after it must still fail closed. Optional means the principal may
-// be absent, and every policy in repo/decorators/security refuses an absent
+// be absent, and every policy in crud/decorators/security refuses an absent
 // principal — so an optional guard in front of a gated repository is a 401 at
 // the repository instead of at the door, not an open door.
 func Optional() Option {

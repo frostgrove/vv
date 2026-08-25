@@ -58,7 +58,7 @@ transaction it opens to the source's own datasource **when the source is
 `Identified`**, so every existing test that wraps a recorder in `InTx` would go
 from an unscoped binding, which every repository joins, to a scoped one only
 repositories over that recorder join. Two dozen test files across `crud`,
-`query`, `repo/basic`, `repo/decorators` and `_examples` bind a recorder.
+`query`, `crud/sqlrepo`, `crud/decorators` and `_examples` bind a recorder.
 Nothing in the tree fails today if that changed, which is exactly why it is
 pinned by a test rather than left to judgement. **Answered: no.**
 
@@ -177,23 +177,23 @@ D-039 forbids.
 
 ## Where it lives
 
-- `catalog/doc.go` — the rules a signature cannot carry.
-- `catalog/catalog.go` — `Catalog`, `Table`, `Column`, `Constraint`, `Kind`.
-- `catalog/errors.go` — `ErrUncomparableHandle`, `ErrUnknownDialect`,
+- `crud/catalog/doc.go` — the rules a signature cannot carry.
+- `crud/catalog/catalog.go` — `Catalog`, `Table`, `Column`, `Constraint`, `Kind`.
+- `crud/catalog/errors.go` — `ErrUncomparableHandle`, `ErrUnknownDialect`,
   `ErrIntrospection`.
-- `catalog/load.go` — `Load`, `backendFor`, `eachRow`, `builder`, `conBuildKey`,
+- `crud/catalog/load.go` — `Load`, `backendFor`, `eachRow`, `builder`, `conBuildKey`,
   `conFamily`, `snapshot`.
-- `catalog/set.go` — `Set`, `Set.Load`, `Set.For`, `findable` (the guarded
+- `crud/catalog/set.go` — `Set`, `Set.Load`, `Set.For`, `findable` (the guarded
   comparability probe).
-- `catalog/reload.go` — `Reloader`, `loaded.Reload`, the negative cache and the
+- `crud/catalog/reload.go` — `Reloader`, `loaded.Reload`, the negative cache and the
   per-handle floor.
-- `catalog/postgres.go`, `catalog/mysql.go`, `catalog/mariadb.go`,
-  `catalog/sqlite.go` — one back-end per engine.
+- `crud/catalog/postgres.go`, `crud/catalog/mysql.go`, `crud/catalog/mariadb.go`,
+  `crud/catalog/sqlite.go` — one back-end per engine.
 - `crud/executor.go:KeyOf` / `crud/executor.go:SameDataSource` — the identity
   rules this reuses rather than reinvents. They were unexported until phase 6 and
   `catalog` is what exports them.
 - `crud/executor.go:Identified` — the only identity the seam offers.
-- `catalog/catalog.go:Referrers` and `catalog/load.go:snapshot.refs` /
+- `crud/catalog/catalog.go:Referrers` and `crud/catalog/load.go:snapshot.refs` /
   `:loaded.ReferencedBy` — the inbound direction, added by phase 7 for the same
   reason `Reloader` is separate: `Catalog` is the interface a consumer
   implements and it stays the small one. A constraint is recorded on the table
@@ -201,10 +201,10 @@ D-039 forbids.
   point *at* this table" — which is what a `restrict` violation needs. The order
   is the order the tables and their constraints were read in, which every
   loading statement fixes with an `ORDER BY`.
-- `probe/declare.go` — the declaration-time refusal this decision owed. It is
+- `crud/probe/declare.go` — the declaration-time refusal this decision owed. It is
   where a table the catalog does not know, and a model key that is not a row
   identity, stop the process.
-- `sqlfault/catalog.go:FromCatalog` — the first consumer of a loaded catalog
+- `crud/sqlfault/catalog.go:FromCatalog` — the first consumer of a loaded catalog
   outside `catalog` itself. It holds the catalog on the classifier *value* the
   caller declared and never in a package-level variable, and its lookup does no
   I/O and takes no context, for the reason `Catalog` itself takes none: a
@@ -221,32 +221,32 @@ D-039 forbids.
 
 - `TestTwoSourcesOverDifferentHandlesDoNotShareACatalog` and its control
   `TestTwoIndependentlyBuiltSourcesOverOneHandleShareOneCatalog` in
-  `catalog/set_test.go`.
+  `crud/catalog/set_test.go`.
 - `TestAReadWritePairAndItsPrimaryShareOneCatalog` and
   `TestAReadWritePairOverAnotherPrimaryGetsItsOwnCatalog` in
-  `catalog/set_test.go` — [[D-032]]'s forwarding rule as a key.
+  `crud/catalog/set_test.go` — [[D-032]]'s forwarding rule as a key.
 - `TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide` in
-  `catalog/set_test.go` — the exact difference between `crud.KeyOf` and the
+  `crud/catalog/set_test.go` — the exact difference between `crud.KeyOf` and the
   interface test, asserted from both sides.
 - `TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam` in
-  `catalog/set_test.go` and `TestTheRecorderStaysUnidentified` in
+  `crud/catalog/set_test.go` and `TestTheRecorderStaysUnidentified` in
   `crud/crudtest/recorder_test.go` — the §16 answer, pinned where a revert would
   land.
 - `TestAnUncomparableHandleIsRefusedRatherThanPanicking` and its control
-  `TestAComparableHandleIsAcceptedAndFoundAgain` in `catalog/set_test.go` — both
+  `TestAComparableHandleIsAcceptedAndFoundAgain` in `crud/catalog/set_test.go` — both
   shapes of uncomparable, including the one `reflect` calls comparable.
 - `TestAnUnknownDialectIsRefusedBeforeAnyStatement`,
   `TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog` — both the
   refusal `Query` reports and the one `Rows.Err` reports, which is pgx's shape —
   and `TestARowThatCannotBeScannedFailsLoadRatherThanDroppingIt`, with their
-  controls, in `catalog/load_test.go`. The mid-stream arm needs a double that can
+  controls, in `crud/catalog/load_test.go`. The mid-stream arm needs a double that can
   express it, which is what `crudtest.Result.RowsErr` is for; it is pinned by
   `TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem` in
   `crud/crudtest/recorder_test.go`.
 - `TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog` in
-  `catalog/set_test.go` — "one catalog per physical handle" under two declarers
+  `crud/catalog/set_test.go` — "one catalog per physical handle" under two declarers
   held at one barrier, which is the only assertion that holds it concurrently.
-- `TestALookupIssuesNoStatement` in `catalog/reload_test.go` — no I/O, no
+- `TestALookupIssuesNoStatement` in `crud/catalog/reload_test.go` — no I/O, no
   context, and `Reload` as its control.
 - `TestTheSameUnknownNameDoesNotReintrospectInALoop`,
   `TestOnceTheWindowPassesTheCatalogReadsAgain`,
@@ -254,12 +254,12 @@ D-039 forbids.
   `TestOnceTheFloorLiftsADifferentNameReadsAgain`,
   `TestAReloadThatFindsTheNameResetsTheBackoff`,
   `TestTheBackoffStopsDoublingAtTheCeiling` and
-  `TestAFailedReloadKeepsTheSchemaAndSaysSo` in `catalog/reload_test.go` — the
+  `TestAFailedReloadKeepsTheSchemaAndSaysSo` in `crud/catalog/reload_test.go` — the
   negative cache, both guards, both directions, and the ceiling the doubling
   stops at.
 - `TestAConstraintIsKeyedOnItsTableAsWellAsItsName` and
   `TestColumnsAndConstraintsKeepTheOrderTheEngineReported` in
-  `catalog/catalog_test.go`.
+  `crud/catalog/catalog_test.go`.
 - `TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot` and
   `TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot` in
   `test/integration/catalog_test.go` — the twin, live, on all four engines, for
@@ -296,7 +296,7 @@ D-039 forbids.
 ### Paid by phase 7
 
 The invariant has two halves and phase 6 paid one. There was no repository
-declaration that needed a catalog until `probe/` landed, so *"a repository
+declaration that needed a catalog until `crud/probe/` landed, so *"a repository
 declared with a feature that needs a catalog refuses to start when the catalog
 cannot be loaded"* had no site to be tested at. Phase 7 built the site and the
 tests:
@@ -305,11 +305,11 @@ tests:
   `test/integration/probe_test.go` — live on all four engines, with the table the
   catalog does know as its control.
 - `TestADeclarationWhoseTableTheCatalogDoesNotKnowRefusesToStart` in
-  `probe/declare_test.go` — the same refusal against a catalog that read **zero
+  `crud/probe/declare_test.go` — the same refusal against a catalog that read **zero
   rows**, which is what a MySQL user with no `information_schema` grants gets:
   `Load` succeeds and the catalog is empty. Its control is the loaded twin.
 - `TestADeclarationAgainstACatalogWithoutTheTableRefusesAtBindTime` in
-  `repo/decorators/faults/probe_test.go` — the refusal at the seam a consumer
+  `crud/decorators/faults/probe_test.go` — the refusal at the seam a consumer
   actually writes, which is a panic at `Bind` and not an error at request time
   ([[D-021]]).
 

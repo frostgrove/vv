@@ -67,9 +67,9 @@ undefined fields on the way back out.
   the three JSON shapes.
 - `TestOptStates` in `crud/opt_test.go`.
 - `TestUpdateDistinguishesUndefinedFromNull` in
-  `repo/basic/repository_test.go` — the end-to-end statement, which is where a
+  `crud/sqlrepo/repository_test.go` — the end-to-end statement, which is where a
   regression would actually hurt.
-- `TestUpdateCarriesAnExplicitNullThrough` in `http/crudfiber/handler_test.go`.
+- `TestUpdateCarriesAnExplicitNullThrough` in `crud/http/crudfiber/handler_test.go`.
 - `TestOnlyOmitzeroDropsAnUndefinedFieldOnMarshal` in `crud/opt_edge_test.go`.
 - `TestFromPtrOfAZeroValueIsAValueNotAnAbsence` in `crud/opt_edge_test.go`.
 - `TestGeneratedDTOTypesFollowNullability` in `_examples/example/blog/blog_test.go` — would

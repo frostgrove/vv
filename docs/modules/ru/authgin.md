@@ -1,12 +1,12 @@
 # authgin — аутентификация запроса Gin
 
 ```go
-import "github.com/shardit-io/vv/http/authgin"
+import "github.com/shardit-io/vv/auth/http/authgin"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/http/authgin` — одна зависимость,
+**Модуль:** `github.com/shardit-io/vv/auth/http/authgin` — одна зависимость,
 `github.com/gin-gonic/gin`
-· **Зависит от:** `auth`, `authhttp`, `crudhttp`, gin
+· **Зависит от:** `auth`, `authhttp`, `porthttp`, gin
 
 Он **не** требует [crudgin](crudgin.md). Аутентифицировать запрос и отдавать
 CRUD-ресурс — два решения, которые принимаются раздельно ([[D-051]]).
@@ -73,7 +73,7 @@ api := r.Group("/api", authgin.Middleware(guard))
 |---|---|
 | `Middleware(guard, opts...)` | `gin.HandlerFunc` |
 
-`opts` — это `crudhttp.RenderOption`, те же, что принимает `crudgin.Errors`.
+`opts` — это `porthttp.RenderOption`, те же, что принимает `crudgin.Errors`.
 
 ## Что он делает
 

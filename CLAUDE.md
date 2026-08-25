@@ -6,9 +6,8 @@ without owning the caller's connection or transaction.
 
 Module: `github.com/shardit-io/vv`, and it has no external dependencies.
 Anything that would add one is a module of its own under the same repository —
-`http/crudfiber`, `http/crudgin`, `adapter/crudpgx`, `auth/authjwt` — so a
-consumer downloads
-only the binding and driver it imports. `test/` and `_examples/` are two more,
+`crud/http/crudfiber`, `crud/http/crudgin`, `crud/adapter/crudpgx`, `auth/authjwt` —
+so a consumer downloads only the binding and driver it imports. `test/` and `_examples/` are two more,
 unpublished, so drivers, ORMs and example stacks never become dependencies of
 the library. See `[[D-033]]`.
 
@@ -150,18 +149,20 @@ Tests are the specification; see `[[D-020]]`.
   closes it the control fails and tells you the positive test now proves nothing.
 - **Never `t.Parallel()` in `test/integration`** — every test shares the same
   physical tables.
-- **A change to one HTTP binding is a change to all three.** `http/crudfiber`,
-  `http/crudgin` and `http/crudnet` carry the same test names, file for file. If
+- **A change to one HTTP binding is a change to all three.**
+  `crud/http/crudfiber`, `crud/http/crudgin` and `crud/http/crudnet` carry the
+  same test names, file for file. If
   a new test only makes sense for one of them, it belongs in that binding's
   `routing_test.go`, and the difference it pins belongs in `[[FL-013]]`.
-  **`rpc/crudgrpc` is a fourth transport and is not in that triplet**: it carries
-  the subset of those names that is about `port` rather than about HTTP, and
+  **`crud/rpc/crudgrpc` is a fourth transport and is not in that triplet**: it
+  carries the subset of those names that is about `port` rather than about HTTP, and
   spells the rest in its own vocabulary because there is no 404 and no `PUT`
   here to name. A test that only makes sense for gRPC belongs in
-  `rpc/crudgrpc/`, and the difference it pins belongs in `[[FL-013]]` too.
+  `crud/rpc/crudgrpc/`, and the difference it pins belongs in `[[FL-013]]` too.
 - **The auth middleware is a second triplet with the same rule.**
-  `http/authnet`, `http/authgin` and `http/authfiber` carry the same test names
-  file for file, and `rpc/authgrpc` carries the subset that is about `port`
+  `auth/http/authnet`, `auth/http/authgin` and `auth/http/authfiber` carry the
+  same test names file for file, and `auth/rpc/authgrpc` carries the subset that
+  is about `port`
   rather than about HTTP. What differs between them belongs in `[[FL-019]]`.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
@@ -180,52 +181,80 @@ The code has a voice. Match it rather than averaging toward generic Go.
 - Prefer the boring construct. The magic in this library is deliberate and
   concentrated (reflection over models, codegen, type inference at the seam) —
   see `[[D-021]]`. Everywhere else, be ordinary.
-- `crud/` imports the standard library only — and so does the whole root module.
-  A package that needs an external dependency becomes a module. `[[D-033]]`.
+- **Package** `crud` imports the standard library only — the package, not the
+  subtree: `crud/sqlrepo`, `crud/query` and the rest below it are ordinary
+  packages with ordinary dependencies ([[D-016]], and `Makefile:TIER0_STDLIB` is
+  what holds it). The whole root *module* still takes no third-party
+  dependency at all: a package that needs one becomes a module. `[[D-033]]`.
 
 ---
 
 ## Layout
 
+The top-level axis is the subsystem; the transport is the second level inside it
+([[D-058]]). A package name still carries its prefix even where the path repeats
+it — `crud/http/crudfiber` holds `package crudfiber` — because a consumer who
+mounts CRUD routes and auth middleware on Gin imports `crudgin` and `authgin` in
+the same file ([[D-035]]).
+
 ```
 crud/                       core: contracts, metadata, relations, predicates, Opt, pagination
-repo/basic/                 the plain repository: the layer that speaks SQL
-repo/decorators/specs/      JPA Specifications + Criteria API + metamodel
-repo/decorators/security/   row-level scope, authorization, per-entity checks
-repo/decorators/faults/     the column -> model-field hop, and where the probe is wired in
+├── crudtest/               an in-memory source for unit-testing repositories
+├── query/                  the wire DSL: one JSON document -> crud.Options
+├── sqlrepo/                the repository that speaks SQL: Define, Bind, the statements
+├── decorators/specs/       JPA Specifications + Criteria API + metamodel
+├── decorators/security/    row-level scope, authorization, per-entity checks
+├── decorators/faults/      the column -> model-field hop, and where the probe is wired in
+├── adapter/crudsql/        database/sql — and therefore ent, gorm, sqlx, sqlc, bun
+├── adapter/crudpgx/        MODULE — pgx v5
+├── catalog/                per-handle schema introspection, four dialects
+├── probe/                  one extra statement finds every other violation the payload caused
+├── sqlfault/               the tree walk, the integrity gate, fault assembly — what WithFaults takes
+├── http/crudhttp/          what is HTTP *and* CRUD: the request shapes, the model hop
+├── http/crudnet/           a full CRUD API on net/http — stdlib, so not a module
+├── http/crudfiber/         MODULE — a full CRUD API on Fiber v3
+├── http/crudgin/           MODULE — the same API on Gin
+└── rpc/crudgrpc/           MODULE — the same API on gRPC
+
 auth/                       who the caller is: Principal, Role, Permission, Guard, the 401
-auth/apikey/                an Authenticator over a shared secret — stdlib, so not a module
-query/                      the wire DSL: one JSON document -> crud.Options
-errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
-errs/sqlerr/                a driver error becomes a code, one table per dialect
-sqlfault/                   the tree walk, the integrity gate, fault assembly — what WithFaults takes
-catalog/                    per-handle schema introspection, four dialects
-probe/                      one extra statement finds every other violation the payload caused
+├── apikey/                 an Authenticator over a shared secret — stdlib, so not a module
+├── authjwt/                MODULE — JWT verification, generic over your claims
+├── http/authhttp/          the HTTP half of the auth middleware: the renderer, the refusal
+├── http/authnet/           the net/http auth middleware — stdlib, so not a module
+├── http/authgin/           MODULE — the Gin auth middleware
+├── http/authfiber/         MODULE — the Fiber auth middleware
+└── rpc/authgrpc/           MODULE — the gRPC auth interceptors
+
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
-http/crudhttp/              the HTTP half: the status table, the envelope, the renderer seam
-http/crudnet/               a full CRUD API on net/http — stdlib, so not a module
-http/authhttp/              the HTTP half of the auth middleware: the renderer, the refusal
-http/authnet/               the net/http auth middleware — stdlib, so not a module
+└── porthttp/               the HTTP projection of the error contract: the status table, the
+                            envelope, the Renderer seam — every subsystem's, not CRUD's
+
 remote/                     the consuming half: another service's resource, held as a port.Repository
+└── remotehttp/             the HTTP client transport: a remote.Call becomes a request
+
+errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
+└── sqlerr/                 a driver error becomes a code, one table per dialect
+
+vvdb/                       one config -> a DSN or a *sql.DB, four engines; who opens the connection
+└── dbpgx/                  MODULE — the same config, a pgx pool
+
+utils/                      for the consumer's application, never for the library
+├── vvflag/                 one typed flag, without owning the command line
+└── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
+
 cmd/vv/                     generates the update DTO and the metamodel from your model
 internal/codegen/           what cmd/vv is a front end for
-adapter/crudsql/            database/sql — and therefore ent, gorm, sqlx, sqlc, bun
-crud/crudtest/              an in-memory source for unit-testing repositories
-vvflag/                     one typed flag, without owning the command line
 docs/                       modules, decisions, use cases, flows, usage guides, the roadmap
 
-http/crudfiber/             MODULE — a full CRUD API on Fiber v3
-http/crudgin/               MODULE — the same API on Gin
-rpc/crudgrpc/               MODULE — the same API on gRPC
-auth/authjwt/               MODULE — JWT verification, generic over your claims
-http/authgin/               MODULE — the Gin auth middleware
-http/authfiber/             MODULE — the Fiber auth middleware
-rpc/authgrpc/               MODULE — the gRPC auth interceptors
-adapter/crudpgx/            MODULE — pgx v5
-tools/vvcfg/                MODULE — a config struct, loaded and validated at start-up
 test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
 _examples/                  MODULE (unpublished) — runnable examples, one per stack
 ```
+
+`utils/` is the one name in the tree chosen for what it is not: a subsystem. Its
+boundary is a single line — **nothing under `utils/` imports `crud/`, `auth/`,
+`port/` or `remote/`.** A package that needs to is not a utility, and it moves to
+the subsystem it belongs to. Without that line `utils/` collects half the
+repository inside a year.
 
 `_examples/` starts with an underscore, so the Go toolchain ignores it at the
 root: `make unit` does not build it and `make examples` does.

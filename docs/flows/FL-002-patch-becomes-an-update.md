@@ -1,6 +1,6 @@
 # FL-002 — A PATCH becomes an UPDATE
 
-**Entry point:** `http/crudfiber/handler.go:Update` (and `http/crudgin/handler.go:Update`)
+**Entry point:** `crud/http/crudfiber/handler.go:Update` (and `crud/http/crudgin/handler.go:Update`)
 **Implements:** [[UC-003]] [[UC-009]] · **Governed by:** [[D-002]] [[D-010]] [[D-019]]
 
 The read-modify-write that most hand-written handlers get wrong. Three states in
@@ -9,12 +9,12 @@ differs by dialect.
 
 ## The path
 
-1. **`HandlerFor.Update`** — `http/crudfiber/handler.go:Update`,
-   `http/crudgin/handler.go:Update`
+1. **`HandlerFor.Update`** — `crud/http/crudfiber/handler.go:Update`,
+   `crud/http/crudgin/handler.go:Update`
    `h.id(c)` coerces the path parameter to `ID` (via `port.CoerceID` and
    `query.Coerce`), then the body is decoded into `U`. The binding closes
    `BeforeUpdate` over the request and the path key and puts it on the command
-   (`http/crudfiber/options.go:BeforeUpdate`); the service runs it. PATCH is the
+   (`crud/http/crudfiber/options.go:BeforeUpdate`); the service runs it. PATCH is the
    one route with no mapper: the body decodes straight into `U`, because the
    generated DTO already is the transport shape ([[D-018]], and `port/doc.go`
    states the limit).
@@ -22,17 +22,17 @@ differs by dialect.
    A `WithScope` narrowing reaches every read and *nothing* on this path.
    Row-level rules on writes belong in `security.Gate`, whose scope does reach
    the UPDATE ([[FL-008]]); the asymmetry is documented at
-   `http/crudfiber/options.go:WithScope`, and word for word in the other two.
+   `crud/http/crudfiber/options.go:WithScope`, and word for word in the other two.
 
 2. **`crud.Repo.Update`** — `crud/repo.go:71`
    The typed façade. It only re-types `dto U` down to `any` for the `Core`
    chain; every decorator sees `any` and the compiler still checks the call site.
 
-3. **(optional) `gate.Update`** — `repo/decorators/security/security.go:454`
+3. **(optional) `gate.Update`** — `crud/decorators/security/security.go:454`
    When the repository was bound with a gate. Frozen-field check, a scoped load,
    `Inspect`, then the scope goes into the options it forwards — see [[FL-008]].
 
-4. **`repository.Update`** — `repo/basic/repository.go:531`
+4. **`repository.Update`** — `crud/sqlrepo/repository.go:531`
    The whole write lives here. In order:
 
 5. **The load** — `repository.go:544-556`
@@ -135,7 +135,7 @@ differs by dialect.
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
 | `:id` does not parse as `ID` | `HandlerFor.id` → `port.CoerceID` | 400, `invalid_id` |
-| malformed JSON body | the binding's decode → `crudhttp.MalformedBody` | 400, `malformed_body` |
+| malformed JSON body | the binding's decode → `porthttp.MalformedBody` | 400, `malformed_body` |
 | DTO field names a column the model lacks | `PlanFor` at `Define` time | panic at start-up, not a request |
 | no row with that id, or it is outside the narrowing | the load (`repository.go:553`) | 404 |
 | row deleted between the load and the write | `missedRow` → `ErrNotFound` | 404 |
@@ -147,8 +147,8 @@ differs by dialect.
 
 | File | Role |
 |---|---|
-| `http/crudfiber/handler.go`, `http/crudgin/handler.go`, `http/crudnet/handler.go` | `Update`, id coercion, the hook closure, response |
-| `http/crudfiber/options.go`, `http/crudgin/options.go`, `http/crudnet/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
+| `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | `Update`, id coercion, the hook closure, response |
+| `crud/http/crudfiber/options.go`, `crud/http/crudgin/options.go`, `crud/http/crudnet/options.go` | `BeforeUpdate`, and the `WithScope` asymmetry |
 | `port/command.go` | `UpdateCommand` — the key, the patch and the hook |
 | `port/service.go` | `DefaultService.Update` — where the hook runs and the repository is called |
 | `port/request.go` | `CoerceID` — the id coercion every binding calls |
@@ -156,28 +156,28 @@ differs by dialect.
 | `crud/update.go` | `UpdatePlan`, `Changes`, `planField.read`, `valuesEqual` |
 | `crud/opt.go` | the three states themselves |
 | `crud/meta.go` | `Field.comparableOf`, `Schema.Update`, `checkVersion` |
-| `repo/basic/repository.go` | `Update`, `versionCheck`, `missedRow`, `refresh` |
+| `crud/sqlrepo/repository.go` | `Update`, `versionCheck`, `missedRow`, `refresh` |
 | `crud/dialect.go` | `SupportsReturning`, `LockClause` |
 | `crud/executor.go` | `ExecutorFor` — the "are we in a transaction" question the `FOR UPDATE` branch asks |
-| `repo/decorators/security/security.go` | the gated variant |
+| `crud/decorators/security/security.go` | the gated variant |
 
 ## Tests that walk this flow
 
-Both below have an identical twin in `http/crudgin/handler_test.go` and
-`http/crudnet/handler_test.go`.
+Both below have an identical twin in `crud/http/crudgin/handler_test.go` and
+`crud/http/crudnet/handler_test.go`.
 
-- `TestUpdateForwardsOnlyTheFieldsTheBodyCarried` — `http/crudfiber/handler_test.go` — the wire half.
-- `TestUpdateCarriesAnExplicitNullThrough` — `http/crudfiber/handler_test.go` — `null` is not absence.
-- `TestUpdateWritesOnlyChangedFields` — `repo/basic/repository_test.go` — the diff.
-- `TestUpdateWithNothingToDoSkipsTheWrite` — `repo/basic/repository_test.go` — no statement at all.
-- `TestUpdateDistinguishesUndefinedFromNull` — `repo/basic/repository_test.go` — the three states in SQL.
-- `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` — `repo/basic/repository_test.go` — the MySQL re-read.
-- `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` — `repo/basic/repository_test.go` — pins the fabricated-model regression.
-- `TestUpdateChecksTheVersionItReadAndAdvancesIt` — `repo/basic/version_test.go` — both halves of the lock.
-- `TestAnUpdateAgainstARowSomebodyElseChangedIsRefused` — `repo/basic/version_test.go`.
-- `TestAVanishedRowIsStillNotFoundRatherThanStale` — `repo/basic/version_test.go` — `missedRow`'s two answers.
-- `TestAnUpdateWithNothingToDoLeavesTheVersionAlone` — `repo/basic/version_test.go`.
-- `TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound` — `repo/basic/blueprint_edge_test.go`.
+- `TestUpdateForwardsOnlyTheFieldsTheBodyCarried` — `crud/http/crudfiber/handler_test.go` — the wire half.
+- `TestUpdateCarriesAnExplicitNullThrough` — `crud/http/crudfiber/handler_test.go` — `null` is not absence.
+- `TestUpdateWritesOnlyChangedFields` — `crud/sqlrepo/repository_test.go` — the diff.
+- `TestUpdateWithNothingToDoSkipsTheWrite` — `crud/sqlrepo/repository_test.go` — no statement at all.
+- `TestUpdateDistinguishesUndefinedFromNull` — `crud/sqlrepo/repository_test.go` — the three states in SQL.
+- `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — the MySQL re-read.
+- `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` — `crud/sqlrepo/repository_test.go` — pins the fabricated-model regression.
+- `TestUpdateChecksTheVersionItReadAndAdvancesIt` — `crud/sqlrepo/version_test.go` — both halves of the lock.
+- `TestAnUpdateAgainstARowSomebodyElseChangedIsRefused` — `crud/sqlrepo/version_test.go`.
+- `TestAVanishedRowIsStillNotFoundRatherThanStale` — `crud/sqlrepo/version_test.go` — `missedRow`'s two answers.
+- `TestAnUpdateWithNothingToDoLeavesTheVersionAlone` — `crud/sqlrepo/version_test.go`.
+- `TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound` — `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestAConcurrentWriteIsRefusedRatherThanLost` — `test/integration/dialect_edge_test.go` — against real engines.
 - `TestForUpdateMakesTwoTransactionsTakeTurns` — `test/integration/edge_test.go` — the lock branch.
 - `TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange` — `crud/edge_test.go` — `valuesEqual` on `time.Time`.

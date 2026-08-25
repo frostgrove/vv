@@ -12,11 +12,11 @@ import (
 
 	"github.com/shardit-io/vv/test/gormstore"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // The models live in test/gormstore, next to their generated DTOs and
@@ -33,12 +33,12 @@ type (
 // Soft deletes are a gorm-layer feature; vv sees the raw table, so the
 // tombstone filter is declared once, here, and no query option can widen it.
 var (
-	GormTeams = basic.Define[Team, uint, TeamUpdate]("teams",
-		basic.Scope(crud.IsNull("DeletedAt")))
-	GormMembers = basic.Define[Member, uint, MemberUpdate]("members",
-		basic.Scope(crud.IsNull("DeletedAt")))
-	GormLabels = basic.Define[Label, uint, gormstore.LabelUpdate]("labels",
-		basic.Scope(crud.IsNull("DeletedAt")))
+	GormTeams = sqlrepo.Define[Team, uint, TeamUpdate]("teams",
+		sqlrepo.Scope(crud.IsNull("DeletedAt")))
+	GormMembers = sqlrepo.Define[Member, uint, MemberUpdate]("members",
+		sqlrepo.Scope(crud.IsNull("DeletedAt")))
+	GormLabels = sqlrepo.Define[Label, uint, gormstore.LabelUpdate]("labels",
+		sqlrepo.Scope(crud.IsNull("DeletedAt")))
 )
 
 func gormDB(t *testing.T) *gorm.DB {

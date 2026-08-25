@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/decorators/security"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/specs"
 )
 
 // Target is one driver bound to one database.

@@ -1,6 +1,6 @@
-# FL-004 — Declaration: what `basic.Define` validates and when
+# FL-004 — Declaration: what `sqlrepo.Define` validates and when
 
-**Entry point:** `repo/basic/blueprint.go:Define`
+**Entry point:** `crud/sqlrepo/blueprint.go:Define`
 **Implements:** [[UC-010]] [[UC-014]] [[UC-016]] · **Governed by:** [[D-021]] [[D-007]] [[D-013]]
 
 `Define` runs at package initialisation, so what it checks fails at start-up and
@@ -9,7 +9,7 @@ value of this flow.
 
 ## The path
 
-1. **`basic.Define`** — `repo/basic/blueprint.go:114`
+1. **`sqlrepo.Define`** — `crud/sqlrepo/blueprint.go:114`
    A thin panic wrapper over `TryDefine` (`blueprint.go:123`). Use `TryDefine`
    in a test that wants to assert on the message.
 
@@ -100,7 +100,7 @@ value of this flow.
 
 10. **`Blueprint.Bind`** — `blueprint.go:182`
     `newRepository` assembles the static statement fragments once
-    (`repo/basic/repository.go:27`), then `crud.Chain` wraps the decorators with
+    (`crud/sqlrepo/repository.go:27`), then `crud.Chain` wraps the decorators with
     the first one outermost.
 
 ## What is deferred to first use
@@ -121,7 +121,7 @@ value of this flow.
 - **Lazy relation resolution is load-bearing.** `Relation.Target` caches the
   table it computes on first call, so resolving a path *early* pins a guessed
   table name. `security.relationFieldName`
-  (`repo/decorators/security/policies.go:102`) walks element types rather than
+  (`crud/decorators/security/policies.go:102`) walks element types rather than
   calling `Resolve` for exactly this reason: policies are package variables and
   Go's initialisation order does not promise the blueprint ran first.
 - **A struct-shaped field with no `rel` tag is neither a column nor an edge.**
@@ -149,18 +149,18 @@ value of this flow.
 
 | File | Role |
 |---|---|
-| `repo/basic/blueprint.go` | `Define`, `TryDefine`, `Setting`s, `resolveRelationScopes`, `Bind` |
+| `crud/sqlrepo/blueprint.go` | `Define`, `TryDefine`, `Setting`s, `resolveRelationScopes`, `Bind` |
 | `crud/meta.go` | `SchemaOf`, `buildSchema`, `collectFields`, `checkVersion`, tag vocabulary |
 | `crud/relation.go` | `parseRelation`, `relCandidate`, `Target`, `resolveDefaults`, `RegisterTable`, `TableNameOf` |
 | `crud/update.go` | `PlanFor`, `collectPlanFields` |
 | `crud/access.go` | `CheckID` |
 | `crud/scope.go` | `AtPath`, `ForModel` |
-| `repo/basic/repository.go` | `newRepository` — the statement fragments built at `Bind` |
+| `crud/sqlrepo/repository.go` | `newRepository` — the statement fragments built at `Bind` |
 
 ## Tests that walk this flow
 
-- `TestBadDeclarationsAreRefusedAndSayWhy` — `repo/basic/blueprint_edge_test.go` — the table of declaration-time refusals.
-- `TestBadDeclarationsPanicEarly` — `repo/basic/repository_test.go` — `Define` panics rather than deferring.
+- `TestBadDeclarationsAreRefusedAndSayWhy` — `crud/sqlrepo/blueprint_edge_test.go` — the table of declaration-time refusals.
+- `TestBadDeclarationsPanicEarly` — `crud/sqlrepo/repository_test.go` — `Define` panics rather than deferring.
 - `TestSchemaRefusesBrokenModels` — `crud/schema_edge_test.go` — the model-level rules.
 - `TestADbTagOnAnUnexportedFieldIsRefused` — `crud/schema_edge_test.go`.
 - `TestAnUntaggedUnexportedFieldIsSimplyIgnored` — `crud/schema_edge_test.go` — the other half of that rule.
@@ -172,9 +172,9 @@ value of this flow.
 - `TestRelationTagsAreCheckedWhenTheyAreDeclared` — `crud/schema_edge_test.go` — what `parseRelation` catches.
 - `TestARelationPointingAtAMissingFieldIsReportedOnUse` — `crud/schema_edge_test.go` — what it deliberately does not.
 - `TestSelfReferencingRelationResolves` — `crud/relation_test.go` — why resolution is lazy.
-- `TestRelationScopeRefusesAPathTheModelDoesNotHave` — `repo/basic/relscope_test.go`.
-- `TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent` — `repo/basic/blueprint_edge_test.go` — the one setting `Define` does not check.
-- `TestAnEmptyTableNameBecomesThePluralOfTheModel` — `repo/basic/blueprint_edge_test.go`.
+- `TestRelationScopeRefusesAPathTheModelDoesNotHave` — `crud/sqlrepo/relscope_test.go`.
+- `TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent` — `crud/sqlrepo/blueprint_edge_test.go` — the one setting `Define` does not check.
+- `TestAnEmptyTableNameBecomesThePluralOfTheModel` — `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestTableNameOf` / `TestRelationTargetUsesTheTablerName` — `crud/relation_test.go`.
 - `TestRegisterTableTypeRedirectsARelationsTarget` — `crud/decorate_test.go`.
 - `TestAnAmbiguousAliasResolvesToNothing` — `crud/schema_edge_test.go`.

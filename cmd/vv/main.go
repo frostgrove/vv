@@ -70,7 +70,7 @@ func main() {
 	flag.StringVar(&o.Into, "into", "", "write into this directory instead of -dir")
 	flag.StringVar(&o.Import, "import", "", "import path of -dir, used to qualify model types written elsewhere")
 	flag.IntVar(&o.Depth, "depth", 2, "how far to expand relation paths into the metamodel")
-	flag.StringVar(&o.SpecsPkg, "specs", "github.com/shardit-io/vv/repo/decorators/specs", "import path of the specs package")
+	flag.StringVar(&o.SpecsPkg, "specs", "github.com/shardit-io/vv/crud/decorators/specs", "import path of the specs package")
 	flag.StringVar(&o.CrudPkg, "crud", "github.com/shardit-io/vv/crud", "import path of the crud package")
 	flag.BoolVar(&o.Adapter, "adapter", false, "also generate the resource adapter: input DTO, mapper, inverse path map, service and wiring")
 	flag.StringVar(&o.Binding, "binding", "net", "which transport the generated wiring is written for: net or none")

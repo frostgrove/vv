@@ -22,7 +22,7 @@
 // application.
 //
 // It does not decide. [Permission] and [Role] are strings with a type, not a
-// rule engine. What a permission means is repo/decorators/security's, and the
+// rule engine. What a permission means is crud/decorators/security's, and the
 // direction is one-way on purpose: security imports auth, auth imports nothing
 // below errs. A middleware has no reason to compile a repository in.
 //

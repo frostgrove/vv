@@ -50,9 +50,9 @@ would be worse than a refusal: the caller cannot tell which rows landed.
 ## Where it lives
 
 - `crud/repo.go:Core` — the seam.
-- `repo/decorators/security/security.go:Aggregate`
-- `repo/decorators/security/security.go:SaveAll`
-- `repo/decorators/security/security.go:UpdateAll`
+- `crud/decorators/security/security.go:Aggregate`
+- `crud/decorators/security/security.go:SaveAll`
+- `crud/decorators/security/security.go:UpdateAll`
 
 ## Proven by
 

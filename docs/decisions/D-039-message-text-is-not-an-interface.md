@@ -80,7 +80,7 @@ having. Recording it and asserting on it are different things.
   out because they are the key; `Message` sits beside them and is not.
 - `errs/sqlerr/corpus.go:Err.SameKey` — the comparison, and the comment saying
   what it leaves out.
-- `sqlfault/extract.go:carried` — the whitelist of structured fields a parser
+- `crud/sqlfault/extract.go:carried` — the whitelist of structured fields a parser
   may read. It excludes pgconn's `File`, `Line` and `Routine`, which name
   PostgreSQL's own C source. `Detail` and `Hint` are *carried* and never read:
   they hold the offending value, and they are the two fields the server
@@ -88,7 +88,7 @@ having. Recording it and asserting on it are different things.
   — the corpus supplies the expectations the adapters are tested against, so a
   second copy of the rule there could stay green while the shipped one was
   broken.
-- `adapter/crudpgx/conflict.go:extract` — the same seven fields, spelled by name
+- `crud/adapter/crudpgx/conflict.go:extract` — the same seven fields, spelled by name
   because that module may name `*pgconn.PgError`.
 - `errs/sqlerr/classify.go:Classify` — the parser takes the whole `Err`, message
   included, and reads none of it. Passing only the key would make the invariant
@@ -116,7 +116,7 @@ having. Recording it and asserting on it are different things.
   are the evidence: identical keys for `unique`, different sentences.
 
 - `TestNothingInExtractionOrClassificationReadsMessageDetailOrHint` in
-  `sqlfault/classify_test.go` — the **extraction** half, which nothing tested
+  `crud/sqlfault/classify_test.go` — the **extraction** half, which nothing tested
   before phase 3: the fault built from a driver error and the fault built from
   the same error with `Message`, `Detail` and `Hint` replaced by unrelated text
   agree in code, kind, source and every `Detail` field but the driver error

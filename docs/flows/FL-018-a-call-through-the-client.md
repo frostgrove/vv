@@ -23,10 +23,17 @@ status or code -> errs.Kind -> errs.Fault -> the sentinel a caller branches on
 ```
 
 The shape mirrors the server exactly. `port` classifies, and
-`crudhttp`/`crudgrpc` hold two tables over that one answer ([[D-045]]). Here
+`porthttp`/`crudgrpc` hold two tables over that one answer ([[D-045]]). Here
 `port.FaultFrom` rebuilds, and the same two packages hold the two inverse
-tables — in the same files as the forward ones, because a client that kept its
+tables — in the same package as the forward ones, because a client that kept its
 own copy would agree with the server until the first time one of them changed.
+
+The two client transports do not sit in the same place, and the reason is a
+module boundary rather than a protocol. `remote/remotehttp` reads
+`porthttp`'s tables from `port/`, which is where [[D-059]] put them, so it moved
+out of the binding and in beside `remote`. `crudgrpc.Transport` stayed with its
+binding: `remote` is in the root module and may not import grpc, so a
+`remote/remotegrpc` would be a whole module for one file ([[D-058]]).
 
 ## The path — a list with a filter
 
@@ -51,8 +58,8 @@ own copy would agree with the server until the first time one of them changed.
    A `remote.Call`: a method, a text key, a JSON key array, a query document and
    a raw body. Nothing about a URL, a header or a connection.
 
-5. **The transport** — `http/crudhttp/transport.go:route` or
-   `rpc/crudgrpc/transport.go:requestFor`
+5. **The transport** — `remote/remotehttp/transport.go:route` or
+   `crud/rpc/crudgrpc/transport.go:requestFor`
    One place per protocol where a call becomes a verb and a path, or a full
    method name and a `structpb.Struct`. Both go through `encoding/json`, which is
    what keeps `crud.Opt`'s three states intact — a `map[string]any` collapses
@@ -66,15 +73,15 @@ own copy would agree with the server until the first time one of them changed.
 
 ## The path — a refusal
 
-1. **Is this library speaking?** Over HTTP, `crudhttp.ParseEnvelope` checks
+1. **Is this library speaking?** Over HTTP, `porthttp.ParseEnvelope` checks
    `Envelope.Type == "error"`; over gRPC, the transport looks for an
    `errdetails.ErrorInfo` whose domain is `crudgrpc.ErrorDomain`. A response that
    fails the check is a `*remote.ProtocolError` and never a classified failure,
    whatever the status said. **This is the trap the check exists for** — see
    *Traps* below.
 
-2. **The kind** — `crudhttp.KindForStatus` or `crudgrpc.KindForCode`, each beside
-   the forward table it inverts.
+2. **The kind** — `porthttp.KindForStatus` or `crudgrpc.KindForCode`, each in the
+   package that holds the forward table it inverts.
 
 3. **The code refines the kind, on one transport.** `crudgrpc.CodeFor` sends both
    `KindValidation` and `KindBadRequest` to `InvalidArgument` ([[D-052]]), so
@@ -150,31 +157,31 @@ own copy would agree with the server until the first time one of them changed.
 | `port/kind.go` | `FaultFrom`, `sentinelFor` |
 | `port/request.go` | `FormatID` — `CoerceID`'s inverse |
 | `errs/path.go` | `Path.UnmarshalJSON` — the lossless half of the decode |
-| `http/crudhttp/transport.go` | `Transport`, `WithClient`, `WithRequestHook`, `route`, `entityQuery`, `fault`, `faultCode` |
-| `http/crudhttp/decode.go` | `KindForStatus`, `ParseEnvelope`, `Envelope.Violations`, the wire shapes |
-| `rpc/crudgrpc/transport.go` | `Transport`, `WithVocabulary`, `WithCallOptions`, `requestFor`, `fault`, `kindOf` |
-| `rpc/crudgrpc/status.go` | `KindForCode` |
+| `remote/remotehttp/transport.go` | `Transport`, `WithClient`, `WithRequestHook`, `route`, `entityQuery`, `fault`, `faultCode` |
+| `port/porthttp/decode.go` | `KindForStatus`, `ParseEnvelope`, `Envelope.Violations`, the wire shapes |
+| `crud/rpc/crudgrpc/transport.go` | `Transport`, `WithVocabulary`, `WithCallOptions`, `requestFor`, `fault`, `kindOf` |
+| `crud/rpc/crudgrpc/status.go` | `KindForCode` |
 
 ## Tests that walk this flow
 
 | Test | File | What it pins |
 |---|---|---|
-| `TestEveryMethodMakesTheRoundTrip` | `remote/roundtrip_test.go`, `rpc/crudgrpc/client_test.go` | all eight methods, real client to real binding |
+| `TestEveryMethodMakesTheRoundTrip` | `remote/roundtrip_test.go`, `crud/rpc/crudgrpc/client_test.go` | all eight methods, real client to real binding |
 | `TestAFilterWrittenInGoArrivesAsTheSameNarrowing` | both | the filter reaches the far repository as the same `crud.Options` |
 | `TestAConflictArrivesAsAConflictWithItsViolations` | both | sentinel, kind, violations, and nothing internal |
 | `TestAnInternalFailureArrivesEmpty` | both | a 500 carries no violations and no driver text |
 | `TestAStaleWriteKeepsTheBranchACallerRereadsFrom` | `remote/roundtrip_test.go` | `ErrStaleVersion` and `ErrConflict` both match |
 | `TestARouters404IsNotAMissingRow` | `remote/roundtrip_test.go` | a plain-text *and* a JSON 404 from elsewhere |
-| `TestAnUnregisteredMethodIsNotAMissingRow` | `rpc/crudgrpc/client_test.go` | the same trap wearing `Unimplemented` |
-| `TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode` | `rpc/crudgrpc/client_test.go` | the `InvalidArgument` collapse, undone by the code |
+| `TestAnUnregisteredMethodIsNotAMissingRow` | `crud/rpc/crudgrpc/client_test.go` | the same trap wearing `Unimplemented` |
+| `TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode` | `crud/rpc/crudgrpc/client_test.go` | the `InvalidArgument` collapse, undone by the code |
 | `TestAnOptionThatCannotCrossIsRefusedBeforeAnythingIsSent` | `remote/roundtrip_test.go` | [[D-053]]'s three refusals |
 | `TestRawSQLIsNeverPutOnTheWire` | `remote/roundtrip_test.go` | [[D-054]]'s strongest refusal |
 | `TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup` | `remote/roundtrip_test.go` | the `omitzero` check |
 | `TestARemoteResourceMountsAsAGateway` | `remote/roundtrip_test.go` | two hops, filter and sentinel both intact |
-| `TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate` | `query/roundtrip_test.go` | every operator, byte-identical SQL and binds |
-| `TestAPredicateTheWireCannotCarryIsRefusedByName` | `query/roundtrip_test.go` | eight refusals, each blamed by constructor |
-| `TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr` | `query/roundtrip_test.go` | the True/False asymmetry, all four arms |
-| `TestTwoConditionsOnOneFieldBothSurvive` | `query/roundtrip_test.go` | the repeated-JSON-key hazard |
+| `TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate` | `crud/query/roundtrip_test.go` | every operator, byte-identical SQL and binds |
+| `TestAPredicateTheWireCannotCarryIsRefusedByName` | `crud/query/roundtrip_test.go` | eight refusals, each blamed by constructor |
+| `TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr` | `crud/query/roundtrip_test.go` | the True/False asymmetry, all four arms |
+| `TestTwoConditionsOnOneFieldBothSurvive` | `crud/query/roundtrip_test.go` | the repeated-JSON-key hazard |
 | `TestADecodedFaultStillMatchesTheSentinelItLeftWith` | `port/inbound_test.go` | `FaultFrom` wraps what `sentinelKind` reads |
 | `TestAKeyThatWentOutAsTextComesBackTheSameKey` | `port/inbound_test.go` | `FormatID` and `CoerceID` are inverses |
 | `TestAPathSurvivesTheWireExactly` | `errs/path_test.go` | names and indices, in order |

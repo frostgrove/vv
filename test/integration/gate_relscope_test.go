@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/security"
+	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
-// basic.RelationScope closes the preload leak for a narrowing that belongs to
+// sqlrepo.RelationScope closes the preload leak for a narrowing that belongs to
 // the table. This closes it for the other kind: a narrowing that depends on who
 // is asking, which cannot be declared on the blueprint because the blueprint is
 // built once, at start-up, and the principal arrives per request.
@@ -44,7 +44,7 @@ var gateWholePolicy = security.Combine(
 // are measuring the declaration rather than something the preloader does anyway.
 var gateTableOnlyPolicy = security.ScopeField[EgParent, int64]("Name", gateTenantOf)
 
-var GateParents = basic.Define[EgParent, int64, struct{}]("eg_parents")
+var GateParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents")
 
 func gateSeed(t *testing.T, src crud.Source) {
 	t.Helper()
@@ -160,8 +160,8 @@ func TestABlueprintNarrowingAndAPolicyNarrowingBothApply(t *testing.T) {
 	egSetup(t)
 
 	// The table hides tombstones from everyone; the policy hides other tenants.
-	scoped := basic.Define[EgParent, int64, struct{}]("eg_parents",
-		basic.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
+	scoped := sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
+		sqlrepo.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {

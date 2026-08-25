@@ -250,19 +250,19 @@ the probe.
 - `crud/predicate.go:Order.render` — the one remaining name check, and the
   `NULLS` clause it guards.
 - `crud/predicate.go:LikeIgnoreCase` — the portable spelling.
-- `repo/basic/repository.go:newRepository` — `returning` is empty when the
+- `crud/sqlrepo/repository.go:newRepository` — `returning` is empty when the
   dialect has none, which is what makes the two write paths diverge.
-- `repo/basic/repository.go:repository.insert` and
-  `repo/basic/repository.go:repository.Update` — the two paths.
-- `repo/basic/repository.go:repository.Count` — the derived table for a DISTINCT
+- `crud/sqlrepo/repository.go:repository.insert` and
+  `crud/sqlrepo/repository.go:repository.Update` — the two paths.
+- `crud/sqlrepo/repository.go:repository.Count` — the derived table for a DISTINCT
   count.
 - `crud/repo.go:Repo.UpdateAll` — documents observable difference 2.
 - `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — where
   difference 5 comes from.
-- `catalog/postgres.go`, `catalog/mysql.go`, `catalog/mariadb.go`,
-  `catalog/sqlite.go` — difference 9, one file per engine, each naming what its
+- `crud/catalog/postgres.go`, `crud/catalog/mysql.go`, `crud/catalog/mariadb.go`,
+  `crud/catalog/sqlite.go` — difference 9, one file per engine, each naming what its
   server cannot answer.
-- `catalog/catalog.go:Constraint` — `Kind`, `Partial`, `Predicate`, `Prefixes`
+- `crud/catalog/catalog.go:Constraint` — `Kind`, `Partial`, `Predicate`, `Prefixes`
   and `Expressions` are the fields difference 9 is expressed in.
 - `errs/sqlerr/testdata/corpus/` — differences 6, 7 and 8 as captured entries:
   `too_long`, `out_of_range` and `bad_type` are marked unreachable on SQLite,
@@ -283,7 +283,7 @@ the probe.
   `test/integration/dialect_edge_test.go` — the re-read compensation, from the
   caller's side.
 - `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` in
-  `repo/basic/repository_test.go`.
+  `crud/sqlrepo/repository_test.go`.
 - `TestSQLiteTakesAnOffsetWithoutALimit` in
   `test/integration/driver_sqlite_test.go` — the `OffsetLimiter` bug, pinned.
 - `TestBoundaryValuesRoundTripOnEveryProvider` and
@@ -325,7 +325,7 @@ that accidentally *hides* one is also caught:
   `test/integration/dialect_edge_test.go` — asserts *both* halves: the portable
   one matches on both engines, and the collation-dependent one differs.
 - `TestUpdateAllIsOneStatementForTheWholeFilter` in
-  `repo/basic/updateall_test.go` covers the statement; the row-count difference
+  `crud/sqlrepo/updateall_test.go` covers the statement; the row-count difference
   is documented on the method rather than asserted, because asserting it means
   asserting a driver's behaviour.
 
@@ -338,7 +338,7 @@ that accidentally *hides* one is also caught:
   `TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames` in the same file
   — difference 10(a): what each engine's violation can say about itself, and
   what only the catalog can add.
-- `TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows` in `probe/full_test.go` —
+- `TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows` in `crud/probe/full_test.go` —
   difference 11(a)'s sharpest half, asserted from both sides in one table: the
   same keyed `Save` probes the second unique key on PostgreSQL and does not on
   MySQL. Its control is `TestAKeylessSaveProbesEveryKeyOnEveryEngine`, where the
@@ -354,7 +354,7 @@ that accidentally *hides* one is also caught:
   one shared predicate: partial on PostgreSQL and SQLite, a prefix key on MySQL
   and MariaDB.
 - `TestTheDriversUnnamedViolationIsNotDoubledWhenTheProbeCoveredIt` in
-  `probe/full_test.go` — difference 11(c), with both controls: two candidates of
+  `crud/probe/full_test.go` — difference 11(c), with both controls: two candidates of
   one code are not folded, and a named constraint folds only into its own.
 
 ## See also

@@ -62,21 +62,21 @@ engine.
 
 ## Where it lives
 
-- `http/crudhttp/errors.go:StatusFor` — the §2 table, arm by arm.
+- `port/porthttp/errors.go:StatusFor` — the §2 table, arm by arm.
 - `port/kind.go:KindOfWith` / `:KindOf` — the precedence resolution. It moved
   with the vocabulary at phase 5: a kind is not HTTP and a status is ([[D-045]]).
-- `http/crudhttp/errors.go:Status` — the seam whose signature is unchanged, now
+- `port/porthttp/errors.go:Status` — the seam whose signature is unchanged, now
   `StatusFor(port.KindOf(err))` ([[UC-015]] guarantee 8, [[D-045]]'s forbid).
 - `port/kind.go:FaultOf` — what a non-fault error becomes.
-- `rpc/crudgrpc/status.go:CodeFor` — the same table in gRPC's words, added at
+- `crud/rpc/crudgrpc/status.go:CodeFor` — the same table in gRPC's words, added at
   phase 9. Two tables, one answer: the kind is resolved once and each transport
   spells it.
 
 ## Proven by
 
-- `TestStatusMapsWhatItPromisesTo` — `http/crudfiber/edge_test.go` and its two
+- `TestStatusMapsWhatItPromisesTo` — `crud/http/crudfiber/edge_test.go` and its two
   twins: the table, arm by arm, in all three HTTP bindings.
-- `TestKindMapsToTheCodeItPromisesTo` — `rpc/crudgrpc/status_test.go` — the
+- `TestKindMapsToTheCodeItPromisesTo` — `crud/rpc/crudgrpc/status_test.go` — the
   second vocabulary over the same answer, which is what says the kind decides
   rather than the status table being the decision. Two of the eight kinds
   collapse into one `codes.Code` there, and that is the cost [[D-052]] records
@@ -84,7 +84,7 @@ engine.
 - `TestEveryRouteMapsARefusalTheSameWay` — a route that skipped the mapping
   would slip past a per-route test.
 - `TestA500NeverEchoesTheInternalError` — the silence, extended to the envelope.
-- `TestStatusIsTheKindTableOverThePortsAnswer` — `http/crudhttp/errors_test.go` —
+- `TestStatusIsTheKindTableOverThePortsAnswer` — `port/porthttp/errors_test.go` —
   the seam from the HTTP side, asserting the concrete status as well as the
   composition, so a table answering one status to everything cannot pass.
 - `TestThePrecedenceTableResolvesAMixedFault` — `port/kind_test.go` — every

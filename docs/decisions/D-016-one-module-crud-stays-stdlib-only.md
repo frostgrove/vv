@@ -1,7 +1,7 @@
 # D-016 — One published module; package `crud` stays stdlib-only
 
 **Status:** superseded by [[D-033]] — the module half only. The stdlib rule stands.
-**Invariant:** `go get github.com/shardit-io/vv` must be the whole installation — no `replace` directive — and no file in `crud/` outside `_test.go` may import anything but the standard library.
+**Invariant:** `go get github.com/shardit-io/vv` must be the whole installation — no `replace` directive — and no file in package `crud` outside `_test.go` may import anything but the standard library.
 
 > **What changed.** The single-module half of this decision was reversed: an
 > optional dependency now lives in its own module under the same repository, so
@@ -11,15 +11,24 @@
 > fact one MVS floor per optional dependency, paid by everybody. [[D-033]] has
 > the new arrangement and answers the `replace` problem this file raises.
 >
-> **The second half is untouched and still binding:** no file in `crud/` outside
-> `_test.go` may import anything but the standard library. [[D-033]] widens it
-> to the whole root module rather than relaxing it.
+> **The second half is untouched and still binding:** no file in package `crud`
+> outside `_test.go` may import anything but the standard library. [[D-033]]
+> widens it to the whole root module rather than relaxing it.
+>
+> **The scope of that half was clarified at [[D-058]], not changed.** This was
+> written when `crud/` held exactly one package, so "no file in `crud/`" and "no
+> file in package `crud`" were the same sentence. The layout move put `sqlrepo`,
+> `query`, `catalog`, `probe`, `sqlfault`, the decorators, the adapters and the
+> bindings underneath it, and every one of them is allowed the dependencies this
+> rule forbids — `crudpgx` imports pgx, that is what it is for. The rule is the
+> package. `Makefile:TIER0_STDLIB` lists `./crud`, never `./crud/...`, and that
+> is where the reading is enforced rather than merely stated.
 
 ## The decision
 
-One published module at the repository root. `http/crudfiber` and
-`adapter/crudpgx` are packages inside it, not modules. `adapter/crudpgx/go.mod`
-and `http/crudfiber/go.mod` were deleted to get here.
+One published module at the repository root. `crud/http/crudfiber` and
+`crud/adapter/crudpgx` are packages inside it, not modules. `crud/adapter/crudpgx/go.mod`
+and `crud/http/crudfiber/go.mod` were deleted to get here.
 
 There is a second `go.mod` in the tree — `test/go.mod` — and it is deliberate and
 different: the integration tests need ent, gorm, sqlx, sqlc, two drivers and
@@ -27,9 +36,9 @@ Docker, and none of that may become a dependency of the library. It is not
 published, it uses a `replace` to reach the library from disk, and `go.work`
 joins the two for local development.
 
-Package `crud` itself imports only the standard library. Verified: the only
-non-stdlib imports under `crud/` are in `_test.go` files and in `crud/crudtest`,
-which imports `crud`.
+Package `crud` itself imports only the standard library. Verified: within the
+package, the only non-stdlib imports are in `_test.go` files. (The subtree below
+it is a different question and a different answer — see the note above.)
 
 ## Why
 
@@ -53,22 +62,25 @@ The trade was taken because the alternative cost is paid by every consumer on
 every install, and this one is paid only by consumers who pin one of two
 libraries.
 
-**Why `crud/` is stdlib-only.** It is the package every other package depends on
+**Why package `crud` is stdlib-only.** It is the package every other package depends on
 and the one a third-party adapter has to import. If it grew a dependency, every
 adapter and every consumer would inherit it, and the "only two things cross the
 boundary — run this statement and give me rows" claim would stop being true at
 the module level even while it stayed true at the API level. It is also what
-makes `adapter/crudsql`'s SQLSTATE classifier ask by shape rather than by type
+makes `crud/adapter/crudsql`'s SQLSTATE classifier ask by shape rather than by type
 ([[D-015]]): it cannot name a driver's error type, so it reflects for a method
 and a field instead.
 
 ## What it forbids
 
-- Do not add a `go.mod` under `adapter/`, `http/` or anywhere else that would be
-  published. If a dependency is heavy enough to want its own module, that is a
-  new decision with its own file, and it has to answer the `replace` problem.
+- Do not add a `go.mod` under `crud/adapter/`, `crud/http/` or anywhere else
+  that would be published. If a dependency is heavy enough to want its own
+  module, that is a new decision with its own file, and it has to answer the
+  `replace` problem. (Superseded by [[D-033]], which says how to do it; the
+  paragraph is kept as written.)
 - Do not import anything outside the standard library from a non-test file in
-  `crud/`. Not a UUID package, not a decimal package, not a logging package.
+  **package** `crud`. Not a UUID package, not a decimal package, not a logging
+  package. Packages below `crud/` are not covered — [[D-058]].
 - Do not move a driver, an ORM or a test helper into the root `go.mod` to make
   an integration test compile. That is what `test/go.mod` is for.
 - Do not delete `test/go.mod` to "simplify". Its whole job is to keep ent, gorm,
@@ -85,9 +97,9 @@ and a field instead.
 - `go.work` — joins `.` and `./test`.
 - `crud/executor.go` — the package doc that states the stdlib-only rule and the
   "only Exec and Query cross the boundary" principle it serves.
-- `sqlfault/extract.go:sqlState` — the visible consequence: a driver's SQLSTATE
+- `crud/sqlfault/extract.go:sqlState` — the visible consequence: a driver's SQLSTATE
   is reached by shape rather than by naming its type. It moved out of
-  `adapter/crudsql` at phase 3 and the rule did not: `crudsql` still imports no
+  `crud/adapter/crudsql` at phase 3 and the rule did not: `crudsql` still imports no
   driver, and `make check-deps` is what proves it.
 - `Makefile` — `tidy` tidies both modules; `unit` runs the library's tests with
   no database, `integration` runs the test module with `-tags=integration`.
@@ -128,4 +140,4 @@ holding.
 
 ## See also
 
-[[D-015]] [[D-009]] [[D-018]] [[D-020]]
+[[D-015]] [[D-009]] [[D-018]] [[D-020]] [[D-058]]

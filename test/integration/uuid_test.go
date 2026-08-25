@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // A UUID primary key is a different animal from an integer one, and every layer
@@ -63,8 +63,8 @@ type RoomMemberUpdate struct {
 }
 
 var (
-	Rooms       = basic.Define[Room, uuid.UUID, RoomUpdate]("uu_rooms")
-	RoomMembers = basic.Define[RoomMember, uuid.UUID, RoomMemberUpdate]("uu_members")
+	Rooms       = sqlrepo.Define[Room, uuid.UUID, RoomUpdate]("uu_rooms")
+	RoomMembers = sqlrepo.Define[RoomMember, uuid.UUID, RoomMemberUpdate]("uu_members")
 )
 
 var uuSchema = map[string][]string{

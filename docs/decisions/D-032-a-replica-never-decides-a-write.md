@@ -59,9 +59,9 @@ refused would lie to a caller asking whether transactions work.
 
 - `crud/executor.go:ReadWrite` / `crud/executor.go:ReadSourcer`
 - `crud/options.go:PrimaryOnly`
-- `repo/basic/repository.go:read` — the three rules.
-- `repo/basic/repository.go:Update` — `PrimaryOnly` on the load.
-- `repo/decorators/security/security.go` — `PrimaryOnly` on every check.
+- `crud/sqlrepo/repository.go:read` — the three rules.
+- `crud/sqlrepo/repository.go:Update` — `PrimaryOnly` on the load.
+- `crud/decorators/security/security.go` — `PrimaryOnly` on every check.
 
 ## Proven by
 

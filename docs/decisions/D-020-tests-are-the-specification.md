@@ -36,13 +36,13 @@ negative claim:
 
 - `test/integration/gate_relscope_test.go:103` and `:151` — the preload and the
   nested-filter leaks.
-- `repo/decorators/security/relscope_test.go:101` — "the preload narrowed
+- `crud/decorators/security/relscope_test.go:101` — "the preload narrowed
   itself — the positive test above proves nothing".
 - `test/integration/ent_model_test.go:244` — "ent did not apply its own default,
   so this test cannot tell the two paths apart".
 - `test/integration/gorm_model_test.go:367` — "gorm's own Create did not fire
   the hook, so this test cannot tell anything apart".
-- `repo/decorators/security/gate_edge_test.go:180` — `Combine` folds
+- `crud/decorators/security/gate_edge_test.go:180` — `Combine` folds
   `AllowUnscopedDeleteAll` with `&&`, and "every policy allows it" is vacuously
   true of *no* policies; the test builds a real policy list so the vacuous case
   is not what is being measured.
@@ -89,7 +89,7 @@ library's tests on a machine with no Docker and no database.
 - `crud/crudtest/recorder.go` — the in-memory source for the unit half.
 - `*_edge_test.go` throughout the tree — by convention, the file where the
   hostile and degenerate cases live, separate from the happy-path file.
-- `query/hostile_test.go` — the adversarial input suite.
+- `crud/query/hostile_test.go` — the adversarial input suite.
 
 ## Proven by
 
@@ -99,19 +99,19 @@ This decision is about the tests, so its evidence is the tests themselves:
   in `test/integration/gate_relscope_test.go` — the clearest control-case
   example in the tree. Grep the file for `proves nothing`.
 - `TestAPreloadIsNotNarrowedWithoutTheDeclaration` in
-  `repo/decorators/security/relscope_test.go`.
+  `crud/decorators/security/relscope_test.go`.
 - `TestEntsGoSideDefaultsDoNotApplyToVVWrites` in
   `test/integration/ent_model_test.go` and
   `TestGormHooksDoNotRunOnVVWrites` in
   `test/integration/gorm_model_test.go` — both prove the ORM's own path works
   before proving vv's does not go through it.
 - `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` in
-  `repo/decorators/security/gate_edge_test.go`.
+  `crud/decorators/security/gate_edge_test.go`.
 - `TestAScopedSaveOfAnUnusedIDIsStillAnInsert` in
-  `repo/decorators/security/gate_edge_test.go` — the control for
+  `crud/decorators/security/gate_edge_test.go` — the control for
   `TestAScopeWithoutInspectStillRefusesAnOverwriteOfAHiddenRow`.
 - `TestSearchWithNothingToSearchProducesNoPredicate` in
-  `query/compile_test.go` — the control for the search tests.
+  `crud/query/compile_test.go` — the control for the search tests.
 
 ## An honest note on "mutation-checked"
 

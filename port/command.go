@@ -2,7 +2,7 @@ package port
 
 import (
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/crud/query"
 )
 
 // The commands are what a transport hands a Service. Each one carries what the

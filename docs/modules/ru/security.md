@@ -1,7 +1,7 @@
 # security — шлюз
 
 ```go
-import "github.com/shardit-io/vv/repo/decorators/security"
+import "github.com/shardit-io/vv/crud/decorators/security"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки
@@ -124,7 +124,7 @@ RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
 },
 ```
 
-Аналог на уровне таблицы — `basic.RelationScope` на blueprint. Там, где
+Аналог на уровне таблицы — `sqlrepo.RelationScope` на blueprint. Там, где
 объявлены оба, **действуют оба**.
 
 ---
@@ -246,7 +246,7 @@ AllowUnscopedUpdateAll: false   // по умолчанию
 
 ## См. также
 
-- [basic](basic.md) — `Scope` и `RelationScope` для формы на уровне таблицы
+- [sqlrepo](sqlrepo.md) — `Scope` и `RelationScope` для формы на уровне таблицы
 - [probe](probe.md) — проба знает о скоупах и читает `security.Policy`
 - [[UC-004]] изоляция тенантов · [[FL-007]] чтение через шлюз · [[FL-008]] запись через него
 - [[D-007]] сужение пересекает связь только когда объявлено · [[D-008]] вне скоупа — это 404

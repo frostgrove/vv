@@ -42,7 +42,7 @@ type MessageSource interface {
 // There is no Renderer here, and its absence is deliberate. The test for the
 // shared half is whether a non-HTTP transport can implement an interface
 // without importing net/http, and a renderer returning (int, http.Header, any)
-// fails it — gRPC cannot. It lives in http/crudhttp, next to the status table
+// fails it — gRPC cannot. It lives in port/porthttp, next to the status table
 // it is shaped by ([[D-045]]).
 
 // Chain applies resolvers in order, each to what the last one produced.

@@ -10,8 +10,8 @@ structs.
 
 ## The path
 
-1. **`repository.find` → `repository.preload`** — `repo/basic/repository.go:242`,
-   `repo/basic/repository.go:364`
+1. **`repository.find` → `repository.preload`** — `crud/sqlrepo/repository.go:242`,
+   `crud/sqlrepo/repository.go:364`
    Runs on `r.exec(ctx)`, so a preload inside a transaction sees the
    transaction, and with `r.relScopes(o)` — the blueprint's permanent narrowings
    merged with whatever this query carries.
@@ -104,7 +104,7 @@ structs.
 - **A preload cannot be paginated.** The refusal is explicit
   (`preload.go:193-196`) rather than a silently applied limit.
 - **The projection must carry the join column.** `repository.projection`
-  (`repo/basic/repository.go:292`) adds it; a `DISTINCT` projection cannot, so
+  (`crud/sqlrepo/repository.go:292`) adds it; a `DISTINCT` projection cannot, so
   `find` refuses the combination (`repository.go:206`).
 - **The wider ask wins when two specs name one path.** Folding their narrowings
   together would answer a superset request with a subset.
@@ -120,7 +120,7 @@ structs.
 | `crud.Limit`/`Page`/`Offset`/`Unpaged` inside `PreloadWhere` | `load` (`preload.go:193`) | 400 (`SchemaError`) |
 | preload over a `DISTINCT` projection | `repository.find` (`repository.go:206`) | 400 (`SchemaError`) |
 | parent and child key types disagree | not an error — `mapKey` reconciles them | correct rows, or empty relations if `mapKey` ever stops covering a kind |
-| more preloads than `MaxPreloads` | `Request.Compile` (`query/compile.go:185`) | 400 |
+| more preloads than `MaxPreloads` | `Request.Compile` (`crud/query/compile.go:185`) | 400 |
 
 ## Files
 
@@ -130,9 +130,9 @@ structs.
 | `crud/scope.go` | `At` for this hop, `under` for the hops below it |
 | `crud/relation.go` | `Resolve`, join-table columns, `Relation.fieldValue` |
 | `crud/access.go` | `Pointers` — scan destinations by offset |
-| `repo/basic/repository.go` | `preload`, and `projection` keeping the join column |
-| `query/compile.go` | `PreloadWhere` per relation, allow-list, `MaxPreloads` |
-| `repo/basic/blueprint.go` | `PreloadDepth`, `RelationScope` |
+| `crud/sqlrepo/repository.go` | `preload`, and `projection` keeping the join column |
+| `crud/query/compile.go` | `PreloadWhere` per relation, allow-list, `MaxPreloads` |
+| `crud/sqlrepo/blueprint.go` | `PreloadDepth`, `RelationScope` |
 
 ## Tests that walk this flow
 
@@ -146,13 +146,13 @@ structs.
 - `TestANestedPreloadFillsEveryParentsOwnCopy` — `crud/preload_edge_test.go`.
 - `TestPreloadChunksLargeKeySets` — `crud/preload_test.go` — the 900 boundary.
 - `TestPreloadBatchesSpanTheChunkBoundary` — `test/integration/matrix_test.go` — against real engines.
-- `TestPreloadCannotBePaginated` — `crud/preload_test.go` and `query/preload_test.go`.
+- `TestPreloadCannotBePaginated` — `crud/preload_test.go` and `crud/query/preload_test.go`.
 - `TestPreloadDepthIsCapped` — `crud/preload_test.go`.
 - `TestABarePreloadWinsOverANarrowedOneForTheSamePath` — `crud/preload_edge_test.go`.
 - `TestTwoNarrowedPreloadsOfOnePathStillBothApply` — `crud/preload_edge_test.go`.
-- `TestProjectionKeepsPreloadKeys` — `query/preload_test.go`.
-- `TestAPreloadOfTheRepositorysOwnModelCarriesItsScope` — `repo/basic/relscope_test.go`.
-- `TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel` — `repo/basic/relscope_test.go`.
+- `TestProjectionKeepsPreloadKeys` — `crud/query/preload_test.go`.
+- `TestAPreloadOfTheRepositorysOwnModelCarriesItsScope` — `crud/sqlrepo/relscope_test.go`.
+- `TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel` — `crud/sqlrepo/relscope_test.go`.
 - `TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime` — `test/integration/relations_test.go`.
 - `TestPreloadsSurvivePaging` — `test/integration/matrix_test.go`.
 

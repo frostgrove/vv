@@ -103,5 +103,5 @@ pins what four engines do with it.
 ## See also
 
 - [crud](crud.md) — the `Source` interface this satisfies
-- [basic](basic.md) — the repository whose statements you are pinning
+- [sqlrepo](sqlrepo.md) — the repository whose statements you are pinning
 - [[UC-011]] test repository behaviour without a database · [[D-014]] the SQL is deterministic · [[D-020]] tests are the specification

@@ -87,34 +87,34 @@ While this is open, do not:
 
 ## Where it lives
 
-- `repo/basic/repository.go:repository.projection` — the "nothing is added under
+- `crud/sqlrepo/repository.go:repository.projection` — the "nothing is added under
   DISTINCT" rule, with the reason.
-- `repo/basic/repository.go:repository.find` — spells the column list out when
+- `crud/sqlrepo/repository.go:repository.find` — spells the column list out when
   `Distinct` arrives without a `select`; this is where the no-op is created.
-- `repo/basic/repository.go:repository.distinctSort` — the refuse/drop asymmetry
+- `crud/sqlrepo/repository.go:repository.distinctSort` — the refuse/drop asymmetry
   and the relation-sort refusal.
-- `repo/basic/repository.go:hasPK` — what a projection needs to still identify
+- `crud/sqlrepo/repository.go:hasPK` — what a projection needs to still identify
   its rows; drives the preload refusal.
-- `repo/basic/repository.go:repository.Count` — the derived table.
+- `crud/sqlrepo/repository.go:repository.Count` — the derived table.
 - `crud/options.go:Distinct` — the option.
-- `query/compile.go:Request.Compile` — `{"distinct": true}` from the wire.
+- `crud/query/compile.go:Request.Compile` — `{"distinct": true}` from the wire.
 
 ## Proven by
 
 - `TestDistinctRefusesASortItCannotProject` in
-  `repo/basic/paging_edge_test.go` — including that no statement reaches the
+  `crud/sqlrepo/paging_edge_test.go` — including that no statement reaches the
   database.
 - `TestDistinctDropsADefaultSortItCannotProject` in
-  `repo/basic/paging_edge_test.go` — the other half of the asymmetry.
+  `crud/sqlrepo/paging_edge_test.go` — the other half of the asymmetry.
 - `TestDistinctRefusesASortThroughARelation` in
-  `repo/basic/paging_edge_test.go`.
+  `crud/sqlrepo/paging_edge_test.go`.
 - `TestAPagedDistinctDoesNotAppendThePrimaryKey` in
-  `repo/basic/paging_edge_test.go`.
+  `crud/sqlrepo/paging_edge_test.go`.
 - `TestDistinctProjectsOnlyWhatWasSelected` and
   `TestDistinctRefusesAPreloadItCannotAttach` in
-  `repo/basic/repository_test.go`.
+  `crud/sqlrepo/repository_test.go`.
 - `TestDistinctWithoutAProjectionStillNamesItsColumns` in
-  `repo/basic/repository_test.go` — this is the test that pins the *current*
+  `crud/sqlrepo/repository_test.go` — this is the test that pins the *current*
   behaviour of the unresolved case. Whichever way the question is settled, this
   test changes.
 - `TestDistinctActuallyRemovesDuplicateRows` and

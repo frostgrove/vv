@@ -1,7 +1,7 @@
 # specs — Specifications and the Criteria API
 
 ```go
-import "github.com/shardit-io/vv/repo/decorators/specs"
+import "github.com/shardit-io/vv/crud/decorators/specs"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library
@@ -101,7 +101,7 @@ That is what the settings and options taking a *name* rather than a predicate
 are addressed by:
 
 ```go
-basic.SoftDelete(Doc_.DeletedAt.Name())
+sqlrepo.SoftDelete(Doc_.DeletedAt.Name())
 crud.GroupBy(Order_.Status.Name())
 crud.Sum("total", Order_.Amount.Name())
 security.Freeze[Doc, int64](Doc_.TenantID.Name())
@@ -117,7 +117,7 @@ Article_.Comments.Path()          // "Comments"
 Article_.Comments.Author.Path()   // "Comments.Author"
 ```
 
-That is what `basic.RelationScope`, `crud.Preload`, `crud.PreloadWhere` and
+That is what `sqlrepo.RelationScope`, `crud.Preload`, `crud.PreloadWhere` and
 `security.ScopeRelationField` take instead of a literal. The handle also records
 the model the path lands on, so pointing one at the wrong model fails at package
 initialisation rather than narrowing the wrong table.
@@ -140,7 +140,7 @@ A relation scope's predicate is written against the *target* model, so it comes
 from the target's own metamodel:
 
 ```go
-basic.RelationScope(
+sqlrepo.RelationScope(
     Article_.Comments.Path(),                    // "Comments"
     specs.Predicate(Comment_.Approved.Eq(true))) // "approved" = $1
 ```

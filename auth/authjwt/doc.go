@@ -61,5 +61,5 @@
 // rotation on the issuing side; this package reads what was presented.
 //
 // It does not decide anything. What a claim means and what a permission grants
-// is repo/decorators/security's ([[D-055]]).
+// is crud/decorators/security's ([[D-055]]).
 package authjwt

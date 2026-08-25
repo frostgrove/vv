@@ -42,15 +42,15 @@ check back at the only boundary a consumer touches.
 - `crud/repo.go:Chain` / `crud/repo.go:Decorate` — `mw[0]` ends up outermost.
 - `crud/repo.go:Base` — embeddable pass-through, for a decorator that overrides
   two methods out of eleven.
-- `repo/basic/blueprint.go:Blueprint.Bind` — `Bind(src, mw...)` wraps the
+- `crud/sqlrepo/blueprint.go:Blueprint.Bind` — `Bind(src, mw...)` wraps the
   repository, then `crud.Wrap` re-types it.
-- `repo/decorators/security/security.go:Gate` — `Gate[M, ID](p Policy[M, ID])`,
+- `crud/decorators/security/security.go:Gate` — `Gate[M, ID](p Policy[M, ID])`,
   the case the decision exists for.
 
 ## Proven by
 
 - `TestGateComposesWithOtherMiddleware` in
-  `repo/decorators/security/security_test.go` — a gate stacked with a second
+  `crud/decorators/security/security_test.go` — a gate stacked with a second
   middleware, both declared without explicit generics.
 - `TestDecorateStacksWithTheFirstMiddlewareOutermost` in `crud/decorate_test.go`
   — would catch a reversed chain, which silently moves a security layer inside

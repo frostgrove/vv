@@ -26,7 +26,15 @@ WORKSPACE := $(filter-out ./_examples,$(ALL_MODULES))
 # The contract manifest (D-035). These import the standard library and each
 # other, and nothing else; `check-tiers` is what makes that true rather than
 # aspirational.
-TIER0 := crud query errs port
+#
+# Every entry is one package path, matched exactly, and the arm lists `./$p`
+# rather than `./$p/...`. Both halves of that became load-bearing when the tree
+# grew subtrees under a manifest name ([[D-058]]): a prefix match would let
+# `crud/sqlrepo` in under `crud`, and a recursive listing would drag every
+# package below `crud/` into the very set being checked. Either one alone turns
+# this target into a green light that means nothing. A new contract package is
+# added here by hand, which is what D-048 asks for anyway.
+TIER0 := crud crud/crudtest crud/query errs errs/sqlerr port port/porthttp
 
 # `errs` is sealed tighter than the rest of the manifest. D-036's case rests on
 # it having an empty require block at the first tag, and the arm above cannot
@@ -42,18 +50,24 @@ TIER0 := crud query errs port
 # `check-tidy` stays green and `check-deps` finds nothing third-party. `-test`
 # adds the synthetic `errs.test` binary and the `errs_test` external package to
 # the list, which the second `sed` normalises away. The plain arm above stays
-# without it on purpose — `crud`'s own tests import `repo/basic`, which is legal
+# without it on purpose — `crud`'s own tests import `crud/sqlrepo`, which is legal
 # inside one module and only illegal across a module boundary.
 TIER0_SEALED := errs
 
 # `crud` is sealed in the other direction, and by D-016's surviving half rather
-# than D-036: no file in `crud/` outside `_test.go` imports anything but the
-# standard library, and that is what makes `crud` unable to import `errs` —
+# than D-036: no file in package `crud` outside `_test.go` imports anything but
+# the standard library, and that is what makes `crud` unable to import `errs` —
 # the one rule `errs/doc.go` states and cannot express in a signature. The plain
 # arm cannot see that import either: its filter drops every contract package, so
 # the two classification paths `errs/doc.go` warns about would first disagree at
-# run time. Without `-test`: `crud`'s own tests import `repo/basic`, which is
+# run time. Without `-test`: `crud`'s own tests import `crud/sqlrepo`, which is
 # legal inside one module.
+#
+# The scope is the package, not the subtree. D-016 was written when `crud/` held
+# one package and the two readings were the same sentence; [[D-058]] moved
+# `sqlrepo`, `query`, `catalog` and the rest underneath it, and every one of them
+# is allowed the dependencies this arm forbids. Listed as `./crud`, never
+# `./crud/...`.
 TIER0_STDLIB := crud
 
 help: ## Show this help
@@ -134,10 +148,10 @@ check-tiers: ## A contract package imports only stdlib and other contract packag
 	@fail=0; re=$$(echo "$(TIER0)" | tr ' ' '|'); \
 	for p in $(TIER0); do \
 		[ -d "$$p" ] || continue; \
-		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>&1) \
+		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p 2>&1) \
 		  || { echo "cannot list $$p — it does not build:"; echo "$$deps" | sed 's/^/  /'; fail=1; continue; }; \
 		bad=$$(echo "$$deps" | grep "^$(MOD)/" | sed 's|^$(MOD)/||' \
-		      | grep -Ev "^($$re)(/|$$)" || true); \
+		      | grep -Ev "^($$re)$$" || true); \
 		if [ -n "$$bad" ]; then \
 			echo "contract package $$p imports non-contract packages:"; \
 			echo "$$bad" | sort -u | sed 's/^/  /'; fail=1; \
@@ -145,12 +159,12 @@ check-tiers: ## A contract package imports only stdlib and other contract packag
 	done; \
 	for p in $(TIER0_STDLIB); do \
 		[ -d "$$p" ] || continue; \
-		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p/... 2>&1) \
+		deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./$$p 2>&1) \
 		  || { echo "cannot list $$p — it does not build:"; echo "$$deps" | sed 's/^/  /'; fail=1; continue; }; \
 		bad=$$(echo "$$deps" | grep "^$(MOD)" | sed 's|^$(MOD)/||' \
-		      | grep -Ev "^$$p(/|$$)" || true); \
+		      | grep -Ev "^$$p$$" || true); \
 		if [ -n "$$bad" ]; then \
-			echo "stdlib-only package $$p may import only the standard library and $$p/...:"; \
+			echo "stdlib-only package $$p may import only the standard library:"; \
 			echo "$$bad" | sort -u | sed 's/^/  /'; fail=1; \
 		fi; \
 	done; \

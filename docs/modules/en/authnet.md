@@ -1,11 +1,11 @@
 # authnet — authenticate a net/http request
 
 ```go
-import "github.com/shardit-io/vv/http/authnet"
+import "github.com/shardit-io/vv/auth/http/authnet"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing
-· **Depends on:** `auth`, `authhttp`, `crudhttp`, `net/http`
+· **Depends on:** `auth`, `authhttp`, `porthttp`, `net/http`
 
 ---
 
@@ -68,7 +68,7 @@ neighbours are not authenticated.
 | `Middleware(guard, opts...)` | an ordinary `func(http.Handler) http.Handler` |
 | `Handler(guard, next, opts...)` | the same, applied to one handler |
 
-`opts` are `crudhttp.RenderOption`s — the same ones `crudnet.Errors` takes — so
+`opts` are `porthttp.RenderOption`s — the same ones `crudnet.Errors` takes — so
 a refusal renders through your vocabulary and your message catalogue.
 
 ## What it does

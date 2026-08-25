@@ -105,8 +105,8 @@ rather than on the document, because the SQL is what a caller can observe.
 ## Proven by
 
 - `TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate` in
-  `query/roundtrip_test.go` — thirty-two documents covering every operator in
-  `query/ops.go`, each compiled, marshalled, compiled again, and asserted to
+  `crud/query/roundtrip_test.go` — thirty-two documents covering every operator in
+  `crud/query/ops.go`, each compiled, marshalled, compiled again, and asserted to
   render byte-identical SQL with identical binds. The control is inside the
   loop: a case that renders no SQL fails outright, so the test cannot pass for a
   marshaller that produced `{}` and a compiler that read it as no filter.
@@ -124,7 +124,7 @@ rather than on the document, because the SQL is what a caller can observe.
   hazard, asserted twice over: the field name appears exactly twice in the
   document, and the re-compiled SQL and binds match the original.
 - `TestAFilterWrittenInGoArrivesAsTheSameNarrowing` in
-  `remote/roundtrip_test.go` and in `rpc/crudgrpc/client_test.go` — the same
+  `remote/roundtrip_test.go` and in `crud/rpc/crudgrpc/client_test.go` — the same
   claim end to end over both transports, asserted at the far side's repository
   rather than on the response, so a filter that never arrived fails.
 

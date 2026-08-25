@@ -66,7 +66,7 @@ datasource handle is a pointer in practice, but nothing in the contract says it
 must be, and `==` on an uncomparable dynamic type panics. It answers about the
 static type, which is as far as it can see: a struct holding an interface is
 comparable and `==` on it still panics when that interface holds a slice. A
-caller that must not panic guards the comparison — `catalog/set.go:findable`
+caller that must not panic guards the comparison — `crud/catalog/set.go:findable`
 does, and [[D-041]] says why.
 
 **Why `KeyOf` takes an unidentified value at face value.** If a caller names
@@ -124,9 +124,9 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 - `crud/executor.go:SameDataSource` — never panics on an uncomparable handle,
   as far as its static type goes.
 - `crud/executor.go:InTx` — join-or-open.
-- `repo/basic/repository.go:repository.exec` — every statement in the basic
+- `crud/sqlrepo/repository.go:repository.exec` — every statement in the SQL
   repository goes through it.
-- `repo/basic/repository.go:repository.Source` — three lines, and the whole of
+- `crud/sqlrepo/repository.go:repository.Source` — three lines, and the whole of
   `crud.Sourced`.
 
 ## Proven by

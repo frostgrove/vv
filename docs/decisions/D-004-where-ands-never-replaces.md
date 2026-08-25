@@ -14,7 +14,7 @@ and `Offset`, which are scalars where the last mention does win.
 
 This is the property that makes a security scope unremovable, and it has to hold
 positionally, not by convention. The gate prepends its scope
-(`repo/decorators/security/security.go:gate.scoped`) and then appends the
+(`crud/decorators/security/security.go:gate.scoped`) and then appends the
 caller's options behind it. If `Where` replaced, a client sending one more filter
 would erase the tenant predicate and read the whole table, and the call would
 return 200.
@@ -47,7 +47,7 @@ security meaning. A filter is not.
   columns of rows the caller was already allowed to see. It exists because a
   row-level `Inspect` reading a column the client did not select would compare
   against a zero value and believe it
-  (`repo/decorators/security/security.go:gate.whole`).
+  (`crud/decorators/security/security.go:gate.whole`).
 - A decorator must prepend its scope, not append it. Appending is equally safe
   today because AND is commutative, but prepending is what keeps the reading of
   `scoped` obvious.
@@ -59,11 +59,11 @@ security meaning. A filter is not.
 - `crud/options.go:With` — replays a stored shape by appending.
 - `crud/options.go:NarrowRelations` — the same rule for relation narrowings.
 - `crud/scope.go:MergeRelationScopes` — two declarations of the same path AND.
-- `repo/decorators/security/security.go:gate.scoped` — prepends the policy scope
+- `crud/decorators/security/security.go:gate.scoped` — prepends the policy scope
   and the relation narrowing, then the caller's options.
-- `repo/basic/repository.go:repository.scoped` — ANDs the blueprint's permanent
+- `crud/sqlrepo/repository.go:repository.scoped` — ANDs the blueprint's permanent
   scope over whatever the options resolved to.
-- `query/compile.go:Request.Compile` — a compiled document emits `crud.Where`
+- `crud/query/compile.go:Request.Compile` — a compiled document emits `crud.Where`
   per clause; filter, flat terms and search are three separate `Where` calls and
   are therefore ANDed rather than merged into one object.
 
@@ -71,16 +71,16 @@ security meaning. A filter is not.
 
 - `TestWhereAccumulates` in `crud/options_test.go` — the unit-level statement.
 - `TestACallerFilterCannotWidenTheScope` in
-  `repo/basic/blueprint_edge_test.go`.
+  `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestASpecificationCannotEscapeARepositoryScope` in
-  `repo/decorators/specs/edge_test.go`.
+  `crud/decorators/specs/edge_test.go`.
 - `TestTheGateScopeAndTheRepositoryScopeBothApply` in
-  `repo/decorators/security/edge_test.go` — two independent scopes, both in the
+  `crud/decorators/security/edge_test.go` — two independent scopes, both in the
   statement.
 - `TestWithScopeIsANDedWithTheClientFilter` in
-  `http/crudfiber/options_test.go`.
-- `TestFilterTermsAndSearchAreAndedNotMerged` in `query/compile_test.go`.
-- `TestSearchIsParenthesised` in `query/query_test.go` — a search is an OR, and
+  `crud/http/crudfiber/options_test.go`.
+- `TestFilterTermsAndSearchAreAndedNotMerged` in `crud/query/compile_test.go`.
+- `TestSearchIsParenthesised` in `crud/query/query_test.go` — a search is an OR, and
   it is wrapped, so it cannot leak out of the surrounding AND. That is the
   precedence trap a hand-built `a LIKE ? OR b LIKE ?` string falls into.
 - `TestPredicateFoldsTheFilter` in `crud/options_test.go`.

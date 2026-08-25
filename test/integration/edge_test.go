@@ -15,11 +15,11 @@ import (
 
 	"entgo.io/ent/dialect"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/repo/basic"
 )
 
 // This file and dialect_edge_test.go are the edge-case half of the integration
@@ -120,16 +120,16 @@ type EgMark struct {
 }
 
 var (
-	EgRows    = basic.Define[EgRow, int64, EgRowUpdate]("eg_rows")
-	EgAutos   = basic.Define[EgAuto, int64, struct{}]("eg_auto")
-	EgConses  = basic.Define[EgCons, int64, EgConsUpdate]("eg_cons")
-	EgVers    = basic.Define[EgVer, int64, EgVerUpdate]("eg_ver")
-	EgParents = basic.Define[EgParent, int64, struct{}]("eg_parents")
-	EgKids    = basic.Define[EgKid, int64, struct{}]("eg_kids")
-	EgMarks   = basic.Define[EgMark, int64, struct{}]("eg_marks")
+	EgRows    = sqlrepo.Define[EgRow, int64, EgRowUpdate]("eg_rows")
+	EgAutos   = sqlrepo.Define[EgAuto, int64, struct{}]("eg_auto")
+	EgConses  = sqlrepo.Define[EgCons, int64, EgConsUpdate]("eg_cons")
+	EgVers    = sqlrepo.Define[EgVer, int64, EgVerUpdate]("eg_ver")
+	EgParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents")
+	EgKids    = sqlrepo.Define[EgKid, int64, struct{}]("eg_kids")
+	EgMarks   = sqlrepo.Define[EgMark, int64, struct{}]("eg_marks")
 
 	// The same model declared with a preload budget small enough to hit.
-	EgShallowParents = basic.Define[EgParent, int64, struct{}]("eg_parents", basic.PreloadDepth(2))
+	EgShallowParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents", sqlrepo.PreloadDepth(2))
 )
 
 // ---------------------------------------------------------------------------
@@ -573,8 +573,8 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if page.Limit != basic.DefaultPageSize || len(page.Items) != 3 {
-					t.Fatalf("Limit(0) = %s, want limit %d and all three rows", egPager(page), basic.DefaultPageSize)
+				if page.Limit != sqlrepo.DefaultPageSize || len(page.Items) != 3 {
+					t.Fatalf("Limit(0) = %s, want limit %d and all three rows", egPager(page), sqlrepo.DefaultPageSize)
 				}
 			})
 

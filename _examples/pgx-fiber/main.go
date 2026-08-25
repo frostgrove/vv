@@ -6,8 +6,9 @@
 // is an ordinary struct with `db` tags.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/adapter/crudpgx
-//	go get github.com/shardit-io/vv/http/crudfiber
+//	go get github.com/shardit-io/vv/crud/adapter/crudpgx
+//	go get github.com/shardit-io/vv/vvdb/dbpgx
+//	go get github.com/shardit-io/vv/crud/http/crudfiber
 //
 // Run it with the repository's own databases up (`make up` at the root):
 //
@@ -24,12 +25,14 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudfiber"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudfiber"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/shardit-io/vv/vvdb"
+	"github.com/shardit-io/vv/vvdb/dbpgx"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
@@ -50,20 +53,28 @@ type Product struct {
 // Products is validated when this package initialises: a mistyped tag, a DTO
 // field the model lacks or a wrong ID type fails here rather than at request
 // time.
-var Products = basic.Define[Product, int64, ProductUpdate]("pgx_fiber_products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[Product, int64, ProductUpdate]("pgx_fiber_products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
-const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"
+// The database, described once. The same struct is what vvcfg loads out of a
+// YAML file in a real service — this one is a literal so the example stays a
+// single file.
+var database = vvdb.Config{
+	Engine: vvdb.Postgres, Host: "localhost", Port: 55432,
+	User: "vv", Password: "vv", Name: "vv", SSLMode: "disable",
+}
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	// dbpgx builds the connection string and sizes the pool; the application
+	// owns what comes back, and hands it to vv on the crudpgx line below.
+	pool, err := dbpgx.Connect(ctx, database)
 	if err != nil {
 		log.Fatal(err)
 	}

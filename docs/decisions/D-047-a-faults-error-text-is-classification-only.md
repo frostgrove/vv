@@ -65,7 +65,7 @@ branch on. The violation *count* is a number, not the violations.
 ## Where it lives
 
 - `errs/fault.go:Fault.Error` — the method.
-- `sqlfault/classify.go:Classifier.Classify` — the producer, and the one place a
+- `crud/sqlfault/classify.go:Classifier.Classify` — the producer, and the one place a
   classifier could put driver text into a fault. It carries the driver error in
   `Detail.Driver` and the constraint in `Detail`/`Source`, and writes neither
   into anything `Error()` prints. It is also where the sentinel is put *inside*
@@ -75,27 +75,27 @@ branch on. The violation *count* is a number, not the violations.
   `Fault` value does not satisfy `error` and fmt falls through to the struct
   printer.
 - `errs/violation.go:Violation.String` — the same rule one level down.
-- `http/crudhttp/render.go:EnvelopeRenderer.Render` and `port/kind.go:FaultOf` —
+- `port/porthttp/render.go:EnvelopeRenderer.Render` and `port/kind.go:FaultOf` —
   what replaced the body that copied `Error()`. The rule survives its own reason:
   a fault's text still reaches a log, a `%w` chain and an operator's screen.
 
 ## Proven by
 
 - `TestAClassifiedConflictIsItsOwnOutermostError` in
-  `sqlfault/classify_test.go` — the other half of the sentence above: the fault
+  `crud/sqlfault/classify_test.go` — the other half of the sentence above: the fault
   is what the adapter returns, so `Body` copies *its* text. Hung underneath a
   `fmt.Errorf`, the 409 body would carry the wrapper's. Its control is the
   unclassified path beside it, whose outermost text is still the driver's.
 - `TestAFaultCarriesNothingTheDriverSaidInItsErrorText` in
-  `sqlfault/classify_test.go` — the same claim at the producer, over a real
+  `crud/sqlfault/classify_test.go` — the same claim at the producer, over a real
   classification: a driver error whose message holds a SQL statement, a
   constraint name and a connection string and whose fields hold a constraint, a
   table, a schema and a column. Same two controls, and the native number gets its
   own guard on a MySQL fixture whose number is 1062 rather than PostgreSQL's
   zero.
 - `TestAClassifiedConflictsBodyCarriesNothingInternal` in
-  `http/crudnet/write_edge_test.go`, with identical twins in `http/crudfiber/`
-  and `http/crudgin/` — the rule under live load, through the route. Its second
+  `crud/http/crudnet/write_edge_test.go`, with identical twins in `crud/http/crudfiber/`
+  and `crud/http/crudgin/` — the rule under live load, through the route. Its second
   control is the one that matters: the *unclassified* conflict beside it is
   asserted to still carry the constraint name in its body, so if something else
   ever closes that leak this fails and says the positive has stopped proving

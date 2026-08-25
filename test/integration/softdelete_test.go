@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/repo/basic"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 // Written by hand, a soft delete is two declarations: a scope that hides the
@@ -35,8 +35,8 @@ type SdRowUpdate struct {
 var (
 	// The same table twice: once with the setting, once without, so every
 	// assertion below can be checked against what the row really is.
-	SoftRows = basic.Define[SdRow, int64, SdRowUpdate]("sd_rows", basic.SoftDelete("Deleted"))
-	RawRows  = basic.Define[SdRow, int64, SdRowUpdate]("sd_rows")
+	SoftRows = sqlrepo.Define[SdRow, int64, SdRowUpdate]("sd_rows", sqlrepo.SoftDelete("Deleted"))
+	RawRows  = sqlrepo.Define[SdRow, int64, SdRowUpdate]("sd_rows")
 )
 
 var sdSchema = map[string][]string{
@@ -244,8 +244,8 @@ func TestABadSoftDeleteDeclarationIsRefused(t *testing.T) {
 		{"an immutable column", "Tenant"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := basic.TryDefine[SdRow, int64, SdRowUpdate]("sd_rows",
-				basic.SoftDelete(tc.field)); err == nil {
+			if _, err := sqlrepo.TryDefine[SdRow, int64, SdRowUpdate]("sd_rows",
+				sqlrepo.SoftDelete(tc.field)); err == nil {
 				t.Fatal("accepted")
 			}
 		})

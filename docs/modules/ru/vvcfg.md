@@ -1,11 +1,11 @@
 # vvcfg — структура конфигурации, загружаемая и валидируемая при старте приложения
 
 ```go
-import "github.com/shardit-io/vv/tools/vvcfg"
+import "github.com/shardit-io/vv/utils/vvcfg"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/tools/vvcfg
+go get github.com/shardit-io/vv/utils/vvcfg
 ```
 
 **Модуль:** отдельный — cleanenv является зависимостью, а корневой модуль не
@@ -59,7 +59,7 @@ type Validator interface{ Validate() error }
 
 **Неверная конфигурация должна останавливать процесс при старте** — а не
 проявляться запутанным сбоем, когда уже пошёл трафик ([[D-021]]). Это то же
-правило, которому следует `basic.Define` для сломанного маппинга модели и
+правило, которому следует `sqlrepo.Define` для сломанного маппинга модели и
 `probe.Full` для неизвестной таблицы.
 
 ## Приоритет

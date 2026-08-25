@@ -9,10 +9,10 @@ Six modules in one repository, four of them published:
 
 ```
 github.com/shardit-io/vv                    crud, query, repo, cmd,
-                                                    adapter/crudsql, http/crudhttp
-github.com/shardit-io/vv/http/crudfiber     + fiber/v3
-github.com/shardit-io/vv/http/crudgin       + gin
-github.com/shardit-io/vv/adapter/crudpgx    + pgx/v5
+                                                    crud/adapter/crudsql, crud/http/crudhttp
+github.com/shardit-io/vv/crud/http/crudfiber     + fiber/v3
+github.com/shardit-io/vv/crud/http/crudgin       + gin
+github.com/shardit-io/vv/crud/adapter/crudpgx    + pgx/v5
 github.com/shardit-io/vv/test               unpublished, replace ../
 github.com/shardit-io/vv/_examples          unpublished, replace ../
 ```
@@ -28,12 +28,12 @@ A consumer installs the base and then only the plugins it uses:
 
 ```bash
 go get github.com/shardit-io/vv
-go get github.com/shardit-io/vv/http/crudgin
+go get github.com/shardit-io/vv/crud/http/crudgin
 ```
 
-`adapter/crudsql` stays in the root because it is `database/sql`, which is the
+`crud/adapter/crudsql` stays in the root because it is `database/sql`, which is the
 standard library — and it is therefore how ent, gorm, sqlx, sqlc and bun are
-reached with no plugin at all. `http/crudnet`, the `net/http` binding, stays for
+reached with no plugin at all. `crud/http/crudnet`, the `net/http` binding, stays for
 the same reason: the rule is about dependencies, not about layers, so a binding
 with no dependency is not a module.
 
@@ -63,8 +63,8 @@ it has three parts:
   plain `require github.com/shardit-io/vv vX.Y.Z`. The only `replace` in
   the tree is in `test/go.mod`, which is not published.
 - *Tags carry the directory prefix.* The root is `vX.Y.Z`; a submodule is
-  `http/crudgin/vX.Y.Z`. This is how Go maps a subdirectory module to a commit;
-  without the prefix `go get .../http/crudgin@latest` finds nothing and falls
+  `crud/http/crudgin/vX.Y.Z`. This is how Go maps a subdirectory module to a commit;
+  without the prefix `go get .../crud/http/crudgin@latest` finds nothing and falls
   back to a pseudo-version of the default branch.
 - *Local development uses `go.work`.* It joins all five modules, so a change to
   `crud/` is seen by every binding without a version existing anywhere.
@@ -74,7 +74,7 @@ v0.3.0 and a binding at v0.1.0, and the binding will still build, because MVS
 raises the base to the higher version. That is the incoherent combination D-016
 worried about and it is real. The answer is process, not mechanism — and mechanism is not merely unchosen, it
 is unavailable. MVS has no upper bound, so nothing can stop a consumer selecting
-`vv@v0.2.0` with `vv/http/crudgin@v0.1.0`; the binding's own requirement raises
+`vv@v0.2.0` with `vv/crud/http/crudgin@v0.1.0`; the binding's own requirement raises
 the library, and only the *other* direction — old binding, new library — is
 dangerous, which is exactly what a bare `go get -u` produces. What the repository
 can do is refuse to *publish* an incoherent set: `make release` will not run if a
@@ -89,7 +89,7 @@ half-land. `retract` in the root `go.mod` is the only remedy after the fact.
 - Do not give a package its own module because of what layer it is in. A binding
   or an adapter that imports only the standard library belongs in the library:
   a second `go get` bought for no dependency is a cost with nothing on the other
-  side of it. `adapter/crudsql` and `http/crudnet` are both in the root for that
+  side of it. `crud/adapter/crudsql` and `crud/http/crudnet` are both in the root for that
   reason.
 - Do not put a `replace` in a published `go.mod`. It is invisible to consumers
   and it hides the fact that the required version does not exist yet.
@@ -108,12 +108,12 @@ half-land. `retract` in the root `go.mod` is the only remedy after the fact.
 
 - `go.mod` — module `github.com/shardit-io/vv`, `go 1.26`, no `require`
   block at all.
-- `http/crudfiber/go.mod`, `http/crudgin/go.mod`, `adapter/crudpgx/go.mod` —
+- `crud/http/crudfiber/go.mod`, `crud/http/crudgin/go.mod`, `crud/adapter/crudpgx/go.mod` —
   one external requirement each, plus the library.
-- `rpc/crudgrpc/go.mod` — three, and still one *decision*: grpc, protobuf and
+- `crud/rpc/crudgrpc/go.mod` — three, and still one *decision*: grpc, protobuf and
   genproto arrive together or not at all. [[D-051]] is the rule that says so,
   written when this line's literal reading first came apart.
-- `http/crudnet/` and `adapter/crudsql/` — no `go.mod`, because there is no
+- `crud/http/crudnet/` and `crud/adapter/crudsql/` — no `go.mod`, because there is no
   dependency to isolate.
 - `test/go.mod`, `_examples/go.mod` — the unpublished modules, each with a
   `replace` per published module.
@@ -178,7 +178,7 @@ than a sentence.
 
 The dependency isolation itself is visible in the `go.mod` files: gin's
 transitive set (sonic, validator/v10, quic-go, protobuf, mongo-driver) appears
-in `http/crudgin/go.mod` and nowhere else.
+in `crud/http/crudgin/go.mod` and nowhere else.
 
 ## See also
 

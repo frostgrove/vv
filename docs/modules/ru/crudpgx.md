@@ -1,11 +1,11 @@
 # crudpgx — pgx v5
 
 ```go
-import "github.com/shardit-io/vv/adapter/crudpgx"
+import "github.com/shardit-io/vv/crud/adapter/crudpgx"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/adapter/crudpgx
+go get github.com/shardit-io/vv/crud/adapter/crudpgx
 ```
 
 **Модуль:** отдельный — чтобы потребитель на `database/sql` никогда не тянул

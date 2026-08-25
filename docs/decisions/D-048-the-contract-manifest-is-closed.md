@@ -33,7 +33,7 @@ go through it, and nothing is ever swapped behind it.
 they discriminate.** `crud` has four adapters. `errs.Classifier` will have four
 dialects. `query` has two doors — JSON and query string — that must agree.
 `port` has three HTTP transports and, since phase 9, a fourth on another
-protocol — `rpc/crudgrpc`, which is the one that proved the point rather than
+protocol — `crud/rpc/crudgrpc`, which is the one that proved the point rather than
 restating it. Those earn it. Nothing on the `?` list has two of anything.
 
 **Because the draft's own heuristic got it backwards.** It flagged `codegen`,
@@ -59,7 +59,7 @@ which is already on the manifest. A fourth binding is the count rule's evidence
 for `port`, not a candidate of its own.
 
 **What this does not forbid.** A package may exist without being on the manifest.
-`vvflag`, `tools/vvcfg`, `internal/codegen` and `app` are all implementations
+`vvflag`, `utils/vvcfg`, `internal/codegen` and `app` are all implementations
 with no contract at all, and that is the normal case rather than the exception.
 The manifest is the short list of things a third party writes *against*.
 

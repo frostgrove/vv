@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/adapter/crudpgx"
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/adapter/crudpgx"
 )
 
 func TestPgx(t *testing.T) {

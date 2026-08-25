@@ -1,7 +1,7 @@
 # D-035 — A package is named for what it is; a prefix only breaks a collision
 
 **Status:** accepted
-**Invariant:** a package takes a prefix only where the bare name would collide, and the prefix names the subsystem the package belongs to, never the project.
+**Invariant:** a package takes a prefix only where the bare name would collide, and the prefix names the subsystem the package belongs to — the project only where the colliding name *is* the subsystem and there is nothing else to prefix with.
 
 ## The decision
 
@@ -27,14 +27,33 @@ So the grid runs subsystem × library:
 | | fiber | gin | net/http | pgx | database/sql | grpc |
 |---|---|---|---|---|---|---|
 | **crud** | `crudfiber` | `crudgin` | `crudnet` | `crudpgx` | `crudsql` | `crudgrpc` |
+| **auth** | `authfiber` | `authgin` | `authnet` | — | — | `authgrpc` |
+| **port** | — | — | `porthttp` | — | — | — |
+| **remote** | — | — | `remotehttp` | — | — | — |
 | **i18n** | `i18nfiber` | `i18ngin` | — | — | — | — |
 
-The client transports take no new cell, and that is [[D-053]]'s placement rule
-rather than an omission: a transport lives with the binding it calls, so
-`crudhttp.Transport` and `crudgrpc.Transport` are functions in packages that
-already exist. There is one HTTP client and not three, because a consumer
-calling out uses `net/http` whatever it serves with — so the fiber and gin cells
-have nothing to hold.
+[[D-058]] is where that grid became the directory tree: the row is the top-level
+directory and the column is the second level, so `crudgin` is at
+`crud/http/crudgin` and `authgin` at `auth/http/authgin`. The prefix survives the
+nesting for the reason it existed in the first place — a consumer mounting both
+imports the two in one file.
+
+`port` and `remote` hold a single cell each and hold it for opposite reasons.
+`porthttp` is the HTTP projection every subsystem answers through, so there is
+one and it is not CRUD's ([[D-059]]). `remotehttp` is the client transport: there
+is one HTTP client and not three, because a consumer calling out uses `net/http`
+whatever it serves with — so the fiber and gin cells have nothing to hold.
+
+**The gRPC client transport is the exception, and it is an exception.**
+`crudgrpc.Transport` stays in `crud/rpc/crudgrpc` rather than moving to a
+`remote/remotegrpc` beside `remotehttp`, because `remote` is in the root module
+and may not import grpc: the move would cost a whole module for one file.
+[[D-053]]'s old rule — *a transport lives with the binding it calls* — held while
+the tables a client reads backwards lived beside the binding. They are
+`porthttp`'s now, so the HTTP transport moved and the gRPC one could not. The
+asymmetry is recorded rather than smoothed over: `remotehttp` is where the HTTP
+client lives, `crudgrpc` is where the gRPC one lives, and the reason is the
+module boundary, not the protocol.
 
 ## Why
 
@@ -73,10 +92,25 @@ The prefix names what it is about — SQL — and it is the same construction as
 prefix only breaks a collision, and a collision of meaning counts*; anything
 further from that reading needs its own entry here.
 
+**The project prefix has one legitimate use, and `vvflag` was already it.**
+Where the bare name is a word the package has to leave to somebody else — the
+standard library's `flag`, or `db`, which is the name of the handle in nearly
+every Go program that has one — a prefix is required and there is no subsystem
+to prefix with, because the subsystem *is* that word. The project is what is
+left. This is the reading `vvflag` has always relied on while the list below
+appeared to forbid it; `vvdb` is the second case and the one that made the
+contradiction visible ([[D-057]]).
+
+It stays narrow. Two things have to be true at once: the bare name collides, and
+there is no subsystem name to use instead. `vvfiber` fails the second test —
+the subsystem is CRUD, and `crudfiber` says so.
+
 ## What it forbids
 
-- Do not name a package after the project. `vvfiber`, `vvgin`, `vvcrud` are all
-  wrong: they say who wrote it, which the import path already said.
+- Do not name a package after the project, **except** in the one case above:
+  the bare name is taken and no subsystem name can take its place. `vvfiber`,
+  `vvgin`, `vvcrud` are all wrong — they say who wrote it, which the import path
+  already said, and `crudfiber` was available.
 - Do not add a prefix to a package that does not collide. `vvcrud` and
   `vvquery` buy nothing.
 - Do not take a subsystem × library cell for a different subsystem. If
@@ -86,13 +120,19 @@ further from that reading needs its own entry here.
 
 ## Where it lives
 
-- `http/crudfiber/`, `http/crudgin/`, `http/crudnet/` — the three HTTP bindings.
-- `adapter/crudsql/`, `adapter/crudpgx/` — the two adapters.
-- `vvflag/` — prefixed against the standard library.
-- `sqlfault/` — prefixed against `errs.Fault`, which every file in it names.
+- `crud/http/crudfiber/`, `crud/http/crudgin/`, `crud/http/crudnet/` — the three
+  HTTP bindings; `auth/http/authfiber/`, `auth/http/authgin/`,
+  `auth/http/authnet/` — the same three cells one row down.
+- `crud/adapter/crudsql/`, `crud/adapter/crudpgx/` — the two adapters.
+- `port/porthttp/` — the `port` × `net/http` cell ([[D-059]]).
+- `remote/remotehttp/` — the `remote` × `net/http` cell.
+- `utils/vvflag/` — prefixed against the standard library.
+- `vvdb/` — prefixed against `db`, the variable name, with `vvdb/dbpgx` under
+  it taking no prefix because nothing is called `dbpgx` ([[D-057]]).
+- `crud/sqlfault/` — prefixed against `errs.Fault`, which every file in it names.
 - `remote/` — unprefixed, and named for where the repository is rather than for
   what a caller does with it.
-- `tools/vvcfg/` — `cfg` alone is too vague to be a package name on its own.
+- `utils/vvcfg/` — `cfg` alone is too vague to be a package name on its own.
 - `Makefile:TIER0` — the contract manifest the naming rule sorts, with
   `TIER0_SEALED` and `TIER0_STDLIB` beside it: the two arms that seal `errs`
   and `crud` against each other, which the manifest arm cannot see because it
@@ -109,8 +149,11 @@ make check-tiers
 ```
 
 fails when a contract package imports outside the manifest — verified by making
-`query` import `repo/basic` and watching it fail.
+`port` import `crud/sqlrepo`, and again by making `port/porthttp` import it, and
+watching each fail. Both arms had to be re-armed at [[D-058]]: the manifest was
+matched by prefix, and a prefix match lets `crud/sqlrepo` in under `crud` the
+moment `crud/` has a subtree.
 
 ## See also
 
-[[D-033]] [[D-034]] [[D-016]] [[D-053]]
+[[D-033]] [[D-034]] [[D-016]] [[D-053]] [[D-057]] [[D-058]] [[D-059]]

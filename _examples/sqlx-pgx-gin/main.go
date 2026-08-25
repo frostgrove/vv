@@ -9,8 +9,8 @@
 // struct scanner understands.
 //
 //	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/adapter/crudsql
-//	go get github.com/shardit-io/vv/http/crudgin
+//	go get github.com/shardit-io/vv/crud/adapter/crudsql
+//	go get github.com/shardit-io/vv/crud/http/crudgin
 //	go get github.com/jmoiron/sqlx
 //	go get github.com/jackc/pgx/v5
 //
@@ -30,12 +30,12 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/adapter/crudsql"
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/http/crudgin"
-	"github.com/shardit-io/vv/query"
-	"github.com/shardit-io/vv/repo/basic"
-	"github.com/shardit-io/vv/repo/decorators/specs"
+	"github.com/shardit-io/vv/crud/adapter/crudsql"
+	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/shardit-io/vv/crud/http/crudgin"
+	"github.com/shardit-io/vv/crud/query"
+	"github.com/shardit-io/vv/crud/sqlrepo"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
@@ -56,10 +56,10 @@ type Product struct {
 // Products is validated when this package initialises: a mistyped tag, a DTO
 // field the model lacks or a wrong ID type fails here rather than at request
 // time.
-var Products = basic.Define[Product, int64, ProductUpdate]("sqlx_gin_products",
-	basic.DefaultLimit(20),
-	basic.MaxLimit(100),
-	basic.DefaultSort(crud.Desc("CreatedAt")),
+var Products = sqlrepo.Define[Product, int64, ProductUpdate]("sqlx_gin_products",
+	sqlrepo.DefaultLimit(20),
+	sqlrepo.MaxLimit(100),
+	sqlrepo.DefaultSort(crud.Desc("CreatedAt")),
 )
 
 const dsn = "postgres://vv:vv@localhost:55432/vv?sslmode=disable"

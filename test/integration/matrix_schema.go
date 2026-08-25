@@ -2,7 +2,7 @@
 
 package integration
 
-import "github.com/shardit-io/vv/repo/basic"
+import "github.com/shardit-io/vv/crud/sqlrepo"
 
 // The provider matrix needs one relation it can grow past a single preload
 // batch. It gets its own pair of tables rather than the blog ones because every
@@ -25,8 +25,8 @@ type MxItem struct {
 }
 
 var (
-	MxOwners = basic.Define[MxOwner, int64, struct{}]("mx_owners")
-	MxItems  = basic.Define[MxItem, int64, struct{}]("mx_items")
+	MxOwners = sqlrepo.Define[MxOwner, int64, struct{}]("mx_owners")
+	MxItems  = sqlrepo.Define[MxItem, int64, struct{}]("mx_items")
 )
 
 // Both lists start with DROP so a rerun is a clean slate, and both keep the

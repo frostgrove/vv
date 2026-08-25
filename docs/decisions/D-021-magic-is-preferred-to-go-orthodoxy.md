@@ -32,7 +32,7 @@ The trade has a hard edge and the library holds to it: **the magic must fail
 early.** Reflection that fails at request time is the worst of both worlds — no
 compile-time check and no boilerplate to read. So:
 
-- `basic.Define` validates the model tags, the ID type parameter and the update
+- `sqlrepo.Define` validates the model tags, the ID type parameter and the update
   DTO at package initialisation and **panics** on a broken declaration.
 - `crud.NewMeta` / `buildSchema` refuses an unmapped model, a composite key, a
   duplicate column, an unexported tagged field, an impossible `version` column.
@@ -75,10 +75,10 @@ against the ORM's own.
 - `crud/access.go` — `Pointers`, `Values`, `ID`, `SetID` by offset.
 - `crud/update.go:PlanFor` / `crud/update.go:buildPlan` — the reflective DTO
   plan, built once per (DTO, model) pair and cached.
-- `repo/basic/blueprint.go:Define` — panics; `TryDefine` is the same without it.
-- `repo/basic/blueprint.go:Blueprint.resolveRelationScopes` — path validation at
+- `crud/sqlrepo/blueprint.go:Define` — panics; `TryDefine` is the same without it.
+- `crud/sqlrepo/blueprint.go:Blueprint.resolveRelationScopes` — path validation at
   declaration time.
-- `repo/decorators/specs/metamodel.go:Metamodel` — attribute-struct validation at
+- `crud/decorators/specs/metamodel.go:Metamodel` — attribute-struct validation at
   declaration time.
 - `cmd/vv` — the codegen half ([[D-018]]).
 - `port/pathmap.go:MustPathMap` / `:MustCoverUpdate` — the same rule applied to
@@ -89,23 +89,23 @@ against the ORM's own.
 
 ## Proven by
 
-- `TestBadDeclarationsPanicEarly` in `repo/basic/repository_test.go` — the
+- `TestBadDeclarationsPanicEarly` in `crud/sqlrepo/repository_test.go` — the
   edge this decision stands on.
 - `TestBadDeclarationsAreRefusedAndSayWhy` in
-  `repo/basic/blueprint_edge_test.go` — `TryDefine`, the same checks without the
+  `crud/sqlrepo/blueprint_edge_test.go` — `TryDefine`, the same checks without the
   panic.
 - `TestSchemaRefusesBrokenModels` in `crud/schema_edge_test.go` and
   `TestSchemaRejectsBadDeclarations` in `crud/meta_test.go`.
 - `TestADbTagOnAnUnexportedFieldIsRefused` in `crud/schema_edge_test.go` — a
   silently dropped column would show up as a zero in the row, not as an error.
 - `TestABadRelationDeclarationPanics` in
-  `repo/decorators/security/relscope_test.go` and
+  `crud/decorators/security/relscope_test.go` and
   `TestRelationTagsAreCheckedWhenTheyAreDeclared` in
   `crud/schema_edge_test.go`.
 - `TestMetamodelValidatesAtDeclarationTime` and
   `TestAMetamodelThatCannotBindIsRefusedAtDeclarationTime` in
-  `repo/decorators/specs/specs_test.go` and
-  `repo/decorators/specs/edge_test.go`.
+  `crud/decorators/specs/specs_test.go` and
+  `crud/decorators/specs/edge_test.go`.
 - `TestPlanRefusesDTOsThatCannotBeApplied` in `crud/edge_test.go` and
   `TestPlanRejectsAForeignDTO` in `crud/update_test.go`.
 - `TestSchemaOfIsCachedByType` in `crud/schema_edge_test.go` — the reflection happens

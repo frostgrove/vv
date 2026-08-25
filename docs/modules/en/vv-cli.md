@@ -72,7 +72,7 @@ and options that take a path rather than a predicate are identifiers too:
 Article_.Comments.Path()                // "Comments"
 Article_.Comments.Author.Path()         // "Comments.Author"
 
-basic.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Approved.Eq(true)))
+sqlrepo.RelationScope(Article_.Comments.Path(), specs.Predicate(Comment_.Approved.Eq(true)))
 crud.Preload(Article_.Comments.Path())
 ```
 

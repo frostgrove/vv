@@ -1,7 +1,7 @@
 # crudnet — полноценный CRUD API на net/http
 
 ```go
-import "github.com/shardit-io/vv/http/crudnet"
+import "github.com/shardit-io/vv/crud/http/crudnet"
 ```
 
 **Модуль:** корневой — импортирует только стандартную библиотеку, поэтому

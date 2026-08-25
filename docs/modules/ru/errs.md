@@ -66,7 +66,7 @@ type User struct {
     Name  string `db:"name"       json:"name"`
 }
 
-var Users = basic.Define[User, int64, UserUpdate]("users")
+var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
 ```
 
 ### Подключение — две строки, которые вы бы иначе не написали

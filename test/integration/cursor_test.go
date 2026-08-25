@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/query"
+	"github.com/shardit-io/vv/crud/query"
 )
 
 // Offset paging answers "skip 10, take 10", and what those ten rows are depends

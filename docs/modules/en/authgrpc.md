@@ -1,10 +1,10 @@
 # authgrpc — authenticate a gRPC call
 
 ```go
-import "github.com/shardit-io/vv/rpc/authgrpc"
+import "github.com/shardit-io/vv/auth/rpc/authgrpc"
 ```
 
-**Module:** `github.com/shardit-io/vv/rpc/authgrpc` — one dependency,
+**Module:** `github.com/shardit-io/vv/auth/rpc/authgrpc` — one dependency,
 `google.golang.org/grpc`
 · **Depends on:** `auth`, grpc
 
