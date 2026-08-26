@@ -415,6 +415,15 @@ every create whose body omits the column and every replace that omits it. The
 missing piece is a stamp, and the argument below is about the stamp and about
 what has to be true for it not to be a downgrade.
 
+**The release shape must refuse two different empty configurations.** `Gate`
+must reject a zero `Policy` while the application is wiring; a request-time
+`Scope` must return a narrowing predicate or an error. An intentional broad
+administrator path needs a separately named, auditable policy/combinator —
+`(nil, nil)` is not an acceptable spelling for it. The first is a start-up
+check and the second a per-request contract, so neither substitutes for the
+other. This changes the documented meaning of optional hooks and needs an
+explicit decision against [[D-021]], not a silent helper change.
+
 Written in today's spelling on purpose. The post-`ID` spelling of blocker 6 does
 not shorten this line — it moves the annotation to `Gate`, which cannot infer
 `ID` from a `Policy[M]` because `ID` appears only in its result, exactly as
@@ -429,10 +438,12 @@ reaches `Inspect` and is still refused. Distinguishing absent from zero is
 (`auth/principal.go:35-38`). On a schema where 0 is a real tenant — the schema
 `attrOf` already documents as the reason a missing claim is a denial
 (`principal.go:171-174`) — a zero-value stamp turns a refusal into a silent
-re-tenanting. So either the stamping hook reads a three-state input, or the
-generated `<Model>Input` carries no tenant field at all and the stamp is
-documented as safe only on a DTO that cannot express one. The second is smaller
-and is what `cmd/vv -adapter` already generates.
+re-tenanting. The release proposal chooses the only safe route without a new
+three-state input representation: the generated `<Model>Input` carries no
+tenant field, and stamping is permitted only for that DTO shape. A hand-written
+DTO that can express tenant remains a refusal-only path until a separately
+designed absent/null/value input contract exists. This is an explicit [[D-002]]
+decision need, not a default-value convention.
 
 ### Turning one knob
 
@@ -504,17 +515,16 @@ reimposing the scope the lift just removed. What protects the console is the
 freeze, which is why `Immutable` stays false. A per-row rule you want kept
 belongs in a *sibling* of the `Except`, which is where `RefuseWhen` sits above.
 
-**`RefuseWhen` and `InspectOwner` would ship with opposite booleans**, and that
-has to be decided rather than left to the reader. `InspectOwner(allow func(...) bool)`
-means true-permits; the same closure body under a refuse-shaped helper means the
-opposite. A consumer who writes `InspectOwner(func(...) bool { return m.Locked })`
-has inverted their rule silently, and the resulting policy allows exactly what it
-meant to refuse and denies everything else — which no test of theirs would look
-wrong. Either `RefuseWhen` replaces `InspectOwner` and `InspectOwner` becomes the
-documented low-level form, or the package ships two per-row hooks in one import
-whose booleans disagree and says so in both doc comments. `security.Writes` also
-needs a set type: `Action` is a `uint8` with `iota` values (`security.go:29-37`),
-not bit flags, so "neither edited nor deleted" is two calls unless a set exists.
+**One public polarity: `RefuseWhen`.** `InspectOwner(allow func(...) bool)` is
+the existing low-level predicate and true means permit (`principal.go:202-220`).
+Before the tag, `RefuseWhen` should be the public high-level constructor and
+`InspectOwner` should either be renamed/withdrawn or documented only as its
+permit-shaped primitive; it must not be a second equally-prominent recipe. The
+same closure body under the two names inverts a rule silently. This is an API
+choice requiring an explicit decision and a D-030-style obligation test for the
+new policy helper. `security.Writes` also needs a set type: `Action` is a
+`uint8` with `iota` values (`security.go:29-37`), not bit flags, so "neither
+edited nor deleted" is two calls unless a set exists.
 
 **And it has to survive being written twenty times.** These constructors are
 generic over `M any, ID comparable` with no further constraint, so an author can
@@ -813,13 +823,18 @@ it on `PUT`.
 **Blast radius:** data leak
 
 ### E-SECURITY-09 — Concurrent preloads keep their relation narrowings separate
-**Shape:** concurrency
+**Shape:** concurrency pointer
 **Setup:** Two tenant requests preload the same relation through one policy at once.
-**What the consumer does:** They expect tenant A's relation predicate not to persist into tenant B's preload, or vice versa.
-**What must happen:** Each call must build a fresh relation narrowing and treat an error as a refusal; no mutable relation-scope value may survive to a later request.
-**Today:** ❓ unverified
-**Evidence:** `ScopeRelationField` constructs an `AtPath` value inside its per-context closure (`policies.go:126-135`), and `gate.narrow` invokes the policy for each operation (`security.go:207-218`). `TestARelationScopeErrorFailsClosed` and the merge tests cover error and composition paths, but there is no concurrent relation-scope test in `crud/decorators/security`.
-**Blast radius:** data leak
+**Today:** ❓ unverified at the shared `crud.RelationScopes` seam; no policy-state
+isolation failure is demonstrated here.
+**Evidence:** `ScopeRelationField` builds an `AtPath` result inside its
+per-context closure (`crud/decorators/security/policies.go:126-135`) and the gate
+calls the policy per operation (`crud/decorators/security/security.go:207-218`).
+Those facts do not prove concurrent mutation safety of the shared narrowing/
+preload machinery, and no security test exercises it.
+**Pointer:** Crud owns the relation-scope/preload concurrency contract. Keep this
+classification conservative until a test demonstrates policy state crossing
+requests.
 
 ### E-SECURITY-10 — The request is cancelled after the inspection read
 **Shape:** partial failure
@@ -848,16 +863,42 @@ it on `PUT`.
 **Evidence:** `Delete` builds `crud.InAny(pk, ids)`, loads the complete victim slice when `Inspect` is set, walks it, and only then issues `DeleteAll` (`security.go:691-713`). `ScopeAttr` installs `Inspect` through `ScopeField` (`policies.go:74-105`). The package tests its all-or-nothing batch behaviour with two rows (`edge_test.go:276-336`), not a bounded or oversized id set.
 **Blast radius:** crash
 
+### E-SECURITY-13 — A mixed-tenant batch contains one unauthorised row
+**Shape:** atomicity boundary
+**Setup:** A worker passes `SaveAll` two models under `ScopeAttr`: one belongs to
+the caller's tenant and the second belongs to another tenant. The equivalent
+filtered `UpdateAll` reads a mixed victim set and `Inspect` refuses one row.
+**What the consumer does:** They expect the whole operation to refuse, with no
+valid prefix written and no later bulk statement issued after an unauthorised
+row is found.
+**What must happen:** Gate-level authorisation is all-or-nothing: every `SaveAll`
+item and every inspected `UpdateAll` victim is checked before delegation; a
+refusal reaches the caller and the gate invokes neither final write. Database
+transaction/commit guarantees after delegation remain the source's contract.
+**Today:** 🟡 partial
+**Evidence:** `SaveAll` performs its per-model checks in a complete loop and only
+calls `g.Core.SaveAll` after that loop (`crud/decorators/security/security.go:412-457`).
+`TestSaveAllIsCheckedByTheGate` refuses a two-row batch on its second row and
+keeps an all-authorised control (`test/integration/saveall_test.go:132`).
+`UpdateAll` loads all victims, returns immediately on the first failed inspect,
+and delegates only after the loop (`crud/decorators/security/security.go:663-674`),
+but the mixed-tenant/update control is not pinned; caller-provided paging remains
+the separate D-026 defect.
+**Blast radius:** data loss if a future change moves delegation before the checks
+
 ## Edge verdict
 
 The worst new finding is a declaration that visibly contains `security.Gate` but
-no effective policy: both a zero `Policy` and a hand-written scope returning
-`(nil, nil)` delegate ordinary reads without a predicate. The gate is closed
-against an explicit scope error and checks a batch before its final statement,
-but the far-side helper does not validate values as the root helper does, and a
-large selected-id delete still materialises every victim. The per-request state
-looks local by reading, yet neither root nor relation narrowing has a concurrent
-test, and cancellation after inspection is not a gate-level refusal.
+has no effective policy. The two causes are distinct: a zero `Policy` has no
+scope hook at all, while a hand-written scope returns `(nil, nil)` even though
+its request cannot name a tenant; both delegate ordinary reads without a
+predicate. The gate is closed against an explicit scope error and checks every
+`SaveAll` item before its final delegation, but the far-side helper does not
+validate values as the root helper does, and a large selected-id delete still
+materialises every victim. Root/relation narrowing looks call-local by reading
+but remains conservatively unverified without concurrent tests; shared preload
+state is a Crud concern. Cancellation after inspection is not a gate-level
+refusal.
 
 ## Release blockers found here (edge)
 

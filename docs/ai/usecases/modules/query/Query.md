@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/query`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — a cleared filter chip (`?f=status:notIn:`) compiles to `1 = 1` and answers 200 with every row; empty boolean groups, malformed unary terms and invalid paging can also silently change or remove the intended question. Four separate volume bounds remain unarmed on a stock mount: the page size, offset depth, `distinct`, and preload row count.
+**Verdict:** not ready — a cleared filter chip (`?f=status:notIn:`) compiles to `1 = 1` and answers 200 with every row; empty boolean groups, malformed unary terms, invalid paging, and repeated scalar query keys can also silently change or remove the intended question. Four separate volume bounds remain unarmed on a stock mount: the page size, offset depth, `distinct`, and preload row count.
 
 ## What a consumer is actually trying to do
 
@@ -862,29 +862,31 @@ var articleQuery = &query.Config{
     Filterable: []string{"Title", "Views", "CreatedAt", "Author.*"},
     Sortable:   []string{"CreatedAt", "Views"},
     Searchable: []string{"Title", "Body"},
+}
 
-    MaxPageSize:    100,  // does not exist here; default 100, not 0
-    MaxOffsetRows: 10000, // does not exist anywhere
-    MaxPreloadRows:  500, // does not exist anywhere
-    // AllowDistinct defaults false, like AllowUnpaged
+var articleRules = port.Rules{ // proposed route-owned preference/cap surface
+    Query:          articleQuery,
+    PageCap:        100,
+    DefaultOrder:   crud.Desc("CreatedAt"),
+    MaxOffsetRows:  10000,
+    MaxPreloadRows: 500,
+    // AllowDistinct defaults false, like AllowUnpaged.
 }
 
 repo := Articles.Bind(crudsql.Postgres(db))
-crudnet.New(repo,
-    crudnet.WithQuery[Article, int64, ArticleUpdate](articleQuery),
-).Mount(mux, "/articles")
+crudnet.New(repo, crudnet.WithRules[Article, int64, ArticleUpdate](articleRules)).Mount(mux, "/articles") // proposed forwarder
 // Every config handed to WithQuery is resolved against the model at mount
 // and a misspelled entry panics there.
 ```
 
-**Count it honestly.** That is 14 lines. The same endpoint today, with the page
+**Count it honestly.** That is 16 lines. The same endpoint today, with the page
 ceiling and the check wired, is about 12: `sqlrepo.Define("articles",
-sqlrepo.MaxLimit(100))` is the same line with one argument, the `Config` literal
-loses three fields, and `func init() { articleQuery.MustCheck(Articles.Meta()) }`
-adds one. The concepts a newcomer holds are unchanged: four packages, three type
-parameters, five lists, a handful of caps. **The win is not brevity.** It is one
-fewer file for the bound most likely to be wrong, and three bounds that do not
-exist anywhere today at any line count.
+sqlrepo.MaxLimit(100))` is the same line with one argument, and `func init() {
+articleQuery.MustCheck(Articles.Meta()) }` adds one. The concepts a newcomer
+holds are unchanged: four packages, three type parameters, five lists, a handful
+of caps. **The win is not brevity.** It gives all route-specific preferences one
+owner and leaves the repository ceiling as a backstop rather than a second route
+configuration.
 
 ### Turning one knob
 
@@ -921,7 +923,39 @@ default config is a positional argument, so a selector returning a name the map
 does not hold cannot fall through to a nil `*query.Config` — which is the
 *widest* configuration this package has, since empty lists allow everything. A
 selector that fails open is the exact failure the mount-time check exists to
-close, arriving one layer up.
+close, arriving one layer up. `WithQueryFor` must validate every mapped config
+with `Config.Check(repo.Meta())` at mount and must return a `query.Error` before
+compilation when the selector returns an unmatched non-empty key; it must never
+substitute the default or nil config.
+
+**One owner per kind of bound.** The proposed canonical owner is `port.Rules`:
+it owns a route's `PageCap` and default ordering, while `query.Config` owns the
+wire vocabulary and parser-work caps, `crudhttp` only forwards the same `Rules`
+surface, and `sqlrepo.MaxLimit` remains the repository-wide physical backstop.
+This explicitly challenges [[D-060]], which assigns endpoint page size to
+`sqlrepo.MaxLimit`; it is not presented as compatible with that decision. The
+owner must amend or replace D-060 before a release chooses this shape.
+
+**Pending D-060 migration contract — not current behaviour.** If the amendment
+chooses the route-owned shape, proposed `port.Rules.PageCap` is the authoritative
+endpoint page cap. `sqlrepo.MaxLimit` becomes the legacy repository backstop:
+existing declarations retain their current value during the compatibility window,
+but new endpoint guidance migrates that value to `Rules.PageCap`; a later major
+release may deprecate `MaxLimit` as an endpoint-setting rather than silently
+giving one repository two route-specific values. Crudhttp and Crudgrpc must pass
+the same resolved Rules cap into their query compilation path — neither binding
+may invent a second default or clamp after the compiler has refused. Remote
+`GetAll` must request the peer's explicitly declared unpaged/export capability
+and **refuse** when it is absent; it must never truncate at a local or remote cap
+and call the result “all”. This is the explicit migration price of choosing a
+single authority, and all four clauses await the D-060 amendment.
+
+The selector may choose a vocabulary by principal, but it is not tenancy. A
+tenant/row policy still arrives through `security.Gate`; it prepends `crud.Where`
+and relation narrowings, so request options compiled from whichever config was
+selected cannot widen it (`crud/decorators/security/security.go:221-238,304-320`).
+`crudnet.WithScope` is not a substitute because it reaches reads only
+(`crud/http/crudnet/options.go:87-98`).
 
 ### Why this shape
 
@@ -934,34 +968,33 @@ client may ask for a sort-or-hash over the whole set. An endpoint is reviewed by
 reading its bounds; if the bounds that matter are in another file or absent, the
 review passes and the endpoint is not bounded.
 
-**`MaxPageSize` must default non-zero, and that is the part round 1 got wrong.**
+**`port.Rules.PageCap` must default non-zero, and that is the part round 1 got wrong.**
 Round 1 wrote "the zero value means inherit, never unbounded" and then had it
 inherit `sqlrepo.MaxLimit`, which is itself zero and documented as "Zero disables
 the cap" (`blueprint.go:53`). Both zero is the stock mount, so the proposal
 closed nothing and breached [[D-060]]'s invariant in the process — "Every bound
-on how much comes back is closed by default". So: `MaxPageSize` defaults to 100
-the way `MaxInValues` defaults to 1024, and `MaxPageSize: -1` is the explicit
-spelling for "no ceiling". A bound whose safe value has to be typed is not a
-bound.
+on how much comes back is closed by default". So: proposed `PageCap` defaults to
+100 the way `MaxInValues` defaults to 1024, and `PageCap: -1` is the explicit
+spelling for "no ceiling". A bound whose safe value has to be typed is not a bound.
 
 **It refuses where the repository clamps, and adopting it is a behaviour
 change.** Every other cap in `query.Config` refuses with a `query.Error` at a
 path; `sqlrepo.MaxLimit` clamps silently (`crud/options.go:251-252`), which is
 H-QUERY-11's sharp edge. Two caps with opposite behaviour is how a knob becomes a
 trap, so the effective ceiling is the minimum of the two and **the endpoint
-refuses at it**. With `MaxPageSize: 100` and `MaxLimit(50)`, `?limit=80` stops
+refuses at it**. With `PageCap: 100` and `MaxLimit(50)`, `?limit=80` stops
 being 50 rows and becomes a 400 — that is a break for every client relying on the
 clamp, and it belongs in the release note rather than in a footnote. The
 interaction with `unpaged` must be stated too, because an unpaged read never
 reaches the limit clamp at all (`crud/options.go:242-247`): `AllowUnpaged: true`
-means `MaxPageSize` does not apply, and an endpoint that wants both bounded says
-so with `MaxOffsetRows`. `DefaultLimit` is deliberately **not** proposed —
+means `PageCap` does not apply, and an endpoint that wants both bounded says so
+with `port.Rules.MaxOffsetRows`. `DefaultLimit` is deliberately **not** proposed —
 `sqlrepo.DefaultLimit` already defaults to 20 and applies when a client names
 none, so adding it here would make three places a page size is decided for no
 case in this sweep.
 
-**`MaxOffsetRows` and `AllowDistinct` are the two bounds nobody has proposed
-anywhere.** `MaxPageSize` caps rows *returned* and does nothing about rows
+**`port.Rules.MaxOffsetRows` and `AllowDistinct` are the two bounds nobody has
+proposed anywhere.** `PageCap` caps rows *returned* and does nothing about rows
 *scanned*: `?page=10000000&limit=100` still walks to the offset, and the module
 page already concedes nothing helps there. A deep page should refuse at path
 `page` with a message pointing at `after`/`before`, which is the answer
@@ -970,19 +1003,21 @@ doc comment already makes (`compile.go:53-67`): this bounds how much work
 happens rather than what may be named, so the dangerous direction is the one
 that has to be named.
 
-**`MaxPreloadRows` needs a mechanism, and round 1 forbade the only one.** Round 1
+**`port.Rules.MaxPreloadRows` needs a mechanism, and round 1 forbade the only one.** Round 1
 wrote that it "must be a *refusal* when the batch would exceed it, not a `LIMIT`
 on the child statement". As specified that is not implementable: [[D-006]]'s
 invariant is one statement per relation per level, which rules out a preflight
 `COUNT(*)`, and a refusal computed after the batch returned has already
-materialised the rows the ceiling exists to bound. The distinction the sentence
-missed: a `LIMIT` that *truncates* a child list is what D-006 and
-`crud/preload.go:193-196` forbid; a `LIMIT n+1` read as a **tripwire** and turned
-into a refusal is not — it keeps the statement count and stops before the rows
-land. Concretely: `query` emits a `crud.PreloadCeiling(n)` option,
-`crud/preload.go` reads it, the child statement carries `LIMIT n+1`, and the
-n+1st row is a `query.Error` naming the relation. It adds no statement and no
-dependency. **Its failure mode has to be stated in the same breath**: the refusal
+materialised the rows the ceiling exists to bound. The distinction needs an owner
+decision: a `LIMIT` that *truncates* a child list is what [[D-006]] and
+`crud/preload.go:193-196` forbid, but D-006 currently forbids preload limits
+generally. A `LIMIT n+1` tripwire may preserve the statement count, but it is not
+proven compatible with D-006; amend that decision and add statement-count,
+no-truncated-success, and n/n+1 controls before claiming it. Concretely, the
+proposed `query`-emitted `crud.PreloadCeiling(n)` option would be read by
+`crud/preload.go`; its child statement would carry `LIMIT n+1`, and the n+1st row
+would become a `query.Error` naming the relation. **Its failure mode has to be
+stated in the same breath**: the refusal
 depends on the data, so the same `?preload=comments` works today and 400s
 tomorrow because one thread went viral, and the client's only retry is a smaller
 page. That is worse DX than a static bound and better than an unbounded read; if
@@ -1027,12 +1062,12 @@ makes twenty resources bearable.
 
 ### What it must not break
 
-- **[[D-060]] is challenged twice and I am naming both.** It places the page
-  ceiling deliberately — "an endpoint that wants a page size says so with
-  `sqlrepo.MaxLimit`" — and a `MaxPageSize` in `query.Config` contradicts that
-  placement. Its invariant also says every bound on how much comes back is closed
-  by default, which a zero-means-unbounded field would breach; the non-zero
-  default above is what keeps the second half. I propose both anyway, because
+- **[[D-060]] is challenged explicitly.** It places the page ceiling deliberately
+  in `sqlrepo.MaxLimit`; the proposed route-owned `port.Rules.PageCap`
+  contradicts that placement. Its invariant also says every bound on how much
+  comes back is closed by default, which a zero-means-unbounded field would
+  breach; the non-zero default above is what keeps the second half. I propose the
+  route owner anyway, because
   D-060's own central argument — two open defaults that only protect in
   combination protect nothing — applies verbatim to `limit`, which is `unpaged`
   written as a number, and because H-QUERY-21 is the case D-060's placement
@@ -1040,9 +1075,8 @@ makes twenty resources bearable.
   `Config.Check` as having moved the misspelled-entry failure to declaration, and
   only a test calls `Config.Check`.
 - **[[D-006]]** — a preload is a batched second statement, loaded for every
-  parent at once. `MaxPreloadRows` keeps the statement count and uses a `LIMIT
-  n+1` tripwire that refuses rather than truncates. Round 1's wording forbade
-  that mechanism and left the field unimplementable; see above.
+  parent at once. A `port.Rules.MaxPreloadRows` tripwire is an unresolved design,
+  not a claimed D-006-compatible mechanism; see above.
 - **[[D-021]]** — the magic must fail early. `sqlrepo.Define`, `crud.NewMeta`,
   `Blueprint.resolveRelationScopes` and `security.relationFieldName` all fail at
   declaration for this class of typo. `query.Config` is the odd one out, and it
@@ -1186,11 +1220,11 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
   ending (`compile.go:624-626`) and is driven by `searchFields` on the wire, so a
   stranger reaches it from a correct config — including the zero `Config` the
   module page calls "a usable default".
-- **`MaxPageSize` in `query.Config` still challenges [[D-060]]'s placement, and
-  now its default too.** Three sweeps propose three homes: a non-zero default on
-  `sqlrepo.MaxLimit` (general), a clamp in `port.Rules` (crudhttp), an endpoint
-  field (here). I keep the endpoint field, because H-QUERY-21 is the case the
-  other two cannot serve. One release cannot ship three placements.
+- **A route-owned `port.Rules.PageCap` challenges [[D-060]]'s placement, and its
+  default too.** Three sweeps propose three homes: a non-zero default on
+  `sqlrepo.MaxLimit` (general), a clamp in `port.Rules` (crudhttp), and the
+  route-owned `Rules` surface here. I nominate `port.Rules`; one release cannot
+  ship three placements.
 - **H-QUERY-10's guarantee 3 is downgraded rather than dropped.** It is a
   recorded carve-out in UC-002's **Out of scope**, so it is not a defect. It
   stays visible because a consumer shipping a public endpoint reads "nothing
@@ -1282,13 +1316,13 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
 **Evidence:** `path` enforces `Config.MaxDepth` for fields at `crud/query/compile.go:548-563`, but the preload loop calls `meta.RelationAt` directly at `crud/query/compile.go:330-347`. Execution does have a separate fixed default of five levels (`crud/preload.go:11-14,113-123`), and `TestPreloadDepthIsCapped` exercises that default (`crud/query/preload_test.go:170-177`); no test ties a smaller `query.Config.MaxDepth` to a preload.
 **Blast radius:** confusing error
 
-### E-QUERY-09 — A duplicate preload removes its own narrowing
+### E-QUERY-09 — A duplicate preload reaches the core merge rule
 **Shape:** seam
 **Setup:** A saved-view merge emits both a bare `comments` preload and a filtered `comments` preload.
-**What the consumer does:** It expects the duplicate to be refused or both supplied constraints to be preserved; the document includes a filter for a reason.
-**What must happen:** A request must not return a wider child collection than one of its own duplicate entries asked for without a refusal or an explicit merge rule.
+**What the consumer does:** It expects the wire door either to refuse the duplicate or to state the core merge rule before returning a wider child collection than one entry requested.
+**What must happen:** The query compiler must not hide the duplicate; the core preload contract owns whether an unfiltered request wins or the request is refused.
 **Today:** 🟡 partial
-**Evidence:** the query compiler accepts and appends each preload independently at `crud/query/compile.go:330-347`. The preload tree deliberately lets the bare request discard narrowings at `crud/preload.go:70-102`, and `crud/preload_edge_test.go:75-110` pins that "wider request wins" behaviour. No query-door test establishes that behaviour for duplicate `Preload` entries in one document.
+**Evidence:** the query compiler accepts and appends every wire `Preload` entry at `crud/query/compile.go:330-347`; it has no duplicate-path check. The outcome after those options reach the core preloader is owned by the core sweep and its preloader contract (General E-GENERAL-08 and [[D-006]]); no query-door test establishes the duplicate-entry seam.
 **Blast radius:** silent wrong answer
 
 ### E-QUERY-10 — The same sort field requested both ways
@@ -1327,9 +1361,18 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
 **Evidence:** `node` checks depth before descending at `crud/query/filter.go:16-29`; `crud/query/hostile_test.go:384-406` drives depths 100, 5,000 and 50,000 through both the decoded document and a raw filter and requires rejection. `crud/query/hostile_test.go:442-467` separately pins that a rejected document returns no options.
 **Blast radius:** none
 
+### E-QUERY-14 — Repeated scalar query keys choose a private winner
+**Shape:** adversarial input | misuse
+**Setup:** A proxy, browser helper and hand-written link compose `?limit=20&limit=100`, two `filter` documents, or two different `after` cursors.
+**What the consumer does:** It expects a repeated scalar control to be refused when values conflict, rather than having parameter order choose the request.
+**What must happen:** Repeated scalar keys and aliases must either agree exactly or produce a `query.Error` naming the conflicting key; repeatable collection keys such as `f`, `sort`, and `preload` retain their documented collection semantics.
+**Today:** ❌ wrong or unhandled
+**Evidence:** numeric parsing uses `url.Values.Get`, which returns only the first `limit` value (`crud/query/querystring.go:161-171,191-193`); `filter` likewise keeps only the first document (`:221-227`), and `firstOf` selects the first non-empty cursor spelling (`:336-342`, used at `:204-205`). `multi` deliberately collects every value only for collection keys (`:324-334`). No duplicate-scalar-key test was found under `crud/query/`.
+**Blast radius:** silent wrong answer
+
 ## Edge verdict
 
-The worst open edge is still an accepted filter that removes its own narrowing: an empty `notIn` is `1 = 1`, and an empty boolean group also becomes no predicate (`crud/query/filter.go:72-79,292-303`; `crud/query/edge_test.go:90-140`). The package is genuinely closed against deep filter recursion and against handing options back on that refusal (`crud/query/filter.go:16-29`; `crud/query/hostile_test.go:384-467`); its existing hostile suite also pins unknown-name and list-cap refusals. It remains too willing to normalise malformed or contradictory input — invalid unary values, negative paging, aliases, cursors and sort directions choose a different request rather than refuse it (`crud/query/querystring.go:68-78,161-196`; `crud/query/compile.go:281-311,381-386`). Declaration-time safety is incomplete: `Check` catches misspelled paths but not numeric bounds, and the configured depth does not govern preload paths (`crud/query/compile.go:95-198,330-347,548-563`).
+The worst open edge is still an accepted filter that removes its own narrowing: an empty `notIn` is `1 = 1`, and an empty boolean group also becomes no predicate (`crud/query/filter.go:72-79,292-303`; `crud/query/edge_test.go:90-140`). The package is genuinely closed against deep filter recursion and against handing options back on that refusal (`crud/query/filter.go:16-29`; `crud/query/hostile_test.go:384-467`); its existing hostile suite also pins unknown-name and list-cap refusals. It remains too willing to normalise malformed or contradictory input — invalid unary values, negative paging, repeated scalar keys and aliases, cursors and sort directions choose a different request rather than refuse it (`crud/query/querystring.go:68-78,161-205,221-227,336-342`; `crud/query/compile.go:281-311,381-386`). Declaration-time safety is incomplete: `Check` catches misspelled paths but not numeric bounds, and the configured depth does not govern preload paths (`crud/query/compile.go:95-198,330-347,548-563`).
 
 ## Release blockers found here (edge)
 
@@ -1338,3 +1381,4 @@ The worst open edge is still an accepted filter that removes its own narrowing: 
 | 1 | An empty boolean `or`/`and`/`not` is accepted and contributes no predicate (`crud/query/filter.go:72-114`; pinned by `crud/query/edge_test.go:90-112`) | serious | A malformed filter builder receives 200 for the unfiltered list. This is the same silent-widening failure class as the existing empty-`notIn` blocker, reached through a different ordinary UI shape. |
 | 2 | `?f=publishedAt:isNull:yes` silently becomes `IS NOT NULL` because `ParseBool`'s error is discarded (`crud/query/querystring.go:68-78`) | serious | A typo reverses which rows a nullable-column filter returns, with no 400 for the client or operator to notice. |
 | 3 | Negative `page`, `limit` and `offset` parse successfully then resolve to the default page/zero offset (`crud/query/querystring.go:161-196`, `crud/query/compile.go:349-358`) | sharp edge | A stale or malicious pagination value gets a 200 for a different page than the URL requested; the existing test only covers non-numbers. |
+| 4 | Repeated scalar keys keep only the first `limit`, `filter`, or cursor value (`crud/query/querystring.go:161-171,191-205,221-227,336-342`) | serious | A proxy or composed URL can turn the intended request into another valid request without a refusal; order, not a documented rule, selects the result. |

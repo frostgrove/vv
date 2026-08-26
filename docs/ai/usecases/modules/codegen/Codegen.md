@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/cmd/vv`, `github.com/frostgrove/vv/internal/codegen`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — `-adapter` exposes auto primary keys and cannot read a shared embedded base; the edge sweep adds destructive output paths, build-tag-blind parsing, silently omitted named types, and colliding relation artefact names.
+**Verdict:** not ready — `-adapter` exposes auto primary keys and cannot read a shared embedded base; the edge sweep adds destructive output paths, build-tag-blind parsing, silently omitted named types, colliding relation artefact names, and no no-write check that detects a stale checked-in artefact in ordinary CI.
 
 ## What a consumer is actually trying to do
 
@@ -750,20 +750,20 @@ documents should not disagree quietly.
 
 ### E-CODEGEN-02 — The output path leaves the package
 **Shape:** adversarial input | misuse
-**Setup:** A typo or copied shell variable supplies `-out ../main.go`, an absolute-like path, or a symlink whose target is outside the package the directive is meant to generate for.
+**Setup:** A typo or copied shell variable supplies `-out ../main.go`, `-out sub/../../main.go`, or a symlink whose target is outside the package the directive is meant to generate for.
 **What the consumer does:** They expect `-out` to name one generated file inside `-dir` or `-into`, not to be an unconstrained write capability.
 **What must happen:** The command must reject a path that escapes the resolved output directory and refuse to follow an existing symlink; intentional cross-package output belongs to the explicit `-into` seam.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `internal/codegen/codegen.go:518-563` resolves `o.Out` with `filepath.Join` and passes it straight to `g.run`; `g.run` writes that path directly at `:138-143`. There is no containment, absolute-path, or symlink check, and no output-path test outside the temporary package (`internal/codegen/codegen_test.go:15-52`).
+**Evidence:** `internal/codegen/codegen.go:559-563` joins `Out` to the selected directory and passes the cleaned result straight to `g.run`; a later absolute-looking component does not itself discard that directory, so that is not this failure. Parent traversal still escapes it, and `g.run` writes the result directly (`:138-143`), following an existing symlink. There is no lexical containment or symlink check, and no output-path test outside the temporary package (`internal/codegen/codegen_test.go:15-52`).
 **Blast radius:** data loss
 
 ### E-CODEGEN-03 — Two invocations target the same generated file
 **Shape:** concurrency | misuse
 **Setup:** Two `go:generate` directives select different `-types` but retain the default output, or two developers' generation processes overlap in a shared checkout.
 **What the consumer does:** They expect a named configuration error or a lock, not whichever complete file happened to write last.
-**What must happen:** The target file must identify the directive/configuration that owns it, and concurrent or conflicting writers must fail before replacing it.
+**What must happen:** Concurrent writers must be serialised or one must refuse before either replaces the target; a complete last-writer-wins file is still the wrong configuration outcome.
 **Today:** ❌ wrong or unhandled
-**Evidence:** every run renders independently then unconditionally writes the same `outPath` (`internal/codegen/codegen.go:116-148`); no lock, ownership marker, or target-content comparison exists. `-types` becomes only a filter map (`:549-553`), while the generated header contains no configuration (`internal/codegen/render.go:41-43`). `TestOutputIsByteIdenticalAcrossRuns` uses fresh directories for each run (`internal/codegen/codegen_test.go:555-596`), not shared output.
+**Evidence:** every run renders independently then unconditionally writes the same `outPath` (`internal/codegen/codegen.go:116-148`); no lock or conflict check exists. `-types` becomes only a filter map (`:549-553`), while the generated header contains no configuration (`internal/codegen/render.go:41-43`). `TestOutputIsByteIdenticalAcrossRuns` uses fresh directories for each run (`internal/codegen/codegen_test.go:555-596`), not a shared output.
 **Blast radius:** silent wrong answer
 
 ### E-CODEGEN-04 — Generation is interrupted while replacing the output
@@ -847,24 +847,43 @@ documents should not disagree quietly.
 **Evidence:** `internal/codegen/codegen.go:129-131` rejects an empty `g.order` before render/write. `TestAPackageWithNothingToGenerateIsAnError` pins an untagged empty package (`internal/codegen/codegen_test.go:514-528`), but does not cover the `-types`-after-rename form or require the error to name requested types.
 **Blast radius:** none
 
+### E-CODEGEN-13 — A checked-in artefact is stale but the ordinary build consumes it
+**Shape:** seam | partial failure
+**Setup:** A model or generator changes, `vv_gen.go` remains checked in from yesterday, and a normal build or test compiles the old generated declarations without regenerating them.
+**What the consumer does:** They need CI to answer whether the committed artefact equals a fresh generation, without modifying the checkout that CI is trying to validate.
+**What must happen:** `-check` regenerates the candidate without writing the target and fails on a content difference; the documented workflow runs it for every directive. It complements [[D-050]]'s run-time totality check, which cannot prove a generator-version or metamodel-shape change is current.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `cmd/vv/main.go:63-85` exposes no `-check` flag, and every `codegen.Run` invocation reaches `g.run`, whose persistence path is `os.WriteFile` (`internal/codegen/codegen.go:518-563`, `:138-143`). `TestOutputIsByteIdenticalAcrossRuns` compares fresh temporary outputs (`internal/codegen/codegen_test.go:555-596`); no repository artefact-versus-regeneration check or no-write command test exists.
+**Blast radius:** silent wrong answer
+
 ## Edge verdict
 
-The release-stopping edge is destructive generation: an authored or escaping
-output path is overwritten without a generated-header, containment, or symlink
-check, and the single direct write has no atomic replacement guarantee. The
+The release-stopping edge is destructive generation: an authored output, a
+parent-traversing output path, or a symlink target is overwritten without a
+generated-header, containment, or symlink check, and the single direct write has
+no atomic replacement guarantee. A later absolute-looking `-out` component is
+not itself an escape through `filepath.Join`; the real path risks are traversal
+and symlinks. The
 generator also reads syntax rather than the active Go build, so build tags can
 turn a successful generation into an artefact for a package that the target build
 does not contain. Less visibly, a mixed `-types` list, per-model exclusion, and
 relation-name collision all omit or mis-shape generated artefacts while still
-leaving a plausible-looking file. The incompatible adapter/DTO combination and
-the truly empty package do refuse before writing; their command-level coverage is
-still missing.
+leaving a plausible-looking file. A stale checked-in artefact has no no-write
+detection workflow: [[D-050]] catches one class of model/DTO divergence at
+start-up, not whether the committed generator output is current. The incompatible
+adapter/DTO combination and the truly empty package do refuse before writing;
+their command-level coverage is still missing.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `-out` overwrites any authored file and may escape `-dir`/`-into`; no generated-header, containment, or symlink guard exists (`internal/codegen/codegen.go:116-155`, `:518-563`) | blocker | A one-character directive typo can replace model or application source outside the intended generated target. The output is version-controlled source, so recovery is not guaranteed before the next build or commit. |
+| 1 | `-out` overwrites any authored file and can escape through `..` or an existing symlink; no generated-header, containment, or symlink guard exists (`internal/codegen/codegen.go:116-155`, `:559-563`) | blocker | A one-character directive typo can replace model or application source outside the intended generated target. The output is version-controlled source, so recovery is not guaranteed before the next build or commit. |
 | 2 | Build-tagged files are parsed as though every target were active, and the generated package is selected while ranging parsed packages (`internal/codegen/codegen.go:151-155`, `:181-212`) | serious | A successful generation can refer to a platform- or feature-specific model unavailable in the build that compiles the artefact, with no diagnosis at the directive. |
 | 3 | A mixed valid/invalid `-types` list and a qualified or ambiguous `-skip`/`-readonly` name silently omit or alter a model (`internal/codegen/codegen.go:201-208`, `:301-311`, `:549-553`) | serious | The generated file looks complete while the model a consumer meant to protect has no DTO, metamodel, or coverage assertion, or a different model's wire shape changed instead. |
 | 4 | Distinct relation paths can collapse onto one concatenated generated attribute-group name (`internal/codegen/render.go:186-191`, `:238-244`) | serious | A typed navigation path silently reuses or loses another path, undermining the guarantee that generated metamodels reflect the model graph. |
 | 5 | Replacement uses one non-atomic `os.WriteFile` with no recoverable temporary output (`internal/codegen/codegen.go:138-143`) | sharp edge | A kill or write failure can leave the only generated file truncated; the exact failure path is untested, so this is a release risk rather than a claimed observed outcome. |
+| 6 | No `-check` mode compares a checked-in artefact with fresh output without writing it (`cmd/vv/main.go:63-85`; `internal/codegen/codegen.go:138-143`) | serious | A normal build can consume yesterday’s generated API and CI has no supported, read-only way to make the drift visible before it ships. |
+
+## Edge DX constraints
+
+`-types`, `-skip`, and `-readonly` must resolve every supplied name exactly and refuse unused, ambiguous, or conflicting choices; the current permissive forms are not a compatibility contract. `-attr` needs the same explicit conflict rule for imported aliases and type spellings before it can be offered as a short path. A future `-check` must render the same candidate as generation and compare it without writing the output; it is a drift check, not another generator mode. Changing the generated `specs.Str` signature is breaking for every checked-in corpus, so it needs a migration that regenerates all committed artefacts in the same release. [[D-050]] continues to require source-derived generated totality at start-up, and [[D-018]] remains the owner of the flag vocabulary and checked-in-output contract.

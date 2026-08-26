@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/http/crudhttp`, `github.com/frostgrove/vv/crud/http/crudnet`, `github.com/frostgrove/vv/crud/http/crudfiber`, `github.com/frostgrove/vv/crud/http/crudgin`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the happy half's write-side gaps remain, and hostile but valid HTTP bodies add three more ways to alter the wrong data: under `New`, an absent or `null` mutation body becomes a zero model, a duplicate JSON key chooses its last value, and `null` in a numeric bulk-id list becomes key zero. A nil query config also turns an apparently bounded public endpoint back into the open default. The small request and response paths are otherwise deliberately bounded, but several declaration errors wait until the first live request.
+**Verdict:** not ready — the happy half's write-side gaps remain, and hostile but valid HTTP bodies add three more ways to alter the wrong data: under `New`, an absent or `null` mutation body becomes a zero model, a duplicate JSON key chooses its last value, and `null` in a numeric bulk-id list becomes key zero. A nil query config also turns an apparently bounded public endpoint back into the open default. The common body-cap contract belongs to Port and still lacks an exact-boundary triplet; string IDs also have no stated encoded-slash or path-normalisation contract across the three routers.
 
 ## What a consumer is actually trying to do
 
@@ -474,7 +474,8 @@ Two knobs this module wants and does not have:
 
 ```go
 shared := crudhttp.Rules{
-    MaxLimit:   200,                                          // per endpoint, clamping down only
+    // Page-cap field/name and MaxLimit migration are pending D-060 authority;
+    // this binding forwards the selected shared rule rather than choosing it.
     StrictBody: true,                                         // an unknown key in a write body is a 400 naming it
     OnError:    func(ctx context.Context, err error) { … },   // see the failure; do not take over rendering it
 }
@@ -626,11 +627,12 @@ the group is a bigger version of the trap.
   a group inheriting a body cap must not make some route inherit zero, and
   H-CRUDHTTP-16's `total` needs a spelling for "not measured" that is not a
   number.
-- **[[D-060]]** — the volume bounds stay closed by default and the *name* bounds
-  stay open. The per-endpoint page ceiling H-CRUDHTTP-02 asks for clamps
-  downwards only and carries a generous non-zero default expressed as a method in
-  the shape of `Rules.BulkCap()`, so the four transports cannot disagree about
-  what unset means. H-CRUDHTTP-20's proposal to close `Searchable` by default is
+- **[[D-060]] page-cap authority is pending one explicit migration decision.**
+  The current physical `sqlrepo.MaxLimit` clamp is real but unset by default;
+  Query proposes route-owned `port.Rules.PageCap`. Crudhttp neither promotes one
+  as permanent nor creates a local cap: it forwards and tests the selected shared
+  rule, including its default, its relationship to `MaxLimit`, and Remote's
+  non-truncation outcome. H-CRUDHTTP-20's proposal to close `Searchable` by default is
   a **challenge** to the other half of this decision and must be argued as one:
   search is a bound on what a request may name, and [[D-060]] says those are
   open. The other half of that case — a search that matches nothing returning the
@@ -678,7 +680,7 @@ decision doc written first.
 | A request body of its own | `NewFor` on create and replace; `PATCH` always decodes the generated DTO | small to live with · a fourth constructor's surface to **decide** |
 | A bound on which columns a client may write | the four kinds of column the tags already mark, and nothing else; the only seam is a hand-written `BeforeUpdate` | large to live with · a doc paragraph to close · a `Writable` list to **decide** |
 | A search bounded like a filter | `Searchable` unset searches every text column, and a term matching none is dropped and answered 200 | large to live with · two `return nil, nil` sites to close · the default to **decide** |
-| A page-size ceiling per endpoint | not at the endpoint; `sqlrepo.MaxLimit` on the repository, unset by default, and an unbounded page is marshalled into one buffer | large to live with · a field on `port.Rules` to close |
+| A page-size ceiling per endpoint | today only the unset repository `MaxLimit` clamp exists, so an unbounded page is marshalled into one buffer; the permanent route/repository authority is pending D-060 migration | large to live with · binding forwards/tests the selected shared rule |
 | Refusals a client can act on | status, code, field, locale — nothing to write, until a catalogue and a renamed field are wanted together | small to live with · one line in `build` to close |
 | Tenant isolation on the reads and the writes | the gate on the repository, which really does reach `DELETE` and `UPDATE` | none |
 | The transport lever that looks like the answer | `WithScope` is reads-only; `GET /{id}` is 404 and `DELETE /{id}` is 200 and deletes; the doc comment says so, the name does not | small to live with · a four-package rename to close |
@@ -720,7 +722,7 @@ is what gets read before the tag.
 | 5 | An unknown key in a write body is dropped: 201 over a row with that column defaulted on create, 200 over an unchanged row on patch — including `{"tenantId": 9}`, so a cross-tenant move is answered with success | serious | It is [[D-013]]'s failure mode one route over, and the create half writes something wrong rather than nothing |
 | 6 | `WithRenderer` and `WithErrorHandler` both bypass the hop-aware renderer, so a message catalogue and a client-facing field name are mutually exclusive on a resource — and nothing says so | serious | It bites hardest on the generated adapter, which is the path `_examples/example/blog/vv_gen.go:145` mounts. Shares one fix location with #7: `build`'s renderer selection |
 | 7 | Render options handed to `Errors` never reach the CRUD routes on any binding, and both doc comments say the opposite — `crudnet/middleware.go:44-46` and `crudfiber/middleware.go:50-56` | serious | A consumer configures the envelope in the one place that looks global, gets it in none of the places that matter, and the documentation told them it would work. Same fix location as #6 |
-| 8 | No page-size ceiling at the endpoint: `?limit=1000000` is served unless the repository declared `MaxLimit`, which is unset by default — and the page is marshalled into one buffer before a byte is written | serious | The endpoint-shaped bound is on the wrong object, `Serving` over somebody else's service has no lever, and the failure is an out-of-memory kill in a shared process. Already [[UC-002]] gap 20 — joint with `port` |
+| 8 | No effective default page-size ceiling: `?limit=1000000` is served unless the repository declared its currently-unset `MaxLimit`, and the page is marshalled into one buffer before a byte is written | serious | The route-specific consumer need is real; D-060 must select and migrate the shared route/repository authority before this binding forwards and tests it. Until then `Serving` over somebody else's service has no lever and the failure is an out-of-memory kill. Already [[UC-002]] gap 20 — joint with `port` |
 | 9 | Nothing bounds which columns a client may write; the update DTO carries every column that is not the key, generated, immutable or version, and the only seam is a hand-written `BeforeUpdate` | serious | "Who can set `role`?" is the first question on every API review, and the answer is in no case, example or module page |
 | 10 | `docs/modules/en/crudfiber.md:151` and `docs/modules/ru/crudfiber.md:152` promise XML and form bodies (all three decode JSON only, `crudfiber/handler.go:424`), and `:157-160` promises the retained body is reachable from a hand-written endpoint (`bodyKey` is unexported) | serious | Two wrong sentences on one page, and the page is what a consumer trusts. [[FL-013]]'s difference table already has the right value, so the fix is a copy |
 | 11 | A presenter is handed an `M` whose unselected fields are zero when a client sends `?select=`, and `Selectable` is open by default | sharp edge | A display name composed from two columns comes back empty with a 200, and no test anywhere combines the two |
@@ -838,23 +840,11 @@ is what gets read before the tag.
 **Evidence:** `BulkDeleteRequest` is a slice of the concrete key type (`crud/http/crudhttp/request.go:8-11`), and each binding unmarshals it through the plain shared decoder before only checking length (`crud/http/crudnet/handler.go:388-403`, `crud/http/crudgin/handler.go:371-386`, `crud/http/crudfiber/handler.go:353-365`). For a numeric slice `encoding/json` leaves the element at zero for `null`; `port/service.go:228-235` then passes every non-empty id slice to the repository. The existing empty-list test covers `{}` and `{"ids":null}` but not a `null` element (`crud/http/crudnet/edge_test.go:198-220`, with matching test names in Gin and Fiber).
 **Blast radius:** data loss
 
-### E-CRUDHTTP-06 — Exactly at the body cap
-**Shape:** boundary
-**Setup:** A client sends one valid JSON body whose encoded size is exactly `MaxBody`, then one that is one byte larger.
-**What the consumer does:** They size an upload against the configured limit and expect the limit to be inclusive and the next byte to be a 413, on all three transports.
-**What must happen:** The body at the cap parses; the body past it is refused before parsing or a repository call.
-**Today:** ❓ unverified
-**Evidence:** The implementation reads `limit+1` bytes and rejects only `len(body) > limit` (`port/porthttp/body.go:62-90`); Fiber also sets its standalone app limit to one byte beyond the handler's cap (`crud/http/crudfiber/handler.go:129-150`). The triplet tests exercise an under-cap body and a much larger one, not the exact and plus-one boundary (`crud/http/crudnet/edge_test.go:531-553`, with matching test names in Gin and Fiber).
-**Blast radius:** none
+### E-CRUDHTTP-06 — Pointer: the exact body cap reaches a mounted route
+**Owner:** [Port.md](../port/Port.md) owns inclusive body-limit semantics. Crudhttp owns the mounted-route impact: the exact and plus-one boundary must be tested through Crudnet, Gin and Fiber before their shared decoder’s guarantee is marked handled. **Today:** ❓ unverified — `port/porthttp/body.go:62-90` has the inclusive implementation, but the binding triplets cover under-cap and much-larger bodies, not exactly-at/plus-one (`crud/http/crudnet/edge_test.go:531-553`, with matching test names in Gin and Fiber).
 
-### E-CRUDHTTP-07 — A cap set to zero is not a request for infinity
-**Shape:** misuse
-**Setup:** A deployment loads `MaxBody(0)`, `MaxBody(-1)`, `MaxBulk(0)` or `MaxBulk(-1)` from an optional environment variable.
-**What the consumer does:** They expect a bad or absent numeric setting to retain the safe default, not to remove a cap.
-**What must happen:** The default caps remain in force and the effective number is identical on all three bindings.
-**Today:** ❓ unverified
-**Evidence:** The shared body decoder restores `MaxBody` for zero or less (`port/porthttp/body.go:62-82`), and `port.Rules.BulkCap` restores `DefaultMaxBulk` for zero or less (`port/rules.go:43-66`). Fiber's standalone app follows the same body default (`crud/http/crudfiber/handler.go:142-150`). The adjacent tests cover an omitted cap and positive `MaxBulk` boundaries, but no explicit zero or negative option (`crud/http/crudnet/edge_test.go:531-573`, `crud/http/crudnet/options_test.go:276-297`, with matching test names in Gin and Fiber).
-**Blast radius:** none
+### E-CRUDHTTP-07 — Pointer: zero or negative caps retain the shared default
+**Owner:** [Port.md](../port/Port.md) owns body and bulk-cap defaults; [[D-060]] assigns the one bulk-cap owner to `port.Rules.BulkCap`. Crudhttp retains only the binding conformance question. **Today:** ❓ unverified — `port/porthttp/body.go:62-82` and `port/rules.go:43-66` restore defaults, but no three-binding test supplies explicit zero or negative options (`crud/http/crudnet/edge_test.go:531-573`, `crud/http/crudnet/options_test.go:276-297`, with matching test names in Gin and Fiber).
 
 ### E-CRUDHTTP-08 — A nil query config turns the public API open
 **Shape:** misuse
@@ -910,6 +900,15 @@ is what gets read before the tag.
 **Evidence:** The bindings do pass their request context into service calls (`crud/http/crudnet/handler.go:204-280` and `:290-403`; `crud/http/crudgin/handler.go:187-263` and `:273-386`; `crud/http/crudfiber/handler.go:192-257` and `:267-365`). But `port.sentinelKind` has no cancellation or deadline arm and falls through to `KindInternal` (`port/kind.go:103-128`), which maps to 500 (`port/porthttp/errors.go:51-71`). No cancellation or deadline test was found under the three HTTP bindings. This is the inherited `errs`/`porthttp` gap already recorded as item 15 in the happy-half blocker table.
 **Blast radius:** confusing error
 
+### E-CRUDHTTP-14 — A string ID crosses encoded slashes and path cleaning
+**Shape:** seam | adversarial input
+**Setup:** A resource has a string ID such as `tenant/a`, `a//b`, or `a/../b`. A client sends its encoded spelling through a proxy that may decode `%2F`, collapse duplicate slashes, or clean dot segments before the request reaches Crudnet, Gin, or Fiber.
+**What the consumer does:** They need one documented wire rule: either string IDs exclude slash and dot-path spellings, or every supported router preserves one canonical escaped form. A request must not select a different row because an intermediary normalised its path.
+**What must happen:** Each binding rejects an unsafe path spelling before `CoerceID`, or all three preserve and test the same ID bytes. The route table must say which form generated clients may use.
+**Today:** ❓ unverified
+**Evidence:** Crudnet mounts `/{id}` and hands `r.PathValue("id")` to `port.CoerceID` (`crud/http/crudnet/handler.go:149-177`, `:466`); Gin and Fiber instead pass `c.Param("id")` and `c.Params("id")` (`crud/http/crudgin/handler.go:448-451`; `crud/http/crudfiber/handler.go:440-443`). `port.CoerceID` accepts a raw string key (`port/request.go:15-28`). No encoded-slash, duplicate-slash, or dot-segment test was found under the three bindings.
+**Blast radius:** silent wrong answer
+
 ## Edge verdict
 
 The worst open path is a mutation body that carries no object at all: empty and
@@ -919,8 +918,9 @@ duplicate value silently, while `null` inside a numeric bulk list can become the
 zero key. Configuration is not treated as a declaration: `WithQuery(nil)` opens
 an endpoint, a mutable config remains live under requests, and some unusable
 types or dependencies fail only after traffic arrives. The byte caps themselves
-are designed correctly, but their exact boundaries and bad configured values
-need direct triplet tests.
+are Port-owned; this module needs mounted exact-boundary and explicit-default
+conformance tests. String IDs also cross three router path-normalisation rules
+without a stated shared contract.
 
 ## Release blockers found here (edge)
 
@@ -930,3 +930,16 @@ need direct triplet tests.
 | 2 | Duplicate JSON keys silently take the last value before a write | serious | An upstream check, signature or audit record can describe one value while the framework persists another. The client sees success and no warning. |
 | 3 | `{"ids":[7,null]}` on a numeric bulk delete can pass key zero to the repository | serious | A malformed batch can delete an otherwise valid zero-key row. The whole request must fail before the repository sees any id. |
 | 4 | `WithQuery(nil)` discards the apparent public-query boundary and leaves the open default | serious | A typed declaration that looks like an allow-list can expose every mapped field. It must fail when the handler is built. |
+
+## Edge DX constraints
+
+`WithQuery(nil)` must refuse at handler construction; its name is a declaration
+of a query boundary, not a request-time optional value. Renderer precedence stays
+with the shared Port renderer/hop path rather than adding another binding-local
+renderer configuration. Any future success or page-envelope change must be
+evaluated against [[D-013]]’s refusal rule, [[D-042]]’s advisory/complete
+vocabulary, and [[D-052]]’s document contract; it is not a local JSON
+convenience. [[D-060]] remains the owner of volume-default decisions: bulk has
+the settled `port.Rules.BulkCap` rule, while page-cap authority/migration remains
+pending. Crudhttp may test binding conformance for whichever shared page rule is
+selected, but must not create another cap policy.

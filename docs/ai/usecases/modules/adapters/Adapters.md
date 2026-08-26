@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/adapter/crudsql`, `github.com/frostgrove/vv/crud/adapter/crudpgx`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. A `WithTxOptions` copy also aliases mutable caller state, and COPY cannot represent a schema-qualified destination as callers naturally spell one.
+**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. A `WithTxOptions` copy also aliases mutable caller state; pgx-only COPY cannot represent a schema-qualified destination as callers naturally spell one; and no repository transaction test follows a typed driver refusal through rollback and back to the caller.
 
 ## What a consumer is actually trying to do
 
@@ -792,8 +792,8 @@ consumer starts writing code this library was supposed to have written.
 **Evidence:** `crud.Rows.Close` has no error result (`crud/executor.go:18-25`); `crudsql.rows.Close` explicitly discards `*sql.Rows.Close`'s error (`crud/adapter/crudsql/crudsql.go:113-117`); and repository read paths defer `Close` then return the earlier `Rows.Err` result (`crud/sqlrepo/repository.go:964-985`, `:988-1000`). `crudpgx` only wraps `Rows.Err` (`crud/adapter/crudpgx/crudpgx.go:104-115`). No adapter test exercises a close-time error.
 **Blast radius:** silent wrong answer
 
-### E-ADAPTERS-10 — COPY targets a schema-qualified table
-**Shape:** boundary
+### E-ADAPTERS-10 — Pointer: pgx COPY targets a schema-qualified table
+**Owner:** This is `crudpgx`-only: `crudsql` exposes no COPY fast path. The pgx adapter must either accept schema and relation as distinct identifier parts or reject dotted input before PostgreSQL sees it.
 **Setup:** A PostgreSQL application keeps tenant tables outside `public` and calls `CopyFrom(ctx, "tenant_42.products", columns, rows)`.
 **What the consumer does:** They expect the normal PostgreSQL spelling to reach `tenant_42.products`, or a clear rejection that says the API accepts only one identifier component.
 **What must happen:** The COPY API accepts a schema and relation as distinct identifier parts, or rejects dotted input before contacting PostgreSQL.
@@ -819,6 +819,15 @@ consumer starts writing code this library was supposed to have written.
 **Evidence:** Both option collectors apply every option in order and retain the final field value (`crud/adapter/crudsql/crudsql.go:48-68`; `crud/adapter/crudpgx/crudpgx.go:50-74`), while `WithFaults` is an unconditional replacement in both (`crudsql.go:53-58`; `crudpgx.go:55-60`). The tests prove one supplied classifier changes the result (`crud/adapter/crudsql/classify_test.go:25-64`) but do not exercise duplicate ordering or a feature-composed option list.
 **Blast radius:** silent wrong answer
 
+### E-ADAPTERS-13 — A repository transaction returns a typed driver refusal
+**Shape:** seam | partial failure
+**Setup:** A repository `Tx` callback calls `Save`; PostgreSQL rejects the write with a typed `*pgconn.PgError`, and the callback returns the resulting error.
+**What the consumer does:** They expect the transaction to roll back once and the error returned by `Tx` to retain both the classified conflict and the typed driver error, so a caller can branch with `errors.Is` and inspect it with `errors.As`.
+**What must happen:** The callback error causes rollback; with a successful rollback it is returned without replacement, and a rollback failure retains both causes. This must hold for a repository callback, not only for an adapter's direct `Exec` or `Query` call.
+**Today:** ❓ unverified
+**Evidence:** `repository.Tx` delegates directly to `crud.InTx` (`crud/sqlrepo/repository.go:137-139`). `InTx` rolls back when the callback returns an error and returns that error unchanged unless rollback also errors, in which case it joins both (`crud/executor.go:503-527`). The pgx adapter classifies a query failure through `sqlfault.Wrap` (`crud/adapter/crudpgx/crudpgx.go:95-102`; `crud/adapter/crudpgx/conflict.go:12-21`), whose fault retains the driver error (`crud/sqlfault/classify.go:127-157`). `TestTransactionRollsBackOnError` covers only a manually returned ordinary error (`crud/sqlrepo/repository_test.go:582-597`); `crudpgx`'s typed-error tests call its executor directly (`crud/adapter/crudpgx/conflict_test.go:65-80`). No repository-transaction typed-driver-error/rollback-identity journey was found.
+**Blast radius:** confusing error
+
 ## Edge verdict
 
 The riskiest fresh behaviour is configuration that remains mutable after the
@@ -826,11 +835,12 @@ adapter appears assembled: a shared `*sql.TxOptions` can change isolation or
 read-only policy for later transactions without changing the source value. The
 adapters also defer nil dependency and dialect mistakes to request-time crashes,
 and `crudsql` deliberately has no way to retain a close-time cursor error. The
-pgx COPY entry point is careful to use pgx identifiers, but its one-string shape
-cannot express the schema-qualified table a PostgreSQL deployment normally
-names. Connection ownership, pgx connection sharing, commit cancellation and
-empty COPY are not falsely called safe here: the implementation exposes the
-seams, but the adjacent tests do not pin the consumer contract.
+pgx-only COPY entry point is careful to use pgx identifiers, but its one-string
+shape cannot express the schema-qualified table a PostgreSQL deployment normally
+names. Connection ownership, pgx connection sharing, commit cancellation, empty
+COPY, and the repository callback's typed-driver-error journey are not falsely
+called safe here: the implementation exposes the seams, but the adjacent tests
+do not pin the consumer contract.
 
 ## Release blockers found here (edge)
 
@@ -838,3 +848,25 @@ seams, but the adjacent tests do not pin the consumer contract.
 |---|---|---|---|
 | 1 | `WithTxOptions` advertises a copied source but preserves the caller's mutable `*sql.TxOptions` pointer, so a later mutation can silently change isolation or `ReadOnly` for live transactions. | serious | A reservation flow can run at a weaker isolation than the source value a reviewer approved; concurrent mutation additionally makes the policy race-dependent. |
 | 2 | `crudsql.rows.Close` drops its only error, after repository paths have already decided to return success from the preceding `Rows.Err` check. | serious | A database-side failure at the cursor boundary can be reported as a successful read, with no error contract left for the caller to inspect. |
+
+## Edge DX constraints
+
+The shared Faults proposal owns one startup assembly route, not a new
+`WithCatalog`: `crudsql.Introspect(ctx, db DB, opts ...sqlfault.Option) (DB,
+catalog.Catalog, error)`. It returns concrete `DB` so `Begin`, transaction
+options, and adoption remain available; it returns the catalog because the caller
+also supplies it to `probe.Full`. The caller still owns the supplied handle and
+its close, and must choose whether an introspection error aborts startup or is
+handled explicitly before using the original source; the helper neither opens nor
+closes a connection. The paired transaction-adoption API and catalog/source
+accessor must be the same proposal Faults uses, rather than two adapter-specific
+routes: proposed `WithFaultsFrom(src)` copies immutable classifier configuration
+into `From(tx, ...)`, and the proposed `DB.Join`/adoption call scopes that
+transaction to the source's database. Neither turns a foreign transaction into a
+new source or adopts its lifetime. Any optional capability needed through a
+source wrapper — including the proposed COPY lookup — must be preserved by a
+[[D-061]]-style unwrap walk; a bare assertion would make instrumentation change
+semantics. Today `crudsql.Open` returns concrete `DB`
+(`crud/adapter/crudsql/crudsql.go:136-185`), while neither `Introspect`,
+`WithCatalog`, `WithFaultsFrom`, nor `Join` exists (`rg` finds no such exported
+symbol under `crud/adapter/crudsql`).

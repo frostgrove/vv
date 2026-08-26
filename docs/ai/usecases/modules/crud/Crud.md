@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — four things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; `Save` over a key the client chose overwrites the row that was there, with no version check and no way to ask for an insert; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, and unpinned cursor and transaction-cleanup paths.
+**Verdict:** not ready — three Crud-owned things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. The stale full-model `Save`/`Replace` route is Sqlrepo's canonical blocker (E-SQLREPO-14), with Crud retaining only the [[D-011]] seam implication. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, reusable-option isolation without a control, and an unpinned transaction-cleanup path; query-door and preload-budget edges point to their owning sweeps.
 
 ## What a consumer is actually trying to do
 
@@ -652,8 +652,8 @@ revenue := crud.Sum("revenue", "Amount")
 rows, err := orders.Aggregate(ctx,
     crud.GroupBy("CustomerID"),
     crud.Aggregate(revenue),
-    crud.Having(crud.GtAgg(revenue, 1000)),   // does not exist
-    crud.OrderBy(crud.ByAgg(revenue).Desc()), // does not exist
+    crud.Having(crud.GtAgg(revenue, 1000)), // proposed; does not exist today
+    crud.OrderBy(crud.DescAgg(revenue)),    // proposed; does not exist today
     crud.Limit(10))                           // runs, and means nothing without the line above it
 ```
 
@@ -712,8 +712,10 @@ in a `WHERE`.
 and `sortExpr` branches on it *before* the `cur.meta.Field` lookup
 (`crud/predicate.go:537-546`), which gives the alias sort the same protection the
 `Having` argument gets: an aggregate sort never enters the model namespace at
-all. The constructor is `crud.ByAgg(revenue)` returning an `Order`, and `Desc`
-stays a field.
+all. The concrete **proposed** constructors are
+`crud.AscAgg(a Aggregation) Order` and `crud.DescAgg(a Aggregation) Order`; they
+return an `Order` with `Agg` set and its existing `Desc` field set as named. No
+`ByAgg` symbol or fluent `Desc()` method exists today.
 
 Closing H-CRUD-12 (2) is the same edit's cheap half: validate `o.Sort` against
 `Agg.GroupBy` and the alias set, and the 42803 that reaches a client today
@@ -748,13 +750,15 @@ becomes a refusal.
   it is not a one-line change.
 - [[D-003]] — the AST is closed. A `Having` is new closed nodes over the
   aggregate values, never a `Raw` fragment with a different name.
-- [[D-054]] — the closed AST gets one marshaller, `document` is on the
-  `Predicate` interface so a node that forgets a wire spelling does not compile,
-  and exactly three nodes are refused by name. A `Having` node must either gain a
-  DSL spelling or extend that list to four; the alias sort needs the same
-  decision, because `crud/query` compiles `sort` from a wire string and an alias
-  sort therefore needs either a spelling or an explicit refusal. Either is a
-  position; silence is not.
+- **[[D-054]] is an explicit aggregate-wire decision.** This proposal is
+  in-process only for the release: `Having`, `GtAgg`/`LtAgg`/`EqAgg`, `AscAgg`,
+  and `DescAgg` have no query-document spelling, and `crud/query` must refuse
+  aggregate aliases and HAVING terms rather than treating them as model fields.
+  Because `Predicate` requires `document`, the D-054 owner must choose and test
+  the fourth named marshal refusal for aggregate-comparison nodes (rather than
+  inventing an unreviewed wire grammar). A future wire feature must define both
+  aggregate declarations and their aliases in the same document; a bare alias is
+  never enough.
 - [[D-004]] — `Where` ANDs. A reusable bundle, a `With`, a `Having`: none may
   weaken a predicate another layer added. H-CRUD-06 (3) records that this is a
   rule and not a type property, which is a note on the decision rather than a
@@ -858,7 +862,7 @@ closes all four.
 |---|---|---|---|
 | 1 | A cursor sort over a `sql.Null[T]`/`sql.NullTime` column is minted **and accepted**, and silently returns a page short of rows (`crud/meta.go:503` vs `crud/cursor.go:124`) | blocker | 200, well-formed, fewer rows than exist, no error anywhere — and it is the exact model shape [[UC-010]] promises to adopt. It is also why the obvious three-line fix for #2 does not close it |
 | 2 | Every paged list over a nullable sort column emits a `nextCursor` its own next request refuses (`crud/sqlrepo/repository.go:238` vs `crud/cursor.go:124`) | blocker | `setCursors` runs on both branches of `Get`, so this reaches consumers who never opted into cursor paging and do not know the field is there. A tag freezes the wire behaviour. Must ship with the "no cursor by design" signal or it becomes #10 |
-| 3 | `Save` is an upsert whenever the key is set, with no version check and no way to say "insert only" (`crud/sqlrepo/repository.go:623`) | blocker | Three symptoms, one fix: a create over a client-supplied key overwrites the row that was there (H-CRUD-03 (6)); a `PUT` is last-write-wins on a model whose `version` tag says otherwise (H-CRUD-05 (6)); a projected read-modify-write zeroes the columns it never fetched (H-CRUD-09 (5)). **Closing it challenges [[D-011]] and is [[D-030]] work.** Overlaps H-SQLREPO-05 and Sqlrepo blockers 2 and 7, and Index gaps 2 and 17 — one decision, several rows |
+| — | **Pointer — Sqlrepo E-SQLREPO-14 / edge blocker 3 owns stale full-model `Save`/`Replace`.** `Save` is the core repository verb whose version-tag semantics [[D-011]] make a consumer expect, but its SQL/upsert and `Replace` route live in Sqlrepo. | pointer, not a second blocker | Follow the canonical Sqlrepo finding and its integration matrix (`docs/ai/usecases/modules/sqlrepo/Sqlrepo.md:1741-1748`). Crud retains the decision tension only: either versioned full writes carry a predicate or the core contract must say that `Save` is outside optimistic locking. |
 | 4 | A filter value held in a `crud.Opt` binds NULL and matches nothing (`crud/predicate.go:154-157`, `crud/opt.go:105`) | serious | The predicate path is the only path that never calls `ElemValue`, and `crud.Eq("Age", dto.Age)` is the line [[D-002]] leads a consumer to write. Silently empty result, no error |
 | 5 | Eleven options inside `PreloadWhere` are accepted and dropped, one of them a narrowing (`crud/preload.go:128`, `:268`, `:299`) | serious | `NarrowRelations` on a preload constrains nothing, a nested `Preload` does nothing, `Select` returns the big column anyway. Pagination is refused loudly eighty-three lines above; nothing else is |
 | 6 | Six seam verbs silently drop options, with six different subsets and no document naming any of them (H-CRUD-06's table) | serious | `UpdateAll`/`DeleteAll` take a `Limit` and emit none ([[D-026]], open); `Aggregate` drops seven. A filtered write does more than it was asked and reports the count as if that were the answer |
@@ -923,26 +927,24 @@ closes all four.
   out that a compile error is the loudest possible failure and the opposite of
   "quietly wrong". Moved to its own clause and to blocker 23, under a docs
   heading, with the cost stated.
+- **The pointer reductions are adopted, not dismissed findings.** Reviewers
+  correctly identified E-CRUD-01/02 as query-door behaviour and E-CRUD-06 as a
+  preloader/query-budget seam. They remain visible as pointers to the owning
+  sweep rather than being counted again as independent Crud readiness claims;
+  the core line evidence is retained only to identify that seam.
 
 ## Edge cases
 
-### E-CRUD-01 — Hostile page controls cannot form invalid SQL
-**Shape:** adversarial input
-**Setup:** A request adapter forwards a negative page, limit or offset, and a saved-search helper supplies the same paging knob twice.
-**What the consumer does:** They replay the saved options and append the request options without sanitising either list themselves.
-**What must happen:** No negative offset reaches a statement, non-positive page and limit values resolve predictably, and a repeated value has one documented winner.
-**Today:** ✅ handled
-**Evidence:** `crud/options.go:56-73` applies options left to right; `crud/options.go:241-276` normalises non-positive paging values, clamps the limit and discards a negative offset. `crud/edge_test.go:430-477` pins last-value-wins and the negative-offset control.
-**Blast radius:** none
+### E-CRUD-01 — Request page controls are compiler-owned
+**Pointer:** `Query.md` E-QUERY-05 and E-QUERY-06 own hostile wire values and
+alias precedence. Core `Option` application is only left-to-right mutation
+(`crud/options.go:56-73`); it must not duplicate the query compiler's consumer
+contract here.
 
-### E-CRUD-02 — A forged cursor is refused before it becomes a filter
-**Shape:** adversarial input
-**Setup:** A client alters a copied cursor so it is not base64, is not its expected JSON shape, has unequal field/value counts, names another sort, or contains a value that cannot fit the sorted column.
-**What the consumer does:** They send that string back as the next-page cursor.
-**What must happen:** The caller gets an error before a cursor predicate or bind list is produced; the server must never reinterpret a position under another sort.
-**Today:** 🟡 partial
-**Evidence:** `crud/cursor.go:57-91` rejects malformed encodings, shape and sort mismatches, and values that cannot decode into the target column type; `crud/cursor.go:108-133` performs those checks before it builds comparison branches. No `CursorPredicate` test was found under `crud/`.
-**Blast radius:** confusing error
+### E-CRUD-02 — Cursor request composition is compiler-owned
+**Pointer:** `Query.md` E-QUERY-07 owns the consumer-facing contradictory
+`after`/`before` request. The core cursor decoder's malformed-token checks live
+in `crud/cursor.go:57-133`; this sweep does not duplicate the query-door audit.
 
 ### E-CRUD-03 — A reused optional value cannot retain a rejected request
 **Shape:** partial failure
@@ -971,14 +973,11 @@ closes all four.
 **Evidence:** `crud/predicate.go:290-347` drops nil children, flattens groups and renders the three identity cases as constants. `crud/predicate_test.go:112-143` pins empty, nested and nil-containing groups.
 **Blast radius:** none
 
-### E-CRUD-06 — A deep preload request cannot multiply work without a limit
-**Shape:** adversarial input
-**Setup:** A client asks for six self-relation hops, or a resource deliberately lowers its preload depth below the requested path.
-**What the consumer does:** They pass the requested preload paths through to the core preloader.
-**What must happen:** The path is refused before the first related-query statement, with the violated depth named; it must not turn one list request into unbounded follow-up queries.
-**Today:** ✅ handled
-**Evidence:** `crud/preload.go:11-14` sets the default cap; `crud/preload.go:70-102` rejects a path beyond it; `crud/preload.go:113-130` validates the tree before entering the query loop. `crud/preload_test.go:353-375` pins the default and a tightened cap, including the no-statement control.
-**Blast radius:** none
+### E-CRUD-06 — Preload depth is a preloader/query seam
+**Pointer:** `Query.md` E-QUERY-08 owns the mismatch between a resource's
+declared query depth and the core preloader's fixed execution cap
+(`crud/preload.go:11-14`, `:70-130`). General owns the shared preload budget;
+this file does not restate either audit.
 
 ### E-CRUD-07 — A thousand selected IDs have a framework-level limit
 **Shape:** scale
@@ -1034,17 +1033,26 @@ closes all four.
 **Evidence:** `crud/executor.go:503-527` passes the original context to `Begin`, `Rollback` and `Commit`, and joins a rollback error with the callback error. No cancellation, rollback-failure or commit-failure test was found under `crud/`.
 **Blast radius:** confusing error
 
+### E-CRUD-13 — A reusable option list cannot leak one request into another
+**Shape:** composition · concurrency
+**Setup:** A service retains `base := []crud.Option{crud.Where(...), crud.Limit(20)}`, copies it before appending request-only options, and uses both lists across sequential or concurrent requests; another request supplies no options at all.
+**What the consumer does:** They expect each repository call to build a fresh query shape. A zero option list must mean the zero `Options` shape, and appending to a copied slice must not change the stored list or a previous request's resolved `Options`.
+**What must happen:** `Build` allocates independent `Options` for every call; built-in options mutate only the `*Options` passed to them. Reusing an immutable `[]Option` is safe, while a caller-written `Option` that mutates captured state is explicitly outside that guarantee.
+**Today:** 🟡 partial
+**Evidence:** `Build` creates a new `Options` and applies the supplied options (`crud/options.go:59-64`); `Apply` skips nil options and invokes each only with that receiver (`crud/options.go:66-73`). `TestBuildOfNothingIsTheZeroShape` and its nil-option control pin zero/nil composition (`crud/options_test.go:43-56`), while `TestOptionsApplyInSequence` covers one resolved receiver only (`crud/options_test.go:10-40`). No test reuses one option slice across independent builds or proves copied-slice request isolation.
+**Blast radius:** confusing error
+
 ## Edge verdict
 
-The worst new edge is a manually assembled large ID filter: the core predicate
-writer accepts every value and leaves the first useful limit to the driver. The
-root package is otherwise closed against malformed paging, invalid reflective
-access, malformed preload depth, self-relations and a cyclic decorator chain;
-the strongest of those claims have focused controls. Its first-use metadata cache
-does not make one schema identity atomic, and the transaction-cleanup claim has
-no cancellation or rollback-failure proof. These are smaller than the existing
-silent data findings, but they make lazy initialisation and operational failure
-less predictable than the short call site suggests.
+The remaining Crud-owned edge is a manually assembled large ID filter: the core
+predicate writer accepts every value and leaves the first useful limit to the
+driver. Core reflection, self-relations, and cyclic decorators have focused
+controls; query-door paging/cursor composition and preload depth are pointers to
+their owning sweeps. The first-use metadata cache does not make one schema
+identity atomic, an `Option` slice has no cross-request isolation control, and
+the transaction-cleanup claim has no cancellation or rollback-failure proof.
+These make lazy initialisation and operational failure less predictable than the
+short call site suggests.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |

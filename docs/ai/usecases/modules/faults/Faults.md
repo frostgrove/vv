@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/decorators/faults`, `github.com/frostgrove/vv/crud/sqlfault`, `github.com/frostgrove/vv/crud/probe`, `github.com/frostgrove/vv/crud/catalog`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the arithmetic underneath is the most carefully argued code in the repository, and the wiring on top of it ships one option whose three documented verbs do nothing, a headline claim that is false in both languages, a family of constraints dropped without saying so, and a probe that fires on failures no constraint caused and can move a 422 to a 409. The edge pass adds several ways the declared safety controls betray their caller: an explicit source can make the probe consult a different database, CodeOnly does not survive the final field-mapping hop, one Skip can disable two distinct constraints, and ordinary conditional wiring can crash on the first refusal.
+**Verdict:** not ready — the arithmetic underneath is the most carefully argued code in the repository, and the wiring on top of it ships one option whose three documented verbs do nothing, a headline claim that is false in both languages, a family of constraints dropped without saying so, and a probe that fires on failures no constraint caused and can move a 422 to a 409. The edge pass adds several ways the declared safety controls betray their caller: an explicit source can make the probe consult a different database, CodeOnly does not survive the final field-mapping hop, one Skip can disable two distinct constraints, and ordinary conditional wiring can crash on the first refusal; probe failure is bounded but lacks a decorator-level cancellation proof.
 
 ## What a consumer is actually trying to do
 
@@ -1148,6 +1148,21 @@ buys is one line, one import, a strictly better source — the driver's own viol
 and the removal of the only step that is easy to get wrong: building the handle
 twice, in the right order, with the engine string written a second time.
 
+**Ownership is deliberately split.** The adapter package owns source adoption,
+catalog loading, and the proposed `Introspect`/`WithFaultsFrom` assembly; this
+Faults module owns optional enrichment and probe declaration over the source the
+adapter returned. That is the one source/catalog-transfer owner shared with the
+Adapters sweep: `faults.WithSource` remains only the opaque-chain escape hatch
+and must not grow a second handle-construction path.
+
+`Introspect` does I/O at startup but does not open or close the caller's database:
+the caller owns the `*sql.DB`/pool lifetime, context, and the account's metadata
+read grants. It returns catalog-load failure before any repository binds; a
+service that cannot grant schema reads uses an explicit prebuilt catalog or does
+not enable `Full`. The proposal must document that it queries schema metadata and
+that the returned replacement source—not the pre-introspection handle—is the one
+to bind.
+
 ### Turning one knob
 
 ```go
@@ -1266,7 +1281,7 @@ joined-ORM-transaction path (H-FAULTS-17) is the wiring most in need of help, an
 `Introspect` does not reach it: `From` returns an `Executor`, which has no
 `Dialect()` and so is not a `crud.Source` (`crud/adapter/crudsql/crudsql.go:75-77`,
 `crud/executor.go:57-60`). It cannot be an argument here at all. What that call
-site needs is a different, smaller thing — `crudsql.WithFaultsFrom(src)`, an
+site needs is a different, smaller thing — proposed `crudsql.WithFaultsFrom(src)`, an
 option that copies the classifier the main handle already holds, so the
 per-request line becomes `crudsql.From(tx, crudsql.WithFaultsFrom(src))`: one
 noun, no second engine string, and the columns ORM-transaction writes lose today
@@ -1274,6 +1289,15 @@ are kept. Since `Introspect` lives in package `crudsql` it can read the
 unexported field directly and needs no exported accessor for its own sake; the
 accessor is worth exporting for this option and for the adapters sweep's
 `Adopt`, not for the constructor.
+
+`WithFaultsFrom` transfers **only** immutable classifier configuration; it does
+not turn the foreign transaction into a `crud.Source`, copy `Begin`, or install a
+probe. The caller still captures that transaction with
+`crud.WithExecutorFor(ctx, src, tx)` for the repository call, so `Full` selects
+the transaction executor already in context (`crud/probe/full.go:83-95,119-126`).
+That makes transaction propagation explicit and avoids a second source whose
+identity could drift from the write. A foreign transaction remains in Full's
+documented advisory/no-savepoint branch, not an enforcement bypass.
 
 **Because the six-line version is where the field goes missing.** A consumer who
 stops after `faults.Enrich[User, int64]()` — which both module docs and the
@@ -1341,6 +1365,13 @@ three.
   `README.md:1218` promises that none of this is on by default, and a default
   that widens a disclosure is not a convenience. Advisory also has to start
   meaning *side-effect free*, which H-FAULTS-17 and H-FAULTS-19 say it is not.
+- [[D-030]] — `security.Gate` is enforcement and must decide every `crud.Core`
+  verb before a statement; faults enrichment is advisory response decoration
+  after an already-classified refusal. `WithProbe`/`WithProbeFor` may add detail
+  or `Partial`, never authorise a write, recover a rejected row, or substitute
+  for the gate's per-verb obligation. A new write verb therefore needs two
+  explicit decisions: D-030 coverage in `security.Gate`, and whether the
+  advisory probe is worth wiring for that verb.
 - [[D-021]] — refuse at declaration. This library breaks its own rule in three
   places, not two: `WithProbeFor` accepting an unrecognised verb name,
   `reproducible` dropping a constraint in silence (H-FAULTS-05, H-FAULTS-07), and
@@ -1606,16 +1637,7 @@ probe — the adapters sweep carries it at `Adapters.md:165`.
 **Evidence:** WithCodes stores a nil vocabulary unchanged (crud/sqlfault/classify.go:26-29), and Classify dereferences it at c.codes.KindOf (crud/sqlfault/classify.go:79-85). WithExtractor likewise stores its input unchanged (crud/sqlfault/classify.go:31-33); a non-nil ExtractorFunc interface holding a nil function reaches f(err) (crud/sqlfault/extract.go:19-22) through c.extract (crud/sqlfault/classify.go:120-125). New deliberately guards only nil Option values (crud/sqlfault/classify.go:44-51). No test supplies a nil Codes or nil ExtractorFunc.
 **Blast radius:** crash
 
-### E-FAULTS-09 — Twenty concurrent declarations read the same whole schema twenty times
-**Shape:** concurrency
-**Setup:** A service starts many independently-bound resources in goroutines and each calls one catalog.Set.Load for the same physical database.
-**What the consumer does:** They use the documented Set specifically so all resources share one catalog and expect a single start-up introspection.
-**What must happen:** Concurrent loads should coalesce into one schema read, or the API and readiness guidance must say that concurrency trades one catalog for N complete introspections.
-**Today:** 🟡 partial
-**Evidence:** Set checks entries under its mutex, unlocks while Load runs, then only de-duplicates the resulting catalog before append (crud/catalog/set.go:52-79). The source comment and TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog explicitly say both callers read (crud/catalog/set.go:61-63; crud/catalog/set_test.go:85-91). Correctness is preserved — one stored catalog wins — but boot cost is multiplied by the number of simultaneous declarers.
-**Blast radius:** confusing error
-
-### E-FAULTS-10 — One Full value serves twenty models without cross-wiring their table plans
+### E-FAULTS-09 — One Full value serves twenty models without cross-wiring their table plans
 **Shape:** concurrency
 **Setup:** An application creates one expensive probe.Full value over its catalog and reuses it while binding many models, potentially at the same time.
 **What the consumer does:** They avoid rebuilding the configuration and expect each repository to keep the candidate constraints for its own table.
@@ -1624,9 +1646,18 @@ probe — the adapters sweep carries it at `Adapters.md:165`.
 **Evidence:** Full.Declare copies the handler before attaching meta, table and candidates (crud/probe/declare.go:35-59), so the source Full remains unbound. TestDeclaringTwoModelsFromOneFullValueGivesTwoHandlers asserts the first remains on docs and the second binds orgs (crud/probe/declare_test.go:90-111). It is a sequential declaration test; no test pins concurrent reuse, so the source shape is encouraging rather than a release-proof guarantee.
 **Blast radius:** none
 
+### E-FAULTS-10 — A failed enrichment probe must not replace the write refusal
+**Shape:** partial failure | seam
+**Setup:** A write has already returned a classified unique conflict, then the probe query blocks, its context is cancelled, or its connection fails.
+**What the consumer does:** It returns the write failure to the client and treats enrichment as extra detail, not as permission to change a 409 into a timeout or 500.
+**What must happen:** At most the configured probe work is attempted; a timeout or probe failure preserves the original classified fault and marks it partial. The response must not retry or extend the follow-up work after that failure.
+**Today:** 🟡 partial
+**Evidence:** `Full.run` gives its one follow-up query a derived timeout and returns its error (`crud/probe/full.go:98-129`); `Full.Enrich` preserves the driver fault and marks it partial on that error (`:67-80`). `enrichProbed` keeps the original fault, reports the probe error only to `WithProbeError`, and finishes it as partial (`crud/decorators/faults/probe.go:157-177`; `faults.go:102-130`). `TestAProbeThatErrorsKeepsTheDriversViolationAndSaysItIsPartial` and `TestAProbeFailureIsHandedToTheCallerAndNotToTheClient` pin the error control (`crud/probe/full_test.go:70-100`; `crud/decorators/faults/probe_test.go:452-465`); the direct timeout control is `crud/probe/full_test.go:412-435`. No decorator-level cancelled-context or one-follow-up-count control was found.
+**Blast radius:** confusing error
+
 ## Edge verdict
 
-The worst edge is the explicit source override: it is the documented escape hatch for an opaque chain, yet it can turn another database's state into this resource's response with no declaration-time check. Privacy and disclosure controls are also not closed: CodeOnly is undone after the probe, and a name-only Skip can silently suppress two separate checks. The module handles shared Full configuration correctly and preserves its carefully bounded probe arithmetic, but conditional configuration at the error boundary still has several request-time panics. These are not exotic driver failures; they are the ordinary nils, duplicate names, binary values and parallel startup work a service reaches while wiring a framework.
+The worst edge is the explicit source override: it is the documented escape hatch for an opaque chain, yet it can turn another database's state into this resource's response with no declaration-time check. Privacy and disclosure controls are also not closed: CodeOnly is undone after the probe, and a name-only Skip can silently suppress two separate checks. `Full` preserves a classified write refusal when its one follow-up fails, but the decorator has no direct cancelled-context control for that contract. Conditional configuration at the error boundary still has several request-time panics. These are not exotic driver failures; they are the ordinary nils, duplicate names, binary values and failed follow-up work a service reaches while wiring a framework.
 
 ## Release blockers found here (edge)
 

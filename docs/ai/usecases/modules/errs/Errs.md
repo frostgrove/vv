@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/errs`, `github.com/frostgrove/vv/errs/sqlerr`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. The edge pass adds configuration mistakes that the public values let through as legitimate responses: an empty code, an unknown kind and a negative array position all render instead of failing at wiring; `Fault` keeps nested parameter values live despite promising a deep copy; and a failed catalogue load can leave its receiver changed. `sqlerr` is conservative about a malformed tuple, but the public corpus tools accept internally inconsistent records and `Save` can leave the requested directory. Most are additive repairs, but the silent wrong answers should be closed before a tag.
+**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. The edge pass adds configuration mistakes that the public values let through as legitimate responses: an empty code, an unknown kind and a negative array position all render instead of failing at wiring; `Fault` keeps nested parameter values live despite promising a deep copy; and reload atomicity and locale-case behaviour remain unverified where the code has no focused control. Wrapped driver errors are deliberately absent from `Fault.Error()`, JSON and the standard 500 envelope, but remain reachable through `errors.As` for caller-controlled, redacted diagnostics. `sqlerr` is conservative about a malformed tuple, but the public corpus tools accept internally inconsistent records and `Save` can leave the requested directory. Most are additive repairs, but the silent wrong answers should be closed before a tag.
 
 ## What a consumer is actually trying to do
 
@@ -849,6 +849,14 @@ Today it is 3 statements and 4 concepts — the bridge, the builder, the fact th
 `Fault` returns a value whose slice you may still write to, and the write itself
 — and the module page's own version of it does not compile.
 
+Product vocabulary should be difficult to misdeclare: retain `Code` and `Kind`
+as their compatible public value types, but make `Codes.Add` reject `Code("")`
+and every kind outside the declared constants. A small `Kind.Valid` predicate (or
+an unexported equivalent used by `Add`) is sufficient; callers then fail during
+wiring instead of constructing a syntactically valid empty code or an arbitrary
+numeric kind. `KindInternal` remains the deliberate zero value for an
+*undeclared* fault (`errs/code.go:72-90`), not an opt-in vocabulary declaration.
+
 `Violations(vs []Violation) *Builder` takes a **slice** and not a variadic. The
 variadic form makes the one line the proposal exists to shorten read
 `Violations(errs.FromFieldViolations("CreateUserRequest", verrs...)...)` — two
@@ -886,13 +894,17 @@ rd := crudhttp.NewRenderer(crudhttp.WithCodes(codes), crudhttp.WithMessages(cat)
 users := crudfiber.New(repo, crudfiber.WithRenderer[User, int64, UserUpdate](rd))
 ```
 
-That works on all four bindings, today, and it is not in any document. It is also
-enough for the whole vocabulary-and-catalogue story on `New(repo)`, because
-`New(repo)` declares no path hop for `WithRenderer` to drop. Two things are still
-missing and they are independent:
+That works on all four bindings, today, and it is not in any document. A supplied
+renderer is a replacement, not an option bag: `build` uses it directly, and adds
+`port.Hops(svc, mapper)` only when it constructs the default renderer
+(`crud/http/crudfiber/handler.go:115-124`; the same seam is in `crudnet` and
+`crudgin`). A resource with a mapper must therefore put its declared hops into
+the supplied renderer itself. Two things are still missing and they are
+independent:
 
 ```go
-// (a) the code the client reads, decided by the consumer — needs CodeMapper wired
+// (a) proposed API: the code the client reads, decided by the consumer.
+// Neither WithCodeMapper nor CodeMapperFunc exists until CodeMapper is wired.
 rd := crudhttp.NewRenderer(
     crudhttp.WithCodes(codes),
     crudhttp.WithMessages(cat),
@@ -905,33 +917,35 @@ rd := crudhttp.NewRenderer(
         })),
 )
 
-// (b) the resource whose mapper declares a hop — needs an option that extends
-users := crudfiber.NewFor[CreateUser](repo, mapper,
-    crudfiber.WithRenderOptions[User, int64, UserUpdate](
-        crudhttp.WithCodes(codes), crudhttp.WithMessages(cat)))
+// (b) a replacement renderer keeps the generated/service hops explicitly.
+// `svc` is the service passed to ServingFor; for NewFor it is the equivalent
+// service the application assembled before choosing this custom renderer.
+rd := crudhttp.NewRenderer(
+    crudhttp.WithCodes(codes), crudhttp.WithMessages(cat),
+    crudhttp.WithResolvers(port.Hops(svc, mapper)...),
+)
+users := crudfiber.ServingFor(svc, mapper,
+    crudfiber.WithRenderer[User, int64, UserUpdate](rd))
 ```
 
-**(a) is shippable before the tag and (b) is not urgent**, and the round-1 draft
-priced them as one indivisible ask. (a) is the option on `port/porthttp` and
-`crud/rpc/crudgrpc`, plus the call inside `port.Violations`; it is usable on day
-one through `WithRenderer`, and it is the only answer H-ERRS-16 has. (b) is
-`rendererFor(hops, opts...)` in each of four bindings — and note the type
-arguments, spelled out, because Go infers a function's type arguments from its
-own arguments and nothing in a `crudhttp.RenderOption` mentions `M`, `ID` or `U`
-(`crud/http/crudfiber/options.go:25-52` says exactly this, and every option in
-every runnable example spells all three). One local
+**(a) is shippable before the tag and (b) is explicit wiring, not a new binding
+option.** (a) is the option on `port/porthttp` and `crud/rpc/crudgrpc`, plus the
+call inside `port.Violations`; it is usable on day one through `WithRenderer`,
+and it is the only answer H-ERRS-16 has. (b) follows the existing order exactly:
+`port.Hops` returns the service resolver first and the generated mapper resolver
+second (`port/path.go:47-63`); `errs.Chain` applies that list in order
+(`errs/spi.go:48-72`); and `crudhttp.WithResolvers` installs it ahead of the
+raw-body fallback (`port/porthttp/render.go:61-65`). One local
 `type userOpt = crudfiber.Option[User, int64, UserUpdate]` per resource is what
 makes that bearable, and it is the pattern the binding's own godoc already
 teaches.
 
-**And (b) should come with a panic, not only an option.** The defect it fixes is
-silent: a consumer who passes `WithRenderer` to `NewFor` loses their mapper's hop
-and gets a plausible-looking body with Go field names in it. `build` knows both
-things at wiring time — it has the hops and it has `o.renderer`. Refusing there,
-at start-up, is the same call [[D-021]] already makes for
-`Serving` + a service option. Documenting it has been tried; the note at
-`crud/http/crudfiber/middleware.go:10-11` is exactly that kind of note and it did
-not stop the `Errors(WithCodes(...))` trap.
+The DX change is documentation and a constructor helper, not a panic: replacing
+the renderer is already the documented contract of `WithRenderer`
+(`crud/http/crudfiber/options.go:72-77`). A helper that accepts render options
+and appends `port.Hops` may reduce the repetition, but it must preserve the same
+service-then-generated order and must not pretend a replacement renderer carries
+configuration it was never given.
 
 The mapper's key is `(Code, Path)` and not the constraint. That is deliberate and
 it is the portable one: `CodeFor` receives the whole violation (`errs/spi.go:30`)
@@ -947,16 +961,18 @@ fault-level and holds whichever constraint the statement died on: a probe result
 carrying three violations from three indexes would otherwise get all three
 renamed to one.
 
-Where the call goes is not free either. It runs after the violation-free
-synthesis (`port/violations.go:61-70`) and **before** `errs.SortViolations` at
-`:90`, because both the sort and the message ladder are keyed on the code — a
-mapper that ran after either would produce an order and a sentence belonging to a
-code no longer in the body. And the status has to be recomputed after it:
-`port/porthttp/render.go:128` takes the status from the un-mapped fault five
-lines before the violations are built, so as scoped today a consumer who maps a
-conflict word onto a validation-class code gets a 409 carrying a 422-class code
-with no warning. `crud/rpc/crudgrpc/status.go:241` has the same order and needs
-the same fix.
+Where the call goes is not free either. The required precedence is: synthesise a
+violation when the fault has none (`port/violations.go:61-70`); apply the
+`CodeMapper` to each resulting violation; reject an empty or undeclared mapped
+code; resolve the resulting kind through the wired `Codes`; then sort, cap and
+render messages. `errs.SortViolations` is currently at `port/violations.go:90`
+and the message ladder at `:94-97`, so mapping after either would produce an
+order or a sentence for a code no longer in the body. Finally resolve the response
+status from those mapped, declared kinds, not from the original fault: current
+HTTP resolves it before `Violations` (`port/porthttp/render.go:127-139`) and
+gRPC does the analogous pre-detail resolution (`crud/rpc/crudgrpc/status.go:241`).
+That recomputation is required by [[D-049]]: it preserves one kind-to-status
+mapping and never creates a code-specific status table.
 
 And on the reading side, for a log:
 
@@ -1030,15 +1046,13 @@ sets (`errs/bridge.go:62,68`), and per blocker 5 any other placeholder ships raw
   **packages** join the contract manifest; it says nothing about which symbols
   the first tag freezes inside `errs`. It does bear on H-ERRS-11: `errs/sqlerr`
   is on that list, so the corpus tooling it exports is frozen with it.
-- **[[D-047]]** — `Error()` stays classification only, and this is the decision
-  the log proposal argues with rather than merely respecting. Its **What it
-  forbids** says *"Do not use `Error()` as the debug channel. The exported fields
-  and `MarshalJSON` are that."* `MarshalJSON` is not that — it drops `Detail` by
-  its own doc. `LogValue` is the channel D-047 says already exists, given a type;
-  it adds no text rendering and widens nothing. Taking the proposal means
-  correcting that one sentence in the decision as well as in `errs/fault.go:63-67`.
-  D-047's other half needs no correction: `:60-62` already anticipated the
-  envelope in writing.
+- **[[D-047]]** — `Error()` and `String()` remain classification only: no cause,
+  driver text, DSN, token, customer value, `Detail`, `Source`, `Message` or
+  `Params`. `Fault.Error` implements that boundary (`errs/fault.go:57-104`) and
+  `Fault.MarshalJSON` keeps the same material out of the public projection
+  (`:106-148`). A future structured log helper may expose vetted diagnostic
+  fields, but must not turn `Error()` into a cause channel; callers that walk
+  `errors.As` own redaction of the underlying error.
 - **[[D-044]]** — nothing internal on the wire. A `CodeMapper` keyed on
   `Source.Constraint` reads an internal name **inside** the process and emits a
   word the consumer chose. Same trade the message ladder already makes with
@@ -1049,13 +1063,13 @@ sets (`errs/bridge.go:62,68`), and per blocker 5 any other placeholder ships raw
   collapse deliberately and wrote down why, and the round-1 draft called that
   choice an accident. The retryable-code divergence is a different family, in the
   same tables, that D-046's **What it forbids** does not reach.
-- **[[D-049]]** — the kind decides the status. An overridden code must resolve
-  its kind through the wired vocabulary *and the status must be recomputed after
-  the mapping*, or it becomes a second status table.
-- **[[D-043]]** — a `CodeMapper` changes a code and never a path. Nothing here
-  gets a second chance to guess a hop. The wiring-time panic in (b) exists to
-  keep a declared hop from being dropped, which is D-043 held by a mechanism
-  rather than a note.
+- **[[D-049]]** — the kind decides the status. An overridden code must be a
+  declared code, resolve through the wired vocabulary, and have its status
+  recomputed afterwards; otherwise the mapper would create a second status table.
+- **[[D-043]]** — a `CodeMapper` changes a code and never a path. The canonical
+  one-hop resolver sequence remains service then generated mapper, followed only
+  by the raw-body fallback when neither declared hop changed the path. A custom
+  renderer must receive that same sequence explicitly.
 - **[[D-019]]** — H-ERRS-09 challenges it, narrowly. The decision says a dialect
   difference is either compensated for or on a list of eleven, and the retryable
   code split and PostgreSQL's `25P02` status are on neither. Closing it is a
@@ -1081,8 +1095,8 @@ freezes a signature, and cannot ship in a point release.
 | A bridged validator tag that renders as a sentence | Declare every tag by hand in `Codes`, or ship `{"error_code":"gte","message":"gte"}` — status is correct either way | all | small | reversible |
 | Rename a code for the client | Nothing. Rebuild the fault by hand and lose the wrapped sentinels doing it — the frozen interface for it is called from no line in the repository | all (keyed on code/path); constraint-keyed: pg only | large | **irreversible** — the signature freezes |
 | Refuse to confirm an address exists, on one route | Nothing. Same rebuild, or accept the disclosure | all | large | reversible once the mapper is wired |
-| Declare product codes and get statuses on a generated route | `Add` per code, then one `WithRenderer` with a shared renderer — undocumented, and it silently drops a declared hop on `NewFor`/`Serving` | all | small — **same seam as the row below** | reversible |
-| Locale files and a narrow override on a generated route | `LoadMessages` plus the same `WithRenderer` — same undocumented seam, same silent hop loss | all | small — **same seam as the row above** | reversible |
+| Declare product codes and get statuses on a generated route | `Add` per code, then one `WithRenderer` with a shared renderer — undocumented; a replacement renderer on `NewFor`/`ServingFor` must receive `WithResolvers(port.Hops(svc, mapper)...)` explicitly | all | small | reversible |
+| Locale files and a narrow override on a generated route | `LoadMessages` plus the same explicit renderer composition when the resource has path hops | all | small | reversible |
 | A vocabulary default with a placeholder in it | Do not write one. Below `errs.Messages` the template goes to the client raw, with or without a catalogue | all | small | reversible |
 | Plurals in a second language | Replace `errs.Messages` wholesale. The SPI is there and nothing says the flat catalogue stops at one language | all | large | reversible |
 | Fail CI on a half-translated locale | `cat.Missing("ru")` in a test — which reports nothing while a `default.json` covers the code | all | large | reversible |
@@ -1105,12 +1119,11 @@ as internal, and `Missing`'s refusal to be a start-up check are all better than
 what I would have designed blind. Round 1 said the vocabulary and the catalogue
 were unreachable from a generated route and that was wrong: they are one
 undocumented option away. What is actually wrong is quieter and worse. The short
-path and the customised path both work, and the seam between them takes something
-away without saying so — `WithRenderer` drops a declared hop, `Missing` walks past
-the default rung, a catalogue silently overrides a violation's own text, a second
-`Add` silently keeps the first sentence. None of those is wordiness. Each is the
-library making a choice on the consumer's behalf and not telling them, and that is
-the class of defect this tag should not freeze.
+path and the customised path both work, but a replacement renderer needs an
+explicit declaration of its path hops; `Missing` walks past the default rung, a
+catalogue silently overrides a violation's own text, and a second `Add` silently
+keeps the first sentence. None of those is wordiness. Each is a contract choice
+the library must state plainly before the tag freezes it.
 
 ## Release blockers found here
 
@@ -1126,7 +1139,7 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 | 4 | `errs.CodeMapper` is frozen into the contract (`errs/doc.go:51`) and no line in any module calls `CodeFor` | blocker · **irreversible** | `errs` (freeze) + `port/porthttp` + `crud/rpc/crudgrpc` + `port.Violations` | The tag freezes an SPI signature wired to nothing, and it is the only answer H-ERRS-16 has. Half (a) — the option plus the call in `port.Violations` — is usable on day one via `WithRenderer` and ships before the tag; if it cannot, `errs/doc.go` and `errs.md:437` must say the interface is declared and not consumed |
 | 5 | `errs/sqlerr` exports `Path`, `Save`, `Load`, `Corpus` and `Case` (`docs/api/surface.md:538-547`) and is in the contract manifest | blocker · **irreversible** | `errs/sqlerr` | The tag freezes the testdata JSON shape as a compatibility surface. Either that is deliberate and said so, or the capture tooling moves to an internal package. Free before the tag, permanent after |
 | 6 | `errs.Messages` and `errs.Codes` have no synchronisation, and `docs/modules/en/errs.md:421` says `Messages.Load` *"adds a locale at run time"* | blocker | `errs` | A documented invitation to a data race in the one package every request goroutine reads through `port.Violations`. No test can see it because no test loads while rendering. Either the sentence says start-up only, or `Messages` gets an `RWMutex` |
-| 7 | `WithRenderer` silently discards a declared path hop on `NewFor(repo, mapper)` and on `Serving(svc)` with `WithPaths` | blocker | `crud/http/{crudnet,crudfiber,crudgin}` + `crud/rpc/crudgrpc` | The consumer gets their vocabulary and loses their field names, with no error. Round 1 filed this as "a vocabulary cannot reach a generated route", which was wrong — one `WithRenderer` reaches `New(repo)` fine. The real defect is the silent loss, and the fix is a wiring-time panic plus `WithRenderOptions`. Also the `port` sweep, *The client hears the message in its own language* |
+| 7 | A custom renderer on `NewFor`/`ServingFor` needs the existing `port.Hops(svc, mapper)` composition documented | serious | `crud/http/{crudnet,crudfiber,crudgin}` + `crud/rpc/crudgrpc` docs | `WithRenderer` replaces the renderer by contract; its resolver list cannot be inferred from the interface. The documented composition is service hop, then generated mapper hop, ahead of fallback. Also the `port` sweep, *The client hears the message in its own language* |
 | 8 | Below `errs.Messages`, a vocabulary default is handed to the body unexpanded — `port/violations.go:126` → `Codes.MessageFor` — so a declared `"at most {max} characters"` ships `{max}` | serious | `port` (3 lines in `defaultMessage`) + `errs` docs | It is the exact template `docs/modules/en/errs.md:394` teaches, and it fires **with** a catalogue wired for any key that catalogue does not cover — so wiring one is not the mitigation round 1 implied. `Messages.Message` returns `("", false)` and the rung below has no guard. It also falsifies [[UC-017]] guarantee 4 — *"falling back rather than emitting a template"* — whose status in `docs/ai/usecases/Index.md:88` is **covered**: either that row moves to partially covered or the guarantee is narrowed to `errs.Messages`, and only this sweep is placed to say which |
 | 9 | Bridged validator tags (`gte`, `email`, `oneof`) are undeclared codes, so the rendered message is the tag: `{"error_code":"gte","message":"gte"}` | serious | `errs` | The bridge's promise is a code *and* a sentence. Nothing in the docs says the tags must be declared, and `Missing` cannot see them because they are not in the vocabulary. `errs.ValidatorCodes` closes both. The **status is correct** — `port.KindOfWith` refuses to read an unknown code as internal (`port/kind.go:28-46`) — and round 1 said otherwise, which oversized it |
 | 10 | On PostgreSQL alone, every statement after a failure in the same transaction is `25P02` → `transaction_aborted` → `KindRetryable` → **503** | serious · **irreversible** | `errs/sqlerr` + [[D-019]] + `docs/modules/en/sqlerr.md` | A well-behaved client retries a permanently poisoned transaction, forever. It is the one dialect difference that moves the **status** rather than the word, it is on no list, and a consumer who develops on SQLite never sees it |
@@ -1144,21 +1157,14 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 
 ## Contested
 
-- **Round 1's blocker 1 is withdrawn, not defended.** All three reviewers showed
-  that `crudfiber.New(repo, WithRenderer(NewRenderer(WithCodes, WithMessages)))`
-  works today and drops nothing, because `New(repo)` declares no hop and the
-  binding installs the body index and the locale per request for any renderer
-  (`crud/http/crudfiber/options.go:192-204`). Verified. What survives is narrower
-  and sharper: the silent hop loss on `NewFor`/`Serving`, now row 7.
-- **`WithRenderOptions` kept, and the "compose the resolvers instead" proposal
-  declined.** One reviewer asked the bindings to merge `port.Hops(svc, mapper)`
-  into a consumer-supplied renderer's resolvers so `WithRenderer` keeps the field
-  names automatically. `crudhttp.Renderer` is an interface — `Render(ctx, err)`
-  and nothing else — so there is no resolver list on it to append to, and a
-  binding that type-asserted `*EnvelopeRenderer` to reach one would work for the
-  built-in renderer and silently do nothing for the RFC 9457 renderer
-  `WithRenderer` exists for. A wiring-time panic plus an option that never
-  replaces the computed hops is the version that cannot be half-right.
+- **The renderer replacement boundary is retained, not called a dropped hop.**
+  `crudfiber.New(repo, WithRenderer(NewRenderer(WithCodes, WithMessages)))` needs
+  no hop because `New` uses `port.Identity`; `NewFor` and `ServingFor` do. The
+  binding uses a supplied renderer directly and constructs `rendererFor(Hops)`
+  only when none was supplied (`crud/http/crudfiber/handler.go:115-124`). Since
+  `crudhttp.Renderer` is only `Render(ctx, err)`, it has no resolver list a
+  binding can merge. The truthful DX is the explicit `WithResolvers(port.Hops(svc,
+  mapper)...)` composition, not a non-existent `WithRenderOptions` or a panic.
 - **`Builder.Violations` leaves `open` at the last appended violation.** A
   reviewer asked for `-1`. With `-1`, a following `.Message(...)` lands on
   `Fault.Message` — row 19's trap, reached through the new method — and a
@@ -1227,9 +1233,18 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 **Shape:** boundary
 **Setup:** A request really has a member named `billing.email`, and the service records its `errs.Path` in a log before another component parses that text.
 **What the consumer does:** It needs the wire path to remain exact and the dotted rendering not to be mistaken for a machine round-trip format.
-**What must happen:** The array form must preserve the member exactly, while the lossy log form must be visibly documented as unsuitable for recovery.
+**What must happen:** `errs.Path`'s dotted/bracketed form remains the canonical
+human-facing Errs grammar, while the JSON array form preserves a literal member
+exactly. A consumer must not treat `Path.String()` as a recovery format when a
+member itself contains the grammar's separator.
 **Today:** 🟡 partial
-**Evidence:** `errs/path.go:64-106` preserves every JSON string step, while `errs/path.go:116-119` deliberately makes `String` lossy. `TestParsePathRoundTripsTheDottedForm` (`errs/path_test.go:77-123`) includes the control showing that a separator does not survive; `docs/modules/en/errs.md:242-253` introduces the three renderings without carrying that warning.
+**Evidence:** `errs/path.go:64-106` preserves every JSON string step, while
+`errs/path.go:116-119` deliberately makes `String` lossy. The dotted/bracketed
+grammar is what `ParsePath` accepts (`errs/path.go:122-166`); its test includes
+the control showing that a separator does not survive a text round-trip
+(`TestParsePathRoundTripsTheDottedForm`, `errs/path_test.go:77-123`).
+`docs/modules/en/errs.md:242-253` introduces the renderings without the recovery
+warning.
 **Blast radius:** confusing error
 
 ### E-ERRS-06 — A returned fault retains a caller-owned parameter value
@@ -1255,8 +1270,13 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 **Setup:** An operator calls `Messages.Load` with a directory whose first file is valid and whose later file has a non-string value.
 **What the consumer does:** It receives an error and expects the catalogue it was already serving either to be unchanged or to have an explicit transactional reload contract.
 **What must happen:** One `Load` must be all-or-nothing, or its partial mutation must be documented so a caller can discard the receiver rather than serve a mixture of old and new wording.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/catalogue.go:86-93` adds files directly to the receiver as it walks them; `errs/catalogue.go:109-129` adds keys one at a time before a later key can fail. `TestTwoFilesDisagreeingOnOneKeyAreRefused` (`errs/catalogue_test.go:103`) checks the returned error but not the receiver after a failed load.
+**Today:** ❓ unverified
+**Evidence:** `errs/catalogue.go:86-93` adds files directly to the receiver as it
+walks them, and `errs/catalogue.go:109-129` adds keys before a later key can
+fail. That implementation makes partial mutation plausible, but
+`TestTwoFilesDisagreeingOnOneKeyAreRefused` (`errs/catalogue_test.go:103`) checks
+only the returned error, not the receiver after a failed load; no focused reload
+atomicity control was found.
 **Blast radius:** silent wrong answer
 
 ### E-ERRS-09 — `pt-br` misses a `pt-BR` catalogue
@@ -1264,8 +1284,12 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 **Setup:** The catalogue is named `pt-BR.json`, while a transport passes the lower-case language tag it received from a client.
 **What the consumer does:** It expects the same language to select the same wording independent of the tag's casing.
 **What must happen:** Locale matching must canonicalise case, or the file-name convention must say it is case-sensitive before an API silently falls to its default language.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `errs/message.go:159-170` preserves the supplied locale and only splits it on `-` or `_`; `errs/catalogue.go:98-105` preserves the file-name spelling too. `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` (`errs/message_test.go:233`) covers separator choice, not case.
+**Today:** ❓ unverified
+**Evidence:** `errs/message.go:159-170` preserves the supplied locale and only
+splits it on `-` or `_`; `errs/catalogue.go:98-105` preserves the file-name
+spelling too. `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes`
+(`errs/message_test.go:233`) covers separator choice, not case; there is no
+focused case-normalisation control.
 **Blast radius:** confusing error
 
 ### E-ERRS-10 — A translator leaves an unmatched brace
@@ -1313,6 +1337,31 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
 **Evidence:** `errs/sqlerr/corpus.go:151-152` joins `engine + ".json"` directly into the path, and `errs/sqlerr/corpus.go:174-179` writes that path without validation. `TestSavingAnUnchangedCorpusRewritesNothing` (`errs/sqlerr/corpus_test.go:139`) exercises only the four checked-in engine values.
 **Blast radius:** data loss
 
+### E-ERRS-15 — A wrapped database or HTTP error contains a secret
+**Shape:** disclosure boundary
+**Setup:** A driver or upstream HTTP error includes a DSN, bearer token, or a
+customer value in its text. The service builds a classified fault with
+`Builder.Wrapping(err)` and returns it through an HTTP or gRPC boundary.
+**What the consumer does:** It expects the response and ordinary `Error()` text
+to remain safe to display, while still being able to inspect the underlying error
+inside trusted, redacting diagnostics.
+**What must happen:** `Fault.Error()` and `Fault.String()` must contain no cause;
+the public JSON projection and standard internal HTTP response must omit it too.
+The cause remains intentionally reachable through `errors.As` / `Unwrap`, so the
+application — not the framework — owns redaction before logs, traces or support
+tools. gRPC's status renderer is the corresponding transport seam, not a second
+Errs reconstruction contract (`crud/rpc/crudgrpc/status.go:241-264`).
+**Today:** ✅ handled at the Errs and standard HTTP boundary
+**Evidence:** `Builder.Wrapping` puts causes in the fault's unexported wrapped
+list (`errs/build.go:175-181`); `Fault.Error` explicitly excludes wrapped error
+text and `Unwrap` exposes the list only to Go error traversal
+(`errs/fault.go:57-104`); `Fault.String` shares that safe text (`:151-155`); and
+`Fault.MarshalJSON` excludes wrapped errors and `Detail` (`:106-148`). The
+standard HTTP renderer short-circuits an internal status to `Internal()` before
+copying fault content (`port/porthttp/render.go:123-139`).
+**Blast radius:** data disclosure if an application logs the cause without
+redaction
+
 ## Edge verdict
 
 The worst new failure is a silent wrong response assembled from values the
@@ -1320,11 +1369,14 @@ framework could have rejected at start-up: a blank code, an unknown kind, an
 empty field and a negative index all have valid JSON spellings but no valid
 consumer action. Snapshotting is only shallow for `Params`, and a shared builder
 has no concurrency boundary, so an error can change between producer and
-renderer. The catalogue refuses several structural mistakes, yet it admits
-broken placeholder syntax, unreachable flat keys and partial state after a
-failed load. `sqlerr` itself stays conservative on a key it does not recognise,
-but the exported corpus utilities do not validate their own records or write
-boundary.
+renderer. The catalogue refuses several structural mistakes and admits broken
+placeholder syntax and unreachable flat keys; failed-reload atomicity and
+locale-case matching are still unverified, rather than established release
+claims. Wrapped causes are safely absent from Fault text, JSON and the standard
+internal HTTP envelope, but their deliberately reachable `Unwrap` path makes
+caller-side redaction non-optional. `sqlerr` itself stays conservative on a key
+it does not recognise, but the exported corpus utilities do not validate their
+own records or write boundary.
 
 ## Release blockers found here (edge)
 
@@ -1334,5 +1386,5 @@ boundary.
 | 2 | `Path` admits an empty field and a negative index through public construction and JSON decode | serious | A form can be told to mark a field or array element that cannot exist, with no signal that the error body is invalid. |
 | 3 | `Fault()` copies only the outer `Params` map and a reusable `Builder` has no concurrency contract | serious | A response can acquire another request's mutable parameter value or race while it is assembled; the result is a plausible but wrong sentence. |
 | 4 | `Corpus.Save` lets `Corpus.Engine` escape the requested directory | serious | Capture automation supplied a malformed engine can overwrite a neighbouring JSON file instead of failing in its scratch directory. |
-| 5 | `Messages.Load` mutates the receiver before it reports a later file or key error | sharp edge | A failed reload has no atomicity contract, so an operator can keep serving a mixture of catalogue revisions. |
+| 5 | Failed `Messages.Load` atomicity and locale-case matching have no focused controls | sharp edge | The implementation invites concern, but a release verdict must not turn unmeasured reload or locale behaviour into a certainty. Add isolated receiver-state and case-normalisation controls before choosing a contract. |
 | 6 | Malformed templates and unreachable flat keys load successfully and then fall through or render syntax | sharp edge | Product wording silently differs from the reviewed catalogue, which makes localisation failures hard to diagnose. |

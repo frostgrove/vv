@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/utils/vvflag`, `github.com/frostgrove/vv/utils/vvcfg`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — a `--config-path` whose value is lost is reported as *absent*, so the process boots on whatever `CONFIG_PATH` says; `--migrate false` enables the boolean; an optional nested block never receives its environment fields; the first of two YAML or JSON documents is silently accepted; and a named FIFO can block start-up forever. The documented `main` also exits 2 under the application's own `flag.Parse()`; loading reads the process environment on every call and nothing says so; a mistyped key in the YAML is dropped in silence; and a container with no file cannot boot at all.
+**Verdict:** not ready — a `--config-path` whose value is lost is reported as *absent*, so the process boots on whatever `CONFIG_PATH` says; `--migrate false` enables the boolean; an optional nested block never receives its environment fields; the first of two YAML or JSON documents is silently accepted; and a named FIFO can block start-up forever. The documented `main` also exits 2 under the application's own `flag.Parse()`; `Load` merges process environment after the file rather than being a file-only fixture loader; a mistyped key in YAML or JSON is dropped in silence; and a container with no file cannot boot at all.
 
 **Status glyphs.** ✅ every must-hold holds today. 🟡 at least one holds and at
 least one does not. ❌ none holds. The status answers "can a consumer do this
@@ -738,8 +738,8 @@ are clean. Fixing only the `utils/` three leaves the gate red.
 **Setup:** A wrapper starts `worker exec -- --config-path child.yaml`, while the wrapper itself supplies `CONFIG_PATH=/etc/worker.yaml`.
 **What the consumer does:** It uses `--` to give the child ownership of every following argument.
 **What must happen:** The child argument must not override the wrapper's configuration; the wrapper may fall back to `CONFIG_PATH`, or return `ErrNoPath` when it is unset.
-**Today:** ✅ handled
-**Evidence:** `find` returns not-found immediately at the end marker (`utils/vvflag/vvflag.go:72-76`), after which `Find` consults only `CONFIG_PATH` (`utils/vvcfg/vvcfg.go:37-45`). The flag-layer behaviour is pinned by `TestDoubleDashEndsTheFlags` (`utils/vvflag/vvflag_test.go:85-90`); no `vvcfg` integration test combines that with the environment fallback.
+**Today:** ❓ unverified
+**Evidence:** `find` returns not-found immediately at the end marker (`utils/vvflag/vvflag.go:72-76`), after which `Find` consults only `CONFIG_PATH` (`utils/vvcfg/vvcfg.go:37-45`). The flag-layer behaviour is pinned by `TestDoubleDashEndsTheFlags` (`utils/vvflag/vvflag_test.go:85-90`), but no end-to-end `Find` control combines `--` with the environment fallback.
 **Blast radius:** none
 
 ### E-UTILS-03 — An upper-case extension still selects the intended decoder
@@ -747,8 +747,8 @@ are clean. Fixing only the `utils/` three leaves the gate red.
 **Setup:** A Windows-built artifact or a copied ConfigMap is named `APP.YAML` rather than `app.yaml`.
 **What the consumer does:** It passes that exact path to `Load` and expects YAML, not an unsupported-format error caused only by casing.
 **What must happen:** Format recognition must be case-insensitive, or the error must say that casing is significant.
-**Today:** ✅ handled
-**Evidence:** `vvcfg.Load` delegates the supplied path unchanged (`utils/vvcfg/vvcfg.go:49-63`), and cleanenv lower-cases `filepath.Ext(path)` before its YAML/JSON/TOML dispatch (`cleanenv@v1.5.0/cleanenv.go:129-150`). Neither `utils/vvcfg/vvcfg_test.go` nor the dependency's format tests exercise an upper-case filename.
+**Today:** ❓ unverified
+**Evidence:** `vvcfg.Load` delegates the supplied path unchanged (`utils/vvcfg/vvcfg.go:49-63`), and cleanenv lower-cases `filepath.Ext(path)` before its YAML/JSON/TOML dispatch (`cleanenv@v1.5.0/cleanenv.go:129-150`). Neither `utils/vvcfg/vvcfg_test.go` nor the dependency's format tests exercise an upper-case filename, so the composed consumer guarantee is not pinned.
 **Blast radius:** none
 
 ### E-UTILS-04 — A lower-case configuration field must not disappear silently
@@ -823,18 +823,27 @@ are clean. Fixing only the `utils/` three leaves the gate red.
 **Evidence:** `vvcfg.Load` accepts only a pathname and immediately delegates it (`utils/vvcfg/vvcfg.go:49-63`); cleanenv opens that path and passes the unbounded file reader directly to the chosen decoder (`cleanenv@v1.5.0/cleanenv.go:129-160`). There is no `io.LimitReader`, limit option, or size-oriented test in either adjacent test file.
 **Blast radius:** crash
 
-### E-UTILS-12 — Concurrent fixture/config loads need an explicit environment snapshot
-**Shape:** concurrency
-**Setup:** One process loads an application config and a test fixture concurrently while another goroutine changes a process environment variable for its own test or reload experiment.
-**What the consumer does:** It expects each `Load(path)` result to correspond to a declared input set, not to whichever environment values happened to be read field by field during the call.
-**What must happen:** The caller must be able to select file-only loading or pass an environment snapshot; process-global environment must not be an invisible concurrent input.
+### E-UTILS-12 — Pointer: process environment is part of the declared load input
+**Owner:** H-UTILS-13 owns fixture isolation and the missing file-only/environment-snapshot API. This module supports one start-up contract: establish the process environment before calling `Load`, then do not mutate it while loading.
+**Setup:** An application loads its configuration after deployment has established the process environment.
+**What the consumer does:** It treats the file and the already-established environment as the two documented inputs; tests that mutate environment concurrently are outside that contract and need H-UTILS-13's explicit isolation route.
+**What must happen:** Documentation must say that `Load` merges environment after parsing the file, so callers do not mistake `Load(path)` for file-only input.
+**Today:** 🟡 partial
+**Evidence:** every `Load` calls `cleanenv.ReadConfig` (`utils/vvcfg/vvcfg.go:60-63`), which parses then reads process environment (`cleanenv@v1.5.0/cleanenv.go:97-104`) field by field through `os.LookupEnv` (`:416-452`). The package fixture already has `env:"NAME"` and `env:"PORT"` (`utils/vvcfg/vvcfg_test.go:11-13`), but the module documentation presents `Load(path)` without saying environment is a second input (`docs/modules/en/vvcfg.md:42-52`).
+**Blast radius:** confusing error
+
+### E-UTILS-13 — A misspelled YAML or JSON key must not vanish
+**Shape:** adversarial input | misuse
+**Setup:** An operator writes `adress: ":8080"` instead of `addr:` in YAML, or ships the same misspelling in JSON after a field rename.
+**What the consumer does:** They expect start-up to refuse the unknown key and identify it, rather than run with a default or zero value while the reviewed file appears to set it.
+**What must happen:** YAML and JSON key strictness must have one explicit policy: refuse unknown keys, or deliberately permit them under a named compatibility policy. Until that decision is made, the silent default is not release-ready.
 **Today:** ❌ wrong or unhandled
-**Evidence:** every `Load` calls `cleanenv.ReadConfig` (`utils/vvcfg/vvcfg.go:60-63`), which performs the file parse and then reads the process environment (`cleanenv@v1.5.0/cleanenv.go:97-104`); every configured field is sampled separately through `os.LookupEnv` (`:416-452`). `Load` takes neither a layer policy nor an environment map, and no test makes two loads or environment changes concurrent. The ordinary single-fixture version is already demonstrably environment-dependent in `utils/vvcfg/vvcfg_test.go:11-13` and is described in H-UTILS-13; this is the process-wide race it becomes when the loader is reused.
+**Evidence:** cleanenv invokes plain `yaml.NewDecoder(r).Decode(str)` and `json.NewDecoder(r).Decode(str)` with neither `KnownFields(true)` nor `DisallowUnknownFields()` (`cleanenv@v1.5.0/cleanenv.go:158-166`); `vvcfg.Load` adds no decoder policy around `ReadConfig` (`utils/vvcfg/vvcfg.go:49-63`). No adjacent `vvcfg` test supplies an unknown YAML or JSON key.
 **Blast radius:** silent wrong answer
 
 ## Edge verdict
 
-The worst edge failures are silent configuration changes: a separated boolean `false` enables the operation, an unexported field or optional pointer block remains at zero despite its tags, an empty primary environment alias defeats its valid fallback, and a second document is ignored. The command-line end marker and case-insensitive extensions are closed, but only the former has a direct package test. On the availability side, a valid-looking FIFO has no cancellation path and large input has no bound; the preliminary `Stat` also gives a false sense of path provenance because a separate open follows it. The existing short `Find`/`Load` spine is useful, but its input boundary is too implicit for an operator-facing release.
+The worst edge failures are silent configuration changes: a separated boolean `false` enables the operation, an unexported field or optional pointer block remains at zero despite its tags, an empty primary environment alias defeats its valid fallback, an unknown YAML/JSON key vanishes, and a second document is ignored. The end-marker/environment and upper-case-extension journeys have plausible component evidence but lack exact end-to-end controls. On the availability side, a valid-looking FIFO has no cancellation path and large input has no bound; the preliminary `Stat` also gives a false sense of path provenance because a separate open follows it. Process environment is a supported start-up input, not a promised concurrent snapshot; fixture isolation remains H-UTILS-13.
 
 ## Release blockers found here (edge)
 
@@ -848,4 +857,20 @@ The worst edge failures are silent configuration changes: a separated boolean `f
 | 6 | `Stat` and decoder open are separate pathname operations | sharp edge | A replacement or symlink swap can make the loader inspect one object and run another, invalidating path provenance |
 | 7 | No caller-set configuration size limit exists | sharp edge | A broken or unexpectedly huge mount can exhaust start-up resources before the service has a chance to report a normal refusal |
 | 8 | `Load[*Config]` compiles but reaches a dependency's `wrong type ptr` error | sharp edge | The public generic shape invites the instantiation and gives the author no wrapper-level explanation or test |
-| 9 | Process-global environment is an implicit, field-by-field concurrent input | sharp edge | Reused loaders and fixture/reload code cannot state which input set produced a config |
+| 9 | Unknown YAML/JSON keys are silently dropped | serious | A spelling left behind by a field rename can make a production service boot with a default while its reviewed configuration appears to set a different value. |
+
+## Edge DX constraints
+
+The recommended start-up spelling is error-first: `cfg, err :=
+vvcfg.Auto[Config](os.Args[1:]); if err != nil { log.Fatal(err) }`. `Must(Auto(...))`
+remains available but must not lead the package documentation for operator input.
+`Validator` remains the shipped optional interface; whether a `MustValidate()`
+option is added is a separate declaration-time policy decision, not a competing
+`Validate()` option vocabulary. Unknown YAML/JSON keys are likewise a decision
+gap: strict refusal protects renamed fields, while a named compatibility mode may
+be needed for shared files and rolling deploys; do not silently choose either
+policy through the decoder. Generic nesting and the validation walk belong to
+vvcfg once; Vvdb owns only its `Config.Validate` rules (including replica
+semantics) and must not grow a second loader or environment policy. Today the
+interface assertion is optional (`utils/vvcfg/vvcfg.go:64-68`) and the decoders
+are non-strict (`cleanenv@v1.5.0/cleanenv.go:158-166`).

@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv` and every module under it — `crud`, `crud/sqlrepo`, `crud/query`, `crud/decorators/{specs,security,faults}`, `crud/adapter/{crudsql,crudpgx}`, `crud/{catalog,probe,sqlfault,crudtest}`, `crud/http/{crudhttp,crudnet,crudfiber,crudgin}`, `crud/rpc/crudgrpc`, `auth`, `auth/{apikey,authjwt}`, `auth/http/{authhttp,authnet,authgin,authfiber}`, `auth/rpc/authgrpc`, `port`, `port/porthttp`, `remote`, `remote/remotehttp`, `errs`, `errs/sqlerr`, `utils/{vvdb,vvflag,vvcfg}`, `utils/vvdb/dbpgx`, `cmd/vv`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — every part is deep and proven in isolation; a stock mount is writable by anyone who can reach the port, open in five query dimensions and serialises the whole model, the README's flagship error example promises a status the code does not answer, the wiring the README prescribes for the error vocabulary configures nothing on a generated route, and nothing assembles the parts into an application. The edge pass adds three silent data-integrity failures: `Save` does not honour a model's version lock, MySQL can update the row that owns a different unique key, and a gRPC numeric key above 2^53 can select its rounded neighbour.
+**Verdict:** not ready — every part is deep and proven in isolation; a stock mount is writable by anyone who can reach the port, open in five query dimensions and serialises the whole model, the README's flagship error example promises a status the code does not answer, the wiring the README prescribes for the error vocabulary configures nothing on a generated route, and nothing assembles the parts into an application. The edge pass adds a cross-stack ambiguity: two HTTP credentials select a tenant by header order instead of being refused before the generated route. The `Save` and gRPC numeric-key integrity defects are tracked by their canonical Sqlrepo and Crudgrpc sweeps.
 
 **This table is not the whole gate.** It carries what no single module owns. The
 module sweeps carry **35** blocker-severity rows of their own — `grep -c "| blocker |"
@@ -887,14 +887,8 @@ their fixes live.
 **Evidence:** `crud/sqlrepo/version_test.go:167-183` pins that an unversioned model has no version clause at all. `crud/meta.go:29-33` documents the opt-in tag, but no declaration check or generated mount warns that it is absent; no test found for a consumer-facing warning.
 **Blast radius:** silent wrong answer
 
-### E-GENERAL-03 — A stale worker calls `Save`
-**Shape:** concurrency
-**Setup:** A worker holds a versioned model, another writer changes it, then the worker calls `Save` with its stale full model.
-**What the consumer does:** They use the repository's documented upsert instead of the route-shaped `Update` method.
-**What must happen:** A versioned model must not silently overwrite a newer row through a different repository verb; refusal is safer than a partial lock.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `crud/sqlrepo/version_test.go:147-164` states and asserts that `Save` is an upsert with no `WHERE` in which to check the version; its emitted statement updates `title` while carrying no version predicate. `port/service.go:190-212` makes generated replace routes call that same `Save`. The test only prevents the stale value from winding the counter backwards, not the stale write itself.
-**Blast radius:** silent wrong answer
+### E-GENERAL-03 — Pointer: replacement is not an optimistic-lock promise
+**Owner:** [Sqlrepo.md](../modules/sqlrepo/Sqlrepo.md) owns the versioned `Save` and generated-replace contract. A consumer must not infer from a protected `Update` that full `Save` has the same stale-write refusal; the owner sweep carries the source verdict.
 
 ### E-GENERAL-04 — A bulk update races a saved edit
 **Shape:** concurrency
@@ -905,14 +899,14 @@ their fixes live.
 **Evidence:** `crud/sqlrepo/version_test.go:133-145` asserts that `UpdateAll` adds `"version" = "version" + 1` to its statement.
 **Blast radius:** none
 
-### E-GENERAL-05 — Two first requests cross the same relation
-**Shape:** concurrency
-**Setup:** Two requests are the first in one process to preload or filter through one relation.
-**What the consumer does:** They start a new deployment under ordinary concurrent traffic.
-**What must happen:** Lazy relation defaults resolve once, consistently, and without a race on process-shared metadata.
-**Today:** ✅ handled
-**Evidence:** `crud/relation.go:75-90,303-317` protects target and default resolution with separate `sync.Once` values. `crud/relation_test.go:474-520` drives simultaneous first use and checks every goroutine receives the same non-empty join fields.
-**Blast radius:** none
+### E-GENERAL-05 — Two credentials reach a generated tenant route
+**Shape:** seam | adversarial input
+**Setup:** A reverse proxy or retry layer leaves two `Authorization` values on a request: one caller belongs to tenant A and the other to tenant B. The application composes `authnet.Middleware`, `security.ScopeAttr("TenantID", "tenant")`, and a generated Crudnet list route.
+**What the consumer does:** They expect the door to refuse an ambiguous identity before its tenant claim becomes the repository scope; the route must not let header order choose which tenant's rows are listed.
+**What must happen:** A repeated HTTP credential is a 401/400 with no service call. One verified principal may then reach the common context and tenant gate.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/http/authnet/authnet.go:49-56` passes only `r.Header.Get` into `Guard.Authenticate`; Go's `net/textproto/header.go:30-38` returns the first header value. `auth/guard.go:95-123` authenticates that one credential and writes its principal to the context; `crud/decorators/security/principal.go:128-145` derives `ScopeAttr` from that principal, and `crud/decorators/security/security.go:323-338` applies it to a list. No test exercises this composed route with repeated HTTP credentials.
+**Blast radius:** data leak
 
 ### E-GENERAL-06 — A manager points back to another manager
 **Shape:** degenerate declaration
@@ -973,18 +967,18 @@ their fixes live.
 **Setup:** A client posts bodies at a resource's byte limit and one byte over it.
 **What the consumer does:** They repeat the request on a generated HTTP route.
 **What must happen:** The exact-limit body is accepted; the larger body is 413 and reaches neither decoder nor repository.
-**Today:** ✅ handled
-**Evidence:** `port/porthttp/body.go:62-85` reads one byte past the configured cap and returns `TooLarge` only above it. `crud/http/crudnet/edge_test.go:521-572` pins 413 and no repository call above the cap, plus acceptance below the default cap.
-**Blast radius:** none
+**Today:** ❓ unverified
+**Evidence:** `port/porthttp/body.go:62-85` implements the inclusive one-byte-past check. `crud/http/crudnet/edge_test.go:521-572` pins an over-cap refusal/no repository call and an ordinary under-cap control, but no exact-cap or one-byte-over control was found through Crudnet, Gin, and Fiber. The implementation is promising, not a three-binding boundary verdict.
+**Blast radius:** confusing error
 
 ### E-GENERAL-13 — A remote peer returns a page one byte too large
 **Shape:** boundary
 **Setup:** A dependent vv service or proxy answers at the configured response cap and one byte over it.
 **What the consumer does:** They call it through `remotehttp.Transport`.
 **What must happen:** The exact-limit answer is read, and the larger response is refused before it can grow the consumer process without bound.
-**Today:** ✅ handled
-**Evidence:** `remote/remotehttp/transport.go:144-155` reads one byte past the cap and refuses only the oversize response. `remote/remotehttp/transport_test.go:70-84` pins acceptance of an under-cap answer; no test found for the exact-cap boundary.
-**Blast radius:** none
+**Today:** 🟡 partial
+**Evidence:** `remote/remotehttp/transport.go:144-155` reads one byte past the cap and refuses only the oversize response. `remote/remotehttp/transport_test.go:70-84` pins acceptance of an under-cap answer, but no test covers the exact-cap boundary the consumer relies on.
+**Blast radius:** confusing error
 
 ### E-GENERAL-14 — The caller cancels an outbound read
 **Shape:** partial failure
@@ -1004,32 +998,20 @@ their fixes live.
 **Evidence:** `remote/remotehttp/transport.go:116-160` issues one request and returns the transport result; it has no retry or idempotency branch. No idempotency-key API or end-to-end test found in the mounted request path.
 **Blast radius:** data loss
 
-### E-GENERAL-16 — One database reports a second unique key, another overwrites it
-**Shape:** seam
-**Setup:** A table has an assigned primary key and a separate unique email; a keyed `Save` names a new primary key but an email already held by another row.
-**What the consumer does:** They move the same repository from PostgreSQL to MySQL, or use both during a migration.
-**What must happen:** The same domain conflict must refuse rather than update the other row because a dialect's upsert grammar is broader.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `crud/dialect.go:36-49` states that MySQL's `ON DUPLICATE KEY UPDATE` swallows every unique key, while PostgreSQL only targets the primary key (`crud/dialect.go:75-77`). `crud/dialect.go:126-137` emits that MySQL clause, and `docs/usage-guides/gorm.md:1178-1186` documents that this shape can overwrite row 1 instead of creating row 3.
-**Blast radius:** data loss
+### E-GENERAL-16 — Pointer: a second unique key changes `Save` by driver
+**Owner:** [Sqlrepo.md](../modules/sqlrepo/Sqlrepo.md) owns keyed `Save` and dialect-specific upsert behaviour. Its edge cases must decide the PostgreSQL/MySQL second-unique-key conflict; General keeps only this release-level pointer.
 
-### E-GENERAL-17 — A gRPC number names a 64-bit row
-**Shape:** adversarial input
-**Setup:** A gRPC client sends an identifier or receives a count above 2^53 as a protobuf number rather than a string.
-**What the consumer does:** They use the `google.protobuf.Struct` API directly, as the generic gRPC route invites them to do.
-**What must happen:** An inexact numeric identifier must be refused before it can select a rounded neighbour, and an int64 count or delete result must not be rounded in the response.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `crud/rpc/crudgrpc/message.go:142-153` accepts every `NumberValue` and formats its float64 without an exact-range check. `crud/rpc/crudgrpc/message.go:159-168` converts `int64` count and delete results to float64. `crud/rpc/crudgrpc/handler_test.go:226-255` deliberately proves that the first unspellable int64 is rounded when sent as a number; the example tells callers to use strings instead (`_examples/pgx-grpc/main.go:21-26`), but the server does not refuse the unsafe form.
-**Blast radius:** silent wrong answer
+### E-GENERAL-17 — Pointer: gRPC numeric IDs require a lossless spelling
+**Owner:** [Crudgrpc.md](../modules/crudgrpc/Crudgrpc.md) E-CRUDGRPC-01 owns the `google.protobuf.Struct` numeric-ID and int64-result contract. General does not repeat its source verdict; consumers should use that owner’s string-key rule.
 
 ### E-GENERAL-18 — A malformed declaration has no key, two keys or an impossible relation
 **Shape:** degenerate declaration
 **Setup:** A consumer declares no primary key, a composite key, an unsupported relation shape or an embedded pointer.
 **What the consumer does:** They rely on package initialization to catch the mapping before serving traffic.
 **What must happen:** Each declaration fails loudly with the field and the reason, not as a zero-value read or a request-time panic.
-**Today:** ✅ handled
-**Evidence:** `crud/schema_edge_test.go:42-111` covers non-struct models, no or composite keys, duplicate columns and embedded pointers. `crud/schema_edge_test.go:193-260` covers invalid relation kinds and shapes; `crud/meta.go:222-228` supplies the start-up `MustSchemaOf` form.
-**Blast radius:** none
+**Today:** 🟡 partial
+**Evidence:** `crud/schema_edge_test.go:42-111` covers non-struct models, no or composite keys, duplicate columns and embedded pointers. `crud/schema_edge_test.go:193-260` covers invalid relation kinds and shapes. `crud/meta.go:222-229` supplies `MustSchemaOf` for a package-level start-up check, but it is an opt-in call; no framework-wide declaration-validation path invokes it for every mounted or defined model before traffic.
+**Blast radius:** confusing error
 
 ### E-GENERAL-19 — The first row of a batch is invalid
 **Shape:** partial failure
@@ -1044,19 +1026,27 @@ their fixes live.
 **Shape:** boundary
 **Setup:** A UI retries an empty selection, then submits one more id than the bulk cap.
 **What the consumer does:** They call the generated bulk-delete route rather than hand-writing an empty-set branch.
-**What must happen:** An empty set answers deleted 0 without touching the repository; an oversize set refuses before a destructive call.
-**Today:** ✅ handled
-**Evidence:** `crud/http/crudnet/handler.go:387-401` checks the bulk cap before the service call. `crud/http/crudnet/handler_test.go:460-473` pins that an empty set does not call the repository, `crud/http/crudnet/edge_test.go:207-217` repeats that assertion for omitted and null ids on the wire path, and `crud/http/crudnet/options_test.go:276-297` proves the exact cap calls the repository while one extra id refuses before it.
+**What must happen:** An empty set answers deleted 0 without touching the repository; an oversize set refuses before a destructive call. `port.Rules.BulkCap` is the shared policy owner, but each binding needs its own conformance proof.
+**Today:** 🟡 partial
+**Evidence:** `port/rules.go:43-65` makes `Rules.BulkCap` the non-zero shared owner. `crud/http/crudnet/handler.go:387-401` checks that owner before the service call. `crud/http/crudnet/handler_test.go:460-473` pins that an empty set does not call the repository, `crud/http/crudnet/edge_test.go:207-217` repeats that assertion for omitted and null ids on the wire path, and `crud/http/crudnet/options_test.go:276-297` proves the exact cap calls the repository while one extra id refuses before it. This evidence proves the Crudnet journey only; General has no conformance evidence that Gin or Fiber read the cap.
 **Blast radius:** none
 
 ## Edge verdict
 
-The worst edge is silent integrity loss: a versioned repository protects `Update` but not `Save`, and moving that same code to MySQL can update the row that owns a different unique key. The gRPC `Struct` carrier is also unsafe for numeric 64-bit identifiers and counts because it accepts and emits float64 values where rounding is observable. The framework is genuinely closed against hostile query text, query alias bypasses, bounded request and remote response bodies, and concurrent first relation resolution. Cancellation is pinned for the remote HTTP client, but ambiguous write outcomes after a disconnect and a failed batch's cross-dialect atomicity remain unverified.
+The cross-stack edge is an ambiguous HTTP identity: `authnet` reads the first credential, so a proxy can choose which authenticated principal becomes a generated tenant route’s scope. The canonical Sqlrepo and Crudgrpc sweeps carry the separate `Save` and numeric-ID integrity verdicts; General points to them rather than competing with their source ownership. Hostile query text and query alias bypasses are closed; request-body cap code has the right one-byte-past shape but lacks an exact/plus-one binding-triplet verdict. `port.Rules.BulkCap` is the one bulk-cap policy owner, and Crudnet proves its empty/exact/over-cap journey; Gin and Fiber conformance remains unverified here. Schema resolution rejects malformed mappings when invoked, but no universal start-up declaration pass invokes it. Remote response code has the right one-byte-over implementation but lacks the exact-cap test, while ambiguous write outcomes after a disconnect and a failed batch’s cross-dialect atomicity remain unverified.
 
 ## Release blockers found here (edge)
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `Save` does not check a declared version and can silently apply a stale full model (`crud/sqlrepo/version_test.go:147-164`; `port/service.go:190-212`) | blocker | A version column reads as the framework's concurrency contract, yet a worker or generated replace path can choose `Save` and overwrite a newer row without a conflict. |
-| 2 | MySQL's keyed `Save` can update the row holding a different unique key, while PostgreSQL refuses it (`crud/dialect.go:36-49,126-137`) | blocker | The same repository call changes identity semantics by driver and can write the wrong person's row. |
-| 3 | gRPC accepts inexact float64 identifiers and emits int64 counts/deletion totals as float64 (`crud/rpc/crudgrpc/message.go:142-168`) | blocker | An ordinary `Struct` client can select a rounded neighbouring row or receive a rounded successful total with no error. |
+| 1 | `authnet` gives the first repeated HTTP `Authorization` value to the authenticator, whose principal becomes the tenant scope (`auth/http/authnet/authnet.go:49-56`; `auth/guard.go:95-123`; `crud/decorators/security/security.go:323-338`) | serious | A proxy or hostile client can make header order choose an otherwise valid caller’s tenant view. The request succeeds with no record that the door was ambiguous. |
+
+## Contested
+
+The round-1 DX concern about `vvkit` is **out of this edge pass**, not a new API proposal. The happy-half DX section already states its explicit, conditional challenge to [[D-037]]: if a generic descriptor type-switch is read as dependency resolution, the package cannot be written. No compatibility plan can be chosen by a readiness sweep. [[D-033]] and [[D-036]] also prohibit a root package that imports a transport dependency, so any future kit must return transport-neutral values; [[D-060]] already assigns the bulk cap to `port.Rules.BulkCap`. This round accepts those boundaries and adds no competing cap or generic-service design.
+
+Page-cap authority and migration are not a General-owned safe-mount proposal. The happy-half `sqlrepo.MaxLimit` default is merely an input/alternative for the Query sweep's single pending [[D-060]] amendment; Query alone selects the authority and migration, including clamp/refusal and remote-`GetAll` consequences, rather than adding a third configuration surface here (`docs/ai/usecases/modules/query/Query.md:1209-1213`). The `house.With(...)` occurrence in the happy-half sketch is explicitly illustrative and proposed, not an existing API; the immediately following text records that it “does not exist today” (`docs/ai/usecases/general/General.md:575-579`).
+
+Authhttp owns repeated HTTP credential detection and refusal in E-AUTHHTTP-13 (`docs/ai/usecases/modules/authhttp/Authhttp.md:714-730`). General retains E-GENERAL-05 only for the generated-route and tenant-scope consequence after that transport choice; Release-readiness must merge the two records as one underlying fix.
+
+Port owns the renderer-install seam in its release-blocker row 1 (`docs/ai/usecases/modules/port/Port.md:1203-1208`). General's happy blocker 3 remains the README-wide, all-transport consumer blast radius, not a competing implementation owner; Release-readiness must count the repair once.

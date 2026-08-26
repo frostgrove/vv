@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/auth/http/authhttp`, `github.com/frostgrove/vv/auth/http/authnet`, `github.com/frostgrove/vv/auth/http/authgin`, `github.com/frostgrove/vv/auth/http/authfiber`, `github.com/frostgrove/vv/auth/rpc/authgrpc`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the happy-path second-guard bypass and frozen HTTP mount remain blockers; the edge sweep adds silent first-value selection for duplicated gRPC credentials, Fiber refusal drift, and declarations that do not fail until a live request.
+**Verdict:** not ready — the happy-path second-guard bypass and frozen HTTP mount remain blockers; the edge sweep adds silent first-value selection for duplicated gRPC **and HTTP** credentials, an unresolved multi-source credential contract, Fiber refusal drift, and declarations that do not fail until a live request.
 
 This file is the binding half. What a credential is, how a token is parsed, and
 what options `auth.Guard` should grow belong to the sibling sweep at
@@ -143,7 +143,7 @@ worse than no door.
 6. A wholesale renderer — RFC 9457, say — is a value they can give this binding, as it is a value they give the CRUD binding.
 **Today:** 🟡 partial — 1, 3, 4 and 5 hold; 2 holds on two of three HTTP bindings and is unproven on the third; 6 does not, and the signature that blocks it is about to be frozen
 **Evidence:** `authhttp.Refuse` (`auth/http/authhttp/authhttp.go:67-92`) renders through `porthttp`, adds every header the renderer asked for, and writes rather than defers (the reason is at `authhttp.go:10-16`). 5 already holds and is easy to overstate as missing: `porthttp.RenderOption` carries `WithCodes` and `WithMessages` (`port/porthttp/render.go:51`, `:57`), and `authnet.md:71-72` promises exactly that. Locale from `Accept-Language` (`authhttp.go:49-54`), pinned by `TestARefusalIsRenderedInTheLanguageTheRequestAskedFor` (`authhttp/refuse_test.go:195`) — **but Fiber does not go through `Refuse` at all.** It has its own `locale()` (`authfiber/locale.go:17-23`) and its own header-and-body writer (`authfiber.go:60-73`), and no test in the tree exercises either: `authfiber/middleware_test.go:83` checks the body and the `Content-Type` and nothing else, and `grep -rn "Accept-Language" auth/` finds `authfiber/locale.go` and no Fiber test. For 6, the two seams are compatible and the mount is not: `crudhttp.Renderer` is a type *alias* for `porthttp.Renderer` (`crud/http/crudhttp/porthttp.go:23`) and `Refuse` takes `porthttp.Renderer` (`authhttp.go:67`), so the value passed to `crudnet.WithRenderer` is exactly the value `Refuse` accepts — but all three HTTP bindings take `...porthttp.RenderOption`, a variadic of the *EnvelopeRenderer*'s option type, which no `Renderer` can be smuggled through (`docs/api/surface.md:61-62`, `:731`, `:736`).
-**If not ready:** the escape hatch is real on two bindings and absent on the third. `authhttp.Refuse` is exported and `authhttp.md:17-18` names "render a refusal yourself" as a reason to import the package, so on `net/http` and Gin the workaround is a hand-written binding of about a dozen lines — `g.Authenticate(...)`, then `authhttp.Refuse(w, r, myRenderer, err)` — and `authhttp/refuse_test.go:219` passes its own renderer through exactly that seam. **On Fiber there is no such helper**: `Refuse` needs an `http.ResponseWriter` and Fiber has none, and its equivalent is unexported (`authfiber.go:62`), so a Fiber consumer reimplements the locale hop, the header loop and the `SetContext` write by hand with no reference to copy. The release-shaped half has three futures, not two, and the third has been under-priced. (a) Change four exported entry points from `...porthttp.RenderOption` to a binding-local `...Option`; every call site passing render options breaks, and `Render(opts ...porthttp.RenderOption) Option` fixes most of them with one wrapping edit — except `authnet.Handler(g, next, opts...)`, whose trailing variadic cannot be wrapped by a caller splatting positionally. (b) Ship it and take a v2 later. (c) **Add a constructor beside the frozen one** — `authgin.New(guard, opts ...Option)`, matching the `New` consumers already type on `crudgin`, `crudnet` and `crudfiber` (`crud/http/crudgin/handler.go:85`) — carrying `Render(...)`, `WithRenderer(...)` and `Skip(...)`. Nothing breaks, the knobs get a door, and the deadline goes away for one extra name per binding plus a line saying which to reach for. If (c) is rejected it should be rejected in writing, because it is the first thing a reviewer will propose.
+**If not ready:** the renderer escape hatch is real on two bindings and absent on the third, but its repair belongs to the shared Port/Crudhttp/Crudgrpc renderer contract, not a binding-local `WithRenderer`. `authhttp.Refuse` is exported and `authhttp.md:17-18` names "render a refusal yourself" as a reason to import the package; Fiber needs the same shared refusal adapter rather than a hand-written locale/header/body copy. The HTTP-specific release choice is smaller: add `authgin.New(guard, opts ...Option)` beside the frozen middleware constructor, carrying `Skip(...)` only. That adds the route-exemption door without creating a fourth renderer precedence chain.
 
 ### H-AUTHHTTP-07 — A standards-checking client wants `WWW-Authenticate` on the 401
 **Who:** a team publishing an OpenAPI document, or one whose clients use an OAuth2 library that refreshes on a challenge
@@ -327,7 +327,9 @@ var public = []authhttp.Route{
 r.Use(authgin.New(guard, authgin.Skip(public...)))
 
 // The refusal in the service's own body — the same value crudgin already takes.
-r.Use(authgin.New(guard, authgin.WithRenderer(myRenderer)))
+// Renderer configuration is the shared porthttp/Port seam used by CRUD and
+// gRPC; this binding constructor does not create a fourth renderer dialect.
+r.Use(authgin.New(guard))
 
 // A step-up token on the admin subtree. Nothing at this call site says
 // "re-authenticate": the default is that a different guard verifies, and only
@@ -346,7 +348,7 @@ guard := auth.NewGuard(authn, authhttp.Cookie("session"))
 guard := auth.NewGuard(authn, auth.Observe())
 ```
 
-Three of these are on the binding and three are on the guard, and the split is
+Two of these are on the binding and three are on the guard, and the split is
 the design rather than an accident: a route and an `http.Header` are
 transport-shaped, and re-authentication, cookies and a dry run are not, so all
 four transports get the second group at once. `New` is the second constructor of
@@ -402,6 +404,23 @@ to replace. `authnet.Handler` stays for what its own comment says it is for —
 one authenticated route among unauthenticated neighbours — and the lead becomes
 the global mount plus `Skip`.
 
+**Renderer configuration is not an Authhttp knob.** `New` may carry the
+HTTP-only route exemption, but it must consume the same `porthttp.Renderer`
+composition chosen by Port and used by Crudhttp and Crudgrpc. A binding-local
+`WithRenderer` would make a fourth precedence chain (default versus service hops
+versus messages/codes) and re-create the dropped-hop problem those sweeps are
+already closing. The release work is one shared renderer contract, then the
+Authhttp refusal path reads it; it is not a new per-binding configuration API.
+
+**Required decision gate before `New` or that renderer path is usable.** Amend
+[[D-055]]'s forbidden-import bullet to say exactly: *the root `auth` package and
+every `auth*` binding must not import `crud`, `crud/decorators/security`, or
+`port`; an `auth*` HTTP binding may import `port/porthttp` solely for D-059's
+shared HTTP error contract.* The amendment must also state that this exception
+does not permit a dependency on a `crud*` sibling or any subsystem. Until that
+text is accepted, current `port`/`porthttp` imports are a decision violation,
+not precedent authorising `New`, renderer installation, or refusal logging.
+
 **The cost of adding a knob is small and asymmetric.** One nobody turns costs a
 paragraph of documentation; one that is missing costs every consumer who needs it
 a hand-written binding, and on Fiber there is no helper to hand-write it with.
@@ -418,17 +437,19 @@ The asymmetry only holds before the tag.
   amended D-055; `docs/modules/en/authhttp.md:7` states `porthttp` as the intended
   dependency. `Auth.md` H-AUTH-17 found the same thing from the logging side.
   Blockers 2 and 6 here both propose putting a `porthttp.Renderer` deeper into the
-  bindings, so the amendment has to land first: D-059 narrowed the forbid to
-  `crud`, `crud/decorators/security` and `port` itself, with `port/porthttp`
-  allowed. A binding decision the shipped code contradicts is a trap for the next
-  agent, who is told a decision doc is binding.
+  bindings. The required D-055 amendment is quoted above: it permits only
+  `port/porthttp` from HTTP bindings and only for D-059's error contract, while
+  retaining the prohibition on root `port`, `crud`, security, and every `crud*`
+  sibling. Until it lands, the shipped imports are evidence of a contradiction,
+  not permission to deepen them.
 - [[D-055]] again, correctly cited this time — *"do not make an `auth*` module
   require its `crud*` sibling"*. That is the rule H-AUTHHTTP-10's gap breaks, and
   round 1 attributed it to [[FL-019]]'s reading and to [[D-051]]. D-051 says
   nothing about `auth` at all (`grep -n auth docs/ai/decisions/D-051-*.md` is
   empty), and five places in the tree cite it as if it did.
-- [[D-045]] — one shared half, one shape every transport can supply. `Skip` and
-  `WithRenderer` are HTTP because a route and an `http.Header` are;
+- [[D-045]] — one shared half, one shape every transport can supply. `Skip` is
+  HTTP because a route is; renderer configuration remains the shared
+  Port/Crudhttp/Crudgrpc seam rather than an Authhttp-local `WithRenderer`;
   `Reauthenticate`, `Cookie`'s option type and `Observe` are on the guard because
   they are not. D-045 also forbids re-deriving a shared rule in a binding, which
   is why the exemption matcher is one function in `authhttp` and not three.
@@ -459,10 +480,13 @@ The asymmetry only holds before the tag.
   for a log"* — is claimed as pinned and is unreachable on `authnet` and
   `authfiber` (H-AUTHHTTP-08), and on `authgrpc` only for an interceptor chained
   inside the renderer. Either the guarantee narrows or the bindings close it.
-- [[UC-019]] guarantee 15 — *"The same guard object drives all four"* — is what
-  `authhttp.Cookie` strains, because `auth.Lookup` sets state on the guard and a
-  guard carrying a cookie lookup mounted on `authgrpc.Unary` refuses every call.
-  The fallback shape answers it; without one, the guarantee narrows.
+- [[UC-019]] guarantee 15 — *"The same guard object drives all four"* — remains
+  true only with the defined fallback: `authhttp.Cookie` first checks the HTTP
+  cookie source, rejects a conflict if `Authorization` is also present, and uses
+  the configured header only when the cookie is absent. On gRPC the cookie source
+  is absent, so that same lookup takes the header fallback rather than trying to
+  authenticate an empty `Cookie` metadata value. Without these rules the
+  guarantee must narrow.
 - [[UC-019]]'s **Out of scope** line on mTLS — *"the rest of this use case then
   applies unchanged"* — is false on the three HTTP bindings and true on gRPC
   (H-AUTHHTTP-15). It has to say which.
@@ -510,7 +534,9 @@ and it is dissolvable, by adding a second constructor rather than changing the
 first. The escape hatch that makes the rest survivable is real on `net/http` and
 Gin and absent on Fiber, which is also the binding with the untested duplicate
 refusal, the dropped cause and no example: three findings landing on the same
-transport is not a coincidence to leave until after a tag.
+transport is not a coincidence to leave until after a tag. The proposed HTTP
+`New`/renderer route is decision-gated: D-055 must first adopt the narrow D-059
+exception above; existing forbidden imports do not make it current behaviour.
 
 ## Release blockers found here
 | # | What | Severity | Why it blocks |
@@ -679,26 +705,65 @@ transport is not a coincidence to leave until after a tag.
 **Blast radius:** confusing error
 
 ### E-AUTHHTTP-12 — An authenticator returns success with no principal
-**Shape:** boundary | partial failure
-**Setup:** An identity-provider adapter accidentally returns `(nil, nil)` after a timeout or an incomplete claims decode.
-**What the consumer does:** They expect a refusal at the door, rather than a nil principal reaching a policy or being mistaken for authentication.
-**What must happen:** A nil principal must be converted to an unauthenticated refusal before the binding calls the handler, on every transport.
-**Today:** ✅ handled
-**Evidence:** `auth/guard.go:103-113` turns `(nil, nil)` into `Unauthenticated` before writing a context. `auth/guard_test.go:119-129` pins both the refusal and the absence of a stored principal; all four bindings use `Guard.Authenticate` before their downstream handler (`auth/http/authnet/authnet.go:49-55`, `auth/http/authgin/authgin.go:46-55`, `auth/http/authfiber/authfiber.go:48-56`, `auth/rpc/authgrpc/interceptor.go:50-77`).
-**Blast radius:** none
+**Shape:** core Auth pointer
+**Today:** ✅ handled in `auth.Guard`, before every binding reaches its handler.
+**Evidence:** `Guard.Authenticate` converts `(nil, nil)` into `Unauthenticated`
+(`auth/guard.go:103-113`) and `auth/guard_test.go:119-129` pins it. This is an
+Auth invariant, not a duplicated Authhttp edge finding.
+
+### E-AUTHHTTP-13 — An HTTP request carries two Authorization values
+**Shape:** adversarial input | transport ambiguity
+**Setup:** A proxy preserves an old `Authorization` value and appends a new one,
+or a hostile client sends two different credentials.
+**What the consumer does:** They expect the HTTP door to reject the ambiguity,
+not to choose the first/last value according to transport implementation detail.
+**What must happen:** The shared HTTP credential getter must refuse more than one
+value for the configured credential name, matching the gRPC ambiguity policy.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Authnet gives the guard `r.Header.Get` (`auth/http/authnet/authnet.go:49-55`),
+and Gin/Fiber similarly provide a one-string getter (`auth/http/authgin/authgin.go:46-55`,
+`auth/http/authfiber/authfiber.go:48-56`). `auth.Guard` accepts that one string
+without cardinality information (`auth/guard.go:80-123`). The standard library's
+`http.Header.Get` delegates to `textproto.MIMEHeader.Get`, which returns one
+header value (`/usr/lib/go/src/net/textproto/header.go:25-28`); no HTTP binding test
+supplies repeated Authorization values.
+**Blast radius:** silent wrong answer
+
+### E-AUTHHTTP-14 — A configured cookie/query/API-key source conflicts with Authorization
+**Shape:** credential-source ambiguity
+**Setup:** A browser sends an event-stream cookie or namespaced query API key and
+an `Authorization` header with a different credential.
+**What the consumer does:** They expect one documented, fail-closed result rather
+than whichever custom lookup happens to inspect first.
+**What must happen:** A multi-source lookup must reject two present credentials;
+fallback to `Authorization` is permitted only when its cookie/query/API-key
+source is absent. The same lookup must return the header fallback on gRPC, where
+the HTTP-only source is absent, so one guard value remains usable on all four
+transports.
+**Today:** 🟡 proposed contract
+**Evidence:** `auth.Lookup` replaces normal header lookup rather than composing
+with it (`auth/guard.go:50-62,120-123`), and the HTTP bindings currently hand it
+only header-shaped getters (`authnet.go:50`, `authgin.go:47`, `authfiber.go:51`);
+query values therefore cannot reach a guard today. The planned `authhttp.Cookie`
+or namespaced query getter must define this precedence/refusal before it expands
+the source set.
+**Blast radius:** data leak if a lower-privilege source silently wins
 
 ## Edge verdict
 
-The worst unclosed edge is gRPC metadata cardinality: a repeated credential is
-silently reduced to its first value, so the binding chooses an identity where the
-service needs an explicit ambiguity policy. Fiber has two independent refusal
-parity gaps: it demonstrably loses repeated headers and its encoding-failure
-outcome is untested, while net/http has the safe behavior pinned. The remaining
-request-time panics and invalid declaration handling are less likely than the
-security-shaped cases, but they violate the module's own fail-at-wiring posture.
-Cancellation reaches the authenticator by construction and a nil principal is
-closed correctly; both need the focused coverage described above to remain
-credible across the four bindings.
+The worst unclosed edge is credential cardinality and source ambiguity: gRPC
+metadata and HTTP headers both collapse repeated `Authorization` values to one,
+and cookie/query/API-key support needs an explicit reject-on-conflict rule with
+header fallback. Fiber has two independent refusal parity gaps: it demonstrably
+loses repeated headers and its encoding-failure outcome is untested, while
+net/http has the safe behavior pinned. The remaining request-time panics and
+invalid declaration handling are less likely than the security-shaped cases, but
+they violate the module's own fail-at-wiring posture. Cancellation reaches the
+authenticator by construction; authenticator `(nil, nil)` is a closed core-Auth
+invariant rather than an Authhttp release finding. `auth.WithCredential` /
+`CredentialFrom` remain Auth proposals pending a D-055 amendment; therefore
+cookie/query support here must not imply Remote can forward a credential until
+Auth records that approved lifetime and placement contract.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |

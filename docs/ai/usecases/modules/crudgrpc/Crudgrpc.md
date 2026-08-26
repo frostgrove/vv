@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/rpc/crudgrpc`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — a `Replace` whose `entity` key is misspelled overwrites the row with a zero model and answers success, the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers. On the client seam, a numeric key past 2⁵³ can select a different row and a valid field name containing `.` or brackets comes back as a different error path.
+**Verdict:** not ready — a `Replace` whose `entity` key is misspelled overwrites the row with a zero model and answers success, the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers. On the client seam, a numeric key past 2⁵³ can select a different row; path-carrier losslessness awaits an Errs-owned codec decision.
 
 ## What a consumer is actually trying to do
 
@@ -383,7 +383,7 @@ cost no API at all come first.
 ### The call site
 
 ```go
-srv := crudgrpc.Reflecting(grpc.NewServer(          // one wrapper, whole server
+srv := crudgrpc.Reflecting(grpc.NewServer(          // *crudgrpc.ReflectingServer
     grpc.ChainUnaryInterceptor(crudgrpc.Errors(), authgrpc.Unary(guard)),
     grpc.ChainStreamInterceptor(crudgrpc.StreamErrors(), authgrpc.Stream(guard)),
 ))
@@ -406,6 +406,17 @@ The mount line is identical in both, and that is the part to protect. What the
 ideal adds is one wrapper call and one extra interceptor pair — still three
 statements, still one line per resource. `Reflecting` is a **new symbol**;
 `Errors`, `StreamErrors` and `Register` all exist.
+
+`Reflecting` has one exact shape: `func Reflecting(*grpc.Server)
+*ReflectingServer`. `ReflectingServer` embeds the supplied `*grpc.Server`,
+implements `grpc.ServiceRegistrar`, overrides `RegisterService` to collect each
+descriptor, and therefore still exposes `Serve`, `Stop`, `GracefulStop`, and
+`GetServiceInfo` to ordinary grpc-go wiring. Generated
+`crudgrpc.New(...).Register(srv, name)` calls the wrapper's registration method;
+hand-written generated services can use the same `srv.RegisterService`. The
+wrapper registers reflection from the collected descriptors before its embedded
+server begins serving. `Reflect(descs...)` remains the escape hatch for a bare
+`grpc.ServiceRegistrar` supplied by another framework.
 
 `Reflecting` rather than `Reflect(srv, desc)`, and the difference is worth
 arguing because the round-1 shape was worse. `Reflect(srv, h.Desc("Article"))`
@@ -467,14 +478,16 @@ srv := grpc.NewServer(grpc.ChainUnaryInterceptor(crudgrpc.Errors(crudgrpc.Using(
 crudgrpc.New(articles, crudgrpc.WithRenderer[Article, int64, ArticleUpdate](rd)).Register(srv, "Article")
 ```
 
-`Using(r Renderer) RenderOption` is a **new symbol**, and it is only half the
-change. Adding it makes `Errors` and `WithRenderer` one vocabulary — today
-`Errors` takes `RenderOption`s and the handler takes a `Renderer`, so the second
-line above cannot be written at all — but the value handed to `Errors` still
-never runs for a CRUD method, because the handler renders first
-(`handler.go:312-313`) and the interceptor passes an already-rendered status
-through (`interceptor.go:33-35`). On a fifteen-resource server that is still
-fifteen passes plus one.
+`Using(r Renderer) RenderOption` is a **new symbol**, but it must not become a
+gRPC-only renderer precedence rule. The shared rule is Port's: process/server
+renderer first; resource `Rendering(RenderOption...)` composes onto it while
+retaining declared hops; an explicit replacement renderer changes only the
+protocol body/status shape after Port-owned mapping. Crudhttp and Authhttp use
+the same ownership split. Today `Errors` takes `RenderOption`s and the handler
+takes a `Renderer`, so the second line above cannot be written at all — but the
+value handed to `Errors` still never runs for a CRUD method, because the handler
+renders first (`handler.go:312-313`) and the interceptor passes an already-
+rendered status through (`interceptor.go:33-35`).
 
 The version that actually delivers "one value covers the server" is different
 and larger: `Errors` publishes its options on the context, and `build`/`fail`
@@ -583,10 +596,14 @@ sixty lines. It is not the sixty lines the decision describes.
   application of it** — and the `entity`/`ids` envelope keys are a smaller,
   separate change that needs no amendment at all, because an absent envelope key
   is a client mistake by every reading.
-- [[D-060]] decided that the page cap belongs to `sqlrepo.MaxLimit` and **not**
-  to `query.Config`: "These are the ceilings that stop a statement no engine will
-  accept, not page sizes." Moving it would be a challenge to that decision.
-  Documenting the pairing, and arming `MaxLimit`'s default, are not.
+- **[[D-060]] page-cap authority is pending one explicit migration decision.**
+  Today the physical `sqlrepo.MaxLimit` clamp is the only implementation
+  (`crud/sqlrepo/blueprint.go:53-54`, `crud/options.go:241-252`), while the Query
+  sweep proposes a route-owned `port.Rules.PageCap` and challenges D-060's old
+  placement. Crudgrpc owns neither permanent surface: it must forward and test
+  whichever owner the D-060 amendment selects, including the chosen relationship
+  to `MaxLimit` and the Remote non-truncation rule. It must not document either
+  current clamp or proposed field as the settled binding contract.
 - [[D-063]] bounds **response** bodies as well as request ones, and names
   `ResourceExhausted` in both directions. The client's unclassified
   `*remote.ProtocolError` for an oversized page is a gap against it, and either
@@ -712,10 +729,11 @@ re-discovering them.
   Its rules are now must-hold 5 of H-CRUDGRPC-02, where the job actually lives,
   and its blocker survives as row 16. The slot carries the presenter and the write
   hooks, which had no happy case at all.
-- **H-CRUDGRPC-13 lost its cursor rule to H-CRUDGRPC-02** and its `query.Config`
-  complaint to [[D-060]], which decided the page cap belongs to `sqlrepo.MaxLimit`
-  in as many words. What is left is the two ceiling questions, and one of them is
-  now a [[D-063]] conformance failure rather than a missing flow row.
+- **H-CRUDGRPC-13 lost its cursor rule to H-CRUDGRPC-02** and its page-cap
+  ownership complaint to the pending D-060 authority/migration decision. What is
+  left is the two ceiling questions, and one of them is now a [[D-063]]
+  conformance failure rather than a missing flow row. Crudgrpc tests and forwards
+  the chosen shared owner; it does not choose one by documentation.
 
 ## Edge cases
 
@@ -791,14 +809,15 @@ re-discovering them.
 **Evidence:** `locale.go:25-49` gives an existing context locale priority and otherwise uses the exported key order and first parsable value. The module page names all three headers but no precedence (`docs/modules/en/crudgrpc.md:150-151`), while `handler_test.go:565-605` tests each key in isolation and the no-metadata fallback only.
 **Blast radius:** confusing error
 
-### E-CRUDGRPC-09 — A valid dotted or bracketed JSON key comes back as a different field
-**Shape:** seam
-**Setup:** A model or mapper exposes a JSON key such as `json:"billing.address"` or `json:"tag[primary]"`, and validation rejects that field.
-**What the consumer does:** A remote Go caller uses the returned `errs.Path` to highlight the same input key it submitted.
-**What must happen:** The path crosses the status boundary losslessly, or the binding uses an explicitly lossless wire representation instead of parsing a log rendering.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `status.go:294-318` writes `v.Path.String()` into the gRPC field-violation `Field` string, then `transport.go:214-230` reconstructs it with `errs.ParsePath`. `errs/path.go:109-119` documents `String` as lossy for dots and brackets; `client_test.go:224-262` proves only the ordinary `name` path, and `status_test.go:216-264` contains no separator-bearing name.
-**Blast radius:** silent wrong answer
+### E-CRUDGRPC-09 — A valid dotted or bracketed JSON key crosses the status carrier
+**Shape:** Errs pointer | gRPC carrier seam
+**Today:** ❓ the gRPC carrier currently writes `errs.Path.String()` into
+`BadRequest.FieldViolation.Field` and parses it on return
+(`crud/rpc/crudgrpc/status.go:294-300`, `transport.go:214-230`).
+**Pointer:** `errs.Path.String` is deliberately lossy for dots/brackets
+(`errs/path.go:109-119`), so Errs owns the lossless path-codec decision. Crudgrpc
+must carry whichever stable string/segment representation Errs defines, and add
+a separator-bearing transport control; it must not invent a second path grammar.
 
 ### E-CRUDGRPC-10 — A peer returns an enormous list of field violations
 **Shape:** scale
@@ -827,21 +846,41 @@ re-discovering them.
 **Evidence:** `transport.go:60-92` keeps the connection, service name and call options on the shared transport but builds `in`, `method` and `out` per call. No concurrent transport test was found in `crud/rpc/crudgrpc`; the client tests construct and use calls serially, for example `client_test.go:224-262`.
 **Blast radius:** confusing error
 
+### E-CRUDGRPC-13 — A native client cancels or reaches its deadline in flight
+**Shape:** cancellation boundary
+**Setup:** A native gRPC caller cancels a call after the server has entered the
+repository, then repeats it with a short deadline.
+**What the consumer does:** They expect the direct RPC result to be canonical
+`codes.Canceled` or `codes.DeadlineExceeded`, and the server-side service/
+repository context to become done rather than continuing detached work.
+**What must happen:** The client context must pass unchanged to `Invoke`; the
+server method must receive grpc-go's call context; cancellation/deadline must be
+observed at both ends and pinned at the wire boundary. The Remote adapter must
+not reduce either status to an unrelated internal fault.
+**Today:** 🟡 partial
+**Evidence:** `transport.Do` passes its caller context directly to
+`t.conn.Invoke` (`crud/rpc/crudgrpc/transport.go:76-86`), and unary methods pass
+grpc-go's context to their handler/service (`service.go:86-99`; handlers then
+thread it to `h.svc`, e.g. `handler.go:143-147`). But a status with no framework
+`ErrorInfo` becomes `remote.ProtocolError` carrying only `st.Code().String()`
+(`transport.go:203-246`), and no cancellation/deadline integration control
+proves the native status or server context completion.
+**Blast radius:** abandoned work / confusing retry handling
+
 ## Edge verdict
 
-The worst fresh fault is the error-path round trip: the server uses a formatter that
-its own package says is only for human log lines, then the client turns that lossy
-text back into machine data. Direct native clients also remain able to turn an
-unsafe numeric key into a successful request for a different row. The binding
-does close a presenter serialization failure and the normal violation cap by
-construction, but the former lacks a failing-path test and the latter is removed
-by a zero configuration. Its client half trusts remote error detail cardinality
-without applying the server's bound, while locale and decoder boundary contracts
-remain partly specified rather than pinned.
+The release-blocking wire defect is the canonical 64-bit numeric rounding path:
+the server accepts a native number it has already rounded, then can act on a
+neighbouring row. Path reconstruction is an Errs-owned codec decision carried by
+gRPC, not a second Crudgrpc grammar. The binding does close a presenter
+serialization failure and the normal violation cap by construction, but the
+former lacks a failing-path test and the latter is removed by a zero
+configuration. Its client half trusts remote error detail cardinality without
+applying the server's bound; locale, decoder, and in-flight cancellation/deadline
+contracts remain partly specified rather than pinned.
 
 ## Release blockers found here (edge)
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | The gRPC field-violation string for a valid key containing `.` or brackets is serialized through the deliberately lossy `errs.Path.String` form and reconstructed as a different `errs.Path` on the remote client. | blocker | A client can mark or retry the wrong field after a validation response, with no indication that the framework changed the path. |
-| 2 | A native numeric `id` above 2⁵³ is accepted after the `Struct` has rounded it, so a successful `Get`, `Update`, `Replace` or `Delete` can address a neighbouring 64-bit key. | blocker | The client gets a successful operation on a row it did not name; the documented string route does not protect a caller the server continues to accept. |
+| 1 | A native numeric `id` above 2⁵³ is accepted after the `Struct` has rounded it, so a successful `Get`, `Update`, `Replace` or `Delete` can address a neighbouring 64-bit key. | blocker | The client gets a successful operation on a row it did not name; the documented string route does not protect a caller the server continues to accept. |

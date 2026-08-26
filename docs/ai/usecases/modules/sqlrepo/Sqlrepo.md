@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/sqlrepo`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, and a second table or relation scope can silently replace the first and leak rows. A save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model, relations on a model are written nowhere and refused nothing, and the batch verb has a row ceiling below any real import. Two read paths truncate silently and report the truncation as the whole answer.
+**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, and a second table or relation scope can silently replace the first and leak rows. A save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model and bypasses optimistic-lock refusal, and MySQL can apply that upsert to a row selected by a different unique key. Relations on a model are written nowhere and refused nothing, and the batch verb has a row ceiling below any real import. Two read paths truncate silently and report the truncation as the whole answer.
 
 ## What a consumer is actually trying to do
 
@@ -1684,23 +1684,23 @@ them.
 **Evidence:** `repository.preload` reaches the shared relation path at `crud/sqlrepo/repository.go:531-536`. `Relation.resolveDefaults` protects its lazy writes with `sync.Once` at `crud/relation.go:300-317`, and `TestConcurrentFirstUseOfARelationDoesNotRace` at `crud/relation_test.go:474-522` asserts 32 concurrent first resolutions agree.
 **Blast radius:** none
 
-### E-SQLREPO-08 — A timeout after the write is not mistaken for no write
+### E-SQLREPO-08 — A timeout after the write is not mistaken for an uncommitted write
 **Shape:** partial failure
 **Setup:** On a dialect without `RETURNING`, the INSERT succeeds but the request context expires before the refresh query can return.
 **What the consumer does:** It calls `Save` and receives the timeout error.
-**What must happen:** The outcome is documented as indeterminate so retry code does not assume the row was absent and create a second effect.
+**What must happen:** The post-write durability state is documented as indeterminate so retry code does not assume the row was absent and create a second effect. This case is only about commit-state ambiguity after a repository write, not a general cancellation policy.
 **Today:** 🟡 partial
 **Evidence:** The non-`RETURNING` branch executes the write at `crud/sqlrepo/repository.go:652-660` and then refreshes the model with the same context at `:661-667`; a refresh failure is returned by `:684-695`. The error is propagated, but no test or module documentation states that a timed-out call may already have committed its write.
 **Blast radius:** confusing error
 
-### E-SQLREPO-09 — A broken `RETURNING` stream cannot silently leave models stale
+### E-SQLREPO-09 — A foreign executor's `RETURNING` stream has a stated conformance contract
 **Shape:** adversarial input
 **Setup:** A custom source reports fewer or more `RETURNING` rows than the slice supplied to `SaveAll`.
-**What the consumer does:** It trusts a successful `SaveAll` to refresh every input model in its original order.
-**What must happen:** A row-count mismatch returns an error. Success cannot leave a suffix unrefreshed or discard an unexpected returned row.
-**Today:** ❌ wrong or unhandled
-**Evidence:** The `RETURNING` loop stops when either stream or model slice ends at `crud/sqlrepo/repository.go:1188-1203`, then returns only `rows.Err()` at `:1204`; it never checks `i == len(models)` or that the stream ended exactly there. The integration key-order test at `test/integration/saveall_test.go:89-127` exercises normal adapters only; no mismatch test was found.
-**Blast radius:** silent wrong answer
+**What the consumer does:** It uses a foreign or test-double executor and needs to know whether malformed result cardinality is a supported adversarial input or outside the executor contract.
+**What must happen:** The framework must either specify and test exact returned-cardinality validation for foreign executors, or state that an executor returning successful malformed `RETURNING` rows violates its own contract. It must not present the latter as an ordinary supported-adapter release failure.
+**Today:** ❓ unverified
+**Evidence:** The loop stops when either stream or model slice ends (`crud/sqlrepo/repository.go:1188-1204`), so no local check establishes exact cardinality. The integration key-order test exercises normal adapters (`test/integration/saveall_test.go:89-127`), not an adversarial foreign executor; `crud.Executor` itself exposes only `Query` and `Rows` rather than a `RETURNING` cardinality guarantee (`crud/executor.go:36-39`, `:13-25`).
+**Blast radius:** confusing error
 
 ### E-SQLREPO-10 — A repeated key in one batch has one stated outcome
 **Shape:** concurrency
@@ -1738,6 +1738,24 @@ them.
 **Evidence:** `Bind` sends its middleware through `crud.Chain` at `crud/sqlrepo/blueprint.go:244-249`; `Chain` walks the list backward, leaving element zero outermost, at `crud/repo.go:109-115`. `TestDecorateStacksWithTheFirstMiddlewareOutermost` at `crud/decorate_test.go:84-112` pins both orders and their statement counts.
 **Blast radius:** none
 
+### E-SQLREPO-14 — A stale full-model Save or Replace must not silently win
+**Shape:** concurrency | seam
+**Setup:** Two callers hold version 0 of a versioned row. One changes it through `Update`, then the other sends the older full model through `Save` or HTTP `Replace`.
+**What the consumer does:** They use a `version` tag expecting any write carrying the stale model to refuse with `ErrStaleVersion`, rather than overwrite the newer fields.
+**What must happen:** A versioned full-model write either carries a version predicate and refuses the stale row, or `Save`/`Replace` explicitly refuse versioned full replacements. It must not advertise optimistic locking while one ordinary full-write route bypasses it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Save` constructs a keyed upsert from `insertFull + upsertTail` with no version predicate (`crud/sqlrepo/repository.go:609-624`); `newRepository` builds that tail from `Meta.Update` (`:52-60`), and version columns are deliberately omitted from the update list (`crud/meta.go:289-299`). `Update` alone builds `version = version + 1` and checks the prior value (`crud/sqlrepo/repository.go:733-751`, `:799-828`). `DefaultService.Replace` sets the id then calls `repo.Save` (`port/service.go:190-212`). The live matrix proves a stale Save succeeds, overwrites `Name`, and leaves the newer version intact (`test/integration/dialect_edge_test.go:380-418`); no stale Replace journey was found.
+**Blast radius:** silent wrong answer
+
+### E-SQLREPO-15 — MySQL collides on a second unique key during a primary-key Save
+**Shape:** seam | adversarial input
+**Setup:** A table has primary key `id` and a separate unique `email`. A caller saves `id=1` with an email already owned by `id=2`.
+**What the consumer does:** They expect the non-primary unique collision to be refused, as it is on PostgreSQL, rather than have a primary-key Save update whichever row MySQL selected by `email`.
+**What must happen:** The cross-dialect difference must be refused or made explicit at the call site; a consumer cannot safely treat `Save(id=1)` as targeting only id 1 when MySQL permits another unique key to choose the conflict row.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Save` always asks the dialect for one upsert tail keyed from the model primary key (`crud/sqlrepo/repository.go:609-624`, `:52-60`). PostgreSQL renders `ON CONFLICT (pk)` and declares that only the primary key is swallowed (`crud/dialect.go:75-98`); MySQL renders targetless `ON DUPLICATE KEY UPDATE` (`:126-154`), and the `UpsertScope` contract states that it swallows every unique key (`crud/dialect.go:36-47`). No integration case exercises a Save that collides only on a second unique key.
+**Blast radius:** data loss
+
 ## Edge verdict
 
 The worst new holes are declaration-time: two table scopes, or two relation
@@ -1745,15 +1763,38 @@ scopes on the same path, replace rather than compose, so a configuration made of
 individually safe pieces can return rows it was meant to hide. Boundary and
 configuration failures are also uneven: nil `Setting` and source values panic,
 a negative maximum removes a cap, and a maximum finite page can overflow into an
-unlimited read. The normal first-use relation race and middleware order are
-properly closed with source-level tests. Batch and timeout failure semantics need
-more than the happy-path integrations before a consumer can safely build retry
-or recovery logic around them.
+unlimited read. Versioned `Update` is protected, but full-model `Save` and
+`Replace` bypass that protection; on MySQL a second unique key can additionally
+select a different row for the upsert. The normal first-use relation race and
+middleware order are properly closed with source-level tests. Timeout ambiguity
+is only a post-write commit-state concern; malformed foreign `RETURNING`
+cardinality is an unverified executor contract, not a supported-adapter blocker.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
 | 1 | A second `sqlrepo.Scope` replaces the first (`crud/sqlrepo/blueprint.go:68-85`) | blocker | Two independently configured permanent guards can leave one guard absent from every read. This is a direct row-leak path and contradicts [[D-004]]'s rule that narrowing only composes. |
 | 2 | A second `RelationScope` for one path replaces the first (`crud/sqlrepo/blueprint.go:228-236`; `crud/scope.go:43-52`) | blocker | A tenant or visibility predicate on a preloaded or relation-filtered table can be erased by another declaration for the same path. The far-side query then returns rows the first declaration existed to hide. |
-| 3 | `SaveAll` accepts a malformed `RETURNING` cardinality as success (`crud/sqlrepo/repository.go:1188-1204`) | serious | A generic framework accepts custom sources. A short result stream leaves models stale after a successful call, so later writes act on values that do not describe stored rows. |
-| 4 | `SkipTotal` overflows at `math.MaxInt` and emits no limit (`crud/sqlrepo/repository.go:171-177`; `crud/render.go:104-110`) | serious | A finite request can become a whole-table read and exhaust service memory. |
+| 3 | A stale versioned full-model `Save` (and therefore `Replace`) succeeds and overwrites newer fields (`crud/sqlrepo/repository.go:609-624`; `port/service.go:190-212`) | blocker | The `version` tag appears to protect concurrent writes, but one common full-replacement route silently wins instead of returning `ErrStaleVersion`. |
+| 4 | MySQL `Save` can absorb a collision on a non-primary unique key and update that conflicting row (`crud/dialect.go:36-47`, `:126-154`) | blocker | A call targeting id 1 can mutate the row identified by another unique key, unlike PostgreSQL's primary-key-only conflict target. |
+| 5 | `SkipTotal` overflows at `math.MaxInt` and emits no limit (`crud/sqlrepo/repository.go:171-177`; `crud/render.go:104-110`) | serious | A finite request can become a whole-table read and exhaust service memory. |
+
+## Edge DX constraints
+
+`Scope` and same-path `RelationScope` must have one declaration rule: AND-compose
+every repeated narrowing or refuse the duplicate; table scope must not be
+last-wins while relation scope is map-overwrite. The illustrative
+`BatchSize(500)` is withdrawn: no arbitrary chunking knob should silently turn a
+one-statement `SaveAll` into a partial multi-statement write. The smaller contract
+is a declared per-statement ceiling and a pre-SQL refusal naming it; callers who
+need more explicitly partition their input and own the transaction.
+
+Any alternative conflict target or version-aware full Save is a direct [[D-011]]
+challenge: `Save` is a single no-option JPA-shaped upsert, so it cannot be added
+as a local convenience. A tombstone-view/Restore proposal also challenges
+[[D-031]]'s statement-owned soft delete and needs [[D-030]]'s new-verb permission
+and decorator obligations. These decisions must be amended explicitly before a
+DX proposal becomes an API. The current source confirms `Scope` assignment
+(`crud/sqlrepo/blueprint.go:68-85`), same-path overwrite
+(`crud/scope.go:43-52`), and the existing one-statement `SaveAll` assembly
+(`crud/sqlrepo/repository.go:1124-1175`).

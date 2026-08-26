@@ -637,11 +637,16 @@ without it the twentieth resource hand-writes an `AllOf` block it did not need.
 - [[D-013]] — an unknown field is a rejection, and the string-addressed form
   stays. That is why H-SPECS-03's guarantee 1 cannot be made total, and it should
   not be.
-- [[D-018]] — metamodels are generated. Nothing in the DX section above needs a
-  generator change. A metamodel coverage assertion, the domain-type attribute
-  choice (H-SPECS-10) and withholding `Desc()` inside a to-many group
-  (H-SPECS-04) all do, and all three are inside this decision's remit rather than
-  against it — the third of them is *only* implementable there.
+- [[D-018]] — metamodels are generated. The proposed `EqPtr` and `EqOpt` would
+  be methods on the runtime generic attribute types, so they can compose with
+  every already-generated `*T` and `crud.Opt[T]` DTO field without changing
+  generated output. Attribute
+  *classification* is different: same-package named numeric/string types and
+  imported types are code-generation work owned by `cmd/vv` (H-SPECS-10 and the
+  Codegen sweep), not a second inference rule in `specs`. A metamodel coverage
+  assertion and withholding `Desc()` inside a to-many group (H-SPECS-04) are
+  likewise inside this decision's remit — the latter is *only* implementable
+  there.
 - [[D-019]] — a dialect difference must not be observable except where this file
   names it. There are eleven named. **The missing `ESCAPE` clause is a twelfth
   and is not named**, so H-SPECS-08's blocker is a breach here as well as a
@@ -814,6 +819,13 @@ of this is new work: an owner triaging at a tag reads the new rows first.
   helper does not accept the value they hold, and nothing points at `.Unwrap()`
   (`crud/repo.go:101`, which this repository's own [[D-061]] tests use at
   `crud/basenext_test.go:53`).
+- **The generic first-relation concern is not retained as a specs finding.** The
+  reviewer asked whether composing a specification added a concurrency failure;
+  the source shows it only evaluates its operands (`spec.go:142-155`), while the
+  mutable first-use state is guarded in `crud.Relation` (`crud/relation.go:74-109`)
+  and covered by the 32-resolver control (`crud/relation_test.go:474-521`).
+  E-SPECS-12 is therefore a pointer to General's construction audit, not a
+  blocker or an unverified specs-specific release claim.
 
 ## Edge cases
 
@@ -916,14 +928,12 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 **Evidence:** `FindAll` forwards the specification and options unchanged (`crud/decorators/specs/executor.go:61-64`). With no paging option, `GetAll` intentionally invokes `find` with a zero limit (`crud/sqlrepo/repository.go:271-280`); this preserves correctness but materialises every matching row. No specs test or module-doc warning establishes a ceiling or export route.
 **Blast radius:** crash
 
-### E-SPECS-12 — Two first requests cross the same relation together
-**Shape:** concurrency
-**Setup:** Two services reuse a composed relation specification at process start, and their first requests both traverse `Comments.Author.Name`.
-**What the consumer does:** They expect first use to be as safe as every later request and neither request's relation resolution to influence the other.
-**What must happen:** Lazy relation metadata must initialise once, with all callers seeing the same join fields.
-**Today:** 🟡 partial
-**Evidence:** Relation metadata has separate `sync.Once` guards for target and default join-field resolution (`crud/relation.go:74-90,93-109`). `TestConcurrentFirstUseOfARelationDoesNotRace` starts 32 resolvers and asserts both stable join fields and non-empty results (`crud/relation_test.go:474-521`). Library composition creates a fresh closure and does not itself mutate its operands (`crud/decorators/specs/spec.go:142-155`), but no specs test invokes one composed specification concurrently.
-**Blast radius:** none
+### E-SPECS-12 — First use of a relation from a reusable specification
+**Shape:** concurrency pointer
+**Setup:** Two first requests evaluate the same relation-bearing specification.
+**Today:** ✅ handled by the core relation invariant; no specs-specific failure is demonstrated.
+**Evidence:** Target and default join-field resolution are each guarded by `sync.Once` (`crud/relation.go:74-109`), and `TestConcurrentFirstUseOfARelationDoesNotRace` exercises 32 concurrent resolvers (`crud/relation_test.go:474-521`). Composition only evaluates its operands and returns a predicate (`crud/decorators/specs/spec.go:142-155`); it adds no mutable relation state.
+**Pointer:** General owns any broader first-use/construction audit. This module does not claim a missing specs concurrency test as a release blocker.
 
 ### E-SPECS-13 — Cancellation reaches a bulk specification write
 **Shape:** partial failure
@@ -952,9 +962,32 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 **Evidence:** `specs.Predicate` exposes the AST for the bridge (`crud/decorators/specs/spec.go:195-198`), and `remote.ToRequest` marshals it and returns any error before making a request (`remote/options.go:90-95`). The marshaller explicitly refuses `EqField`, `False`, and `Raw` (`crud/document.go:220-222,292-301`); `crud/query/roundtrip_test.go:121-153` proves the refusals name the offending constructor.
 **Blast radius:** none
 
+### E-SPECS-16 — An optional child filter is empty inside a reusable tenant specification
+**Shape:** composition boundary
+**Setup:** A shared list specification combines the mandatory root restriction
+with an optional child specification that evaluates to nil when its form value
+is absent. (`specs.If` is the proposed convenient spelling; the source control
+is `specs.Of[User](func(specs.Root[User], specs.Builder) crud.Predicate { return nil })`.)
+**What the consumer does:** They reuse the specification in an admin list and
+expect the blank optional child condition to disappear without discarding the
+tenant restriction that makes the list safe.
+**What must happen:** The composed predicate must still be the root `TenantID`
+restriction; an absent optional member may never turn the whole composition into
+an unbounded read.
+**Today:** ✅ handled for `AllOf`/`And` composition; `AnyOf` remains the separate
+widening trap documented in the DX section.
+**Evidence:** `SpecFunc` deliberately returns nil for an absent function/result
+(`crud/decorators/specs/spec.go:24-33`). `combine` returns the non-nil side when the other side is absent
+(`crud/decorators/specs/spec.go:142-155`), and `fold` drops nil members but returns
+the remaining predicates with `AND` for `AllOf` (`:174-189`). Thus the false
+optional specification evaluates to nil and the mandatory tenant predicate is
+returned unchanged. `crud.Where` then only appends filters (`crud/options.go:87-94`),
+so a later option cannot replace that root restriction.
+**Blast radius:** none
+
 ## Edge verdict
 
-The worst live edge is not a crash: a natural, readable relation filter can return the wrong root rows with status 200 because same-path child conditions are evaluated in independent `EXISTS` clauses. The wrong-model preload and empty `NotIn` read have the same silent-success shape, while the bulk-write form of empty `NotIn` escalates it to data loss because the guard checks only for nil. Pattern escaping and typed list-size limits are also open across the public typed path. Declaration-time relation-target validation, malformed runtime-path refusal, transaction propagation, and remote refusal of unrepresentable predicates are genuinely closed; composed-specification concurrency and cancellation of a bulk write remain unverified at this layer.
+The worst live edge is not a crash: a natural, readable relation filter can return the wrong root rows with status 200 because same-path child conditions are evaluated in independent `EXISTS` clauses. The wrong-model preload and empty `NotIn` read have the same silent-success shape, while the bulk-write form of empty `NotIn` escalates it to data loss because the guard checks only for nil. Pattern escaping and typed list-size limits are also open across the public typed path. Declaration-time relation-target validation, malformed runtime-path refusal, transaction propagation, remote refusal of unrepresentable predicates, and an empty optional member inside an `AllOf` retaining its mandatory root restriction are genuinely closed. Bulk-write cancellation remains unverified; relation first-use safety is a core invariant, with any wider construction audit owned by General.
 
 ## Release blockers found here (edge)
 

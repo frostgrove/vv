@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/auth`, `github.com/frostgrove/vv/auth/authjwt`, `github.com/frostgrove/vv/auth/apikey`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established. The edge half adds a forgeable blank HMAC configuration, an accidental scheme waiver that can hand bearer tokens to a key store, ambiguous key-set identifiers resolved by array order, and type-nil extensions that escape the promised start-up checks.
+**Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established. The edge half adds a forgeable blank HMAC configuration, an accidental scheme waiver that can hand bearer tokens to a key store, ambiguous key-set identifiers resolved by array order, type-nil extensions that escape the promised start-up checks, and a removed JWKS key whose continuing acceptance has no declared lifetime.
 
 ## What a consumer is actually trying to do
 
@@ -738,14 +738,8 @@ failures today.
 **Evidence:** `NewGuard` tests only `a == nil` before retaining the interface (`auth/guard.go:32-42`), and `apikey.New` does the equivalent for its `Store` (`auth/apikey/apikey.go:79-92`). Both later invoke the stored interface on the request path (`auth/guard.go:103`, `auth/apikey/apikey.go:103`). The start-up tests pass literal nil only (`auth/guard_test.go:132-139`, `auth/apikey/apikey_test.go:108-115`); no typed-nil configuration test was found.
 **Blast radius:** crash
 
-### E-AUTH-03 — Two Authorization credentials arrive through a transport
-**Shape:** adversarial input · seam
-**Setup:** A client or proxy supplies two `Authorization` values — for example an old bearer token and a newly injected API key.
-**What the consumer does:** They expect an ambiguous proof of identity to be rejected, rather than to depend on which hop or transport happened to retain first.
-**What must happen:** The binding rejects multiple credential values before authentication, consistently across HTTP and gRPC.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `authnet` hands `http.Header.Get` straight to the guard (`auth/http/authnet/authnet.go:49-55`); Go's `Header.Get` returns the first value (`net/textproto/header.go:25-39`). The gRPC adapter also selects `vs[0]` (`auth/rpc/authgrpc/interceptor.go:115-125`) from `metadata.MD.Get`, which preserves all values (`google.golang.org/grpc/metadata/metadata.go:107-113`). No auth transport test for duplicate credentials was found.
-**Blast radius:** silent wrong answer
+### E-AUTH-03 — Pointer: credential cardinality is a transport decision
+**Owner:** [Authhttp.md](../authhttp/Authhttp.md) owns repeated HTTP/gRPC credential handling. The core guard accepts one string-shaped credential; the binding must decide whether more than one header/metadata value is an ambiguity and refuse it before calling `Guard.Authenticate`.
 
 ### E-AUTH-04 — `Scheme("")` silently means `AnyScheme()`
 **Shape:** misuse · seam
@@ -846,9 +840,18 @@ failures today.
 **Evidence:** The authenticator rejects an empty token before lookup (`auth/apikey/apikey.go:95-111`), and `Static` uses `subtle.ConstantTimeCompare` for every candidate (`auth/apikey/apikey.go:135-149`). `TestAKnownKeyAuthenticatesAndAnUnknownOneDoesNot` pins a known key, an unknown key, a prefix, and an empty key (`auth/apikey/apikey_test.go:22-55`).
 **Blast radius:** none
 
+### E-AUTH-15 — A signing key is withdrawn before every token expires
+**Shape:** partial failure | seam
+**Setup:** A provider removes compromised key `k1` from its JWKS while unexpired `k1` tokens remain in circulation. No client presents a new, unknown `kid` to force a refresh.
+**What the consumer does:** They need an explicit policy: either a known key remains accepted until token expiry, or the cache has a stated maximum age after which the provider is consulted. Revocation cannot depend on unrelated traffic or a process restart.
+**What must happen:** The public API documents and enforces one acceptance/revocation lifetime, including what happens when refresh fails. A removed key must not remain trusted indefinitely by accident.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/authjwt/jwks.go:127-141` returns a cached known `kid` without calling `refresh`; `auth/authjwt/jwks.go:162-228` refreshes only after a cache miss, and records `fetched` without any reader. `auth/authjwt/jwks_test.go:82-105` proves retirement only after a new unknown `k2` forces a refresh; no test removes a still-cached `k1` without that trigger.
+**Blast radius:** data leak
+
 ## Edge verdict
 
-The worst edge is an empty HMAC secret: the parser starts and accepts signatures that anybody can create, so this is not merely a bad 401 configuration. The module also leaves several declarations that should fail at start-up to fail on traffic — empty audience, nil static public key, zero refresh interval, and interface-typed nil dependencies — while its advertised fixed API-key identities remain mutable by reference. JWKS has careful concurrency and rate-limit coverage under valid configuration, but it silently resolves a duplicate key identifier by response order; HTTP and gRPC likewise silently choose the first of multiple credentials. The prefix-key boundary is properly closed and pinned, but the extension and misconfiguration boundaries need construction-time validation before this is release-ready.
+The worst edge is an empty HMAC secret: the parser starts and accepts signatures that anybody can create, so this is not merely a bad 401 configuration. The module also leaves several declarations that should fail at start-up to fail on traffic — empty audience, nil static public key, zero refresh interval, and interface-typed nil dependencies — while its advertised fixed API-key identities remain mutable by reference. JWKS has careful concurrency and unknown-key rate-limit coverage under valid configuration, but it silently resolves a duplicate key identifier by response order and has no declared lifetime for a key the provider withdrew. Repeated credentials are an Authhttp transport seam, not a competing core verdict. The prefix-key boundary is properly closed and pinned, but the extension and misconfiguration boundaries need construction-time validation before this is release-ready.
 
 ## Release blockers found here (edge)
 
@@ -859,3 +862,24 @@ The worst edge is an empty HMAC secret: the parser starts and accepts signatures
 | 3 | A duplicate usable JWKS `kid` is resolved by last-write-wins (`auth/authjwt/jwks.go:257-275`) | serious | A malformed or compromised provider response changes the trust anchor by JSON array order rather than failing closed. |
 | 4 | `JWKSMinRefreshEvery(0)` removes the unknown-`kid` outbound-request bound (`auth/authjwt/jwks.go:105-108`, `auth/authjwt/jwks.go:181-201`) | serious | One forged, sequentially distinct `kid` per request can make the service repeatedly call its identity provider. |
 | 5 | Typed-nil principals and extension dependencies evade the literal-nil start-up checks (`auth/context.go:22-35`, `auth/guard.go:32-42`) | serious | A routine Go interface mistake becomes an apparent authenticated identity or request-time crash instead of a deploy-time error. |
+| 6 | A known JWKS key is accepted from cache until an unrelated unknown `kid` forces a refresh; `fetched` has no maximum-age reader (`auth/authjwt/jwks.go:127-141,162-228`) | serious | Withdrawing a compromised signing key does not give an operator a predictable revocation time. A process can continue accepting its tokens until restart or unrelated key traffic. |
+
+## Edge DX constraints
+
+The round-2 DX conclusion is accepted with these boundaries. Empty HMAC material, audience elements, and JWKS refresh intervals need one **construction-time policy** — each current constructor must reject its invalid value before `authjwt.New` creates a parser — but no shared validator API exists today. `auth.WithCredential` and `auth.CredentialFrom` are likewise proposals, not current APIs: [[D-055]] must first decide whether an in-flight credential may live beside the principal, then define explicit opt-in placement and lifetime for every transport and remote forwarding. **Until that D-055 amendment is accepted and recorded, Remote must not present `CredentialFrom`, request-hook credential forwarding, or its forwarding example as usable.** The H-AUTH-19 proposal, the DX call-site line, and release-blocker row 5 are all conditional on that amendment; today a Remote hook must use a consumer-owned context value or not forward the credential. `authhttp.Cookie` remains an HTTP-only proposal in `authhttp`, never `auth`. Any refusal observation remains on the [[D-062]] `port.Logger(ctx)` boundary; a process logger or callback option would violate it.
+
+## Contested
+
+- **H-AUTH-19's happy-half evidence misattributes credential parsing to
+  `authhttp`.** `Guard.Authenticate` obtains the credential through
+  `g.credential(get)` before authenticating it (`auth/guard.go:90-113`); the HTTP
+  and gRPC bindings supply only their transport getter
+  (`auth/http/authnet/authnet.go:49-55`, `auth/http/authgin/authgin.go:46-52`,
+  `auth/http/authfiber/authfiber.go:48-56`,
+  `auth/rpc/authgrpc/interceptor.go:48-58,67-77`). If [[D-055]] accepts
+  credential retention, its opt-in and lifetime therefore belong at the
+  Guard/transport-context seam, not at an imaginary Authhttp parser seam.
+  `authhttp.Cookie` remains only a proposed HTTP credential *source*. The stale
+  Remote pointer is replaced by its current explicitly conditional forwarding
+  example (`docs/ai/usecases/modules/remote/Remote.md:1110-1117,1147-1150`);
+  `auth.CredentialFrom` is not a current symbol.

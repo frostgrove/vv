@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/remote`, `github.com/frostgrove/vv/remote/remotehttp`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — `GetAll` can silently truncate, `GetByID` drops a narrowing predicate, and a remote resource has no scope seam; edge cases add credential disclosure through URL userinfo, unbounded redirect following, and hooks that still run after cancellation.
+**Verdict:** not ready — `GetAll` can silently truncate, `GetByID` drops a narrowing predicate, and a remote resource has no scope seam; edge cases add credential disclosure through URL userinfo, redirect following, hooks that still run after cancellation, and ambiguous write outcomes after a lost response.
 
 ## What a consumer is actually trying to do
 
@@ -1108,7 +1108,7 @@ customers := remote.New[Customer, int64, CustomerUpdate](content.Resource("custo
 // CallInfo carries Method, ID and Resource — enough to label a metric or scope
 // an idempotency key, and no Body or IDs a hook could write through.
 func forwardToken(r *http.Request, _ remote.CallInfo) error {
-    c, ok := auth.CredentialFrom(r.Context()) // what the inbound Guard kept
+    c, ok := auth.CredentialFrom(r.Context()) // PROPOSED ONLY: conditional on an accepted D-055 amendment
     if !ok {
         return remote.HookError("no credential to forward to the content service")
     }
@@ -1143,6 +1143,19 @@ vocabulary, and nothing about the first block has to be unwritten to get to the
 second. Two of the knobs do change the call *site* — `customersRO` is a second
 identifier, and `EachPage` is a callback where `GetAll` was a slice — and the
 code block says so rather than the prose, because that is where a reader looks.
+
+`auth.CredentialFrom` does **not** exist today. This proposed forwarding example
+is conditional on Auth accepting and recording its D-055 amendment for an
+in-flight credential beside the principal; until then a Remote hook needs a
+consumer-owned context value or the application must not forward credentials.
+
+**A peer base is validated once, before traffic.** `TryTransport` must parse an
+absolute `http`/`https` URL, require a host and a mount-prefix path, reject
+userinfo, query, fragment, and encoded separators, and normalise only the final
+slash. `Transport` may panic on the same invalid input. The default client must
+refuse every redirect; a caller that intentionally follows one supplies its own
+`http.Client` and accepts responsibility for credential/header forwarding. Error
+paths redact any authority credentials even if a foreign transport supplied one.
 
 ### Why this shape
 
@@ -1192,6 +1205,12 @@ smaller promise gets read as a bigger one:
   (`port.ErrScopeCannotCross`) so `errors.Is` works. And it should be said in
   the same breath that a `ScopedReads` resource mounted on a binding is a
   read-only API by construction.
+- **The wrapper is formally asymmetric.** `Get`, `GetAll`, and `Count` append
+  the scope; `GetByID` routes through scoped `Get`; preloads are refused unless
+  `RelationsScopedRemotely` was declared; `Save`, `Update`, `Delete`, and bulk
+  delete refuse with that classified error; and `Next()` returns the wrapped
+  repository's next decorator unchanged. The last rule is forwarding, not an
+  escape from scope: walking past the wrapper consciously changes the value used.
 - **It stops an honest mistake and nothing else.** The far service has no idea
   the narrowing was meant to be mandatory; the wrapper moves the trusted call
   site one layer up inside the same process. H-REMOTE-07's must-hold (3) — a call
@@ -1226,6 +1245,13 @@ specific: the far side declared `UnstablePagination()`, the caller passed
 closes the first two; the default primary-key tiebreaker
 (`crud/sqlrepo/repository.go:540-556`) is why everything else already walks.
 
+**Cancellation and partial progress are part of the callback contract.** Before
+each page `EachPage` checks `ctx.Err()` and returns it without another request;
+if cancellation happens while the callback handles page N, the callback's error
+wins and no page N+1 is fetched. Pages already handed to the callback stay
+processed — no rollback or hidden retry occurs — so all-or-nothing exports need
+their own transaction/sink protocol around the callback.
+
 ### What it must not break
 
 - [[D-053]] — three answers and never a fourth. This is the decision the module
@@ -1250,18 +1276,16 @@ closes the first two; the default primary-key tiebreaker
   inherited by `ScopedReads` unscoped with nothing failing, which is the exact
   failure D-030 was written for. A `portVerbs` table belongs in the same commit
   as the wrapper — cheaper before it exists than after.
-- [[D-060]] — a request may not choose how much comes back. `port.EachPage` walks
-  *within* the far side's page size, never around it. **This file previously
-  cited D-060 to forbid `GetAll` paging through the collection itself, and that
-  attribution was wrong:** D-060 bounds what one request may *name* — its own
-  "Why" is "a full table scan and a full table in memory, chosen by whoever sent
-  the request" — and says nothing about how many requests a caller makes; its
-  cost section frames the remote consequence as `GetAll` needing
-  `AllowUnpaged`, not as the whole table being off limits. The rule this file
-  actually wants is its own and is stated as such: **an implicit fan-out inside a
-  single method surprises a caller, an explicit walk does not.** That is a new
-  decision, and if it is accepted it belongs in D-060's "What is deliberately
-  still open" rather than being read back into the existing text.
+- **[[D-060]] — Query owns the pending cap-authority migration.** Its proposed
+  amendment makes `port.Rules.PageCap` authoritative, retains
+  `sqlrepo.MaxLimit` only as a compatibility backstop, and requires every binding
+  to forward one resolved cap (`docs/ai/usecases/modules/query/Query.md:931-950`).
+  Remote does not introduce another cap owner: under that pending contract,
+  `GetAll` requests the far endpoint's declared unpaged/export capability and
+  refuses if it is absent or capped; it never returns a truncated collection as
+  “all”. Proposed `port.EachPage` is the explicit multi-request alternative and
+  walks within the peer's declared page size. Until D-060 is amended, this is
+  migration guidance, not a claim about current `GetAll` behaviour.
 - [[D-047]] — a fault's `Error()` is classification only. Every far-side refusal
   this module surfaces reads as `errs: bad_request: bad_query (1 violation)` in a
   log, and the fix is **not** to put the violation message into `Error()`; that
@@ -1354,7 +1378,7 @@ here because it surfaces here.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `GetAll` comes back truncated wherever the far side declared a page size, and the page it discards claims to be complete (`remote/resource.go:112-127`, `crud/options.go:242-247`, `crud/sqlrepo/repository.go:217-218`) | blocker | Silent partial data in exports and reconciliation jobs. [[D-060]]'s own "What it forbids" already ruled truncation "worse than refusing it" — a binding decision named it and nothing was done. The client-only half needs no far-side deploy: the far side's clamp is on the wire as `PaginatedResponse.Limit` (`crud/page.go:8`), and `GetAll` is already decoding and throwing it away |
+| 1 | `GetAll` comes back truncated wherever the far side declared a page size, and the page it discards claims to be complete (`remote/resource.go:112-127`, `crud/options.go:242-247`, `crud/sqlrepo/repository.go:217-218`) | blocker | Silent partial data in exports and reconciliation jobs. Query’s **pending D-060 migration contract** is the canonical proposed authority: it requires an export-capability request and refusal, never a truncated “all” result (`docs/ai/usecases/modules/query/Query.md:939-951`). The client-only half needs no far-side deploy: the far side's clamp is on the wire as `PaginatedResponse.Limit` (`crud/page.go:8`), and `GetAll` is already decoding and throwing it away |
 | 2 | A narrowing option on `GetByID` is silently dropped where the local call honours it: `port.NarrowForEntity` wipes `Filter`, `Terms`, `Search` and `Sort` (`remote/resource.go:139`, `port/request.go:38-44`) against `crud/sqlrepo/repository.go:144-150` | blocker | `GetByID(ctx, id, crud.Where(crud.Eq("TenantID", 7)))` is `ErrNotFound` locally and another tenant's row remotely, over a 200. It is the fourth answer [[D-053]] says does not exist, inside the module [[D-053]] was written for, and it falsifies the only workaround available for blocker 3 |
 | 3 | `security.Gate` cannot wrap a remote resource, and the obvious wrapper cannot close it: `port.Repository` carries usable options on three of eight methods (`port/repository.go:16-25`, `remote/resource.go:212`, and blocker 2) | blocker | Tenant isolation over a remote resource has no seam, and the shape everyone reaches for first — scope the reads, forward the writes — is the false protection `crud/http/crudnet/options.go:87-96` already warns about. The honest close is a smaller, named promise: reads scoped, writes refused with a rendered class, and enforcement left to the owning service's gate |
 | 4 | [[UC-018]] is marked `covered` with an empty gap list (`docs/ai/usecases/Index.md:89`), while blocker 1 falls inside its guarantee 3, blocker 2 inside guarantee 2, blocker 3 inside guarantee 11 and blocker 5 inside guarantee 7 | blocker | The use-case tree is what the next reader trusts instead of re-deriving. Either these findings are wrong or UC-018 loses `covered` and gains gap rows — deciding which is the one thing a release sweep owes the owner |
@@ -1376,10 +1400,11 @@ here because it surfaces here.
 
 - **Blocker 1 keeps `blocker` severity although it fires only where the far side
   declared a `MaxLimit`.** A reviewer was right in round 1 that a stock far end
-  returns every row, and the wording now says so. The severity stays: [[D-060]]
-  already ruled this configuration a hazard in its own "What it forbids", and the
-  defect fires exactly where an operator did the careful thing. A narrower blast
-  radius makes the argument sharper, not smaller.
+  returns every row, and the wording now says so. The severity stays: Query’s
+  pending D-060 migration contract identifies refusal rather than truncation as
+  the proposed compatibility outcome, and the defect fires exactly where an
+  operator did the careful thing. A narrower blast radius makes the argument
+  sharper, not smaller.
 - **H-REMOTE-01 stays ✅ despite the peer's `query.Config`.** A reviewer wanted it
   re-rated because a filter can 400 over the wire. Its must-holds are about the
   translation — that what this client sends is the narrowing a local repository
@@ -1408,6 +1433,12 @@ here because it surfaces here.
   having. The runtime refusal is the trade, and the price of it is that the
   refusal must carry a class a gateway can render, which is now part of the
   proposal rather than left unstated.
+- **Foreign-envelope recognition is a Port pointer, not a second Remote parser.**
+  Remote correctly turns a body `porthttp.ParseEnvelope` declines into
+  `ProtocolError` (`remotehttp/transport.go:242-255`). The false acceptance of a
+  foreign `{"type":"error"}` body is therefore owned by Port's envelope parser;
+  Remote owns only the caller-facing protocol-error recovery and does not invent
+  another acceptance grammar.
 
 ## Edge cases
 
@@ -1495,8 +1526,11 @@ here because it surfaces here.
 ### E-REMOTE-10 — The request is already cancelled before token minting
 **Shape:** partial failure | seam
 **Setup:** An inbound request is cancelled before the gateway starts a remote call; its `WithRequestHook` mints or exchanges a token before setting the header.
-**What the consumer does:** They expect cancellation to prevent all per-call work, including the hook, rather than merely stopping the HTTP round trip after a token exchange has happened.
-**What must happen:** `Do` must check `ctx.Err()` before invoking the hook (and again before the client), returning the cancellation without sending or minting.
+**What the consumer does:** They expect cancellation to prevent this configured
+request hook from minting a token after the caller has gone away.
+**What must happen:** `Do` must check `ctx.Err()` before invoking the hook (and
+again before the client), returning cancellation without this hook work or a
+send. This case makes no broader preflight claim than the source supports.
 **Today:** ❌ wrong or unhandled
 **Evidence:** `remote/remotehttp/transport.go:117-136` builds the request and executes the hook unconditionally before `t.client.Do`; only the latter observes cancellation at `:138-141`. `TestTheCallersDeadlineReachesTheRequest` cancels a context but installs no hook (`remote/remotehttp/transport_test.go:87-100`).
 **Blast radius:** confusing error
@@ -1519,6 +1553,29 @@ here because it surfaces here.
 **Evidence:** `remote/transport.go:56-67` makes custom transports a supported extension point, and `remote/resource.go:274-288` rejects `len(raw) == 0` before unmarshalling. The HTTP cap test covers a non-empty response (`remote/remotehttp/transport_test.go:50-85`), but no remote-resource test supplies an empty successful `json.RawMessage` from a custom transport.
 **Blast radius:** none
 
+### E-REMOTE-13 — The peer commits a write but the response is lost
+**Shape:** ambiguous outcome | retry boundary
+**Setup:** `Save` creates an entity, or `Delete` removes one, the peer commits,
+and the connection drops before the response reaches the caller. A job retries
+the same method because it received a timeout/transport error.
+**What the consumer does:** They need to know whether retry is safe, whether the
+outcome is explicitly ambiguous, and where an idempotency key belongs.
+**What must happen:** Remote must not retry writes automatically. `Save`/`Delete`
+return an error that means "outcome unknown" when no response arrived; the
+caller either reads state before deciding, supplies a peer-recognised idempotency
+key through the widened call hook, or chooses not to retry. A `PUT` replace may
+be idempotent only under the far service's documented semantics; POST create and
+DELETE are not assumed safe merely because the method names look familiar.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Save` maps unset IDs to POST and set IDs to PUT
+(`remote/resource.go:167-201`), while `Delete` maps one ID to DELETE
+(`:226-262`). `remotehttp.Do` returns the raw client error after `t.client.Do`
+fails (`remote/remotehttp/transport.go:138-141`) and has no idempotency-key or
+ambiguous-outcome type; the hook sees only `*http.Request` today
+(`:87-92,132-135`). No write-lost-response/retry test exists in the remote or
+transport suites.
+**Blast radius:** duplicate create / incorrect compensating action
+
 ## Edge verdict
 
 The highest-severity new edge is a direct secret disclosure: a URL containing
@@ -1529,8 +1586,10 @@ answer. The resource defends several ordinary declaration and boundary mistakes
 in code — nil transport, non-positive response caps, zero-key delete, nil model,
 and empty extension output — but all except the empty delete lack focused tests.
 Cancellation does reach the HTTP request, yet it arrives too late to suppress a
-costly per-request hook; shared-resource concurrency is plausible by inspection
-and still unpinned.
+costly per-request hook. A lost write response has no idempotency or
+ambiguous-outcome contract, so callers can retry a committed create/delete by
+accident. Response caps and cancellation remain Remote-owned client behaviour;
+shared-resource concurrency is plausible by inspection and still unpinned.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |
@@ -1539,3 +1598,4 @@ and still unpinned.
 | 2 | The default client follows redirects and the transport treats any final 2xx as a normal resource response (`remote/remotehttp/transport.go:64-71`, `:138-159`) | serious | A call configured for one peer can silently complete against another route or origin, defeating the client’s fixed-peer and protocol-validation promises. |
 | 3 | `WithRequestHook` runs even when the inbound context was already cancelled (`remote/remotehttp/transport.go:117-141`) | sharp edge | Token minting, tracing, or other hook work happens after the consumer has cancelled the call. The existing cancellation test proves only that an unhooked HTTP request stops. |
 | 4 | A base URL with query or fragment is accepted and concatenated into the first request (`remote/remotehttp/transport.go:39-46`, `:117-124`) | sharp edge | A configuration typo cannot fail at wiring and produces a malformed or surprising route only under traffic. |
+| 5 | A committed `Save`/`Delete` whose response is lost is indistinguishable from a write that never reached the peer; Remote has neither an ambiguous-outcome error nor an idempotency-key contract (`remote/resource.go:167-201`, `:226-262`; `remote/remotehttp/transport.go:138-141`) | serious | A well-meaning retry can duplicate a POST create or perform an incorrect compensating action after a committed delete. |

@@ -66,6 +66,12 @@ code delivers it. It is allowed to be wrong about the code in a way a use case i
 not, and it says where it is unsure. `general/General.md` is the same sweep for
 the framework as a whole.
 
+## Readiness indexes
+
+For newcomer-oriented navigation, see the [module index](modules/Index.md) and
+[general index](general/Index.md). The cross-module tag assessment is
+[Release readiness](Release-readiness.md).
+
 ## Index
 | ID | Use case | Actor | Lives in | Also constrains | Status |
 |----|----------|-------|---------|-----------------|--------|

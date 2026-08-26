@@ -921,11 +921,14 @@ what a tag needs.
    zero-config case free, and `authhttp.Refuse` takes the same branch so
    H-PORT-14(1) survives intact.
 
-   **The precedence rule has to be stated, or this recreates blocker 2 inside
-   the fix:** a resource that was given its own `WithRenderer` or
-   `WithErrorHandler` keeps rendering itself and never defers. Only a resource
-   with no renderer of its own hands the error up. Otherwise mounting the
-   middleware silently turns off a renderer somebody configured per resource.
+   **One renderer precedence, everywhere:** the process-wide `EnvelopeRenderer`
+   is the base; a resource's `Rendering(RenderOption...)` composes options onto
+   that base and retains its declared hops; an explicit replacement `Renderer`
+   owns only the response shape, while Port still applies declared hops before
+   the renderer sees violations. Thus a resource override is explicit, but it
+   cannot turn off field mapping or create a second logging/locale pipeline.
+   Crudhttp, Authhttp, and Crudgrpc consume this same rule rather than each
+   growing a binding-local renderer option.
 
    **The ordering rule follows and has to be said out loud:** `fail` must be
    *outside* the auth middleware. `authnet.Middleware(guard)(fail(mux))` gives a
@@ -991,14 +994,21 @@ this catalogue* and *replace the body* are different functions, `RenderOption`
 keeps meaning exactly what it means today, and nobody writes `nil` to get the
 default.
 
-`Bind` returns only an error. `porthttp.Handle` installs an empty body holder on
-the request context and `Bind` fills it, so there is no request to thread back
-and no `_ = porthttp.WithBody(...)` to forget. That is what lets Fiber and
-`net/http` supply the retained body from a hand-written handler, which is the
-blocker-9 half nothing else here reaches. A hand-written route that is *not*
-wrapped in `Handle` — a chi route beside a generated mount — still needs the
-hops, and `porthttp.Handle` is the only place to put them; that half of
-H-PORT-11 stays open until the toolkit lands, and change 1 does not close it.
+`Bind(r, dst)` returns only an error. `Handle(fn func(http.ResponseWriter,
+*http.Request) error) http.Handler` has no impossible error return in the
+`net/http` shape: it records `fn`'s error for an enclosing `Errors` middleware,
+or renders through the process default when no recorder is installed. It also
+installs the empty body holder that `Bind` fills, so there is no request to
+thread back and no `_ = porthttp.WithBody(...)` to forget. That is what lets
+Fiber and `net/http` supply the retained body from a hand-written handler. A
+hand-written route that is *not* wrapped in `Handle` still needs the hops; that
+half of H-PORT-11 stays open until the toolkit lands.
+
+**Manual fields validate at wiring.** `port.Fields` needs `Validate() error`
+(called by `port.Hops`/the binding constructor) that rejects an empty declared
+destination and a malformed path before a request can turn it into an empty
+successful mapping. It must use the generated `PathMap` rule as its control,
+not silently decline a declaration the consumer wrote to be authoritative.
 
 ### Turning one knob
 
@@ -1089,6 +1099,10 @@ constructors is still four against twenty-one call sites.
   it stayed behind. Its forbid list says the forwarders survive the first
   deprecation cycle; nothing here removes one, and `porthttp.WithResolvers` stays
   meaningful rather than becoming a no-op that lies.
+- **[[D-062]]** — observation stays request-scoped. `WithObserver` receives the
+  request context and reports through `port.Logger(ctx)`; `Handle`/`Bind`/`JSON`
+  do not grow callback or process-logger options. A custom replacement renderer
+  owns its own observation because it owns the original error value.
 - **[[D-043]]** — a path is translated one hop per layer, and a guess never
   overturns a declaration. Under change 2 the declared hops are applied by
   `port.Violations` itself, ahead of the raw-body fallback, so the property no
@@ -1350,14 +1364,13 @@ leaves it.
 **Evidence:** `port/locale.go:36-50` truncates at the first semicolon or comma and returns `fr`, ignoring the zero quality value. `port/porthttp/locale_test.go:33-46` tests a positive q-value but no excluded-language case.
 **Blast radius:** confusing error
 
-### E-PORT-13 — An empty bulk-delete set is truly empty
-**Shape:** boundary
-**Setup:** A worker constructs `BulkDeleteCommand[ID]{}` and calls the service directly.
-**What the consumer does:** They run a cleanup whose computed id set is empty and expect no database statement and a count of zero.
-**What must happen:** The empty set returns `(0, nil)` without calling the repository; it must not turn into a broad delete or a not-found error.
-**Today:** ✅ handled
-**Evidence:** `port/service.go:228-235` returns before the repository call for an empty id list. `port/service_test.go:276-306` pins the zero count and zero repository calls.
-**Blast radius:** none
+### E-PORT-13 — An HTTP bulk-delete body contains no ids
+**Shape:** Crudhttp pointer
+**Today:** ✅ handled at the service seam: an empty `BulkDeleteCommand` returns
+`(0, nil)` before the repository call (`port/service.go:228-235`), pinned by
+`port/service_test.go:276-306`.
+**Pointer:** Crudhttp owns the consumer-facing decode/status/body contract for
+an empty bulk-delete request. It is not a separate Port edge finding.
 
 ### E-PORT-14 — The body stream fails after it starts
 **Shape:** partial failure
@@ -1368,18 +1381,40 @@ leaves it.
 **Evidence:** `port/porthttp/body.go:77-80` sends every `io.ReadAll` error to `MalformedBody`, whose catch-all at `:143-151` formats the original error into a client-visible `BadRequestAs` message. `port/porthttp/errors_test.go:263-332` exercises JSON structural errors and an audited query error, but no failing-reader case.
 **Blast radius:** data leak
 
+### E-PORT-15 — A client excludes every error representation the server can send
+**Shape:** protocol negotiation
+**Setup:** A client sends `Accept: text/html, application/json;q=0` (or an
+otherwise contradictory list) and the request fails validation.
+**What the consumer does:** They expect the error path to follow an explicit
+representation rule, rather than receiving JSON that their header ruled out or
+a browser-style body on an API route.
+**What must happen:** The common contract must be one of two explicit outcomes:
+negotiate an acceptable framework envelope, or return a bodyless 406 when JSON
+is explicitly excluded. If `Accept` is absent or permits JSON, the stable
+fallback is the normal JSON error envelope. A binding may not invent an HTML
+fallback.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `EnvelopeRenderer.Render` returns a status, headers, and the JSON
+envelope without receiving request headers (`port/porthttp/render.go:123-149`),
+and `porthttp` has an `AcceptLanguage` helper but no `Accept` parser
+(`port/porthttp/errors.go:78-85`). The three HTTP bindings only consult
+`Accept-Language` at their render calls (`crud/http/crudnet/options.go:174-182`,
+`crud/http/crudgin/options.go:208-214`, `crud/http/crudfiber/options.go:198-205`);
+no source path or test establishes error-representation negotiation.
+**Blast radius:** protocol violation
+
 ## Edge verdict
 
 The worst edge failure is a foreign JSON gateway response being accepted as this
-framework's envelope and silently classified from its HTTP status; a bad route
-can therefore read as an empty resource. The body fallback is careful when it
-has an index, but its retention limit drops the resolver entirely, so a common
-valid large request returns a server field as if it were exact; hand-written
-`Fields` maps add two more silent-path failures. The generated map, ordinary
-decoder privacy, ambiguity refusal, non-JSON decline, and empty bulk deletion
-are genuinely covered. The remaining concurrency and size-limit claims have
-plausible source-level protections but lack the boundary or concurrent tests a
-release contract needs.
+framework's envelope and silently classified from its HTTP status; `porthttp`
+owns that parser defect, while Remote owns the caller-facing recovery. The body
+fallback is careful when it has an index, but its retention limit drops the
+resolver entirely, so a common valid large request returns a server field as if
+it were exact; hand-written `Fields` maps add two more silent-path failures.
+Error-response `Accept` negotiation has no contract at all. The generated map,
+ordinary decoder privacy, ambiguity refusal, and non-JSON decline are genuinely
+covered. Exact-cap, broader size, and concurrency claims remain unverified where
+the source has a plausible guard but no boundary/concurrent control.
 
 ## Release blockers found here (edge)
 
