@@ -130,7 +130,7 @@ are reached, the first line is the whole installation.
 
 Versions move in lockstep: the library and every binding are tagged together, so
 `@v0.1.0` means the same thing everywhere. No `replace` is ever needed
-([`D-033`](docs/decisions/D-033-optional-dependencies-are-their-own-modules.md)).
+([`D-033`](docs/ai/decisions/D-033-optional-dependencies-are-their-own-modules.md)).
 
 ## Quick start
 
@@ -165,7 +165,7 @@ mapping panics at package initialisation rather than on the first request.
 Open the database — or hand vv one you already have. `vvdb` takes one struct
 with `yaml` and `env` tags and answers a handle for PostgreSQL, MySQL, MariaDB
 or SQLite; the driver stays your own blank import, and the connection stays
-yours ([`D-057`](docs/decisions/D-057-the-application-opens-the-connection.md)):
+yours ([`D-057`](docs/ai/decisions/D-057-the-application-opens-the-connection.md)):
 
 ```yaml
 db:
@@ -724,7 +724,7 @@ And what it will not tell a client. Every authentication failure is one answer �
 absent, expired, forged, for another audience, or valid for a tenant that no
 longer exists. A 401 that distinguishes its reasons is a user-enumeration oracle
 in the same way a 403 on a hidden row is a row oracle
-([`D-056`](docs/decisions/D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md)).
+([`D-056`](docs/ai/decisions/D-056-an-authentication-failure-is-a-fault-that-wraps-a-sentinel.md)).
 The reason is kept, inside, for a log.
 
 An optional guard is available and does not weaken that: a request with no
@@ -978,7 +978,7 @@ What differs is mounting, which body encodings are accepted, what each router
 does with a trailing slash or a method it does not have, and — on gRPC — that a
 failure arrives as a status code plus `BadRequest` / `ErrorInfo` / `RetryInfo`
 details rather than as the JSON envelope;
-[`FL-013`](docs/flows/FL-013-a-request-through-another-binding.md) has the table.
+[`FL-013`](docs/ai/flows/FL-013-a-request-through-another-binding.md) has the table.
 
 `crudnet` is worth a look even if your router is not `ServeMux`: every route
 method on it is an ordinary `http.HandlerFunc`, so chi, gorilla/mux or
@@ -1608,8 +1608,8 @@ Adding a driver means adding a `Target`, never a test.
 | | |
 | --- | --- |
 | Everything one package can do, and how to wire it | [`docs/modules/`](docs/modules/en/Index.md) |
-| Why is it like this? May I change it? | [`docs/decisions/`](docs/decisions/Index.md) |
-| What must hold, in a consumer's language | [`docs/usecases/`](docs/usecases/Index.md) |
-| Where does this happen, in which files? | [`docs/flows/`](docs/flows/Index.md) |
+| Why is it like this? May I change it? | [`docs/ai/decisions/`](docs/ai/decisions/Index.md) |
+| What must hold, in a consumer's language | [`docs/ai/usecases/`](docs/ai/usecases/Index.md) |
+| Where does this happen, in which files? | [`docs/ai/flows/`](docs/ai/flows/Index.md) |
 | Adopting an ORM you already use | [`docs/usage-guides/`](docs/usage-guides/) |
 | What is left to build | [`docs/roadmaps/Roadmap.md`](docs/roadmaps/Roadmap.md) |

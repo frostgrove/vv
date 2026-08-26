@@ -60,7 +60,7 @@ it.
 
 **Because the oracle is real and is not closed by this decision.** The probe
 queries rows the caller may not be allowed to see, and a unique-violation
-response reveals that a value exists. `docs/usecases/` gap 3 records this for
+response reveals that a value exists. `docs/ai/usecases/` gap 3 records this for
 plain 409s; the probe multiplies it. The controls — value never echoed by
 default, per-constraint opt-out, scope-aware probing from the `security.Policy`,
 code-only mode — make the trade adjustable, not absent. A unique constraint a

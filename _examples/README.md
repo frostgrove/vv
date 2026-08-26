@@ -45,7 +45,7 @@ both live in the library.
 | [`ent-pgx-fiber`](ent-pgx-fiber/) | ent | `crudsql` | PostgreSQL | Fiber | An ent project keeps its generated entity, its migration and its builders; vv binds the generated struct as-is and serves from the same pool. |
 | [`ent-pgx-gin`](ent-pgx-gin/) | ent | `crudsql` | PostgreSQL | Gin | The same model, the same declaration and the same options as the example above — only the mount and the engine differ. |
 | [`gorm-pgx-fiber`](gorm-pgx-fiber/) | gorm | `crudsql` | PostgreSQL | Fiber | One struct carrying both gorm and vv tags: no second model, no adapter type, and gorm and vv share one `*sql.DB`. |
-| [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so vv reads the written row back; the caller cannot tell ([`D-019`](../docs/decisions/D-019-dialect-differences-are-not-observable.md)). |
+| [`gorm-mysql-gin`](gorm-mysql-gin/) | gorm | `crudsql` | MySQL | Gin | The same declaration on a different engine. MySQL has no `RETURNING`, so vv reads the written row back; the caller cannot tell ([`D-019`](../docs/ai/decisions/D-019-dialect-differences-are-not-observable.md)). |
 | [`sqlx-pgx-gin`](sqlx-pgx-gin/) | sqlx | `crudsql` | PostgreSQL | Gin | sqlx and vv read the *same* `db` tag, so there is exactly one tag set: sqlx keeps the queries it is good at, vv serves the CRUD surface. |
 | [`sql-nethttp`](sql-nethttp/) | none | `crudsql` | PostgreSQL | `net/http` | The standard library and nothing else — and no second `go get`, because the net/http binding needs no dependency and ships in the library. |
 | [`pgx-grpc`](pgx-grpc/) | none | `crudpgx` | PostgreSQL | gRPC | `pgx-fiber` with one line changed — the mount. The transport is not HTTP and everything below it is the same value: eight methods under `vv.crud.v1.Product`, `google.protobuf.Struct` documents, and no `.proto` to write. |
@@ -99,4 +99,4 @@ make examples      # from the repository root: build, vet and test this module
 The leading underscore keeps this tree out of `go build ./...` at the root, so
 `make unit` does not build it. It is a module of its own — like `test/`, and for
 the same reason: ent, gorm, sqlx and both HTTP bindings must never become
-dependencies of the library ([`D-033`](../docs/decisions/D-033-optional-dependencies-are-their-own-modules.md)).
+dependencies of the library ([`D-033`](../docs/ai/decisions/D-033-optional-dependencies-are-their-own-modules.md)).

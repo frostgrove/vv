@@ -786,7 +786,7 @@ method name; and a failure arrives as a status code plus `BadRequest`,
 
 Everything from here on — every option, every rule, every code — is identical
 across the four. Where they differ is a table in
-`docs/flows/FL-013-a-request-through-another-binding.md`; the two most likely to
+`docs/ai/flows/FL-013-a-request-through-another-binding.md`; the two most likely to
 matter are that the Gin and `net/http` bindings accept JSON request bodies only,
 and that gRPC has one code for "the request was wrong", so a 422 and a 400 are
 both `InvalidArgument` and the machine code in the details is what tells them

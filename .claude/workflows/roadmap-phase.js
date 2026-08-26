@@ -17,8 +17,8 @@ const CONTEXT = `
 Repository: /home/user/ws/shradit/golang/go-rx-crud — the Go CRUD framework "vv"
 (module github.com/frostgrove/vv).
 
-Read CLAUDE.md first; it is binding. Then docs/decisions/Index.md — a decision
-doc is BINDING, and docs/flows/Index.md's reverse index maps every source file
+Read CLAUDE.md first; it is binding. Then docs/ai/decisions/Index.md — a decision
+doc is BINDING, and docs/ai/flows/Index.md's reverse index maps every source file
 to the flows that touch it.
 
 The rules broken most often here:

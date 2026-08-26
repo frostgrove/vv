@@ -21,9 +21,9 @@ where the reasoning lives, and much of it is not recoverable from the source.
 
 | Question | Where |
 |---|---|
-| Why is it like this? May I change it? | `docs/decisions/` |
-| What is a consumer trying to do? What must hold? | `docs/usecases/` |
-| Where does this happen? Which files? | `docs/flows/` |
+| Why is it like this? May I change it? | `docs/ai/decisions/` |
+| What is a consumer trying to do? What must hold? | `docs/ai/usecases/` |
+| Where does this happen? Which files? | `docs/ai/flows/` |
 | What can this package do, and how is it wired? | `docs/modules/` |
 | How does a consumer set this up? | `docs/usage-guides/` |
 | What is still open? | `docs/roadmaps/Roadmap.md` |
@@ -33,15 +33,15 @@ not with `grep`.
 
 **The lookup order for any task:**
 
-1. `docs/flows/Index.md` — the reverse index maps every source file to the flows
+1. `docs/ai/flows/Index.md` — the reverse index maps every source file to the flows
    that touch it. If you are about to edit a file, read its flows first.
-2. `docs/decisions/Index.md` — check whether the thing you are about to change
+2. `docs/ai/decisions/Index.md` — check whether the thing you are about to change
    was decided deliberately. Several were, and the reasoning is not in the code.
-3. `docs/usecases/Index.md` — check which guarantees your change touches.
+3. `docs/ai/usecases/Index.md` — check which guarantees your change touches.
 
 ### The one rule that matters most
 
-**A decision doc is binding.** If `docs/decisions/` says something must not
+**A decision doc is binding.** If `docs/ai/decisions/` says something must not
 happen, it must not happen — even when the code looks like it would be cleaner
 the other way. Most of those decisions exist because the obvious version was
 tried and produced a silent bug: a scope that stopped at a preload, a filter that
@@ -85,7 +85,7 @@ failing test.
 
 | What you changed | What you must update |
 |---|---|
-| A call path, or moved/renamed a file or symbol | The flow(s) that name it, including the file table and the reverse index in `docs/flows/Index.md` |
+| A call path, or moved/renamed a file or symbol | The flow(s) that name it, including the file table and the reverse index in `docs/ai/flows/Index.md` |
 | Observable behaviour a caller can see | The use case whose **What must hold** covers it — and if no use case does, that is itself worth reporting |
 | Anything a decision doc forbids, permits or explains | That decision. If the answer changed, mark the old one `superseded by D-NNN` and write the new one; do not edit history into agreement |
 | Added a public API | The flow that exercises it, the use case it serves, `docs/modules/<package>.md`, and a decision if the shape was contentious |

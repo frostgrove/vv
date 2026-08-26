@@ -23,7 +23,7 @@ This is reference material, not a plan. What is still open is in
 | errors §9 *Rendering and the transports* | [modules/crudhttp.md](../modules/en/crudhttp.md), [[FL-011]], [[FL-013]] |
 | errors §10 *Codegen* | [modules/vv-cli.md](../modules/en/vv-cli.md), [[D-018]], [[D-050]] |
 | errors §11 *Prior art* | [[D-049]], [[D-052]] |
-| errors §12 *What binds us* | `docs/usecases/` |
+| errors §12 *What binds us* | `docs/ai/usecases/` |
 | errors §13 *The hard problems* | §6 and §8 above |
 | errors §14 *Phases* | the tree |
 | errors §15 *Test strategy* | [[D-020]], `CLAUDE.md` |

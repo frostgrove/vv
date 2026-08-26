@@ -115,8 +115,8 @@ is exactly what `utils/` is allowed to hold.
 - `utils/vvdb/doc.go` — the boundary, stated where a reader of the package meets it.
 - `utils/vvdb/config.go`, `utils/vvdb/dsn.go`, `utils/vvdb/open.go` — the three levels.
 - `utils/vvdb/dbpgx/` — the one engine that is not `database/sql`.
-- `docs/flows/FL-021` — the path, and where the escaping lives.
-- `docs/usecases/UC-021` — what the author is trying to do.
+- `docs/ai/flows/FL-021` — the path, and where the escaping lives.
+- `docs/ai/usecases/UC-021` — what the author is trying to do.
 - `_examples/pgx-fiber`, `_examples/sql-nethttp`, `_examples/gorm-mysql-gin` —
   the three levels, one per example, each showing the handover line.
 
