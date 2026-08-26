@@ -41,55 +41,80 @@ usually already written down.
 what is missing is more useful than "covered", and the gap list at the bottom of
 this page is the roadmap.
 
+## Layout
+
+Two directories, and the split is about blast radius rather than about size.
+
+```
+general/            what holds across the whole framework, no single owner
+modules/<module>/   what holds for one module, plus that module's own
+                    happy- and edge-case catalogue in <Module>.md
+```
+
+A use case lives in `general/` only when no one module could deliver it alone —
+UC-001 is every transport and the repository behind them, UC-015 is the error
+contract from a driver's `SQLSTATE` to a status code four layers away. Everything
+else names an owner, and the owner is the directory. Where a use case genuinely
+constrains two modules the second one is listed in the **Also constrains** column
+below, so a change to that module still finds it.
+
+`<Module>.md` inside each module directory is a different kind of file from a
+`UC-NNN`. A use case is a settled contract with a status; `<Module>.md` is the
+release-readiness sweep — the happy paths and the edge cases a consumer will
+actually hit, the top-level DX they should get, and a verdict on whether today's
+code delivers it. It is allowed to be wrong about the code in a way a use case is
+not, and it says where it is unsure. `general/General.md` is the same sweep for
+the framework as a whole.
+
 ## Index
-| ID | Use case | Actor | Status |
-|----|----------|-------|--------|
-| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | Expose a full CRUD API for a resource without writing handlers | application author | covered |
-| [UC-002](UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted client, HTTP or gRPC | partially covered |
-| [UC-003](UC-003-partial-update-absent-vs-null.md) | Apply a partial update that tells absent from null | client sending a partial update | covered |
-| [UC-004](UC-004-isolate-tenants.md) | Isolate tenants so a caller cannot see or touch another's rows | application author | partially covered |
-| [UC-005](UC-005-run-repository-work-in-an-orm-transaction.md) | Run repository work inside a transaction the ORM owns | application author | covered |
-| [UC-006](UC-006-query-and-sort-across-relations.md) | Query and sort across relations, from the wire and from Go | client and application author | covered |
-| [UC-007](UC-007-write-typed-compile-checked-queries.md) | Write typed, compile-checked queries in Go | application author | covered |
-| [UC-008](UC-008-write-many-rows-in-one-statement.md) | Write many rows in one statement | application author | partially covered |
-| [UC-009](UC-009-survive-concurrent-writers.md) | Survive concurrent writers | application author | covered |
-| [UC-010](UC-010-adopt-an-existing-orm-model.md) | Adopt an existing ORM's model without changing it | application author on ent or gorm | covered |
-| [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | Test repository behaviour without a database | application author writing tests | partially covered |
-| [UC-012](UC-012-talk-to-more-than-one-database.md) | Talk to more than one database in one process | application author | covered |
-| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | Insert business rules between the handler and the repository | application author | covered |
-| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | covered |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | client reading a status, HTTP or gRPC, and application author | covered |
-| [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | covered |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | client rendering a form, and application author | covered |
-| [UC-018](UC-018-consume-another-services-crud-api.md) | Consume another service's CRUD API | the application author on the calling side | covered |
-| [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | Authenticate a request and let the repository see who it is | the application author, on behalf of every caller | covered |
-| [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | covered |
-| [UC-021](UC-021-configure-a-database-once-in-one-file.md) | Configure a database once, in one file, for any engine | the application author | covered |
+| ID | Use case | Actor | Lives in | Also constrains | Status |
+|----|----------|-------|---------|-----------------|--------|
+| [UC-001](general/UC-001-expose-a-crud-api-without-handlers.md) | Expose a full CRUD API for a resource without writing handlers | application author | `general` | — | covered |
+| [UC-002](modules/query/UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted client, HTTP or gRPC | `query` | crudhttp · crudgrpc | partially covered |
+| [UC-003](modules/sqlrepo/UC-003-partial-update-absent-vs-null.md) | Apply a partial update that tells absent from null | client sending a partial update | `sqlrepo` | codegen | covered |
+| [UC-004](modules/security/UC-004-isolate-tenants.md) | Isolate tenants so a caller cannot see or touch another's rows | application author | `security` | sqlrepo | partially covered |
+| [UC-005](modules/sqlrepo/UC-005-run-repository-work-in-an-orm-transaction.md) | Run repository work inside a transaction the ORM owns | application author | `sqlrepo` | adapters | covered |
+| [UC-006](modules/sqlrepo/UC-006-query-and-sort-across-relations.md) | Query and sort across relations, from the wire and from Go | client and application author | `sqlrepo` | crud | covered |
+| [UC-007](modules/specs/UC-007-write-typed-compile-checked-queries.md) | Write typed, compile-checked queries in Go | application author | `specs` | codegen | covered |
+| [UC-008](modules/sqlrepo/UC-008-write-many-rows-in-one-statement.md) | Write many rows in one statement | application author | `sqlrepo` | security | partially covered |
+| [UC-009](modules/sqlrepo/UC-009-survive-concurrent-writers.md) | Survive concurrent writers | application author | `sqlrepo` | adapters | covered |
+| [UC-010](modules/crud/UC-010-adopt-an-existing-orm-model.md) | Adopt an existing ORM's model without changing it | application author on ent or gorm | `crud` | adapters | covered |
+| [UC-011](modules/crudtest/UC-011-test-repository-behaviour-without-a-database.md) | Test repository behaviour without a database | application author writing tests | `crudtest` | — | partially covered |
+| [UC-012](modules/sqlrepo/UC-012-talk-to-more-than-one-database.md) | Talk to more than one database in one process | application author | `sqlrepo` | adapters | covered |
+| [UC-013](modules/port/UC-013-business-rules-between-handler-and-repository.md) | Insert business rules between the handler and the repository | application author | `port` | crudhttp | covered |
+| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | Keep generated artefacts in sync with the model | application author and reviewer | `codegen` | specs | covered |
+| [UC-015](general/UC-015-map-a-failure-to-the-transport.md) | Map a failure to the transport correctly | client reading a status, HTTP or gRPC, and application author | `general` | — | covered |
+| [UC-016](modules/sqlrepo/UC-016-hide-rows-permanently-at-the-repository-level.md) | Hide rows permanently at the repository level | application author | `sqlrepo` | security | covered |
+| [UC-017](modules/faults/UC-017-get-every-error-for-one-payload-at-once.md) | Get every error for one payload in one response | client rendering a form, and application author | `faults` | errs | covered |
+| [UC-018](modules/remote/UC-018-consume-another-services-crud-api.md) | Consume another service's CRUD API | the application author on the calling side | `remote` | port | covered |
+| [UC-019](modules/auth/UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | Authenticate a request and let the repository see who it is | the application author, on behalf of every caller | `auth` | authhttp | covered |
+| [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | `security` | auth | covered |
+| [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | Configure a database once, in one file, for any engine | the application author | `vvdb` | utils | covered |
 
 ## Coverage map
 | Use case | Flows |
 |---|---|
-| [UC-001](UC-001-expose-a-crud-api-without-handlers.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] [[FL-015]] |
-| [UC-002](UC-002-let-an-untrusted-client-query.md) | [[FL-001]] [[FL-012]] [[FL-011]] [[FL-013]] |
-| [UC-003](UC-003-partial-update-absent-vs-null.md) | [[FL-002]] [[FL-004]] [[FL-010]] [[FL-011]] |
-| [UC-004](UC-004-isolate-tenants.md) | [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]] |
-| [UC-005](UC-005-run-repository-work-in-an-orm-transaction.md) | [[FL-009]] [[FL-002]] |
-| [UC-006](UC-006-query-and-sort-across-relations.md) | [[FL-005]] [[FL-006]] [[FL-001]] [[FL-012]] |
-| [UC-007](UC-007-write-typed-compile-checked-queries.md) | [[FL-010]] [[FL-004]] [[FL-005]] |
-| [UC-008](UC-008-write-many-rows-in-one-statement.md) | [[FL-002]] [[FL-008]] |
-| [UC-009](UC-009-survive-concurrent-writers.md) | [[FL-002]] [[FL-003]] [[FL-009]] [[FL-011]] |
-| [UC-010](UC-010-adopt-an-existing-orm-model.md) | [[FL-004]] [[FL-003]] [[FL-009]] [[FL-010]] |
-| [UC-011](UC-011-test-repository-behaviour-without-a-database.md) | [[FL-001]] [[FL-002]] [[FL-004]] |
-| [UC-012](UC-012-talk-to-more-than-one-database.md) | [[FL-009]] [[FL-016]] |
-| [UC-013](UC-013-business-rules-between-handler-and-repository.md) | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
-| [UC-014](UC-014-keep-generated-artefacts-in-sync.md) | [[FL-010]] [[FL-004]] [[FL-015]] |
-| [UC-015](UC-015-map-a-failure-to-the-transport.md) | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
-| [UC-016](UC-016-hide-rows-permanently-at-the-repository-level.md) | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
-| [UC-017](UC-017-get-every-error-for-one-payload-at-once.md) | [[FL-011]] [[FL-014]] [[FL-017]] |
-| [UC-018](UC-018-consume-another-services-crud-api.md) | [[FL-018]] [[FL-013]] [[FL-015]] |
-| [UC-019](UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | [[FL-019]] [[FL-007]] [[FL-008]] [[FL-011]] [[FL-013]] |
-| [UC-020](UC-020-authorize-without-a-policy-per-endpoint.md) | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
-| [UC-021](UC-021-configure-a-database-once-in-one-file.md) | [[FL-021]] |
+| [UC-001](general/UC-001-expose-a-crud-api-without-handlers.md) | `general` | — | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] [[FL-015]] |
+| [UC-002](modules/query/UC-002-let-an-untrusted-client-query.md) | `query` | crudhttp · crudgrpc | [[FL-001]] [[FL-012]] [[FL-011]] [[FL-013]] |
+| [UC-003](modules/sqlrepo/UC-003-partial-update-absent-vs-null.md) | `sqlrepo` | codegen | [[FL-002]] [[FL-004]] [[FL-010]] [[FL-011]] |
+| [UC-004](modules/security/UC-004-isolate-tenants.md) | `security` | sqlrepo | [[FL-007]] [[FL-008]] [[FL-005]] [[FL-006]] [[FL-011]] |
+| [UC-005](modules/sqlrepo/UC-005-run-repository-work-in-an-orm-transaction.md) | `sqlrepo` | adapters | [[FL-009]] [[FL-002]] |
+| [UC-006](modules/sqlrepo/UC-006-query-and-sort-across-relations.md) | `sqlrepo` | crud | [[FL-005]] [[FL-006]] [[FL-001]] [[FL-012]] |
+| [UC-007](modules/specs/UC-007-write-typed-compile-checked-queries.md) | `specs` | codegen | [[FL-010]] [[FL-004]] [[FL-005]] |
+| [UC-008](modules/sqlrepo/UC-008-write-many-rows-in-one-statement.md) | `sqlrepo` | security | [[FL-002]] [[FL-008]] |
+| [UC-009](modules/sqlrepo/UC-009-survive-concurrent-writers.md) | `sqlrepo` | adapters | [[FL-002]] [[FL-003]] [[FL-009]] [[FL-011]] |
+| [UC-010](modules/crud/UC-010-adopt-an-existing-orm-model.md) | `crud` | adapters | [[FL-004]] [[FL-003]] [[FL-009]] [[FL-010]] |
+| [UC-011](modules/crudtest/UC-011-test-repository-behaviour-without-a-database.md) | `crudtest` | — | [[FL-001]] [[FL-002]] [[FL-004]] |
+| [UC-012](modules/sqlrepo/UC-012-talk-to-more-than-one-database.md) | `sqlrepo` | adapters | [[FL-009]] [[FL-016]] |
+| [UC-013](modules/port/UC-013-business-rules-between-handler-and-repository.md) | `port` | crudhttp | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
+| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | `codegen` | specs | [[FL-010]] [[FL-004]] [[FL-015]] |
+| [UC-015](general/UC-015-map-a-failure-to-the-transport.md) | `general` | — | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
+| [UC-016](modules/sqlrepo/UC-016-hide-rows-permanently-at-the-repository-level.md) | `sqlrepo` | security | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
+| [UC-017](modules/faults/UC-017-get-every-error-for-one-payload-at-once.md) | `faults` | errs | [[FL-011]] [[FL-014]] [[FL-017]] |
+| [UC-018](modules/remote/UC-018-consume-another-services-crud-api.md) | `remote` | port | [[FL-018]] [[FL-013]] [[FL-015]] |
+| [UC-019](modules/auth/UC-019-authenticate-a-request-and-let-the-repository-see-who-it-is.md) | `auth` | authhttp | [[FL-019]] [[FL-007]] [[FL-008]] [[FL-011]] [[FL-013]] |
+| [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | `security` | auth | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
+| [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | `vvdb` | utils | [[FL-021]] |
 
 ## Gaps
 

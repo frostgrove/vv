@@ -7,10 +7,10 @@ question rather than reading in order.
 |---|---|
 | What can this package do, and how do I wire it? | [modules/](modules/Index.md) — [en](modules/en/Index.md) · [ru](modules/ru/Index.md) |
 | Why is it like this? May I change it? | [decisions/](decisions/Index.md) |
-| What does a consumer need? What must hold? | [usecases/](usecases/Index.md) |
+| What does a consumer need? What must hold? | [ai/usecases/](ai/usecases/Index.md) |
 | Where does this happen? Which files? | [flows/](flows/Index.md) |
 | How do I set this up in my project? | [usage-guides/](usage-guides/) |
-| What is left to build? | [roadmaps/Roadmap.md](roadmaps/Roadmap.md) |
+| What is left to build? | [roadmaps/](roadmaps/Index.md) |
 
 `modules/` and `usage-guides/` face a consumer; the other three face whoever
 changes the code.
@@ -72,7 +72,9 @@ Both lead with what you get and only then how to set it up.
 
 [roadmaps/Roadmap.md](roadmaps/Roadmap.md) holds **only what is not built**.
 Anything finished is deleted from it rather than marked done, so its length is
-the size of the remaining work.
+the size of the remaining work. [roadmaps/Index.md](roadmaps/Index.md) also
+links dated delivery plans, which propose an order without changing the live
+inventory.
 
 [roadmaps/retired-sections.md](roadmaps/retired-sections.md) is reference, not a
 plan: the map from the two retired root roadmaps' section numbers — which
