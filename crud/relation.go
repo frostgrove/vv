@@ -75,6 +75,19 @@ type Relation struct {
 	once  sync.Once
 	meta  *Meta
 	err   error
+
+	// defaults guards the second lazy step. Target() resolves the far schema
+	// behind `once`; resolveDefaults then *writes* LocalField and TargetField,
+	// and it used to do so on every call. Those writes land on the *Relation
+	// held by the process-global schema cache, which every repository over the
+	// model shares — so two concurrent requests that first crossed the same
+	// relation raced on the same two strings, with no lock and no happens-before
+	// for the readers that follow.
+	//
+	// A second Once and not the existing one: resolveDefaults calls Target(),
+	// which enters `once`, so reusing it would deadlock. Two steps, two Onces.
+	defaults    sync.Once
+	defaultsErr error
 }
 
 // Target resolves (and caches) the metadata of the model on the other side.
@@ -288,21 +301,20 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 // on first use rather than at build time, because the target schema may not be
 // buildable yet when models reference each other.
 func (r *Relation) resolveDefaults() error {
-	t, err := r.Target()
-	if err != nil {
-		return err
-	}
-	if r.LocalField == "" {
-		if r.Kind == BelongsTo {
-			r.LocalField = r.Owner.PK.Name
-		} else {
+	r.defaults.Do(func() {
+		t, err := r.Target()
+		if err != nil {
+			r.defaultsErr = err
+			return
+		}
+		if r.LocalField == "" {
 			r.LocalField = r.Owner.PK.Name
 		}
-	}
-	if r.TargetField == "" {
-		r.TargetField = t.PK.Name
-	}
-	return nil
+		if r.TargetField == "" {
+			r.TargetField = t.PK.Name
+		}
+	})
+	return r.defaultsErr
 }
 
 // Resolve returns everything the query layer needs in one call.

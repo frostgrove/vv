@@ -14,14 +14,18 @@ keeps it and marks the answer incomplete, and nothing is ever invented
 
 ## The path
 
-1. **Declaration.** `sqlrepo.Blueprint.Bind` builds the middleware chain, and
-   `faults.Enrich` is last in it, so the layer underneath is the repository
-   itself. `crud/decorators/faults/probe.go:enricher.declare` runs then:
+1. **Declaration.** `sqlrepo.Blueprint.Bind` builds the middleware chain.
+   `crud/decorators/faults/probe.go:enricher.declare` runs then:
 
-   - the datasource comes from `next.(crud.Sourced)` — `crud/sqlrepo/repository.go:repository.Source`.
-     A `crud.Core` embedded in a decorator promotes only the interface's own
-     methods, so a decorator that is *not* innermost does not forward it and the
-     declaration refuses. `faults.WithSource` is the way out.
+   - the datasource comes from `crud.SourceOf(next)`, which asks each layer and
+     follows `crud.Nexter` down until one answers — ending at
+     `crud/sqlrepo/repository.go:repository.Source`. A `crud.Core` embedded in a
+     decorator promotes only the interface's own methods, so a bare assertion on
+     the layer directly below made the order decorators were listed in decide
+     whether the probe worked: a `security.Gate` between `faults.Enrich` and the
+     repository answered no ([[D-061]]). The walk ends, and the declaration
+     refuses, only where a decorator implements neither `Sourced` nor `Next` —
+     `faults.WithSource` is the way out.
    - each wired handler is bound with `probe.Declarer.Declare`
      (`crud/probe/declare.go`), which refuses at start-up rather than at request time
      ([[D-021]]): a table the catalog does not know (`probe.ErrUnknownTable`), a
@@ -36,7 +40,10 @@ keeps it and marks the answer incomplete, and nothing is ever invented
    `crud/decorators/faults/probe.go` — and hand the write to
    `enricher.probed`. Under `probe.WithSavepoints()` on a transaction vv owns,
    `enricher.savepoint` takes one **before** the write through
-   `crud.Beginner.Begin`, because a savepoint cannot be taken after the fact.
+   `crud.BeginnerOf(ex).Begin`, because a savepoint cannot be taken after the
+   fact. `BeginnerOf` and not an assertion: a `Source` wrapped for
+   instrumentation is still a `Beginner` underneath, and losing it here means
+   `spRefused` and a probe that quietly declines ([[D-061]]).
 
 3. **The write fails.** `enricher.enrichProbed` finds the fault
    (`errs.AsFault`) and returns anything that is not one untouched — this
@@ -208,7 +215,7 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 | the savepoint budget is spent | `enricher.savepoint` → `spRefused` | the write runs unwrapped, the probe declines on an engine that poisons, `Partial: true` |
 | an update whose row is gone by the time the probe runs | `full.run` reads no rows | the driver's violation alone |
 | a catalog that is not a `catalog.Referrers` | `candidatesFor` | no `restrict` terms; everything else unchanged |
-| the layer under `faults.Enrich` is not `crud.Sourced` | `enricher.declare` | the process refuses to start, naming the fix |
+| nothing in the chain under `faults.Enrich` says its datasource | `enricher.declare` → `crud.SourceOf` | the process refuses to start, naming the fix — a decorator that forwards neither `Source` nor `Next`, or `faults.WithSource` |
 
 ## Files
 
@@ -223,8 +230,8 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 | `crud/probe/options.go` | `Option`, `WithSavepoints`, `WithScope`, `WithValues`, `CodeOnly`, `Skip`, `WithMaxConstraints`, `WithMaxRows`, `WithTimeout`, `WithMaxSavepoints`, and the four `Default*` numbers |
 | `crud/probe/declare.go` | `Declare`, `identifies`, and the four sentinels |
 | `crud/decorators/faults/probe.go` | `Option`, `WithProbe`, `WithProbeFor`, `WithSource`, `WithProbeError`, `probeCfg`, `declare`, `probed`, `enrichProbed`, `savepoint`, `insertRequest`, `updateRequest` |
-| `crud/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, and the three probed verbs |
-| `crud/executor.go` | `binding.owned`, `binding.saves`, `push`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `Sourced` |
+| `crud/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, `Next`, and the three probed verbs |
+| `crud/executor.go` | `binding.owned`, `binding.saves`, `push`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `Sourced`, `Nexter`, `SourceOf`, `BeginnerOf` — the last three are what let the probe sit anywhere in the chain ([[D-061]]) |
 | `crud/dialect.go` | `UpsertScope`, `StatementRollback`, and their implementations |
 | `crud/update.go` | `DefinedChanges` — `DefinedFields` with the values as well as the names |
 | `crud/render.go` | `SQL` — the builder every term is rendered through |

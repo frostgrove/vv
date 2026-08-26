@@ -157,14 +157,43 @@ is [[D-043]]'s, and it is the one place the two vocabularies touch.
   driver error's own `Detail` field is excluded, because fmt renders an
   error-typed field through `Error()` and asserting its absence would be free.
 
-## Proven by
+## Proven by — on the wire
 
-- Phase 4 owes the render test: a body built from every corpus entry contains no
-  substring of the entry's constraint name, table name, column name, SQLSTATE or
-  native number. Asserting on one hand-written violation would pass for a
-  renderer that leaks a different field.
-- Phase 4 also owes the extension of `TestA500NeverEchoesTheInternalError` to
-  `Detail` and `Params`.
+Phase 4 paid both halves this decision was owed.
+
+- `TestARenderedBodyNamesNothingInternal` in `port/porthttp/render_test.go` — a
+  body built from *every* corpus entry on all four engines carries no substring
+  of that entry's driver message, SQLSTATE, native number or any structured
+  field it recorded. The fixture is the corpus rather than an example because
+  one hand-written violation would pass for a renderer that leaks a different
+  field. Two controls: the body is asserted to still be the envelope and to
+  still carry an `error_code`, since a renderer emitting `{}` names nothing
+  perfectly; and the walked and searched counts are asserted per engine, since
+  an emptied loop is green.
+- `TestA500NeverEchoesTheInternalError` in all three bindings' `edge_test.go` —
+  extended to the two channels a renderer could copy from without ever touching
+  `err.Error()`. The same secret arrives once as a bare error and once inside a
+  fault carrying `Detail`, `Source` and `Params`, and both answer the same empty
+  envelope.
+
+- `TestAMalformedBodyIsRefusedWithoutNamingGoTypes` and
+  `TestABodyThatIsNotJSONSaysWhereItStopped` in `port/porthttp/errors_test.go` —
+  encoding/json's `UnmarshalTypeError` reads "cannot unmarshal string into Go
+  struct field WidgetUpdate.price of type crud.Opt[int64]", and it was rendered
+  verbatim. The corpus render test cannot see this: it renders faults the
+  *database* produced and this one comes from the decoder. What survives is what
+  the client sent — the JSON key it got wrong and a word for the shape that
+  belonged there.
+- `TestAnAuditedRefusalStillReachesTheClientWhole`, same file — the control on
+  how narrow that rule has to be. The first version swallowed every error it did
+  not recognise and turned `query.Request`'s "no such option: filtr" into "the
+  request body could not be read", trading one disclosure bug for a refusal that
+  says nothing ([[D-013]]).
+- `TestRejections/no_refusal_names_a_Go_type` in `crud/query/query_test.go` —
+  `decodeValue` formatted a `reflect.Type` into its message and `port.FaultOf`
+  renders a `*query.Error`'s reason, so "Price expects crud.Opt[int64]" reached
+  clients through both doors. Four tests in the tree pinned that wording, which is
+  how it survived three review passes.
 
 ## See also
 

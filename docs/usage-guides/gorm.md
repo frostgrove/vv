@@ -194,6 +194,8 @@ The other options on the same call:
 | `ReadOnly` | mount only the read routes |
 | `AllowClientID` | let a create carry its own primary key |
 | `MaxBulk` | cap ids per bulk delete |
+| `MaxBody` | cap the bytes of request body a route reads before answering 413 |
+| `WithRenderer` | replace the body a failed request answers with |
 | `WithErrorHandler` | your own error → response mapping |
 
 Depth, condition and preload limits apply whether or not you set the lists.
@@ -832,7 +834,7 @@ nested file is refused at load time for exactly that reason.
 Wire it into the renderer:
 
 ```go
-crudfiber.WithRenderer[User, int64, store.UserUpdate](
+crudfiber.WithRenderer[Member, uint, store.MemberUpdate](
     crudhttp.NewRenderer(crudhttp.WithMessages(cat)))
 ```
 

@@ -85,6 +85,8 @@ func StandardCodes() *Codes {
 		{CodeUnknownField, KindBadRequest, "the request names a field that does not exist"},
 		{CodeBadQuery, KindBadRequest, "the query could not be read"},
 
+		{CodeTooLarge, KindTooLarge, "the request body is too large"},
+
 		{CodeNotFound, KindNotFound, "not found"},
 		{CodeForbidden, KindForbidden, "not allowed"},
 		{CodeUnauthenticated, KindUnauthorized, "authentication is required"},

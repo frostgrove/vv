@@ -24,8 +24,8 @@ transaction, or implement an adapter. Most application code touches `crud.Where`
 |---|---|
 | **Model metadata** | `db` and `rel` tags become a `Schema`, a `Meta` and a relation graph, resolved once |
 | **`Opt[T]`** | three states — undefined, null, set — so a PATCH can tell "leave it" from "clear it" |
-| **Options** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate`, and eighteen more |
-| **Predicates** | a closed AST: 25 constructors, `And`/`Or`/`Not`, relation paths at any depth |
+| **Options** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate`, and fourteen more |
+| **Predicates** | a closed AST: 26 constructors, `And`/`Or`/`Not` among them, relation paths at any depth |
 | **Pagination** | `PaginatedResponse[T]`, offset paging and cursor paging over the sort tuple |
 | **Relations** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — inferred, overridable |
 | **The executor seam** | `Exec` and `Query`. That is the whole abstraction boundary |
@@ -280,10 +280,43 @@ transaction, and reported success ([[UC-012]]).
 `crud.InTx(ctx, src, fn)` opens one transaction for several repositories, and
 joins one already in the context rather than nesting inside it.
 
-**Optional interfaces** an adapter may implement, each checked by assertion so a
-third-party adapter keeps compiling without them: `Beginner` (savepoints),
-`BulkInserter` (`COPY`), `OffsetLimiter`, `ReadSourcer`, `Identified`,
-`Sourced`, `UpsertScope`, `StatementRollback`, `Tabler`.
+**Optional interfaces** an adapter may implement, each looked up rather than
+required so a third-party adapter keeps compiling without them: `Beginner`
+(savepoints), `BulkInserter` (`COPY`), `OffsetLimiter`, `ReadSourcer`,
+`Identified`, `Sourced`, `UpsertScope`, `StatementRollback`, `Tabler`.
+
+### Wrapping a Source — for tracing, timing, statement logs
+
+This is the seam. A `Source` is three methods, so a wrapper that times or logs
+statements is a dozen lines — and it has one obligation:
+
+```go
+type tracing struct{ inner crud.Source }
+
+func (t tracing) Exec(ctx context.Context, q string, a ...any) (crud.Result, error) { … }
+func (t tracing) Query(ctx context.Context, q string, a ...any) (crud.Rows, error)  { … }
+func (t tracing) Dialect() crud.Dialect { return t.inner.Dialect() }
+
+// This one. Without it the wrapper is not a decorator, it is a replacement.
+func (t tracing) UnwrapSource() crud.Source { return t.inner }
+```
+
+Go's embedding promotes only the embedded interface's own method set, so a
+wrapper erases every optional interface the wrapped source had. Three of them
+cost something, and only two of the three say so:
+
+| Lost | What happens |
+|---|---|
+| `Beginner` | every `Tx` is `ErrNoTxSupport` — loud |
+| `Identified` | the catalog keyed on the handle stops matching, and refuses at start-up ([[D-041]]) — loud |
+| `ReadSourcer` | **every read goes to the primary, silently.** The replica sits idle and nothing connects that to the day the wrapper was added |
+
+`UnwrapSource` is all three at once: `crud.BeginnerOf`, `crud.ReadSourceOf` and
+`crud.KeyOf` follow it ([[D-061]]).
+
+**The same rule one level up.** A decorator over `crud.Core` erases in the same
+way. Embed `crud.Base` — it supplies the `Next()` that `crud.SourceOf` walks —
+or a probe wired above your decorator cannot find the datasource underneath it.
 
 ## Replicas
 

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/shardit-io/vv/vvdb"
-	"github.com/shardit-io/vv/vvdb/dbpgx"
+	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb/dbpgx"
 )
 
 // unreachable is a config that parses and cannot connect: the assertions here

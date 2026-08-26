@@ -237,6 +237,13 @@ func TestScopeSubjectNarrowsToTheCallersOwnRows(t *testing.T) {
 // Every principal policy fails closed on a context nobody authenticated —
 // UC-004 guarantee 16, and the reason it is a 401 rather than a 403 is that
 // nothing has been decided yet.
+//
+// Every policy here narrows a read. `InspectOwner` is deliberately not in the
+// table: `Inspect` runs on writes, and on reads only when `InspectReads` is set,
+// which is off by default because a scope is the cheap way to filter a list. Its
+// own fail-closed case is a write, and
+// `TestInspectOwnerRefusesBeforeConsultingTheRuleWhenNobodyIsAuthenticated`
+// carries it.
 func TestEveryPrincipalPolicyFailsClosedWithoutOne(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

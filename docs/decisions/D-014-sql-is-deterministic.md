@@ -64,7 +64,7 @@ same way every time.
 - `crud/meta.go:buildSchema` — the primary key sorts first, the rest keep
   declaration order; `Field.Ordinal` records it.
 - `crud/predicate.go:writer.nextAlias` — aliases are numbered by walk order.
-- `cmd/vv/main.go:generator.load` — `sort.Strings(g.order)`.
+- `internal/codegen/codegen.go:generator.load` — `sort.Strings(g.order)`.
 - `internal/codegen/render.go:generator.render` — sorts the import block.
 
 ## Proven by

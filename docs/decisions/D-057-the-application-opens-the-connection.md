@@ -78,8 +78,16 @@ the name of the handle in nearly every Go program that has one, and
 `db := db.MustOpen(cfg)` shadows the package for the rest of the function.
 
 The child package needs no prefix at all: nothing is called `dbpgx`, so it is
-`vvdb/dbpgx` and not `vvdb/vvdbpgx`. Not `vvpgx` either — that would spend the
-project prefix where no collision exists.
+`dbpgx` and not `vvdbpgx`. Not `vvpgx` either — that would spend the project
+prefix where no collision exists.
+
+**Where the pair sits was settled by [[D-058]] and does not change any of the
+above.** It is `utils/vvdb` and `utils/vvdb/dbpgx`. The name is unaffected: the
+prefix answers "what may this package be called", the directory answers "what is
+this a part of", and `utils/` is the answer to the second because `vvdb` is the
+consumer's plumbing rather than a subsystem of the library. Its own forbid list
+below is what makes it fit there — a package that may not import `crud` or `errs`
+is exactly what `utils/` is allowed to hold.
 
 ## What it forbids
 
@@ -94,13 +102,19 @@ project prefix where no collision exists.
 - Do not put the DSN in an error message. It carries the password.
 - Do not grow `vvdb` a dependency. `database/sql` is the standard library and
   the driver is the consumer's blank import; anything else is a module, and
-  `vvdb/dbpgx` is the first of them ([[D-033]], [[D-051]]).
+  `utils/vvdb/dbpgx` is the first of them ([[D-033]], [[D-051]]).
+- Do not move it back out of `utils/`. The forbid list above *is* the `utils/`
+  boundary [[D-058]] states, arrived at from the other direction: a package that
+  may not import `crud`, may not be called from the repository path and may not
+  grow a dependency is not a subsystem of this library, whatever its own module
+  count says. `make check-utils` is where the first of those forbids stopped
+  being a sentence and became an arm.
 
 ## Where it lives
 
-- `vvdb/doc.go` — the boundary, stated where a reader of the package meets it.
-- `vvdb/config.go`, `vvdb/dsn.go`, `vvdb/open.go` — the three levels.
-- `vvdb/dbpgx/` — the one engine that is not `database/sql`.
+- `utils/vvdb/doc.go` — the boundary, stated where a reader of the package meets it.
+- `utils/vvdb/config.go`, `utils/vvdb/dsn.go`, `utils/vvdb/open.go` — the three levels.
+- `utils/vvdb/dbpgx/` — the one engine that is not `database/sql`.
 - `docs/flows/FL-021` — the path, and where the escaping lives.
 - `docs/usecases/UC-021` — what the author is trying to do.
 - `_examples/pgx-fiber`, `_examples/sql-nethttp`, `_examples/gorm-mysql-gin` —
@@ -111,10 +125,10 @@ project prefix where no collision exists.
 The import rule is mechanical and checked:
 
 ```
-go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./vvdb
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./utils/vvdb
 ```
 
-prints `github.com/shardit-io/vv/vvdb` and nothing else — the package itself,
+prints `github.com/shardit-io/vv/utils/vvdb` and nothing else — the package itself,
 because `-deps` includes it. Anything on a second line is a violation.
 `make check-deps` covers the third-party half for the whole root module; this is
 the first-party half, and it grows a line the moment `vvdb` imports `crud`.
@@ -124,13 +138,13 @@ and prints nothing at all:
 
 ```
 go list -deps -f '{{.ImportPath}} {{join .Deps " "}}' ./... \
-  | grep -v '^github.com/shardit-io/vv/vvdb' | grep vvdb
+  | grep -v '^github.com/shardit-io/vv/utils/vvdb' | grep vvdb
 ```
 
 The filter is on the package's own path rather than on a directory list, so it
 keeps working when the tree is rearranged.
 
-The behaviour is pinned by `vvdb/*_test.go`, and the escaping — the part a
+The behaviour is pinned by `utils/vvdb/*_test.go`, and the escaping — the part a
 string comparison cannot check — by `test/dsn/dsn_test.go`, which parses what
 `vvdb` writes with pgx and go-sql-driver. `test/integration/vvdb_test.go` opens
 three live servers from one shape of config, with a wrong-password control
@@ -138,4 +152,4 @@ beside it.
 
 ## See also
 
-[[D-033]] [[D-035]] [[D-021]] [[D-013]] [[D-032]] [[D-051]]
+[[D-033]] [[D-035]] [[D-021]] [[D-013]] [[D-032]] [[D-051]] [[D-058]]

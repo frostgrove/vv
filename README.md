@@ -35,8 +35,9 @@ remote/                     the consuming half: another service's resource, held
 └── remotehttp/             the HTTP client transport
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI — stdlib only
 └── sqlerr/                 a driver error becomes a code, one table per dialect
-vvdb/                       one config -> a DSN or a *sql.DB: postgres, mysql, mariadb, sqlite — stdlib only
-utils/vvflag/               one typed flag, without owning the command line
+utils/                      for your application, never for the library
+├── vvdb/                   one config -> a DSN or a *sql.DB: postgres, mysql, mariadb, sqlite — stdlib only
+└── vvflag/                 one typed flag, without owning the command line
 cmd/vv/                     generates the update DTO, the metamodel and — with -adapter — the resource
 
   ── separate modules, so you only download the one you use ──────────────────
@@ -48,7 +49,7 @@ auth/authjwt/               JWT verification, generic over your claims
 auth/http/authgin/          the Gin auth middleware
 auth/http/authfiber/        the Fiber auth middleware
 auth/rpc/authgrpc/          the gRPC auth interceptors
-vvdb/dbpgx/                 the same config, a pgx pool
+utils/vvdb/dbpgx/           the same config, a pgx pool
 utils/vvcfg/                a config struct, loaded and validated at start-up
 ```
 
@@ -101,8 +102,11 @@ would need a test schema that declares one, and none does.
 
 **Prefer running code?** [`_examples/`](_examples/) has one small, complete program per
 stack — ent, gorm, sqlx and no-ORM-at-all, across all three HTTP bindings and both
-engines. Start the databases with `make up` and `go run ./<example>` serves a real API
-you can curl. Each one is a single file you can read top to bottom.
+engines. Each is a `main.go` you can read top to bottom, plus the generated
+`vv_gen.go` beside it. Start the databases with `make up`, then `cd _examples` and
+`GOWORK=off go run ./<example>` serves a real API you can curl — the workspace is
+off because `_examples` is deliberately outside it, so its stacks never reach the
+module graph of anyone building the library.
 
 ---
 
@@ -113,7 +117,7 @@ go get github.com/shardit-io/vv                      # the library — and, on n
 go get github.com/shardit-io/vv/crud/http/crudgin   # …plus your HTTP framework, if you use one
 go get github.com/shardit-io/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
 go get github.com/shardit-io/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
-go get github.com/shardit-io/vv/vvdb/dbpgx          # …and a pgx pool opened from your config file
+go get github.com/shardit-io/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
 go get github.com/shardit-io/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 ```
 
@@ -1421,8 +1425,18 @@ transaction gives you a savepoint — natively on pgx, via `SAVEPOINT` on
 
 ### Bulk
 
-`crudpgx` implements `crud.BulkInserter` with `COPY`. Any executor that offers
-it is used automatically; the core never learns about the driver.
+`crudpgx` implements `crud.BulkInserter` with `COPY`. **Nothing in the library
+reaches for it.** `SaveAll` writes one multi-row `INSERT` whatever the executor
+underneath can do, so this is a door you open yourself:
+
+```go
+if bulk, ok := src.(crud.BulkInserter); ok {
+    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
+}
+```
+
+The call runs on the handle that executor holds and ignores any transaction in
+the context.
 
 ---
 
@@ -1530,6 +1544,11 @@ Adding a driver means adding a `Target`, never a test.
 
 ## Sharp edges
 
+- **A column `DEFAULT` does not fire.** vv writes every mapped column, so an
+  INSERT it builds names `active`, and creating a row without one stores the Go
+  zero value rather than the column's default. A default only reaches rows the
+  database makes on its own. Where the server must own a value, mark the column
+  `generated` or fill it in a `BeforeSave` hook.
 - **Rows affected diverge.** MySQL reports 0 for an `UPDATE` that changed
   nothing, and counts *matched* rather than *changed* rows depending on
   configuration. `ErrNotFound` is therefore never derived from `n == 0` on a

@@ -35,6 +35,8 @@ func KindForStatus(code int) errs.Kind {
 		return errs.KindValidation
 	case http.StatusBadRequest:
 		return errs.KindBadRequest
+	case http.StatusRequestEntityTooLarge:
+		return errs.KindTooLarge
 	default:
 		return errs.KindInternal
 	}

@@ -76,7 +76,7 @@ and one token would then mean two things in one process.
 **Because there is no `init()` and no package-level table.** `errs/doc.go`
 refuses those for a reason that applies here unchanged: two libraries declaring
 `"admin"` with different permissions must not settle it by link order, and a
-`go.work` joining eight modules makes an `init()` in the wrong one invisible.
+`go.work` joining twelve modules makes an `init()` in the wrong one invisible.
 
 **Because the transport-neutral half is `auth.Guard` rather than four copies.**
 Whether an optional guard accepts a forged token, whether a second install
@@ -100,7 +100,7 @@ CRUD routes would otherwise have no way to get it.
 ## What it forbids
 
 - Do not add `auth` to `Makefile:TIER0`. [[D-048]] is in force; this is a
-  package, and the manifest stays four names.
+  package, and the manifest stays four contracts.
 - Do not import `crud/decorators/security`, `crud` or `port` from `auth` or from
   any `auth*` binding. The direction is one-way, and it is what keeps a
   middleware from compiling a repository in.

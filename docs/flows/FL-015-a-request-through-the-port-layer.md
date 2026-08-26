@@ -229,7 +229,7 @@ approximate rather than guessed.
 | a PUT at a key that does not exist, with an auto key | `DefaultService.Replace`'s existence probe | 404, and nothing is written ([[D-012]]) |
 | a delete that removed nothing | `DefaultService.Delete` | 404 |
 | a bulk delete of an empty set | `DefaultService.DeleteMany` | `200 {"deleted":0}`, and the repository is never called |
-| `WithQuery` handed to `Serving` | `options.refuseServiceOptions` | a panic at declaration naming the option |
+| `WithQuery` handed to `Serving` | `port.Rules.RefuseServiceOptions` | a panic at declaration naming the option |
 | a violation at a field no hop declares | `Fields` passes through, `BodyResolver` resolves | the key the client sent, not marked approximate |
 | a violation at a field nothing can resolve | `BodyResolver` declines | the model's field name, marked approximate ([[D-043]]) |
 | a violation at a field a *generated* map does not declare | `PathMap` declines, and the chain stops | the model's field name, marked approximate — the fallback behind it does not run ([[D-050]]) |
@@ -253,7 +253,8 @@ approximate rather than guessed.
 | `port/violations.go` | `Violations`, `ViolationOptions`, `MaxViolations` — the copy, the chain, the sort, the cap and the message ladder, called by every renderer |
 | `port/locale.go` | `WithLocale`, `LocaleFrom`, `FirstLanguageTag` — one context key and one tag parser for every transport |
 | `crud/http/crudnet/handler.go` | the traced binding: routes, decode, the four constructors, `HandlerFor`/`Handler` |
-| `crud/http/crudnet/options.go` | `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `render`, `writeJSON` |
+| `crud/http/crudnet/options.go` | `collect`, `rendererFor`, `render`, `writeJSON` — the rules and their two methods are `port.Rules` |
+| `port/rules.go` | `Rules`, `Service`, `RefuseServiceOptions` — the five settings that say nothing about a transport, held once for all four bindings |
 | `crud/http/crudfiber/handler.go`, `crud/http/crudgin/handler.go` | the same two files each, name for name ([[FL-013]]) |
 | `crud/http/crudhttp/doc.go` | where the lines between the three shared halves are drawn |
 | `crud/http/crudhttp/porthttp.go` | the forwarders over everything [[D-059]] moved |

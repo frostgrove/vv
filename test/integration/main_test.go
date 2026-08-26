@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/shardit-io/vv/crud/query"
 	"os"
 	"testing"
 	"time"
@@ -136,3 +137,14 @@ func truncate(t *testing.T, db *sql.DB) {
 		t.Fatal(err)
 	}
 }
+
+// unpagedOK is the query configuration of an endpoint that serves whole result
+// sets.
+//
+// It bounds nothing else — every allow-list is empty, which means "anything the
+// model maps" — so a test compiled with it is compiled the way a test compiled
+// with a nil config used to be. The one difference is the one field: unpaged is
+// off by default, because it is the only knob a request can set that has no
+// ceiling of its own, and an endpoint has to say it serves whole tables
+// ([[D-060]]).
+var unpagedOK = &query.Config{AllowUnpaged: true}

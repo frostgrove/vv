@@ -93,9 +93,10 @@ and the generated mappers from phase 8.
   was transformed so far, plus `false`, so the caller has something to mark.
 
 - `crud/meta.go` — the `Meta`/`Schema` split this rests on.
-- `crud/http/crudhttp/request.go:DecodeJSON` — a pure function whose `io.ReadAll`
+- `port/porthttp/body.go:DecodeJSON` — a pure function whose `io.ReadAll`
   result dies at return, so the carrier phase 4 owes (`DecodeJSONKeep`) has to be
-  added rather than reached for.
+  added rather than reached for. It was `crud/http/crudhttp/request.go`'s until
+  [[D-059]].
 - `crud/decorators/faults/faults.go` — the first hop, constraint and table to model field, through `crud.Meta`.
 - `port/path.go:Fields` — the second hop, the service's, hand-written and
   therefore partial: an undeclared head passes through.
@@ -117,6 +118,10 @@ and the generated mappers from phase 8.
 - `TestAServicePathHopReachesTheRenderedField` — `edge_test.go` in all three
   bindings — the service's hop reaching the rendered field, with the control
   that an undeclared one still reaches the body index.
+- `TestWithPathsPutsTheServicesHopIntoTheChain` in
+  `port/service_options_test.go` — the option that declares that hop, measured
+  as the chain answering the command's name, with a service built without it as
+  the control: no hop, and the path arrives unchanged.
 - `TestADeclaredMapBeatsTheRawBodyGuess` in `port/porthttp/render_test.go` — the
   hop a generated adapter contributes, ahead of the fallback, with a no-map
   control on every arm. It also pins the half this decision owed since phase 4:

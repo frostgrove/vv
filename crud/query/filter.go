@@ -142,6 +142,9 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
+		if err := c.countValues(len(vals), where); err != nil {
+			return nil, err
+		}
 		return crud.In(canonical, vals...), nil
 	default:
 		if err := c.count(where); err != nil {
@@ -227,6 +230,13 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		vals, err := decodeList(raw, f)
 		if err != nil {
 			return nil, errf(where, "%s", err)
+		}
+		// between carries exactly two and buildMulti checks that itself; the
+		// cap is about a list whose length the client chose.
+		if kind != opBetween {
+			if err := c.countValues(len(vals), where); err != nil {
+				return nil, err
+			}
 		}
 		return buildMulti(field, kind, vals, where)
 

@@ -51,6 +51,10 @@ func Unauthorized() *Builder { return New(KindUnauthorized) }
 // BadRequest starts a 400-class fault: the request itself was malformed.
 func BadRequest() *Builder { return New(KindBadRequest) }
 
+// TooLarge starts a 413-class fault: the request body is past the cap the
+// transport reads to. Nothing in it was parsed, so it carries no field.
+func TooLarge() *Builder { return New(KindTooLarge) }
+
 // Retryable starts a fault nothing the caller sent is wrong about ([[D-040]]).
 func Retryable() *Builder { return New(KindRetryable) }
 

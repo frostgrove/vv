@@ -1,7 +1,9 @@
 package crudgin
 
 import (
+	"encoding/json"
 	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/crud/http/crudhttp"
@@ -11,21 +13,37 @@ import (
 )
 
 type options[M any, ID comparable, U any] struct {
-	query         *query.Config
-	renderer      crudhttp.Renderer
-	errorHandler  func(*gin.Context, error)
-	transform     func(*gin.Context, M) any
-	scope         func(*gin.Context) ([]crud.Option, error)
-	beforeSave    func(*gin.Context, *M) error
-	beforeUpdate  func(*gin.Context, ID, *U) error
-	readOnly      bool
-	allowClientID bool
-	maxBulk       int
+	crudhttp.Rules
+	renderer     crudhttp.Renderer
+	errorHandler func(*gin.Context, error)
+	transform    func(*gin.Context, M) any
+	scope        func(*gin.Context) ([]crud.Option, error)
+	beforeSave   func(*gin.Context, *M) error
+	beforeUpdate func(*gin.Context, ID, *U) error
 }
 
-// Option configures a handler. Type parameters are inferred from New's
-// repository argument, so options never need explicit generics at the call site
-// when written inline.
+// Option configures a handler.
+//
+// New infers all three type parameters from its repository argument, so the
+// constructor is written without them. An option is not: Go infers a function's
+// type arguments from its own arguments, and nothing in `WithQuery(cfg)`
+// mentions M, ID or U. Every option spells all three.
+//
+//	crudgin.New(articles,
+//	    crudgin.WithQuery[Article, int64, ArticleUpdate](cfg),
+//	    crudgin.MaxBulk[Article, int64, ArticleUpdate](100),
+//	)
+//
+// One local helper per resource is what makes that bearable:
+//
+//	type articleOpt = crudgin.Option[Article, int64, ArticleUpdate]
+//
+//	func articleQuery(cfg *query.Config) articleOpt {
+//	    return crudgin.WithQuery[Article, int64, ArticleUpdate](cfg)
+//	}
+//
+// The alias alone does not help — it names the result type, which is not where
+// the inference is stuck — so the helper is a function, not a name.
 //
 // Three parameters and not four. Nothing an option sets mentions the input
 // type, so a handler with one of its own takes the same options as any other,
@@ -42,38 +60,9 @@ func collect[M any, ID comparable, U any](opts []Option[M, ID, U]) options[M, ID
 	return o
 }
 
-// service translates the options that are about rules rather than about
-// transport into the ones the default service takes.
-func (o options[M, ID, U]) service() []port.ServiceOption {
-	var out []port.ServiceOption
-	if o.query != nil {
-		out = append(out, port.WithQuery(o.query))
-	}
-	if o.allowClientID {
-		out = append(out, port.AllowClientID())
-	}
-	return out
-}
-
-// refuseServiceOptions panics when a service-shaped option is handed to a
-// constructor that was given a finished service.
-//
-// A panic and not a silent no-op, named after the option so the message is the
-// fix. Serving means the rules are the service's; an ignored WithQuery would
-// leave an API accepting everything while its author believed it was bounded,
-// and that is exactly the failure [[D-021]] says must happen at start-up.
-func (o options[M, ID, U]) refuseServiceOptions(who string) {
-	switch {
-	case o.query != nil:
-		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")
-	case o.allowClientID:
-		panic(who + ": AllowClientID configures the service, which is already built — pass port.AllowClientID to it instead")
-	}
-}
-
 // WithQuery bounds what clients may filter, sort, select and preload.
 func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.query = cfg }
+	return func(o *options[M, ID, U]) { o.Query = cfg }
 }
 
 // WithErrorHandler replaces the error-to-response mapping. Reuse Status rather
@@ -121,18 +110,25 @@ func BeforeUpdate[M any, ID comparable, U any](fn func(*gin.Context, ID, *U) err
 
 // ReadOnly mounts only the read routes.
 func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.readOnly = true }
+	return func(o *options[M, ID, U]) { o.ReadOnly = true }
 }
 
 // AllowClientID lets a create request carry its own primary key even when the
 // database would generate one.
 func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.allowClientID = true }
+	return func(o *options[M, ID, U]) { o.AllowClientID = true }
+}
+
+// MaxBody caps how many bytes of request body one route reads before answering
+// 413. It defaults to [crudhttp.MaxBody]; zero or less means the default, and
+// there is no way to say "unbounded".
+func MaxBody[M any, ID comparable, U any](n int) Option[M, ID, U] {
+	return func(o *options[M, ID, U]) { o.MaxBody = n }
 }
 
 // MaxBulk caps how many ids one bulk delete may carry.
 func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.maxBulk = n }
+	return func(o *options[M, ID, U]) { o.MaxBulk = n }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +154,28 @@ func rendererFor(hops []errs.Resolver) crudhttp.Renderer {
 		return defaultRenderer
 	}
 	return crudhttp.NewRenderer(crudhttp.WithResolvers(hops...))
+}
+
+// writeJSON is the one place a successful response leaves this package.
+//
+// It marshals before touching the status for the reason crudnet's twin gives: a
+// value that cannot be encoded — a presenter returning a channel, a NaN — would
+// otherwise leave a half-written 200 with no way back, because the status is
+// already on the wire. Deciding here makes it a 500 that says nothing, like any
+// other server fault.
+//
+// This binding used to write through the framework's own JSON renderer, and the
+// three bindings then disagreed about a failure none of them can prevent: net/http answered a silent 500, Gin answered 200 with a truncated body, and Fiber handed the encoder's error to its default handler, which answers text/plain with the message in it
+// ([[FL-013]], [[D-063]]).
+func writeJSON(c *gin.Context, status int, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		port.Logger(c.Request.Context()).Error("crudgin: encoding the response", "err", err)
+		status = http.StatusInternalServerError
+		body, _ = json.Marshal(crudhttp.Internal())
+		c.Abort()
+	}
+	c.Data(status, "application/json; charset=utf-8", body)
 }
 
 // Status maps a repository or query error to an HTTP status code. Everything it

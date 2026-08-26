@@ -27,7 +27,7 @@
 //   - [Open] and [MustOpen] hand back a *sql.DB with the pool already sized.
 //     The driver is the consumer's blank import, which is why this package has
 //     no dependency and needs no module of its own.
-//   - vvdb/dbpgx does the same for a *pgxpool.Pool, which is not database/sql
+//   - utils/vvdb/dbpgx does the same for a *pgxpool.Pool, which is not database/sql
 //     and therefore is a module.
 //
 // # What it refuses

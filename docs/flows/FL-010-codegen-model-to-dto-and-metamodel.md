@@ -149,7 +149,7 @@ package that does not compile yet.
     | `<Model>Mapper` | `Model(ctx, in) (M, error)`, a field-for-field assignment, plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
     | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "CreatedAt")` — the inverse, plus the exclusions |
     | `<Model>Service` | a struct embedding `*port.DefaultService[M, ID, U]`, with `var _ port.Service[…]` beside it so an override that changes a signature is a build failure |
-    | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `options.refuseServiceOptions` |
+    | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `port.Rules.RefuseServiceOptions` |
     The id type comes from the primary key's `Type` as written, through
     `model.pk`; a model the generator cannot find a key on is an error rather
     than a file that does not compile. The name is `Mount<Model>` singular:

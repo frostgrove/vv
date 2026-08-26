@@ -194,8 +194,10 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
   MySQL `Number` as a SQLite result code. That is reachable: the SQLSTATE is
   optional in MySQL's ERR packet and go-sql-driver/mysql leaves the `[5]byte`
   unset when the `#` marker is absent, and `1043`, `ER_HANDSHAKE_ERROR`, carries
-  19 in its low byte — a refused handshake would be a 409 with the driver's
-  sentence in the body. `crud/sqlfault/extract.go:sqliteNative` is the arm's own
+  19 in its low byte, which is `SQLITE_CONSTRAINT` — so a refused handshake
+  would answer 409, telling a client to fix a payload that was never the
+  problem, about a server it never reached.
+  `crud/sqlfault/extract.go:sqliteNative` is the arm's own
   reader: a `Code` method, then integer `ExtendedCode` and `Code` fields, never
   `Number` ([[D-046]]).
 - **Deliberately blank in phase 3**, so a later reader does not read the gap as

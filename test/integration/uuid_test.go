@@ -303,7 +303,7 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 			if err := json.Unmarshal([]byte(body), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(RoomMembers.Meta(), nil)
+			opts, err := req.Compile(RoomMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatalf("compiling a uuid filter: %v", err)
 			}
@@ -321,7 +321,7 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 			if err := json.Unmarshal([]byte(body), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err = req.Compile(RoomMembers.Meta(), nil)
+			opts, err = req.Compile(RoomMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatalf("compiling a uuid in-list: %v", err)
 			}
@@ -335,7 +335,7 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 			if err := json.Unmarshal([]byte(`{"filter":{"roomId":"not-a-uuid"}}`), &req); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := req.Compile(RoomMembers.Meta(), nil); err == nil {
+			if _, err := req.Compile(RoomMembers.Meta(), unpagedOK); err == nil {
 				t.Fatal("a malformed UUID compiled cleanly")
 			}
 		})

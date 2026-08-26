@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb"
 )
 
 // recorder is a driver that connects to nothing and remembers the string it was

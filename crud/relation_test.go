@@ -3,6 +3,7 @@ package crud_test
 import (
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
@@ -468,4 +469,54 @@ func hopNames(hops []crud.PathHop) []string {
 		out[i] = h.Rel.Name
 	}
 	return out
+}
+
+// Two goroutines that first cross the same relation do not race on it.
+//
+// A relation's join fields resolve lazily, because the far model may not be
+// buildable yet when two models reference each other (FL-004). Only `Target()`
+// was behind a Once; `resolveDefaults` wrote `LocalField` and `TargetField`
+// outside it — and those writes land on the `*Relation` held by the *process-
+// global* schema cache, which every repository over that model shares.
+//
+// So it was not a race between two repositories. It was a race between any two
+// concurrent requests in the process that both happened to be the first to cross
+// that relation, on two strings the query builder then reads. Run with -race.
+func TestConcurrentFirstUseOfARelationDoesNotRace(t *testing.T) {
+	m := articleMeta(t)
+	rel := m.Schema.Relation("Comments")
+	if rel == nil {
+		t.Fatal("the fixture no longer has the relation this test is about")
+	}
+
+	const n = 32
+	var wg sync.WaitGroup
+	locals := make([]string, n)
+	targets := make([]string, n)
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, local, remote, err := rel.Resolve()
+			if err != nil {
+				t.Errorf("resolving the relation: %v", err)
+				return
+			}
+			locals[i], targets[i] = local.Name, remote.Name
+		}()
+	}
+	wg.Wait()
+
+	// And every goroutine saw the same answer. A race that -race happened not to
+	// catch would still show up here as two different resolutions of one
+	// relation.
+	for i := range n {
+		if locals[i] != locals[0] || targets[i] != targets[0] {
+			t.Fatalf("goroutine %d resolved the relation to %s/%s where goroutine 0 got %s/%s",
+				i, locals[i], targets[i], locals[0], targets[0])
+		}
+	}
+	if locals[0] == "" || targets[0] == "" {
+		t.Fatalf("the relation resolved to an empty field name: %s/%s", locals[0], targets[0])
+	}
 }

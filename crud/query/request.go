@@ -52,6 +52,25 @@ type Request struct {
 	Unpaged   bool `json:"unpaged,omitempty"`
 	SkipTotal bool `json:"skipTotal,omitempty"`
 	Distinct  bool `json:"distinct,omitempty"`
+
+	// unpagedParam is the query-string spelling that set Unpaged — "unpaged" or
+	// its alias "all" — so a refusal names the key the client sent rather than
+	// the one this struct calls it.
+	//
+	// Unexported, so it is not part of the document: a JSON body has one
+	// spelling and needs no record of it, and an exported field would put a
+	// query-string detail on the wire shape.
+	unpagedParam string
+}
+
+// UnpagedParam is the request parameter that asked for unpaged results, for a
+// caller building its own refusal. It is "unpaged" for a JSON document and for
+// a query string that spelled it that way, and "all" for the alias.
+func (r *Request) UnpagedParam() string {
+	if r == nil || r.unpagedParam == "" {
+		return "unpaged"
+	}
+	return r.unpagedParam
 }
 
 // UnmarshalJSON refuses a key this document does not define.

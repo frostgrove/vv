@@ -29,7 +29,7 @@ func decodeValue(raw json.RawMessage, f *crud.Field) (any, error) {
 				}
 			}
 		}
-		return nil, fmt.Errorf("%s expects %s, got %s", f.Name, t, preview(raw))
+		return nil, fmt.Errorf("%s expects %s, got %s", f.Name, wanted(t), preview(raw))
 	}
 	return ptr.Elem().Interface(), nil
 }
@@ -112,7 +112,7 @@ func coerceString(s string, t reflect.Type) (any, error) {
 			return nil, err
 		}
 		if ptr.Elem().OverflowInt(n) {
-			return nil, fmt.Errorf("%s does not fit in %s", s, t)
+			return nil, fmt.Errorf("%s does not fit in %s", s, wanted(t))
 		}
 		ptr.Elem().SetInt(n)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
@@ -121,7 +121,7 @@ func coerceString(s string, t reflect.Type) (any, error) {
 			return nil, err
 		}
 		if ptr.Elem().OverflowUint(n) {
-			return nil, fmt.Errorf("%s does not fit in %s", s, t)
+			return nil, fmt.Errorf("%s does not fit in %s", s, wanted(t))
 		}
 		ptr.Elem().SetUint(n)
 	case reflect.Float32, reflect.Float64:
@@ -135,12 +135,58 @@ func coerceString(s string, t reflect.Type) (any, error) {
 			ptr.Elem().SetBytes([]byte(s))
 			break
 		}
-		return nil, fmt.Errorf("cannot parse %q as %s", s, t)
+		return nil, fmt.Errorf("cannot parse %q as %s", s, wanted(t))
 	default:
 		// Fall back to JSON, which covers structs with their own decoder.
 		if err := json.Unmarshal([]byte(strconv.Quote(s)), ptr.Interface()); err != nil {
-			return nil, fmt.Errorf("cannot parse %q as %s", s, t)
+			return nil, fmt.Errorf("cannot parse %q as %s", s, wanted(t))
 		}
 	}
 	return ptr.Elem().Interface(), nil
 }
+
+// wanted names a column's shape in the vocabulary a client speaks, never in Go's.
+//
+// These messages are rendered — port.FaultOf turns a *query.Error into a
+// violation whose message is its Reason — so formatting a reflect.Type into one
+// puts the Go type of the consumer's own field, package path included, on the
+// wire: "Price expects crud.Opt[int64]". [[D-044]] forbids exactly that, and the
+// corpus render test cannot see it, because that test renders faults the
+// *database* produced and these come from the decoder.
+//
+// The field name stays. It is the client's own path into its own document, which
+// is what [[D-013]] requires a refusal to carry.
+func wanted(t reflect.Type) string {
+	if t == nil {
+		return "a value of a different shape"
+	}
+	if t == reflect.TypeOf(time.Time{}) {
+		return "a timestamp"
+	}
+	// A type with its own text or JSON decoding — a uuid, an enum, a money type —
+	// has rules of its own that this package cannot summarise and must not guess
+	// at. Naming the field is as far as it can honestly go.
+	if t.Implements(textUnmarshaler) || reflect.PointerTo(t).Implements(textUnmarshaler) ||
+		t.Implements(jsonUnmarshaler) || reflect.PointerTo(t).Implements(jsonUnmarshaler) {
+		return "a value in this field's own format"
+	}
+	switch t.Kind() {
+	case reflect.Bool:
+		return "true or false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "a whole number"
+	case reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.String:
+		return "a string"
+	case reflect.Slice, reflect.Array:
+		return "a list"
+	case reflect.Map, reflect.Struct:
+		return "an object"
+	default:
+		return "a value of a different shape"
+	}
+}
+
+var jsonUnmarshaler = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()

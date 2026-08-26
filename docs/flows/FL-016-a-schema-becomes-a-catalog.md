@@ -19,10 +19,13 @@ that has to still exist.
 ## The path
 
 1. **`Set.Load`** — `crud/catalog/set.go:46`
-   `k := crud.KeyOf(src)`. A raw handle, a `Source` over it and a
-   `crud.ReadWrite` pair over that all reduce to the same key, because
-   `readWrite.DataSource` forwards the primary's identity
-   (`crud/executor.go:106`, [[D-032]]). A source that cannot name a database is
+   `k := crud.KeyOf(src)`. A raw handle, a `Source` over it, a `crud.ReadWrite`
+   pair over that, and an instrumenting wrapper over any of them all reduce to
+   the same key: `KeyOf` walks the wrapper chain through `crud.SourceUnwrapper`
+   and `readWrite.DataSource` forwards the primary's identity
+   (`crud/executor.go:identityOf`, [[D-032]], [[D-061]]). The walk is what makes
+   "per handle" mean the handle rather than whatever is standing in front of it.
+   A source that cannot name a database is
    returned as its own key and never as nil — see the trap below, because the
    distinction is the whole reason this keys on `KeyOf` and not on what
    `Identified` answers.
@@ -227,7 +230,7 @@ test that sleeps.
 | `crud/catalog/mysql.go` | `readMySQL`, the five MySQL statements, and the shaping both MySQL and MariaDB share: `myReadColumns`, `myReadTableConstraints`, `myReadStatistics`, `myReadForeignKeys`, `myReadChecks`, `myKind` |
 | `crud/catalog/mariadb.go` | `readMariaDB` and MariaDB's own five statements |
 | `crud/catalog/sqlite.go` | `readSQLite`, the five SQLite statements, `sqliteKind`, `sqliteFKName`, `pkPart` |
-| `crud/executor.go` | `KeyOf` and `SameDataSource` — exported by this phase; also [[FL-002]] and [[FL-009]] |
+| `crud/executor.go` | `KeyOf` and `SameDataSource` — exported by this phase — and `SourceUnwrapper` / `identityOf`, the walk `KeyOf` reduces through ([[D-061]]); also [[FL-002]] and [[FL-009]] |
 | `crud/crudtest/recorder.go` | `Result.RowsErr` and `RowsFailing` — the mid-stream failure the `rows.Err()` arm exists for, which `Result.Err` cannot express |
 | `test/integration/catalog_schema_test.go` | `catSchema`, `catSearchPathSchema` — the four-engine fixture |
 | `test/integration/catalog_test.go` | `catEngines`, `catTarget`, `catUnreproducible` and the live assertions |

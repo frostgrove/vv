@@ -111,16 +111,27 @@ because a key set is a public document and an HMAC entry in one is a shared
 secret published to the internet. An entry with `use` set to anything but `sig`
 is ignored too, and one unusable entry does not cost the whole set.
 
-**Refetching is rate-limited.** A token naming a `kid` the cached set does not
-have triggers exactly one refetch per `JWKSMinRefresh` (one minute by default).
-Without that limit, one forged token per fetch is a denial-of-service against
-the identity provider.
+**Refetching is rate-limited, and the limit holds when the provider is down.** A
+token naming a `kid` the cached set does not have triggers at most one refetch
+per `JWKSMinRefresh` (one minute by default), and at most one at a time. Without
+those two bounds, one forged token per fetch is a denial-of-service against the
+identity provider — and a `kid` is the caller's own input, so its rate is theirs
+to choose.
+
+Both bounds are the ones the obvious version gets wrong. Arming the limit on a
+successful fetch leaves it doing nothing while the provider is failing, which is
+when it matters; and the lock has to be dropped across the HTTP call, so a burst
+arriving together passes the check before any of it records an attempt. The limit
+reads the last *attempt*, and concurrent misses share one in-flight fetch rather
+than being refused — after a rotation they are asking for a `kid` that really is
+about to exist.
 
 A token with no `kid` matches only when the set holds exactly one key. Anything
 else would be this package choosing which key to trust on your behalf.
 
 The default client has no timeout of its own — `JWKSClient` is how a deployment
-that cares supplies one.
+that cares supplies one. `JWKSMinRefreshEvery(d)` moves the rate limit, for a
+provider that rotates faster or slower than a minute.
 
 ## The bridge
 

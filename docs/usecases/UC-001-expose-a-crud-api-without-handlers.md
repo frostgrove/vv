@@ -1,7 +1,7 @@
 # UC-001 — Expose a full CRUD API for a resource without writing handlers
 
 **Actor:** the application author, on behalf of every client of the resource — HTTP or gRPC
-**Covered by:** [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]]
+**Covered by:** [[FL-001]] [[FL-002]] [[FL-003]] [[FL-004]] [[FL-011]] [[FL-012]] [[FL-013]] [[FL-015]]
 
 ## Scenario
 A resource needs the usual endpoints: list it, query it, count it, fetch one,
@@ -37,7 +37,8 @@ resource, and wants the twentieth resource to cost exactly what the first did.
 9. Delete of one row reports how many rows went away, and 404 when that is zero.
 10. Bulk delete takes a set of ids, passes them to a single call, reports the
     count, and answers zero for an empty set without touching the database. The
-    number of ids in one request can be capped.
+    number of ids in one request is capped whether or not the author says so,
+    and a declaration changes the number rather than switching the cap on.
 11. A count honours the request's filter and ignores everything that means
     nothing to a count — paging, sorting, preloads, projection.
 12. Fetching one entity honours the shaping options — which relations to load,
@@ -76,7 +77,7 @@ resource, and wants the twentieth resource to cost exactly what the first did.
 | [[FL-004]] | the declaration, and what is checked when the package initialises |
 | [[FL-011]] | every route's failure path |
 | [[FL-012]] | the path id and the query-string values becoming Go values |
-| [[FL-013]] | the second binding: what it shares and the four things it does differently |
+| [[FL-013]] | the other three bindings: what they share, and every place one of them answers differently |
 | [[FL-015]] | the shared half every binding routes into, and the seam a service takes the repository's place at |
 
 ## Status
@@ -88,23 +89,26 @@ patch / delete lifecycle plus pagination and the rejection paths are re-run end
 to end against live PostgreSQL and MySQL.
 
 There are four bindings — Fiber, Gin, `net/http` and gRPC. The three HTTP ones
-answer the same 147 unit tests and the same end-to-end suite; the gRPC one
-answers the subset that is not about HTTP, in its own vocabulary. Mounting one
-or another is the same line of code with a different package name, and a service
-type written against one satisfies the others unchanged: the interface is
-literally the same type, which the integration suite proves by mounting one
-service on all four. The `net/http` binding costs nothing to have, because it
-needs no dependency.
+answer the same unit suite, name for name, and the same end-to-end suite; the
+gRPC one answers the subset that is not about HTTP, in its own vocabulary.
+Mounting one or another is the same line of code with a different package name,
+and a service type written against one satisfies the others unchanged: the
+interface is literally the same type, which the integration suite proves by
+mounting one service on all four. The `net/http` binding costs nothing to have,
+because it needs no dependency.
 
-The gap that remains is narrower than it was. A project on Echo, chi or gRPC
-still writes its own routes — though one on chi or gorilla/mux can register the
-`net/http` binding's handler methods one by one instead, because they are
-ordinary `http.HandlerFunc`s. What nobody has to write is the interesting part:
+The gap that remains is narrower than it was. A project on Echo still writes its
+own routes — though one on chi or gorilla/mux can register the `net/http`
+binding's handler methods one by one instead, because they are ordinary
+`http.HandlerFunc`s. What nobody has to write is the interesting part:
 the status table, the bad-request sentinel, the create-time clearing of a
 generated key, the id coercion and the count/entity narrowing all live in a
-package with no framework in it. Writing the third binding is the evidence: it
-needed nothing added to that package.
+package with no framework in it. Writing the fourth binding is the evidence, and
+a better one than the third was: it is not HTTP at all, and it still needed
+nothing added to that package.
 
-Where the three differ is named rather than papered over — mounting, body
-encodings, and what each router does with a trailing slash or a method it does
-not have. [[FL-013]] carries the table.
+Where the four differ is named rather than papered over — mounting, and what
+each router does with a trailing slash or a method it does not have. Body
+decoding used to be on that list and is not: all three HTTP bindings now read
+the same JSON under the same byte cap, where one of them used to accept a form
+or an XML body the other two refused. [[FL-013]] carries the table.

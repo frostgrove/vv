@@ -94,19 +94,22 @@ this page is the roadmap.
 ## Gaps
 
 The roadmap, worst first. The first group is behaviour that does not match a
-stated guarantee — four of it live, with entry 5 kept as a closed one because
-the numbers are cited elsewhere; the rest are missing proof or documented sharp
-edges that need a decision.
+stated guarantee — three of it live, with entries 1 and 5 kept as closed ones
+because the numbers are cited elsewhere; the rest are missing proof or documented
+sharp edges that need a decision.
 
 ### Guarantees that do not hold
 
-1. **[UC-002] An unknown top-level key in a query document is silently ignored.**
-   The request body is decoded without rejecting unknown fields, so a misspelled
-   `filter` key parses cleanly and the endpoint returns the whole table. This
-   directly contradicts the use case's headline — "an unknown field is rejected,
-   never ignored" — which holds inside the filter but not at the document's own
-   level, where a client's typo actually lands. Same for unknown query-string
-   parameters. Untested and unguarded.
+1. ~~**[UC-002] An unknown top-level key in a query document is silently
+   ignored.**~~ **Closed, both doors.** The document decodes with unknown fields
+   refused, and the refusal names the offending key and offers the accepted set
+   back — a test walks the struct tags to prove that list cannot drift from the
+   struct. The query string is closed as far as it can be: a parameter one edit
+   away from one of ours is refused, including a transposition, because
+   "prelaod" is the typo people actually make. It stops there on purpose — a
+   handler reads its own parameters off the same URL, so an unrelated name has
+   to pass, and the control test pins that it does. The entry keeps its number
+   because the numbers are cited elsewhere.
 
 2. **[UC-004] A create is not narrowed, and a hand-written policy does not guard
    it either.** An upsert has no `WHERE` for the tenant predicate to live in, so
@@ -244,13 +247,17 @@ edges that need a decision.
     and raw text from the other, and a range operator against `null` binding a
     nil instead of being refused.
 
-20. **[UC-002] The budgets have holes.** Search predicates, sort terms and select
+20. **[UC-002] The budgets still have holes.** Search predicates and select
     entries are not charged against the condition budget; the search-field list
     has no length cap; the depth budget does not bound a preload path; and inside
-    a preload's own filter both counters restart. Separately, the page cap is a
-    repository setting rather than part of the query configuration, so an
-    endpoint reviewed through its query configuration alone looks bounded and is
-    not.
+    a preload's own filter both counters restart. Sort terms have left this list:
+    they have a cap of their own, added with the list-length cap after an audit
+    found the condition budget was measuring names and nothing was measuring
+    volume ([[D-060]]). Separately, the page cap is a repository setting rather
+    than part of the query configuration, so an endpoint reviewed through its
+    query configuration alone is reviewed through the wrong file — narrower than
+    it was, since an endpoint that declares nothing now refuses `unpaged`
+    outright.
 
 21. **[UC-004] A frozen field name is never validated against the model**, so a
     typo silently protects nothing. Contrast the scope and relation-path

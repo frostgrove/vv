@@ -87,8 +87,23 @@ crudgrpc.Serving(svc).Register(srv, "Article")
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
 | `ReadOnly()` | регистрирует только три чтения |
 | `AllowClientID()` | разрешить create'у самому задать ключ, генерируемый базой |
-| `MaxBulk(n)` | ограничить `BulkDelete` |
+| `MaxBulk(n)` | ограничить `BulkDelete` — по умолчанию `port.DefaultMaxBulk` (1024), «без предела» не бывает |
 | `WithRenderer(r)` | заменить рендерер статуса |
+
+Каждая опция ниже принимает три параметра типа ресурса явно —
+`WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` выводит их из
+репозитория, который ему передан; опция же — значение, построенное до вызова
+`New`, а Go выводит параметры функции из её собственных аргументов, которые ни
+одного из них не называют. Обычный способ сократить места вызова — локальный
+хелпер на ресурс.
+
+**`WithScope` работает только на чтениях, и это не пробел, который ждёт
+заполнения.** `Save` и `Delete` не принимают опций, так что предикату на запрос
+там просто некуда попасть. Асимметрия выглядит защитой и ею не является: при
+скоупе `TenantID = 7` запрос `GET /{id}` по чужой строке отдаст 404, а
+`DELETE /{id}` по той же строке — 200. Построчным правилам на записях место в
+[`security.Gate`](security.md), чей скоуп действительно доходит до DELETE и
+UPDATE.
 
 **`WithErrorHandler` здесь нет.** Ответ gRPC — это возвращаемое значение, а не
 поток, который обработчик мог бы наполовину записать, так что перехватывать
@@ -111,6 +126,7 @@ srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors(
 | `KindRetryable` | `Unavailable`, с `RetryInfo{1s}` |
 | `KindConflict` | `AlreadyExists` |
 | `KindValidation` · `KindBadRequest` | `InvalidArgument` |
+| `KindTooLarge` | `ResourceExhausted` |
 | всё остальное | `Internal` |
 
 Отказ приходит как код статуса плюс **детали `BadRequest` / `ErrorInfo` /

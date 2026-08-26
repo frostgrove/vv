@@ -1,7 +1,7 @@
 # FL-011 — An error becomes an HTTP status
 
 **Entry point:** `port/porthttp/errors.go:Status` (via each binding's `HandlerFor.fail`)
-**Implements:** [[UC-015]] · **Governed by:** [[D-015]] [[D-008]] [[D-019]] [[D-045]] [[D-038]] [[D-047]] [[D-046]] [[D-039]] [[D-040]] [[D-049]] [[D-044]]
+**Implements:** [[UC-015]] · **Governed by:** [[D-015]] [[D-008]] [[D-019]] [[D-045]] [[D-038]] [[D-047]] [[D-046]] [[D-039]] [[D-040]] [[D-049]] [[D-044]] [[D-063]]
 
 Every handler ends in `h.fail(c, err)`. One function decides the status, one
 decides the body, and everything the library knows how to classify is a client
@@ -41,7 +41,7 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
 | `*query.Error` | `crud/query/compile.go:13` | every rejection in the wire DSL, carrying `Path` and `Reason` |
 | `*crud.UnknownFieldError` | `crud/errors.go:41` | `Schema.Field` misses in the repository and the SQL writer |
 | `*crud.SchemaError` | `crud/errors.go:52` | declaration-time and render-time refusals |
-| `port.ErrBadRequest` | `port/sentinel.go` | `BadRequest` / `BadRequestf` / `BadRequestAs` — malformed body, unparseable id, `MaxBulk` exceeded. One sentinel for every binding and every transport, so a 400 raised by one is recognised by the shared classification ([[D-045]]). `porthttp.ErrBadRequest` is the same variable, not a copy |
+| `port.ErrBadRequest` | `port/sentinel.go` | `BadRequest` / `BadRequestf` / `BadRequestAs` — malformed body, unparseable id, more ids than `port.Rules.BulkCap()` allows. One sentinel for every binding and every transport, so a 400 raised by one is recognised by the shared classification ([[D-045]]). `porthttp.ErrBadRequest` is the same variable, not a copy |
 | `crud.ErrNoTxSupport` | `crud/errors.go:13` | `crud.InTx` on a handle that cannot begin — **not classified**, so 500 |
 | `crud.ErrReadOnly` | `crud/errors.go:22` | nothing in the tree; it exists for a decorator that wants to say "read-only" rather than "forbidden" — **not classified**, so 500 |
 
@@ -113,11 +113,18 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
    **And there is a second vocabulary now.** `crud/rpc/crudgrpc/status.go:CodeFor` is
    the same table in gRPC's words, over the same `port.KindOfWith` answer:
    `NotFound`, `Unauthenticated`, `PermissionDenied`, `Unavailable`,
-   `AlreadyExists`, `InvalidArgument`, `Internal`. Two of the eight kinds
-   collapse into `InvalidArgument` — a validation failure and a malformed request
-   are one code here — and every conflict is `AlreadyExists`. Both are costs
-   [[D-052]] records rather than bugs; the kind is decided once and each
-   transport spells it ([[D-049]]).
+   `AlreadyExists`, `InvalidArgument`, `ResourceExhausted`, `Internal`. Two of
+   the nine kinds collapse into `InvalidArgument` — a validation failure and a
+   malformed request are one code here — and every conflict is `AlreadyExists`.
+   Both are costs [[D-052]] records rather than bugs; the kind is decided once
+   and each transport spells it ([[D-049]]).
+
+   **Both tables are total and each is checked against the kind set.** A kind
+   with no row would otherwise reach an HTTP client as 500 while refusing to
+   compile for gRPC — which is what happened when `errs` gained `KindTooLarge`,
+   because the third table, the one that renders a code, had a `default` arm and
+   answered `internal`: a 413 whose body told the client the server had broken
+   ([[D-063]]).
 
 5. **The body** — `port/porthttp/render.go:EnvelopeRenderer.Render`.
    The order of its steps is load-bearing: the fault (or one synthesised from the
@@ -195,14 +202,15 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
 | unknown field, bad value, bad operator | `query` compile → `*query.Error` | 400 with `path` and `message` |
-| unparseable `:id`, malformed body, over `MaxBulk` | `port.BadRequestAs` | 400, with `invalid_id`, `malformed_body` or `bad_query` in the envelope |
+| unparseable `:id`, malformed body, more ids than `Rules.BulkCap()` | `port.BadRequestAs` | 400, with `invalid_id`, `malformed_body` or `bad_query` in the envelope |
+| a request body past the transport's cap | `porthttp.TooLarge`, before anything parses it | 413, `too_large`, naming the limit and nothing else. Its own kind and not a bad-request code, because "send less" is a different instruction from "send something else" ([[D-063]]) |
 | unset `noauto` primary key on save | `ErrMissingID` | 400 |
 | row absent or out of scope | `ErrNotFound` | 404, `not_found` |
 | policy denial | `security.Denied` → `ErrForbidden` | 403 |
-| duplicate key / FK / NOT NULL / CHECK, PostgreSQL or MariaDB | `sqlfault.Integrity` — class 23 | 409, and where the engine was declared the body reads `errs: conflict: unique` rather than the driver's sentence |
+| duplicate key / FK / NOT NULL / CHECK, PostgreSQL or MariaDB | `sqlfault.Integrity` — class 23 | 409, and where the engine was declared the violation carries `unique` and the sentence the vocabulary declares for it |
 | the same on MySQL, where a CHECK is `3819` and a missing default `1364` | `Integrity`'s `HY000` arm, which reads the number only under that state | 409. Both were an unclassified 500 before the number list ([[D-046]]) |
 | the same on SQLite, which reports no SQLSTATE at all | `Integrity`'s no-state arm, on `SQLITE_CONSTRAINT` in the low byte of the extended result code | 409. All seven classes were an unclassified 500 until that arm existed |
-| any of the above through `crudsql.Open`, `From` or `Source`, or a class-23 number no probe produced | gate 1 only — no engine was declared, or no table has the number | 409 **with the driver's message**, because no code was learned. [[FL-014]] |
+| any of the above through `crudsql.Open`, `From` or `Source`, or a class-23 number no probe produced | gate 1 only — no engine was declared, or no table has the number | 409 carrying the coarse `conflict` code, because no finer one was learned. The body is no worse than the classified one — the driver's sentence stopped reaching it in phase 4 ([[D-044]]) — but the client cannot tell a duplicate key from a foreign key. [[FL-014]] |
 | a value too long, out of range, or of the wrong type | `errs/sqlerr` classifies it — `too_long`, `out_of_range`, `invalid_format`. The sentinel gate still refuses class 22 ([[D-015]]) | 422, `too_long` and its siblings in the envelope. The sentinel half would still say 500; the kind is what decides ([[D-049]]) |
 | a lock timeout, a deadlock, a serialisation failure | `errs/sqlerr` classifies all three, on `55P03`/`1205`/`SQLITE_BUSY`, `40P01`/`1213`, and `40001` | 503 with `Retry-After`, from `errs.KindRetryable` ([[D-040]]). The framework does not retry on the caller's behalf; the header is the smallest honest hint |
 | a PostgreSQL transaction poisoned by an earlier failure (`25P02`) | `errs/sqlerr` classifies it as `transaction_aborted` | 500, now carrying `errs.CodeTransactionAborted`: two saves in one `crud.InTx` where the first collides answer a truthful 409 and then a 500 whose body still says nothing |
@@ -254,7 +262,7 @@ out of the request's own words ([[D-044]], [[UC-015]] guarantee 11).
 | `crud/sqlfault/catalog.go` | the one-method schema SPI that fills in columns a driver did not name |
 | `crud/sqlfault/doc.go` | the two gates, what no arm may read, why the engine is declared |
 | `errs/doc.go` | what the package is, what it refuses, which half of it the first tag freezes, and the two rules that are not visible in a signature |
-| `errs/code.go` | `Code` and its constants; `Kind`, its eight constants and `Kind.String` |
+| `errs/code.go` | `Code` and its constants; `Kind`, its nine constants and `Kind.String` |
 | `errs/codes.go` | `Codes` — the wired vocabulary — `StandardCodes`, `Add`, `KindOf`, `MessageFor`, `ErrCodeRedeclared` |
 | `errs/path.go` | `Step`, `Path`, `Named`, `Indexed`, the three renderings (`MarshalJSON`, `String`, `Pointer`) and `ParsePath` |
 | `errs/violation.go` | `Origin`, `Source`, `Violation` and its public projection |
@@ -299,7 +307,12 @@ listed at the end.
 - `TestAQueryThatNamesSomethingTheModelLacksIsABadRequest` — `crud/http/crudfiber/edge_test.go`.
 - `TestEveryRejectionNamesThePathThatWasWrong` — `crud/query/edge_test.go` — the `Path` field.
 - `TestAnIntegrityConflictIsA409WithAMessage` — `crud/http/crudfiber/write_edge_test.go`.
-- `TestAClassifiedConflictsBodyCarriesNothingInternal` — `crud/http/crudfiber/write_edge_test.go` — [[D-047]] under live load: the 409 body of a *classified* conflict names no constraint, no table, no schema, no SQLSTATE and no statement, and its control is the unclassified one beside it, asserted to still leak.
+- `TestAClassifiedConflictsBodyCarriesNothingInternal` — `crud/http/crudfiber/write_edge_test.go` — [[D-047]] under live load: the 409 body of a *classified* conflict names no constraint, no table, no schema, no SQLSTATE and no statement, and the unclassified conflict beside it is held to the same line. That leg used
+  to be the control that *did* leak, and [[D-044]] inverted it: it now asserts
+  the constraint name is reachable on the Go error and absent from the body, so
+  what it measures is the renderer rather than an empty fixture. Both legs also
+  assert the code is still there — a renderer emitting `{}` would pass "names
+  nothing" perfectly.
 - `TestIntegrityErrorsAreClassifiedWhateverShapeTheDriverUses` — `crud/adapter/crudsql/conflict_test.go`.
 - `TestAClassifiedConflictIsNotAnyOtherSentinel` — `crud/adapter/crudsql/conflict_test.go`.
 - `TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault` — `crud/adapter/crudsql/conflict_test.go` — [[D-038]]'s owed regression, on all three readers.
@@ -362,7 +375,7 @@ classification half of them into `port`.
 - `TestEachLevelOfTheMessageLadderResolves` / `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` / `TestAMessageExpandsByteIdenticallyEveryTime` / `TestTwoLocalesThroughTheSameFaultGiveTwoMessages` / `TestAnIndexedPathResolvesTheSameMessageAsAnyOtherRow` / `TestRedeclaringAMessageWithDifferentTextIsRefused` — `errs/message_test.go` — the ladder, what it falls back to, and the redeclaration guard.
 - `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` / `TestALocaleIsWalkedBeforeAKeyIsNarrowed` / `TestOnlyTheFirstAndLastNamedStepsReachTheLadder` — `errs/message_test.go` — the two separators a locale arrives with, the locale-outer walk (the only shape that tells it from a key-outer one), and the collapse to the first and last named steps, which is what makes a key spelling a whole nested path silently unreachable.
 - `TestAViolationCodeIsNotTheFaultsCode` / `TestAViolationMessageIsNotTheFaultsMessage` — `errs/build_test.go` — whose code is whose, and whose message. Each has two halves and each half is the other's control; routing every `Message` to the fault left the root module green.
-- `TestEveryEntryPointCarriesItsKind` — `errs/build_test.go` — the eight constructors, with `Internal` as the control because its kind is the zero value.
+- `TestEveryEntryPointCarriesItsKind` — `errs/build_test.go` — the nine constructors, with `Internal` as the control because its kind is the zero value.
 - `TestAPerViolationStepWithNoViolationOpenOpensAGeneralOne` / `TestOriginSourceAndApproximateAlsoOpenAGeneralViolation` — `errs/build_test.go` — the misordered-chain rule, which lives nowhere else: a per-violation step arriving before any `Field`/`At`/`General` opens a general violation rather than dropping what it was given.
 - `TestTheStepsThatWriteNothingElseReadsStillWrite` — `errs/build_test.go` — the four builder steps nothing else reads back: `Origin`, `Source`, `Approximate` and `Partial`. Stubbed to `return b` they left the whole root module green, so each is pinned on the value it writes, with the unwritten violation as the control.
 - `TestAFaultDoesNotShareASliceWithTheBuilderOrTheCaller` — `errs/build_test.go` — the copy `Fault()` promises is deep: two faults from one builder share no `Path` array, a caller's scratch path and column lists do not stay live inside a fault, and an absent column list still reports nil. The last is the control on the clone helper, which an unconditional `make` would turn from "not known" into "no columns".
@@ -377,7 +390,21 @@ And the second vocabulary, plus the pipeline both share:
 
 - `TestKindMapsToTheCodeItPromisesTo` — `crud/rpc/crudgrpc/status_test.go` — the gRPC
   table arm by arm, with a control asserting it covers exactly the kinds `errs`
-  declares, so a ninth kind fails rather than being mapped to `Internal`.
+  declares, so a new kind fails rather than being mapped to `Internal`.
+  `KindTooLarge` is the one that has arrived since, and it is why the other two
+  kind-keyed tables now carry the same control:
+  `TestEveryKindHasAStatusAndTheTableIsTotal` in `port/porthttp/errors_test.go`
+  and `TestEveryKindRendersACodeAndTheTableIsTotal` in `port/kind_test.go`. The
+  third was added last, and it is the one that had a `default` arm — so the new
+  kind rendered `error_code: "internal"` inside a 413 ([[D-063]]).
+- `TestAConsumersVocabularyDecidesTheStatusAndTheDefaultMessage` and
+  `TestStatusAnswersWhatRenderWouldWithoutABody` —
+  `port/porthttp/render_options_test.go` — the wired half of the same table.
+  A code only the consumer declares moves a 400 to a 409 and carries the message
+  that vocabulary gives it, with the standard vocabulary answering 400 and the
+  bare code as the control; and `EnvelopeRenderer.Status` answers what `Render`
+  would for every kind, so a binding that decides before it renders cannot
+  decide differently.
 - `TestAnInternalStatusSaysNothing` and
   `TestAStatusMessageNamesNoEntityAndNoDriverText` — the same file — the
   disclosure guard on this transport. The second is the one with teeth:

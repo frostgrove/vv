@@ -19,40 +19,40 @@ my database would accept?*
    A context carrying somebody else's database is not this repository's business
    and is left alone.
 
-2. **The binding stack** — `crud/executor.go:145`
+2. **The binding stack** — `crud/executor.go:binding`
    ```go
    type binding struct { ds any; e Executor; prev *binding }
    ```
-   `push` (`executor.go:151`) links a new binding in front of whatever was there.
+   `push` (`executor.go:push`) links a new binding in front of whatever was there.
    They chain rather than replace, so an inner scoped binding cannot hide an
    outer unscoped one from a different repository.
 
-3. **`WithExecutor`** — `crud/executor.go:165`
+3. **`WithExecutor`** — `crud/executor.go:WithExecutor`
    Pushes with `ds == nil`: **every** repository runs on it, whatever datasource
    it was bound to. Deliberately unconditional — the executor an ent or gorm
    transaction hands over has no relationship to the source a repository holds,
    so no check could pass. This is the single interop point of the library.
 
-4. **`WithExecutorFor`** — `crud/executor.go:184`
-   Pushes with `ds = KeyOf(src)` (`executor.go:228`): the raw handle if the
+4. **`WithExecutorFor`** — `crud/executor.go:WithExecutorFor`
+   Pushes with `ds = KeyOf(src)` (`executor.go:push`): the raw handle if the
    value is not `Identified`, otherwise its `DataSource()`. Both spellings — the
    `*sql.DB` and any `crudsql.DB` over it — land on the same key, because
    `crudsql.Executor.DataSource` returns the wrapped `Queryer`
    (`crud/adapter/crudsql/crudsql.go:86`) and `crudpgx.Executor.DataSource` the pgx
    handle (`crud/adapter/crudpgx/crudpgx.go:85`).
 
-5. **`ExecutorFor`** — `crud/executor.go:202`
+5. **`ExecutorFor`** — `crud/executor.go:ExecutorFor`
    Walks the chain innermost-first. The first *unscoped* binding it meets is
    remembered as the fallback; any binding whose `ds` matches `want` returns
    immediately. So **a matching scoped binding wins over an unscoped one
    wherever it sits in the stack**, and a repository with no match at all still
-   joins an unscoped binding. `SameDataSource` (`executor.go:268`) compares by
+   joins an unscoped binding. `SameDataSource` (`executor.go:SameDataSource`) compares by
    type and value and never panics on an identity that is not comparable.
 
-6. **`InTx`** — `crud/executor.go:294`
+6. **`InTx`** — `crud/executor.go:InTx`
    ```go
    if _, ok := ExecutorFor(ctx, src); ok { return fn(ctx) }   // join, do not nest
-   b, ok := src.(Beginner); if !ok { return ErrNoTxSupport }
+   b, ok := BeginnerOf(src); if !ok { return ErrNoTxSupport }   // through wrappers
    tx, _ := b.Begin(ctx)
    // panic  -> Rollback, re-panic
    // error  -> Rollback (errors.Join if the rollback also fails)
@@ -62,7 +62,7 @@ my database would accept?*
    Joining means the outer owner keeps control of commit and rollback — which is
    what makes an vv call inside somebody else's transaction safe.
 
-7. **`ownScope`** — `crud/executor.go:245`
+7. **`ownScope`** — `crud/executor.go:ownScope`
    For a transaction vv opens itself, nobody named a database. An
    `Identified` source scopes the binding to itself, so the transaction reaches
    every repository over that database and no others. A source that cannot say
@@ -198,7 +198,7 @@ transaction, and reports success.
   the transaction. `KeyOf`, right beside it, never answers nil — the two look
   alike and answer different questions, and [[D-041]] was written against the
   wrong one of them until phase 6.
-- **Only `Exec` and `Query` cross the boundary** (`crud/executor.go:36`). That is
+- **Only `Exec` and `Query` cross the boundary** (`crud/executor.go:Executor`). That is
   the reason any foreign transaction can be pushed into a context at all —
   scanning stays with the mapper and dialect stays with the repository.
 - **`ForUpdate` is only requested inside a transaction.** `repository.Update`
@@ -209,15 +209,17 @@ transaction, and reports success.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| `InTx` on a handle that cannot begin | `InTx` (`executor.go:300`) | `ErrNoTxSupport` → 500 |
-| `fn` returns an error | `InTx` (`executor.go:313`) | the error; rollback failure joined onto it |
-| `fn` panics | `InTx` (`executor.go:307`) | rollback, then the panic is re-raised |
+| `InTx` on a handle that cannot begin | `InTx` (`executor.go:InTx`) | `ErrNoTxSupport` → 500 |
+| `fn` returns an error | `InTx` (`executor.go:InTx`) | the error; rollback failure joined onto it |
+| `fn` panics | `InTx` (`executor.go:InTx`) | rollback, then the panic is re-raised |
 | plain `WithExecutor` with two databases in play | nothing catches it — by design | the write lands in the wrong database; use `WithExecutorFor` |
 | a source that is not `Identified` under `WithExecutorFor` | `KeyOf` takes the value at face value | matched only if the caller passes the same value |
-| uncomparable datasource identity | `SameDataSource` (`executor.go:268`) | no match, no panic — as far as the *static* type goes; a struct holding an interface is comparable and `==` on it still panics, which is why `crud/catalog/set.go:findable` guards its own probe ([[FL-016]]) |
+| a `Source` wrapped for instrumentation that does not implement `SourceUnwrapper` | nothing catches it, and there is nothing to catch — the wrapper really has none of those methods | `Tx` is `ErrNoTxSupport`, the catalog refuses at start-up, and — silently — every read goes to the primary. Implement `UnwrapSource()` ([[D-061]]) |
+| a wrapped source under `InTx`, before `ownScope` walked | `ownScope` asserted where `BeginnerOf` walked | the transaction opened and bound **unscoped**: every repository in the process adopted it, including ones on another database. Closed — `identityOf` is now the one walk all three identity sites share ([[D-061]]) |
+| uncomparable datasource identity | `SameDataSource` (`executor.go:SameDataSource`) | no match, no panic — as far as the *static* type goes; a struct holding an interface is comparable and `==` on it still panics, which is why `crud/catalog/set.go:findable` guards its own probe ([[FL-016]]) |
 | a finished transaction still in the context | the driver | the driver's error, surfaced as-is |
 | a deferred constraint fires at `COMMIT` rather than at the statement | the adapter's `Commit` → `Executor.conflict` → `sqlfault.Wrap` | `ErrConflict` → 409, with the code where the source named its engine ([[FL-011]], [[FL-014]]) |
-| a write inside a transaction opened by `From` or `Open` | nothing classifies the engine — by design | 409 with the driver's message and no code; pass `crudsql.WithFaults` ([[FL-014]]) |
+| a write inside a transaction opened by `From` or `Open` | nothing classifies the engine — by design | 409 with the coarse `conflict` code and nothing finer; the driver's message reaches no body either way ([[D-044]]). Pass `crudsql.WithFaults` ([[FL-014]]) |
 | a probe wanting a savepoint inside a **foreign** transaction | `OwnedExecutorFor` reports `owned == false` | no savepoint is taken, and on an engine that poisons its transaction the answer is one violation ([[FL-017]]) |
 | a probe wanting a savepoint past the budget | `ClaimSavepoint` | no savepoint, and the fault is marked incomplete rather than silently short ([[D-042]]) |
 
@@ -225,7 +227,7 @@ transaction, and reports success.
 
 | File | Role |
 |---|---|
-| `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, `Sourced`, the binding stack with its `owned` flag and savepoint counter, `WithExecutor(For)`, `ExecutorFor`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
+| `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, `Sourced`, `Nexter`, `SourceUnwrapper`, `SourceOf`, `BeginnerOf`, `ReadSourceOf`, `maxChainDepth`, the binding stack with its `owned` flag and savepoint counter, `WithExecutor(For)`, `ExecutorFor`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
 | `crud/decorators/faults/probe.go` | `enricher.savepoint` — the only caller of `ClaimSavepoint`, and the four conditions a savepoint needs ([[FL-017]]) |
 | `crud/sqlrepo/repository.go` | `exec` — every statement's executor choice; `Tx` |
 | `crud/adapter/crudsql/crudsql.go` | `From`, `Open`, `Source`, `Postgres`/`MySQL`/`MariaDB`/`SQLite`, `WithFaults`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource`; `Tx.Commit` and `savepoint.Commit` classify, and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
@@ -246,6 +248,17 @@ transaction, and reports success.
 - `TestInTxJoinsRatherThanNests` — `crud/executor_test.go`.
 - `TestInTxDoesNotJoinAnotherDatabasesTransaction` — `crud/executor_test.go`.
 - `TestInTxWithoutABeginnerIsRefused` — `crud/executor_test.go`.
+- `TestAWrappedSourceKeepsWhatItWrapsWhenItSaysWhatItWraps` and
+  `TestInTxReachesTheBeginnerThroughAWrapper` — `crud/wrapsource_test.go` —
+  `Beginner`, `ReadSourcer` and `Identified` all survive a wrapper that
+  implements `UnwrapSource`, with a wrapper that omits it as the control that the
+  helpers follow a declaration rather than guessing ([[D-061]]).
+- `TestAWrappedPrimaryIsStillTheDatabaseItNames` and
+  `TestATransactionOnAWrappedSourceIsScopedToItsDatabase` — same file — a
+  `ReadWrite` over an instrumented primary still names the primary's database,
+  and a transaction opened on a wrapped source is scoped to it rather than left
+  for anyone to adopt. Each carries the control that a binding scoped to a
+  *different* database is still not matched.
 - `TestTransactionJoinsAnAmbientExecutor` / `TestTransactionRollsBackOnError` — `crud/sqlrepo/repository_test.go`.
 - `TestGormRollbackTakesVVWithIt` — `test/integration/driver_gorm_test.go` — the ORM-owned pattern.
 - `TestAnEntTransactionJoinsButCannotOpenASavepoint` — `test/integration/driver_ent_test.go`.

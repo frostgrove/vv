@@ -197,6 +197,11 @@ and everything else still work on the same value.
 `FindOne` returns `specs.ErrNotUnique` — which wraps `crud.ErrConflict` — when
 more than one row matches. `FindFirst` takes the first instead.
 
+`DeleteBy` and `UpdateBy` refuse an empty specification —
+`specs.ErrUnboundedDelete` and `specs.ErrUnboundedUpdate`. A specification that
+composes to nothing is the accident that truncates the table, and wiping or
+rewriting every row is `DeleteAll` and `UpdateAll`, which say so in their names.
+
 ## You are never forced into the decorator
 
 A specification is also a plain option:

@@ -44,19 +44,22 @@ import "github.com/shardit-io/vv/crud/http/crudhttp"
 | `NarrowForCount(*query.Request)` | отбросить всё, что ничего не значит для `COUNT` |
 | `NarrowForEntity(*query.Request)` | оставить только опции формы ответа |
 | `Sanitize` · `ClearGenerated` | что клиент не может выбирать при создании: сгенерированный ключ, колонка `generated` |
+| `Rules` | пять настроек, которые ничего не говорят о транспорте, общие для всех четырёх биндингов — алиас [`port.Rules`](port.md#правила-которые-биндингу-не-принадлежат) |
 
-Последние четыре — форвардеры поверх [port](port.md); они экспортируются здесь,
-потому что их вызывает приложение, которое пишет собственный маршрут создания
-([[D-045]]).
+`CoerceID` и далее до `Sanitize` · `ClearGenerated` — форвардеры поверх
+[port](port.md); они экспортируются здесь, потому что их вызывает приложение,
+которое пишет собственный маршрут создания ([[D-045]]). `Rules` в их число не
+входит — это алиас типа, который здесь никогда не жил.
 
 ## Форвардеры
 
 `crud/http/crudhttp/porthttp.go` реэкспортирует всё, что перенёс [[D-059]]:
 `Renderer`, `EnvelopeRenderer`, `RenderOption`, `Envelope`, `Groups`,
-`MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `ErrBadRequest`,
+`MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `MaxBody`, `ErrBadRequest`,
 `NewRenderer`, пять опций `With…`, `Internal`, `Status`, `StatusFor`,
 `KindForStatus`, `KindOf`, `ParseEnvelope`, `BadRequest`, `BadRequestf`,
-`BadRequestAs`, `MalformedBody`, `BodyResolver`, `DecodeJSON`, `DecodeJSONKeep`,
+`BadRequestAs`, `MalformedBody`, `TooLarge`, `BodyResolver`, `DecodeJSON`,
+`DecodeJSONKeep`, `DecodeJSONKeepLimit`,
 `KeepBody`, `WithBody`, `BodyFrom`, `WithLocale`, `LocaleFrom` и
 `AcceptLanguage`.
 

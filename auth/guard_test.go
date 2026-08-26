@@ -137,3 +137,49 @@ func TestANilAuthenticatorRefusesToStart(t *testing.T) {
 	}()
 	auth.NewGuard(nil)
 }
+
+// An outage is an outage whichever order the authenticators are wired in.
+//
+// An authenticator distinguishes "this credential is wrong" from "I could not
+// tell": apikey.Store has three results for exactly that, so a store outage
+// renders as a 500 rather than a 401 ([[D-056]]). Chain returned the *last*
+// error, so the distinction survived only when the failing authenticator
+// happened to be wired last — Chain(keys, jwt) turned a database outage into
+// "your key is invalid", which is wrong for the client and invisible to whoever
+// watches the 5xx rate.
+func TestAnOutageAnywhereInAChainBeatsARefusal(t *testing.T) {
+	outage := errors.New("connection refused")
+	broken := auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+		return nil, outage
+	})
+	refuses := auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+		return nil, auth.Unauthenticated("bad token")
+	})
+
+	for _, tc := range []struct {
+		name  string
+		chain auth.Authenticator
+	}{
+		{"the failing one first", auth.Chain(broken, refuses)},
+		{"the failing one last", auth.Chain(refuses, broken)},
+		{"and buried in the middle", auth.Chain(refuses, broken, refuses)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.chain.Authenticate(context.Background(), auth.Credential{Token: "t"})
+			if !errors.Is(err, outage) {
+				t.Fatalf("the outage was reported as %v — a client is told its credential is wrong and nothing alerts", err)
+			}
+			if errors.Is(err, auth.ErrUnauthenticated) {
+				t.Fatal("the outage was classified as a refusal, so it renders as 401 rather than 500")
+			}
+		})
+	}
+
+	// The control. All of that would hold for a Chain that never answered
+	// ErrUnauthenticated at all — so a chain where every authenticator genuinely
+	// refuses must still refuse.
+	_, err := auth.Chain(refuses, refuses).Authenticate(context.Background(), auth.Credential{Token: "t"})
+	if !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("a chain that only refused answered %v, want a refusal", err)
+	}
+}

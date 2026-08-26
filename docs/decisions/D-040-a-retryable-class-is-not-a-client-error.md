@@ -1,6 +1,6 @@
 # D-040 — A retryable class is not a client error
 
-**Status:** accepted — the classification half and the `Kind` are in force; the 503 and `Retry-After` arrive with phase 4 (`ROADMAP-errors.md` §14)
+**Status:** accepted
 **Invariant:** A lock timeout, a deadlock or a serialisation failure is never classified as a conflict or any other 4xx. It carries its own `Kind`, answers 503, and the framework does not retry on the caller's behalf.
 
 ## The decision
@@ -106,10 +106,11 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   half of this decision is what that refusal *is*, and phase 3 moved it out of
   `crud/adapter/crudsql` without widening it: a lock timeout, a deadlock and a
   serialisation failure are still not conflicts.
-- `crud/sqlfault/classify.go:Classifier.Classify` — where a retryable failure now
-  gets a `Fault` carrying `KindRetryable`. Nothing maps the kind to a status yet,
-  so it is still a 500 with a silent body; the 503 this decision asks for is
-  phase 4's and is **not** paid by phase 3.
+- `crud/sqlfault/classify.go:Classifier.Classify` — where a retryable failure
+  gets a `Fault` carrying `KindRetryable`. Phase 4 paid the rest, and
+  [[D-059]] moved it one directory further out:
+  `port/porthttp/errors.go:StatusFor` turns the kind into 503 and
+  `port/porthttp/render.go:EnvelopeRenderer` is what attaches `Retry-After`.
 - `errs/code.go:KindRetryable` — the transport class, and the five codes that
   declare it in `errs/codes.go:StandardCodes`. Not to be confused with
   `errs/sqlerr/corpus.go:KindRetryable` below, which is an untyped corpus label
@@ -164,7 +165,7 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   control. Nothing else exercises `Save`; `make corpus` writes the files and no
   target diffs the result.
 
-## Proven by
+## Proven by — the class, the status and the forbid
 
 - `TestEveryCorpusCaseClassifiesAsTheCorpusSays` in
   `test/integration/corpus_test.go` — the `lock_timeout` arm on four live
@@ -173,11 +174,18 @@ emitting `Detail` on a deadlock would no longer be a finding on that one row.
   `crud/adapter/crudsql/conflict_test.go` — `SQLITE_BUSY` (5) and busy-snapshot (517)
   by number.
 - `TestTheRetryableCodesAreTheirOwnKind` — the `Kind`, which phase 1 shipped.
-- `TestARetryableFailureIsA503WithRetryAfter` — the status and the header, which
-  phase 4 shipped. `errs` still declares no status table: a `Kind` → status map
-  there would put an HTTP type in the transport-neutral half, which [[D-045]]
-  forbids, so the table lives in `crud/http/crudhttp` and [[D-049]] decides which of
-  it and the sentinel wins.
+- `TestARetryableFailureIsA503WithRetryAfter` in `write_edge_test.go` in all three
+  HTTP bindings — the status and the header. `errs` still declares no status
+  table: a `Kind` → status map there would put an HTTP type in the
+  transport-neutral half, which [[D-045]] forbids, so the table is
+  `port/porthttp.StatusFor` ([[D-059]] moved it there from `crud/http/crudhttp`)
+  and [[D-049]] decides which of it and the sentinel wins.
+- `TestA503AdvertisesTheRetryAfterTheConsumerSet` in
+  `port/porthttp/render_options_test.go` — the same header from the other side:
+  the number `WithRetryAfter` sets is the number on the wire, with the
+  unconfigured `DefaultRetryAfter` as the control, `WithRetryAfter(0)` writing
+  no header at all, and a 409 from the same renderer carrying none — so the
+  header is tied to the status rather than to the renderer.
 - `TestARetryableCaseNeverAnswersAConflictOrValidationCode` — the forbid, as a
   test rather than a sentence.
 

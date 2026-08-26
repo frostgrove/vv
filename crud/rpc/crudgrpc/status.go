@@ -2,7 +2,6 @@ package crudgrpc
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -63,6 +62,10 @@ const PartialKey = "partial"
 // wrong", so on this transport the machine code in the details is what
 // separates them. That is the code doing the job it was always meant to do.
 //
+// A body past the cap is ResourceExhausted, which is gRPC's own answer for a
+// message over its receive limit and therefore the code a client already has a
+// branch for. HTTP says 413.
+//
 // Every conflict is AlreadyExists, including a restrict violation and a stale
 // version, where FailedPrecondition and Aborted would each read better.
 // Refining per code would be a second table keyed on something [[D-049]] says
@@ -84,6 +87,8 @@ func CodeFor(k errs.Kind) codes.Code {
 		return codes.InvalidArgument
 	case errs.KindBadRequest:
 		return codes.InvalidArgument
+	case errs.KindTooLarge:
+		return codes.ResourceExhausted
 	default:
 		return codes.Internal
 	}
@@ -118,6 +123,8 @@ func KindForCode(c codes.Code) errs.Kind {
 		return errs.KindConflict
 	case codes.InvalidArgument:
 		return errs.KindBadRequest
+	case codes.ResourceExhausted:
+		return errs.KindTooLarge
 	default:
 		return errs.KindInternal
 	}
@@ -254,7 +261,7 @@ func (r *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
 		// A detail that will not marshal must not cost the caller its status.
 		// The code and the sentence are what a client branches on; the details
 		// are what it renders a form from.
-		log.Printf("crudgrpc: attaching the error details: %v", attachErr)
+		port.Logger(ctx).Error("crudgrpc: attaching the error details", "err", attachErr)
 		return st
 	}
 	return full

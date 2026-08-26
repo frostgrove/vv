@@ -198,3 +198,135 @@ func TestAFaultsKindDecidesAndTheSentinelIsTheFallback(t *testing.T) {
 		t.Fatalf("a fault wrapping crud.ErrNotFound answered %d, not 404", got)
 	}
 }
+
+// Every kind answers the status it promises to, and the table is total.
+//
+// The gRPC binding has carried this control since it was written and this side
+// did not, which is how errs could gain a kind and reach a client as 500 over
+// HTTP while gRPC refused to build. The two tables are the same obligation
+// ([[FL-013]]); they now fail the same way.
+func TestEveryKindHasAStatusAndTheTableIsTotal(t *testing.T) {
+	want := map[errs.Kind]int{
+		errs.KindInternal:     http.StatusInternalServerError,
+		errs.KindNotFound:     http.StatusNotFound,
+		errs.KindUnauthorized: http.StatusUnauthorized,
+		errs.KindForbidden:    http.StatusForbidden,
+		errs.KindRetryable:    http.StatusServiceUnavailable,
+		errs.KindConflict:     http.StatusConflict,
+		errs.KindValidation:   http.StatusUnprocessableEntity,
+		errs.KindBadRequest:   http.StatusBadRequest,
+		errs.KindTooLarge:     http.StatusRequestEntityTooLarge,
+	}
+	for k, status := range want {
+		if got := StatusFor(k); got != status {
+			t.Fatalf("kind %s answered %d, want %d", k, got, status)
+		}
+		// KindForStatus is the same table read backwards, and the two have to
+		// agree. Internal is the one row that is not injective: every status
+		// outside the table means internal, so the round trip is only asked of
+		// the rows that name a status of their own.
+		if k != errs.KindInternal {
+			if got := KindForStatus(status); got != k {
+				t.Fatalf("status %d read back as %s, want %s", status, got, k)
+			}
+		}
+	}
+
+	// The control on the table's size. Kind.String is total — a kind outside
+	// its own table renders as "internal" — so a kind nobody listed here is
+	// spotted by being the one that is not KindInternal and still says so.
+	declared := 0
+	for k := errs.Kind(0); k < errs.Kind(64); k++ {
+		if k != errs.KindInternal && k.String() == "internal" {
+			continue
+		}
+		declared++
+		if _, listed := want[k]; !listed {
+			t.Fatalf("errs declares the kind %s and this table has no row for it", k)
+		}
+	}
+	if declared != len(want) {
+		t.Fatalf("errs declares %d kinds and the table has %d rows", declared, len(want))
+	}
+}
+
+// A body that will not decode is refused in the client's own vocabulary, never
+// in Go's.
+//
+// encoding/json's UnmarshalTypeError reads "cannot unmarshal string into Go
+// struct field WidgetUpdate.price of type crud.Opt[int64]" — the Go type of the
+// consumer's DTO and the Go type of the field, package path included. It was
+// passed straight through as the rendered message, on every transport, because
+// BadRequestAs renders what it is given. [[D-044]] forbids exactly that, and the
+// corpus render test could not see it: it renders faults the *database* produced,
+// and this one is produced by the decoder.
+func TestAMalformedBodyIsRefusedWithoutNamingGoTypes(t *testing.T) {
+	type inner struct {
+		Price int64 `json:"price"`
+	}
+	var v inner
+	err := DecodeJSON(strings.NewReader(`{"price":"free"}`), &v)
+	if err == nil {
+		t.Fatal("a string in an int64 field decoded cleanly")
+	}
+
+	_, _, body := NewRenderer().Render(context.Background(), err)
+	raw, merr := json.Marshal(body)
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	rendered := string(raw)
+
+	for _, leak := range []string{"inner", "int64", "Go struct field", "unmarshal", "porthttp"} {
+		if strings.Contains(rendered, leak) {
+			t.Fatalf("the rendered refusal names %q, which is this process's internals:\n%s", leak, rendered)
+		}
+	}
+
+	// The control, and it is the point: the refusal must still be useful. The
+	// client is told which key of its own document was wrong and what belonged
+	// there — both facts about what it sent.
+	if !strings.Contains(rendered, "price") {
+		t.Fatalf("the refusal does not name the key the client got wrong:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "whole number") {
+		t.Fatalf("the refusal does not say what belonged there:\n%s", rendered)
+	}
+}
+
+// The control on the rule's narrowness: an error that is *not* encoding/json's
+// structural one still reaches the client whole.
+//
+// The first version of the sanitising branch swallowed everything it did not
+// recognise, which turned query.Request's "no such option: filtr" — a refusal
+// [[D-013]] requires to name the key — into "the request body could not be
+// read". One disclosure bug traded for a refusal that says nothing.
+func TestAnAuditedRefusalStillReachesTheClientWhole(t *testing.T) {
+	var req query.Request
+	err := DecodeJSON(strings.NewReader(`{"filtr":{"name":"x"}}`), &req)
+	if err == nil {
+		t.Fatal("an option the document does not define was accepted")
+	}
+	_, _, body := NewRenderer().Render(context.Background(), err)
+	raw, _ := json.Marshal(body)
+	if !strings.Contains(string(raw), "filtr") {
+		t.Fatalf("the refusal no longer names the key the client sent:\n%s", raw)
+	}
+}
+
+// A syntactically broken body keeps the one fact that is the client's own: where
+// in its bytes the parser stopped.
+func TestABodyThatIsNotJSONSaysWhereItStopped(t *testing.T) {
+	var v struct {
+		Price int64 `json:"price"`
+	}
+	err := DecodeJSON(strings.NewReader(`{"price":`), &v)
+	if err == nil {
+		t.Fatal("a truncated document decoded cleanly")
+	}
+	_, _, body := NewRenderer().Render(context.Background(), err)
+	raw, _ := json.Marshal(body)
+	if !strings.Contains(string(raw), "valid JSON") {
+		t.Fatalf("a truncated body was not reported as invalid JSON:\n%s", raw)
+	}
+}

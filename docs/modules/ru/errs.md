@@ -213,7 +213,7 @@ users := Users.Bind(db, faults.Enrich[User, int64](
 | Целостность | `unique` `not_unique` `foreign_key` `restrict` `required` `check` `exclusion` |
 | Данные | `too_long` `out_of_range` `invalid_format` `invalid_enum` |
 | Конкурентность | `stale_version` `deadlock` `serialization_failure` `lock_timeout` `transaction_aborted` |
-| Запрос | `malformed_body` `invalid_id` `unknown_field` `bad_query` |
+| Запрос | `malformed_body` `invalid_id` `unknown_field` `bad_query` `too_large` |
 | Грубая классификация | `conflict` `not_found` `forbidden` `unauthenticated` `unavailable` `internal` |
 
 Код **никогда не выводится из того, что сказал драйвер** — код, построенный из
@@ -221,7 +221,7 @@ users := Users.Bind(db, faults.Enrich[User, int64](
 
 ### `Kind` — класс транспорта
 
-Восемь значений, и транспорт отображает **kind, но никогда не code**. Именно
+Девять значений, и транспорт отображает **kind, но никогда не code**. Именно
 это позволяет сервису объявить пятьдесят собственных кодов, не трогая таблицу
 статусов ([[D-049]]).
 
@@ -235,6 +235,7 @@ users := Users.Bind(db, faults.Enrich[User, int64](
 | `KindConflict` | 409 | `AlreadyExists` |
 | `KindValidation` | 422 | `InvalidArgument` |
 | `KindBadRequest` | 400 | `InvalidArgument` |
+| `KindTooLarge` | 413 | `ResourceExhausted` |
 
 `KindInternal` — **нулевое значение намеренно**: kind, потерявший смысл,
 говорит 500, а не притворяется 4xx, который не может обосновать.
@@ -285,7 +286,7 @@ type Violation struct {
 type Fault struct {
     Kind       Kind
     Code       Code
-    Message    string   // для разработчика. Никогда не рендерится
+    Message    string   // для разработчика — но см. ниже
     Violations []Violation
     Op         string   // глагол репозитория: "Save", "Update"
     Entity     string
@@ -293,6 +294,13 @@ type Fault struct {
     Detail     Detail   // диалект, SQLSTATE, ограничение, таблица — никогда не рендерится
 }
 ```
+
+**`Message` — для разработчика, и есть ровно один путь, по которому его читает
+клиент.** У fault'а без нарушений — 404, голый 403, 401 — одно нарушение
+синтезируется, и оно берёт сообщение fault'а, если раньше не ответит каталог по
+коду. То есть сообщение, написанное для лога, — это сообщение, которое кому-то
+могут показать: держите его общим или оставьте пустым и дайте ответить словарю
+([[D-056]]). У `Detail` такого пути нет, он не рендерится никогда.
 
 **Он оборачивает и никогда не заменяет** ([[D-038]]). Вызывающий, написавший
 `errors.Is(err, crud.ErrConflict)` ещё до того, как всё это появилось,
@@ -328,8 +336,9 @@ return errs.Validation().
     Fault()
 ```
 
-Девять точек входа: `New(kind)`, `Validation()`, `BadRequest()`, `Conflict()`,
-`NotFound()`, `Forbidden()`, `Unauthorized()`, `Retryable()`, `Internal()`.
+Десять точек входа: `New(kind)`, `Validation()`, `BadRequest()`, `Conflict()`,
+`NotFound()`, `Forbidden()`, `Unauthorized()`, `Retryable()`, `TooLarge()`,
+`Internal()`.
 
 Шаги: `Field(name)` · `At(path)` · `General()` · `Code(c)` · `Message(s)` ·
 `Params(p)` · `Origin(o)` · `Source(s)` · `Approximate(b)` · `Detail(d)` ·

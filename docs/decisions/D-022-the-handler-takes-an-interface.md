@@ -36,7 +36,7 @@ func (s UserService) Save(ctx context.Context, u *User) error {
 }
 ```
 
-One override, ten promoted methods, and `crudfiber.New(UserService{…})`
+One override, thirteen promoted methods, and `crudfiber.New(UserService{…})`
 compiles. Taking a concrete `crud.Repo` instead would mean either no service
 layer at all, or a hand-written forwarder per method per service.
 

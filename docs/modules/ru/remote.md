@@ -160,7 +160,7 @@ type ArticleInput struct {
 
 | Транспорт | Где | Опции |
 |---|---|---|
-| `remotehttp.Transport(baseURL, …)` | `vv/crud/http/crudhttp` | `WithClient(*http.Client)`, `WithRequestHook(func(*http.Request) error)` |
+| `remotehttp.Transport(baseURL, …)` | `vv/remote/remotehttp` | `WithClient(*http.Client)`, `WithMaxResponse(int)`, `WithRequestHook(func(*http.Request) error)` |
 | `crudgrpc.Transport(conn, name, …)` | `vv/crud/rpc/crudgrpc` | `WithVocabulary(*errs.Codes)`, `WithCallOptions(…)` |
 
 Транспорт живёт рядом с тем биндингом, который он вызывает, поэтому таблица,

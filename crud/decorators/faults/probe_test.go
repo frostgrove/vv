@@ -274,6 +274,37 @@ func TestAProbeIsNotRunForAnErrorThatIsNotAFault(t *testing.T) {
 	}
 }
 
+// A probe finds its datasource through a decorator sitting between it and the
+// repository, so the order the two are listed in is not what decides whether it
+// works.
+//
+// This used to refuse. The probe asserted crud.Sourced on the layer directly
+// below it, and an interface embedded in a struct promotes only its own method
+// set — so the gate, which forwards everything a Core names and nothing else,
+// answered no. The chain always knew; only the type system did not. crud.SourceOf
+// walks it through Next().
+func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
+	src := newStub(uniqueFault(), false, false)
+	repo := Docs.Bind(src,
+		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
+		security.Gate(security.Policy[Doc, int64]{}))
+
+	// Binding is half the claim. The probe has to actually run, or a source
+	// that resolved to something unusable would pass this just as well.
+	if err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
+		t.Fatal("the write was supposed to fail with the stub's unique violation")
+	}
+	if n := src.probeCount(); n == 0 {
+		t.Fatal("the probe bound but never ran its own statement")
+	}
+}
+
+// A probe over a chain that genuinely cannot say what it wraps still refuses at
+// Bind time.
+//
+// The control on the walk. Without it, every assertion above would hold for a
+// SourceOf that answered "yes" to anything, and a probe with no datasource would
+// go back to failing at the first collision instead of at start-up ([[D-021]]).
 func TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -281,22 +312,27 @@ func TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime(t *testing.T) {
 		}
 	}()
 	src := newStub(uniqueFault(), false, false)
-	// The gate is not crud.Sourced, and an interface embedded in a struct
-	// promotes only its own methods, so putting Enrich anywhere but last leaves
-	// the probe with no datasource.
 	Docs.Bind(src,
 		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
-		security.Gate(security.ReadOnly[Doc, int64]()))
+		opaque[Doc, int64]())
 }
 
-// The control: named explicitly, the same order binds.
+// opaque is a decorator that forwards no optional interface and does not say
+// what it wraps — the shape crud.Base exists to stop anyone writing by accident.
+func opaque[M any, ID comparable]() crud.Middleware[M, ID] {
+	return func(next crud.Core[M, ID]) crud.Core[M, ID] { return opaqueCore[M, ID]{next} }
+}
+
+type opaqueCore[M any, ID comparable] struct{ crud.Core[M, ID] }
+
+// The control: named explicitly, any order binds, including through opaque.
 func TestAProbeWithAnExplicitSourceBindsWhereverItSits(t *testing.T) {
 	src := newStub(uniqueFault(), false, false)
 	Docs.Bind(src,
 		faults.Enrich[Doc, int64](
 			faults.WithProbe(probe.Full(docsCatalog())),
 			faults.WithSource(src)),
-		security.Gate(security.ReadOnly[Doc, int64]()))
+		opaque[Doc, int64]())
 }
 
 func TestADeclarationAgainstACatalogWithoutTheTableRefusesAtBindTime(t *testing.T) {

@@ -2,7 +2,7 @@
 
 **Actor:** a client reading the status code — HTTP or gRPC — and the application author who
 does not want to write the mapping once per endpoint
-**Covered by:** [[FL-011]] [[FL-014]]
+**Covered by:** [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] [[FL-018]]
 
 ## Scenario
 Every endpoint fails in the same handful of ways: the row is not there, the
@@ -19,7 +19,9 @@ branch on and, where the mistake is its own, enough detail to fix it.
    collision — a duplicate key, a foreign key pointing nowhere, a `NOT NULL`
    violation, a lookup that matched several rows, a stale version — is 409. A
    request the model cannot answer — an unknown field, a value that will not
-   coerce, an unparseable id, a malformed body, a save with no key — is 400.
+   coerce, an unparseable id, a malformed body, a save with no key — is 400. A
+   body larger than the transport reads is 413, which is a different instruction
+   from 400: the client should send less, not send something else.
    Anything else is 500.
 2. Matching is by sentinel, not by type identity. An error with context wrapped
    around it maps to the same status as the bare sentinel, so a decorator or a
@@ -74,8 +76,12 @@ branch on and, where the mistake is its own, enough detail to fix it.
 - **GraphQL and message queues.** HTTP and gRPC are written and tested. Each
   transport's vocabulary is derived in one place from one classification, so a
   third does not multiply anything — but it is not written.
-- **Problem+JSON, i18n, error codes per field.** The body is a small fixed shape:
-  an error tag, an optional path, an optional message.
+- **Problem+JSON.** The body is one fixed shape — a tag saying this is an error,
+  and violations bucketed by whether they name a field — and RFC 9457 is not
+  shipped beside it. Two shapes is twice the surface to keep honest for a choice
+  almost nobody changes; replacing the renderer is the way out. A machine code
+  per violation and a message chosen for the request's language are not out of
+  scope — both are in the body already. A second wire format is.
 
 ## Covered by
 | Flow | What it contributes |
@@ -98,6 +104,20 @@ with a real repository behind it; the "same refusal from every route" table and
 the 500-leaks-nothing assertion are both exhaustive over the route set, and both
 are run once per HTTP binding, of which there are three.
 
+Each transport's table is now total, and refuses to be half-extended: a class
+with no row fails the suite rather than answering 500. Before that only gRPC had
+that control, so a new class would have reached an HTTP client as 500 while
+refusing to compile for gRPC.
+
+The round trip is asserted where it can be. The HTTP status table is read back
+through its inverse, and the code a classless failure renders is checked against
+the vocabulary that declares it — in both cases skipping the internal class,
+which is what every unrecognised answer means and so is not injective. The gRPC
+table is checked forward only, because two classes deliberately collapse into one
+code there, which the paragraph below is about. 413 is the first class added since, and it is the one that found the third
+table — the one that renders a code — still falling through to "internal"
+([[D-063]]).
+
 **Guarantee 13 arrived with phase 9**, and it is the one the gRPC binding
 existed to test. `port.KindOfWith` answers the class; `porthttp.StatusFor` and
 `crudgrpc.CodeFor` are two tables over that one answer, and the violations
@@ -117,20 +137,6 @@ are [[D-052]]'s, accepted the way this use case already accepts [[D-049]]'s.
 Guarantee 8 — that the mapping is a function an application can reuse — is now
 also what keeps the bindings honest rather than only a convenience: there is one
 switch, and removing an arm from it fails every binding's suite identically.
-
-Guarantee 11 does not hold, and the set it fails on is narrower than it was.
-Every status *except* 500 puts the error's own text in the response body. That is
-what makes guarantee 5 useful, and for a 400 the text is the query compiler's.
-
-For a 409 it now depends on whether the failure was **classified**. A classified
-one carries a code and a kind and no driver text at all: the body reads
-`conflict` and the classification, and names no constraint, no table, no column,
-no engine number and no submitted value. One that was not classified still
-carries the driver's own sentence — and there are three ways to be one: the
-engine reported a violation number nobody has provoked, the write went through a
-transaction the application owns and joined, or the datasource was built without
-naming which engine it speaks to. In all three the status is right and the body
-is the old one.
 
 Guarantee 11 holds as of phase 4. `err.Error()` no longer reaches a body:
 `porthttp` renders one envelope built from the fault's public projection, and a

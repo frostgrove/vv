@@ -35,8 +35,9 @@ spelled out.
    intact. Fiber needed `queryValues` walking `QueryArgs().VisitAll` to get the
    same thing; Gin's own `c.Query` has the same collapsing hazard and is not
    used. From here it is `query.ParseQuery` and [[FL-001]].
-3. **`HandlerFor.parseBody`** — `crud/http/crudgin/handler.go:423` —
-   `porthttp.DecodeJSON` over `c.Request.Body`. An empty body is not an error:
+3. **`HandlerFor.parseBody` → `decodeOnly` → `decode`** — `crud/http/crudgin/handler.go:427` —
+   `porthttp.DecodeJSONKeepLimit` over `c.Request.Body`, bounded by this
+   handler's `MaxBody` ([[D-063]]). An empty body is not an error:
    `POST /count` and `POST /query` both mean "no narrowing" when sent with none.
 4. **`HandlerFor.scope`** — `crud/http/crudgin/handler.go:391` — `WithScope`'s
    options, if any, and nothing else. It is the whole of what a binding
@@ -47,8 +48,9 @@ spelled out.
    application's own middleware puts it there with
    `c.Request = c.Request.WithContext(ctx)`. The handler contributes nothing but
    the pass-through ([[FL-007]]). From here it is [[FL-015]].
-6. **`HandlerFor.entity` / `c.JSON`** — `crud/http/crudgin/handler.go:436` — one
-   status, one body. `crud.MapPage` renders a page through `WithTransform`
+6. **`HandlerFor.entity` → `writeJSON`** — `crud/http/crudgin/handler.go:453`,
+   `crud/http/crudgin/options.go:151` — one status, one body, marshalled before
+   the status is written. `crud.MapPage` renders a page through `WithTransform`
    exactly as in [[FL-001]].
 7. **`HandlerFor.fail` → the error handler → `render`** —
    `crud/http/crudgin/options.go:183` — the renderer decides the status, any header
@@ -56,11 +58,32 @@ spelled out.
    middleware and `write` puts the response on the wire. The error text still
    never reaches a 500 body ([[FL-011]]).
 
+## What keeps the three in step
+
+`make check-triplets` compares the test names of `crudnet`, `crudgin` and
+`crudfiber` — and of the auth triplet, [[FL-019]] — and fails when they disagree.
+A test that only makes sense for one binding goes in that binding's
+`routing_test.go` (or `binding_test.go` for auth), which the check exempts, and
+the difference it pins is written down in this document.
+
+The rule was in `CLAUDE.md` and nowhere else, so it held by everyone remembering
+it — and it had already stopped holding. `crudfiber` was the one binding of three
+with no `routing_test.go`, on the one framework whose router matches in
+registration order.
+
 ## Where the bindings differ
 
 Every option name, every status code and every response shape is the same in all
-three. What differs is mounting, body decoding and what the router does with a
-path or a method it does not have.
+three. What differs is mounting and what the router does with a path or a method
+it does not have.
+
+Body decoding used to be on that list and is not any more. `crudfiber` bound
+through `c.Bind().Body()`, which dispatches on Content-Type — so the same request
+sent as a form or as XML was a 201 on Fiber and a 400 on the other two, and a
+`binding:"required"` tag in the consumer's own model changed what the routes
+accepted, under one framework only. All three now decode with
+`porthttp.DecodeJSONKeepLimit`, for the reason that function's doc comment gives:
+a framework binder validates, and validation is not the binding's to add.
 
 | | `crudfiber` | `crudgin` | `crudnet` | `crudgrpc` |
 |---|---|---|---|---|
@@ -70,7 +93,12 @@ path or a method it does not have.
 | mount | `app.Use(prefix, h.Routes())` | `h.Mount(r, prefix)` | `h.Mount(mux, prefix)` | `h.Register(srv, "Widget")` |
 | handler type | `func(fiber.Ctx) error` | `gin.HandlerFunc` | `http.HandlerFunc` | `func(context.Context, *structpb.Struct) (*structpb.Struct, error)` |
 | hooks carry | `fiber.Ctx` | `*gin.Context` | `*http.Request` | `context.Context` |
-| request bodies | JSON, XML, form | JSON | JSON | `google.protobuf.Struct` |
+| request bodies | JSON | JSON | JSON | `google.protobuf.Struct` |
+| body cap | `MaxBody`, 4 MiB ([[D-063]]) | the same | the same | gRPC's own `MaxRecvMsgSize` |
+| response write | `writeJSON` — marshal, then status | the same | the same | `answer`, the same shape |
+| a response that will not encode | a silent 500 | the same | the same | `Internal` |
+| Content-Type | `application/json; charset=utf-8` | the same | the same | n/a |
+| body past the cap | 413, the envelope | the same | the same | `ResourceExhausted` |
 | routes / methods | 10 routes | 10 routes | 10 routes | 8 methods |
 | query-string door | yes | yes | yes | **no** — one document, always |
 | `/x` vs `/x/` | both | `/x`, and 301 from `/x/` | both | n/a |
@@ -78,7 +106,7 @@ path or a method it does not have.
 | unclaimed path | 404 | 404 | 404 | `Unimplemented` |
 | renderer | `porthttp.Renderer` | `porthttp.Renderer` | `porthttp.Renderer` | `crudgrpc.Renderer` — a `*status.Status` |
 | failure shape | the envelope | the envelope | the envelope | a status code plus `BadRequest` / `ErrorInfo` / `RetryInfo` details |
-| status vocabulary | 404/401/403/503/409/422/400/500 | the same | the same | `NotFound`/`Unauthenticated`/`PermissionDenied`/`Unavailable`/`AlreadyExists`/`InvalidArgument`/`Internal` — **422 and 400 collapse** |
+| status vocabulary | 404/401/403/503/409/422/400/413/500 | the same | the same | `NotFound`/`Unauthenticated`/`PermissionDenied`/`Unavailable`/`AlreadyExists`/`InvalidArgument`/`ResourceExhausted`/`Internal` — **422 and 400 collapse** |
 | retry hint | `Retry-After: 1` | the same | the same | `RetryInfo{1s}` |
 | locale from | `Accept-Language` | the same | the same | `grpc-accept-language`, `accept-language`, `x-locale` metadata |
 | raw-body fallback | yes | yes | yes | **no** — declared hops only |
@@ -150,6 +178,25 @@ And the two that are specific to `crudnet`:
   the process that no other pattern claims, returning 200 and a page of rows
   where the application meant 404. `{$}` matches the root path and nothing else.
 
+### Two body-cap differences that remain, and are the framework's
+
+**Fiber refuses before the handler when it owns the app.** `fiber.New()` carries
+a `BodyLimit` of its own, and it runs before any handler. `Routes()` therefore
+builds its app with `BodyLimit` set to this handler's cap plus one, so the body
+at the cap reaches our decoder and the body past it is refused by us, with our
+envelope. `Register()` cannot do that — the limit belongs to the app, which the
+caller owns there — so a Fiber consumer who mounts with `Register` on their own
+app gets Fiber's plain-text 413 above whatever cap they set on the app, and ours
+below it. `TestTheStandaloneAppCarriesTheHandlersBodyCap` pins the half this
+library controls.
+
+**gRPC has its own receive limit and it is not ours.** `MaxRecvMsgSize` is the
+server's, defaults to 4 MiB and refuses with `ResourceExhausted` before a handler
+runs — which is the same code `KindTooLarge` maps to, so a client sees one
+answer either way. `crudgrpc` therefore adds no cap of its own: the message is
+already bounded before it is unmarshalled, and a second limit inside would refuse
+at a number the server operator did not set.
+
 ## What is specific to `crudgrpc`
 
 Enough that it is a section rather than rows. The path from the command onwards
@@ -198,6 +245,18 @@ is the same one; everything below is the door.
   rendered order, or — for a fault carrying none — the ladder's answer for the
   fault's own code. An `Internal` status says `internal` and carries no details
   at all.
+
+### `unpaged` is refused the same way on all four
+
+`query.Config{AllowUnpaged: true}` is what an endpoint declares to serve whole
+result sets, and without it a request carrying `unpaged` is a `query.Error` at
+path `unpaged` — a 400 over HTTP and `InvalidArgument` over gRPC ([[D-060]]).
+
+It matters here because the client half of both transports emulates
+`remote.GetAll` with that flag: there is no "every row" route. So a resource
+meant to be read whole by a remote caller declares it once, at the far end, and
+the fixtures in `remote/fake_test.go` and `crud/rpc/crudgrpc/client_test.go` do
+exactly that rather than hiding it.
 
 ## Where the decisions bite
 
@@ -249,8 +308,13 @@ is the same one; everything below is the door.
 | `GET /widgets/count` read as an entity named "count" | Gin's router gives a static segment priority over `:id` | it does not happen; pinned by `TestStaticRoutesAreNotSwallowedByTheIDRoute` |
 | `GET /widgets/` with the collection mounted at `""` | `Engine.RedirectTrailingSlash` | 301 to `/widgets` |
 | `GET /widgets/abc` where the key is `int64` | `port.CoerceID` (`port/request.go`) | 400, and the envelope names `invalid_id` ([[FL-011]]) |
-| a body that is not JSON | `porthttp.DecodeJSONKeep` (`port/porthttp/body.go`) | 400 `malformed_body`, and the service is never called |
-| an option that configures the service, handed to `Serving` | `options.refuseServiceOptions` | a panic at declaration naming the option ([[D-021]]) |
+| a body that is not JSON — including a form or XML body on Fiber, which used to be accepted | `porthttp.DecodeJSONKeepLimit` (`port/porthttp/body.go`) | 400 `malformed_body`, and the service is never called |
+| a body larger than 4 MiB | `porthttp.DecodeJSONKeepLimit`, before anything parses it | 413 `too_large` naming the limit; `ResourceExhausted` on gRPC ([[D-063]]) |
+| a bulk delete past the cap | each binding's `BulkDelete`, reading `port.Rules.BulkCap()` | 400 `bad_query` naming the cap. It is 1024 by default, where an unset `MaxBulk` used to mean unlimited ([[D-060]]) |
+| an `in` list or a sort longer than the endpoint allows | `Request.Compile` | 400 naming the path and the cap ([[D-060]]) |
+| a presenter that returns a value JSON cannot encode | each binding's `writeJSON`, before the status is written | a silent 500. It used to be 200 with a truncated body on Gin and a `text/plain` leak of the encoder's message on Fiber ([[D-063]], [[D-044]]) |
+| `?unpaged=true` on an endpoint that did not declare it | `Request.Compile` (`crud/query/compile.go`) | 400 `bad_query` at the spelling the client sent — `unpaged` or its alias `all` — and the repository is never asked ([[D-060]]) |
+| an option that configures the service, handed to `Serving` | `port.Rules.RefuseServiceOptions` | a panic at declaration naming the option ([[D-021]]) |
 | `?filtr=` — a parameter one edit from a real one | `query.ParseQuery` → `checkParams` | 400 with the offending path named |
 | a write verb on a `ReadOnly` handler | the route was never registered | 404, or 405 with `HandleMethodNotAllowed`; `Unimplemented` on gRPC |
 | a gRPC request whose `patch` is not an object | `message.go:sub` | `InvalidArgument`, `malformed_body`, and the service is never called |
@@ -262,22 +326,28 @@ is the same one; everything below is the door.
 | File | Role |
 |---|---|
 | `crud/http/crudgin/handler.go` | routes, `Mount`/`Register`, query-string reading, body decoding, the four constructors |
-| `crud/http/crudgin/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor`, `Status`, `DefaultErrorHandler` |
+| `crud/http/crudgin/options.go` | the transport-shaped options, `collect`, `rendererFor`, `Status`, `DefaultErrorHandler`, `writeJSON` — the rest is `port.Rules` |
 | `crud/http/crudnet/handler.go` | the same for `net/http`: `Mount`, the pattern set, and the root-path choice |
-| `crud/http/crudnet/options.go` | the same set again, plus `writeJSON` |
+| `crud/http/crudnet/options.go` | the same set again; all three carry a `writeJSON` of their own, and that is the point of it ([[D-063]]) |
+| `crud/http/crudfiber/handler.go` | the same for Fiber, plus `Routes` and `bodyLimit` — the standalone app's own cap |
 | `crud/http/crudhttp/doc.go` | where the lines between the three shared halves are drawn |
-| `crud/http/crudhttp/repository.go` | `Repository` — the alias every binding aliases in turn |
+| `crud/http/crudhttp/repository.go` | `Repository` and `Rules` — the two aliases every HTTP binding aliases in turn, so it embeds `port.Rules` without importing `port` for one field |
 | `crud/http/crudhttp/request.go` | `BulkDeleteRequest`, and the forwarders for `CoerceID` / `NarrowForCount` / `NarrowForEntity` |
 | `crud/http/crudhttp/porthttp.go` | the aliases and forwarders for everything [[D-059]] moved, so a binding written against the old names still compiles |
 | `port/porthttp/errors.go` | `Status`, `StatusFor`, `KindOf`, `AcceptLanguage`, `ErrBadRequest`, `BadRequest`, `BadRequestf`, `BadRequestAs` |
 | `port/porthttp/render.go` | the `Renderer` seam and `EnvelopeRenderer` — the status, the envelope and the header, which is the HTTP half |
-| `port/porthttp/body.go` | `DecodeJSON`, `DecodeJSONKeep`, `KeepBody`, `MalformedBody`, `WithBody`/`BodyFrom`, `WithLocale`/`LocaleFrom` |
+| `port/porthttp/body.go` | `DecodeJSON`, `DecodeJSONKeep`, `DecodeJSONKeepLimit`, `MaxBody`, `MaxKeptBody`, `KeepBody`, `MalformedBody`, `TooLarge`, `WithBody`/`BodyFrom`, `WithLocale`/`LocaleFrom` |
 | `crud/rpc/crudgrpc/doc.go` | the method table and the four stated limits |
 | `crud/rpc/crudgrpc/handler.go` | the eight methods, the four constructors, `build`, the hooks and the scope |
 | `crud/rpc/crudgrpc/service.go` | `ServiceName`, `ServicePrefix`, `Desc`, `Register`, and the hand-built `grpc.ServiceDesc` |
 | `crud/rpc/crudgrpc/message.go` | `google.protobuf.Struct` ⇄ Go: `toStruct`, `fromStruct`, `sub`, `queryOf`, `queryIn`, `idOf`, `idsOf`, `countDoc`, `deletedDoc` |
 | `crud/rpc/crudgrpc/status.go` | `Renderer`, `StatusRenderer`, `Code`, `CodeFor`, `KindForCode`, the five `RenderOption`s, and the details |
-| `crud/rpc/crudgrpc/options.go` | the nine options, `collect`, `service`, `refuseServiceOptions`, `rendererFor` |
+| `crud/rpc/crudgrpc/options.go` | the transport-shaped options, `collect`, `rendererFor` — the rest is `port.Rules` |
+| `port/rules.go` | `Rules`, `Service`, `RefuseServiceOptions` — the five rules every binding shares, once ([[D-045]]) |
+| `port/log.go` | `Logger`, `WithLogger` — where every binding's own lines go ([[D-062]]) |
+| `crud/http/crudnet/middleware.go` | `Errors`, `WithErrors`, `HandlerFunc`, `recorder` — the middleware over a mux carrying hand-rolled routes as well, the double-install guard, and the panic that becomes a silent 500 |
+| `crud/http/crudgin/middleware.go` | `Errors` — the same for Gin |
+| `crud/http/crudfiber/middleware.go` | `Errors` and `ErrorHandler` — the same for Fiber, plus the `fiber.Config` hook, which the other two frameworks have no equivalent of |
 | `crud/rpc/crudgrpc/interceptor.go` | `Errors` and the double-install guard |
 | `crud/rpc/crudgrpc/locale.go` | `LocaleKeys`, `WithLocale`, `withRequestLocale` |
 | `remote/remotehttp/transport.go` | the HTTP client transport — `route`, `entityQuery`, `fault` ([[FL-018]]) |
@@ -298,8 +368,25 @@ Everything the request touches after `compile` is in [[FL-001]]'s file table.
 ## Tests that walk this flow
 
 - `TestStaticRoutesAreNotSwallowedByTheIDRoute` — `crud/http/crudgin/routing_test.go`
-  — the fixed paths, with a control case showing the `:id` route really is live
-  and really would have taken them.
+  and `crud/http/crudfiber/routing_test.go` — the fixed paths, with a control case
+  showing the `:id` route really is live and really would have taken them. The
+  Fiber copy is the one that matters most and was the last to be written: Fiber
+  matches in registration order, so on that binding the order of the lines in
+  `Register` is the only thing keeping `/count` from being an entity id, and
+  reordering them makes the test fail.
+- `TestABodyPastTheCapIsRefusedAndReachesNoRepository` and
+  `TestTheDefaultCapAcceptsAnOrdinaryBody` — `edge_test.go` in all three HTTP
+  bindings, byte for byte the same test ([[D-063]]).
+- `TestUnpagedIsRefusedOnAnEndpointThatDidNotDeclareIt` — `handler_test.go` in
+  all three, beside the `TestListHonoursUnpagedAndSkipTotal` it controls
+  ([[D-060]]).
+- `TestTheStandaloneAppCarriesTheHandlersBodyCap` —
+  `crud/http/crudfiber/routing_test.go` — the one body-cap behaviour that is
+  Fiber's alone.
+- `TestAnUnencodableResponseIsAServerFaultThatSaysNothing` — `edge_test.go` in
+  all three. This is the test that found the three bindings disagreeing about a
+  failure none of them can prevent, and it is why the response write is a row in
+  the table above rather than three separate implementations.
 - `TestTheCollectionRouteAnswersWithoutATrailingSlash` —
   `crud/http/crudgin/routing_test.go` — `GET /widgets` is 200 and `/widgets/` is 301.
 - `TestMountingAtTheRootDoesNotCollide` — `crud/http/crudgin/routing_test.go` — the
@@ -398,10 +485,12 @@ And the ones that are about all four at once:
   `test/integration/http_port_test.go` — the same, live.
 
 **The triplet rule is about the three HTTP bindings, and the fourth transport is
-not in it.** All three HTTP unit suites carry the same 175 test and subtest
-names, plus the routing tests each router needs (`crudgin` has 8 more, `crudnet`
-11). A change that makes the shared 175 diverge is either a bug or a new row in
-the table above. `crudgrpc` carries the subset that is about `port` rather than
+not in it.** All three HTTP unit suites carry the same 181 test and subtest
+names, plus the routing tests each router needs (`crudfiber` has 7 more,
+`crudgin` 8, `crudnet` 11). A change that makes the shared 181 diverge is either
+a bug or a new row in the table above. `make check-triplets` compares the
+top-level names; the subtests are the reader's job, which is why the number is
+written down here. `crudgrpc` carries the subset that is about `port` rather than
 about HTTP — the constructors, the mapper, the hooks, the service-shaped
 refusal, the clearing, the key coercion — under the same names, and spells the
 rest in its own vocabulary because there is no 404 and no `PUT` here to name. A

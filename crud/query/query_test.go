@@ -54,9 +54,16 @@ type ArticleUpdate struct {
 
 var (
 	Articles = sqlrepo.Define[Article, int64, ArticleUpdate]("articles")
-	_        = sqlrepo.Define[Author, int64, struct{}]("authors")
-	_        = sqlrepo.Define[Comment, int64, struct{}]("comments")
-	_        = sqlrepo.Define[Tag, int64, struct{}]("tags")
+
+	// exports is the configuration of an endpoint that serves whole result
+	// sets. It exists because unpaged is off by default and most tests here are
+	// about something else entirely — a preload, a sort, a coercion — and turn
+	// pagination off only so the assertion is about one list rather than a page
+	// of one.
+	exports = &query.Config{AllowUnpaged: true}
+	_       = sqlrepo.Define[Author, int64, struct{}]("authors")
+	_       = sqlrepo.Define[Comment, int64, struct{}]("comments")
+	_       = sqlrepo.Define[Tag, int64, struct{}]("tags")
 )
 
 const cols = `"id", "author_id", "title", "body", "views", "published_at", "created_at"`
@@ -315,7 +322,11 @@ func TestRejections(t *testing.T) {
 		{"unknown nested field", `{"filter":{"author.nope":1}}`, "unknown field"},
 		{"unknown relation", `{"filter":{"nope.name":1}}`, "unknown field"},
 		{"unknown operator", `{"filter":{"title":{"wat":1}}}`, "unknown operator"},
-		{"bad value type", `{"filter":{"views":"lots"}}`, "expects int"},
+		// "a whole number", not "int". The message is rendered, so a reflect.Type
+		// formatted into it puts the Go type of the consumer's own field on the
+		// wire ([[D-044]]). What survives is the field's name — the client's own
+		// path into its own document, which [[D-013]] requires.
+		{"bad value type", `{"filter":{"views":"lots"}}`, "expects a whole number"},
 		{"unknown sort", `{"sort":["nope"]}`, "unknown field"},
 		{"unknown preload", `{"preload":["nope"]}`, "unknown field"},
 		{"preload of a column", `{"preload":["title"]}`, "not a relation"},
@@ -324,6 +335,32 @@ func TestRejections(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) { mustFail(t, tc.doc, nil, tc.want) })
 	}
+
+	// The control on the wording above: no refusal in this table names a Go
+	// type. A reader can change one message without noticing what the phrasing
+	// was for, and this is what notices.
+	t.Run("no refusal names a Go type", func(t *testing.T) {
+		for _, doc := range []string{
+			`{"filter":{"views":"lots"}}`,
+			`{"filter":{"views":{"gt":"lots"}}}`,
+			`{"filter":{"createdAt":"never"}}`,
+			`{"filter":{"views":["a","b"]}}`,
+		} {
+			var req query.Request
+			if err := json.Unmarshal([]byte(doc), &req); err != nil {
+				t.Fatal(err)
+			}
+			_, err := req.Compile(Articles.Meta(), nil)
+			if err == nil {
+				t.Fatalf("%s compiled cleanly", doc)
+			}
+			for _, leak := range []string{"int64", "int32", "uint", "float64", "time.Time", "crud.Opt", "reflect"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Fatalf("the refusal for %s names %q, which is this process's own type: %v", doc, leak, err)
+				}
+			}
+		}
+	})
 }
 
 // An unknown path is a rejection, never a silently dropped clause — the

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -569,4 +570,36 @@ func localeRequest(t *testing.T, app *fiber.App, header string) response {
 		t.Fatalf("reading the response: %v", err)
 	}
 	return response{status: res.StatusCode, body: raw, header: res.Header}
+}
+
+// An unconfigured bulk delete is capped too.
+//
+// MaxBulk used to mean "unlimited" at zero, which is what every binding read an
+// unset field as — so the cardinality of a bulk delete was bounded only by the
+// request body, and every id becomes a bound parameter. PostgreSQL refuses a
+// statement past 65535 of them, so the honest 400 arrived from the driver, as a
+// 500, after the statement was built. port.Rules.BulkCap is the one place the
+// four transports read it from, so they cannot disagree about it again.
+func TestAnUnconfiguredBulkDeleteIsStillCapped(t *testing.T) {
+	app, fake := mount(t)
+
+	ids := make([]string, port.DefaultMaxBulk+1)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i + 1)
+	}
+	r := do(t, app, http.MethodPost, "/widgets/bulk-delete", `{"ids":[`+strings.Join(ids, ",")+`]}`)
+	if r.status != http.StatusBadRequest {
+		t.Fatalf("%d ids on an unconfigured handler answered %d, want 400: %s", len(ids), r.status, r.body)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("the request was refused and the repository was still asked: %v", fake.methods())
+	}
+
+	// The control. All of that would hold for a handler that refused every bulk
+	// delete, so a request at the default cap has to get through.
+	app2, _ := mount(t)
+	small := `{"ids":[1,2,3]}`
+	if r := do(t, app2, http.MethodPost, "/widgets/bulk-delete", small); r.status != http.StatusOK {
+		t.Fatalf("three ids under the default cap answered %d: %s", r.status, r.body)
+	}
 }

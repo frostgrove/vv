@@ -1,9 +1,11 @@
 # Runnable examples
 
-One small, complete program per stack. Each is a single `main.go` you can read
-top to bottom: a model, a declaration, a mount, and a `bootstrap` that creates
-its own table and seeds three rows so the example runs against an empty
-database.
+One small, complete program per stack. Each is a `main.go` you can read top to
+bottom — a model, a declaration, a mount, and a `bootstrap` that creates its own
+table and seeds three rows so the example runs against an empty database — plus
+the `vv_gen.go` that `go generate` writes beside it, holding the update DTO and
+the metamodel ([[D-018]]). That second file is generated output: read it once to
+see what the generator produces, then leave it alone.
 
 They exist because the two usage guides describe the wiring and these execute
 it. If a guide and an example disagree, the example is the one that was run.
@@ -11,11 +13,18 @@ it. If a guide and an example disagree, the example is the one that was run.
 ## Start the databases, then pick one
 
 ```bash
-make up                      # from the repository root
+make up                             # from the repository root
 cd _examples
-go run ./pgx-fiber           # or any directory below; -addr changes the port
+GOWORK=off go run ./pgx-fiber       # or any directory below; -addr changes the port
 curl 'localhost:8080/products?f=price:gte:100&sort=-price'
 ```
+
+`GOWORK=off` is not optional and it is not a workaround. `_examples` is
+deliberately outside `go.work`: it demonstrates every stack at once, so joining
+it to the workspace would put ent, gorm, sqlx, sqlc and both drivers in the
+module graph of anyone building the library. It has its own `go.mod` with
+`replace` lines instead, and the workspace has to be off for those to be read.
+`make examples` does the same thing from the repository root.
 
 Every example serves the same resource at `/products` with the same ten routes,
 so you can diff any two files and see only what the stack changes.

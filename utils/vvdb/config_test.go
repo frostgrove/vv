@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb"
 )
 
 func primary() vvdb.Config {

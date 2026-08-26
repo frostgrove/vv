@@ -1,7 +1,7 @@
 # FL-001 — A list request from wire to rows
 
 **Entry point:** `crud/http/crudfiber/handler.go:List` (GET) and `crud/http/crudfiber/handler.go:Query` (POST /query)
-**Implements:** [[UC-001]] [[UC-002]] · **Governed by:** [[D-013]] [[D-004]] [[D-014]] [[D-024]]
+**Implements:** [[UC-001]] [[UC-002]] · **Governed by:** [[D-013]] [[D-004]] [[D-014]] [[D-024]] [[D-060]] [[D-063]]
 
 Two doors, one path. Everything after parsing is shared, which is the point: a
 filter that works on `GET /articles?f=…` has to mean the same thing on
@@ -15,10 +15,17 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
    repeats into a map, so the second `f=` would vanish silently — a narrower
    filter than the client asked for, with a 200 on it.
    **`HandlerFor.Query`** — `handler.go:Query` — reads the JSON body instead
-   (`parseBody`; an empty body is a legal empty request).
+   (`parseBody` → `decodeOnly` → `decode` → `porthttp.DecodeJSONKeepLimit`; an empty body is a
+   legal empty request, and a body past `MaxBody` is refused before anything
+   parses it — [[D-063]]). `Request.UnmarshalJSON` (`crud/query/request.go`)
+   decodes with `DisallowUnknownFields`: the strictness inside the document is
+   worth nothing if `{"filtr":…}` parses as a document with no filter.
 
 2. **`query.ParseQuery`** — `crud/query/querystring.go:143`
-   Query string → `query.Request`. Numbers are parsed here and a non-number is
+   Query string → `query.Request`. `checkParams` runs first and refuses a
+   parameter one edit away from one of ours, because `?filtr=` left alone is a
+   200 with the whole table. A name that is nothing like ours belongs to the
+   application and passes. Numbers are parsed here and a non-number is
    rejected here (`page`, `limit`, `offset`). `f=` and `filters=` are split on
    `|`, then each triple goes through `ParseTerm` (`querystring.go:28`), which
    splits on the **first two** colons only, so a timestamp value survives. The
@@ -59,18 +66,30 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
    list spelled from the root: `Comments.Body`, not `Body`.
    An empty list allows everything; `"Comments.*"` allows a subtree.
 
-6. **Budgets** — `compiler.count` (`compile.go:350`), `maxDepth`, `maxPreloads`
+6. **Budgets** — `compiler.count` (`compile.go`), `maxDepth`, `maxPreloads`,
+   `compiler.countValues`, `maxSort`
    One shared condition counter for the whole document, including a preload's
    sub-filter, so a client cannot buy more conditions by nesting them. Defaults
-   when `Config` is nil: depth 6, 64 conditions, 16 preloads
-   (`crud/query/compile.go:52`).
+   when `Config` is nil: depth 6, 64 conditions, 16 preloads, 1024 values in one
+   `in`/`notIn` list, 16 sort terms.
+   The last two measure volume rather than names, which is why they are separate
+   counters: a list is charged as **one** condition however long it is, and a
+   sort was charged nothing at all ([[D-060]]). `Compile` also drops a repeated
+   canonical sort path rather than rendering it twice — a second `ORDER BY` over
+   a column already sorted decides nothing and still pays for the term, which
+   for a relation hop is a correlated subquery.
 
-7. **`repository.Get`** — `crud/sqlrepo/repository.go:126`
-   `Options.Resolved` (`crud/options.go:170`) turns page/limit/offset into a
-   limit and an offset, clamped to the blueprint's `MaxLimit`. `Unpaged` is
-   honoured only as far as `MaxLimit` — one flag from the wire does not talk a
-   repository out of its declared ceiling. A page number large enough to
-   overflow `int` saturates instead of wrapping.
+7. **Paging** — `Compile`, then `repository.Get` — `crud/sqlrepo/repository.go:Get`
+   `Unpaged` is refused in `Compile` unless the endpoint declared
+   `query.Config{AllowUnpaged: true}`, at the parameter spelling the client sent
+   — `Request.UnpagedParam` answers `unpaged` or its alias `all`. That refusal
+   is the ceiling, because the one below it was never armed: `MaxLimit` defaults
+   to no cap ([[D-060]]).
+   `Options.Resolved` (`crud/options.go:Resolved`) then turns page/limit/offset into a
+   limit and an offset, clamped to the blueprint's `MaxLimit`. An `Unpaged` that
+   got this far is still honoured only as far as `MaxLimit` — one flag from the
+   wire does not talk a repository out of its declared ceiling. A page number
+   large enough to overflow `int` saturates instead of wrapping.
 
 8. **The COUNT decision** — `crud/sqlrepo/repository.go:152-168`
    This is the part worth holding in your head. Four cases:
@@ -120,8 +139,10 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
     Derives `TotalPages`, `HasNext`, `HasPrev`. A nil item slice becomes `[]`,
     so the JSON is an array and never `null`.
 
-14. Back in `HandlerFor.list`: `c.JSON(page)`, or `crud.MapPage` when a
-    `WithTransform` presenter is configured.
+14. Back in `HandlerFor.list`: `writeJSON(c, 200, page)`, or `crud.MapPage` when
+    a `WithTransform` presenter is configured. `writeJSON` marshals before it
+    touches the status, so a presenter that returns a value JSON cannot encode is
+    a silent 500 rather than a half-written 200 ([[D-063]], [[FL-013]]).
 
 ## Where the decisions bite
 
@@ -135,21 +156,31 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 - **The projection always carries the primary key — except under DISTINCT.**
   Preloads attach by key and the pagination tiebreaker breaks ties by key. The
   `DISTINCT` exception is deliberate and is why `find` re-checks with `hasPK`.
-- **`MaxLimit` binds even when the wire says `unpaged`.** `Options.Resolved` is
-  the only place that decides, and `GetAll` deliberately does not go through it
-  when no paging option was given (`repository.go:174`): its contract is every
-  matching row, and a decorator that reads a whole set in order to check it
-  would otherwise check the first page and let the rest through.
+- **The wire cannot ask to be unpaged unless the endpoint said it serves that.**
+  `Compile` refuses first; `Options.Resolved` clamps second. Two bounds, and the
+  second one was the only one there for a long time — with `MaxLimit` unset by
+  default it clamped to nothing at all ([[D-060]]). `GetAll` deliberately does
+  not go through `Resolved` when no paging option was given
+  (`repository.go:174`): its contract is every matching row, and a decorator
+  that reads a whole set in order to check it would otherwise check the first
+  page and let the rest through. That is the in-process `GetAll`; the remote one
+  is emulated with the flag and therefore needs the far endpoint's declaration
+  ([[FL-018]]).
 
 ## Failure modes
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
+| a `POST /query` body past `MaxBody` | `porthttp.DecodeJSONKeepLimit`, before anything parses it | 413 `too_large` naming the limit ([[D-063]]) |
+| an unknown top-level key in the JSON document | `Request.UnmarshalJSON` | 400, the key named, and the accepted set offered back |
+| `?filtr=` — a parameter one edit from a real one | `ParseQuery` → `checkParams` | 400, "did you mean …" |
 | `page=abc` | `ParseQuery` → `num` (`querystring.go:146`) | 400 `{"error":"bad_request","path":"page"}` |
 | `f=x` (no operator segment) | `ParseTerm` (`querystring.go:39`) | 400, path `filter` |
 | unknown field in filter/sort/select/preload | `compiler.path` → `Meta.WalkPath` | 400, path names the exact clause |
 | field resolves but is not allow-listed | `allowed` at the six call sites | 400 `"X is not filterable/sortable/…"` |
 | document deeper than `MaxDepth`, or more than `MaxConditions` leaves | `compiler.node` / `compiler.count` | 400 |
+| an `in`/`notIn` list past `MaxInValues`, or more than `MaxSort` sort terms | `compiler.countValues` / `Compile` | 400 naming the path and the cap ([[D-060]]) |
+| `unpaged` on an endpoint that did not declare it | `Compile` | 400 at the spelling the client sent — `unpaged` or `all` — and the repository is never asked |
 | `select` crossing a relation | `Compile` (`compile.go:174`) | 400 "use preload instead" |
 | `DISTINCT` + a sort it cannot project | `distinctSort` (`repository.go:330`) | 400 (`SchemaError`) |
 | `DISTINCT` + a preload | `find` (`repository.go:206`) | 400 (`SchemaError`) |
@@ -161,11 +192,11 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 |---|---|
 | `crud/http/crudfiber/handler.go` | routes, query-string reading, option assembly |
 | `crud/http/crudgin/handler.go`, `crud/http/crudnet/handler.go` | the same, for Gin and `net/http` — `URL.Query()` in place of the `queryValues` workaround ([[FL-013]]) |
-| `port/porthttp/body.go` | `DecodeJSON` — shared by every binding, and by every subsystem ([[D-059]]); `crudhttp.DecodeJSON` forwards to it |
+| `port/porthttp/body.go` | `DecodeJSONKeepLimit`, `MaxBody`, `TooLarge` — the bounded read every binding and every subsystem shares ([[D-059]], [[D-063]]); `crudhttp` forwards to them |
 | `port/service.go` | `DefaultService.List` / `:Count` / `:Get` — where the document is narrowed and compiled ([[FL-015]]) |
 | `port/request.go` | `NarrowForCount`, `NarrowForEntity` — what a count and a keyed read drop |
 | `crud/query/querystring.go` | `ParseQuery`, `ParseTerm`, flat-term compilation |
-| `crud/query/request.go` | the `Request` document and its forgiving JSON shapes |
+| `crud/query/request.go` | the `Request` document, its forgiving JSON shapes, and `UnmarshalJSON` — forgiving about how a value is written, strict about which keys exist |
 | `crud/query/compile.go` | `Compile`, the allow-lists, budgets, path resolution |
 | `crud/query/filter.go` | the structured filter document → predicates |
 | `crud/options.go` | `Options`, `Where`, `Resolved` |
@@ -186,6 +217,9 @@ and `crud/http/crudnet/handler_test.go`.
 - `TestEachAllowListGuardsItsOwnVerb` — `crud/query/compile_test.go` — one list per verb, no cross-authorisation.
 - `TestADeniedColumnStaysDeniedHoweverItIsSpelled` — `crud/query/hostile_test.go` — canonicalisation before the allow-list.
 - `TestTheDefaultBudgetsBoundAnUnconfiguredEndpoint` — `crud/query/hostile_test.go` — a nil `Config` is still bounded.
+- `TestAClientChosenListAndSortAreBounded` — `crud/query/compile_test.go` — the two volume caps and the sort dedup, with the control that the same 40-value list compiles clean under `MaxConditions: 1`, so the condition budget really never saw it.
+- `TestUnpagedIsRefusedUnlessTheEndpointServesIt` — `crud/query/compile_test.go` — the refusal, the declaring control, and that it is a `query.Error` naming the parameter rather than a 500.
+- `TestAMisspelledDocumentKeyIsRefused` / `TestAMisspelledQueryParameterIsRefused` — `crud/query/strict_test.go` — the two doors' own key sets, with `TestEveryDocumentKeyStillParses` and `TestAnApplicationsOwnParametersArePassedThrough` as the controls.
 - `TestGetSkipsCountOnShortFirstPage` — `crud/sqlrepo/repository_test.go` — the no-COUNT case.
 - `TestSkipTotalProbesOneExtraRow` — `crud/sqlrepo/repository_test.go` — the `limit+1` probe.
 - `TestSkipTotalReportsWhatWasFetchedAndNotTheOffset` — `crud/sqlrepo/paging_edge_test.go` — pins the fabricated-total regression.

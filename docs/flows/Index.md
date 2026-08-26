@@ -80,7 +80,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-018](FL-018-a-call-through-the-client.md) | A call through the client | `remote/resource.go:Resource.Get` | [[UC-018]] [[UC-015]] |
 | [FL-019](FL-019-a-token-becomes-a-principal.md) | A token becomes a principal | `auth/guard.go:Guard.Authenticate` | [[UC-019]] |
 | [FL-020](FL-020-a-principal-becomes-a-policy-decision.md) | A principal becomes a policy decision | `crud/decorators/security/principal.go:ScopeAttr` | [[UC-020]] [[UC-004]] |
-| [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `vvdb/dsn.go:DSN` / `vvdb/open.go:Open` | [[UC-021]] |
+| [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `utils/vvdb/dsn.go:DSN` / `utils/vvdb/open.go:Open` | [[UC-021]] |
 
 ## By file — which flows touch this file
 
@@ -160,13 +160,21 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
 | `*/vv_gen.go` — ten checked-in files under `test/` and `_examples/` | FL-010 |
-| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-015 |
+| `crud/http/crudfiber/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
+| `crud/http/crudfiber/routing_test.go` | FL-013 |
+| `crud/http/crudgin/routing_test.go` | FL-013 |
+| `crud/http/crudnet/routing_test.go` | FL-013 |
 | `crud/http/crudfiber/options.go` | FL-002, FL-011, FL-013, FL-015 |
+| `crud/http/crudfiber/middleware.go` | FL-013 |
+| `crud/http/crudgin/middleware.go` | FL-013 |
+| `crud/http/crudnet/middleware.go` | FL-013 |
 | `crud/http/crudgin/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
 | `crud/http/crudgin/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `crud/http/crudnet/handler.go` | FL-001, FL-002, FL-003, FL-011, FL-012, FL-013, FL-015 |
 | `crud/http/crudnet/options.go` | FL-002, FL-011, FL-013, FL-015 |
 | `crud/http/crudhttp/doc.go` | FL-013, FL-015 |
+| `auth/http/authnet/binding_test.go` | FL-019 |
+| `auth/http/authgin/binding_test.go` | FL-019 |
 | `crud/http/crudhttp/model.go` | FL-003, FL-013 |
 | `crud/http/crudhttp/repository.go` | FL-013 |
 | `crud/http/crudhttp/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015 |
@@ -174,11 +182,13 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/porthttp/errors.go` | FL-011, FL-013, FL-014, FL-015, FL-018 |
 | `port/porthttp/render.go` | FL-011, FL-015 |
 | `port/porthttp/envelope.go` | FL-011 |
-| `port/porthttp/decode.go` | FL-018 |
+| `port/porthttp/decode.go` | FL-013, FL-018 |
 | `port/porthttp/bodyindex.go` | FL-011, FL-015 |
 | `port/porthttp/body.go` | FL-001, FL-002, FL-011, FL-012, FL-013, FL-015 |
 | `port/porthttp/locale_test.go` | FL-013, FL-015 |
 | `port/doc.go` | FL-015 |
+| `port/rules.go` | FL-013, FL-015 |
+| `port/log.go` | FL-013, FL-019 |
 | `port/service.go` | FL-001, FL-002, FL-003, FL-011, FL-015 |
 | `port/command.go` | FL-002, FL-015 |
 | `port/mapper.go` | FL-015 |
@@ -215,9 +225,9 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/probe/options.go` | FL-017 |
 | `crud/probe/declare.go` | FL-017 |
 | `crud/decorators/faults/faults.go` | FL-011, FL-014, FL-015, FL-017 |
-| `crud/decorators/faults/probe.go` | FL-017 |
+| `crud/decorators/faults/probe.go` | FL-009, FL-017 |
 | `crud/query/coerce.go` | FL-012 |
-| `crud/query/compile.go` | FL-001, FL-006, FL-011 |
+| `crud/query/compile.go` | FL-001, FL-006, FL-011, FL-013 |
 | `crud/query/filter.go` | FL-001, FL-005, FL-012 |
 | `crud/query/ops.go` | FL-012 |
 | `crud/query/querystring.go` | FL-001, FL-012 |
@@ -252,11 +262,11 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `test/portmount/grpcmount_test.go` | FL-011, FL-013, FL-015 |
 | `test/dsn/dsn_test.go` | FL-021 |
 | `test/integration/vvdb_test.go` | FL-021 |
-| `vvdb/config.go` | FL-021 |
-| `vvdb/dsn.go` | FL-021 |
-| `vvdb/open.go` | FL-021 |
-| `vvdb/doc.go` | FL-021 |
-| `vvdb/dbpgx/dbpgx.go` | FL-021 |
+| `utils/vvdb/config.go` | FL-021 |
+| `utils/vvdb/dsn.go` | FL-021 |
+| `utils/vvdb/open.go` | FL-021 |
+| `utils/vvdb/doc.go` | FL-021 |
+| `utils/vvdb/dbpgx/dbpgx.go` | FL-021 |
 
 `crud/sqlrepo/repository.go` is in eleven of them. It is the layer everything else
 decorates, and almost no change to it is local.

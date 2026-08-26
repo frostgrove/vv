@@ -200,7 +200,7 @@ func TestNestedFiltersAgainstDatabases(t *testing.T) {
 						t.Fatal(err)
 					}
 					req.Unpaged = true
-					opts, err := req.Compile(Articles.Meta(), nil)
+					opts, err := req.Compile(Articles.Meta(), unpagedOK)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -227,7 +227,7 @@ func TestToManyFilterDoesNotDuplicateOrInflateCount(t *testing.T) {
 
 			var req query.Request
 			_ = json.Unmarshal([]byte(`{"filter":{"tags.slug":{"in":["go","rust"]}},"limit":10}`), &req)
-			opts, err := req.Compile(Articles.Meta(), nil)
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -258,7 +258,10 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 
 			var req query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["author.name","-views"],"unpaged":true}`), &req)
-			opts, err := req.Compile(Articles.Meta(), nil)
+			// The endpoint declares AllowUnpaged: this route serves whole
+			// result sets, which is a thing an endpoint says rather than a
+			// thing a request may decide for it ([[D-060]]).
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +280,7 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			// that have one.
 			var byWords query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["-stats.wordCount"],"filter":{"stats.wordCount":{"gt":0}},"unpaged":true}`), &byWords)
-			opts, err = byWords.Compile(Articles.Meta(), nil)
+			opts, err = byWords.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -292,7 +295,7 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			// Sorting through a to-many has no single value and is refused.
 			var bad query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["comments.body"]}`), &bad)
-			opts, err = bad.Compile(Articles.Meta(), nil)
+			opts, err = bad.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -370,7 +373,10 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 			var req query.Request
 			_ = json.Unmarshal([]byte(
 				`{"preload":["author","stats","tags","comments.author"],"sort":["title"],"unpaged":true}`), &req)
-			opts, err := req.Compile(Articles.Meta(), nil)
+			// The endpoint declares AllowUnpaged: this route serves whole
+			// result sets, which is a thing an endpoint says rather than a
+			// thing a request may decide for it ([[D-060]]).
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -460,7 +466,10 @@ func TestFilteredPreloadAgainstDatabases(t *testing.T) {
 				"filter":  {"title":"go generics"},
 				"unpaged": true
 			}`), &req)
-			opts, err := req.Compile(Articles.Meta(), nil)
+			// The endpoint declares AllowUnpaged: this route serves whole
+			// result sets, which is a thing an endpoint says rather than a
+			// thing a request may decide for it ([[D-060]]).
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -487,7 +496,7 @@ func TestReverseRelation(t *testing.T) {
 
 			var req query.Request
 			_ = json.Unmarshal([]byte(`{"filter":{"articles.views":{"gte":100}},"preload":["articles"]}`), &req)
-			opts, err := req.Compile(Authors.Meta(), nil)
+			opts, err := req.Compile(Authors.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -520,7 +529,10 @@ func TestSearchDoesNotEscapeItsScope(t *testing.T) {
 				"searchFields": ["title", "body"],
 				"unpaged": true
 			}`), &req)
-			opts, err := req.Compile(Articles.Meta(), nil)
+			// The endpoint declares AllowUnpaged: this route serves whole
+			// result sets, which is a thing an endpoint says rather than a
+			// thing a request may decide for it ([[D-060]]).
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -546,7 +558,10 @@ func TestQueryStringAgainstDatabases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(Articles.Meta(), nil)
+			// The endpoint declares AllowUnpaged: this route serves whole
+			// result sets, which is a thing an endpoint says rather than a
+			// thing a request may decide for it ([[D-060]]).
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}

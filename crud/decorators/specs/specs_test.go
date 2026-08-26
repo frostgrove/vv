@@ -115,6 +115,9 @@ func TestComposition(t *testing.T) {
 		{"nil operand is ignored", specs.Where[User](nil).And(User_.Age.Gt(1)),
 			`"age" > $1`},
 		{"isNull", specs.Where(User_.Age.IsNull()), `"age" IS NULL`},
+		// Lte was the one ordered comparison this table did not reach; its
+		// three siblings are pinned above and in TestMetamodelStyle.
+		{"lte", specs.Where(User_.Age.Lte(30)), `"age" <= $1`},
 		{"between", specs.Where(User_.Created.Between(now, now)),
 			`"created_at" BETWEEN $1 AND $2`},
 	} {

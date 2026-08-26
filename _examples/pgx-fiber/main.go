@@ -7,7 +7,7 @@
 //
 //	go get github.com/shardit-io/vv
 //	go get github.com/shardit-io/vv/crud/adapter/crudpgx
-//	go get github.com/shardit-io/vv/vvdb/dbpgx
+//	go get github.com/shardit-io/vv/utils/vvdb/dbpgx
 //	go get github.com/shardit-io/vv/crud/http/crudfiber
 //
 // Run it with the repository's own databases up (`make up` at the root):
@@ -31,8 +31,8 @@ import (
 	"github.com/shardit-io/vv/crud/http/crudfiber"
 	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/vvdb"
-	"github.com/shardit-io/vv/vvdb/dbpgx"
+	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb/dbpgx"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt

@@ -1,7 +1,7 @@
 # vvdb — одна конфигурация, четыре движка, соединение
 
 ```go
-import "github.com/shardit-io/vv/vvdb"
+import "github.com/shardit-io/vv/utils/vvdb"
 ```
 
 **Модуль:** корневой · **Зависит от:** стандартной библиотеки
@@ -23,7 +23,7 @@ TLS» — мелкие, незапоминаемые и легко ошибит�
 ```go
 dsn, err := vvdb.DSN(cfg)          // 0. строка, ничего не открыто
 sqlDB, err := vvdb.Open(cfg)       // 1. *sql.DB, пул настроен
-pool := dbpgx.MustConnect(ctx, cfg) // 1. *pgxpool.Pool — vvdb/dbpgx
+pool := dbpgx.MustConnect(ctx, cfg) // 1. *pgxpool.Pool — utils/vvdb/dbpgx
 src := crudsql.Postgres(sqlDB)     // 2. и вот теперь это принадлежит vv
 ```
 
@@ -49,6 +49,7 @@ db:
     max_open: 20
     max_idle: 5
     max_lifetime: 30m
+    max_idle_time: 5m
     connect_timeout: 5s
   replica:
     host: replica.internal  # наследует всё, что не назвала заново

@@ -114,8 +114,9 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
 
 - `auth/errors.go` — `ErrUnauthenticated`, `Unauthenticated`,
   `Unauthenticatedf`.
-- `port/violations.go:55` — the synthesised violation that copies
-  `Fault.Message`. Unchanged, and the reason this decision is written down.
+- `port/violations.go:Violations` — the synthesised violation that copies
+  `Fault.Message` when a fault carries none. Unchanged, and the reason this
+  decision is written down.
 - `auth/http/authhttp/authhttp.go` — `Refuse`, and the paragraph on
   `WWW-Authenticate`.
 - `auth/authjwt/parser.go` — `Parse`, where every verification failure collapses
@@ -138,8 +139,56 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
 - `TestEveryRefusalIsTheSameAnswerToAClient` — `auth/authjwt/parser_test.go`.
 - `TestTheRefusalBodyIsTheSharedEnvelopeAndNamesNoReason` — carried file-for-file
   by `auth/http/authnet`, `auth/http/authgin` and `auth/http/authfiber`.
+- `TestARefusalThatWillNotEncodeIs500AndSaysNothing` in
+  `auth/http/authhttp/refuse_test.go` — the branch below that one: when the
+  envelope itself will not marshal, the client gets 500 and no sentence. Its
+  control is the operator's line, which *does* name the reason — so the silent
+  body is the guard rather than an empty fixture. Verified by replacing the
+  `WriteHeader` with `http.Error(w, marshalErr.Error(), 500)` and watching the
+  reason appear in the response.
+- `TestARefusalCarriesEveryHeaderTheRendererAskedFor` — same file, with the
+  control that no `WWW-Authenticate` is invented for a renderer that asked for
+  none: a bearer challenge's `error=` parameter is this decision's disclosure
+  in a header.
 - `TestAStoreFailureIsNotARefusal` — `auth/apikey/apikey_test.go`: an outage is
   the store's own error and renders as the 500 it is, not as a bad key.
+
+- `TestNamingTwoAudiencesRequiresBothOfThem` in `auth/authjwt/parser_test.go` —
+  golang-jwt's `WithAudience` assigns the expected set and means "any of", so
+  calling it once per audience left only the last one expected: `Audience("a","b")`
+  accepted a token audienced to "b" alone and **rejected** one audienced to "a".
+  Wrong in both directions at once. Every other test in the package passes one
+  audience, which is why a single-audience test cannot see it and this one has
+  three arms.
+- `TestAnOutageAnywhereInAChainBeatsARefusal` in `auth/guard_test.go` — an
+  authenticator distinguishes "this credential is wrong" from "I could not tell",
+  which is what `apikey.Store`'s three results are for. `Chain` returned the last
+  error, so that distinction survived only when the failing authenticator was
+  wired last: a store outage became "your key is invalid", wrong for the client
+  and invisible to whoever watches the 5xx rate.
+- `TestALargeIntegerClaimSurvivesAtAnyDepth` in `auth/authjwt/claims_test.go` —
+  two hops had to be right and one was. Without `WithJSONNumber` an id above 2^53
+  is rounded by encoding/json before this package sees it; without a recursive
+  `narrow` a nested claim comes back as `json.Number` and a caller comparing it to
+  an int64 gets a scope that narrows to nothing. A tenant id off by one is a row
+  belonging to the wrong tenant.
+- `TestAJWKSWithNoURLRefusesToStart` in `auth/authjwt/jwks_test.go` — the reason
+  for a refusal stays inside the process, so an empty key-set URL answers every
+  request with exactly the 401 a forged token gets. It is the hardest
+  misconfiguration in the package to diagnose from outside and now fails at
+  declaration ([[D-021]]).
+- `TestALeaderThatDisconnectsDoesNotFailTheWaiters` in the same file — the
+  single-flight elects a leader, and the leader used to fetch on its own request
+  context. Under net/http that is cancelled when that one client disconnects, so
+  an abandoned request failed every waiter and suppressed the refetch for the
+  whole `JWKSMinRefresh` window.
+- `TestARefusedStreamIsClassifiedLikeARefusedCall` in
+  `crud/rpc/crudgrpc/streamerrors_test.go` — `authgrpc.Stream` returns an
+  unrendered fault and relies on something downstream, exactly as its unary twin
+  does. There was no downstream: `Errors` is a unary interceptor and had no stream
+  counterpart, so a refused stream answered `Unknown` where a refused call
+  answered `Unauthenticated`. The first subtest is the control that this really
+  was `Unknown`.
 
 ## See also
 

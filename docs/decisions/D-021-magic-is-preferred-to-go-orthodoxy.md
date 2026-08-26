@@ -117,6 +117,21 @@ against the ORM's own.
   build or start-up, never at request time", and the one that had to compare two
   independent derivations to mean anything ([[D-050]]).
 
+- `TestAFrozenFieldIsFrozenByEitherSpellingAndThroughBothVerbs` and
+  `TestFreezingAFieldTheModelDoesNotHavePanicsAtDeclaration` in
+  `crud/decorators/security/security_test.go` — `Policy.Immutable` was matched as
+  a raw string on `Update` and resolved forgivingly on `Save`, so
+  `Freeze("tenant_id")` froze the column on PUT and **not** on PATCH. The names
+  now resolve once in `Gate`, and one that resolves to nothing panics there: after
+  a release that panic would stop an already-deployed application from booting,
+  which is why it has to land before the tag rather than after.
+- `TestAClaimOfADifferentWidthThanTheColumnStillWorks` and
+  `TestAnUncomparableClaimTypePanicsRatherThanDenyingEverything` in
+  `crud/decorators/security/policies_test.go` — `ScopeField`'s two halves consumed
+  the extractor's `any` differently and only one coerced, so an `int64` claim
+  against a `uint` column read perfectly and denied every create at request time.
+  The shipped gorm guide's own line is a working reproduction.
+
 ## See also
 
 [[D-001]] [[D-018]] [[D-013]] [[D-022]] [[D-023]] [[D-050]]

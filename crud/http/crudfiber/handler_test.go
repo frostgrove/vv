@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/query"
 )
 
 // Every route the package documents, with the verb it answers, the status it
@@ -486,13 +487,36 @@ func TestCountPostAcceptsAnEmptyBody(t *testing.T) {
 // The DSL's flags are options in their own right, and a list request that asks
 // for everything must not silently keep paginating.
 func TestListHonoursUnpagedAndSkipTotal(t *testing.T) {
-	app, fake := mount(t)
+	// The endpoint declares AllowUnpaged. Without it the flag is refused, which
+	// is the point of the default: unpaged is the one thing a client can ask for
+	// that has no ceiling — MaxLimit clamps it, and MaxLimit is unset by default
+	// ([[D-060]]). skipTotal and distinct need no declaration; neither changes
+	// how many rows come back.
+	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}))
 
 	ok(t, app, http.MethodGet, "/widgets?unpaged=true&skipTotal=true&distinct=true", "", http.StatusOK)
 
 	o := fake.only(t, "Get").Opts
 	if !o.Unpaged || !o.NoTotal || !o.Distinct {
 		t.Fatalf("unpaged=%v skipTotal=%v distinct=%v, want all three set", o.Unpaged, o.NoTotal, o.Distinct)
+	}
+}
+
+// And a request that asks for it on an endpoint that never declared it is
+// refused rather than served.
+//
+// The control on the test above: without this, that one would hold just as well
+// for a handler that ignored the flag entirely, and the flag's whole cost is
+// that it is honoured.
+func TestUnpagedIsRefusedOnAnEndpointThatDidNotDeclareIt(t *testing.T) {
+	app, fake := mount(t)
+
+	r := do(t, app, http.MethodGet, "/widgets?unpaged=true", "")
+	if r.status != http.StatusBadRequest {
+		t.Fatalf("unpaged on an endpoint that never declared it answered %d, want 400: %s", r.status, r.body)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("the request was refused and the repository was still asked: %v", fake.methods())
 	}
 }
 

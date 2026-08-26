@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"errors"
+	"github.com/shardit-io/vv/crud/decorators/security"
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
@@ -119,6 +121,64 @@ func TestUpdateDiffsAgainstThePrimary(t *testing.T) {
 	}
 	if onPrimary != "stale" {
 		t.Fatalf("the primary holds %q: the diff was taken against the replica and wrote nothing", onPrimary)
+	}
+}
+
+// The gate's own authorisation load takes the primary too.
+//
+// gate.Update loads the row and hands it to Inspect, which decides whether the
+// update is allowed. That is a read that decides a write, so [[D-032]] puts it on
+// the primary — and it was the one check in the gate that did not say so. Every
+// other one (saveTarget, the hidden-row Exists, UpdateAll's target fetch,
+// Delete's and DeleteAll's victim fetches) already passed PrimaryOnly.
+//
+// The failure it allows is the one D-032 exists for: a row that has just moved
+// out of the caller's reach still authorises the update on a lagging replica,
+// and the UPDATE that follows lands on the primary anyway.
+func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
+	ctx := context.Background()
+	primary, replica := openShards(t)
+
+	// The two disagree about who owns the row. The replica is stale.
+	if _, err := primary.ExecContext(ctx, `INSERT INTO shard_rows (id, name) VALUES (1, 'moved-away')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replica.ExecContext(ctx, `INSERT INTO shard_rows (id, name) VALUES (1, 'still-mine')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rule that reads the row: only "still-mine" may be updated.
+	seen := ""
+	policy := security.Policy[ShardRow, int64]{
+		Inspect: func(_ context.Context, _ security.Action, m *ShardRow) error {
+			seen = m.Name
+			if m.Name != "still-mine" {
+				return security.Denied(security.Update, "not yours any more")
+			}
+			return nil
+		},
+	}
+
+	repo := ReplicaRows.Bind(
+		crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)),
+		security.Gate(policy),
+	)
+
+	_, err := repo.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")})
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("the update was allowed on the strength of the replica's copy (Inspect saw %q): %v", seen, err)
+	}
+	if seen != "moved-away" {
+		t.Fatalf("Inspect was shown %q — the replica's row, not the primary's", seen)
+	}
+
+	// The control: with the primary agreeing, the same call goes through. The
+	// refusal above is the staleness, not a policy that denies everything.
+	if _, err := primary.ExecContext(ctx, `UPDATE shard_rows SET name = 'still-mine' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")}); err != nil {
+		t.Fatalf("the same update was refused when the primary agreed: %v", err)
 	}
 }
 

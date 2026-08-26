@@ -187,7 +187,7 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.doc), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(Users.Meta(), nil)
+			opts, err := req.Compile(Users.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -308,7 +308,7 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 			}`), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(GormMembers.Meta(), nil)
+			opts, err := req.Compile(GormMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -439,7 +439,7 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 				`{"filter":{"active":true,"age":{"gte":30}},"sort":["-age"],"page":1,"limit":10}`), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(EntUsers.Meta(), nil)
+			opts, err := req.Compile(EntUsers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -517,7 +517,7 @@ type mxTeamUsecase struct {
 }
 
 func (uc mxTeamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *query.Request) (promoteResult, error) {
-	opts, err := req.Compile(uc.members.Meta(), nil)
+	opts, err := req.Compile(uc.members.Meta(), unpagedOK)
 	if err != nil {
 		return promoteResult{}, err
 	}
@@ -678,7 +678,7 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 				`{"preload":["author","tags"],"sort":["title"],"page":1,"limit":2}`), &req); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(Articles.Meta(), nil)
+			opts, err := req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -706,7 +706,7 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 			}
 
 			req.Page = 2
-			opts, err = req.Compile(Articles.Meta(), nil)
+			opts, err = req.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}

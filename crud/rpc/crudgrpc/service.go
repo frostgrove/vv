@@ -67,7 +67,7 @@ func (h *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
 	add("List", h.List)
 	add("Count", h.Count)
 	add("Get", h.Get)
-	if !h.opt.readOnly {
+	if !h.opt.ReadOnly {
 		add("Create", h.Create)
 		add("Update", h.Update)
 		add("Replace", h.Replace)

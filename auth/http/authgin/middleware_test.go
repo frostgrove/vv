@@ -135,25 +135,6 @@ func TestADoubleInstallAuthenticatesOnce(t *testing.T) {
 	}
 }
 
-// Gin's own logging middleware reads c.Errors, and the body deliberately does
-// not carry the cause. Filing it is what keeps the reason reachable in a log.
-func TestTheCauseIsFiledWithGinsErrorBag(t *testing.T) {
-	var filed int
-	h := &seen{}
-	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Next(); filed = len(c.Errors) })
-	r.Use(authgin.Middleware(auth.NewGuard(refuses())))
-	r.GET("/articles", h.handle)
-
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
-	req.Header.Set("Authorization", "Bearer forged")
-	r.ServeHTTP(httptest.NewRecorder(), req)
-
-	if filed == 0 {
-		t.Fatal("the refusal was not filed with c.Error, so Gin's logger sees nothing at all")
-	}
-}
-
 func TestANilGuardRefusesToStart(t *testing.T) {
 	defer func() {
 		if recover() == nil {

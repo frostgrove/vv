@@ -82,13 +82,21 @@ func (e *enricher[M, ID]) declare(next crud.Core[M, ID], s settings) {
 	}
 	e.src = s.src
 	if e.src == nil {
-		sd, ok := next.(crud.Sourced)
+		// crud.SourceOf and not a type assertion on the layer directly below.
+		// The assertion made the order decorators were listed in decide whether
+		// the probe worked: security.Gate between faults and the repository
+		// answered no, because an interface embedded in a struct promotes only
+		// its own method set — so a chain that was correct in every other
+		// respect refused at start-up for a reason about Go's type system
+		// rather than about the wiring. The walk asks the whole chain.
+		src, ok := crud.SourceOf(next)
 		if !ok {
-			panic(fmt.Sprintf("faults: a probe is wired for %s but the layer underneath does not "+
-				"say which datasource it is bound to. Put faults.Enrich last in the Bind list, "+
-				"or name the source with faults.WithSource", e.entity()))
+			panic(fmt.Sprintf("faults: a probe is wired for %s but nothing in the chain underneath "+
+				"says which datasource it is bound to. A decorator between this one and the "+
+				"repository has to forward what it wraps with Next() — crud.Base does — or "+
+				"name the source with faults.WithSource", e.entity()))
 		}
-		e.src = sd.Source()
+		e.src = src
 	}
 	e.probes = make(map[string]probeCfg, len(s.byOp))
 	for op, h := range s.byOp {
@@ -197,7 +205,7 @@ func (e *enricher[M, ID]) savepoint(ctx context.Context, budget int) (crud.Tx, s
 	if sr, ok := e.src.Dialect().(crud.StatementRollback); ok && sr.RollsBackStatementOnly() {
 		return nil, spNotNeeded
 	}
-	b, ok := ex.(crud.Beginner)
+	b, ok := crud.BeginnerOf(ex)
 	if !ok {
 		return nil, spRefused
 	}

@@ -1,11 +1,10 @@
 package crudfiber
 
 import (
-	"log"
-
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud/http/crudhttp"
+	"github.com/shardit-io/vv/port"
 )
 
 // Errors renders whatever a handler returned, for handlers this library did not
@@ -31,7 +30,8 @@ func Errors(opts ...crudhttp.RenderOption) fiber.Handler {
 			// something has, the status is already gone and there is nothing to
 			// do but log.
 			if p := recover(); p != nil {
-				log.Printf("crudfiber: panic while serving %s %s: %v", c.Method(), c.Path(), p)
+				port.Logger(c.Context()).Error("crudfiber: panic while serving a request",
+					"method", c.Method(), "path", c.Path(), "panic", p)
 				err = nil
 				if len(c.Response().Body()) == 0 {
 					err = c.Status(fiber.StatusInternalServerError).JSON(crudhttp.Internal())

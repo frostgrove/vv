@@ -87,8 +87,22 @@ take their framework's context.
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
 | `ReadOnly()` | register the three reads only |
 | `AllowClientID()` | let a create choose its own database-generated key |
-| `MaxBulk(n)` | cap `BulkDelete` |
+| `MaxBulk(n)` | cap `BulkDelete` — the default is `port.DefaultMaxBulk` (1024); there is no "unlimited" |
 | `WithRenderer(r)` | replace the status renderer |
+
+Every option below takes the resource's three type parameters explicitly —
+`WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` infers them from the
+repository it is given; an option is a value built before `New` is called, and Go
+infers a function's type arguments from its own arguments, which name none of
+them. A local helper per resource is the usual way to keep call sites short.
+
+**`WithScope` is reads only, and that is not a gap waiting to be filled.** `Save`
+and `Delete` take no options, so there is nowhere for a per-request predicate to
+go. The asymmetry looks like protection and is not: with a scope of
+`TenantID = 7`, `GET /{id}` on somebody else's row is 404 while `DELETE /{id}` on
+the same row answers 200. Row-level rules on writes belong in
+[`security.Gate`](security.md), whose scope really does reach the DELETE and the
+UPDATE.
 
 **There is no `WithErrorHandler`.** A gRPC response is a return value rather than
 a stream a handler may have half-written, so there is nothing for a handler to
@@ -111,6 +125,7 @@ srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors(
 | `KindRetryable` | `Unavailable`, with `RetryInfo{1s}` |
 | `KindConflict` | `AlreadyExists` |
 | `KindValidation` · `KindBadRequest` | `InvalidArgument` |
+| `KindTooLarge` | `ResourceExhausted` |
 | anything else | `Internal` |
 
 A failure arrives as a status code plus **`BadRequest` / `ErrorInfo` /

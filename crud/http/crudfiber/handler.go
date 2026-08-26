@@ -31,6 +31,7 @@
 package crudfiber
 
 import (
+	"bytes"
 	"net/url"
 
 	"github.com/gofiber/fiber/v3"
@@ -78,7 +79,7 @@ type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
 // are about rules rather than about transport.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), port.Identity[M](), o)
+	return build(port.NewService(repo, o.Service()...), port.Identity[M](), o)
 }
 
 // NewFor builds a handler whose request body is a type of its own, mapped onto
@@ -86,7 +87,7 @@ func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[
 // from the repository and the mapper.
 func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), mapper, o)
+	return build(port.NewService(repo, o.Service()...), mapper, o)
 }
 
 // Serving mounts a service that is already built — the one a generator wrote,
@@ -97,14 +98,14 @@ func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper M
 // "bound what clients may ask for" ([[D-021]]).
 func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudfiber.Serving")
+	o.RefuseServiceOptions("crudfiber.Serving")
 	return build(svc, port.Identity[M](), o)
 }
 
 // ServingFor mounts an already-built service behind an input type of its own.
 func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudfiber.ServingFor")
+	o.RefuseServiceOptions("crudfiber.ServingFor")
 	return build(svc, mapper, o)
 }
 
@@ -126,16 +127,32 @@ func build[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Ma
 }
 
 // Routes returns a standalone app to mount with app.Use("/prefix", …).
+//
+// The app's own BodyLimit is set to this handler's cap so the refusal is this
+// library's envelope rather than Fiber's plain-text one, and so the number is
+// the same one crudnet and crudgin enforce. Register cannot do that — the limit
+// belongs to the app, which the caller owns there — and [[FL-013]] carries the
+// difference.
 func (h *HandlerFor[M, ID, U, In]) Routes() *fiber.App {
-	app := fiber.New()
+	app := fiber.New(fiber.Config{BodyLimit: h.bodyLimit()})
 	h.Register(app)
 	return app
+}
+
+// bodyLimit is what Fiber is told to accept: one byte past our own cap, so the
+// body that is exactly at the cap reaches the decoder and the one past it is
+// refused by us, with our envelope, rather than by Fiber with its own.
+func (h *HandlerFor[M, ID, U, In]) bodyLimit() int {
+	if h.opt.MaxBody > 0 {
+		return h.opt.MaxBody + 1
+	}
+	return crudhttp.MaxBody + 1
 }
 
 // Register mounts the routes on an existing router or group. `/count` is
 // registered before `/:id` so it is not swallowed by the parameter route.
 func (h *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
-	if !h.opt.readOnly {
+	if !h.opt.ReadOnly {
 		r.Post("/", h.Create)
 		r.Post("/bulk-delete", h.BulkDelete)
 	}
@@ -144,7 +161,7 @@ func (h *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
 	r.Post("/count", h.CountPost)
 	r.Get("/", h.List)
 	r.Get("/:id", h.GetByID)
-	if !h.opt.readOnly {
+	if !h.opt.ReadOnly {
 		r.Patch("/:id", h.Update)
 		r.Put("/:id", h.Replace)
 		r.Delete("/:id", h.Delete)
@@ -182,9 +199,9 @@ func (h *HandlerFor[M, ID, U, In]) list(c fiber.Ctx, req *query.Request) error {
 		return h.fail(c, err)
 	}
 	if h.opt.transform == nil {
-		return c.Status(fiber.StatusOK).JSON(page)
+		return writeJSON(c, fiber.StatusOK, page)
 	}
-	return c.Status(fiber.StatusOK).JSON(crud.MapPage(page, func(m M) any {
+	return writeJSON(c, fiber.StatusOK, crud.MapPage(page, func(m M) any {
 		return h.opt.transform(c, m)
 	}))
 }
@@ -216,7 +233,7 @@ func (h *HandlerFor[M, ID, U, In]) count(c fiber.Ctx, req *query.Request) error 
 	if err != nil {
 		return h.fail(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"count": n})
+	return writeJSON(c, fiber.StatusOK, fiber.Map{"count": n})
 }
 
 // GetByID answers GET /:id, honouring ?preload= and ?select=.
@@ -249,9 +266,10 @@ func (h *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
 // server-side timestamp.
 func (h *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
 	var in In
-	keep(c)
-	if err := c.Bind().Body(&in); err != nil {
-		return h.fail(c, crudhttp.MalformedBody(err))
+	raw, err := h.decode(c, &in)
+	keep(c, raw)
+	if err != nil {
+		return h.fail(c, err)
 	}
 	m, err := h.mapper.Model(c.Context(), in)
 	if err != nil {
@@ -271,9 +289,10 @@ func (h *HandlerFor[M, ID, U, In]) Update(c fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	var dto U
-	keep(c)
-	if err := c.Bind().Body(&dto); err != nil {
-		return h.fail(c, crudhttp.MalformedBody(err))
+	raw, err := h.decode(c, &dto)
+	keep(c, raw)
+	if err != nil {
+		return h.fail(c, err)
 	}
 	m, err := h.svc.Update(c.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dto, Before: h.beforeUpdate(c, id)})
 	if err != nil {
@@ -298,9 +317,10 @@ func (h *HandlerFor[M, ID, U, In]) Replace(c fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	var in In
-	keep(c)
-	if err := c.Bind().Body(&in); err != nil {
-		return h.fail(c, crudhttp.MalformedBody(err))
+	raw, err := h.decode(c, &in)
+	keep(c, raw)
+	if err != nil {
+		return h.fail(c, err)
 	}
 	m, err := h.mapper.Model(c.Context(), in)
 	if err != nil {
@@ -323,7 +343,7 @@ func (h *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
 	if err != nil {
 		return h.fail(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": n})
+	return writeJSON(c, fiber.StatusOK, fiber.Map{"deleted": n})
 }
 
 // BulkDeleteRequest is the body of POST /bulk-delete.
@@ -332,17 +352,17 @@ type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 // BulkDelete answers POST /bulk-delete.
 func (h *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
 	var req BulkDeleteRequest[ID]
-	if err := c.Bind().Body(&req); err != nil {
-		return h.fail(c, crudhttp.MalformedBody(err))
+	if err := h.decodeOnly(c, &req); err != nil {
+		return h.fail(c, err)
 	}
-	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
-		return h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
+	if len(req.IDs) > h.opt.BulkCap() {
+		return h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.BulkCap()))
 	}
 	n, err := h.svc.DeleteMany(c.Context(), port.BulkDeleteCommand[ID]{IDs: req.IDs})
 	if err != nil {
 		return h.fail(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"deleted": n})
+	return writeJSON(c, fiber.StatusOK, fiber.Map{"deleted": n})
 }
 
 // ---------------------------------------------------------------------------
@@ -392,13 +412,29 @@ func queryValues(c fiber.Ctx) url.Values {
 
 func (h *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, error) {
 	req := &query.Request{}
-	if len(c.Body()) == 0 {
-		return req, nil
-	}
-	if err := c.Bind().Body(req); err != nil {
-		return nil, crudhttp.MalformedBody(err)
+	if err := h.decodeOnly(c, req); err != nil {
+		return nil, err
 	}
 	return req, nil
+}
+
+// decode reads a JSON body onto v under this handler's cap and hands back the
+// bytes, for the raw-body path fallback ([[D-043]]).
+//
+// encoding/json and not c.Bind().Body, which dispatches on Content-Type. The
+// binder would make this the one binding of the three that accepts a form or an
+// XML body, and the one where a `binding:"required"` tag in the consumer's own
+// model changes what the routes accept — a difference in what the API is, owned
+// by nobody and visible only under Fiber ([[FL-013]]).
+func (h *HandlerFor[M, ID, U, In]) decode(c fiber.Ctx, v any) ([]byte, error) {
+	return crudhttp.DecodeJSONKeepLimit(bytes.NewReader(c.Body()), v, h.opt.MaxBody)
+}
+
+// decodeOnly is decode for the routes whose body carries no field values, so
+// there is nothing worth keeping.
+func (h *HandlerFor[M, ID, U, In]) decodeOnly(c fiber.Ctx, v any) error {
+	_, err := h.decode(c, v)
+	return err
 }
 
 // id reads and converts the :id path parameter.
@@ -408,9 +444,9 @@ func (h *HandlerFor[M, ID, U, In]) id(c fiber.Ctx) (ID, error) {
 
 func (h *HandlerFor[M, ID, U, In]) entity(c fiber.Ctx, status int, m M) error {
 	if h.opt.transform != nil {
-		return c.Status(status).JSON(h.opt.transform(c, m))
+		return writeJSON(c, status, h.opt.transform(c, m))
 	}
-	return c.Status(status).JSON(m)
+	return writeJSON(c, status, m)
 }
 
 func (h *HandlerFor[M, ID, U, In]) fail(c fiber.Ctx, err error) error {
@@ -418,26 +454,25 @@ func (h *HandlerFor[M, ID, U, In]) fail(c fiber.Ctx, err error) error {
 }
 
 // bodyKey is where the retained request body lives on this binding. Locals and
-// not the context: Fiber's Bind().Body dispatches on Content-Type and still has
-// to accept XML and form encodings, so the copy is taken here rather than
-// inside crudhttp's JSON decoder.
+// not the context, because Fiber hands a handler no context it can replace.
 type bodyKeyType struct{}
 
 var bodyKey = bodyKeyType{}
 
-// keep copies the request body for the raw-body path fallback ([[D-043]]).
+// keep files the bytes the decoder already copied, for the raw-body path
+// fallback ([[D-043]]).
 //
-// A copy and never a reference. Fiber documents c.Body() as valid only within
-// the handler and this binding builds its app with a plain fiber.New(), so
+// A copy and never a reference, which is why it takes the decoder's slice
+// rather than c.Body(). Fiber documents c.Body() as valid only within the
+// handler and this binding builds its app with a plain fiber.New(), so
 // Immutable is off — a stored reference is a use-after-free that would surface
 // as a corrupted field path under load.
 //
-// One copy per write request, capped, and only on the three routes whose body
-// carries field values: a bulk delete carries ids, and a restrict violation
-// raised by one names a column of the child table, which this model's Meta
-// could not translate anyway.
-func keep(c fiber.Ctx) {
-	if raw := crudhttp.KeepBody(c.Body()); len(raw) > 0 {
+// Only on the three routes whose body carries field values: a bulk delete
+// carries ids, and a restrict violation raised by one names a column of the
+// child table, which this model's Meta could not translate anyway.
+func keep(c fiber.Ctx, raw []byte) {
+	if len(raw) > 0 {
 		fiber.Locals(c, bodyKey, raw)
 	}
 }

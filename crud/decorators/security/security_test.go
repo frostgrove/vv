@@ -304,3 +304,124 @@ func (t tracer) GetAll(ctx context.Context, opts ...crud.Option) ([]Doc, error) 
 	*t.seen = append(*t.seen, t.name)
 	return t.Core.GetAll(ctx, opts...)
 }
+
+// A frozen field is frozen through every verb, whichever spelling declared it.
+//
+// The two enforcement points used to speak different vocabularies: Update
+// compares against crud.DefinedFields, which answers *canonical* model field
+// names, while Save resolved each name through the forgiving meta.Field, which
+// also accepts the column spelling. So Freeze("tenant_id") froze the column on
+// PUT and not on PATCH — silently writable through the verb a client is most
+// likely to use, on a policy whose whole purpose is that it is not.
+func TestAFrozenFieldIsFrozenByEitherSpellingAndThroughBothVerbs(t *testing.T) {
+	for _, spelling := range []string{"TenantID", "tenant_id"} {
+		t.Run(spelling, func(t *testing.T) {
+			rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "mine")))
+			repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64](spelling)))
+
+			// PATCH: a DTO that defines the frozen field is refused.
+			other := int64(9)
+			_, err := repo.Update(context.Background(), 1, DocUpdate{TenantID: &other})
+			if !errors.Is(err, security.ErrForbidden) {
+				t.Fatalf("declared as %q, the field was writable through PATCH: %v", spelling, err)
+			}
+			if n := len(rec.Statements()); n != 0 {
+				t.Fatalf("the refusal still ran %d statements", n)
+			}
+		})
+	}
+
+	// The control: a DTO that leaves the frozen field alone still goes through,
+	// so the refusals above are the field and not the policy.
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(docRow(1, 7, "mine")),
+		crudtest.Rows(docRow(1, 7, "renamed")),
+	).ExecResult(crud.Result{RowsAffected: 1})
+	title := "renamed"
+	if _, err := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("tenant_id"))).
+		Update(context.Background(), 1, DocUpdate{Title: &title}); err != nil {
+		t.Fatalf("an update that touched no frozen field was refused: %v", err)
+	}
+}
+
+// A frozen name that resolves to nothing is a declaration mistake, and it fails
+// where it was written.
+//
+// It used to be accepted: Update never matched it, so the field the author meant
+// to freeze was writable, and Save turned it into a denial of every write. Both
+// halves are silent until a request arrives ([[D-021]]).
+func TestFreezingAFieldTheModelDoesNotHavePanicsAtDeclaration(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a frozen name that names nothing was accepted, so it freezes nothing and nobody is told")
+		}
+	}()
+	security.Gate(security.Freeze[Doc, int64]("Nope"))(nil)
+}
+
+// A policy with no per-row rule does not pay for the row.
+//
+// gate.Update loaded the row and handed it to Inspect. With no Inspect wired it
+// loaded the row and did nothing with it — a whole round trip before every
+// update, on the most common policy shape there is: a scope and no per-row rule.
+//
+// The scope is not what needed it. The UPDATE carries the same scope, so a row
+// outside it matches nothing and the repository answers ErrNotFound by itself
+// ([[D-008]]), which is what the control below asserts.
+func TestAPolicyWithNoPerRowRuleDoesNotLoadTheRow(t *testing.T) {
+	title := "renamed"
+
+	// The repository loads the row itself — Update is load-diff-write ([[D-010]])
+	// — so the question is not whether a SELECT happens but whether the gate adds
+	// a *second* one. Counting is the only way to see it.
+	update := func(t *testing.T, policy security.Policy[Doc, int64], rows int) int {
+		t.Helper()
+		rec := crudtest.Postgres()
+		for range rows {
+			rec = rec.Push(crudtest.Rows(docRow(1, 7, "mine")))
+		}
+		if _, err := Docs.Bind(rec, security.Gate(policy)).
+			Update(withTenant(context.Background(), 7), 1, DocUpdate{Title: &title}); err != nil {
+			t.Fatal(err)
+		}
+		return len(rec.Statements())
+	}
+
+	// A scope and nothing else. tenantPolicy is ScopeField, which sets an Inspect
+	// of its own — so it is not the shape this test is about.
+	scopeOnly := security.Policy[Doc, int64]{
+		Scope: func(ctx context.Context) (crud.Predicate, error) {
+			t, err := tenantOf(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return crud.Eq("TenantID", t), nil
+		},
+	}
+	seen := 0
+	withRule := security.Combine(scopeOnly, security.Policy[Doc, int64]{
+		Inspect: func(context.Context, security.Action, *Doc) error { seen++; return nil },
+	})
+
+	bare := update(t, scopeOnly, 3)
+	ruled := update(t, withRule, 3)
+
+	if seen == 0 {
+		t.Fatal("the rule was never shown the row, so the comparison below measures nothing")
+	}
+	if bare >= ruled {
+		t.Fatalf("a policy with no per-row rule cost %d statements and one with a rule cost %d — the gate is still loading a row it does not look at", bare, ruled)
+	}
+
+	t.Run("control: an out-of-scope id is still not found", func(t *testing.T) {
+		// This is what the load was not needed for. The UPDATE carries the scope,
+		// so the row matches nothing and the answer is ErrNotFound rather than a
+		// denial — D-008, reached without a read.
+		rec := crudtest.Postgres().Push(crudtest.Rows())
+		_, err := Docs.Bind(rec, security.Gate(scopeOnly)).
+			Update(withTenant(context.Background(), 9), 1, DocUpdate{Title: &title})
+		if !errors.Is(err, crud.ErrNotFound) {
+			t.Fatalf("an out-of-scope update answered %v, want ErrNotFound", err)
+		}
+	})
+}

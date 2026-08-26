@@ -88,6 +88,26 @@ type switch per driver.
   `test/integration/aggregate_test.go` — unknown field, unknown group, unknown
   function, duplicate name, no aggregation.
 
+- `TestValidateRefusesAnAggregateNoEngineCouldAnswer` and
+  `TestValidateRefusesTheThreeShapesThatReachedTheDriver` in
+  `crud/aggregate_test.go` — the refusal path, with the control that the
+  ordinary shapes still validate. The second was written after the first found
+  three specs that validated and then reached a driver as a statement no engine
+  parses: `COUNT(DISTINCT *)`, and an aggregate over a relation path, which
+  `Render` expands into `SUM(EXISTS (SELECT 1 FROM ...))` because `FieldAt`
+  resolves a path and `w.Column` writes one.
+- `TestTheProjectionRendersEachAggregateUnderTheFunctionItNames` in the same
+  file — the projection, with `CountOf` as the DISTINCT control.
+- `TestAFloatAggregateIsReadWhateverShapeTheDriverReturned` paired with
+  `TestASumReadsAsTheSameNumberThroughIntAndFloat` — the coercion. A driver
+  decides the Go type from the *column*, not from the aggregate, so the same
+  total arrives as `int32` from pgx, `[]byte` from MySQL and `float64`
+  elsewhere. The pair is what found `toFloat64` missing the `int32` arm
+  `toInt64` has had since it was written: `Int` read the total and `Float`
+  answered "absent", on one driver, for one column type, with nothing to see.
+- `TestAnAbsentAggregateAndOneThatIsZeroAreDifferentAnswers` — what the
+  `(T, bool)` signature is for.
+
 ## See also
 
 [[D-003]] [[D-004]] [[D-013]] [[FL-007]]

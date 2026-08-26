@@ -10,7 +10,7 @@ wrap both in `crud.ErrConflict`, which [[D-015]]'s table maps to **409**. Both
 cannot be true, and the roadmap says so: *"shipping both mappings — 409 from the
 sentinel, 422 from the Kind — is the one outcome that must not happen."*
 
-The kind wins. `crudhttp.StatusFor` is the §2 table written out arm by arm, and
+The kind wins. `porthttp.StatusFor` is the §2 table written out arm by arm, and
 `port.KindOf` resolves one kind from the fault plus its violations' codes. A refusal
 with no fault falls through to the sentinel table, unchanged.
 
@@ -78,7 +78,7 @@ engine.
   twins: the table, arm by arm, in all three HTTP bindings.
 - `TestKindMapsToTheCodeItPromisesTo` — `crud/rpc/crudgrpc/status_test.go` — the
   second vocabulary over the same answer, which is what says the kind decides
-  rather than the status table being the decision. Two of the eight kinds
+  rather than the status table being the decision. Two of the nine kinds
   collapse into one `codes.Code` there, and that is the cost [[D-052]] records
   rather than a per-code refinement this decision forbids.
 - `TestEveryRouteMapsARefusalTheSameWay` — a route that skipped the mapping

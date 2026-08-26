@@ -71,6 +71,10 @@ type enricher[M any, ID comparable] struct {
 	onProbeErr func(op string, err error)
 }
 
+// Next hands back the Core this enricher wraps, so a chain with faults in the
+// middle stays walkable ([[crud.Nexter]]).
+func (e *enricher[M, ID]) Next() crud.Core[M, ID] { return e.Core }
+
 // enrich is the whole of this package. Everything below it is one line per verb.
 //
 // The fault is copied rather than written to. A *Fault is a value two

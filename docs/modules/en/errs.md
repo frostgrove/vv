@@ -212,7 +212,7 @@ declare your own of the same type.
 | Integrity | `unique` `not_unique` `foreign_key` `restrict` `required` `check` `exclusion` |
 | Data | `too_long` `out_of_range` `invalid_format` `invalid_enum` |
 | Concurrency | `stale_version` `deadlock` `serialization_failure` `lock_timeout` `transaction_aborted` |
-| Request | `malformed_body` `invalid_id` `unknown_field` `bad_query` |
+| Request | `malformed_body` `invalid_id` `unknown_field` `bad_query` `too_large` |
 | Coarse | `conflict` `not_found` `forbidden` `unauthenticated` `unavailable` `internal` |
 
 A code is **never derived from anything a driver said** — a code built out of a
@@ -220,7 +220,7 @@ CHECK expression's source text carries the column names with it.
 
 ### `Kind` — the transport class
 
-Eight values, and a transport maps **the kind and never the code**. That is what
+Nine values, and a transport maps **the kind and never the code**. That is what
 lets a service declare fifty codes of its own without touching a status table
 ([[D-049]]).
 
@@ -234,6 +234,7 @@ lets a service declare fifty codes of its own without touching a status table
 | `KindConflict` | 409 | `AlreadyExists` |
 | `KindValidation` | 422 | `InvalidArgument` |
 | `KindBadRequest` | 400 | `InvalidArgument` |
+| `KindTooLarge` | 413 | `ResourceExhausted` |
 
 `KindInternal` is **zero on purpose**: a kind that lost its meaning says 500
 rather than claiming a 4xx it cannot support.
@@ -282,7 +283,7 @@ the probe runs (a payload already known bad is not probed).
 type Fault struct {
     Kind       Kind
     Code       Code
-    Message    string   // developer-facing. Never rendered
+    Message    string   // developer-facing — but see below
     Violations []Violation
     Op         string   // the repository verb: "Save", "Update"
     Entity     string
@@ -290,6 +291,13 @@ type Fault struct {
     Detail     Detail   // dialect, SQLSTATE, constraint, table — never rendered
 }
 ```
+
+**`Message` is developer-facing, and there is exactly one path by which a client
+reads it.** A fault carrying no violations — a 404, a bare 403, a 401 — has one
+synthesised for it, and that violation takes the fault's message unless the
+catalogue answers for the code first. So a message written for a log is a message
+somebody may be shown: keep it generic, or leave it empty and let the vocabulary
+answer ([[D-056]]). `Detail` has no such path and is never rendered.
 
 **It wraps and never replaces** ([[D-038]]). A caller who wrote
 `errors.Is(err, crud.ErrConflict)` before any of this existed keeps that branch,
@@ -323,8 +331,9 @@ return errs.Validation().
     Fault()
 ```
 
-Nine entry points: `New(kind)`, `Validation()`, `BadRequest()`, `Conflict()`,
-`NotFound()`, `Forbidden()`, `Unauthorized()`, `Retryable()`, `Internal()`.
+Ten entry points: `New(kind)`, `Validation()`, `BadRequest()`, `Conflict()`,
+`NotFound()`, `Forbidden()`, `Unauthorized()`, `Retryable()`, `TooLarge()`,
+`Internal()`.
 
 Steps: `Field(name)` · `At(path)` · `General()` · `Code(c)` · `Message(s)` ·
 `Params(p)` · `Origin(o)` · `Source(s)` · `Approximate(b)` · `Detail(d)` ·

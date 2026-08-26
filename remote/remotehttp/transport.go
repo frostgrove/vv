@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
@@ -36,7 +37,7 @@ import (
 // copy of each, which is the whole of [[D-045]]'s rule read from the client
 // side.
 func Transport(baseURL string, opts ...TransportOption) remote.Transport {
-	t := &transport{base: strings.TrimSuffix(baseURL, "/"), client: http.DefaultClient}
+	t := &transport{base: strings.TrimSuffix(baseURL, "/"), client: defaultClient()}
 	for _, o := range opts {
 		if o != nil {
 			o(t)
@@ -45,11 +46,36 @@ func Transport(baseURL string, opts ...TransportOption) remote.Transport {
 	return t
 }
 
+// DefaultTimeout bounds a call that nobody bounded. It is deliberately generous
+// — this is the backstop for a peer that stopped answering, not a latency
+// budget, and a service with one of its own passes a client with [WithClient].
+const DefaultTimeout = 30 * time.Second
+
+// MaxResponse is how many bytes of an answer this transport reads.
+//
+// A remote resource is another service, and another service can be wrong: a
+// paging bug on the far side, a proxy substituting an HTML page, a peer that has
+// been taken over. io.ReadAll on a body nobody bounded turns any of those into
+// this process running out of memory, which is the one failure a client cannot
+// report. The cap is generous because a legitimate page of rows is large, and it
+// is a cap because "as much as they send" is not a number.
+const MaxResponse = 32 << 20
+
+// defaultClient is what a Transport uses when nobody named one.
+//
+// A client of its own and never http.DefaultClient. http.DefaultClient has no
+// timeout at all, so a peer that accepts a connection and then says nothing
+// holds the caller for as long as it likes; and it belongs to the whole process,
+// so a consumer tuning it for this transport would be tuning it for every other
+// library in the binary too.
+func defaultClient() *http.Client { return &http.Client{Timeout: DefaultTimeout} }
+
 // A TransportOption wires one part of a [Transport].
 type TransportOption func(*transport)
 
-// WithClient replaces the http.Client, which is where a timeout, a transport
-// with connection limits, or a instrumented round tripper goes.
+// WithClient replaces the http.Client, which is where a timeout other than
+// [DefaultTimeout], a transport with connection limits, or an instrumented round
+// tripper goes.
 func WithClient(c *http.Client) TransportOption {
 	return func(t *transport) {
 		if c != nil {
@@ -65,10 +91,26 @@ func WithRequestHook(fn func(*http.Request) error) TransportOption {
 	return func(t *transport) { t.hook = fn }
 }
 
+// WithMaxResponse caps how many bytes of an answer this transport reads, for a
+// resource whose pages are genuinely larger — or smaller — than [MaxResponse].
+// Zero or less means [MaxResponse]; there is no spelling for "unbounded".
+func WithMaxResponse(n int) TransportOption {
+	return func(t *transport) { t.maxResponse = n }
+}
+
 type transport struct {
-	base   string
-	client *http.Client
-	hook   func(*http.Request) error
+	base        string
+	client      *http.Client
+	hook        func(*http.Request) error
+	maxResponse int
+}
+
+// cap answers the byte limit this transport reads an answer to.
+func (t *transport) cap() int {
+	if t.maxResponse > 0 {
+		return t.maxResponse
+	}
+	return MaxResponse
 }
 
 // Do implements remote.Transport.
@@ -81,7 +123,7 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("crudhttp: building the request for %s: %w", target, err)
+		return nil, fmt.Errorf("remotehttp: building the request for %s: %w", target, err)
 	}
 	req.Header.Set("Accept", "application/json")
 	if len(body) > 0 {
@@ -95,13 +137,21 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("crudhttp: calling %s %s: %w", method, target, err)
+		return nil, fmt.Errorf("remotehttp: calling %s %s: %w", method, target, err)
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	// One byte past the cap, so an answer of exactly MaxResponse is read rather
+	// than reported as over it: io.LimitReader cannot tell a full buffer from an
+	// exhausted reader, and the honest answer to the first is that it fits.
+	limit := t.cap()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
-		return nil, fmt.Errorf("crudhttp: reading the answer from %s %s: %w", method, target, err)
+		return nil, fmt.Errorf("remotehttp: reading the answer from %s %s: %w", method, target, err)
+	}
+	if len(raw) > limit {
+		return nil, fmt.Errorf("remotehttp: the answer to %s %s is larger than the %d bytes this client reads",
+			method, target, limit)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return raw, nil
@@ -148,7 +198,7 @@ func (t *transport) route(call remote.Call) (method, path string, body []byte, e
 		// them through []string would turn 42 into "42".
 		return http.MethodPost, "/bulk-delete", []byte(`{"ids":` + string(call.IDs) + `}`), nil
 	}
-	return "", "", nil, fmt.Errorf("crudhttp: no route for %s", call.Method)
+	return "", "", nil, fmt.Errorf("remotehttp: no route for %s", call.Method)
 }
 
 // entityQuery renders the shaping options GET /{id} carries.

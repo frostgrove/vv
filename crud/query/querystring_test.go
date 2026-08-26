@@ -246,7 +246,7 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 
 	// And it all compiles into one statement: the JSON document and the flat
 	// terms are ANDed, not one instead of the other.
-	sql, _ := runReq(t, req, nil)
+	sql, _ := runReq(t, req, exports)
 	want := `("body" = $1 AND "views" >= $2 AND "title" LIKE $3 AND "published_at" IS NULL ` +
 		`AND ("title" LIKE $4 OR "body" LIKE $5))`
 	if got := where(sql); got != want {
@@ -335,7 +335,7 @@ func TestParseQueryOfNothing(t *testing.T) {
 	if req == nil {
 		t.Fatal("ParseQuery returned no request")
 	}
-	opts, err := req.Compile(Articles.Meta(), nil)
+	opts, err := req.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}

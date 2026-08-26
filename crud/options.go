@@ -191,6 +191,19 @@ func Distinct() Option { return func(o *Options) { o.Distinct = true } }
 
 // With replays a prebuilt Options as an Option, so callers can pass a stored
 // query shape around.
+//
+// It carries the relation narrowings, and that is not a detail. `Get` computes
+// its total with `Count(ctx, With(o))`; the security gate's narrowings arrive
+// only in `o.RelScopes`, so a `With` that dropped them built the COUNT from a
+// narrowing-free Options while the SELECT beside it was narrowed. The page then
+// showed the rows the caller may see and a `Total` counted over the rows the
+// gate hides — a wrong number, and a count oracle over another tenant's rows
+// ([[D-007]], [[D-029]]).
+//
+// After, Before and Agg are deliberately not replayed: a cursor belongs to the
+// sort it was made for ([[D-028]]) and an aggregate is a different statement, so
+// replaying either into a second query would be carrying state across a boundary
+// rather than reusing a shape.
 func With(src *Options) Option {
 	return func(o *Options) {
 		if src == nil {
@@ -215,6 +228,7 @@ func With(src *Options) Option {
 		o.NoTotal = o.NoTotal || src.NoTotal
 		o.ForUpdate = o.ForUpdate || src.ForUpdate
 		o.Distinct = o.Distinct || src.Distinct
+		o.RelScopes = MergeRelationScopes(o.RelScopes, src.RelScopes)
 	}
 }
 

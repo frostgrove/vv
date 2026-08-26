@@ -99,7 +99,8 @@ moved to `port` at phase 5. [[D-045]] and [[FL-015]] carry the current map.
 
 - `crud/http/crudhttp/repository.go:Repository` — the interface.
 - `port/porthttp/errors.go:Status` — the whole mapping in one switch.
-- `port/porthttp/errors.go:Body` — the response body, and the 500 silence.
+- `port/porthttp/envelope.go:Envelope` / `:Internal` — the response body and the
+  500 silence, which is what phase 4's renderer put in `Body`'s place.
 - `port/porthttp/errors.go:ErrBadRequest` — the one sentinel, with the reason on
   it.
 - `crud/http/crudhttp/model.go:Sanitize` / `:ClearGenerated` — the create-time

@@ -110,15 +110,32 @@ that names a symbol which no longer exists has failed at the one job it has.
 The databases run in Docker and are expected to be up (`make up`).
 
 ```bash
-make unit          # go test ./... in every module, no database
-make integration   # go test -tags=integration ./test/...  — PostgreSQL + MySQL
+make unit          # go test -race ./... in every module, no database
+make integration   # go test -race -tags=integration ./test/... — PostgreSQL + MySQL
 make test          # both
 make vet           # every module
 make fmt           # gofmt
 make generate      # regenerate DTOs and metamodels
 make tidy          # go mod tidy in every module
 make examples      # build, vet and test the runnable examples
+make vuln          # govulncheck over every module — reaches the network, so not in `check`
+make api           # regenerate docs/api/surface.md, the exported-surface baseline
 ```
+
+`make check` runs the structural checks `go test` cannot: `check-deps`,
+`check-tiers`, `check-utils`, `check-triplets`, `check-todo`, `check-tidy`. Run
+it before reporting a task done — several of them fail on things a test suite is
+structurally unable to see.
+
+`make vuln` is deliberately outside `check`, because `check` must run offline.
+`make release` runs it. Scan in **workspace mode**: with `GOWORK=off` a satellite
+cannot resolve the library — there is no tag — and govulncheck reports a loading
+error, which reads exactly like a clean scan. Ten of the eleven published modules
+were "scanned" that way the first time and none of them actually ran.
+
+`make api` regenerates `docs/api/surface.md`. Nothing checks it and nothing
+should: a diff there is a question for a person. After the first tag, a line that
+disappears is a breaking change.
 
 `make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`, which is
 **discovered** — `find . -name go.mod` — not a hand-written list. A new module
@@ -130,6 +147,15 @@ and this repository has already been bitten by exactly that.
 Before reporting a task done: unit green, integration green **twice in a row**
 (a test that passes once and fails on rerun is a real defect), `gofmt -l` silent,
 `go vet` clean.
+
+**Both suites run under `-race`, and the integration one is why.** It is the only
+thing here that touches live drivers, real pools and the concurrency they bring,
+and the library holds process-global state every repository over a model shares —
+the schema cache, the per-handle catalog. A race in those is not a race between
+two repositories but between any two concurrent requests that happen to be first
+somewhere, which is the shape that never reproduces in a unit test and did not:
+`Relation.resolveDefaults` wrote to a shared `*Relation` outside its `Once` and
+was found by reading, not by running.
 
 If the integration suite fails to connect, the container died — `make up` and
 retry. The suite bootstraps its own schema from empty.
@@ -143,7 +169,14 @@ Tests are the specification; see `[[D-020]]`.
 - **A test that would still pass if the feature were deleted is a liability.**
   Sanity-check a new test by breaking the library, watching it fail, and
   restoring. Say in your report that you did.
-- **Put a control case next to any test that could pass vacuously.** The pattern
+- **The wire DSL has fuzz targets** in `crud/query/fuzz_test.go`, and their seed
+corpus runs as an ordinary test on every `make unit`. They pin the three
+properties everything else rests on: compiling never panics, a refusal produces
+no options at all, and nothing the caller wrote reaches the statement as text.
+Run a real campaign with `-fuzz FuzzCompileJSON -fuzztime 2m` after touching
+anything in `crud/query`.
+
+**Put a control case next to any test that could pass vacuously.** The pattern
   is in `test/integration/gate_relscope_test.go`: the "not declared" subtest
   asserts the leak *is* there without the declaration, so if something else ever
   closes it the control fails and tells you the positive test now proves nothing.
@@ -154,6 +187,10 @@ Tests are the specification; see `[[D-020]]`.
   same test names, file for file. If
   a new test only makes sense for one of them, it belongs in that binding's
   `routing_test.go`, and the difference it pins belongs in `[[FL-013]]`.
+  **`make check-triplets` is what holds this** — it compares the test names and
+  exempts `routing_test.go` and `binding_test.go`, so a difference has to be
+  parked in the file that says it is one. Before that check existed the rule
+  held by everybody remembering it, and it had already stopped holding.
   **`crud/rpc/crudgrpc` is a fourth transport and is not in that triplet**: it
   carries the subset of those names that is about `port` rather than about HTTP, and
   spells the rest in its own vocabulary because there is no 404 and no `PUT`
@@ -163,7 +200,17 @@ Tests are the specification; see `[[D-020]]`.
   `auth/http/authnet`, `auth/http/authgin` and `auth/http/authfiber` carry the
   same test names file for file, and `auth/rpc/authgrpc` carries the subset that
   is about `port`
-  rather than about HTTP. What differs between them belongs in `[[FL-019]]`.
+  rather than about HTTP. What differs between them goes in that binding's
+  `binding_test.go` — the auth triplet's name for `routing_test.go`, because
+  what differs there is what the framework does with an error nobody asked it
+  about — and is written down in `[[FL-019]]`.
+- **An optional interface is never found with a bare type assertion.** A value
+  reached through a decorator or a wrapper has lost every method its own
+  interface does not name — silently. Use `crud.SourceOf`, `crud.BeginnerOf`,
+  `crud.ReadSourceOf` or `crud.KeyOf`, and give any decorator you add a
+  `Next()`. `[[D-061]]` has the failure this comes from.
+- **Nothing writes to a process-wide logger.** `port.Logger(ctx)` is the seam;
+  `log.Printf` in library code is a defect. `[[D-062]]`.
 - Compare errors with `errors.Is` against the exported sentinels, never by
   string.
 - The failure message states what broke in plain words, not `got != want`.
@@ -235,12 +282,11 @@ remote/                     the consuming half: another service's resource, held
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
 └── sqlerr/                 a driver error becomes a code, one table per dialect
 
-vvdb/                       one config -> a DSN or a *sql.DB, four engines; who opens the connection
-└── dbpgx/                  MODULE — the same config, a pgx pool
-
 utils/                      for the consumer's application, never for the library
 ├── vvflag/                 one typed flag, without owning the command line
-└── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
+├── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
+└── vvdb/                   one config -> a DSN or a *sql.DB, four engines; who opens the connection
+    └── dbpgx/              MODULE — the same config, a pgx pool
 
 cmd/vv/                     generates the update DTO and the metamodel from your model
 internal/codegen/           what cmd/vv is a front end for
@@ -254,7 +300,12 @@ _examples/                  MODULE (unpublished) — runnable examples, one per 
 boundary is a single line — **nothing under `utils/` imports `crud/`, `auth/`,
 `port/` or `remote/`.** A package that needs to is not a utility, and it moves to
 the subsystem it belongs to. Without that line `utils/` collects half the
-repository inside a year.
+repository inside a year. `make check-utils` is what holds it.
+
+`vvdb` is there despite carrying a satellite module beneath it, and that is the line working
+rather than bending: [[D-057]] already forbids it `crud`, `errs`, and any call
+from inside the repository path. What the boundary measures is the import graph,
+not the package count.
 
 `_examples/` starts with an underscore, so the Go toolchain ignores it at the
 root: `make unit` does not build it and `make examples` does.

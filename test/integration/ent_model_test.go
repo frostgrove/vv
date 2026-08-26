@@ -113,7 +113,7 @@ func TestEntStructReadsThroughVV(t *testing.T) {
 	}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(EntUsers.Meta(), nil)
+	opts, err := req.Compile(EntUsers.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}

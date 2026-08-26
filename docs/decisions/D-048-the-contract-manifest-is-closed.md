@@ -6,8 +6,27 @@
 ## The decision
 
 `Makefile:TIER0` is the manifest, and `make check-tiers` is what makes it real
-rather than aspirational. It holds four names and this decision closes it:
-nothing on the framework roadmap's `?` list joins.
+rather than aspirational. It holds **four contracts** — `crud`, `query`, `errs`
+and `port` — and this decision closes that list: nothing on the framework
+roadmap's `?` list joins.
+
+It is spelled as seven exact package paths, not four:
+
+```
+TIER0 := crud crud/crudtest crud/query errs errs/sqlerr port port/porthttp
+```
+
+The extra three are not new contracts. `crud/crudtest`, `errs/sqlerr` and
+`port/porthttp` are subpackages of contracts already on the list, and they are
+named individually because [[D-058]] made prefix matching unsafe: a check that
+matched `crud/...` would admit `crud/sqlrepo`, which is an ordinary package with
+ordinary dependencies. `port/porthttp` arrived with [[D-059]] and carries its own
+argument for why the HTTP projection of the error contract is `port`'s.
+
+So the closing rule governs **subsystems**, and a subpackage of one joins by the
+tier rule — it imports only the standard library and other contract packages —
+rather than by the second-implementation rule below, which is about a new
+contract. Read the count as four; read the variable as seven.
 
 | candidate | verdict | why |
 |---|---|---|
@@ -79,7 +98,7 @@ The manifest is the short list of things a third party writes *against*.
 
 ## Where it lives
 
-- `Makefile:TIER0` — the manifest, four names.
+- `Makefile:TIER0` — the manifest: four contracts, seven package paths.
 - `Makefile:TIER0_STDLIB` / `Makefile:TIER0_SEALED` — the two tighter arms.
   `crud` may import only the standard library ([[D-016]]'s surviving half);
   `errs` may import only the standard library and `errs/...`, checked with
@@ -109,6 +128,6 @@ buried in a package list.
 
 [[D-055]] is this decision applied rather than amended: the `auth` subsystem
 shipped, `authjwt` as the satellite this table predicted, and `Makefile:TIER0`
-unchanged at four names.
+unchanged at four contracts.
 
 [[D-033]] [[D-035]] [[D-036]] [[D-037]] [[D-041]] [[D-016]] [[D-055]]

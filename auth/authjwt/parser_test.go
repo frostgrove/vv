@@ -235,3 +235,59 @@ func TestOnlyTheMethodsTheKeyDeclaresAreAccepted(t *testing.T) {
 		}
 	})
 }
+
+// Naming two audiences means the token must carry both.
+//
+// This is the one place in the package where the underlying library's option
+// does the opposite of what this one promises. golang-jwt's WithAudience
+// *assigns* the expected set and means "any of", so calling it once per audience
+// left only the last one expected — `Audience("a", "b")` accepted a token
+// audienced to "b" alone and **rejected** one audienced to "a" alone, which is
+// wrong in both directions at once.
+//
+// Every other test in this package passes exactly one audience, which is why
+// three review passes did not see it. The three-arm table is the point: a
+// single-audience test passes under either quantifier.
+func TestNamingTwoAudiencesRequiresBothOfThem(t *testing.T) {
+	const other = "reports-api"
+	p := authjwt.New[MyClaims](authjwt.HMAC(secret),
+		authjwt.Issuer(issuer), authjwt.Audience(audience, other))
+
+	withAud := func(aud any) string {
+		c := claims()
+		c["aud"] = aud
+		return sign(t, jwt.SigningMethodHS256, secret, c)
+	}
+
+	for _, tc := range []struct {
+		name string
+		aud  any
+		ok   bool
+	}{
+		{"both", []string{audience, other}, true},
+		{"both, in the other order", []string{other, audience}, true},
+		{"both and a third", []string{other, "extra", audience}, true},
+		{"only the first", audience, false},
+		{"only the second", other, false},
+		{"neither", "somewhere-else", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := p.Parse(t.Context(), withAud(tc.aud))
+			switch {
+			case tc.ok && err != nil:
+				t.Fatalf("a token carrying %v was refused: %v", tc.aud, err)
+			case !tc.ok && err == nil:
+				t.Fatalf("a token carrying only %v was accepted by a parser that requires both", tc.aud)
+			}
+		})
+	}
+
+	// The control: the same parser with one audience still accepts a token
+	// carrying it, so the table above is not passing because this parser refuses
+	// everything.
+	one := authjwt.New[MyClaims](authjwt.HMAC(secret),
+		authjwt.Issuer(issuer), authjwt.Audience(audience))
+	if _, err := one.Parse(t.Context(), withAud(audience)); err != nil {
+		t.Fatalf("a single-audience parser refused its own audience: %v", err)
+	}
+}

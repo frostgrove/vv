@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
 
@@ -79,12 +80,22 @@ func Bearer(header string) (Credential, bool) {
 // It is how one endpoint accepts a JWT from a browser and an API key from a
 // batch job.
 //
-// The error it returns when none succeeds is the last one, and it says nothing
-// about how many were tried. Reporting "3 of 3 authenticators refused" would
-// tell a caller which schemes exist.
+// The error it returns when none succeeds says nothing about how many were tried
+// or which one produced it. Reporting "3 of 3 authenticators refused" would tell
+// a caller which schemes exist.
+//
+// **A failure that is not a refusal wins over one that is**, whatever order the
+// authenticators are in. An authenticator distinguishes "this credential is
+// wrong" from "I could not tell" on purpose — apikey.Store has three results for
+// exactly that, so a store outage renders as a 500 rather than a 401 ([[D-056]],
+// TestAStoreFailureIsNotARefusal). Returning the *last* error threw that away
+// whenever a later authenticator refused: Chain(keys, jwt) turned a database
+// outage into "your key is invalid", which is wrong for the client and invisible
+// to whoever watches the 5xx rate. The wiring order is not something a consumer
+// should have to get right to keep an outage visible.
 func Chain(as ...Authenticator) Authenticator {
 	return AuthenticatorFunc(func(ctx context.Context, c Credential) (Principal, error) {
-		var err error
+		var refusal, infra error
 		for _, a := range as {
 			if a == nil {
 				continue
@@ -93,11 +104,23 @@ func Chain(as ...Authenticator) Authenticator {
 			if e == nil {
 				return p, nil
 			}
-			err = e
+			if errors.Is(e, ErrUnauthenticated) {
+				refusal = e
+				continue
+			}
+			// The first one, not the last: an outage that happened before another
+			// authenticator also failed is still the thing that happened.
+			if infra == nil {
+				infra = e
+			}
 		}
-		if err == nil {
-			err = Unauthenticated("no authenticator was wired")
+		switch {
+		case infra != nil:
+			return nil, infra
+		case refusal != nil:
+			return nil, refusal
+		default:
+			return nil, Unauthenticated("no authenticator was wired")
 		}
-		return nil, err
 	})
 }

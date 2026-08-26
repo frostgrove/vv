@@ -84,6 +84,15 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			preds = append(preds, buildText(canonical, kind, t.Values[0]))
 
 		case kind.multi():
+			// The third spelling of a value list, and it was the one with no
+			// ceiling. `c.count` above charges the whole term as one condition
+			// however long Values is — which is what D-060 says a list costs —
+			// so without this the flat-term `in` produced one bind parameter per
+			// element with nothing bounding it, reachable from POST /query
+			// through Term.Values on a stock config.
+			if err := c.countValues(len(t.Values), "filter."+canonical); err != nil {
+				return nil, err
+			}
 			vals, err := c.coerceAll(t.Values, f, canonical)
 			if err != nil {
 				return nil, err
@@ -125,7 +134,10 @@ func (c *compiler) coerceAll(raw []string, f *crud.Field, canonical string) ([]a
 		}
 		v, err := coerceString(s, t)
 		if err != nil {
-			return nil, errf("filter."+canonical, "%q is not a valid %s", s, t)
+			// wanted, not t: this message is rendered, so a reflect.Type here
+			// puts the Go type of the consumer's own field on the wire
+			// ([[D-044]]). The query-string door had its own copy of the leak.
+			return nil, errf("filter."+canonical, "%q is not %s", s, wanted(t))
 		}
 		out = append(out, v)
 	}
@@ -158,14 +170,18 @@ func ParseQuery(v url.Values) (*Request, error) {
 		}
 		return 0, nil
 	}
-	flag := func(keys ...string) bool {
+	// flag answers the value and the spelling that carried it, because a
+	// refusal has to name the parameter the client actually sent. `?all=1`
+	// blamed on `unpaged` is a 400 pointing at a key that appears nowhere in the
+	// request ([[D-013]] wants the path a client can act on).
+	flag := func(keys ...string) (bool, string) {
 		for _, k := range keys {
 			if s := v.Get(k); s != "" {
 				b, err := strconv.ParseBool(s)
-				return err == nil && b
+				return err == nil && b, k
 			}
 		}
-		return false
+		return false, ""
 	}
 
 	var err error
@@ -178,9 +194,9 @@ func ParseQuery(v url.Values) (*Request, error) {
 	if r.Offset, err = num("offset"); err != nil {
 		return nil, err
 	}
-	r.Unpaged = flag("unpaged", "all")
-	r.SkipTotal = flag("skipTotal", "skip_total", "noTotal")
-	r.Distinct = flag("distinct")
+	r.Unpaged, r.unpagedParam = flag("unpaged", "all")
+	r.SkipTotal, _ = flag("skipTotal", "skip_total", "noTotal")
+	r.Distinct, _ = flag("distinct")
 
 	r.Sort = parseSortList(multi(v, "sort", "sorts", "orderBy", "order_by"))
 	r.Select = Strings(multi(v, "select", "fields"))

@@ -30,8 +30,11 @@ type repository[M any, ID comparable, U any] struct {
 
 func newRepository[M any, ID comparable, U any](src crud.Source, bp *Blueprint[M, ID, U]) *repository[M, ID, U] {
 	r := &repository[M, ID, U]{src: src, bp: bp, meta: bp.meta, d: src.Dialect()}
-	if rs, ok := src.(crud.ReadSourcer); ok {
-		r.replica = rs.ReadSource()
+	// crud.ReadSourceOf and not a type assertion: a source wrapped for
+	// instrumentation is still a ReadWrite underneath, and losing the replica
+	// here would send every read to the primary with nothing saying why.
+	if replica, ok := crud.ReadSourceOf(src); ok {
+		r.replica = replica
 	}
 	m, d := r.meta, r.d
 	q := d.Quote
@@ -882,7 +885,7 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 	}
 	where := crud.And(r.bp.set.scope, byID)
 	if r.bp.softDelete != nil {
-		return r.stamp(ctx, where)
+		return r.stamp(ctx, where, r.bp.relScopes)
 	}
 	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).Raw(r.deleteFrom).
 		Where(where)
@@ -900,7 +903,7 @@ func (r *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, er
 func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
 	o := crud.Build(opts...)
 	if r.bp.softDelete != nil {
-		return r.stamp(ctx, r.scoped(o))
+		return r.stamp(ctx, r.scoped(o), r.relScopes(o))
 	}
 	q, args, err := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).
 		Raw(r.deleteFrom).Where(r.scoped(o)).Done()
@@ -917,12 +920,19 @@ func (r *repository[M, ID, U]) DeleteAll(ctx context.Context, opts ...crud.Optio
 // stamp is what a delete becomes when the repository soft-deletes: one UPDATE
 // setting the tombstone, under exactly the narrowing the DELETE would have had.
 //
+// The relation narrowings are a parameter and not read from the blueprint, which
+// is what "exactly" costs. Reading `r.bp.relScopes` here dropped the per-request
+// ones — and those are where a security policy's `RelationScopes` arrive
+// ([[D-007]]) — so two repositories differing only in `SoftDelete` produced a
+// narrowed DELETE and an unnarrowed UPDATE for the same call. The unnarrowed one
+// is a write, over rows the policy hides.
+//
 // The permanent scope already carries "not deleted" (the setting folds it in),
 // so a row deleted twice is not counted twice and the number returned is what
 // this call actually removed from view.
-func (r *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicate) (int64, error) {
+func (r *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicate, rs *crud.RelationScopes) (int64, error) {
 	f := r.bp.softDelete
-	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.bp.relScopes).
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(rs).
 		Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(crud.NowFunc()).
 		Where(where)
 	q, args, err := b.Done()
@@ -1054,14 +1064,33 @@ func (r *repository[M, ID, U]) Aggregate(ctx context.Context, opts ...crud.Optio
 	}
 	defer rows.Close()
 
+	// The group columns resolve once, above the loop. FieldAt is a path walk —
+	// a Split, an allocation and a Join per call — and it used to run per group
+	// column *per row*, so a thousand-row aggregate over three groupings did
+	// three thousand walks to answer a question the statement had already
+	// settled. It also belongs here for a second reason: a path that does not
+	// resolve is a request-level failure, and finding that out on row 900 rather
+	// than before the scan is the wrong shape of error.
+	groups := make([]*crud.Field, len(o.Agg.GroupBy))
+	for i, g := range o.Agg.GroupBy {
+		f, _, err := r.meta.FieldAt(g)
+		if err != nil {
+			return nil, err
+		}
+		groups[i] = f
+	}
+
 	width := len(o.Agg.GroupBy) + len(o.Agg.Aggregations)
+	cells := make([]any, width)
+	dest := make([]any, width)
+	for i := range cells {
+		dest[i] = &cells[i]
+	}
+
 	var out []crud.AggregateRow
 	for rows.Next() {
-		cells := make([]any, width)
-		dest := make([]any, width)
-		for i := range cells {
-			dest[i] = &cells[i]
-		}
+		// cells is reused, so every value has to be copied out below before the
+		// next Scan overwrites it — which the two maps already do.
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -1069,11 +1098,7 @@ func (r *repository[M, ID, U]) Aggregate(ctx context.Context, opts ...crud.Optio
 			Group: make(map[string]any, len(o.Agg.GroupBy)),
 			Value: make(map[string]any, len(o.Agg.Aggregations)),
 		}
-		for i, g := range o.Agg.GroupBy {
-			f, _, err := r.meta.FieldAt(g)
-			if err != nil {
-				return nil, err
-			}
+		for i, f := range groups {
 			row.Group[f.Name] = cells[i]
 		}
 		for i, ag := range o.Agg.Aggregations {

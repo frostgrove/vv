@@ -65,9 +65,9 @@ func TestMalformedFilterDocumentsAreRefused(t *testing.T) {
 		{"an or that is not a list", `{"filter":{"or":"title"}}`, `expected an array of filter objects, got "title"`},
 		{"an array inside an or", `{"filter":{"or":[["title"]]}}`, `expected an object, got ["title"]`},
 		{"an empty field name", `{"filter":{"":1}}`, "empty field path"},
-		{"an operand that is an object", `{"filter":{"title":{"eq":{"nested":1}}}}`, "Title expects string"},
+		{"an operand that is an object", `{"filter":{"title":{"eq":{"nested":1}}}}`, "Title expects a string"},
 		{"a list operator given a scalar", `{"filter":{"views":{"in":5}}}`, "Views expects an array"},
-		{"a scalar operator given a list", `{"filter":{"views":{"gte":[1]}}}`, "Views expects int"},
+		{"a scalar operator given a list", `{"filter":{"views":{"gte":[1]}}}`, "Views expects a whole number"},
 		{"between given three values", `{"filter":{"views":{"between":[1,2,3]}}}`, "exactly two values, got 3"},
 		{"between given one", `{"filter":{"views":{"between":[1]}}}`, "exactly two values, got 1"},
 	} {
@@ -250,17 +250,23 @@ func TestUncoercibleValuesAreRejectedNotZeroed(t *testing.T) {
 	mentions := func(err error, what string) bool {
 		return strings.Contains(strings.ToLower(err.Error()), strings.ToLower(what))
 	}
+	// `typ` is what the refusal says the column wanted, in the vocabulary a client
+	// speaks. It used to be the Go type — "int8", "uint64", "time.Time" — and this
+	// table pinned it there, which is [[D-044]] broken by the test that was
+	// supposed to be checking the refusal. The claim it really makes survives: an
+	// uncoercible value is refused, and the refusal names the column and says what
+	// belonged in it.
 	for _, tc := range []struct{ name, doc, term, field, typ string }{
-		{"a word into an int", `{"filter":{"count":"twelve"}}`, "count:eq:twelve", "count", "int"},
-		{"a fraction into an int", `{"filter":{"count":1.5}}`, "count:eq:1.5", "count", "int"},
+		{"a word into an int", `{"filter":{"count":"twelve"}}`, "count:eq:twelve", "count", "a whole number"},
+		{"a fraction into an int", `{"filter":{"count":1.5}}`, "count:eq:1.5", "count", "a whole number"},
 		{"an int64 into an int8", `{"filter":{"small":9223372036854775807}}`,
-			"small:eq:9223372036854775807", "small", "int8"},
-		{"a negative into a uint", `{"filter":{"tiny":-1}}`, "tiny:eq:-1", "tiny", "uint8"},
+			"small:eq:9223372036854775807", "small", "a whole number"},
+		{"a negative into a uint", `{"filter":{"tiny":-1}}`, "tiny:eq:-1", "tiny", "a whole number"},
 		{"past the top of a uint64", `{"filter":{"total":18446744073709551616}}`,
-			"total:eq:18446744073709551616", "total", "uint64"},
-		{"a word into a bool", `{"filter":{"active":"maybe"}}`, "active:eq:maybe", "active", "bool"},
-		{"a word into a time", `{"filter":{"at":"yesterday"}}`, "at:eq:yesterday", "at", "time.Time"},
-		{"a unix epoch into a time", `{"filter":{"at":1735689600}}`, "at:eq:1735689600", "at", "time.Time"},
+			"total:eq:18446744073709551616", "total", "a whole number"},
+		{"a word into a bool", `{"filter":{"active":"maybe"}}`, "active:eq:maybe", "active", "true or false"},
+		{"a word into a time", `{"filter":{"at":"yesterday"}}`, "at:eq:yesterday", "at", "a timestamp"},
+		{"a unix epoch into a time", `{"filter":{"at":1735689600}}`, "at:eq:1735689600", "at", "a timestamp"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for door, req := range map[string]*query.Request{
@@ -357,7 +363,7 @@ func TestQueryStringTermEdges(t *testing.T) {
 		{name: "an empty value for a text operator", qs: "f=title:contains:", fail: "contains needs a value"},
 		{name: "a list operator given one value", qs: "f=views:between:1", fail: "exactly two values, got 1"},
 		{name: "a value the column cannot hold", qs: "f=views:eq:9223372036854775808",
-			fail: `"9223372036854775808" is not a valid int`},
+			fail: `"9223372036854775808" is not a whole number`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sql, args, err := tryQuery(t, tc.qs, nil)

@@ -1,12 +1,12 @@
 package crudgin
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/shardit-io/vv/crud/http/crudhttp"
+	"github.com/shardit-io/vv/port"
 )
 
 // installed marks a context the middleware is already running over. Gin has no
@@ -44,7 +44,8 @@ func Errors(opts ...crudhttp.RenderOption) gin.HandlerFunc {
 			// something has, the status is already gone and there is nothing to
 			// do but log.
 			if p := recover(); p != nil {
-				log.Printf("crudgin: panic while serving %s %s: %v", c.Request.Method, c.Request.URL.Path, p)
+				port.Logger(c.Request.Context()).Error("crudgin: panic while serving a request",
+					"method", c.Request.Method, "path", c.Request.URL.Path, "panic", p)
 				if !c.Writer.Written() {
 					c.AbortWithStatusJSON(http.StatusInternalServerError, crudhttp.Internal())
 				}

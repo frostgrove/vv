@@ -65,8 +65,16 @@ binding: `remote` is in the root module and may not import grpc, so a
    what keeps `crud.Opt`'s three states intact — a `map[string]any` collapses
    absent and null the first time it passes through a Go nil.
 
-6. **The answer** — `remote/resource.go:decode`
-   Raw JSON into `crud.PaginatedResponse[M]`, `M`, `{"count":n}` or
+6. **The answer** — `remotehttp.transport.Do`, then `remote/resource.go:decode`
+   The body is read to `MaxResponse` — 32 MiB, one byte past so an answer of
+   exactly that size still fits — and an answer over it is refused rather than
+   buffered. A peer is another service and another service can be wrong; an
+   unbounded read turns its paging bug into this process running out of memory,
+   which is the one failure a client cannot report ([[D-063]]). The client is
+   also ours and not `http.DefaultClient`, which has no timeout at all, so a peer
+   that accepts a connection and then says nothing does not hold the caller
+   forever — `DefaultTimeout` is 30s and `WithClient` replaces it.
+   Then: raw JSON into `crud.PaginatedResponse[M]`, `M`, `{"count":n}` or
    `{"deleted":n}`. A service that answers something unreadable is an
    infrastructure failure and carries no fault: `port.KindOf` reads an
    unrecognised error as internal, which is the status a gateway should pass on.
@@ -128,6 +136,12 @@ binding: `remote` is in the root module and may not import grpc, so a
   arrives as a string where a number was expected.
 - **A patch DTO written by hand can empty a row.** `cmd/vv` writes `omitzero`
   on every generated `crud.Opt` field; `remote.New` refuses one that lacks it.
+- **`GetAll` is emulated with the unpaged flag**, because no transport has an
+  "every row" route. So a far endpoint that did not declare
+  `query.Config{AllowUnpaged: true}` refuses it, and the refusal names the fix
+  ([[D-060]]). That is the honest answer rather than a regression — an
+  endpoint's bounds should not depend on whether the caller is in this process —
+  but it is the one method whose availability is the *server's* decision.
 - **`GET /{id}` carries preload paths in a query string** and has nowhere to put
   a per-relation filter, so a narrowed preload is refused there. gRPC sends the
   whole document and does not have this limit.
@@ -140,6 +154,8 @@ binding: `remote` is in the root module and may not import grpc, so a
 | `crud.Raw`, `crud.EqField`, `crud.False` | `*crud.PredicateError`, nothing sent |
 | a patch DTO with an untagged `crud.Opt` | a panic from `remote.New`, at start-up |
 | the address is wrong, or a proxy answered | `*remote.ProtocolError`, no sentinel |
+| the answer is larger than `MaxResponse` | a plain error naming the limit; nothing is buffered past it |
+| `GetAll` against an endpoint that did not declare `AllowUnpaged` | the far side's 400, naming `unpaged` and the fix |
 | the service refused, classified | `*errs.Fault`, sentinel and violations intact |
 | the service failed internally | `*errs.Fault`, `KindInternal`, no violations |
 | the answer will not decode | a plain error; `port.KindOf` reads it as internal |
@@ -157,7 +173,7 @@ binding: `remote` is in the root module and may not import grpc, so a
 | `port/kind.go` | `FaultFrom`, `sentinelFor` |
 | `port/request.go` | `FormatID` — `CoerceID`'s inverse |
 | `errs/path.go` | `Path.UnmarshalJSON` — the lossless half of the decode |
-| `remote/remotehttp/transport.go` | `Transport`, `WithClient`, `WithRequestHook`, `route`, `entityQuery`, `fault`, `faultCode` |
+| `remote/remotehttp/transport.go` | `Transport`, `WithClient`, `WithRequestHook`, `WithMaxResponse`, `MaxResponse`, `DefaultTimeout`, `defaultClient`, `route`, `entityQuery`, `fault`, `faultCode` |
 | `port/porthttp/decode.go` | `KindForStatus`, `ParseEnvelope`, `Envelope.Violations`, the wire shapes |
 | `crud/rpc/crudgrpc/transport.go` | `Transport`, `WithVocabulary`, `WithCallOptions`, `requestFor`, `fault`, `kindOf` |
 | `crud/rpc/crudgrpc/status.go` | `KindForCode` |
@@ -185,6 +201,9 @@ binding: `remote` is in the root module and may not import grpc, so a
 | `TestADecodedFaultStillMatchesTheSentinelItLeftWith` | `port/inbound_test.go` | `FaultFrom` wraps what `sentinelKind` reads |
 | `TestAKeyThatWentOutAsTextComesBackTheSameKey` | `port/inbound_test.go` | `FormatID` and `CoerceID` are inverses |
 | `TestAPathSurvivesTheWireExactly` | `errs/path_test.go` | names and indices, in order |
+| `TestAnAnswerPastTheCapIsRefusedRatherThanBuffered` | `remote/remotehttp/transport_test.go` | the response cap, with the under-the-cap control |
+| `TestTheDefaultClientIsOursAndHasADeadline` | `remote/remotehttp/transport_test.go` | never `http.DefaultClient`, and the timeout is set |
+| `TestTheCallersDeadlineReachesTheRequest` | `remote/remotehttp/transport_test.go` | the client's own backstop does not swallow the caller's cancellation |
 
 ## See also
 

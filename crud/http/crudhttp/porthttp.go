@@ -41,6 +41,8 @@ const (
 	DefaultRetryAfter = porthttp.DefaultRetryAfter
 	// MaxKeptBody caps the copy [DecodeJSONKeep] retains.
 	MaxKeptBody = porthttp.MaxKeptBody
+	// MaxBody is how many bytes of request body a binding reads before refusing.
+	MaxBody = porthttp.MaxBody
 )
 
 // ErrBadRequest marks a failure the binding itself produced. It is the same
@@ -99,6 +101,9 @@ func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) er
 // MalformedBody marks a body that would not decode.
 func MalformedBody(err error) error { return porthttp.MalformedBody(err) }
 
+// TooLarge marks a body past the cap the binding reads to.
+func TooLarge(limit int) error { return porthttp.TooLarge(limit) }
+
 // BodyResolver is the path hop for handlers nobody generated a mapper for.
 func BodyResolver(raw []byte) errs.Resolver { return porthttp.BodyResolver(raw) }
 
@@ -107,6 +112,11 @@ func DecodeJSON(r io.Reader, v any) error { return porthttp.DecodeJSON(r, v) }
 
 // DecodeJSONKeep decodes like [DecodeJSON] and hands back the bytes it decoded.
 func DecodeJSONKeep(r io.Reader, v any) ([]byte, error) { return porthttp.DecodeJSONKeep(r, v) }
+
+// DecodeJSONKeepLimit is [DecodeJSONKeep] with the cap named.
+func DecodeJSONKeepLimit(r io.Reader, v any, limit int) ([]byte, error) {
+	return porthttp.DecodeJSONKeepLimit(r, v, limit)
+}
 
 // KeepBody returns a copy of b that outlives the handler.
 func KeepBody(b []byte) []byte { return porthttp.KeepBody(b) }

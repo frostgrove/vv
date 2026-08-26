@@ -73,7 +73,7 @@ that walks through the same table twice does not shadow itself.
 - `TestNestedSortIsAScalarSubquery` in `crud/predicate_test.go`.
 - `TestSortThroughAToManyRelationIsRefused` in `crud/predicate_test.go`.
 - `TestNestedFiltersAgainstDatabases` and `TestNestedSortAgainstDatabases` in
-  `test/integration/matrix_test.go`.
+  `test/integration/relations_test.go`.
 
 ## See also
 

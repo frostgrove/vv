@@ -44,18 +44,22 @@ Two tests, asked in that order:
 | `NarrowForCount(*query.Request)` | drop everything that means nothing to a `COUNT` |
 | `NarrowForEntity(*query.Request)` | keep only the shaping options |
 | `Sanitize` · `ClearGenerated` | what a client may not choose on create: a generated key, a `generated` column |
+| `Rules` | the five settings that say nothing about a transport, shared by all four bindings — an alias for [`port.Rules`](port.md#the-rules-a-binding-does-not-own) |
 
-The last four are forwarders over [port](port.md); they are exported here because
-an application that writes its own create route calls them ([[D-045]]).
+`CoerceID` through `Sanitize` · `ClearGenerated` are forwarders over
+[port](port.md); they are exported here because an application that writes its
+own create route calls them ([[D-045]]). `Rules` is not one of them — it is an
+alias for a type that never lived here.
 
 ## The forwarders
 
 `crud/http/crudhttp/porthttp.go` re-exports everything [[D-059]] moved:
 `Renderer`, `EnvelopeRenderer`, `RenderOption`, `Envelope`, `Groups`,
-`MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `ErrBadRequest`,
+`MaxViolations`, `DefaultRetryAfter`, `MaxKeptBody`, `MaxBody`, `ErrBadRequest`,
 `NewRenderer`, the five `With…` options, `Internal`, `Status`, `StatusFor`,
 `KindForStatus`, `KindOf`, `ParseEnvelope`, `BadRequest`, `BadRequestf`,
-`BadRequestAs`, `MalformedBody`, `BodyResolver`, `DecodeJSON`, `DecodeJSONKeep`,
+`BadRequestAs`, `MalformedBody`, `TooLarge`, `BodyResolver`, `DecodeJSON`,
+`DecodeJSONKeep`, `DecodeJSONKeepLimit`,
 `KeepBody`, `WithBody`, `BodyFrom`, `WithLocale`, `LocaleFrom` and
 `AcceptLanguage`.
 

@@ -127,7 +127,7 @@ the subsystem is CRUD, and `crudfiber` says so.
 - `port/porthttp/` — the `port` × `net/http` cell ([[D-059]]).
 - `remote/remotehttp/` — the `remote` × `net/http` cell.
 - `utils/vvflag/` — prefixed against the standard library.
-- `vvdb/` — prefixed against `db`, the variable name, with `vvdb/dbpgx` under
+- `utils/vvdb/` — prefixed against `db`, the variable name, with `utils/vvdb/dbpgx` under
   it taking no prefix because nothing is called `dbpgx` ([[D-057]]).
 - `crud/sqlfault/` — prefixed against `errs.Fault`, which every file in it names.
 - `remote/` — unprefixed, and named for where the repository is rather than for

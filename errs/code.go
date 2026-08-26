@@ -30,6 +30,10 @@ const (
 	CodeInvalidID     Code = "invalid_id"
 	CodeUnknownField  Code = "unknown_field"
 	CodeBadQuery      Code = "bad_query"
+	// CodeTooLarge is a request body past the cap the transport reads to. It is
+	// request-shaped rather than validation-shaped on purpose: nothing about a
+	// field was wrong, and nothing was parsed to find out.
+	CodeTooLarge Code = "too_large"
 
 	// decision-shaped
 	// CodeConflict is a collision nothing finer was learned about: an engine
@@ -79,6 +83,11 @@ const (
 	KindConflict
 	KindValidation
 	KindBadRequest
+	// KindTooLarge is its own kind rather than a KindBadRequest code, because
+	// the status is the whole of what a client acts on here: 413 tells a caller
+	// to send less, and 400 tells it to send something else. A code alone
+	// cannot carry that — transports map the kind and never the code.
+	KindTooLarge
 )
 
 // String is total: an unrecognised kind renders as internal, so a value that
@@ -99,6 +108,8 @@ func (k Kind) String() string {
 		return "validation"
 	case KindBadRequest:
 		return "bad_request"
+	case KindTooLarge:
+		return "too_large"
 	default:
 		return "internal"
 	}

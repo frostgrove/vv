@@ -89,6 +89,7 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		{"Unauthorized", errs.Unauthorized(), errs.KindUnauthorized},
 		{"BadRequest", errs.BadRequest(), errs.KindBadRequest},
 		{"Retryable", errs.Retryable(), errs.KindRetryable},
+		{"TooLarge", errs.TooLarge(), errs.KindTooLarge},
 		{"Internal", errs.Internal(), errs.KindInternal},
 	} {
 		if got := tc.b.Fault().Kind; got != tc.want {
@@ -96,7 +97,23 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		}
 	}
 
-	// The control: eight entry points that all built the same kind would pass
+	// The table is total, and stays total. A constructor added without a row
+	// here is one whose kind nothing pins — TooLarge arrived that way and was
+	// caught by a reader rather than by this test, which is the job this loop
+	// exists to do. Kind.String is total, so a kind outside its own table
+	// renders as "internal" and is how a new one is spotted.
+	declared := 0
+	for k := errs.Kind(0); k < errs.Kind(64); k++ {
+		if k != errs.KindInternal && k.String() == "internal" {
+			continue
+		}
+		declared++
+	}
+	if declared != 9 {
+		t.Fatalf("errs declares %d kinds and this table has 9 rows — a constructor for the new one is owed", declared)
+	}
+
+	// The control: nine entry points that all built the same kind would pass
 	// any single assertion above. Internal is zero, so it is the one an
 	// unwritten field would look like.
 	if errs.Validation().Fault().Kind == errs.Internal().Fault().Kind {

@@ -18,7 +18,10 @@ reports success.
    carries on using its own connection, inside the same block.
 2. Naming the raw database handle and naming any datasource built over it are the
    same statement. The author does not have to keep a reference to the exact
-   wrapper the repository was bound with.
+   wrapper the repository was bound with. This reaches through the author's own
+   wrappers too — instrumenting statements is the ordinary reason to write one —
+   on one condition, which is that the wrapper says what it wraps. A wrapper that
+   does not is opaque, and guarantee 6 is what it gets.
 3. Two independently constructed datasources over one handle resolve to the same
    database. Two repositories built separately still share one transaction.
 4. A transaction the repository opens itself is scoped the same way, without the

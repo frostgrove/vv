@@ -36,6 +36,7 @@
 package crudgin
 
 import (
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -83,7 +84,7 @@ type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
 // are about rules rather than about transport.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), port.Identity[M](), o)
+	return build(port.NewService(repo, o.Service()...), port.Identity[M](), o)
 }
 
 // NewFor builds a handler whose request body is a type of its own, mapped onto
@@ -91,7 +92,7 @@ func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[
 // from the repository and the mapper.
 func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), mapper, o)
+	return build(port.NewService(repo, o.Service()...), mapper, o)
 }
 
 // Serving mounts a service that is already built — the one a generator wrote,
@@ -102,14 +103,14 @@ func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper M
 // "bound what clients may ask for" ([[D-021]]).
 func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudgin.Serving")
+	o.RefuseServiceOptions("crudgin.Serving")
 	return build(svc, port.Identity[M](), o)
 }
 
 // ServingFor mounts an already-built service behind an input type of its own.
 func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudgin.ServingFor")
+	o.RefuseServiceOptions("crudgin.ServingFor")
 	return build(svc, mapper, o)
 }
 
@@ -144,7 +145,7 @@ func (h *HandlerFor[M, ID, U, In]) Mount(r gin.IRouter, prefix string) {
 // to the same path and Gin panics. The trailing-slash form is left to Gin's own
 // RedirectTrailingSlash, which is on by default.
 func (h *HandlerFor[M, ID, U, In]) Register(r gin.IRoutes) {
-	if !h.opt.readOnly {
+	if !h.opt.ReadOnly {
 		r.POST("", h.Create)
 		r.POST("/bulk-delete", h.BulkDelete)
 	}
@@ -153,7 +154,7 @@ func (h *HandlerFor[M, ID, U, In]) Register(r gin.IRoutes) {
 	r.POST("/count", h.CountPost)
 	r.GET("", h.List)
 	r.GET("/:id", h.GetByID)
-	if !h.opt.readOnly {
+	if !h.opt.ReadOnly {
 		r.PATCH("/:id", h.Update)
 		r.PUT("/:id", h.Replace)
 		r.DELETE("/:id", h.Delete)
@@ -195,10 +196,10 @@ func (h *HandlerFor[M, ID, U, In]) list(c *gin.Context, req *query.Request) {
 		return
 	}
 	if h.opt.transform == nil {
-		c.JSON(http.StatusOK, page)
+		writeJSON(c, http.StatusOK, page)
 		return
 	}
-	c.JSON(http.StatusOK, crud.MapPage(page, func(m M) any {
+	writeJSON(c, http.StatusOK, crud.MapPage(page, func(m M) any {
 		return h.opt.transform(c, m)
 	}))
 }
@@ -234,7 +235,7 @@ func (h *HandlerFor[M, ID, U, In]) count(c *gin.Context, req *query.Request) {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"count": n})
+	writeJSON(c, http.StatusOK, gin.H{"count": n})
 }
 
 // GetByID answers GET /:id, honouring ?preload= and ?select=.
@@ -271,7 +272,7 @@ func (h *HandlerFor[M, ID, U, In]) GetByID(c *gin.Context) {
 // server-side timestamp.
 func (h *HandlerFor[M, ID, U, In]) Create(c *gin.Context) {
 	var in In
-	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &in)
+	raw, err := h.decode(c.Request.Body, &in)
 	keep(c, raw)
 	if err != nil {
 		h.fail(c, err)
@@ -298,7 +299,7 @@ func (h *HandlerFor[M, ID, U, In]) Update(c *gin.Context) {
 		return
 	}
 	var dto U
-	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &dto)
+	raw, err := h.decode(c.Request.Body, &dto)
 	keep(c, raw)
 	if err != nil {
 		h.fail(c, err)
@@ -329,7 +330,7 @@ func (h *HandlerFor[M, ID, U, In]) Replace(c *gin.Context) {
 		return
 	}
 	var in In
-	raw, err := crudhttp.DecodeJSONKeep(c.Request.Body, &in)
+	raw, err := h.decode(c.Request.Body, &in)
 	keep(c, raw)
 	if err != nil {
 		h.fail(c, err)
@@ -360,7 +361,7 @@ func (h *HandlerFor[M, ID, U, In]) Delete(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deleted": n})
+	writeJSON(c, http.StatusOK, gin.H{"deleted": n})
 }
 
 // BulkDeleteRequest is the body of POST /bulk-delete.
@@ -369,12 +370,12 @@ type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 // BulkDelete answers POST /bulk-delete.
 func (h *HandlerFor[M, ID, U, In]) BulkDelete(c *gin.Context) {
 	var req BulkDeleteRequest[ID]
-	if err := crudhttp.DecodeJSON(c.Request.Body, &req); err != nil {
+	if err := h.decodeOnly(c.Request.Body, &req); err != nil {
 		h.fail(c, err)
 		return
 	}
-	if h.opt.maxBulk > 0 && len(req.IDs) > h.opt.maxBulk {
-		h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
+	if len(req.IDs) > h.opt.BulkCap() {
+		h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.BulkCap()))
 		return
 	}
 	n, err := h.svc.DeleteMany(c.Request.Context(), port.BulkDeleteCommand[ID]{IDs: req.IDs})
@@ -382,7 +383,7 @@ func (h *HandlerFor[M, ID, U, In]) BulkDelete(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deleted": n})
+	writeJSON(c, http.StatusOK, gin.H{"deleted": n})
 }
 
 // ---------------------------------------------------------------------------
@@ -425,10 +426,23 @@ func (h *HandlerFor[M, ID, U, In]) parseQueryString(c *gin.Context) (*query.Requ
 
 func (h *HandlerFor[M, ID, U, In]) parseBody(c *gin.Context) (*query.Request, error) {
 	req := &query.Request{}
-	if err := crudhttp.DecodeJSON(c.Request.Body, req); err != nil {
+	if err := h.decodeOnly(c.Request.Body, req); err != nil {
 		return nil, err
 	}
 	return req, nil
+}
+
+// decode reads a JSON body onto v under this handler's cap and hands back the
+// bytes, for the raw-body path fallback ([[D-043]]).
+func (h *HandlerFor[M, ID, U, In]) decode(r io.Reader, v any) ([]byte, error) {
+	return crudhttp.DecodeJSONKeepLimit(r, v, h.opt.MaxBody)
+}
+
+// decodeOnly is decode for the routes whose body carries no field values, so
+// there is nothing worth keeping.
+func (h *HandlerFor[M, ID, U, In]) decodeOnly(r io.Reader, v any) error {
+	_, err := h.decode(r, v)
+	return err
 }
 
 // id reads and converts the :id path parameter.
@@ -438,10 +452,10 @@ func (h *HandlerFor[M, ID, U, In]) id(c *gin.Context) (ID, error) {
 
 func (h *HandlerFor[M, ID, U, In]) entity(c *gin.Context, status int, m M) {
 	if h.opt.transform != nil {
-		c.JSON(status, h.opt.transform(c, m))
+		writeJSON(c, status, h.opt.transform(c, m))
 		return
 	}
-	c.JSON(status, m)
+	writeJSON(c, status, m)
 }
 
 func (h *HandlerFor[M, ID, U, In]) fail(c *gin.Context, err error) {

@@ -111,8 +111,12 @@ key. It never answers nil, which is what makes it safe to key a catalog on
   hand back the datasource it was bound to. It is on the concrete repository and
   not on `Core`, because a middleware embeds `Core` as an interface and an
   interface embedded in a struct promotes only its own method set — so a
-  decorator that is not innermost does not forward it, which is the honest
-  answer.
+  decorator that is not innermost does not forward it. That used to be where the
+  argument stopped, and it made the order decorators were listed in decide
+  whether the probe worked; a decorator now forwards `Next()` and the library
+  walks the chain with `crud.SourceOf` ([[D-061]]). The reason `Sourced` is not
+  on `Core` is unchanged — a `Core` method every decorator must implement is the
+  wall of pass-throughs [[D-030]] declines to spend.
 - `crud/executor.go:ExecutorFrom` — answers "is there a transaction here at
   all", which is a different question from "is there one for MY database"; the
   repository always asks the second one.
@@ -171,4 +175,4 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 
 ## See also
 
-[[D-027]] [[D-010]] [[D-016]] [[D-017]] [[D-042]] [[FL-009]] [[FL-017]]
+[[D-027]] [[D-010]] [[D-016]] [[D-017]] [[D-042]] [[FL-009]] [[FL-017]] [[D-061]]

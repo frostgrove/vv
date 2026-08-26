@@ -146,3 +146,54 @@ func TestADefaultMessageComesFromTheDeclaredVocabulary(t *testing.T) {
 		t.Fatalf("an undeclared code answered %q, want a decline", m)
 	}
 }
+
+// Every kind renders a code of its own, and the table is total.
+//
+// This is the third kind-keyed table in the library and the last one to get this
+// control. The status table and the gRPC code table both had one, and both
+// refused to compile when errs gained KindTooLarge; this one has a `default`
+// arm, so it said `internal` instead — a 413 whose body told the client the
+// server had broken. A fault with no code of its own is exactly the case
+// CodeForKind exists for, and 413 is the kind most likely to arrive without one,
+// because nothing about the body was parsed.
+func TestEveryKindRendersACodeAndTheTableIsTotal(t *testing.T) {
+	want := map[errs.Kind]errs.Code{
+		errs.KindInternal:     errs.CodeInternal,
+		errs.KindNotFound:     errs.CodeNotFound,
+		errs.KindUnauthorized: errs.CodeUnauthenticated,
+		errs.KindForbidden:    errs.CodeForbidden,
+		errs.KindRetryable:    errs.CodeUnavailable,
+		errs.KindConflict:     errs.CodeConflict,
+		errs.KindValidation:   errs.CodeCheck,
+		errs.KindBadRequest:   errs.CodeBadQuery,
+		errs.KindTooLarge:     errs.CodeTooLarge,
+	}
+	for k, code := range want {
+		if got := CodeForKind(k); got != code {
+			t.Fatalf("kind %s renders %q, want %q", k, got, code)
+		}
+		// And the code it renders has to be declared with that same kind, or a
+		// client reading error_code and a client reading the status would
+		// disagree about what happened.
+		if k != errs.KindInternal {
+			if got, ok := errs.StandardCodes().KindOf(code); !ok || got != k {
+				t.Fatalf("code %q is declared with kind %s, but is what kind %s renders", code, got, k)
+			}
+		}
+	}
+
+	// The control on the table's size, the same one the other two carry.
+	declared := 0
+	for k := errs.Kind(0); k < errs.Kind(64); k++ {
+		if k != errs.KindInternal && k.String() == "internal" {
+			continue
+		}
+		declared++
+		if _, listed := want[k]; !listed {
+			t.Fatalf("errs declares the kind %s and this table has no row for it", k)
+		}
+	}
+	if declared != len(want) {
+		t.Fatalf("errs declares %d kinds and the table has %d rows", declared, len(want))
+	}
+}

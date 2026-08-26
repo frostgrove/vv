@@ -43,7 +43,7 @@ func TestPreloadBatchesAndWires(t *testing.T) {
 
 	var req query.Request
 	_ = json.Unmarshal([]byte(`{"preload":["author","comments.author"],"unpaged":true}`), &req)
-	opts, err := req.Compile(Articles.Meta(), nil)
+	opts, err := req.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestFilteredPreload(t *testing.T) {
 	],"unpaged":true}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(Articles.Meta(), nil)
+	opts, err := req.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestFilteredPreload(t *testing.T) {
 func TestPreloadFilterIsScopedToTheTarget(t *testing.T) {
 	var req query.Request
 	_ = json.Unmarshal([]byte(`{"preload":[{"path":"comments","filter":{"views":1}}]}`), &req)
-	_, err := req.Compile(Articles.Meta(), nil)
+	_, err := req.Compile(Articles.Meta(), exports)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("err = %v, want an unknown-field rejection", err)
 	}

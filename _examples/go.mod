@@ -56,7 +56,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
@@ -66,7 +66,7 @@ require (
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
@@ -93,11 +93,11 @@ require (
 	github.com/shardit-io/vv/crud/http/crudfiber v0.0.0
 	github.com/shardit-io/vv/crud/http/crudgin v0.0.0
 	github.com/shardit-io/vv/crud/rpc/crudgrpc v0.0.0
-	github.com/shardit-io/vv/vvdb/dbpgx v0.0.0
+	github.com/shardit-io/vv/utils/vvdb/dbpgx v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
-	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.2
@@ -114,4 +114,4 @@ replace github.com/shardit-io/vv/auth/http/authfiber => ../auth/http/authfiber
 
 replace github.com/shardit-io/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
 
-replace github.com/shardit-io/vv/vvdb/dbpgx => ../vvdb/dbpgx
+replace github.com/shardit-io/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx

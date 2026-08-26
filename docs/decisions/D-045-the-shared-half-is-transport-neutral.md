@@ -160,7 +160,9 @@ The four shells — three HTTP and one that is not:
   over it, and the four constructors `New` / `NewFor` / `Serving` /
   `ServingFor`.
 - `crud/http/crudfiber/options.go` and its two counterparts — `collect`, `service`,
-  `refuseServiceOptions`, `rendererFor`.
+  `rendererFor`. `collect` and the two rule methods — `port.Rules.Service` and
+  `port.Rules.RefuseServiceOptions` — are shared rather than copied, and
+  `port.Rules` is where the five transport-neutral settings live.
 - `crud/rpc/crudgrpc/handler.go`, `:options.go`, `:service.go` — the same four
   constructors and the same option set on gRPC, with a `context.Context` where
   the HTTP ones take a request.

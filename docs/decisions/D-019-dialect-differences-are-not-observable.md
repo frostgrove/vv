@@ -314,8 +314,8 @@ the probe.
   difference 9's CHECK rows including nil-is-not-empty on a CHECK's columns, and
   the engines' own column ordinals.
 
-The four observable differences each have their own test, so a future change
-that accidentally *hides* one is also caught:
+Differences 1 through 4 each have their own test, so a future change that
+accidentally *hides* one is also caught:
 
 - `TestNullsOrderingIsPostgresOnly` in `crud/predicate_test.go` and
   `TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly` in

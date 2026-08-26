@@ -108,15 +108,44 @@ func (a AggregateSpec) Validate(m *Meta) error {
 			return &SchemaError{Model: m.Name, Field: ag.As,
 				Reason: ag.Fn + " needs a field"}
 		}
+		// COUNT(*) counts rows and COUNT(DISTINCT x) counts values; there is no
+		// COUNT(DISTINCT *), and no engine parses one. Without this the spec
+		// validated and Render wrote it, so the refusal came back from the
+		// driver as a 500 for a statement this package built.
+		if ag.Field == "" && ag.Distinct {
+			return &SchemaError{Model: m.Name, Field: ag.As,
+				Reason: "COUNT(DISTINCT) needs a field; use CountAll for every row"}
+		}
 		if ag.Field != "" {
-			if _, _, err := m.FieldAt(ag.Field); err != nil {
+			f, _, err := m.FieldAt(ag.Field)
+			if err != nil {
 				return err
+			}
+			// FieldAt resolves a path across a relation, and Render writes the
+			// field with w.Column, which expands such a path into a correlated
+			// EXISTS — so `Sum("total", "Comments.ArticleID")` validated and
+			// then rendered `SUM(EXISTS (SELECT 1 FROM ...))`. An aggregate is
+			// over a column of the row being grouped; reaching another table is
+			// a join this API does not express ([[D-029]]).
+			if strings.Contains(ag.Field, ".") || f == nil {
+				return &SchemaError{Model: m.Name, Field: ag.As,
+					Reason: "an aggregate takes a column of this model, not a path across a relation: " + ag.Field}
 			}
 		}
 	}
 	for _, g := range a.GroupBy {
-		if _, _, err := m.FieldAt(g); err != nil {
+		f, _, err := m.FieldAt(g)
+		if err != nil {
 			return err
+		}
+		// The same refusal the aggregation loop makes, for the same reason: Render
+		// writes a grouping column with w.Column, which expands a relation path
+		// into a correlated EXISTS. `GROUP BY EXISTS (SELECT ...)` is a statement
+		// this package builds and no engine accepts, so the refusal used to come
+		// back from the driver as a 500.
+		if strings.Contains(g, ".") || f == nil {
+			return &SchemaError{Model: m.Name, Field: "groupBy",
+				Reason: "a grouping column belongs to this model, not to a path across a relation: " + g}
 		}
 	}
 	return nil
@@ -159,6 +188,8 @@ func toInt64(v any) (int64, error) {
 		return int64(n), nil
 	case int32:
 		return int64(n), nil
+	case uint64:
+		return int64(n), nil
 	case float64:
 		return int64(n), nil
 	case float32:
@@ -173,6 +204,13 @@ func toInt64(v any) (int64, error) {
 	return 0, fmt.Errorf("crud: cannot read %T as an integer", v)
 }
 
+// The integer arms are not padding. A driver decides the Go type from the
+// *column*, not from the aggregate: pgx v5 scans an INT4 into an int32 when the
+// destination is `any`, so AVG or SUM over an integer column arrives here as an
+// int32 and has to read as a float. toInt64 has carried the int32 arm since it
+// was written; this one did not, so the same total read correctly through Int
+// and came back as "absent" through Float — on one driver, for one column type,
+// with nothing to see.
 func toFloat64(v any) (float64, error) {
 	switch n := v.(type) {
 	case float64:
@@ -182,6 +220,10 @@ func toFloat64(v any) (float64, error) {
 	case int64:
 		return float64(n), nil
 	case int:
+		return float64(n), nil
+	case int32:
+		return float64(n), nil
+	case uint64:
 		return float64(n), nil
 	case []byte:
 		return parseFloat(string(n))

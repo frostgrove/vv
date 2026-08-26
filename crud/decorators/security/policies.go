@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"github.com/shardit-io/vv/crud"
@@ -33,16 +34,61 @@ func ScopeField[M any, ID comparable](field string, value func(context.Context) 
 	if f == nil {
 		panic("security: model " + schema.Name + " has no field " + field)
 	}
+	// reconcile brings the extractor's value to the column's own type.
+	//
+	// The two halves of this policy used to consume it differently and only one
+	// of them coerced. Scope binds the value as a parameter, so the engine widens
+	// it and a read works for any numerically compatible type; Inspect compares
+	// through crud.EqualValues, which is exact reflect.Type identity. So an
+	// extractor answering int64 against a uint column read perfectly and denied
+	// **every create** with "row belongs to a different TenantID" — at request
+	// time, on a policy that looks right, and the shipped gorm guide's own
+	// `ScopeAttr[Member, uint]("TenantID", "tenant")` against an int64 JWT claim
+	// is a working reproduction.
+	//
+	// A width mismatch is a declaration mistake, so it fails where the mistake
+	// is rather than on the first write ([[D-021]]). A type that cannot convert
+	// at all panics naming both sides; one that can is converted for both halves,
+	// so the predicate and the check agree by construction.
+	want := crud.ElemType(f.Type)
+	reconcile := func(v any) (any, error) {
+		if v == nil {
+			// crud.Eq(f.Name, nil) renders IS NULL, which would turn the
+			// documented "an admin returns nil" reading into an empty page and a
+			// denial of every create. A policy that means "no narrowing" says so
+			// by returning a nil *predicate*, not a nil value.
+			return nil, Denied(Read, f.Name+" extractor answered no value; return a nil predicate to mean no narrowing")
+		}
+		got := reflect.TypeOf(v)
+		if got == want {
+			return v, nil
+		}
+		if got.ConvertibleTo(want) {
+			return reflect.ValueOf(v).Convert(want).Interface(), nil
+		}
+		panic("security: the " + f.Name + " extractor answered a " + got.String() +
+			" and the column is a " + want.String() + " — the two cannot be compared, " +
+			"so every write would be denied and every read would narrow to nothing")
+	}
+
 	return Policy[M, ID]{
 		Scope: func(ctx context.Context) (crud.Predicate, error) {
 			v, err := value(ctx)
 			if err != nil {
 				return nil, err
 			}
+			v, err = reconcile(v)
+			if err != nil {
+				return nil, err
+			}
 			return crud.Eq(f.Name, v), nil
 		},
 		Inspect: func(ctx context.Context, action Action, m *M) error {
-			want, err := value(ctx)
+			raw, err := value(ctx)
+			if err != nil {
+				return err
+			}
+			w, err := reconcile(raw)
 			if err != nil {
 				return err
 			}
@@ -50,7 +96,7 @@ func ScopeField[M any, ID comparable](field string, value func(context.Context) 
 			if err != nil {
 				return err
 			}
-			if !crud.EqualValues(crud.ElemValue(got[0]), crud.ElemValue(want)) {
+			if !crud.EqualValues(crud.ElemValue(got[0]), crud.ElemValue(w)) {
 				return Denied(action, "row belongs to a different "+f.Name)
 			}
 			return nil

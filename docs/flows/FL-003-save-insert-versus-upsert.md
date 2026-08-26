@@ -118,7 +118,7 @@ primary key holds a value.
 | `nil` model | `Save` (`repository.go:443`) | 400 (`SchemaError`) |
 | `noauto` key left at zero | `Save` (`repository.go:454`) | 400 `ErrMissingID` |
 | PUT to an unused id with a generated key | `DefaultService.Replace`'s probe (`port/service.go`) | 404 |
-| duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The message is the fault's classification text where the source named its engine, and the driver's own sentence where it did not |
+| duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The code is the fault's — `unique`, `foreign_key` — where the source named its engine, and the coarse `conflict` where it did not. The driver's own sentence reaches neither body ([[D-044]]) |
 | `ON CONFLICT DO NOTHING` matched an existing row | `insert` (`repository.go:482`) | 200/201 with the *stored* row |
 | the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
 | gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |

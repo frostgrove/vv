@@ -44,14 +44,14 @@ type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
 // inferred from it, so the call site carries no generics.
 func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), port.Identity[M](), o)
+	return build(port.NewService(repo, o.Service()...), port.Identity[M](), o)
 }
 
 // NewFor builds a handler whose request document is a type of its own, mapped
 // onto the model before the service sees it.
 func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	return build(port.NewService(repo, o.service()...), mapper, o)
+	return build(port.NewService(repo, o.Service()...), mapper, o)
 }
 
 // Serving mounts a service that is already built — the one a generator wrote,
@@ -62,14 +62,14 @@ func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper M
 // "bound what clients may ask for" ([[D-021]]).
 func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudgrpc.Serving")
+	o.RefuseServiceOptions("crudgrpc.Serving")
 	return build(svc, port.Identity[M](), o)
 }
 
 // ServingFor mounts an already-built service behind an input type of its own.
 func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
 	o := collect(opts)
-	o.refuseServiceOptions("crudgrpc.ServingFor")
+	o.RefuseServiceOptions("crudgrpc.ServingFor")
 	return build(svc, mapper, o)
 }
 
@@ -246,8 +246,8 @@ func (h *HandlerFor[M, ID, U, In]) BulkDelete(ctx context.Context, req *structpb
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
-	if h.opt.maxBulk > 0 && len(ids) > h.opt.maxBulk {
-		return nil, h.fail(ctx, port.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.maxBulk))
+	if len(ids) > h.opt.BulkCap() {
+		return nil, h.fail(ctx, port.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.BulkCap()))
 	}
 	n, err := h.svc.DeleteMany(ctx, port.BulkDeleteCommand[ID]{IDs: ids})
 	if err != nil {

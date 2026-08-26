@@ -90,7 +90,7 @@ binding wraps it in a `DefaultService` for you. `New`, `NewFor`, `Serving` and
 | `CountCommand` | the same, narrowed |
 | `GetCommand[ID]` | `ID`, `Query`, `Options` |
 | `CreateCommand[M]` | `Model M`, `Before func(*M) error` |
-| `UpdateCommand[ID, U]` | `ID`, `DTO U`, `Before` |
+| `UpdateCommand[ID, U]` | `ID`, `Patch U`, `Before` |
 | `ReplaceCommand[ID, M]` | `ID`, `Model M`, `Before` |
 | `DeleteCommand[ID]` | `ID` |
 | `BulkDeleteCommand[ID]` | `IDs []ID` |
@@ -227,6 +227,65 @@ wants the same rules:
 | `BadRequest(err)` · `BadRequestf` · `BadRequestAs(code, path, …)` | build a 400 with a path named |
 | `CoversUpdate[M, U]()` / `MustCoverUpdate[M, U]()` | the DTO still covers every writable column |
 | `FirstLanguageTag(list)` | the first tag out of an `Accept-Language`-shaped list |
+
+## The rules a binding does not own
+
+Five of a handler's settings say nothing about a transport: what a client may
+ask for, what it may not choose, and how much may arrive at once. They live here
+once, and each binding embeds them:
+
+```go
+type Rules struct {
+    Query         *query.Config  // WithQuery
+    ReadOnly      bool           // ReadOnly
+    AllowClientID bool           // AllowClientID
+    MaxBulk       int            // MaxBulk, read through BulkCap()
+    MaxBody       int            // MaxBody
+}
+```
+
+`Rules.Service()` turns the two that belong to the service into
+`port.ServiceOption`s. `Rules.RefuseServiceOptions(who)` is the start-up panic a
+binding raises when one of those is handed to `Serving`, which was already built
+([[D-021]]).
+
+The option *constructors* stay in the bindings, because each binding's `Option`
+is its own three-parameter type ([[D-045]]) and a shared constructor could not
+return one. What is shared is the state and the two methods over it — which is
+the half that used to be copied four times, and where `MaxBody` had to be written
+four times to exist at all.
+
+`Rules.BulkCap()` answers how many ids a bulk delete accepts: the field when it
+is set, and `DefaultMaxBulk` (1024) otherwise. A method rather than a defaulted
+field, so the four transports cannot disagree about what an unset `MaxBulk` means
+— which is how they came to agree it meant no cap at all ([[D-060]]).
+
+`MaxBody` is honoured by the three HTTP bindings only; gRPC bounds a message at
+the server with its own `MaxRecvMsgSize`, before a handler runs.
+
+`crudhttp.Rules` is an alias of this type, under the name an HTTP binding looks
+for.
+
+## Where the library's own log lines go
+
+```go
+port.Logger(ctx)                 // the context's logger, or slog.Default()
+ctx = port.WithLogger(ctx, log)  // put one there
+```
+
+This library writes a line only where something failed that nobody can be
+returned an error for: a handler panicked and the connection has to be closed, a
+response would not marshal, a status could not carry its details, a refusal could
+not be written. Nine call sites across four transports and the shared auth half.
+
+They go through `Logger` rather than `log.Printf` so an application can give them
+the request's trace id, route them to its own handler, or silence them — without
+touching the process-wide default every other library in the binary shares
+([[D-062]]). `Logger` never returns nil, and `WithLogger(ctx, nil)` stores
+nothing.
+
+**Statements are a different question** and have a different seam: wrap
+`crud.Source`. See [crud](crud.md#wrapping-a-source--for-tracing-timing-statement-logs).
 
 ## See also
 

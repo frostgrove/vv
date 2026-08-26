@@ -20,10 +20,8 @@ was:  http/crudgin  http/authgin       one row of the grid, spread across column
 is:   crud/http/crudgin  auth/http/authgin   the column gathered under its row
 ```
 
-Seven directories of code at the root — `crud`, `auth`, `port`, `remote`,
-`errs`, `vvdb`, `utils` — plus `cmd`, `internal`, `docs`, `test` and
-`_examples`. `vvdb` arrived on its own axis at [[D-057]] and was already laid out
-this way; it was not moved.
+Six directories of code at the root — `crud`, `auth`, `port`, `remote`, `errs`,
+`utils` — plus `cmd`, `internal`, `docs`, `test` and `_examples`.
 
 Four consequences, and each is checkable:
 
@@ -112,14 +110,29 @@ two words for one thing. `crud/middleware/` would be truer to the code;
 
 ## `utils/` is the one name chosen for what it is not
 
-`utils/vvflag` and `utils/vvcfg` are a flag reader and a config loader for the
-consumer's application. Neither is a subsystem and neither will become one, so
-neither has a row in the grid.
+`utils/vvflag` reads a flag, `utils/vvcfg` loads a config file, and `utils/vvdb`
+turns that config into a DSN or a `*sql.DB`. All three are the consumer's
+application plumbing. None is a subsystem of this library, so none has a row in
+the grid.
 
 A directory called `utils` collects the whole repository unless it has a
 boundary, so it has one, and it is a single line: **nothing under `utils/`
 imports `crud/`, `auth/`, `port/` or `remote/`.** A package that needs to is not a
 utility; it belongs to the subsystem it reached for and moves there.
+
+`make check-utils` is that line rather than this paragraph being it. It lists
+both halves separately because they need different commands — `vvflag` and
+`vvdb` are packages of the root module, `vvcfg` and `vvdb/dbpgx` are modules of
+their own and a root-module `go list` cannot see them.
+
+`vvdb` is the case that shows the line is a test rather than a size limit. It has
+its own name argument, its own flow and a satellite module of its own
+(`utils/vvdb/dbpgx`), which is more apparatus than either of its neighbours — and
+it still belongs here, because [[D-057]]'s forbid list already says it may not
+import `crud` or `errs`, may not be called from anywhere inside the repository
+path, and may not return a `crud.Source`. A package forbidden all of that is not
+a subsystem of the library; it is what the library is handed. How many packages
+sit under `utils/` is not what the boundary measures.
 
 ## What it forbids
 
@@ -154,17 +167,25 @@ The whole tree, and `CLAUDE.md`'s *Layout* section is the reader's copy of it:
 - `errs/` — `sqlerr/`. Not moved: `Makefile:TIER0_SEALED` holds it and the
   roadmap plans it as its own module, and a move under `crud/` or `port/` would
   cost both.
-- `utils/` — `vvflag/`, `vvcfg/`.
-- `vvdb/` — `dbpgx/`. Untouched; it arrived on its own axis ([[D-057]]).
+- `utils/` — `vvflag/`, `vvcfg/`, and `vvdb/` with `vvdb/dbpgx/` under it
+  ([[D-057]]).
 - `cmd/vv/`, `internal/codegen/` — Go convention, not this decision's to move.
 - `Makefile:TIER0`, `:TIER0_STDLIB` — the two arms re-armed for a tree with
   subtrees under manifest names.
+- `Makefile:SUBSYSTEMS`, `:check-utils` — the `utils/` boundary, enforced rather
+  than stated.
 - `cmd/vv/main.go:73` (`-specs`) and `internal/codegen/codegen.go:513-515`
   (`DefaultPortPkg`, `DefaultErrsPkg`, `DefaultNetPkg`) — the generator's
   defaults are string literals and moved with the packages they name.
 
 ## Proven by
 
+- `make check-utils` — no package under `utils/` reaches `crud`, `auth`, `port`
+  or `remote`, which is what lets `vvdb` sit there. Verified in both halves:
+  importing `crud` from `utils/vvdb` (root module) and `port` from
+  `utils/vvdb/dbpgx` (its own module) each fail with the offender named. The
+  second is the one worth checking — an arm that listed only `./utils/...` would
+  have passed it.
 - `make check-tiers`, and the thing that matters is that it can still fail.
   Verified three ways: importing `crud/sqlrepo` from `port` (the manifest arm
   names it), importing it from `port/porthttp` (the same arm, the cell added at
@@ -184,6 +205,23 @@ The whole tree, and `CLAUDE.md`'s *Layout* section is the reader's copy of it:
 - `make integration`, twice in a row, on PostgreSQL, MySQL and MariaDB. Nothing
   here changes behaviour, so a diff in the suite would have meant the move was
   not the move.
+
+
+## The one asymmetry the axis does not explain
+
+The HTTP client transport is `remote/remotehttp`. The gRPC client transport is
+`crud/rpc/crudgrpc`, beside the server it calls — which the axis above would put
+under `remote/` too.
+
+The reason is the module graph and not the axis. `remote` is in the root module,
+the root module takes no third-party requirement ([[D-036]]), and a gRPC client
+requires grpc. So `remote/remotegrpc` would be a module of its own containing one
+file, and a consumer calling a gRPC resource would download it in addition to
+`crudgrpc`, which they already have and which already requires grpc. The
+asymmetry costs a reader one surprise; the symmetry would cost every consumer a
+module.
+
+[[D-045]] points here for this record, and until now it pointed at nothing.
 
 ## See also
 

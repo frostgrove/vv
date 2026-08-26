@@ -71,7 +71,10 @@ column. The model you passed is refreshed in place, so `u.ID` and `u.CreatedAt`
 are filled when `Save` returns.
 
 `SaveAll` batches into one statement and reads every key back in order
-([[UC-008]]). On pgx it uses `COPY` where the shape allows.
+([[UC-008]]). It is an `INSERT` on every adapter: a driver's bulk-copy path is
+never reached for, because it takes its own handle and would step outside a
+transaction the caller opened. pgx's `COPY` is there as `crud.BulkInserter`, for
+an application that asks for it directly.
 
 ### Update is load, diff, write
 
@@ -266,6 +269,18 @@ on pgx, via `SAVEPOINT` on `database/sql` ([[FL-009]]).
 - **An unknown field is a rejection**, never a dropped clause ([[D-013]]).
 - **The SQL is deterministic** — same options, same statement, byte for byte
   ([[D-014]]). That is what makes it testable with [crudtest](crudtest.md).
+
+## A column `DEFAULT` does not fire
+
+vv writes every mapped column, so the INSERT it builds names them all — and a row
+created without a value for one stores the Go zero value rather than the column's
+`DEFAULT`. A default only reaches rows the database makes on its own.
+
+This is the first surprise most newcomers hit, and it follows from [[D-014]]:
+the same call has to compile to the same statement, and a statement that omitted
+whichever columns happened to be zero would not. Where the server must own a
+value, mark the column `generated` — vv then leaves it out of the INSERT and
+reads it back — or fill it in a `BeforeSave` hook.
 
 ## See also
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/remote"
 )
@@ -18,8 +19,17 @@ func remoteOver(t *testing.T, c *client) *remote.Resource[Widget, int64, WidgetU
 	return remote.New[Widget, int64, WidgetUpdate](Transport(c.conn, resource))
 }
 
+// remoted mounts a resource this client can read whole.
+//
+// AllowUnpaged is not test scaffolding. There is no "every row" call on the
+// wire — remote.GetAll is emulated with the unpaged flag — so a resource that
+// never agreed to serve whole tables refuses it, on this transport exactly as on
+// HTTP ([[D-060]], [[FL-013]]).
 func remoted(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*remote.Resource[Widget, int64, WidgetUpdate], *fakeRepo) {
 	t.Helper()
+	opts = append([]Option[Widget, int64, WidgetUpdate]{
+		WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}),
+	}, opts...)
 	c, f := mount(t, opts...)
 	return remoteOver(t, c), f
 }

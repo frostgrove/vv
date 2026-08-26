@@ -65,17 +65,33 @@ func (c *Claims) UnmarshalJSON(b []byte) error {
 // everything else alone. An integral number is an int64 because that is what a
 // key column holds; anything else stays a float64.
 func narrow(v any) any {
-	n, ok := v.(json.Number)
-	if !ok {
+	switch n := v.(type) {
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return i
+		}
+		if f, err := n.Float64(); err == nil {
+			return f
+		}
+		return n.String()
+	case map[string]any:
+		// One level deep was not enough. A nested claim — `{"org": {"id": 42}}`,
+		// which is how every identity provider spells a tenant — came back from
+		// Attr as a json.Number, so a caller comparing it to an int64 got a type
+		// mismatch and a scope that narrowed to nothing. The claim is the shape
+		// the issuer chose, not one this package gets to assume is flat.
+		for k, e := range n {
+			n[k] = narrow(e)
+		}
+		return n
+	case []any:
+		for i, e := range n {
+			n[i] = narrow(e)
+		}
+		return n
+	default:
 		return v
 	}
-	if i, err := n.Int64(); err == nil {
-		return i
-	}
-	if f, err := n.Float64(); err == nil {
-		return f
-	}
-	return n.String()
 }
 
 // Subject implements [auth.Principal].

@@ -9,6 +9,7 @@ import (
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/crud/http/crudnet"
+	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/port"
 )
 
@@ -187,9 +188,18 @@ func (f *fakeRepo) last(t *testing.T) recordedCall {
 
 // serve mounts a real binding on a real server. Nothing here is a stub between
 // the client and the handler: what the client writes is what net/http parses.
+//
+// The endpoint declares AllowUnpaged, and that is not test scaffolding — it is
+// what a resource has to say to be consumable by remote.GetAll. There is no
+// "every row" route over HTTP; GetAll is emulated with the unpaged flag, and an
+// endpoint that never agreed to serve whole tables refuses it. A resource meant
+// to be read this way says so once, at the far end ([[D-060]]).
 func serve(t *testing.T, repo port.Repository[Widget, int64, WidgetUpdate], opts ...crudnet.Option[Widget, int64, WidgetUpdate]) string {
 	t.Helper()
 	mux := http.NewServeMux()
+	opts = append([]crudnet.Option[Widget, int64, WidgetUpdate]{
+		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}),
+	}, opts...)
 	crudnet.New(repo, opts...).Mount(mux, "/widgets")
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

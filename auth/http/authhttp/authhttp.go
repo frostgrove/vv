@@ -24,9 +24,9 @@ package authhttp
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 
+	"github.com/shardit-io/vv/port"
 	"github.com/shardit-io/vv/port/porthttp"
 )
 
@@ -65,7 +65,8 @@ func Locale(r *http.Request) context.Context {
 // disclosure [[D-056]] exists to prevent. A consumer who needs the header for a
 // standards-checking client sets it in a wrapper.
 func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error) {
-	status, header, body := rd.Render(Locale(r), err)
+	ctx := Locale(r)
+	status, header, body := rd.Render(ctx, err)
 	for k, vs := range header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -79,13 +80,13 @@ func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err er
 	if marshalErr != nil {
 		// The envelope failed to marshal, which is this library's bug and not
 		// the caller's. Say nothing, and do not leak the marshal error.
-		log.Printf("authhttp: encoding the refusal: %v", marshalErr)
+		port.Logger(ctx).Error("authhttp: encoding the refusal", "err", marshalErr)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if _, writeErr := w.Write(b); writeErr != nil {
-		log.Printf("authhttp: writing the refusal: %v", writeErr)
+		port.Logger(ctx).Error("authhttp: writing the refusal", "err", writeErr)
 	}
 }

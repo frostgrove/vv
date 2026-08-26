@@ -51,10 +51,14 @@ users := Users.Bind(db,
 
 | Опция | Что делает |
 |---|---|
-| `WithProbe(h)` | подключить обработчик к двум глаголам вставки — `Save` и `SaveAll` — и к `Update` |
+| `WithProbe(h)` | подключить обработчик к двум однострочным записям — `Save` и `Update` |
 | `WithProbeFor(op, h)` | подключить один глагол по имени: `Save`, `SaveAll`, `Update`, `UpdateAll`, `Delete`, `DeleteAll` |
 | `WithProbeError(fn)` | куда уходит ошибка пробы. **Это рекомендательно — логируйте её, никогда не рендерите** |
 | `WithSource(src)` | назвать источник данных, на котором работает проба. Нужно только когда это не самый внутренний middleware |
+
+Батчевые глаголы остаются на дешёвом ответе. Батч — это там, где стоимость
+умножается и где клиент меньше всего похож на форму, поэтому `SaveAll` и
+остальные держатся за `probe.Simple`, пока `WithProbeFor` не скажет иначе.
 
 `WithProbe` устанавливает два глагола сразу, а `WithProbeFor` — один, поэтому
 **побеждает последняя опция** — более узкую ставьте второй.
@@ -62,7 +66,7 @@ users := Users.Bind(db,
 ```go
 faults.Enrich[Doc, int64](
     faults.WithProbe(probe.Full(cat)),                       // Save и Update
-    faults.WithProbeFor("SaveAll", probe.Simple()),          // …но не батчи
+    faults.WithProbeFor("SaveAll", probe.Full(cat)),         // …и батчи тоже
 )
 ```
 

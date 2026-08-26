@@ -2,6 +2,9 @@ package query_test
 
 import (
 	"encoding/json"
+	"errors"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -54,7 +57,7 @@ func TestCompileMapsEveryKnobOntoOptions(t *testing.T) {
 		"terms": [{"path": "title", "op": "contains", "values": ["go"]}],
 		"search": "rust", "searchFields": ["body"],
 		"unpaged": true, "skipTotal": true, "distinct": true
-	}`, nil)
+	}`, exports)
 
 	wantFilters := []string{`"views" >= $1`, `"title" LIKE $1`, `"body" LIKE $1`}
 	if len(o.Filter) != len(wantFilters) {
@@ -392,7 +395,7 @@ func TestARequestSurvivesBeingWrittenBackOutAsJSON(t *testing.T) {
 		"filter": {"views": {"gte": 10}, "author.name": "Ann"},
 		"terms": [{"path": "title", "op": "contains", "values": ["go"]}],
 		"search": "rust", "searchFields": ["body"],
-		"unpaged": true, "skipTotal": true, "distinct": true
+		"skipTotal": true, "distinct": true
 	}`
 
 	var first query.Request
@@ -442,4 +445,313 @@ func compileReq(t *testing.T, req *query.Request) []crud.Option {
 		t.Fatalf("compile: %v", err)
 	}
 	return opts
+}
+
+// A request cannot turn pagination off unless the endpoint says it may.
+//
+// Every other bound in query.Config bounds what a request may *name*. This one
+// bounds how much comes back, and it is the only knob a client can set that has
+// no ceiling of its own: crud.Options.Resolved clamps unpaged down to the
+// repository's MaxLimit, and MaxLimit is unset by default. With both defaults,
+// `?unpaged=true` on a public list route is a full table scan and a full table
+// in memory, chosen by whoever sent the request.
+//
+// It reads like security.Policy's AllowUnscopedDeleteAll, and for the same
+// reason: the dangerous direction is the one that has to be named.
+func TestUnpagedIsRefusedUnlessTheEndpointServesIt(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"unpaged":true}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cfg := range []*query.Config{nil, {}, {Filterable: []string{"*"}}} {
+		if _, err := req.Compile(Articles.Meta(), cfg); err == nil {
+			t.Fatalf("unpaged was accepted on an endpoint that never declared it: %+v", cfg)
+		}
+	}
+
+	// The control. Everything above would hold just as well if unpaged were
+	// refused unconditionally, so an endpoint that declares it has to get it —
+	// and get it as far as the resolved options, not merely past validation.
+	o := resolve(t, `{"unpaged":true}`, &query.Config{AllowUnpaged: true})
+	if !o.Unpaged {
+		t.Fatal("an endpoint that declared AllowUnpaged did not get unpaged results")
+	}
+
+	// And the refusal is a client mistake with a path, not a 500: the client
+	// asked for something this endpoint does not serve, and can be told which
+	// part of its request was refused.
+	_, err := req.Compile(Articles.Meta(), nil)
+	var qe *query.Error
+	if !errors.As(err, &qe) || qe.Path != "unpaged" {
+		t.Fatalf("the refusal is not a query.Error naming the parameter: %#v", err)
+	}
+
+	// And it names the spelling the client sent. The query string accepts `all`
+	// as an alias, and blaming that request on `unpaged` points at a key that
+	// appears nowhere in it — a path the client cannot act on, which is the one
+	// thing the path is for.
+	for _, spelling := range []string{"unpaged", "all"} {
+		v, verr := url.ParseQuery(spelling + "=1")
+		if verr != nil {
+			t.Fatal(verr)
+		}
+		qr, perr := query.ParseQuery(v)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		if !qr.Unpaged {
+			t.Fatalf("?%s=1 did not set the unpaged flag at all", spelling)
+		}
+		_, cerr := qr.Compile(Articles.Meta(), nil)
+		var e *query.Error
+		if !errors.As(cerr, &e) {
+			t.Fatalf("?%s=1 was not refused: %v", spelling, cerr)
+		}
+		if e.Path != spelling {
+			t.Fatalf("?%s=1 was refused at path %q, naming a parameter the client did not send", spelling, e.Path)
+		}
+	}
+}
+
+// A list a client chose the length of is bounded, and so is a sort.
+//
+// Both are the same hole in different clothes: a bound the condition budget
+// cannot see. `{"id": {"in": [...]}}` is charged as exactly one condition
+// however long the array is, and every element becomes a bound parameter —
+// PostgreSQL refuses a statement past 65535 of them, so without a cap here the
+// honest 400 arrived from the driver, as a 500, after the statement was built.
+// A sort has no budget of its own at all, and a term that hops a relation
+// renders as a correlated scalar subquery, so a long list is not linear.
+func TestAClientChosenListAndSortAreBounded(t *testing.T) {
+	t.Run("in", func(t *testing.T) {
+		big := make([]string, 40)
+		for i := range big {
+			big[i] = strconv.Itoa(i)
+		}
+		doc := `{"filter":{"views":{"in":[` + strings.Join(big, ",") + `]}}}`
+
+		cfg := &query.Config{MaxInValues: 8}
+		var req query.Request
+		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), cfg); err == nil {
+			t.Fatal("a 40-value list past a cap of 8 compiled")
+		}
+
+		// The control, and the point: the same document is one condition, so
+		// MaxConditions never sees its length. Without MaxInValues this passes.
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxConditions: 1}); err != nil {
+			t.Fatalf("a 40-value list is charged as more than one condition: %v", err)
+		}
+
+		// And a list under the cap still works.
+		compile(t, `{"filter":{"views":{"in":[1,2,3]}}}`, cfg)
+	})
+
+	t.Run("the shorthand spelling is bounded too", func(t *testing.T) {
+		big := make([]string, 40)
+		for i := range big {
+			big[i] = strconv.Itoa(i)
+		}
+		doc := `{"filter":{"views":[` + strings.Join(big, ",") + `]}}`
+		var req query.Request
+		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxInValues: 8}); err == nil {
+			t.Fatal("the array shorthand is not bounded, only the explicit `in` operator is")
+		}
+	})
+
+	t.Run("the flat-term spelling is bounded too", func(t *testing.T) {
+		// The third spelling, and the one D-060's cap did not reach. It is
+		// reachable from POST /query through Term.Values, not only from a query
+		// string, so a stock config still produced one bind parameter per element
+		// with no ceiling.
+		big := make([]string, 40)
+		for i := range big {
+			big[i] = strconv.Itoa(i)
+		}
+		doc := `{"terms":[{"path":"views","op":"in","values":["` + strings.Join(big, `","`) + `"]}]}`
+		var req query.Request
+		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxInValues: 8}); err == nil {
+			t.Fatal("a 40-value flat term compiled past a cap of 8")
+		}
+		// The control: the same term charges as one condition, so MaxConditions
+		// never sees its length — which is why it needs a cap of its own.
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxConditions: 1}); err != nil {
+			t.Fatalf("a 40-value flat term is charged as more than one condition: %v", err)
+		}
+	})
+
+	t.Run("the search field list is bounded", func(t *testing.T) {
+		// The fourth spelling: each entry is its own LIKE with its own bind.
+		fields := make([]string, 40)
+		for i := range fields {
+			fields[i] = "title"
+		}
+		var req query.Request
+		doc := `{"search":"go","searchFields":["` + strings.Join(fields, `","`) + `"]}`
+		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxSort: 4}); err == nil {
+			t.Fatal("40 search fields compiled past a cap of 4")
+		}
+	})
+
+	t.Run("a repeated search field is searched once", func(t *testing.T) {
+		o := resolve(t, `{"search":"go","searchFields":["title","title","body"]}`, nil)
+		sql, _, err := crud.NewSQL(crud.Postgres{}, Articles.Meta()).Predicate(o.Predicate()).Done()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(sql, `"title" LIKE`); n != 1 {
+			t.Fatalf("the same column was searched %d times; the second LIKE matches the same rows and costs the same scan:\n%s", n, sql)
+		}
+	})
+
+	t.Run("sort", func(t *testing.T) {
+		var req query.Request
+		if err := json.Unmarshal([]byte(`{"sort":["title","-views","createdAt"]}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxSort: 2}); err == nil {
+			t.Fatal("three sort terms past a cap of two compiled")
+		}
+		// The control: at the cap it is fine.
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxSort: 3}); err != nil {
+			t.Fatalf("three sort terms at a cap of three were refused: %v", err)
+		}
+	})
+
+	t.Run("a repeated sort path is rendered once", func(t *testing.T) {
+		o := resolve(t, `{"sort":["title","title","-title"]}`, nil)
+		n := 0
+		for _, ord := range o.Sort {
+			if strings.EqualFold(ord.Field, "Title") {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("the same column was sorted %d times; the second term decides nothing and still costs", n)
+		}
+	})
+}
+
+// A cursor cannot reach a column the endpoint declined to expose to filtering.
+//
+// A cursor is a filter. Its payload is the sort tuple, and the repository turns
+// it into an inequality over exactly those columns ([[D-028]]) — so a column that
+// is Sortable and not Filterable became comparable with `>` and `<` by forging a
+// two-element token, while the same comparison written as a filter was refused
+// by name. That is a binary search over a column the deployment kept back:
+// enough to read a salary to the nearest unit in twenty requests.
+//
+// The token is opaque and unsigned, and that is fine — it carries a position,
+// not authority. What it must not do is reach further than the document could.
+func TestACursorCannotCompareAColumnTheEndpointHidesFromFiltering(t *testing.T) {
+	cfg := &query.Config{
+		Filterable: []string{"ID", "Title"},
+		Sortable:   []string{"ID", "Title", "Views"},
+	}
+
+	// The control first, and it is what makes this a hole rather than a
+	// preference: the same comparison written as a filter is refused by name.
+	var asFilter query.Request
+	if err := json.Unmarshal([]byte(`{"filter":{"views":{"gt":100}}}`), &asFilter); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := asFilter.Compile(Articles.Meta(), cfg); err == nil {
+		t.Fatal("the control failed: Views is filterable after all, so this test proves nothing")
+	}
+
+	// The same reach, through a cursor.
+	var viaCursor query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["views","id"],"after":"whatever"}`), &viaCursor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := viaCursor.Compile(Articles.Meta(), cfg); err == nil {
+		t.Fatal("a cursor reached a column the endpoint hides from filtering")
+	}
+
+	// And the ordinary case still works: sorting by a filterable column and
+	// paging through it is what cursors are for.
+	var fine query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["title","id"],"after":"whatever"}`), &fine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fine.Compile(Articles.Meta(), cfg); err != nil {
+		t.Fatalf("a cursor over filterable columns was refused: %v", err)
+	}
+
+	// And sorting by the hidden column *without* a cursor is still allowed — it
+	// orders rows the caller may already see, which is what Sortable means.
+	var sortOnly query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["views"]}`), &sortOnly); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sortOnly.Compile(Articles.Meta(), cfg); err != nil {
+		t.Fatalf("sorting by a sortable column was refused when no cursor was involved: %v", err)
+	}
+}
+
+// An allow-list entry that names nothing fails where it was written.
+//
+// The lists are plain strings and `allowed` is pure string matching, so a
+// misspelled entry is inert: it never matches, the field it was meant to expose
+// stays closed, and every request asking for that field is refused as the
+// *client's* mistake. `Filterable: {"CreatedAt"}` on a model whose field is
+// `Created` is a filter nobody can use and an error that blames the caller,
+// forever, with nothing anywhere saying otherwise.
+func TestAnAllowListEntryThatNamesNothingIsRefusedAtDeclaration(t *testing.T) {
+	m := Articles.Meta()
+
+	for _, tc := range []struct {
+		name string
+		cfg  *query.Config
+	}{
+		{"filterable", &query.Config{Filterable: []string{"Nope"}}},
+		{"sortable", &query.Config{Sortable: []string{"Nope"}}},
+		{"selectable", &query.Config{Selectable: []string{"Nope"}}},
+		{"searchable", &query.Config{Searchable: []string{"Nope"}}},
+		{"defaultSearchFields", &query.Config{DefaultSearchFields: []string{"Nope"}}},
+		{"preloadable", &query.Config{Preloadable: []string{"Nope"}}},
+		{"preloadable naming a column", &query.Config{Preloadable: []string{"Title"}}},
+		{"a subtree whose prefix resolves to nothing", &query.Config{Filterable: []string{"Nope.*"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Check(m); err == nil {
+				t.Fatal("the entry was accepted, so it exposes nothing and every request naming that field is blamed on the client")
+			}
+		})
+	}
+
+	// The controls. Everything above would hold for a Check that refused any
+	// config at all, so the legal shapes have to pass: real fields, a real
+	// relation, a subtree, the bare wildcard, and the empty list that means
+	// "anything the model maps".
+	for _, tc := range []struct {
+		name string
+		cfg  *query.Config
+	}{
+		{"real fields", &query.Config{Filterable: []string{"Title", "Views"}}},
+		{"a path across a relation", &query.Config{Filterable: []string{"Author.Name"}}},
+		{"a relation subtree", &query.Config{Filterable: []string{"Comments.*"}}},
+		{"a real relation to preload", &query.Config{Preloadable: []string{"Comments", "Comments.Author"}}},
+		{"the wildcard", &query.Config{Filterable: []string{"*"}}},
+		{"the empty config", &query.Config{}},
+		{"nil", nil},
+	} {
+		t.Run("control: "+tc.name, func(t *testing.T) {
+			if err := tc.cfg.Check(m); err != nil {
+				t.Fatalf("a legal config was refused: %v", err)
+			}
+		})
+	}
 }

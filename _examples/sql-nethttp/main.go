@@ -33,7 +33,7 @@ import (
 	"github.com/shardit-io/vv/crud/http/crudnet"
 	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb"
 )
 
 //go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt

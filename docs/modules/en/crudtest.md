@@ -51,13 +51,14 @@ a paginated read is two statements, and a preload is one more per relation.
 |---|---|
 | `Push(results...)` | queue query answers |
 | `ExecResult(res)` | the next `Exec`'s rows-affected and last-insert-id |
-| `Fail(err)` | the next call fails |
+| `Fail(err)` | the next `Exec` reports `err` |
 | `Rows(rows...)` | a successful result |
 | `RowsFailing(err, rows...)` | rows, and *then* an error |
 
-**`RowsFailing` is not a duplicate of `Fail`.** The drivers this doubles for
-report one failure in two places: `Fail` is `Query` itself refusing, which is
-`database/sql`'s shape, and `RowsFailing` is pgx's — a statement the server
+**`RowsFailing` is not a duplicate of a refused query.** The drivers this
+doubles for report one failure in two places: `crudtest.Result{Err: err}` is
+`Query` itself refusing, which is `database/sql`'s shape, and `RowsFailing` is
+pgx's — a statement the server
 refused arrives as a live `Rows` that yields what it has and *then* answers
 `Err`. A double that could only express the first cannot drive the arm a read
 has to end with, and a loop that never asks reads a truncated schema as a

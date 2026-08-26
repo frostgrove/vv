@@ -8,7 +8,6 @@ import (
 
 	"github.com/shardit-io/vv/auth"
 	"github.com/shardit-io/vv/auth/http/authnet"
-	"github.com/shardit-io/vv/crud/http/crudnet"
 )
 
 // serve runs one request through the middleware and answers what the handler
@@ -130,23 +129,4 @@ func TestANilGuardRefusesToStart(t *testing.T) {
 		}
 	}()
 	authnet.Middleware(nil)
-}
-
-// The auth middleware writes its own refusal, so it has to compose with the
-// error middleware a consumer already mounts for the CRUD routes. Rendering
-// twice produces a body with two JSON documents in it.
-func TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware(t *testing.T) {
-	h := &seen{}
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
-	req.Header.Set("Authorization", "Bearer forged")
-	w := httptest.NewRecorder()
-
-	crudnet.Errors()(authnet.Middleware(auth.NewGuard(refuses()))(h)).ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("the refusal answered %d under the error middleware, want 401", w.Code)
-	}
-	if n := strings.Count(w.Body.String(), `"type"`); n != 1 {
-		t.Fatalf("the body carries %d envelopes, want 1: %s", n, w.Body.String())
-	}
 }

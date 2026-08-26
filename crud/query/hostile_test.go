@@ -153,7 +153,7 @@ func TestAPreloadsOwnFilterBindsItsValue(t *testing.T) {
 		crudtest.Rows(),
 	)
 	var req query.Request
-	doc := `{"preload":[{"path":"comments","filter":{"body":` + quoted(payload) + `}}],"unpaged":true}`
+	doc := `{"preload":[{"path":"comments","filter":{"body":` + quoted(payload) + `}}]}`
 	if err := json.Unmarshal([]byte(doc), &req); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 // its columns filterable.
 func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
 	cfg := &query.Config{Filterable: []string{"Title"}, Preloadable: []string{"Comments"}}
-	sql, _, err := tryDoc(t, `{"preload":["comments"],"unpaged":true}`, cfg)
+	sql, _, err := tryDoc(t, `{"preload":["comments"]}`, cfg)
 	if err != nil {
 		t.Fatalf("the preload the list allows was refused: %v", err)
 	}

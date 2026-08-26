@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,9 +37,17 @@ import (
 // nonexistent kids turning into a stream of requests to the provider. That is
 // the shape of the denial-of-service a naive implementation hands an attacker:
 // one forged token per fetch.
-func JWKS(url string, opts ...JWKSOption) KeySource {
+func JWKS(rawURL string, opts ...JWKSOption) KeySource {
+	// An empty URL is the hardest misconfiguration in this package to diagnose
+	// from outside: every request answers the same reasonless 401 a forged token
+	// does ([[D-056]] keeps the reason inside the process), so nothing in the logs
+	// or the response tells anyone the key set was never fetched. New already
+	// panics on three misconfigurations for exactly this reason ([[D-021]]).
+	if strings.TrimSpace(rawURL) == "" {
+		panic("authjwt: JWKS needs the provider's key-set URL; with none, every token is refused for a reason nothing reports")
+	}
 	s := &jwks{
-		url:        url,
+		url:        rawURL,
 		client:     http.DefaultClient,
 		minRefresh: JWKSMinRefresh,
 	}
@@ -57,6 +66,18 @@ func JWKS(url string, opts ...JWKSOption) KeySource {
 		keyfunc: s.key,
 	}
 }
+
+// JWKSFetchTimeout bounds one key-set fetch.
+//
+// It belongs to the fetch and not to whoever triggered it. The waiters parked
+// behind a refresh share the leader's work, so a leader that could wait forever
+// could park them forever — and the leader's own request context is the wrong
+// bound in the other direction, because that one is cancelled when a single
+// client disconnects. A deadline of its own is the only one that is nobody's.
+//
+// It is deliberately not configurable. A deployment that wants a different
+// number wants a different HTTP client, and [JWKSClient] is where that goes.
+const JWKSFetchTimeout = 10 * time.Second
 
 // JWKSMinRefresh is how long a key set is trusted before an unknown kid may
 // trigger another fetch.
@@ -91,9 +112,16 @@ type jwks struct {
 	client     *http.Client
 	minRefresh time.Duration
 
-	mu      sync.Mutex
-	keys    map[string]any
-	fetched time.Time
+	mu   sync.Mutex
+	keys map[string]any
+	// fetched is the last *successful* fetch; attempted is the last fetch of any
+	// kind. The rate limit reads attempted, and the two are separate because
+	// only one of them is what a caller wants to know about the keys it holds.
+	fetched   time.Time
+	attempted time.Time
+	// inflight is closed when the fetch currently running finishes, and nil when
+	// none is. It is what makes a burst of concurrent misses one request.
+	inflight chan struct{}
 }
 
 // key answers the verification key for one token.
@@ -109,10 +137,7 @@ func (s *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	if k, ok := s.cached(kid); ok {
 		return k, nil
 	}
-	// Deliberately not "no key with kid abc123": the kid is the caller's own
-	// input echoed back, and a message naming it turns the endpoint into a
-	// reflector.
-	return nil, errors.New("authjwt: the key set has no key for this token")
+	return nil, errNoKeyForToken
 }
 
 // cached answers a key already held. A token with no kid matches only when the
@@ -134,30 +159,79 @@ func (s *jwks) cached(kid string) (any, bool) {
 	return nil, false
 }
 
-// refresh refetches the set, at most once per minRefresh.
+// refresh refetches the set, at most once per minRefresh and never twice at once.
 //
-// The rate limit is inside the lock and checked against the last *successful*
-// fetch, so a burst of tokens naming unknown kids costs one request rather than
-// one each.
+// A kid is the caller's own input, and any unknown one reaches here — so without
+// both of those bounds, a token naming a kid nobody has is an outbound request
+// this process makes because somebody asked it to.
+//
+// **The limit reads the last attempt, not the last success.** Arming it only on
+// success is what it used to do, and it meant the limit did nothing in exactly
+// the case it exists for: while the provider is down, every fetch fails, nothing
+// is ever recorded, and each token costs a request to a service that is already
+// failing. The stated purpose — "a burst of tokens naming unknown kids costs one
+// request rather than one each" — was only true when the provider was healthy,
+// which is when it does not matter.
+//
+// **And one fetch at a time.** The lock has to be dropped across the HTTP call,
+// so a burst arriving together all passed the check before any of them recorded
+// an attempt. Waiters share the in-flight fetch rather than being refused,
+// because after a key rotation they are asking for a kid that really is about to
+// exist, and refusing them would turn one rotation into a wave of 401s.
 func (s *jwks) refresh(ctx context.Context) error {
 	s.mu.Lock()
-	if !s.fetched.IsZero() && time.Since(s.fetched) < s.minRefresh {
+	if wait := s.inflight; wait != nil {
 		s.mu.Unlock()
-		return errors.New("authjwt: the key set has no key for this token")
+		select {
+		case <-wait:
+			// The fetch that was already running has finished. Whether it found
+			// this kid is the caller's next question, not ours.
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	if !s.attempted.IsZero() && time.Since(s.attempted) < s.minRefresh {
+		s.mu.Unlock()
+		return errNoKeyForToken
+	}
+	done := make(chan struct{})
+	s.inflight = done
+	s.attempted = time.Now()
 	s.mu.Unlock()
 
-	keys, err := s.fetch(ctx)
-	if err != nil {
-		return err
-	}
+	// The fetch runs on a context of its own, not the leader's.
+	//
+	// The waiters share whatever the leader does, and under net/http the leader's
+	// context is cancelled the moment *that one client* disconnects — so one
+	// abandoned request failed every request parked behind it and, because the
+	// attempt is recorded either way, suppressed the refetch for the whole
+	// minRefresh window. A shared piece of work must not belong to whoever
+	// happened to ask for it first.
+	//
+	// WithoutCancel keeps the values the caller put on the context — a trace id,
+	// a logger — and drops only the cancellation. The deadline is the fetch's
+	// own, so the leader cannot park the waiters indefinitely either.
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), JWKSFetchTimeout)
+	defer cancel()
+	keys, err := s.fetch(fctx)
 
 	s.mu.Lock()
-	s.keys = keys
-	s.fetched = time.Now()
+	if err == nil {
+		s.keys = keys
+		s.fetched = time.Now()
+	}
+	s.inflight = nil
 	s.mu.Unlock()
-	return nil
+	close(done)
+
+	return err
 }
+
+// errNoKeyForToken is deliberately not "no key with kid abc123": the kid is the
+// caller's own input echoed back, and a message naming it turns the endpoint
+// into a reflector ([[D-056]]).
+var errNoKeyForToken = errors.New("authjwt: the key set has no key for this token")
 
 func (s *jwks) fetch(ctx context.Context) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)

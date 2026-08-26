@@ -35,6 +35,12 @@
 
    vvdb ──► dbpgx · database/sql ──► crudsql · crudpgx
    one config file, then the handle the application hands over
+
+   auth ──► authjwt · apikey ──► authnet · authgin · authfiber · authgrpc
+                                            │
+                                            ▼
+                                    security.Gate
+   who is calling, established once at the door and read by every policy
 ```
 
 ## Ядро — импортируется всегда
@@ -98,11 +104,12 @@
 
 | Модуль | Импорт | Что это |
 |---|---|---|
-| [vvdb](vvdb.md) | `vv/vvdb` | Одна конфигурация → DSN или `*sql.DB` с настроенным пулом. Четыре движка, только stdlib |
-| [dbpgx](dbpgx.md) | `vv/vvdb/dbpgx` | **Модуль** — та же конфигурация, `*pgxpool.Pool` |
+| [vvdb](vvdb.md) | `vv/utils/vvdb` | Одна конфигурация → DSN или `*sql.DB` с настроенным пулом. Четыре движка, только stdlib |
+| [dbpgx](dbpgx.md) | `vv/utils/vvdb/dbpgx` | **Модуль** — та же конфигурация, `*pgxpool.Pool` |
 
 Из шва репозитория сюда не дотянуться: соединение открывает приложение и отдаёт
-его адаптеру ниже ([[D-057]]).
+его адаптеру ниже ([[D-057]]). Оба лежат под `utils/` именно поэтому — это
+обвязка приложения, а не подсистема библиотеки ([[D-058]]).
 
 ## Адаптеры — как vv добирается до вашей базы данных
 

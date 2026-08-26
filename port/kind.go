@@ -70,7 +70,9 @@ func worse(a, b errs.Kind) errs.Kind {
 // Forbidden is [[D-008]] verbatim — never confirm that a hidden row exists.
 // Conflict before Validation because a collision is a fact about the world the
 // client cannot fix by editing its own payload; the envelope still carries every
-// violation, and only the coarse answer is a single value.
+// violation, and only the coarse answer is a single value. TooLarge is last and
+// therefore weakest: it is what happened only when nothing else did, and it
+// conceals nothing, so any other classification on the same fault outranks it.
 func rank(k errs.Kind) int {
 	switch k {
 	case errs.KindInternal:
@@ -89,6 +91,8 @@ func rank(k errs.Kind) int {
 		return 6
 	case errs.KindBadRequest:
 		return 7
+	case errs.KindTooLarge:
+		return 8
 	default:
 		// A kind from outside the table cannot be given a 4xx it may not
 		// support, and errs.Kind.String makes the same choice.
@@ -212,6 +216,8 @@ func CodeForKind(k errs.Kind) errs.Code {
 		return errs.CodeCheck
 	case errs.KindBadRequest:
 		return errs.CodeBadQuery
+	case errs.KindTooLarge:
+		return errs.CodeTooLarge
 	default:
 		return errs.CodeInternal
 	}

@@ -257,10 +257,11 @@ Both halves, and the second is the one that catches the NULL bug:
 - `TestTheSameFailingRequestTwiceProducesTheSameBody` — byte-identical over five
   renders, with a count of violations in the body as the control that the
   comparison measures an order.
-- `TestTheViolationOrderIsTotalAndByteIdentical` in
-  `port/porthttp/render_test.go` — eight violations spanning names, indices and
-  equal-prefix paths, built in reverse. Phase 4 wrote it; phase 7 is what
-  produces eight violations for it to order.
+- `TestTheViolationOrderIsTotalAndByteIdentical` in `port/violations_test.go` —
+  eight violations spanning names, indices and equal-prefix paths, built in
+  reverse. Phase 4 wrote it beside the renderer and phase 9 moved it down with
+  the pipeline ([[D-045]]); phase 7 is what produces eight violations for it to
+  order.
 - The unit half, in `crud/probe/full_test.go`, `crud/probe/dup_test.go`,
   `crud/probe/declare_test.go` and `crud/decorators/faults/probe_test.go`: every skip
   with its unskipped twin, the merge rule with both its controls, the caps, the

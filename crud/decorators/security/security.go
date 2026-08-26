@@ -114,19 +114,48 @@ type Policy[M any, ID comparable] struct {
 // policy, so the call site stays clean:
 //
 //	users := Users.Bind(db, security.Gate(tenantPolicy))
+//
+// Every field of Policy is nil-able and nil means "allow" — which is the right
+// answer for a policy that scopes rows and does not authorise verbs, and worth
+// knowing about when reading one. The zero Policy is not the same as no gate at
+// all: it still refuses an unscoped DeleteAll and an unscoped UpdateAll, which
+// are the two rules a gate applies without being asked. What it does not do is
+// authorise anything, so a policy that names a Scope and no Authorize permits
+// every verb on the rows the scope leaves visible. [[D-060]] says why the
+// default is that way round.
 func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID] {
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] {
-		return &gate[M, ID]{Core: next, p: p, immutable: index(p.Immutable)}
+		return &gate[M, ID]{Core: next, p: p, immutable: index[M](p.Immutable)}
 	}
 }
 
-func index(names []string) map[string]struct{} {
+// index resolves the frozen names once, to the model's canonical spelling, and
+// refuses one that names nothing.
+//
+// It used to keep the strings as written, and the two enforcement points then
+// spoke different vocabularies: Update compares against crud.DefinedFields,
+// which answers *canonical* field names, while Save resolved each name through
+// the forgiving meta.Field, which also accepts the column spelling. So
+// Freeze("tenant_id") froze the column on PUT and **not** on PATCH — the field
+// was silently writable through the verb a client is most likely to use.
+//
+// The panic is the part that has to land before a tag. It is a declaration
+// mistake, so [[D-021]] puts it at start-up; after a release it would stop an
+// already-deployed application from booting, which is a different and much worse
+// conversation than a build that never started.
+func index[M any](names []string) map[string]struct{} {
 	if len(names) == 0 {
 		return nil
 	}
+	schema := crud.MustSchemaOf[M]()
 	m := make(map[string]struct{}, len(names))
 	for _, n := range names {
-		m[n] = struct{}{}
+		f := schema.Field(n)
+		if f == nil {
+			panic("security: Policy.Immutable names " + n + ", which is not a field or column of " +
+				schema.Name + " — a frozen name that resolves to nothing freezes nothing")
+		}
+		m[f.Name] = struct{}{}
 	}
 	return m
 }
@@ -136,6 +165,15 @@ type gate[M any, ID comparable] struct {
 	p         Policy[M, ID]
 	immutable map[string]struct{}
 }
+
+// Next hands back the Core this gate wraps, so a chain built with the gate in
+// the middle stays walkable ([[crud.Nexter]]).
+//
+// Without it a probe wired above a gate could not find the repository
+// underneath, and the order the two decorators happened to be listed in decided
+// whether the probe ran at all. Forwarding what it wraps is a decorator's job
+// even when the decorator itself has nothing to say about the question.
+func (g *gate[M, ID]) Next() crud.Core[M, ID] { return g.Core }
 
 // Denied wraps ErrForbidden with what was refused.
 func Denied(action Action, reason string) error {
@@ -517,6 +555,9 @@ func (g *gate[M, ID]) checkImmutableSave(meta *crud.Meta, old, next *M) error {
 		return nil
 	}
 	for name := range g.immutable {
+		// index resolved these at declaration and panicked on a name that
+		// resolves to nothing, so this is the canonical spelling and meta.Field
+		// cannot answer nil.
 		f := meta.Field(name)
 		if f == nil {
 			return Denied(Update, "immutable field "+name+" is not part of "+meta.Name)
@@ -554,12 +595,28 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.O
 	}
 	// The scope applies here too, so an out-of-scope id is ErrNotFound rather
 	// than a denial.
-	cur, err := g.loadScoped(ctx, id)
-	if err != nil {
-		return zero, err
-	}
-	if err := g.inspect(ctx, Update, &cur); err != nil {
-		return zero, err
+	//
+	// PrimaryOnly, like every other check this gate makes. A read that decides a
+	// write never goes to a replica ([[D-032]]) — and this one decides one: the
+	// row it loads is what Inspect is shown. Taken from a lagging replica, a row
+	// that has just moved out of scope still authorises the update, and the
+	// UPDATE that follows lands on the primary. This was the one check that did
+	// not pass it.
+	//
+	// Only when there is a rule to run. With no Inspect the row was loaded and
+	// then not looked at — a whole round trip, on the most common policy shape
+	// there is (a scope and no per-row rule), before every single update. The
+	// out-of-scope-is-404 half below does not need it: the UPDATE carries the
+	// same scope, so a row outside it matches nothing and the repository answers
+	// ErrNotFound on its own ([[D-008]]).
+	if g.p.Inspect != nil {
+		cur, err := g.loadScoped(ctx, id, crud.PrimaryOnly())
+		if err != nil {
+			return zero, err
+		}
+		if err := g.inspect(ctx, Update, &cur); err != nil {
+			return zero, err
+		}
 	}
 	// And it goes into the write itself, not just the check in front of it.
 	// Checking here and writing unscoped was check-then-act: a row that left
@@ -633,11 +690,16 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	}
 	pk := g.Meta().PK.Name
 	within := crud.And(scope, crud.InAny(pk, ids))
+	// Hoisted above the Inspect branch, because the statement at the end needs it
+	// whether or not there is a rule to run. It used to be computed inside the
+	// branch and used only for the victim read, so a policy whose scope hops a
+	// relation issued an unnarrowed DELETE — while the same request routed
+	// through DeleteAll was narrowed ([[D-007]]).
+	rel, err := g.narrow(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if g.p.Inspect != nil {
-		rel, err := g.narrow(ctx)
-		if err != nil {
-			return 0, err
-		}
 		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), rel, crud.PrimaryOnly()})...)
 		if err != nil {
 			return 0, err
@@ -648,7 +710,7 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 			}
 		}
 	}
-	return g.Core.DeleteAll(ctx, crud.Where(within))
+	return g.Core.DeleteAll(ctx, crud.Where(within), rel)
 }
 
 func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {

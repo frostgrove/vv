@@ -118,7 +118,7 @@ unscoped is check-then-act. See [[D-008]].
 - `TestAVanishedRowIsStillNotFoundRatherThanStale` in
   `crud/sqlrepo/version_test.go` — the two answers stay distinct.
 - `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` in
-  `test/integration/dialect_edge_test.go` — the MySQL re-read.
+  `crud/sqlrepo/repository_test.go` — the MySQL re-read.
 - `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` in
   `crud/sqlrepo/repository_test.go`.
 - `TestAnUpdateWithNothingToDoLeavesTheVersionAlone` in

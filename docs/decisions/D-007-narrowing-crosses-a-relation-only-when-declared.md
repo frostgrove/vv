@@ -122,6 +122,19 @@ whose own path walks back into that model would otherwise recurse.
 - `TestAPreloadIsNotNarrowedWithoutTheDeclaration` in
   `crud/decorators/security/relscope_test.go` — the deliberate negative, with its
   own control.
+- `TestScopeRelationAttrNarrowsThePreloadTheWayTheHandWrittenFormDoes` in
+  `crud/decorators/security/principal_relscope_test.go` — the token-driven
+  one-liner compiles to the same statement the hand-written declaration does,
+  with `TestAPreloadIsNotNarrowedWithoutTheDeclaration` above as its control —
+  the same negative serves both, which is why there is one of it.
+- `TestScopeRelationSubjectNarrowsTheFarTableToTheCallersOwnRows` in
+  `crud/decorators/security/principal_relscope_test.go` — the subject spelling.
+- `TestABadRelationDeclarationPanics` in
+  `crud/decorators/security/relscope_test.go` — the typo that fails where it was
+  written rather than as a leak, driven through all three spellings: the
+  hand-written `ScopeRelationField` and the two token-driven constructors, which
+  are thin wrappers over it and would narrow nothing if they resolved a path
+  differently. The control is the same three over a path that does resolve.
 - `TestACallerCannotWidenARelationScope` in `crud/sqlrepo/relscope_test.go` and
   `TestACallerCannotWidenARelationNarrowing` in
   `crud/decorators/security/relscope_test.go`.
@@ -138,6 +151,36 @@ whose own path walks back into that model would otherwise recurse.
 - `TestARelationFilterCarriesTheScopeIntoItsSubquery` and
   `TestANestedSortCarriesTheScopeIntoItsSubquery` in
   `crud/sqlrepo/relscope_test.go`.
+
+- `TestMergingTwoNarrowingsOfOneRelationKeepsBoth` and
+  `TestMergingDoesNotLeaveTheRequestsNarrowingOnTheRepositorysOwn` in
+  `crud/scope_test.go` — the merge itself. The second is the one that matters:
+  a per-request narrowing that leaked into the repository's own declaration
+  would apply to the *next* request too, which is one caller's tenant filter on
+  another caller's read.
+- `TestInspectOwnerRefusesARowTheCallerDoesNotOwn` and
+  `TestInspectOwnerRefusesBeforeConsultingTheRuleWhenNobodyIsAuthenticated` in
+  `crud/decorators/security/principal_relscope_test.go` — the rule that cannot
+  be written as a scope, because owning a row is not the same as the row naming
+  you.
+
+- `TestEveryStatementAGatedCallIssuesCarriesTheNarrowing` in
+  `crud/decorators/security/relscope_test.go` — the narrowing arrives in
+  `Options.RelScopes`, and four internal call sites used to rebuild an `Options`
+  without it. Two of the four were writes: the soft-delete stamp read the
+  blueprint's narrowings instead of the query's, so two repositories differing
+  only in `SoftDelete` produced a narrowed DELETE and an unnarrowed UPDATE; and
+  `gate.Delete` computed its narrowing inside the `Inspect` branch and issued the
+  statement without it. The page total's COUNT was the third, and is a count
+  oracle over rows the gate hides. Each subtest asserts on rendered SQL, because
+  a policy that narrows and a statement that does not carry the narrowing look
+  identical from outside until a row comes back.
+- `TestTheRelationScopeBuildersDoNotMutateWhatTheyWereCalledOn` in
+  `crud/scope_test.go` — `AtPath` and `ForModel` read as builders and used to
+  write into the receiver. A policy's `RelationScopes` runs per request, so a
+  consumer extending a stored value would be writing into what another in-flight
+  request is reading, and what they would corrupt is the narrowing that decides
+  whose rows come back.
 
 ## See also
 

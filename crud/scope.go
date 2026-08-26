@@ -1,6 +1,7 @@
 package crud
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 )
@@ -33,33 +34,55 @@ type RelationScopes struct {
 
 // AtPath narrows a relation path, spelled canonically ("Comments",
 // "Comments.Author"). It is relative to the model the scopes belong to.
+// It copies. The chained shape — `(*RelationScopes)(nil).AtPath(…).AtPath(…)` —
+// reads as a builder, and a builder that mutates its receiver is a trap on this
+// particular path: a policy's RelationScopes function runs per request, and a
+// consumer who stores the result of the first call and extends it on the second
+// would be writing into a value another in-flight request is reading. Copying
+// costs one map per declaration and makes the shape mean what it looks like.
 func (rs *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 	if p == nil {
 		return rs
 	}
+	out := rs.clone()
+	if out.paths == nil {
+		out.paths = map[string]Predicate{}
+	}
+	out.paths[path] = p
+	return out
+}
+
+// clone answers a shallow copy, or an empty value for a nil receiver. The
+// predicates themselves are immutable ([[D-003]]: the AST is closed), so the maps
+// are all there is to copy.
+func (rs *RelationScopes) clone() *RelationScopes {
+	out := &RelationScopes{}
 	if rs == nil {
-		rs = &RelationScopes{}
+		return out
 	}
-	if rs.paths == nil {
-		rs.paths = map[string]Predicate{}
+	if len(rs.paths) > 0 {
+		out.paths = make(map[string]Predicate, len(rs.paths))
+		maps.Copy(out.paths, rs.paths)
 	}
-	rs.paths[path] = p
-	return rs
+	if len(rs.models) > 0 {
+		out.models = make(map[reflect.Type]Predicate, len(rs.models))
+		maps.Copy(out.models, rs.models)
+	}
+	return out
 }
 
 // ForModel narrows a model wherever a hop lands on it.
+// It copies, for the reason [AtPath] gives.
 func (rs *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes {
 	if p == nil || t == nil {
 		return rs
 	}
-	if rs == nil {
-		rs = &RelationScopes{}
+	out := rs.clone()
+	if out.models == nil {
+		out.models = map[reflect.Type]Predicate{}
 	}
-	if rs.models == nil {
-		rs.models = map[reflect.Type]Predicate{}
-	}
-	rs.models[t] = p
-	return rs
+	out.models[t] = p
+	return out
 }
 
 // At returns the narrowing that applies to a hop that arrived at target by the

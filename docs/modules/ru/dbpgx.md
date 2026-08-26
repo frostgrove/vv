@@ -1,10 +1,10 @@
 # dbpgx — та же конфигурация, пул pgx
 
 ```go
-import "github.com/shardit-io/vv/vvdb/dbpgx"
+import "github.com/shardit-io/vv/utils/vvdb/dbpgx"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/vvdb/dbpgx` · **Зависит от:** pgx v5
+**Модуль:** `github.com/shardit-io/vv/utils/vvdb/dbpgx` · **Зависит от:** pgx v5
 
 [vvdb](vvdb.md) открывает `*sql.DB` одной стандартной библиотекой. `pgxpool` —
 не `database/sql`, поэтому это отдельный модуль, и потребитель на ent, gorm или

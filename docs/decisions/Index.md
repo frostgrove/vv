@@ -40,8 +40,11 @@ landed `errs`, D-045 when phase 5 landed `port`, D-041 when phase 6 landed
 generated mappers and the start-up refusal it owed; D-045's own named follow-up
 — move the violations pipeline when a second transport wants it — was
 discharged by phase 9 and is recorded there rather than left as a paragraph to
-rediscover; D-040 and D-044 are partly
-in force — see their rows. An *accepted* decision may still owe evidence: D-039
+rediscover. D-040 and D-044 were the last two carrying a partial status and both
+are now bare `accepted`: D-040's owed 503 and `Retry-After` are pinned by
+`TestARetryableFailureIsA503WithRetryAfter` in all three HTTP bindings, and
+D-044's owed rendered body by `TestARenderedBodyNamesNothingInternal` in
+`port/porthttp/render_test.go`. An *accepted* decision may still owe evidence: D-039
 did and phase 2 paid it, D-038 did — the tree walk through a multi-error — and
 phase 3 paid that. Nothing in `docs/` heads a section `Proven by (owed)` today,
 and the next decision written before its code does should say so here.
@@ -89,11 +92,11 @@ and the next decision written before its code does should say so here.
 | [D-037](D-037-app-never-resolves-a-component-by-type.md) | No component is ever resolved by type; `app` holds no `map[reflect.Type]any` | accepted | philosophy |
 | [D-038](D-038-a-fault-is-additive.md) | A fault wraps and never replaces; the `crud` sentinel underneath stays reachable with `errors.Is` | accepted | errors |
 | [D-039](D-039-message-text-is-not-an-interface.md) | No classification and no field path comes from a driver's message text | accepted | errors |
-| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | **classification and kind in force; 503 from phase 4** | errors |
+| [D-040](D-040-a-retryable-class-is-not-a-client-error.md) | A lock timeout, deadlock or serialisation failure is never a 4xx, and the framework does not retry | accepted | errors |
 | [D-041](D-041-the-catalog-is-per-physical-handle.md) | The catalog is keyed on the database handle, never global, and its absence fails at start-up | accepted | errors |
 | [D-042](D-042-the-probe-is-advisory.md) | The probe may only narrow the truth; it never suppresses the driver's own violation | accepted | errors |
 | [D-043](D-043-a-path-is-translated-one-hop-per-layer.md) | Each layer translates only the hop it owns; an unresolvable path is marked approximate, never guessed | accepted | errors |
-| [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | **marshal and print in force; the rendered body from phase 4** | errors |
+| [D-044](D-044-the-public-payload-names-nothing-internal.md) | No response body names a constraint, table, column, SQLSTATE or engine number, at any status | accepted | errors |
 | [D-045](D-045-the-shared-half-is-transport-neutral.md) | The shared half is transport-neutral; a binding is a shell over `port` (supersedes D-034) | accepted | HTTP |
 | [D-046](D-046-the-classifier-is-keyed-on-dialect-sqlstate-native.md) | The classifier is keyed on `(dialect, sqlstate, native)`; SQLSTATE class alone is not a gate | accepted | errors |
 | [D-047](D-047-a-faults-error-text-is-classification-only.md) | A fault's `Error()` names the kind, code, op, entity and count, and nothing a driver said | accepted | errors |
@@ -109,14 +112,21 @@ and the next decision written before its code does should say so here.
 | [D-057](D-057-the-application-opens-the-connection.md) | The application opens the connection and hands it over; `vvdb` imports nothing of vv and nothing in the seam reaches it | accepted | process & tooling |
 | [D-058](D-058-the-layout-axis-is-the-subsystem.md) | The top-level directory is the subsystem and the transport is the second level; `repo/basic` becomes `crud/sqlrepo`, and `utils/` may not import a subsystem | accepted | process & tooling |
 | [D-059](D-059-the-http-projection-of-the-error-contract-belongs-to-port.md) | The status table, the envelope, the `Renderer` seam and the body decode are `port/porthttp`'s, so an auth middleware does not import the repository | accepted | transports, errors |
+| [D-060](D-060-a-request-may-not-choose-how-much-comes-back.md) | `query.Config` is open by default about what a request may *name* and closed about how much comes back; `unpaged` is declared per endpoint | accepted | querying, transports |
+| [D-061](D-061-a-wrapper-forwards-what-it-wraps.md) | No optional interface is found by a bare assertion on the layer below; a decorator forwards `Next()`, a Source wrapper forwards `UnwrapSource()`, and the library walks | accepted | core seam, transactions & datasources |
+| [D-062](D-062-the-library-logs-through-the-callers-logger.md) | The library never writes to a process-wide logger; every line goes through `port.Logger(ctx)`, and statements are instrumented by wrapping the `Source` | accepted | process & tooling, transports |
+| [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
 
 ## By area
 
 **Core seam** — D-001 (two-parameter `Core`, three-parameter `Repo`),
 D-002 (`Opt[T]`), D-021 (why any of it is reflective), D-022 (the handler's
-interface).
+interface), D-030 (a verb on the seam is every decorator's obligation, and the
+test that enforces it), D-061 (what embedding erases, and the two one-method
+interfaces that survive it).
 
-**Querying** — D-028 (cursor pagination), D-003 (closed AST, `Raw`), D-004 (`Where` ANDs),
+**Querying** — D-060 (what a request may name, and how much it may ask for),
+D-028 (cursor pagination), D-003 (closed AST, `Raw`), D-004 (`Where` ANDs),
 D-005 (`EXISTS`, not a join), D-006 (batched preload), D-013 (unknown field is a
 rejection), D-014 (deterministic SQL), D-024 (**open** — `DISTINCT`).
 
@@ -142,7 +152,9 @@ transactions vv opened and the savepoint budget on them), D-019 (dialect
 differences), D-027 (**open** — cross-database capture), D-041 (what else keys
 on that identity), D-042 (why the ownership flag exists at all).
 
-**HTTP** — D-012 (PUT), D-022 (interface, not struct), D-015 (error → status),
+**HTTP** — D-063 (the body cap, and why all three bindings share one number),
+D-062 (where the library's own log lines go), D-012 (PUT), D-022 (interface, not
+struct), D-015 (error → status),
 D-013 (400 for an unknown field), D-045 (what a binding owns and what `port`
 owns — there are three HTTP bindings, Fiber, Gin and net/http, and one service
 seam between them and the gRPC one; D-034 is its superseded first draft, kept

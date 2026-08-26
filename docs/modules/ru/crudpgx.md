@@ -41,7 +41,7 @@ type Queryer interface {
 ## Подключение к чужой транзакции
 
 ```go
-err := pool.BeginFunc(ctx, func(tx pgx.Tx) error {
+err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
     ctx := crud.WithExecutor(ctx, crudpgx.From(tx))
     return users.Save(ctx, &u)
 })
@@ -52,9 +52,18 @@ sqlc, и `Queryer` из vv одновременно, так что одна тр
 
 ## Массовая вставка через COPY
 
-`crudpgx` реализует `crud.BulkInserter` через `COPY`. Любой исполнитель, который
-это предлагает, используется **автоматически** — `SaveAll` подхватывает это, и
-ядро ничего не узнаёт о драйвере ([[UC-008]]).
+`crudpgx` реализует `crud.BulkInserter` через `COPY`. **Библиотека сама за этим
+не тянется.** `SaveAll` пишет один многострочный `INSERT` независимо от того, что
+умеет исполнитель под ним, так что эту дверь приложение открывает само:
+
+```go
+if bulk, ok := src.(crud.BulkInserter); ok {
+    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
+}
+```
+
+Вызов идёт на том хэндле, который держит исполнитель, и игнорирует любую
+транзакцию в контексте ([[UC-008]]).
 
 ## Структурированные коды ошибок
 

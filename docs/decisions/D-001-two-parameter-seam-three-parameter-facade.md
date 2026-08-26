@@ -41,7 +41,7 @@ check back at the only boundary a consumer touches.
 - `crud/repo.go:Middleware` — `func(Core[M, ID]) Core[M, ID]`.
 - `crud/repo.go:Chain` / `crud/repo.go:Decorate` — `mw[0]` ends up outermost.
 - `crud/repo.go:Base` — embeddable pass-through, for a decorator that overrides
-  two methods out of eleven.
+  two methods out of fourteen.
 - `crud/sqlrepo/blueprint.go:Blueprint.Bind` — `Bind(src, mw...)` wraps the
   repository, then `crud.Wrap` re-types it.
 - `crud/decorators/security/security.go:Gate` — `Gate[M, ID](p Policy[M, ID])`,
@@ -57,7 +57,7 @@ check back at the only boundary a consumer touches.
   the thing it is supposed to guard.
 - `TestBasePassesEverythingThroughAndLetsOneOverrideWin` in
   `crud/decorate_test.go` — would catch a `Base` that stopped promoting a
-  method, so an override of one method dropped the other ten.
+  method, so an override of one method dropped the other thirteen.
 - `TestUnwrapReturnsTheDecoratedCore` in `crud/decorate_test.go`.
 
 ## See also

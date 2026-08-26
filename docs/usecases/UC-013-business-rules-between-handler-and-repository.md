@@ -48,7 +48,11 @@ handler itself.
     deletable through `DELETE /:id`. Row-level rules that must cover writes belong
     to the access-control gate (UC-004), not here.
 11. A presenter can render every entity on its way out, on every read and write
-    route, so a column can exist in the model and never reach the wire.
+    route, so a column can exist in the model and never reach the wire. A
+    presenter that returns something the encoder cannot write is the author's
+    mistake and the library cannot prevent it, but the client is told so: the
+    answer is a silent server failure, and never a success status over a body
+    that was half written or a plain-text copy of the encoder's complaint.
 12. The request body may be a type of its own rather than the model, mapped onto
     the model before any rule runs, and choosing one costs none of the generated
     routes. The mapping is declared once and the same routes, options, hooks and

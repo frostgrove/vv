@@ -64,6 +64,8 @@ func StatusFor(k errs.Kind) int {
 		return http.StatusUnprocessableEntity
 	case errs.KindBadRequest:
 		return http.StatusBadRequest
+	case errs.KindTooLarge:
+		return http.StatusRequestEntityTooLarge
 	default:
 		return http.StatusInternalServerError
 	}

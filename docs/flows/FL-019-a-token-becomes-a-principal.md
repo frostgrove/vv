@@ -71,6 +71,22 @@ changing `SetContext` to `Locals` and watching it.
 `UNAUTHENTICATED` — so the gRPC binding has no status table of its own and
 [[D-008]]'s ordering is untouched.
 
+### What each binding tests that the others cannot
+
+`make check-triplets` holds `authnet`, `authgin` and `authfiber` to the same test
+names, and exempts `binding_test.go` — which is where a difference goes, named.
+The check found both of the rows below on the day it was written; neither had
+been recorded anywhere.
+
+| Binding | What lives in its `binding_test.go` | Why it cannot be mirrored |
+|---|---|---|
+| `authnet` | `TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware` | It composes the auth middleware under `crudnet.Errors`, which needs both halves of the stack in one test binary. On net/http both are in the root module. Doing it for Gin would mean `authgin`'s tests requiring `crudgin`, and [[D-051]] is the rule against exactly that — a consumer mounting auth on Gin must not be made to take the CRUD binding, and a test dependency is still a dependency in the graph they resolve. The behaviour is the same on all three; only one of them can say so. |
+| `authgin` | `TestTheCauseIsFiledWithGinsErrorBag` | Gin carries an error bag on the context that its own logging middleware reads. net/http and Fiber have no equivalent, so there is nothing to mirror it to. |
+
+`authfiber` has no `binding_test.go`, and that is the honest state: everything it
+does differently is the `SetContext` row above, which every binding's copy of
+`TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` already covers.
+
 ## Where the decisions bite
 
 - [[D-055]] — the principal only ever travels in the context, and `auth`
@@ -117,6 +133,7 @@ changing `SetContext` to `Locals` and watching it.
 | `auth/authjwt/claims.go` | the ready-made claims and `Grant` |
 | `auth/authjwt/authenticator.go` | the bridge, and `Standard` |
 | `auth/http/authhttp/authhttp.go` | the shared renderer and `Refuse`, over `port/porthttp` — the same status table and envelope the CRUD bindings answer through, reached without importing CRUD ([[D-059]]) |
+| `port/log.go` | `port.Logger` — where the two lines `Refuse` writes go when the refusal itself cannot be encoded or written. The application's logger, never the process-wide one ([[D-062]]) |
 | `auth/http/authnet/authnet.go` | the net/http middleware |
 | `auth/http/authgin/authgin.go` | the Gin middleware |
 | `auth/http/authfiber/authfiber.go` | the Fiber middleware, and `SetContext` |
@@ -141,6 +158,15 @@ changing `SetContext` to `Locals` and watching it.
   subtest that a bad credential is still refused. That subtest is what makes the
   option safe rather than a hole.
 - `TestADoubleInstallAuthenticatesOnce` — all four.
+- `TestARefusalCarriesEveryHeaderTheRendererAskedFor`,
+  `TestARefusalWithNoBodyIsTheStatusAndNothingElse`,
+  `TestARefusalThatWillNotEncodeIs500AndSaysNothing`,
+  `TestARefusalIsRenderedInTheLanguageTheRequestAskedFor` and
+  `TestRendererForKeepsOneRendererForTheOrdinaryCase` —
+  `auth/http/authhttp/refuse_test.go`. The branches of the shared writer that no
+  binding's middleware test reaches, because a binding is handed the default
+  renderer and these need one that answers a second challenge, no body, or a
+  body the encoder refuses.
 - `TestAnOptionalGuardStillRefusesABadCredential` — `auth/guard_test.go`.
 - `TestASecondGuardDoesNotAuthenticateAgain` — `auth/guard_test.go`.
 - `TestHeaderAndLookupReplaceWhereTheCredentialComesFrom` —
@@ -156,11 +182,22 @@ changing `SetContext` to `Locals` and watching it.
 - `TestARotatedKidIsPickedUp` and `TestUnknownKidsDoNotBecomeOneFetchEach` —
   `auth/authjwt/jwks_test.go`. The second is verified by removing the rate limit
   and watching twenty tokens cost twenty fetches.
+- `TestAFailingProviderIsStillOnlyFetchedOnce` and
+  `TestAConcurrentBurstOfMissesIsOneFetch` — same file, the two holes the
+  sequential test above cannot see. The limit used to be armed by a *successful*
+  fetch, so it did nothing while the provider was down; and the lock is dropped
+  across the HTTP call, so a concurrent burst all passed the check before any of
+  it recorded an attempt. Removing the two guards makes them report twenty and
+  twenty-four fetches respectively.
 - `TestASymmetricKeyInAKeySetIsNotUsable` — same file.
 - `TestAStoreFailureIsNotARefusal` — `auth/apikey/apikey_test.go`.
 - `TestSkipLeavesTheNamedMethodAlone` — `auth/rpc/authgrpc/interceptor_test.go`, with
   the control that every unnamed method is still authenticated.
+- `TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware` —
+  `auth/http/authnet/binding_test.go`, and only there; the table above says why.
+- `TestTheCauseIsFiledWithGinsErrorBag` — `auth/http/authgin/binding_test.go`,
+  and only there.
 
 ## See also
 
-[[FL-020]] [[FL-011]] [[FL-013]] [[FL-007]] [[FL-008]]
+[[FL-020]] [[FL-011]] [[FL-013]] [[FL-007]] [[FL-008]] [[D-051]] [[D-062]]

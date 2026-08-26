@@ -150,7 +150,7 @@ func TestGormModelThroughVV(t *testing.T) {
 	}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(GormMembers.Meta(), nil)
+	opts, err := req.Compile(GormMembers.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			req.Unpaged = true
-			opts, err := req.Compile(GormTeams.Meta(), nil)
+			opts, err := req.Compile(GormTeams.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}

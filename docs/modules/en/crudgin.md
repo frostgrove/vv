@@ -91,9 +91,24 @@ so the same value mounts on Fiber, `net/http` and gRPC unchanged.
 | `BeforeUpdate(fn)` | `func(*gin.Context, ID, *U) error` |
 | `ReadOnly()` | register the reads and nothing else |
 | `AllowClientID()` | let a create choose its own database-generated key |
-| `MaxBulk(n)` | cap `POST /bulk-delete` |
+| `MaxBulk(n)` | cap `POST /bulk-delete` — the default is `port.DefaultMaxBulk` (1024); there is no "unlimited" |
+| `MaxBody(n)` | cap the request body this handler reads, in bytes; the default is 4 MiB and a body past it is 413 ([[D-063]]) |
 | `WithRenderer(r)` | replace the envelope |
 | `WithErrorHandler(fn)` | `func(*gin.Context, error)` |
+
+Every option below takes the resource's three type parameters explicitly —
+`WithQuery[Article, int64, ArticleUpdate](cfg)`. `New` infers them from the
+repository it is given; an option is a value built before `New` is called, and Go
+infers a function's type arguments from its own arguments, which name none of
+them. A local helper per resource is the usual way to keep call sites short.
+
+**`WithScope` is reads only, and that is not a gap waiting to be filled.** `Save`
+and `Delete` take no options, so there is nowhere for a per-request predicate to
+go. The asymmetry looks like protection and is not: with a scope of
+`TenantID = 7`, `GET /{id}` on somebody else's row is 404 while `DELETE /{id}` on
+the same row answers 200. Row-level rules on writes belong in
+[`security.Gate`](security.md), whose scope really does reach the DELETE and the
+UPDATE.
 
 ## Errors
 

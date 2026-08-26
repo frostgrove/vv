@@ -11,8 +11,8 @@ import (
 
 	"github.com/shardit-io/vv/crud"
 	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/vvdb"
-	"github.com/shardit-io/vv/vvdb/dbpgx"
+	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/shardit-io/vv/utils/vvdb/dbpgx"
 )
 
 // The compose file is the source of these, and the environment overrides them

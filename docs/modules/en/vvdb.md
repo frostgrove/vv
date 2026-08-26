@@ -1,7 +1,7 @@
 # vvdb — one configuration, four engines, a connection
 
 ```go
-import "github.com/shardit-io/vv/vvdb"
+import "github.com/shardit-io/vv/utils/vvdb"
 ```
 
 **Module:** root · **Depends on:** the standard library
@@ -23,7 +23,7 @@ wrong connects successfully to the wrong place.
 ```go
 dsn, err := vvdb.DSN(cfg)          // 0. the string, and nothing opened
 sqlDB, err := vvdb.Open(cfg)       // 1. a *sql.DB, pool sized
-pool := dbpgx.MustConnect(ctx, cfg) // 1. a *pgxpool.Pool — vvdb/dbpgx
+pool := dbpgx.MustConnect(ctx, cfg) // 1. a *pgxpool.Pool — utils/vvdb/dbpgx
 src := crudsql.Postgres(sqlDB)     // 2. and now it is vv's
 ```
 
@@ -49,6 +49,7 @@ db:
     max_open: 20
     max_idle: 5
     max_lifetime: 30m
+    max_idle_time: 5m
     connect_timeout: 5s
   replica:
     host: replica.internal  # inherits everything it does not restate

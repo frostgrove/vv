@@ -45,6 +45,7 @@ porthttp.KindOf(err)          // errs.Kind
 | `KindConflict` | 409 |
 | `KindValidation` | 422 |
 | `KindBadRequest` | 400 |
+| `KindTooLarge` | 413 |
 | всё остальное | 500 |
 
 **Kind — это ответ `port`, а статус — таблица этого пакета.** В этом весь
@@ -199,8 +200,10 @@ ctx := porthttp.WithBody(r.Context(), body)
 
 | | |
 |---|---|
-| `DecodeJSON(r, v)` / `DecodeJSONKeep(r, v)` | декодировать, опционально сохранив байты |
+| `DecodeJSON(r, v)` / `DecodeJSONKeep(r, v)` | декодировать в пределах `MaxBody`, опционально сохранив байты |
+| `DecodeJSONKeepLimit(r, v, n)` | то же с явным лимитом; ноль или меньше означает `MaxBody` |
 | `KeepBody(b)` | копия, переживающая хендлер; nil за пределами `MaxKeptBody` |
+| `TooLarge(n)` | тело сверх лимита становится 413 с `too_large` и названным лимитом |
 | `MalformedBody(err)` | ошибка декодирования становится 400 с `malformed_body` |
 | `BadRequest` · `BadRequestf` · `BadRequestAs` | собрать 400 с указанным путём |
 | `AcceptLanguage(header)` | первый тег из заголовка `Accept-Language` |
@@ -210,6 +213,17 @@ ctx := porthttp.WithBody(r.Context(), body)
 `CoerceID`, `Sanitize`, `ClearGenerated`, `NarrowForCount` и `NarrowForEntity`
 сюда **не** входят: они про CRUD-запрос, поэтому принадлежат [port](port.md), а
 [crudhttp](crudhttp.md) их пробрасывает.
+
+
+**`MaxBody` — 4 МиБ, и способа сказать «без предела» нет.** Чтение идёт через
+`io.LimitReader`, которому дают на байт больше лимита, и длина сверяется
+после — тело ровно на лимите проходит, а тело сверх него отклоняется, а не
+молча обрезается. Два HTTP-биндинга из трёх не приносили собственного лимита,
+так что до этого один запрос мог держать столько памяти, сколько клиент захочет
+прислать ([[D-063]]).
+
+`MaxKeptBody` — другое число для другой задачи: он ограничивает *копию*,
+сохраняемую для fallback'а по пути, а не чтение.
 
 ## См. также
 

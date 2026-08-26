@@ -10,29 +10,40 @@ import (
 )
 
 type options[M any, ID comparable, U any] struct {
-	query         *query.Config
-	renderer      Renderer
-	transform     func(context.Context, M) any
-	scope         func(context.Context) ([]crud.Option, error)
-	beforeSave    func(context.Context, *M) error
-	beforeUpdate  func(context.Context, ID, *U) error
-	readOnly      bool
-	allowClientID bool
-	maxBulk       int
+	port.Rules
+	renderer     Renderer
+	transform    func(context.Context, M) any
+	scope        func(context.Context) ([]crud.Option, error)
+	beforeSave   func(context.Context, *M) error
+	beforeUpdate func(context.Context, ID, *U) error
 }
 
-// Option configures a handler. Type parameters are inferred from New's
-// repository argument, so options never need explicit generics at the call site
-// when written inline.
+// Option configures a handler.
+//
+// New infers all three type parameters from its repository argument, so the
+// constructor is written without them. An option is not: Go infers a function's
+// type arguments from its own arguments, and nothing in `WithQuery(cfg)`
+// mentions M, ID or U. Every option spells all three.
+//
+//	crudgrpc.New(articles,
+//	    crudgrpc.WithQuery[Article, int64, ArticleUpdate](cfg),
+//	    crudgrpc.MaxBulk[Article, int64, ArticleUpdate](100),
+//	)
+//
+// One local helper per resource is what makes that bearable:
+//
+//	type articleOpt = crudgrpc.Option[Article, int64, ArticleUpdate]
+//
+//	func articleQuery(cfg *query.Config) articleOpt {
+//	    return crudgrpc.WithQuery[Article, int64, ArticleUpdate](cfg)
+//	}
+//
+// The alias alone does not help — it names the result type, which is not where
+// the inference is stuck — so the helper is a function, not a name.
 //
 // Three parameters and not four. Nothing an option sets mentions the input
-// type, so a handler with one of its own takes the same options as any other
-// ([[D-045]]).
-//
-// Every transport-shaped signature takes a context.Context where the three HTTP
-// bindings take a request. A gRPC call has no request object: what a hook or a
-// scope reads — the peer, the metadata, whatever an earlier interceptor put
-// there — all hangs off the context.
+// type, so a handler with one of its own takes the same options as any other,
+// and no existing call site has to be touched ([[D-045]]).
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
 
 // collect applies the options once, so the four constructors read the same
@@ -45,38 +56,9 @@ func collect[M any, ID comparable, U any](opts []Option[M, ID, U]) options[M, ID
 	return o
 }
 
-// service translates the options that are about rules rather than about
-// transport into the ones the default service takes.
-func (o options[M, ID, U]) service() []port.ServiceOption {
-	var out []port.ServiceOption
-	if o.query != nil {
-		out = append(out, port.WithQuery(o.query))
-	}
-	if o.allowClientID {
-		out = append(out, port.AllowClientID())
-	}
-	return out
-}
-
-// refuseServiceOptions panics when a service-shaped option is handed to a
-// constructor that was given a finished service.
-//
-// A panic and not a silent no-op, named after the option so the message is the
-// fix. Serving means the rules are the service's; an ignored WithQuery would
-// leave an API accepting everything while its author believed it was bounded,
-// and that is exactly the failure [[D-021]] says must happen at start-up.
-func (o options[M, ID, U]) refuseServiceOptions(who string) {
-	switch {
-	case o.query != nil:
-		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")
-	case o.allowClientID:
-		panic(who + ": AllowClientID configures the service, which is already built — pass port.AllowClientID to it instead")
-	}
-}
-
 // WithQuery bounds what clients may filter, sort, select and preload.
 func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.query = cfg }
+	return func(o *options[M, ID, U]) { o.Query = cfg }
 }
 
 // WithRenderer replaces the status every failed call answers with. The code
@@ -119,18 +101,18 @@ func BeforeUpdate[M any, ID comparable, U any](fn func(context.Context, ID, *U) 
 // registered at all, so a client calling one is answered Unimplemented by gRPC
 // itself.
 func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.readOnly = true }
+	return func(o *options[M, ID, U]) { o.ReadOnly = true }
 }
 
 // AllowClientID lets a create request carry its own primary key even when the
 // database would generate one.
 func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.allowClientID = true }
+	return func(o *options[M, ID, U]) { o.AllowClientID = true }
 }
 
 // MaxBulk caps how many ids one BulkDelete may carry.
 func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.maxBulk = n }
+	return func(o *options[M, ID, U]) { o.MaxBulk = n }
 }
 
 // ---------------------------------------------------------------------------

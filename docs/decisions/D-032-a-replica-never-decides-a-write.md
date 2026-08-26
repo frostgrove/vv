@@ -71,6 +71,14 @@ refused would lie to a caller asking whether transactions work.
 - `TestUpdateDiffsAgainstThePrimary` in the same file.
 - `TestAReadInsideATransactionIgnoresTheReplica` in the same file.
 
+- `TestTheGatesAuthorisationLoadTakesThePrimary` in
+  `test/integration/replica_test.go` — the gate loads the row it hands to
+  `Inspect`, which decides whether the write is allowed, and that load was the one
+  check in the gate with no `PrimaryOnly`. On a lagging replica a row that had
+  just moved out of the caller's reach still authorised the update, and the UPDATE
+  landed on the primary anyway. The two databases hold different owners, so the
+  test fails with "the update was allowed on the strength of the replica's copy".
+
 ## See also
 
 [[D-009]] [[D-010]] [[D-029]]

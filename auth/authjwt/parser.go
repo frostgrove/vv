@@ -42,14 +42,25 @@ func Issuer(iss string) Option {
 }
 
 // Audience requires the aud claim to contain every one of these.
+//
+// Every one, not any: naming two audiences narrows what is accepted rather than
+// widening it. A deployment that means "either of these" declares two parsers,
+// because the alternative is an option whose meaning depends on how many
+// arguments it was given.
 func Audience(aud ...string) Option {
 	return func(s *settings) { s.audience = append(s.audience, aud...) }
 }
 
-// Leeway is how much clock skew is tolerated on exp, nbf and iat. It defaults
+// Leeway is how much clock skew is tolerated on exp and nbf. It defaults
 // to none, which is the strict reading and the right default for two clocks
 // that are both synchronised; thirty seconds is the usual production setting
 // for two that may not be.
+//
+// It does not name iat, because iat is not verified. A token issued in the
+// future is accepted: nbf is what says "not before", and an issuer that sets iat
+// ahead without setting nbf has said nothing this parser acts on. Saying so is
+// the honest half — adding the check would reject tokens that are valid today,
+// on the clock skew this option exists to tolerate.
 func Leeway(d time.Duration) Option {
 	return func(s *settings) { s.leeway = d }
 }
@@ -107,7 +118,13 @@ func New[C any](k KeySource, opts ...Option) *Parser[C] {
 	// WithValidMethods is what pins the algorithm to the key rather than to the
 	// token's own header. Without it a token can nominate its own verification
 	// scheme, which is the whole of the alg=none and key-confusion families.
-	po := []jwt.ParserOption{jwt.WithValidMethods(k.methods)}
+	// WithJSONNumber, so the claim map holds the literal digits rather than a
+	// float64. Without it an integer claim above 2^53 — a Snowflake id, a
+	// Twitter-style user id, anything minted from a 64-bit counter — is rounded
+	// by encoding/json before this package ever sees it, and `narrow` then
+	// faithfully converts the rounded value. The mitigation existed and ran one
+	// hop too late.
+	po := []jwt.ParserOption{jwt.WithValidMethods(k.methods), jwt.WithJSONNumber()}
 	if !s.noExpiry {
 		po = append(po, jwt.WithExpirationRequired())
 	}
@@ -117,8 +134,15 @@ func New[C any](k KeySource, opts ...Option) *Parser[C] {
 	if s.issuer != "" {
 		po = append(po, jwt.WithIssuer(s.issuer))
 	}
-	for _, a := range s.audience {
-		po = append(po, jwt.WithAudience(a))
+	if len(s.audience) > 0 {
+		// One call, and WithAllAudiences rather than WithAudience.
+		//
+		// golang-jwt's WithAudience *assigns* the expected set and means "any
+		// of", so calling it once per audience left only the last one expected —
+		// and Audience("a", "b") then rejected a token audienced to "a", which is
+		// the opposite of both halves of what this option promises. Every test in
+		// the tree passed exactly one audience, so nothing caught it.
+		po = append(po, jwt.WithAllAudiences(s.audience...))
 	}
 	return &Parser[C]{key: k, opts: po}
 }

@@ -15,8 +15,8 @@ import (
 // the documentation shows — authorised the root path and refused the preload.
 func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 	const (
-		byFilter  = `{"filter":{"comments.body":"x"},"unpaged":true}`
-		byPreload = `{"preload":[{"path":"comments","filter":{"body":"x"}}],"unpaged":true}`
+		byFilter  = `{"filter":{"comments.body":"x"}}`
+		byPreload = `{"preload":[{"path":"comments","filter":{"body":"x"}}]}`
 	)
 
 	t.Run("a grant on the root's own column does not leak sideways", func(t *testing.T) {
@@ -65,8 +65,8 @@ func TestAPreloadSortObeysTheSortableList(t *testing.T) {
 		t.Fatal("the root sort accepted a column the list does not name")
 	}
 	for _, doc := range []string{
-		`{"preload":[{"path":"comments","sort":["-body"]}],"unpaged":true}`,
-		`{"preload":[{"path":"comments","sort":["-approved"]}],"unpaged":true}`,
+		`{"preload":[{"path":"comments","sort":["-body"]}]}`,
+		`{"preload":[{"path":"comments","sort":["-approved"]}]}`,
 	} {
 		_, _, err := tryDoc(t, doc, cfg)
 		if err == nil {
@@ -79,7 +79,7 @@ func TestAPreloadSortObeysTheSortableList(t *testing.T) {
 
 	// And the grant that names the preloaded column lets it through.
 	ok := &query.Config{Sortable: []string{"Comments.Body"}, Preloadable: []string{"Comments"}}
-	if _, _, err := tryDoc(t, `{"preload":[{"path":"comments","sort":["-body"]}],"unpaged":true}`, ok); err != nil {
+	if _, _, err := tryDoc(t, `{"preload":[{"path":"comments","sort":["-body"]}]}`, ok); err != nil {
 		t.Fatalf("a preload sort named by the list was refused: %v", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestAPreloadSortObeysTheSortableList(t *testing.T) {
 // different ordering.
 func TestAPreloadSortValidatesItsNullsPlacementLikeTheRootDoes(t *testing.T) {
 	const rootDoc = `{"sort":[{"field":"title","nulls":"nope"}]}`
-	const preloadDoc = `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"nope"}]}],"unpaged":true}`
+	const preloadDoc = `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"nope"}]}]}`
 
 	if _, _, err := tryDoc(t, rootDoc, nil); err == nil {
 		t.Fatal("the root accepted a nulls placement that is neither first nor last")
@@ -104,7 +104,7 @@ func TestAPreloadSortValidatesItsNullsPlacementLikeTheRootDoes(t *testing.T) {
 
 	// The two placements the root does accept keep working inside a preload.
 	for _, nulls := range []string{"first", "last"} {
-		doc := `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"` + nulls + `"}]}],"unpaged":true}`
+		doc := `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"` + nulls + `"}]}]}`
 		if _, _, err := tryDoc(t, doc, nil); err != nil {
 			t.Fatalf("nulls=%s was refused inside a preload: %v", nulls, err)
 		}

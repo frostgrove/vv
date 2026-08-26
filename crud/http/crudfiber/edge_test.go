@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/shardit-io/vv/crud"
+	"github.com/shardit-io/vv/crud/http/crudhttp"
 	"github.com/shardit-io/vv/crud/query"
 	"github.com/shardit-io/vv/errs"
 	"github.com/shardit-io/vv/port"
@@ -175,7 +176,7 @@ func TestAQueryThatNamesSomethingTheModelLacksIsABadRequest(t *testing.T) {
 		{"an operator that does not exist", http.MethodGet, "/widgets?f=price:bogus:1", "",
 			"filter.Price", `unknown operator "bogus"`},
 		{"a value the column cannot hold", http.MethodGet, "/widgets?f=price:gte:abc", "",
-			"filter.Price", `"abc" is not a valid int`},
+			"filter.Price", `"abc" is not a whole number`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, fake := mount(t)
@@ -516,4 +517,94 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 			t.Fatalf("the violation names %q, want the lower-case key the client sent; %q means the service hop stopped the chain", got, "Price")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// the body cap
+
+// A body past the cap is refused before anything parses it, and the refusal is
+// this library's envelope rather than the framework's own words.
+//
+// Without a cap the read was io.ReadAll on a body nobody bounded, which is one
+// request holding as much memory as a client cares to send. The three bindings
+// refuse at the same size on purpose ([[FL-013]]) — the number is Fiber's
+// default, because Fiber is the one framework of the three that brought a limit
+// of its own and the other two would otherwise accept what it rejects.
+func TestABodyPastTheCapIsRefusedAndReachesNoRepository(t *testing.T) {
+	app, f := mount(t, MaxBody[Widget, int64, WidgetUpdate](64))
+
+	body := `{"name":"` + strings.Repeat("x", 512) + `"}`
+	r := do(t, app, http.MethodPost, "/widgets", body)
+	if r.status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a body of %d bytes over a cap of 64 answered %d, want 413: %s", len(body), r.status, r.body)
+	}
+	env := envelope(t, r)
+	if len(env.Errors.General) != 1 || env.Errors.General[0].Code != string(errs.CodeTooLarge) {
+		t.Fatalf("the refusal does not carry the too_large code a client branches on: %s", r.body)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("the body was refused and the repository was still called: %v", f.calls)
+	}
+
+	// The control. Every assertion above would hold just as well if this route
+	// refused every POST, so a body under the cap has to get through — and the
+	// same handler, so the difference really is the size.
+	small := `{"name":"ok"}`
+	if r := do(t, app, http.MethodPost, "/widgets", small); r.status != http.StatusCreated {
+		t.Fatalf("a body of %d bytes under a cap of 64 answered %d, want 201: %s", len(small), r.status, r.body)
+	}
+}
+
+// The default cap is a cap and not a refusal: a handler nobody configured still
+// accepts an ordinary body.
+//
+// The control on the constant. A default of zero read as "read nothing" would
+// make every write 413 and every test above still pass, because they all name
+// their own cap.
+func TestTheDefaultCapAcceptsAnOrdinaryBody(t *testing.T) {
+	app, f := mount(t)
+
+	body := `{"name":"` + strings.Repeat("x", 64<<10) + `"}`
+	if r := do(t, app, http.MethodPost, "/widgets", body); r.status != http.StatusCreated {
+		t.Fatalf("a %d-byte body under the %d-byte default answered %d: %s",
+			len(body), crudhttp.MaxBody, r.status, r.body)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("the body was accepted and the repository saw %d calls, want 1", len(f.calls))
+	}
+}
+
+// A response value that will not encode is a server fault, and says nothing.
+//
+// The presenter is the consumer's, so an unencodable value is a failure this
+// library cannot prevent — only answer honestly. It has to become a 500 with the
+// silent body, because the alternative is a status already on the wire and a
+// half-written document after it.
+//
+// The three bindings disagreed about this until it was measured: net/http
+// answered the silent 500, Gin answered **200** with a truncated body, and Fiber
+// returned the encoder's error to its default handler, which answers text/plain
+// with the message in it — a presenter's internals on the wire at a status that
+// said success ([[D-063]], [[FL-013]]).
+func TestAnUnencodableResponseIsAServerFaultThatSaysNothing(t *testing.T) {
+	app, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](func(fiber.Ctx, Widget) any { return make(chan int) }))
+
+	r := do(t, app, http.MethodGet, "/widgets/1", "")
+
+	if r.status != http.StatusInternalServerError {
+		t.Fatalf("a presenter that cannot be encoded answered %d, want 500: %s", r.status, r.body)
+	}
+	if strings.Contains(string(r.body), "chan") || strings.Contains(string(r.body), "json:") {
+		t.Fatalf("the encoder's own words reached the client: %s", r.body)
+	}
+	if ct := r.header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("the silent 500 is not JSON, so a client cannot parse it: %q — %s", ct, r.body)
+	}
+
+	// The control. Everything above would hold for a handler that answered 500
+	// to every GET, so the same route with an encodable presenter has to work.
+	app2, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](func(_ fiber.Ctx, w Widget) any { return w.Name }))
+	if r := do(t, app2, http.MethodGet, "/widgets/1", ""); r.status != http.StatusOK {
+		t.Fatalf("an encodable presenter answered %d, want 200: %s", r.status, r.body)
+	}
 }

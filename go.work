@@ -12,5 +12,5 @@ use (
 	./crud/rpc/crudgrpc
 	./test
 	./utils/vvcfg
-	./vvdb/dbpgx
+	./utils/vvdb/dbpgx
 )

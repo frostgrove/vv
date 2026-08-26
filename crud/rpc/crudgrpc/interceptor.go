@@ -36,3 +36,33 @@ func Errors(opts ...RenderOption) grpc.UnaryServerInterceptor {
 		return resp, rd.Render(withRequestLocale(ctx), err).Err()
 	}
 }
+
+// StreamErrors is [Errors] for a streaming method.
+//
+// It exists because the unary one is not enough and the gap was invisible: the
+// auth interceptor (`authgrpc.Stream`) returns an unrendered `errs.Fault` and
+// relies on something downstream to turn it into a status, exactly as its unary
+// twin does — and there was no downstream for a stream. grpc-go then wrapped the
+// bare error as codes.Unknown, so a refused stream answered Unknown where a
+// refused unary call answered Unauthenticated, and a client branching on the code
+// could not tell a rejected credential from a server bug.
+//
+// The same renderer and the same table as [Errors], for the reason [[D-045]]
+// gives: one classification, spelled once per protocol, never once per entry
+// point.
+func StreamErrors(opts ...RenderOption) grpc.StreamServerInterceptor {
+	rd := Renderer(defaultRenderer)
+	if len(opts) > 0 {
+		rd = NewRenderer(opts...)
+	}
+	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		err := handler(srv, ss)
+		if err == nil {
+			return nil
+		}
+		if _, already := status.FromError(err); already {
+			return err
+		}
+		return rd.Render(withRequestLocale(ss.Context()), err).Err()
+	}
+}

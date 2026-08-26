@@ -1,10 +1,10 @@
 package crudnet
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/shardit-io/vv/crud/http/crudhttp"
+	"github.com/shardit-io/vv/port"
 )
 
 // A HandlerFunc is an ordinary handler that may return an error, which is the
@@ -66,9 +66,10 @@ func Errors(opts ...crudhttp.RenderOption) func(http.Handler) http.Handler {
 				// 500; if something has, the status is already gone and there
 				// is nothing to do but log.
 				if p := recover(); p != nil {
-					log.Printf("crudnet: panic while serving %s %s: %v", r.Method, r.URL.Path, p)
+					port.Logger(r.Context()).Error("crudnet: panic while serving a request",
+						"method", r.Method, "path", r.URL.Path, "panic", p)
 					if !rec.wrote {
-						writeJSON(rec, http.StatusInternalServerError, crudhttp.Internal())
+						writeJSON(r.Context(), rec, http.StatusInternalServerError, crudhttp.Internal())
 					}
 				}
 			}()

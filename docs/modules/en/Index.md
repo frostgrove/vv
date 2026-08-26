@@ -104,11 +104,13 @@ the exception ([[D-048]], [[D-055]]).
 
 | Module | Import | What it is |
 |---|---|---|
-| [vvdb](vvdb.md) | `vv/vvdb` | One configuration → a DSN, or a `*sql.DB` with the pool sized. Four engines, stdlib only |
-| [dbpgx](dbpgx.md) | `vv/vvdb/dbpgx` | **Module** — the same configuration, a `*pgxpool.Pool` |
+| [vvdb](vvdb.md) | `vv/utils/vvdb` | One configuration → a DSN, or a `*sql.DB` with the pool sized. Four engines, stdlib only |
+| [dbpgx](dbpgx.md) | `vv/utils/vvdb/dbpgx` | **Module** — the same configuration, a `*pgxpool.Pool` |
 
 Nothing here is reachable from the repository seam: the application opens the
-connection and hands it to an adapter below ([[D-057]]).
+connection and hands it to an adapter below ([[D-057]]). Both live under
+`utils/` for that reason — they are the application's plumbing, not a subsystem
+of the library ([[D-058]]).
 
 ## Adapters — how vv reaches your database
 

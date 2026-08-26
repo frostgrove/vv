@@ -273,7 +273,7 @@ func TestACursorWalkOverTheWireDSL(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &req); err != nil {
 			t.Fatalf("body %s: %v", body, err)
 		}
-		opts, err := req.Compile(EgRows.Meta(), nil)
+		opts, err := req.Compile(EgRows.Meta(), unpagedOK)
 		if err != nil {
 			t.Fatalf("compiling %s: %v", body, err)
 		}
@@ -307,7 +307,7 @@ func TestACursorWalkOverTheWireDSL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(EgRows.Meta(), nil)
+	opts, err := req.Compile(EgRows.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}

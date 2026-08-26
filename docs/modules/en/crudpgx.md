@@ -41,7 +41,7 @@ type Queryer interface {
 ## Joining someone else's transaction
 
 ```go
-err := pool.BeginFunc(ctx, func(tx pgx.Tx) error {
+err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
     ctx := crud.WithExecutor(ctx, crudpgx.From(tx))
     return users.Save(ctx, &u)
 })
@@ -52,9 +52,18 @@ and vv's `Queryer` at once, so one transaction feeds both.
 
 ## Bulk insert, through COPY
 
-`crudpgx` implements `crud.BulkInserter` with `COPY`. Any executor that offers it
-is used **automatically** — `SaveAll` picks it up and the core never learns about
-the driver ([[UC-008]]).
+`crudpgx` implements `crud.BulkInserter` with `COPY`. **Nothing in the library
+reaches for it.** `SaveAll` writes one multi-row `INSERT` whatever the executor
+underneath can do, so this is a door the application opens itself:
+
+```go
+if bulk, ok := src.(crud.BulkInserter); ok {
+    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
+}
+```
+
+The call runs on the handle that executor holds and ignores any transaction in
+the context ([[UC-008]]).
 
 ## Structured error codes
 

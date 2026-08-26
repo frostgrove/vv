@@ -1,6 +1,6 @@
 # FL-021 — A configuration becomes a connection
 
-**Entry point:** `vvdb/dsn.go:DSN`, and `vvdb/open.go:Open` above it
+**Entry point:** `utils/vvdb/dsn.go:DSN`, and `utils/vvdb/open.go:Open` above it
 **Implements:** [[UC-021]]
 
 One struct, four engines, two syntaxes. Nothing on this path runs during a
@@ -16,21 +16,21 @@ that has to still exist.
 
 ## The path
 
-1. **`Open`** — `vvdb/open.go:Open`
+1. **`Open`** — `utils/vvdb/open.go:Open`
    Calls `DSN`, then `DriverName`, then `sql.Open`. It registers no driver: the
    consumer's blank import did that, which is what keeps this package free of a
    dependency and out of a module of its own ([[D-033]]).
 
-2. **`DSN`** — `vvdb/dsn.go:DSN`
+2. **`DSN`** — `utils/vvdb/dsn.go:DSN`
    Dispatches on `Config.Engine` to one of four builders. An engine outside the
    closed set is `ErrEngine` here, before anything is assembled ([[D-013]]).
 
-3. **`prepare`** — `vvdb/dsn.go:prepare`
+3. **`prepare`** — `utils/vvdb/dsn.go:prepare`
    The two questions every builder asks first. A `Config.DSN` set beside the
    fields it would override is `ErrConflict`; a `Config.DSN` on its own is
    returned as it arrived and the builder has nothing left to do.
 
-4. **`Config.validateFields`** — `vvdb/config.go:validateFields`
+4. **`Config.validateFields`** — `utils/vvdb/config.go:validateFields`
    What the engine cannot do without, and what belongs to another engine. This
    is where `path` on a server engine, `host` on SQLite and a `:` in a MySQL
    user name are refused. The last one is not a style rule: the driver splits
@@ -43,33 +43,33 @@ that has to still exist.
 
    | engine | function | shape |
    |---|---|---|
-   | PostgreSQL | `vvdb/dsn.go:PostgresDSN` | a URI, assembled by `net/url` |
-   | MySQL | `vvdb/dsn.go:MySQLDSN` | `user:pass@tcp(host:port)/name?…`, which is not a URI |
-   | MariaDB | `vvdb/dsn.go:MariaDBDSN` | the same shape, its own declaration |
-   | SQLite | `vvdb/dsn.go:SQLiteDSN` | `file:path?…` |
+   | PostgreSQL | `utils/vvdb/dsn.go:PostgresDSN` | a URI, assembled by `net/url` |
+   | MySQL | `utils/vvdb/dsn.go:MySQLDSN` | `user:pass@tcp(host:port)/name?…`, which is not a URI |
+   | MariaDB | `utils/vvdb/dsn.go:MariaDBDSN` | the same shape, its own declaration |
+   | SQLite | `utils/vvdb/dsn.go:SQLiteDSN` | `file:path?…` |
 
-6. **`tlsParam`** — `vvdb/dsn.go:tlsParam`
+6. **`tlsParam`** — `utils/vvdb/dsn.go:tlsParam`
    `sslmode` is spelled in PostgreSQL's vocabulary for every engine, because one
    configuration has to spell it one way. PostgreSQL reads it directly; the
    MySQL family gets `tls=false|preferred|skip-verify|true`. `verify-ca` has no
    MySQL spelling and is `ErrUnsupported` rather than a downgrade to
    `skip-verify`, which would claim a verification nobody performs.
 
-7. **`seconds`** — `vvdb/dsn.go:seconds`
+7. **`seconds`** — `utils/vvdb/dsn.go:seconds`
    `connect_timeout` is whole seconds and `0` there means no timeout at all, so
    a sub-second duration rounds **up**.
 
-8. **`Pool.apply`** — `vvdb/open.go:apply`
+8. **`Pool.apply`** — `utils/vvdb/open.go:apply`
    The four limits onto `database/sql`'s setters. A zero is left alone: writing
    it would be a pool that can open nothing rather than one with no limit.
 
-9. **`Config.ReadReplica`** — `vvdb/config.go:ReadReplica`
+9. **`Config.ReadReplica`** — `utils/vvdb/config.go:ReadReplica`
    The replica as it will be opened: the primary with the replica's non-empty
-   fields laid over it. `vvdb/open.go:OpenReadWrite` opens both, and closes the
+   fields laid over it. `utils/vvdb/open.go:OpenReadWrite` opens both, and closes the
    primary if the second fails. The pair is what `crud.ReadWrite` takes
    ([[D-032]]).
 
-10. **`dbpgx.Connect`** — `vvdb/dbpgx/dbpgx.go:Connect`
+10. **`dbpgx.Connect`** — `utils/vvdb/dbpgx/dbpgx.go:Connect`
     The same first three steps, then `pgxpool.ParseConfig`, then the pool
     section onto pgx's names and the caller's `Option`s. Unlike `sql.Open` this
     dials, so an absent server fails here.
@@ -100,28 +100,28 @@ column rather than the missing parameter.
 
 | File | What it holds |
 |---|---|
-| `vvdb/config.go` | `Config`, `Pool`, `Engine`, the sentinels, `Validate`, `ReadReplica`, `DriverName` |
-| `vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
-| `vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
-| `vvdb/doc.go` | the boundary: who opens the connection |
-| `vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option` |
+| `utils/vvdb/config.go` | `Config`, `Pool`, `Engine`, the sentinels, `Validate`, `ReadReplica`, `DriverName` |
+| `utils/vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
+| `utils/vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
+| `utils/vvdb/doc.go` | the boundary: who opens the connection |
+| `utils/vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option` |
 
 ## Tests that walk this flow
 
 | Test | What it pins |
 |---|---|
-| `vvdb/dsn_test.go:TestEachEngineIsBuiltInItsOwnSyntax` | the four shapes |
-| `vvdb/dsn_test.go:TestAPasswordSurvivesEveryPunctuationMark` | escaped for one engine, deliberately not for the other |
-| `vvdb/dsn_test.go:TestAParameterHoldingASlashIsEscapedForMySQL` | the `Europe/Moscow` failure |
-| `vvdb/dsn_test.go:TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded` | `verify-ca` on MySQL |
-| `vvdb/dsn_test.go:TestADSNIsUsedAsGivenAndRefusesToShareTheJob` | the escape hatch, and that it is whole or absent |
-| `vvdb/dsn_test.go:TestASubSecondConnectTimeoutDoesNotBecomeForever` | rounding up |
-| `vvdb/config_test.go:TestAReplicaInheritsEverythingItDoesNotRestate` | inheritance |
-| `vvdb/config_test.go:TestAReplicaIsValidatedAsItWillBeOpened` | the merge is what is checked, with the control case beside it |
-| `vvdb/open_test.go:TestOpenSizesThePool` | the pool section reaches the handle |
-| `vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
-| `vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
-| `vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
+| `utils/vvdb/dsn_test.go:TestEachEngineIsBuiltInItsOwnSyntax` | the four shapes |
+| `utils/vvdb/dsn_test.go:TestAPasswordSurvivesEveryPunctuationMark` | escaped for one engine, deliberately not for the other |
+| `utils/vvdb/dsn_test.go:TestAParameterHoldingASlashIsEscapedForMySQL` | the `Europe/Moscow` failure |
+| `utils/vvdb/dsn_test.go:TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded` | `verify-ca` on MySQL |
+| `utils/vvdb/dsn_test.go:TestADSNIsUsedAsGivenAndRefusesToShareTheJob` | the escape hatch, and that it is whole or absent |
+| `utils/vvdb/dsn_test.go:TestASubSecondConnectTimeoutDoesNotBecomeForever` | rounding up |
+| `utils/vvdb/config_test.go:TestAReplicaInheritsEverythingItDoesNotRestate` | inheritance |
+| `utils/vvdb/config_test.go:TestAReplicaIsValidatedAsItWillBeOpened` | the merge is what is checked, with the control case beside it |
+| `utils/vvdb/open_test.go:TestOpenSizesThePool` | the pool section reaches the handle |
+| `utils/vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
+| `utils/vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
+| `utils/vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
 | `test/dsn/dsn_test.go` | **the real parsers read back what was written** — pgx and go-sql-driver, which `vvdb` cannot import |
 | `test/dsn/dsn_test.go:TestAnUnescapedParameterIsWhyTheEscapingExists` | the control: the driver does reject the unescaped form |
 | `test/integration/vvdb_test.go:TestOneConfigShapeOpensEveryEngine` | three live servers from one shape of config |

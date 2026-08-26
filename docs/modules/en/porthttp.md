@@ -44,6 +44,7 @@ porthttp.KindOf(err)          // errs.Kind
 | `KindConflict` | 409 |
 | `KindValidation` | 422 |
 | `KindBadRequest` | 400 |
+| `KindTooLarge` | 413 |
 | anything else | 500 |
 
 **The kind is `port`'s answer and the status is this package's table.** That is
@@ -197,13 +198,25 @@ an application answering its own errors may want them too:
 
 | | |
 |---|---|
-| `DecodeJSON(r, v)` / `DecodeJSONKeep(r, v)` | decode, and optionally keep the bytes |
+| `DecodeJSON(r, v)` / `DecodeJSONKeep(r, v)` | decode under `MaxBody`, and optionally keep the bytes |
+| `DecodeJSONKeepLimit(r, v, n)` | the same with the cap named; zero or less means `MaxBody` |
 | `KeepBody(b)` | a copy that outlives the handler; nil past `MaxKeptBody` |
 | `MalformedBody(err)` | a decode failure becomes a 400 with `malformed_body` |
+| `TooLarge(n)` | a body past the cap becomes a 413 with `too_large`, naming the limit |
 | `BadRequest` · `BadRequestf` · `BadRequestAs` | build a 400 with a path named |
 | `AcceptLanguage(header)` | the first tag out of an `Accept-Language` header |
 | `WithLocale(ctx, l)` / `LocaleFrom(ctx)` | the locale the message ladder reads |
 | `WithBody(ctx, raw)` / `BodyFrom(ctx)` | the retained body, for the fallback above |
+
+**`MaxBody` is 4 MiB and there is no way to say "unbounded".** The read goes
+through an `io.LimitReader` given one byte more than the cap, and the length is
+compared afterwards — so a body exactly at the cap fits, and one past it is
+refused rather than silently truncated. Two of the three HTTP bindings brought no
+limit of their own, so before this a single request could hold as much memory as
+a client cared to send ([[D-063]]).
+
+`MaxKeptBody` is a different number for a different job: it caps the *copy* kept
+for the path fallback, not the read.
 
 `CoerceID`, `Sanitize`, `ClearGenerated`, `NarrowForCount` and `NarrowForEntity`
 are **not** here: they are about a CRUD request, so they are [port](port.md)'s,
