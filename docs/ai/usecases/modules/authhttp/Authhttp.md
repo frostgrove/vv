@@ -1,8 +1,8 @@
 # authhttp · authnet · authgin · authfiber · authgrpc — establish who is calling, at the door, on whichever transport the service already speaks
 
 **Covers:** `github.com/frostgrove/vv/auth/http/authhttp`, `github.com/frostgrove/vv/auth/http/authnet`, `github.com/frostgrove/vv/auth/http/authgin`, `github.com/frostgrove/vv/auth/http/authfiber`, `github.com/frostgrove/vv/auth/rpc/authgrpc`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — one silent security hole (a second, stricter guard mounted inside another never runs), a mount signature the three HTTP bindings are about to freeze that cannot carry any of the knobs this sweep asks for, and a second refusal implementation inside `authfiber` that no test in the tree touches.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the happy-path second-guard bypass and frozen HTTP mount remain blockers; the edge sweep adds silent first-value selection for duplicated gRPC credentials, Fiber refusal drift, and declarations that do not fail until a live request.
 
 This file is the binding half. What a credential is, how a token is parsed, and
 what options `auth.Guard` should grow belong to the sibling sweep at
@@ -576,3 +576,134 @@ transport is not a coincidence to leave until after a tag.
   the ✅. The identity reaching the *repository* is the module's stated purpose,
   the binding tests stop at a fake handler, and the integration test bypasses all
   four bindings. Rated as construction, not as a defect — but not as proof.
+
+## Edge cases
+
+### E-AUTHHTTP-01 — A gRPC call carries two different credentials
+**Shape:** adversarial input | seam
+**Setup:** A client, proxy, or retry layer sends two `authorization` metadata values, one valid for a low-privilege caller and one valid for an administrator.
+**What the consumer does:** They expect the door to reject an ambiguous credential, rather than making authorization depend on which intermediary happened to order the values first.
+**What must happen:** A binding must refuse multiple values for a single credential name, or document and test a deliberately safe selection rule; silently choosing one is not an authentication decision a service author can audit.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/rpc/authgrpc/interceptor.go:115-125` adapts metadata to the one-string getter by returning `vs[0]`. `auth/rpc/authgrpc/interceptor_test.go:47-55` pins key case-insensitivity, but no test supplies more than one value.
+**Blast radius:** silent wrong answer
+
+### E-AUTHHTTP-02 — An optional endpoint receives a syntactically broken credential
+**Shape:** adversarial input | boundary
+**Setup:** A browser with a stale client sends `Authorization: Bearer `, or a proxy truncates the header to a bare token, to a route mounted with `auth.Optional()`.
+**What the consumer does:** They expect a malformed credential that was actually presented to be refused, so the client learns to sign in again instead of quietly receiving the anonymous view.
+**What must happen:** Missing and malformed must remain distinguishable at the optional-door boundary; only a genuinely absent credential may proceed anonymously.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/credential.go:56-65` reports both forms as no credential, and `auth/guard.go:95-100` lets any no-credential result through when optional. `auth/credential_test.go:19-21` pins that parser result, while `auth/guard_test.go:59-66` only proves refusal for a syntactically valid token whose authenticator rejects it.
+**Blast radius:** confusing error
+
+### E-AUTHHTTP-03 — Credential-source wiring is accidentally empty
+**Shape:** misuse | degenerate declaration
+**Setup:** A feature-flag branch passes `auth.Lookup(nil)`, or a configuration value becomes `auth.Header("")`; the same guard is optional on a public-and-personalized route.
+**What the consumer does:** They expect an invalid credential-source declaration to stop the process before it serves a request.
+**What must happen:** `NewGuard` must reject an empty header name and a nil lookup callback. A nil lookup must never silently reinstate `Authorization`, and an empty header must not turn an optional guard into an anonymous pass-through.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/guard.go:32-42` validates only the authenticator; `Header` and `Lookup` assign their arguments unchanged at `:45-62`; `credential` falls back to `get(g.header)` whenever `lookup` is nil at `:116-123`. `auth/guard_test.go:89-117` covers only valid `Header` and `Lookup` declarations.
+**Blast radius:** silent wrong answer
+
+### E-AUTHHTTP-04 — An earlier middleware has already put a principal in the context
+**Shape:** misuse | seam
+**Setup:** A legacy identity shim, or a test helper accidentally left in a production chain, calls exported `auth.WithPrincipal` before a guard that is meant to verify the request.
+**What the consumer does:** They expect the guard to verify its own trust boundary, not to treat an arbitrary principal stored by another middleware as proof that this request passed the door.
+**What must happen:** Reuse must be limited to an explicitly trusted result of the same authentication boundary, or a consumer must opt in to trusting a pre-existing principal; an unscoped context value cannot silently satisfy a stricter guard.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/context.go:22-27` exports the writer of the shared principal value, and `auth/guard.go:90-93` returns success before consulting the guard whenever that value is present. `auth/guard_test.go:68-87` tests two installations of the same guard only; no test installs an independent guard or a caller-supplied principal. This is the edge form of happy-path blocker 1.
+**Blast radius:** data leak
+
+### E-AUTHHTTP-05 — The gRPC exemption list contains a typo
+**Shape:** misuse | degenerate declaration
+**Setup:** A service writes `authgrpc.Skip("grpc.health.v1.Health/Check")` without the required leading slash, or accidentally includes an empty entry while assembling its exemption list.
+**What the consumer does:** They expect the process to reject a list that is not made of exact gRPC full method names, at the same point it rejects a missing guard.
+**What must happen:** `Skip` must validate every non-empty, slash-prefixed full method name at interceptor construction; an audited exact-list API is misleading if a typo is merely stored for later.
+**Today:** 🟡 partial
+**Evidence:** the `Skip` contract requires a leading slash and exact names in `auth/rpc/authgrpc/interceptor.go:19-27`, but its implementation inserts every supplied string unchanged at `:28-36`. The prefix control in `auth/rpc/authgrpc/interceptor_test.go:171-175` proves exact matching after construction, not declaration validation.
+**Blast radius:** confusing error
+
+### E-AUTHHTTP-06 — A public-route helper is given no next handler
+**Shape:** misuse
+**Setup:** A tired author wires `authnet.Handler(guard, nil)` while registering a one-off protected route.
+**What the consumer does:** They expect the wiring error to fail where the route is declared, just as a nil guard does.
+**What must happen:** `authnet.Handler` must reject a nil next handler at construction; a valid credential must never be the condition that turns a configuration error into a panic.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/http/authnet/authnet.go:62-63` forwards `next` without validation, while the successful middleware path invokes `next.ServeHTTP` at `:49-56`. The authnet tests contain no `Handler` case (`auth/http/authnet/middleware_test.go:27-133`; `auth/http/authnet/binding_test.go:31-51`).
+**Blast radius:** crash
+
+### E-AUTHHTTP-07 — A custom fourth binding has no renderer
+**Shape:** misuse | seam
+**Setup:** An author of a small custom HTTP binding calls exported `authhttp.Refuse` with an uninitialized `porthttp.Renderer`.
+**What the consumer does:** They expect a refusal path to remain fail-closed and diagnosable, not to panic only when the first unauthenticated request arrives.
+**What must happen:** The escape hatch needs a constructor-level validation point or a safe renderer fallback; a nil collaborator cannot make the door crash open under load.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/http/authhttp/authhttp.go:67-69` dereferences `rd` immediately. The focused tests pass concrete renderers (`auth/http/authhttp/refuse_test.go:87-97`, `:127-130`, `:155-162`); no nil-renderer case exists.
+**Blast radius:** crash
+
+### E-AUTHHTTP-08 — Fiber is asked to emit a repeated response header
+**Shape:** seam | adversarial input
+**Setup:** A service replaces the refusal renderer and returns two values for `WWW-Authenticate`, `Vary`, or another standards-defined repeated header.
+**What the consumer does:** They expect the Fiber door to preserve the renderer's response exactly as the net/http and Gin doors do.
+**What must happen:** Every value in the renderer's `http.Header` must reach the Fiber response; the binding must append rather than overwrite.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `auth/http/authfiber/authfiber.go:63-72` loops values but calls `c.Set`, which replaces the previous value. By contrast `auth/http/authhttp/authhttp.go:70-73` uses `Header().Add`, and `auth/http/authhttp/refuse_test.go:85-123` pins two challenges there. Fiber's refusal test checks one JSON body and content type only (`auth/http/authfiber/middleware_test.go:83-98`).
+**Blast radius:** silent wrong answer
+
+### E-AUTHHTTP-09 — Fiber's renderer body cannot be encoded
+**Shape:** partial failure | seam
+**Setup:** A custom renderer accidentally returns a value whose JSON marshal operation fails while Fiber is writing a refusal.
+**What the consumer does:** They expect the same safe, bodyless 500 that a net/http or Gin refusal gives, without a framework-specific error body or the original failure reason escaping.
+**What must happen:** The binding must marshal before committing the renderer's status, log the encoding failure in process, and return a silent 500 on every HTTP transport.
+**Today:** ❓ unverified
+**Evidence:** net/http implements the safe fallback at `auth/http/authhttp/authhttp.go:79-90`, pinned by `auth/http/authhttp/refuse_test.go:152-191`. Fiber instead commits the status through `c.Status(status).JSON(body)` at `auth/http/authfiber/authfiber.go:69-72`; no Fiber test exercises an unencodable body, so the final response is not established here.
+**Blast radius:** confusing error
+
+### E-AUTHHTTP-10 — The caller cancels while the authenticator is waiting on its provider
+**Shape:** partial failure
+**Setup:** A client disconnects or its deadline expires while an authenticator is fetching keys or checking an API key store.
+**What the consumer does:** They expect the authenticator to receive the inbound cancellation, so it can abandon the provider operation rather than continuing after the caller has gone.
+**What must happen:** Each binding must pass its request or stream context unchanged through `Guard.Authenticate` to `Authenticator.Authenticate`, with a binding test for cancellation propagation.
+**Today:** 🟡 partial
+**Evidence:** authnet, Gin, Fiber, and gRPC pass their inbound contexts to the guard at `auth/http/authnet/authnet.go:49-55`, `auth/http/authgin/authgin.go:46-55`, `auth/http/authfiber/authfiber.go:48-56`, and `auth/rpc/authgrpc/interceptor.go:50-58,69-77`; the guard supplies that context to the authenticator at `auth/guard.go:103-113`. No auth binding test creates a canceled context.
+**Blast radius:** confusing error
+
+### E-AUTHHTTP-11 — Two mounts render different service vocabularies at the same time
+**Shape:** concurrency | seam
+**Setup:** One service mounts an ordinary API with the default renderer and an admin API with a different messages or codes option, and requests to both arrive concurrently.
+**What the consumer does:** They expect neither mount's refusal vocabulary or locale to leak into the other mount's responses.
+**What must happen:** Option-bearing mounts must have isolated immutable renderer state, while the shared default must derive request-specific locale only from the current context.
+**Today:** 🟡 partial
+**Evidence:** `auth/http/authhttp/authhttp.go:38-45` shares only the no-option renderer and builds a new renderer for options; `port/porthttp/render.go:123-149` reads the renderer configuration while rendering. `auth/http/authhttp/refuse_test.go:256-266` checks pointer separation for one configured renderer, but no test interleaves requests or distinct middleware mounts.
+**Blast radius:** confusing error
+
+### E-AUTHHTTP-12 — An authenticator returns success with no principal
+**Shape:** boundary | partial failure
+**Setup:** An identity-provider adapter accidentally returns `(nil, nil)` after a timeout or an incomplete claims decode.
+**What the consumer does:** They expect a refusal at the door, rather than a nil principal reaching a policy or being mistaken for authentication.
+**What must happen:** A nil principal must be converted to an unauthenticated refusal before the binding calls the handler, on every transport.
+**Today:** ✅ handled
+**Evidence:** `auth/guard.go:103-113` turns `(nil, nil)` into `Unauthenticated` before writing a context. `auth/guard_test.go:119-129` pins both the refusal and the absence of a stored principal; all four bindings use `Guard.Authenticate` before their downstream handler (`auth/http/authnet/authnet.go:49-55`, `auth/http/authgin/authgin.go:46-55`, `auth/http/authfiber/authfiber.go:48-56`, `auth/rpc/authgrpc/interceptor.go:50-77`).
+**Blast radius:** none
+
+## Edge verdict
+
+The worst unclosed edge is gRPC metadata cardinality: a repeated credential is
+silently reduced to its first value, so the binding chooses an identity where the
+service needs an explicit ambiguity policy. Fiber has two independent refusal
+parity gaps: it demonstrably loses repeated headers and its encoding-failure
+outcome is untested, while net/http has the safe behavior pinned. The remaining
+request-time panics and invalid declaration handling are less likely than the
+security-shaped cases, but they violate the module's own fail-at-wiring posture.
+Cancellation reaches the authenticator by construction and a nil principal is
+closed correctly; both need the focused coverage described above to remain
+credible across the four bindings.
+
+## Release blockers found here (edge)
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | A gRPC credential with repeated metadata values silently authenticates the first value (`auth/rpc/authgrpc/interceptor.go:120-124`) | serious | An application cannot audit which caller wins when a proxy, retry layer, or hostile client supplies two credentials. Reject the ambiguity or make and pin an explicit selection policy before a protocol-facing release. |
+| 2 | Fiber overwrites repeated renderer headers instead of preserving them (`auth/http/authfiber/authfiber.go:63-72`) | serious | This is release-blocker 7 above in its concrete edge form; count it once. A custom refusal envelope produces a different protocol response on Fiber than on net/http or Gin. |
+| 3 | Empty credential-source declarations are accepted and can silently make an optional guard anonymous (`auth/guard.go:45-62`, `:116-123`) | sharp edge | A declaration must fail before serving. Today its meaning changes at runtime — `Lookup(nil)` restores the default header and `Header("")` supplies no credential — which defeats review of the door's configuration. |
+| 4 | `authnet.Handler` and direct `authhttp.Refuse` defer nil-collaborator failures to the first request (`auth/http/authnet/authnet.go:49-63`, `auth/http/authhttp/authhttp.go:67-69`) | sharp edge | Both are crashes on the failure path, rather than a wiring error next to the route or custom binding declaration. |

@@ -1,8 +1,8 @@
 # crudhttp · crudnet · crudfiber · crudgin — ten routes over a repository, and the same ten on whichever framework the project already uses
 
 **Covers:** `github.com/frostgrove/vv/crud/http/crudhttp`, `github.com/frostgrove/vv/crud/http/crudnet`, `github.com/frostgrove/vv/crud/http/crudfiber`, `github.com/frostgrove/vv/crud/http/crudgin`
-**Sweep:** happy paths · release readiness
-**Verdict:** ready with gaps — the read path and the refusal envelope are as good as this library gets; the write side of the *request* is where it stops, because nothing here opens a transaction, nothing bounds which columns a client may write, and when a repository error becomes a 500 two of the three bindings drop the cause on the floor.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the happy half's write-side gaps remain, and hostile but valid HTTP bodies add three more ways to alter the wrong data: under `New`, an absent or `null` mutation body becomes a zero model, a duplicate JSON key chooses its last value, and `null` in a numeric bulk-id list becomes key zero. A nil query config also turns an apparently bounded public endpoint back into the open default. The small request and response paths are otherwise deliberately bounded, but several declaration errors wait until the first live request.
 
 ## What a consumer is actually trying to do
 
@@ -790,3 +790,143 @@ is what gets read before the tag.
   the case stays, because `PUT /{id}` is an HTTP-shaped door into the id space
   that a reader of this page has to be told closes — and the missing `noauto` test
   is now named as `port`'s item rather than this module's.
+
+## Edge cases
+
+### E-CRUDHTTP-01 — An absent mutation body is not an empty resource
+**Shape:** boundary
+**Setup:** A browser, proxy or client library sends `POST /articles`, `PATCH /articles/9` or `PUT /articles/9` with no body.
+**What the consumer does:** They expect a create or replace to require a JSON object; an empty patch should not look like a saved edit.
+**What must happen:** The three mutation routes refuse an absent body with a 400 before the mapper, hook or service runs. `POST /query` and `POST /count` may retain their documented empty-body meaning.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/porthttp/body.go:77-90` returns success without decoding an empty body. All three bindings then pass their zero `In` or `U` value onward: `crud/http/crudnet/handler.go:290-308`, `:312-330` and `:343-366`; `crud/http/crudgin/handler.go:273-291`, `:295-313` and `:326-349`; `crud/http/crudfiber/handler.go:267-282`, `:286-301` and `:314-333`. `port/service.go:152-166` saves the zero create model and `:190-212` saves the zero replace model after setting only the path id. The only empty-body route test is the deliberate `POST /count` case (`crud/http/crudnet/handler_test.go:477-485`); no mutation-body test was found.
+**Blast radius:** data loss
+
+### E-CRUDHTTP-02 — JSON `null` is not a model
+**Shape:** adversarial input
+**Setup:** A client sends the valid JSON document `null` to a create, patch or replace route.
+**What the consumer does:** They expect a top-level JSON value of the wrong shape to be refused, as an array and a string already are.
+**What must happen:** A mutation route accepts only an object. It must return a 400 without changing a row when the body is `null`.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The shared decoder calls `json.Unmarshal` without checking the top-level token (`port/porthttp/body.go:77-90`); unmarshalling `null` onto the bindings' zero struct targets at `crud/http/crudnet/handler.go:291-303`, `:318-325` and `:349-361` leaves the same zero values that E-CRUDHTTP-01 sends to the service. Gin and Fiber take the same path at `crud/http/crudgin/handler.go:274-286`, `:301-308`, `:332-344` and `crud/http/crudfiber/handler.go:268-278`, `:291-297`, `:319-329`. The malformed-body triplets cover arrays, strings and bad syntax, but not a top-level `null` (`crud/http/crudnet/edge_test.go:88-118`, with matching test names in Gin and Fiber).
+**Blast radius:** data loss
+
+### E-CRUDHTTP-03 — One JSON key, two conflicting values
+**Shape:** adversarial input
+**Setup:** A client or intermediary sends `{"role":"reader","role":"admin"}` or two different `price` values in one mutation body.
+**What the consumer does:** They expect an ambiguous document to be refused. A signer, audit trail and Go decoder must not disagree about which value was authorised.
+**What must happen:** A body with a duplicate key, at any object level the binding maps, is a 400 before a write.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Every binding delegates body parsing to the single `json.Unmarshal` call in `port/porthttp/body.go:87`; no binding scans for duplicate keys before `Create`, `Update` or `Replace` call the service (`crud/http/crudnet/handler.go:290-366`, `crud/http/crudgin/handler.go:273-349`, `crud/http/crudfiber/handler.go:267-333`). The malformed-body tests enumerate invalid syntax and wrong shapes but name no duplicate-key control (`crud/http/crudnet/edge_test.go:88-118`, with matching test names in Gin and Fiber). `encoding/json` keeps the last duplicate value, so the write can differ from the value an upstream check saw.
+**Blast radius:** silent wrong answer
+
+### E-CRUDHTTP-04 — A JSON route reached through `text/plain`
+**Shape:** seam
+**Setup:** A cookie-authenticated service has no separate CSRF middleware and receives a valid JSON write with `Content-Type: text/plain`, `application/xml` or no content type.
+**What the consumer does:** They read “JSON only” as a wire contract and rely on that distinction when placing the CRUD routes behind their existing browser defences.
+**What must happen:** The JSON-body routes either require a JSON media type and answer 415, or the module pages say that media type is not checked and leave CSRF protection to the application.
+**Today:** 🟡 partial
+**Evidence:** `crud/http/crudnet/handler.go:451-461` and `crud/http/crudgin/handler.go:435-445` read only the body; Fiber deliberately calls the same decoder over `c.Body()` at `crud/http/crudfiber/handler.go:421-431`. None reads a request `Content-Type`. Their test helpers set `application/json` for every non-empty body (`crud/http/crudnet/fake_test.go:264-275`, `crud/http/crudgin/fake_test.go:279-290`, `crud/http/crudfiber/fake_test.go:266-277`), so no test pins the policy.
+**Blast radius:** data loss
+
+### E-CRUDHTTP-05 — `null` inside a numeric bulk delete
+**Shape:** adversarial input
+**Setup:** A client sends `POST /articles/bulk-delete` with `{"ids":[7,null]}` to an `int64`-keyed resource.
+**What the consumer does:** They expect a malformed id list to be rejected as one request, with no delete attempted.
+**What must happen:** Every bulk id must be a valid key. A `null` element must produce a 400 before `DeleteMany` is called.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `BulkDeleteRequest` is a slice of the concrete key type (`crud/http/crudhttp/request.go:8-11`), and each binding unmarshals it through the plain shared decoder before only checking length (`crud/http/crudnet/handler.go:388-403`, `crud/http/crudgin/handler.go:371-386`, `crud/http/crudfiber/handler.go:353-365`). For a numeric slice `encoding/json` leaves the element at zero for `null`; `port/service.go:228-235` then passes every non-empty id slice to the repository. The existing empty-list test covers `{}` and `{"ids":null}` but not a `null` element (`crud/http/crudnet/edge_test.go:198-220`, with matching test names in Gin and Fiber).
+**Blast radius:** data loss
+
+### E-CRUDHTTP-06 — Exactly at the body cap
+**Shape:** boundary
+**Setup:** A client sends one valid JSON body whose encoded size is exactly `MaxBody`, then one that is one byte larger.
+**What the consumer does:** They size an upload against the configured limit and expect the limit to be inclusive and the next byte to be a 413, on all three transports.
+**What must happen:** The body at the cap parses; the body past it is refused before parsing or a repository call.
+**Today:** ❓ unverified
+**Evidence:** The implementation reads `limit+1` bytes and rejects only `len(body) > limit` (`port/porthttp/body.go:62-90`); Fiber also sets its standalone app limit to one byte beyond the handler's cap (`crud/http/crudfiber/handler.go:129-150`). The triplet tests exercise an under-cap body and a much larger one, not the exact and plus-one boundary (`crud/http/crudnet/edge_test.go:531-553`, with matching test names in Gin and Fiber).
+**Blast radius:** none
+
+### E-CRUDHTTP-07 — A cap set to zero is not a request for infinity
+**Shape:** misuse
+**Setup:** A deployment loads `MaxBody(0)`, `MaxBody(-1)`, `MaxBulk(0)` or `MaxBulk(-1)` from an optional environment variable.
+**What the consumer does:** They expect a bad or absent numeric setting to retain the safe default, not to remove a cap.
+**What must happen:** The default caps remain in force and the effective number is identical on all three bindings.
+**Today:** ❓ unverified
+**Evidence:** The shared body decoder restores `MaxBody` for zero or less (`port/porthttp/body.go:62-82`), and `port.Rules.BulkCap` restores `DefaultMaxBulk` for zero or less (`port/rules.go:43-66`). Fiber's standalone app follows the same body default (`crud/http/crudfiber/handler.go:142-150`). The adjacent tests cover an omitted cap and positive `MaxBulk` boundaries, but no explicit zero or negative option (`crud/http/crudnet/edge_test.go:531-573`, `crud/http/crudnet/options_test.go:276-297`, with matching test names in Gin and Fiber).
+**Blast radius:** none
+
+### E-CRUDHTTP-08 — A nil query config turns the public API open
+**Shape:** misuse
+**Setup:** An endpoint declares `WithQuery(cfg)`, but `cfg` is nil because a configuration branch or generated declaration failed to initialise it.
+**What the consumer does:** They expect a call spelling `WithQuery` to either bound the endpoint or fail while the process starts.
+**What must happen:** `WithQuery(nil)` panics with a useful declaration error, rather than silently reverting to the open query defaults.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Each `WithQuery` stores its argument without validation (`crud/http/crudnet/options.go:63-66`, `crud/http/crudgin/options.go:63-66`, `crud/http/crudfiber/options.go:62-65`). `port.Rules.Service` omits a nil `Query` entirely (`port/rules.go:68-79`), then `DefaultService.compile` invokes the query compiler with nil (`port/service.go:240-248`). An empty allow-list allows every canonical path (`crud/query/compile.go:210-225`). No nil-config test was found in the bindings or `port`.
+**Blast radius:** data leak
+
+### E-CRUDHTTP-09 — A live query configuration changes under a request
+**Shape:** concurrency
+**Setup:** Two handlers share one `*query.Config`; an application reload goroutine appends a field to an allow-list while one request is compiling it.
+**What the consumer does:** They expect endpoint policy to be frozen at declaration, or an explicitly documented synchronisation boundary before a hot reload can widen an endpoint.
+**What must happen:** Handler construction copies or freezes the config, so concurrent requests cannot race with a policy change or observe a half-written allow-list.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port.NewService` keeps the caller's config pointer (`port/service.go:81-95`) and passes that same pointer to `Request.Compile` on each request (`port/service.go:237-248`). `query.Config` exposes its allow-list slices (`crud/query/compile.go:29-80`) and `allowed` reads them directly (`crud/query/compile.go:210-225`). No test was found for post-construction mutation or concurrent use of a mutable config.
+**Blast radius:** data leak
+
+### E-CRUDHTTP-10 — A key type that cannot be written in a URL
+**Shape:** degenerate declaration
+**Setup:** A consumer supplies a custom service with a comparable struct key that has no `encoding.TextUnmarshaler`, for example `type Key struct { Tenant, Number int64 }`.
+**What the consumer does:** They expect the resource declaration to reject a key that no `/{id}` route can parse, before it is mounted.
+**What must happen:** Construction fails loudly and names the key requirement, or the API exposes a deliberate composite-key wire shape.
+**Today:** 🟡 partial
+**Evidence:** The constructors accept every `ID comparable` and do no key-shape validation (`crud/http/crudnet/handler.go:84-119`; Gin and Fiber have the same constructor shape at `crud/http/crudgin/handler.go:80-115` and `crud/http/crudfiber/handler.go:75-110`). At request time, `port.CoerceID` delegates to `query.Coerce` (`port/request.go:13-28`); its fallback tries to decode the URL string as JSON into the struct (`crud/query/coerce.go:100-145`) and returns a 400. The binding id tests cover invalid text and overflow for an integer key only (`crud/http/crudnet/edge_test.go:121-151`, with matching test names in Gin and Fiber).
+**Blast radius:** confusing error
+
+### E-CRUDHTTP-11 — A pointer key panics on the first route
+**Shape:** degenerate declaration
+**Setup:** A custom repository or service uses `*Key` as its comparable ID type and mounts one of the HTTP handlers.
+**What the consumer does:** They expect unsupported key declarations to fail at construction, not when the first request reaches `GET /{id}`.
+**What must happen:** The constructor rejects a nil-able key type with a direct explanation, before serving traffic.
+**Today:** ❌ wrong or unhandled
+**Evidence:** For a nil pointer zero value, `reflect.TypeOf(zero)` in `port.CoerceID` is nil (`port/request.go:15-20`), and `query.coerceString` immediately calls `reflect.New(t)` (`crud/query/coerce.go:85-93`), which panics for a nil type. No binding constructor validates the key type (`crud/http/crudnet/handler.go:84-119`, `crud/http/crudgin/handler.go:80-115`, `crud/http/crudfiber/handler.go:75-110`), and no pointer-key route test was found.
+**Blast radius:** crash
+
+### E-CRUDHTTP-12 — A missing mapper waits for the first write
+**Shape:** misuse
+**Setup:** A `NewFor` caller passes a nil mapper interface through a conditional or an uninitialised generated variable.
+**What the consumer does:** They expect construction to reject a nil dependency, because the read routes can otherwise look healthy until the first production write.
+**What must happen:** `NewFor` and `ServingFor` fail at declaration with an error that names the mapper.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `NewFor` passes the mapper through `build` without a nil check (`crud/http/crudnet/handler.go:94-135`; the matching paths are `crud/http/crudgin/handler.go:90-131` and `crud/http/crudfiber/handler.go:85-126`). The first create and replace call `h.mapper.Model` (`crud/http/crudnet/handler.go:298` and `:356`; `crud/http/crudgin/handler.go:281` and `:339`; `crud/http/crudfiber/handler.go:274` and `:325`). No nil-mapper test was found.
+**Blast radius:** crash
+
+### E-CRUDHTTP-13 — The caller gives up while the database is still working
+**Shape:** partial failure
+**Setup:** A client cancels a slow list, count or write after the handler has handed its request context to the service.
+**What the consumer does:** They expect cancellation to remain distinct from a database fault, so it does not inflate the API's 500 graph or cause a retry policy to treat a departed client as a server failure.
+**What must happen:** The context reaches the service, and a returned `context.Canceled` or deadline error has an explicit transport outcome and log treatment.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The bindings do pass their request context into service calls (`crud/http/crudnet/handler.go:204-280` and `:290-403`; `crud/http/crudgin/handler.go:187-263` and `:273-386`; `crud/http/crudfiber/handler.go:192-257` and `:267-365`). But `port.sentinelKind` has no cancellation or deadline arm and falls through to `KindInternal` (`port/kind.go:103-128`), which maps to 500 (`port/porthttp/errors.go:51-71`). No cancellation or deadline test was found under the three HTTP bindings. This is the inherited `errs`/`porthttp` gap already recorded as item 15 in the happy-half blocker table.
+**Blast radius:** confusing error
+
+## Edge verdict
+
+The worst open path is a mutation body that carries no object at all: empty and
+`null` documents travel through the normal write path, and `PUT` can save a row
+whose ordinary fields are all zero. A hostile JSON document can also choose a
+duplicate value silently, while `null` inside a numeric bulk list can become the
+zero key. Configuration is not treated as a declaration: `WithQuery(nil)` opens
+an endpoint, a mutable config remains live under requests, and some unusable
+types or dependencies fail only after traffic arrives. The byte caps themselves
+are designed correctly, but their exact boundaries and bad configured values
+need direct triplet tests.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | Under `New`, `POST`, `PATCH` and `PUT` accept an absent or top-level-`null` body; create saves a zero model and replace can save a zero row at a real id | blocker | A client, proxy or integration mistake can write the wrong record with a success response. `POST /query` and `POST /count` need their empty-body exception, so the mutation rule must be route-specific. |
+| 2 | Duplicate JSON keys silently take the last value before a write | serious | An upstream check, signature or audit record can describe one value while the framework persists another. The client sees success and no warning. |
+| 3 | `{"ids":[7,null]}` on a numeric bulk delete can pass key zero to the repository | serious | A malformed batch can delete an otherwise valid zero-key row. The whole request must fail before the repository sees any id. |
+| 4 | `WithQuery(nil)` discards the apparent public-query boundary and leaves the open default | serious | A typed declaration that looks like an allow-list can expose every mapped field. It must fail when the handler is built. |

@@ -1,8 +1,8 @@
 # cmd/vv · internal/codegen — the update DTO, the metamodel and the whole resource, written from the model so they cannot quietly disagree with it
 
 **Covers:** `github.com/frostgrove/vv/cmd/vv`, `github.com/frostgrove/vv/internal/codegen`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the DTO-and-metamodel half is finished and unusually well pinned, but `-adapter` hands a client the auto primary key on every create with no flag that takes it back, and the most ordinary Go model shape after the plain struct — one that embeds a shared base from another package — cannot be generated for at all, and its start-up refusal names two fixes that both do nothing.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — `-adapter` exposes auto primary keys and cannot read a shared embedded base; the edge sweep adds destructive output paths, build-tag-blind parsing, silently omitted named types, and colliding relation artefact names.
 
 ## What a consumer is actually trying to do
 
@@ -736,3 +736,135 @@ documents should not disagree quietly.
   guarantee that holds in the code is ✅; the missing test is blocker 6, which is
   wider than that one message. The previous draft graded the same kind of
   unproven-but-true guarantee both ways in one file.
+
+## Edge cases
+
+### E-CODEGEN-01 — The output name is an authored Go file
+**Shape:** misuse | partial failure
+**Setup:** A developer copies a directive into a package and writes `-out helpers.go`, unaware that `helpers.go` already holds handwritten code.
+**What the consumer does:** They expect the generator to stop before it destroys a file it did not create.
+**What must happen:** An existing output must begin with this generator's header before it may be replaced; any other existing file must be refused with the target path and the flag that selected it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `internal/codegen/codegen.go:116-148` renders and calls `os.WriteFile` without inspecting the target. `load` excludes any input whose basename matches the output at `:151-155`, so `helpers.go` is skipped as a model source immediately before it is overwritten. The generator tests create only disposable output files (`internal/codegen/codegen_test.go:15-52`); no test protects an authored target.
+**Blast radius:** data loss
+
+### E-CODEGEN-02 — The output path leaves the package
+**Shape:** adversarial input | misuse
+**Setup:** A typo or copied shell variable supplies `-out ../main.go`, an absolute-like path, or a symlink whose target is outside the package the directive is meant to generate for.
+**What the consumer does:** They expect `-out` to name one generated file inside `-dir` or `-into`, not to be an unconstrained write capability.
+**What must happen:** The command must reject a path that escapes the resolved output directory and refuse to follow an existing symlink; intentional cross-package output belongs to the explicit `-into` seam.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `internal/codegen/codegen.go:518-563` resolves `o.Out` with `filepath.Join` and passes it straight to `g.run`; `g.run` writes that path directly at `:138-143`. There is no containment, absolute-path, or symlink check, and no output-path test outside the temporary package (`internal/codegen/codegen_test.go:15-52`).
+**Blast radius:** data loss
+
+### E-CODEGEN-03 — Two invocations target the same generated file
+**Shape:** concurrency | misuse
+**Setup:** Two `go:generate` directives select different `-types` but retain the default output, or two developers' generation processes overlap in a shared checkout.
+**What the consumer does:** They expect a named configuration error or a lock, not whichever complete file happened to write last.
+**What must happen:** The target file must identify the directive/configuration that owns it, and concurrent or conflicting writers must fail before replacing it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** every run renders independently then unconditionally writes the same `outPath` (`internal/codegen/codegen.go:116-148`); no lock, ownership marker, or target-content comparison exists. `-types` becomes only a filter map (`:549-553`), while the generated header contains no configuration (`internal/codegen/render.go:41-43`). `TestOutputIsByteIdenticalAcrossRuns` uses fresh directories for each run (`internal/codegen/codegen_test.go:555-596`), not shared output.
+**Blast radius:** silent wrong answer
+
+### E-CODEGEN-04 — Generation is interrupted while replacing the output
+**Shape:** partial failure
+**Setup:** A generator process is killed, the disk fills, or a filesystem error occurs after the old generated file has been opened for replacement.
+**What the consumer does:** They expect the last complete generated file to remain, or no new file at all; they do not expect a truncated Go file to be committed or to break every build.
+**What must happen:** Rendered bytes must be written to a temporary file in the destination directory, synced, and atomically renamed over a confirmed generated target.
+**Today:** ❓ unverified
+**Evidence:** the only persistence operation is `os.WriteFile(outPath, src, 0o644)` at `internal/codegen/codegen.go:138-143`; there is no temporary-file or rename path. No test exercises a failing or interrupted write (`internal/codegen/codegen_test.go:15-52`). The exact filesystem failure outcome is therefore not established here.
+**Blast radius:** data loss
+
+### E-CODEGEN-05 — The model exists only under a build tag
+**Shape:** seam | degenerate declaration
+**Setup:** A service has Linux-only and Windows-only model files, or an enterprise-tagged model that the ordinary build deliberately excludes.
+**What the consumer does:** They expect generation to see the same package for the same build context, or to refuse and name the tags it cannot evaluate.
+**What must happen:** The generator must use the Go build file-selection rules (with an explicit target if necessary); it must not emit references to inactive models or choose a package by map iteration across mutually exclusive files.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `internal/codegen/codegen.go:151-155` uses `parser.ParseDir` and filters only tests and the output basename, never build constraints; it then ranges every returned package and assigns `g.pkg` on each iteration at `:181-212`. There is no build-tag fixture in `internal/codegen/codegen_test.go` (its file map starts at `:15-52` and all listed tests are untagged).
+**Blast radius:** confusing error
+
+### E-CODEGEN-06 — One name in a mixed `-types` list is misspelled
+**Shape:** misuse
+**Setup:** A consumer writes `-types User,Artcle` while adopting a foreign package; `User` exists and `Artcle` is a typo.
+**What the consumer does:** They expect generation to refuse and name `Artcle`, rather than ship `User`'s DTO and metamodel while silently omitting the other model.
+**What must happen:** Every requested type must be found exactly once and reported in the generator's completion line; unknown or duplicate names must be an error before output is written.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `internal/codegen/codegen.go:549-553` turns the list into a set; `load` simply ignores declarations absent from that set at `:201-208`; the only final validation is that *some* model was found at `:129-131`. The tests cover a package with no models (`internal/codegen/codegen_test.go:514-528`), not one valid requested type plus one unknown name.
+**Blast radius:** silent wrong answer
+
+### E-CODEGEN-07 — Two models share a field name and only one should be excluded
+**Shape:** misuse | degenerate declaration
+**Setup:** A foreign package has `User.CreatedAt` and `Invoice.CreatedAt`; the consumer intends `-readonly User.CreatedAt`, or gives `-skip CreatedAt` without realising it applies to both.
+**What the consumer does:** They expect a qualified name to affect exactly one model and an ambiguous bare name to be rejected.
+**What must happen:** `-skip` and `-readonly` must resolve `Model.Field` exactly, reject unmatched names, and reject a bare name matching more than one model rather than altering every matching wire shape.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `names` stores raw comma-separated strings only (`internal/codegen/codegen.go:432-441`), and `exclude` consults only `f.Name` at `:301-311`; there is no model qualifier, match count, or unused-name check. Existing tests exercise a unique bare field (`internal/codegen/codegen_test.go:178-217`, `:751-768`), not two models or a qualified flag.
+**Blast radius:** silent wrong answer
+
+### E-CODEGEN-08 — A handwritten declaration has the generator's name
+**Shape:** misuse
+**Setup:** A package already declares `ArticleUpdate`, `ArticleAttrs`, or `Article_` for a hand-written compatibility layer, then adds the ordinary generator directive.
+**What the consumer does:** They expect generation to fail with the colliding declaration and a remediation, before leaving the package with duplicate symbols.
+**What must happen:** The generator must collect existing package-level names excluding its own previous output and refuse collisions for every declaration it will emit.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `load` records structs and imports but no package-level declaration names (`internal/codegen/codegen.go:159-212`); `renderDTO` and `renderMetamodel` emit fixed `ModelUpdate`, `ModelAttrs`, and `Model_` spellings at `internal/codegen/render.go:139-163` and `:170-181`. No collision test exists (`internal/codegen/codegen_test.go:15-52`).
+**Blast radius:** confusing error
+
+### E-CODEGEN-09 — Two relation chains concatenate to the same generated type name
+**Shape:** degenerate declaration | scale
+**Setup:** A model has relation chains such as `A → BC` and `AB → C`; both are valid typed paths but their concatenated suffix is `ABC`.
+**What the consumer does:** They expect each relation path to get its own typed group, however similarly the field names concatenate.
+**What must happen:** Generated relation-group names must be injective (for example by separators or path encoding), and a collision must be rejected rather than causing one branch to reuse or suppress another's group.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `renderAttrs` creates the type name by concatenating `root.Name + suffix + "Attrs"` at `internal/codegen/render.go:186-191` and appends child field names without a separator at `:238-244`; the `emitted` map then returns early on the duplicate at `:187-190`. Relation tests cover depth and cycles (`internal/codegen/codegen_test.go:220-350`), not two distinct chains with the same concatenated suffix.
+**Blast radius:** silent wrong answer
+
+### E-CODEGEN-10 — Relation depth is zero, negative, or accidentally enormous
+**Shape:** boundary | scale
+**Setup:** An environment variable expands to `-depth 0`, `-depth -1`, or `-depth 1000` on a graph with many non-cyclic relation paths.
+**What the consumer does:** They expect an invalid depth to fail at generation and an intentionally large expansion to be bounded or at least reported before producing an enormous review-hostile file.
+**What must happen:** Depth must be a positive validated limit, and the generator must give an explicit diagnostic when it cuts paths or reaches a configured expansion budget.
+**Today:** ❌ wrong or unhandled
+**Evidence:** the CLI accepts any integer at `cmd/vv/main.go:72`; `Run` copies it unchanged at `internal/codegen/codegen.go:532-548`; `renderAttrs` silently drops a relation whenever `level+1 >= g.depth` at `internal/codegen/render.go:216-224`, with no maximum or log. The only depth test uses ordinary positive values (`internal/codegen/codegen_test.go:333-350`).
+**Blast radius:** silent wrong answer
+
+### E-CODEGEN-11 — The adapter is requested while DTO generation is disabled
+**Shape:** misuse
+**Setup:** A developer writes `-adapter -no-dto`, reasoning that the generated input body makes a patch DTO unnecessary.
+**What the consumer does:** They expect a declaration-time refusal rather than generated adapter code that refers to a type it omitted.
+**What must happen:** The command must reject this incompatible flag combination with the corrective flag choice and write nothing.
+**Today:** 🟡 partial
+**Evidence:** `internal/codegen/codegen.go:129-137` refuses the combination before `render` and `os.WriteFile`; command flags set the two values at `cmd/vv/main.go:75-82`. The test suite checks independently generated halves (`internal/codegen/codegen_test.go:530-550`) but has no `-adapter -no-dto` command or `Run` test.
+**Blast radius:** none
+
+### E-CODEGEN-12 — The requested output has no model to generate
+**Shape:** boundary
+**Setup:** A package contains only support structs, or a `-types` filter leaves no matching model after a rename.
+**What the consumer does:** They expect an error and no empty generated file that makes a directory look configured when it is not.
+**What must happen:** The command must refuse before writing and identify the directory or explicit requested type set that produced no models.
+**Today:** 🟡 partial
+**Evidence:** `internal/codegen/codegen.go:129-131` rejects an empty `g.order` before render/write. `TestAPackageWithNothingToGenerateIsAnError` pins an untagged empty package (`internal/codegen/codegen_test.go:514-528`), but does not cover the `-types`-after-rename form or require the error to name requested types.
+**Blast radius:** none
+
+## Edge verdict
+
+The release-stopping edge is destructive generation: an authored or escaping
+output path is overwritten without a generated-header, containment, or symlink
+check, and the single direct write has no atomic replacement guarantee. The
+generator also reads syntax rather than the active Go build, so build tags can
+turn a successful generation into an artefact for a package that the target build
+does not contain. Less visibly, a mixed `-types` list, per-model exclusion, and
+relation-name collision all omit or mis-shape generated artefacts while still
+leaving a plausible-looking file. The incompatible adapter/DTO combination and
+the truly empty package do refuse before writing; their command-level coverage is
+still missing.
+
+## Release blockers found here (edge)
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `-out` overwrites any authored file and may escape `-dir`/`-into`; no generated-header, containment, or symlink guard exists (`internal/codegen/codegen.go:116-155`, `:518-563`) | blocker | A one-character directive typo can replace model or application source outside the intended generated target. The output is version-controlled source, so recovery is not guaranteed before the next build or commit. |
+| 2 | Build-tagged files are parsed as though every target were active, and the generated package is selected while ranging parsed packages (`internal/codegen/codegen.go:151-155`, `:181-212`) | serious | A successful generation can refer to a platform- or feature-specific model unavailable in the build that compiles the artefact, with no diagnosis at the directive. |
+| 3 | A mixed valid/invalid `-types` list and a qualified or ambiguous `-skip`/`-readonly` name silently omit or alter a model (`internal/codegen/codegen.go:201-208`, `:301-311`, `:549-553`) | serious | The generated file looks complete while the model a consumer meant to protect has no DTO, metamodel, or coverage assertion, or a different model's wire shape changed instead. |
+| 4 | Distinct relation paths can collapse onto one concatenated generated attribute-group name (`internal/codegen/render.go:186-191`, `:238-244`) | serious | A typed navigation path silently reuses or loses another path, undermining the guarantee that generated metamodels reflect the model graph. |
+| 5 | Replacement uses one non-atomic `os.WriteFile` with no recoverable temporary output (`internal/codegen/codegen.go:138-143`) | sharp edge | A kill or write failure can leave the only generated file truncated; the exact failure path is untested, so this is a release risk rather than a claimed observed outcome. |

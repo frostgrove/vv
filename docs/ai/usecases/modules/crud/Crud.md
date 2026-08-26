@@ -1,8 +1,8 @@
 # crud — the vocabulary a repository, a filter, a write and a page are written in
 
 **Covers:** `github.com/frostgrove/vv/crud`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — four things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; `Save` over a key the client chose overwrites the row that was there, with no version check and no way to ask for an insert; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — four things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; `Save` over a key the client chose overwrites the row that was there, with no version check and no way to ask for an insert; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, and unpinned cursor and transaction-cleanup paths.
 
 ## What a consumer is actually trying to do
 
@@ -923,3 +923,130 @@ closes all four.
   out that a compile error is the loudest possible failure and the opposite of
   "quietly wrong". Moved to its own clause and to blocker 23, under a docs
   heading, with the cost stated.
+
+## Edge cases
+
+### E-CRUD-01 — Hostile page controls cannot form invalid SQL
+**Shape:** adversarial input
+**Setup:** A request adapter forwards a negative page, limit or offset, and a saved-search helper supplies the same paging knob twice.
+**What the consumer does:** They replay the saved options and append the request options without sanitising either list themselves.
+**What must happen:** No negative offset reaches a statement, non-positive page and limit values resolve predictably, and a repeated value has one documented winner.
+**Today:** ✅ handled
+**Evidence:** `crud/options.go:56-73` applies options left to right; `crud/options.go:241-276` normalises non-positive paging values, clamps the limit and discards a negative offset. `crud/edge_test.go:430-477` pins last-value-wins and the negative-offset control.
+**Blast radius:** none
+
+### E-CRUD-02 — A forged cursor is refused before it becomes a filter
+**Shape:** adversarial input
+**Setup:** A client alters a copied cursor so it is not base64, is not its expected JSON shape, has unequal field/value counts, names another sort, or contains a value that cannot fit the sorted column.
+**What the consumer does:** They send that string back as the next-page cursor.
+**What must happen:** The caller gets an error before a cursor predicate or bind list is produced; the server must never reinterpret a position under another sort.
+**Today:** 🟡 partial
+**Evidence:** `crud/cursor.go:57-91` rejects malformed encodings, shape and sort mismatches, and values that cannot decode into the target column type; `crud/cursor.go:108-133` performs those checks before it builds comparison branches. No `CursorPredicate` test was found under `crud/`.
+**Blast radius:** confusing error
+
+### E-CRUD-03 — A reused optional value cannot retain a rejected request
+**Shape:** partial failure
+**Setup:** A decoder or scanner reuses an `Opt[int]` that held a prior request's value, then receives `null` or a value the element type cannot accept.
+**What the consumer does:** They decode or scan into the reused DTO field rather than allocating another wrapper themselves.
+**What must happen:** `null` replaces the old value, while an invalid body or scan reports an error and leaves the prior state intact; neither path may leave a half-decoded value.
+**Today:** ✅ handled
+**Evidence:** `crud/opt.go:131-147` assigns only after a successful scan, except that SQL NULL deliberately becomes null; `crud/opt.go:164-175` unmarshals into a temporary before assigning. Pinned by `crud/opt_edge_test.go:50-75` and `crud/opt_edge_test.go:185-274`.
+**Blast radius:** none
+
+### E-CRUD-04 — A hand-written adapter gives a schema the wrong model
+**Shape:** misuse
+**Setup:** An adapter hands `Schema.Pointers`, `Values`, `ID`, `HasID` or `SetID` a value, a nil pointer, or a pointer to another model.
+**What the consumer does:** They implement the executor seam and make one reflective call with a value whose type is not the schema's model.
+**What must happen:** The call reports a schema error instead of panicking or writing through an unrelated pointer.
+**Today:** ✅ handled
+**Evidence:** `crud/access.go:9-14` checks that the value is a non-nil pointer to the schema type; `crud/access.go:17-81` routes every listed accessor through that check. `crud/access_test.go:151-183` pins all four bad shapes across all five accessors.
+**Blast radius:** crash
+
+### E-CRUD-05 — An empty boolean group has an honest meaning
+**Shape:** boundary
+**Setup:** A search builder collects no terms, or only nil terms, and passes its `And`, `Or` or `Not` result straight into `Where`.
+**What the consumer does:** They use one generic predicate builder for an empty form and for a populated form.
+**What must happen:** The result has defined Boolean semantics and valid SQL: empty AND is true, empty OR and `Not(nil)` are false, and no empty parenthesis reaches the driver.
+**Today:** ✅ handled
+**Evidence:** `crud/predicate.go:290-347` drops nil children, flattens groups and renders the three identity cases as constants. `crud/predicate_test.go:112-143` pins empty, nested and nil-containing groups.
+**Blast radius:** none
+
+### E-CRUD-06 — A deep preload request cannot multiply work without a limit
+**Shape:** adversarial input
+**Setup:** A client asks for six self-relation hops, or a resource deliberately lowers its preload depth below the requested path.
+**What the consumer does:** They pass the requested preload paths through to the core preloader.
+**What must happen:** The path is refused before the first related-query statement, with the violated depth named; it must not turn one list request into unbounded follow-up queries.
+**Today:** ✅ handled
+**Evidence:** `crud/preload.go:11-14` sets the default cap; `crud/preload.go:70-102` rejects a path beyond it; `crud/preload.go:113-130` validates the tree before entering the query loop. `crud/preload_test.go:353-375` pins the default and a tightened cap, including the no-statement control.
+**Blast radius:** none
+
+### E-CRUD-07 — A thousand selected IDs have a framework-level limit
+**Shape:** scale
+**Setup:** An export, cleanup job or manually assembled filter passes thousands of IDs to `In` or `InAny`.
+**What the consumer does:** They expect the same closed predicate API to either handle the list in safe chunks or reject it with a framework error.
+**What must happen:** The root API enforces a caller-visible bind budget or refuses before asking a driver to parse an oversized statement.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/predicate.go:201-225` emits one bind marker for every value and contains no limit, chunking or refusal path. No large-list test was found under `crud/`.
+**Blast radius:** confusing error
+
+### E-CRUD-08 — An organisational hierarchy may point back to itself
+**Shape:** degenerate declaration
+**Setup:** An employee model has `Manager *Employee`, and a request filters or sorts through `Manager.Manager.Name` under a relation scope.
+**What the consumer does:** They model the normal self-referential hierarchy without introducing a duplicate model only to break the cycle.
+**What must happen:** Resolving the target and walking repeated hops completes, and the scope lands on the hop it names rather than recursing indefinitely or leaking to another hop.
+**Today:** ✅ handled
+**Evidence:** `crud/relation.go:93-109` resolves a target once, while `crud/relation.go:300-334` separates default resolution so the two lazy steps cannot deadlock. `crud/relation_test.go:261-275` pins the self target; `crud/predicate_test.go:328-364` pins a two-hop self path and its scopes.
+**Blast radius:** none
+
+### E-CRUD-09 — Concurrent first callers receive one metadata identity
+**Shape:** concurrency
+**Setup:** Two request paths call `SchemaOf` for the same model before either has populated the process cache.
+**What the consumer does:** They initialise repositories lazily in parallel and rely on the documented per-type cache rather than serialising the first call themselves.
+**What must happen:** Both callers receive the one cached schema and its field identities; a cache must not split its first result by caller.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/meta.go:195-205` and `crud/meta.go:209-217` perform a load, build and store without an atomic get-or-build step, so simultaneous misses can each return their own built schema. `crud/schema_edge_test.go:420-438` proves only the sequential cache case; no concurrent first-schema test was found under `crud/`.
+**Blast radius:** confusing error
+
+### E-CRUD-10 — Concurrent first relation crossings resolve one join
+**Shape:** concurrency
+**Setup:** Two first requests cross the same relation at the same time.
+**What the consumer does:** They share one bound repository across requests and hit a relation only after traffic starts.
+**What must happen:** Both calls see the same resolved local and remote fields, without a race on the process-shared relation.
+**Today:** ✅ handled
+**Evidence:** `crud/relation.go:75-91` gives target and default resolution separate `sync.Once` guards; `crud/relation.go:300-317` writes the default fields only inside the second guard. `crud/relation_test.go:474-522` runs 32 concurrent resolutions and checks the resolved field names agree.
+**Blast radius:** none
+
+### E-CRUD-11 — A decorator chain that loops cannot hang service start-up
+**Shape:** misuse
+**Setup:** A hand-written decorator's `Next` method accidentally returns the decorator itself.
+**What the consumer does:** They wire a probe or another feature that asks the chain for its source.
+**What must happen:** The source lookup ends with no source rather than following the cycle forever or inventing one below the bad layer.
+**Today:** ✅ handled
+**Evidence:** `crud/executor.go:178-208` caps a core-chain walk at 64 layers and returns failure when it cannot reach a source. `crud/basenext_test.go:84-106` pins the self-loop control with a timeout and confirms no source is fabricated.
+**Blast radius:** none
+
+### E-CRUD-12 — A cancelled owned transaction still has a defined cleanup outcome
+**Shape:** partial failure
+**Setup:** The context is cancelled after the transaction begins and the callback returns that cancellation error.
+**What the consumer does:** They use `InTx` around work subject to an HTTP deadline and rely on the helper to finish the transaction lifecycle.
+**What must happen:** The original failure is returned and the transaction is cleaned up predictably even when the request context is no longer usable.
+**Today:** ❓ unverified
+**Evidence:** `crud/executor.go:503-527` passes the original context to `Begin`, `Rollback` and `Commit`, and joins a rollback error with the callback error. No cancellation, rollback-failure or commit-failure test was found under `crud/`.
+**Blast radius:** confusing error
+
+## Edge verdict
+
+The worst new edge is a manually assembled large ID filter: the core predicate
+writer accepts every value and leaves the first useful limit to the driver. The
+root package is otherwise closed against malformed paging, invalid reflective
+access, malformed preload depth, self-relations and a cyclic decorator chain;
+the strongest of those claims have focused controls. Its first-use metadata cache
+does not make one schema identity atomic, and the transaction-cleanup claim has
+no cancellation or rollback-failure proof. These are smaller than the existing
+silent data findings, but they make lazy initialisation and operational failure
+less predictable than the short call site suggests.
+
+## Release blockers found here (edge)
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | A manual `In` list has no caller-visible bind budget, batching or refusal. | serious | A normal export or cleanup filter reaches an adapter-specific oversized-statement failure after the root API accepted every ID; the caller cannot derive a safe ceiling from this package. |

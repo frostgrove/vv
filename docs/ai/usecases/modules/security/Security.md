@@ -1,8 +1,8 @@
 # crud/decorators/security — the rule that says whose rows these are, declared once next to the repository
 
 **Covers:** `github.com/frostgrove/vv/crud/decorators/security`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — two blockers write across a tenant boundary or empty a table through the layer that exists to stop both; of 27 cases 3 are ready, 12 are partial and 12 are missing, and the enforcement that *is* here is proven well: the narrowing is asserted at the statement, with negative controls beside the positives and a totality test over the seam. The helper the module leads with serves one schema shape.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — four blockers now write across a tenant boundary, empty a table, or turn an apparently gated repository into an unfiltered read: an empty effective predicate, a soft-delete overwrite, a zero policy, and a `Scope` that returns `nil` for an unrecognised caller. Of 39 cases 3 are ready, 18 are partial, 16 are wrong or missing and 2 are unverified. The statement-level enforcement is unusually well pinned, but declaration mistakes and the seams around it still fail late or open silently; the helper the module leads with serves one schema shape.
 
 ## What a consumer is actually trying to do
 
@@ -737,3 +737,134 @@ it on `PUT`.
   worth grading; the remedy is `porthttp.Renderer`'s and is counted on
   `Port.md`'s row. The same is done for H-SECURITY-22, whose blocker is counted
   on `General.md`'s row 6.
+
+## Edge cases
+
+### E-SECURITY-01 — A gate attached with no policy
+**Shape:** misuse
+**Setup:** A role-derived policy list becomes empty during boot, but the resource still binds through `security.Gate`.
+**What the consumer does:** They read `Docs.Bind(db, security.Gate(security.Policy[Doc, int64]{}))` as a guarded repository and expose its ordinary list route.
+**What must happen:** Binding must refuse, or unrestricted access must require an explicit declaration whose name says so. A gate left with no rule must not make every row readable.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Gate` only stores the policy and builds the immutable-name index (`security.go:126-129`); `scope` returns a nil predicate when no scope hook exists (`security.go:197-201`), and `scoped` then returns the caller options unchanged (`security.go:225-237`) to `GetAll` (`security.go:323-338`). `TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy` (`gate_edge_test.go:184-206`) pins only the unscoped `DeleteAll` refusal. No test sends a read through a zero policy.
+**Blast radius:** data leak
+
+### E-SECURITY-02 — The tenant resolver answers no value and no error
+**Shape:** adversarial input
+**Setup:** A hand-written `Scope` looks up the workspace from a host name and its missed-map branch returns `(nil, nil)`.
+**What the consumer does:** They send a request for an unrecognised host and expect the gate to fail closed, as it does when the resolver returns an error.
+**What must happen:** A scope that cannot name a tenant must return an error before a statement runs. Unrestricted access needs an explicit, auditable declaration rather than the same nil value a failed lookup produces.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Policy.Scope` documents a nil predicate as unrestricted (`security.go:55-60`), and `scoped` omits a nil predicate and delegates the original options (`security.go:225-237`). By contrast, `TestAScopeThatFailsClosesEveryDoor` (`edge_test.go:47-121`) covers only the error result and asserts zero statements; no test covers `(nil, nil)`.
+**Blast radius:** data leak
+
+### E-SECURITY-03 — A list UI submits no selected ids
+**Shape:** boundary
+**Setup:** A user clears their selection while the bulk-delete request is being built.
+**What the consumer does:** Their service calls `repo.Delete(ctx)` with no ids.
+**What must happen:** It must report zero deletions and issue neither a read nor a write; an empty list must not be reinterpreted as an unscoped delete.
+**Today:** 🟡 partial
+**Evidence:** `Delete` returns `(0, nil)` before authorisation or a repository call when `len(ids) == 0` (`security.go:677-680`). No empty-id case exists in `crud/decorators/security/*_test.go`.
+**Blast radius:** none
+
+### E-SECURITY-04 — One mapper result in a batch is nil
+**Shape:** boundary
+**Setup:** A batch importer maps a malformed record to nil after it has mapped earlier records successfully.
+**What the consumer does:** They pass that slice to `SaveAll` under a tenant policy.
+**What must happen:** The whole batch must be refused before the one write statement; a malformed later item must not commit the valid prefix.
+**Today:** 🟡 partial
+**Evidence:** `SaveAll` checks every item, rejects a nil model, and calls `g.Core.SaveAll` only after the loop completes (`security.go:412-457`). `TestSaveAllIsCheckedByTheGate` is named in [[D-030]], but no security-package test exercises a nil item after a valid one.
+**Blast radius:** none
+
+### E-SECURITY-05 — The far-side tenant column has a different Go type
+**Shape:** degenerate declaration
+**Setup:** An article has an integer tenant id, its preloaded comments have a text tenant id after a migration, and the token claim remains an integer.
+**What the consumer does:** They combine `ScopeAttr` with `ScopeRelationAttr` and expect the one claim to fail closed consistently on both tables.
+**What must happen:** The relation helper must validate or reject an incompatible value rather than leave its conversion to a driver at request time. A nil custom relation value must be refused for the same reason.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Root `ScopeField` obtains the target type and reconciles or rejects its value (`policies.go:53-84`). `ScopeRelationField` resolves only the far-side field name and passes the raw value to `crud.Eq` (`policies.go:126-135`); `ScopeRelationAttr` and `ScopeRelationSubject` are thin wrappers over it (`principal.go:154-166`). The relation tests use matching `int64` and string fixtures (`principal_relscope_test.go:42-75`); no mismatch or nil-value test exists.
+**Blast radius:** confusing error
+
+### E-SECURITY-06 — Two independent tenant checks disagree
+**Shape:** misuse
+**Setup:** A service keeps the tenant in both the authenticated principal and a verified route context while it migrates endpoints.
+**What the consumer does:** It combines the two scopes so disagreement returns no rows rather than picking whichever declaration happened to run last.
+**What must happen:** Both predicates must remain in the statement, including when they name the same field with different values.
+**Today:** 🟡 partial
+**Evidence:** `Combine` collects each non-nil scope and returns `crud.And(ps...)` (`policies.go:198-237`); `TestPoliciesCombine` checks that two root predicates reach one `WHERE` (`security_test.go:256-273`). That test uses compatible predicates, not conflicting tenant values.
+**Blast radius:** none
+
+### E-SECURITY-07 — A configuration reload edits the declaration after bind
+**Shape:** misuse
+**Setup:** A program holds a `Policy` value in configuration, binds a repository, then edits its immutable-field slice or unscoped-write flag for the next revision.
+**What the consumer does:** It expects the repository already published to keep the policy it was bound with.
+**What must happen:** A bound gate must be a stable snapshot; later changes to the declaration must not silently change what an in-flight service permits.
+**Today:** 🟡 partial
+**Evidence:** `Gate` captures `p` by value and builds an immutable-name map at bind (`security.go:126-160`); update checks use that map (`security.go:645-654`) and the unscoped guards use the captured policy flags (`security.go:660-661`, `724-725`). `PerAction` separately copies its input map (`principal.go:103-125`), but no test mutates a general `Policy` after binding.
+**Blast radius:** confusing error
+
+### E-SECURITY-08 — Two tenants use one bound repository concurrently
+**Shape:** concurrency
+**Setup:** Tenant A and tenant B send list and update requests through the same repository at the same time.
+**What the consumer does:** Each request supplies its own principal in its context and expects every predicate argument to stay with that request.
+**What must happen:** No root scope, inspection value or relation option from one request may appear in another request's statement.
+**Today:** ❓ unverified
+**Evidence:** The gate derives `p`, `rel` and `scoped` in call-local variables (`security.go:225-237`), and `ScopeField` derives its value in a closure-local variable (`policies.go:74-102`). There is no `t.Parallel`, goroutine or concurrent-use test in this package. The result also depends on the consumer's extractor, which the gate cannot make safe for them.
+**Blast radius:** data leak
+
+### E-SECURITY-09 — Concurrent preloads keep their relation narrowings separate
+**Shape:** concurrency
+**Setup:** Two tenant requests preload the same relation through one policy at once.
+**What the consumer does:** They expect tenant A's relation predicate not to persist into tenant B's preload, or vice versa.
+**What must happen:** Each call must build a fresh relation narrowing and treat an error as a refusal; no mutable relation-scope value may survive to a later request.
+**Today:** ❓ unverified
+**Evidence:** `ScopeRelationField` constructs an `AtPath` value inside its per-context closure (`policies.go:126-135`), and `gate.narrow` invokes the policy for each operation (`security.go:207-218`). `TestARelationScopeErrorFailsClosed` and the merge tests cover error and composition paths, but there is no concurrent relation-scope test in `crud/decorators/security`.
+**Blast radius:** data leak
+
+### E-SECURITY-10 — The request is cancelled after the inspection read
+**Shape:** partial failure
+**Setup:** A filtered write has loaded its victims and the caller disconnects while a later `Inspect` callback is running.
+**What the consumer does:** Their callback returns nil because it has no work left, while the request context is already cancelled.
+**What must happen:** The gate must not send an `UPDATE` or `DELETE` after cancellation; cancellation is not consent to finish a write the caller abandoned.
+**Today:** 🟡 partial
+**Evidence:** `UpdateAll` and `DeleteAll` pass the context to the victim read and stop on an `Inspect` error, but neither checks `ctx.Err()` between the inspection loop and the final write (`security.go:663-674`, `727-738`). No cancellation case exists in the package tests. Whether the final source declines the write is therefore outside the gate's guarantee.
+**Blast radius:** data loss
+
+### E-SECURITY-11 — A caller may create but may not overwrite
+**Shape:** partial failure
+**Setup:** A client-owned id is allowed for creation, but the principal has `Create` permission and lacks `Update` permission.
+**What the consumer does:** They call `Save` with an id that happens to name an existing row and expect the action check before source data is read.
+**What must happen:** A permission refusal must not depend on reading the row first, or the module reference must state that `Save` needs an existence probe before it knows which action to authorise.
+**Today:** 🟡 partial
+**Evidence:** `Save` calls `saveTarget` before it calls `authorize(Update)` for an existing id (`security.go:471-501`); `saveTarget` issues `GetAll` and may issue `Exists` (`security.go:515-548`). The seam-totality test's `Save` row supplies a model with no id (`obligation_test.go:57-61`), so it does not pin this order. The write is refused, but the advertised before-any-SQL coarse check does not hold for this path.
+**Blast radius:** confusing error
+
+### E-SECURITY-12 — A selection contains tens of thousands of ids
+**Shape:** scale
+**Setup:** An administrator selects a large result set, or an integration worker retries a large id list, under `ScopeAttr`.
+**What the consumer does:** They call `Delete(ctx, ids...)` and expect either bounded work or a clear refusal rather than memory growing with the selection.
+**What must happen:** The gate must cap, batch or reject an inspected id set before it materialises every victim and emits one enormous `IN` predicate.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Delete` builds `crud.InAny(pk, ids)`, loads the complete victim slice when `Inspect` is set, walks it, and only then issues `DeleteAll` (`security.go:691-713`). `ScopeAttr` installs `Inspect` through `ScopeField` (`policies.go:74-105`). The package tests its all-or-nothing batch behaviour with two rows (`edge_test.go:276-336`), not a bounded or oversized id set.
+**Blast radius:** crash
+
+## Edge verdict
+
+The worst new finding is a declaration that visibly contains `security.Gate` but
+no effective policy: both a zero `Policy` and a hand-written scope returning
+`(nil, nil)` delegate ordinary reads without a predicate. The gate is closed
+against an explicit scope error and checks a batch before its final statement,
+but the far-side helper does not validate values as the root helper does, and a
+large selected-id delete still materialises every victim. The per-request state
+looks local by reading, yet neither root nor relation narrowing has a concurrent
+test, and cancellation after inspection is not a gate-level refusal.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `security.Gate(security.Policy{})` makes all ordinary reads unscoped | blocker | A configuration list becoming empty leaves a visibly gated repository that reads every tenant's rows; only the two bulk-table guards remain. |
+| 2 | A hand-written `Scope` returning `(nil, nil)` is indistinguishable from an intentional admin bypass | blocker | One missed lookup branch turns an unknown tenant into an unfiltered read with no error or audit signal. |
+| 3 | `ScopeRelationAttr` and `ScopeRelationSubject` pass raw claims to the far-side predicate without the root helper's type reconciliation | serious | A normal schema migration or nullable value moves the decision to driver coercion at request time, against the module's own eager-validation standard. |
+| 4 | The gate does not check cancellation after its inspected-victim loop | sharp edge | A source that does not independently reject a cancelled context can receive a write after its caller has abandoned the request. |
+| 5 | `Delete(ids...)` with `ScopeAttr` has no size bound and materialises every selected victim before deleting | sharp edge | A large selection can exhaust process memory or a driver parameter budget on a route consumers routinely expose. |

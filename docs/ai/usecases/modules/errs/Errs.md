@@ -1,8 +1,8 @@
 # errs · errs/sqlerr — one failed request, told to a client in words it can branch on
 
 **Covers:** `github.com/frostgrove/vv/errs`, `github.com/frostgrove/vv/errs/sqlerr`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. Everything else below is additive and can ship in a point release. Four of the twenty-one rows are fixed inside `errs` alone; the table says which.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the value types, the corpus behind the four dialect tables and the message ladder are the strongest part of this repository, and five things the tag makes **irreversible** are not: the retryable `error_code` is three different words on four engines with no decision covering it, `CodeExclusion` is advertised and produced by nothing so closing it later changes bytes a shipped client already parses, an SPI interface is frozen into the contract with no caller anywhere, the corpus JSON shape joins the compatibility surface with it, and nothing in the library ever writes down what a client is supposed to do with a code it has never seen. The edge pass adds configuration mistakes that the public values let through as legitimate responses: an empty code, an unknown kind and a negative array position all render instead of failing at wiring; `Fault` keeps nested parameter values live despite promising a deep copy; and a failed catalogue load can leave its receiver changed. `sqlerr` is conservative about a malformed tuple, but the public corpus tools accept internally inconsistent records and `Save` can leave the requested directory. Most are additive repairs, but the silent wrong answers should be closed before a tag.
 
 ## What a consumer is actually trying to do
 
@@ -1184,3 +1184,155 @@ bindings and the docs, and the `port` sweep reports several of the same rows.
   the wiring is. The case now asks what only this module can fail at — writing a
   `Classifier` against the frozen SPI, and `sqlerr.Classify` being pure and total
   — and carries row 5, which has no other home.
+
+## Edge cases
+
+### E-ERRS-01 — A zero-value code reaches the form
+**Shape:** degenerate declaration
+**Setup:** A service reads its product codes from configuration and registers a zero-value `errs.Code` by mistake.
+**What the consumer does:** It returns a field violation carrying that code and expects bad start-up configuration to fail before any route serves traffic.
+**What must happen:** A code that is empty must be refused at declaration time; an omitted machine word must not become a distinct, empty `error_code` that a client has to interpret.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/codes.go:120-131` accepts every `Code` value; `errs/violation.go:83-110` always emits the value as `error_code`; and `errs/message.go:116-149` has no lookup keys for an empty code. No test found for declaring or rendering `Code("")`.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-02 — A typoed kind becomes an internal response
+**Shape:** degenerate declaration
+**Setup:** A product vocabulary passes a value such as `errs.Kind(99)` to `Codes.Add` after decoding an application setting.
+**What the consumer does:** It expects the declaration to fail at start-up, because the code is about to become part of a response contract.
+**What must happen:** Only the nine declared kinds may be accepted; an unrecognised kind must not be retained as known and then spell itself `internal` on the wire.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/codes.go:120-140` stores and reports an arbitrary `Kind`; `errs/code.go:75-115` makes every unrecognised value render as `internal`. `TestTheZeroKindIsInternalAndSoIsAnUnknownOne` (`errs/codes_test.go:124`) pins the latter fallback, but no test passes an invalid kind to `Codes.Add`.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-03 — A downstream body names row minus one
+**Shape:** adversarial input
+**Setup:** A gateway decodes a downstream path containing `[-1]`, or a service builds `errs.Indexed(-1)` by hand.
+**What the consumer does:** It forwards or logs the refusal and expects a field position to address a real element.
+**What must happen:** Negative positions must be refused before they can become a public path; there is no minus-first item for a client to mark.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/path.go:24-25` constructs any integer, and `errs/path.go:76-106` unmarshals any JSON integer without a sign check before calling it an index. `TestABracketedNegativeNumberStaysPartOfTheName` (`errs/path_test.go:142`) protects only the dotted parser, not the constructor or JSON decoder.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-04 — A missing field name looks like a real field
+**Shape:** misuse
+**Setup:** A handwritten validator reads a missing configuration value and calls `Field("")` before attaching a code.
+**What the consumer does:** It expects an invalid field declaration to fail loudly, or at least become a general violation rather than a field a form cannot address.
+**What must happen:** A non-general path must contain meaningful member names; `field:[""]` must not be a plausible-looking response.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/build.go:64-71` turns the empty string into an opened path with no validation, and `errs/path.go:43-61` serialises that one empty step. No test found for `Field("")`.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-05 — A JSON member contains a dot
+**Shape:** boundary
+**Setup:** A request really has a member named `billing.email`, and the service records its `errs.Path` in a log before another component parses that text.
+**What the consumer does:** It needs the wire path to remain exact and the dotted rendering not to be mistaken for a machine round-trip format.
+**What must happen:** The array form must preserve the member exactly, while the lossy log form must be visibly documented as unsuitable for recovery.
+**Today:** 🟡 partial
+**Evidence:** `errs/path.go:64-106` preserves every JSON string step, while `errs/path.go:116-119` deliberately makes `String` lossy. `TestParsePathRoundTripsTheDottedForm` (`errs/path_test.go:77-123`) includes the control showing that a separator does not survive; `docs/modules/en/errs.md:242-253` introduces the three renderings without carrying that warning.
+**Blast radius:** confusing error
+
+### E-ERRS-06 — A returned fault retains a caller-owned parameter value
+**Shape:** concurrency
+**Setup:** A batch validator puts a mutable slice or map inside `Params`, returns a fault, then reuses and changes that value for the next row.
+**What the consumer does:** It treats `Fault()` as a snapshot, as its godoc promises, and renders the first fault later on another goroutine.
+**What must happen:** Either all parameter values are immutable snapshots or the contract must say that `Params` values themselves stay caller-owned and must not be shared.
+**Today:** 🟡 partial
+**Evidence:** `errs/build.go:184-217` promises a copy "all the way down" but copies only the outer `map[string]any`; `errs/build.go:205-209` assigns each `any` value unchanged. `TestAFaultDoesNotShareASliceWithTheBuilderOrTheCaller` (`errs/build_test.go:285`) covers paths and column slices, not a slice or map held inside `Params`.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-07 — Two requests reuse one builder
+**Shape:** concurrency
+**Setup:** A service caches a partly configured `*errs.Builder` and two handlers add their own field and message before calling `Fault`.
+**What the consumer does:** It reuses the apparent template to reduce repeated setup and has no reason in the public builder docs to know that this is unsafe.
+**What must happen:** The builder must either be safe to share or state plainly that it is a one-fault mutable value which must not cross requests.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/build.go:68-70`, `:88-94`, `:100-108` and `:175-181` mutate the same `Builder.f` and `open` without synchronisation. No concurrent-builder test or public concurrency warning was found.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-08 — A failed catalogue reload installs half the change
+**Shape:** partial failure
+**Setup:** An operator calls `Messages.Load` with a directory whose first file is valid and whose later file has a non-string value.
+**What the consumer does:** It receives an error and expects the catalogue it was already serving either to be unchanged or to have an explicit transactional reload contract.
+**What must happen:** One `Load` must be all-or-nothing, or its partial mutation must be documented so a caller can discard the receiver rather than serve a mixture of old and new wording.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/catalogue.go:86-93` adds files directly to the receiver as it walks them; `errs/catalogue.go:109-129` adds keys one at a time before a later key can fail. `TestTwoFilesDisagreeingOnOneKeyAreRefused` (`errs/catalogue_test.go:103`) checks the returned error but not the receiver after a failed load.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-09 — `pt-br` misses a `pt-BR` catalogue
+**Shape:** boundary
+**Setup:** The catalogue is named `pt-BR.json`, while a transport passes the lower-case language tag it received from a client.
+**What the consumer does:** It expects the same language to select the same wording independent of the tag's casing.
+**What must happen:** Locale matching must canonicalise case, or the file-name convention must say it is case-sensitive before an API silently falls to its default language.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/message.go:159-170` preserves the supplied locale and only splits it on `-` or `_`; `errs/catalogue.go:98-105` preserves the file-name spelling too. `TestAPOSIXLocaleFallsBackTheSameWayAHyphenatedOneDoes` (`errs/message_test.go:233`) covers separator choice, not case.
+**Blast radius:** confusing error
+
+### E-ERRS-10 — A translator leaves an unmatched brace
+**Shape:** adversarial input
+**Setup:** A release contains `"at most {max characters"` or `"{}"` in a locale file.
+**What the consumer does:** It expects a catalogue typo to stop start-up, or at least to fall through rather than show template syntax to a client.
+**What must happen:** Malformed placeholders must be rejected when the catalogue is loaded or be treated as unresolved; literal brace syntax must not look like a successful message.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/message.go:178-209` copies an unmatched `{` and an empty `{}` into a successful result; `errs/catalogue.go:109-129` validates only JSON shape and string values. `TestATemplateWithAMissingParamFallsBackRatherThanEmittingThePlaceholder` (`errs/message_test.go:67`) covers a valid placeholder with a missing value, not malformed syntax.
+**Blast radius:** confusing error
+
+### E-ERRS-11 — A flat key can still be impossible to reach
+**Shape:** misuse
+**Setup:** A translator writes the flat key `order.items.email.unique`, believing the whole request path is supported.
+**What the consumer does:** It expects the start-up validation that catches a nested object to catch a flat override the lookup ladder can never use.
+**What must happen:** An impossible catalogue key must be refused or reported; a valid JSON file must not silently discard a product's more specific wording.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/message.go:111-149` consults only the first and last named steps, while `errs/message.go:56-74` accepts any key. `errs/catalogue.go:52-63` documents this exact dead key; `TestANestedCatalogueFileIsRefused` (`errs/catalogue_test.go:136`) tests nested JSON but accepts the flat spelling at `:148-152`.
+**Blast radius:** confusing error
+
+### E-ERRS-12 — A driver extractor joins the wrong MySQL tuple
+**Shape:** adversarial input
+**Setup:** An adapter accidentally combines the `23000` SQLSTATE from one driver error with native code `1205` from another.
+**What the consumer does:** It passes the flattened error to `sqlerr.Classify` and needs uncertainty to stay unclassified rather than becoming a retryable or conflict response.
+**What must happen:** The complete `(dialect, sqlstate, native)` tuple must be required; a tuple not captured for that dialect must produce `ok == false`.
+**Today:** 🟡 partial
+**Evidence:** `errs/sqlerr/mysql.go:22-50` looks up the exact pair, so `{"23000", 1205}` has no arm. `TestARefusalFromOneEngineDoesNotClassifyThroughAnothersParser` (`errs/sqlerr/dialect_test.go:27`) checks several foreign-dialect refusals, but no test found for a mismatched state and native number within one MySQL tuple.
+**Blast radius:** none
+
+### E-ERRS-13 — A corpus says two things are named `unique`
+**Shape:** degenerate declaration
+**Setup:** A recapture or review tool loads a corpus with duplicate case names, a case with no error, or a non-empty `want` that no captured error can support.
+**What the consumer does:** It asks `Corpus.Case("unique")` and expects the capture tooling to reject an internally inconsistent release input rather than choose a record by order.
+**What must happen:** `Load` must validate case names and the `Want`/`Err` relationship before handing the corpus to the classifier tests.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/sqlerr/corpus.go:154-167` validates only the top-level engine string; `errs/sqlerr/corpus.go:141-149` returns the first duplicate name. No corpus-load validation test beyond malformed JSON and engine mismatch was found.
+**Blast radius:** silent wrong answer
+
+### E-ERRS-14 — A capture writes outside its selected corpus directory
+**Shape:** adversarial input
+**Setup:** Capture automation constructs a `Corpus` from configuration with `Engine: "../baseline"` and calls `sqlerr.Save`.
+**What the consumer does:** It expects a helper passed a corpus directory to write only under that directory, even when a capture is malformed.
+**What must happen:** The engine must be validated as one supported file stem, or the resulting path must be proven to remain under `dir` before a write.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `errs/sqlerr/corpus.go:151-152` joins `engine + ".json"` directly into the path, and `errs/sqlerr/corpus.go:174-179` writes that path without validation. `TestSavingAnUnchangedCorpusRewritesNothing` (`errs/sqlerr/corpus_test.go:139`) exercises only the four checked-in engine values.
+**Blast radius:** data loss
+
+## Edge verdict
+
+The worst new failure is a silent wrong response assembled from values the
+framework could have rejected at start-up: a blank code, an unknown kind, an
+empty field and a negative index all have valid JSON spellings but no valid
+consumer action. Snapshotting is only shallow for `Params`, and a shared builder
+has no concurrency boundary, so an error can change between producer and
+renderer. The catalogue refuses several structural mistakes, yet it admits
+broken placeholder syntax, unreachable flat keys and partial state after a
+failed load. `sqlerr` itself stays conservative on a key it does not recognise,
+but the exported corpus utilities do not validate their own records or write
+boundary.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `Codes.Add` accepts an empty `Code` and every out-of-range `Kind`, so a typed configuration mistake can reach a client as an empty code or `internal` | serious | The response remains syntactically valid while no client branch can mean what the service author declared. A start-up error is the only honest outcome. |
+| 2 | `Path` admits an empty field and a negative index through public construction and JSON decode | serious | A form can be told to mark a field or array element that cannot exist, with no signal that the error body is invalid. |
+| 3 | `Fault()` copies only the outer `Params` map and a reusable `Builder` has no concurrency contract | serious | A response can acquire another request's mutable parameter value or race while it is assembled; the result is a plausible but wrong sentence. |
+| 4 | `Corpus.Save` lets `Corpus.Engine` escape the requested directory | serious | Capture automation supplied a malformed engine can overwrite a neighbouring JSON file instead of failing in its scratch directory. |
+| 5 | `Messages.Load` mutates the receiver before it reports a later file or key error | sharp edge | A failed reload has no atomicity contract, so an operator can keep serving a mixture of catalogue revisions. |
+| 6 | Malformed templates and unreachable flat keys load successfully and then fall through or render syntax | sharp edge | Product wording silently differs from the reviewed catalogue, which makes localisation failures hard to diagnose. |

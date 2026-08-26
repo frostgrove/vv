@@ -1,15 +1,18 @@
 # crud/crudtest — prove the statement your repository builds is the one you meant, on a laptop with no Docker
 
 **Covers:** `github.com/frostgrove/vv/crud/crudtest`
-**Sweep:** happy paths · release readiness
+**Sweep:** happy paths · edge cases · release readiness
 
-**Verdict:** ready with gaps — the code works and forty-one test files in this
+**Verdict:** not ready — the code works and forty-one test files in this
 repository lean on it, but two things get an order of magnitude more expensive
 at the tag and are nearly free before it: whether an unanswered read is silent
 (blocker 1) and whether a rendered statement is a compatibility promise (blocker
-2). Everything else is documents. **This sweep does not recommend tagging until
-rows 1 and 2 have an answer** — not necessarily the answer proposed here, but an
-answer written down.
+2). The edge half adds a false-green path in `Normalize`, which rewrites SQL
+literals rather than formatting alone, plus invalid recorder construction and
+shallow fixture/history capture that can make a test inspect data it never ran
+with. **This sweep does not recommend tagging until rows 1 and 2 and the
+normalization contract have an answer** — not necessarily the answer proposed
+here, but an answer written down.
 
 ## What a consumer is actually trying to do
 
@@ -759,3 +762,125 @@ material.
   most common reason someone reaches for this module, and it produces one
   crudtest action: `WantStatements`, which is in the proposal. The missing test
   itself is filed against `crud/sqlrepo`.
+
+## Edge cases
+
+### E-CRUDTEST-01 — Normalising a statement containing meaningful whitespace
+**Shape:** adversarial input · boundary
+**Setup:** A statement or expected fixture contains a string, quoted identifier, or dialect expression whose value includes two spaces, a tab, or a newline.
+**What the consumer does:** They use `crudtest.Normalize` to ignore builder formatting while asserting the literal content their query must preserve.
+**What must happen:** Normalisation changes whitespace between SQL tokens only; it never makes two statements with different literal contents compare equal.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Normalize` applies `strings.Fields` to the entire SQL string and rejoins it (`crud/crudtest/recorder.go:246-248`), which also collapses whitespace inside quoted literals and identifiers. Its only test contains token whitespace only (`crud/crudtest/recorder_test.go:436-443`), while 23 in-tree tests use the helper; no literal-whitespace control was found.
+**Blast radius:** silent wrong answer
+
+### E-CRUDTEST-02 — A recorder is declared without a dialect
+**Shape:** degenerate declaration
+**Setup:** A test creates `crudtest.New(nil)`, or uses a zero-value `Recorder`, after a table-driven dialect arm was left uninitialised.
+**What the consumer does:** They bind the repository, expecting a configuration error at the test's setup line.
+**What must happen:** A recorder that cannot render SQL rejects construction loudly, including interface-typed nil dialects.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `New` stores any `crud.Dialect` without validation and `Recorder.Dialect` returns it unchanged (`crud/crudtest/recorder.go:51-70`). Repository binding immediately calls dialect methods such as `Quote`, `SupportsReturning`, and `Upsert` (`crud/sqlrepo/repository.go:31-60`), so nil instead fails later as a panic. `TestDialectShorthands` covers only three concrete values (`crud/crudtest/recorder_test.go:418-434`); no nil or typed-nil dialect test was found.
+**Blast radius:** crash
+
+### E-CRUDTEST-03 — A typed-nil `sql.Scanner` is a scan destination
+**Shape:** misuse
+**Setup:** A custom scanner is a nil pointer held in an `any` destination slice because a fixture's optional value was not allocated.
+**What the consumer does:** They expect the recorder to return its ordinary "not a non-nil pointer" scan error, so the test fails at the fixture boundary.
+**What must happen:** Typed-nil scanners are rejected before their method is invoked.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `assign` invokes `sql.Scanner.Scan` before it checks whether the reflected destination is a non-nil pointer (`crud/crudtest/recorder.go:209-217`), so a typed-nil scanner reaches its own method and can panic. `TestScanRefusesRowsItCannotFill` tests a non-pointer destination, not a typed-nil scanner (`crud/crudtest/recorder_test.go:292-330`); no typed-nil scanner test was found.
+**Blast radius:** crash
+
+### E-CRUDTEST-04 — A mid-stream error is observed before any row is read
+**Shape:** partial failure
+**Setup:** A test queues `RowsFailing(err, row)` and the consumer accidentally calls `Err` before iterating the row.
+**What the consumer does:** They expect the configured result to yield its rows first and reveal its error only at the end of the cursor, as the public helper promises.
+**What must happen:** `Err` remains nil until the queued rows have been exhausted; after that it reports the configured failure.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Query` constructs `rows` with `err` already set (`crud/crudtest/recorder.go:147-159`) and `rows.Err` returns it without considering cursor position (`crud/crudtest/recorder.go:178-195`). `TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem` calls `Err` only after its loop (`crud/crudtest/recorder_test.go:132-177`); it does not pin the promised ordering for an early caller.
+**Blast radius:** confusing error
+
+### E-CRUDTEST-05 — A queued fixture is edited after `Push`
+**Shape:** concurrency · misuse
+**Setup:** A test builds a `[]any` row, queues it, then reuses or changes the slice while preparing a second request or subtest.
+**What the consumer does:** They expect `Push` to snapshot the answer it was handed, so the later query sees the fixture that was declared.
+**What must happen:** Mutating a caller-owned row or cell after queueing cannot alter the response a future `Query` scans.
+**Today:** 🟡 partial
+**Evidence:** `Rows` retains the caller's row slices (`crud/crudtest/recorder.go:42-49`) and `Push` appends `Result` values without copying their rows (`crud/crudtest/recorder.go:72-78`); `Query` returns those same row slices to `rows` (`crud/crudtest/recorder.go:147-159`). The queue-order test uses immutable literals (`crud/crudtest/recorder_test.go:81-117`), and no mutation or race test for queued fixtures was found.
+**Blast radius:** silent wrong answer
+
+### E-CRUDTEST-06 — The caller reuses a mutable bound argument after `Exec`
+**Shape:** concurrency · seam
+**Setup:** A repository passes a mutable `[]byte` or a caller-supplied `[]any` argument slice to the recorder, then reuses the buffer before the assertion reads the statement.
+**What the consumer does:** They expect the recorded statement to be a snapshot of the call, not a view of memory the caller still owns.
+**What must happen:** Later mutation of an argument slice or a mutable argument value cannot change recorded history.
+**Today:** 🟡 partial
+**Evidence:** `Exec` and `Query` retain the variadic argument slice directly in `Statement.Args` (`crud/crudtest/recorder.go:135-150`), and no deep copy is made. The recording test reads immutable scalar arguments only (`crud/crudtest/recorder_test.go:34-69`); no mutable-argument test was found.
+**Blast radius:** silent wrong answer
+
+### E-CRUDTEST-07 — An assertion edits the `Args` returned by `Statements`
+**Shape:** misuse · concurrency
+**Setup:** A test trims, sorts, or overwrites `rec.Statements()[i].Args` while preparing a comparison.
+**What the consumer does:** They expect the advertised copy to protect the recorder just as it protects the recorded SQL string.
+**What must happen:** Inspector-side mutation cannot rewrite the statement history another assertion, cleanup, or goroutine sees.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Statements` copies only the outer `[]Statement` slice (`crud/crudtest/recorder.go:96-101`); each copied `Statement.Args` still aliases the recorded slice retained by `Exec` and `Query` (`crud/crudtest/recorder.go:135-150`). `TestStatementsIsACopy` changes `SQL`, a string value, and does not mutate `Args` (`crud/crudtest/recorder_test.go:332-346`).
+**Blast radius:** silent wrong answer
+
+### E-CRUDTEST-08 — A result declares both a query failure and a rows failure
+**Shape:** degenerate declaration
+**Setup:** A test helper constructs `crudtest.Result{Err: immediate, RowsErr: late, Rows: rows}` while combining two failure fixtures.
+**What the consumer does:** They expect an invalid fixture to fail where it is declared; one statement cannot both refuse to create rows and yield rows before failing.
+**What must happen:** The recorder rejects the contradictory result, or exposes an explicitly documented precedence that cannot make the test silently exercise the wrong branch.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Result` exposes both fields at once (`crud/crudtest/recorder.go:27-40`), and `Query` silently returns `Err` first, discarding `Rows` and `RowsErr` (`crud/crudtest/recorder.go:147-159`). `RowsFailing` constructs only the late-error form (`crud/crudtest/recorder.go:45-49`), and the two failure tests exercise one form each (`crud/crudtest/recorder_test.go:119-177`); no contradictory-result test was found.
+**Blast radius:** confusing error
+
+### E-CRUDTEST-09 — An immediate query failure must consume exactly one answer
+**Shape:** partial failure · seam
+**Setup:** A paginated test queues an immediate query error followed by the result expected by the retry or the next read.
+**What the consumer does:** They expect the refused query to consume its own queued answer, record its statement, and leave the following answer aligned with the following `Query`.
+**What must happen:** Failure and success consume the same one-result queue slot; a retry never receives the failed call's result.
+**Today:** 🟡 partial
+**Evidence:** `Query` removes the first queue entry before checking `Result.Err` (`crud/crudtest/recorder.go:147-159`), so the implementation has the correct alignment. `TestAQueuedErrorSurfacesAndTheStatementIsStillRecorded` proves only the first failure and recording (`crud/crudtest/recorder_test.go:119-130`); it has no next-query control to pin that the queue stayed aligned.
+**Blast radius:** confusing error
+
+### E-CRUDTEST-10 — The test records and inspects ten thousand statements
+**Shape:** scale
+**Setup:** A generator or property test issues thousands of repository calls and reads `rec.Last()` after each one for a local assertion.
+**What the consumer does:** They expect the direct accessor for the most recent statement not to copy the entire history on every call.
+**What must happen:** `Last` is constant-size work, or the scale cost is explicit and a no-copy accessor is available.
+**Today:** 🟡 partial
+**Evidence:** `Last` calls `Statements` (`crud/crudtest/recorder.go:103-110`), and `Statements` copies every recorded statement (`crud/crudtest/recorder.go:96-101`); repeated `Last` calls over a growing log are therefore quadratic in copied entries. Tests cover a fresh recorder and two statements (`crud/crudtest/recorder_test.go:34-79`), not a large recording.
+**Blast radius:** confusing error
+
+### E-CRUDTEST-11 — A direct query fails immediately and still leaves a trace
+**Shape:** partial failure
+**Setup:** The test injects a connection error at `Query` rather than a late cursor error.
+**What the consumer does:** They assert the repository receives that error and still have the attempted statement to explain the failure.
+**What must happen:** The query returns the injected error and records one `Query` statement.
+**Today:** ✅ handled
+**Evidence:** `Query` appends the statement before returning `Result.Err` (`crud/crudtest/recorder.go:147-157`), pinned by `TestAQueuedErrorSurfacesAndTheStatementIsStillRecorded` (`crud/crudtest/recorder_test.go:119-130`).
+**Blast radius:** none
+
+### E-CRUDTEST-12 — A cursor yields rows and then reports a terminal failure
+**Shape:** partial failure · boundary
+**Setup:** A test injects two rows followed by a driver-style failure with `RowsFailing`.
+**What the consumer does:** They iterate both rows and then assert the terminal error, catching repository loops that treat a truncated response as complete.
+**What must happen:** The configured rows are scanned in order and the terminal error is available from `Rows.Err` after the loop.
+**Today:** ✅ handled
+**Evidence:** `RowsFailing` places the failure in `RowsErr` (`crud/crudtest/recorder.go:45-49`), `Next` yields all configured rows, and `Err` returns that value (`crud/crudtest/recorder.go:178-206`). `TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem` pins the two-row control and an ordinary non-failing result (`crud/crudtest/recorder_test.go:132-177`).
+**Blast radius:** none
+
+## Edge verdict
+
+The recorder is strongest where its tests are explicit: immediate and terminal read failures can be injected, statement attempts are retained, and the cursor yields configured rows before the ordinary end-of-loop check. Its sharpest false-green defect is `Normalize`: it claims to remove formatting only but also erases meaningful literal whitespace, so two distinct statements can compare equal. Fixture and inspection boundaries are shallow, not snapshots, which makes a later mutation change either the rows a query scans or the arguments a test claims were sent. Invalid setup also reaches request-time behaviour — nil dialects, typed-nil scanners, and contradictory result errors — instead of failing at the line that declared the double.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `Normalize` collapses whitespace inside quoted SQL content (`crud/crudtest/recorder.go:246-248`) | serious | The helper advertised for stable statement assertions can make two semantically different statements compare equal, producing a green test over the wrong SQL. |
+| 2 | Queued rows and recorded arguments remain mutable through caller-owned slices and `Statements()` (`crud/crudtest/recorder.go:72-78`, `crud/crudtest/recorder.go:96-101`, `crud/crudtest/recorder.go:135-159`) | serious | A fixture or assertion can silently rewrite what a later query scans or what another assertion says was executed; parallel tests turn that into a race-prone false result. |
+| 3 | `New(nil)` and typed-nil dialects pass setup and panic only when a repository renders SQL (`crud/crudtest/recorder.go:63-70`) | serious | A table-driven test fails far from the missing dialect, often while constructing the repository under test rather than at its fixture declaration. |

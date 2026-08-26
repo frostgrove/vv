@@ -1,8 +1,8 @@
 # port · port/porthttp — one set of rules for a resource, and one shape for every way it can fail
 
 **Covers:** `github.com/frostgrove/vv/port`, `github.com/frostgrove/vv/port/porthttp`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the transport-neutral half is finished and well pinned; the seam that installs it is not, the seam a consumer is told to stand on does not reach the delete verb or a domain error they already have, and every document in the repository that says how to install the error contract describes a call that configures nothing on a generated route.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the transport-neutral half is finished and well pinned; the seam that installs it is not, the seam a consumer is told to stand on does not reach the delete verb or a domain error they already have, and every document in the repository that says how to install the error contract describes a call that configures nothing on a generated route. At the edge, an oversized valid body silently loses its field mapping, a typo in a hand-written path map can erase a field from the response, and a third party JSON body with `"type":"error"` can turn a gateway 404 into `ErrNotFound`.
 
 ## What a consumer is actually trying to do
 
@@ -1239,3 +1239,153 @@ leaves it.
   one. The stronger mechanism gives the worse answer, and that is a property of
   the path chain, not of the generator. Which convention to emit stays
   H-CODEGEN-10's.
+
+## Edge cases
+
+### E-PORT-01 — The byte exactly at the advertised body limit
+**Shape:** boundary
+**Setup:** A JSON request is exactly `porthttp.MaxBody` bytes; the next request is the same document plus one byte.
+**What the consumer does:** They leave the default 4 MiB limit in place and send both requests to the same generated endpoint.
+**What must happen:** The exact-limit body is decoded, while the one-byte-larger body is refused as a 413 before JSON decoding; neither result may depend on which HTTP binding received it.
+**Today:** ❓ unverified
+**Evidence:** `port/porthttp/body.go:70-90` reads `limit+1` bytes and rejects only `len(body) > limit`, which is the intended boundary. No test found for an exactly-`MaxBody` body and its one-byte-over twin; `port/porthttp/bodyindex_test.go:144-174` covers ordinary and empty bodies only.
+**Blast radius:** none
+
+### E-PORT-02 — A hostile JSON value must not reveal the DTO behind it
+**Shape:** adversarial input
+**Setup:** A client supplies a string where a nested numeric DTO field belongs, then sends syntactically truncated JSON.
+**What the consumer does:** They rely on `DecodeJSON` for a hand-written endpoint and return its error through the standard renderer.
+**What must happen:** Both requests answer a useful 400 naming only the client's key or byte position; neither body names a Go struct, field type, package, or decoder internals.
+**Today:** ✅ handled
+**Evidence:** `port/porthttp/body.go:126-151` converts `*json.UnmarshalTypeError` and `*json.SyntaxError` into safe `BadRequestAs` faults. `port/porthttp/errors_test.go:263-332` pins the no-Go-type, useful-key, and syntax-offset cases.
+**Blast radius:** none
+
+### E-PORT-03 — A valid large body later fails validation
+**Shape:** boundary
+**Setup:** A valid 65 KiB–4 MiB JSON create body uses a renamed wire key such as `emailAddress`; the database then returns a unique violation on model field `Email` and no generated map is installed.
+**What the consumer does:** They use the documented default body cap and expect the response to either name `emailAddress` or plainly say that it could not map the field.
+**What must happen:** Discarding bytes above the retention cap must not silently turn the client-facing path into the server's `Email`; the fallback must decline and the unresolved result must remain available to the renderer.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/porthttp/body.go:45-49` promises a declined, approximate path past `MaxKeptBody`, but `KeepBody` returns `nil` at `:101-107`; `WithBody` then installs nothing at `:200-205`, and `BodyResolver` returns `nil` for no body at `port/porthttp/bodyindex.go:49-55`. With a nil fallback, `port/violations.go:72-87` never reaches its `Approximate` arm, so the model path passes through as exact. `port/porthttp/bodyindex_test.go:176-200` proves only that the bytes are discarded, not the rendered failure after they are discarded.
+**Blast radius:** silent wrong answer
+
+### E-PORT-04 — A body with more fields than the fallback indexes
+**Shape:** scale
+**Setup:** A client posts a valid object with 4,097 distinct leaves, and a later constraint names a field after the index's 4,096-leaf cut-off.
+**What the consumer does:** They use no generated mapper and expect the error path to be either the submitted key or an explicit unresolved result, never a stack overflow or an invented key.
+**What must happen:** The request stays bounded, and a field beyond either index limit is declined rather than guessed; a renderer that needs to distinguish that loss must receive the approximate marker.
+**Today:** 🟡 partial
+**Evidence:** `port/porthttp/bodyindex.go:12-18` sets depth 32 and 4,096 leaves, and `:111-144` stops walking at either bound, leaving a miss for `Resolve` at `:100-108`; `port/violations.go:84-87` marks that internal result approximate. The marker is deliberately absent from the HTTP shape at `errs/violation.go:73-76`, and no test found at either `maxBodyDepth` or `maxBodyLeaves`.
+**Blast radius:** confusing error
+
+### E-PORT-05 — Two submitted leaves have the same name
+**Shape:** adversarial input
+**Setup:** A body contains both `email` and `user.email`, while a storage failure only identifies model field `Email`.
+**What the consumer does:** They mount a repository without a generated mapper and let the raw-body fallback attribute the failure.
+**What must happen:** The framework must decline rather than select either form field by accident.
+**Today:** ✅ handled
+**Evidence:** `port/porthttp/bodyindex.go:93-108` accepts an exact path but declines when the folded-name lookup has anything other than one candidate. `port/porthttp/bodyindex_test.go:58-67` pins the ambiguous pair remaining at `Email` and being marked approximate internally.
+**Blast radius:** none
+
+### E-PORT-06 — A form or XML body reaches the common renderer
+**Shape:** seam
+**Setup:** A binding accepts a form or XML request, then a field-level failure is rendered through `porthttp`.
+**What the consumer does:** They rely on one envelope across endpoints whose input encodings differ.
+**What must happen:** The JSON-only fallback must not misattribute a form key as a nested JSON path; it must leave the model path unresolved rather than guess.
+**Today:** ✅ handled
+**Evidence:** `port/porthttp/bodyindex.go:72-80` indexes only JSON containers and otherwise leaves the resolver in its declining state. `port/porthttp/bodyindex_test.go:87-107` tests form and XML bodies against a JSON control.
+**Blast radius:** none
+
+### E-PORT-07 — A hand-written `Fields` entry has no destination
+**Shape:** misuse
+**Setup:** A service author writes `port.Fields{"Email": nil}` or `port.Fields{"Email": port.At()}` while maintaining a path map by hand.
+**What the consumer does:** They receive a unique failure at `Email` and expect either a start-up refusal or an unresolved field, not a general error with its field erased.
+**What must happen:** An empty declared destination must be rejected or declined loudly; a typo in a map must not remove the path from the client response.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/path.go:29-44` checks only whether the `Fields` map contains the key; for an empty destination it creates an empty output path and reports success. `port/pathmap.go:112-117` contains the corresponding protection for generated `PathMap`, and `port/pathmap_test.go:160-165` pins it there; no test found for an empty `Fields` destination.
+**Blast radius:** silent wrong answer
+
+### E-PORT-08 — A hand-written service reports a batch row
+**Shape:** seam
+**Setup:** A custom service uses `Fields{"Email": port.At("contact", "email")}` and reports a violation at `[3, "Email"]` for one row of a batch-shaped command.
+**What the consumer does:** They expect the row number to survive while `Email` becomes `contact.email`, as it does for a generated map.
+**What must happen:** A declared manual hop must translate the named step below the leading index, or the module must refuse/document that it cannot support batch attribution.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/path.go:29-31` returns a path with a leading index unchanged, even when a later named step is declared. `port/pathmap.go:42-70` instead deliberately skips indices and translates the following name; `port/pathmap_test.go:114-140` pins that generated-map behaviour, while `port/path_test.go:86-92` pins the manual map's unchanged result.
+**Blast radius:** silent wrong answer
+
+### E-PORT-09 — One fault is rendered concurrently for two locales
+**Shape:** concurrency
+**Setup:** Two requests share the same immutable `*errs.Fault`; one renders it with a French catalogue and one with a Japanese catalogue, each through a shared `EnvelopeRenderer`.
+**What the consumer does:** They render both requests concurrently and later render the original fault again.
+**What must happen:** Each response uses its own locale and translated path, and neither render mutates the shared fault or the other response.
+**Today:** 🟡 partial
+**Evidence:** `port/violations.go:52-60` copies the violation slice before translation and message expansion, and `port/path.go:37-44` plus `port/pathmap.go:62-70` allocate fresh mapped paths. `port/violations_test.go:295-309` proves no write-through in sequential renders; no concurrent render test found.
+**Blast radius:** confusing error
+
+### E-PORT-10 — A zero cap is passed through configuration
+**Shape:** misuse
+**Setup:** An environment-derived setting produces `porthttp.WithMaxViolations(0)` for a public endpoint with thousands of validation failures.
+**What the consumer does:** They expect the documented default cap of 100 to remain in force, or a bad setting to fail loudly.
+**What must happen:** Zero must preserve the default or be rejected; a configuration typo must not silently make the response unbounded.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/porthttp/render.go:68-86` initializes `max` to `MaxViolations` and then overwrites it with zero, while `port/violations.go:29-30` and `:90-93` define zero or less as no cap. `port/violations_test.go:160-164` pins the uncapped pipeline zero value; no renderer-level test covers `WithMaxViolations(0)`.
+**Blast radius:** crash
+
+### E-PORT-11 — A gateway happens to use `"type":"error"`
+**Shape:** seam
+**Setup:** An API gateway returns a JSON 404 such as `{"type":"error","message":"no route matched"}` rather than this framework's envelope.
+**What the consumer does:** A remote client calls `ParseEnvelope` before deciding whether the 404 is a missing resource or a transport failure.
+**What must happen:** A body lacking this envelope's error groups and machine codes is rejected as foreign, so a wrong base URL never becomes `crud.ErrNotFound`.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/porthttp/decode.go:57-72` accepts every JSON object whose only checked field is `type == "error"`; absent `errors` decodes to empty slices and still returns `true`. `remote/remotehttp/transport.go:242-259` turns every accepted envelope into `port.FaultFrom` using the HTTP status, so a foreign 404 becomes a classified missing-row fault. `remote/roundtrip_test.go:329-376` tests plain text and JSON bodies without that type field; no test found for a foreign `{"type":"error"}` body.
+**Blast radius:** silent wrong answer
+
+### E-PORT-12 — The first language is explicitly unacceptable
+**Shape:** adversarial input
+**Setup:** A client sends `Accept-Language: fr;q=0, en;q=1`.
+**What the consumer does:** They install a French catalogue and expect the server never to choose French when the header expressly excludes it.
+**What must happen:** An excluded first range must not become the rendering locale; the parser should select an acceptable range or decline to the default.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/locale.go:36-50` truncates at the first semicolon or comma and returns `fr`, ignoring the zero quality value. `port/porthttp/locale_test.go:33-46` tests a positive q-value but no excluded-language case.
+**Blast radius:** confusing error
+
+### E-PORT-13 — An empty bulk-delete set is truly empty
+**Shape:** boundary
+**Setup:** A worker constructs `BulkDeleteCommand[ID]{}` and calls the service directly.
+**What the consumer does:** They run a cleanup whose computed id set is empty and expect no database statement and a count of zero.
+**What must happen:** The empty set returns `(0, nil)` without calling the repository; it must not turn into a broad delete or a not-found error.
+**Today:** ✅ handled
+**Evidence:** `port/service.go:228-235` returns before the repository call for an empty id list. `port/service_test.go:276-306` pins the zero count and zero repository calls.
+**Blast radius:** none
+
+### E-PORT-14 — The body stream fails after it starts
+**Shape:** partial failure
+**Setup:** A hand-written endpoint passes a reader that returns bytes and then an infrastructure error while `DecodeJSONKeepLimit` is reading.
+**What the consumer does:** They return the decoder error through the standard renderer and expect a safe, accurately classified response.
+**What must happen:** A reader failure must not expose its raw error text as a client 400; it should be classified separately or reduced to a safe generic failure.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `port/porthttp/body.go:77-80` sends every `io.ReadAll` error to `MalformedBody`, whose catch-all at `:143-151` formats the original error into a client-visible `BadRequestAs` message. `port/porthttp/errors_test.go:263-332` exercises JSON structural errors and an audited query error, but no failing-reader case.
+**Blast radius:** data leak
+
+## Edge verdict
+
+The worst edge failure is a foreign JSON gateway response being accepted as this
+framework's envelope and silently classified from its HTTP status; a bad route
+can therefore read as an empty resource. The body fallback is careful when it
+has an index, but its retention limit drops the resolver entirely, so a common
+valid large request returns a server field as if it were exact; hand-written
+`Fields` maps add two more silent-path failures. The generated map, ordinary
+decoder privacy, ambiguity refusal, non-JSON decline, and empty bulk deletion
+are genuinely covered. The remaining concurrency and size-limit claims have
+plausible source-level protections but lack the boundary or concurrent tests a
+release contract needs.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `ParseEnvelope` accepts any JSON object with `"type":"error"` (`port/porthttp/decode.go:57-72`), and `remote` consequently derives a framework fault from that foreign response's status (`remote/remotehttp/transport.go:242-259`) | blocker | A gateway's own 404 can become `crud.ErrNotFound`: an outage or wrong base URL reads as an empty table, silently |
+| 2 | A decoded body over `MaxKeptBody` is discarded as `nil` (`port/porthttp/body.go:101-107`), which removes the fallback instead of making it decline (`port/porthttp/bodyindex.go:49-55`); the model path is then presented as exact | serious | A valid request above 64 KiB that later hits a field violation can direct a client at a server field it never sent, with no signal |
+| 3 | `Fields` accepts an empty mapped path and returns an empty successful result (`port/path.go:29-44`) | serious | One map typo turns a field error into a general error, silently, precisely on the manual path the module documents as supported |
+| 4 | A failing request reader is converted to `BadRequestAs(..., "%s", err)` (`port/porthttp/body.go:77-80`, `:143-151`) | serious | An infrastructure error supplied by a reader can cross the public error boundary verbatim, contrary to the module's disclosure contract |

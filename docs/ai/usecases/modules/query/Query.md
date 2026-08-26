@@ -1,8 +1,8 @@
 # crud/query — one JSON document or query string becomes a bounded repository call
 
 **Covers:** `github.com/frostgrove/vv/crud/query`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — a cleared filter chip (`?f=status:notIn:`) compiles to `1 = 1` and answers 200 with every row, and four separate volume bounds are unarmed on a stock mount: the page size, the offset depth, `distinct`, and the preload row count.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — a cleared filter chip (`?f=status:notIn:`) compiles to `1 = 1` and answers 200 with every row; empty boolean groups, malformed unary terms and invalid paging can also silently change or remove the intended question. Four separate volume bounds remain unarmed on a stock mount: the page size, offset depth, `distinct`, and preload row count.
 
 ## What a consumer is actually trying to do
 
@@ -1207,3 +1207,134 @@ the crudhttp sweep carries as its own case. The per-caller config seam is the
   `coerce_test.go:19-31` defines exactly such a type and `:106` walks it through
   both doors. The honest finding is that nothing in the *sweep* said so, not that
   nothing in the code did.
+
+## Edge cases
+
+### E-QUERY-01 — An empty boolean group from a half-cleared filter builder
+**Shape:** boundary
+**Setup:** A UI serialises its cleared "any of these" control as `{"filter":{"or":[]}}` rather than omitting `filter`.
+**What the consumer does:** It sends that document beside a tenant scope, expecting either no client filter or a refusal that lets the UI remove the malformed control.
+**What must happen:** A syntactically present boolean group with no operands must not silently impersonate a meaningful narrowing; it should be refused at its path, or have an explicit documented no-filter meaning.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `node` turns an empty predicate list into nil at `crud/query/filter.go:72-79`; `list` produces that nil for an empty `or` at `crud/query/filter.go:100-114`. `crud/query/edge_test.go:90-112` pins `{"filter":{"or":[]}}` as an accepted request with no `WHERE`. No test establishes a consumer-facing meaning for a present empty group.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-02 — The boolean that is not a boolean
+**Shape:** adversarial input
+**Setup:** A hand-edited URL carries `?f=publishedAt:isNull:yes`.
+**What the consumer does:** They expect the invalid value to receive the same 400 as `limit=lots`, rather than becoming a different null test.
+**What must happen:** A unary operator must either accept a real boolean or refuse while naming the term; it must never choose the opposite predicate after a failed parse.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `terms` ignores the `strconv.ParseBool` error and leaves `want` false at `crud/query/querystring.go:68-78`, so `isNull:yes` becomes `IS NOT NULL`. `crud/query/querystring_test.go:309-326` tests non-numeric paging refusals, but no query test covers an invalid unary value.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-03 — The deliberately empty multi-select
+**Shape:** boundary
+**Setup:** A user unticks every status and the client retains `notIn: []` in the document.
+**What the consumer does:** It asks the endpoint to interpret the empty chip rather than making every client know the database's answer to `NOT IN ()`.
+**What must happen:** The request must be refused at the chip, because an accepted filter cannot widen to every row; `in: []` should not silently present an empty screen either.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `buildMulti` passes an empty `notIn` list through at `crud/query/filter.go:292-303`; `crud/query/edge_test.go:115-140` pins the resulting `1 = 1` for `notIn` and `1 = 0` for `in`. The flat form reaches the same code after `splitList` drops a blank value at `crud/query/request.go:329-344` and `terms` accepts zero multi-values at `crud/query/querystring.go:86-104`.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-04 — A pattern operator pointed at an integer
+**Shape:** adversarial input
+**Setup:** A public endpoint permits `Views` for filtering and a client sends `{"filter":{"views":{"contains":"1"}}}`.
+**What the consumer does:** It expects an ordinary bad query to stop before the repository is called.
+**What must happen:** LIKE-family operators must verify that the resolved field is text and refuse a numeric field with a `query.Error`.
+**Today:** ❌ wrong or unhandled
+**Evidence:** After resolving the field, the textual arm only unmarshals a string and emits `buildText`; it never checks `f.Type` at `crud/query/filter.go:222-227`. `buildText` unconditionally constructs a LIKE predicate at `crud/query/filter.go:275-290`. No `crud/query` test sends a textual operator to a non-text field.
+**Blast radius:** confusing error
+
+### E-QUERY-05 — A negative page size that becomes the default page
+**Shape:** adversarial input
+**Setup:** A stale client sends `?limit=-1&page=-2&offset=-3`.
+**What the consumer does:** It expects the endpoint to reject impossible pagination rather than return page one under the requested URL.
+**What must happen:** Negative paging values must be a refusal naming their parameter; zero may retain its documented default meaning.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `ParseQuery` uses `strconv.Atoi` without a sign check at `crud/query/querystring.go:161-196`, then `Compile` emits page, limit and offset only when each is greater than zero at `crud/query/compile.go:349-358`. At the repository layer, negative limits and pages deliberately resolve to the default/first page (`crud/options_test.go:148-170`) and negative offsets resolve to zero (`crud/edge_test.go:460-477`). `TestParseQueryRejectsNonNumbers` covers `offset=-`, not a valid negative integer (`crud/query/querystring_test.go:309-326`).
+**Blast radius:** silent wrong answer
+
+### E-QUERY-06 — Two spellings of one page-size knob disagree
+**Shape:** misuse
+**Setup:** A URL assembled by two components contains both `limit=100` and `perPage=20`.
+**What the consumer does:** It expects one authoritative value or a refusal that exposes the composition error.
+**What must happen:** Conflicting aliases for the same setting must not silently select one by the library's private precedence order.
+**Today:** ❌ wrong or unhandled
+**Evidence:** the `num` helper returns the first non-empty spelling in its supplied order at `crud/query/querystring.go:161-171`, and the limit call gives `limit` precedence over `perPage`, `per_page`, `per-page` and `pageSize` at `:191-193`. The alias suite only tests one spelling at a time (`crud/query/querystring_test.go:258-306`); no test covers conflicting aliases.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-07 — A cursor request with both directions
+**Shape:** misuse
+**Setup:** Infinite-scroll state accidentally retains `after` while the user presses Previous and adds `before`.
+**What the consumer does:** It sends both opaque tokens and needs a clear refusal rather than a page chosen by option order.
+**What must happen:** `after` and `before` are mutually exclusive at the wire boundary.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Request.Compile` appends both options when both strings are present at `crud/query/compile.go:381-386`. `crud.Before` then clears `After`, so the later option silently wins at `crud/options.go:118-133`, although `Options` documents that at most one may be set at `crud/options.go:29-32`. No `crud/query` test covers both fields together.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-08 — A relation path longer than the configured depth
+**Shape:** degenerate declaration
+**Setup:** The resource sets `MaxDepth: 2` but exposes a self-referential preload path such as `Parent.Parent.Parent`.
+**What the consumer does:** It relies on the one query declaration to bound relation traversal as it does filter and sort paths.
+**What must happen:** The configured depth must constrain preload paths too, or the distinct fixed execution cap must be visible in the query declaration.
+**Today:** 🟡 partial
+**Evidence:** `path` enforces `Config.MaxDepth` for fields at `crud/query/compile.go:548-563`, but the preload loop calls `meta.RelationAt` directly at `crud/query/compile.go:330-347`. Execution does have a separate fixed default of five levels (`crud/preload.go:11-14,113-123`), and `TestPreloadDepthIsCapped` exercises that default (`crud/query/preload_test.go:170-177`); no test ties a smaller `query.Config.MaxDepth` to a preload.
+**Blast radius:** confusing error
+
+### E-QUERY-09 — A duplicate preload removes its own narrowing
+**Shape:** seam
+**Setup:** A saved-view merge emits both a bare `comments` preload and a filtered `comments` preload.
+**What the consumer does:** It expects the duplicate to be refused or both supplied constraints to be preserved; the document includes a filter for a reason.
+**What must happen:** A request must not return a wider child collection than one of its own duplicate entries asked for without a refusal or an explicit merge rule.
+**Today:** 🟡 partial
+**Evidence:** the query compiler accepts and appends each preload independently at `crud/query/compile.go:330-347`. The preload tree deliberately lets the bare request discard narrowings at `crud/preload.go:70-102`, and `crud/preload_edge_test.go:75-110` pins that "wider request wins" behaviour. No query-door test establishes that behaviour for duplicate `Preload` entries in one document.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-10 — The same sort field requested both ways
+**Shape:** misuse
+**Setup:** A URL merger creates `sort=title,-title`.
+**What the consumer does:** It expects a clear invalid-sort response, since ascending and descending cannot both be the requested order.
+**What must happen:** Duplicate canonical sort paths with incompatible direction or null placement must be refused; a request must not receive an arbitrary first direction.
+**Today:** ❌ wrong or unhandled
+**Evidence:** duplicate canonical paths are skipped after their first occurrence at `crud/query/compile.go:281-311`, so the first direction is retained and the later one disappears. `TestAClientChosenListAndSortAreBounded` pins that a repeated sort path is rendered once (`crud/query/compile_test.go:619-644`), but it does not establish a rule for contradictory repeats.
+**Blast radius:** silent wrong answer
+
+### E-QUERY-11 — A deduplicated search list fails before it is deduplicated
+**Shape:** boundary
+**Setup:** A UI emits `searchFields` with the same selected field repeated 17 times under the default cap of 16.
+**What the consumer does:** It expects the semantic set of one field to be searched once, as it is below the cap.
+**What must happen:** Duplicate fields must be eliminated before their count is compared with the per-request limit, or the request must be refused as an explicit duplicate rather than "too many" fields.
+**Today:** 🟡 partial
+**Evidence:** `search` checks `len(names)` against `MaxSort` before creating its `seen` set at `crud/query/compile.go:589-614`. The same function deduplicates entries only afterwards at `:608-616`; `crud/query/compile_test.go:592-617` separately pins the cap and one repeated field, but not repeats beyond the cap.
+**Blast radius:** confusing error
+
+### E-QUERY-12 — A declaration whose cap is zero or negative
+**Shape:** misuse
+**Setup:** A tired resource author writes `MaxInValues: -1`, or explicitly sets `MaxDepth: 0` expecting a hard zero rather than the implicit default.
+**What the consumer does:** It calls the documented declaration check during startup and expects a bad bound to fail there.
+**What must happen:** A non-positive explicit bound must either be rejected at declaration time or have one documented, consistent meaning; a negative number must not silently become the same setting as zero.
+**Today:** 🟡 partial
+**Evidence:** every numeric accessor treats only values greater than zero as configured and otherwise supplies a default at `crud/query/compile.go:95-128`, so both zero and negative values silently select that default. `Config.Check` validates only allow-list entries at `:152-198`; its test table covers names and wildcards, not numeric bounds (`crud/query/compile_test.go:704-756`).
+**Blast radius:** confusing error
+
+### E-QUERY-13 — A document nested beyond the parser's own limit
+**Shape:** adversarial input
+**Setup:** A hostile caller sends a filter with tens of thousands of nested `not` objects.
+**What the consumer does:** It expects an ordinary query refusal, not a stack failure or partial compilation after some nesting has been walked.
+**What must happen:** Depth must be bounded before recursive compilation can consume the process, and either front door must return no options when it rejects.
+**Today:** ✅ handled
+**Evidence:** `node` checks depth before descending at `crud/query/filter.go:16-29`; `crud/query/hostile_test.go:384-406` drives depths 100, 5,000 and 50,000 through both the decoded document and a raw filter and requires rejection. `crud/query/hostile_test.go:442-467` separately pins that a rejected document returns no options.
+**Blast radius:** none
+
+## Edge verdict
+
+The worst open edge is still an accepted filter that removes its own narrowing: an empty `notIn` is `1 = 1`, and an empty boolean group also becomes no predicate (`crud/query/filter.go:72-79,292-303`; `crud/query/edge_test.go:90-140`). The package is genuinely closed against deep filter recursion and against handing options back on that refusal (`crud/query/filter.go:16-29`; `crud/query/hostile_test.go:384-467`); its existing hostile suite also pins unknown-name and list-cap refusals. It remains too willing to normalise malformed or contradictory input — invalid unary values, negative paging, aliases, cursors and sort directions choose a different request rather than refuse it (`crud/query/querystring.go:68-78,161-196`; `crud/query/compile.go:281-311,381-386`). Declaration-time safety is incomplete: `Check` catches misspelled paths but not numeric bounds, and the configured depth does not govern preload paths (`crud/query/compile.go:95-198,330-347,548-563`).
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | An empty boolean `or`/`and`/`not` is accepted and contributes no predicate (`crud/query/filter.go:72-114`; pinned by `crud/query/edge_test.go:90-112`) | serious | A malformed filter builder receives 200 for the unfiltered list. This is the same silent-widening failure class as the existing empty-`notIn` blocker, reached through a different ordinary UI shape. |
+| 2 | `?f=publishedAt:isNull:yes` silently becomes `IS NOT NULL` because `ParseBool`'s error is discarded (`crud/query/querystring.go:68-78`) | serious | A typo reverses which rows a nullable-column filter returns, with no 400 for the client or operator to notice. |
+| 3 | Negative `page`, `limit` and `offset` parse successfully then resolve to the default page/zero offset (`crud/query/querystring.go:161-196`, `crud/query/compile.go:349-358`) | sharp edge | A stale or malicious pagination value gets a 200 for a different page than the URL requested; the existing test only covers non-numbers. |

@@ -1,8 +1,8 @@
 # crudsql · crudpgx — the one line between vv and the connection you already opened
 
 **Covers:** `github.com/frostgrove/vv/crud/adapter/crudsql`, `github.com/frostgrove/vv/crud/adapter/crudpgx`
-**Sweep:** happy paths · release readiness
-**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. A `WithTxOptions` copy also aliases mutable caller state, and COPY cannot represent a schema-qualified destination as callers naturally spell one.
 
 ## What a consumer is actually trying to do
 
@@ -708,3 +708,133 @@ consumer starts writing code this library was supposed to have written.
   from. The `[][]any` half of round 1's proposal is withdrawn: it left the caller
   hand-ordering values against a column list they could not see, which is the
   defect the case exists for.
+
+## Edge cases
+
+### E-ADAPTERS-01 — Dependency wiring supplies a nil handle
+**Shape:** misuse
+**Setup:** A service's database dependency is optional in one environment and an unset `*sql.DB`, `*pgx.Conn`, or `pgx.Tx` reaches a named adapter constructor.
+**What the consumer does:** They bind repositories during startup and expect a configuration failure naming the missing dependency, before a live request reaches it.
+**What must happen:** Construction refuses a nil handle loudly, or the adapter exposes an error-returning assembly path; it must not make the first query panic.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crudsql.Open` and every named `crudsql` constructor store the handle without a nil check (`crud/adapter/crudsql/crudsql.go:151-165`), then `DB.Begin` dereferences it (`:177-185`); `crudpgx.Open` and `From` likewise store `Queryer` unchanged (`crud/adapter/crudpgx/crudpgx.go:76-77`, `:146-147`) and `Exec` invokes it unconditionally (`:87-92`). The adjacent tests use nil only to exercise private classification methods (`crud/adapter/crudsql/classify_test.go:25-64`); no constructor-to-call nil test was found.
+**Blast radius:** crash
+
+### E-ADAPTERS-02 — A custom database handle is paired with a nil dialect
+**Shape:** degenerate declaration
+**Setup:** An integration helper calls `crudsql.Source(q, nil)` or `crudsql.Open(db, nil)` while factoring its own dialect behind configuration.
+**What the consumer does:** They expect a bad declaration to fail where it is made, rather than long after a repository has been bound.
+**What must happen:** The adapter rejects a nil `crud.Dialect` at construction, because every repository needs a usable SQL renderer.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crudsql.Source` and `Open` store `d` unchanged (`crud/adapter/crudsql/crudsql.go:127-134`, `:146-153`) and `DB.Dialect` returns it unchanged (`:168`); repository assembly retains the source dialect (`crud/sqlrepo/repository.go:32`) and SQL rendering calls `Dialect.Placeholder` (`crud/sqlrepo/repository.go:85`). `classify_test.go:25-64` exercises a real `crud.Postgres{}` dialect only; no nil-dialect test was found.
+**Blast radius:** crash
+
+### E-ADAPTERS-03 — An optional classifier silently erases pgx's default one
+**Shape:** misuse
+**Setup:** An application builds an optional catalog classifier, leaves it nil in one deployment, and still passes `crudpgx.WithFaults(classifier)` alongside `crudpgx.Open(pool)`.
+**What the consumer does:** They expect an absent optional extension to retain the standard PostgreSQL classification, or to be refused at startup; a duplicate key should not lose its code because a feature flag was off.
+**What must happen:** A nil `WithFaults` argument is rejected or ignored, and conflicting classifier options have documented, tested precedence.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crudpgx.faults` begins with the PostgreSQL classifier then applies every non-nil option (`crud/adapter/crudpgx/crudpgx.go:62-74`), while `WithFaults(nil)` overwrites that field (`:55-60`). `sqlfault.Wrap` accepts a nil classifier and degrades an integrity error to the sentinel without a fault or code (`crud/sqlfault/classify.go:127-156`). The adapter tests cover a non-nil replacement (`crud/adapter/crudsql/classify_test.go:25-64`) but no nil or duplicate option.
+**Blast radius:** silent wrong answer
+
+### E-ADAPTERS-04 — A transaction configuration changes after the source was built
+**Shape:** concurrency
+**Setup:** Two source values are derived from one `*sql.TxOptions`, then configuration code changes its `Isolation` or `ReadOnly` field while requests begin transactions.
+**What the consumer does:** They rely on `WithTxOptions` returning an independent source whose transaction policy cannot change behind its back or race with `Begin`.
+**What must happen:** The option value is copied at configuration time, or the API makes shared mutable configuration explicit and safe.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `WithTxOptions` copies the `DB` value but stores the caller's `*sql.TxOptions` pointer verbatim (`crud/adapter/crudsql/crudsql.go:138-144`, `:173-174`), and `Begin` passes that same pointer to `BeginTx` (`:176-185`). `TestWithTxOptionsReachesTheDriver` (`test/integration/edge_test.go:1231-1239`) uses a fresh literal and tests only the configured isolation; no mutation, aliasing or concurrent-begin test was found.
+**Blast radius:** silent wrong answer
+
+### E-ADAPTERS-05 — A cancelled commit context means different things on the two adapters
+**Shape:** seam
+**Setup:** A request reaches its commit boundary after its deadline is cancelled, with the application passing that context to `crud.Tx.Commit`.
+**What the consumer does:** They need the same documented cancellation semantics through `database/sql` and pgx; a context argument must not be silently ignored on only one of the two doors.
+**What must happen:** Both adapters honour the supplied commit context where their driver can, or the `database/sql` limitation is surfaced in the API and documented next to transaction use.
+**Today:** 🟡 partial
+**Evidence:** `crudpgx.Tx.Commit` and `Rollback` pass `ctx` to pgx (`crud/adapter/crudpgx/crudpgx.go:155-159`), whereas `crudsql.Tx.Commit` and `Rollback` ignore their context argument because the underlying methods take none (`crud/adapter/crudsql/crudsql.go:197-202`). The transaction tests exercise deferred constraints and isolation, not a cancellation at commit (`crud/adapter/crudsql/*_test.go`, `crud/adapter/crudpgx/*_test.go`: no cancellation test found).
+**Blast radius:** confusing error
+
+### E-ADAPTERS-06 — A pinned `*sql.Conn` is accidentally shared by tenants
+**Shape:** concurrency
+**Setup:** Middleware binds a repository to one `*sql.Conn` after setting RLS or session state, then stores that repository where two tenant requests can use it at once.
+**What the consumer does:** They need the adapter's documented single-connection route to make its lifetime and concurrency boundary unmistakable, so tenant state cannot be reused by accident.
+**What must happen:** The documented call scopes a connection to one request or transaction, and the adapters state whether a bound connection may be shared concurrently.
+**Today:** ❓ unverified
+**Evidence:** `crudsql.Queryer` accepts `*sql.Conn` structurally (`crud/adapter/crudsql/crudsql.go:30-35`) and `Source` retains the supplied `Queryer` as its data source (`:119-134`); every call then goes directly through that value (`:88-110`). The module page's stack table instead groups `*sql.Conn` with `crudsql.Postgres(db)`, whose constructor takes `*sql.DB` (`docs/modules/en/crudsql.md:48-50`; `crudsql.go:151`, `:159`); its later generic `Source(q, dialect)` paragraph gives no connection lifetime or sharing rule (`crudsql.md:69-83`). No adapter test binds a `*sql.Conn` or drives concurrent calls.
+**Blast radius:** data leak
+
+### E-ADAPTERS-07 — A shared pgx connection is used like a pool
+**Shape:** concurrency
+**Setup:** A team reads that `*pgxpool.Pool`, `*pgx.Conn` and `pgx.Tx` all satisfy `Queryer`, binds a global repository to a single connection, and serves concurrent requests through it.
+**What the consumer does:** They need the adapter to distinguish the pool's ordinary shared use from a connection or transaction's ownership and concurrency constraints.
+**What must happen:** The public documentation names the safe sharing boundary for each advertised handle type, and a concurrent-use test pins the adapter's own state behaviour.
+**Today:** ❓ unverified
+**Evidence:** The public `Queryer` comment groups all three types together (`crud/adapter/crudpgx/crudpgx.go:27-31`), `Open` stores whichever value it receives (`:146-147`), and `Exec`/`Query` forward to the same stored value (`:87-102`). The nearby adapter tests use fake handles serially (`crud/adapter/crudpgx/conflict_test.go:38-53`) and no concurrent connection or transaction test was found.
+**Blast radius:** confusing error
+
+### E-ADAPTERS-08 — A foreign Queryer breaks its own success contract
+**Shape:** degenerate declaration
+**Setup:** An ORM shim or test double implementing `crudsql.Queryer` returns `(nil, nil)` from `ExecContext` or `QueryContext` after an internal bug.
+**What the consumer does:** They need a diagnostic failure at the adapter boundary, not a nil dereference that hides which foreign handle broke its contract.
+**What must happen:** A nil result or row cursor accompanying a nil error is rejected with an adapter error before repository code dereferences it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crudsql.Executor.Exec` immediately calls `RowsAffected` on a successful result (`crud/adapter/crudsql/crudsql.go:88-101`), and `Query` wraps a successful row pointer without a nil check (`:104-117`). `Queryer` is intentionally public for foreign handles (`:30-35`), but its adjacent tests cover only error classification and have no success-contract test (`crud/adapter/crudsql/conflict_test.go`, `classify_test.go`).
+**Blast radius:** crash
+
+### E-ADAPTERS-09 — The cursor reports its failure when it is closed
+**Shape:** partial failure
+**Setup:** A `database/sql` driver discovers a protocol or server-side failure while closing a result set after the repository has read its rows.
+**What the consumer does:** They need the repository call to fail, preferably through the usual classifier, rather than return a complete-looking page after the driver reports a close error.
+**What must happen:** A close-time failure is retained and returned through `Rows.Err`, or the public cursor contract makes the unavoidable limitation explicit.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud.Rows.Close` has no error result (`crud/executor.go:18-25`); `crudsql.rows.Close` explicitly discards `*sql.Rows.Close`'s error (`crud/adapter/crudsql/crudsql.go:113-117`); and repository read paths defer `Close` then return the earlier `Rows.Err` result (`crud/sqlrepo/repository.go:964-985`, `:988-1000`). `crudpgx` only wraps `Rows.Err` (`crud/adapter/crudpgx/crudpgx.go:104-115`). No adapter test exercises a close-time error.
+**Blast radius:** silent wrong answer
+
+### E-ADAPTERS-10 — COPY targets a schema-qualified table
+**Shape:** boundary
+**Setup:** A PostgreSQL application keeps tenant tables outside `public` and calls `CopyFrom(ctx, "tenant_42.products", columns, rows)`.
+**What the consumer does:** They expect the normal PostgreSQL spelling to reach `tenant_42.products`, or a clear rejection that says the API accepts only one identifier component.
+**What must happen:** The COPY API accepts a schema and relation as distinct identifier parts, or rejects dotted input before contacting PostgreSQL.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The public adapter accepts one `table string` (`crud/adapter/crudpgx/crudpgx.go:117-125`) and wraps that entire string as the single-element `pgx.Identifier{table}` before calling pgx (`:119-124`); it has no schema parameter or dotted-name validation. The integration COPY test uses only `"users"` (`test/integration/driver_pgx_test.go:110-124`), and no schema-qualified COPY test was found.
+**Blast radius:** confusing error
+
+### E-ADAPTERS-11 — COPY is asked to import an empty feed
+**Shape:** boundary
+**Setup:** A scheduled import has no rows after validation but still takes the same COPY path as a non-empty file.
+**What the consumer does:** They expect `CopyFrom` to return zero, make no durable change, and avoid turning an empty normal condition into a driver-specific protocol error.
+**What must happen:** The empty input is either a tested no-op with count zero or a documented, deliberate refusal; it must not be left to a version-specific driver behaviour.
+**Today:** ❓ unverified
+**Evidence:** `crudpgx.Executor.CopyFrom` forwards every `[][]any`, including an empty slice, unchanged to `pgx.CopyFromRows` (`crud/adapter/crudpgx/crudpgx.go:117-125`). The only live COPY test passes two rows (`test/integration/driver_pgx_test.go:110-124`); no zero-row COPY case was found in `crud/adapter/crudpgx` or its adjacent integration test.
+**Blast radius:** confusing error
+
+### E-ADAPTERS-12 — Two classifier options disagree
+**Shape:** misuse
+**Setup:** A base package supplies `WithFaults(sqlfault.New("postgres"))` and a feature package appends its own classifier, accidentally using a nil or different vocabulary.
+**What the consumer does:** They expect one declared error contract per data source; adding an extension should not silently replace its code table because option order changed.
+**What must happen:** Duplicate classifier options are refused, or their last-wins rule and its consequences are explicit and tested for both adapters.
+**Today:** 🟡 partial
+**Evidence:** Both option collectors apply every option in order and retain the final field value (`crud/adapter/crudsql/crudsql.go:48-68`; `crud/adapter/crudpgx/crudpgx.go:50-74`), while `WithFaults` is an unconditional replacement in both (`crudsql.go:53-58`; `crudpgx.go:55-60`). The tests prove one supplied classifier changes the result (`crud/adapter/crudsql/classify_test.go:25-64`) but do not exercise duplicate ordering or a feature-composed option list.
+**Blast radius:** silent wrong answer
+
+## Edge verdict
+
+The riskiest fresh behaviour is configuration that remains mutable after the
+adapter appears assembled: a shared `*sql.TxOptions` can change isolation or
+read-only policy for later transactions without changing the source value. The
+adapters also defer nil dependency and dialect mistakes to request-time crashes,
+and `crudsql` deliberately has no way to retain a close-time cursor error. The
+pgx COPY entry point is careful to use pgx identifiers, but its one-string shape
+cannot express the schema-qualified table a PostgreSQL deployment normally
+names. Connection ownership, pgx connection sharing, commit cancellation and
+empty COPY are not falsely called safe here: the implementation exposes the
+seams, but the adjacent tests do not pin the consumer contract.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `WithTxOptions` advertises a copied source but preserves the caller's mutable `*sql.TxOptions` pointer, so a later mutation can silently change isolation or `ReadOnly` for live transactions. | serious | A reservation flow can run at a weaker isolation than the source value a reviewer approved; concurrent mutation additionally makes the policy race-dependent. |
+| 2 | `crudsql.rows.Close` drops its only error, after repository paths have already decided to return success from the preceding `Rows.Err` check. | serious | A database-side failure at the cursor boundary can be reported as a successful read, with no error contract left for the caller to inspect. |

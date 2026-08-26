@@ -1,8 +1,8 @@
 # crud/rpc/crudgrpc — the CRUD API a service mesh can call, without a `.proto` and without `protoc`
 
 **Covers:** `github.com/frostgrove/vv/crud/rpc/crudgrpc`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — a `Replace` whose `entity` key is misspelled overwrites the row with a zero model and answers success, the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — a `Replace` whose `entity` key is misspelled overwrites the row with a zero model and answers success, the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers. On the client seam, a numeric key past 2⁵³ can select a different row and a valid field name containing `.` or brackets comes back as a different error path.
 
 ## What a consumer is actually trying to do
 
@@ -716,3 +716,132 @@ re-discovering them.
   complaint to [[D-060]], which decided the page cap belongs to `sqlrepo.MaxLimit`
   in as many words. What is left is the two ceiling questions, and one of them is
   now a [[D-063]] conformance failure rather than a missing flow row.
+
+## Edge cases
+
+### E-CRUDGRPC-01 — A native caller types an exact-looking 64-bit number
+**Shape:** adversarial input
+**Setup:** The primary key is `9007199254740993`, the first `int64` a `google.protobuf.Value` number cannot represent exactly.
+**What the consumer does:** A hand-written native client sends that value as the numeric `id` in `Get`, as it would in JSON.
+**What must happen:** The binding either addresses that exact row or refuses the numeric spelling and tells the caller to send an `id` string; it must never turn a key into its neighbour and answer it successfully.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `message.go:94-110` accepts either scalar spelling, and `message.go:141-153` formats the already-rounded `float64`; `handler_test.go:228-256` deliberately proves that the numeric spelling does not reach the original key. The module page says keys are strings at `docs/modules/en/crudgrpc.md:200-204`, but the server still accepts the unsafe native form. No refusal test exists.
+**Blast radius:** silent wrong answer
+
+### E-CRUDGRPC-02 — `patch: null` is mistaken for an empty patch
+**Shape:** misuse
+**Setup:** A hand-written caller or a JSON-marshalling wrapper supplies `{"id":"42","patch":null}` rather than omitting the optional wrapper.
+**What the consumer does:** They expect a malformed top-level patch document to be refused; explicit null remains meaningful *inside* a patch field and must not silently acquire a second, wrapper-level meaning.
+**What must happen:** The binding rejects the null wrapper before the service is called, or gives it a documented, observable operation distinct from an empty patch.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `message.go:60-73` returns nil for both an absent and a null nested document, `message.go:42-54` then leaves the zero DTO unchanged, and `handler.go:175-192` sends it to `Update`. `handler_test.go:168-224` pins null versus absent *inside* the nested object, not `patch: null`; no test exercises the wrapper value.
+**Blast radius:** silent wrong answer
+
+### E-CRUDGRPC-03 — The protobuf decoder rejects the request before the framework can render it
+**Shape:** partial failure
+**Setup:** A client sends a truncated or malformed protobuf frame for one of the eight unary methods.
+**What the consumer does:** They need the malformed call to have the same deliberate, documented gRPC error contract as a bad document, rather than an arbitrary codec error that bypasses their server interceptors.
+**What must happen:** The decode failure is either rendered as a stable client error or explicitly documented as a gRPC-layer exception to the error contract; it must be tested at the wire boundary.
+**Today:** ❓ unverified
+**Evidence:** `service.go:86-101` returns `dec(in)` directly before invoking either the handler or its interceptor; `interceptor.go:23-36` can therefore never render that error. The malformed-request test starts from an already-built `structpb.Struct` (`handler_test.go:258-270`), and no decoder-error test was found in `crud/rpc/crudgrpc`.
+**Blast radius:** confusing error
+
+### E-CRUDGRPC-04 — A zero violation cap means unlimited
+**Shape:** misuse
+**Setup:** A service author writes `NewRenderer(WithMaxViolations(0))`, reasonably reading zero as “use the published default”.
+**What the consumer does:** One bulk-validation fault contains thousands of field violations.
+**What must happen:** A non-positive cap is refused at construction or falls back to the advertised cap of 100; a one-character configuration mistake must not remove the response bound.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `status.go:177-195` stores zero without validation, while `port/violations.go:9-16` describes the zero-value pipeline as having no cap and `port/violations.go:90-92` truncates only when `Max > 0`. `status_test.go:350-378` tests custom caps of 3 and 50 only; no non-positive-cap test exists.
+**Blast radius:** crash
+
+### E-CRUDGRPC-05 — The 100th and 101st invalid fields stay distinguishable
+**Shape:** boundary
+**Setup:** A batch validator returns exactly 100 field violations, then 101, with the default renderer.
+**What the consumer does:** The caller renders every error at the limit, and when one is dropped it needs the `partial` marker before asking the user to correct a list that is known to be incomplete.
+**What must happen:** One hundred entries arrive without `partial`; one hundred and one arrive as 100 entries with `partial=true`, in deterministic order.
+**Today:** 🟡 partial
+**Evidence:** `status.go:28-31` takes the 100-entry limit from `port.MaxViolations`; `status.go:251-267` passes it to the pipeline; `status.go:325-330` marks truncation. `status_test.go:350-378` establishes the behaviour only at 3/10 and 50/10, not the published 100/101 boundary.
+**Blast radius:** confusing error
+
+### E-CRUDGRPC-06 — A presenter returns something JSON cannot carry
+**Shape:** degenerate declaration
+**Setup:** A `WithTransform` function accidentally returns a channel, a function, or a value containing `NaN` after a successful create or read.
+**What the consumer does:** They need a normal internal gRPC failure with no half-built document and no presenter value leaked to the peer.
+**What must happen:** Encoding fails closed as an `Internal` status for every response shape, including a transformed page and a transformed write.
+**Today:** 🟡 partial
+**Evidence:** `handler.go:290-306` routes transformed values through `toStruct` and renders an encoding failure; `message.go:26-37` is the marshal/unmarshal boundary; `status.go:237-248` makes `Internal` detail-free. `handler_test.go:473-496` tests only successful transformed reads, so no test pins the failing presenter or the write shapes.
+**Blast radius:** none
+
+### E-CRUDGRPC-07 — One server changes the global locale keys while another serves calls
+**Shape:** concurrency
+**Setup:** A platform package appends a private metadata key to exported `LocaleKeys` during startup while another gRPC server in the process is already handling failures.
+**What the consumer does:** They expect locale configuration to be fixed per server, or to fail loudly, not to race every request and make language selection depend on timing.
+**What must happen:** The locale-key list is immutable after package initialization or copied into an explicit server configuration before serving begins.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `locale.go:11-23` exposes `LocaleKeys` as a mutable slice, and `locale.go:34-49` iterates that same slice on every failed call with no synchronization or copy. `handler_test.go:565-605` covers one header at a time only; no mutation or concurrent-locale test exists.
+**Blast radius:** confusing error
+
+### E-CRUDGRPC-08 — Two locale sources disagree
+**Shape:** seam
+**Setup:** A gateway forwards `grpc-accept-language: fr`, a native sidecar adds `accept-language: de`, and an application interceptor has optionally installed `WithLocale(ctx, "ja")`.
+**What the consumer does:** They need one documented priority rule, so a translated validation message does not change merely because a new proxy adds a header.
+**What must happen:** An explicit locale wins; otherwise the metadata-key and repeated-value precedence is stated and tested with conflicting values.
+**Today:** 🟡 partial
+**Evidence:** `locale.go:25-49` gives an existing context locale priority and otherwise uses the exported key order and first parsable value. The module page names all three headers but no precedence (`docs/modules/en/crudgrpc.md:150-151`), while `handler_test.go:565-605` tests each key in isolation and the no-metadata fallback only.
+**Blast radius:** confusing error
+
+### E-CRUDGRPC-09 — A valid dotted or bracketed JSON key comes back as a different field
+**Shape:** seam
+**Setup:** A model or mapper exposes a JSON key such as `json:"billing.address"` or `json:"tag[primary]"`, and validation rejects that field.
+**What the consumer does:** A remote Go caller uses the returned `errs.Path` to highlight the same input key it submitted.
+**What must happen:** The path crosses the status boundary losslessly, or the binding uses an explicitly lossless wire representation instead of parsing a log rendering.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `status.go:294-318` writes `v.Path.String()` into the gRPC field-violation `Field` string, then `transport.go:214-230` reconstructs it with `errs.ParsePath`. `errs/path.go:109-119` documents `String` as lossy for dots and brackets; `client_test.go:224-262` proves only the ordinary `name` path, and `status_test.go:216-264` contains no separator-bearing name.
+**Blast radius:** silent wrong answer
+
+### E-CRUDGRPC-10 — A peer returns an enormous list of field violations
+**Shape:** scale
+**Setup:** An older or misconfigured remote service sends a framework-marked status with many `BadRequest.FieldViolations`, exceeding this binding's 100-entry outbound convention.
+**What the consumer does:** The remote caller needs a bounded fault with an honest partial marker, just as it receives from a current server, rather than allocating one violation per received detail.
+**What must happen:** The client applies `MaxViolations` while reconstructing remote failures and marks dropped detail as partial, or rejects the oversized status as a protocol error.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The server uses the 100-entry cap (`status.go:28-31`, `:251-267`), but `transport.go:209-249` appends every received `FieldViolation` without a cap and returns them all in `FaultFrom`. `client_test.go:224-262` exercises one violation only; no oversized remote-detail test exists.
+**Blast radius:** crash
+
+### E-CRUDGRPC-11 — A client is constructed with a nil connection
+**Shape:** misuse
+**Setup:** A service's dependency wiring leaves `grpc.ClientConnInterface` nil, then constructs `crudgrpc.Transport(conn, "Article")` before the first call.
+**What the consumer does:** They expect configuration to fail at construction with the resource name, rather than a nil dereference on the first live request.
+**What must happen:** The transport fails loudly at the assembly boundary with a configuration error the caller can act on.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `transport.go:34-42` stores `conn` without validation and `transport.go:76-92` unconditionally calls `t.conn.Invoke`. No nil-connection test was found in `crud/rpc/crudgrpc`.
+**Blast radius:** crash
+
+### E-CRUDGRPC-12 — One remote API instance serves concurrent requests
+**Shape:** concurrency
+**Setup:** A service shares one `remote.New(crudgrpc.Transport(conn, name))` value across hundreds of goroutines with different IDs, bodies and contexts.
+**What the consumer does:** They expect per-call documents and errors never to bleed into another request, and a concurrency guarantee that is more than an accident of the current implementation.
+**What must happen:** The transport remains safe for concurrent calls, with every request using only its own document, method and context, and a test makes that promise durable.
+**Today:** ❓ unverified
+**Evidence:** `transport.go:60-92` keeps the connection, service name and call options on the shared transport but builds `in`, `method` and `out` per call. No concurrent transport test was found in `crud/rpc/crudgrpc`; the client tests construct and use calls serially, for example `client_test.go:224-262`.
+**Blast radius:** confusing error
+
+## Edge verdict
+
+The worst fresh fault is the error-path round trip: the server uses a formatter that
+its own package says is only for human log lines, then the client turns that lossy
+text back into machine data. Direct native clients also remain able to turn an
+unsafe numeric key into a successful request for a different row. The binding
+does close a presenter serialization failure and the normal violation cap by
+construction, but the former lacks a failing-path test and the latter is removed
+by a zero configuration. Its client half trusts remote error detail cardinality
+without applying the server's bound, while locale and decoder boundary contracts
+remain partly specified rather than pinned.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | The gRPC field-violation string for a valid key containing `.` or brackets is serialized through the deliberately lossy `errs.Path.String` form and reconstructed as a different `errs.Path` on the remote client. | blocker | A client can mark or retry the wrong field after a validation response, with no indication that the framework changed the path. |
+| 2 | A native numeric `id` above 2⁵³ is accepted after the `Struct` has rounded it, so a successful `Get`, `Update`, `Replace` or `Delete` can address a neighbouring 64-bit key. | blocker | The client gets a successful operation on a row it did not name; the documented string route does not protect a caller the server continues to accept. |

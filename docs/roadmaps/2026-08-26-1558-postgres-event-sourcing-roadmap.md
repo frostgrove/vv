@@ -2063,3 +2063,943 @@ only one row of the package.
 - Security review confirming no payload/identity/raw query leakage in normal telemetry/logs.
 - Release/rollback operator checklist with a feature-gated writer revision control.
 - Test fixture process documenting use of eugene-khyst/Axon references and deviations.
+
+## Worked release rehearsal — `account.credited` v1 to v2
+
+This is a generic rehearsal pattern, not a domain schema to copy. It makes the
+separate version axes visible and gives a minimum test sequence for any payload
+evolution that requires a new event revision.
+
+### Initial state
+
+```text
+event type: account.credited
+event revision: 1
+stream versions: arbitrary per account
+aggregate reader: v1
+writer: v1
+snapshot revision: 1
+projection: accounts.balance_view/v1
+integration contract: accounts.balance_changed/v1
+```
+
+Revision 2 adds a required explicit currency representation that cannot safely
+be inferred from every historic event without a declared deterministic rule. The
+release must not call this merely “adding a field”; old bytes will outlive every
+rolling deployment and backup.
+
+### R0 — classify and decide
+
+1. Confirm the changed payload meaning is an event revision, not only code refactor.
+2. Name `account.credited` source revision `1` and target revision `2` explicitly.
+3. Write deterministic v1→v2 upcaster rule and all exceptional/malformed cases.
+4. Decide whether existing historic v1 fields supply currency or a compensating fact is needed.
+5. Decide whether integration event remains v1 or needs independent external version.
+6. Decide whether projection v1 can consume v2/current upcast form or requires v2 rebuild.
+7. Decide snapshot v1 compatibility/discard/rebuild behavior under v2 reader.
+8. Decide rollback point after which old v1-only binary is prohibited.
+9. Update event manifest, owner, security/payload and retention documentation.
+10. Add initial release matrix with all currently deployed readers/writers/tools.
+
+### R1 — fixtures and pure reader path
+
+1. Add canonical v1 valid payload fixture with expected v2 transformed form.
+2. Add v1 malformed/missing/invalid currency field fixture with safe failure outcome.
+3. Add v2 valid writer payload fixture and decoder round-trip test.
+4. Add mixed stream fixture containing v1/v2 events at contiguous versions.
+5. Add full replay expected aggregate state/version for mixed stream.
+6. Add projection expected output for mixed stream after upcast.
+7. Add snapshot v1 + v1/v2 tail expected aggregate state fixture.
+8. Run upcaster twice in pure environment and compare canonical output exactly.
+9. Assert upcaster does not access time, DB, locale, HTTP, random or storage spy.
+10. Assert original stored v1 fixture bytes/revision remain unchanged after reader run.
+
+### R2 — deploy compatible readers first
+
+1. Deploy code that registers v1 decoder/upcaster path to v2 current handler.
+2. Keep writer feature gate emitting v1 while validating reader deployment.
+3. Deploy same compatible reader into services, projectors, repair CLI and workers.
+4. Deploy snapshot reader that reads/discards v1 snapshot safely and writes no v2 yet.
+5. Verify old archived/backup fixture restores and loads through deployed reader.
+6. Verify live Postgres can load historic v1 streams with current reader.
+7. Verify OTel/audit/error output remains payload/identity safe under v1 load.
+8. Verify no external integration mapper starts publishing changed schema accidentally.
+9. Verify all release cohort health checks report compatible reader version safely.
+10. Do not enable v2 writer merely because a subset of request pods updated.
+
+### R3 — mixed-reader and rollback rehearsal
+
+1. Start one v1-only reader fixture and one v1+v2 reader fixture against same DB.
+2. Append only v1 events and prove both rehydrate/project correctly.
+3. Confirm rollback binary/tool manifest explicitly declares its maximum readable revision.
+4. Confirm a v1-only binary cannot be selected as rollback once v2 writing begins.
+5. Test deployment rollback before writer gate: it should load all existing v1 history.
+6. Test in-progress projection/replay jobs pin/upgrade compatible reader version safely.
+7. Test tenant cohort with a lagging reader does not receive v2 writer feature inadvertently.
+8. Test snapshot v1 cleanup/write remains compatible in mixed reader phase.
+9. Test telemetry/dashboards distinguish reader release version without payload labels.
+10. Record rehearsal outcome and unresolved tool/consumer compatibility gaps.
+
+### R4 — enable v2 writer deliberately
+
+1. Enable v2 writer feature only in an approved cohort after all reader gates pass.
+2. Append a v2 event through live PostgreSQL expected-version transaction fixture.
+3. Load same stream through v2 reader and validate aggregate state/version.
+4. Project same v2 event through current projector and validate output/checkpoint.
+5. Map the domain event to unchanged or independently versioned integration event.
+6. Validate outbox crash/duplicate behavior has no payload/version leakage.
+7. Validate snapshot policy does not create unreadable state for deployed recovery tools.
+8. Validate an old v1-only reader fails visibly in controlled test—not silently wrong.
+9. Mark binary rollback boundary in deployment/runbook after first v2 commit.
+10. Audit writer-gate activation/schema release under protected release policy.
+
+### R5 — projection and snapshot evolution
+
+1. If projection schema/meaning changes, create `accounts.balance_view/v2` separately.
+2. Rebuild v2 projection from zero/mixed history using same declared upcaster path.
+3. Compare v1/v2 projection outputs according to documented changed business semantics.
+4. Validate v2 table indexes/query policy and tenant scope before routing cutover.
+5. Switch query routing atomically/explicitly only after validation and rollback plan.
+6. Keep v1 projection/read route until cutover support/rollback window ends.
+7. Introduce snapshot v2/v3 only with snapshot+tail/full replay equality fixtures.
+8. Test old snapshots in v2 reader: read/upcast/discard/rebuild rule is documented.
+9. Do not delete v1 events or readers just because v2 projection/snapshot exists.
+10. Record rebuild/cutover version and operator evidence in release artifact.
+
+### R6 — retirement and archival gate
+
+1. Scan active event store for retained v1 rows under authorized operational process.
+2. Include archives, backups, disaster restore and offline repair fixtures in review.
+3. Include long-lived tenant cohorts and old projection/checkpoint/snapshot artifacts.
+4. Include integration consumers/replay tooling that may need v1 interpretation.
+5. Confirm support/rollback window has ended and no allowed binary is v1-only.
+6. Confirm v1 reader removal will cause a clear controlled failure if unexpected data returns.
+7. Keep original v1 rows immutable even after upcaster/reader code retirement decision.
+8. Remove only code/path per documented release, never historic event payload data.
+9. Update manifest/release notes/archive reader documentation and on-call runbook.
+10. Preserve canonical v1 fixture in regression suite after runtime path removal.
+
+## Event evolution decision table
+
+| Proposed change | Correct first question | Usual safe action | Never do |
+|---|---|---|---|
+| rename Go field only | wire bytes changed? | code refactor if no | change event type casually |
+| add optional payload field | old reader behavior? | additive revision or tolerant codec proof | assume JSON default is semantic |
+| add required field | can old fact derive it purely? | v2 + upcaster/compensating rule | update old rows |
+| split one fact into two | historic ordering/meaning? | explicit upcaster split with fixture | generate new clock/IDs |
+| merge facts | does aggregate state retain meaning? | explicit current reader/projection plan | silently discard fact |
+| correct wrong business fact | what actually happened? | compensating/correction event | mutate payload |
+| change external integration payload | domain vs external contract? | independent integration version mapper | publish raw domain bytes |
+| change snapshot serialization | event history unchanged? | snapshot revision/rebuild | call it event migration |
+| change read model | rebuild/cutover required? | new projection version | update live table blindly |
+| change tenant topology | routing/readers compatible? | cohort migration and resolver tests | embed tenant in event name |
+| change codec library | canonical bytes still same? | golden fixture/revision review | assume patch upgrade safe |
+| add encryption/redaction | historic recovery policy? | dedicated ADR/workflow | boolean option/SQL rewrite |
+| archive old data | readers/restores need it? | archive/restore proof | partition drop by age |
+| remove upcaster | all retained sources gone? | evidence + fixture preservation | scan hot table only |
+| roll back code | any new event committed? | reader matrix/forward fix | deploy old binary blindly |
+
+## Initial non-goals and refusal boundary
+
+- EventStoreDB, Kafka, MongoDB, filesystem or another RDBMS event-store adapter.
+- A generic database-neutral event-store interface that erases Postgres transaction semantics.
+- Direct event payload CRUD, search/filter/list endpoints for ordinary clients.
+- Automatic aggregate discovery/reflection/annotation-driven event registration.
+- Automatic serializer evolution, in-place migration or “best effort” unknown event skip.
+- Blind command/event append retry after optimistic conflict or uncertain commit.
+- Exactly-once broker delivery or external side effect guarantee.
+- A generic workflow/saga/Temporal/NATS engine embedded in event-store core.
+- A global background publisher/projector started by `New`.
+- A universal snapshot/partition/archive/retention implementation without measured need.
+- Arbitrary per-event metadata/header/baggage/tenant/locale propagation map.
+- Event payload/audit/trace copy as an automatic support/debugging convenience.
+- Generic field-level GDPR/crypto deletion implementation with false immutability claims.
+- Localized event names or use of event source as an i18n/CMS/audit substitute.
+- Database-per-tenant resolver/identity provider/credential manager inside event core.
+
+## Completion definition for PostgreSQL event-source roadmap
+
+This roadmap is implementation-ready only when its first-release scope can prove:
+
+1. PostgreSQL is the sole durable backend and is named in module/DDL/test support.
+2. Append/load event semantics, expected version, sequence/global order and error taxonomy are decided.
+3. One real aggregate, historic fixture corpus and live two-session Postgres conflict suite exist.
+4. Upcaster/revision graph, mixed reader/writer release rehearsal and rollback boundary exist.
+5. Projection/checkpoint/outbox behavior is either tested first scope or explicitly deferred.
+6. Snapshots, audit, tenancy, storage, i18n and OTel bridges each have directional contracts/deferrals.
+7. Payload/identity/privacy/retention and history-access policies are explicit and testable.
+8. Reference implementation study is captured as choices/tests, not a Java/Spring API clone.
+9. DDL/migration/restore/archive/release/on-call evidence is assigned and versioned.
+10. Every item in this roadmap that affects a historic fact has a no-in-place-mutation invariant.
+
+## Daily engineering review workbook
+
+Use this workbook for every package, migration, handler and operational change.
+It deliberately repeats critical decisions in short form so a review can stop a
+bad change before a long implementation makes the historic data contract costly
+to unwind.
+
+### Before adding an event
+
+- Name the aggregate consistency boundary and why a current-state update is insufficient.
+- Name the stable past-tense event fact, not a command/UI label.
+- Name event type owner, domain audience and sensitive-field policy.
+- Name revision `1` payload schema and canonical encoding rules.
+- Name aggregate Apply rule and prove it is pure/deterministic.
+- Name command Decide rule and expected state/version preconditions.
+- Name whether zero/multiple events are possible and their order semantics.
+- Name stream identity/type and tenant partition/routing policy if applicable.
+- Name payload size/metadata limits and what data must never be stored.
+- Name snapshot need as measured optimization or explicitly defer it.
+- Name projection/read-model consumer or explicitly defer query requirements.
+- Name external integration mapper/outbox need or explicitly defer it.
+- Name audit action/evidence need or explicitly defer it.
+- Name OTel logical operation/outcome vocabulary without payload identity.
+- Name test fixtures for valid, invalid, conflict and historic replay behavior.
+
+### Before changing an event
+
+- Compare old/new wire bytes and semantic meaning, not only Go struct fields.
+- Identify every existing revision in hot store, backup, archive and test fixture.
+- Decide additive tolerance, upcaster path, new type or compensating event.
+- Write golden source/target/malformed fixtures before changing a writer.
+- Confirm upcaster is pure and needs no current database/profile/service lookup.
+- Confirm aggregate and projection current handlers agree on transformed meaning.
+- Confirm integration mapper external contract change is analyzed separately.
+- Confirm snapshot reader/rebuild behavior for old/new event form.
+- Confirm all active reader/projector/repair/rollback binaries support it.
+- Confirm writer feature flag remains disabled until compatible reader deployment.
+- Confirm tenant cohort migration and database topology status if relevant.
+- Confirm telemetry/audit vocabulary stays bounded and does not expose new fields.
+- Confirm event retention/privacy/legal owner has reviewed sensitive semantic change.
+- Confirm release note explains rollback boundary after first new event commit.
+- Confirm no migration proposes SQL update/delete of historic event payload.
+
+### Before adding a projection
+
+- Name projection logical purpose, owner and query audience.
+- Name source event types/revisions/current upcaster policy.
+- Name initial checkpoint/global-order position and tenant scope behavior.
+- Name exact idempotency key or duplicate-safe model update mechanism.
+- Name transaction relationship between read model and checkpoint.
+- Name failure/retry/poison/quarantine/manual-skip policy.
+- Name batch size, claim/lease and cancellation/backpressure behavior.
+- Name whether external side effects are forbidden or routed through outbox.
+- Name rebuild target table/version and validation/cutover/rollback procedure.
+- Name read access policy and how vv CRUD/security helpers apply to model.
+- Name metrics/traces using finite projection/outcome/batch vocabulary only.
+- Name audit/purpose policy for manual replay/rebuild/admin repair actions.
+- Name schema migration expand/contract order with old runtime compatibility.
+- Name integration test for crash before/after checkpoint commit.
+- Name a fixture that proves full replay yields the expected projection model.
+
+### Before enabling an outbox publisher
+
+- Name outbox row schema and transaction relation to source event append.
+- Name publisher startup/shutdown owner and explicit host configuration.
+- Name claim/lease/order/batch/backpressure and expiry/recovery semantics.
+- Name broker adapter/module dependency boundary and credential/client owner.
+- Name integration event type/revision/schema/consumer compatibility owner.
+- Name message identity and producer/consumer duplicate/idempotency contract.
+- Name send/ack/mark crash windows and expected at-least-once behavior.
+- Name dead-letter/manual-redrive/retention/audit policy.
+- Name carrier propagation trust/byte/baggage limit and link/parent topology.
+- Name sensitive payload omission/redaction and external consumer authorization rule.
+- Name observability fields/metrics and prohibited topic/endpoint/event ID labels.
+- Name integration test for broker acceptance then process crash before sent mark.
+- Name integration test for consumer duplicate/out-of-order message handling.
+- Name rollback behavior when mapper/writer/schema version changes.
+- Name explicit non-goal if exactly-once or ordering cannot be proven.
+
+### Before a PostgreSQL migration
+
+- Name schema version, target Postgres versions and deployment owner.
+- Name every writer/reader/projector/publisher/snapshot/tool affected.
+- Add columns/indexes/constraints before code begins depending on them.
+- Measure lock/transaction duration and plan cancellation/retry/maintenance window.
+- Prove constraint behavior with live Postgres negative tests.
+- Prove existing event rows/payloads remain unmodified and readable.
+- Prove expand phase works with old binaries and contract phase is delayed.
+- Prove database-per-tenant cohort sequencing/control-plane status if used.
+- Prove shared-db RLS/tenant query session settings remain correct under pooling if used.
+- Prove backup/restore/replay fixture before destructive/index/partition transition.
+- Prove cleanup/drop target exactness and recoverability before destructive operation.
+- Prove query plans/indexes for stream load/global projection remain acceptable.
+- Prove migration error mapping/logging does not expose SQL or event payload data.
+- Prove rollback/forward-fix choice after partial migration is documented.
+- Prove schema manifest/release compatibility matrix receives the new migration state.
+
+### Before a production release
+
+- Freeze/update event reader/writer/upcaster compatibility matrix.
+- Freeze/update snapshot/projection/outbox/integration compatibility matrix.
+- Freeze/update Postgres DDL/driver/version/tenant cohort compatibility matrix.
+- Run pure aggregate, codec and upcaster golden fixture suite.
+- Run live Postgres append/load/conflict/rollback/sequence suite.
+- Run projection/outbox crash/duplicate suite for each enabled component.
+- Run OTel/audit/tenancy/privacy bridge equivalence suite for each enabled bridge.
+- Run old/new/mixed reader/writer binary rehearsal against historic fixture database.
+- Run rollback scenario after a new revision event commit where writer changes.
+- Run restore/replay/archive reader scenario or record explicit pre-beta deferral.
+- Capture performance baselines/capacity/lag/transaction duration evidence.
+- Verify dashboards/alerts/runbooks use approved bounded vocabulary.
+- Verify release/audit owner and emergency repair contact/purpose path.
+- Verify all deferred features/non-goals remain visible to consumer documentation.
+- Do not deploy if any required reader/tool/cohort compatibility evidence is absent.
+
+## Sign-off roles and questions
+
+| Role | Must answer before release |
+|---|---|
+| domain owner | Is this event a true immutable fact and is aggregate boundary correct? |
+| PostgreSQL owner | Do DDL/isolation/index/backup/restore prove append/load safety? |
+| event maintainer | Does registry/upcaster/release matrix preserve every retained revision? |
+| projection owner | Are duplicates/checkpoints/rebuild/cutover/queries correct and recoverable? |
+| integration owner | Is outbox at-least-once and consumer schema/idempotency contract explicit? |
+| tenancy owner | Are shared/db-per-tenant scope/routing/cohort cases fail-closed? |
+| audit/privacy owner | Are actor/history/payload/retention/purpose boundaries lawful and protected? |
+| observability owner | Are traces/metrics useful, bounded and free of event/tenant/payload identity? |
+| release manager | Is writer enablement/rollback boundary rehearsed with every active tool? |
+| on-call owner | Can incident responders repair without historical SQL mutation or data leakage? |
+
+## Fast refusal questions
+
+Stop implementation and return to a decision when any answer is “yes”:
+
+- Does this need another durable backend beside PostgreSQL?
+- Does this require an append without expected version?
+- Does this mutate, delete or normalize historic payload in place?
+- Does this upcaster need current external data, time, locale or I/O?
+- Does this retry stale proposed events after a conflict/uncertain commit?
+- Does this publish/broker-call during append transaction or aggregate Apply?
+- Does this call duplicate delivery exactly once without a demonstrated idempotency boundary?
+- Does this use a snapshot/projection as a reason to throw away event history?
+- Does this put a tenant, user, event ID, payload or raw SQL into telemetry metric labels?
+- Does this use a translated message/type or storage URL as an event identity?
+- Does this make a generic raw event history endpoint available to ordinary clients?
+- Does this assume a database-per-tenant resolver can fall back to default DB?
+- Does this add a background worker/global provider implicitly at package creation?
+- Does this introduce a serializer/DDL/reader change without mixed-version replay tests?
+- Does this call a reference Java framework API the Go satellite does not need?
+
+If yes, the change is not an ordinary implementation task. It needs a new
+contract/ADR, a bounded satellite boundary, a security/retention review and the
+corresponding live PostgreSQL/release evidence before it is safe to continue.
+
+## Compact end-to-end scenario register
+
+### ES-01 — first aggregate open
+
+**DX.** `Append` takes stream type/ID and expected version zero explicitly.
+
+**Action.** Decide/open one aggregate and append its first event in PostgreSQL.
+
+**Happy.** One stream/event/version/outbox state commits atomically.
+
+**Edge.** Concurrent first open yields one success and one typed conflict.
+
+**Evidence.** Live two-session query confirms no duplicate stream/version row.
+
+### ES-02 — ordinary aggregate change
+
+**DX.** Load returns current state/version to command handler only.
+
+**Action.** Load v3 stream, decide two events, append expected v3.
+
+**Happy.** Versions 4/5 commit contiguous and rehydrate expected state.
+
+**Edge.** Second writer advances stream first; stale events never append.
+
+**Evidence.** Full replay/transaction rollback fixture compares database rows.
+
+### ES-03 — malformed historical payload
+
+**DX.** Registry owns decoder path, no caller raw JSON parser.
+
+**Action.** Load a stream containing deliberately invalid historic payload bytes.
+
+**Happy.** Valid control stream loads normally.
+
+**Edge.** Invalid stream fails safe before partial aggregate/side effect.
+
+**Evidence.** Error/trace scanner finds no payload/SQL in exported output.
+
+### ES-04 — historic v1 to v2 upcast
+
+**DX.** Register v1→v2 pure function in explicit graph.
+
+**Action.** Load mixed v1/v2 stream with current aggregate handler.
+
+**Happy.** State/version equal approved current fixture.
+
+**Edge.** Missing/ambiguous graph path blocks load at bootstrap/runtime safely.
+
+**Evidence.** Stored v1 row bytes/revision remain byte-identical after run.
+
+### ES-05 — upcaster malformed input
+
+**DX.** Upcaster returns typed safe failure, not log-and-skip API.
+
+**Action.** Feed one malformed v1 event into aggregate/projector fixture.
+
+**Happy.** Valid v1 control transforms deterministically.
+
+**Edge.** Failure leaves source history/checkpoint state at known safe boundary.
+
+**Evidence.** Repair runbook/fixture requires no historic row update.
+
+### ES-06 — snapshot tail
+
+**DX.** Snapshot policy declares version/codec/rebuild behavior.
+
+**Action.** Load valid snapshot v100 plus events 101–105.
+
+**Happy.** Result equals full replay v1–105 state/version.
+
+**Edge.** Corrupt/wrong snapshot discards/fails per policy without partial state.
+
+**Evidence.** Snapshot+tail/full replay equality suite runs in CI.
+
+### ES-07 — commit uncertainty
+
+**DX.** Command/idempotency layer owns post-commit response-loss reconciliation.
+
+**Action.** Drop client connection after database commit outcome window.
+
+**Happy.** Normal response control returns event result once.
+
+**Edge.** Uncertain case is not blindly re-appended with stale expected version.
+
+**Evidence.** Query/idempotency fixture verifies exactly documented durable state.
+
+### ES-08 — serialization/deadlock distinction
+
+**DX.** Error type distinguishes Postgres retryable failure from stream conflict.
+
+**Action.** Inject serialization/deadlock condition in live transaction fixture.
+
+**Happy.** Expected-version conflict control remains domain concurrency outcome.
+
+**Edge.** DB failure does not return a misleading stale-state business conflict.
+
+**Evidence.** Caller retry test rehydrates/re-decides under context budget.
+
+### ES-09 — synchronous projection
+
+**DX.** Projection declares same-transaction behavior explicitly.
+
+**Action.** Append event and update local read model in one transaction.
+
+**Happy.** Commit exposes both event/model; rollback exposes neither.
+
+**Edge.** Projection insert failure rolls back append where that guarantee is claimed.
+
+**Evidence.** Live Postgres commit/rollback visibility matrix passes.
+
+### ES-10 — asynchronous projection duplicate
+
+**DX.** Projector has named idempotency/checkpoint strategy.
+
+**Action.** Crash after model update before checkpoint/ack and restart worker.
+
+**Happy.** Final read model equals once-applied expected state.
+
+**Edge.** Duplicate causes no external action or model corruption.
+
+**Evidence.** Crash/restart fixture records exact checkpoint/model transitions.
+
+### ES-11 — projection poison event
+
+**DX.** Runner exposes pause/quarantine/repair policy, not silent skip.
+
+**Action.** Make handler/upcaster fail permanently on one position.
+
+**Happy.** Valid preceding events/checkpoint state remain correct.
+
+**Edge.** Failure cannot advance past poison event without authorized action.
+
+**Evidence.** Manual repair audit/purpose fixture and runbook are exercised.
+
+### ES-12 — projection rebuild cutover
+
+**DX.** New projection version has a distinct table/name and routing switch.
+
+**Action.** Rebuild v2 from zero while v1 serves reads.
+
+**Happy.** Validated v2 switches only after full expected output proof.
+
+**Edge.** Failed rebuild leaves v1 user query path intact.
+
+**Evidence.** Cutover/rollback integration fixture compares routing/model outputs.
+
+### ES-13 — transactional outbox commit
+
+**DX.** Append request explicitly names integration mapping/outbox intent.
+
+**Action.** Commit append, stream advance and outbox row together.
+
+**Happy.** Publisher sees row only after commit.
+
+**Edge.** Event/outbox/projection insert failure rolls all state back.
+
+**Evidence.** Live transaction query confirms no rolled-back publish candidate.
+
+### ES-14 — publisher duplicate after send
+
+**DX.** Publisher/consumer contract states at-least-once and message identity.
+
+**Action.** Crash after broker acceptance before sent marker update.
+
+**Happy.** Normal send/mark control progresses to sent lifecycle state.
+
+**Edge.** Restart may duplicate; consumer remains idempotent.
+
+**Evidence.** Fault test sees two delivery attempts and one correct consumer result.
+
+### ES-15 — integration schema isolation
+
+**DX.** Mapper has independently versioned external envelope registry.
+
+**Action.** Change internal domain event v1 to v2 without external contract change.
+
+**Happy.** External v1 consumer fixture continues to decode expected message.
+
+**Edge.** Mapper rejects accidental raw internal field/payload leakage.
+
+**Evidence.** Schema/privacy golden fixtures cover both source revisions.
+
+### ES-16 — tenant shared database
+
+**DX.** Verified tenant scope decorates store before stream operation.
+
+**Action.** Append/load same aggregate ID under tenants A and B in one DB.
+
+**Happy.** Each sees only its own independent stream/history.
+
+**Edge.** Missing/crafted scope executes zero/unscoped SQL.
+
+**Evidence.** Cross-tenant guessed-ID/projection/replay query matrix passes.
+
+### ES-17 — tenant database per tenant
+
+**DX.** Resolver selects caller-owned datasource from verified scope.
+
+**Action.** Append/load equal stream ID under two tenant DB fixture stores.
+
+**Happy.** Both aggregate semantics/conformance results match shared topology.
+
+**Edge.** Resolver failure never falls back to another/default database.
+
+**Evidence.** Wrong-mapping/pool lifecycle integration test remains fail closed.
+
+### ES-18 — event append audit revision
+
+**DX.** Audit bridge declares actor/action/resource/subject capture policy.
+
+**Action.** Append an authorized event inside transactional audit mode.
+
+**Happy.** Event and protected audit revision commit together.
+
+**Edge.** Audit failure prevents committed action where policy claims atomicity.
+
+**Evidence.** Unsampled/no-OTel fixture proves audit remains complete.
+
+### ES-19 — event OTel privacy
+
+**DX.** OTel bridge maps stream to configured family and bounded outcome.
+
+**Action.** Append/load payload/ID/tenant sentinel fixtures under sampled provider.
+
+**Happy.** Logical spans show append/load/conflict timing/outcome.
+
+**Edge.** No sentinel/event ID/version/checkpoint becomes signal attribute.
+
+**Evidence.** Golden export/cardinality/no-op equivalence test passes.
+
+### ES-20 — release rollback gate
+
+**DX.** Release manifest names reader/writer/upcaster/snapshot/projector versions.
+
+**Action.** Commit first v2 event then attempt old binary rollback fixture.
+
+**Happy.** Pre-v2 rollback control remains permitted/readable.
+
+**Edge.** Post-v2 rollback is blocked or uses declared compatible reader/forward fix.
+
+**Evidence.** Live mixed-binary Postgres rehearsal is attached to release.
+
+### ES-21 — no-op append result
+
+**DX.** Command result names no-event/no-op state explicitly.
+
+**Action.** Decide command against state where requested fact already holds.
+
+**Happy.** No append/outbox row is created and result has documented no-op state.
+
+**Edge.** Caller cannot send empty batch through ordinary Append accidentally.
+
+**Evidence.** Audit/telemetry semantics distinguish no-op from failed append.
+
+### ES-22 — aggregate type collision
+
+**DX.** Stream identity includes validated aggregate type plus opaque ID.
+
+**Action.** Attempt load/append account and order with identical raw ID.
+
+**Happy.** Separate type controls remain independently readable.
+
+**Edge.** Wrong type against existing stream fails, never merges histories.
+
+**Evidence.** DB constraint and load registry tests prove isolation.
+
+### ES-23 — payload size rejection
+
+**DX.** Envelope builder exposes documented per-event/batch size limits.
+
+**Action.** Append below-limit and over-limit payload fixtures.
+
+**Happy.** Below-limit event commits/reloads normally.
+
+**Edge.** Over-limit request fails before transaction and no bytes leak in error.
+
+**Evidence.** Memory/trace/privacy corpus confirms bounded behavior.
+
+### ES-24 — metadata secret rejection
+
+**DX.** Envelope metadata schema is closed and typed.
+
+**Action.** Add authorization/token/header/baggage sentinel to metadata.
+
+**Happy.** Approved safe correlation metadata control validates.
+
+**Edge.** Secret/free-map form is refused before encode/store/outbox.
+
+**Evidence.** Event/audit/OTel export scan finds no sentinel.
+
+### ES-25 — archive restore replay
+
+**DX.** Archive reader/restore operation has named authorized purpose/runbook.
+
+**Action.** Restore sanitized historic partition containing v1 events.
+
+**Happy.** Current reader/upcaster rehydrates expected state/projection.
+
+**Edge.** Missing old reader/upcaster blocks retirement/restoration safely.
+
+**Evidence.** Restore rehearsal artifact records source/version/checksum/result.
+
+### ES-26 — archive retention legal hold
+
+**DX.** Archive job receives explicit retention/hold policy, not age-only delete.
+
+**Action.** Attempt archive/purge on a held historic range fixture.
+
+**Happy.** Eligible control range follows verified immutable archive workflow.
+
+**Edge.** Held range remains and records bounded policy refusal.
+
+**Evidence.** Audit/runbook confirms no generic partition drop escaped policy.
+
+### ES-27 — command idempotency mismatch
+
+**DX.** Idempotency interface stores canonical request identity/result policy.
+
+**Action.** Repeat key with same request then different request fixture.
+
+**Happy.** Same request returns one documented prior/current result.
+
+**Edge.** Different request with same key is conflict, never prior event replay.
+
+**Evidence.** No raw request/key becomes telemetry/audit generic payload.
+
+### ES-28 — context cancellation during replay
+
+**DX.** Load/project/rebuild APIs accept ordinary caller context.
+
+**Action.** Cancel while a bounded historic batch is decoding/upcasting.
+
+**Happy.** Short control batch completes normally.
+
+**Edge.** Canceled operation returns no partial aggregate/checkpoint as completed.
+
+**Evidence.** Retry/resume uses documented durable checkpoint/load policy.
+
+### ES-29 — source driver error no guessing
+
+**DX.** Error mapper receives observed Postgres driver error types/codes only.
+
+**Action.** Inject unknown SQLSTATE/raw driver text fixture.
+
+**Happy.** Known expected conflict/serialization controls classify correctly.
+
+**Edge.** Unknown error stays bounded internal/unavailable, not guessed domain type.
+
+**Evidence.** Raw SQL/message sentinel is absent from public/OTel outputs.
+
+### ES-30 — support history access range limit
+
+**DX.** Protected reader requires purpose and maximum stream/range/page limits.
+
+**Action.** Authorized tool requests small and enormous historic ranges.
+
+**Happy.** Small approved control retrieves protected data under audit policy.
+
+**Edge.** Large/unscoped request fails/batches without broad data extract.
+
+**Evidence.** Access/audit/tenant bound fixture proves zero ordinary endpoint leak.
+
+## Final Postgres-only boundary reminders
+
+- PostgreSQL transaction semantics are a product feature, not an adapter detail.
+- Expected version is a mandatory precondition, not a tuning option.
+- A committed event is immutable; correction is a new fact, not a row edit.
+- Stream version, event revision, snapshot revision and projection version are distinct.
+- Upcasters make readers compatible; they never make historic bytes current by mutation.
+- A snapshot speeds replay; it never displaces append-only history.
+- A projector can be duplicated; its checkpoint/model contract must survive that.
+- An outbox gives atomic intent and at-least-once publication, never magical exactly once.
+- A broker is an optional external dependency, never a Postgres event store replacement.
+- A tenant scope must be verified before event routing/query, never parsed from a raw carrier.
+- An audit revision has actor/purpose evidence; it is not the aggregate source of truth.
+- A trace gives transient diagnostics; it is not an audit/event retention system.
+- A locale renders a UI message; it never changes event type, schema or replay state.
+- Storage holds bytes through its own lifecycle; event payload holds logical domain facts/references.
+- Axon is a source of upcaster/revision lessons; it is not vv's Java API blueprint.
+- eugene-khyst is the main practical Postgres template; its choices still require Go/Postgres evidence.
+- A release is safe only when old/new readers, writers, tools, snapshots and projections agree.
+- A rollback is safe only before/after explicitly rehearsed writer boundaries.
+- Archive/restore are history operations with reader/retention proof, not table maintenance shortcuts.
+- Every automatic convenience that hides one of these facts is a candidate refusal.
+
+## Final implementation order
+
+1. Establish DDL/codec/aggregate fixture/expected-version live PostgreSQL baseline.
+2. Establish reader/upcaster graph and v1→v2 mixed release rehearsal.
+3. Establish checkpointed projection with duplicate/crash/rebuild fixture.
+4. Establish outbox only with explicit at-least-once publisher/consumer evidence.
+5. Establish audit/tenancy/OTel/storage/i18n bridges as separate directional satellites.
+6. Establish operations: backups, restore/replay, benchmarks, incident/runbook/release matrix.
+7. Add snapshots, partitions, archive, extra aggregate/product breadth only with measured demand.
+
+No stage can be skipped by adding a framework abstraction or a second storage
+engine. The quality gate is evidence that a historic fact remains readable,
+ordered, authorized, replayable and release-compatible after the next failure.
+
+## Reference-study checklist — what to take and what to leave
+
+### From `eugene-khyst/postgresql-event-sourcing`
+
+- Study the separated PostgreSQL core versus application-domain project layout.
+- Study its event/aggregate table relation and version-check append transaction.
+- Study its explicit optimistic-concurrency explanation and live competing writer behavior.
+- Study its snapshot configuration and load-from-snapshot-plus-tail explanation.
+- Study its distinction between write aggregate stream and query projections.
+- Study its synchronous projection option in the same database transaction.
+- Study its transactional outbox rationale for asynchronous integration events.
+- Study its alternative publisher/notification/polling operational tradeoffs.
+- Study its acknowledgement that async handling is at least once, not exactly once.
+- Study its warning about long transactions and subscription/projection behavior.
+- Study its end-to-end test/docker/database migration organization.
+- Study its “adapt application module, keep event core separate” intent.
+
+### Do not copy blindly from that Java/Spring reference
+
+- Do not import Spring/JPA annotations or lifecycle assumptions into Go/vv.
+- Do not accept its table/lock/query shape without current Postgres load testing.
+- Do not copy a domain model or HTTP/API transport as a framework contract.
+- Do not assume its outbox/broker choice establishes vv's broker dependency.
+- Do not assume its snapshot threshold is appropriate for vv aggregates.
+- Do not assume its error mapping/audit/tenant/privacy model matches vv decisions.
+- Do not expose its raw SQL/entity abstractions as vv public API.
+- Do not treat a demo's E2E coverage as substitute for vv fault/release tests.
+- Do not turn its project modules into root-module dependencies.
+- Do not substitute repository admiration for a specific Go/Postgres ADR.
+- Do not publish a compatibility claim until vv target version matrix passes.
+- Do not omit new failure cases merely because the reference did not model them.
+
+### From Axon versioning/upcaster guidance
+
+- Take the principle that persisted events outlive current code/schema.
+- Take the principle that upcasters transform reader view rather than stored history.
+- Take the need for an ordered/validated upcaster chain across revisions.
+- Take the possibility that an evolution may map one source event to zero or many.
+- Take the discipline of keeping historic reader compatibility explicit.
+- Take the release need to coordinate readers, writers and event schema evolution.
+- Take the distinction between event revision and other application versions.
+- Take the need to test historic serialized forms, not only new events.
+
+### Do not copy Axon wholesale
+
+- Do not pull in Axon's aggregate runtime, annotations, command bus or Java types.
+- Do not make Go event registration reflection/annotation magic by imitation.
+- Do not turn Axon convenience APIs into implicit global vv behavior.
+- Do not assume an Axon storage engine abstraction erases PostgreSQL decision details.
+- Do not adopt every Axon extension/saga/query feature before vv has its own demand.
+- Do not make upcasting a way to run current business logic or external services.
+- Do not replace vv root contracts with a foreign framework vocabulary.
+- Do not skip live PostgreSQL proof because a mature Java framework supports a concept.
+
+## Research deliverables before code review
+
+1. A one-page comparison records the reference table/transaction strategy and vv alternative.
+2. A DDL sketch identifies every unique/index/FK/transaction boundary it relies on.
+3. A failure table identifies conflict, connection-loss, crash and retry outcomes.
+4. A version table separates stream, event, snapshot, projection, API and release axes.
+5. A v1→v2 fixture demonstrates the actual upcaster and writer rollout decision.
+6. A projection/outbox fixture demonstrates at-least-once duplicate behavior concretely.
+7. A privacy table lists fields prohibited from envelope, audit and OTel outputs.
+8. A tenancy table shows shared and DB-per-tenant routing before store invocation.
+9. A rollback rehearsal proves or forbids old binary deployment after new event write.
+10. A restore/replay rehearsal proves historic reader intent extends beyond hot rows.
+11. A dependency graph proves root vv has no PostgreSQL/event/OTel/broker coupling.
+12. A roadmap/index/ADR link lets future maintainers find every irreversible choice.
+
+## Final source links
+
+- [PostgreSQL event sourcing reference implementation](https://github.com/eugene-khyst/postgresql-event-sourcing)
+- [Axon Framework GitHub repository](https://github.com/AxonFramework/AxonFramework)
+- [Axon event versioning and upcasters](https://docs.axoniq.io/axon-framework-reference/main/events/event-versioning/)
+- [Axon PostgreSQL event-store infrastructure](https://docs.axoniq.io/axon-framework-reference/development/events/infrastructure/)
+- [Transactional outbox pattern reference](https://masstransit.io/documentation/patterns/transactional-outbox)
+- [OpenTelemetry event-store integration boundary](2026-08-26-1558-opentelemetry-roadmap.md)
+- [Multitenancy topology boundary](2026-08-26-1558-multitenancy-roadmap.md)
+- [Audit revision boundary](2026-08-26-1558-audit-log-roadmap.md)
+- [Storage lifecycle boundary](2026-08-26-1558-storage-roadmap.md)
+- [Language-neutral event boundary](2026-08-26-1558-i18n-roadmap.md)
+
+## Last-mile release checklist
+
+### Aggregate correctness
+
+- Rehydrate every canonical historic fixture.
+- Rehydrate every mixed revision fixture.
+- Rehydrate every snapshot-plus-tail fixture.
+- Reject every corrupt/gap/duplicate fixture.
+- Decide every command fixture deterministically.
+- Confirm every conflict re-decides from current state.
+- Confirm no handler executes external side effects.
+- Confirm no event type is localized/dynamic/reflection-derived.
+- Confirm payload/metadata limits run before SQL.
+- Confirm historic rows remain untouched by test and migration paths.
+
+### PostgreSQL correctness
+
+- Run real concurrent append sessions.
+- Run rollback after every transaction sub-step.
+- Run serialization/deadlock classification fixture.
+- Run connection-loss/uncertain commit fixture.
+- Run wrong datasource/transaction-scope fixture.
+- Run constraint/index negative cases.
+- Run load order/query-plan regression fixture.
+- Run Postgres/driver version support report.
+- Run backup restore then full replay fixture.
+- Run destructive test cleanup scope validation.
+
+### Asynchronous correctness
+
+- Run projection duplicate crash fixture.
+- Run projection poison/quarantine fixture.
+- Run projection rebuild/cutover/rollback fixture.
+- Run outbox commit/claim/send/mark crash fixture.
+- Run consumer duplicate/out-of-order fixture.
+- Run manual redrive/audit purpose fixture.
+- Run worker cancellation/backpressure fixture.
+- Run trace carrier corruption/bounds fixture.
+- Run no-broker/no-exporter deterministic core suite.
+- Run explicit startup/shutdown ownership fixture.
+
+### Release correctness
+
+- Run readers-before-writers deployment fixture.
+- Run old/new mixed reader fixture.
+- Run feature-gated new writer fixture.
+- Run rollback before first new revision fixture.
+- Run rollback after first new revision fixture.
+- Run projection/snapshot/integration compatibility fixture.
+- Run archive/restore old-reader retention fixture.
+- Run tenant cohort/schema compatibility fixture.
+- Run schema expand/contract migration fixture.
+- Publish/review final compatibility matrix and non-goals.
+
+### Privacy and composition
+
+- Run payload/ID/tenant/raw-error sentinel export scanner.
+- Run trace no-op/sampled/exporter failure equivalence tests.
+- Run audit sampled/unsampled transactional evidence tests.
+- Run shared/DB-per-tenant cross-scope refusal tests.
+- Run protected history access/purpose/range-limit tests.
+- Run storage reference/event lifecycle no-URL/no-key tests.
+- Run i18n replay/upcaster/identity isolation tests.
+- Run metric cardinality stress tests.
+- Run generic CRUD/event-history separation tests.
+- Run root dependency graph/one-satellite-decision checks.
+
+## Final rule
+
+If a developer cannot explain a change using the six separate version axes,
+show a pure historic fixture, and name its reader/writer/rollback consequences,
+the change is not ready to enter an append-only event history.
+
+## Stable terminology card
+
+- **Aggregate ID** identifies one domain consistency boundary; it is not telemetry label data.
+- **Stream version** protects append order for that aggregate; it is not event schema revision.
+- **Event revision** describes payload meaning; it is not database migration number.
+- **Global position** drives ordered consumption/checkpoints; it is not a user-visible cursor.
+- **Snapshot revision** describes derived cache encoding; it is not historic fact version.
+- **Projection version** describes read-model implementation; it is not aggregate state version.
+- **Integration revision** describes external contract; it is not raw domain event revision.
+- **Release version** describes deployed compatibility cohort; it is not a fact in a stream.
+- **Expected version** is supplied by a fresh aggregate load; it is not an optional optimization.
+- **Conflict** means stale decision; it is not a permission failure or database outage.
+- **Serialization failure** is a PostgreSQL retryable condition; it is not domain conflict by default.
+- **Upcaster** is a pure reader transform; it is not a migration job or business handler.
+- **Projection** is an at-least-once read model consumer; it is not an exactly-once promise.
+- **Outbox** is durable publish intent; it is not broker delivery confirmation.
+- **Audit revision** proves declared actor/action evidence; it is not full event-sourced state.
+- **Tenant scope** routes/authorizes before storage; it is not a stream-name suffix.
+- **Trace correlation** is diagnostic linkage; it is not a durable business causation model.
+- **Archive** is retained history lifecycle; it is not permission to delete facts casually.
+- **Restore** is an authorized operational procedure; it is not a generic query method.
+- **Compensating event** records a later correction; it is not a mutation of earlier truth.
+
+## Minimal adoption warning
+
+Event sourcing raises the cost of an incorrect shortcut because data must remain
+readable after the code, deployment and team that wrote it are gone. Start with
+one aggregate whose audit/history/consistency value justifies that cost; prove
+the Postgres append/replay/release path end to end; then expand by evidence.
+
+## Final implementation constraints
+
+The first event satellite chooses PostgreSQL on purpose.
+
+It owns no alternate backend promise.
+
+It starts no hidden broker or projection worker.
+
+It sets no global OTel provider or locale.
+
+It owns no JWT/header/tenant authentication parser.
+
+It exposes no raw events table as generic CRUD.
+
+It accepts no writer without expected version.
+
+It stores no arbitrary metadata bag.
+
+It publishes no raw domain payload as integration contract by default.
+
+It retries no stale append after a conflict.
+
+It treats no trace as an audit record.
+
+It treats no snapshot as a reason to forget facts.
+
+It treats no upcaster as a historic SQL update.
+
+It treats no successful broker call as exactly-once completion.
+
+It retires no historic reader before restore/replay evidence.
+
+It enters beta only with live PostgreSQL and mixed-release proof.

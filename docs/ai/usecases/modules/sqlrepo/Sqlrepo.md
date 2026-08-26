@@ -1,8 +1,8 @@
 # crud/sqlrepo — one declaration next to the model, and the whole CRUD surface over any driver
 
 **Covers:** `github.com/frostgrove/vv/crud/sqlrepo`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, a save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model, relations on a model are written nowhere and refused nothing, and the batch verb has a row ceiling below any real import. Two read paths truncate silently and report the truncation as the whole answer.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, and a second table or relation scope can silently replace the first and leak rows. A save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model, relations on a model are written nowhere and refused nothing, and the batch verb has a row ceiling below any real import. Two read paths truncate silently and report the truncation as the whole answer.
 
 ## What a consumer is actually trying to do
 
@@ -1618,3 +1618,142 @@ them.
   and that `repository.go:1116-1119` states it. Adopted, and the proposal now
   picks a semantics rather than only a mechanism — with the doc comment amended in
   the same change, because it currently argues against the fix.
+
+## Edge cases
+
+### E-SQLREPO-01 — An empty selection never reaches the database
+**Shape:** boundary
+**Setup:** A cleanup screen submits no selected IDs, or an import produces no rows.
+**What the consumer does:** It passes the empty slice to `Delete` or `SaveAll` rather than branching around both calls.
+**What must happen:** Both calls succeed with no statement. An empty selection must not become an unscoped write.
+**Today:** 🟡 partial
+**Evidence:** `Delete` returns `0, nil` before building SQL at `crud/sqlrepo/repository.go:873-875`, pinned by `TestDeleteNothingIsANoop` at `crud/sqlrepo/repository_test.go:486-494`. `SaveAll` has the corresponding early return at `crud/sqlrepo/repository.go:1124-1126`, but no `crud/sqlrepo` test covers it.
+**Blast radius:** none
+
+### E-SQLREPO-02 — A bad caller value is rejected before a write
+**Shape:** misuse
+**Setup:** A handler bug passes a nil model or nil update DTO into the repository.
+**What the consumer does:** It calls `Save`, `SaveAll`, `Update`, or `UpdateAll` with that bad value.
+**What must happen:** The call returns an actionable error without executing any statement. Bad request plumbing must not become a database round trip.
+**Today:** 🟡 partial
+**Evidence:** `Save` and `SaveAll` reject nil models before any executor call at `crud/sqlrepo/repository.go:609-612` and `:1129-1132`; `UpdateAll` validates its DTO before SQL at `:834-843`. `Update` instead loads the row at `:716` before `plan.Changes` rejects a nil DTO at `:725-728`. `crud.UpdatePlan` has a generic nil-DTO test at `crud/edge_test.go:382-422`, but no sqlrepo entry-point test pins the no-statement contract.
+**Blast radius:** confusing error
+
+### E-SQLREPO-03 — A conditional setting does not turn `TryDefine` into a panic
+**Shape:** degenerate declaration
+**Setup:** A configuration helper returns a nil `sqlrepo.Setting` when an optional feature is disabled.
+**What the consumer does:** It passes that setting to `TryDefine`, the API the module reference presents as the non-panicking form.
+**What must happen:** `TryDefine` returns a declaration error that names the bad setting. It must not panic after a caller selected the error-returning API.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Setting` is a function type at `crud/sqlrepo/blueprint.go:28-29`; `TryDefine` invokes every option without a nil check at `:183-185`. `docs/modules/en/sqlrepo.md:41` says `TryDefine` is the error-returning alternative, and no test covers a nil setting.
+**Blast radius:** crash
+
+### E-SQLREPO-04 — A missing datasource is refused at wiring time
+**Shape:** degenerate declaration
+**Setup:** Dependency injection supplies a nil `crud.Source` during process setup.
+**What the consumer does:** It calls `Users.Bind(src)` and expects the startup failure to identify the missing binding.
+**What must happen:** Binding refuses with an actionable error before the service can start. A configuration error must not be a nil-interface panic.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Bind` passes its source directly to `newRepository` at `crud/sqlrepo/blueprint.go:246-248`; `newRepository` immediately calls `src.Dialect()` at `crud/sqlrepo/repository.go:31-32`. No nil-source check or test was found.
+**Blast radius:** crash
+
+### E-SQLREPO-05 — Two permanent table guards both remain true
+**Shape:** misuse
+**Setup:** Base configuration narrows a repository to live rows and service configuration adds a tenant scope.
+**What the consumer does:** It passes two `sqlrepo.Scope` settings, expecting both declarations to remain a permanent narrowing.
+**What must happen:** The guards compose by AND, or the declaration refuses the duplicate. A later safety setting must not erase an earlier one.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Scope` assigns one `settings.scope` field at `crud/sqlrepo/blueprint.go:68-85`; `TryDefine` applies settings left to right at `:183-185`; reads use only that final field at `crud/sqlrepo/repository.go:286-292`. No test covers two `Scope` settings. This conflicts with [[D-004]], whose invariant is that a narrowing never replaces another narrowing.
+**Blast radius:** data leak
+
+### E-SQLREPO-06 — Two guards on the same relation both remain true
+**Shape:** seam
+**Setup:** One declaration narrows `Comments` to a tenant and another narrows the same path to visible comments.
+**What the consumer does:** It passes two `sqlrepo.RelationScope("Comments", ...)` settings, expecting both guarantees to apply to a preload and a relation filter.
+**What must happen:** The guards compose by AND, or the declaration refuses the duplicate path. Repeating a relation guard must not widen the far-side query.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `RelationScope` appends declarations at `crud/sqlrepo/blueprint.go:115-134`, then `resolveRelationScopes` repeatedly calls `AtPath` at `:228-236`. `RelationScopes.AtPath` overwrites its path map entry at `crud/scope.go:43-52`; only the separate blueprint/request merge ANDs same-path scopes at `:107-138`. No local test covers two blueprint relation scopes on one path.
+**Blast radius:** data leak
+
+### E-SQLREPO-07 — Two first requests may cross one relation safely
+**Shape:** concurrency
+**Setup:** Two requests are the first in the process to preload the same relation.
+**What the consumer does:** It shares the repository normally and sends both requests at once.
+**What must happen:** Both requests resolve the same relation and neither races on process-shared metadata.
+**Today:** ✅ handled
+**Evidence:** `repository.preload` reaches the shared relation path at `crud/sqlrepo/repository.go:531-536`. `Relation.resolveDefaults` protects its lazy writes with `sync.Once` at `crud/relation.go:300-317`, and `TestConcurrentFirstUseOfARelationDoesNotRace` at `crud/relation_test.go:474-522` asserts 32 concurrent first resolutions agree.
+**Blast radius:** none
+
+### E-SQLREPO-08 — A timeout after the write is not mistaken for no write
+**Shape:** partial failure
+**Setup:** On a dialect without `RETURNING`, the INSERT succeeds but the request context expires before the refresh query can return.
+**What the consumer does:** It calls `Save` and receives the timeout error.
+**What must happen:** The outcome is documented as indeterminate so retry code does not assume the row was absent and create a second effect.
+**Today:** 🟡 partial
+**Evidence:** The non-`RETURNING` branch executes the write at `crud/sqlrepo/repository.go:652-660` and then refreshes the model with the same context at `:661-667`; a refresh failure is returned by `:684-695`. The error is propagated, but no test or module documentation states that a timed-out call may already have committed its write.
+**Blast radius:** confusing error
+
+### E-SQLREPO-09 — A broken `RETURNING` stream cannot silently leave models stale
+**Shape:** adversarial input
+**Setup:** A custom source reports fewer or more `RETURNING` rows than the slice supplied to `SaveAll`.
+**What the consumer does:** It trusts a successful `SaveAll` to refresh every input model in its original order.
+**What must happen:** A row-count mismatch returns an error. Success cannot leave a suffix unrefreshed or discard an unexpected returned row.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The `RETURNING` loop stops when either stream or model slice ends at `crud/sqlrepo/repository.go:1188-1203`, then returns only `rows.Err()` at `:1204`; it never checks `i == len(models)` or that the stream ended exactly there. The integration key-order test at `test/integration/saveall_test.go:89-127` exercises normal adapters only; no mismatch test was found.
+**Blast radius:** silent wrong answer
+
+### E-SQLREPO-10 — A repeated key in one batch has one stated outcome
+**Shape:** concurrency
+**Setup:** Two workers contribute assigned-key rows to one batch and the same primary key appears twice.
+**What the consumer does:** It calls `SaveAll` instead of deduplicating separately, because the method is presented as batched `Save`.
+**What must happen:** The batch is refused before SQL, or its cross-dialect outcome is stated and tested. A duplicate in one payload must not depend on an engine surprise.
+**Today:** ❓ unverified
+**Evidence:** `SaveAll` checks only whether each row has a key and whether the batch mixes generated and assigned keys at `crud/sqlrepo/repository.go:1128-1149`; it then builds one insert with the upsert tail at `:1151-1175`. No primary-key-duplicate case was found in `crud/sqlrepo` or `test/integration/saveall_test.go`; the duplicate-email probe case is a different constraint path at `test/integration/probe_test.go:789-795`.
+**Blast radius:** confusing error
+
+### E-SQLREPO-11 — The largest finite page does not become an unlimited read
+**Shape:** scale
+**Setup:** A service-side caller requests `crud.Limit(math.MaxInt)` with `crud.SkipTotal()`, or configures that value as its default limit.
+**What the consumer does:** It asks for the largest representable finite page and expects the repository to retain a limit.
+**What must happen:** The one-extra-row probe is saturated or refused. Arithmetic at the page boundary must not remove the limit and load the whole table.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Get` computes the probe as `limit + 1` at `crud/sqlrepo/repository.go:171-177`. `Options.Resolved` accepts any positive limit at `crud/options.go:241-276`, and `SQL.LimitOffset` emits a limit only when it is positive at `crud/render.go:104-110`; integer overflow therefore makes the probe negative and emits no `LIMIT`. No max-int probe test was found.
+**Blast radius:** crash
+
+### E-SQLREPO-12 — A negative maximum does not disable a safety cap
+**Shape:** boundary
+**Setup:** A configuration typo supplies `sqlrepo.MaxLimit(-1)`.
+**What the consumer does:** It expects a malformed cap to fail at startup or remain restrictive.
+**What must happen:** The declaration refuses the value. A setting named `MaxLimit` must not quietly remove the only ceiling on a caller's page size.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `MaxLimit` stores its value unchanged at `crud/sqlrepo/blueprint.go:53-54`; `Options.Resolved` caps only when `maxLimit > 0` at `crud/options.go:241-254`. The reference says only zero disables the cap at `docs/modules/en/sqlrepo.md:104`, and no negative-cap test was found.
+**Blast radius:** crash
+
+### E-SQLREPO-13 — Middleware order matches the binding declaration
+**Shape:** seam
+**Setup:** A repository is bound with a rejecting outer policy followed by an observing decorator.
+**What the consumer does:** It lists the policy first and relies on it to refuse before the observer and SQL run.
+**What must happen:** The first middleware is outermost, as the binding documentation says, so order remains a consumer-visible safety choice.
+**Today:** ✅ handled
+**Evidence:** `Bind` sends its middleware through `crud.Chain` at `crud/sqlrepo/blueprint.go:244-249`; `Chain` walks the list backward, leaving element zero outermost, at `crud/repo.go:109-115`. `TestDecorateStacksWithTheFirstMiddlewareOutermost` at `crud/decorate_test.go:84-112` pins both orders and their statement counts.
+**Blast radius:** none
+
+## Edge verdict
+
+The worst new holes are declaration-time: two table scopes, or two relation
+scopes on the same path, replace rather than compose, so a configuration made of
+individually safe pieces can return rows it was meant to hide. Boundary and
+configuration failures are also uneven: nil `Setting` and source values panic,
+a negative maximum removes a cap, and a maximum finite page can overflow into an
+unlimited read. The normal first-use relation race and middleware order are
+properly closed with source-level tests. Batch and timeout failure semantics need
+more than the happy-path integrations before a consumer can safely build retry
+or recovery logic around them.
+
+## Release blockers found here (edge)
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | A second `sqlrepo.Scope` replaces the first (`crud/sqlrepo/blueprint.go:68-85`) | blocker | Two independently configured permanent guards can leave one guard absent from every read. This is a direct row-leak path and contradicts [[D-004]]'s rule that narrowing only composes. |
+| 2 | A second `RelationScope` for one path replaces the first (`crud/sqlrepo/blueprint.go:228-236`; `crud/scope.go:43-52`) | blocker | A tenant or visibility predicate on a preloaded or relation-filtered table can be erased by another declaration for the same path. The far-side query then returns rows the first declaration existed to hide. |
+| 3 | `SaveAll` accepts a malformed `RETURNING` cardinality as success (`crud/sqlrepo/repository.go:1188-1204`) | serious | A generic framework accepts custom sources. A short result stream leaves models stale after a successful call, so later writes act on values that do not describe stored rows. |
+| 4 | `SkipTotal` overflows at `math.MaxInt` and emits no limit (`crud/sqlrepo/repository.go:171-177`; `crud/render.go:104-110`) | serious | A finite request can become a whole-table read and exhaust service memory. |

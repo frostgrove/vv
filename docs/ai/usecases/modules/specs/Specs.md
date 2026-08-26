@@ -1,8 +1,8 @@
 # crud/decorators/specs — a filter written in Go as a value you can name, compose and test
 
 **Covers:** `github.com/frostgrove/vv/crud/decorators/specs` (with the metamodel `cmd/vv` writes into `vv_gen.go`)
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — two new blockers and one already filed. New: a filter that composes to a tautology walks through *both* bulk-write guards and empties the table, and the pattern operators escape their wildcards but emit no `ESCAPE` clause, which is wrong on SQLite through the typed form and wrong on every dialect through the literal form the module doc teaches first. Already filed, and still a live breach of [[D-015]]: the two refusal sentinels wrap nothing, so a refused bulk write reaches the client as 500. The composition algebra and the find-one contract underneath them are the best-proven code in this repository.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the edge sweep confirms three silent-wrong-answer paths before the existing data-loss guard is reached: two conditions on one to-many relation can match two different children; a parent-model specification can silently narrow child preloads; and `NotIn` of an empty upstream list reads every row. The existing bulk-write tautology and dialect-dependent escaped `LIKE` blockers remain: the former can delete or rewrite the table, the latter makes a literal search depend on the engine. Already filed, and still a live breach of [[D-015]]: the two refusal sentinels wrap nothing, so a refused bulk write reaches the client as 500. The composition algebra, relation-resolution concurrency and the find-one contract are the best-proven code in this repository.
 
 ## What a consumer is actually trying to do
 
@@ -814,3 +814,154 @@ of this is new work: an owner triaging at a tag reads the new rows first.
   helper does not accept the value they hold, and nothing points at `.Unwrap()`
   (`crud/repo.go:101`, which this repository's own [[D-061]] tests use at
   `crud/basenext_test.go:53`).
+
+## Edge cases
+
+### E-SPECS-01 — A search term contains `%`, `_`, and a backslash
+**Shape:** adversarial input
+**Setup:** An admin searches for the literal product name `50%_off\\clearance` through `User_.Name.Contains(q)`.
+**What the consumer does:** They expect wildcard-looking characters in a search box to be data, not a wider pattern.
+**What must happen:** The typed convenience operator must match those three characters literally on every supported dialect.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/decorators/specs/metamodel.go:111-113` routes `Str.Contains` to `crud.Contains`, and `crud/predicate.go:436-438,490-492` prefixes/suffixes and backslash-escapes the term. `likeNode.render` then emits only `LIKE` and the bind, with no `ESCAPE` clause (`crud/predicate.go:255-274`), so the meaning of that escape is dialect-dependent. `crud/predicate_test.go:60-65` pins the escaped bind text but no engine-behaviour test exists.
+**Blast radius:** silent wrong answer
+
+### E-SPECS-02 — The literal Criteria example receives a hostile search term
+**Shape:** adversarial input
+**Setup:** A service follows the documented literal form and builds `cb.Like(root.Get("Name"), "%"+q+"%")` from a query parameter.
+**What the consumer does:** They use the form the module teaches first for a reusable filter, with a customer-controlled `q`.
+**What must happen:** The API must offer an escaped literal-search operation, or make the unsafe pattern operation impossible to mistake for one.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Builder.Like` and `Builder.LikeIgnoreCase` only delegate to the raw-pattern constructors (`crud/decorators/specs/spec.go:78-82`); `crud.Like` preserves the pattern verbatim (`crud/predicate.go:425-434`). The literal-style test deliberately binds `%@corp.com` as a pattern (`crud/decorators/specs/specs_test.go:62-82`), and the complete Builder method set has no escaped counterpart (`crud/decorators/specs/spec.go:61-101`).
+**Blast radius:** silent wrong answer
+
+### E-SPECS-03 — A dynamic field name is malformed or hostile
+**Shape:** adversarial input
+**Setup:** An integration uses `Root.Get` with a runtime field name that is empty, misspelled, or contains SQL-looking punctuation.
+**What the consumer does:** They expect a bad input to fail before any statement runs, never to be interpreted as SQL.
+**What must happen:** The name must be resolved as a model path and produce a typed unknown-field error, with no query sent.
+**Today:** ✅ handled
+**Evidence:** `Root.Get` only constructs a `Path` (`crud/decorators/specs/spec.go:51-59`) and builder comparisons become normal predicates (`:68-94`). `writer.leaf` resolves the name through `WalkPath`, remembers an error, and renders a false placeholder on failure (`crud/predicate.go:82-97`); `SQL.Done` returns that error (`crud/render.go:131-139`). The literal-spec seam is pinned by `crud/decorators/specs/comparable_test.go:95-107`, and unknown segments are separately refused by `crud/relation_test.go:457-464`.
+**Blast radius:** none
+
+### E-SPECS-04 — A hand-written metamodel skips a field and later uses it
+**Shape:** misuse
+**Setup:** A tired author writes an `attr:"-"` metamodel field to keep a sensitive column out of the metamodel, then a later filter calls that attribute’s `Eq(v)` method.
+**What the consumer does:** They expect a skipped attribute to be unusable, or to fail while the declaration is built.
+**What must happen:** A skipped field must refuse loudly at package initialisation or at compile time; it must not become an empty runtime path.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `bindMetamodel` skips `attr:"-"` without setting the attribute name (`crud/decorators/specs/metamodel.go:240-244`); `Attr.Eq` remains available and passes that name to `crud.Eq` (`:57-58`). The test proves the name is empty (`crud/decorators/specs/edge_test.go:235-252`); the eventual path failure is only at statement construction (`crud/predicate.go:86-96`).
+**Blast radius:** confusing error
+
+### E-SPECS-05 — A relation handle names the wrong target model
+**Shape:** degenerate declaration
+**Setup:** A manually maintained relation group declares `specs.Rel[Post, Writer]` under `Comments`, although `Comments` lands on `Remark`.
+**What the consumer does:** They want the generated-looking declaration to reject the mismatch before the first request.
+**What must happen:** Package initialisation must refuse the declaration and name the relation rather than narrowing an unintended table.
+**Today:** ✅ handled
+**Evidence:** `bindRel` compares the relation element with the handle target and panics on a mismatch (`crud/decorators/specs/metamodel.go:279-290`). `TestARelationHandleDeclaringTheWrongTargetIsRefused` proves both the rejection and the matching control declaration (`crud/decorators/specs/edge_test.go:352-375`).
+**Blast radius:** none
+
+### E-SPECS-06 — The parent filter is accidentally supplied to a child preload
+**Shape:** seam
+**Setup:** Both `Article` and `Comment` have `TenantID`, and a feed calls `crud.PreloadWhere(Article_.Comments.RelPath(), specs.As(Article_.TenantID.Eq(t)))`.
+**What the consumer does:** They expect a predicate for the parent model to be rejected when a child predicate is required.
+**What must happen:** The preload spelling must retain the target-model type, so the wrong filter cannot compile; shared column names must not turn the mistake into a successful but wrong response.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `specs.As` erases `M` to `crud.Option` (`crud/decorators/specs/spec.go:200-204`), and `PreloadWhere` accepts only a string plus untyped options (`crud/preload.go:40-46`). Preload options are rendered against the child query (`crud/preload_test.go:307-323`), so a shared `TenantID` silently narrows comments rather than articles. No wrong-model test exists.
+**Blast radius:** silent wrong answer
+
+### E-SPECS-07 — Two child conditions must describe the same child
+**Shape:** seam
+**Setup:** A moderation list asks for `AllOf(Article_.Comments.Approved.Eq(true), Article_.Comments.Spam.Eq(false))`.
+**What the consumer does:** They read it as “an article with one approved, non-spam comment.”
+**What must happen:** Both conditions must share one child witness, or the call site must make the wider two-child question explicit and offer a typed spelling for the narrow one.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Every predicate leaf with relation hops opens its own correlated `EXISTS` (`crud/predicate.go:82-128`). `AllOf` combines the resulting leaves with `AND` (`crud/decorators/specs/spec.go:168-189`), so the two conditions may be satisfied by different comments. No test in `crud/decorators/specs` or `crud/predicate_test.go` pins the same-child interpretation.
+**Blast radius:** silent wrong answer
+
+### E-SPECS-08 — An upstream exclusion list is empty on a read
+**Shape:** boundary
+**Setup:** A synchroniser receives no protected IDs and calls `User_.ID.NotIn(ids...)` to find the rest.
+**What the consumer does:** They expect the empty upstream result to be distinguishable from an intentional request for every user, or to refuse loudly.
+**What must happen:** An empty exclusion list must not silently become a successful whole-table read.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Typed `NotIn` delegates to `crud.NotInAny` (`crud/decorators/specs/metamodel.go:68-70`), whose empty value list renders `1 = 1` (`crud/predicate.go:201-209`). The remote round-trip suite deliberately preserves the `nin of nothing` semantics (`crud/query/roundtrip_test.go:67-72`), but no specs test exposes the whole-table read at the typed call site.
+**Blast radius:** silent wrong answer
+
+### E-SPECS-09 — The same empty exclusion list drives a bulk write
+**Shape:** boundary
+**Setup:** An offboarding job calls `DeleteBy(ctx, User_.ID.NotIn(ids...))` or `UpdateBy` after an upstream page unexpectedly contains no IDs.
+**What the consumer does:** They rely on the advertised bulk-write guard to prevent an accidental full-table statement.
+**What must happen:** A predicate that is semantically unconditional must be refused before it reaches either write verb.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The empty `NotIn` is a non-nil predicate that renders `1 = 1` (`crud/predicate.go:195-209`). `DeleteBy` and `UpdateBy` only refuse `p == nil` (`crud/decorators/specs/executor.go:82-98`) and otherwise delegate to `DeleteAll`/`UpdateAll`; both execute the rendered statement (`crud/sqlrepo/repository.go:846-870,903-917`). The exhaustive test covers only empty specifications, not a tautology (`crud/decorators/specs/edge_test.go:74-95`).
+**Blast radius:** data loss
+
+### E-SPECS-10 — A named filter receives 90,000 IDs
+**Shape:** scale
+**Setup:** An export reuses `User_.ID.In(ids...)` after another service returns a large page.
+**What the consumer does:** They expect a stated, early ceiling rather than a statement that a driver rejects after expensive construction.
+**What must happen:** Typed `In` and `NotIn` must cap the list or refuse with a consumer-correct error before a database call.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Attr.In` forwards the whole slice to `crud.InAny` (`crud/decorators/specs/metamodel.go:64-70`), and `inNode.render` binds every value without a limit (`crud/predicate.go:211-225`). The neighbouring wire entry point explicitly documents the PostgreSQL 65,535-parameter failure and defaults its cap to 1,024 (`crud/query/compile.go:39-46,83-92`); no equivalent cap or specs test exists.
+**Blast radius:** confusing error
+
+### E-SPECS-11 — A shared export filter selects two million rows
+**Shape:** scale
+**Setup:** The CSV export named in this module calls `FindAll` with a valid tenant filter and no paging option.
+**What the consumer does:** They expect either an intentionally named unbounded read with guidance, or a streamed/paged route before process memory is exhausted.
+**What must happen:** The unbounded result must be explicit and its resource cost documented at the call site.
+**Today:** 🟡 partial
+**Evidence:** `FindAll` forwards the specification and options unchanged (`crud/decorators/specs/executor.go:61-64`). With no paging option, `GetAll` intentionally invokes `find` with a zero limit (`crud/sqlrepo/repository.go:271-280`); this preserves correctness but materialises every matching row. No specs test or module-doc warning establishes a ceiling or export route.
+**Blast radius:** crash
+
+### E-SPECS-12 — Two first requests cross the same relation together
+**Shape:** concurrency
+**Setup:** Two services reuse a composed relation specification at process start, and their first requests both traverse `Comments.Author.Name`.
+**What the consumer does:** They expect first use to be as safe as every later request and neither request's relation resolution to influence the other.
+**What must happen:** Lazy relation metadata must initialise once, with all callers seeing the same join fields.
+**Today:** 🟡 partial
+**Evidence:** Relation metadata has separate `sync.Once` guards for target and default join-field resolution (`crud/relation.go:74-90,93-109`). `TestConcurrentFirstUseOfARelationDoesNotRace` starts 32 resolvers and asserts both stable join fields and non-empty results (`crud/relation_test.go:474-521`). Library composition creates a fresh closure and does not itself mutate its operands (`crud/decorators/specs/spec.go:142-155`), but no specs test invokes one composed specification concurrently.
+**Blast radius:** none
+
+### E-SPECS-13 — Cancellation reaches a bulk specification write
+**Shape:** partial failure
+**Setup:** An operator cancels a long-running `UpdateBy` or `DeleteBy` while the database is executing it.
+**What the consumer does:** They need the cancellation error to surface rather than a fabricated row count, and they need an explicit transaction when several statements must succeed or roll back together.
+**What must happen:** The context must reach the executor unchanged; multi-statement work must roll back when its callback returns the cancellation error.
+**Today:** ❓ unverified
+**Evidence:** Specs passes the supplied context directly to its repository calls (`crud/decorators/specs/executor.go:82-98`), and sqlrepo supplies that same context to `Exec` (`crud/sqlrepo/repository.go:866-868,913-915`). `crud.InTx` rolls back when the callback returns an error (`crud/executor.go:503-527`). No cancellation or database-error test exists in `crud/decorators/specs`, so the observable bulk-write outcome is not pinned here.
+**Blast radius:** confusing error
+
+### E-SPECS-14 — A specification bulk delete and audit insert share one transaction
+**Shape:** seam
+**Setup:** An offboarding workflow invokes `users.Tx`, uses `specs.Executor(users).DeleteBy` inside the callback, then writes an audit row through a sibling repository.
+**What the consumer does:** They expect both writes to commit or neither to commit, without rebuilding the specification executor around a transaction value.
+**What must happen:** The executor must retain the ordinary repository’s `Tx` surface, and the transaction it opens must reach same-database sibling repositories only.
+**Today:** ✅ handled
+**Evidence:** `specs.Repo` embeds `crud.Repo` (`crud/decorators/specs/executor.go:18-25`), whose embedded `Core` includes `Tx` (`crud/repo.go:11-54,60-65`). `sqlrepo.Tx` delegates to `crud.InTx` (`crud/sqlrepo/repository.go:137-139`), and `TestInTxScopesTheTransactionItOpens` proves same-database siblings join while another database does not (`crud/executor_test.go:139-160`).
+**Blast radius:** none
+
+### E-SPECS-15 — The reusable filter crosses a process boundary
+**Shape:** seam
+**Setup:** A service sends a specification built with `specs.Lift[User](crud.Raw(...))`, `crud.EqField`, or a false predicate to a remote vv resource.
+**What the consumer does:** They expect a filter the wire cannot represent to fail at the sending call, never to disappear and return extra rows.
+**What must happen:** Unsupported predicate nodes must be named in a preflight error; representable filters must retain their narrowing through the round trip.
+**Today:** ✅ handled
+**Evidence:** `specs.Predicate` exposes the AST for the bridge (`crud/decorators/specs/spec.go:195-198`), and `remote.ToRequest` marshals it and returns any error before making a request (`remote/options.go:90-95`). The marshaller explicitly refuses `EqField`, `False`, and `Raw` (`crud/document.go:220-222,292-301`); `crud/query/roundtrip_test.go:121-153` proves the refusals name the offending constructor.
+**Blast radius:** none
+
+## Edge verdict
+
+The worst live edge is not a crash: a natural, readable relation filter can return the wrong root rows with status 200 because same-path child conditions are evaluated in independent `EXISTS` clauses. The wrong-model preload and empty `NotIn` read have the same silent-success shape, while the bulk-write form of empty `NotIn` escalates it to data loss because the guard checks only for nil. Pattern escaping and typed list-size limits are also open across the public typed path. Declaration-time relation-target validation, malformed runtime-path refusal, transaction propagation, and remote refusal of unrepresentable predicates are genuinely closed; composed-specification concurrency and cancellation of a bulk write remain unverified at this layer.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | Two conditions on one to-many relation can be true on two different children, while the typed call reads as one child satisfying both. | blocker | It returns a wider, plausible result with 200 and no indication that a moderation or entitlement rule changed meaning. |
+| 2 | `crud.PreloadWhere` accepts `specs.As` for the parent model and applies it to the child query after the type is erased. | blocker | Shared fields such as `TenantID` make the mistake silently load the wrong children; the typed API supplied false confidence. |
+| 3 | Typed `NotIn` over an empty list renders `1 = 1` for a normal read. | blocker | A failed upstream page becomes a whole-table success, indistinguishable from an intentional unfiltered request. |
+| 4 | Typed pattern helpers emit an escaped bind but no `ESCAPE` clause, and the literal Criteria builder has no escaped convenience operation. | blocker | Search semantics vary by dialect and can silently broaden a customer-controlled search. |
+| 5 | The same non-nil tautology passes `DeleteBy` and `UpdateBy`'s empty-specification guard. | blocker | A commonplace empty upstream list can delete or rewrite every row despite the module’s advertised safety rail. |

@@ -1,8 +1,8 @@
 # utils/vvdb · utils/vvdb/dbpgx — one configuration file becomes the handle the application owns
 
 **Covers:** `github.com/frostgrove/vv/utils/vvdb`, `github.com/frostgrove/vv/utils/vvdb/dbpgx`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — three guarantees the shipped documents make are false (`dbpgx.Connect` "dials"; `Config.Validate` "is called by DSN and by Open"; `replica:` works with `MustOpen`, which is the pairing the README itself prints), a `params` key silently overrides the TLS mode the config states, and two of the fixes — a redacting `Secret` type and `Open` calling `Validate` — are breaking changes whose window closes at the tag.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — three guarantees the shipped documents make are false (`dbpgx.Connect` "dials"; `Config.Validate` "is called by DSN and by Open"; `replica:` works with `MustOpen`, which is the pairing the README itself prints), and the edge pass adds a second silent `params` override that can replace a PostgreSQL Unix-socket target, plus replica declarations that either create a second pool on the primary or discard a nested topology. A redacting `Secret` type and `Open` calling `Validate` remain breaking changes whose window closes at the tag; the new `ReadReplica` map alias and pgx cancellation/range boundaries need decisions or tests before this surface is safe to call release-ready.
 
 ## What a consumer is actually trying to do
 
@@ -1428,3 +1428,127 @@ above close rather than pave.
 - **Reviewer: "H-VVDB-18's refusal of a close helper reads as reflex."** Agreed and reversed: [[D-057]]'s forbid list is about a function that removes the caller's line, which a `Close` the caller invokes does not. It is now proposed rather than dismissed, with the real objection stated — two ways to close is two things to reconcile.
 - **Reviewer: "`vvdb.Verify(ctx, db, cfg)` reuses `pool.connect_timeout` for the whole boot check, which is a per-dial timeout."** Kept the idea, and the shape has moved twice: it is now `func (p Pool) Verify(ctx, ping func(context.Context) error) error`, one attempt, wrapping `ErrUnreachable`. Reusing the config's own number is still right: a consumer who tuned a dial timeout has stated the only latency number this module knows, and inventing a second one is a number nobody wrote.
 - **Reviewer: "The `database/sql` half of the start-up guarantee has no blocker row despite being rated large."** Still kept out of the blockers table. `Open` being lazy is documented accurately (`open.go:17-19`) and matches `sql.Open`; a missing convenience is a DX gap, not a shipped falsehood. The pgx half is a blocker because four documents say the opposite of what the code does. The distance rating and the severity answer different questions, and the Distance column now says which.
+
+## Edge cases
+
+### E-VVDB-01 — A port outside TCP's range reaches the driver
+**Shape:** boundary
+**Setup:** An environment template renders `DB_PORT=-1` or `65536` for a PostgreSQL or MySQL service.
+**What the consumer does:** They call `Open` (or hand the same config to `dbpgx.Connect`) expecting the configuration boundary to name the bad port before a handle is returned.
+**What must happen:** A port that cannot identify a TCP endpoint is refused at start-up with the `port` field named; it must not become a lazy driver failure or a retry against an impossible address.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `validateFields` checks only engine-specific names, path, TLS and the MySQL user colon (`utils/vvdb/config.go:192-220`); it never bounds `Port`. Both builders pass any integer through `strconv.Itoa` and `net.JoinHostPort` (`utils/vvdb/dsn.go:59-74`, `:114-125`), and `Open` hands the resulting string to lazy `sql.Open` (`utils/vvdb/open.go:20-35`). `TestAPortLeftUnsetIsTheEnginesOwn` exercises only zero/defaulting (`utils/vvdb/dsn_test.go:55-74`); no out-of-range-port test exists.
+**Blast radius:** confusing error
+
+### E-VVDB-02 — An already-bracketed IPv6 literal is not a valid host field
+**Shape:** boundary
+**Setup:** An operator pastes `[2001:db8::1]` into `host`, as they would into a URL authority, rather than the bare literal `2001:db8::1`.
+**What the consumer does:** They generate a PostgreSQL or MySQL DSN and start the service.
+**What must happen:** The configuration either accepts both conventional spellings or refuses the bracketed one with an actionable `host` error before it reaches a driver.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Both server builders pass `Host` directly to `net.JoinHostPort` without normalising or rejecting brackets (`utils/vvdb/dsn.go:59-74`, `:114-125`); `validateFields` has no host syntax check (`utils/vvdb/config.go:192-220`). The sole IPv6 test covers the bare spelling only (`utils/vvdb/dsn_test.go:169-179`), so it cannot pin the pasted-URL boundary.
+**Blast radius:** confusing error
+
+### E-VVDB-03 — A passthrough parameter replaces a PostgreSQL Unix socket
+**Shape:** adversarial input
+**Setup:** The primary config says `host: /var/run/postgresql`; a shared or generated `params` map also contains `host: other.internal`.
+**What the consumer does:** They expect the explicit `host` field to select the local socket and `params` to carry only driver extras.
+**What must happen:** A parameter that duplicates a connection-address field is refused as two sources of truth; it must never silently reroute the connection.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The PostgreSQL builder first writes a socket directory as query `host` (`utils/vvdb/dsn.go:63-68`) and then lets every `Params` entry overwrite it via `q.Set` (`:81-83`). pgx parses the URI authority first and then overwrites settings from query parameters (`.../pgx/v5@v5.10.0/pgconn/config.go:619-677`), finally taking the endpoint from `settings["host"]` (`:442-481`). `fieldsBesideDSN` protects a whole DSN but does not inspect `Params` keys (`utils/vvdb/config.go:169-190`), and no local test combines a socket with `params.host`.
+**Blast radius:** silent wrong answer
+
+### E-VVDB-04 — A chart's empty `replica: {}` opens the primary twice
+**Shape:** misuse
+**Setup:** A Helm default emits `replica: {}` although the deployment has no read server yet.
+**What the consumer does:** They call `OpenReadWrite` and wire its second result into `crud.ReadWrite` only when non-nil.
+**What must happen:** An empty replica declaration is either treated as absent or refused as incomplete; it must not quietly create an independent second pool against the primary.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Any non-nil pointer is a replica (`utils/vvdb/config.go:229-233`). With no fields to overlay, `ReadReplica` returns the copied primary unchanged (`:243-286`), and `OpenReadWrite` calls `Open` a second time whenever that result is present (`utils/vvdb/open.go:63-77`). `TestNoReplicaIsNotAnEmptyReplica` tests only a nil pointer (`utils/vvdb/config_test.go:83-87`), not `&vvdb.Config{}`.
+**Blast radius:** silent wrong answer
+
+### E-VVDB-05 — A replica of a replica is silently discarded
+**Shape:** degenerate declaration
+**Setup:** A generated configuration accidentally nests `replica:` under an already-declared replica.
+**What the consumer does:** They start from the one configuration file and expect unsupported topology to stop start-up rather than be partially applied.
+**What must happen:** The module must refuse a nested replica and name it, because its API describes one primary and one stale-read server.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `ReadReplica` copies the first fragment and then clears `r.Replica` in both the DSN and field-merge paths (`utils/vvdb/config.go:233-241`, `:243-286`); `Validate` validates that already-flattened value (`:153-164`). The existing test explicitly says "a replica of a replica is not a thing this describes" but only asserts the result is nil (`utils/vvdb/config_test.go:20-41`), proving discard rather than refusal. No nested-declaration rejection test exists.
+**Blast radius:** silent wrong answer
+
+### E-VVDB-06 — A derived replica aliases the primary's parameters
+**Shape:** concurrency
+**Setup:** A caller obtains a field-described replica with no replica `params`, then adds a replica-only `application_name` or `search_path` to the returned config before opening it.
+**What the consumer does:** They reasonably treat `ReadReplica` as a derived configuration, independent of the primary it came from.
+**What must happen:** Mutating the returned configuration must not mutate the primary; configuration derivation must copy the map regardless of whether the overlay has parameters.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `base := c` copies the map header, not its backing map (`utils/vvdb/config.go:243-245`). A new map is allocated only when `len(r.Params) > 0` (`:276-285`), so the normal host-only replica returns the primary's `Params` map unchanged. `TestAReplicaOverridesRatherThanMerges` covers only the allocating branch (`utils/vvdb/config_test.go:44-60`); no test mutates `Params` on a host-only derived replica.
+**Blast radius:** silent wrong answer
+
+### E-VVDB-07 — One goroutine changes `Params` while another builds a DSN
+**Shape:** concurrency
+**Setup:** Startup derives tenant or replica settings from a shared `Config` while another goroutine adds a per-process parameter to its exported `Params` map.
+**What the consumer does:** They reuse the ordinary value configuration across their startup components and build more than one handle from it.
+**What must happen:** The public configuration must either be explicitly immutable after loading or safely snapshot its map before iteration; an ordinary configuration race must not terminate the process.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Params` is an exported mutable `map[string]string` (`utils/vvdb/config.go:66-69`) and every builder ranges it without a copy or lock (`utils/vvdb/dsn.go:81-83`, `:146-148`, `:166-169`). No adjacent test starts concurrent config derivation or DSN building (`utils/vvdb/config_test.go:1-148`, `utils/vvdb/dsn_test.go:1-285`). A concurrent map iteration and write is a Go runtime fatal error, not a recoverable configuration refusal.
+**Blast radius:** crash
+
+### E-VVDB-08 — An in-memory SQLite test obtains two databases from one handle
+**Shape:** scale
+**Setup:** A test config uses `engine: sqlite`, `path: ":memory:"` and permits more than one open connection.
+**What the consumer does:** It creates schema and data through one request, then a concurrent request acquires another connection and expects the same test database.
+**What must happen:** The module must either make this shape share the store, restrict it to one connection, or document and refuse the unsafe combination; a test database must not fragment when it becomes concurrent.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `SQLiteDSN` produces `file::memory:` verbatim (`utils/vvdb/dsn.go:161-173`), while `Open` permits any positive `MaxOpen` (`utils/vvdb/open.go:20-35`, `:82-95`). The default SQLite driver's own in-memory tests use `file::memory:?cache=shared` and set `MaxOpenConns(1)` (`.../sqlite@v1.54.0/sqlite.go:207-237`, `.../sqlite@v1.54.0/all_test.go:4583-4591`). No `vvdb` opener test opens SQLite at all (`utils/vvdb/open_test.go:32-142`).
+**Blast radius:** confusing error
+
+### E-VVDB-09 — A SQLite read replica cannot read the primary's in-memory store
+**Shape:** seam
+**Setup:** A local test uses the same `path: ":memory:"` for SQLite and adds `replica: {}` to exercise read/write routing.
+**What the consumer does:** They pass the two handles to `crud.ReadWrite` and expect reads to see a table a write just created.
+**What must happen:** SQLite must reject replica topology, or the module must explicitly construct a safely shared in-memory URI; two independently opened in-memory handles cannot impersonate primary and replica.
+**Today:** ❌ wrong or unhandled
+**Evidence:** A non-nil empty replica merges back to the primary configuration (`utils/vvdb/config.go:229-286`), and `OpenReadWrite` separately calls `Open` for primary and replica (`utils/vvdb/open.go:63-77`). Each therefore receives the same non-shared `file::memory:` string from `SQLiteDSN` (`utils/vvdb/dsn.go:161-173`); the driver test's `cache=shared` spelling is the missing distinction (`.../sqlite@v1.54.0/all_test.go:4583-4591`). There is no SQLite `OpenReadWrite` test.
+**Blast radius:** silent wrong answer
+
+### E-VVDB-10 — A cancelled pgx start-up context still yields a pool
+**Shape:** partial failure
+**Setup:** The application shuts down while a goroutine is still constructing its pgx pool and calls `Connect` with an already-cancelled context.
+**What the consumer does:** It expects cancellation to return `context.Canceled` and no handle whose background work it must now remember to close.
+**What must happen:** `Connect` must honour an already-cancelled context before transferring ownership of a pool, or document the deliberately different contract and make the caller check it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Connect` forwards `ctx` directly to `pgxpool.NewWithConfig` and returns any pool it receives (`utils/vvdb/dbpgx/dbpgx.go:33-56`). `NewWithConfig` constructs the pool then starts initial resource creation in a goroutine before returning it (`.../pgx/v5@v5.10.0/pgxpool/pool.go:220-339`); its later health checks use `context.Background()` to create replacement connections (`:554-595`). The local pgx tests use only `context.Background()` (`utils/vvdb/dbpgx/dbpgx_test.go:24-83`), so cancellation ownership is untested.
+**Blast radius:** confusing error
+
+### E-VVDB-11 — A 64-bit pool limit overflows pgx's 32-bit configuration
+**Shape:** scale
+**Setup:** A generated deployment sets `pool.max_open: 2147483648` on a 64-bit host, thinking it has stated a very large but valid Go `int`.
+**What the consumer does:** It chooses `dbpgx.Connect` for a PostgreSQL service and expects invalid capacity to be refused as a named config error.
+**What must happen:** Limits outside pgx's `int32` range must be rejected before pool construction, with the offending field named.
+**Today:** 🟡 partial
+**Evidence:** `Pool.MaxOpen` is a machine-sized `int` (`utils/vvdb/config.go:88-94`) but `dbpgx.apply` narrows it without bounds checking (`utils/vvdb/dbpgx/dbpgx.go:93-102`). pgx passes that `int32` to puddle as `MaxSize` (`.../pgx/v5@v5.10.0/pgxpool/pool.go:320-339`), where a wrapped negative value becomes the generic error `MaxSize must be >= 1` (`.../puddle/v2@v2.2.2/pool.go:152-174`), surfaced as "connecting to <name>" (`utils/vvdb/dbpgx/dbpgx.go:52-55`). `TestTheConfigReachesPgx` covers only `MaxOpen: 7` (`utils/vvdb/dbpgx/dbpgx_test.go:16-48`).
+**Blast radius:** confusing error
+
+### E-VVDB-12 — A bad second pgx configuration must not leak the first pool
+**Shape:** partial failure
+**Setup:** The primary PostgreSQL config parses, but a replica DSN is malformed so its pgx configuration fails after the first pool has been created.
+**What the consumer does:** It retries `ConnectReadWrite` during startup and expects either both pools or no pool to remain owned by the failed attempt.
+**What must happen:** The first pool must be closed, the returned pair must be nil, and the error must identify the replica; this needs a non-vacuous test that drives the second `Connect` failure.
+**Today:** ❓ unverified
+**Evidence:** The intended cleanup exists: `ConnectReadWrite` closes `primary` and returns `nil, nil` after its second `Connect` fails (`utils/vvdb/dbpgx/dbpgx.go:73-87`). There is no `ConnectReadWrite` test at all (`utils/vvdb/dbpgx/dbpgx_test.go:1-84`), and `TestConnectRefusesBeforeItDials` covers only a single malformed primary config (`:78-83`), so it would not fail if the pair cleanup disappeared.
+**Blast radius:** crash
+
+## Edge verdict
+
+The worst new edge is a silent change of PostgreSQL endpoint: an ordinary `params.host` overwrites the socket address that the named `host` field supplied. Replica declarations are not a closed one-primary/one-secondary vocabulary: an empty object creates another primary pool, while a nested object is quietly erased, and host-only derived replicas share the primary's mutable `Params` map. The lower-level builders remain thin at malformed port, bracketed IPv6, SQLite in-memory and 64-bit pgx-capacity boundaries; none is covered by a test that reaches a real `vvdb` SQLite handle. pgx cancellation and pair-cleanup behavior also lack the consumer-level tests needed for a release claim, even though the latter cleanup branch looks intentional.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `Params` overwrites the PostgreSQL socket's `host` after vvdb writes it; pgx gives URI query parameters final precedence | blocker | A field named `host` can silently connect the service to another server. This is the same two-sources-of-truth defect as the existing TLS row, but it changes the database endpoint rather than TLS policy |
+| 2 | `replica: {}` is treated as a real replica of the primary, while a nested `replica:` is silently discarded | serious | One declarative topology either doubles primary connections or silently loses a server; neither outcome is what an operator declared |
+| 3 | `ReadReplica` aliases the primary `Params` map whenever the replica has no parameter override | serious | A caller adding a read-only schema or session parameter mutates the next primary connection's configuration, producing a wrong-database or wrong-schema result without an error |
+| 4 | `path: ":memory:"` is not made safe for multiple SQLite connections or a read replica | sharp edge | The standard test configuration fragments into disconnected stores once a second connection or routing handle is introduced, yielding intermittent missing-table/data symptoms |
+| 5 | Invalid TCP ports are not validated and a pgx pool size can overflow the `int32` target | sharp edge | The process receives a driver/pool construction error unrelated to the named field, despite the configuration boundary advertising start-up refusals |

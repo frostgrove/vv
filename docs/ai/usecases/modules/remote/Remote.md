@@ -1,8 +1,8 @@
 # remote · remote/remotehttp — another service's table, held with the same hands as your own
 
 **Covers:** `github.com/frostgrove/vv/remote`, `github.com/frostgrove/vv/remote/remotehttp`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — a read, a write and a refusal cross intact; then `GetAll` comes back short while saying it is complete, a predicate on `GetByID` is thrown away where the local call honours it, and there is no seam at which a remote resource can be scoped.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — `GetAll` can silently truncate, `GetByID` drops a narrowing predicate, and a remote resource has no scope seam; edge cases add credential disclosure through URL userinfo, unbounded redirect following, and hooks that still run after cancellation.
 
 ## What a consumer is actually trying to do
 
@@ -1408,3 +1408,134 @@ here because it surfaces here.
   having. The runtime refusal is the trade, and the price of it is that the
   refusal must carry a class a gateway can render, which is now part of the
   proposal rather than left unstated.
+
+## Edge cases
+
+### E-REMOTE-01 — The configured peer URL carries userinfo
+**Shape:** adversarial input | misuse
+**Setup:** An environment variable contains `https://client:secret@content.internal/articles`, and the address is wrong or the peer returns a non-vv error.
+**What the consumer does:** They expect an error safe to put in an application log. A URL credential may be unwise, but configuration parsers and legacy endpoints still produce one; the library must not make that secret observable.
+**What must happen:** `Transport` must reject URL userinfo at wiring, or redact it from every request-building and protocol error.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `remote/remotehttp/transport.go:39-46` stores the supplied base string unchanged; `:117-159` puts the resulting target in the fault location; `fault` retains it at `:247-255`; and `remote/transport.go:93-100` includes `Where` in `ProtocolError.Error()`. `remote/roundtrip_test.go:329-375` tests a wrong URL but no URL with userinfo.
+**Blast radius:** data leak
+
+### E-REMOTE-02 — A resource base URL has a query or fragment
+**Shape:** misuse | degenerate declaration
+**Setup:** A config value is copied from a browser or health-check URL, such as `https://content.internal/articles?canary=blue` or `https://content.internal/articles#v2`.
+**What the consumer does:** They expect a resource-prefix constructor to reject a URL that cannot safely have a method path appended to it.
+**What must happen:** Construction must parse the base URL and refuse query, fragment, and other non-prefix forms before the first call.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `remote/remotehttp/transport.go:39-46` only strips one trailing slash; `Do` constructs a target by string concatenation at `:117-124`. There is no URL parse or constructor-error path, and `remote/remotehttp/transport_test.go:23-42` covers only an ordinary base URL.
+**Blast radius:** confusing error
+
+### E-REMOTE-03 — The peer answers a redirect instead of a CRUD response
+**Shape:** adversarial input | seam
+**Setup:** An ingress redirects an old mount to a login page or another host, and the caller's hook has prepared the request for the configured peer.
+**What the consumer does:** They expect this fixed-peer client to report a protocol failure at the configured address, rather than silently pursuing a different route or origin.
+**What must happen:** The default transport must refuse redirects and report the original 3xx response; following redirects needs an explicit opt-in at the caller's `http.Client` seam.
+**Today:** ❌ wrong or unhandled
+**Evidence:** the default is only `&http.Client{Timeout: DefaultTimeout}` at `remote/remotehttp/transport.go:64-71`, with no redirect policy; a nil `CheckRedirect` uses Go's redirect-following default (`net/http/client.go:63-77`), and sensitive headers are forwarded to the same host or its subdomains (`:41-49`). `Do` delegates to `t.client.Do` at `remote/remotehttp/transport.go:138-141` and accepts every final 2xx response at `:156-159`. No remote test installs a redirecting server (`remote/remotehttp/transport_test.go:23-100`; `remote/roundtrip_test.go:36-518`).
+**Blast radius:** silent wrong answer
+
+### E-REMOTE-04 — A 202 or 206 carries syntactically valid JSON
+**Shape:** adversarial input | seam
+**Setup:** A proxy returns `202 Accepted` before a write completed, or `206 Partial Content` containing a valid but incomplete page.
+**What the consumer does:** They expect a repository method to return only the completed full document its method promises, not treat every successful-looking HTTP status as equivalent.
+**What must happen:** Each call must accept the statuses the vv route actually promises and reject other 2xx statuses as a protocol error; a 201 create may be valid, a 202 or 206 is not silently interchangeable with it.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `remote/remotehttp/transport.go:156-159` accepts the entire 200–299 range without consulting `remote.Call.Method`; `remote/resource.go:280-288` only unmarshals the body shape. The round-trip suite exercises the binding's ordinary responses (`remote/roundtrip_test.go:36-192`), not 202 or 206.
+**Blast radius:** silent wrong answer
+
+### E-REMOTE-05 — A string primary key contains a path separator
+**Shape:** boundary | adversarial input
+**Setup:** A remote resource uses human slugs or external IDs, and a valid key contains `/`, `%`, a space, or non-ASCII text.
+**What the consumer does:** They expect that key to name one row, never a different route or a differently decoded ID.
+**What must happen:** A single-row call must encode the primary key as exactly one URL path segment on Get, Update, Replace, and Delete.
+**Today:** 🟡 partial
+**Evidence:** `port/request.go:46-72` turns the typed key into text, and `remote/remotehttp/transport.go:174-193` applies `url.PathEscape` to every entity-route ID. The supplied integration model has only an `int64` key (`remote/fake_test.go:20-26`), and no transport test exercises an escaped string key.
+**Blast radius:** confusing error
+
+### E-REMOTE-06 — A resource receives no transport
+**Shape:** misuse | degenerate declaration
+**Setup:** A conditional wiring branch has no configured peer and supplies a nil `remote.Transport` to `remote.New` or `remote.TryNew`.
+**What the consumer does:** They expect the declaration to fail before any repository method can dereference a nil collaborator.
+**What must happen:** `TryNew` must return an explanatory error and `New` must fail immediately, preserving the framework's start-up-error convention.
+**Today:** 🟡 partial
+**Evidence:** `remote/resource.go:51-62` routes `New` through `TryNew`, and `TryNew` rejects a nil transport before reflection or a request. No remote test calls either constructor with nil (`remote/roundtrip_test.go:36-518`).
+**Blast radius:** none
+
+### E-REMOTE-07 — Optional HTTP wiring receives nil or a non-positive cap
+**Shape:** misuse | boundary
+**Setup:** A config branch supplies `WithClient(nil)` and an environment parser produces `WithMaxResponse(0)` or `WithMaxResponse(-1)`.
+**What the consumer does:** They expect the client to remain bounded and usable, not to panic on the first call or silently make response reading unlimited.
+**What must happen:** A nil client must leave the owned default in place, and every non-positive response limit must use the documented finite default.
+**Today:** 🟡 partial
+**Evidence:** `remote/remotehttp/transport.go:79-85` ignores a nil client; `WithMaxResponse` records its argument at `:94-99`; and `cap` substitutes `MaxResponse` unless the value is positive at `:108-114`. `remote/remotehttp/transport_test.go:23-42` tests an explicit non-nil replacement, and `:50-85` tests a positive cap; neither covers these degenerate values.
+**Blast radius:** none
+
+### E-REMOTE-08 — A job has no keys to delete
+**Shape:** boundary
+**Setup:** A retention job's selection is empty and calls `Delete(ctx)` with no IDs.
+**What the consumer does:** They expect a truthful zero and no pointless remote mutation request.
+**What must happen:** The call must return `(0, nil)` without contacting the peer.
+**Today:** ✅ handled
+**Evidence:** `remote/resource.go:237-263` returns before `Transport.Do` for zero IDs. `remote/roundtrip_test.go:182-191` pins both the zero result and absence of a recorded far-side call.
+**Blast radius:** none
+
+### E-REMOTE-09 — Save is called with a nil model pointer
+**Shape:** misuse | partial failure
+**Setup:** A handler passes a nil `*M` after a failed decode or a conditional allocation path.
+**What the consumer does:** They expect a clear local error and no `null` create or replace request.
+**What must happen:** The model must be rejected before `Transport.Do`; a malformed caller value cannot become a remote write.
+**Today:** 🟡 partial
+**Evidence:** `remote/resource.go:173-192` marshals first but then calls `Meta.HasID` before constructing or sending a call; `crud/access.go:8-14` rejects a nil model pointer. No Save test passes nil (`remote/roundtrip_test.go:100-130`).
+**Blast radius:** none
+
+### E-REMOTE-10 — The request is already cancelled before token minting
+**Shape:** partial failure | seam
+**Setup:** An inbound request is cancelled before the gateway starts a remote call; its `WithRequestHook` mints or exchanges a token before setting the header.
+**What the consumer does:** They expect cancellation to prevent all per-call work, including the hook, rather than merely stopping the HTTP round trip after a token exchange has happened.
+**What must happen:** `Do` must check `ctx.Err()` before invoking the hook (and again before the client), returning the cancellation without sending or minting.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `remote/remotehttp/transport.go:117-136` builds the request and executes the hook unconditionally before `t.client.Do`; only the latter observes cancellation at `:138-141`. `TestTheCallersDeadlineReachesTheRequest` cancels a context but installs no hook (`remote/remotehttp/transport_test.go:87-100`).
+**Blast radius:** confusing error
+
+### E-REMOTE-11 — One resource is used by many concurrent requests
+**Shape:** concurrency
+**Setup:** A gateway shares one `remote.Resource` across many requests with different IDs, options, contexts, and response bodies.
+**What the consumer does:** They expect the resource to be safe to share: one call's query, hook-created request, and decoded response cannot bleed into another's.
+**What must happen:** Resource and transport configuration must be immutable after construction and each call must allocate its own request, route data, and decode target; the invariant needs concurrent coverage.
+**Today:** 🟡 partial
+**Evidence:** `Resource` retains only a transport and meta at `remote/resource.go:41-45`, while each repository method creates local calls and decode targets (`:94-105`, `:130-145`, `:173-201`); `remote/remotehttp/transport.go:117-159` likewise holds per-call route, request, and response values locally. Go documents `http.Client` as safe for concurrent use (`net/http/client.go:30-35`). The tests are serial; no remote test runs shared-resource calls concurrently (`remote/roundtrip_test.go:36-518`; `remote/remotehttp/transport_test.go:23-100`).
+**Blast radius:** confusing error
+
+### E-REMOTE-12 — An extension transport answers success with no document
+**Shape:** boundary | seam
+**Setup:** A consumer writes a minimal `remote.Transport`, or a wrapper accidentally drops an otherwise successful response body and returns `(nil, nil)`.
+**What the consumer does:** They expect every resource method to fail loudly instead of returning a zero-valued page, row, count, or delete count as though the peer answered it.
+**What must happen:** The shared decoder must reject an empty successful document before a caller can observe a zero value.
+**Today:** 🟡 partial
+**Evidence:** `remote/transport.go:56-67` makes custom transports a supported extension point, and `remote/resource.go:274-288` rejects `len(raw) == 0` before unmarshalling. The HTTP cap test covers a non-empty response (`remote/remotehttp/transport_test.go:50-85`), but no remote-resource test supplies an empty successful `json.RawMessage` from a custom transport.
+**Blast radius:** none
+
+## Edge verdict
+
+The highest-severity new edge is a direct secret disclosure: a URL containing
+userinfo is copied into `ProtocolError` and therefore ordinary application logs.
+The fixed-peer contract is also porous: the default client follows redirects,
+and any final 2xx status is accepted even when it cannot mean a completed CRUD
+answer. The resource defends several ordinary declaration and boundary mistakes
+in code — nil transport, non-positive response caps, zero-key delete, nil model,
+and empty extension output — but all except the empty delete lack focused tests.
+Cancellation does reach the HTTP request, yet it arrives too late to suppress a
+costly per-request hook; shared-resource concurrency is plausible by inspection
+and still unpinned.
+
+## Release blockers found here (edge)
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | URL userinfo is preserved in a `ProtocolError` and its `Error()` string (`remote/remotehttp/transport.go:117-159`; `remote/transport.go:93-100`) | serious | A failed remote call can write an endpoint credential into normal application logs. Reject userinfo or redact every error before a service ships its first credentialed peer configuration. |
+| 2 | The default client follows redirects and the transport treats any final 2xx as a normal resource response (`remote/remotehttp/transport.go:64-71`, `:138-159`) | serious | A call configured for one peer can silently complete against another route or origin, defeating the client’s fixed-peer and protocol-validation promises. |
+| 3 | `WithRequestHook` runs even when the inbound context was already cancelled (`remote/remotehttp/transport.go:117-141`) | sharp edge | Token minting, tracing, or other hook work happens after the consumer has cancelled the call. The existing cancellation test proves only that an unhooked HTTP request stops. |
+| 4 | A base URL with query or fragment is accepted and concatenated into the first request (`remote/remotehttp/transport.go:39-46`, `:117-124`) | sharp edge | A configuration typo cannot fail at wiring and produces a malformed or surprising route only under traffic. |

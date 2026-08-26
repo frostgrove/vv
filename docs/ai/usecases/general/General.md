@@ -1,8 +1,8 @@
 # vv — a filtered, sorted, paginated, secured CRUD API over the model you already have
 
 **Covers:** `github.com/frostgrove/vv` and every module under it — `crud`, `crud/sqlrepo`, `crud/query`, `crud/decorators/{specs,security,faults}`, `crud/adapter/{crudsql,crudpgx}`, `crud/{catalog,probe,sqlfault,crudtest}`, `crud/http/{crudhttp,crudnet,crudfiber,crudgin}`, `crud/rpc/crudgrpc`, `auth`, `auth/{apikey,authjwt}`, `auth/http/{authhttp,authnet,authgin,authfiber}`, `auth/rpc/authgrpc`, `port`, `port/porthttp`, `remote`, `remote/remotehttp`, `errs`, `errs/sqlerr`, `utils/{vvdb,vvflag,vvcfg}`, `utils/vvdb/dbpgx`, `cmd/vv`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — every part is deep and proven in isolation; a stock mount is writable by anyone who can reach the port, open in five query dimensions and serialises the whole model, the README's flagship error example promises a status the code does not answer, the wiring the README prescribes for the error vocabulary configures nothing on a generated route, and nothing assembles the parts into an application.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — every part is deep and proven in isolation; a stock mount is writable by anyone who can reach the port, open in five query dimensions and serialises the whole model, the README's flagship error example promises a status the code does not answer, the wiring the README prescribes for the error vocabulary configures nothing on a generated route, and nothing assembles the parts into an application. The edge pass adds three silent data-integrity failures: `Save` does not honour a model's version lock, MySQL can update the row that owns a different unique key, and a gRPC numeric key above 2^53 can select its rounded neighbour.
 
 **This table is not the whole gate.** It carries what no single module owns. The
 module sweeps carry **35** blocker-severity rows of their own — `grep -c "| blocker |"
@@ -866,3 +866,197 @@ their fixes live.
   and returns `specs.Repo`. Round 1's H-GENERAL-19 (catalog reload) is folded into
   H-GENERAL-20, where the deploy-order rule it was half of now lives. Every other
   case is renumbered by the two new cases inserted at 05 and 06.
+
+## Edge cases
+
+### E-GENERAL-01 — Two editors patch the same versioned row
+**Shape:** concurrency
+**Setup:** Two clients read version 3 of one row and both send a partial update.
+**What the consumer does:** They add `db:"version,version"` because their API must refuse a stale edit rather than choose a winner.
+**What must happen:** One update succeeds and advances the version; the other returns a conflict, never the other editor's row as though it were its own.
+**Today:** ✅ handled
+**Evidence:** `crud/sqlrepo/version_test.go:34-52` asserts that `Update` predicates on the version it read and advances it; `crud/sqlrepo/version_test.go:58-94` pins the stale result as both `crud.ErrStaleVersion` and `crud.ErrConflict`, on PostgreSQL and MySQL.
+**Blast radius:** none
+
+### E-GENERAL-02 — The version column is omitted at 6pm
+**Shape:** misuse
+**Setup:** A model has ordinary mutable fields but no `version` tag.
+**What the consumer does:** They mount it, assuming PATCH has the same protection as the versioned example without knowing that protection is an opt-in declaration.
+**What must happen:** The declaration should either make the missing concurrency policy visible at start-up or document that last writer wins at the call site that writes the model.
+**Today:** 🟡 partial
+**Evidence:** `crud/sqlrepo/version_test.go:167-183` pins that an unversioned model has no version clause at all. `crud/meta.go:29-33` documents the opt-in tag, but no declaration check or generated mount warns that it is absent; no test found for a consumer-facing warning.
+**Blast radius:** silent wrong answer
+
+### E-GENERAL-03 — A stale worker calls `Save`
+**Shape:** concurrency
+**Setup:** A worker holds a versioned model, another writer changes it, then the worker calls `Save` with its stale full model.
+**What the consumer does:** They use the repository's documented upsert instead of the route-shaped `Update` method.
+**What must happen:** A versioned model must not silently overwrite a newer row through a different repository verb; refusal is safer than a partial lock.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/sqlrepo/version_test.go:147-164` states and asserts that `Save` is an upsert with no `WHERE` in which to check the version; its emitted statement updates `title` while carrying no version predicate. `port/service.go:190-212` makes generated replace routes call that same `Save`. The test only prevents the stale value from winding the counter backwards, not the stale write itself.
+**Blast radius:** silent wrong answer
+
+### E-GENERAL-04 — A bulk update races a saved edit
+**Shape:** concurrency
+**Setup:** A job runs `UpdateAll` while a client holds a previously read version of one affected row.
+**What the consumer does:** They expect the client retry to see a conflict rather than overwrite the batch change.
+**What must happen:** Every row changed by the bulk operation advances its version.
+**Today:** ✅ handled
+**Evidence:** `crud/sqlrepo/version_test.go:133-145` asserts that `UpdateAll` adds `"version" = "version" + 1` to its statement.
+**Blast radius:** none
+
+### E-GENERAL-05 — Two first requests cross the same relation
+**Shape:** concurrency
+**Setup:** Two requests are the first in one process to preload or filter through one relation.
+**What the consumer does:** They start a new deployment under ordinary concurrent traffic.
+**What must happen:** Lazy relation defaults resolve once, consistently, and without a race on process-shared metadata.
+**Today:** ✅ handled
+**Evidence:** `crud/relation.go:75-90,303-317` protects target and default resolution with separate `sync.Once` values. `crud/relation_test.go:474-520` drives simultaneous first use and checks every goroutine receives the same non-empty join fields.
+**Blast radius:** none
+
+### E-GENERAL-06 — A manager points back to another manager
+**Shape:** degenerate declaration
+**Setup:** A hierarchy model has a relation whose target is the model itself.
+**What the consumer does:** They declare `Manager` on `Person` and then ask the repository to resolve it.
+**What must happen:** The declaration must resolve without a schema-builder deadlock and preserve the target model.
+**Today:** ✅ handled
+**Evidence:** `crud/relation.go:93-108` resolves relation targets lazily. `crud/relation_test.go:261-274` proves a self-referencing `Manager` resolves to `Person` and is cached on a second lookup.
+**Blast radius:** none
+
+### E-GENERAL-07 — One redaction must not mutate a sibling row
+**Shape:** seam
+**Setup:** A page has two parents that preload the same to-one child, then a presenter redacts one child's field.
+**What the consumer does:** They mutate the returned object for one response item.
+**What must happen:** Each parent must own its child value; changing one cannot alter another item in the same successful response.
+**Today:** ✅ handled
+**Evidence:** `crud/preload_edge_test.go:12-33` asserts two parents receive distinct child pointers and that changing one does not change the other. `crud/preload_edge_test.go:54-73` extends that property through a nested preload.
+**Blast radius:** none
+
+### E-GENERAL-08 — A broad preload and a narrow preload name the same path
+**Shape:** misuse
+**Setup:** Application code composes `Preload("Comments")` with `PreloadWhere("Comments", ...)` in either order.
+**What the consumer does:** They expect the broad request to remain broad rather than receive a silently narrowed subset.
+**What must happen:** The two requests are folded into one query without the narrowed request deleting rows the broad request asked to receive.
+**Today:** ✅ handled
+**Evidence:** `crud/preload_edge_test.go:75-110` tests both orderings and rejects a generated `WHERE` that keeps the narrowing; `crud/preload_edge_test.go:113-129` separately pins that two narrow requests intersect.
+**Blast radius:** none
+
+### E-GENERAL-09 — An attacker puts SQL text in every query-name position
+**Shape:** adversarial input
+**Setup:** An untrusted query document supplies statement terminators, comments, path traversal and wildcards as filters, sorts, projections, relations and preload clauses.
+**What the consumer does:** They send it through the JSON or query-string door of a public mounted resource.
+**What must happen:** The request refuses cleanly, produces no usable partial options, and no caller-chosen text becomes SQL.
+**Today:** ✅ handled
+**Evidence:** `crud/query/hostile_test.go:45-85` covers every name position. `crud/query/fuzz_test.go:19-31,76-105,108-157` checks both wire grammars for no panic, no partial compile on refusal and no caller text in rendered SQL.
+**Blast radius:** none
+
+### E-GENERAL-10 — A denied column arrives in another spelling
+**Shape:** adversarial input
+**Setup:** `published_at` is not allow-listed, and a client asks for `publishedAt`, `PublishedAt`, `published-at` or a padded spelling.
+**What the consumer does:** They try every wire spelling in filter, sort, select and search.
+**What must happen:** The deny remains a deny; forgiving field resolution must not turn into an allow-list bypass.
+**Today:** ✅ handled
+**Evidence:** `crud/query/hostile_test.go:209-247` exercises every spelling across all query dimensions and rejects an unlisted relation too. `crud/meta.go:91-106` is the forgiving field lookup that makes this control necessary.
+**Blast radius:** none
+
+### E-GENERAL-11 — The last possible page number
+**Shape:** boundary
+**Setup:** A client asks for a positive page near `math.MaxInt` with a non-zero limit.
+**What the consumer does:** They probe whether offset arithmetic wraps back to page one.
+**What must happen:** The request must be an empty page past the end, not a mislabeled page one.
+**Today:** 🟡 partial
+**Evidence:** `crud/options.go:259-270` saturates a would-overflow offset at `math.MaxInt`, which is the correct code path. No test found for the boundary through a mounted transport.
+**Blast radius:** confusing error
+
+### E-GENERAL-12 — The request body is exactly the cap, then one byte larger
+**Shape:** boundary
+**Setup:** A client posts bodies at a resource's byte limit and one byte over it.
+**What the consumer does:** They repeat the request on a generated HTTP route.
+**What must happen:** The exact-limit body is accepted; the larger body is 413 and reaches neither decoder nor repository.
+**Today:** ✅ handled
+**Evidence:** `port/porthttp/body.go:62-85` reads one byte past the configured cap and returns `TooLarge` only above it. `crud/http/crudnet/edge_test.go:521-572` pins 413 and no repository call above the cap, plus acceptance below the default cap.
+**Blast radius:** none
+
+### E-GENERAL-13 — A remote peer returns a page one byte too large
+**Shape:** boundary
+**Setup:** A dependent vv service or proxy answers at the configured response cap and one byte over it.
+**What the consumer does:** They call it through `remotehttp.Transport`.
+**What must happen:** The exact-limit answer is read, and the larger response is refused before it can grow the consumer process without bound.
+**Today:** ✅ handled
+**Evidence:** `remote/remotehttp/transport.go:144-155` reads one byte past the cap and refuses only the oversize response. `remote/remotehttp/transport_test.go:70-84` pins acceptance of an under-cap answer; no test found for the exact-cap boundary.
+**Blast radius:** none
+
+### E-GENERAL-14 — The caller cancels an outbound read
+**Shape:** partial failure
+**Setup:** A worker starts a remote read and its job context is cancelled before the peer responds.
+**What the consumer does:** They cancel the context they passed to the repository call.
+**What must happen:** The outbound request ends with `context.Canceled`; a library backstop must not keep the request alive.
+**Today:** ✅ handled
+**Evidence:** `remote/remotehttp/transport.go:116-140` creates the request with the caller's context. `remote/remotehttp/transport_test.go:87-100` waits for the server context to end and asserts the caller receives `context.Canceled`.
+**Blast radius:** none
+
+### E-GENERAL-15 — The database commits after the client disconnects
+**Shape:** partial failure
+**Setup:** A write reaches the database, the connection breaks before the client reads the response, and the client retries.
+**What the consumer does:** They need to know whether the first create or replace committed before issuing another one.
+**What must happen:** The framework must provide an idempotency mechanism or state plainly that the outcome is ambiguous and leave a safe retry protocol to the application.
+**Today:** ❓ unverified
+**Evidence:** `remote/remotehttp/transport.go:116-160` issues one request and returns the transport result; it has no retry or idempotency branch. No idempotency-key API or end-to-end test found in the mounted request path.
+**Blast radius:** data loss
+
+### E-GENERAL-16 — One database reports a second unique key, another overwrites it
+**Shape:** seam
+**Setup:** A table has an assigned primary key and a separate unique email; a keyed `Save` names a new primary key but an email already held by another row.
+**What the consumer does:** They move the same repository from PostgreSQL to MySQL, or use both during a migration.
+**What must happen:** The same domain conflict must refuse rather than update the other row because a dialect's upsert grammar is broader.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/dialect.go:36-49` states that MySQL's `ON DUPLICATE KEY UPDATE` swallows every unique key, while PostgreSQL only targets the primary key (`crud/dialect.go:75-77`). `crud/dialect.go:126-137` emits that MySQL clause, and `docs/usage-guides/gorm.md:1178-1186` documents that this shape can overwrite row 1 instead of creating row 3.
+**Blast radius:** data loss
+
+### E-GENERAL-17 — A gRPC number names a 64-bit row
+**Shape:** adversarial input
+**Setup:** A gRPC client sends an identifier or receives a count above 2^53 as a protobuf number rather than a string.
+**What the consumer does:** They use the `google.protobuf.Struct` API directly, as the generic gRPC route invites them to do.
+**What must happen:** An inexact numeric identifier must be refused before it can select a rounded neighbour, and an int64 count or delete result must not be rounded in the response.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `crud/rpc/crudgrpc/message.go:142-153` accepts every `NumberValue` and formats its float64 without an exact-range check. `crud/rpc/crudgrpc/message.go:159-168` converts `int64` count and delete results to float64. `crud/rpc/crudgrpc/handler_test.go:226-255` deliberately proves that the first unspellable int64 is rounded when sent as a number; the example tells callers to use strings instead (`_examples/pgx-grpc/main.go:21-26`), but the server does not refuse the unsafe form.
+**Blast radius:** silent wrong answer
+
+### E-GENERAL-18 — A malformed declaration has no key, two keys or an impossible relation
+**Shape:** degenerate declaration
+**Setup:** A consumer declares no primary key, a composite key, an unsupported relation shape or an embedded pointer.
+**What the consumer does:** They rely on package initialization to catch the mapping before serving traffic.
+**What must happen:** Each declaration fails loudly with the field and the reason, not as a zero-value read or a request-time panic.
+**Today:** ✅ handled
+**Evidence:** `crud/schema_edge_test.go:42-111` covers non-struct models, no or composite keys, duplicate columns and embedded pointers. `crud/schema_edge_test.go:193-260` covers invalid relation kinds and shapes; `crud/meta.go:222-228` supplies the start-up `MustSchemaOf` form.
+**Blast radius:** none
+
+### E-GENERAL-19 — The first row of a batch is invalid
+**Shape:** partial failure
+**Setup:** An import calls `SaveAll` with a batch containing one row that the database rejects.
+**What the consumer does:** They need a truthful answer about whether rows were written and, when faults are enabled, whether the reported violations are complete.
+**What must happen:** The API must document atomicity by dialect and mark an enrichment it cannot finish as partial; it must never imply that every row was considered when it was not.
+**Today:** 🟡 partial
+**Evidence:** `crud/decorators/faults/probe.go:229-248` marks a batch request but abandons its constructed row set on a nil model or metadata failure. `docs/usage-guides/gorm.md:1295-1304` says batch probing is off unless `faults.WithProbeFor("SaveAll", ...)` is supplied and describes `"partial": true` for probe failure. No cross-dialect test found for a failed multi-row `SaveAll` that states whether any row committed.
+**Blast radius:** confusing error
+
+### E-GENERAL-20 — Empty and over-cap bulk deletion
+**Shape:** boundary
+**Setup:** A UI retries an empty selection, then submits one more id than the bulk cap.
+**What the consumer does:** They call the generated bulk-delete route rather than hand-writing an empty-set branch.
+**What must happen:** An empty set answers deleted 0 without touching the repository; an oversize set refuses before a destructive call.
+**Today:** ✅ handled
+**Evidence:** `crud/http/crudnet/handler.go:387-401` checks the bulk cap before the service call. `crud/http/crudnet/handler_test.go:460-473` pins that an empty set does not call the repository, `crud/http/crudnet/edge_test.go:207-217` repeats that assertion for omitted and null ids on the wire path, and `crud/http/crudnet/options_test.go:276-297` proves the exact cap calls the repository while one extra id refuses before it.
+**Blast radius:** none
+
+## Edge verdict
+
+The worst edge is silent integrity loss: a versioned repository protects `Update` but not `Save`, and moving that same code to MySQL can update the row that owns a different unique key. The gRPC `Struct` carrier is also unsafe for numeric 64-bit identifiers and counts because it accepts and emits float64 values where rounding is observable. The framework is genuinely closed against hostile query text, query alias bypasses, bounded request and remote response bodies, and concurrent first relation resolution. Cancellation is pinned for the remote HTTP client, but ambiguous write outcomes after a disconnect and a failed batch's cross-dialect atomicity remain unverified.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `Save` does not check a declared version and can silently apply a stale full model (`crud/sqlrepo/version_test.go:147-164`; `port/service.go:190-212`) | blocker | A version column reads as the framework's concurrency contract, yet a worker or generated replace path can choose `Save` and overwrite a newer row without a conflict. |
+| 2 | MySQL's keyed `Save` can update the row holding a different unique key, while PostgreSQL refuses it (`crud/dialect.go:36-49,126-137`) | blocker | The same repository call changes identity semantics by driver and can write the wrong person's row. |
+| 3 | gRPC accepts inexact float64 identifiers and emits int64 counts/deletion totals as float64 (`crud/rpc/crudgrpc/message.go:142-168`) | blocker | An ordinary `Struct` client can select a rounded neighbouring row or receive a rounded successful total with no error. |

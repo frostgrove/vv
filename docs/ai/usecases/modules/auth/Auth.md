@@ -1,8 +1,8 @@
 # auth · authjwt · apikey — establish who is calling, once, so every rule further in can ask
 
 **Covers:** `github.com/frostgrove/vv/auth`, `github.com/frostgrove/vv/auth/authjwt`, `github.com/frostgrove/vv/auth/apikey`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established. The edge half adds a forgeable blank HMAC configuration, an accidental scheme waiver that can hand bearer tokens to a key store, ambiguous key-set identifiers resolved by array order, and type-nil extensions that escape the promised start-up checks.
 
 ## What a consumer is actually trying to do
 
@@ -717,3 +717,145 @@ failures today.
   `roles` declared in the snippet, and `RoleMap` counted here where it belongs.
   H-AUTH-13's cliff is restated as 5 lines / 5 names → 11 / 11, which is a worse
   cliff than the previous round claimed.
+
+## Edge cases
+
+### E-AUTH-01 — A custom authenticator returns a typed-nil principal
+**Shape:** misuse
+**Setup:** An application implements `auth.Principal` on `*caller` and its lookup-miss branch returns `(*caller)(nil), nil`.
+**What the consumer does:** They mount that authenticator behind `auth.NewGuard`, expecting the miss to be a refusal rather than an authenticated request.
+**What must happen:** A principal with no concrete value is rejected before it reaches the context or a policy; an extension bug must not become a request-time panic or an apparent identity.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Guard.Authenticate` rejects only an interface equal to nil (`auth/guard.go:103-113`); `WithPrincipal` and `PrincipalFrom` make the same interface-nil checks (`auth/context.go:22-35`). A typed nil stored in an interface is not equal to nil, so it is carried and reported present. `TestAnAuthenticatorThatAnswersNothingIsARefusal` covers only an untyped `nil, nil` (`auth/guard_test.go:119-130`), and `TestANilPrincipalIsNotStored` likewise passes a literal nil (`auth/context_test.go:48-53`); no typed-nil case was found.
+**Blast radius:** crash
+
+### E-AUTH-02 — A typed-nil authenticator or API-key store starts the process
+**Shape:** misuse
+**Setup:** A tired author passes a nil `*myAuthenticator` as `auth.Authenticator`, or a nil `*myStore` as `apikey.Store`, after a failed constructor branch.
+**What the consumer does:** They rely on the documented nil guard to make the deployment fail where it is wired.
+**What must happen:** Both declarations refuse loudly at construction, regardless of whether nil is carried directly or through an interface.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `NewGuard` tests only `a == nil` before retaining the interface (`auth/guard.go:32-42`), and `apikey.New` does the equivalent for its `Store` (`auth/apikey/apikey.go:79-92`). Both later invoke the stored interface on the request path (`auth/guard.go:103`, `auth/apikey/apikey.go:103`). The start-up tests pass literal nil only (`auth/guard_test.go:132-139`, `auth/apikey/apikey_test.go:108-115`); no typed-nil configuration test was found.
+**Blast radius:** crash
+
+### E-AUTH-03 — Two Authorization credentials arrive through a transport
+**Shape:** adversarial input · seam
+**Setup:** A client or proxy supplies two `Authorization` values — for example an old bearer token and a newly injected API key.
+**What the consumer does:** They expect an ambiguous proof of identity to be rejected, rather than to depend on which hop or transport happened to retain first.
+**What must happen:** The binding rejects multiple credential values before authentication, consistently across HTTP and gRPC.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `authnet` hands `http.Header.Get` straight to the guard (`auth/http/authnet/authnet.go:49-55`); Go's `Header.Get` returns the first value (`net/textproto/header.go:25-39`). The gRPC adapter also selects `vs[0]` (`auth/rpc/authgrpc/interceptor.go:115-125`) from `metadata.MD.Get`, which preserves all values (`google.golang.org/grpc/metadata/metadata.go:107-113`). No auth transport test for duplicate credentials was found.
+**Blast radius:** silent wrong answer
+
+### E-AUTH-04 — `Scheme("")` silently means `AnyScheme()`
+**Shape:** misuse · seam
+**Setup:** A scheme string comes from configuration and is blank because an environment variable was omitted.
+**What the consumer does:** They expect a bad scheme declaration to stop the process, retaining the default `ApiKey` restriction unless they explicitly chose the named waiver.
+**What must happen:** An empty replacement scheme is rejected at construction; only `AnyScheme()` may waive the scheme check.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Scheme` stores its argument unchanged (`auth/apikey/apikey.go:64-67`), while an empty stored scheme means accept every credential (`auth/apikey/apikey.go:56-59`, `auth/apikey/apikey.go:95-103`) — exactly `AnyScheme`'s implementation (`auth/apikey/apikey.go:69-77`). The package documentation calls `AnyScheme()` an opt-in because it can hand expired JWTs to a key store that logs misses (`docs/modules/en/apikey.md:98-104`), but `TestTheSchemeIsCheckedUnlessItIsWaived` tests the named waiver and a non-empty replacement only (`auth/apikey/apikey_test.go:57-79`).
+**Blast radius:** data leak
+
+### E-AUTH-05 — A `Static` API key's claims change after start-up
+**Shape:** concurrency · seam
+**Setup:** A small service wires `apikey.Static` with an `auth.Claims` principal whose `Attrs` map is later reused or updated by its configuration reload path.
+**What the consumer does:** They rely on the documented fixed-at-start-up store and mutate the input only after it has been handed to the authenticator.
+**What must happen:** Later mutations cannot alter the subject, permissions, or attributes an issued key authenticates as; concurrent mutation must not race request authentication.
+**Today:** 🟡 partial
+**Evidence:** `Static` copies the outer key map but retains each `auth.Principal` interface unchanged (`auth/apikey/apikey.go:124-149`). `auth.Claims.Attr` reads its map directly (`auth/principal.go:49-57`, `auth/principal.go:79-83`), and `authjwt.Claims.Grant` also passes its `Extra` map into the neutral principal (`auth/authjwt/claims.go:137-153`). `TestStaticCopiesTheMapItWasGiven` proves only that deleting the outer map entry does not revoke the key (`auth/apikey/apikey_test.go:98-106`); no test mutates a principal or its attributes after `Static` returns.
+**Blast radius:** silent wrong answer
+
+### E-AUTH-06 — The HMAC secret is empty
+**Shape:** degenerate declaration
+**Setup:** A deployment reads its HMAC secret from an unset or empty environment variable.
+**What the consumer does:** They expect the parser construction to refuse a secret with no entropy rather than start as an authenticator every attacker can reproduce.
+**What must happen:** `authjwt.HMAC` rejects an empty secret at construction.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `HMAC` copies and returns any slice, including a zero-length one (`auth/authjwt/key.go:44-50`), and `KeySource.valid` checks only that a key function and methods exist (`auth/authjwt/key.go:91-92`); `New` therefore starts it (`auth/authjwt/parser.go:101-104`). The dependency then computes HMAC directly with the provided `[]byte` and has no non-empty-key check (`github.com/golang-jwt/jwt/v5@v5.3.1/hmac.go:58-80`). No empty-secret test was found in `auth`.
+**Blast radius:** data leak
+
+### E-AUTH-07 — `Audience("")` passes the start-up check but authenticates nobody
+**Shape:** degenerate declaration
+**Setup:** The expected audience is supplied by an empty environment variable.
+**What the consumer does:** They expect the same eager configuration rejection as when `Audience` was omitted.
+**What must happen:** An empty audience element is rejected at construction, with a message that identifies the bad setting.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Audience` appends empty strings without validation (`auth/authjwt/parser.go:44-52`), while `New` only tests `len(s.audience) == 0` (`auth/authjwt/parser.go:111-145`). It consequently configures `jwt.WithAllAudiences("")`; golang-jwt treats an empty `aud` claim as missing and requires one whenever an expected audience exists (`github.com/golang-jwt/jwt/v5@v5.3.1/validator.go:237-269`). `TestAParserThatWouldOverTrustRefusesToStart` covers omitted audience, not `Audience("")` (`auth/authjwt/parser_test.go:167-203`).
+**Blast radius:** confusing error
+
+### E-AUTH-08 — A failed PEM parse yields a nil static public key
+**Shape:** degenerate declaration
+**Setup:** An internal issuer's PEM cannot be parsed, and the application passes the resulting nil RSA/ECDSA key or empty Ed25519 key to the corresponding constructor.
+**What the consumer does:** They expect the authentication configuration to fail where the key is wired, not only after traffic reaches it.
+**What must happen:** Every static-key constructor validates usable key material before `New` can build a parser.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `RSA`, `ECDSA`, and `EdDSA` capture their supplied key unchanged while always supplying methods and a non-nil key function (`auth/authjwt/key.go:52-77`); `KeySource.valid` cannot inspect the captured material (`auth/authjwt/key.go:91-92`). `New` thus accepts all three (`auth/authjwt/parser.go:101-104`). The construction test exercises only `Custom(nil, nil)` (`auth/authjwt/parser_test.go:167-203`); no nil static-key case was found.
+**Blast radius:** confusing error
+
+### E-AUTH-09 — A signed JWT has permissions but no subject
+**Shape:** boundary · seam
+**Setup:** An issuer emits a correctly signed, unexpired token with roles or permissions but omits `sub`.
+**What the consumer does:** They use `authjwt.Standard` and expect every authenticated principal to have the stable caller identifier the auth contract promises.
+**What must happen:** The bridge refuses the token, or makes an explicit no-subject waiver the consumer must name; it must not authenticate an identity whose audit and ownership key is empty.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The parser configures issuer, audience, expiry, and algorithms but never `jwt.WithSubject` (`auth/authjwt/parser.go:127-146`); golang-jwt validates a missing subject only when a subject is required (`github.com/golang-jwt/jwt/v5@v5.3.1/validator.go:292-309`). The ready-made claims return `Sub` unchanged (`auth/authjwt/claims.go:97-99`), and `Standard` returns those claims as a principal (`auth/authjwt/authenticator.go:50-54`). `Principal.Subject` is documented as the stable audit and `ScopeSubject` identifier (`auth/principal.go:22-26`). `security.ScopeSubject` later refuses an empty subject (`crud/decorators/security/principal.go:189-200`), but permission policies do not provide that backstop. No missing-subject test was found.
+**Blast radius:** silent wrong answer
+
+### E-AUTH-10 — A JWKS contains the same `kid` twice
+**Shape:** adversarial input
+**Setup:** A provider publishes two usable keys with one key identifier, whether through a broken rotation job or a compromised key-set response.
+**What the consumer does:** They expect the ambiguous key set to be refused; the verifier must not choose a trust anchor by document order.
+**What must happen:** Fetching detects duplicate usable `kid` values and rejects the set without replacing a known-good cache.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `fetch` reduces the response into a map with unconditional assignment (`auth/authjwt/jwks.go:257-275`), so the last duplicate overwrites the first; `cached` then returns that one key by `kid` (`auth/authjwt/jwks.go:146-160`). The JWKS tests cover rotation, unusable entries, unavailable servers, and unknown kids (`auth/authjwt/jwks_test.go:64-234`), but no duplicate-`kid` case was found.
+**Blast radius:** silent wrong answer
+
+### E-AUTH-11 — The JWKS refresh interval is zero or negative
+**Shape:** degenerate declaration · adversarial input
+**Setup:** A duration parsed from configuration is zero or negative, then an attacker sends sequential tokens with unknown `kid` values.
+**What the consumer does:** They expect the advertised anti-refetch limit to remain safe, or the invalid duration to fail at construction.
+**What must happen:** `JWKSMinRefreshEvery` rejects non-positive durations (or preserves a safe minimum); unknown kids must not turn into one outbound fetch per request.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `JWKSMinRefreshEvery` assigns the duration without validation (`auth/authjwt/jwks.go:105-108`). The limiter skips a refresh only when `time.Since(s.attempted) < s.minRefresh` (`auth/authjwt/jwks.go:181-201`), which is false for zero or negative intervals, so sequential misses each initiate a fetch. Tests prove the default limit and concurrent coalescing (`auth/authjwt/jwks_test.go:107-122`, `auth/authjwt/jwks_test.go:209-234`) but do not exercise zero or negative configuration.
+**Blast radius:** confusing error
+
+### E-AUTH-12 — A thousand static API keys are configured
+**Shape:** scale
+**Setup:** A service grows from a handful of machine callers to a thousand and keeps the convenient `apikey.Static` wiring.
+**What the consumer does:** They expect either a stated supported scale or a clear refusal before each authentication becomes a full linear scan.
+**What must happen:** The module gives the declaration a bounded, documented capacity or directs the consumer to `Store` before production latency becomes a surprise.
+**Today:** 🟡 partial
+**Evidence:** `Static` deliberately compares every entry (`auth/apikey/apikey.go:114-149`), while both its source comment and module page describe a handful of keys / tests and small services (`auth/apikey/apikey.go:120-122`; `docs/modules/en/apikey.md:18-21`, `docs/modules/en/apikey.md:84-94`). There is no maximum, warning, or size test; `TestAKnownKeyAuthenticatesAndAnUnknownOneDoesNot` uses one key (`auth/apikey/apikey_test.go:12-55`).
+**Blast radius:** confusing error
+
+### E-AUTH-13 — The first authenticator says success but supplies no principal
+**Shape:** partial failure · seam
+**Setup:** A custom member in `auth.Chain` returns `(nil, nil)` for a credential it could not resolve, while a later authenticator could authenticate that credential.
+**What the consumer does:** They expect the chain to treat "no caller" as a refusal and continue, consistent with the guard's contract.
+**What must happen:** A nil principal with no error is not a successful authentication and cannot prevent a later authenticator from running.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Chain` returns immediately whenever `e == nil`, without inspecting `p` (`auth/credential.go:96-125`); only `Guard.Authenticate` translates a bare nil principal into `Unauthenticated` (`auth/guard.go:103-113`). The chain test covers real principals, refusals, empty chains, and literal nil members (`auth/credential_test.go:63-100`), not a `(nil, nil)` member.
+**Blast radius:** confusing error
+
+### E-AUTH-14 — A one-character-short API key is presented
+**Shape:** boundary · adversarial input
+**Setup:** A caller submits a key that is a prefix of a real static key, or an empty key.
+**What the consumer does:** They expect neither input to authenticate and no prefix comparison shortcut to leak into matching behavior.
+**What must happen:** Both inputs are refused while a full known key still authenticates.
+**Today:** ✅ handled
+**Evidence:** The authenticator rejects an empty token before lookup (`auth/apikey/apikey.go:95-111`), and `Static` uses `subtle.ConstantTimeCompare` for every candidate (`auth/apikey/apikey.go:135-149`). `TestAKnownKeyAuthenticatesAndAnUnknownOneDoesNot` pins a known key, an unknown key, a prefix, and an empty key (`auth/apikey/apikey_test.go:22-55`).
+**Blast radius:** none
+
+## Edge verdict
+
+The worst edge is an empty HMAC secret: the parser starts and accepts signatures that anybody can create, so this is not merely a bad 401 configuration. The module also leaves several declarations that should fail at start-up to fail on traffic — empty audience, nil static public key, zero refresh interval, and interface-typed nil dependencies — while its advertised fixed API-key identities remain mutable by reference. JWKS has careful concurrency and rate-limit coverage under valid configuration, but it silently resolves a duplicate key identifier by response order; HTTP and gRPC likewise silently choose the first of multiple credentials. The prefix-key boundary is properly closed and pinned, but the extension and misconfiguration boundaries need construction-time validation before this is release-ready.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `authjwt.HMAC(nil)` / `authjwt.HMAC([]byte{})` starts a parser that verifies with a public, empty secret (`auth/authjwt/key.go:44-50`) | blocker | A forgotten secret is an authentication bypass, not an outage: an attacker can mint a valid HMAC token and reach any permission-based policy. |
+| 2 | `apikey.Scheme("")` is an accidental `AnyScheme()` (`auth/apikey/apikey.go:56-77`) | serious | A configuration typo can feed bearer JWTs into the API-key store, precisely the credential-disclosure path the explicit waiver exists to avoid. |
+| 3 | A duplicate usable JWKS `kid` is resolved by last-write-wins (`auth/authjwt/jwks.go:257-275`) | serious | A malformed or compromised provider response changes the trust anchor by JSON array order rather than failing closed. |
+| 4 | `JWKSMinRefreshEvery(0)` removes the unknown-`kid` outbound-request bound (`auth/authjwt/jwks.go:105-108`, `auth/authjwt/jwks.go:181-201`) | serious | One forged, sequentially distinct `kid` per request can make the service repeatedly call its identity provider. |
+| 5 | Typed-nil principals and extension dependencies evade the literal-nil start-up checks (`auth/context.go:22-35`, `auth/guard.go:32-42`) | serious | A routine Go interface mistake becomes an apparent authenticated identity or request-time crash instead of a deploy-time error. |

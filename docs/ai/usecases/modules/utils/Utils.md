@@ -1,8 +1,8 @@
 # utils/vvflag · utils/vvcfg — start the process from a file an operator wrote, and refuse it here if it is wrong
 
 **Covers:** `github.com/frostgrove/vv/utils/vvflag`, `github.com/frostgrove/vv/utils/vvcfg`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — a `--config-path` whose value is lost is reported as *absent*, so the process boots on whatever `CONFIG_PATH` says; the documented `main` exits 2 under the application's own `flag.Parse()`; loading reads the process environment on every call and nothing says so; a mistyped key in the YAML is dropped in silence; and a container with no file cannot boot at all.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — a `--config-path` whose value is lost is reported as *absent*, so the process boots on whatever `CONFIG_PATH` says; `--migrate false` enables the boolean; an optional nested block never receives its environment fields; the first of two YAML or JSON documents is silently accepted; and a named FIFO can block start-up forever. The documented `main` also exits 2 under the application's own `flag.Parse()`; loading reads the process environment on every call and nothing says so; a mistyped key in the YAML is dropped in silence; and a container with no file cannot boot at all.
 
 **Status glyphs.** ✅ every must-hold holds today. 🟡 at least one holds and at
 least one does not. ❌ none holds. The status answers "can a consumer do this
@@ -721,3 +721,131 @@ are clean. Fixing only the `utils/` three leaves the gate red.
   must-hold 2, which all three reviewers asked for; the number now carries the
   single-dash flag case. Anyone holding a round-1 reference to H-UTILS-19 should
   read H-UTILS-05.
+
+## Edge cases
+
+### E-UTILS-01 — A boolean written as `false` must not turn an operation on
+**Shape:** misuse
+**Setup:** A deployment writes `--migrate false`, `--dangerous false`, or another boolean flag in the space-separated form it uses for every non-boolean setting.
+**What the consumer does:** It expects that spelling either to set the flag false or to refuse as an unsupported spelling before the process acts.
+**What must happen:** The loader must never silently interpret a following literal `false` as a positional argument while treating the flag itself as true.
+**Today:** ❌ wrong or unhandled
+**Evidence:** An exact boolean flag returns `"true"` before `find` looks at the following argument (`utils/vvflag/vvflag.go:80-85`); only `--name=false` reaches `strconv.ParseBool` (`:77-79,106-117`). `TestABoolFlagStandsAlone` deliberately pins that a following positional is not consumed (`utils/vvflag/vvflag_test.go:70-83`), but no test covers `--name false` or requires an error. The docs list the standalone boolean form (`docs/modules/en/vvflag.md:35-43`) but do not call this destructive-looking near miss out.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-02 — A child process's `--config-path` stays positional after `--`
+**Shape:** boundary
+**Setup:** A wrapper starts `worker exec -- --config-path child.yaml`, while the wrapper itself supplies `CONFIG_PATH=/etc/worker.yaml`.
+**What the consumer does:** It uses `--` to give the child ownership of every following argument.
+**What must happen:** The child argument must not override the wrapper's configuration; the wrapper may fall back to `CONFIG_PATH`, or return `ErrNoPath` when it is unset.
+**Today:** ✅ handled
+**Evidence:** `find` returns not-found immediately at the end marker (`utils/vvflag/vvflag.go:72-76`), after which `Find` consults only `CONFIG_PATH` (`utils/vvcfg/vvcfg.go:37-45`). The flag-layer behaviour is pinned by `TestDoubleDashEndsTheFlags` (`utils/vvflag/vvflag_test.go:85-90`); no `vvcfg` integration test combines that with the environment fallback.
+**Blast radius:** none
+
+### E-UTILS-03 — An upper-case extension still selects the intended decoder
+**Shape:** boundary
+**Setup:** A Windows-built artifact or a copied ConfigMap is named `APP.YAML` rather than `app.yaml`.
+**What the consumer does:** It passes that exact path to `Load` and expects YAML, not an unsupported-format error caused only by casing.
+**What must happen:** Format recognition must be case-insensitive, or the error must say that casing is significant.
+**Today:** ✅ handled
+**Evidence:** `vvcfg.Load` delegates the supplied path unchanged (`utils/vvcfg/vvcfg.go:49-63`), and cleanenv lower-cases `filepath.Ext(path)` before its YAML/JSON/TOML dispatch (`cleanenv@v1.5.0/cleanenv.go:129-150`). Neither `utils/vvcfg/vvcfg_test.go` nor the dependency's format tests exercise an upper-case filename.
+**Blast radius:** none
+
+### E-UTILS-04 — A lower-case configuration field must not disappear silently
+**Shape:** misuse
+**Setup:** A tired author writes `dsn string \`env:"DSN"\`` instead of exporting `DSN`, and supplies the secret only through the environment.
+**What the consumer does:** It starts the service without a parent `Validate`, assuming the tagged field was filled.
+**What must happen:** The loader must reject an unfillable tagged field, or document and detect that exported fields are required; it must not return a successful zero-valued configuration.
+**Today:** ❌ wrong or unhandled
+**Evidence:** cleanenv skips every field that cannot be set (`cleanenv@v1.5.0/cleanenv.go:355-358`), so it neither reads nor reports the `env:"DSN"` tag. `vvcfg.Load` returns the zero-valued config when `&cfg` does not implement the optional `Validator` interface (`utils/vvcfg/vvcfg.go:60-69`), and its tests deliberately show an unvalidated config loading successfully (`utils/vvcfg/vvcfg_test.go:84-91`). No test covers a tagged unexported field.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-05 — An optional nested pointer supplied only through environment must not stay nil
+**Shape:** degenerate declaration
+**Setup:** A service declares `TLS *TLSConfig \`yaml:"tls" env-prefix:"TLS_"\`` and sets `TLS_CERT` and `TLS_KEY` in its deployment, with no `tls:` block in the file.
+**What the consumer does:** It treats the pointer as an optional block and expects its environment-tagged fields to make it present, or a clear refusal that pointer nesting is unsupported.
+**What must happen:** The loader must allocate and fill the nested block, or fail before returning a config that silently has TLS disabled.
+**Today:** ❌ wrong or unhandled
+**Evidence:** cleanenv recurses into nested values only when `fld.Kind() == reflect.Struct` (`cleanenv@v1.5.0/cleanenv.go:336-346`); a `*TLSConfig` is not traversed, so its fields and their `env:` tags never reach the `os.LookupEnv` loop (`:416-443`). With no parent validator, `vvcfg.Load` returns that nil pointer successfully (`utils/vvcfg/vvcfg.go:60-69`). No adjacent test covers pointer-valued nested configuration.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-06 — An empty preferred environment alias must not mask a usable fallback
+**Shape:** seam
+**Setup:** A field uses cleanenv's alternative names, `env:"DATABASE_URL,DB_URL"`; a platform injects `DATABASE_URL=` but the application provides a valid `DB_URL`.
+**What the consumer does:** It expects the usable fallback to win, or an explicit error naming the empty preferred source.
+**What must happen:** An empty first alias must not silently blank a string setting or prevent a later valid alias from being considered without documentation of that precedence.
+**Today:** ❌ wrong or unhandled
+**Evidence:** cleanenv splits the names in tag order (`cleanenv@v1.5.0/cleanenv.go:374-382`) and stops at the first one that is merely present (`:424-428`); it applies that empty value as-is (`:442-452`) and never looks at `DB_URL`. `vvcfg` offers no origin or layer policy around `ReadConfig` (`utils/vvcfg/vvcfg.go:49-69`), and no test covers alternative environment names, especially the present-but-empty case.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-07 — The generic argument must not make a pointer config a dependency error
+**Shape:** misuse
+**Setup:** Seeing that `Load` returns `*T`, an author writes `vvcfg.Load[*Config](path)` rather than `vvcfg.Load[Config](path)`.
+**What the consumer does:** It expects a clear wrapper-level rejection of the unsupported shape, before deployment, rather than a cleanenv reflection message after the file has been decoded.
+**What must happen:** The public generic entry point must either support pointer `T` consistently or reject it with a typed `vvcfg` error explaining the correct instantiation.
+**Today:** 🟡 partial
+**Evidence:** `Load` declares `var cfg T` and passes `&cfg` to cleanenv (`utils/vvcfg/vvcfg.go:49-63`), so pointer `T` supplies `**Config`. cleanenv unwraps only one pointer and then rejects any non-struct kind as `wrong type ptr` (`cleanenv@v1.5.0/cleanenv.go:301-323`); the error is merely wrapped as `vvcfg: reading <path>` (`utils/vvcfg/vvcfg.go:61-63`). The API docs show only `Auto[Config]` (`docs/modules/en/vvcfg.md:23-40`), and no test pins this misleading but compilable call.
+**Blast radius:** confusing error
+
+### E-UTILS-08 — A FIFO must not be able to hold start-up forever
+**Shape:** partial failure
+**Setup:** `CONFIG_PATH` resolves to a named pipe left by an init or sidecar process whose writer never opens it.
+**What the consumer does:** It starts the service and needs either a prompt refusal that the path is not a regular configuration file or a caller-controlled deadline.
+**What must happen:** A special file must be rejected before blocking, or `Load` must accept a context/deadline that can end the wait.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `Load` uses `os.Stat` only to establish that the path exists (`utils/vvcfg/vvcfg.go:53-59`), then hands the path to `cleanenv.ReadConfig` (`:60-63`); cleanenv opens it with `os.OpenFile` (`cleanenv@v1.5.0/cleanenv.go:129-135`). Neither exported function takes a context, an `io.Reader`, or a file-kind policy. The adjacent test checks a directory but not a FIFO (`utils/vvcfg/vvcfg_test.go:50-66`).
+**Blast radius:** crash
+
+### E-UTILS-09 — The file inspected must be the file decoded
+**Shape:** concurrency
+**Setup:** A ConfigMap-style writer atomically replaces the configuration path, or an attacker able to write its directory swaps a symlink, between the loader's existence check and its open.
+**What the consumer does:** It expects the loader either to decode the object it inspected or to avoid claiming that a separate preflight check establishes what will be loaded.
+**What must happen:** The stat/open sequence must use one opened descriptor or have no TOCTOU pre-check; otherwise the configuration provenance is not a stable fact.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `vvcfg.Load` calls `os.Stat(path)` (`utils/vvcfg/vvcfg.go:53-59`) and only afterwards asks cleanenv to reopen the pathname (`:60-63`, `cleanenv@v1.5.0/cleanenv.go:129-135`). No file descriptor crosses that boundary, and no test changes a path between those calls.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-10 — A second configuration document must not be ignored
+**Shape:** adversarial input
+**Setup:** A YAML file contains an approved first document followed by `---` and an unapproved second document; JSON has two adjacent top-level objects after a concatenation mistake.
+**What the consumer does:** It expects either every supplied document to have an explicit merge rule or the file to be refused as ambiguous.
+**What must happen:** Trailing documents and trailing non-whitespace must be rejected; accepting only the first makes an operator believe a setting was applied when it was not.
+**Today:** ❌ wrong or unhandled
+**Evidence:** cleanenv's YAML and JSON parsers each call `Decode` exactly once (`cleanenv@v1.5.0/cleanenv.go:158-166`) and do not attempt a second decode to require `io.EOF`; `vvcfg.Load` exposes no strict-decoding option (`utils/vvcfg/vvcfg.go:49-63`). The dependency tests cover one valid document per format (`cleanenv@v1.5.0/cleanenv_test.go:1324-1440`), and no adjacent test supplies a second document or trailing JSON object.
+**Blast radius:** silent wrong answer
+
+### E-UTILS-11 — A huge mounted configuration needs a bounded read
+**Shape:** scale
+**Setup:** A broken mount serves a multi-gigabyte YAML file, or an otherwise valid file contains a huge list that exceeds the process's intended start-up memory budget.
+**What the consumer does:** It wants to set a reasonable maximum input size and receive one startup error rather than let configuration parsing consume unbounded memory or time.
+**What must happen:** The loader must provide a caller-selectable byte limit (and report the path and limit) before handing input to a decoder.
+**Today:** ❌ wrong or unhandled
+**Evidence:** `vvcfg.Load` accepts only a pathname and immediately delegates it (`utils/vvcfg/vvcfg.go:49-63`); cleanenv opens that path and passes the unbounded file reader directly to the chosen decoder (`cleanenv@v1.5.0/cleanenv.go:129-160`). There is no `io.LimitReader`, limit option, or size-oriented test in either adjacent test file.
+**Blast radius:** crash
+
+### E-UTILS-12 — Concurrent fixture/config loads need an explicit environment snapshot
+**Shape:** concurrency
+**Setup:** One process loads an application config and a test fixture concurrently while another goroutine changes a process environment variable for its own test or reload experiment.
+**What the consumer does:** It expects each `Load(path)` result to correspond to a declared input set, not to whichever environment values happened to be read field by field during the call.
+**What must happen:** The caller must be able to select file-only loading or pass an environment snapshot; process-global environment must not be an invisible concurrent input.
+**Today:** ❌ wrong or unhandled
+**Evidence:** every `Load` calls `cleanenv.ReadConfig` (`utils/vvcfg/vvcfg.go:60-63`), which performs the file parse and then reads the process environment (`cleanenv@v1.5.0/cleanenv.go:97-104`); every configured field is sampled separately through `os.LookupEnv` (`:416-452`). `Load` takes neither a layer policy nor an environment map, and no test makes two loads or environment changes concurrent. The ordinary single-fixture version is already demonstrably environment-dependent in `utils/vvcfg/vvcfg_test.go:11-13` and is described in H-UTILS-13; this is the process-wide race it becomes when the loader is reused.
+**Blast radius:** silent wrong answer
+
+## Edge verdict
+
+The worst edge failures are silent configuration changes: a separated boolean `false` enables the operation, an unexported field or optional pointer block remains at zero despite its tags, an empty primary environment alias defeats its valid fallback, and a second document is ignored. The command-line end marker and case-insensitive extensions are closed, but only the former has a direct package test. On the availability side, a valid-looking FIFO has no cancellation path and large input has no bound; the preliminary `Stat` also gives a false sense of path provenance because a separate open follows it. The existing short `Find`/`Load` spine is useful, but its input boundary is too implicit for an operator-facing release.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | `--migrate false` (and every other spaced boolean false) silently becomes true | serious | A common manifest spelling can enable a destructive action while leaving `false` as an ignored positional argument |
+| 2 | An unexported tagged field and an environment-only nested pointer block both return as zero/nil without a refusal | serious | A one-character declaration mistake or an ordinary optional TLS block can boot a service without the secret or security setting the deployment supplied |
+| 3 | An empty first alternative environment variable masks a valid fallback | serious | Shared platform variables routinely exist empty; the process reads a blank connection setting while the usable value is present |
+| 4 | YAML/JSON decoders accept the first document and ignore an appended configuration document | serious | An operator can ship a change that the pod silently does not use, then diagnose the running service from the wrong file content |
+| 5 | A FIFO at `CONFIG_PATH` blocks `Load` without a deadline or regular-file check | serious | A stalled init/sidecar path prevents the service from starting and cannot be cancelled through this API |
+| 6 | `Stat` and decoder open are separate pathname operations | sharp edge | A replacement or symlink swap can make the loader inspect one object and run another, invalidating path provenance |
+| 7 | No caller-set configuration size limit exists | sharp edge | A broken or unexpectedly huge mount can exhaust start-up resources before the service has a chance to report a normal refusal |
+| 8 | `Load[*Config]` compiles but reaches a dependency's `wrong type ptr` error | sharp edge | The public generic shape invites the instantiation and gives the author no wrapper-level explanation or test |
+| 9 | Process-global environment is an implicit, field-by-field concurrent input | sharp edge | Reused loaders and fixture/reload code cannot state which input set produced a config |

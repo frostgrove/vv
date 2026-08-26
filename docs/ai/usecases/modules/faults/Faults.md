@@ -1,8 +1,8 @@
 # faults · sqlfault · probe · catalog — one refused write, told back as every mistake the payload made
 
 **Covers:** `github.com/frostgrove/vv/crud/decorators/faults`, `github.com/frostgrove/vv/crud/sqlfault`, `github.com/frostgrove/vv/crud/probe`, `github.com/frostgrove/vv/crud/catalog`
-**Sweep:** happy paths · release readiness
-**Verdict:** not ready — the arithmetic underneath is the most carefully argued code in the repository, and the wiring on top of it ships one option whose three documented verbs do nothing, a headline claim that is false in both languages, a family of constraints dropped without saying so, and a probe that fires on failures no constraint caused and can move a 422 to a 409.
+**Sweep:** happy paths · edge cases · release readiness
+**Verdict:** not ready — the arithmetic underneath is the most carefully argued code in the repository, and the wiring on top of it ships one option whose three documented verbs do nothing, a headline claim that is false in both languages, a family of constraints dropped without saying so, and a probe that fires on failures no constraint caused and can move a 422 to a 409. The edge pass adds several ways the declared safety controls betray their caller: an explicit source can make the probe consult a different database, CodeOnly does not survive the final field-mapping hop, one Skip can disable two distinct constraints, and ordinary conditional wiring can crash on the first refusal.
 
 ## What a consumer is actually trying to do
 
@@ -1531,3 +1531,109 @@ probe — the adapters sweep carries it at `Adapters.md:165`.
   This file rates it a serious blocker anyway, on the grounds that a control which
   removes the check is not a narrowing of it. Whoever settles it must edit one of
   the two documents; they cannot both stand.
+
+## Edge cases
+
+### E-FAULTS-01 — The source override points at the other database
+**Shape:** seam
+**Setup:** A repository over the primary database sits below an opaque decorator, so its author supplies faults.WithSource manually and accidentally passes the analytics source, whose users table has the same shape.
+**What the consumer does:** They load the catalog from the primary, wire probe.Full with it, and use the secondary source only to make the declaration pass.
+**What must happen:** Declaration must refuse a source/catalog/repository combination it cannot prove belongs to the same physical handle, or the probe must decline rather than turn data from another database into an answer about this write.
+**Today:** ❌ wrong or unhandled
+**Evidence:** faults.WithSource stores any crud.Source without an identity check (crud/decorators/faults/probe.go:50-57). Declaration binds Full only against its catalog (crud/decorators/faults/probe.go:101-115; crud/probe/declare.go:42-59), then enrichProbed assigns that supplied source to Request.Source (crud/decorators/faults/probe.go:161-166) and Full queries it when there is no matching transaction executor (crud/probe/full.go:119-126). Catalog exposes no handle identity to compare (crud/catalog/catalog.go:13-20). The one explicit-source test proves only that passing the same stub permits an opaque chain (crud/decorators/faults/probe_test.go:328-336); no test uses distinct sources.
+**Blast radius:** data leak
+
+### E-FAULTS-02 — CodeOnly still names the field the driver supplied
+**Shape:** seam
+**Setup:** A public endpoint uses probe.CodeOnly because revealing even the request field is too much for this deployment, and PostgreSQL reports a column on the driver violation.
+**What the consumer does:** They turn on CodeOnly together with Full and expect every violation in the returned fault to retain a code but no path.
+**What must happen:** The final fault must contain no path from either the probe or the driver; a privacy option cannot depend on which layer first knew the column.
+**Today:** ❌ wrong or unhandled
+**Evidence:** CodeOnly promises that it applies to the path the probe would fill on the driver's violation (crud/probe/options.go:82-85), but Full only avoids copying a probe path in fold (crud/probe/full.go:223-226). The original driver Source survives merge (crud/probe/full.go:157-160), and the decorator then resolves every path-less violation after the probe returns (crud/decorators/faults/faults.go:118-120; :138-151). TestCodeOnlyModeDropsThePathAndKeepsTheCode tests Full directly with a driver fault carrying no source columns (crud/probe/full_test.go:469-481); no decorator-level CodeOnly test covers a driver-named column.
+**Blast radius:** data leak
+
+### E-FAULTS-03 — One Skip disables two different constraints with the same name
+**Shape:** degenerate declaration
+**Setup:** A MySQL or MariaDB table has a unique key and a foreign key both named k, which their separate namespaces allow.
+**What the consumer does:** To stop the unique-key oracle, they call probe.Skip("k") and expect only that unique check to disappear.
+**What must happen:** The declaration must either reject an ambiguous name or let the consumer identify the one constraint to suppress. It must never silently remove a second, semantically different check.
+**Today:** ❌ wrong or unhandled
+**Evidence:** The catalog deliberately preserves distinct constraint families under the same name (crud/catalog/load.go:150-173; :210-218), but Declare accepts a Skip as soon as Table.Constraint finds either one (crud/probe/declare.go:51-54; crud/catalog/catalog.go:128-140). Planning then keys the exclusion on candidate.name alone (crud/probe/plan.go:191-193), so both candidates named k are skipped. TestASkipNamingNoConstraintRefusesToStart covers a missing name and one ordinary name only (crud/probe/declare_test.go:64-72); no collision test exists.
+**Blast radius:** silent wrong answer
+
+### E-FAULTS-04 — Two binary tokens in one batch are not recognised as duplicates
+**Shape:** boundary
+**Setup:** An import writes two rows with the same []byte value into a unique bytea or BINARY token column.
+**What the consumer does:** They enable Full for SaveAll because the module says intra-payload duplicates report both row indexes without another statement.
+**What must happen:** The no-statement supplement either identifies both equal binary values or marks this part of the batch answer incomplete. It cannot present the promised all-row result as complete after declining the only check that can compare two uncommitted rows.
+**Today:** 🟡 partial
+**Evidence:** keyOf rejects every non-comparable value before rendering it (crud/probe/dup.go:81-102), so []byte cannot enter the duplicate map even when its bytes are identical. The subsequent SQL terms ask the stored table, not another row in the submitted batch (crud/probe/sql.go:91-115), and Partial is set only by a cap or a probe error (crud/probe/full.go:64-80). TestANonComparableKeyPartMakesARowUnkeyable deliberately pins the omission using []string values (crud/probe/dup_test.go:153-175); there is no []byte duplicate test.
+**Blast radius:** silent wrong answer
+
+### E-FAULTS-05 — A zero cap means “use fifty”, without telling the author
+**Shape:** boundary
+**Setup:** An operator sets WithMaxRows(0), WithMaxConstraints(-1), WithTimeout(0), or WithMaxSavepoints(0) from an environment-derived configuration, intending to disable that work or noticing a bad value.
+**What the consumer does:** They deploy expecting the explicit invalid setting to refuse at declaration, or at minimum to be reported as the documented default.
+**What must happen:** An invalid explicit limit must fail loudly before traffic, because it changes whether an error response will issue a statement, wait for one, or claim a savepoint.
+**Today:** 🟡 partial
+**Evidence:** All four option constructors silently leave the defaults in place when their input is not positive (crud/probe/options.go:104-140). Only WithMaxConstraints documents this fallback (crud/probe/options.go:104-106); WithMaxRows, WithTimeout and WithMaxSavepoints do not. The option tests cover positive replacements and timeout behaviour (crud/probe/full_test.go:353-435), with no non-positive setting case.
+**Blast radius:** confusing error
+
+### E-FAULTS-06 — A missing catalog panics while binding
+**Shape:** misuse
+**Setup:** A startup branch loses a catalog value after handling its Load error incorrectly and still constructs probe.Full with a nil catalog interface.
+**What the consumer does:** They bind the resource and expect the declaration-time failure style this subsystem advertises: a precise refusal naming the bad wiring.
+**What must happen:** The process must fail at declaration with an actionable error such as “probe catalog is nil”, not a nil-interface panic whose relation to the resource is lost.
+**Today:** ❌ wrong or unhandled
+**Evidence:** Full accepts and stores its Catalog argument without validation (crud/probe/full.go:18-23), then Declare immediately calls f.cat.Table (crud/probe/declare.go:38-45). No guard covers a nil catalog. Declaration tests cover an empty fake catalog but not nil (crud/probe/declare_test.go:13-27), and the binding test only asserts that a known-table failure panics (crud/decorators/faults/probe_test.go:338-346).
+**Blast radius:** crash
+
+### E-FAULTS-07 — A conditional handler crashes on the first conflict
+**Shape:** misuse
+**Setup:** An application builds its options conditionally, leaves a probe.Handler nil for one environment, and still passes it to faults.WithProbe.
+**What the consumer does:** They start normally, then receive their first classified database refusal.
+**What must happen:** Bind must reject a nil handler with the operation that is unwired. A release cannot turn a routine 409 into a request-time panic because an optional feature was absent.
+**Today:** ❌ wrong or unhandled
+**Evidence:** WithProbe stores the handler unchanged (crud/decorators/faults/probe.go:28-39); declare records a nil handler without a Declarer or Savepointer check firing (crud/decorators/faults/probe.go:101-115). The first fault then calls pc.h.Enrich unconditionally (crud/decorators/faults/probe.go:161-177). No faults probe test passes a nil handler.
+**Blast radius:** crash
+
+### E-FAULTS-08 — A conditional sqlfault component crashes only on a refusal
+**Shape:** misuse
+**Setup:** A service conditionally supplies a custom vocabulary or extractor, but the selected *errs.Codes is nil or the selected ExtractorFunc is nil.
+**What the consumer does:** They construct sqlfault.New successfully, then a real database constraint is hit hours later.
+**What must happen:** The constructor must refuse an unusable component, or classification must degrade safely just as Wrap does for a nil classifier.
+**Today:** ❌ wrong or unhandled
+**Evidence:** WithCodes stores a nil vocabulary unchanged (crud/sqlfault/classify.go:26-29), and Classify dereferences it at c.codes.KindOf (crud/sqlfault/classify.go:79-85). WithExtractor likewise stores its input unchanged (crud/sqlfault/classify.go:31-33); a non-nil ExtractorFunc interface holding a nil function reaches f(err) (crud/sqlfault/extract.go:19-22) through c.extract (crud/sqlfault/classify.go:120-125). New deliberately guards only nil Option values (crud/sqlfault/classify.go:44-51). No test supplies a nil Codes or nil ExtractorFunc.
+**Blast radius:** crash
+
+### E-FAULTS-09 — Twenty concurrent declarations read the same whole schema twenty times
+**Shape:** concurrency
+**Setup:** A service starts many independently-bound resources in goroutines and each calls one catalog.Set.Load for the same physical database.
+**What the consumer does:** They use the documented Set specifically so all resources share one catalog and expect a single start-up introspection.
+**What must happen:** Concurrent loads should coalesce into one schema read, or the API and readiness guidance must say that concurrency trades one catalog for N complete introspections.
+**Today:** 🟡 partial
+**Evidence:** Set checks entries under its mutex, unlocks while Load runs, then only de-duplicates the resulting catalog before append (crud/catalog/set.go:52-79). The source comment and TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog explicitly say both callers read (crud/catalog/set.go:61-63; crud/catalog/set_test.go:85-91). Correctness is preserved — one stored catalog wins — but boot cost is multiplied by the number of simultaneous declarers.
+**Blast radius:** confusing error
+
+### E-FAULTS-10 — One Full value serves twenty models without cross-wiring their table plans
+**Shape:** concurrency
+**Setup:** An application creates one expensive probe.Full value over its catalog and reuses it while binding many models, potentially at the same time.
+**What the consumer does:** They avoid rebuilding the configuration and expect each repository to keep the candidate constraints for its own table.
+**What must happen:** Binding a later model must not move an earlier repository onto the later table or share mutable declaration state.
+**Today:** 🟡 partial
+**Evidence:** Full.Declare copies the handler before attaching meta, table and candidates (crud/probe/declare.go:35-59), so the source Full remains unbound. TestDeclaringTwoModelsFromOneFullValueGivesTwoHandlers asserts the first remains on docs and the second binds orgs (crud/probe/declare_test.go:90-111). It is a sequential declaration test; no test pins concurrent reuse, so the source shape is encouraging rather than a release-proof guarantee.
+**Blast radius:** none
+
+## Edge verdict
+
+The worst edge is the explicit source override: it is the documented escape hatch for an opaque chain, yet it can turn another database's state into this resource's response with no declaration-time check. Privacy and disclosure controls are also not closed: CodeOnly is undone after the probe, and a name-only Skip can silently suppress two separate checks. The module handles shared Full configuration correctly and preserves its carefully bounded probe arithmetic, but conditional configuration at the error boundary still has several request-time panics. These are not exotic driver failures; they are the ordinary nils, duplicate names, binary values and parallel startup work a service reaches while wiring a framework.
+
+## Release blockers found here (edge)
+
+| # | What | Severity | Why it blocks |
+|---|---|---|---|
+| 1 | faults.WithSource can direct a probe planned from one catalog to a different physical database, with no identity check | blocker | A secondary database can decide whether this endpoint says a value exists. That is both a cross-database silent wrong answer and an existence oracle leak. |
+| 2 | CodeOnly does not prevent the final faults decorator from resolving a driver-named column into a public path | blocker | A deployment selecting the explicit “do not name the field” control still exposes it for the driver paths most likely to carry one. |
+| 3 | Skip is keyed solely by constraint name although the catalog deliberately preserves same-name key and foreign-key families | blocker | Opting out of one oracle check silently turns off another violation class and still renders the result complete. |
+| 4 | Intra-payload duplicate detection drops equal non-comparable binary values without Partial | serious | A batch caller is promised both bad row indexes; this ordinary database value type gets neither the Go-side second row nor an incompleteness marker. |
+| 5 | Nil catalog, handler, vocabulary or extractor values are accepted and panic at Bind or on the first classified refusal | serious | A conditional production configuration turns a normal 409 into either a rollout crash or a request-time panic instead of an actionable declaration error. |
