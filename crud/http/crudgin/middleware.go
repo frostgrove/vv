@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/crud/http/crudhttp"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/port"
 )
 
 // installed marks a context the middleware is already running over. Gin has no

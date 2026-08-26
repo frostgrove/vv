@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port/porthttp"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 const reason = "signature does not verify"

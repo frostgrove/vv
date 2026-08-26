@@ -1,6 +1,6 @@
 package sqlerr
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // mariadbKeys is MariaDB 11.4.12, every row provoked and captured.
 //

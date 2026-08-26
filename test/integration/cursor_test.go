@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // Offset paging answers "skip 10, take 10", and what those ten rows are depends

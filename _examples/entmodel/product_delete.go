@@ -8,8 +8,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/shardit-io/vv/_examples/entmodel/predicate"
-	"github.com/shardit-io/vv/_examples/entmodel/product"
+	"github.com/frostgrove/vv/_examples/entmodel/predicate"
+	"github.com/frostgrove/vv/_examples/entmodel/product"
 )
 
 // ProductDelete is the builder for deleting a Product entity.

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // ScopeField is the multi-tenant one-liner: every query is narrowed to rows

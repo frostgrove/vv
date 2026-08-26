@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
 )
 
 // gate is an executor with no classifier: the sentinel gate on its own, which is

@@ -34,8 +34,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/port"
 )
 
 // A Resource is one model's API on another service.

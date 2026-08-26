@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // ErrUnauthenticated is the sentinel every authentication failure wraps, so a

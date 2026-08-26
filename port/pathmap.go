@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
 )
 
 // A PathMap is the resource adapter's hop of the path chain, inverted: a model

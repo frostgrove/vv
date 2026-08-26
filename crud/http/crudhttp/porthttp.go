@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port/porthttp"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 // Everything below moved to port/porthttp when the HTTP projection of the error

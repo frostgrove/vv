@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/catalog"
 )
 
 // The declaration-time refusals. Every one of them is something the process

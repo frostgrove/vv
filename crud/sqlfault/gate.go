@@ -3,7 +3,7 @@ package sqlfault
 import (
 	"strings"
 
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // mysqlIntegrityNumbers are integrity violations MySQL reports as HY000 — its

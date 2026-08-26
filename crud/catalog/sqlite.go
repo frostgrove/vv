@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // SQLite introspection, through the table-valued form of every PRAGMA.

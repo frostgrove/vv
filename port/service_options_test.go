@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // WithPaths is the service half of the path chain ([[D-043]]): the model's

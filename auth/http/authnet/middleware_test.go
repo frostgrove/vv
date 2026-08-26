@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authnet"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authnet"
 )
 
 // serve runs one request through the middleware and answers what the handler

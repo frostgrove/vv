@@ -4,8 +4,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // A probe is one violation, deliberately provoked.

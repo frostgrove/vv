@@ -6,8 +6,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/authjwt"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/authjwt"
 )
 
 func standardClaims(t *testing.T, c jwt.MapClaims) authjwt.Claims {

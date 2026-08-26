@@ -17,7 +17,7 @@ import (
 	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/shardit-io/vv/utils/vvflag"
+	"github.com/frostgrove/vv/utils/vvflag"
 )
 
 // ErrNoPath reports that neither --config-path nor CONFIG_PATH named a file.

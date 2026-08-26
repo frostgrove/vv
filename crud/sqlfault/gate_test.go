@@ -3,8 +3,8 @@ package sqlfault
 import (
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // The two gates answer different questions, and phase 3 owes the test that says

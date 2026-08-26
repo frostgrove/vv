@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 // What a Set has to get right is which database a catalog belongs to. Everything

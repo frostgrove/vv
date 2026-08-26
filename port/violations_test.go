@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // pipeline is what every test here measures: the list a transport renders from,

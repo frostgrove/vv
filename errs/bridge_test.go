@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // fieldError is what a validation library hands over, written out here so this

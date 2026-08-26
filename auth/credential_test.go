@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 func TestParseAuthorizationSplitsSchemeFromToken(t *testing.T) {

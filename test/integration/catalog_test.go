@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudpgx"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudpgx"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/catalog"
 )
 
 // What a catalog claims about a schema can only be checked against a server, and

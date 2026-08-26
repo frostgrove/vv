@@ -7,9 +7,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // The wire shape of every method is google.protobuf.Struct, in and out, and the

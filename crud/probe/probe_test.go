@@ -3,7 +3,7 @@ package probe
 import (
 	"testing"
 
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 // Simple is what every verb the caller did not name gets, and what an engine

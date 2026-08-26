@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
-	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/frostgrove/vv/utils/vvdb"
 )
 
 // The password holds every character that means something to one of the two

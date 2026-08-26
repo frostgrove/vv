@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The sentinels are declared here rather than imported from crud on purpose.

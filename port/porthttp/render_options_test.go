@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // An option a consumer sets and nothing asserts is an option that can be

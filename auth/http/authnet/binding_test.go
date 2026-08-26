@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authnet"
-	"github.com/shardit-io/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authnet"
+	"github.com/frostgrove/vv/crud/http/crudnet"
 )
 
 // What this binding tests that the other two cannot.

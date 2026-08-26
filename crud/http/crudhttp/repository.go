@@ -1,6 +1,6 @@
 package crudhttp
 
-import "github.com/shardit-io/vv/port"
+import "github.com/frostgrove/vv/port"
 
 // Repository is everything a transport binding needs. crud.Repo[M, ID, U]
 // satisfies it, and so does specs.Repo and any struct that embeds either —

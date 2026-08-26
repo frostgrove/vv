@@ -16,7 +16,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/shardit-io/vv/auth/authjwt"
+	"github.com/frostgrove/vv/auth/authjwt"
 )
 
 // jwkOf renders an RSA public key the way a provider publishes one.

@@ -1,6 +1,6 @@
 package sqlerr
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // The two primary result codes this table reads, in the low byte of whatever
 // the driver reported.

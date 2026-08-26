@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shardit-io/vv/_examples/example"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/_examples/example"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 var (

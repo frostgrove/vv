@@ -3,8 +3,8 @@ package sqlfault
 import (
 	"slices"
 
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/errs"
 )
 
 // Columns answers which columns a constraint covers, in key order.

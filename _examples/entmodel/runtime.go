@@ -5,8 +5,8 @@ package entmodel
 import (
 	"time"
 
-	"github.com/shardit-io/vv/_examples/entmodel/product"
-	"github.com/shardit-io/vv/_examples/entmodel/schema"
+	"github.com/frostgrove/vv/_examples/entmodel/product"
+	"github.com/frostgrove/vv/_examples/entmodel/schema"
 )
 
 // The init function reads all schema descriptors with runtime code

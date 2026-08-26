@@ -4,10 +4,10 @@ package versionstore
 
 import (
 	"context"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudnet"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 	"net/http"
 	"time"
 )

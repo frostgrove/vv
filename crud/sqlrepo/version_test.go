@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // Note carries the optimistic lock. Update is load-then-write, so between the

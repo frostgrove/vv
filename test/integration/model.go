@@ -8,9 +8,9 @@ package integration
 import (
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // User is the model under test. It exercises every mapping feature at once: a

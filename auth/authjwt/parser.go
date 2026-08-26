@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // A Parser verifies a token and decodes its payload into C.

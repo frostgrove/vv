@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/utils/vvdb"
-	"github.com/shardit-io/vv/utils/vvdb/dbpgx"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
 )
 
 // The compose file is the source of these, and the environment overrides them

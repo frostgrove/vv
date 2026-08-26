@@ -19,9 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlfault"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/errs"
 )
 
 // Queryer is the pgx shape: *pgxpool.Pool, *pgx.Conn and pgx.Tx all satisfy it.

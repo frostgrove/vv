@@ -8,8 +8,8 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // DecodeJSON reads a JSON body onto v, bounded by [MaxBody]. An empty body is

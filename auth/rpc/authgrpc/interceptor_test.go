@@ -10,10 +10,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/rpc/authgrpc"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/rpc/authgrpc"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // call runs one unary call through the interceptor.

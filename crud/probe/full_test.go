@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/errs"
 )
 
 // insert is one full row of the model, every column non-null. Individual tests

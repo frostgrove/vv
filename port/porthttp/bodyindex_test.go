@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // resolved renders one violation at path through the raw-body fallback and

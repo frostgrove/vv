@@ -6,7 +6,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // The same three fixtures the HTTP bindings carry, and for the same reason: a

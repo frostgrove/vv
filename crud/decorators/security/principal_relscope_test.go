@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/decorators/security"
 )
 
 // The three constructors below are the ones a consumer reaches for, and the

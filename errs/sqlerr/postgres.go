@@ -1,6 +1,6 @@
 package sqlerr
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // postgres classifies on the SQLSTATE alone, and on the whole five characters
 // rather than the class. That is the sentence [[D-046]] supersedes: 23503 and

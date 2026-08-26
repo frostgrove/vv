@@ -3,8 +3,8 @@ package crudnet
 import (
 	"net/http"
 
-	"github.com/shardit-io/vv/crud/http/crudhttp"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/port"
 )
 
 // A HandlerFunc is an ordinary handler that may return an error, which is the

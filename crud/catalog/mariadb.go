@@ -3,7 +3,7 @@ package catalog
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // MariaDB 11.4 introspection. Its own statements; only the row-to-struct shaping

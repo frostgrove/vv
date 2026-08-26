@@ -2,7 +2,7 @@
 
 package integration
 
-import "github.com/shardit-io/vv/crud/sqlrepo"
+import "github.com/frostgrove/vv/crud/sqlrepo"
 
 // The provider matrix needs one relation it can grow past a single preload
 // batch. It gets its own pair of tables rather than the blog ones because every

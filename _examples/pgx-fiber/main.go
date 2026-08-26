@@ -5,10 +5,10 @@
 // database/sql in the way — vv talks to the pool directly, and the model
 // is an ordinary struct with `db` tags.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/adapter/crudpgx
-//	go get github.com/shardit-io/vv/utils/vvdb/dbpgx
-//	go get github.com/shardit-io/vv/crud/http/crudfiber
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/adapter/crudpgx
+//	go get github.com/frostgrove/vv/utils/vvdb/dbpgx
+//	go get github.com/frostgrove/vv/crud/http/crudfiber
 //
 // Run it with the repository's own databases up (`make up` at the root):
 //
@@ -25,17 +25,17 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudpgx"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudfiber"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/utils/vvdb"
-	"github.com/shardit-io/vv/utils/vvdb/dbpgx"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudpgx"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudfiber"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/utils/vvdb"
+	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt
 
 // Product is the model: a plain struct, `db` tags, nothing generated and
 // nothing embedded. `auto` says the database owns the key, so a create request

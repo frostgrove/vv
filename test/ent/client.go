@@ -9,12 +9,12 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/shardit-io/vv/test/ent/migrate"
+	"github.com/frostgrove/vv/test/ent/migrate"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
-	"github.com/shardit-io/vv/test/ent/user"
+	"github.com/frostgrove/vv/test/ent/user"
 
 	stdsql "database/sql"
 )

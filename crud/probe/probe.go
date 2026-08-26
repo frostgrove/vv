@@ -3,8 +3,8 @@ package probe
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
 )
 
 // Handler turns one classified failure into every violation the payload caused.

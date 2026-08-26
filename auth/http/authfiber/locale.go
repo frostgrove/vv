@@ -5,7 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/vv/port/porthttp"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 // locale is the rendering context a refusal is written in.

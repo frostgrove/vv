@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The signatures still match. This is the assertion the whole dependency-free

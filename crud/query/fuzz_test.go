@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // The wire DSL is the one surface in this library that parses bytes somebody

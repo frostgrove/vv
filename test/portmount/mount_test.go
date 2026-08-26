@@ -23,13 +23,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/http/crudfiber"
-	"github.com/shardit-io/vv/crud/http/crudgin"
-	"github.com/shardit-io/vv/crud/http/crudnet"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/http/crudfiber"
+	"github.com/frostgrove/vv/crud/http/crudgin"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // TestMain silences Gin's start-up banner and per-route debug lines.

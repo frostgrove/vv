@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/test/versionstore"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/test/versionstore"
 )
 
 // This file exists so the package is linked and its init runs. A package with

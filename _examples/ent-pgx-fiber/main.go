@@ -9,8 +9,8 @@
 // one pool, ent migrating and seeding through it, vv reading and writing
 // through it.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/http/crudfiber
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/http/crudfiber
 //	go get entgo.io/ent
 //	go get github.com/jackc/pgx/v5
 //
@@ -32,14 +32,14 @@ import (
 	"github.com/gofiber/fiber/v3"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/_examples/entmodel"
-	"github.com/shardit-io/vv/_examples/entstore"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudfiber"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/_examples/entmodel"
+	"github.com/frostgrove/vv/_examples/entstore"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudfiber"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // The model is ent's own generated struct, entmodel.Product, bound as-is —

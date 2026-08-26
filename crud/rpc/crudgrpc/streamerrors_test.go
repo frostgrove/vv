@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/crud/rpc/crudgrpc"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/crud/rpc/crudgrpc"
 )
 
 // A refusal on a streaming method is classified, the way it is on a unary one.

@@ -9,8 +9,8 @@
 // tags, so one type serves both gorm and vv without an adapter struct in
 // between.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/http/crudgin
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/http/crudgin
 //	go get gorm.io/gorm
 //	go get gorm.io/driver/mysql
 //
@@ -29,16 +29,16 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudgin"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudgin"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/utils/vvdb"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt
 
 // Product is an ordinary gorm model carrying `db` tags alongside the `gorm`
 // ones — gorm owns migration and seeding, vv owns the CRUD API, and

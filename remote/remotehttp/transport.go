@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/port/porthttp"
-	"github.com/shardit-io/vv/remote"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/port/porthttp"
+	"github.com/frostgrove/vv/remote"
 )
 
 // Transport calls a resource another service mounted, over net/http.

@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/http/crudhttp"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/errs"
 )
 
 // serve mounts one handler behind the middlewares and reports what the client

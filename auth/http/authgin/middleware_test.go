@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authgin"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authgin"
 )
 
 func TestMain(m *testing.M) {

@@ -510,9 +510,9 @@ type Options struct {
 
 // The packages the adapter half names. See Options.
 const (
-	DefaultPortPkg = "github.com/shardit-io/vv/port"
-	DefaultErrsPkg = "github.com/shardit-io/vv/errs"
-	DefaultNetPkg  = "github.com/shardit-io/vv/crud/http/crudnet"
+	DefaultPortPkg = "github.com/frostgrove/vv/port"
+	DefaultErrsPkg = "github.com/frostgrove/vv/errs"
+	DefaultNetPkg  = "github.com/frostgrove/vv/crud/http/crudnet"
 )
 
 // Run generates from o and writes the result. The output path is Out resolved

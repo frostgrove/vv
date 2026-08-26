@@ -3,8 +3,8 @@
 //
 // A parser takes one flattened driver error — the dialect, the SQLSTATE, the
 // engine's own number and the structured fields the driver populated — and
-// answers a [github.com/shardit-io/vv/errs.Code] and a
-// [github.com/shardit-io/vv/errs.Source], or nothing. It holds no driver
+// answers a [github.com/frostgrove/vv/errs.Code] and a
+// [github.com/frostgrove/vv/errs.Source], or nothing. It holds no driver
 // import, names no driver type and opens no connection. Extraction, which does
 // have to name a type or ask by shape, is the adapters' job and lives with
 // them.
@@ -47,14 +47,14 @@
 //
 // # These are not an errs.Classifier
 //
-// A [github.com/shardit-io/vv/errs.Classifier] takes an error and produces a
-// whole [github.com/shardit-io/vv/errs.Fault]. A fault needs a Kind, which
+// A [github.com/frostgrove/vv/errs.Classifier] takes an error and produces a
+// whole [github.com/frostgrove/vv/errs.Fault]. A fault needs a Kind, which
 // comes from the wired Codes value this package cannot see, and it needs
 // Builder.Wrapping, which is the only door to a sentinel. So a classifier is
 // written *over* these parsers, in the layer that has both — not by making them
 // implement it.
 //
-// That layer is github.com/shardit-io/vv/crud/sqlfault, which has the parsers, crud
+// That layer is github.com/frostgrove/vv/crud/sqlfault, which has the parsers, crud
 // for the sentinel and catalog for the columns a driver did not name — none of
 // which this package may import. Extraction, the half that must name a driver
 // type or shape-match one, stays with the adapters.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // A Method is one call a resource answers.

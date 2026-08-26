@@ -5,8 +5,8 @@ package integration
 import (
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // The blog schema exercises every relation kind at once: belongs_to, has_many,

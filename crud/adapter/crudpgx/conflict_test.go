@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlfault"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // pgx does not report a refused statement from Query. It hands back a Rows that

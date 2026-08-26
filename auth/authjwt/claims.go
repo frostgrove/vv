@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // Claims is the ready-made claims type, for the ordinary shape of token: a

@@ -25,7 +25,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // The defaults match docker-compose.yml, and the variables match the ones the

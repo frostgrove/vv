@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 const corpusDir = "sqlerr/testdata/corpus"

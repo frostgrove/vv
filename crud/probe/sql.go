@@ -1,7 +1,7 @@
 package probe
 
 import (
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // The aliases the probe's own statement uses. They are prefixed because a scope

@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authgin"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authgin"
 )
 
 // What this binding does that the other two do not.

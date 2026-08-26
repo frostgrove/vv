@@ -3,7 +3,7 @@
 // associations. It is what docs/gorm.md tells a gorm project to do, executed.
 package gormstore
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly UpdatedAt,DeletedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly UpdatedAt,DeletedAt
 
 import (
 	"sync/atomic"

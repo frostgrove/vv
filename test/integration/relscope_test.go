@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // A scope is a WHERE clause, and a WHERE clause only ever constrains its own

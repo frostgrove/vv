@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/protoadapt"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // A Renderer turns an error into a status. It is the seam a consumer replaces

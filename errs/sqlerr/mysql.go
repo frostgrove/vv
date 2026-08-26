@@ -1,6 +1,6 @@
 package sqlerr
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // key is what MySQL and MariaDB are classified on: the SQLSTATE and the
 // engine's own number together, never either alone.

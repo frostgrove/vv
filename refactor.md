@@ -464,8 +464,8 @@ gRPC-транспорт при этом остаётся в `crud/rpc/crudgrpc`:
 git mv http/authhttp auth/http/authhttp        # 1. директории
 # 2. пути импорта — по всему дереву, включая docs, README, CLAUDE.md,
 #    go.mod, go.work, //go:generate и их копии в тестах
-grep -rl 'shardit-io/vv/http/authhttp' . --exclude-dir=.git \
-  | xargs sed -i 's|shardit-io/vv/http/authhttp|shardit-io/vv/auth/http/authhttp|g'
+grep -rl 'frostgrove/vv/http/authhttp' . --exclude-dir=.git \
+  | xargs sed -i 's|frostgrove/vv/http/authhttp|frostgrove/vv/auth/http/authhttp|g'
 # 3. голые упоминания путей в прозе документов (без префикса модуля)
 grep -rn 'http/authhttp' docs README.md CLAUDE.md
 # 4. имя пакета — только если оно менялось (этап 2, basic → sqlrepo)

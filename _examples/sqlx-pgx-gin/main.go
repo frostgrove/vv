@@ -8,9 +8,9 @@
 // surface the handler exposes, because crud.Opt[int] is not a shape sqlx's
 // struct scanner understands.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/adapter/crudsql
-//	go get github.com/shardit-io/vv/crud/http/crudgin
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/adapter/crudsql
+//	go get github.com/frostgrove/vv/crud/http/crudgin
 //	go get github.com/jmoiron/sqlx
 //	go get github.com/jackc/pgx/v5
 //
@@ -30,15 +30,15 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudgin"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudgin"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt
 
 // Product carries one tag set, `db`, read by both sqlx and vv: sqlx maps
 // columns onto fields with it, and vv reads the same tag for the pk,

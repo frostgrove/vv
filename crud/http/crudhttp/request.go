@@ -1,8 +1,8 @@
 package crudhttp
 
 import (
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/port"
 )
 
 // BulkDeleteRequest is the body of POST /bulk-delete.

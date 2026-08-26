@@ -5,4 +5,4 @@
 // It is what docs/ent.md tells an ent project to do, executed.
 package entstore
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -dir ../ent -types User -readonly CreatedAt -import github.com/shardit-io/vv/test/ent -into .
+//go:generate go run github.com/frostgrove/vv/cmd/vv -dir ../ent -types User -readonly CreatedAt -import github.com/frostgrove/vv/test/ent -into .

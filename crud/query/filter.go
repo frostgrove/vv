@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // node compiles one filter object. Keys are either logical combinators

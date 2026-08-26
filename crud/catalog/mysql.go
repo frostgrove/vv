@@ -3,7 +3,7 @@ package catalog
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // MySQL 8.4 introspection, and the row-to-struct shaping MariaDB shares.

@@ -12,12 +12,12 @@
 // start-up refusal run under `make unit`.
 package versionstore
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter -readonly ArchivedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -adapter -readonly ArchivedAt
 
 import (
 	"time"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // A Document is a row two people edit at once, which is what the lock is for.

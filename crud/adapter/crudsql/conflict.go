@@ -1,6 +1,6 @@
 package crudsql
 
-import "github.com/shardit-io/vv/crud/sqlfault"
+import "github.com/frostgrove/vv/crud/sqlfault"
 
 // conflict classifies whatever the driver returned: crud.ErrConflict for a
 // constraint the database refused to break, and an errs.Fault carrying the code

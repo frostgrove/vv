@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/frostgrove/vv/utils/vvdb"
 )
 
 func base(e vvdb.Engine) vvdb.Config {

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlfault"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/errs"
 )
 
 // POST refuses a client-chosen key when the database generates it, and PUT is

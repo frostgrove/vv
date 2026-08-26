@@ -10,11 +10,11 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/authjwt"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/decorators/security"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/authjwt"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // The whole chain against a real database: a token is verified, its claims

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // parcel carries one of everything the generated artefacts have to reason

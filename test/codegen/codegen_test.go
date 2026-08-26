@@ -23,9 +23,9 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/shardit-io/vv/test/entstore"
-	_ "github.com/shardit-io/vv/test/gormstore"
-	_ "github.com/shardit-io/vv/test/versionstore"
+	_ "github.com/frostgrove/vv/test/entstore"
+	_ "github.com/frostgrove/vv/test/gormstore"
+	_ "github.com/frostgrove/vv/test/versionstore"
 )
 
 // example/blog pins its own generated file against the generator, but it runs
@@ -54,18 +54,18 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 		{
 			name:      "ent",
 			pkg:       filepath.Join(root, "test", "entstore"),
-			directive: "//go:generate go run github.com/shardit-io/vv/cmd/vv -dir ../ent -types User -readonly CreatedAt -import github.com/shardit-io/vv/test/ent -into .",
+			directive: "//go:generate go run github.com/frostgrove/vv/cmd/vv -dir ../ent -types User -readonly CreatedAt -import github.com/frostgrove/vv/test/ent -into .",
 			regen: func(t *testing.T, pkg, dir string) {
 				// The model lives in another package and is named through
 				// -import, so only the destination has to move.
 				run(t, pkg, "-dir", "../ent", "-types", "User",
-					"-readonly", "CreatedAt", "-import", "github.com/shardit-io/vv/test/ent", "-into", dir)
+					"-readonly", "CreatedAt", "-import", "github.com/frostgrove/vv/test/ent", "-into", dir)
 			},
 		},
 		{
 			name:      "version",
 			pkg:       filepath.Join(root, "test", "versionstore"),
-			directive: "//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter -readonly ArchivedAt",
+			directive: "//go:generate go run github.com/frostgrove/vv/cmd/vv -adapter -readonly ArchivedAt",
 			regen: func(t *testing.T, pkg, dir string) {
 				copyGoSources(t, pkg, dir)
 				run(t, root, "-dir", dir, "-adapter", "-readonly", "ArchivedAt")
@@ -74,7 +74,7 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 		{
 			name:      "gorm",
 			pkg:       filepath.Join(root, "test", "gormstore"),
-			directive: "//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly UpdatedAt,DeletedAt",
+			directive: "//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly UpdatedAt,DeletedAt",
 			regen: func(t *testing.T, pkg, dir string) {
 				// This one generates beside its own model, and -into is refused
 				// without -import for exactly that reason: the generated file
@@ -124,7 +124,7 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 
 func run(t *testing.T, wd string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"run", "github.com/shardit-io/vv/cmd/vv"}, args...)...)
+	cmd := exec.Command("go", append([]string{"run", "github.com/frostgrove/vv/cmd/vv"}, args...)...)
 	cmd.Dir = wd
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)

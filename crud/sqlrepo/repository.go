@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // repository is the SQL implementation of crud.Core.

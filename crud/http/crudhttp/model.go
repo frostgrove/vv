@@ -1,8 +1,8 @@
 package crudhttp
 
 import (
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/port"
 )
 
 // Sanitize clears what a client is not allowed to choose on create: a

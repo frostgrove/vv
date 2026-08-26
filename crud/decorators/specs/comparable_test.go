@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/decorators/specs"
 )
 
 // Cmp exists because cmp.Ordered does not reach time.Time — the one type a

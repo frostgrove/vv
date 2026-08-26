@@ -3,7 +3,7 @@ package catalog
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // PostgreSQL introspection, out of pg_catalog rather than information_schema.

@@ -26,8 +26,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/port/porthttp"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 // defaultRenderer is what a middleware with no options refuses through. One

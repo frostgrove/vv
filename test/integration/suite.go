@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/decorators/security"
-	"github.com/shardit-io/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud/decorators/specs"
 )
 
 // Target is one driver bound to one database.

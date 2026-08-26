@@ -3,7 +3,7 @@ package security
 import (
 	"context"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // The policies in this file are the ones whose answer comes from the

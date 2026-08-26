@@ -11,8 +11,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/authjwt"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/authjwt"
 )
 
 // MyClaims is a consumer's own claims type: no embedded type of ours, none of

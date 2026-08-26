@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 // A rolling migration adds a constraint while the process runs and the

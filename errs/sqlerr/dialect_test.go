@@ -3,8 +3,8 @@ package sqlerr_test
 import (
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // The dialect is part of the key, and this is where that is worth something.

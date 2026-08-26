@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // An Extractor flattens a driver error into the shape sqlerr.Classify reads.

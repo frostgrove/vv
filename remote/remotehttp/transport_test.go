@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/remote"
+	"github.com/frostgrove/vv/remote"
 )
 
 // The client a Transport builds for itself is never the process-wide one, and

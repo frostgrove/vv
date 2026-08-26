@@ -3,10 +3,10 @@
 package entstore
 
 import (
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/test/ent"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/test/ent"
 	"time"
 )
 

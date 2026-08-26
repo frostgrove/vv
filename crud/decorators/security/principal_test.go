@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/decorators/security"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // editor is the caller most of these tests run as: one tenant, one role, the

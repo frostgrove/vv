@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/probe"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/probe"
+	"github.com/frostgrove/vv/errs"
 )
 
 // An Option wires the probe into the decorator.

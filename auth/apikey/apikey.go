@@ -26,7 +26,7 @@ import (
 	"context"
 	"crypto/subtle"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // A Store resolves a presented key to a caller.

@@ -1,6 +1,6 @@
 package port
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // Fields is the service's own hop of the path chain: the model's field name to
 // the path the command uses for it. A service defined its command shape, so it

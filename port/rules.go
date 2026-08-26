@@ -1,6 +1,6 @@
 package port
 
-import "github.com/shardit-io/vv/crud/query"
+import "github.com/frostgrove/vv/crud/query"
 
 // Rules are the parts of a handler's configuration that say nothing about a
 // transport: what a client may ask for, what it may not choose, and how much of

@@ -7,12 +7,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/crud/decorators/faults"
-	"github.com/shardit-io/vv/crud/decorators/security"
-	"github.com/shardit-io/vv/crud/probe"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud/decorators/faults"
+	"github.com/frostgrove/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud/probe"
+	"github.com/frostgrove/vv/errs"
 )
 
 // docsCatalog is the schema the probe reads. Two unique keys, so a test can tell

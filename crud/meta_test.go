@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 type Timestamps struct {

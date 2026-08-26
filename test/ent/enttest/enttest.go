@@ -5,12 +5,12 @@ package enttest
 import (
 	"context"
 
-	"github.com/shardit-io/vv/test/ent"
+	"github.com/frostgrove/vv/test/ent"
 	// required by schema hooks.
-	_ "github.com/shardit-io/vv/test/ent/runtime"
+	_ "github.com/frostgrove/vv/test/ent/runtime"
 
 	"entgo.io/ent/dialect/sql/schema"
-	"github.com/shardit-io/vv/test/ent/migrate"
+	"github.com/frostgrove/vv/test/ent/migrate"
 )
 
 type (

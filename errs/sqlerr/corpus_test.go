@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // SameKey is what keeps the checked-in corpus honest, and every table test in

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 // The canned schemas the unit tests load. They are PostgreSQL-shaped because

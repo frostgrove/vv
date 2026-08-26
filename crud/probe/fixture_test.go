@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The fixture every unit test in this package reads.

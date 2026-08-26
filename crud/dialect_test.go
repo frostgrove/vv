@@ -3,7 +3,7 @@ package crud_test
 import (
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // The dialect is the only place SQL syntax differences are allowed to live, so

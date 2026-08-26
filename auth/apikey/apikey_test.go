@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/apikey"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/apikey"
 )
 
 var batch = auth.Claims{Sub: "batch", Permissions: []auth.Permission{"article:read"}}

@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/errs"
 )
 
 // fakeColumns is a schema lookup that records whether it was asked. The

@@ -19,7 +19,7 @@ at the first tag.
 
 ## 1. The organisation name
 
-`shardit-io` stays for now. "Shard it" promises horizontal sharding this library
+`frostgrove` stays for now. "Shard it" promises horizontal sharding this library
 does not do, and `github.com/shardit` is held by another account, so the `-io`
 suffix is a workaround rather than a choice.
 

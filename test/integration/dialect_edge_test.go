@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The two engines vv supports disagree about more than syntax: MySQL has no

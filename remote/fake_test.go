@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/http/crudnet"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/port"
 )
 
 // The model and the fake are crudnet's, name for name. A client test that

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
 // A Classifier turns one engine's driver errors into faults. It is an

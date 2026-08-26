@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 func TestADeclarationWhoseTableTheCatalogDoesNotKnowRefusesToStart(t *testing.T) {

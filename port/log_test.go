@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/port"
 )
 
 // The library's own lines go where the application says, and somewhere sensible

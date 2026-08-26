@@ -20,9 +20,9 @@ package authgin
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authhttp"
-	"github.com/shardit-io/vv/port/porthttp"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authhttp"
+	"github.com/frostgrove/vv/port/porthttp"
 )
 
 // Middleware authenticates every request that passes through it.

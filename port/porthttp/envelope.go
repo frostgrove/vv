@@ -1,6 +1,6 @@
 package porthttp
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // An Envelope is the only body this library puts on the wire for a failed
 // request:

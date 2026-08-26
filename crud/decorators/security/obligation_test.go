@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/decorators/security"
 )
 
 // verb is one method of crud.Core and what the gate is obliged to do with it.

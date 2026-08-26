@@ -19,7 +19,7 @@ package sqlrepo
 import (
 	"reflect"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // DefaultPageSize is the page size used when a query does not ask for one.

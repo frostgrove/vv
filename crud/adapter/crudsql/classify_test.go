@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/sqlfault"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The degradation [[D-046]]'s last forbid buys, made visible.

@@ -9,8 +9,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/http/authfiber"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/http/authfiber"
 )
 
 // serve runs one request through the middleware and answers what the handler

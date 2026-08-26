@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/frostgrove/vv/utils/vvdb"
 )
 
 // An Option reaches the pgx configuration after vvdb's fields have been

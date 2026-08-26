@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // A preload compiles against the related model but keeps the *root's*

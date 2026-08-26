@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 // Repository is everything a Service needs. crud.Repo[M, ID, U] satisfies it,

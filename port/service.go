@@ -3,9 +3,9 @@ package port
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/errs"
 )
 
 // A Service is what a transport talks to. It takes commands and answers models,

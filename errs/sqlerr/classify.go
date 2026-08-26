@@ -1,6 +1,6 @@
 package sqlerr
 
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 
 // Classify answers what one driver error is, from its key alone.
 //

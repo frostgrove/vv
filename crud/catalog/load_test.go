@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/crudtest"
 )
 
 func TestAnUnknownDialectIsRefusedBeforeAnyStatement(t *testing.T) {

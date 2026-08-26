@@ -14,16 +14,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudpgx"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/crud/decorators/faults"
-	"github.com/shardit-io/vv/crud/http/crudhttp"
-	"github.com/shardit-io/vv/crud/probe"
-	"github.com/shardit-io/vv/crud/sqlfault"
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudpgx"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud/decorators/faults"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/crud/probe"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/errs"
 )
 
 // What the probe finds can only be checked against a server: the whole design

@@ -6,7 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud/query"
 	"os"
 	"testing"
 	"time"
@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/test/corpus"
+	"github.com/frostgrove/vv/test/corpus"
 )
 
 // Where the databases are. The corpus generator reads the same variables and
@@ -44,7 +44,7 @@ var (
 
 func TestMain(m *testing.M) {
 	if err := setup(); err != nil {
-		fmt.Fprintf(os.Stderr, "github.com/shardit-io/vv integration setup failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "github.com/frostgrove/vv integration setup failed: %v\n", err)
 		fmt.Fprintln(os.Stderr, "start the databases with: docker compose up -d --wait")
 		os.Exit(1)
 	}

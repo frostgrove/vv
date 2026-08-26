@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shardit-io/vv/test/ent"
+	"github.com/frostgrove/vv/test/ent"
 )
 
 // The UserFunc type is an adapter to allow the use of ordinary

@@ -7,12 +7,12 @@
 // that mapping, the service shell and the net/http wiring.
 package blog
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter
+//go:generate go run github.com/frostgrove/vv/cmd/vv -adapter
 
 import (
 	"time"
 
-	"github.com/shardit-io/vv/crud"
+	"github.com/frostgrove/vv/crud"
 )
 
 type Author struct {

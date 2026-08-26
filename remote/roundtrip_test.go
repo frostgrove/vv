@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/remote"
-	"github.com/shardit-io/vv/remote/remotehttp"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/remote"
+	"github.com/frostgrove/vv/remote/remotehttp"
 )
 
 func client(t *testing.T, base string) *remote.Resource[Widget, int64, WidgetUpdate] {

@@ -3,7 +3,7 @@ package authjwt
 import (
 	"context"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // Authenticator bridges a parser to the contract: it verifies the token and

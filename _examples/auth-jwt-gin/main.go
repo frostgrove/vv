@@ -7,11 +7,11 @@
 // knows about neither. What connects them is one context value and one claim
 // name.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/adapter/crudpgx
-//	go get github.com/shardit-io/vv/crud/http/crudgin
-//	go get github.com/shardit-io/vv/auth/http/authgin
-//	go get github.com/shardit-io/vv/auth/authjwt
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/adapter/crudpgx
+//	go get github.com/frostgrove/vv/crud/http/crudgin
+//	go get github.com/frostgrove/vv/auth/http/authgin
+//	go get github.com/frostgrove/vv/auth/authjwt
 //
 // Run it with the repository's own databases up (`make up` at the root):
 //
@@ -42,16 +42,16 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/shardit-io/vv/auth"
-	"github.com/shardit-io/vv/auth/authjwt"
-	"github.com/shardit-io/vv/auth/http/authgin"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudpgx"
-	"github.com/shardit-io/vv/crud/decorators/security"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudgin"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/auth"
+	"github.com/frostgrove/vv/auth/authjwt"
+	"github.com/frostgrove/vv/auth/http/authgin"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudpgx"
+	"github.com/frostgrove/vv/crud/decorators/security"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudgin"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // Note is the model. TenantID is an ordinary column — nothing marks it as the

@@ -1,8 +1,8 @@
 package remote
 
 import (
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // An OptionError reports a repository option that has no spelling in the wire

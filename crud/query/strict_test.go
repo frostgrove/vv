@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // The failure this guards against is the quiet one: a client misspells the key

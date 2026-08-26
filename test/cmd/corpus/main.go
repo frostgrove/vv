@@ -15,8 +15,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/shardit-io/vv/errs/sqlerr"
-	"github.com/shardit-io/vv/test/corpus"
+	"github.com/frostgrove/vv/errs/sqlerr"
+	"github.com/frostgrove/vv/test/corpus"
 )
 
 func main() {

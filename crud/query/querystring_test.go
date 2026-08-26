@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/crud/query"
+	"github.com/frostgrove/vv/crud/query"
 )
 
 // Every operator spelling has to mean the same thing on both front doors. A

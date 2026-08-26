@@ -3,8 +3,8 @@ package crudfiber
 import (
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/shardit-io/vv/crud/http/crudhttp"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/port"
 )
 
 // Errors renders whatever a handler returned, for handlers this library did not

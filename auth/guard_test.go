@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/shardit-io/vv/auth"
+	"github.com/frostgrove/vv/auth"
 )
 
 // headers turns a map into the getter a Guard takes, so a test does not need a

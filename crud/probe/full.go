@@ -3,9 +3,9 @@ package probe
 import (
 	"context"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/catalog"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/errs"
 )
 
 // Full issues one extra statement — one boolean column per constraint the write

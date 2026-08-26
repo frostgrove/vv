@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shardit-io/vv/_examples/example/blog"
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/crudtest"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/_examples/example/blog"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 var Articles = sqlrepo.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
@@ -134,7 +134,7 @@ func articleRow() []any {
 // generateDirective is the line model.go carries, checked verbatim: change it
 // without changing the command below and the staleness check would quietly be
 // measuring a command nobody runs.
-const generateDirective = "//go:generate go run github.com/shardit-io/vv/cmd/vv -adapter"
+const generateDirective = "//go:generate go run github.com/frostgrove/vv/cmd/vv -adapter"
 
 // The checked-in generated file must match what the generator produces now.
 func TestGeneratedFileIsUpToDate(t *testing.T) {
@@ -152,7 +152,7 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 
 	assertDirective(t, "model.go", generateDirective)
 
-	cmd := exec.Command("go", "run", "github.com/shardit-io/vv/cmd/vv", "-dir", dir, "-adapter")
+	cmd := exec.Command("go", "run", "github.com/frostgrove/vv/cmd/vv", "-dir", dir, "-adapter")
 	cmd.Dir = mustRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("regenerating: %v\n%s", err, out)

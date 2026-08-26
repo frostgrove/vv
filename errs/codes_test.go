@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/errs"
 )
 
 // everyStandardCode is the vocabulary this package declares. It is written out

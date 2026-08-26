@@ -5,9 +5,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
 )
 
 // Repository is everything the default service needs. crud.Repo[M, ID, U]

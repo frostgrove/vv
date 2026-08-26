@@ -8,8 +8,8 @@
 // through the same underlying *sql.DB, so a gorm transaction and an vv
 // call can be the same transaction.
 //
-//	go get github.com/shardit-io/vv
-//	go get github.com/shardit-io/vv/crud/http/crudfiber
+//	go get github.com/frostgrove/vv
+//	go get github.com/frostgrove/vv/crud/http/crudfiber
 //	go get gorm.io/gorm
 //	go get gorm.io/driver/postgres
 //
@@ -28,15 +28,15 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudfiber"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudfiber"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt
 
 // Product is an ordinary gorm model. The `gorm` tags are what the project
 // already had; the `db` tags are the only addition vv needs, sitting on

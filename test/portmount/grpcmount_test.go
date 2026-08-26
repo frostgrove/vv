@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/shardit-io/vv/crud/rpc/crudgrpc"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud/rpc/crudgrpc"
+	"github.com/frostgrove/vv/errs"
 )
 
 // The fourth transport. Everything in this file is the same claim mount_test.go

@@ -7,7 +7,7 @@
 // library's own module. There is no second `go get` for the transport the way
 // there is for Fiber or Gin, and no framework in anybody's build.
 //
-//	go get github.com/shardit-io/vv
+//	go get github.com/frostgrove/vv
 //	go get github.com/jackc/pgx/v5
 //
 // The driver is the only other line, and only because PostgreSQL needs one.
@@ -27,16 +27,16 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/crud/adapter/crudsql"
-	"github.com/shardit-io/vv/crud/decorators/specs"
-	"github.com/shardit-io/vv/crud/http/crudnet"
-	"github.com/shardit-io/vv/crud/query"
-	"github.com/shardit-io/vv/crud/sqlrepo"
-	"github.com/shardit-io/vv/utils/vvdb"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
+	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/utils/vvdb"
 )
 
-//go:generate go run github.com/shardit-io/vv/cmd/vv -readonly CreatedAt
+//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly CreatedAt
 
 // Product is the model: a plain struct with `db` tags, the same shape every
 // other example serves.

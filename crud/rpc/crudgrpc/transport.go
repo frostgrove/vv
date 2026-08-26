@@ -13,9 +13,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/shardit-io/vv/errs"
-	"github.com/shardit-io/vv/port"
-	"github.com/shardit-io/vv/remote"
+	"github.com/frostgrove/vv/errs"
+	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/remote"
 )
 
 // Transport calls a resource another service registered, over gRPC.

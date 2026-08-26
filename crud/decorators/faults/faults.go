@@ -36,8 +36,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/shardit-io/vv/crud"
-	"github.com/shardit-io/vv/errs"
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/errs"
 )
 
 // Enrich builds the middleware. Both type parameters have to be written at the
