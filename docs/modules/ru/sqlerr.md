@@ -1,7 +1,7 @@
 # errs/sqlerr — ошибка драйвера становится кодом
 
 ```go
-import "github.com/shardit-io/vv/errs/sqlerr"
+import "github.com/frostgrove/vv/errs/sqlerr"
 ```
 
 **Модуль:** корневой · **Зависит от:** `errs` и стандартной библиотеки. **Без

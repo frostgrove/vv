@@ -1,7 +1,7 @@
 # errs — the error contract
 
 ```go
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 ```
 
 **Module:** root, and it will get its own version line at the first tag

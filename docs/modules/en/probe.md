@@ -1,7 +1,7 @@
 # probe — every violation, not just the first
 
 ```go
-import "github.com/shardit-io/vv/crud/probe"
+import "github.com/frostgrove/vv/crud/probe"
 ```
 
 **Module:** root · **Depends on:** `crud`, `errs`, `catalog`

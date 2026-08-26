@@ -1,7 +1,7 @@
 # remote — репозиторий, которого нет в этом процессе
 
 ```go
-import "github.com/shardit-io/vv/remote"
+import "github.com/frostgrove/vv/remote"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `query`, `port`, `errs` и

@@ -1,7 +1,7 @@
 # crudnet — a full CRUD API on net/http
 
 ```go
-import "github.com/shardit-io/vv/crud/http/crudnet"
+import "github.com/frostgrove/vv/crud/http/crudnet"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing
@@ -10,7 +10,7 @@ import "github.com/shardit-io/vv/crud/http/crudnet"
 Ten routes, the full query DSL, pagination, preloads, the create/patch/replace
 lifecycle and the error envelope — on `net/http`, with no dependency at all.
 
-On `net/http` over `database/sql`, `go get github.com/shardit-io/vv` is the whole
+On `net/http` over `database/sql`, `go get github.com/frostgrove/vv` is the whole
 installation.
 
 ---

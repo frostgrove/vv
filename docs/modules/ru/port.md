@@ -1,7 +1,7 @@
 # port — транспортно-нейтральная половина
 
 ```go
-import "github.com/shardit-io/vv/port"
+import "github.com/frostgrove/vv/port"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `query`, `errs` и стандартной

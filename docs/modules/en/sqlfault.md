@@ -1,7 +1,7 @@
 # sqlfault — a driver error becomes a fault
 
 ```go
-import "github.com/shardit-io/vv/crud/sqlfault"
+import "github.com/frostgrove/vv/crud/sqlfault"
 ```
 
 **Module:** root · **Depends on:** `errs`, `errs/sqlerr`, `crud`, `catalog`

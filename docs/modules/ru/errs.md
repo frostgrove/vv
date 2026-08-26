@@ -1,7 +1,7 @@
 # errs — контракт ошибок
 
 ```go
-import "github.com/shardit-io/vv/errs"
+import "github.com/frostgrove/vv/errs"
 ```
 
 **Модуль:** корневой, получит собственную версионную строку при первом теге

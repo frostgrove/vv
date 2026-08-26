@@ -1,7 +1,7 @@
 # porthttp — the HTTP projection of the error contract
 
 ```go
-import "github.com/shardit-io/vv/port/porthttp"
+import "github.com/frostgrove/vv/port/porthttp"
 ```
 
 **Module:** root · **Depends on:** `crud`, `query`, `errs`, `port`, `net/http`

@@ -392,11 +392,11 @@ follows on its own.
 ## Before you start: adding the module
 
 ```bash
-go get github.com/shardit-io/vv                 # the library
-go get github.com/shardit-io/vv/crud/http/crudfiber  # …and your HTTP framework
-go get github.com/shardit-io/vv/crud/rpc/crudgrpc    # …or gRPC instead
-go get github.com/shardit-io/vv/auth/authjwt   # …and JWT, if that is how you authenticate
-go get github.com/shardit-io/vv/auth/http/authgin   # …plus the auth middleware for your framework
+go get github.com/frostgrove/vv                 # the library
+go get github.com/frostgrove/vv/crud/http/crudfiber  # …and your HTTP framework
+go get github.com/frostgrove/vv/crud/rpc/crudgrpc    # …or gRPC instead
+go get github.com/frostgrove/vv/auth/authjwt   # …and JWT, if that is how you authenticate
+go get github.com/frostgrove/vv/auth/http/authgin   # …plus the auth middleware for your framework
 ```
 
 The library itself has **no external dependencies**. Anything that would add one
@@ -412,10 +412,10 @@ of the library.
 
 ```go
 import (
-    "github.com/shardit-io/vv/crud"
-    "github.com/shardit-io/vv/crud/sqlrepo"
-    "github.com/shardit-io/vv/crud/adapter/crudsql"
-    "github.com/shardit-io/vv/crud/http/crudfiber"   // or .../crud/http/crudgin, .../crud/http/crudnet
+    "github.com/frostgrove/vv/crud"
+    "github.com/frostgrove/vv/crud/sqlrepo"
+    "github.com/frostgrove/vv/crud/adapter/crudsql"
+    "github.com/frostgrove/vv/crud/http/crudfiber"   // or .../crud/http/crudgin, .../crud/http/crudnet
 )
 ```
 
@@ -505,7 +505,7 @@ func TestMemberMappingMatchesGorm(t *testing.T) {
     }
     for _, f := range s.Fields {
         if stmt.Schema.LookUpField(f.Column) == nil {
-            t.Errorf("github.com/shardit-io/vv maps %q, gorm has no such column", f.Column)
+            t.Errorf("github.com/frostgrove/vv maps %q, gorm has no such column", f.Column)
         }
     }
     if Members.Meta().Table != stmt.Schema.Table {
@@ -581,7 +581,7 @@ The one type vv needs beyond your model is the partial-update DTO. You do
 not write it:
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/vv -dir ../models -types Member,Team \
+//go:generate go run github.com/frostgrove/vv/cmd/vv -dir ../models -types Member,Team \
 //    -readonly CreatedAt,UpdatedAt,DeletedAt -import myapp/models -into .
 package store
 ```
@@ -657,7 +657,7 @@ mapping onto the model, the inverse of that mapping, a service shell and the
 wiring:
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/vv -dir ../models -types Member,Team \
+//go:generate go run github.com/frostgrove/vv/cmd/vv -dir ../models -types Member,Team \
 //    -readonly CreatedAt,UpdatedAt,DeletedAt -import myapp/models -into . -adapter
 ```
 

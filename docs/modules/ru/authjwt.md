@@ -1,10 +1,10 @@
 # authjwt — проверка JWT в вашу собственную структуру клеймов
 
 ```go
-import "github.com/shardit-io/vv/auth/authjwt"
+import "github.com/frostgrove/vv/auth/authjwt"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/auth/authjwt` — одна зависимость,
+**Модуль:** `github.com/frostgrove/vv/auth/authjwt` — одна зависимость,
 `github.com/golang-jwt/jwt/v5`
 · **Зависит от:** `auth`, golang-jwt/v5
 

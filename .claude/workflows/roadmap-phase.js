@@ -15,7 +15,7 @@ if (PHASE === undefined) throw new Error('pass {phase: N}')
 
 const CONTEXT = `
 Repository: /home/user/ws/shradit/golang/go-rx-crud — the Go CRUD framework "vv"
-(module github.com/shardit-io/vv).
+(module github.com/frostgrove/vv).
 
 Read CLAUDE.md first; it is binding. Then docs/decisions/Index.md — a decision
 doc is BINDING, and docs/flows/Index.md's reverse index maps every source file

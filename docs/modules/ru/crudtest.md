@@ -1,7 +1,7 @@
 # crudtest — модульное тестирование репозитория без базы данных
 
 ```go
-import "github.com/shardit-io/vv/crud/crudtest"
+import "github.com/frostgrove/vv/crud/crudtest"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

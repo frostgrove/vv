@@ -1,7 +1,7 @@
 # security — the gate
 
 ```go
-import "github.com/shardit-io/vv/crud/decorators/security"
+import "github.com/frostgrove/vv/crud/decorators/security"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

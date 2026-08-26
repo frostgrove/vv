@@ -4,7 +4,7 @@ A generic CRUD repository for Go: JPA-shaped semantics, a Specifications /
 Criteria API, a security gate, a wire DSL and a Fiber handler — over any driver,
 without owning the caller's connection or transaction.
 
-Module: `github.com/shardit-io/vv`, and it has no external dependencies.
+Module: `github.com/frostgrove/vv`, and it has no external dependencies.
 Anything that would add one is a module of its own under the same repository —
 `crud/http/crudfiber`, `crud/http/crudgin`, `crud/adapter/crudpgx`, `auth/authjwt` —
 so a consumer downloads only the binding and driver it imports. `test/` and `_examples/` are two more,

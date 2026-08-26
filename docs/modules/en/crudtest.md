@@ -1,7 +1,7 @@
 # crudtest — unit-test a repository with no database
 
 ```go
-import "github.com/shardit-io/vv/crud/crudtest"
+import "github.com/frostgrove/vv/crud/crudtest"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

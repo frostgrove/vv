@@ -1,7 +1,7 @@
 # authnet — authenticate a net/http request
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authnet"
+import "github.com/frostgrove/vv/auth/http/authnet"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing

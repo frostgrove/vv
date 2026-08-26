@@ -1,7 +1,7 @@
 # crudhttp — то, что одновременно HTTP *и* CRUD
 
 ```go
-import "github.com/shardit-io/vv/crud/http/crudhttp"
+import "github.com/frostgrove/vv/crud/http/crudhttp"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `query`, `errs`, `port`, `port/porthttp`, `net/http`

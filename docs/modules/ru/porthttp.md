@@ -1,7 +1,7 @@
 # porthttp — HTTP-проекция контракта ошибок
 
 ```go
-import "github.com/shardit-io/vv/port/porthttp"
+import "github.com/frostgrove/vv/port/porthttp"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `query`, `errs`, `port`, `net/http`

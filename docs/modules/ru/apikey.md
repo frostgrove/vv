@@ -1,7 +1,7 @@
 # apikey — аутентификация по общему секрету
 
 ```go
-import "github.com/shardit-io/vv/auth/apikey"
+import "github.com/frostgrove/vv/auth/apikey"
 ```
 
 **Модуль:** корневой — импортирует только стандартную библиотеку, поэтому ничего

@@ -1,7 +1,7 @@
 # crud/sqlrepo — репозиторий
 
 ```go
-import "github.com/shardit-io/vv/crud/sqlrepo"
+import "github.com/frostgrove/vv/crud/sqlrepo"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

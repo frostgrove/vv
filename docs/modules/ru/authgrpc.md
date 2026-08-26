@@ -1,10 +1,10 @@
 # authgrpc — аутентификация вызова gRPC
 
 ```go
-import "github.com/shardit-io/vv/auth/rpc/authgrpc"
+import "github.com/frostgrove/vv/auth/rpc/authgrpc"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/auth/rpc/authgrpc` — одна зависимость,
+**Модуль:** `github.com/frostgrove/vv/auth/rpc/authgrpc` — одна зависимость,
 `google.golang.org/grpc`
 · **Зависит от:** `auth`, grpc
 

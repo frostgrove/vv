@@ -1,7 +1,7 @@
 # specs — Specifications and the Criteria API
 
 ```go
-import "github.com/shardit-io/vv/crud/decorators/specs"
+import "github.com/frostgrove/vv/crud/decorators/specs"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

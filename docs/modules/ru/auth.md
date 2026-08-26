@@ -1,7 +1,7 @@
 # auth — кто вызывает
 
 ```go
-import "github.com/shardit-io/vv/auth"
+import "github.com/frostgrove/vv/auth"
 ```
 
 **Модуль:** корневой — импортирует стандартную библиотеку и `errs`, больше

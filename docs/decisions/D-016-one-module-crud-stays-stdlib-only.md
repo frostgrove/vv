@@ -1,7 +1,7 @@
 # D-016 — One published module; package `crud` stays stdlib-only
 
 **Status:** superseded by [[D-033]] — the module half only. The stdlib rule stands.
-**Invariant:** `go get github.com/shardit-io/vv` must be the whole installation — no `replace` directive — and no file in package `crud` outside `_test.go` may import anything but the standard library.
+**Invariant:** `go get github.com/frostgrove/vv` must be the whole installation — no `replace` directive — and no file in package `crud` outside `_test.go` may import anything but the standard library.
 
 > **What changed.** The single-module half of this decision was reversed: an
 > optional dependency now lives in its own module under the same repository, so
@@ -90,7 +90,7 @@ and a field instead.
 
 ## Where it lives
 
-- `go.mod` — module `github.com/shardit-io/vv`, `go 1.26`, two direct
+- `go.mod` — module `github.com/frostgrove/vv`, `go 1.26`, two direct
   requirements: `fiber/v3` and `pgx/v5`.
 - `test/go.mod` — the unpublished test module, with the comment explaining why
   it exists and the `replace` to `../`.
@@ -114,7 +114,7 @@ The stdlib-only rule is checkable and worth checking:
 
 ```
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./crud \
-  | grep -v '^github.com/shardit-io/vv/crud$'
+  | grep -v '^github.com/frostgrove/vv/crud$'
 ```
 
 should print nothing. It is part of `make check-deps`, which closes the gap this
@@ -125,7 +125,7 @@ one is invisible to it, because it filters on the module path prefix.
 that half, and it is the one the rule needs: `errs/doc.go` states that `crud` may
 not import `errs` at all, since a library-origin error with two classification
 paths would have them disagree. Verified by adding
-`_ "github.com/shardit-io/vv/errs"` to `crud/errors.go` and watching the arm name
+`_ "github.com/frostgrove/vv/errs"` to `crud/errors.go` and watching the arm name
 it, while `go build ./...` and `make check-deps` both stayed green — the manifest
 arm above it filters every contract package out of its own result, so `errs` is
 exactly what it cannot see.

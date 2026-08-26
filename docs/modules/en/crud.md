@@ -1,7 +1,7 @@
 # crud — the contract
 
 ```go
-import "github.com/shardit-io/vv/crud"
+import "github.com/frostgrove/vv/crud"
 ```
 
 **Module:** root · **Depends on:** the standard library, and nothing else

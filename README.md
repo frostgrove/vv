@@ -113,12 +113,12 @@ module graph of anyone building the library.
 ## Install
 
 ```bash
-go get github.com/shardit-io/vv                      # the library — and, on net/http, the whole of it
-go get github.com/shardit-io/vv/crud/http/crudgin   # …plus your HTTP framework, if you use one
-go get github.com/shardit-io/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
-go get github.com/shardit-io/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
-go get github.com/shardit-io/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
-go get github.com/shardit-io/vv/auth/authjwt        # …and JWT, if that is how you authenticate
+go get github.com/frostgrove/vv                      # the library — and, on net/http, the whole of it
+go get github.com/frostgrove/vv/crud/http/crudgin   # …plus your HTTP framework, if you use one
+go get github.com/frostgrove/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
+go get github.com/frostgrove/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
+go get github.com/frostgrove/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
+go get github.com/frostgrove/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
@@ -1232,7 +1232,7 @@ The update DTO and the metamodel are mechanical restatements of the model, so
 `cmd/vv` writes them:
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/vv
+//go:generate go run github.com/frostgrove/vv/cmd/vv
 ```
 
 From this:

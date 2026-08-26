@@ -1,7 +1,7 @@
 # authhttp — the HTTP half of the auth middleware
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authhttp"
+import "github.com/frostgrove/vv/auth/http/authhttp"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing

@@ -1,7 +1,7 @@
 # authnet — аутентификация запроса net/http
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authnet"
+import "github.com/frostgrove/vv/auth/http/authnet"
 ```
 
 **Модуль:** корневой — импортирует только стандартную библиотеку, поэтому ничего

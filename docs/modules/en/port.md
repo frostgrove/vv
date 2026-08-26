@@ -1,7 +1,7 @@
 # port — the transport-neutral half
 
 ```go
-import "github.com/shardit-io/vv/port"
+import "github.com/frostgrove/vv/port"
 ```
 
 **Module:** root · **Depends on:** `crud`, `query`, `errs`, and the standard

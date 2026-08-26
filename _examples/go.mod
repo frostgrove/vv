@@ -4,23 +4,23 @@
 //
 // The leading underscore keeps the whole tree out of `go build ./...` at the
 // repository root; `make examples` builds it.
-module github.com/shardit-io/vv/_examples
+module github.com/frostgrove/vv/_examples
 
 go 1.26
 
-replace github.com/shardit-io/vv => ../
+replace github.com/frostgrove/vv => ../
 
-replace github.com/shardit-io/vv/crud/http/crudfiber => ../crud/http/crudfiber
+replace github.com/frostgrove/vv/crud/http/crudfiber => ../crud/http/crudfiber
 
-replace github.com/shardit-io/vv/crud/http/crudgin => ../crud/http/crudgin
+replace github.com/frostgrove/vv/crud/http/crudgin => ../crud/http/crudgin
 
-replace github.com/shardit-io/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
+replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/shardit-io/vv v0.0.0
-	github.com/shardit-io/vv/auth/authjwt v0.0.0-00010101000000-000000000000
-	github.com/shardit-io/vv/auth/http/authgin v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv v0.0.0
+	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/auth/http/authgin v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.83.1
 )
 
@@ -89,11 +89,11 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
-	github.com/shardit-io/vv/crud/adapter/crudpgx v0.0.0
-	github.com/shardit-io/vv/crud/http/crudfiber v0.0.0
-	github.com/shardit-io/vv/crud/http/crudgin v0.0.0
-	github.com/shardit-io/vv/crud/rpc/crudgrpc v0.0.0
-	github.com/shardit-io/vv/utils/vvdb/dbpgx v0.0.0
+	github.com/frostgrove/vv/crud/adapter/crudpgx v0.0.0
+	github.com/frostgrove/vv/crud/http/crudfiber v0.0.0
+	github.com/frostgrove/vv/crud/http/crudgin v0.0.0
+	github.com/frostgrove/vv/crud/rpc/crudgrpc v0.0.0
+	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
@@ -104,14 +104,14 @@ require (
 	gorm.io/gorm v1.31.2
 )
 
-replace github.com/shardit-io/vv/crud/rpc/crudgrpc => ../crud/rpc/crudgrpc
+replace github.com/frostgrove/vv/crud/rpc/crudgrpc => ../crud/rpc/crudgrpc
 
-replace github.com/shardit-io/vv/auth/authjwt => ../auth/authjwt
+replace github.com/frostgrove/vv/auth/authjwt => ../auth/authjwt
 
-replace github.com/shardit-io/vv/auth/http/authgin => ../auth/http/authgin
+replace github.com/frostgrove/vv/auth/http/authgin => ../auth/http/authgin
 
-replace github.com/shardit-io/vv/auth/http/authfiber => ../auth/http/authfiber
+replace github.com/frostgrove/vv/auth/http/authfiber => ../auth/http/authfiber
 
-replace github.com/shardit-io/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
+replace github.com/frostgrove/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
 
-replace github.com/shardit-io/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx
+replace github.com/frostgrove/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx

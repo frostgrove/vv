@@ -10,7 +10,7 @@ Thirteen modules in one repository, eleven of them published. The list is
 here; this is the shape, not the manifest.
 
 ```
-github.com/shardit-io/vv                     the root: crud, query, errs, port,
+github.com/frostgrove/vv                     the root: crud, query, errs, port,
                                              remote, auth, cmd, and every
                                              stdlib-only binding under them
                                              (crudnet, authhttp, authnet,
@@ -55,8 +55,8 @@ examples` rather than by `make unit`.
 A consumer installs the base and then only the plugins it uses:
 
 ```bash
-go get github.com/shardit-io/vv
-go get github.com/shardit-io/vv/crud/http/crudgin
+go get github.com/frostgrove/vv
+go get github.com/frostgrove/vv/crud/http/crudgin
 ```
 
 `crud/adapter/crudsql` stays in the root because it is `database/sql`, which is the
@@ -88,7 +88,7 @@ breaks every existing import path or strands them on a dead version line.
 it has three parts:
 
 - *No `replace` in anything published.* Each submodule's `go.mod` carries a
-  plain `require github.com/shardit-io/vv vX.Y.Z`. The only `replace`
+  plain `require github.com/frostgrove/vv vX.Y.Z`. The only `replace`
   directives in the tree are in `test/go.mod` and `_examples/go.mod`, neither of
   which is published.
 - *Tags carry the directory prefix.* The root is `vX.Y.Z`; a submodule is
@@ -136,7 +136,7 @@ half-land. `retract` in the root `go.mod` is the only remedy after the fact.
 
 ## Where it lives
 
-- `go.mod` — module `github.com/shardit-io/vv`, `go 1.26`, no `require`
+- `go.mod` — module `github.com/frostgrove/vv`, `go 1.26`, no `require`
   block at all.
 - `crud/http/crudfiber/go.mod`, `crud/http/crudgin/go.mod`, `crud/adapter/crudpgx/go.mod` —
   one external requirement each, plus the library.
@@ -187,7 +187,7 @@ Two checks are worth running by hand, and both are cheap:
 
 ```
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... \
-  | grep -v '^github.com/shardit-io/vv'
+  | grep -v '^github.com/frostgrove/vv'
 ```
 
 run from the repository root, must print nothing. `make check-deps` is that

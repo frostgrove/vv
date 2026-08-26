@@ -1,11 +1,11 @@
 # vvcfg — a configuration struct, loaded and validated at start-up
 
 ```go
-import "github.com/shardit-io/vv/utils/vvcfg"
+import "github.com/frostgrove/vv/utils/vvcfg"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/utils/vvcfg
+go get github.com/frostgrove/vv/utils/vvcfg
 ```
 
 **Module:** its own — cleanenv is a dependency and the root module takes none

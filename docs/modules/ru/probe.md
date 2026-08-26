@@ -1,7 +1,7 @@
 # probe — не первое нарушение, а все
 
 ```go
-import "github.com/shardit-io/vv/crud/probe"
+import "github.com/frostgrove/vv/crud/probe"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `errs`, `catalog`

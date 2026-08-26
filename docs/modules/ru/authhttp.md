@@ -1,7 +1,7 @@
 # authhttp — HTTP-половина auth-middleware
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authhttp"
+import "github.com/frostgrove/vv/auth/http/authhttp"
 ```
 
 **Модуль:** корневой — импортирует только стандартную библиотеку, поэтому ничего

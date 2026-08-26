@@ -1,7 +1,7 @@
 # query — the wire DSL
 
 ```go
-import "github.com/shardit-io/vv/crud/query"
+import "github.com/frostgrove/vv/crud/query"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

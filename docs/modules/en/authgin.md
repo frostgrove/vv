@@ -1,10 +1,10 @@
 # authgin — authenticate a Gin request
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authgin"
+import "github.com/frostgrove/vv/auth/http/authgin"
 ```
 
-**Module:** `github.com/shardit-io/vv/auth/http/authgin` — one dependency,
+**Module:** `github.com/frostgrove/vv/auth/http/authgin` — one dependency,
 `github.com/gin-gonic/gin`
 · **Depends on:** `auth`, `authhttp`, `porthttp`, gin
 

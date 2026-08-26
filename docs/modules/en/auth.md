@@ -1,7 +1,7 @@
 # auth — who the caller is
 
 ```go
-import "github.com/shardit-io/vv/auth"
+import "github.com/frostgrove/vv/auth"
 ```
 
 **Module:** root — it imports the standard library and `errs`, and nothing else

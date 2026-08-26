@@ -124,7 +124,7 @@ make check-tiers
 ```
 
 prints nothing for `errs` and fails when it reaches outside `errs/...` —
-verified both ways, with `import _ "github.com/shardit-io/vv/crud"` in a file of
+verified both ways, with `import _ "github.com/frostgrove/vv/crud"` in a file of
 `package errs` and again in one of `package errs_test`. The second is the one
 worth having: it is invisible to `go build`, `go vet`, `make check-deps` and
 `make check-tidy`, and would first appear as a require cycle at the tag.

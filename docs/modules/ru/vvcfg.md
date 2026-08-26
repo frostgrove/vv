@@ -1,11 +1,11 @@
 # vvcfg — структура конфигурации, загружаемая и валидируемая при старте приложения
 
 ```go
-import "github.com/shardit-io/vv/utils/vvcfg"
+import "github.com/frostgrove/vv/utils/vvcfg"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/utils/vvcfg
+go get github.com/frostgrove/vv/utils/vvcfg
 ```
 
 **Модуль:** отдельный — cleanenv является зависимостью, а корневой модуль не

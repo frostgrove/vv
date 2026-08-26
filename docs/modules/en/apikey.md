@@ -1,7 +1,7 @@
 # apikey — authenticate by a shared secret
 
 ```go
-import "github.com/shardit-io/vv/auth/apikey"
+import "github.com/frostgrove/vv/auth/apikey"
 ```
 
 **Module:** root — it imports only the standard library, so it costs nothing

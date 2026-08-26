@@ -1,10 +1,10 @@
 # authfiber — аутентификация запроса Fiber v3
 
 ```go
-import "github.com/shardit-io/vv/auth/http/authfiber"
+import "github.com/frostgrove/vv/auth/http/authfiber"
 ```
 
-**Модуль:** `github.com/shardit-io/vv/auth/http/authfiber` — одна зависимость,
+**Модуль:** `github.com/frostgrove/vv/auth/http/authfiber` — одна зависимость,
 `github.com/gofiber/fiber/v3`
 · **Зависит от:** `auth`, `authhttp`, `porthttp`, fiber v3
 

@@ -1,7 +1,7 @@
 # catalog — the schema, read once
 
 ```go
-import "github.com/shardit-io/vv/crud/catalog"
+import "github.com/frostgrove/vv/crud/catalog"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

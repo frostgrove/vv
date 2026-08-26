@@ -1,7 +1,7 @@
 # query — DSL для передачи по проводу
 
 ```go
-import "github.com/shardit-io/vv/crud/query"
+import "github.com/frostgrove/vv/crud/query"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

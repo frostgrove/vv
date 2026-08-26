@@ -1,7 +1,7 @@
 # vvdb — one configuration, four engines, a connection
 
 ```go
-import "github.com/shardit-io/vv/utils/vvdb"
+import "github.com/frostgrove/vv/utils/vvdb"
 ```
 
 **Module:** root · **Depends on:** the standard library

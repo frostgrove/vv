@@ -130,7 +130,7 @@ of the library ([[D-058]]).
 
 ## What "module" means here
 
-The published root module `github.com/shardit-io/vv` has **no third-party
+The published root module `github.com/frostgrove/vv` has **no third-party
 requirement at all**. Anything that would add one is a module of its own in the
 same repository, so you download the Fiber binding or the Gin binding or
 neither, and pgx only if you use pgx ([[D-033]]).

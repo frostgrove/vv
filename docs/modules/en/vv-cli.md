@@ -1,11 +1,11 @@
 # cmd/vv — the generator
 
 ```bash
-go run github.com/shardit-io/vv/cmd/vv
+go run github.com/frostgrove/vv/cmd/vv
 ```
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/vv
+//go:generate go run github.com/frostgrove/vv/cmd/vv
 ```
 
 **Module:** root · **Depends on:** `go/ast`, `go/parser`, `go/types`
@@ -160,7 +160,7 @@ which is what makes ent's generated entities work as-is. Write the result into
 your own package rather than into ent's, where the names would collide:
 
 ```bash
-go run github.com/shardit-io/vv/cmd/vv \
+go run github.com/frostgrove/vv/cmd/vv \
     -dir ./ent -types User,Article -skip CreatedAt \
     -import myapp/ent -into ./internal/store
 ```

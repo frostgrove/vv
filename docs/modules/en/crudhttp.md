@@ -1,7 +1,7 @@
 # crudhttp — what is HTTP *and* CRUD
 
 ```go
-import "github.com/shardit-io/vv/crud/http/crudhttp"
+import "github.com/frostgrove/vv/crud/http/crudhttp"
 ```
 
 **Module:** root · **Depends on:** `crud`, `query`, `errs`, `port`, `port/porthttp`, `net/http`

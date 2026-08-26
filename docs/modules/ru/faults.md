@@ -1,7 +1,7 @@
 # faults — декоратор, который называет поле
 
 ```go
-import "github.com/shardit-io/vv/crud/decorators/faults"
+import "github.com/frostgrove/vv/crud/decorators/faults"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud`, `errs`, `probe`

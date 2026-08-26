@@ -1,7 +1,7 @@
 # specs — спецификации и Criteria API
 
 ```go
-import "github.com/shardit-io/vv/crud/decorators/specs"
+import "github.com/frostgrove/vv/crud/decorators/specs"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

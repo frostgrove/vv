@@ -1,7 +1,7 @@
 # remotehttp — the HTTP client transport
 
 ```go
-import "github.com/shardit-io/vv/remote/remotehttp"
+import "github.com/frostgrove/vv/remote/remotehttp"
 ```
 
 **Module:** root · **Depends on:** `crud`, `query`, `errs`, `port`, `port/porthttp`, `remote`, `net/http`

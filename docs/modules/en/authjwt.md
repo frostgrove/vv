@@ -1,10 +1,10 @@
 # authjwt — verify a JWT, into your own claims struct
 
 ```go
-import "github.com/shardit-io/vv/auth/authjwt"
+import "github.com/frostgrove/vv/auth/authjwt"
 ```
 
-**Module:** `github.com/shardit-io/vv/auth/authjwt` — one dependency,
+**Module:** `github.com/frostgrove/vv/auth/authjwt` — one dependency,
 `github.com/golang-jwt/jwt/v5`
 · **Depends on:** `auth`, golang-jwt/v5
 

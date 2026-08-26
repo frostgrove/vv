@@ -29,7 +29,7 @@ module graph of anyone building the library. It has its own `go.mod` with
 Every example serves the same resource at `/products` with the same ten routes,
 so you can diff any two files and see only what the stack changes.
 
-All of them need `go get github.com/shardit-io/vv`. Beyond that each
+All of them need `go get github.com/frostgrove/vv`. Beyond that each
 needs only what its own stack uses: the Fiber ones add `.../crud/http/crudfiber`, the
 Gin ones `.../crud/http/crudgin`, `pgx-grpc` adds `.../crud/rpc/crudgrpc`,
 `auth-jwt-gin` adds `.../auth/http/authgin` and `.../auth/authjwt`, `pgx-fiber`

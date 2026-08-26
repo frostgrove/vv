@@ -128,7 +128,7 @@ The import rule is mechanical and checked:
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./utils/vvdb
 ```
 
-prints `github.com/shardit-io/vv/utils/vvdb` and nothing else — the package itself,
+prints `github.com/frostgrove/vv/utils/vvdb` and nothing else — the package itself,
 because `-deps` includes it. Anything on a second line is a violation.
 `make check-deps` covers the third-party half for the whole root module; this is
 the first-party half, and it grows a line the moment `vvdb` imports `crud`.
@@ -138,7 +138,7 @@ and prints nothing at all:
 
 ```
 go list -deps -f '{{.ImportPath}} {{join .Deps " "}}' ./... \
-  | grep -v '^github.com/shardit-io/vv/utils/vvdb' | grep vvdb
+  | grep -v '^github.com/frostgrove/vv/utils/vvdb' | grep vvdb
 ```
 
 The filter is on the package's own path rather than on a directory list, so it

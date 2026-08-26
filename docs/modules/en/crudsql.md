@@ -1,7 +1,7 @@
 # crudsql — database/sql, and therefore everything
 
 ```go
-import "github.com/shardit-io/vv/crud/adapter/crudsql"
+import "github.com/frostgrove/vv/crud/adapter/crudsql"
 ```
 
 **Module:** root — `database/sql` is standard library, so it costs nothing

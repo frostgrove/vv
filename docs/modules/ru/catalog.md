@@ -1,7 +1,7 @@
 # catalog — схема, прочитанная один раз
 
 ```go
-import "github.com/shardit-io/vv/crud/catalog"
+import "github.com/frostgrove/vv/crud/catalog"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

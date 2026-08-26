@@ -1,7 +1,7 @@
 # crud/sqlrepo — the repository
 
 ```go
-import "github.com/shardit-io/vv/crud/sqlrepo"
+import "github.com/frostgrove/vv/crud/sqlrepo"
 ```
 
 **Module:** root · **Depends on:** `crud`, and the standard library

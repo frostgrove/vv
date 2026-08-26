@@ -2,7 +2,7 @@
         work check check-deps check-tiers check-todo check-tidy check-utils check-triplets vuln api
 
 GO  ?= go
-MOD := github.com/shardit-io/vv
+MOD := github.com/frostgrove/vv
 
 # Every module in the repository, discovered rather than listed. A hand-written
 # list is how a new module escapes unit, vet, tidy and release all at once, and

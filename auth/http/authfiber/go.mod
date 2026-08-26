@@ -5,13 +5,13 @@
 // resource are two things a consumer chooses separately, and a middleware that
 // dragged the routes in would make one of them unavailable without the other —
 // which is the shape D-051 calls a second decision.
-module github.com/shardit-io/vv/auth/http/authfiber
+module github.com/frostgrove/vv/auth/http/authfiber
 
 go 1.26
 
 require (
 	github.com/gofiber/fiber/v3 v3.4.0
-	github.com/shardit-io/vv v0.0.0
+	github.com/frostgrove/vv v0.0.0
 )
 
 require (

@@ -34,7 +34,7 @@ in one file. The standard library reads the same way — `net/http/httptest`.
 **A directory can be a package and a subtree at once.** `crud/` is still
 `package crud` and is now also the root of a subtree, exactly as `net` is a
 package with `net/http` beneath it, and as `errs` + `errs/sqlerr` and `auth` +
-`auth/apikey` already were. The import path `github.com/shardit-io/vv/crud` did
+`auth/apikey` already were. The import path `github.com/frostgrove/vv/crud` did
 not change, which is 190 import sites left alone.
 
 **The shared half stays outside every subsystem.** `port/` is the neutral half of

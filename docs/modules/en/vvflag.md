@@ -1,7 +1,7 @@
 # vvflag — one typed flag, before `flag.Parse` owns everything
 
 ```go
-import "github.com/shardit-io/vv/utils/vvflag"
+import "github.com/frostgrove/vv/utils/vvflag"
 ```
 
 **Module:** root · **Depends on:** the standard library

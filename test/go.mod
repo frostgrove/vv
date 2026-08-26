@@ -1,12 +1,12 @@
 // Integration tests live in their own module so the library never picks up a
 // driver, an ORM or a test helper as a dependency.
-module github.com/shardit-io/vv/test
+module github.com/frostgrove/vv/test
 
 go 1.26
 
 // The library is the repository this test module lives in, so it is used from
 // disk rather than fetched. Nothing else here is published.
-replace github.com/shardit-io/vv => ../
+replace github.com/frostgrove/vv => ../
 
 require (
 	entgo.io/ent v0.14.6
@@ -18,9 +18,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/shardit-io/vv v0.0.0
-	github.com/shardit-io/vv/auth/authjwt v0.0.0-00010101000000-000000000000
-	github.com/shardit-io/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv v0.0.0
+	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688
 	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12
@@ -93,10 +93,10 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
-	github.com/shardit-io/vv/crud/adapter/crudpgx v0.0.0
-	github.com/shardit-io/vv/crud/http/crudfiber v0.0.0
-	github.com/shardit-io/vv/crud/http/crudgin v0.0.0
-	github.com/shardit-io/vv/crud/rpc/crudgrpc v0.0.0
+	github.com/frostgrove/vv/crud/adapter/crudpgx v0.0.0
+	github.com/frostgrove/vv/crud/http/crudfiber v0.0.0
+	github.com/frostgrove/vv/crud/http/crudgin v0.0.0
+	github.com/frostgrove/vv/crud/rpc/crudgrpc v0.0.0
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
@@ -105,20 +105,20 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/shardit-io/vv/crud/http/crudfiber => ../crud/http/crudfiber
+replace github.com/frostgrove/vv/crud/http/crudfiber => ../crud/http/crudfiber
 
-replace github.com/shardit-io/vv/crud/http/crudgin => ../crud/http/crudgin
+replace github.com/frostgrove/vv/crud/http/crudgin => ../crud/http/crudgin
 
-replace github.com/shardit-io/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
+replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 
-replace github.com/shardit-io/vv/crud/rpc/crudgrpc => ../crud/rpc/crudgrpc
+replace github.com/frostgrove/vv/crud/rpc/crudgrpc => ../crud/rpc/crudgrpc
 
-replace github.com/shardit-io/vv/auth/authjwt => ../auth/authjwt
+replace github.com/frostgrove/vv/auth/authjwt => ../auth/authjwt
 
-replace github.com/shardit-io/vv/auth/http/authgin => ../auth/http/authgin
+replace github.com/frostgrove/vv/auth/http/authgin => ../auth/http/authgin
 
-replace github.com/shardit-io/vv/auth/http/authfiber => ../auth/http/authfiber
+replace github.com/frostgrove/vv/auth/http/authfiber => ../auth/http/authfiber
 
-replace github.com/shardit-io/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
+replace github.com/frostgrove/vv/auth/rpc/authgrpc => ../auth/rpc/authgrpc
 
-replace github.com/shardit-io/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx
+replace github.com/frostgrove/vv/utils/vvdb/dbpgx => ../utils/vvdb/dbpgx

@@ -1,11 +1,11 @@
 # cmd/vv — генератор
 
 ```bash
-go run github.com/shardit-io/vv/cmd/vv
+go run github.com/frostgrove/vv/cmd/vv
 ```
 
 ```go
-//go:generate go run github.com/shardit-io/vv/cmd/vv
+//go:generate go run github.com/frostgrove/vv/cmd/vv
 ```
 
 **Модуль:** root · **Зависит от:** `go/ast`, `go/parser`, `go/types`
@@ -165,7 +165,7 @@ func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
 столкнутся:
 
 ```bash
-go run github.com/shardit-io/vv/cmd/vv \
+go run github.com/frostgrove/vv/cmd/vv \
     -dir ./ent -types User,Article -skip CreatedAt \
     -import myapp/ent -into ./internal/store
 ```

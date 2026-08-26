@@ -1,11 +1,11 @@
 # crudpgx — pgx v5
 
 ```go
-import "github.com/shardit-io/vv/crud/adapter/crudpgx"
+import "github.com/frostgrove/vv/crud/adapter/crudpgx"
 ```
 
 ```bash
-go get github.com/shardit-io/vv/crud/adapter/crudpgx
+go get github.com/frostgrove/vv/crud/adapter/crudpgx
 ```
 
 **Module:** its own — so a consumer on `database/sql` never takes pgx as a

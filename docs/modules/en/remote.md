@@ -1,7 +1,7 @@
 # remote — a repository that is not in this process
 
 ```go
-import "github.com/shardit-io/vv/remote"
+import "github.com/frostgrove/vv/remote"
 ```
 
 **Module:** root · **Depends on:** `crud`, `query`, `port`, `errs`, and the

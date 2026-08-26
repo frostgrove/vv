@@ -1,7 +1,7 @@
 # security — шлюз
 
 ```go
-import "github.com/shardit-io/vv/crud/decorators/security"
+import "github.com/frostgrove/vv/crud/decorators/security"
 ```
 
 **Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки

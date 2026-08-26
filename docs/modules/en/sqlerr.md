@@ -1,7 +1,7 @@
 # errs/sqlerr — a driver error becomes a code
 
 ```go
-import "github.com/shardit-io/vv/errs/sqlerr"
+import "github.com/frostgrove/vv/errs/sqlerr"
 ```
 
 **Module:** root · **Depends on:** `errs`, and the standard library. **No driver

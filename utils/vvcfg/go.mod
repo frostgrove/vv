@@ -1,13 +1,13 @@
 // The config loader is its own module because cleanenv is a dependency, and the
 // root module takes none (D-033, as amended by D-036). A consumer that binds
 // its own configuration pays nothing for this one existing.
-module github.com/shardit-io/vv/utils/vvcfg
+module github.com/frostgrove/vv/utils/vvcfg
 
 go 1.26
 
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
-	github.com/shardit-io/vv v0.0.0
+	github.com/frostgrove/vv v0.0.0
 )
 
 require (
