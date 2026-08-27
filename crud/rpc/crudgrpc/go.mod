@@ -9,7 +9,7 @@ module github.com/frostgrove/vv/crud/rpc/crudgrpc
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6
+	github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688
 	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12

@@ -4,5 +4,7 @@ github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4 h1:guH3qezyLc1LQWLJs
 github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6 h1:iKeZfx6NlJeBJRTECoz5N133Lw4uycFILcwqQjObi48=
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84WpRLGD5kQhF+p1OXgBMzEEo6INY=
+github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
