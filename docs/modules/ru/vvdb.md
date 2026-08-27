@@ -60,6 +60,10 @@ db:
     max_lifetime: 30m
     max_idle_time: 5m
     connect_timeout: 5s
+  migration:
+    path: ./migrations
+    models: [./src]
+    table: goose_db_version
   replica:
     host: replica.internal  # наследует всё, что не назвала заново
 ```
@@ -99,6 +103,11 @@ field-описание из YAML; `Config`, собранный в Go, по-пр�
 верхнеуровневой декларации: `Analytics vvdb.Config` с
 `yaml:"analytics" env-prefix:"ANALYTICS_"` использует
 `ANALYTICS_DB_HOST` и `ANALYTICS_DB_REPLICA_HOST`, а не переменные primary.
+
+`migration` — операционные метаданные только для primary, которые использует
+[vvgoose](vvgoose.md). Они не входят в DSN и не наследуются read replica.
+Переменные окружения: `DB_MIGRATION_PATH`, `DB_MIGRATION_MODELS` и
+`DB_MIGRATION_TABLE`.
 
 | | |
 |---|---|

@@ -51,6 +51,7 @@ auth/http/authfiber/        the Fiber auth middleware
 auth/rpc/authgrpc/          the gRPC auth interceptors
 utils/vvdb/dbpgx/           the same config, a pgx pool
 utils/vvcfg/                a config struct, loaded and validated at start-up
+utils/vvgoose/              Goose migrations and SQL generation from Go models
 ```
 
 **One page per package** — what it does, everything it can do, and how to wire
@@ -99,6 +100,7 @@ would need a test schema that declares one, and none does.
 - [`docs/usage-guides/ent.md`](docs/usage-guides/ent.md) — ent's *generated* entity struct is the model, as-is
 - [`docs/usage-guides/gorm.md`](docs/usage-guides/gorm.md) — your gorm struct is the model, `gorm.Model`
   and associations included
+- [`docs/usage-guides/migrations.md`](docs/usage-guides/migrations.md) — add a standalone migration command
 
 **Prefer running code?** [`_examples/`](_examples/) has one small, complete program per
 stack — ent, gorm, sqlx and no-ORM-at-all, across all three HTTP bindings and both
@@ -118,6 +120,7 @@ go get github.com/frostgrove/vv/crud/http/crudgin   # …plus your HTTP framewor
 go get github.com/frostgrove/vv/crud/rpc/crudgrpc   # …or gRPC instead of an HTTP framework
 go get github.com/frostgrove/vv/crud/adapter/crudpgx # …and pgx, if that is your driver
 go get github.com/frostgrove/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
+go get github.com/frostgrove/vv/utils/vvgoose        # …or the application migration CLI
 go get github.com/frostgrove/vv/auth/authjwt        # …and JWT, if that is how you authenticate
 ```
 
@@ -127,6 +130,9 @@ or the Gin binding or neither, and pgx only if you use pgx. The `net/http`
 binding and the `database/sql` adapter need nothing, so they ship in the library
 — on `net/http` over `database/sql`, which is how ent, gorm, sqlx, sqlc and bun
 are reached, the first line is the whole installation.
+`vvgoose` is the deliberate cross-engine command: it carries Goose, its
+searchable terminal UI and the drivers it registers so `cmd/migrate` needs no
+blank imports of its own.
 
 Versions move in lockstep: the library and every binding are tagged together, so
 `@v0.1.0` means the same thing everywhere. No `replace` is ever needed

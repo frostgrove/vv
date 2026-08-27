@@ -184,16 +184,56 @@ func TestVVDBReplicaEnvironmentHonoursEachNestedEnvPrefix(t *testing.T) {
 	}
 }
 
+func TestVVDBMigrationDefaultsAndEnvironmentAreLoadedWithTheDatabase(t *testing.T) {
+	p := write(t, "db:\n  engine: postgres\n  host: primary.internal\n  name: orders\n")
+	got, err := Load[databaseConf](p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DB.Migration.Path != "./migrations" || got.DB.Migration.Table != "goose_db_version" ||
+		len(got.DB.Migration.Models) != 1 || got.DB.Migration.Models[0] != "." {
+		t.Fatalf("migration defaults = %+v", got.DB.Migration)
+	}
+
+	t.Setenv("DB_MIGRATION_PATH", "./database/migrations")
+	t.Setenv("DB_MIGRATION_MODELS", "./src/app,./src/domain")
+	t.Setenv("DB_MIGRATION_TABLE", "app_goose_versions")
+	got, err = Load[databaseConf](p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DB.Migration.Path != "./database/migrations" || got.DB.Migration.Table != "app_goose_versions" ||
+		len(got.DB.Migration.Models) != 2 || got.DB.Migration.Models[1] != "./src/domain" {
+		t.Fatalf("migration environment = %+v", got.DB.Migration)
+	}
+}
+
+func TestVVDBMigrationEnvironmentHonoursNestedEnvPrefix(t *testing.T) {
+	t.Setenv("DB_MIGRATION_PATH", "./primary-migrations")
+	t.Setenv("ANALYTICS_DB_MIGRATION_PATH", "./analytics-migrations")
+	p := write(t, "db:\n  engine: postgres\n  host: primary.internal\n  name: app\nanalytics:\n  engine: postgres\n  host: analytics.internal\n  name: analytics\n")
+	got, err := Load[twoDatabaseConf](p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DB.Migration.Path != "./primary-migrations" || got.Analytics.Migration.Path != "./analytics-migrations" {
+		t.Fatalf("primary migration = %+v, analytics migration = %+v", got.DB.Migration, got.Analytics.Migration)
+	}
+}
+
 func TestVVDBRawDSNEnvironmentReplacesAFileFormConnection(t *testing.T) {
 	t.Setenv("DB_DSN", "postgres://from-env/orders")
 	t.Setenv("DB_REPLICA_DSN", "postgres://replica-env/orders")
-	p := write(t, "db:\n  engine: postgres\n  host: primary.from.yaml\n  name: orders\n  replica:\n    host: replica.from.yaml\n")
+	p := write(t, "db:\n  engine: postgres\n  host: primary.from.yaml\n  name: orders\n  migration:\n    path: ./database/migrations\n    table: app_goose_versions\n  replica:\n    host: replica.from.yaml\n")
 	got, err := Load[databaseConf](p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.DB.DSN != "postgres://from-env/orders" || got.DB.Host != "" || got.DB.Name != "" {
 		t.Fatalf("primary environment DSN did not replace fields: %+v", got.DB)
+	}
+	if got.DB.Migration.Path != "./database/migrations" || got.DB.Migration.Table != "app_goose_versions" {
+		t.Fatalf("DB_DSN erased migration metadata: %+v", got.DB.Migration)
 	}
 	r, ok := got.DB.ReadReplica()
 	if !ok || r.DSN != "postgres://replica-env/orders" || r.Host != "" {

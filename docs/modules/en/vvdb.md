@@ -60,6 +60,10 @@ db:
     max_lifetime: 30m
     max_idle_time: 5m
     connect_timeout: 5s
+  migration:
+    path: ./migrations
+    models: [./src]
+    table: goose_db_version
   replica:
     host: replica.internal  # inherits everything it does not restate
 ```
@@ -100,6 +104,11 @@ top-level declaration: `Analytics vvdb.Config` with
 `yaml:"analytics" env-prefix:"ANALYTICS_"` uses
 `ANALYTICS_DB_HOST` and `ANALYTICS_DB_REPLICA_HOST`, never the primary's
 variables.
+
+`migration` is primary-only operational metadata used by
+[vvgoose](vvgoose.md). It is not part of a DSN and is never inherited by a
+read replica. Its environment names are `DB_MIGRATION_PATH`,
+`DB_MIGRATION_MODELS`, and `DB_MIGRATION_TABLE`.
 
 | | |
 |---|---|

@@ -28,6 +28,15 @@ The check is a prefix, and it is one a reader can apply without running
 anything: three requires under `google.golang.org/` that a consumer of any one
 of them already has.
 
+`utils/vvgoose` is the second case where lines and decisions do not count the
+same. Choosing its two-line, cross-engine migration command chooses Goose, its
+CLI parser, the searchable terminal selector and the drivers the command
+registers. Removing any of those changes the consumer decision: application
+`main` would grow driver imports, ambiguity would stop being interactive, or
+the command would stop accepting the same four-engine config. [[D-064]] records
+the exact boundary. A lower-level Goose adapter without the CLI or bundled
+drivers would be another decision and does not belong in this satellite.
+
 ## Why
 
 **Because the rule [[D-033]] is actually enforcing is "a consumer downloads only
@@ -70,6 +79,8 @@ answer is to find the seam rather than to publish the pair.
 
 - `crud/rpc/crudgrpc/go.mod` — the three requires, with the decision written at the
   top of the file where a reader meets it first.
+- `utils/vvgoose/go.mod` — the migration-command decision and the dependencies
+  required to make its one-call entrypoint complete.
 - `Makefile:SATELLITES` and `Makefile:check-deps` — the per-module external
   package count, which reports rather than caps.
 - `ROADMAP-framework.md` §9 — the argument this decision records, including the

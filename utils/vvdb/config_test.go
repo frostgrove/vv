@@ -78,6 +78,120 @@ func TestAReplicaMergesPoolFieldsAndDoesNotAliasPrimaryParams(t *testing.T) {
 	}
 }
 
+func TestMigrationConfigurationValidatesDeclarationWithoutInspectingTheFilesystem(t *testing.T) {
+	cfg := primary()
+	// The migration command may create this directory later, and the ordinary
+	// server binary need not ship migration sources at all. Config validation is
+	// therefore deliberately about the declaration rather than current disk
+	// state.
+	cfg.Migration = vvdb.Migration{
+		Path:   t.TempDir() + "/not-created",
+		Models: []string{".", "./src/app"},
+		Table:  "audit.goose_versions",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a valid migration declaration whose directory is not created yet = %v", err)
+	}
+
+	// A Config assembled in Go does not pass through cleanenv's env-default
+	// tags. Its zero value remains valid and is resolved by the migration tool.
+	cfg.Migration = vvdb.Migration{}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("zero migration configuration should select downstream defaults: %v", err)
+	}
+}
+
+func TestMigrationConfigurationRefusesBlankPathsAndSQLSyntaxAsHistoryTable(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		migration vvdb.Migration
+		want      error
+		field     string
+	}{
+		{"blank path", vvdb.Migration{Path: " \t"}, vvdb.ErrMissing, "migration.path"},
+		{"blank model directory", vvdb.Migration{Models: []string{".", ""}}, vvdb.ErrMissing, "migration.models[1]"},
+		{"leading digit", vvdb.Migration{Table: "2goose"}, vvdb.ErrUnsupported, "migration.table"},
+		{"punctuation", vvdb.Migration{Table: "goose-version"}, vvdb.ErrUnsupported, "migration.table"},
+		{"empty qualifier", vvdb.Migration{Table: "public..goose"}, vvdb.ErrUnsupported, "migration.table"},
+		{"too many qualifiers", vvdb.Migration{Table: "cluster.public.goose"}, vvdb.ErrUnsupported, "migration.table"},
+		{"sql syntax", vvdb.Migration{Table: "goose; DROP TABLE users"}, vvdb.ErrUnsupported, "migration.table"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := primary()
+			cfg.Migration = tc.migration
+			err := cfg.Validate()
+			if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("Validate() = %v, want %v naming %s", err, tc.want, tc.field)
+			}
+		})
+	}
+}
+
+func TestMigrationConfigurationIsPrimaryOnlyAndDoesNotLeakIntoAReplica(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replica *vvdb.Config
+	}{
+		{"field replica", &vvdb.Config{Host: "replica.internal"}},
+		{"raw dsn replica", &vvdb.Config{DSN: "postgres://readonly@replica.internal/app"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := primary()
+			cfg.Migration = vvdb.Migration{
+				Path:   "./migrations",
+				Models: []string{"./src/app"},
+				Table:  "goose_db_version",
+			}
+			cfg.Replica = tc.replica
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("primary migration plus ordinary replica should be valid: %v", err)
+			}
+			r, ok := cfg.ReadReplica()
+			if !ok {
+				t.Fatal("ordinary replica was not returned")
+			}
+			if r.Migration.Path != "" || len(r.Migration.Models) != 0 || r.Migration.Table != "" {
+				t.Fatalf("primary migration configuration leaked into replica: %+v", r.Migration)
+			}
+		})
+	}
+}
+
+func TestAReplicaCannotDeclareItsOwnMigrationConfiguration(t *testing.T) {
+	for _, replica := range []*vvdb.Config{
+		{Migration: vvdb.Migration{Path: "./replica-migrations"}},
+		{Host: "replica.internal", Migration: vvdb.Migration{Table: "replica_versions"}},
+	} {
+		cfg := primary()
+		cfg.Replica = replica
+		err := cfg.Validate()
+		if !errors.Is(err, vvdb.ErrUnsupported) || !strings.Contains(err.Error(), "replica.migration") {
+			t.Fatalf("Validate() = %v, want a named primary-only migration refusal", err)
+		}
+		if _, ok := cfg.ReadReplica(); ok {
+			t.Fatal("ReadReplica offered a replica with its own migration configuration")
+		}
+	}
+}
+
+func TestMigrationConfigurationDoesNotConflictWithAnOpaqueDSN(t *testing.T) {
+	cfg := vvdb.Config{
+		Engine: vvdb.Postgres,
+		DSN:    "postgres://vv:secret@primary.internal/app",
+		Migration: vvdb.Migration{
+			Path:  "./migrations",
+			Table: "goose_db_version",
+		},
+	}
+	got, err := vvdb.DSN(cfg)
+	if err != nil {
+		t.Fatalf("migration metadata is outside the connection string and must not conflict with dsn: %v", err)
+	}
+	if got != cfg.DSN {
+		t.Fatalf("DSN() = %q, want opaque string unchanged", got)
+	}
+}
+
 func TestAReplicaGivenAWholeDSNInheritsTheHandlePolicyNotConnectionFacts(t *testing.T) {
 	cfg := primary()
 	cfg.Driver = "postgres"

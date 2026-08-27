@@ -79,7 +79,8 @@ type Config struct {
 	// keeps commas and every other escaped query value representable.
 	Params Params `yaml:"params" env:"DB_PARAMS"`
 
-	Pool Pool `yaml:"pool"`
+	Pool      Pool      `yaml:"pool"`
+	Migration Migration `yaml:"migration"`
 
 	// Replica is a second server for reads that may be served stale. It
 	// inherits every field left empty here, so a replica that differs only by
@@ -95,6 +96,71 @@ type Config struct {
 	// names both.
 	DSN string `yaml:"dsn" env:"DB_DSN"`
 }
+
+// Migration describes the application-owned migration layout. It lives in
+// vvdb so the database and its migrations are configured in one block, while
+// the Goose dependency itself stays in the separate utils/vvgoose module.
+//
+// Models names directories vvgoose scans for Go structs when generating a SQL
+// migration. An empty list means the current module. Table is Goose's migration
+// history table, not an application table.
+type Migration struct {
+	Path   string   `yaml:"path" env:"DB_MIGRATION_PATH" env-default:"./migrations"`
+	Models []string `yaml:"models" env:"DB_MIGRATION_MODELS" env-default:"."`
+	Table  string   `yaml:"table" env:"DB_MIGRATION_TABLE" env-default:"goose_db_version"`
+}
+
+// Validate checks the declarative part of the migration configuration. It does
+// not touch the filesystem: the same database block is commonly loaded by the
+// server binary, where migration sources need not be present, and a creation
+// command is allowed to create Path itself.
+//
+// Empty fields are valid. They are the zero-value spelling of the defaults in
+// the tags above for a Config assembled in Go rather than loaded by vvcfg.
+func (m Migration) Validate() error {
+	if m.Path != "" && strings.TrimSpace(m.Path) == "" {
+		return fmt.Errorf("%w: migration.path is blank", ErrMissing)
+	}
+	for i, dir := range m.Models {
+		if strings.TrimSpace(dir) == "" {
+			return fmt.Errorf("%w: migration.models[%d] is blank", ErrMissing, i)
+		}
+	}
+	if m.Table != "" && !validMigrationTable(m.Table) {
+		return fmt.Errorf("%w: migration.table %q must be an identifier or schema.identifier", ErrUnsupported, m.Table)
+	}
+	return nil
+}
+
+// validMigrationTable accepts the portable, unquoted identifier subset shared
+// by all four engines. Goose interpolates its history table into SQL rather
+// than binding it as a value, so accepting punctuation here would turn an
+// environment setting into SQL syntax. One qualifier is useful for a
+// PostgreSQL schema and a MySQL database; more than one is not understood by
+// Goose's own table lookup.
+func validMigrationTable(name string) bool {
+	parts := strings.Split(name, ".")
+	if len(parts) == 0 || len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || !identifierStart(part[0]) {
+			return false
+		}
+		for i := 1; i < len(part); i++ {
+			if !identifierPart(part[i]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func identifierStart(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func identifierPart(c byte) bool { return identifierStart(c) || c >= '0' && c <= '9' }
 
 // A Pool sizes the connections. The four limits are database/sql's and pgx
 // reads them too; ConnectTimeout is the only one that travels in the
@@ -275,6 +341,9 @@ func (c Config) Validate() error {
 	if err := c.Pool.Validate(); err != nil {
 		return err
 	}
+	if err := c.Migration.Validate(); err != nil {
+		return err
+	}
 	if c.DSN != "" {
 		if f := c.fieldsBesideDSN(); f != "" {
 			return fmt.Errorf("%w: dsn is set and so is %s — one of them would be ignored", ErrConflict, f)
@@ -285,6 +354,9 @@ func (c Config) Validate() error {
 	if c.Replica != nil {
 		if c.Engine == SQLite {
 			return fmt.Errorf("%w: replica is not available for sqlite", ErrUnsupported)
+		}
+		if !migrationEmpty(c.Replica.Migration) {
+			return fmt.Errorf("%w: replica.migration belongs to the primary database", ErrUnsupported)
 		}
 		if replicaEmpty(*c.Replica) {
 			return fmt.Errorf("%w: replica is declared but names no difference from the primary", ErrMissing)
@@ -459,7 +531,7 @@ func (c Config) validateParams() error {
 // nothing else nine times out of ten, and repeating the credentials is how the
 // two drift apart the day one of them is rotated.
 func (c Config) ReadReplica() (Config, bool) {
-	if c.Replica == nil || replicaEmpty(*c.Replica) || c.Replica.Replica != nil {
+	if c.Replica == nil || replicaEmpty(*c.Replica) || c.Replica.Replica != nil || !migrationEmpty(c.Replica.Migration) {
 		return Config{}, false
 	}
 	// A field-level replica needs the primary's connection facts. An opaque
@@ -477,6 +549,7 @@ func (c Config) ReadReplica() (Config, bool) {
 	if r.DSN != "" {
 		base := c
 		base.Replica = nil
+		base.Migration = Migration{}
 		base.DSN = r.DSN
 		base.Host, base.Port = "", 0
 		base.User, base.Password, base.Name = "", "", ""
@@ -495,6 +568,7 @@ func (c Config) ReadReplica() (Config, bool) {
 	}
 	base := c
 	base.Replica = nil
+	base.Migration = Migration{}
 	base.DSN = ""
 	base.Params = cloneParams(c.Params)
 	base.Pragmas = clonePragmas(c.Pragmas)
@@ -545,7 +619,12 @@ func (c Config) ReadReplica() (Config, bool) {
 func replicaEmpty(c Config) bool {
 	return c.Engine == "" && c.Driver == "" && c.Host == "" && c.Port == 0 &&
 		c.User == "" && c.Password == "" && c.Name == "" && c.SSLMode == "" &&
-		c.Path == "" && len(c.Pragmas) == 0 && len(c.Params) == 0 && c.Pool == (Pool{}) && c.DSN == "" && c.Replica == nil
+		c.Path == "" && len(c.Pragmas) == 0 && len(c.Params) == 0 && c.Pool == (Pool{}) &&
+		migrationEmpty(c.Migration) && c.DSN == "" && c.Replica == nil
+}
+
+func migrationEmpty(m Migration) bool {
+	return m.Path == "" && len(m.Models) == 0 && m.Table == ""
 }
 
 func cloneParams(in Params) Params {

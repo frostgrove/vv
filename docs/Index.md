@@ -67,6 +67,8 @@ Both lead with what you get and only then how to set it up.
   the model, as-is
 - [usage-guides/gorm.md](usage-guides/gorm.md) — your gorm struct is the model,
   `gorm.Model` and associations included
+- [usage-guides/migrations.md](usage-guides/migrations.md) — add a standalone
+  Goose migration command and generate SQL from a model
 
 ## Roadmap
 

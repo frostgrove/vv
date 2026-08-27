@@ -127,6 +127,7 @@ of the library ([[D-058]]).
 | [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Generates the update DTO, the metamodel and — with `-adapter` — the whole resource |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Read one typed flag out of `os.Args` before `flag.Parse` owns it |
 | [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Module** — load a YAML config into a struct, with validation |
+| [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Module** — Goose CLI, migrations, and SQL-table generation from a Go model |
 
 ## What "module" means here
 

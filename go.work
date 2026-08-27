@@ -13,4 +13,5 @@ use (
 	./test
 	./utils/vvcfg
 	./utils/vvdb/dbpgx
+	./utils/vvgoose
 )

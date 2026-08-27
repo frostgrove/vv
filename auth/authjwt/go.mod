@@ -10,6 +10,6 @@ module github.com/frostgrove/vv/auth/authjwt
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4
+	github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6
 	github.com/golang-jwt/jwt/v5 v5.3.1
 )

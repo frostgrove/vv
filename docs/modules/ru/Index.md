@@ -126,6 +126,7 @@
 | [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Генерирует update DTO, метамодель и — с `-adapter` — весь ресурс целиком |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Читает один типизированный флаг из `os.Args` до того, как им завладеет `flag.Parse` |
 | [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Модуль** — загружает YAML-конфиг в структуру, с валидацией |
+| [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Модуль** — Goose CLI, миграции и генерация SQL-таблицы из Go-модели |
 
 ## Что здесь означает «модуль»
 

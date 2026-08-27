@@ -45,9 +45,26 @@ unchanged.
 
 ## 1. The declaration
 
+Once at application setup, make a vv datasource from the connection gorm already
+uses:
+
+```go
+sqlDB, err := db.DB() // db is your *gorm.DB
+if err != nil {
+    return err
+}
+src := crudsql.Postgres(sqlDB) // or crudsql.MySQL(sqlDB)
+```
+
 Per model, forever:
 
 ```go
+type Member struct {
+    gorm.Model // ID, CreatedAt, UpdatedAt, DeletedAt
+    Name string `gorm:"size:120"`
+    Age  *int
+}
+
 var Members = sqlrepo.Define[Member, uint, MemberUpdate]("members",
     sqlrepo.Scope(crud.IsNull("DeletedAt")))     // gorm soft deletes, once
 

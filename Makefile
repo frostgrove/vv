@@ -243,11 +243,10 @@ check-tiers: ## A contract package imports only stdlib and other contract packag
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
 	echo "check-tiers: ok"
 
-# Both halves of `utils/` are listed, and they need different commands: `vvflag`
-# and `vvdb` are packages of the root module, `vvcfg` and `vvdb/dbpgx` are
-# modules of their own and are invisible to a root-module `go list`. Listing only
-# the first half would leave the two packages most likely to reach for a
-# subsystem unchecked.
+# Both halves of `utils/` are listed, and they need different commands: root
+# packages are visible to `./utils/...`, while every nested module is invisible
+# to that pattern and is discovered through MODULES. Listing only the first half
+# would leave the packages most likely to reach for a subsystem unchecked.
 check-utils: ## Nothing under utils/ imports a subsystem (D-058)
 	@re=$$(echo "$(SUBSYSTEMS)" | tr ' ' '|'); \
 	deps=$$( { $(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./utils/... || exit 1; \

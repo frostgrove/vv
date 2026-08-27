@@ -285,6 +285,7 @@ errs/                       the error contract: Code, Kind, Path, Violation, Fau
 utils/                      for the consumer's application, never for the library
 ├── vvflag/                 one typed flag, without owning the command line
 ├── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
+├── vvgoose/                MODULE — Goose CLI and SQL generation from Go models
 └── vvdb/                   one config -> a DSN or a *sql.DB, four engines; who opens the connection
     └── dbpgx/              MODULE — the same config, a pgx pool
 

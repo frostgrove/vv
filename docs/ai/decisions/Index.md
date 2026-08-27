@@ -116,6 +116,7 @@ and the next decision written before its code does should say so here.
 | [D-061](D-061-a-wrapper-forwards-what-it-wraps.md) | No optional interface is found by a bare assertion on the layer below; a decorator forwards `Next()`, a Source wrapper forwards `UnwrapSource()`, and the library walks | accepted | core seam, transactions & datasources |
 | [D-062](D-062-the-library-logs-through-the-callers-logger.md) | The library never writes to a process-wide logger; every line goes through `port.Logger(ctx)`, and statements are instrumented by wrapping the `Source` | accepted | process & tooling, transports |
 | [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
+| [D-064](D-064-migration-generation-never-guesses-a-model.md) | Automatic migration generation uses only one uniquely best model; ambiguity is interactive or empty, never guessed | accepted | process & tooling, migrations |
 
 ## By area
 
@@ -193,7 +194,7 @@ mean).
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-025 (**open** — key normalisation).
 
-**Process & tooling** — D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
+**Process & tooling** — D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
 still binds), D-018 (generated artefacts, and every flag's reason), D-050 (why a
 generated one is held to a standard a hand-written one is not, and what the

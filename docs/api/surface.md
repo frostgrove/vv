@@ -709,6 +709,7 @@ func SQLiteDSN(c Config) (string, error)
 type Config struct{ ... }
 type Engine string
     const Postgres Engine = "postgres" ...
+type Migration struct{ ... }
 type Params map[string]string
 type Pool struct{ ... }
 type SQLitePragmas []string
@@ -915,5 +916,10 @@ func ConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (prima
 func MustConnect(ctx context.Context, c vvdb.Config, opts ...Option) *pgxpool.Pool
 func MustConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool)
 type Option func(*pgxpool.Config)
+```
+
+## github.com/frostgrove/vv/utils/vvgoose
+```go
+func Migrate(cfg vvdb.Config)
 ```
 
