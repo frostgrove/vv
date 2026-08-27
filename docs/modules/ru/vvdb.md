@@ -74,7 +74,7 @@ type Config struct {
 
 func (c Config) Validate() error { return c.DB.Validate() }
 
-cfg            := vvcfg.Must(vvcfg.Auto[Config](os.Args[1:]))
+cfg            := vvcfg.MustLoad[Config]()
 sqlDB, replica := vvdb.MustOpenReadWrite(cfg.DB)
 ```
 
@@ -88,8 +88,9 @@ sqlDB, replica := vvdb.MustOpenReadWrite(cfg.DB)
 парные имена `DB_REPLICA_*` — например `DB_REPLICA_HOST`,
 `DB_REPLICA_PARAMS`, `DB_REPLICA_POOL_MAX_IDLE`: реплику можно целиком задать
 переменными или переопределить ими читаемое YAML-описание.
-Если нет ни `--config-path`, ни `CONFIG_PATH`, `Auto` включает режим только
-environment, поэтому та же декларация работает в image без config-файла.
+Если нет ни `--config-path`, ни `CONFIG_PATH`, `MustLoad` использует
+`./config/app.yml`. Присвой `vvcfg.DefaultCfgPath = ""`, чтобы та же декларация
+работала в image без config-файла.
 Явный `DB_DSN` или `DB_REPLICA_DSN` одной операцией заменяет соответствующее
 field-описание из YAML; `Config`, собранный в Go, по-прежнему откажет raw DSN
 рядом с typed connection fields.

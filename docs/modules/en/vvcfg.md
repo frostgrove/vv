@@ -34,20 +34,17 @@ func (c *Config) Validate() error {
 }
 
 func main() {
-    cfg := vvcfg.Must(vvcfg.Auto[Config](os.Args[1:]))
+    cfg := vvcfg.MustLoad[Config]()
     …
 }
 ```
 
 | | |
 |---|---|
-| `Find(args)` | the path: `--config-path` first, then `CONFIG_PATH` |
 | `Load[T](path)` | decode, then call `Validate()` if the struct has one |
-| `Auto[T](args)` | `Find` then `Load`, in the order a `main` wants them |
-| `Must[T](cfg, err)` | panic on error, for a `main` that has nothing better to do |
+| `MustLoad[T](path...)` | load and panic on error; joins explicit path segments with `filepath.Join` |
 
-`args` should not include the program name. `ErrNoPath` is what `Find` returns
-when neither source names a file.
+Without an explicit path, `MustLoad` resolves the file itself.
 
 ## The validation hook is the point
 
@@ -65,14 +62,14 @@ for an unknown table.
 ## The precedence
 
 ```
---config-path <path>     the flag a deployment can override at the command line
-CONFIG_PATH=<path>       the environment variable
-                         …and nothing else. No search, no default location
+MustLoad("config", "app.yml")  an explicit path, joined with filepath.Join
+--config-path <path>            the flag a deployment can override at the command line
+CONFIG_PATH=<path>              the environment variable
+DefaultCfgPath                  `./config/app.yml` by default
+DefaultCfgPath = ""             environment-only configuration
 ```
 
-There is no implicit `./config.yaml`, and that is deliberate: a config file found
-by accident in a working directory is a deployment that behaves differently
-depending on where it was started from.
+Set `vvcfg.DefaultCfgPath` before startup to use a different project default.
 
 ## See also
 

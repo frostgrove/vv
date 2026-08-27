@@ -54,6 +54,20 @@ func write(t *testing.T, body string) string {
 	return p
 }
 
+func setDefaultCfgPath(t *testing.T, path string) {
+	t.Helper()
+	previous := DefaultCfgPath
+	DefaultCfgPath = path
+	t.Cleanup(func() { DefaultCfgPath = previous })
+}
+
+func setArgs(t *testing.T, args ...string) {
+	t.Helper()
+	previous := os.Args
+	os.Args = args
+	t.Cleanup(func() { os.Args = previous })
+}
+
 func TestLoadReadsThePathItIsGiven(t *testing.T) {
 	// The defect this pins: MustLoad took a variadic path and ignored it,
 	// reading --config-path instead. A caller passing a path got a different
@@ -187,60 +201,90 @@ func TestVVDBRawDSNEnvironmentReplacesAFileFormConnection(t *testing.T) {
 	}
 }
 
-func TestAutoSupportsAnEnvironmentOnlyVVDBDeclaration(t *testing.T) {
+func TestMustLoadUsesEnvironmentWhenDefaultPathIsDisabled(t *testing.T) {
 	t.Setenv("CONFIG_PATH", "")
 	t.Setenv("DB_ENGINE", "postgres")
 	t.Setenv("DB_HOST", "db.from.env")
 	t.Setenv("DB_NAME", "orders")
-	got, err := Auto[databaseConf](nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	setDefaultCfgPath(t, "")
+	setArgs(t, "app")
+
+	got := MustLoad[databaseConf]()
 	if got.DB.Engine != vvdb.Postgres || got.DB.Host != "db.from.env" || got.DB.Name != "orders" {
 		t.Fatalf("environment-only config = %+v", got.DB)
 	}
 }
 
-func TestFindPrefersTheFlagOverTheEnvironment(t *testing.T) {
-	t.Setenv("CONFIG_PATH", "/from/env.yaml")
-
-	got, err := Find([]string{"--config-path", "/from/flag.yaml"})
-	if err != nil || got != "/from/flag.yaml" {
-		t.Fatalf("the flag should win, got %q (%v)", got, err)
-	}
-
-	got, err = Find(nil)
-	if err != nil || got != "/from/env.yaml" {
-		t.Fatalf("the environment should be the fallback, got %q (%v)", got, err)
-	}
-}
-
-func TestNoPathAtAllIsAnErrorRatherThanAGuess(t *testing.T) {
-	t.Setenv("CONFIG_PATH", "")
-	if _, err := Find(nil); !errors.Is(err, ErrNoPath) {
-		t.Fatalf("with nothing configured, Find should refuse: %v", err)
-	}
+func TestLoadNeedsPath(t *testing.T) {
 	if _, err := Load[conf](""); !errors.Is(err, ErrNoPath) {
 		t.Fatalf("Load(\"\") should refuse rather than stat the empty path: %v", err)
 	}
 }
 
-func TestAutoFindsThenLoads(t *testing.T) {
-	p := write(t, "name: via-auto\nport: 2\n")
-	got, err := Auto[conf]([]string{"--config-path", p})
-	if err != nil {
-		t.Fatalf("Auto: %v", err)
+func TestMustLoadUsesItsExplicitPathSegments(t *testing.T) {
+	t.Setenv("CONFIG_PATH", write(t, "name: from-environment\nport: 1\n"))
+	dir := t.TempDir()
+	explicit := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(explicit, []byte("name: explicit\nport: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got.Name != "via-auto" {
-		t.Fatalf("name = %q, want via-auto", got.Name)
+
+	got := MustLoad[conf](dir, "config.yaml")
+	if got.Name != "explicit" || got.Port != 2 {
+		t.Fatalf("MustLoad explicit config = %+v", got)
 	}
 }
 
-func TestMustPanicsRatherThanReturningNil(t *testing.T) {
+func TestMustLoadFindsThePathFromArguments(t *testing.T) {
+	p := write(t, "name: from-arguments\nport: 3\n")
+	setArgs(t, "app", "--config-path", p)
+
+	got := MustLoad[conf]()
+	if got.Name != "from-arguments" || got.Port != 3 {
+		t.Fatalf("MustLoad arguments config = %+v", got)
+	}
+}
+
+func TestMustLoadFindsThePathFromEnvironment(t *testing.T) {
+	p := write(t, "name: from-environment\nport: 4\n")
+	t.Setenv("CONFIG_PATH", p)
+	setArgs(t, "app")
+
+	got := MustLoad[conf]()
+	if got.Name != "from-environment" || got.Port != 4 {
+		t.Fatalf("MustLoad environment config = %+v", got)
+	}
+}
+
+func TestMustLoadPanicsOnAnError(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("Must should panic on an error, not hand back a nil config")
+			t.Fatal("MustLoad should panic on an error, not hand back a nil config")
 		}
 	}()
-	Must(Load[conf](filepath.Join(t.TempDir(), "nope.yaml")))
+	MustLoad[conf](filepath.Join(t.TempDir(), "nope.yaml"))
+}
+
+func TestMustLoadUsesTheDefaultPath(t *testing.T) {
+	p := write(t, "name: from-default\nport: 5\n")
+	t.Setenv("CONFIG_PATH", "")
+	setDefaultCfgPath(t, p)
+	setArgs(t, "app")
+
+	got := MustLoad[conf]()
+	if got.Name != "from-default" || got.Port != 5 {
+		t.Fatalf("MustLoad default config = %+v", got)
+	}
+}
+
+func TestMustLoadPrefersTheFlagOverEnvironmentAndDefault(t *testing.T) {
+	flag := write(t, "name: from-flag\nport: 6\n")
+	t.Setenv("CONFIG_PATH", write(t, "name: from-environment\nport: 7\n"))
+	setDefaultCfgPath(t, write(t, "name: from-default\nport: 8\n"))
+	setArgs(t, "app", "--config-path", flag)
+
+	got := MustLoad[conf]()
+	if got.Name != "from-flag" || got.Port != 6 {
+		t.Fatalf("MustLoad precedence config = %+v", got)
+	}
 }

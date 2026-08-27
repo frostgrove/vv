@@ -1,2 +1,4 @@
+github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c h1:TBczAlIcD+9iu7T3VrzAbCyY+f8IAVs7KAhdniQTmZ8=
+github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=

@@ -1,4 +1,4 @@
-.PHONY: help test unit integration examples up down logs psql mysql mariadb fmt vet tidy generate corpus ent version release clean \
+.PHONY: help test unit integration examples up down logs psql mysql mariadb fmt vet tidy main-deps generate corpus ent version release clean \
         work check check-deps check-tiers check-todo check-tidy check-utils check-triplets vuln api
 
 GO  ?= go
@@ -400,6 +400,9 @@ tidy: ## Tidy every module
 		  exit $$rc \
 		) || exit 1; \
 	done
+
+main-deps: ## Point nested modules that use vv at the current main revision
+	@./scripts/update-root-module.sh main
 
 # The corpus is captured, not written. Every entry is a real driver error from a
 # real server, because the engine matrix this replaced was written from memory

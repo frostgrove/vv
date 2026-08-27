@@ -5,8 +5,8 @@ module github.com/frostgrove/vv/crud/http/crudgin
 go 1.26
 
 require (
+	github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c
 	github.com/gin-gonic/gin v1.12.0
-	github.com/frostgrove/vv v0.0.0
 )
 
 require (

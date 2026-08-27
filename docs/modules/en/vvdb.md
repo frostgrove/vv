@@ -74,7 +74,7 @@ type Config struct {
 
 func (c Config) Validate() error { return c.DB.Validate() }
 
-cfg            := vvcfg.Must(vvcfg.Auto[Config](os.Args[1:]))
+cfg            := vvcfg.MustLoad[Config]()
 sqlDB, replica := vvdb.MustOpenReadWrite(cfg.DB)
 ```
 
@@ -88,9 +88,10 @@ compatibility). `DB_PARAMS` is a URL query, for example
 `DB_REPLICA_*` names after YAML — for example `DB_REPLICA_HOST`,
 `DB_REPLICA_PARAMS` and `DB_REPLICA_POOL_MAX_IDLE` — so an operator can use an
 environment-only replica or override the readable YAML declaration.
-`Auto` has an environment-only mode when neither `--config-path` nor
-`CONFIG_PATH` is set, so the same declaration works in an image with no config
-file. An explicit `DB_DSN` or `DB_REPLICA_DSN` replaces the corresponding
+`MustLoad` uses `./config/app.yml` when neither `--config-path` nor
+`CONFIG_PATH` is set. Set `vvcfg.DefaultCfgPath = ""` to use the same
+declaration in an image with no config file. An explicit `DB_DSN` or
+`DB_REPLICA_DSN` replaces the corresponding
 field-form connection from YAML as one unit; a `Config` assembled in Go still
 refuses a raw DSN beside typed connection fields.
 `DB_SQLITE_PRAGMAS` and `DB_REPLICA_PRAGMAS` use the same comma-separated

@@ -5,8 +5,8 @@ module github.com/frostgrove/vv/utils/vvdb/dbpgx
 go 1.26
 
 require (
+	github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c
 	github.com/jackc/pgx/v5 v5.7.6
-	github.com/frostgrove/vv v0.0.0
 )
 
 require (

@@ -15,14 +15,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 
 	"github.com/frostgrove/vv/utils/vvflag"
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
-// ErrNoPath reports that neither --config-path nor CONFIG_PATH named a file.
+// ErrNoPath reports that a file load was requested without a path.
 var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or set CONFIG_PATH")
+
+// DefaultCfgPath is the file MustLoad reads when no path, --config-path, or
+// CONFIG_PATH is supplied. Set it before application start-up to choose a
+// different default; set it to "" to use environment-only configuration.
+var DefaultCfgPath = "./config/app.yml"
 
 // Validator is implemented by a configuration that can refuse itself. Load
 // calls it after decoding and returns what it returns.
@@ -46,11 +52,9 @@ type PrefixedEnvironmentApplier interface {
 	ApplyEnvironmentPrefix(string) error
 }
 
-// Find returns the configuration path, in the order a deployment expects to be
-// able to override it: the --config-path flag first, then CONFIG_PATH.
-//
-// args should not include the program name.
-func Find(args []string) (string, error) {
+// find returns a command-line or environment configuration path. args does
+// not include the program name.
+func find(args []string) (string, error) {
 	if p, err := vvflag.Or(args, "config-path", ""); err != nil {
 		return "", err
 	} else if p != "" {
@@ -89,11 +93,11 @@ func Load[T any](path string) (*T, error) {
 	return &cfg, nil
 }
 
-// LoadEnvironment builds a configuration from environment variables alone.
+// loadEnvironment builds a configuration from environment variables alone.
 // It is the counterpart to Load for container deployments that intentionally
 // ship no configuration file. Validation and nested environment appliers run
 // exactly as they do after a file, so this is not a weaker startup path.
-func LoadEnvironment[T any]() (*T, error) {
+func loadEnvironment[T any]() (*T, error) {
 	var cfg T
 	if err := cleanenv.ReadEnv(&cfg); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading environment: %w", err)
@@ -157,24 +161,33 @@ func applyEnvironment(v reflect.Value, prefix string) error {
 	return nil
 }
 
-// Auto finds the path and loads it. It is Find and Load in the order a main
-// function wants them.
-func Auto[T any](args []string) (*T, error) {
-	path, err := Find(args)
-	if err != nil {
-		if errors.Is(err, ErrNoPath) {
-			return LoadEnvironment[T]()
-		}
-		return nil, err
-	}
-	return Load[T](path)
-}
-
-// Must turns a load into a panic, for a main function that has nothing better
-// to do with the error:
+// MustLoad loads a configuration or panics.
 //
-//	cfg := vvcfg.Must(vvcfg.Auto[Config](os.Args[1:]))
-func Must[T any](cfg *T, err error) *T {
+// Paths are joined with filepath.Join, so both a whole pathname and individual
+// path segments are valid. With no path, MustLoad tries --config-path,
+// CONFIG_PATH, and DefaultCfgPath in that order. An empty DefaultCfgPath
+// selects environment-only configuration.
+//
+//	cfg := vvcfg.MustLoad[Config]()
+//
+//
+//	cfg := vvcfg.MustLoad[Config]("config", "app.yml")
+func MustLoad[T any](paths ...string) *T {
+	var cfg *T
+	var err error
+
+	if len(paths) > 0 {
+		cfg, err = Load[T](filepath.Join(paths...))
+	} else if path, findErr := find(os.Args[1:]); findErr == nil {
+		cfg, err = Load[T](path)
+	} else if !errors.Is(findErr, ErrNoPath) {
+		err = findErr
+	} else if DefaultCfgPath != "" {
+		cfg, err = Load[T](DefaultCfgPath)
+	} else {
+		cfg, err = loadEnvironment[T]()
+	}
+
 	if err != nil {
 		panic(err)
 	}

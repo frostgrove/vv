@@ -898,12 +898,10 @@ type TransportOption func(*transport)
 
 ## github.com/frostgrove/vv/utils/vvcfg
 ```go
+var DefaultCfgPath = "./config/app.yml"
 var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or set CONFIG_PATH")
-func Auto[T any](args []string) (*T, error)
-func Find(args []string) (string, error)
 func Load[T any](path string) (*T, error)
-func LoadEnvironment[T any]() (*T, error)
-func Must[T any](cfg *T, err error) *T
+func MustLoad[T any](paths ...string) *T
 type EnvironmentApplier interface{ ... }
 type PrefixedEnvironmentApplier interface{ ... }
 type Validator interface{ ... }
