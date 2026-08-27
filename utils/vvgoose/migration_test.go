@@ -209,6 +209,13 @@ func TestCreateMigrationNeverOverwritesTheSameTimestamp(t *testing.T) {
 	if first == second || filepath.Base(second) != "20260827120001_create_users_table.sql" {
 		t.Fatalf("first = %s, second = %s; want next second without overwrite", first, second)
 	}
+	third, err := createMigration(context.Background(), cfg, createOptions{Name: "teams", Empty: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(third) != "20260827120002_create_teams_table.sql" {
+		t.Fatalf("third = %s; a different slug must still get a unique Goose version", third)
+	}
 }
 
 func TestTableNamesWithUnderscoresStillCreateTableMigrations(t *testing.T) {
@@ -223,6 +230,27 @@ func TestTableNamesWithUnderscoresStillCreateTableMigrations(t *testing.T) {
 	file, table, err = migrationNames("add_email_to_users")
 	if err != nil || file != "add_email_to_users" || table != "users" {
 		t.Fatalf("migrationNames(add_email_to_users) = %q, %q, %v", file, table, err)
+	}
+}
+
+func TestAlterStyleMigrationNameDoesNotBecomeACreateTable(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	models := filepath.Join(root, "src")
+	writeTestSource(t, filepath.Join(models, "user.model.go"), "package account\ntype User struct { ID int64; Email string }\n")
+	cfg := vvdb.Config{
+		Engine: vvdb.Postgres,
+		Migration: vvdb.Migration{
+			Path:   filepath.Join(root, "migrations"),
+			Models: []string{models},
+		},
+	}
+	path, err := createMigration(context.Background(), cfg, createOptions{Name: "add_email_to_users"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contents := readFile(t, path); strings.Contains(contents, "CREATE TABLE") {
+		t.Fatalf("an ALTER-style name generated a duplicate table:\n%s", contents)
 	}
 }
 
@@ -251,6 +279,18 @@ func TestConfigPathFlagCanRemainAfterVVCfgConsumesIt(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("the vvcfg flag should be accepted by vvgoose too: %v", err)
+	}
+}
+
+func TestACharacterDeviceIsNotNecessarilyAnInteractiveTerminal(t *testing.T) {
+	t.Parallel()
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if terminalReader(f) {
+		t.Fatal("the null device was treated as an interactive terminal")
 	}
 }
 

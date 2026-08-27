@@ -132,12 +132,13 @@ func (m Migration) Validate() error {
 	return nil
 }
 
-// validMigrationTable accepts the portable, unquoted identifier subset shared
-// by all four engines. Goose interpolates its history table into SQL rather
-// than binding it as a value, so accepting punctuation here would turn an
-// environment setting into SQL syntax. One qualifier is useful for a
-// PostgreSQL schema and a MySQL database; more than one is not understood by
-// Goose's own table lookup.
+// validMigrationTable accepts the lower-case, unquoted identifier subset
+// shared by all four engines. Goose interpolates its history table into SQL
+// rather than binding or quoting it. In PostgreSQL an upper-case name would be
+// folded during CREATE TABLE but compared verbatim during Goose's existence
+// check, so accepting it would make every later command try to recreate the
+// history table. One qualifier is useful for a PostgreSQL schema and a MySQL
+// database; more than one is not understood by Goose's own table lookup.
 func validMigrationTable(name string) bool {
 	parts := strings.Split(name, ".")
 	if len(parts) == 0 || len(parts) > 2 {
@@ -157,7 +158,7 @@ func validMigrationTable(name string) bool {
 }
 
 func identifierStart(c byte) bool {
-	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+	return c == '_' || c >= 'a' && c <= 'z'
 }
 
 func identifierPart(c byte) bool { return identifierStart(c) || c >= '0' && c <= '9' }

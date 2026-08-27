@@ -20,7 +20,7 @@ import (
 
 func main() {
     cfg := vvcfg.MustLoad[config.Config]()
-    vvgoose.Migrate(cfg.DB)
+    vvgoose.Execute(cfg.DB)
 }
 ```
 
@@ -42,4 +42,3 @@ and `rollback [count]` help.
 
 See [the vvgoose module reference](../modules/en/vvgoose.md) for discovery
 rules, environment names and exact `fresh` semantics.
-

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"go/ast"
 	"go/format"
+	"go/token"
 	"reflect"
 	"strconv"
 	"strings"
@@ -47,9 +48,19 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 		if db == "-" || hasRel || hasGormOption(gormOpts, "-") {
 			continue
 		}
-		// A named local struct is a relation/bookkeeping field even without an
-		// explicit rel tag, matching crud's runtime schema rules.
+		// A named local struct is normally a relation/bookkeeping field. GORM's
+		// explicit embedded spelling is the exception and flattens its columns.
 		if name := localTypeName(raw.Type); name != "" && pkg.structs[name] != nil {
+			if hasGormOption(gormOpts, "embedded") || gormOpts["embeddedprefix"] != "" {
+				out = append(out, pkg.fields(pkg.structs[name], prefix+gormOpts["embeddedprefix"], seen)...)
+			}
+			continue
+		}
+		// Without type-checking, an imported selector that is not one of the
+		// database scalar packages is much more likely to be a relation than a
+		// column. An explicit db/column tag remains the author's escape hatch for
+		// an imported scalar type.
+		if !hasDB && gormOpts["column"] == "" && importedRelationCandidate(raw.Type, decl.imports) {
 			continue
 		}
 
@@ -67,18 +78,20 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 			column = prefix + column
 			line := decl.fset.Position(ident.Pos()).Line
 			f := Field{
-				Name:       ident.Name,
-				Column:     column,
-				GoType:     expression(decl, raw.Type),
-				File:       displayPath(decl.file),
-				Line:       line,
-				Nullable:   nullableType(raw.Type),
-				PrimaryKey: dbOpts["pk"] || dbOpts["primarykey"] || dbOpts["primary_key"] || hasGormOption(gormOpts, "primarykey"),
-				Auto:       dbOpts["auto"] || dbOpts["identity"] || dbOpts["serial"] || dbOpts["autoincrement"] || gormBool(gormOpts, "autoincrement", true),
-				NoAuto:     dbOpts["noauto"] || gormBool(gormOpts, "autoincrement", false),
-				Immutable:  dbOpts["immutable"] || dbOpts["readonly"] || dbOpts["insertonly"] || dbOpts["insert_only"] || strings.EqualFold(gormOpts["<-"], "create"),
-				Generated:  dbOpts["generated"] || dbOpts["computed"] || hasGormOption(gormOpts, "->"),
-				Version:    dbOpts["version"] || dbOpts["lock"],
+				Name:           ident.Name,
+				Column:         column,
+				GoType:         expression(decl, raw.Type),
+				CanonicalType:  canonicalExpression(decl.imports, decl.fset, raw.Type),
+				UnderlyingType: pkg.underlyingType(decl.imports, decl.fset, raw.Type, map[string]bool{}),
+				File:           displayPath(decl.file),
+				Line:           line,
+				Nullable:       nullableType(raw.Type),
+				PrimaryKey:     dbOpts["pk"] || dbOpts["primarykey"] || dbOpts["primary_key"] || hasGormOption(gormOpts, "primarykey"),
+				Auto:           dbOpts["auto"] || dbOpts["identity"] || dbOpts["serial"] || dbOpts["autoincrement"] || gormBool(gormOpts, "autoincrement", true),
+				NoAuto:         dbOpts["noauto"] || gormBool(gormOpts, "autoincrement", false),
+				Immutable:      dbOpts["immutable"] || dbOpts["readonly"] || dbOpts["insertonly"] || dbOpts["insert_only"] || strings.EqualFold(gormOpts["<-"], "create"),
+				Generated:      dbOpts["generated"] || dbOpts["computed"] || hasGormOption(gormOpts, "->"),
+				Version:        dbOpts["version"] || dbOpts["lock"],
 			}
 			out = append(out, f)
 		}
@@ -100,7 +113,7 @@ func finishPrimaryKey(fields []Field) {
 		}
 	}
 	for i := range fields {
-		if fields[i].PrimaryKey && !fields[i].Auto && !fields[i].NoAuto && integerType(fields[i].GoType) {
+		if fields[i].PrimaryKey && !fields[i].Auto && !fields[i].NoAuto && integerType(databaseType(fields[i])) {
 			fields[i].Auto = true
 		}
 	}
@@ -167,11 +180,102 @@ func gormBool(options map[string]string, name string, want bool) bool {
 }
 
 func expression(decl *structSource, expr ast.Expr) string {
+	return formatExpression(decl.fset, expr)
+}
+
+func formatExpression(fset *token.FileSet, expr ast.Expr) string {
 	var b bytes.Buffer
-	if err := format.Node(&b, decl.fset, expr); err != nil {
+	if err := format.Node(&b, fset, expr); err != nil {
 		return ""
 	}
 	return b.String()
+}
+
+func canonicalExpression(imports map[string]string, fset *token.FileSet, expr ast.Expr) string {
+	typ := formatExpression(fset, expr)
+	for alias, path := range imports {
+		if alias == "_" || alias == "." {
+			continue
+		}
+		typ = strings.ReplaceAll(typ, alias+".", canonicalPackageName(path)+".")
+	}
+	return typ
+}
+
+func canonicalPackageName(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
+
+func (pkg *packageSource) underlyingType(imports map[string]string, fset *token.FileSet, expr ast.Expr, seen map[string]bool) string {
+	switch expr := expr.(type) {
+	case *ast.StarExpr:
+		return pkg.underlyingType(imports, fset, expr.X, seen)
+	case *ast.ParenExpr:
+		return pkg.underlyingType(imports, fset, expr.X, seen)
+	case *ast.IndexExpr:
+		if genericNullable(expr.X) {
+			return pkg.underlyingType(imports, fset, expr.Index, seen)
+		}
+	case *ast.IndexListExpr:
+		if genericNullable(expr.X) && len(expr.Indices) == 1 {
+			return pkg.underlyingType(imports, fset, expr.Indices[0], seen)
+		}
+	case *ast.Ident:
+		if source := pkg.types[expr.Name]; source != nil && !seen[expr.Name] {
+			seen[expr.Name] = true
+			resolved := pkg.underlyingType(source.imports, source.fset, source.typ, seen)
+			delete(seen, expr.Name)
+			return resolved
+		}
+	}
+	return canonicalExpression(imports, fset, expr)
+}
+
+func databaseType(field Field) string {
+	if field.UnderlyingType != "" {
+		return field.UnderlyingType
+	}
+	if field.CanonicalType != "" {
+		return field.CanonicalType
+	}
+	return field.GoType
+}
+
+func importedRelationCandidate(expr ast.Expr, imports map[string]string) bool {
+	for {
+		switch wrapped := expr.(type) {
+		case *ast.StarExpr:
+			expr = wrapped.X
+		case *ast.ArrayType:
+			expr = wrapped.Elt
+		case *ast.ParenExpr:
+			expr = wrapped.X
+		default:
+			goto unwrapped
+		}
+	}
+
+unwrapped:
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	alias, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	path := imports[alias.Name]
+	if path == "" {
+		return false
+	}
+	switch path {
+	case "time", "database/sql", "encoding/json", "net", "net/url", "math/big", "gorm.io/gorm":
+		return false
+	}
+	return !strings.Contains(path, "uuid") && !strings.Contains(path, "decimal")
 }
 
 func localTypeName(expr ast.Expr) string {
@@ -246,9 +350,9 @@ func isGormModel(expr ast.Expr, imports map[string]string) bool {
 
 func gormModelFields(prefix, file string, line int) []Field {
 	return []Field{
-		{Name: "ID", Column: prefix + "id", GoType: "uint", File: displayPath(file), Line: line, PrimaryKey: true, Auto: true},
-		{Name: "CreatedAt", Column: prefix + "created_at", GoType: "time.Time", File: displayPath(file), Line: line},
-		{Name: "UpdatedAt", Column: prefix + "updated_at", GoType: "time.Time", File: displayPath(file), Line: line},
-		{Name: "DeletedAt", Column: prefix + "deleted_at", GoType: "gorm.DeletedAt", File: displayPath(file), Line: line, Nullable: true},
+		{Name: "ID", Column: prefix + "id", GoType: "uint", CanonicalType: "uint", UnderlyingType: "uint", File: displayPath(file), Line: line, PrimaryKey: true, Auto: true},
+		{Name: "CreatedAt", Column: prefix + "created_at", GoType: "time.Time", CanonicalType: "time.Time", UnderlyingType: "time.Time", File: displayPath(file), Line: line},
+		{Name: "UpdatedAt", Column: prefix + "updated_at", GoType: "time.Time", CanonicalType: "time.Time", UnderlyingType: "time.Time", File: displayPath(file), Line: line},
+		{Name: "DeletedAt", Column: prefix + "deleted_at", GoType: "gorm.DeletedAt", CanonicalType: "gorm.DeletedAt", UnderlyingType: "gorm.DeletedAt", File: displayPath(file), Line: line, Nullable: true},
 	}
 }

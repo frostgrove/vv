@@ -35,19 +35,23 @@ type Model struct {
 
 // Field is one mapped column. GoType is the type expression exactly as the
 // model spells it, which keeps named application types visible to diagnostics.
+// CanonicalType resolves import aliases and UnderlyingType resolves local named
+// scalar declarations; SQL generation uses the strongest available spelling.
 type Field struct {
-	Name       string
-	Column     string
-	GoType     string
-	File       string
-	Line       int
-	Nullable   bool
-	PrimaryKey bool
-	Auto       bool
-	NoAuto     bool
-	Immutable  bool
-	Generated  bool
-	Version    bool
+	Name           string
+	Column         string
+	GoType         string
+	CanonicalType  string
+	UnderlyingType string
+	File           string
+	Line           int
+	Nullable       bool
+	PrimaryKey     bool
+	Auto           bool
+	NoAuto         bool
+	Immutable      bool
+	Generated      bool
+	Version        bool
 }
 
 // Label is a stable, human-readable option for an interactive model picker.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -40,7 +41,11 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 	}
 
 	var model *modelscan.Model
-	if !options.Empty {
+	// A source model describes a complete CREATE TABLE statement. Reusing it
+	// for names such as add_email_to_users would silently turn an ALTER intent
+	// into a destructive duplicate CREATE, so non-create names stay editable
+	// Goose skeletons.
+	if !options.Empty && createsTable(fileSlug) {
 		models, discoverErr := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
 		if discoverErr != nil {
 			return "", discoverErr
@@ -51,7 +56,11 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 		}
 	}
 
-	contents, err := renderMigration(cfg.Engine, table, model)
+	renderTable := table
+	if model != nil && model.Table != "" {
+		renderTable = model.Table
+	}
+	contents, err := renderMigration(cfg.Engine, renderTable, model)
 	if err != nil {
 		return "", err
 	}
@@ -63,11 +72,14 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 	if now == nil {
 		now = time.Now
 	}
-	baseVersion := now().UTC()
+	baseVersion, err := nextMigrationVersion(cfg.Migration.Path, now())
+	if err != nil {
+		return "", err
+	}
 	for offset := range 1000 {
-		version := baseVersion.Add(time.Duration(offset) * time.Second).Format("20060102150405")
+		version := fmt.Sprintf("%014d", baseVersion+int64(offset))
 		path := filepath.Join(cfg.Migration.Path, version+"_"+fileSlug+".sql")
-		created, err := writeExclusive(path, contents)
+		created, err := writeVersionedMigration(cfg.Migration.Path, version, path, contents)
 		if err != nil {
 			return "", err
 		}
@@ -76,6 +88,65 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 		}
 	}
 	return "", fmt.Errorf("vvgoose: could not allocate a unique migration version in %q", cfg.Migration.Path)
+}
+
+func nextMigrationVersion(dir string, now time.Time) (int64, error) {
+	base, err := strconv.ParseInt(now.UTC().Format("20060102150405"), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("vvgoose: format migration time: %w", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("vvgoose: inspect migration directory %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, _, found := strings.Cut(entry.Name(), "_")
+		if !found {
+			continue
+		}
+		version, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr == nil && version >= base {
+			base = version + 1
+		}
+	}
+	return base, nil
+}
+
+func createsTable(fileSlug string) bool {
+	return strings.HasPrefix(fileSlug, "create_") && strings.HasSuffix(fileSlug, "_table")
+}
+
+// writeVersionedMigration reserves the Goose version, not merely the final
+// filename. Goose identifies migrations by the timestamp prefix, so two
+// different names created in the same second must not both receive it.
+func writeVersionedMigration(dir, version, path string, contents []byte) (bool, error) {
+	lockPath := filepath.Join(dir, ".vvgoose-"+version+".lock")
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("vvgoose: reserve migration version %s: %w", version, err)
+	}
+	defer func() {
+		_ = lock.Close()
+		_ = os.Remove(lockPath)
+	}()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, fmt.Errorf("vvgoose: inspect migration directory %q: %w", dir, err)
+	}
+	prefix := version + "_"
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), ".sql") {
+			return false, nil
+		}
+	}
+	return writeExclusive(path, contents)
 }
 
 func writeExclusive(path string, contents []byte) (created bool, err error) {

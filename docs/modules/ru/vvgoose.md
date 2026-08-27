@@ -25,7 +25,7 @@ import (
 
 func main() {
     cfg := vvcfg.MustLoad[config.Config]()
-    vvgoose.Migrate(cfg.DB)
+    vvgoose.Execute(cfg.DB)
 }
 ```
 
@@ -89,4 +89,3 @@ embedded-структуры и поля `gorm.Model`; связи в колонк
 
 Команда `migration` не открывает БД. `migrate`, `status`, `rollback` и `fresh`
 открывают только primary, даже если в конфигурации есть read replica.
-

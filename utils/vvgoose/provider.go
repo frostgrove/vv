@@ -2,15 +2,17 @@ package vvgoose
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/frostgrove/vv/utils/vvdb"
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	gooselock "github.com/pressly/goose/v3/lock"
 	_ "modernc.org/sqlite"
 )
 
@@ -31,31 +33,83 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	info, err := os.Stat(cfg.Migration.Path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("vvgoose: migration directory %q: %w", cfg.Migration.Path, err)
+	}
+	if !info.IsDir() {
+		return nil, nil, fmt.Errorf("vvgoose: migration path %q is not a directory", cfg.Migration.Path)
 	}
 
-	primary := cfg
-	primary.Replica = nil
+	primary, err := providerDatabaseConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
 	db, err := vvdb.Open(primary)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vvgoose: open primary database: %w", err)
+	}
+
+	providerOptions := []goose.ProviderOption{
+		goose.WithTableName(cfg.Migration.Table),
+		goose.WithDisableGlobalRegistry(true),
+	}
+	locker, err := providerLockerOption(cfg.Engine, cfg.Migration.Table)
+	if err != nil {
+		return nil, nil, errors.Join(err, db.Close())
+	}
+	if locker != nil {
+		providerOptions = append(providerOptions, locker)
 	}
 
 	provider, err := goose.NewProvider(
 		dialect,
 		db,
 		os.DirFS(cfg.Migration.Path),
-		goose.WithTableName(cfg.Migration.Table),
-		goose.WithDisableGlobalRegistry(true),
+		providerOptions...,
 	)
 	if err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("vvgoose: load migrations from %q: %w", cfg.Migration.Path, err),
-			db.Close(),
-		)
+		closeErr := db.Close()
+		if closeErr != nil {
+			// Do not wrap ErrNoMigrations in this branch: callers intentionally
+			// turn that one condition into a no-op, but a failed close must remain
+			// observable instead of being swallowed with it.
+			return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %v; close database: %w", cfg.Migration.Path, err, closeErr)
+		}
+		return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %w", cfg.Migration.Path, err)
 	}
 	return provider, db, nil
+}
+
+// providerDatabaseConfig makes the connection suitable for Goose without
+// mutating the application's ordinary database config. Goose may execute a
+// StatementBegin block as one string; go-sql-driver/mysql refuses that unless
+// multiStatements is enabled.
+func providerDatabaseConfig(cfg vvdb.Config) (vvdb.Config, error) {
+	primary := cfg
+	primary.Replica = nil
+	if cfg.Engine != vvdb.MySQL && cfg.Engine != vvdb.MariaDB {
+		return primary, nil
+	}
+
+	if primary.DSN != "" {
+		parsed, err := mysql.ParseDSN(primary.DSN)
+		if err != nil {
+			return vvdb.Config{}, fmt.Errorf("vvgoose: parse MySQL DSN: %w", err)
+		}
+		parsed.MultiStatements = true
+		parsed.ParseTime = true
+		primary.DSN = parsed.FormatDSN()
+		return primary, nil
+	}
+
+	params := make(vvdb.Params, len(primary.Params)+1)
+	for key, value := range primary.Params {
+		params[key] = value
+	}
+	params["multiStatements"] = "true"
+	primary.Params = params
+	return primary, nil
 }
 
 func dialectFor(engine vvdb.Engine) (goose.Dialect, error) {

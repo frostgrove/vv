@@ -25,7 +25,7 @@ import (
 
 func main() {
     cfg := vvcfg.MustLoad[config.Config]()
-    vvgoose.Migrate(cfg.DB)
+    vvgoose.Execute(cfg.DB)
 }
 ```
 
@@ -91,4 +91,3 @@ reject it. `--model` selects a struct explicitly.
 The `migration` command never opens the database. `migrate`, `status`,
 `rollback`, and `fresh` open only the primary even when a read replica is
 configured.
-

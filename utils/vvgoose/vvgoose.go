@@ -4,10 +4,10 @@
 //
 //	func main() {
 //		cfg := vvcfg.MustLoad[config.Config]()
-//		vvgoose.Migrate(cfg.DB)
+//		vvgoose.Execute(cfg.DB)
 //	}
 //
-// Migrate reads os.Args and provides migration generation, applying, status,
+// Execute reads os.Args and provides migration generation, applying, status,
 // rollback and a reset followed by re-application. SQL files stay compatible
 // with the Goose CLI; the package uses Goose's instance Provider internally so
 // two database configurations never share process-global migration state.
@@ -25,6 +25,7 @@ import (
 	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/pressly/goose/v3"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const (
@@ -33,11 +34,11 @@ const (
 	defaultMigrationTable = "goose_db_version"
 )
 
-// Migrate runs the migration CLI using cfg. It is deliberately a terminal
+// Execute runs the migration CLI using cfg. It is deliberately a terminal
 // entrypoint rather than a library-shaped error return: the intended caller is
 // cmd/migrate/main.go, and failures must result in a non-zero process status
 // even when that minimal main does not contain error handling.
-func Migrate(cfg vvdb.Config) {
+func Execute(cfg vvdb.Config) {
 	if err := execute(context.Background(), os.Args[1:], cfg, commandIO{
 		in: os.Stdin, out: os.Stdout, err: os.Stderr,
 	}); err != nil {
@@ -200,8 +201,7 @@ func terminalReader(r io.Reader) bool {
 	if !ok {
 		return false
 	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }
 
 func printResults(w io.Writer, results []*goose.MigrationResult) {

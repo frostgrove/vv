@@ -920,6 +920,6 @@ type Option func(*pgxpool.Config)
 
 ## github.com/frostgrove/vv/utils/vvgoose
 ```go
-func Migrate(cfg vvdb.Config)
+func Execute(cfg vvdb.Config)
 ```
 

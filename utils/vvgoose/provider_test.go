@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/frostgrove/vv/utils/vvdb"
+	mysql "github.com/go-sql-driver/mysql"
 	"github.com/pressly/goose/v3"
 )
 
@@ -144,14 +145,43 @@ func TestRollbackRejectsNonPositiveCount(t *testing.T) {
 	}
 }
 
-func TestAnApplicationWithNoMigrationFilesHasNothingToDo(t *testing.T) {
+func TestRollbackHonoursCount(t *testing.T) {
+	t.Parallel()
+
+	cfg := sqliteMigrationConfig(t)
+	const second = `-- +goose Up
+CREATE TABLE teams (id INTEGER PRIMARY KEY);
+
+-- +goose Down
+DROP TABLE teams;
+`
+	if err := os.WriteFile(filepath.Join(cfg.Migration.Path, "20260827000001_create_teams.sql"), []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if results, err := runMigrate(context.Background(), cfg); err != nil || len(results) != 2 {
+		t.Fatalf("migrate two files = %v, %v", results, err)
+	}
+	results, err := runRollback(context.Background(), cfg, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Source.Version != 20260827000001 || results[1].Source.Version != 20260827000000 {
+		t.Fatalf("rollback results = %+v, want both versions newest first", results)
+	}
+}
+
+func TestAnExistingDirectoryWithNoMigrationFilesHasNothingToDo(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	migrations := filepath.Join(root, "migrations")
+	if err := os.Mkdir(migrations, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cfg := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Path:   filepath.Join(root, "app.sqlite"),
 		Migration: vvdb.Migration{
-			Path: filepath.Join(root, "not-created-yet"),
+			Path: migrations,
 		},
 	}
 	ctx := context.Background()
@@ -162,7 +192,62 @@ func TestAnApplicationWithNoMigrationFilesHasNothingToDo(t *testing.T) {
 		t.Fatalf("empty migrate = %v, %v; want nothing to do", results, err)
 	}
 	if _, err := os.Stat(cfg.Migration.Path); err != nil {
-		t.Fatalf("runtime should make the configured migration directory usable: %v", err)
+		t.Fatalf("migration directory disappeared: %v", err)
+	}
+}
+
+func TestRuntimeCommandsRefuseAMissingMigrationDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg := vvdb.Config{
+		Engine: vvdb.SQLite,
+		Path:   filepath.Join(root, "app.sqlite"),
+		Migration: vvdb.Migration{
+			Path: filepath.Join(root, "misspelled-migrations"),
+		},
+	}
+	if _, err := runMigrate(context.Background(), cfg); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing migration path error = %v, want os.ErrNotExist", err)
+	}
+	if _, err := os.Stat(cfg.Migration.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime command created a typoed path: %v", err)
+	}
+}
+
+func TestProviderEnablesMySQLMultiStatementsWithoutMutatingTheApplicationConfig(t *testing.T) {
+	t.Parallel()
+	structured := vvdb.Config{
+		Engine: vvdb.MySQL,
+		Host:   "localhost",
+		User:   "app",
+		Name:   "app",
+		Params: vvdb.Params{"multiStatements": "false"},
+	}
+	raw := vvdb.Config{
+		Engine: vvdb.MySQL,
+		DSN:    "app:secret@tcp(localhost:3306)/app?multiStatements=false",
+	}
+	for name, cfg := range map[string]vvdb.Config{"structured": structured, "raw dsn": raw} {
+		t.Run(name, func(t *testing.T) {
+			got, err := providerDatabaseConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dsn, err := vvdb.DSN(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := mysql.ParseDSN(dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !parsed.MultiStatements {
+				t.Fatalf("provider DSN = %q, multiStatements is disabled", dsn)
+			}
+		})
+	}
+	if structured.Params["multiStatements"] != "false" || raw.DSN != "app:secret@tcp(localhost:3306)/app?multiStatements=false" {
+		t.Fatal("provider preparation mutated the application's database config")
 	}
 }
 

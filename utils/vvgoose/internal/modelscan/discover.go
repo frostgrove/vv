@@ -23,7 +23,14 @@ type packageSource struct {
 	constExprs map[string]ast.Expr
 	consts     map[string]string
 	structs    map[string]*structSource
+	types      map[string]*typeSource
 	methods    []*ast.FuncDecl
+}
+
+type typeSource struct {
+	typ     ast.Expr
+	imports map[string]string
+	fset    *token.FileSet
 }
 
 type structSource struct {
@@ -70,6 +77,7 @@ func Discover(o Options) ([]Model, error) {
 				constExprs: map[string]ast.Expr{},
 				consts:     map[string]string{},
 				structs:    map[string]*structSource{},
+				types:      map[string]*typeSource{},
 			}
 			packages[key] = pkg
 		}
@@ -195,6 +203,7 @@ func collectFile(pkg *packageSource, fset *token.FileSet, path string, file *ast
 					}
 					st, ok := ts.Type.(*ast.StructType)
 					if !ok {
+						pkg.types[ts.Name.Name] = &typeSource{typ: ts.Type, imports: imports, fset: fset}
 						continue
 					}
 					pos := fset.Position(ts.Pos())
