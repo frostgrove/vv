@@ -27,6 +27,7 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		depth:    2,
 		withDTO:  true,
 		withMeta: true,
+		withRepo: true,
 		specsPkg: "github.com/frostgrove/vv/crud/decorators/specs",
 		crudPkg:  "github.com/frostgrove/vv/crud",
 		portPkg:  DefaultPortPkg,
@@ -148,6 +149,36 @@ func TestUpdateDTOFollowsNullability(t *testing.T) {
 }`)
 	if got := decl(t, out, "type ArticleUpdate struct {"); got != want {
 		t.Fatalf("the update DTO is\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestModelFileNeedsNoDatabaseOrORMTags(t *testing.T) {
+	out := gen(t, map[string]string{"product.model.go": `package product
+
+import (
+	"time"
+	"github.com/google/uuid"
+)
+
+type Product struct {
+	Id          uuid.UUID
+	Name        string
+	Description *string
+	CreatedAt   time.Time
+}
+`}, nil)
+
+	if got := decl(t, out, "type ProductUpdate struct {"); !declares(got, "Name") || !declares(got, "Description") {
+		t.Fatalf("plain model fields did not reach the update DTO:\n%s", got)
+	}
+	if strings.Contains(decl(t, out, "type ProductUpdate struct {"), "Id") {
+		t.Fatalf("Id was not recognised as the conventional primary key:\n%s", out)
+	}
+	if !strings.Contains(out, "var ProductRepository = sqlrepo.Define[Product, uuid.UUID, ProductUpdate](\"\")") {
+		t.Fatalf("the generated file has no repository blueprint:\n%s", out)
+	}
+	if !strings.Contains(out, "func NewProductRepository(src crud.Source)") {
+		t.Fatalf("the generated file has no driver-neutral repository factory:\n%s", out)
 	}
 }
 
@@ -511,9 +542,9 @@ func TestIntoWithoutImportIsRefused(t *testing.T) {
 	}
 }
 
-func TestAPackageWithNothingToGenerateIsAnError(t *testing.T) {
+func TestAPackageWithoutModelFilesIsAnError(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte(`package empty
+	if err := os.WriteFile(filepath.Join(dir, "helper.go"), []byte(`package empty
 
 type NotAModel struct {
 	Name string
@@ -523,12 +554,52 @@ type NotAModel struct {
 	}
 	g := &generator{dir: dir, depth: 2, withDTO: true, withMeta: true}
 	if err := g.run(filepath.Join(dir, "vv_gen.go")); err == nil {
-		t.Fatal("a package with no tagged models should be an error, not an empty file")
+		t.Fatal("a package without model files should be an error, not an empty file")
+	}
+}
+
+func TestRecursiveGenerationFindsModelFilesAndSkipsPrivateHelpers(t *testing.T) {
+	root := t.TempDir()
+	productDir := filepath.Join(root, "app", "product")
+	helperDir := filepath.Join(root, "app", "example")
+	if err := os.MkdirAll(productDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(helperDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(productDir, "product.model.go"), []byte(`package product
+
+type Product struct {
+	ID   int64
+	Name string
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(helperDir, "example.model.go"), []byte(`package example
+
+type placeholder struct{}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(Options{Dir: root, Out: "vv_gen.go", WithDTO: true, WithMeta: true, Recursive: true}); err != nil {
+		t.Fatalf("recursive generation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(productDir, "vv_gen.go")); err != nil {
+		t.Fatalf("product output: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(helperDir, "vv_gen.go")); !os.IsNotExist(err) {
+		t.Fatalf("private helper produced output, err = %v", err)
 	}
 }
 
 func TestGeneratingOnlyOneHalf(t *testing.T) {
-	noDTO := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) { g.withDTO = false })
+	noDTO := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) {
+		g.withDTO = false
+		g.withRepo = false
+	})
 	if strings.Contains(noDTO, "ArticleUpdate") {
 		t.Fatalf("-no-dto still wrote a DTO:\n%s", noDTO)
 	}

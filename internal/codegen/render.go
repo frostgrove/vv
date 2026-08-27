@@ -24,6 +24,14 @@ func (g *generator) render() ([]byte, error) {
 			body.WriteString(s)
 			u.also(mu)
 		}
+		if g.withRepo {
+			s, mu, err := g.renderRepository(m)
+			if err != nil {
+				return nil, err
+			}
+			body.WriteString(s)
+			u.also(mu)
+		}
 		if g.adapter {
 			s, mu, err := g.renderAdapter(m)
 			if err != nil {
@@ -66,6 +74,9 @@ func (g *generator) render() ([]byte, error) {
 	if u.specs {
 		imports = append(imports, fmt.Sprintf("%q", g.specsPkg))
 	}
+	if u.sqlrepo {
+		imports = append(imports, `"github.com/frostgrove/vv/crud/sqlrepo"`)
+	}
 	if g.modelImport != "" {
 		imports = append(imports, fmt.Sprintf("%q", g.modelImport))
 	}
@@ -96,17 +107,42 @@ func (g *generator) render() ([]byte, error) {
 // used says which imports the rendered body needs. A flag per package rather
 // than a scan of the output: the output is what the flags produce, so reading
 // it back to decide would be one derivation checking itself.
-type used struct{ crud, specs, time, port, errs, context, http, net bool }
+type used struct{ crud, specs, sqlrepo, time, port, errs, context, http, net bool }
 
 func (u *used) also(o used) {
 	u.crud = u.crud || o.crud
 	u.specs = u.specs || o.specs
+	u.sqlrepo = u.sqlrepo || o.sqlrepo
 	u.time = u.time || o.time
 	u.port = u.port || o.port
 	u.errs = u.errs || o.errs
 	u.context = u.context || o.context
 	u.http = u.http || o.http
 	u.net = u.net || o.net
+}
+
+// ---------------------------------------------------------------------------
+// repository
+
+// renderRepository emits the declaration every vv model needs, but deliberately
+// does not choose a driver. The application binds it to database/sql, pgx,
+// a test source, or any other vv Source at composition time.
+func (g *generator) renderRepository(m *model) (string, used, error) {
+	pk, ok := m.pk()
+	if !ok {
+		return "", used{}, fmt.Errorf("%s has no primary key: name it ID/Id or use db:\",pk\" for a non-conventional key", m.Name)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "// %sRepository describes %s independently of a database driver.\n", m.Name, g.qual(m.Name))
+	fmt.Fprintf(&b, "// Bind it through New%sRepository with the application's datasource.\n", m.Name)
+	fmt.Fprintf(&b, "var %sRepository = sqlrepo.Define[%s, %s, %sUpdate](\"\")\n\n",
+		m.Name, g.qual(m.Name), pk.Type, m.Name)
+	fmt.Fprintf(&b, "// New%sRepository binds %sRepository to src.\n", m.Name, m.Name)
+	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) crud.Repo[%s, %s, %sUpdate] {\n",
+		m.Name, g.qual(m.Name), pk.Type, m.Name)
+	fmt.Fprintf(&b, "\treturn %sRepository.Bind(src)\n}\n\n", m.Name)
+	return b.String(), used{crud: true, sqlrepo: true}, nil
 }
 
 // extraImports finds the packages the generated types still need — a uuid or

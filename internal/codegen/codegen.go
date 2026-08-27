@@ -85,6 +85,7 @@ type generator struct {
 	depth    int
 	withDTO  bool
 	withMeta bool
+	withRepo bool
 	adapter  bool
 	binding  string
 	specsPkg string
@@ -127,7 +128,10 @@ func (g *generator) run(outPath string) error {
 		g.pkg = packageNameOf(g.into)
 	}
 	if len(g.order) == 0 {
-		return fmt.Errorf("no tagged models found in %s", g.dir)
+		return fmt.Errorf("no models found in %s; put exported model structs in model.go, *.model.go or *_model.go", g.dir)
+	}
+	if g.withRepo && !g.withDTO {
+		return fmt.Errorf("a generated repository needs its update DTO; drop -no-dto or add -no-repo")
 	}
 	if g.adapter && !g.withDTO {
 		// The mapper, the service and the wiring all name <Model>Update. Emitting
@@ -180,7 +184,8 @@ func (g *generator) load(skip string) error {
 
 	for name, pkg := range pkgs {
 		g.pkg = name
-		for _, file := range pkg.Files {
+		for fileName, file := range pkg.Files {
+			modelFile := preferredModelFile(filepath.Base(fileName))
 			for _, imp := range file.Imports {
 				path, _ := strconv.Unquote(imp.Path.Value)
 				alias := filepath.Base(path)
@@ -198,10 +203,13 @@ func (g *generator) load(skip string) error {
 				if !ok {
 					return true
 				}
+				if !ts.Name.IsExported() {
+					return true
+				}
 				if g.only != nil && !g.only[ts.Name.Name] {
 					return true
 				}
-				m := g.parseModel(ts.Name.Name, st)
+				m := g.parseModel(ts.Name.Name, st, modelFile)
 				if m != nil {
 					g.models[m.Name] = m
 					g.order = append(g.order, m.Name)
@@ -214,11 +222,13 @@ func (g *generator) load(skip string) error {
 	return nil
 }
 
-func (g *generator) parseModel(name string, st *ast.StructType) *model {
+func (g *generator) parseModel(name string, st *ast.StructType, force bool) *model {
 	m := &model{Name: name}
 	// An explicitly named type is a model whether or not it carries tags — which
-	// is how a generated entity from another tool qualifies.
-	tagged := g.only != nil && g.only[name]
+	// is how a generated entity from another tool qualifies. Model files carry
+	// the same meaning without a tag: plain Go structs are vv models by
+	// convention, independently of their database driver or ORM.
+	tagged := force || (g.only != nil && g.only[name])
 	for _, f := range st.Fields.List {
 		if len(f.Names) == 0 {
 			// Embedded: the runtime flattens it, so the generator has to as
@@ -278,7 +288,7 @@ func (g *generator) parseModel(name string, st *ast.StructType) *model {
 					fl.Version = true
 				}
 			}
-			if fl.Name == "ID" && !fl.PK && db != "-" {
+			if strings.EqualFold(fl.Name, "id") && !fl.PK && db != "-" {
 				fl.PK = true
 			}
 			// After the tags, not before: whether the flag is the only reason
@@ -469,7 +479,7 @@ func (g *generator) embedded(typ string) ([]field, bool) {
 		return out, true
 	}
 	if st, ok := g.embeds[typ]; ok {
-		m := g.parseModel(typ, st)
+		m := g.parseModel(typ, st, true)
 		if m == nil {
 			return nil, false
 		}
@@ -490,10 +500,17 @@ type Options struct {
 	Depth    int    // how far to expand relation paths into the metamodel
 	WithDTO  bool
 	WithMeta bool
-	Adapter  bool   // also generate the resource adapter: input DTO, mapper, inverse map, service, wiring
-	Binding  string // which transport the wiring is written for: "net" or "none"
-	SpecsPkg string
-	CrudPkg  string
+	// NoRepo keeps the generator useful for a DTO/metamodel-only consumer.
+	// The normal command generates a datasource-independent repository
+	// blueprint and binding factory for every model.
+	NoRepo bool
+	// Recursive discovers model files below Dir and writes one vv_gen.go next
+	// to each package that contains an exported model.
+	Recursive bool
+	Adapter   bool   // also generate the resource adapter: input DTO, mapper, inverse map, service, wiring
+	Binding   string // which transport the wiring is written for: "net" or "none"
+	SpecsPkg  string
+	CrudPkg   string
 
 	// The adapter half names three more packages than the DTO half does, and
 	// they are fields rather than flags. -crud and -specs exist because a
@@ -518,6 +535,30 @@ const (
 // Run generates from o and writes the result. The output path is Out resolved
 // against Into when set, Dir otherwise.
 func Run(o Options) error {
+	if o.Recursive {
+		if o.Into != "" || o.Import != "" {
+			return fmt.Errorf("-recursive writes beside each model package and cannot be combined with -into or -import")
+		}
+		dirs, err := modelDirs(o.Dir)
+		if err != nil {
+			return err
+		}
+		for _, dir := range dirs {
+			one := o
+			one.Dir = dir
+			one.Recursive = false
+			if err := Run(one); err != nil {
+				// A model file may carry only package-private helpers. It is not a
+				// generation target, and must not make an application-wide scan fail.
+				if strings.Contains(err.Error(), "no models found in ") {
+					continue
+				}
+				return err
+			}
+		}
+		return nil
+	}
+
 	binding := o.Binding
 	if binding == "" {
 		binding = "net"
@@ -534,6 +575,7 @@ func Run(o Options) error {
 		depth:    o.Depth,
 		withDTO:  o.WithDTO,
 		withMeta: o.WithMeta,
+		withRepo: !o.NoRepo,
 		adapter:  o.Adapter,
 		binding:  binding,
 		specsPkg: o.SpecsPkg,
@@ -561,4 +603,60 @@ func Run(o Options) error {
 		outDir = o.Into
 	}
 	return g.run(filepath.Join(outDir, o.Out))
+}
+
+// modelDirs finds packages that opted into generation by placing a model in a
+// conventional model file. It follows vvgoose's model-file convention and
+// emits one generated Go file per package.
+func modelDirs(root string) ([]string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", root, err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("-recursive needs a directory, got %s", root)
+	}
+	set := map[string]bool{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root && ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") &&
+			!strings.HasSuffix(entry.Name(), "_gen.go") && preferredModelFile(entry.Name()) {
+			set[filepath.Dir(path)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking %s: %w", root, err)
+	}
+	dirs := make([]string, 0, len(set))
+	for dir := range set {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+func preferredModelFile(name string) bool {
+	return name == "model.go" || strings.HasSuffix(name, ".model.go") || strings.HasSuffix(name, "_model.go")
+}
+
+func ignoredDir(name string) bool {
+	switch name {
+	case ".git", "vendor", "migrations", "migration", "test", "tests", "generated":
+		return true
+	default:
+		return false
+	}
 }

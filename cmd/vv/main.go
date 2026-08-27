@@ -1,14 +1,17 @@
-// Command vv generates the two things you would otherwise copy out of your
-// model by hand: the partial-update DTO and the typed metamodel.
+// Command vv generates the partial-update DTO, typed metamodel and repository
+// blueprint from ordinary Go models.
 //
-//	//go:generate go run github.com/frostgrove/vv/cmd/vv
+//	go run github.com/frostgrove/vv/cmd/vv generate -dir ./src/app
 //
-// Point it at a package; it reads every struct that carries `db` or `rel` tags
-// and writes vv_gen.go next to them:
+// `generate` walks below -dir, finds exported structs in model.go,
+// *.model.go and *_model.go, and writes vv_gen.go beside every model package.
+// Plain structs need no ORM or database tags: fields become snake_case
+// columns, ID/Id is the primary key, and the model type gives the table name.
 //
 //	type ArticleUpdate struct { … }   // pointers for optional, Opt for nullable
 //	type ArticleAttrs  struct { … }   // including nested relation paths
 //	var  Article_ = specs.Metamodel[Article, ArticleAttrs]()
+//	var  ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("")
 //
 // After that `Article_.Author.Name.Eq("Ann")` is a compile-time-checked filter
 // on a joined column, and a renamed field breaks the build instead of a request.
@@ -17,7 +20,7 @@
 //
 //	-dir     package directory (default ".")
 //	-out     output file name (default "vv_gen.go")
-//	-types   comma-separated list; default is every tagged struct
+//	-types   comma-separated list; default is every model-file struct
 //	-depth   how far to expand relation paths into the metamodel (default 2)
 //	-skip    comma-separated field names to leave out entirely (like db:"-")
 //	-readonly comma-separated field names kept out of the update DTO but still
@@ -27,6 +30,8 @@
 //	         somewhere else
 //	-no-dto  skip the update DTOs
 //	-no-meta skip the metamodels
+//	-no-repo skip the generated repository blueprint and binding factory
+//	-recursive walk model files below -dir (the default for `vv generate`)
 //	-adapter also generate the resource adapter: the entity-body DTO, the
 //	         mapper, its inverse path map, the service shell and the wiring
 //	-binding which transport the wiring is written for: net (default) or none
@@ -62,9 +67,13 @@ import (
 
 func main() {
 	var o codegen.Options
+	if len(os.Args) > 1 && os.Args[1] == "generate" {
+		o.Recursive = true
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+	}
 	flag.StringVar(&o.Dir, "dir", ".", "package directory")
 	flag.StringVar(&o.Out, "out", "vv_gen.go", "output file name")
-	flag.StringVar(&o.Types, "types", "", "comma-separated model names; default is every tagged struct")
+	flag.StringVar(&o.Types, "types", "", "comma-separated model names; default is every model-file struct")
 	flag.StringVar(&o.Skip, "skip", "", "comma-separated field names to leave out entirely")
 	flag.StringVar(&o.Readonly, "readonly", "", "comma-separated field names to keep out of the update DTO")
 	flag.StringVar(&o.Into, "into", "", "write into this directory instead of -dir")
@@ -74,8 +83,10 @@ func main() {
 	flag.StringVar(&o.CrudPkg, "crud", "github.com/frostgrove/vv/crud", "import path of the crud package")
 	flag.BoolVar(&o.Adapter, "adapter", false, "also generate the resource adapter: input DTO, mapper, inverse path map, service and wiring")
 	flag.StringVar(&o.Binding, "binding", "net", "which transport the generated wiring is written for: net or none")
+	flag.BoolVar(&o.Recursive, "recursive", o.Recursive, "walk model files below -dir and generate beside each package")
 	noDTO := flag.Bool("no-dto", false, "skip update DTOs")
 	noMeta := flag.Bool("no-meta", false, "skip metamodels")
+	flag.BoolVar(&o.NoRepo, "no-repo", false, "skip repository blueprints and binding factories")
 	flag.Parse()
 
 	o.WithDTO = !*noDTO
