@@ -50,8 +50,10 @@ articles := remote.New[Article, int64, ArticleInput](
 | `Get(ctx, opts...)` | `POST /query` · `List` |
 | `GetAll(ctx, opts...)` | все подходящие строки (либо явно запрошенное подмножество); обход с cursor edge делает page/offset cap размером чанка, а не обрезанным успехом. Shape без cursor и DISTINCT без PK всё ещё требует достаточный `MaxOffset`. |
 | `GetByID(ctx, id, opts...)` | напрямую: `GET /{id}` · `Get`; root filter либо суженный/capped preload: `POST /query` · `List` с равенством primary key |
+| `First(ctx, opts...)` | `List` со страницей в одну строку; при пустом ответе — `crud.ErrNotFound` |
 | `Count(ctx, opts...)` | `POST /count` · `Count` |
-| `Save(ctx, *m)` | `POST /`, если ключ не задан, и `PUT /{id}`, если задан |
+| `Save(ctx, *m)` | `POST /`, если ключ не задан, и `PUT /{id}`, если задан; возвращает сохранённую модель и не меняет `m` |
+| `SaveOnly(ctx, *m)` | тот же create/replace, но ответ-сущность отбрасывается, а `m` не меняется |
 | `Update(ctx, id, dto)` | `PATCH /{id}` · `Update` |
 | `Delete(ctx, id)` | `DELETE /{id}` · `Delete` |
 | `Delete(ctx, ids...)` | `POST /bulk-delete` · `BulkDelete` |
@@ -185,7 +187,7 @@ Export, которому нужен один snapshot базы, должен б�
 ## DTO обновления
 
 Берите то, что генерирует `cmd/vv`. Написанное вручную DTO, у которого поля
-`crud.Opt` не помечены `omitzero`, маршалит неопределённое значение как `null`,
+`utils.Opt` не помечены `omitzero`, маршалит неопределённое значение как `null`,
 и патч одной колонки опустошит все остальные nullable-колонки строки.
 `remote.New` отклоняет такое DTO на старте, не давая ему дойти до базы.
 
@@ -193,7 +195,7 @@ Export, которому нужен один snapshot базы, должен б�
 type ArticleInput struct {
     Title *string          `json:"title,omitempty"`
     Views *int             `json:"views,omitempty"`
-    Note  crud.Opt[string] `json:"note,omitzero"`   // этот тег несущий
+    Note  utils.Opt[string] `json:"note,omitzero"`   // этот тег несущий
 }
 ```
 

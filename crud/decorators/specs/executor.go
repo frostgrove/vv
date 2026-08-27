@@ -47,15 +47,7 @@ func (r Repo[M, ID, U]) FindOne(ctx context.Context, s Specification[M], opts ..
 // FindFirst returns the first match, or crud.ErrNotFound. Pair it with
 // crud.OrderBy to make "first" mean something.
 func (r Repo[M, ID, U]) FindFirst(ctx context.Context, s Specification[M], opts ...crud.Option) (M, error) {
-	var zero M
-	items, err := r.GetAll(ctx, take(1, s, opts))
-	if err != nil {
-		return zero, err
-	}
-	if len(items) == 0 {
-		return zero, crud.ErrNotFound
-	}
-	return items[0], nil
+	return r.First(ctx, append([]crud.Option{As(s)}, opts...)...)
 }
 
 // FindAll returns every row matching the specification.

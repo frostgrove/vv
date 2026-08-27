@@ -28,9 +28,9 @@ type articleService struct {
 	blocked string
 }
 
-func (s articleService) Save(ctx context.Context, a *Article) error {
+func (s articleService) Save(ctx context.Context, a *Article) (Article, error) {
 	if a.Title == s.blocked {
-		return crud.ErrForbidden
+		return Article{}, crud.ErrForbidden
 	}
 	return s.Repo.Save(ctx, a)
 }

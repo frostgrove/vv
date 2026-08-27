@@ -188,7 +188,7 @@ func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			src := newStub(uniqueFault(), false, false)
 			repo := Docs.Bind(src, faults.Enrich[Doc, int64](tc.opts...))
-			if err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
+			if err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
 				t.Fatal("the write was supposed to fail")
 			}
 			if got := src.probeCount(); got != tc.save {
@@ -213,7 +213,7 @@ func TestTheProbesViolationsGetTheSameFieldHopTheDriversDoes(t *testing.T) {
 	src := newStub(uniqueFault(), false, true) // the body key, not the title one
 	repo := Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 
-	err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	got := paths(err)
 	if len(got) != 2 {
 		t.Fatalf("violations = %v, want the driver's and the probe's", got)
@@ -241,7 +241,7 @@ func TestAProbeViolationNamingAnotherTableIsMarkedApproximate(t *testing.T) {
 		Wrapping(crud.ErrConflict).Fault()
 	src2 := newStub(other, false, false)
 	err := Docs.Bind(src2, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog())))).
-		Save(context.Background(), &Doc{Title: "a", Body: "b"})
+		SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	f, ok := errs.AsFault(err)
 	if !ok {
 		t.Fatalf("err = %v", err)
@@ -262,7 +262,7 @@ func TestAProbeIsNotRunForAnErrorThatIsNotAFault(t *testing.T) {
 	src := newStub(boom, false, false)
 	repo := Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 
-	err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the original", err)
 	}
@@ -291,7 +291,7 @@ func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
 
 	// Binding is half the claim. The probe has to actually run, or a source
 	// that resolved to something unusable would pass this just as well.
-	if err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
+	if err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail with the stub's unique violation")
 	}
 	if n := src.probeCount(); n == 0 {
@@ -353,8 +353,8 @@ func TestPastTheSavepointBudgetTheAnswerIsPartial(t *testing.T) {
 
 	var first, second error
 	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		first = repo.Save(ctx, &Doc{Title: "a", Body: "b"})
-		second = repo.Save(ctx, &Doc{Title: "c", Body: "d"})
+		first = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
+		second = repo.SaveOnly(ctx, &Doc{Title: "c", Body: "d"})
 		return nil
 	})
 	if err != nil {
@@ -386,7 +386,7 @@ func TestAForeignTransactionIsNeverGivenASavepoint(t *testing.T) {
 		faults.WithProbe(probe.Full(docsCatalog(), probe.WithSavepoints()))))
 
 	ctx := crud.WithExecutor(context.Background(), src)
-	if err := repo.Save(ctx, &Doc{Title: "a", Body: "b"}); err == nil {
+	if err := repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail")
 	}
 	if got := src.beginCount(); got != 0 {
@@ -405,7 +405,7 @@ func TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns(t *testing.T) {
 
 	var got error
 	if err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		got = repo.Save(ctx, &Doc{Title: "a", Body: "b"})
+		got = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestWithoutSavepointsATransactionDegradesRatherThanErroring(t *testing.T) {
 
 	var got error
 	if err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		got = repo.Save(ctx, &Doc{Title: "a", Body: "b"})
+		got = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -456,7 +456,7 @@ func TestAProbeFailureIsHandedToTheCallerAndNotToTheClient(t *testing.T) {
 		faults.WithProbe(probe.Full(docsCatalog())),
 		faults.WithProbeError(func(_ string, err error) { seen = err })))
 
-	err := repo.Save(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	if seen == nil {
 		t.Fatal("the probe's failure reached nobody")
 	}

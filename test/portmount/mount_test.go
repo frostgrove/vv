@@ -122,16 +122,17 @@ func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) 
 	return 5, nil
 }
 
-func (f *fakeRepo) Save(_ context.Context, m *Widget) error {
+func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	f.calls = append(f.calls, repoCall{Method: "Save", Model: *m})
 	if f.err != nil {
-		return f.err
+		return Widget{}, f.err
 	}
-	m.CreatedAt = savedAt
-	if m.ID == 0 {
-		m.ID = 7
+	saved := *m
+	saved.CreatedAt = savedAt
+	if saved.ID == 0 {
+		saved.ID = 7
 	}
-	return nil
+	return saved, nil
 }
 
 func (f *fakeRepo) Update(_ context.Context, id int64, _ WidgetUpdate, _ ...crud.Option) (Widget, error) {
@@ -415,13 +416,13 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 			},
 		},
 		{
-			name:   "a keyed read keeps the shaping and drops the rest",
+			name:   "a keyed read keeps its filter and drops paging",
 			method: http.MethodGet, target: "/widgets/42?f=price:gte:100&limit=9",
 			want: func(t *testing.T, cmds []command, calls []repoCall) {
 				if len(cmds) != 1 || cmds[0].ID != 42 {
 					t.Fatalf("the route made %+v, want one Get for 42", cmds)
 				}
-				if len(calls) != 1 || calls[0].Filter || calls[0].Limit != 0 {
+				if len(calls) != 1 || !calls[0].Filter || calls[0].Limit != 0 {
 					t.Fatalf("the repository was asked for one row with %+v", calls)
 				}
 			},

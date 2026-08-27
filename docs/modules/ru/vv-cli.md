@@ -34,7 +34,7 @@ type Article struct {
     ID          int64               `db:"id,pk,auto"`
     Title       string              `db:"title"`
     Rating      *float64            `db:"rating"`
-    PublishedAt crud.Opt[time.Time] `db:"published_at"`
+    PublishedAt utils.Opt[time.Time] `db:"published_at"`
     TenantID    int64               `db:"tenant_id,immutable"`
     CreatedAt   time.Time           `db:"created_at,generated"`
 
@@ -49,8 +49,8 @@ nullable, и ничего для ключа, immutable- и generated-колон�
 ```go
 type ArticleUpdate struct {
     Title       *string             `json:"title,omitempty"`
-    Rating      crud.Opt[float64]   `json:"rating,omitzero"`
-    PublishedAt crud.Opt[time.Time] `json:"publishedAt,omitzero"`
+    Rating      utils.Opt[float64]   `json:"rating,omitzero"`
+    PublishedAt utils.Opt[time.Time] `json:"publishedAt,omitzero"`
 }
 ```
 

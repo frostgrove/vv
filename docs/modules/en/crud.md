@@ -1,7 +1,10 @@
 # crud — the contract
 
 ```go
-import "github.com/frostgrove/vv/crud"
+import (
+    "github.com/frostgrove/vv/crud"
+    "github.com/frostgrove/vv/utils"
+)
 ```
 
 **Module:** root · **Depends on:** the standard library, and nothing else
@@ -12,9 +15,10 @@ becomes a closed AST, an option becomes a query plan, and a connection becomes
 two methods. Nothing here runs SQL — `crud/sqlrepo` does that — and nothing here
 knows what a transport is.
 
-**Import it directly when** you write filters, hold a `crud.Opt`, wire a foreign
-transaction, or implement an adapter. Most application code touches `crud.Where`,
-`crud.Opt`, `crud.Page` and little else.
+**Import it directly when** you write filters, wire a foreign transaction, or
+implement an adapter. Three-state values and small generic helpers live in
+`github.com/frostgrove/vv/utils`; most application code touches `crud.Where`,
+`utils.Opt`, `utils.Ptr` and `crud.Page`.
 
 ---
 
@@ -23,7 +27,7 @@ transaction, or implement an adapter. Most application code touches `crud.Where`
 | | |
 |---|---|
 | **Model metadata** | `db` and `rel` tags become a `Schema`, a `Meta` and a relation graph, resolved once |
-| **`Opt[T]`** | three states — undefined, null, set — so a PATCH can tell "leave it" from "clear it" |
+| **`utils.Opt[T]`** | three states — undefined, null, set — so a PATCH can tell "leave it" from "clear it" |
 | **Options** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate`, and fourteen more |
 | **Predicates** | a closed AST: 26 constructors, `And`/`Or`/`Not` among them, relation paths at any depth |
 | **Pagination** | `PaginatedResponse[T]`, offset paging and cursor paging over the sort tuple |
@@ -45,7 +49,7 @@ type User struct {
     ID        int64         `db:"id,pk,auto"`
     TenantID  int64         `db:"tenant_id,immutable"`
     Email     string        `db:"email"`
-    Age       crud.Opt[int] `db:"age"`
+    Age       utils.Opt[int] `db:"age"`
     Version   int           `db:"version,version"`
     CreatedAt time.Time     `db:"created_at,generated"`
 }
@@ -61,7 +65,7 @@ type User struct {
 | `version` | optimistic lock: an integer vv advances and checks on every update |
 | `-` | ignore the field entirely |
 
-Embedded structs are flattened. `time.Time`, `sql.Null[T]`, `crud.Opt[T]` and
+Embedded structs are flattened. `time.Time`, `sql.Null[T]`, `utils.Opt[T]` and
 anything with a `Valuer`/`Scanner` count as one column. **Struct-shaped fields
 without a `rel` tag are skipped** — neither column nor edge, which is what you
 want for a computed field.
@@ -69,28 +73,34 @@ want for a computed field.
 `SchemaOf[M]()`, `MustSchemaOf[M]()` and `NewMeta[M](table)` build the metadata
 by hand if you need it; `sqlrepo.Define` does it for you and validates eagerly.
 
-## `Opt[T]` — three states, one type
+## `utils.Opt[T]` — three states, one type
 
 The reason a PATCH works at all.
 
 ```go
-crud.Undefined[int]()   // absent from the payload  → not written
-crud.Null[int]()        // explicit null            → SET col = NULL
-crud.Set(31)            // a value                  → SET col = 31
-crud.FromPtr(p)         // nil → null, else set
+utils.Undefined[int]()   // absent from the payload  → not written
+utils.Null[int]()        // explicit null            → SET col = NULL
+utils.Set(31)            // a value                  → SET col = 31
+utils.FromPtr(p)         // nil → null, else set
 ```
 
 ```go
-o.Defined()   // is it either null or set?
-o.Valid()     // is it set?
+o.IsDefined() // is it either null or set?
+o.IsSet()     // is it set?
 o.Get()       // (T, bool)
-o.OrZero()    // T
+o.OrElse(def) // T
 o.Ptr()       // *T
 ```
 
 It marshals as the bare value, or `null`, and disappears under `omitzero`. On the
 wire that means the same struct serialises correctly in both directions
 ([[UC-003]]).
+
+`utils.Ptr(v)` is the concise pointer constructor for patch DTOs and
+`utils.Must(v, err)` returns `v` or panics at declaration-time boundaries.
+`crud.Opt`, `crud.Set`, `crud.Null` and friends remain compatibility aliases;
+new code should use `utils` so model, transport and validation code do not take
+a CRUD dependency just to express an optional value.
 
 ## Options
 

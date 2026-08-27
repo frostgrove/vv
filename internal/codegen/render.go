@@ -62,6 +62,13 @@ func (g *generator) render() ([]byte, error) {
 	if u.crud {
 		imports = append(imports, fmt.Sprintf("%q", g.crudPkg))
 	}
+	if u.utils {
+		pkg := g.utilsPkg
+		if pkg == "" {
+			pkg = DefaultUtilsPkg
+		}
+		imports = append(imports, fmt.Sprintf("%q", pkg))
+	}
 	if u.errs {
 		imports = append(imports, fmt.Sprintf("%q", g.errsPkg))
 	}
@@ -107,10 +114,11 @@ func (g *generator) render() ([]byte, error) {
 // used says which imports the rendered body needs. A flag per package rather
 // than a scan of the output: the output is what the flags produce, so reading
 // it back to decide would be one derivation checking itself.
-type used struct{ crud, specs, sqlrepo, time, port, errs, context, http, net bool }
+type used struct{ crud, utils, specs, sqlrepo, time, port, errs, context, http, net bool }
 
 func (u *used) also(o used) {
 	u.crud = u.crud || o.crud
+	u.utils = u.utils || o.utils
 	u.specs = u.specs || o.specs
 	u.sqlrepo = u.sqlrepo || o.sqlrepo
 	u.time = u.time || o.time
@@ -174,7 +182,7 @@ func (g *generator) renderDTO(m *model) (string, used) {
 	var u used
 
 	fmt.Fprintf(&b, "// %sUpdate is the partial-update DTO for %s.\n", m.Name, g.qual(m.Name))
-	fmt.Fprintf(&b, "// A pointer field is optional; a crud.Opt field is optional and nullable,\n")
+	fmt.Fprintf(&b, "// A pointer field is optional; a utils.Opt field is optional and nullable,\n")
 	fmt.Fprintf(&b, "// so an absent key, an explicit null and a value stay three different things.\n")
 	fmt.Fprintf(&b, "type %sUpdate struct {\n", m.Name)
 
@@ -188,9 +196,9 @@ func (g *generator) renderDTO(m *model) (string, used) {
 		typ := dtoType(f.Type)
 		json := lowerFirst(f.Name)
 		omit := "omitempty"
-		if strings.HasPrefix(typ, "crud.Opt[") {
+		if strings.HasPrefix(typ, "utils.Opt[") {
 			omit = "omitzero"
-			u.crud = true
+			u.utils = true
 		}
 		if strings.Contains(typ, "time.Time") {
 			u.time = true

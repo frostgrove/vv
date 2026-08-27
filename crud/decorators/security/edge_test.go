@@ -136,7 +136,7 @@ func TestSaveWithoutAPrincipalWritesNothing(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 8, "theirs")))
 			d := tc.doc
 
-			err := gated(rec).Save(context.Background(), &d)
+			_, err := gated(rec).Save(context.Background(), &d)
 
 			if !errors.Is(err, security.ErrForbidden) {
 				t.Fatalf("err = %v, want ErrForbidden", err)
@@ -231,7 +231,7 @@ func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 			crudtest.Rows(docRow(1, 7, "new")), // RETURNING
 		)
 		d := Doc{ID: 1, TenantID: 7, Title: "new"}
-		if err := gated(rec).Save(ctx, &d); err != nil {
+		if _, err := gated(rec).Save(ctx, &d); err != nil {
 			t.Fatal(err)
 		}
 		if !wrote(rec, "UPDATE") {
@@ -243,7 +243,7 @@ func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "old")))
 		d := Doc{ID: 1, TenantID: 8, Title: "moved"}
 
-		err := gated(rec).Save(ctx, &d)
+		_, err := gated(rec).Save(ctx, &d)
 
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)

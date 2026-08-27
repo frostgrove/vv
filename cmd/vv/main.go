@@ -81,6 +81,7 @@ func main() {
 	flag.IntVar(&o.Depth, "depth", 2, "how far to expand relation paths into the metamodel")
 	flag.StringVar(&o.SpecsPkg, "specs", "github.com/frostgrove/vv/crud/decorators/specs", "import path of the specs package")
 	flag.StringVar(&o.CrudPkg, "crud", "github.com/frostgrove/vv/crud", "import path of the crud package")
+	flag.StringVar(&o.UtilsPkg, "utils", "github.com/frostgrove/vv/utils", "import path of the shared utils package")
 	flag.BoolVar(&o.Adapter, "adapter", false, "also generate the resource adapter: input DTO, mapper, inverse path map, service and wiring")
 	flag.StringVar(&o.Binding, "binding", "net", "which transport the generated wiring is written for: net or none")
 	flag.BoolVar(&o.Recursive, "recursive", o.Recursive, "walk model files below -dir and generate beside each package")

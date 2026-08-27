@@ -614,7 +614,7 @@ package store
 type MemberUpdate struct {
     TeamID *uint         `json:"teamID,omitempty"`
     Name   *string       `json:"name,omitempty"`
-    Age    crud.Opt[int] `json:"age,omitzero"`
+    Age    utils.Opt[int] `json:"age,omitzero"`
 }
 
 type MemberAttrs struct {
@@ -630,7 +630,7 @@ var Member_ = specs.Metamodel[models.Member, MemberAttrs]()
 ```
 
 Note the types. `Age` was `*int` — a nullable column — so it became
-`crud.Opt[int]`, which has **three** states. `Name` was a plain `string`, so a
+`utils.Opt[int]`, which has **three** states. `Name` was a plain `string`, so a
 pointer's two states are enough. That distinction is the whole reason PATCH
 handlers are annoying to write by hand.
 
@@ -872,14 +872,18 @@ type MemberService struct {
     db *gorm.DB
 }
 
-func (s MemberService) Save(ctx context.Context, m *Member) error {
+func (s MemberService) Save(ctx context.Context, m *Member) (Member, error) {
     if m.Name == "" {
-        return fmt.Errorf("%w: name is required", crud.ErrForbidden)
+        return Member{}, fmt.Errorf("%w: name is required", crud.ErrForbidden)
     }
-    if err := s.Repo.Save(ctx, m); err != nil {
-        return err
+    saved, err := s.Repo.Save(ctx, m)
+    if err != nil {
+        return Member{}, err
     }
-    return s.db.WithContext(ctx).Create(&AuditLog{Subject: m.ID}).Error
+    if err := s.db.WithContext(ctx).Create(&AuditLog{Subject: saved.ID}).Error; err != nil {
+        return Member{}, err
+    }
+    return saved, nil
 }
 
 // gorm's soft delete instead of a hard one — see §9.
@@ -1147,7 +1151,7 @@ func TestServiceRejectsEmptyName(t *testing.T) {
     rec := crudtest.Postgres()
     svc := MemberService{Repo: store.Members.Bind(rec)}
 
-    if err := svc.Save(context.Background(), &Member{}); !errors.Is(err, crud.ErrForbidden) {
+    if _, err := svc.Save(context.Background(), &Member{}); !errors.Is(err, crud.ErrForbidden) {
         t.Fatalf("err = %v", err)
     }
     if len(rec.Statements()) != 0 {

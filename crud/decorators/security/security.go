@@ -459,6 +459,25 @@ func (g *gate[M, ID]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, err
 	return items, nil
 }
 
+func (g *gate[M, ID]) First(ctx context.Context, opts ...crud.Option) (M, error) {
+	var zero M
+	if err := g.authorize(ctx, Read); err != nil {
+		return zero, err
+	}
+	scoped, _, err := g.scoped(ctx, g.whole(g.p.InspectReads, opts))
+	if err != nil {
+		return zero, err
+	}
+	m, err := g.Core.First(ctx, scoped...)
+	if err != nil {
+		return zero, err
+	}
+	if err := g.inspect(ctx, Read, &m); err != nil {
+		return zero, err
+	}
+	return m, nil
+}
+
 func (g *gate[M, ID]) inspectAll(ctx context.Context, items []M) error {
 	if !g.p.InspectReads || g.p.Inspect == nil {
 		return nil
@@ -534,6 +553,18 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 	if len(models) == 0 {
 		return nil
 	}
+	// Inspect hooks are allowed to normalise the candidate they inspect. Batch
+	// persistence, like Save and SaveOnly, must not leak that mutation to the
+	// caller, so the entire guarded operation works on private copies.
+	work := make([]*M, len(models))
+	for i, m := range models {
+		if m == nil {
+			return Denied(Create, "nil model")
+		}
+		copy := *m
+		work[i] = &copy
+	}
+	models = work
 	scope, rel, err := g.writeScopes(ctx)
 	if err != nil {
 		return err
@@ -546,9 +577,6 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 	assigned := make([]bool, len(models))
 	previous := make([]*M, len(models))
 	for i, m := range models {
-		if m == nil {
-			return Denied(Create, "nil model")
-		}
 		hasID, err := meta.HasID(m)
 		if err != nil {
 			return err
@@ -602,12 +630,12 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 		return g.saveTransaction(ctx, func(tx context.Context) error {
 			for i, m := range models {
 				if assigned[i] {
-					if err := g.saveScoped(tx, m, previous[i], scope, rel); err != nil {
+					if err := g.saveScopedOnly(tx, m, previous[i], scope, rel); err != nil {
 						return err
 					}
 					continue
 				}
-				if err := g.Core.Save(tx, m); err != nil {
+				if err := g.Core.SaveOnly(tx, m); err != nil {
 					return err
 				}
 			}
@@ -617,21 +645,42 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 	return g.Core.SaveAll(ctx, models)
 }
 
-func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
+// Save returns a separate stored model. Work always happens on a copy, so a
+// policy's Inspect hook and the storage scanner cannot change the caller's
+// command object.
+func (g *gate[M, ID]) Save(ctx context.Context, m *M) (M, error) {
+	var zero M
+	if m == nil {
+		return zero, Denied(Create, "nil model")
+	}
+	copy := *m
+	return g.save(ctx, &copy, true)
+}
+
+// SaveOnly performs the guarded write without obtaining the stored row. It
+// uses a copy for the same no-mutation guarantee as Save.
+func (g *gate[M, ID]) SaveOnly(ctx context.Context, m *M) error {
 	if m == nil {
 		return Denied(Create, "nil model")
 	}
+	copy := *m
+	_, err := g.save(ctx, &copy, false)
+	return err
+}
+
+func (g *gate[M, ID]) save(ctx context.Context, m *M, wantStored bool) (M, error) {
+	var zero M
 	scope, rel, err := g.writeScopes(ctx)
 	if err != nil {
-		return err
+		return zero, err
 	}
 	if (g.p.Scope != nil || g.p.RelationScopes != nil) && g.p.Inspect == nil {
-		return Denied(Create, "a scope-only policy cannot safely authorise Save; add Inspect to validate the incoming row")
+		return zero, Denied(Create, "a scope-only policy cannot safely authorise Save; add Inspect to validate the incoming row")
 	}
 	meta := g.Meta()
 	hasID, err := meta.HasID(m)
 	if err != nil {
-		return err
+		return zero, err
 	}
 
 	action := Create
@@ -640,45 +689,54 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 		// See SaveAll: the lookup must not be the first observable action of a
 		// caller denied either branch of an assigned-key upsert.
 		if err := g.authorize(ctx, Create); err != nil {
-			return err
+			return zero, err
 		}
 		if err := g.authorize(ctx, Update); err != nil {
-			return err
+			return zero, err
 		}
 		id, err := meta.ID(m)
 		if err != nil {
-			return err
+			return zero, err
 		}
 		existing, err := g.saveTarget(ctx, meta, id, scope, rel)
 		if err != nil {
-			return err
+			return zero, err
 		}
 		if existing != nil {
 			snapshot := *existing
 			previous = &snapshot
 			action = Update
 			if err := g.inspect(ctx, Update, existing); err != nil {
-				return err
+				return zero, err
 			}
 			if err := g.checkImmutableSave(meta, existing, m); err != nil {
-				return err
+				return zero, err
 			}
 		}
 	}
 	if action == Create && !hasID {
 		if err := g.authorize(ctx, Create); err != nil {
-			return err
+			return zero, err
 		}
 	}
 	// Inspect the incoming state too: this is what catches a row being written
 	// into somebody else's scope.
 	if err := g.inspect(ctx, action, m); err != nil {
-		return err
+		return zero, err
 	}
 	if hasID {
-		return g.saveScoped(ctx, m, previous, scope, rel)
+		if wantStored {
+			if err := g.saveScoped(ctx, m, previous, scope, rel); err != nil {
+				return zero, err
+			}
+			return *m, nil
+		}
+		return zero, g.saveScopedOnly(ctx, m, previous, scope, rel)
 	}
-	return g.Core.Save(ctx, m)
+	if wantStored {
+		return g.Core.Save(ctx, m)
+	}
+	return zero, g.Core.SaveOnly(ctx, m)
 }
 
 // saveTransaction joins an executor the caller placed in the context. Executor
@@ -711,6 +769,27 @@ func (g *gate[M, ID]) saveScoped(ctx context.Context, m, previous *M, scope crud
 	})
 	if !supported {
 		return Denied(Update, "the storage core cannot perform a scoped upsert atomically")
+	}
+	if previous == nil && errors.Is(err, crud.ErrCreateRaced) {
+		return Denied(Create, "assigned key was concurrently created")
+	}
+	if errors.Is(err, crud.ErrNotFound) || errors.Is(err, crud.ErrStaleVersion) {
+		if scope != nil || rel != nil {
+			return crud.ErrNotFound
+		}
+		return Denied(Update, "row is outside the scope")
+	}
+	return err
+}
+
+func (g *gate[M, ID]) saveScopedOnly(ctx context.Context, m, previous *M, scope crud.Predicate, rel *crud.RelationScopes) error {
+	err, supported := crud.SaveScopedOnlyOf(g.Core, ctx, m, crud.ScopedSave[M]{
+		Previous:       previous,
+		Scope:          scope,
+		RelationScopes: rel,
+	})
+	if !supported {
+		return Denied(Update, "the storage core cannot perform a scoped write-only upsert atomically")
 	}
 	if previous == nil && errors.Is(err, crud.ErrCreateRaced) {
 		return Denied(Create, "assigned key was concurrently created")

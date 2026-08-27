@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/frostgrove/vv/utils"
 )
 
 type planKind uint8
@@ -158,14 +160,14 @@ func (pf planField) read(v reflect.Value) (val any, defined bool) {
 		}
 		return fv.Elem().Interface(), true
 	case planOpt:
-		o := fv.Interface().(optional)
-		if !o.optDefined() {
+		value, defined, null, _ := utils.Inspect(fv.Interface())
+		if !defined {
 			return nil, false
 		}
-		if o.optNull() {
+		if null {
 			return nil, true
 		}
-		return o.optValue(), true
+		return value, true
 	default:
 		return fv.Interface(), true
 	}

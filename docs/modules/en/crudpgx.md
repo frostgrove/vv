@@ -43,7 +43,7 @@ type Queryer interface {
 ```go
 err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
     ctx := crud.WithExecutor(ctx, crudpgx.From(tx))
-    return users.Save(ctx, &u)
+    return users.SaveOnly(ctx, &u)
 })
 ```
 

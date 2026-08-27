@@ -224,13 +224,33 @@ func (e *enricher[M, ID]) GetAll(ctx context.Context, opts ...crud.Option) ([]M,
 	return ms, e.enrich("GetAll", err)
 }
 
-func (e *enricher[M, ID]) Save(ctx context.Context, m *M) error {
+func (e *enricher[M, ID]) First(ctx context.Context, opts ...crud.Option) (M, error) {
+	m, err := e.Core.First(ctx, opts...)
+	return m, e.enrich("First", err)
+}
+
+func (e *enricher[M, ID]) Save(ctx context.Context, m *M) (M, error) {
+	var saved M
 	pc, ok := e.probes["Save"]
 	if !ok {
-		return e.enrich("Save", e.Core.Save(ctx, m))
+		saved, err := e.Core.Save(ctx, m)
+		return saved, e.enrich("Save", err)
 	}
-	return e.probed(ctx, "Save", pc, e.insertRequest(false, m),
-		func(ctx context.Context) error { return e.Core.Save(ctx, m) })
+	err := e.probed(ctx, "Save", pc, e.insertRequest(false, m), func(ctx context.Context) error {
+		var err error
+		saved, err = e.Core.Save(ctx, m)
+		return err
+	})
+	return saved, err
+}
+
+func (e *enricher[M, ID]) SaveOnly(ctx context.Context, m *M) error {
+	pc, ok := e.probes["SaveOnly"]
+	if !ok {
+		return e.enrich("SaveOnly", e.Core.SaveOnly(ctx, m))
+	}
+	return e.probed(ctx, "SaveOnly", pc, e.insertRequest(false, m),
+		func(ctx context.Context) error { return e.Core.SaveOnly(ctx, m) })
 }
 
 // SaveScoped explicitly preserves the internal conditional-save capability for
@@ -244,6 +264,16 @@ func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save crud.Scoped
 		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped Save atomically"}
 	}
 	return e.enrich("Save", err)
+}
+
+// SaveScopedOnly forwards security's internal write-only capability without
+// probing a speculative conditional write.
+func (e *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	err, ok := crud.SaveScopedOnlyOf(e.Core, ctx, m, save)
+	if !ok {
+		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped SaveOnly atomically"}
+	}
+	return e.enrich("SaveOnly", err)
 }
 
 func (e *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {

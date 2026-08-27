@@ -20,7 +20,7 @@ type User struct {
     TenantID  int64         `db:"tenant_id,immutable"`
     Email     string        `db:"email"`
     Name      string        `db:"name"`
-    Age       crud.Opt[int] `db:"age"`
+    Age       utils.Opt[int] `db:"age"`
     CreatedAt time.Time     `db:"created_at,generated"`
 }
 
@@ -28,7 +28,7 @@ type User struct {
 type UserUpdate struct {
     Email *string
     Name  *string
-    Age   crud.Opt[int]
+    Age   utils.Opt[int]
 }
 
 var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
@@ -50,8 +50,10 @@ blueprint и сразу получить привязанный репозито
 | `GetByID(ctx, id, opts...)` | одна строка либо `crud.ErrNotFound` |
 | `Get(ctx, opts...)` | `crud.PaginatedResponse[M]` |
 | `GetAll(ctx, opts...)` | все совпадения; без пагинации, если опция не говорит иначе |
-| `Save(ctx, *M)` | семантика JPA: нет ключа → `INSERT`, есть ключ → `UPSERT`. Модель обновляется на месте |
-| `SaveAll(ctx, []*M)` | та же запись, объединённая в один запрос |
+| `First(ctx, opts...)` | первая совпавшая строка либо `crud.ErrNotFound` |
+| `Save(ctx, *M)` | нет ключа → `INSERT`, есть ключ → `UPSERT`; возвращает новую сохранённую модель и не меняет аргумент |
+| `SaveOnly(ctx, *M)` | та же запись без результата-строки и без мутации аргумента |
+| `SaveAll(ctx, []*M)` | пакетный insert/upsert только на запись; модели не меняет |
 | `Update(ctx, id, dto, opts...)` | загрузить, сравнить, записать только изменившееся |
 | `UpdateAll(ctx, dto, opts...)` | один `UPDATE` по фильтру; возвращает число затронутых строк |
 | `Delete(ctx, ids...)` | возвращает, сколько строк исчезло |
@@ -61,20 +63,24 @@ blueprint и сразу получить привязанный репозито
 | `Tx(ctx, fn)` | выполнить в транзакции, присоединившись к уже открытой в `ctx` |
 | `Meta()` | привязанная схема и таблица |
 
-### Save устроен в духе JPA
+### Save возвращает сохранённую строку
 
 Нулевой первичный ключ означает `INSERT`. Ненулевой — `UPSERT` ([[D-011]]).
 
-Ключ с `db:",auto"` исключается из списка колонок и читается обратно —
-`RETURNING` на PostgreSQL и SQLite, `LastInsertId` на MySQL — вместе с каждой
-`generated`-колонкой. Переданная модель обновляется на месте, так что `u.ID`
-и `u.CreatedAt` заполнены, когда `Save` возвращает управление.
+Ключ с `db:",auto"` исключается из списка колонок. `Save` возвращает отдельную
+модель с тем, что действительно сохранила БД: через `RETURNING` на PostgreSQL
+и SQLite, либо через insert/upsert и чтение в одной транзакции на диалекте без
+него. В результате есть все `generated`-колонки и нормализация триггерами, а
+переданный `*M` никогда не меняется.
 
-`SaveAll` объединяет запись в один запрос и читает обратно каждый ключ по
-порядку ([[UC-008]]). На любом адаптере это `INSERT`: за bulk-copy драйвера
-библиотека не тянется — он идёт на собственном хэндле и вышел бы за пределы
-транзакции, которую открыл вызывающий. `COPY` из pgx доступен как
-`crud.BulkInserter` — для приложения, которое попросит его напрямую.
+`SaveOnly` выполняет только запись: не добавляет `RETURNING`, не читает модель
+и не меняет аргумент. Используйте его, когда сгенерированные значения не нужны.
+
+`SaveAll` тоже работает только на запись. На любом адаптере это `INSERT`: за
+bulk-copy драйвера библиотека не тянется — он идёт на собственном хэндле и
+вышел бы за пределы транзакции, которую открыл вызывающий. `COPY` из pgx
+доступен как `crud.BulkInserter` — для приложения, которое попросит его
+напрямую.
 
 ### Update — это загрузка, сравнение, запись
 
@@ -206,7 +212,7 @@ users := specs.Executor(Users.Bind(db,
 ```go
 type auditing struct{ crud.Core[User, int64] }
 
-func (a auditing) Save(ctx context.Context, u *User) error {
+func (a auditing) Save(ctx context.Context, u *User) (User, error) {
     log.Println("saving", u.Email)
     return a.Core.Save(ctx, u)
 }

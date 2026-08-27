@@ -19,9 +19,17 @@ type Core[M any, ID comparable] interface {
 	Get(ctx context.Context, opts ...Option) (PaginatedResponse[M], error)
 	// GetAll returns every matching row, unpaged unless options say otherwise.
 	GetAll(ctx context.Context, opts ...Option) ([]M, error)
-	// Save inserts when the primary key is unset and upserts otherwise. The
-	// model is refreshed in place with whatever the database generated.
-	Save(ctx context.Context, m *M) error
+	// First returns the first matching row or ErrNotFound. It accepts the same
+	// narrowing options as Get; paging controls are normalised to one row.
+	First(ctx context.Context, opts ...Option) (M, error)
+	// Save inserts when the primary key is unset and upserts otherwise. It
+	// returns the row the database stored — including generated and normalised
+	// values — and never changes m.
+	Save(ctx context.Context, m *M) (M, error)
+	// SaveOnly performs the same insert-or-upsert without reading a row back.
+	// It never changes m. Use it for fire-and-forget writes where generated or
+	// trigger-owned values are not needed.
+	SaveOnly(ctx context.Context, m *M) error
 	// Update loads the row, diffs the DTO against it and writes only what
 	// actually changed. dto is always the U of the enclosing Repo. Options
 	// narrow both halves — the load and the UPDATE's own WHERE — which is how a
@@ -38,8 +46,9 @@ type Core[M any, ID comparable] interface {
 	// bypassed by asking for a total instead of for rows.
 	Aggregate(ctx context.Context, opts ...Option) ([]AggregateRow, error)
 
-	// SaveAll writes many rows in one statement. It is on the seam for the same
-	// reason Aggregate is: a decorator that checks writes has to see this one.
+	// SaveAll writes many rows in one statement and never changes its models. It
+	// is on the seam for the same reason Aggregate is: a decorator that checks
+	// writes has to see this one.
 	SaveAll(ctx context.Context, models []*M) error
 	// Delete removes rows by id and reports how many went away.
 	Delete(ctx context.Context, ids ...ID) (int64, error)

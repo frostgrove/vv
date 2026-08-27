@@ -30,6 +30,7 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		withRepo: true,
 		specsPkg: "github.com/frostgrove/vv/crud/decorators/specs",
 		crudPkg:  "github.com/frostgrove/vv/crud",
+		utilsPkg: DefaultUtilsPkg,
 		portPkg:  DefaultPortPkg,
 		errsPkg:  DefaultErrsPkg,
 		netPkg:   DefaultNetPkg,
@@ -134,18 +135,18 @@ type Article struct {
 `
 
 // The DTO's field types are the whole point of generating it: a nullable column
-// gets crud.Opt so an explicit null and an absent key stay different things,
+// gets utils.Opt so an explicit null and an absent key stay different things,
 // and a non-nullable one gets a pointer, which only has two states because it
 // only needs two.
 func TestUpdateDTOFollowsNullability(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 	want := tags(`type ArticleUpdate struct {
-	AuthorID    *int64              @json:"authorID,omitempty"@
-	Title       *string             @json:"title,omitempty"@
-	Views       *int                @json:"views,omitempty"@
-	Rating      crud.Opt[float64]   @json:"rating,omitzero"@
-	PublishedAt crud.Opt[time.Time] @json:"publishedAt,omitzero"@
-	CreatedAt   *time.Time          @json:"createdAt,omitempty"@
+	AuthorID    *int64               @json:"authorID,omitempty"@
+	Title       *string              @json:"title,omitempty"@
+	Views       *int                 @json:"views,omitempty"@
+	Rating      utils.Opt[float64]   @json:"rating,omitzero"@
+	PublishedAt utils.Opt[time.Time] @json:"publishedAt,omitzero"@
+	CreatedAt   *time.Time           @json:"createdAt,omitempty"@
 }`)
 	if got := decl(t, out, "type ArticleUpdate struct {"); got != want {
 		t.Fatalf("the update DTO is\n%s\nwant\n%s", got, want)

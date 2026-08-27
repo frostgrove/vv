@@ -71,7 +71,7 @@ func failWith(rec *crudtest.Recorder, err error) *crudtest.Recorder {
 func saveFailing(t *testing.T, r crud.Repo[Doc, int64, DocUpdate], rec *crudtest.Recorder, err error) *errs.Fault {
 	t.Helper()
 	failWith(rec, err)
-	got := r.Save(context.Background(), &Doc{Title: "a"})
+	_, got := r.Save(context.Background(), &Doc{Title: "a"})
 	if got == nil {
 		t.Fatal("the save succeeded; nothing was enriched")
 	}
@@ -118,7 +118,7 @@ func TestAColumnFromAnotherTableIsNotTranslated(t *testing.T) {
 	// would pass both legs.
 	rec2 := crudtest.Postgres()
 	failWith(rec2, conflict("audit_log", "title"))
-	err := Audits.Bind(rec2, faults.Enrich[AuditEntry, int64]()).Save(context.Background(), &AuditEntry{Title: "a"})
+	_, err := Audits.Bind(rec2, faults.Enrich[AuditEntry, int64]()).Save(context.Background(), &AuditEntry{Title: "a"})
 	other, ok := errs.AsFault(err)
 	if !ok {
 		t.Fatalf("the audit save's error is not a fault: %v", err)
@@ -223,7 +223,7 @@ func TestAnErrorThatIsNotAFaultIsReturnedUnchanged(t *testing.T) {
 	rec := crudtest.Postgres()
 	failWith(rec, boom)
 
-	err := docs(rec).Save(context.Background(), &Doc{Title: "a"})
+	_, err := docs(rec).Save(context.Background(), &Doc{Title: "a"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("the error stopped matching the one the driver raised: %v", err)
 	}
@@ -277,8 +277,16 @@ func TestEveryVerbIsDecorated(t *testing.T) {
 			_, err := r.GetAll(context.Background())
 			return err
 		},
+		"First": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+			_, err := r.First(context.Background())
+			return err
+		},
 		"Save": func(r crud.Repo[Doc, int64, DocUpdate]) error {
-			return r.Save(context.Background(), &Doc{Title: "a"})
+			_, err := r.Save(context.Background(), &Doc{Title: "a"})
+			return err
+		},
+		"SaveOnly": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+			return r.SaveOnly(context.Background(), &Doc{Title: "a"})
 		},
 		"SaveAll": func(r crud.Repo[Doc, int64, DocUpdate]) error {
 			return r.SaveAll(context.Background(), []*Doc{{Title: "a"}})
@@ -314,7 +322,7 @@ func TestEveryVerbIsDecorated(t *testing.T) {
 		},
 		"Tx": func(r crud.Repo[Doc, int64, DocUpdate]) error {
 			return r.Tx(context.Background(), func(ctx context.Context) error {
-				return r.Save(ctx, &Doc{Title: "a"})
+				return r.SaveOnly(ctx, &Doc{Title: "a"})
 			})
 		},
 	}
@@ -364,7 +372,7 @@ func TestTheGatesRefusalPassesThroughUnenriched(t *testing.T) {
 	rec := crudtest.Postgres()
 	r := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()), faults.Enrich[Doc, int64]())
 
-	err := r.Save(context.Background(), &Doc{Title: "a"})
+	err := r.SaveOnly(context.Background(), &Doc{Title: "a"})
 	if !errors.Is(err, crud.ErrForbidden) {
 		t.Fatalf("the gate's refusal became %v", err)
 	}

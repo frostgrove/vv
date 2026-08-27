@@ -283,6 +283,24 @@ func (r *repository[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) 
 	return items, err
 }
 
+// First is Get narrowed to one row. Filters, sort, projection, preloads and
+// locking still apply; only pagination is owned by this operation.
+func (r *repository[M, ID, U]) First(ctx context.Context, opts ...crud.Option) (M, error) {
+	var zero M
+	o := crud.Build(opts...)
+	o.Page, o.Limit, o.Offset = 0, 1, 0
+	o.After, o.Before = "", ""
+	o.Unpaged, o.NoTotal = false, true
+	items, _, err := r.find(ctx, o, 1, 0)
+	if err != nil {
+		return zero, err
+	}
+	if len(items) == 0 {
+		return zero, crud.ErrNotFound
+	}
+	return items[0], nil
+}
+
 // scoped folds the repository's permanent scope into a caller's predicate.
 func (r *repository[M, ID, U]) scoped(o *crud.Options) crud.Predicate {
 	if r.bp.set.scope == nil {
@@ -629,22 +647,39 @@ func (r *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, opts ...crud.
 // ---------------------------------------------------------------------------
 // writes
 
-func (r *repository[M, ID, U]) Save(ctx context.Context, m *M) error {
-	if m == nil {
-		return &crud.SchemaError{Model: r.meta.Name, Reason: "Save called with a nil model"}
+// Save writes m and returns a separately allocated representation of the row
+// the database stored. It never mutates m. Dialects with RETURNING do that in
+// one statement; the remaining dialects write and refresh inside one
+// transaction so a replacement cannot slip into the result between them.
+func (r *repository[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
+	var zero M
+	if r.d.SupportsReturning() {
+		return r.saveReturning(ctx, m)
 	}
-	hasID, err := r.meta.HasID(m)
+	if _, ok := crud.ExecutorFor(ctx, r.src); ok {
+		return r.saveWithoutReturning(ctx, m)
+	}
+	var saved M
+	err := crud.InNewTx(ctx, r.src, func(tx context.Context) error {
+		var err error
+		saved, err = r.saveWithoutReturning(tx, m)
+		return err
+	})
+	if err != nil {
+		return zero, err
+	}
+	return saved, nil
+}
+
+// SaveOnly writes m without fetching the stored row afterwards. In particular,
+// it never adds RETURNING and never mutates m.
+func (r *repository[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
+	stmt, args, _, err := r.saveStatement(m)
 	if err != nil {
 		return err
 	}
-	switch {
-	case !hasID && r.meta.PK.Auto:
-		return r.insert(ctx, m, r.insertGen, r.meta.InsertGen, true)
-	case !hasID:
-		return crud.ErrMissingID
-	default:
-		return r.insert(ctx, m, r.insertFull+r.upsertTail, r.meta.Insert, false)
-	}
+	_, err = r.exec(ctx).Exec(ctx, stmt, args...)
+	return err
 }
 
 // SaveScoped is the narrow storage primitive used by a security gate after it
@@ -677,6 +712,20 @@ func (r *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save crud.S
 	return r.saveScoped(ctx, m, save)
 }
 
+// SaveScopedOnly preserves the gate's atomic create-or-update decision without
+// scanning a stored row. It is an internal capability, not a general CRUD
+// verb; public callers reach it through security.Gate.SaveOnly.
+func (r *repository[M, ID, U]) SaveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	if !r.d.SupportsReturning() {
+		if _, inTx := crud.ExecutorFor(ctx, r.src); !inTx {
+			return crud.InNewTx(ctx, r.src, func(tx context.Context) error {
+				return r.saveScopedOnly(tx, m, save)
+			})
+		}
+	}
+	return r.saveScopedOnly(ctx, m, save)
+}
+
 func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
 	if m == nil {
 		return &crud.SchemaError{Model: r.meta.Name, Reason: "Save called with a nil model"}
@@ -686,13 +735,36 @@ func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save crud.S
 		return err
 	}
 	if !hasID {
-		return r.Save(ctx, m)
+		saved, err := r.Save(ctx, m)
+		if err != nil {
+			return err
+		}
+		*m = saved
+		return nil
 	}
 	rs := crud.MergeRelationScopes(r.bp.relScopes, save.RelationScopes)
 	if save.Previous == nil {
 		return r.saveScopedCreate(ctx, m, save.Scope, rs)
 	}
 	return r.saveScopedUpdate(ctx, m, save.Previous, save.Scope, rs)
+}
+
+func (r *repository[M, ID, U]) saveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	if m == nil {
+		return &crud.SchemaError{Model: r.meta.Name, Reason: "SaveOnly called with a nil model"}
+	}
+	hasID, err := r.meta.HasID(m)
+	if err != nil {
+		return err
+	}
+	if !hasID {
+		return r.SaveOnly(ctx, m)
+	}
+	rs := crud.MergeRelationScopes(r.bp.relScopes, save.RelationScopes)
+	if save.Previous == nil {
+		return r.saveScopedCreateOnly(ctx, m)
+	}
+	return r.saveScopedUpdateOnly(ctx, m, save.Previous, save.Scope, rs)
 }
 
 // saveScopedCreate inserts exactly once. PostgreSQL and SQLite can make a
@@ -744,6 +816,31 @@ func (r *repository[M, ID, U]) saveScopedCreate(ctx context.Context, m *M, scope
 	// to preserve the policy decision, while deliberately not pinning values a
 	// trigger may normalise — Save promises to hand those generated values back.
 	return r.refresh(ctx, m, crud.And(r.bp.set.scope, scope), rs)
+}
+
+func (r *repository[M, ID, U]) saveScopedCreateOnly(ctx context.Context, m *M) error {
+	values, err := r.meta.Values(m, r.meta.Insert)
+	if err != nil {
+		return err
+	}
+	b := crud.NewSQL(r.d, r.meta).Raw("INSERT INTO ").Table().Raw(" (").Columns(r.meta.Insert).Raw(") VALUES (").Binds(values).Raw(")")
+	if r.d.SupportsReturning() {
+		b.Raw(r.d.Upsert(r.meta.PK.Column, nil))
+	} else if r.d.Name() != "mysql" {
+		return &crud.SchemaError{Model: r.meta.Name, Reason: "dialect cannot perform a create-only scoped SaveOnly"}
+	}
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected == 0 {
+		return crud.ErrCreateRaced
+	}
+	return nil
 }
 
 func (r *repository[M, ID, U]) saveScopedUpdate(ctx context.Context, m, previous *M, scope crud.Predicate, rs *crud.RelationScopes) error {
@@ -815,6 +912,71 @@ func (r *repository[M, ID, U]) saveScopedUpdate(ctx context.Context, m, previous
 	return r.refresh(ctx, m, crud.And(r.bp.set.scope, scope), rs)
 }
 
+func (r *repository[M, ID, U]) saveScopedUpdateOnly(ctx context.Context, m, previous *M, scope crud.Predicate, rs *crud.RelationScopes) error {
+	guard, err := r.scopedSaveGuard(previous, scope)
+	if err != nil {
+		return err
+	}
+	values, err := r.meta.Values(m, r.meta.Update)
+	if err != nil {
+		return err
+	}
+	changed, err := r.scopedSaveChanged(previous, m)
+	if err != nil {
+		return err
+	}
+	if len(r.meta.Update) == 0 {
+		return r.existsScoped(ctx, guard, rs)
+	}
+
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(rs).Raw("UPDATE ").Table().Raw(" SET ")
+	for i, f := range r.meta.Update {
+		if i > 0 {
+			b.Raw(", ")
+		}
+		b.Ident(f.Column).Raw(" = ").Bind(values[i])
+	}
+	b.Where(guard)
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected != 0 {
+		return nil
+	}
+	if changed || r.d.Name() != "mysql" {
+		return crud.ErrNotFound
+	}
+	// MySQL reports zero for a matched no-op update. Verify only existence under
+	// the exact inspected guard; no model is loaded and no unapproved row can
+	// become a successful write between the check and the operation.
+	return r.existsScoped(ctx, guard, rs)
+}
+
+func (r *repository[M, ID, U]) existsScoped(ctx context.Context, within crud.Predicate, rs *crud.RelationScopes) error {
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(rs).Raw("SELECT 1 FROM ").Table().Where(within).Raw(" LIMIT 1")
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	rows, err := r.exec(ctx).Query(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return crud.ErrNotFound
+	}
+	return rows.Err()
+}
+
 // scopedSaveGuard pins an update to every scalar field the gate inspected.
 // That is stricter than a version check when a model has no version column and
 // prevents a delete/reinsert or concurrent mutation from being updated under a
@@ -853,47 +1015,92 @@ func (r *repository[M, ID, U]) scopedSaveChanged(previous, next *M) (bool, error
 	return false, nil
 }
 
-// insert runs an INSERT (optionally with a conflict clause) and refreshes the
-// model with whatever the database produced.
-func (r *repository[M, ID, U]) insert(ctx context.Context, m *M, stmt string, fields []*crud.Field, generatedPK bool) error {
+// saveStatement chooses the two physical forms of Save and collects the
+// caller's values once. It never writes to m, which keeps SaveOnly useful for
+// callers who deliberately retain their command object after persistence.
+func (r *repository[M, ID, U]) saveStatement(m *M) (string, []any, bool, error) {
+	if m == nil {
+		return "", nil, false, &crud.SchemaError{Model: r.meta.Name, Reason: "Save called with a nil model"}
+	}
+	hasID, err := r.meta.HasID(m)
+	if err != nil {
+		return "", nil, false, err
+	}
+	var stmt string
+	var fields []*crud.Field
+	generatedPK := !hasID && r.meta.PK.Auto
+	switch {
+	case generatedPK:
+		stmt, fields = r.insertGen, r.meta.InsertGen
+	case !hasID:
+		return "", nil, false, crud.ErrMissingID
+	default:
+		stmt, fields = r.insertFull+r.upsertTail, r.meta.Insert
+	}
 	args, err := r.meta.Values(m, fields)
 	if err != nil {
-		return err
+		return "", nil, false, err
 	}
-	ex := r.exec(ctx)
+	return stmt, args, generatedPK, nil
+}
 
-	if r.d.SupportsReturning() {
-		rows, err := ex.Query(ctx, stmt+r.returning, args...)
-		if err != nil {
-			return err
-		}
-		ok, err := r.scanOne(rows, m)
-		if err != nil {
-			return err
-		}
-		if ok {
-			return nil
-		}
-		// ON CONFLICT DO NOTHING matched an existing row: read it back.
-		return r.refresh(ctx, m, nil, r.bp.relScopes)
-	}
-
-	res, err := ex.Exec(ctx, stmt, args...)
+func (r *repository[M, ID, U]) saveReturning(ctx context.Context, m *M) (M, error) {
+	var zero M
+	stmt, args, _, err := r.saveStatement(m)
 	if err != nil {
-		return err
+		return zero, err
 	}
-	if generatedPK && res.HasLastInsertID && res.LastInsertID != 0 {
-		if err := r.meta.SetID(m, res.LastInsertID); err != nil {
-			return err
+	rows, err := r.exec(ctx).Query(ctx, stmt+r.returning, args...)
+	if err != nil {
+		return zero, err
+	}
+	var saved M
+	ok, err := r.scanOne(rows, &saved)
+	if err != nil {
+		return zero, err
+	}
+	if !ok {
+		return zero, crud.ErrNotFound
+	}
+	return saved, nil
+}
+
+func (r *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M) (M, error) {
+	var zero M
+	stmt, args, generatedPK, err := r.saveStatement(m)
+	if err != nil {
+		return zero, err
+	}
+	res, err := r.exec(ctx).Exec(ctx, stmt, args...)
+	if err != nil {
+		return zero, err
+	}
+
+	// Start from a zero model rather than a copy of m: custom scanner fields or
+	// pointer fields in a shallow copy could otherwise still mutate the command
+	// object while the refresh scans into the result.
+	var saved M
+	if generatedPK {
+		if !res.HasLastInsertID {
+			return zero, &crud.SchemaError{Model: r.meta.Name, Field: r.meta.PK.Name,
+				Reason: "dialect did not return the generated primary key"}
+		}
+		if err := r.meta.SetID(&saved, res.LastInsertID); err != nil {
+			return zero, err
+		}
+	} else {
+		id, err := r.meta.ID(m)
+		if err != nil {
+			return zero, err
+		}
+		if err := r.meta.SetID(&saved, id); err != nil {
+			return zero, err
 		}
 	}
-	// Without RETURNING the only way to keep Save's promise — the model
-	// describes the row — is to go and read it. Skipping this when the model
-	// declares no `generated` column saved a round trip and cost correctness:
-	// an upsert's conflict clause leaves out every immutable column, so the
-	// caller was left holding values the database had just refused, and a
-	// handler serialised a different document on MySQL than on PostgreSQL.
-	return r.refresh(ctx, m, nil, r.bp.relScopes)
+	if err := r.refresh(ctx, &saved, nil, r.bp.relScopes); err != nil {
+		return zero, err
+	}
+	return saved, nil
 }
 
 // refresh re-reads the row identified by the model's primary key, optionally
@@ -1346,10 +1553,8 @@ func (r *repository[M, ID, U]) Aggregate(ctx context.Context, opts ...crud.Optio
 // stays one round trip or none — silently becoming two would make the cost
 // invisible, which is the only reason to reach for this over a loop.
 //
-// The keys come back only where the dialect has RETURNING. MySQL reports one
-// LastInsertId for the whole statement and guarantees the rest are contiguous
-// only under some autoincrement settings, so reading them back from it would be
-// a guess; there, assign the keys yourself and the batch is exact.
+// It is deliberately write-only, like SaveOnly: callers that need individual
+// stored rows can call Save for each command and keep the results explicitly.
 func (r *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) error {
 	if len(models) == 0 {
 		return nil
@@ -1403,36 +1608,6 @@ func (r *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) error {
 	}
 	b.Raw(tail)
 
-	if r.d.SupportsReturning() {
-		b.Raw(r.returning)
-		q, args, err := b.Done()
-		if err != nil {
-			return err
-		}
-		rows, err := r.exec(ctx).Query(ctx, q, args...)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		// RETURNING follows insertion order on both engines that have it, so the
-		// rows line up with the slice that produced them.
-		i := 0
-		for rows.Next() {
-			if i >= len(models) {
-				break
-			}
-			dest, err := r.meta.Pointers(models[i], r.meta.Fields)
-			if err != nil {
-				return err
-			}
-			if err := rows.Scan(dest...); err != nil {
-				return err
-			}
-			i++
-		}
-		return rows.Err()
-	}
-
 	q, args, err := b.Done()
 	if err != nil {
 		return err
@@ -1440,8 +1615,5 @@ func (r *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) error {
 	if _, err := r.exec(ctx).Exec(ctx, q, args...); err != nil {
 		return err
 	}
-	// No RETURNING: the models keep whatever they were handed in with. For
-	// assigned keys that is already the truth; for generated ones the caller was
-	// told above that this dialect cannot say.
 	return nil
 }

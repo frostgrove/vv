@@ -5,20 +5,22 @@ package entstore
 import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/port"
 	"github.com/frostgrove/vv/test/ent"
+	"github.com/frostgrove/vv/utils"
 	"time"
 )
 
 // UserUpdate is the partial-update DTO for ent.User.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type UserUpdate struct {
-	TenantID *int64        `json:"tenantID,omitempty"`
-	Email    *string       `json:"email,omitempty"`
-	Name     *string       `json:"name,omitempty"`
-	Age      crud.Opt[int] `json:"age,omitzero"`
-	Active   *bool         `json:"active,omitempty"`
+	TenantID *int64         `json:"tenantID,omitempty"`
+	Email    *string        `json:"email,omitempty"`
+	Name     *string        `json:"name,omitempty"`
+	Age      utils.Opt[int] `json:"age,omitzero"`
+	Active   *bool          `json:"active,omitempty"`
 }
 
 // UserAttrs is the generated metamodel shape for User.
@@ -35,6 +37,19 @@ type UserAttrs struct {
 // User_ is the metamodel of User: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var User_ = specs.Metamodel[ent.User, UserAttrs]()
+
+// UserRepo is the typed repository for ent.User.
+type UserRepo = crud.Repo[ent.User, int64, UserUpdate]
+
+// UserRepository describes ent.User independently of a database driver.
+// Bind it through NewUserRepository with the application's datasource.
+var UserRepository = sqlrepo.Define[ent.User, int64, UserUpdate]("")
+
+// NewUserRepository binds UserRepository to src.
+func NewUserRepository(src crud.Source) *UserRepo {
+	repo := UserRepository.Bind(src)
+	return &repo
+}
 
 // A writable column the update DTO does not name refuses to start, rather than
 // becoming a column updates silently cannot reach ([[D-050]]). The generator

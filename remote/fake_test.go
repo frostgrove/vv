@@ -161,16 +161,17 @@ func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) 
 	return f.count, nil
 }
 
-func (f *fakeRepo) Save(_ context.Context, m *Widget) error {
+func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	f.calls = append(f.calls, recordedCall{Method: "Save", Model: *m})
 	if f.err != nil {
-		return f.err
+		return Widget{}, f.err
 	}
-	if m.ID == 0 {
-		m.ID = 7
+	saved := *m
+	if saved.ID == 0 {
+		saved.ID = 7
 	}
-	m.CreatedAt = savedAt
-	return nil
+	saved.CreatedAt = savedAt
+	return saved, nil
 }
 
 func (f *fakeRepo) Update(_ context.Context, id int64, dto WidgetUpdate, _ ...crud.Option) (Widget, error) {

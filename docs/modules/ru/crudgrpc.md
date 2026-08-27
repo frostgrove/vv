@@ -81,7 +81,7 @@ crudgrpc.Serving(svc).Register(srv, "Article")
 | Опция | Что делает |
 |---|---|
 | `WithQuery(cfg)` | ограничивает DSL — [`query.Config`](query.md#bounding-it) |
-| `WithScope(fn)` | `func(context.Context) ([]crud.Option, error)` |
+| `WithScope(fn)` | `func(context.Context) ([]utils.Option, error)` |
 | `WithTransform(fn)` | презентер: `func(context.Context, M) any` |
 | `BeforeSave(fn)` | `func(context.Context, *M) error` |
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
@@ -231,10 +231,10 @@ filter-а. Передайте operand десятичной строкой — о
 сервиса и мэппера — это вся цепочка целиком, и путь, которым ничто не владеет,
 помечается как приблизительный, а не угадывается ([[D-043]]).
 
-## `crud.Opt` переживает провод
+## `utils.Opt` переживает провод
 
 Конвертация идёт через `protojson` и `encoding/json`, так что теги `json`
-самой модели определяют документ, а `crud.Opt` сохраняет свои три состояния:
+самой модели определяют документ, а `utils.Opt` сохраняет свои три состояния:
 отсутствующий ключ **не попадает в `Struct.Fields`**, явный null — это запись
 `NullValue` ([[UC-003]]).
 

@@ -3,6 +3,8 @@ package crud
 import (
 	"reflect"
 	"unsafe"
+
+	"github.com/frostgrove/vv/utils"
 )
 
 // modelBase returns the address of a *M, checking it against the schema.
@@ -88,11 +90,11 @@ func ElemValue(v any) any {
 	if v == nil {
 		return nil
 	}
-	if o, ok := v.(optional); ok {
-		if !o.optDefined() || o.optNull() {
+	if value, defined, null, ok := utils.Inspect(v); ok {
+		if !defined || null {
 			return nil
 		}
-		return o.optValue()
+		return value
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Pointer {

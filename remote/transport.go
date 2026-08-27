@@ -50,7 +50,7 @@ type Call struct {
 	// Query is the narrowing, for the three reads that take one.
 	Query *query.Request
 	// Body is the entity or the patch, already JSON. It is raw rather than a
-	// value because encoding it is the resource's job — that is where crud.Opt
+	// value because encoding it is the resource's job — that is where utils.Opt
 	// keeps its three states — and re-encoding it in the transport would
 	// collapse absent and null the first time it passed through a Go nil.
 	// Update and Replace require a non-empty, non-null JSON object; an array,

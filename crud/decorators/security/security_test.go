@@ -184,7 +184,7 @@ func TestSaveRefusesToWriteIntoAnotherTenant(t *testing.T) {
 
 	rec := crudtest.Postgres()
 	d := Doc{TenantID: 8, Title: "sneaky"}
-	if err := gated(rec).Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := gated(rec).Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 	if len(rec.Statements()) != 0 {
@@ -194,7 +194,7 @@ func TestSaveRefusesToWriteIntoAnotherTenant(t *testing.T) {
 	// Overwriting somebody else's row is refused as well.
 	rec = crudtest.Postgres().Push(crudtest.Rows(docRow(1, 8, "theirs")))
 	d = Doc{ID: 1, TenantID: 7, Title: "mine now"}
-	if err := gated(rec).Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := gated(rec).Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 	for _, s := range rec.SQL() {
@@ -206,11 +206,15 @@ func TestSaveRefusesToWriteIntoAnotherTenant(t *testing.T) {
 	// The honest case goes through.
 	rec = crudtest.Postgres().Push(crudtest.Rows(docRow(5, 7, "mine")))
 	d = Doc{TenantID: 7, Title: "mine"}
-	if err := gated(rec).Save(ctx, &d); err != nil {
+	saved, err := gated(rec).Save(ctx, &d)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if d.ID != 5 {
-		t.Fatalf("doc = %+v", d)
+	if saved.ID != 5 {
+		t.Fatalf("doc = %+v", saved)
+	}
+	if d.ID != 0 {
+		t.Fatalf("Save mutated its argument: %+v", d)
 	}
 }
 
@@ -225,7 +229,7 @@ func TestScopedSaveKeepsAConcurrentCreateCreateOnly(t *testing.T) {
 		crudtest.Rows(), // another tenant won the race; DO NOTHING returns no row
 	)
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	err := gated(rec).Save(ctx, &d)
+	_, err := gated(rec).Save(ctx, &d)
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want forbidden rather than an overwrite", err)
 	}
@@ -242,7 +246,7 @@ func TestScopedSaveKeepsMySQLDuplicateCreatesAsAConflict(t *testing.T) {
 		crudtest.Rows(), // physical probe
 	).Fail(crud.ErrConflict) // normal INSERT reports the duplicate to the adapter
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	if err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrConflict) || errors.Is(err, security.ErrForbidden) {
+	if _, err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrConflict) || errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want the database duplicate conflict rather than a forbidden overwrite", err)
 	}
 	var insert string
@@ -269,7 +273,7 @@ func TestAssignedSaveAuthorizesBothBranchesBeforeItLooksUpTheKey(t *testing.T) {
 		},
 	}
 	rec := crudtest.Postgres()
-	err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &Doc{ID: 1, Title: "x"})
+	_, err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &Doc{ID: 1, Title: "x"})
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want denied update authorization", err)
 	}
@@ -295,7 +299,7 @@ func TestMySQLScopedSavesJoinAnOpaqueForeignExecutor(t *testing.T) {
 			// is the caller's statement that every repository query belongs to it.
 			foreignCtx := crud.WithExecutor(ctx, foreign)
 			if name == "Save" {
-				if err := repo.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
+				if _, err := repo.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := repo.SaveAll(foreignCtx, []*Doc{{ID: 1, TenantID: 7, Title: "after", Body: "body"}}); err != nil {
@@ -321,7 +325,7 @@ func TestScopedSavePinsAnUpdateToItsInspectedSnapshot(t *testing.T) {
 		crudtest.Rows(),                        // another writer changed it before our UPDATE
 	)
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	if err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
+	if _, err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want not found rather than an update of a replacement", err)
 	}
 	st := rec.Last()
@@ -337,7 +341,7 @@ func TestMySQLNoopScopedSaveKeepsTheSnapshotForItsRefresh(t *testing.T) {
 		crudtest.Rows(),                       // snapshot refresh sees the concurrent change
 	).ExecResult(crud.Result{}) // a no-op UPDATE and a stale UPDATE both answer zero
 	d := Doc{ID: 1, TenantID: 7, Title: "before", Body: "body"}
-	if err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
+	if _, err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want not found after the guarded refresh misses", err)
 	}
 	if sql := rec.Last().SQL; !strings.Contains(sql, "`title` = ?") || !strings.Contains(sql, "`body` = ?") {
@@ -352,7 +356,7 @@ func TestARealUpdateConflictStaysAConflict(t *testing.T) {
 		crudtest.RowsFailing(crud.ErrConflict), // another unique/FK/serialization conflict
 	)
 	d := Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}
-	err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d)
+	_, err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d)
 	if !errors.Is(err, crud.ErrConflict) || errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want the underlying update conflict rather than a create denial", err)
 	}
@@ -373,7 +377,7 @@ func TestScopedSaveCannotBypassAnInnerSecurityGate(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(41, 7, "before")))
 	repo := Docs.Bind(rec, security.Gate(tenantPolicy), security.Gate(inner))
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	if err := repo.Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repo.Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want an inner-gate denial", err)
 	}
 	if wrote(rec, "UPDATE") || wrote(rec, "INSERT") {
@@ -392,7 +396,7 @@ func TestInspectOnlySaveUsesTheAtomicSnapshotPath(t *testing.T) {
 		crudtest.Rows(),                        // snapshot UPDATE no longer matches
 	)
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	if err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want a refused stale inspected row", err)
 	}
 	if sql := rec.Last().SQL; !strings.HasPrefix(sql, "UPDATE") || !strings.Contains(sql, `"title" = $`) {
@@ -432,11 +436,15 @@ func TestScopedMySQLSaveRefreshesTheModelAfterTheConditionalWrite(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.MySQL().Push(tc.rows...).ExecResult(crud.Result{RowsAffected: 1})
 			d := tc.doc
-			if err := gated(rec).Save(ctx, &d); err != nil {
+			saved, err := gated(rec).Save(ctx, &d)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if d.Title != tc.want {
-				t.Fatalf("Save left the caller with %+v, want database-normalized title %q", d, tc.want)
+			if saved.Title != tc.want {
+				t.Fatalf("Save returned %+v, want database-normalized title %q", saved, tc.want)
+			}
+			if d.Title != tc.doc.Title {
+				t.Fatalf("Save mutated its argument: %+v", d)
 			}
 		})
 	}
@@ -476,7 +484,7 @@ func TestReadOnlyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := Doc{Title: "nope"}
-	if err := repo.Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repo.Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 	if _, err := repo.Delete(context.Background(), 1); !errors.Is(err, security.ErrForbidden) {

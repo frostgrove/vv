@@ -432,7 +432,7 @@ func TestScopeCannotReachSave(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
 	u := User{Email: "n@x", Name: "New", TenantID: 3} // tenant 3, while the scope pins 1
 
-	if err := scopedUsers.Bind(rec).Save(context.Background(), &u); err != nil {
+	if _, err := scopedUsers.Bind(rec).Save(context.Background(), &u); err != nil {
 		t.Fatal(err)
 	}
 	st := rec.Last()

@@ -248,7 +248,7 @@ n, err := users.UpdateAll(ctx, store.UserUpdate{Active: ptr(false)},
 
 ent's equivalent is `client.User.Update().Where(…)`, and either is fine — they
 end up as the same `UPDATE`. Reach for this one when the filter came from the
-DSL, because then it is already a `[]crud.Option`. Note the one difference from
+DSL, because then it is already a `[]utils.Option`. Note the one difference from
 `Update`: there is no single row to diff against, so every field the DTO defines
 is written to every matching row. A DTO that defines nothing writes nothing.
 
@@ -662,7 +662,7 @@ type UserUpdate struct {
     TenantID *int64        `json:"tenantID,omitempty"`
     Email    *string       `json:"email,omitempty"`
     Name     *string       `json:"name,omitempty"`
-    Age      crud.Opt[int] `json:"age,omitzero"`
+    Age      utils.Opt[int] `json:"age,omitzero"`
     Active   *bool         `json:"active,omitempty"`
 }
 
@@ -680,7 +680,7 @@ var User_ = specs.Metamodel[ent.User, UserAttrs]()
 ```
 
 Note the types. `Age` was `*int` on the entity — a nullable column — so it
-became `crud.Opt[int]`, which has **three** states. `Email` was a plain
+became `utils.Opt[int]`, which has **three** states. `Email` was a plain
 `string`, so a pointer's two states are enough. That distinction is the whole
 reason PATCH handlers are annoying to write by hand.
 
@@ -917,14 +917,18 @@ type UserService struct {
     client *ent.Client
 }
 
-func (s UserService) Save(ctx context.Context, u *ent.User) error {
+func (s UserService) Save(ctx context.Context, u *ent.User) (ent.User, error) {
     if !strings.Contains(u.Email, "@") {
-        return fmt.Errorf("%w: email is not an address", crud.ErrForbidden)
+        return ent.User{}, fmt.Errorf("%w: email is not an address", crud.ErrForbidden)
     }
-    if err := s.Repo.Save(ctx, u); err != nil {
-        return err
+    saved, err := s.Repo.Save(ctx, u)
+    if err != nil {
+        return ent.User{}, err
     }
-    return s.client.AuditLog.Create().SetSubject(u.ID).Exec(ctx)
+    if err := s.client.AuditLog.Create().SetSubject(saved.ID).Exec(ctx); err != nil {
+        return ent.User{}, err
+    }
+    return saved, nil
 }
 
 app.Use("/users", crudfiber.New(UserService{
@@ -1161,7 +1165,7 @@ type Article struct {
     ID          int64               `db:"id,pk,auto"`
     AuthorID    int64               `db:"author_id"`
     Title       string              `db:"title"`
-    PublishedAt crud.Opt[time.Time] `db:"published_at"`
+    PublishedAt utils.Opt[time.Time] `db:"published_at"`
     TenantID    int64               `db:"tenant_id,immutable"`
     CreatedAt   time.Time           `db:"created_at,generated"`
 

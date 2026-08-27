@@ -53,7 +53,7 @@ datasource-independent repository blueprint:
 ```go
 type ProductUpdate struct {
     Name        *string
-    Description crud.Opt[string]
+    Description utils.Opt[string]
     // …
 }
 

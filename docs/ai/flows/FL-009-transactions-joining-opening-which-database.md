@@ -159,7 +159,7 @@ The ORM opens and owns the transaction; vv is handed a handle and joins.
 // gorm
 gdb.Transaction(func(tx *gorm.DB) error {
     ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
-    return users.Save(ctx, &u)          // inside the gorm transaction
+    return users.SaveOnly(ctx, &u)      // inside the gorm transaction
 })
 
 // ent (needs --feature sql/execquery)

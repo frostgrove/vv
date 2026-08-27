@@ -4,8 +4,10 @@ package versionstore
 
 import (
 	"context"
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 	"net/http"
@@ -13,7 +15,7 @@ import (
 )
 
 // DocumentUpdate is the partial-update DTO for Document.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type DocumentUpdate struct {
 	OwnerID *int64  `json:"ownerID,omitempty"`
@@ -36,6 +38,19 @@ type DocumentAttrs struct {
 // Document_ is the metamodel of Document: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Document_ = specs.Metamodel[Document, DocumentAttrs]()
+
+// DocumentRepo is the typed repository for Document.
+type DocumentRepo = crud.Repo[Document, int64, DocumentUpdate]
+
+// DocumentRepository describes Document independently of a database driver.
+// Bind it through NewDocumentRepository with the application's datasource.
+var DocumentRepository = sqlrepo.Define[Document, int64, DocumentUpdate]("")
+
+// NewDocumentRepository binds DocumentRepository to src.
+func NewDocumentRepository(src crud.Source) *DocumentRepo {
+	repo := DocumentRepository.Bind(src)
+	return &repo
+}
 
 // DocumentInput is the entity body for Document: what a create or a replace carries,
 // under this resource's own wire names. DocumentUpdate is the PATCH shape; a

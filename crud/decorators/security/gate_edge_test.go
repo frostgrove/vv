@@ -34,7 +34,7 @@ func TestAScopeWithoutInspectRefusesSaveBeforeItCanWrite(t *testing.T) {
 	rec := crudtest.Postgres()
 
 	err := Docs.Bind(rec, security.Gate(scopeOnly)).
-		Save(ctx, &Doc{ID: 1, TenantID: 7, Title: "mine now"})
+		SaveOnly(ctx, &Doc{ID: 1, TenantID: 7, Title: "mine now"})
 
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden for a scope-only Save", err)
@@ -49,7 +49,7 @@ func TestAScopeWithoutInspectAlsoRefusesAnUnusedClientKey(t *testing.T) {
 	rec := crudtest.Postgres()
 
 	err := Docs.Bind(rec, security.Gate(scopeOnly)).
-		Save(ctx, &Doc{ID: 1, TenantID: 7, Title: "fresh"})
+		SaveOnly(ctx, &Doc{ID: 1, TenantID: 7, Title: "fresh"})
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden until the policy supplies Inspect", err)
 	}
@@ -112,7 +112,7 @@ func TestSaveRefusesToOverwriteATombstoneHiddenByRepositoryScope(t *testing.T) {
 	)
 	repo := docs.Bind(rec, security.Gate(security.ScopeField[softDoc, int64]("TenantID", tenantOf)))
 
-	err := repo.Save(ctx, &softDoc{ID: 1, TenantID: 7, Title: "resurrect"})
+	_, err := repo.Save(ctx, &softDoc{ID: 1, TenantID: 7, Title: "resurrect"})
 	if !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for an invisible tombstone", err)
 	}
@@ -135,7 +135,7 @@ func TestSaveOfAnotherTenantsAssignedKeyLooksMissing(t *testing.T) {
 		crudtest.Rows([]any{int64(1)}), // the internal existence check does
 	)
 
-	err := gated(rec).Save(ctx, &Doc{ID: 1, TenantID: 7, Title: "overwrite"})
+	_, err := gated(rec).Save(ctx, &Doc{ID: 1, TenantID: 7, Title: "overwrite"})
 	if !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -157,7 +157,8 @@ func TestScopeOnlySavePreservesResolverFailures(t *testing.T) {
 		call func(crud.Repo[Doc, int64, DocUpdate]) error
 	}{
 		{"Save", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
-			return repo.Save(context.Background(), &Doc{Title: "x"})
+			_, err := repo.Save(context.Background(), &Doc{Title: "x"})
+			return err
 		}},
 		{"SaveAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
 			return repo.SaveAll(context.Background(), []*Doc{{Title: "x"}})
@@ -206,7 +207,8 @@ func TestGeneratedSaveStillFailsWhenAScopeResolverFails(t *testing.T) {
 			call func(crud.Repo[Doc, int64, DocUpdate]) error
 		}{
 			{"Save", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
-				return repo.Save(context.Background(), &Doc{TenantID: 7, Title: "x"})
+				_, err := repo.Save(context.Background(), &Doc{TenantID: 7, Title: "x"})
+				return err
 			}},
 			{"SaveAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
 				return repo.SaveAll(context.Background(), []*Doc{{TenantID: 7, Title: "x"}})

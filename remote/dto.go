@@ -10,7 +10,7 @@ import (
 
 // checkPatchable refuses an update DTO that cannot be put on a wire.
 //
-// A crud.Opt has three states and encoding/json has two, and the bridge between
+// A utils.Opt has three states and encoding/json has two, and the bridge between
 // them is the `omitzero` tag: an undefined Opt marshals to null, and only
 // omitzero keeps the key out of the document altogether. Without it every field
 // the caller did not set arrives as an explicit null, and the far side writes

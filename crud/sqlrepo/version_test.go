@@ -152,7 +152,7 @@ func TestSaveNeverWindsTheVersionBack(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(noteRow(7, "x", 9)))
 
 	n := Note{ID: 7, Title: "x", Version: 1}
-	if err := Notes.Bind(rec).Save(context.Background(), &n); err != nil {
+	if _, err := Notes.Bind(rec).Save(context.Background(), &n); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(rec.Last().SQL, `"version" = EXCLUDED."version"`) {

@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 	"unsafe"
+
+	"github.com/frostgrove/vv/utils"
 )
 
 // NowFunc is the clock a soft delete stamps with. Swap it in a test rather than
@@ -70,11 +72,11 @@ func (f *Field) valueOf(base unsafe.Pointer) any {
 func (f *Field) comparableOf(base unsafe.Pointer) any {
 	v := reflect.NewAt(f.Type, unsafe.Add(base, f.Offset)).Elem()
 	if f.Optional {
-		o := v.Interface().(optional)
-		if !o.optDefined() || o.optNull() {
+		value, defined, null, _ := utils.Inspect(v.Interface())
+		if !defined || null {
 			return nil
 		}
-		return o.optValue()
+		return value
 	}
 	if f.Type.Kind() == reflect.Pointer {
 		if v.IsNil() {
@@ -495,25 +497,18 @@ var (
 	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 	valuerType          = reflect.TypeOf((*driver.Valuer)(nil)).Elem()
 	scannerType         = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
-	optionalTyp         = reflect.TypeOf((*optional)(nil)).Elem()
 )
 
-// isOptType reports whether t is a crud.Opt[...]. `optional` has unexported
-// methods, so nothing outside this package can pretend to be one.
+// isOptType reports whether t is a utils.Opt[...]. Its concrete identity is
+// still protected by utils' private marker, so an arbitrary Optional cannot
+// accidentally alter CRUD persistence semantics.
 func isOptType(t reflect.Type) bool {
-	return t.Kind() == reflect.Struct && t.Implements(optionalTyp)
+	return utils.IsOptType(t)
 }
 
-// OptElem returns the element type of a crud.Opt[T], or nil.
+// OptElem returns the element type of a utils.Opt[T], or nil.
 func OptElem(t reflect.Type) reflect.Type {
-	if !isOptType(t) {
-		return nil
-	}
-	f, ok := t.FieldByName("value")
-	if !ok {
-		return nil
-	}
-	return f.Type
+	return utils.OptElem(t)
 }
 
 // ElemType strips Opt and pointer wrappers, giving the type a caller actually

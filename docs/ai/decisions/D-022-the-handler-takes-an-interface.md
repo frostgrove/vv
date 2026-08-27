@@ -28,9 +28,9 @@ type UserService struct {
     client *ent.Client
 }
 
-func (s UserService) Save(ctx context.Context, u *User) error {
+func (s UserService) Save(ctx context.Context, u *User) (User, error) {
     if !strings.Contains(u.Email, "@") {
-        return fmt.Errorf("%w: email is not an address", crud.ErrForbidden)
+        return User{}, fmt.Errorf("%w: email is not an address", crud.ErrForbidden)
     }
     return s.Repo.Save(ctx, u)
 }

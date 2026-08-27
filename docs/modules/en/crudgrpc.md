@@ -81,7 +81,7 @@ take their framework's context.
 | Option | Does |
 |---|---|
 | `WithQuery(cfg)` | bound the DSL — [`query.Config`](query.md#bounding-it) |
-| `WithScope(fn)` | `func(context.Context) ([]crud.Option, error)` |
+| `WithScope(fn)` | `func(context.Context) ([]utils.Option, error)` |
 | `WithTransform(fn)` | a presenter: `func(context.Context, M) any` |
 | `BeforeSave(fn)` | `func(context.Context, *M) error` |
 | `BeforeUpdate(fn)` | `func(context.Context, ID, *U) error` |
@@ -227,10 +227,10 @@ violation on a column nothing declared can still name the key the client sent.
 Here the declared hops — the service's and the mapper's — are the whole chain,
 and a path nothing owns is marked approximate rather than guessed ([[D-043]]).
 
-## `crud.Opt` survives the wire
+## `utils.Opt` survives the wire
 
 Conversion goes through `protojson` and `encoding/json`, so the model's own
-`json` tags decide the document and `crud.Opt` keeps its three states: an absent
+`json` tags decide the document and `utils.Opt` keeps its three states: an absent
 key is **not in `Struct.Fields`**, an explicit null is a `NullValue` entry
 ([[UC-003]]).
 

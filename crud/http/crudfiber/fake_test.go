@@ -180,12 +180,16 @@ func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) 
 
 // Save records the model as it arrived — before onSave touches it — because
 // what the handler handed over is exactly what the write tests are about.
-func (f *fakeRepo) Save(_ context.Context, m *Widget) error {
+func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	f.calls = append(f.calls, recordedCall{Method: "Save", Model: *m})
 	if f.err != nil {
-		return f.err
+		return Widget{}, f.err
 	}
-	return f.onSave(m)
+	saved := *m
+	if err := f.onSave(&saved); err != nil {
+		return Widget{}, err
+	}
+	return saved, nil
 }
 
 func (f *fakeRepo) Update(_ context.Context, id int64, dto WidgetUpdate, _ ...crud.Option) (Widget, error) {

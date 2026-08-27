@@ -120,7 +120,7 @@ POST /users
 Та же ошибка, из `users.Save(ctx, &u)`:
 
 ```go
-err := users.Save(ctx, &u)
+_, err := users.Save(ctx, &u)
 
 // Ветка, которая у вас уже была, продолжает работать — это дополнение ([[D-038]]).
 if errors.Is(err, crud.ErrConflict) { … }

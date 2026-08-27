@@ -80,6 +80,21 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("First", func(t *testing.T) {
+		f := newFake()
+		w, err := client(t, serve(t, f)).First(ctx, crud.Where(crud.Eq("OwnerID", int64(7))), crud.Limit(99))
+		if err != nil {
+			t.Fatalf("first: %v", err)
+		}
+		if w.ID != 1 {
+			t.Fatalf("first row = %+v", w)
+		}
+		got := f.last(t)
+		if got.Method != "Get" || got.Opts.Limit != 1 || got.Opts.Predicate() == nil {
+			t.Fatalf("the far side was asked for %+v", got)
+		}
+	})
+
 	t.Run("GetAll", func(t *testing.T) {
 		f := newFake()
 		f.page = crud.NewPaginatedResponse(f.page.Items, 1, 0, int64(len(f.page.Items)))
@@ -131,13 +146,15 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	t.Run("Save creates", func(t *testing.T) {
 		f := newFake()
 		w := Widget{Name: "washer", Price: 10}
-		if err := client(t, serve(t, f)).Save(ctx, &w); err != nil {
+		saved, err := client(t, serve(t, f)).Save(ctx, &w)
+		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		// Refreshed in place with what the service generated, which is Save's
-		// whole contract and the reason it takes a pointer.
-		if w.ID != 7 || !w.CreatedAt.Equal(savedAt) {
-			t.Fatalf("the model came back as %+v", w)
+		if saved.ID != 7 || !saved.CreatedAt.Equal(savedAt) {
+			t.Fatalf("the returned model came back as %+v", saved)
+		}
+		if w.ID != 0 || !w.CreatedAt.IsZero() {
+			t.Fatalf("Save mutated its argument: %+v", w)
 		}
 		if got := f.last(t); got.Method != "Save" || got.Model.Name != "washer" {
 			t.Fatalf("the far side was handed %+v", got)
@@ -147,11 +164,12 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	t.Run("Save replaces", func(t *testing.T) {
 		f := newFake()
 		w := Widget{ID: 42, Name: "bolt", Price: 250}
-		if err := client(t, serve(t, f)).Save(ctx, &w); err != nil {
+		saved, err := client(t, serve(t, f)).Save(ctx, &w)
+		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if w.ID != 42 {
-			t.Fatalf("the key moved to %d", w.ID)
+		if saved.ID != 42 {
+			t.Fatalf("the key moved to %d", saved.ID)
 		}
 		// PUT loads the row first, so the repository sees a GetByID and then a
 		// Save. A key that had gone out as a create would show no GetByID.

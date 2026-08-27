@@ -71,8 +71,8 @@ type articleService struct {
     specs.Repo[Article, int64, ArticleUpdate]   // встроено: тем самым бесплатно реализует интерфейс
 }
 
-func (s articleService) Save(ctx context.Context, a *Article) error {
-    if err := s.checkQuota(ctx, a); err != nil { return err }
+func (s articleService) Save(ctx context.Context, a *Article) (Article, error) {
+    if err := s.checkQuota(ctx, a); err != nil { return Article{}, err }
     return s.Repo.Save(ctx, a)
 }
 

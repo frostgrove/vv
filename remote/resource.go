@@ -133,6 +133,29 @@ func (r *Resource[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) ([
 	return r.allPages(ctx, req)
 }
 
+// First asks the remote list endpoint for one matching row. The remote protocol
+// has no separate first route, so its list shape is normalised exactly as the
+// local repository normalises Get's paging controls.
+func (r *Resource[M, ID, U]) First(ctx context.Context, opts ...crud.Option) (M, error) {
+	var zero M
+	req, err := ToRequest(opts...)
+	if err != nil {
+		return zero, err
+	}
+	q := *req
+	q.Page, q.Limit, q.Offset = 0, 1, 0
+	q.After, q.Before = "", ""
+	q.Unpaged, q.SkipTotal = false, true
+	page, err := r.list(ctx, &q)
+	if err != nil {
+		return zero, err
+	}
+	if len(page.Items) == 0 {
+		return zero, crud.ErrNotFound
+	}
+	return page.Items[0], nil
+}
+
 func (r *Resource[M, ID, U]) list(ctx context.Context, req *query.Request) (crud.PaginatedResponse[M], error) {
 	raw, err := r.tr.Do(ctx, Call{Method: MethodList, Query: req})
 	if err != nil {
@@ -402,40 +425,56 @@ func (r *Resource[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (in
 // writes
 
 // Save creates when the primary key is unset and replaces the named row
-// otherwise, and refreshes the model in place with what the service answered.
+// otherwise. It returns what the service stored and never mutates m.
 //
 // That is crud.Core.Save's own rule read onto two routes rather than a choice
 // made here: an unset key is a POST because the service is the thing that
 // generates one, and a set key is a PUT because the caller named the row.
-func (r *Resource[M, ID, U]) Save(ctx context.Context, m *M) error {
+func (r *Resource[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
+	var zero M
+	call, err := r.saveCall(m)
+	if err != nil {
+		return zero, err
+	}
+	raw, err := r.tr.Do(ctx, call)
+	if err != nil {
+		return zero, err
+	}
+	return decode[M](raw, "an entity")
+}
+
+// SaveOnly sends the same create-or-replace command but intentionally discards
+// the entity response. A remote API still produces that response for its own
+// default create/replace contract; this method simply never decodes or applies
+// it to the caller's model.
+func (r *Resource[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
+	call, err := r.saveCall(m)
+	if err != nil {
+		return err
+	}
+	_, err = r.tr.Do(ctx, call)
+	return err
+}
+
+func (r *Resource[M, ID, U]) saveCall(m *M) (Call, error) {
 	body, err := json.Marshal(m)
 	if err != nil {
-		return fmt.Errorf("remote: encoding the model: %w", err)
+		return Call{}, fmt.Errorf("remote: encoding the model: %w", err)
 	}
 	has, err := r.meta.HasID(m)
 	if err != nil {
-		return err
+		return Call{}, err
 	}
 
 	call := Call{Method: MethodCreate, Body: body}
 	if has {
 		key, err := keyOf[ID](r.meta, m)
 		if err != nil {
-			return err
+			return Call{}, err
 		}
 		call = Call{Method: MethodReplace, ID: key, Body: body}
 	}
-
-	raw, err := r.tr.Do(ctx, call)
-	if err != nil {
-		return err
-	}
-	saved, err := decode[M](raw, "an entity")
-	if err != nil {
-		return err
-	}
-	*m = saved
-	return nil
+	return call, nil
 }
 
 // Update applies a partial update and returns the refreshed row.

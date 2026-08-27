@@ -119,7 +119,7 @@ came from.
 The same error, from `users.Save(ctx, &u)`:
 
 ```go
-err := users.Save(ctx, &u)
+_, err := users.Save(ctx, &u)
 
 // The branch you already had keeps working — this is additive ([[D-038]]).
 if errors.Is(err, crud.ErrConflict) { … }

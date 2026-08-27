@@ -42,6 +42,10 @@ var coreVerbs = []verb{
 		_, err := r.GetAll(ctx)
 		return err
 	}},
+	{name: "First", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+		_, err := r.First(ctx)
+		return err
+	}},
 	{name: "Count", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Count(ctx)
 		return err
@@ -55,7 +59,11 @@ var coreVerbs = []verb{
 		return err
 	}},
 	{name: "Save", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
-		return r.Save(ctx, &Doc{Title: "a"})
+		_, err := r.Save(ctx, &Doc{Title: "a"})
+		return err
+	}},
+	{name: "SaveOnly", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+		return r.SaveOnly(ctx, &Doc{Title: "a"})
 	}},
 	{name: "SaveAll", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
 		return r.SaveAll(ctx, []*Doc{{Title: "a"}})

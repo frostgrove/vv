@@ -1,7 +1,10 @@
 # crud — контракт
 
 ```go
-import "github.com/frostgrove/vv/crud"
+import (
+    "github.com/frostgrove/vv/crud"
+    "github.com/frostgrove/vv/utils"
+)
 ```
 
 **Модуль:** корневой · **Зависит от:** стандартной библиотеки и ничего больше
@@ -12,9 +15,10 @@ import "github.com/frostgrove/vv/crud"
 SQL здесь никто не выполняет — этим занимается `crud/sqlrepo` — и здесь не знают,
 что такое транспорт.
 
-**Импортируйте его напрямую, когда** пишете фильтры, держите `crud.Opt`,
-подключаете чужую транзакцию или реализуете адаптер. Основная часть кода
-приложения трогает только `crud.Where`, `crud.Opt`, `crud.Page` и мало что ещё.
+**Импортируйте его напрямую, когда** пишете фильтры, подключаете чужую
+транзакцию или реализуете адаптер. Трёхсостояние и маленькие generic-хелперы
+лежат в `github.com/frostgrove/vv/utils`; основной код приложения трогает
+`crud.Where`, `utils.Opt`, `utils.Ptr` и `crud.Page`.
 
 ---
 
@@ -23,7 +27,7 @@ SQL здесь никто не выполняет — этим занимает�
 | | |
 |---|---|
 | **Метаданные модели** | теги `db` и `rel` превращаются в `Schema`, `Meta` и граф связей, вычисляемый один раз |
-| **`Opt[T]`** | три состояния — undefined, null, set — чтобы PATCH мог отличить "оставить как есть" от "очистить" |
+| **`utils.Opt[T]`** | три состояния — undefined, null, set — чтобы PATCH мог отличить "оставить как есть" от "очистить" |
 | **Опции** | `Page`, `Limit`, `Where`, `OrderBy`, `Preload`, `Select`, `Distinct`, `Aggregate` и ещё четырнадцать |
 | **Предикаты** | замкнутый AST: 26 конструкторов, среди них `And`/`Or`/`Not`, пути через связи на любую глубину |
 | **Пагинация** | `PaginatedResponse[T]`, постраничная пагинация по offset и по курсору поверх кортежа сортировки |
@@ -45,7 +49,7 @@ type User struct {
     ID        int64         `db:"id,pk,auto"`
     TenantID  int64         `db:"tenant_id,immutable"`
     Email     string        `db:"email"`
-    Age       crud.Opt[int] `db:"age"`
+    Age       utils.Opt[int] `db:"age"`
     Version   int           `db:"version,version"`
     CreatedAt time.Time     `db:"created_at,generated"`
 }
@@ -62,35 +66,41 @@ type User struct {
 | `-` | полностью игнорировать поле |
 
 Встроенные структуры разворачиваются в плоский список. `time.Time`,
-`sql.Null[T]`, `crud.Opt[T]` и всё, что реализует `Valuer`/`Scanner`, считаются
+`sql.Null[T]`, `utils.Opt[T]` и всё, что реализует `Valuer`/`Scanner`, считаются
 одной колонкой. **Поля-структуры без тега `rel` пропускаются** — не становятся
 ни колонкой, ни связью, что и требуется для вычисляемого поля.
 
 `SchemaOf[M]()`, `MustSchemaOf[M]()` и `NewMeta[M](table)` строят метаданные
 вручную, если это нужно; `sqlrepo.Define` делает это за вас и валидирует сразу.
 
-## `Opt[T]` — три состояния, один тип
+## `utils.Opt[T]` — три состояния, один тип
 
 Именно из-за него PATCH вообще работает.
 
 ```go
-crud.Undefined[int]()   // отсутствует в payload   → не записывается
-crud.Null[int]()        // явный null              → SET col = NULL
-crud.Set(31)            // значение                → SET col = 31
-crud.FromPtr(p)         // nil → null, иначе set
+utils.Undefined[int]()   // отсутствует в payload   → не записывается
+utils.Null[int]()        // явный null              → SET col = NULL
+utils.Set(31)            // значение                → SET col = 31
+utils.FromPtr(p)         // nil → null, иначе set
 ```
 
 ```go
-o.Defined()   // либо null, либо set?
-o.Valid()     // set?
+o.IsDefined() // либо null, либо set?
+o.IsSet()     // set?
 o.Get()       // (T, bool)
-o.OrZero()    // T
+o.OrElse(def) // T
 o.Ptr()       // *T
 ```
 
 Сериализуется как голое значение, либо как `null`, и исчезает под `omitzero`.
 На проводе это значит, что одна и та же структура корректно сериализуется в
 обе стороны ([[UC-003]]).
+
+`utils.Ptr(v)` — короткий конструктор указателя для PATCH DTO, а
+`utils.Must(v, err)` возвращает `v` или паникует на границе декларации.
+`crud.Opt`, `crud.Set`, `crud.Null` и остальные имена остаются алиасами для
+совместимости; в новом коде используйте `utils`, чтобы модели, транспорт и
+валидация не зависели от CRUD только ради optional-значения.
 
 ## Опции
 

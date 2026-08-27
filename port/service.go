@@ -209,10 +209,7 @@ func (s *DefaultService[M, ID, U]) Create(ctx context.Context, cmd CreateCommand
 			return zero, err
 		}
 	}
-	if err := s.repo.Save(ctx, &m); err != nil {
-		return zero, err
-	}
-	return m, nil
+	return s.repo.Save(ctx, &m)
 }
 
 // Update implements [Service].
@@ -255,10 +252,7 @@ func (s *DefaultService[M, ID, U]) Replace(ctx context.Context, cmd ReplaceComma
 			return zero, err
 		}
 	}
-	if err := s.repo.Save(ctx, &m); err != nil {
-		return zero, err
-	}
-	return m, nil
+	return s.repo.Save(ctx, &m)
 }
 
 // Delete implements [Service]. Removing nothing is crud.ErrNotFound: the caller

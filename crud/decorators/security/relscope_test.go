@@ -215,7 +215,7 @@ func TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate(t *testing.T) {
 		crudtest.Rows(folderRow(1, 7, "after", 3)),  // conditional UPDATE RETURNING
 	)
 	f := Folder{ID: 1, TenantID: 7, Name: "after", OwnerID: 3}
-	if err := folders(rec, policy).Save(ctx, &f); err != nil {
+	if _, err := folders(rec, policy).Save(ctx, &f); err != nil {
 		t.Fatal(err)
 	}
 	sql := rec.Last().SQL

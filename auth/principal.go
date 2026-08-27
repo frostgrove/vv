@@ -35,7 +35,7 @@ type Principal interface {
 
 	// Attr is everything else the provider knew: a tenant, an organisation, an
 	// email. The second result separates absent from present-and-nil, which is
-	// the same distinction crud.Opt draws for a column ([[D-002]]).
+	// the same distinction utils.Opt draws for a column ([[D-002]]).
 	Attr(name string) (any, bool)
 }
 

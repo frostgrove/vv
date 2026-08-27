@@ -237,11 +237,31 @@ func TestMaxLimitClamps(t *testing.T) {
 	}
 }
 
+func TestFirstUsesReadOptionsAndReturnsNotFound(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
+	u, err := Users.Bind(rec).First(context.Background(),
+		crud.Where(crud.Eq("TenantID", int64(3))), crud.OrderBy(crud.Desc("Name")), crud.Limit(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ID != 9 {
+		t.Fatalf("First returned %+v", u)
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users" WHERE "tenant_id" = $1 ORDER BY "name" DESC, "id" ASC LIMIT 1`)
+
+	_, err = Users.Bind(crudtest.Postgres().Push(crudtest.Rows())).First(context.Background())
+	if !errors.Is(err, crud.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSaveInsertsWithGeneratedKeyOnPostgres(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
 	u := User{Email: "n@x", Name: "New", Age: crud.Set(18), TenantID: 3}
 
-	if err := Users.Bind(rec).Save(context.Background(), &u); err != nil {
+	saved, err := Users.Bind(rec).Save(context.Background(), &u)
+	if err != nil {
 		t.Fatal(err)
 	}
 	st := rec.Last()
@@ -251,8 +271,25 @@ func TestSaveInsertsWithGeneratedKeyOnPostgres(t *testing.T) {
 	if len(st.Args) != 4 {
 		t.Fatalf("args = %v", st.Args)
 	}
-	if u.ID != 9 || !u.CreatedAt.Equal(now) {
-		t.Fatalf("model not refreshed from RETURNING: %+v", u)
+	if saved.ID != 9 || !saved.CreatedAt.Equal(now) {
+		t.Fatalf("returned model is not from RETURNING: %+v", saved)
+	}
+	if u.ID != 0 || !u.CreatedAt.IsZero() {
+		t.Fatalf("Save mutated its argument: %+v", u)
+	}
+}
+
+func TestSaveOnlyWritesWithoutReturningOrMutation(t *testing.T) {
+	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+	u := User{Email: "n@x", Name: "New", Age: crud.Set(18), TenantID: 3}
+
+	if err := Users.Bind(rec).SaveOnly(context.Background(), &u); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, rec.Last().SQL,
+		`INSERT INTO "users" ("email", "name", "age", "tenant_id") VALUES ($1, $2, $3, $4)`)
+	if u.ID != 0 || !u.CreatedAt.IsZero() {
+		t.Fatalf("SaveOnly mutated its argument: %+v", u)
 	}
 }
 
@@ -260,7 +297,7 @@ func TestSaveUpsertsWhenKeyIsSet(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
 	u := User{ID: 9, Email: "n@x", Name: "New", Age: crud.Set(18), TenantID: 3}
 
-	if err := Users.Bind(rec).Save(context.Background(), &u); err != nil {
+	if _, err := Users.Bind(rec).Save(context.Background(), &u); err != nil {
 		t.Fatal(err)
 	}
 	wantSQL(t, rec.Last().SQL,
@@ -276,7 +313,8 @@ func TestSaveOnMySQLUsesLastInsertID(t *testing.T) {
 		Push(crudtest.Rows(userRow(77, "n@x", "New", 18, 3)))
 
 	u := User{Email: "n@x", Name: "New", Age: crud.Set(18), TenantID: 3}
-	if err := Users.Bind(rec).Save(context.Background(), &u); err != nil {
+	saved, err := Users.Bind(rec).Save(context.Background(), &u)
+	if err != nil {
 		t.Fatal(err)
 	}
 	wantSQL(t, mustSQL(t, rec, 0).SQL,
@@ -284,8 +322,11 @@ func TestSaveOnMySQLUsesLastInsertID(t *testing.T) {
 	// created_at is `generated`, so MySQL has to read the row back.
 	wantSQL(t, mustSQL(t, rec, 1).SQL,
 		"SELECT `id`, `email`, `name`, `age`, `tenant_id`, `created_at` FROM `users` WHERE `id` = ? LIMIT 1")
-	if u.ID != 77 {
-		t.Fatalf("id = %d, want 77", u.ID)
+	if saved.ID != 77 {
+		t.Fatalf("id = %d, want 77", saved.ID)
+	}
+	if u.ID != 0 {
+		t.Fatalf("Save mutated its argument: %+v", u)
 	}
 }
 
@@ -299,23 +340,26 @@ func TestSaveOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 		Push(crudtest.Rows([]any{"abc", "what the table actually holds"}))
 
 	d := Doc{ID: "abc", Title: "what the caller asked for"}
-	if err := Docs.Bind(rec).Save(context.Background(), &d); err != nil {
+	saved, err := Docs.Bind(rec).Save(context.Background(), &d)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	wantSQL(t, mustSQL(t, rec, 0).SQL,
 		"INSERT INTO `docs` (`id`, `title`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `title` = VALUES(`title`)")
 	wantSQL(t, mustSQL(t, rec, 1).SQL, "SELECT `id`, `title` FROM `docs` WHERE `id` = ? LIMIT 1")
-	if d.Title != "what the table actually holds" {
-		t.Fatalf("the model still says %q after Save; it has to describe the stored row, "+
-			"or the same handler serialises a different document per engine", d.Title)
+	if saved.Title != "what the table actually holds" {
+		t.Fatalf("Save returned %q, want the stored value", saved.Title)
+	}
+	if d.Title != "what the caller asked for" {
+		t.Fatalf("Save mutated its argument to %q", d.Title)
 	}
 }
 
 func TestSaveRequiresAssignedKeyWhenNotGenerated(t *testing.T) {
 	rec := crudtest.Postgres()
 	d := Doc{Title: "no id"}
-	if err := Docs.Bind(rec).Save(context.Background(), &d); !errors.Is(err, crud.ErrMissingID) {
+	if _, err := Docs.Bind(rec).Save(context.Background(), &d); !errors.Is(err, crud.ErrMissingID) {
 		t.Fatalf("err = %v, want ErrMissingID", err)
 	}
 }

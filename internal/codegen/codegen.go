@@ -90,6 +90,7 @@ type generator struct {
 	binding  string
 	specsPkg string
 	crudPkg  string
+	utilsPkg string
 	portPkg  string
 	errsPkg  string
 	netPkg   string
@@ -333,12 +334,14 @@ func exprString(e ast.Expr) string {
 
 func (f field) isRelation() bool { return f.Rel != "" && f.Rel != "-" }
 
-// elem strips *T and crud.Opt[T] down to T, reporting whether the column is
-// nullable.
+// elem strips *T and either compatibility crud.Opt[T] or canonical
+// utils.Opt[T] down to T, reporting whether the column is nullable.
 func elem(typ string) (string, bool) {
 	typ = strings.TrimSpace(typ)
-	if inner, ok := cutGeneric(typ, "crud.Opt"); ok {
-		return inner, true
+	for _, name := range []string{"utils.Opt", "crud.Opt"} {
+		if inner, ok := cutGeneric(typ, name); ok {
+			return inner, true
+		}
 	}
 	if strings.HasPrefix(typ, "*") {
 		return strings.TrimPrefix(typ, "*"), true
@@ -388,7 +391,7 @@ func attrType(specsPkg, model, typ string) string {
 func dtoType(typ string) string {
 	e, nullable := elem(typ)
 	if nullable {
-		return "crud.Opt[" + e + "]"
+		return "utils.Opt[" + e + "]"
 	}
 	return "*" + e
 }
@@ -511,11 +514,12 @@ type Options struct {
 	Binding   string // which transport the wiring is written for: "net" or "none"
 	SpecsPkg  string
 	CrudPkg   string
+	UtilsPkg  string
 
 	// The adapter half names three more packages than the DTO half does, and
 	// they are fields rather than flags. -crud and -specs exist because a
 	// consumer may point the generated file at a vendored copy of those two;
-	// nobody has asked for the same over these, and five import-path flags is
+	// nobody has asked for the same over these, and six import-path flags is
 	// five ways to produce a file that does not compile.
 	PortPkg string
 	ErrsPkg string
@@ -527,9 +531,10 @@ type Options struct {
 
 // The packages the adapter half names. See Options.
 const (
-	DefaultPortPkg = "github.com/frostgrove/vv/port"
-	DefaultErrsPkg = "github.com/frostgrove/vv/errs"
-	DefaultNetPkg  = "github.com/frostgrove/vv/crud/http/crudnet"
+	DefaultPortPkg  = "github.com/frostgrove/vv/port"
+	DefaultErrsPkg  = "github.com/frostgrove/vv/errs"
+	DefaultNetPkg   = "github.com/frostgrove/vv/crud/http/crudnet"
+	DefaultUtilsPkg = "github.com/frostgrove/vv/utils"
 )
 
 // Run generates from o and writes the result. The output path is Out resolved
@@ -580,6 +585,7 @@ func Run(o Options) error {
 		binding:  binding,
 		specsPkg: o.SpecsPkg,
 		crudPkg:  o.CrudPkg,
+		utilsPkg: cmpOr(o.UtilsPkg, DefaultUtilsPkg),
 		portPkg:  cmpOr(o.PortPkg, DefaultPortPkg),
 		errsPkg:  cmpOr(o.ErrsPkg, DefaultErrsPkg),
 		netPkg:   cmpOr(o.NetPkg, DefaultNetPkg),

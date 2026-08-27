@@ -78,9 +78,9 @@ func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) 
 	return 0, f.err
 }
 
-func (f *fakeRepo) Save(_ context.Context, m *widget) error {
+func (f *fakeRepo) Save(_ context.Context, m *widget) (widget, error) {
 	f.calls = append(f.calls, call{method: "Save", model: *m})
-	return f.err
+	return *m, f.err
 }
 
 func (f *fakeRepo) Update(_ context.Context, id int64, dto widgetUpdate, _ ...crud.Option) (widget, error) {

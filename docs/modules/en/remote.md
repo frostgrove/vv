@@ -52,8 +52,10 @@ the one you already know:
 | `Get(ctx, opts...)` | `POST /query` · `List` |
 | `GetAll(ctx, opts...)` | every matching row (or the requested explicit subset); cursor-edge walks make remote page/offset caps chunking controls rather than a truncated success. Cursorless and DISTINCT-without-PK shapes still need a sufficient `MaxOffset`. |
 | `GetByID(ctx, id, opts...)` | direct: `GET /{id}` · `Get`; root filter or narrowed/capped preload: `POST /query` · `List` with the primary-key equality |
+| `First(ctx, opts...)` | `List` with a one-row page; returns `crud.ErrNotFound` when empty |
 | `Count(ctx, opts...)` | `POST /count` · `Count` |
-| `Save(ctx, *m)` | `POST /` when the key is unset, `PUT /{id}` when it is set |
+| `Save(ctx, *m)` | `POST /` when the key is unset, `PUT /{id}` when it is set; returns the stored model without mutating `m` |
+| `SaveOnly(ctx, *m)` | the same create/replace request, discarding the entity response and leaving `m` unchanged |
 | `Update(ctx, id, dto)` | `PATCH /{id}` · `Update` |
 | `Delete(ctx, id)` | `DELETE /{id}` · `Delete` |
 | `Delete(ctx, ids...)` | `POST /bulk-delete` · `BulkDelete` |
@@ -181,7 +183,7 @@ option is the one failure a caller cannot see:
 
 ## Patch DTOs
 
-Use the one `cmd/vv` generates. A hand-written DTO whose `crud.Opt` fields
+Use the one `cmd/vv` generates. A hand-written DTO whose `utils.Opt` fields
 lack `omitzero` marshals an undefined value as `null`, so a patch of one column
 would empty every other nullable column in the row. `remote.New` refuses such a
 DTO at start-up rather than letting it reach a database.
@@ -190,7 +192,7 @@ DTO at start-up rather than letting it reach a database.
 type ArticleInput struct {
     Title *string          `json:"title,omitempty"`
     Views *int             `json:"views,omitempty"`
-    Note  crud.Opt[string] `json:"note,omitzero"`   // this tag is load-bearing
+    Note  utils.Opt[string] `json:"note,omitzero"`   // this tag is load-bearing
 }
 ```
 

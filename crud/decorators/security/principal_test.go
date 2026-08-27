@@ -166,7 +166,7 @@ func TestScopeAttrNarrowsInSQLAndFreezesTheColumn(t *testing.T) {
 	t.Run("a create into another tenant is refused", func(t *testing.T) {
 		rec := crudtest.Postgres()
 		d := Doc{TenantID: 9, Title: "x"}
-		if err := bound(rec, policy).Save(as(editor), &d); !errors.Is(err, crud.ErrForbidden) {
+		if _, err := bound(rec, policy).Save(as(editor), &d); !errors.Is(err, crud.ErrForbidden) {
 			t.Fatalf("a create into another tenant answered %v, want a denial", err)
 		}
 		if len(rec.Statements()) != 0 {
@@ -177,7 +177,7 @@ func TestScopeAttrNarrowsInSQLAndFreezesTheColumn(t *testing.T) {
 	t.Run("control: a create into the caller's own tenant is allowed", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "x")))
 		d := Doc{TenantID: 7, Title: "x"}
-		if err := bound(rec, policy).Save(as(editor), &d); err != nil {
+		if _, err := bound(rec, policy).Save(as(editor), &d); err != nil {
 			t.Fatalf("a create into the caller's own tenant was refused: %v", err)
 		}
 	})

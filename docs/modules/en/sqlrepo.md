@@ -20,7 +20,7 @@ type User struct {
     TenantID  int64         `db:"tenant_id,immutable"`
     Email     string        `db:"email"`
     Name      string        `db:"name"`
-    Age       crud.Opt[int] `db:"age"`
+    Age       utils.Opt[int] `db:"age"`
     CreatedAt time.Time     `db:"created_at,generated"`
 }
 
@@ -28,7 +28,7 @@ type User struct {
 type UserUpdate struct {
     Email *string
     Name  *string
-    Age   crud.Opt[int]
+    Age   utils.Opt[int]
 }
 
 var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
@@ -50,8 +50,10 @@ skip the blueprint and go straight to a bound repository.
 | `GetByID(ctx, id, opts...)` | one row, or `crud.ErrNotFound` |
 | `Get(ctx, opts...)` | `crud.PaginatedResponse[M]` |
 | `GetAll(ctx, opts...)` | every match; unpaged unless an option says otherwise |
-| `Save(ctx, *M)` | JPA semantics: no key → INSERT, key → UPSERT. The model is refreshed in place |
-| `SaveAll(ctx, []*M)` | the same write, batched into one statement |
+| `First(ctx, opts...)` | first matching row, or `crud.ErrNotFound` |
+| `Save(ctx, *M)` | no key → INSERT, key → UPSERT; returns a new stored model and leaves its argument unchanged |
+| `SaveOnly(ctx, *M)` | the same write with no stored-row result and no argument mutation |
+| `SaveAll(ctx, []*M)` | write-only batch insert/upsert; never mutates its models |
 | `Update(ctx, id, dto, opts...)` | load, diff, write only what changed |
 | `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns rows touched |
 | `Delete(ctx, ids...)` | returns how many rows went away |
@@ -61,20 +63,24 @@ skip the blueprint and go straight to a bound repository.
 | `Tx(ctx, fn)` | run in a transaction, joining one already in `ctx` |
 | `Meta()` | the bound schema and table |
 
-### Save is JPA-shaped
+### Save returns the stored row
 
 A zero primary key means `INSERT`. A non-zero one means `UPSERT` ([[D-011]]).
 
-A `db:",auto"` key is left out of the column list and read back — `RETURNING` on
-PostgreSQL and SQLite, `LastInsertId` on MySQL — along with every `generated`
-column. The model you passed is refreshed in place, so `u.ID` and `u.CreatedAt`
-are filled when `Save` returns.
+A `db:",auto"` key is left out of the column list. `Save` returns a separate
+model containing the stored row — `RETURNING` on PostgreSQL and SQLite, or an
+insert/upsert followed by a read in one transaction on a dialect without it.
+That includes every `generated` column and trigger normalisation; the `*M` you
+passed is never changed.
 
-`SaveAll` batches into one statement and reads every key back in order
-([[UC-008]]). It is an `INSERT` on every adapter: a driver's bulk-copy path is
-never reached for, because it takes its own handle and would step outside a
-transaction the caller opened. pgx's `COPY` is there as `crud.BulkInserter`, for
-an application that asks for it directly.
+`SaveOnly` performs only the write. It does not append `RETURNING`, does not
+fetch a model and does not mutate its argument. Use it for writes whose
+generated values are irrelevant.
+
+`SaveAll` is likewise write-only. It is an `INSERT` on every adapter: a
+driver's bulk-copy path is never reached for, because it takes its own handle
+and would step outside a transaction the caller opened. pgx's `COPY` is there
+as `crud.BulkInserter`, for an application that asks for it directly.
 
 ### Update is load, diff, write
 
@@ -199,7 +205,7 @@ explicit generics. Writing your own is an embedded interface and one method:
 ```go
 type auditing struct{ crud.Core[User, int64] }
 
-func (a auditing) Save(ctx context.Context, u *User) error {
+func (a auditing) Save(ctx context.Context, u *User) (User, error) {
     log.Println("saving", u.Email)
     return a.Core.Save(ctx, u)
 }

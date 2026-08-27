@@ -18,7 +18,7 @@ type Repository[M any, ID comparable, U any] interface {
 	GetByID(ctx context.Context, id ID, opts ...crud.Option) (M, error)
 	Get(ctx context.Context, opts ...crud.Option) (crud.PaginatedResponse[M], error)
 	GetAll(ctx context.Context, opts ...crud.Option) ([]M, error)
-	Save(ctx context.Context, m *M) error
+	Save(ctx context.Context, m *M) (M, error)
 	Update(ctx context.Context, id ID, dto U, opts ...crud.Option) (M, error)
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	Count(ctx context.Context, opts ...crud.Option) (int64, error)

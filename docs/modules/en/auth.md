@@ -59,7 +59,7 @@ p := auth.Claims{
 }
 ```
 
-`Attr` separates absent from present-and-nil, the same distinction `crud.Opt`
+`Attr` separates absent from present-and-nil, the same distinction `utils.Opt`
 draws for a column.
 
 ## Roles and permissions

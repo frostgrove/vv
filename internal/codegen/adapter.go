@@ -54,6 +54,9 @@ func (g *generator) renderAdapter(m *model) (string, used, error) {
 		if strings.Contains(f.Type, "crud.Opt[") {
 			u.crud = true
 		}
+		if strings.Contains(f.Type, "utils.Opt[") {
+			u.utils = true
+		}
 		if strings.Contains(f.Type, "time.Time") {
 			u.time = true
 		}

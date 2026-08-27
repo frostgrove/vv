@@ -57,7 +57,7 @@ ctx = crud.WithExecutor(ctx, crudsql.From(tx))
 ```go
 err := gormDB.Transaction(func(tx *gorm.DB) error {
     ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
-    return users.Save(ctx, &u)
+    return users.SaveOnly(ctx, &u)
 })
 ```
 

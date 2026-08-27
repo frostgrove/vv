@@ -25,8 +25,8 @@ func (s *settings) set(op string, h probe.Handler) {
 	s.byOp[op] = h
 }
 
-// WithProbe wires a handler onto the verbs it is worth paying for: Save and
-// Update, the two single-row writes.
+// WithProbe wires a handler onto every single-row write: Save, SaveOnly and
+// Update.
 //
 // The bulk verbs and everything else keep the cheap answer. A batch is where the
 // cost multiplies and where a client is least likely to be a form, so
@@ -34,12 +34,13 @@ func (s *settings) set(op string, h probe.Handler) {
 func WithProbe(h probe.Handler) Option {
 	return func(s *settings) {
 		s.set("Save", h)
+		s.set("SaveOnly", h)
 		s.set("Update", h)
 	}
 }
 
 // WithProbeFor wires a handler onto one verb, by the name the fault's Op
-// carries: "Save", "SaveAll", "Update", "UpdateAll", "Delete", "DeleteAll".
+// carries: "Save", "SaveOnly", "SaveAll", "Update", "UpdateAll", "Delete", "DeleteAll".
 //
 // Order matters against [WithProbe], which sets two verbs at once: the last
 // option wins, so put the narrower one second.

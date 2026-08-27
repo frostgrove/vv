@@ -546,10 +546,11 @@ type widgetService struct {
 	saved bool
 }
 
-func (s *widgetService) Save(ctx context.Context, w *Widget) error {
+func (s *widgetService) Save(ctx context.Context, w *Widget) (Widget, error) {
 	s.saved = true
-	w.Name = strings.ToUpper(w.Name)
-	return s.fakeRepo.Save(ctx, w)
+	copy := *w
+	copy.Name = strings.ToUpper(copy.Name)
+	return s.fakeRepo.Save(ctx, &copy)
 }
 
 // A request body that is not the model reaches the repository as the model,

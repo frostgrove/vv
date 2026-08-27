@@ -288,6 +288,14 @@ type ScopedSaver[M any, ID comparable] interface {
 	SaveScoped(ctx context.Context, m *M, save ScopedSave[M]) error
 }
 
+// ScopedSaveOnlyer is ScopedSaver's write-only counterpart. A security gate
+// uses it when the caller chose SaveOnly: retaining the guarded conditional
+// statement matters, but reading the row back would violate that API's
+// contract.
+type ScopedSaveOnlyer[M any, ID comparable] interface {
+	SaveScopedOnly(ctx context.Context, m *M, save ScopedSave[M]) error
+}
+
 // SaveScopedOf calls ScopedSaver only on the core it was handed. It deliberately
 // does not walk Nexter: a decorator may enforce authorisation, validation or
 // auditing on Save, and tunnelling through it to an inner storage capability
@@ -299,6 +307,16 @@ type ScopedSaver[M any, ID comparable] interface {
 func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool) {
 	if s, ok := c.(ScopedSaver[M, ID]); ok {
 		return s.SaveScoped(ctx, m, save), true
+	}
+	return nil, false
+}
+
+// SaveScopedOnlyOf calls the write-only conditional-save capability when the
+// core deliberately exposes it. Like SaveScopedOf, it never walks through a
+// decorator that did not explicitly forward the capability.
+func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool) {
+	if s, ok := c.(ScopedSaveOnlyer[M, ID]); ok {
+		return s.SaveScopedOnly(ctx, m, save), true
 	}
 	return nil, false
 }
