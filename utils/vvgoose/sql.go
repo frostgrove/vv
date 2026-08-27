@@ -12,39 +12,110 @@ import (
 
 func renderMigration(engine vvdb.Engine, table string, model *modelscan.Model) ([]byte, error) {
 	if model == nil || len(model.Fields) == 0 {
-		return []byte(fmt.Sprintf(`-- +goose Up
+		return renderEmptyMigration(table), nil
+	}
+	copy := *model
+	if copy.Table == "" {
+		copy.Table = table
+	}
+	return renderModelsMigration(engine, []modelscan.Model{copy})
+}
+
+func renderEmptyMigration(name string) []byte {
+	return []byte(fmt.Sprintf(`-- +goose Up
 -- Write the forward migration for %s here.
 
 -- +goose Down
 -- Write the rollback migration for %s here.
-`, table, table)), nil
+`, name, name))
+}
+
+// renderModelsMigration puts every supplied model into one Goose migration.
+// Downs run in reverse creation order, which is the safe order once a model
+// starts declaring foreign keys.
+func renderModelsMigration(engine vvdb.Engine, models []modelscan.Model) ([]byte, error) {
+	if len(models) == 0 {
+		return nil, fmt.Errorf("vvgoose: no models were selected")
 	}
 
+	up := make([]string, 0, len(models))
+	down := make([]string, 0, len(models))
+	for _, model := range models {
+		if len(model.Fields) == 0 {
+			return nil, fmt.Errorf("vvgoose: model %s has no mapped columns", model.Label())
+		}
+		create, drop, err := renderTableStatements(engine, model.Table, &model)
+		if err != nil {
+			return nil, err
+		}
+		up = append(up, create)
+		down = append(down, drop)
+	}
+
+	var out bytes.Buffer
+	fmt.Fprintln(&out, "-- +goose Up")
+	fmt.Fprintln(&out, strings.Join(up, "\n\n"))
+	fmt.Fprintln(&out)
+	fmt.Fprintln(&out, "-- +goose Down")
+	for i := len(down) - 1; i >= 0; i-- {
+		fmt.Fprintln(&out, down[i])
+	}
+	return out.Bytes(), nil
+}
+
+func renderTableStatements(engine vvdb.Engine, table string, model *modelscan.Model) (create, drop string, err error) {
 	quotedTable := quoteQualified(engine, table)
 	if quotedTable == "" {
-		return nil, fmt.Errorf("vvgoose: table %q is not a valid identifier", table)
+		return "", "", fmt.Errorf("vvgoose: table %q is not a valid identifier", table)
 	}
 	primaryKeys := make([]modelscan.Field, 0, 1)
+	autoPrimaryKeys := 0
 	for _, field := range model.Fields {
 		if field.PrimaryKey {
 			primaryKeys = append(primaryKeys, field)
+			if field.Auto {
+				autoPrimaryKeys++
+			}
 		}
 	}
 	compositePrimaryKey := len(primaryKeys) > 1
+	if autoPrimaryKeys > 1 {
+		return "", "", fmt.Errorf("vvgoose: %s has more than one auto primary-key field", model.Name)
+	}
+	if compositePrimaryKey && autoPrimaryKeys > 0 && engine == vvdb.SQLite {
+		return "", "", fmt.Errorf("vvgoose: %s has an auto field in a composite primary key, which SQLite cannot represent", model.Name)
+	}
+	if compositePrimaryKey && autoPrimaryKeys == 1 && (engine == vvdb.MySQL || engine == vvdb.MariaDB) {
+		// InnoDB requires an AUTO_INCREMENT column to be the first column of
+		// an index. Moving only the table constraint preserves the source column
+		// order while keeping the same composite-key uniqueness semantics.
+		ordered := make([]modelscan.Field, 0, len(primaryKeys))
+		for _, field := range primaryKeys {
+			if field.Auto {
+				ordered = append(ordered, field)
+			}
+		}
+		for _, field := range primaryKeys {
+			if !field.Auto {
+				ordered = append(ordered, field)
+			}
+		}
+		primaryKeys = ordered
+	}
 	columns := make([]string, 0, len(model.Fields)+1)
 	seen := make(map[string]bool, len(model.Fields))
 	for _, field := range model.Fields {
 		if field.Column == "" {
-			return nil, fmt.Errorf("vvgoose: %s.%s has an empty database column", model.Name, field.Name)
+			return "", "", fmt.Errorf("vvgoose: %s.%s has an empty database column", model.Name, field.Name)
 		}
 		folded := strings.ToLower(field.Column)
 		if seen[folded] {
-			return nil, fmt.Errorf("vvgoose: %s maps more than one field to column %q", model.Name, field.Column)
+			return "", "", fmt.Errorf("vvgoose: %s maps more than one field to column %q", model.Name, field.Column)
 		}
 		seen[folded] = true
 		definition, err := renderColumn(engine, field, !compositePrimaryKey)
 		if err != nil {
-			return nil, fmt.Errorf("vvgoose: %s.%s: %w", model.Name, field.Name, err)
+			return "", "", fmt.Errorf("vvgoose: %s.%s: %w", model.Name, field.Name, err)
 		}
 		columns = append(columns, "    "+definition)
 	}
@@ -53,22 +124,14 @@ func renderMigration(engine vvdb.Engine, table string, model *modelscan.Model) (
 		for _, field := range primaryKeys {
 			name := quoteIdentifier(engine, field.Column)
 			if name == "" {
-				return nil, fmt.Errorf("vvgoose: composite primary key column %q is not a valid identifier", field.Column)
+				return "", "", fmt.Errorf("vvgoose: composite primary key column %q is not a valid identifier", field.Column)
 			}
 			quoted = append(quoted, name)
 		}
 		columns = append(columns, "    PRIMARY KEY ("+strings.Join(quoted, ", ")+")")
 	}
 
-	var out bytes.Buffer
-	fmt.Fprintln(&out, "-- +goose Up")
-	fmt.Fprintf(&out, "CREATE TABLE %s (\n", quotedTable)
-	fmt.Fprintln(&out, strings.Join(columns, ",\n"))
-	fmt.Fprintln(&out, ");")
-	fmt.Fprintln(&out)
-	fmt.Fprintln(&out, "-- +goose Down")
-	fmt.Fprintf(&out, "DROP TABLE IF EXISTS %s;\n", quotedTable)
-	return out.Bytes(), nil
+	return "CREATE TABLE " + quotedTable + " (\n" + strings.Join(columns, ",\n") + "\n);", "DROP TABLE IF EXISTS " + quotedTable + ";", nil
 }
 
 func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bool) (string, error) {
@@ -84,6 +147,9 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 	if typ == "" {
 		return "", fmt.Errorf("cannot map Go type %q", field.GoType)
 	}
+	if field.Auto && !integer {
+		return "", fmt.Errorf("auto column has non-integer Go type %q", fieldType)
+	}
 
 	if field.PrimaryKey && field.Auto && integer && engine == vvdb.Postgres && typ == "NUMERIC(20)" {
 		// PostgreSQL identity sequences do not support NUMERIC. Go's uint is
@@ -96,7 +162,7 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 		typ = "VARCHAR(255)"
 	}
 	parts := []string{name, typ}
-	if field.PrimaryKey && inlinePrimaryKey && field.Auto && integer {
+	if field.PrimaryKey && field.Auto && integer && (inlinePrimaryKey || engine != vvdb.SQLite) {
 		switch engine {
 		case vvdb.Postgres:
 			parts = append(parts, "GENERATED BY DEFAULT AS IDENTITY")
@@ -124,6 +190,15 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 }
 
 func modelFieldType(field modelscan.Field) string {
+	// UUID and Decimal are semantic scalar names, not merely their Go storage
+	// representation. Preserve those exact names before resolving a local
+	// declaration such as `type UUID [16]byte` to array/JSON SQL.
+	for _, sourceType := range []string{field.CanonicalType, field.GoType} {
+		switch semantic := baseGoType(sourceType); semantic {
+		case "uuid.UUID", "decimal.Decimal":
+			return semantic
+		}
+	}
 	if field.UnderlyingType != "" {
 		return field.UnderlyingType
 	}

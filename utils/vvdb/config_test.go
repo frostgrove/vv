@@ -113,6 +113,8 @@ func TestMigrationConfigurationRefusesBlankPathsAndSQLSyntaxAsHistoryTable(t *te
 		{"leading digit", vvdb.Migration{Table: "2goose"}, vvdb.ErrUnsupported, "migration.table"},
 		{"upper case", vvdb.Migration{Table: "GooseVersions"}, vvdb.ErrUnsupported, "migration.table"},
 		{"reserved word", vvdb.Migration{Table: "table"}, vvdb.ErrUnsupported, "migration.table"},
+		{"dialect keyword returning", vvdb.Migration{Table: "returning"}, vvdb.ErrUnsupported, "migration.table"},
+		{"dialect keyword nothing", vvdb.Migration{Table: "nothing"}, vvdb.ErrUnsupported, "migration.table"},
 		{"punctuation", vvdb.Migration{Table: "goose-version"}, vvdb.ErrUnsupported, "migration.table"},
 		{"empty qualifier", vvdb.Migration{Table: "public..goose"}, vvdb.ErrUnsupported, "migration.table"},
 		{"too many qualifiers", vvdb.Migration{Table: "cluster.public.goose"}, vvdb.ErrUnsupported, "migration.table"},

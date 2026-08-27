@@ -1,6 +1,6 @@
 # FL-022 — A migration command becomes SQL and schema
 
-**Entry point:** `utils/vvgoose/vvgoose.go:Migrate`
+**Entry point:** `utils/vvgoose/vvgoose.go:Execute`
 **Implements:** [[UC-022]]
 
 One entrypoint has two deliberately separate paths. File generation parses
@@ -12,10 +12,12 @@ forward.
 ## The generation path
 
 1. **CLI dispatch** — `utils/vvgoose/vvgoose.go:newRootCommand`
-   Cobra accepts flags after positional arguments, keeps `--config-path` as a
-   hidden inherited flag, and decides whether stdin is a terminal.
+   Cobra accepts flags after positional arguments and keeps `--config-path` as
+   a hidden inherited flag. With no arguments and terminal input and output it
+   opens Huh's searchable command menu; non-terminal execution prints help.
 2. **Name and config normalization** —
-   `utils/vvgoose/migration.go:createMigration` and
+   `utils/vvgoose/migration.go:createMigration`, `:createTableMigration` and
+   `:createInitMigration`, plus
    `utils/vvgoose/vvgoose.go:normalizeConfig`
    Empty programmatic migration fields become the same path, model root and
    history table that vvcfg's tags provide.
@@ -24,12 +26,15 @@ forward.
    trees, reads structs and constant `TableName` returns, and produces stable
    candidates. It never imports application code ([[D-064]]).
 4. **Selection** — `utils/vvgoose/migration.go:chooseModel`
-   One best candidate is automatic. Equal candidates go to Huh's searchable
-   selector only for terminal input; otherwise the selected model is nil.
-5. **Dialect SQL** — `utils/vvgoose/sql.go:renderMigration`
+   `table` infers one candidate; `migration --tables` makes its table list
+   explicit; `init` includes every discovered model with mapped columns. Equal
+   candidates go to Huh's searchable selector only for terminal input.
+5. **Dialect SQL** — `utils/vvgoose/sql.go:renderMigration` and
+   `:renderModelsMigration`
    Fields become quoted columns in PostgreSQL, MySQL/MariaDB or SQLite syntax.
-   A nil or zero-field model becomes a valid statement-free Goose skeleton.
-6. **Exclusive write** — `utils/vvgoose/migration.go:writeExclusive`
+   A generic migration remains a valid statement-free Goose skeleton.
+6. **Exclusive write / init replacement** —
+   `utils/vvgoose/migration.go:writeExclusive` and `:writeInitMigration`
    The UTC timestamp and normalized name form the filename. `O_EXCL` prevents
    replacement; a collision advances the version by one second.
 
@@ -58,8 +63,10 @@ defaults, environment prefixes and raw-DSN overlay preserve that metadata.
 
 | Test | What it pins |
 |---|---|
-| `utils/vvgoose/migration_test.go:TestMigrationCommandAcceptsFlagsAfterTheNameAndDoesNotOpenTheDatabase` | exact CLI spelling, offline empty generation |
-| `utils/vvgoose/migration_test.go:TestCreateMigrationInfersColumnsFromTheOnlyMatchingModel` | unique source model to SQL |
+| `utils/vvgoose/migration_test.go:TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments` | no-argument menu and prompted generation |
+| `utils/vvgoose/migration_test.go:TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase` | generic CLI spelling and offline generation |
+| `utils/vvgoose/migration_test.go:TestTableMigrationInfersColumnsFromTheOnlyMatchingModel` | unique source model to SQL |
+| `utils/vvgoose/migration_test.go:TestInitMigrationIncludesAllModelsAndOverwritesItsOwnFile` | all-model init rendering and stable overwrite |
 | `utils/vvgoose/migration_test.go:TestGeneratedSQLiteMigrationRunsThroughGoose` | generated SQL creates the inferred columns through Goose |
 | `utils/vvgoose/migration_test.go:TestAmbiguousModelIsEmptyOutsideInteractiveMode` | deterministic non-interactive ambiguity |
 | `utils/vvgoose/internal/modelscan/modelscan_test.go` | source evidence, fields, exclusions and matching |

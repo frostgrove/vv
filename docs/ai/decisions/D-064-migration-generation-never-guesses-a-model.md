@@ -1,19 +1,20 @@
 # D-064 — Migration generation never guesses between models
 
 **Status:** accepted
-**Invariant:** Automatic migration generation uses a source model only when one
+**Invariant:** Automatic table generation uses a source model only when one
 candidate is strictly best. Equal candidates are selected by the author in an
-interactive terminal and produce an empty editable migration everywhere else.
+interactive terminal and produce an empty editable table migration outside it.
 Application source is parsed, never executed.
 
 ## The decision
 
-The migration name is evidence, not permission to pick the first similarly
-named struct found on disk. A unique table-name or type-name match may fill the
+`table` input is evidence, not permission to pick the first similarly named
+struct found on disk. A unique table-name or type-name match may fill the
 columns automatically. Equal matches are an unresolved choice: an interactive
 terminal gets a searchable selector; a non-interactive process gets a valid
 empty Goose file. `--model` makes the choice explicit and `--empty` prevents
-discovery entirely.
+discovery entirely. Generic `migration <name>` never infers a table from its
+name; `--tables` makes that request explicit.
 
 Discovery uses Go's parser over source files. It does not load packages,
 compile an unfinished application, run initializers, or call a model's
@@ -55,15 +56,14 @@ driver. The root module remains unchanged under [[D-033]].
 
 - `TestAmbiguousModelIsEmptyOutsideInteractiveMode` pins the non-interactive
   outcome with two equally named models.
-- `TestCreateMigrationInfersColumnsFromTheOnlyMatchingModel` pins the unique
+- `TestTableMigrationInfersColumnsFromTheOnlyMatchingModel` pins the unique
   automatic path and the relation exclusion.
 - `TestDiscoverSkipsTestsGeneratedFilesAndExcludedTrees` and
   `TestDiscoverUsesConstantTableNameFromAnOrdinaryFile` pin source-only
   discovery.
-- `TestMigrationCommandAcceptsFlagsAfterTheNameAndDoesNotOpenTheDatabase` pins
+- `TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase` pins
   both the empty file and the absence of a database connection.
 
 ## See also
 
 [[D-021]] [[D-033]] [[D-051]] [[FL-022]] [[UC-022]]
-

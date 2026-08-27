@@ -53,17 +53,37 @@ Defaults are `path: ./migrations`, `models: [.]`, and
 ## Commands
 
 ```text
-go run ./cmd/migrate                         # list commands
-go run ./cmd/migrate migration users        # generate SQL from model User
-go run ./cmd/migrate migration users --empty
-go run ./cmd/migrate migration users --model account.User
-go run ./cmd/migrate migration users --no-interactive
+go run ./cmd/migrate                         # open the interactive command menu
+go run ./cmd/migrate migration add_audit_log # create an editable SQL skeleton
+go run ./cmd/migrate migration init_permission_tables --tables permissions,roles
+go run ./cmd/migrate migration init_permission_tables permissions,roles
+go run ./cmd/migrate table users             # infer User and create its table migration
+go run ./cmd/migrate table users,products    # create one table migration per model
+go run ./cmd/migrate table users --empty
+go run ./cmd/migrate table users --model account.User
+go run ./cmd/migrate init                    # create or replace *_init.sql from all models
 go run ./cmd/migrate migrate
 go run ./cmd/migrate status
 go run ./cmd/migrate rollback                # one migration
 go run ./cmd/migrate rollback 3
 go run ./cmd/migrate fresh
 ```
+
+`migration <name>` is an editable Goose skeleton; it never guesses tables from
+its name. Add `-t`/`--tables permissions,roles`, or a second positional table
+list, to generate those models in that one named migration. `table` is the
+model-inference shortcut and accepts one comma-separated list, writing a
+separate migration per table.
+
+`init` renders every discovered model with mapped columns into one `*_init.sql`
+file. Re-running it replaces that file while preserving its Goose version. Do
+not replace an init migration that has already been applied to a shared
+database: Goose will not apply the same version twice.
+
+With no arguments, a terminal gets a searchable command menu for migration,
+table, init and runtime operations. A non-terminal invocation, or
+`--no-interactive`, prints help instead; every command remains directly
+addressable by arguments.
 
 `fresh` runs every known `Down` section and then every `Up` section. It does
 not drop tables that are not owned by migrations.
@@ -83,11 +103,11 @@ structs, and `gorm.Model` fields are understood; relations do not become
 columns.
 
 One matching model is automatic. When several candidates are equally likely,
-a terminal gets a searchable select. Non-interactive ambiguity creates an
-empty editable Goose skeleton. `--empty` does the same; an invalid
-`CREATE TABLE name ()` is intentionally not emitted because MySQL and SQLite
-reject it. `--model` selects a struct explicitly.
+a terminal gets a searchable select. Non-interactive ambiguity creates an empty
+editable table migration. `--empty` does the same; an invalid `CREATE TABLE
+name ()` is intentionally not emitted because MySQL and SQLite reject it.
+`--model` selects a struct explicitly for a one-table command.
 
-The `migration` command never opens the database. `migrate`, `status`,
+`migration`, `table`, and `init` never open the database. `migrate`, `status`,
 `rollback`, and `fresh` open only the primary even when a read replica is
 configured.

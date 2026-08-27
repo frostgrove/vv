@@ -18,18 +18,26 @@ equally plausible `User` structs must not turn directory order into schema.
 
 1. The application's migration entrypoint consists of loading its existing
    configuration and passing the database block to one command function.
-2. Running it with no arguments lists the available commands.
-3. `migration <name>` creates a timestamped Goose SQL file and never requires a
-   database connection.
-4. A uniquely matching Go model supplies its mapped scalar fields, primary key,
-   nullability and common SQL types; relation fields are excluded.
+2. Running it with no arguments in a terminal opens a searchable command menu
+   and asks for the selected command's inputs. Non-terminal execution and
+   `--no-interactive` list the available commands without prompting.
+3. `migration <name>` creates a timestamped editable Goose SQL file and never
+   requires a database connection. Its optional `--tables` (or second
+   positional list) makes model generation explicit in that one file.
+4. `table <name[,name...]>` is the model-inference shortcut and creates one
+   migration per requested model. A uniquely matching Go model supplies its
+   mapped scalar fields, primary key, nullability and common SQL types; relation
+   fields are excluded.
 5. When several models are equally likely, an interactive terminal offers a
    searchable choice. Non-interactive execution creates an empty editable
    migration instead of guessing.
-6. `--empty` skips model discovery, and `--model` makes the model choice explicit.
+6. `--empty` skips table-model discovery, and `--model` makes the one-table
+   model choice explicit.
 7. Generation speaks PostgreSQL, MySQL, MariaDB and SQLite syntax and never
    overwrites an existing migration created in the same second.
-8. `migrate`, `status`, `rollback [count]` and `fresh` operate on the configured
+8. `init` makes an all-model `*_init.sql` baseline and replaces its existing
+   file while preserving its version. `migrate`, `status`, `rollback [count]`
+   and `fresh` operate on the configured
    migration directory and history table. `fresh` means all tracked downs
    followed by all ups; it does not drop untracked tables.
 9. Database commands always use the primary. A declared read replica is never
@@ -42,8 +50,8 @@ equally plausible `User` structs must not turn directory order into schema.
 
 ## Status
 
-**covered.** Source discovery, all CLI branches, dialect rendering, collision
-handling and the non-interactive ambiguity rule are unit-tested. The full
+**covered.** Source discovery, the no-argument interactive menu, all direct CLI
+branches, dialect rendering, collision handling and the non-interactive
+ambiguity rule are unit-tested. The full
 migrate/status/rollback/fresh lifecycle runs against SQLite through the real
 Goose provider; engine-to-provider mapping covers the other three engines.
-

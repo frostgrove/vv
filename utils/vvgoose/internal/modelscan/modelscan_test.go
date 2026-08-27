@@ -152,10 +152,15 @@ func TestDiscoverUnderstandsGormEvidenceAndEmbedding(t *testing.T) {
 
 import g "gorm.io/gorm"
 
+type Dimensions struct {
+	Width int
+}
+
 type Product struct {
 	g.Model
 	SKU string @gorm:"column:sku_code;primaryKey;autoIncrement:false"@
 	DisplayName string @gorm:"column:display_name"@
+	Dimensions Dimensions @gorm:"embedded;embeddedPrefix:size_"@
 	Ignored string @gorm:"-"@
 }
 `)
@@ -165,8 +170,8 @@ type Product struct {
 		t.Fatal(err)
 	}
 	product := modelByName(t, models, "Product")
-	if len(product.Fields) != 6 {
-		t.Fatalf("gorm fields = %#v, want four embedded fields and two declared fields", product.Fields)
+	if len(product.Fields) != 7 {
+		t.Fatalf("gorm fields = %#v, want gorm.Model, two declared fields, and named embedding", product.Fields)
 	}
 	if deleted := fieldByName(t, product, "DeletedAt"); !deleted.Nullable {
 		t.Fatalf("DeletedAt = %+v, want nullable", deleted)
@@ -174,6 +179,9 @@ type Product struct {
 	sku := fieldByName(t, product, "SKU")
 	if sku.Column != "sku_code" || !sku.PrimaryKey || sku.Auto || !sku.NoAuto {
 		t.Fatalf("SKU = %+v, want natural gorm primary key", sku)
+	}
+	if width := fieldByName(t, product, "Width"); width.Column != "size_width" {
+		t.Fatalf("Width = %+v, want named GORM embedding with prefix", width)
 	}
 }
 
@@ -198,6 +206,76 @@ type Person struct {
 	person := modelByName(t, models, "Person")
 	if len(person.Fields) != 2 || !fieldByName(t, person, "CreatedAt").Generated {
 		t.Fatalf("Person fields = %#v, want flattened timestamps", person.Fields)
+	}
+}
+
+func TestDiscoverResolvesImportAliasesAndLocalNamedScalarTypes(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "user.model.go", `package account
+
+import tm "time"
+
+type UserID int64
+type MaybeName *string
+
+type User struct {
+	ID UserID
+	Name MaybeName
+	CreatedAt tm.Time
+}
+`)
+	models, err := Discover(Options{Roots: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := modelByName(t, models, "User")
+	id := fieldByName(t, user, "ID")
+	if id.UnderlyingType != "int64" || !id.PrimaryKey || !id.Auto {
+		t.Fatalf("named ID = %+v, want auto integer primary key", id)
+	}
+	if name := fieldByName(t, user, "Name"); name.UnderlyingType != "string" || !name.Nullable {
+		t.Fatalf("named pointer = %+v, want nullable string", name)
+	}
+	if created := fieldByName(t, user, "CreatedAt"); created.CanonicalType != "time.Time" {
+		t.Fatalf("aliased time = %+v, want canonical time.Time", created)
+	}
+}
+
+func TestDiscoverDistinguishesImportedRelationsFromTaggedScalars(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "invoice.model.go", `package billing
+
+import (
+	"example.com/identity"
+	"example.com/money"
+	null "github.com/guregu/null/v6"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Invoice struct {
+	ID int64
+	Owner *identity.User
+	Amount *money.Amount @gorm:"type:decimal"@
+	ExternalID *pgtype.UUID
+	Note *null.String
+}
+`)
+	models, err := Discover(Options{Roots: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoice := modelByName(t, models, "Invoice")
+	if len(invoice.Fields) != 4 {
+		t.Fatalf("Invoice fields = %#v, want ID and three imported scalars only", invoice.Fields)
+	}
+	if amount := fieldByName(t, invoice, "Amount"); amount.Column != "amount" || !amount.Nullable {
+		t.Fatalf("Amount = %+v, want nullable scalar column", amount)
+	}
+	if externalID := fieldByName(t, invoice, "ExternalID"); externalID.UnderlyingType != "pgtype.UUID" || !externalID.Nullable {
+		t.Fatalf("ExternalID = %+v, want nullable pgtype scalar column", externalID)
+	}
+	if note := fieldByName(t, invoice, "Note"); note.GoType != "*null.String" || !note.Nullable {
+		t.Fatalf("Note = %+v, want nullable null-package scalar column", note)
 	}
 }
 

@@ -60,7 +60,7 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 		// database scalar packages is much more likely to be a relation than a
 		// column. An explicit db/column tag remains the author's escape hatch for
 		// an imported scalar type.
-		if !hasDB && gormOpts["column"] == "" &&
+		if !hasDB && gormOpts["column"] == "" && !gormScalarOption(gormOpts) &&
 			(gormRelationOption(gormOpts) || importedRelationCandidate(raw.Type, decl.imports)) {
 			continue
 		}
@@ -86,7 +86,7 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 				UnderlyingType: pkg.underlyingType(decl.imports, decl.fset, raw.Type, map[string]bool{}),
 				File:           displayPath(decl.file),
 				Line:           line,
-				Nullable:       nullableType(raw.Type),
+				Nullable:       pkg.resolvedNullable(decl.imports, raw.Type, map[string]bool{}),
 				PrimaryKey:     dbOpts["pk"] || dbOpts["primarykey"] || dbOpts["primary_key"] || hasGormOption(gormOpts, "primarykey"),
 				Auto:           dbOpts["auto"] || dbOpts["identity"] || dbOpts["serial"] || dbOpts["autoincrement"] || gormBool(gormOpts, "autoincrement", true),
 				NoAuto:         dbOpts["noauto"] || gormBool(gormOpts, "autoincrement", false),
@@ -101,20 +101,26 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 }
 
 func finishPrimaryKey(fields []Field) {
-	hasPK := false
+	primaryKeys := 0
 	for i := range fields {
-		hasPK = hasPK || fields[i].PrimaryKey
+		if fields[i].PrimaryKey {
+			primaryKeys++
+		}
 	}
-	if !hasPK {
+	if primaryKeys == 0 {
 		for i := range fields {
 			if fields[i].Name == "ID" || fields[i].Column == "id" {
 				fields[i].PrimaryKey = true
+				primaryKeys = 1
 				break
 			}
 		}
 	}
 	for i := range fields {
-		if fields[i].PrimaryKey && !fields[i].Auto && !fields[i].NoAuto && integerType(databaseType(fields[i])) {
+		// A single integer key follows vv's auto-ID convention. For a
+		// composite key the source must name the one auto field explicitly;
+		// inferring auto on every integer component produces invalid DDL.
+		if primaryKeys == 1 && fields[i].PrimaryKey && !fields[i].Auto && !fields[i].NoAuto && integerType(databaseType(fields[i])) {
 			fields[i].Auto = true
 		}
 	}
@@ -302,15 +308,47 @@ unwrapped:
 	if path == "" {
 		return false
 	}
-	switch path {
-	case "time", "database/sql", "encoding/json", "net", "net/url", "math/big", "gorm.io/gorm":
-		return false
+	return relationShape && !knownImportedScalar(path, selector.Sel.Name)
+}
+
+// knownImportedScalar names source packages whose exported values are database
+// scalar wrappers rather than domain entities. Keep this list deliberately
+// narrow: treating an arbitrary imported pointer as a column is the dangerous
+// direction, because it can produce plausible SQL for a relation. UUID and
+// Decimal are also stable type names already understood by sqlType, independent
+// of which implementation package an application chose.
+func knownImportedScalar(path, typeName string) bool {
+	if typeName == "UUID" || typeName == "Decimal" {
+		return true
 	}
-	return relationShape && !strings.Contains(path, "uuid") && !strings.Contains(path, "decimal")
+	switch path {
+	case "time", "database/sql", "encoding/json", "net", "net/netip", "net/url", "math/big", "gorm.io/gorm",
+		"github.com/jackc/pgtype", "github.com/lib/pq", "github.com/jmoiron/sqlx/types", "github.com/sqlc-dev/pqtype",
+		"github.com/oklog/ulid/v2", "github.com/segmentio/ksuid":
+		return true
+	}
+	return strings.HasPrefix(path, "github.com/jackc/pgx/") && strings.HasSuffix(path, "/pgtype") ||
+		modulePath(path, "github.com/guregu/null") || modulePath(path, "gopkg.in/guregu/null") ||
+		modulePath(path, "github.com/volatiletech/null") || modulePath(path, "github.com/aarondl/null") ||
+		modulePath(path, "github.com/google/uuid") || modulePath(path, "github.com/gofrs/uuid") ||
+		modulePath(path, "github.com/satori/go.uuid") || modulePath(path, "github.com/shopspring/decimal")
+}
+
+func modulePath(path, module string) bool {
+	return path == module || strings.HasPrefix(path, module+"/")
 }
 
 func gormRelationOption(options map[string]string) bool {
 	for _, name := range []string{"foreignkey", "references", "many2many", "polymorphic", "polymorphicvalue"} {
+		if hasGormOption(options, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func gormScalarOption(options map[string]string) bool {
+	for _, name := range []string{"type", "serializer", "size", "precision", "scale"} {
 		if hasGormOption(options, name) {
 			return true
 		}
@@ -354,6 +392,24 @@ func nullableType(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+func (pkg *packageSource) resolvedNullable(imports map[string]string, expr ast.Expr, seen map[string]bool) bool {
+	if nullableType(expr) {
+		return true
+	}
+	switch expr := expr.(type) {
+	case *ast.ParenExpr:
+		return pkg.resolvedNullable(imports, expr.X, seen)
+	case *ast.Ident:
+		if source := pkg.types[expr.Name]; source != nil && !seen[expr.Name] {
+			seen[expr.Name] = true
+			resolved := pkg.resolvedNullable(source.imports, source.typ, seen)
+			delete(seen, expr.Name)
+			return resolved
+		}
+	}
+	return false
 }
 
 func genericNullable(expr ast.Expr) bool {

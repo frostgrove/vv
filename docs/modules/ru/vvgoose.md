@@ -53,17 +53,36 @@ db:
 ## Команды
 
 ```text
-go run ./cmd/migrate                         # показать список команд
-go run ./cmd/migrate migration users        # создать SQL по модели User
-go run ./cmd/migrate migration users --empty
-go run ./cmd/migrate migration users --model account.User
-go run ./cmd/migrate migration users --no-interactive
+go run ./cmd/migrate                         # открыть интерактивное меню команд
+go run ./cmd/migrate migration add_audit_log # создать редактируемую SQL-заготовку
+go run ./cmd/migrate migration init_permission_tables --tables permissions,roles
+go run ./cmd/migrate migration init_permission_tables permissions,roles
+go run ./cmd/migrate table users             # найти User и создать миграцию таблицы
+go run ./cmd/migrate table users,products    # создать отдельную миграцию для каждой модели
+go run ./cmd/migrate table users --empty
+go run ./cmd/migrate table users --model account.User
+go run ./cmd/migrate init                    # создать или перезаписать *_init.sql по всем моделям
 go run ./cmd/migrate migrate
 go run ./cmd/migrate status
 go run ./cmd/migrate rollback                # одна миграция
 go run ./cmd/migrate rollback 3
 go run ./cmd/migrate fresh
 ```
+
+`migration <name>` создаёт редактируемую Goose-заготовку и не пытается угадать
+таблицу по имени. Чтобы сгенерировать таблицы в этом одном файле, передай
+`-t`/`--tables permissions,roles` либо вторым позиционным аргументом список
+таблиц. `table` — shortcut для поиска моделей: он принимает список через
+запятую и создаёт отдельную миграцию на таблицу.
+
+`init` рендерит все найденные модели с колонками в один файл `*_init.sql`.
+Повторный вызов перезаписывает именно этот файл, сохраняя его Goose-версию.
+Не заменяй уже применённый init в общей БД: Goose не применит ту же версию
+повторно.
+
+Без аргументов в терминале открывается searchable-меню для migration, table,
+init и runtime-команд. Без TTY или с `--no-interactive` команда печатает help;
+все команды по-прежнему можно вызывать напрямую аргументами.
 
 `fresh` выполняет все известные секции `Down`, затем все `Up`. Он не удаляет
 таблицы, которые не принадлежат миграциям.
@@ -83,9 +102,11 @@ embedded-структуры и поля `gorm.Model`; связи в колонк
 
 Одна подходящая модель выбирается автоматически. Если лучших кандидатов
 несколько, в терминале появляется searchable select. В non-interactive режиме
-неоднозначность создаёт пустой редактируемый Goose-шаблон. То же делает
+неоднозначность создаёт пустую редактируемую table-миграцию. То же делает
 `--empty`; невалидный `CREATE TABLE name ()` намеренно не генерируется, потому
-что MySQL и SQLite его не принимают. `--model` задаёт структуру явно.
+что MySQL и SQLite его не принимают. `--model` задаёт структуру явно для одной
+таблицы.
 
-Команда `migration` не открывает БД. `migrate`, `status`, `rollback` и `fresh`
-открывают только primary, даже если в конфигурации есть read replica.
+Команды `migration`, `table` и `init` не открывают БД. `migrate`, `status`,
+`rollback` и `fresh` открывают только primary, даже если в конфигурации есть
+read replica.

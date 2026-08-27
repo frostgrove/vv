@@ -34,11 +34,16 @@ db:
     models: [./src]
 ```
 
-Now `go run ./cmd/migrate migration users` finds a unique `User` model and
-generates its scalar columns. Add `--empty` for a blank Goose file,
-`--no-interactive` for CI, or `--model package.User` to choose explicitly.
-Run `go run ./cmd/migrate` with no arguments for `migrate`, `fresh`, `status`
-and `rollback [count]` help.
+Use `go run ./cmd/migrate table users` to find a unique `User` model and
+generate its scalar columns; `table users,products` creates one file per table.
+Use `go run ./cmd/migrate migration add_index` for an editable Goose file, or
+`migration init_permissions --tables permissions,roles` to put explicit models
+in one named migration. `go run ./cmd/migrate init` creates or replaces the
+single `*_init.sql` baseline from all discovered models.
+
+Run `go run ./cmd/migrate` with no arguments to open the searchable interactive
+command menu. Direct arguments remain available for scripts and CI; a non-TTY
+invocation prints help instead of trying to prompt.
 
 See [the vvgoose module reference](../modules/en/vvgoose.md) for discovery
 rules, environment names and exact `fresh` semantics.

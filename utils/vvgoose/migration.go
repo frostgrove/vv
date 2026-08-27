@@ -26,7 +26,18 @@ type createOptions struct {
 	Now         func() time.Time
 }
 
-func createMigration(ctx context.Context, raw vvdb.Config, options createOptions) (string, error) {
+type migrationOptions struct {
+	Name        string
+	Tables      []string
+	Interactive bool
+	In          io.Reader
+	Out         io.Writer
+	Now         func() time.Time
+}
+
+// createTableMigration creates one conventional create_<table>_table
+// migration, inferring its columns from the matching source model.
+func createTableMigration(ctx context.Context, raw vvdb.Config, options createOptions) (string, error) {
 	cfg := normalizeConfig(raw)
 	if err := cfg.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
@@ -68,18 +79,195 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
 	}
 
-	now := options.Now
+	return writeNewMigration(cfg.Migration.Path, fileSlug, contents, options.Now)
+}
+
+// createTableMigrations accepts a comma-separated table list and creates one
+// conventional migration per table. Separate files keep later rollbacks and
+// reviews focused on the table that changed.
+func createTableMigrations(ctx context.Context, raw vvdb.Config, tables []string, options createOptions) ([]string, error) {
+	targets, err := splitTableList(tables...)
+	if err != nil {
+		return nil, err
+	}
+	if options.Model != "" && len(targets) != 1 {
+		return nil, fmt.Errorf("vvgoose: --model can only be used with one table")
+	}
+
+	paths := make([]string, 0, len(targets))
+	for _, target := range targets {
+		path, err := createTableMigration(ctx, raw, createOptions{
+			Name:        target,
+			Empty:       options.Empty,
+			Model:       options.Model,
+			Interactive: options.Interactive,
+			In:          options.In,
+			Out:         options.Out,
+			Now:         options.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+// createMigration creates an ordinary editable Goose migration. Supplying
+// tables makes model generation explicit rather than guessing from the
+// migration name, and puts all selected CREATE TABLE statements in this one
+// file.
+func createMigration(ctx context.Context, raw vvdb.Config, options migrationOptions) (string, error) {
+	cfg := normalizeConfig(raw)
+	if err := cfg.Migration.Validate(); err != nil {
+		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
+	}
+	if _, err := dialectFor(cfg.Engine); err != nil {
+		return "", err
+	}
+
+	fileSlug := identifierSlug(options.Name)
+	if fileSlug == "" {
+		return "", fmt.Errorf("vvgoose: migration name %q contains no letters or digits", options.Name)
+	}
+	var contents []byte
+	tables, err := splitTableList(options.Tables...)
+	if err != nil {
+		return "", err
+	}
+	if len(tables) == 0 {
+		contents = renderEmptyMigration(fileSlug)
+	} else {
+		models, err := selectedModels(ctx, cfg, tables, createOptions{
+			Interactive: options.Interactive,
+			In:          options.In,
+			Out:         options.Out,
+		})
+		if err != nil {
+			return "", err
+		}
+		contents, err = renderModelsMigration(cfg.Engine, models)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
+		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	}
+	return writeNewMigration(cfg.Migration.Path, fileSlug, contents, options.Now)
+}
+
+// createInitMigration produces one baseline migration from all discovered
+// models. Its version is stable: rerunning init replaces the existing *_init
+// file instead of adding another competing baseline.
+func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) {
+	cfg := normalizeConfig(raw)
+	if err := cfg.Migration.Validate(); err != nil {
+		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
+	}
+	if _, err := dialectFor(cfg.Engine); err != nil {
+		return "", err
+	}
+	models, err := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
+	if err != nil {
+		return "", err
+	}
+	models, err = initModels(models)
+	if err != nil {
+		return "", err
+	}
+	contents, err := renderModelsMigration(cfg.Engine, models)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
+		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	}
+	return writeInitMigration(cfg.Migration.Path, contents, now)
+}
+
+func selectedModels(ctx context.Context, cfg vvdb.Config, tables []string, options createOptions) ([]modelscan.Model, error) {
+	models, err := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]modelscan.Model, 0, len(tables))
+	seen := make(map[string]bool, len(tables))
+	for _, table := range tables {
+		model, err := chooseModel(ctx, models, table, options)
+		if err != nil {
+			return nil, err
+		}
+		if model == nil {
+			return nil, fmt.Errorf("vvgoose: no unambiguous model found for table %q", table)
+		}
+		key := strings.ToLower(model.Table)
+		if seen[key] {
+			return nil, fmt.Errorf("vvgoose: table %q was selected more than once", model.Table)
+		}
+		seen[key] = true
+		selected = append(selected, *model)
+	}
+	return selected, nil
+}
+
+func initModels(models []modelscan.Model) ([]modelscan.Model, error) {
+	selected := make([]modelscan.Model, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, model := range models {
+		// A model stub with no columns cannot form a portable CREATE TABLE
+		// statement. It is deliberately left out of an init baseline.
+		if len(model.Fields) == 0 {
+			continue
+		}
+		key := strings.ToLower(model.Table)
+		if seen[key] {
+			return nil, fmt.Errorf("vvgoose: init found more than one model for table %q", model.Table)
+		}
+		seen[key] = true
+		selected = append(selected, model)
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("vvgoose: init found no models with mapped columns")
+	}
+	return selected, nil
+}
+
+func splitTableList(values ...string) ([]string, error) {
+	var tables []string
+	seen := map[string]bool{}
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if identifierSlug(item) == "" {
+				return nil, fmt.Errorf("vvgoose: table %q contains no letters or digits", item)
+			}
+			key := strings.ToLower(item)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			tables = append(tables, item)
+		}
+	}
+	return tables, nil
+}
+
+func writeNewMigration(dir, fileSlug string, contents []byte, now func() time.Time) (string, error) {
 	if now == nil {
 		now = time.Now
 	}
-	baseVersion, err := nextMigrationVersion(cfg.Migration.Path, now())
+	baseVersion, err := nextMigrationVersion(dir, now())
 	if err != nil {
 		return "", err
 	}
 	for offset := range 1000 {
 		version := fmt.Sprintf("%014d", baseVersion+int64(offset))
-		path := filepath.Join(cfg.Migration.Path, version+"_"+fileSlug+".sql")
-		created, err := writeVersionedMigration(cfg.Migration.Path, version, path, contents)
+		path := filepath.Join(dir, version+"_"+fileSlug+".sql")
+		created, err := writeVersionedMigration(dir, version, path, contents)
 		if err != nil {
 			return "", err
 		}
@@ -87,7 +275,76 @@ func createMigration(ctx context.Context, raw vvdb.Config, options createOptions
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("vvgoose: could not allocate a unique migration version in %q", cfg.Migration.Path)
+	return "", fmt.Errorf("vvgoose: could not allocate a unique migration version in %q", dir)
+}
+
+func writeInitMigration(dir string, contents []byte, now func() time.Time) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("vvgoose: inspect migration directory %q: %w", dir, err)
+	}
+	var existing string
+	for _, entry := range entries {
+		if entry.IsDir() || !isInitMigration(entry.Name()) {
+			continue
+		}
+		if existing != "" {
+			return "", fmt.Errorf("vvgoose: more than one init migration exists in %q", dir)
+		}
+		existing = filepath.Join(dir, entry.Name())
+	}
+	if existing == "" {
+		return writeNewMigration(dir, "init", contents, now)
+	}
+	if err := overwriteFile(existing, contents); err != nil {
+		return "", err
+	}
+	return existing, nil
+}
+
+func isInitMigration(name string) bool {
+	version, rest, found := strings.Cut(name, "_")
+	if !found || rest != "init.sql" {
+		return false
+	}
+	_, err := strconv.ParseInt(version, 10, 64)
+	return err == nil
+}
+
+func overwriteFile(path string, contents []byte) (err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("vvgoose: inspect init migration %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("vvgoose: init migration %q is not a regular file", path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".vvgoose-init-*.sql")
+	if err != nil {
+		return fmt.Errorf("vvgoose: create temporary init migration: %w", err)
+	}
+	tmpPath := tmp.Name()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return fmt.Errorf("vvgoose: set init migration permissions: %w", err)
+	}
+	if _, err := tmp.Write(contents); err != nil {
+		return fmt.Errorf("vvgoose: write init migration %q: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("vvgoose: close temporary init migration: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("vvgoose: replace init migration %q: %w", path, err)
+	}
+	completed = true
+	return nil
 }
 
 func nextMigrationVersion(dir string, now time.Time) (int64, error) {
@@ -217,7 +474,10 @@ func explicitlyNamedModels(models []modelscan.Model, name string) []modelscan.Mo
 }
 
 func selectModel(ctx context.Context, models []modelscan.Model, in io.Reader, out io.Writer) (*modelscan.Model, error) {
-	selected := 0
+	// Empty is deliberately the default. In accessible mode Huh returns the
+	// current value when input reaches EOF, so a disconnected terminal must not
+	// silently turn the first candidate into a schema decision.
+	selected := len(models)
 	options := make([]huh.Option[int], 0, len(models)+1)
 	for i, model := range models {
 		options = append(options, huh.NewOption(model.Label(), i))

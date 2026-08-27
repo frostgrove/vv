@@ -15,6 +15,7 @@ package vvgoose
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/pressly/goose/v3"
 	"github.com/spf13/cobra"
@@ -87,6 +89,9 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !noInteractive && interactiveTerminal(streams) {
+				return runInteractive(cmd.Context(), cfg, streams)
+			}
 			return cmd.Help()
 		},
 	}
@@ -100,20 +105,25 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 	// when control moves from configuration loading to this CLI.
 	root.PersistentFlags().StringVar(&ignoredConfigPath, "config-path", "", "configuration file (consumed by vvcfg)")
 	_ = root.PersistentFlags().MarkHidden("config-path")
-	root.PersistentFlags().BoolVar(&noInteractive, "no-interactive", false, "never prompt for a model")
+	root.PersistentFlags().BoolVar(&noInteractive, "no-interactive", false, "disable interactive prompts and menus")
 
-	var empty bool
-	var explicitModel string
-	generate := &cobra.Command{
-		Use:   "migration <name>",
-		Short: "Create a Goose SQL migration, inferring columns from a Go model",
-		Args:  cobra.ExactArgs(1),
+	var migrationTables string
+	migration := &cobra.Command{
+		Use:   "migration <name> [tables]",
+		Short: "Create an editable Goose migration, optionally generating explicit tables",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := createMigration(cmd.Context(), cfg, createOptions{
+			if migrationTables != "" && len(args) == 2 {
+				return fmt.Errorf("tables may be supplied either as a positional argument or with --tables, not both")
+			}
+			tables := []string{migrationTables}
+			if len(args) == 2 {
+				tables = append(tables, args[1])
+			}
+			path, err := createMigration(cmd.Context(), cfg, migrationOptions{
 				Name:        args[0],
-				Empty:       empty,
-				Model:       explicitModel,
-				Interactive: !noInteractive && terminalReader(streams.in),
+				Tables:      tables,
+				Interactive: !noInteractive && interactiveTerminal(streams),
 				In:          streams.in,
 				Out:         streams.out,
 			})
@@ -124,9 +134,49 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 			return nil
 		},
 	}
-	generate.Flags().BoolVar(&empty, "empty", false, "create an empty editable migration without model columns")
-	generate.Flags().StringVar(&explicitModel, "model", "", "use this Go struct instead of automatic matching")
-	root.AddCommand(generate)
+	migration.Flags().StringVarP(&migrationTables, "tables", "t", "", "comma-separated source-model tables to generate in this migration")
+	root.AddCommand(migration)
+
+	var tableEmpty bool
+	var explicitModel string
+	table := &cobra.Command{
+		Use:   "table <table[,table...]>",
+		Short: "Create one CREATE TABLE migration per source model",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := createTableMigrations(cmd.Context(), cfg, args, createOptions{
+				Empty:       tableEmpty,
+				Model:       explicitModel,
+				Interactive: !noInteractive && interactiveTerminal(streams),
+				In:          streams.in,
+				Out:         streams.out,
+			})
+			if err != nil {
+				return err
+			}
+			for _, path := range paths {
+				fmt.Fprintf(streams.out, "created %s\n", path)
+			}
+			return nil
+		},
+	}
+	table.Flags().BoolVar(&tableEmpty, "empty", false, "create an empty editable migration without model columns")
+	table.Flags().StringVar(&explicitModel, "model", "", "use this Go struct instead of automatic matching")
+	root.AddCommand(table)
+
+	root.AddCommand(&cobra.Command{
+		Use:   "init",
+		Short: "Create or replace the init migration from every discovered model",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			path, err := createInitMigration(cfg, nil)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(streams.out, "created %s\n", path)
+			return nil
+		},
+	})
 
 	root.AddCommand(&cobra.Command{
 		Use:   "migrate",
@@ -196,8 +246,228 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 	return root
 }
 
-func terminalReader(r io.Reader) bool {
-	f, ok := r.(*os.File)
+type interactiveCommand string
+
+const (
+	interactiveMigration interactiveCommand = "migration"
+	interactiveTable     interactiveCommand = "table"
+	interactiveInit      interactiveCommand = "init"
+	interactiveMigrate   interactiveCommand = "migrate"
+	interactiveStatus    interactiveCommand = "status"
+	interactiveRollback  interactiveCommand = "rollback"
+	interactiveFresh     interactiveCommand = "fresh"
+	interactiveExit      interactiveCommand = "exit"
+)
+
+func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	// Exit is the safe default if the terminal disappears while the menu is
+	// waiting for input. A disconnected terminal must never start a database
+	// operation merely because the first option happened to be selected.
+	selected := interactiveExit
+	menu := huh.NewSelect[interactiveCommand]().
+		Title("What do you want to do?").
+		Options(
+			huh.NewOption("Create a migration", interactiveMigration),
+			huh.NewOption("Create table migrations from models", interactiveTable),
+			huh.NewOption("Create or replace init migration", interactiveInit),
+			huh.NewOption("Apply pending migrations", interactiveMigrate),
+			huh.NewOption("Show migration status", interactiveStatus),
+			huh.NewOption("Roll back migrations", interactiveRollback),
+			huh.NewOption("Fresh: down all, then migrate", interactiveFresh),
+			huh.NewOption("Exit", interactiveExit),
+		).
+		Value(&selected).
+		Filtering(true)
+	if err := runForm(ctx, streams, huh.NewForm(huh.NewGroup(menu))); err != nil {
+		return fmt.Errorf("vvgoose: choose command: %w", err)
+	}
+
+	switch selected {
+	case interactiveMigration:
+		return runInteractiveMigration(ctx, cfg, streams)
+	case interactiveTable:
+		return runInteractiveTable(ctx, cfg, streams)
+	case interactiveInit:
+		return runInteractiveInit(ctx, cfg, streams)
+	case interactiveMigrate:
+		results, err := runMigrate(ctx, cfg)
+		if err == nil {
+			printResults(streams.out, results)
+		}
+		return err
+	case interactiveStatus:
+		statuses, err := runStatus(ctx, cfg)
+		if err == nil {
+			printStatus(streams.out, statuses)
+		}
+		return err
+	case interactiveRollback:
+		return runInteractiveRollback(ctx, cfg, streams)
+	case interactiveFresh:
+		return runInteractiveFresh(ctx, cfg, streams)
+	case interactiveExit:
+		return nil
+	default:
+		return fmt.Errorf("vvgoose: unknown interactive command %q", selected)
+	}
+}
+
+func runInteractiveMigration(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	var name string
+	var tables string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Migration name").
+			Placeholder("init_permission_tables").
+			Value(&name).
+			Validate(func(value string) error {
+				if strings.TrimSpace(value) == "" {
+					return errors.New("migration name is required")
+				}
+				return nil
+			}),
+		huh.NewInput().
+			Title("Tables to generate (optional, comma-separated)").
+			Placeholder("permissions,roles").
+			Value(&tables),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: migration form: %w", err)
+	}
+	path, err := createMigration(ctx, cfg, migrationOptions{
+		Name: name, Tables: []string{tables}, Interactive: true, In: streams.in, Out: streams.out,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(streams.out, "created %s\n", path)
+	return nil
+}
+
+func runInteractiveTable(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	var tables string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Tables to create (comma-separated)").
+			Placeholder("users,products").
+			Value(&tables).
+			Validate(func(value string) error {
+				if strings.TrimSpace(value) == "" {
+					return errors.New("at least one table is required")
+				}
+				return nil
+			}),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: table form: %w", err)
+	}
+	paths, err := createTableMigrations(ctx, cfg, []string{tables}, createOptions{
+		Interactive: true, In: streams.in, Out: streams.out,
+	})
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		fmt.Fprintf(streams.out, "created %s\n", path)
+	}
+	return nil
+}
+
+func runInteractiveInit(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Create or replace the init migration from every model?").
+			Affirmative("Generate init").
+			Negative("Cancel").
+			Value(&confirmed),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: init confirmation: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(streams.out, "cancelled")
+		return nil
+	}
+	path, err := createInitMigration(cfg, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(streams.out, "created %s\n", path)
+	return nil
+}
+
+func runInteractiveRollback(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	countText := "1"
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("How many migrations should be rolled back?").
+			Value(&countText).
+			Validate(func(value string) error {
+				count, err := strconv.Atoi(strings.TrimSpace(value))
+				if err != nil || count < 1 {
+					return errors.New("count must be a positive integer")
+				}
+				return nil
+			}),
+		huh.NewConfirm().
+			Title("Roll back the selected migrations?").
+			Affirmative("Rollback").
+			Negative("Cancel").
+			Value(&confirmed),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: rollback form: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(streams.out, "cancelled")
+		return nil
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(countText))
+	if err != nil || count < 1 {
+		return fmt.Errorf("vvgoose: rollback count must be a positive integer, got %q", countText)
+	}
+	results, err := runRollback(ctx, cfg, count)
+	if err == nil {
+		printResults(streams.out, results)
+	}
+	return err
+}
+
+func runInteractiveFresh(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Roll every tracked migration down and apply it again?").
+			Affirmative("Run fresh").
+			Negative("Cancel").
+			Value(&confirmed),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: fresh confirmation: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(streams.out, "cancelled")
+		return nil
+	}
+	results, err := runFresh(ctx, cfg)
+	if err == nil {
+		printResults(streams.out, results)
+	}
+	return err
+}
+
+func runForm(ctx context.Context, streams commandIO, form *huh.Form) error {
+	return form.WithInput(streams.in).WithOutput(streams.out).RunWithContext(ctx)
+}
+
+func interactiveTerminal(streams commandIO) bool {
+	return terminalFile(streams.in) && terminalFile(streams.out)
+}
+
+func terminalFile(stream any) bool {
+	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}

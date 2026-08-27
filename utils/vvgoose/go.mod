@@ -12,6 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.57.0
 )
 

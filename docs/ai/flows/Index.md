@@ -81,7 +81,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-019](FL-019-a-token-becomes-a-principal.md) | A token becomes a principal | `auth/guard.go:Guard.Authenticate` | [[UC-019]] |
 | [FL-020](FL-020-a-principal-becomes-a-policy-decision.md) | A principal becomes a policy decision | `crud/decorators/security/principal.go:ScopeAttr` | [[UC-020]] [[UC-004]] |
 | [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `utils/vvdb/dsn.go:DSN` / `utils/vvdb/open.go:Open` | [[UC-021]] |
-| [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Migrate` | [[UC-022]] |
+| [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Execute` | [[UC-022]] |
 
 ## By file — which flows touch this file
 

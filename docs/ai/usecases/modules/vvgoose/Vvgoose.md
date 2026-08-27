@@ -16,9 +16,13 @@ search; in CI the same ambiguity must be deterministic and non-blocking.
 
 ## Shipped paths
 
-- no arguments: command help;
-- `migration NAME`: source scan, safe model selection, dialect SQL and an
-  exclusive timestamped file;
+- no arguments in a terminal: searchable command menu and command-specific
+  prompts; non-terminal input/output or `--no-interactive`: command help;
+- `migration NAME`: exclusive timestamped editable file; optional explicit
+  `--tables` renders several selected models in it;
+- `table NAME[,NAME...]`: safe model selection and one table migration per
+  requested table;
+- `init`: one all-model `*_init.sql`, replaced in place on subsequent runs;
 - `migrate`, `status`, `rollback [count]`: isolated Goose Provider operations;
 - `fresh`: tracked Down operations followed by Up operations;
 - YAML and environment defaults through the database's migration block.
@@ -28,4 +32,3 @@ search; in CI the same ambiguity must be deterministic and non-blocking.
 This is a satellite module because the feature necessarily carries Goose, the
 terminal UI and SQL drivers. It has no `replace`; it is published with the
 directory-prefixed tag in the same release as the root module it requires.
-
