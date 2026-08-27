@@ -69,6 +69,8 @@ Both lead with what you get and only then how to set it up.
   `gorm.Model` and associations included
 - [usage-guides/migrations.md](usage-guides/migrations.md) — add a standalone
   Goose migration command and generate SQL from a model
+- [usage-guides/model-generation.md](usage-guides/model-generation.md) — use
+  ordinary Go models and generate DTOs, metamodels and repository blueprints
 
 ## Roadmap
 

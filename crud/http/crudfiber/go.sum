@@ -12,6 +12,8 @@ github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84W
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8HmsxZ+GBg3jxnwkVLpw6faLSP9iM=
 github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038 h1:D4mC6F8kE0cx6R7fACKeJ9bJC45pI9zr9nlysp0WAlI=
+github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/fxamacker/cbor/v2 v2.9.2 h1:X4Ksno9+x3cz0TZv69ec1hxP/+tymuR8PXQJyDwfh78=
 github.com/fxamacker/cbor/v2 v2.9.2/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
 github.com/gofiber/fiber/v3 v3.4.0 h1:F0aND4vwZF7dR7cbvSwFQQEpBU902XHKWxrLsFBkVqw=

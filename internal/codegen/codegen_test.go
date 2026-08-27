@@ -177,8 +177,11 @@ type Product struct {
 	if !strings.Contains(out, "var ProductRepository = sqlrepo.Define[Product, uuid.UUID, ProductUpdate](\"\")") {
 		t.Fatalf("the generated file has no repository blueprint:\n%s", out)
 	}
-	if !strings.Contains(out, "func NewProductRepository(src crud.Source)") {
-		t.Fatalf("the generated file has no driver-neutral repository factory:\n%s", out)
+	if !strings.Contains(out, "type ProductRepo = crud.Repo[Product, uuid.UUID, ProductUpdate]") {
+		t.Fatalf("the generated file has no short repository alias:\n%s", out)
+	}
+	if !strings.Contains(out, "func NewProductRepository(src crud.Source) *ProductRepo") {
+		t.Fatalf("the generated file has no pointer repository factory:\n%s", out)
 	}
 }
 

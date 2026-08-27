@@ -67,6 +67,22 @@ func TestTableNameFallback(t *testing.T) {
 	}
 }
 
+type CustomTable struct {
+	ID int64
+}
+
+func (CustomTable) TableName() string { return "ledger_entries" }
+
+func TestTableNameMethodWinsOverTheConvention(t *testing.T) {
+	m, err := crud.NewMeta[CustomTable]("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Table != "ledger_entries" {
+		t.Errorf("table = %q, want ledger_entries", m.Table)
+	}
+}
+
 func TestSchemaRejectsBadDeclarations(t *testing.T) {
 	type NoPK struct {
 		Name string `db:"name"`

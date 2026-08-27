@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+GO=${GO:-go}
+cd "$REPO_ROOT"
+
+usage() {
+	cat <<'EOF'
+Usage: make <command>
+
+  unit                         Run unit tests in every module
+  integration, test            Run integration tests, or both suites
+  examples                     Build, vet and test runnable examples
+  up, down, logs               Manage local databases
+  psql, mysql, mariadb         Open a database shell
+  fmt, vet, tidy               Format, vet or tidy the repository
+  generate, ent, corpus        Regenerate code or the SQL error corpus
+  check                        Run all structural checks
+  check-deps, check-tiers      Run an individual dependency check
+  check-utils, check-triplets
+  check-todo, check-tidy
+  api, vuln                    Regenerate API baseline or scan vulnerabilities
+  main-deps, version, release  Maintain module versions and publish a release
+  clean                        Stop databases and clear Go's test cache
+EOF
+}
+
+database() {
+	"$SCRIPT_DIR/database.sh" "$1"
+}
+
+case ${1:-help} in
+	help) usage ;;
+	unit|vet|examples|tidy|main-deps|generate|ent|api|vuln|version)
+		exec "$SCRIPT_DIR/modules.sh" "$1"
+		;;
+	check) exec "$SCRIPT_DIR/checks.sh" all ;;
+	check-deps) exec "$SCRIPT_DIR/checks.sh" deps ;;
+	check-tiers) exec "$SCRIPT_DIR/checks.sh" tiers ;;
+	check-utils) exec "$SCRIPT_DIR/checks.sh" utils ;;
+	check-triplets) exec "$SCRIPT_DIR/checks.sh" triplets ;;
+	check-todo) exec "$SCRIPT_DIR/checks.sh" todo ;;
+	check-tidy) exec "$SCRIPT_DIR/checks.sh" tidy ;;
+	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;
+	fmt) exec gofmt -l -w . ;;
+	integration)
+		database up
+		exec "$GO" test -race -tags=integration -count=1 ./test/...
+		;;
+	test)
+		"$SCRIPT_DIR/modules.sh" unit
+		database up
+		exec "$GO" test -race -tags=integration -count=1 ./test/...
+		;;
+	corpus)
+		database up
+		(cd test && exec "$GO" run ./cmd/corpus)
+		;;
+	release)
+		"$0" test
+		"$SCRIPT_DIR/checks.sh" all
+		"$SCRIPT_DIR/modules.sh" vuln
+		exec "$SCRIPT_DIR/release.sh"
+		;;
+	clean)
+		database down
+		exec "$GO" clean -testcache
+		;;
+	*) echo "unknown command: $1" >&2; usage >&2; exit 2 ;;
+esac

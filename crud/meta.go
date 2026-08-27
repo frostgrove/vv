@@ -448,15 +448,15 @@ type Meta struct {
 	Table string
 }
 
-// NewMeta binds M to a table. An empty table name falls back to the snake_case
-// plural of the type name.
+// NewMeta binds M to a table. An empty name asks the model first, through
+// TableName(), then falls back to the snake_case plural of its type name.
 func NewMeta[M any](table string) (*Meta, error) {
 	s, err := SchemaOf[M]()
 	if err != nil {
 		return nil, err
 	}
 	if table == "" {
-		table = pluralise(snake(s.Name))
+		table = TableNameOf(s.Type)
 	}
 	return &Meta{Schema: s, Table: table}, nil
 }

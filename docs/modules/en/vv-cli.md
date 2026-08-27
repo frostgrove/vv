@@ -15,8 +15,12 @@ this writes them. With `-adapter` it writes the rest of the resource too: the
 request body, the mapper, **the inverse of that mapping**, a service shell and
 the wiring.
 
-Point it at a package. It reads every struct carrying `db` or `rel` tags and
-writes `vv_gen.go` next to them.
+For a package, it reads exported structs in `model.go`, `*.model.go`, and
+`*_model.go`, then writes `vv_gen.go` next to them. Ordinary Go fields need no
+`db`, GORM, or other ORM tags: the normal snake-case column and plural table
+conventions apply, and `ID`/`Id` is the primary key. `db` and `rel` are only
+for exceptions. `vv generate -dir ./src/app` walks the tree and generates one
+file beside each model package.
 
 ---
 
@@ -112,6 +116,8 @@ naming the column ([[UC-014]]).
 | `-import` | — | import path of `-dir`, so model types are qualified when written elsewhere |
 | `-no-dto` | off | skip the update DTOs |
 | `-no-meta` | off | skip the metamodels |
+| `-no-repo` | off | skip the repository blueprint and binding factory |
+| `-recursive` | off | walk model files below `-dir` and generate beside each package; implied by `vv generate` |
 | `-adapter` | **off** | also generate the resource adapter |
 | `-binding` | `net` | which transport the generated wiring is written for: `net` or `none` |
 | `-specs` | the specs package | import path override |
@@ -152,6 +158,28 @@ binding changes at all**.
 mounting on Fiber or Gin with `ServingFor` yourself. Fiber and Gin wiring is not
 generated, because a generated file in this library may not import a satellite
 module ([[D-033]]).
+
+## Generated repository
+
+Alongside the DTO and metamodel, the default output provides a driver-neutral
+repository blueprint, a short alias, and a factory returning a pointer:
+
+```go
+type ArticleRepo = crud.Repo[Article, int64, ArticleUpdate]
+
+var ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("")
+
+func NewArticleRepository(src crud.Source) *ArticleRepo {
+    repo := ArticleRepository.Bind(src)
+    return &repo
+}
+```
+
+Give the factory any `crud.Source`: `crudsql.Postgres(sqlDB)` for
+`database/sql` (including GORM's shared pool), `crudpgx.Open(pool)` for native
+pgx, or a test source. In Fx, depend on `*ArticleRepo`, not on the full
+`crud.Repo[Article, int64, ArticleUpdate]` spelling. Use `-no-repo` when a
+package needs only DTOs and metamodels.
 
 ## Adopting an ORM's generated model
 

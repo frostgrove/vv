@@ -481,7 +481,7 @@ make fmt vet unit && make integration && make integration
 
 - [ ] `make unit`, `make vet` — зелено во всех модулях; `gofmt -l` молчит.
 - [ ] `make integration` — зелено **дважды подряд**.
-- [ ] `make tidy` не оставляет diff; `make work` знает все модули.
+- [ ] `make tidy` не оставляет diff.
 - [ ] `make check-tiers` зелено — и **проверено, что оно способно упасть**:
       временно импортировать `crud/sqlrepo` из `port` и увидеть падение
       манифестного арма. Без этой проверки §7 не выполнен, а выглядит

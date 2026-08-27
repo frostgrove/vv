@@ -17,7 +17,7 @@ replace github.com/frostgrove/vv/crud/http/crudgin => ../crud/http/crudgin
 replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b
+	github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038
 	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/auth/http/authgin v0.0.0-00010101000000-000000000000
 	github.com/golang-jwt/jwt/v5 v5.3.1

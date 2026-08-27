@@ -10,7 +10,7 @@ module github.com/frostgrove/vv/auth/rpc/authgrpc
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b
+	github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038
 	google.golang.org/grpc v1.83.1
 )
 

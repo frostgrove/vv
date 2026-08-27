@@ -134,14 +134,15 @@ func (g *generator) renderRepository(m *model) (string, used, error) {
 	}
 
 	var b strings.Builder
+	fmt.Fprintf(&b, "// %sRepo is the typed repository for %s.\n", m.Name, g.qual(m.Name))
+	fmt.Fprintf(&b, "type %sRepo = crud.Repo[%s, %s, %sUpdate]\n\n", m.Name, g.qual(m.Name), pk.Type, m.Name)
 	fmt.Fprintf(&b, "// %sRepository describes %s independently of a database driver.\n", m.Name, g.qual(m.Name))
 	fmt.Fprintf(&b, "// Bind it through New%sRepository with the application's datasource.\n", m.Name)
 	fmt.Fprintf(&b, "var %sRepository = sqlrepo.Define[%s, %s, %sUpdate](\"\")\n\n",
 		m.Name, g.qual(m.Name), pk.Type, m.Name)
 	fmt.Fprintf(&b, "// New%sRepository binds %sRepository to src.\n", m.Name, m.Name)
-	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) crud.Repo[%s, %s, %sUpdate] {\n",
-		m.Name, g.qual(m.Name), pk.Type, m.Name)
-	fmt.Fprintf(&b, "\treturn %sRepository.Bind(src)\n}\n\n", m.Name)
+	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) *%sRepo {\n", m.Name, m.Name)
+	fmt.Fprintf(&b, "\trepo := %sRepository.Bind(src)\n\treturn &repo\n}\n\n", m.Name)
 	return b.String(), used{crud: true, sqlrepo: true}, nil
 }
 

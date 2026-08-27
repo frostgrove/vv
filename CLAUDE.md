@@ -137,12 +137,12 @@ were "scanned" that way the first time and none of them actually ran.
 should: a diff there is a question for a person. After the first tag, a line that
 disappears is a breaking change.
 
-`make unit`, `make vet` and `make tidy` loop over `Makefile:MODULES`, which is
-**discovered** — `find . -name go.mod` — not a hand-written list. A new module
-needs no Makefile edit; it needs `make work` (or `go work use ./<dir>`), a
-`replace` line in `test/go.mod` and `_examples/go.mod`, and its docs. A
-hand-written list is how a module escapes unit, vet, tidy and release at once,
-and this repository has already been bitten by exactly that.
+`make unit`, `make vet` and `make tidy` discover modules with `find . -name
+go.mod`, rather than keeping a hand-written list. A new module therefore needs
+no Makefile edit; it still needs the appropriate `replace` lines in
+`test/go.mod` and `_examples/go.mod`, plus its docs. A hand-written list is how
+a module escapes unit, vet, tidy and release at once, and this repository has
+already been bitten by exactly that.
 
 Before reporting a task done: unit green, integration green **twice in a row**
 (a test that passes once and fails on rerun is a real defect), `gofmt -l` silent,
