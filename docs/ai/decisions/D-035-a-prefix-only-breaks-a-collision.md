@@ -133,7 +133,7 @@ the subsystem is CRUD, and `crudfiber` says so.
 - `remote/` — unprefixed, and named for where the repository is rather than for
   what a caller does with it.
 - `utils/vvcfg/` — `cfg` alone is too vague to be a package name on its own.
-- `Makefile:TIER0` — the contract manifest the naming rule sorts, with
+- `scripts/checks.sh:TIER0` — the contract manifest the naming rule sorts, with
   `TIER0_SEALED` and `TIER0_STDLIB` beside it: the two arms that seal `errs`
   and `crud` against each other, which the manifest arm cannot see because it
   filters every contract package out of its own result ([[D-036]], [[D-016]]).

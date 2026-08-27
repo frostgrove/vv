@@ -619,7 +619,7 @@ without it the twentieth resource hand-writes an `AllOf` block it did not need.
   Two alternatives, both worse and both worth rejecting on the record: having
   `specs` import `port` inverts the direction every other decorator uses and puts
   a transport-shaped package under a repository decorator (and package `crud`
-  may not import `port` at all — `Makefile:TIER0_STDLIB`); and raising an `errs`
+  may not import `port` at all — `scripts/checks.sh:TIER0_STDLIB`); and raising an `errs`
   fault carrying `KindBadRequest`, which `KindOfWith` reads before any sentinel
   (`port/kind.go:36-45`), buys the status code and loses the `errors.Is` that
   D-015 is about.

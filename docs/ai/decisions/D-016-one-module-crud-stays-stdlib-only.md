@@ -21,7 +21,7 @@
 > `query`, `catalog`, `probe`, `sqlfault`, the decorators, the adapters and the
 > bindings underneath it, and every one of them is allowed the dependencies this
 > rule forbids — `crudpgx` imports pgx, that is what it is for. The rule is the
-> package. `Makefile:TIER0_STDLIB` lists `./crud`, never `./crud/...`, and that
+> package. `scripts/checks.sh:TIER0_STDLIB` lists `./crud`, never `./crud/...`, and that
 > is where the reading is enforced rather than merely stated.
 
 ## The decision
@@ -121,7 +121,7 @@ should print nothing. It is part of `make check-deps`, which closes the gap this
 paragraph used to describe as open — for a *third-party* import. A first-party
 one is invisible to it, because it filters on the module path prefix.
 
-`Makefile:TIER0_STDLIB`, checked by `make check-tiers`, is the arm that catches
+`scripts/checks.sh:TIER0_STDLIB`, checked by `make check-tiers`, is the arm that catches
 that half, and it is the one the rule needs: `errs/doc.go` states that `crud` may
 not import `errs` at all, since a library-origin error with two classification
 paths would have them disagree. Verified by adding
@@ -134,7 +134,7 @@ The command given here before ended in `grep '\.'` and so matched
 standard-library paths — it printed a page of them on a clean tree and could
 never have failed. [[D-033]] carried the same defect.
 
-Indirectly relevant: `Makefile:unit` runs `go test ./...` with no database and no
+Indirectly relevant: `scripts/modules.sh:unit` runs `go test ./...` with no database and no
 Docker, which fails the moment the library picks up something the test module was
 holding.
 

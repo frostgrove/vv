@@ -78,8 +78,8 @@ library's tests on a machine with no Docker and no database.
 
 ## Where it lives
 
-- `Makefile:unit` — `go test ./...`, no database.
-- `Makefile:integration` — `up` then `go test -tags=integration -count=1
+- `scripts/modules.sh:unit` — `go test ./...`, no database.
+- `scripts/vv:integration` — `up` then `go test -tags=integration -count=1
   ./test/...`.
 - `docker-compose.yml` — PostgreSQL and MySQL, with `--wait`.
 - `test/integration/main_test.go:truncate` and `test/integration/edge_test.go:egWipe`

@@ -230,7 +230,7 @@ The code has a voice. Match it rather than averaging toward generic Go.
   see `[[D-021]]`. Everywhere else, be ordinary.
 - **Package** `crud` imports the standard library only — the package, not the
   subtree: `crud/sqlrepo`, `crud/query` and the rest below it are ordinary
-  packages with ordinary dependencies ([[D-016]], and `Makefile:TIER0_STDLIB` is
+  packages with ordinary dependencies ([[D-016]], and `scripts/checks.sh:TIER0_STDLIB` is
   what holds it). The whole root *module* still takes no third-party
   dependency at all: a package that needs one becomes a module. `[[D-033]]`.
 

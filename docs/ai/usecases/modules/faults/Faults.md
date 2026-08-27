@@ -1034,7 +1034,7 @@ an exported in-memory one. The library writes the fake twice for its own tests
 `crud/decorators/faults/probe_test.go:36-55` without) and exports neither. The
 crudtest sweep looked at this and handed it here rather than keeping it, for a
 structural reason that also decides where the fix may live:
-`crud/crudtest` is TIER0 (`Makefile:37`) and `crud/catalog` is outside the
+`crud/crudtest` is TIER0 (`scripts/checks.sh:TIER0`) and `crud/catalog` is outside the
 contract manifest under [[D-048]], so `make check-tiers` fails the moment
 `crudtest` imports it (`docs/ai/usecases/modules/crudtest/Crudtest.md:256-269`).
 **The in-memory catalog therefore cannot be exported from `crudtest`.** It goes

@@ -546,7 +546,7 @@ that cleanenv parses one in the other half of this same module.
   rather than discovered in a `go.mod` diff.
 - **The `utils/` boundary, which is [[D-058]]'s and does not mention `errs`.**
   The line is "nothing under `utils/` imports `crud/`, `auth/`, `port/` or
-  `remote/`" (`docs/ai/decisions/D-058…md:119-121`), and `Makefile:SUBSYSTEMS` is
+  `remote/`" (`docs/ai/decisions/D-058…md:119-121`), and `scripts/checks.sh:SUBSYSTEMS` is
   the four names `check-utils` greps. An `errs` import from `vvcfg` would pass
   that check. What forbids it is [[D-057]] — "It imports nothing of vv. Not
   `crud`, not `errs`" — written about `vvdb`, not about `vvcfg`. So aggregating

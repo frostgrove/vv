@@ -7,7 +7,7 @@ go 1.26
 
 require (
 	github.com/charmbracelet/huh v1.0.0
-	github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038
+	github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pressly/goose/v3 v3.27.3

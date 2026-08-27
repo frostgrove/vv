@@ -81,7 +81,7 @@ answer is to find the seam rather than to publish the pair.
   top of the file where a reader meets it first.
 - `utils/vvgoose/go.mod` — the migration-command decision and the dependencies
   required to make its one-call entrypoint complete.
-- `Makefile:SATELLITES` and `Makefile:check-deps` — the per-module external
+- `scripts/common.sh:satellites` and `scripts/checks.sh:check_deps` — the per-module external
   package count, which reports rather than caps.
 - `ROADMAP-framework.md` §9 — the argument this decision records, including the
   otel/gin case it turns down.

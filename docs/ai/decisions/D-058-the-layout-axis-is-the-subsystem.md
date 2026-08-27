@@ -146,7 +146,7 @@ sit under `utils/` is not what the boundary measures.
   `port` under `crud` is how the auth middleware came to depend on the
   repository in the first place ([[D-059]]).
 - Do not put a package under `utils/` that imports a subsystem.
-- Do not match the contract manifest by prefix. `Makefile:TIER0` lists exact
+- Do not match the contract manifest by prefix. `scripts/checks.sh:TIER0` lists exact
   package paths and lists them non-recursively, because `crud` as a prefix now
   matches `crud/sqlrepo` and `./crud/...` now lists thirty packages. Either
   mistake leaves the target green and meaningless.
@@ -165,15 +165,15 @@ The whole tree, and `CLAUDE.md`'s *Layout* section is the reader's copy of it:
   `rpc/authgrpc/`.
 - `port/` — `porthttp/` ([[D-059]]).
 - `remote/` — `remotehttp/`.
-- `errs/` — `sqlerr/`. Not moved: `Makefile:TIER0_SEALED` holds it and the
+- `errs/` — `sqlerr/`. Not moved: `scripts/checks.sh:TIER0_SEALED` holds it and the
   roadmap plans it as its own module, and a move under `crud/` or `port/` would
   cost both.
 - `utils/` — `vvflag/`, `vvcfg/`, `vvgoose/`, and `vvdb/` with `vvdb/dbpgx/` under it
   ([[D-057]]).
 - `cmd/vv/`, `internal/codegen/` — Go convention, not this decision's to move.
-- `Makefile:TIER0`, `:TIER0_STDLIB` — the two arms re-armed for a tree with
+- `scripts/checks.sh:TIER0`, `:TIER0_STDLIB` — the two arms re-armed for a tree with
   subtrees under manifest names.
-- `Makefile:SUBSYSTEMS`, `:check-utils` — the `utils/` boundary, enforced rather
+- `scripts/checks.sh:SUBSYSTEMS`, `:check_utils` — the `utils/` boundary, enforced rather
   than stated.
 - `cmd/vv/main.go:73` (`-specs`) and `internal/codegen/codegen.go:513-515`
   (`DefaultPortPkg`, `DefaultErrsPkg`, `DefaultNetPkg`) — the generator's

@@ -109,9 +109,9 @@ check_utils() {
 
 test_names() {
 	local directory=$1 output=$2
-	(grep -h '^func Test[A-Za-z0-9_]*' "$directory"/*_test.go 2>/dev/null || true) |
+	(grep -ho '^func Test[A-Za-z0-9_]*' "$directory"/*_test.go 2>/dev/null || true) |
 		sed 's/^func //' | { grep -v '^TestMain$' || true; } | sort -u > "$output.all"
-	(grep -h '^func Test[A-Za-z0-9_]*' "$directory"/routing_test.go "$directory"/binding_test.go 2>/dev/null || true) |
+	(grep -ho '^func Test[A-Za-z0-9_]*' "$directory"/routing_test.go "$directory"/binding_test.go 2>/dev/null || true) |
 		sed 's/^func //' | sort -u > "$output.exempt"
 	comm -23 "$output.all" "$output.exempt" > "$output"
 }
@@ -119,6 +119,7 @@ test_names() {
 check_triplets() {
 	local temporary set directory reference reference_directory output missing extra failed=0
 	temporary=$(mktemp -d)
+	trap 'rm -rf -- "$temporary"' RETURN
 	for set in "${TRIPLETS[@]}"; do
 		reference=
 		reference_directory=
@@ -148,7 +149,6 @@ check_triplets() {
 			fi
 		done
 	done
-	rm -rf "$temporary"
 	(( failed == 0 )) || return 1
 	echo 'check-triplets: ok'
 }

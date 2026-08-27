@@ -112,7 +112,7 @@ and its seam is a `Call` — the mirror of `port`'s commands.
 ## Where it lives
 
 The neutral half, all of it in the root module and all of it stdlib plus
-`crud`, `query` and `errs` — which `Makefile:TIER0` is what enforces:
+`crud`, `query` and `errs` — which `scripts/checks.sh:TIER0` is what enforces:
 
 - `port/doc.go` — what the layer is and the four limits it states rather than
   leaves to be discovered.

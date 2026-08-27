@@ -142,7 +142,7 @@ cmd/vv/  internal/codegen/  docs/  test/ (M)  _examples/ (M)
 `_examples`.
 
 Что *не* переезжает и почему: `errs/` и `errs/sqlerr/` — их держит
-`Makefile:TIER0_SEALED` и планы вынести `errs` в отдельный модуль (`Roadmap`
+`scripts/checks.sh:TIER0_SEALED` и планы вынести `errs` в отдельный модуль (`Roadmap`
 §2); переезд под `crud/` или `port/` убил бы и то и другое. `cmd/vv` —
 соглашение Go. `internal/codegen` — соглашение Go.
 
@@ -252,7 +252,7 @@ users := Products.Bind(db, security.Gate(policy), faults.Enrich[User, int64]())
 Имя `porthttp` — это ячейка сетки `[[D-035]]`: подсистема `port` × библиотека
 `net/http`, ровно как `crudhttp` — это `crud` × `net/http`. Место — `port/`, а
 не `errs/`: половина этих файлов зовёт `port.KindOf`, `port.MaxViolations`,
-`port.FirstLanguageTag`, а `errs` запечатан `Makefile:TIER0_SEALED` и обязан
+`port.FirstLanguageTag`, а `errs` запечатан `scripts/checks.sh:TIER0_SEALED` и обязан
 остаться с пустым `require` до собственного тега (`Roadmap` §2).
 
 Ломать потребителей не нужно: `crudhttp` оставляет алиасы на всё, что уехало —

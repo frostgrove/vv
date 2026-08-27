@@ -10,5 +10,7 @@ github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8Hm
 github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038 h1:D4mC6F8kE0cx6R7fACKeJ9bJC45pI9zr9nlysp0WAlI=
 github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179 h1:gRecY9L0e2+Z1tGaDN4w4w8I4hsRYdvpiGKIdBeMUEU=
+github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=

@@ -5,7 +5,7 @@
 
 ## The decision
 
-`Makefile:TIER0` is the manifest, and `make check-tiers` is what makes it real
+`scripts/checks.sh:TIER0` is the manifest, and `make check-tiers` is what makes it real
 rather than aspirational. It holds **four contracts** — `crud`, `query`, `errs`
 and `port` — and this decision closes that list: nothing on the framework
 roadmap's `?` list joins.
@@ -84,7 +84,7 @@ The manifest is the short list of things a third party writes *against*.
 
 ## What it forbids
 
-- Do not add a name to `Makefile:TIER0` without a second implementation that
+- Do not add a name to `scripts/checks.sh:TIER0` without a second implementation that
   exists or is being written in the same change.
 - Do not define a contract for something the standard library contracts. `slog`,
   `io`, `context`, `database/sql/driver`, `net/http` — a facade over any of them
@@ -98,13 +98,13 @@ The manifest is the short list of things a third party writes *against*.
 
 ## Where it lives
 
-- `Makefile:TIER0` — the manifest: four contracts, seven package paths.
-- `Makefile:TIER0_STDLIB` / `Makefile:TIER0_SEALED` — the two tighter arms.
+- `scripts/checks.sh:TIER0` — the manifest: four contracts, seven package paths.
+- `scripts/checks.sh:TIER0_STDLIB` / `scripts/checks.sh:TIER0_SEALED` — the two tighter arms.
   `crud` may import only the standard library ([[D-016]]'s surviving half);
   `errs` may import only the standard library and `errs/...`, checked with
   `-test` because a test-only import becomes a require in the module `errs` is
   split into ([[D-036]]).
-- `Makefile:check-tiers` — what enforces all three.
+- `scripts/checks.sh:check_tiers` — what enforces all three.
 - `ROADMAP-framework.md` §2 (the two rules), §3 (the `?` list this closes),
   §5 (`app`), §12.
 
@@ -127,7 +127,7 @@ buried in a package list.
 ## See also
 
 [[D-055]] is this decision applied rather than amended: the `auth` subsystem
-shipped, `authjwt` as the satellite this table predicted, and `Makefile:TIER0`
+shipped, `authjwt` as the satellite this table predicted, and `scripts/checks.sh:TIER0`
 unchanged at four contracts.
 
 [[D-033]] [[D-035]] [[D-036]] [[D-037]] [[D-041]] [[D-016]] [[D-055]]

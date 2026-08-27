@@ -297,7 +297,7 @@ For (4), classification is reachable in memory. `sqlfault.New(engine)` and `sqlf
 5. The compiled options are inspectable as data — the filter as SQL, the sort terms, the preload paths.
 **Today:** 🟡 partial — the seam is public and works; the double is not shipped.
 **Evidence:** the handler takes an interface ([[D-022]]), so (1) is possible for anyone. It has been written four times inside this repository and exported zero times: `crud/http/crudnet/fake_test.go`, `crudgin/fake_test.go`, `crudfiber/fake_test.go`, `crud/rpc/crudgrpc/fake_test.go` (376, 392, 385 and 308 lines, of which the double proper is about 160 each). All four record a `calls` slice, so (2) is what they converged on and `Last()` alone would not be. None of the four answers (3): a single `err` field fails every method (`crud/http/crudnet/fake_test.go:96-97`, and the same comment in the other three). **Three of the four** answer (4) through two behaviour hooks — `onSave` assigns the key and fills the generated column, `onUpdate` applies the DTO (`crudnet/fake_test.go:100-141`) — which is the 33 lines a double answering zero values would leave every consumer to rewrite. The fourth, `crudgrpc`, hardcodes the same behaviour in the method bodies and carries neither hooks nor option inspectors, so it answers (5) not at all; `whereSQL`, `predSQL`, `preloadPaths`, `relMeta` and `sortTerms` exist in the three HTTP fakes only.
-**A challenge to [[UC-011]], stated plainly.** UC-011 lists "A shipped fake repository for the handler" under **Out of scope**, and says guarantee 12 "describes what is possible through the public interface, not a facility the library hands over". Its Status then calls the same thing "the gap", and `docs/ai/usecases/Index.md:217` carries it as open tension 9. Proposing to ship the double widens that scope, and that is the owner's decision, not this sweep's. What is *not* a scope question: `mount` cannot ship from here, because it names the binding's own `Option` type and no binding is on `Makefile:TIER0`. The `httptest` harness around it (`do`, `ok` — `crudnet/fake_test.go:266-290`) uses `net/http`, `net/http/httptest` and `encoding/json` only and is tier-legal; whether it *belongs* here is a design question, not a manifest one. The round-one draft got that backwards.
+**A challenge to [[UC-011]], stated plainly.** UC-011 lists "A shipped fake repository for the handler" under **Out of scope**, and says guarantee 12 "describes what is possible through the public interface, not a facility the library hands over". Its Status then calls the same thing "the gap", and `docs/ai/usecases/Index.md:217` carries it as open tension 9. Proposing to ship the double widens that scope, and that is the owner's decision, not this sweep's. What is *not* a scope question: `mount` cannot ship from here, because it names the binding's own `Option` type and no binding is on `scripts/checks.sh:TIER0`. The `httptest` harness around it (`do`, `ok` — `crudnet/fake_test.go:266-290`) uses `net/http`, `net/http/httptest` and `encoding/json` only and is tier-legal; whether it *belongs* here is a design question, not a manifest one. The round-one draft got that backwards.
 **If not ready:** the consumer writes the double a fifth time, or binds a real repository to a recorder, mounts the handler over that, and asserts the SQL a request produced. Nothing in the tree demonstrates the second road — no example under `_examples/` mounts a handler at all.
 
 ### H-CRUDTEST-19 — The suite runs `-race`, and half of it runs `t.Parallel()`
@@ -618,7 +618,7 @@ H-CRUDTEST-18.
   recorder. Nothing proposed here adds one, and `TestTheRecorderStaysUnidentified`
   (`recorder_test.go:457`) is the guard that would catch it — with its control at
   `:503`.
-- **[[D-048]] and `Makefile:TIER0`** — `crud/crudtest` may import `crud`,
+- **[[D-048]] and `scripts/checks.sh:TIER0`** — `crud/crudtest` may import `crud`,
   `crud/query`, `errs`, `errs/sqlerr`, `port`, `port/porthttp` and the standard
   library, and nothing else. `RepoLike` is legal because `port` is on the
   manifest; `crud.MustSchemaOf[M]` is exported and in `crud`, so `RowsOf` is
@@ -754,7 +754,7 @@ material.
 - **A `Faults(errs.Classifier)` option on the recorder is not "a few lines", and
   I did not propose it.** Round one's dx review was right that the classifier is
   public and pure, and that finding is adopted in H-CRUDTEST-13. But the recorder
-  cannot call `sqlfault.Wrap`: `crud/sqlfault` is not on `Makefile:TIER0` and
+  cannot call `sqlfault.Wrap`: `crud/sqlfault` is not on `scripts/checks.sh:TIER0` and
   `make check-tiers` fails the moment `crud/crudtest` imports it. An option that
   called `Classify` directly would skip the integrity gate [[D-038]] puts after
   it, and a double that classifies *differently* from the adapter it doubles is

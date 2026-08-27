@@ -61,7 +61,7 @@ discover.
 
 **Because `port` is the address and `errs` is not.** Half of what moved calls
 `port.KindOf`, `port.MaxViolations`, `port.Violations` or
-`port.FirstLanguageTag`. `errs` is sealed by `Makefile:TIER0_SEALED` and has to
+`port.FirstLanguageTag`. `errs` is sealed by `scripts/checks.sh:TIER0_SEALED` and has to
 reach its first tag with an empty require block, so it cannot take a package that
 imports `port`. `port` can, and `port/porthttp` is a subpackage rather than a
 change to `port` itself — `port` stays free of `net/http`, which is [[D-045]]'s
@@ -98,7 +98,7 @@ for the gap is not.
   bad-request sentinel in a subsystem. That is [[D-034]]'s forbid, still verbatim.
 - Do not import `crud/http/crudhttp` from a package that is not about CRUD.
   `port/porthttp` is what a non-CRUD subsystem takes.
-- Do not let `port/porthttp` import a subsystem. `Makefile:TIER0` lists it, so
+- Do not let `port/porthttp` import a subsystem. `scripts/checks.sh:TIER0` lists it, so
   this one is mechanical rather than a matter of care.
 - Do not put an HTTP type into `port` itself. The split [[D-045]] drew still
   holds: `port` has no `net/http` in it, and `porthttp` is where it goes.
@@ -128,7 +128,7 @@ for the gap is not.
   `port/porthttp` now.
 - `remote/remotehttp/` — the client transport, which reads
   `porthttp.KindForStatus` and `porthttp.ParseEnvelope` rather than a copy.
-- `Makefile:TIER0` — `port/porthttp` is a manifest entry.
+- `scripts/checks.sh:TIER0` — `port/porthttp` is a manifest entry.
 
 ## Proven by
 

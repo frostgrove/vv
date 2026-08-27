@@ -592,7 +592,7 @@ consumer's own service layer branches on sentinels, and where the mapping lives.
 Separately and packaging-shaped: `errs/sqlerr` exports `Path`, `Save`, `Load`,
 `Corpus` and `Case` (`docs/api/surface.md:538-547`) beside `Classify` and `Err`.
 Those five are capture tooling for `make corpus`, and `errs/sqlerr` is in the
-contract manifest ([[D-048]], `Makefile:37`), so the tag freezes the testdata
+contract manifest ([[D-048]], `scripts/checks.sh:TIER0`), so the tag freezes the testdata
 JSON shape as a compatibility surface. Either that is deliberate and the doc says
 so, or they belong in an internal package. That is irreversible at the tag and
 free before it.
@@ -995,7 +995,7 @@ struct holding one leak it — the implicit path the module already closed by
 putting `MarshalJSON` on value receivers.
 
 `log/slog` is standard library, so this costs nothing under the seal:
-`Makefile:55` puts `errs` in `TIER0_SEALED` and `check-tiers` runs that arm with
+`scripts/checks.sh:TIER0_SEALED` puts `errs` in the sealed arm and `check-tiers` runs it with
 `-test`, admitting the standard library and `errs/...` and nothing else, and
 `errs/doc.go:38-40` requires an empty `require` block at the tag ([[D-036]],
 [[D-016]]). Worth saying out loud, because for a package whose whole subject is

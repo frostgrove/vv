@@ -229,7 +229,7 @@ those two engines — nor on SQLite, for the same reason ([[D-019]] §10(a)).
 
 | File | Role |
 |---|---|
-| `crud/sqlfault/doc.go` | the two gates, the three things no arm may read, why the engine is declared, why the package is not on `Makefile:TIER0` ([[D-048]]) and why the name carries a prefix ([[D-035]]) |
+| `crud/sqlfault/doc.go` | the two gates, the three things no arm may read, why the engine is declared, why the package is not on `scripts/checks.sh:TIER0` ([[D-048]]) and why the name carries a prefix ([[D-035]]) |
 | `crud/sqlfault/extract.go` | `Extract`, `Extractor`, `ExtractorFunc`, `walk`, `carried`, `engineError`, `sqliteNative` — by-shape extraction, the tree walk [[D-038]] owes, and the two places provenance has to be kept: which error the fields came from, and whose number the SQLite arm may read |
 | `crud/sqlfault/gate.go` | `Integrity`, `mysqlIntegrityNumbers`, `sqliteConstraint` — gate 1, moved here from `crud/adapter/crudsql` so both adapters answer it identically |
 | `crud/sqlfault/classify.go` | `Classifier`, `New`, `Option`, `WithCodes`, `WithExtractor`, `WithColumns`, `Classify`, `Engine`, `Wrap` — assembly, and the seam that guarantees the sentinel |

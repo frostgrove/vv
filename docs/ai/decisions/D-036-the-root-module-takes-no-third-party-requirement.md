@@ -77,9 +77,9 @@ attached by the caller.
 - `go.mod` — the root; its only permitted requirement is a first-party one.
 - `errs/doc.go` — records what the first tag freezes, and the packaging note
   the package's placeholder carried until phase 1 replaced it with real code.
-- `Makefile:check-deps` — the mechanical check, which filters on the module path
+- `scripts/checks.sh:check_deps` — the mechanical check, which filters on the module path
   prefix and so passes a first-party requirement and fails a third-party one.
-- `Makefile:TIER0_SEALED` — the other half, added with phase 1. This decision's
+- `scripts/checks.sh:TIER0_SEALED` — the other half, added with phase 1. This decision's
   case rests on `errs` having an **empty** require block and therefore being
   taggable first, and nothing enforced that: `check-tiers` filters out every
   contract package, so `errs` importing `crud` passed build, vet, tidy and every
@@ -91,7 +91,7 @@ attached by the caller.
   the same require cycle, and it is the case no other check can see — the import
   is intra-module, so `check-tidy` stays green and `check-deps` finds nothing
   third-party.
-- `Makefile:TIER0_STDLIB` — the same seal in the other direction, and owed to
+- `scripts/checks.sh:TIER0_STDLIB` — the same seal in the other direction, and owed to
   [[D-016]] rather than to this decision: `crud` may import only the standard
   library, which is what makes it unable to import `errs`. Both directions are
   recorded here because this is where the "crud cannot import errs" sentence

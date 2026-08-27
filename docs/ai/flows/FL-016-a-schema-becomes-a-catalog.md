@@ -139,7 +139,7 @@ test that sleeps.
   of the seven things a body may not name, and this package is where all four
   live. `ErrIntrospection` says nothing itself.
 - **[[D-048]]** — `catalog` is not on the contract manifest and must not be added
-  to `Makefile:TIER0`.
+  to `scripts/checks.sh:TIER0`.
 
 ## Traps
 

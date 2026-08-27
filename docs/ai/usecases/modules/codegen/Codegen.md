@@ -610,7 +610,7 @@ configures. The generator reads one directory per run (`codegen.go:151`), which
 is what makes the directive the right home for the settings, and `go generate
 ./...` the command — inside one module. A monorepo of several modules needs one
 invocation per module, and this repository is the example, not the counter-example
-it was cited as before: `Makefile:415-420` is five commands, and [[D-018]] records
+it was cited as before: `scripts/modules.sh:generate` is five commands, and [[D-018]] records
 that a store added without a line there is silently never regenerated. That is
 `go generate`'s boundary, not this tool's, and a `-check` over `./...` would have
 to re-discover every directive — a second copy of the flags, which is the failure

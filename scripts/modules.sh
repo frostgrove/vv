@@ -24,7 +24,7 @@ vet() {
 	run_workspace vet ./...
 	echo '==> ./_examples'
 	(cd _examples && GOWORK=off "$GO" vet ./...)
-"$GO" vet -tags=integration ./test/...
+	"$GO" vet -tags=integration ./test/...
 }
 
 examples() {
@@ -58,7 +58,7 @@ tidy() {
 }
 
 generate() {
-"$GO" generate ./...
+	"$GO" generate ./...
 	(cd test/entstore && "$GO" generate ./...)
 	(cd test/gormstore && "$GO" generate ./...)
 	(cd test/versionstore && "$GO" generate ./...)

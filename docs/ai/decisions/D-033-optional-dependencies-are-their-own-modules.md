@@ -6,7 +6,7 @@
 ## The decision
 
 Fourteen modules in one repository, twelve of them published. The list is
-**discovered** by `Makefile:MODULES` (`find . -name go.mod`) and never read from
+**discovered** by `scripts/common.sh:all_modules` (`find . -name go.mod`) and never read from
 here; this is the shape, not the manifest.
 
 ```

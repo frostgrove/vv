@@ -1,7 +1,7 @@
 # D-055 — A principal is a value in the context, and the library never puts it there
 
 **Status:** accepted
-**Invariant:** `auth` defines what an authenticated caller is and nothing else: it holds no credential store, no key, no transport type and no registry, and the only way a principal reaches a policy is a `context.Context` a transport binding wrote. `auth` is a package, not a manifest entry — `Makefile:TIER0` is unchanged.
+**Invariant:** `auth` defines what an authenticated caller is and nothing else: it holds no credential store, no key, no transport type and no registry, and the only way a principal reaches a policy is a `context.Context` a transport binding wrote. `auth` is a package, not a manifest entry — `scripts/checks.sh:TIER0` is unchanged.
 
 ## The decision
 
@@ -99,7 +99,7 @@ CRUD routes would otherwise have no way to get it.
 
 ## What it forbids
 
-- Do not add `auth` to `Makefile:TIER0`. [[D-048]] is in force; this is a
+- Do not add `auth` to `scripts/checks.sh:TIER0`. [[D-048]] is in force; this is a
   package, and the manifest stays four contracts.
 - Do not import `crud/decorators/security`, `crud` or `port` from `auth` or from
   any `auth*` binding. The direction is one-way, and it is what keeps a
@@ -135,7 +135,7 @@ CRUD routes would otherwise have no way to get it.
   `auth/rpc/authgrpc/` — the four transports and their shared HTTP half.
 - `crud/decorators/security/principal.go` — the bridge, and the only file in
   the tree where `auth` and `crud` meet.
-- `Makefile:TIER0` — unchanged, and that is the assertion.
+- `scripts/checks.sh:TIER0` — unchanged, and that is the assertion.
 
 ## Proven by
 

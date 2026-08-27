@@ -165,7 +165,7 @@ approximate rather than guessed.
   service appends the command's options *after* the document compiles and a
   client cannot widen a scope by sending a filter.
 - **`port` may import the standard library, `crud`, `query` and `errs`, and
-  nothing else.** `Makefile:TIER0` and `make check-tiers` are what make that
+  nothing else.** `scripts/checks.sh:TIER0` and `make check-tiers` are what make that
   mechanical. `port/porthttp` is a manifest entry too, under the same rule and
   for a sharper reason: it is what the auth middleware imports, and an import of
   `crud/sqlrepo` from it would put the repository back into a token check

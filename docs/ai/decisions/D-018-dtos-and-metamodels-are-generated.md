@@ -149,7 +149,7 @@ holder or somebody else's bookkeeping, never a column. That is what keeps ent's
 - `internal/codegen/render.go:generator.renderAttrs` — relation expansion with the
   depth bound and a cycle guard.
 - `internal/codegen/adapter.go` — the `-adapter` half and the coverage assertion.
-- `Makefile:generate` — regenerates the library's own examples and all three test
+- `scripts/modules.sh:generate` — regenerates the library's own examples and all three test
   stores. A store added without a line here is silently never regenerated.
 - `_examples/example/blog/vv_gen.go`, `test/entstore/vv_gen.go`,
   `test/gormstore/vv_gen.go`, `test/versionstore/vv_gen.go` — the checked-in

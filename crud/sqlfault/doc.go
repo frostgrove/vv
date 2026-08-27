@@ -4,7 +4,7 @@
 // in the layer that has both — not by making them implement it. This is that
 // layer: it has the parsers, it has crud for the sentinel, and it has catalog
 // for the columns a driver did not name. errs/sqlerr cannot have any of the
-// three, because Makefile:TIER0_SEALED holds it to the standard library and
+// three, because scripts/checks.sh:TIER0_SEALED holds it to the standard library and
 // errs/... alone.
 //
 // Two adapters ask this package the same questions, and that is the whole
@@ -49,7 +49,7 @@
 //
 // # Not a contract package
 //
-// This is deliberately not on Makefile:TIER0. It has one implementation, which
+// This is deliberately not on scripts/checks.sh:TIER0. It has one implementation, which
 // is an implementation and not a contract ([[D-048]]). The contract a third
 // party writes against is errs.Classifier, which this satisfies.
 //

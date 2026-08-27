@@ -5,7 +5,7 @@ module github.com/frostgrove/vv/crud/adapter/crudpgx
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038
+	github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179
 	github.com/jackc/pgx/v5 v5.7.6
 )
 
