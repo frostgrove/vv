@@ -5,7 +5,7 @@ module github.com/frostgrove/vv/crud/http/crudfiber
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c
+	github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4
 	github.com/gofiber/fiber/v3 v3.4.0
 )
 

@@ -10,7 +10,7 @@ replace github.com/frostgrove/vv => ../
 
 require (
 	entgo.io/ent v0.14.6
-	github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c
+	github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4
 	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
 	github.com/gin-gonic/gin v1.12.0

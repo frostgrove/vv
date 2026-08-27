@@ -2,6 +2,8 @@ github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak
 github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c h1:TBczAlIcD+9iu7T3VrzAbCyY+f8IAVs7KAhdniQTmZ8=
 github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4 h1:guH3qezyLc1LQWLJsXTNKVcR1o/DQ1OGUbEnIPuj0pg=
+github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/ilyakaznacheev/cleanenv v1.5.0 h1:0VNZXggJE2OYdXE87bfSSwGxeiGt9moSR2lOrsHHvr4=
 github.com/ilyakaznacheev/cleanenv v1.5.0/go.mod h1:a5aDzaJrLCQZsazHol1w8InnDcOX0OColm64SlIi6gk=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=

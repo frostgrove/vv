@@ -11,6 +11,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c h1:TBczAlIcD+9iu7T3VrzAbCyY+f8IAVs7KAhdniQTmZ8=
 github.com/frostgrove/vv v0.0.0-20260826140305-8277e85cbd9c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4 h1:guH3qezyLc1LQWLJsXTNKVcR1o/DQ1OGUbEnIPuj0pg=
+github.com/frostgrove/vv v0.0.0-20260827054409-4c5d26cca3c4/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/gabriel-vasile/mimetype v1.4.12 h1:e9hWvmLYvtp846tLHam2o++qitpguFiYCKbn0w9jyqw=
 github.com/gabriel-vasile/mimetype v1.4.12/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
 github.com/gin-contrib/sse v1.1.0 h1:n0w2GMuUpWDVp7qSpvze6fAu9iRxJY4Hmj6AmBOU05w=
