@@ -8,6 +8,8 @@ github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6 h1:iKeZfx6NlJeBJRTEC
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84WpRLGD5kQhF+p1OXgBMzEEo6INY=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8HmsxZ+GBg3jxnwkVLpw6faLSP9iM=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=

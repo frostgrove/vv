@@ -127,7 +127,7 @@ func (m Migration) Validate() error {
 		}
 	}
 	if m.Table != "" && !validMigrationTable(m.Table) {
-		return fmt.Errorf("%w: migration.table %q must be an identifier or schema.identifier", ErrUnsupported, m.Table)
+		return fmt.Errorf("%w: migration.table %q must be a non-reserved lower-case identifier or schema.identifier", ErrUnsupported, m.Table)
 	}
 	return nil
 }
@@ -153,6 +153,9 @@ func validMigrationTable(name string) bool {
 				return false
 			}
 		}
+		if migrationReservedWords[part] {
+			return false
+		}
 	}
 	return true
 }
@@ -162,6 +165,27 @@ func identifierStart(c byte) bool {
 }
 
 func identifierPart(c byte) bool { return identifierStart(c) || c >= '0' && c <= '9' }
+
+var migrationReservedWords = map[string]bool{
+	"add": true, "all": true, "alter": true, "analyze": true, "and": true, "any": true,
+	"as": true, "asc": true, "authorization": true, "between": true, "bigint": true,
+	"binary": true, "blob": true, "boolean": true, "both": true, "by": true, "call": true,
+	"cascade": true, "case": true, "cast": true, "char": true, "check": true, "column": true,
+	"constraint": true, "create": true, "cross": true, "current_date": true,
+	"current_time": true, "current_timestamp": true, "database": true, "default": true,
+	"delete": true, "desc": true, "distinct": true, "double": true, "drop": true, "else": true,
+	"end": true, "escape": true, "exists": true, "false": true, "fetch": true, "float": true,
+	"for": true, "foreign": true, "from": true, "full": true, "grant": true, "group": true,
+	"having": true, "in": true, "index": true, "inner": true, "insert": true, "int": true,
+	"integer": true, "intersect": true, "into": true, "is": true, "join": true, "key": true,
+	"left": true, "like": true, "limit": true, "lock": true, "natural": true, "not": true,
+	"null": true, "numeric": true, "of": true, "offset": true, "on": true, "or": true,
+	"order": true, "outer": true, "primary": true, "references": true, "right": true,
+	"row": true, "schema": true, "select": true, "set": true, "table": true, "then": true,
+	"to": true, "true": true, "union": true, "unique": true, "update": true, "user": true,
+	"using": true, "values": true, "varchar": true, "view": true, "when": true, "where": true,
+	"with": true,
+}
 
 // A Pool sizes the connections. The four limits are database/sql's and pgx
 // reads them too; ConnectTimeout is the only one that travels in the

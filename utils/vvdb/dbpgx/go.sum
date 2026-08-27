@@ -9,6 +9,8 @@ github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6 h1:iKeZfx6NlJeBJRTEC
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84WpRLGD5kQhF+p1OXgBMzEEo6INY=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8HmsxZ+GBg3jxnwkVLpw6faLSP9iM=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

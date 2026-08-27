@@ -6,7 +6,7 @@ module github.com/frostgrove/vv/utils/vvcfg
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c
+	github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 )
 

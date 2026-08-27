@@ -112,6 +112,50 @@ func providerDatabaseConfig(cfg vvdb.Config) (vvdb.Config, error) {
 	return primary, nil
 }
 
+func providerLockerOption(engine vvdb.Engine, table string) (goose.ProviderOption, error) {
+	switch engine {
+	case vvdb.Postgres:
+		locker, err := gooselock.NewPostgresSessionLocker()
+		if err != nil {
+			return nil, fmt.Errorf("vvgoose: create PostgreSQL migration locker: %w", err)
+		}
+		return goose.WithSessionLocker(locker), nil
+	case vvdb.MySQL, vvdb.MariaDB:
+		sum := sha256.Sum256([]byte(table))
+		return goose.WithSessionLocker(mysqlSessionLocker{name: fmt.Sprintf("vvgoose:%x", sum[:20])}), nil
+	default:
+		// SQLite serializes schema writers through the database file itself. The
+		// Goose lock package has no SQLite session-lock primitive.
+		return nil, nil
+	}
+}
+
+type mysqlSessionLocker struct{ name string }
+
+func (l mysqlSessionLocker) SessionLock(ctx context.Context, conn *sql.Conn) error {
+	var acquired sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 300)", l.name).Scan(&acquired); err != nil {
+		return fmt.Errorf("vvgoose: acquire MySQL migration lock: %w", err)
+	}
+	if !acquired.Valid || acquired.Int64 != 1 {
+		return fmt.Errorf("vvgoose: MySQL migration lock %q was not acquired", l.name)
+	}
+	return nil
+}
+
+func (l mysqlSessionLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
+	var released sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", l.name).Scan(&released); err != nil {
+		return fmt.Errorf("vvgoose: release MySQL migration lock: %w", err)
+	}
+	if !released.Valid || released.Int64 != 1 {
+		return fmt.Errorf("vvgoose: MySQL migration lock %q was not released", l.name)
+	}
+	return nil
+}
+
+var _ gooselock.SessionLocker = mysqlSessionLocker{}
+
 func dialectFor(engine vvdb.Engine) (goose.Dialect, error) {
 	switch engine {
 	case vvdb.Postgres:

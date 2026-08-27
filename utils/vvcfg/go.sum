@@ -8,6 +8,8 @@ github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6 h1:iKeZfx6NlJeBJRTEC
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84WpRLGD5kQhF+p1OXgBMzEEo6INY=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8HmsxZ+GBg3jxnwkVLpw6faLSP9iM=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/ilyakaznacheev/cleanenv v1.5.0 h1:0VNZXggJE2OYdXE87bfSSwGxeiGt9moSR2lOrsHHvr4=
 github.com/ilyakaznacheev/cleanenv v1.5.0/go.mod h1:a5aDzaJrLCQZsazHol1w8InnDcOX0OColm64SlIi6gk=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=

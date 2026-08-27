@@ -54,6 +54,8 @@ github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6 h1:iKeZfx6NlJeBJRTEC
 github.com/frostgrove/vv v0.0.0-20260827054915-979f9cb9cfb6/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c h1:RQZBdGPxjQFe2T84WpRLGD5kQhF+p1OXgBMzEEo6INY=
 github.com/frostgrove/vv v0.0.0-20260827071144-9d6c18705a6c/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b h1:QJc4wRUgokm12O8HmsxZ+GBg3jxnwkVLpw6faLSP9iM=
+github.com/frostgrove/vv v0.0.0-20260827071218-0d9a984dbd1b/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/go-sql-driver/mysql v1.10.0 h1:Q+1LV8DkHJvSYAdR83XzuhDaTykuDx0l6fkXxoWCWfw=
 github.com/go-sql-driver/mysql v1.10.0/go.mod h1:M+cqaI7+xxXGG9swrdeUIoPG3Y3KCkF0pZej+SK+nWk=
 github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 h1:LMLX+LgTNWpfvCBdFebv6EsYotImrt/Ppc5cXIriCSo=
