@@ -20,17 +20,18 @@ type key struct {
 // mariadb.go differs at exactly two rows; see the header there for why the two
 // are not one table.
 var mysqlKeys = map[key]errs.Code{
-	{"23000", 1062}: errs.CodeUnique,        // unique, unique_composite, primary_key
-	{"23000", 1452}: errs.CodeForeignKey,    // foreign_key
-	{"23000", 1451}: errs.CodeRestrict,      // restrict
-	{"23000", 1048}: errs.CodeRequired,      // not_null
-	{"HY000", 3819}: errs.CodeCheck,         // check
-	{"HY000", 1364}: errs.CodeRequired,      // missing_default
-	{"HY000", 1366}: errs.CodeInvalidFormat, // bad_type
-	{"HY000", 1205}: errs.CodeLockTimeout,   // lock_timeout
-	{"22001", 1406}: errs.CodeTooLong,       // too_long
-	{"22003", 1264}: errs.CodeOutOfRange,    // out_of_range
-	{"40001", 1213}: errs.CodeDeadlock,      // deadlock, serialization_failure
+	{"23000", 1062}: errs.CodeUnique,         // unique, unique_composite, primary_key
+	{"23000", 1452}: errs.CodeForeignKey,     // foreign_key
+	{"23000", 1451}: errs.CodeRestrict,       // restrict
+	{"23000", 1048}: errs.CodeRequired,       // not_null
+	{"HY000", 3819}: errs.CodeCheck,          // check
+	{"HY000", 1364}: errs.CodeRequired,       // missing_default
+	{"HY000", 1366}: errs.CodeInvalidFormat,  // bad_type
+	{"HY000", 1205}: errs.CodeLockTimeout,    // lock_timeout
+	{"22001", 1406}: errs.CodeTooLong,        // too_long
+	{"22003", 1264}: errs.CodeOutOfRange,     // out_of_range
+	{"40001", 1213}: errs.CodeDeadlock,       // deadlock, serialization_failure
+	{"42S02", 1146}: errs.CodeSchemaNotReady, // undefined_table
 }
 
 // mysql classifies on the pair and refuses everything else, including a class-23

@@ -11,6 +11,15 @@ var (
 	// ErrNoTxSupport is returned when a transaction is requested from an
 	// executor that cannot start one (e.g. a foreign *sql.Tx handed to us).
 	ErrNoTxSupport = errors.New("crud: executor cannot begin transactions")
+	// ErrSchemaNotReady marks a statement against a table the configured
+	// database does not have. It is an operational failure, not a missing row:
+	// apply the application's pending migrations or verify the database and
+	// schema selection before retrying the request.
+	//
+	// It is deliberately separate from ErrNotFound. The latter is a 404 about a
+	// row the caller asked for; this remains an internal error and a transport
+	// must not expose the database layout to that caller.
+	ErrSchemaNotReady = errors.New("crud: database schema is not ready")
 	// ErrMissingID is returned by Save when the model has a non-generated
 	// primary key that was left at its zero value.
 	ErrMissingID = errors.New("crud: primary key is required for save")

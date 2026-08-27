@@ -269,7 +269,7 @@ func TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault(t *testing.T) {
 		code     errs.Code
 		unwanted error
 	}{
-		{"a PostgreSQL duplicate key", pgErr{"23505"}, errs.CodeUnique, pgErr{"42P01"}},
+		{"a PostgreSQL duplicate key", pgErr{"23505"}, errs.CodeUnique, pgErr{"42601"}},
 		{"a MySQL CHECK under HY000", newMySQLish(3819, "HY000", "Check constraint 'ck' is violated."),
 			errs.CodeCheck, newMySQLish(1146, "HY000", "Table 'x.y' doesn't exist")},
 		// The negatives have to be errors nothing classifies at all. SQLITE_BUSY

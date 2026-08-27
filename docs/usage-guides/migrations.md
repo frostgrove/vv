@@ -45,5 +45,11 @@ Run `go run ./cmd/migrate` with no arguments to open the searchable interactive
 command menu. Direct arguments remain available for scripts and CI; a non-TTY
 invocation prints help instead of trying to prompt.
 
+If a local migration file was removed after its version reached
+`goose_db_version`, `fresh` cannot run that missing migration's `Down` section.
+Use `go run ./cmd/migrate flush` to remove all local database objects and the
+Goose history, then run `go run ./cmd/migrate migrate`. `flush` is destructive
+and for a local development database only.
+
 See [the vvgoose module reference](../modules/en/vvgoose.md) for discovery
-rules, environment names and exact `fresh` semantics.
+rules, environment names and exact `fresh` and `flush` semantics.

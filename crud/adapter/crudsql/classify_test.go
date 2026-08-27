@@ -86,3 +86,29 @@ func TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor(t *testing.T) {
 		t.Fatalf("MySQL's table answered %q for a number only MariaDB reports", f.Code)
 	}
 }
+
+func TestAMissingTableIsAClassifiedInternalSchemaFailure(t *testing.T) {
+	driver := &pgconnish{
+		Code:    "42P01",
+		Message: `ERROR: relation "products" does not exist (SQLSTATE 42P01)`,
+	}
+
+	got := Postgres(nil).conflict(driver)
+	if !errors.Is(got, crud.ErrSchemaNotReady) {
+		t.Fatalf("a missing table does not match ErrSchemaNotReady: %v", got)
+	}
+	if errors.Is(got, crud.ErrConflict) {
+		t.Fatalf("a missing table is an operational failure, not a conflict: %v", got)
+	}
+	if !errors.Is(got, driver) {
+		t.Fatalf("the driver error is no longer reachable underneath the fault: %v", got)
+	}
+
+	f, ok := errs.AsFault(got)
+	if !ok || f.Kind != errs.KindInternal || f.Code != errs.CodeSchemaNotReady {
+		t.Fatalf("fault = %#v, want internal/schema_not_ready", f)
+	}
+	if got.Error() != "errs: internal: schema_not_ready (1 violation)" {
+		t.Fatalf("Error() = %q, want the safe classification only", got.Error())
+	}
+}

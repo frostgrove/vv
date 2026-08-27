@@ -42,13 +42,15 @@ func TestTheTwoGatesAnswerDifferentQuestions(t *testing.T) {
 		{"a SQLite constraint subcode nothing has produced", "sqlite", &sqliteish{code: 19 | (9 << 8)}, true, ""},
 
 		// A code and no sentinel — the dangerous direction. A fault exists, and
-		// it must not become a 409 by being a fault.
+		// it must not become a 409 by being a fault. The missing-table case is
+		// operational rather than request-shaped, but follows the same rule.
 		{"SQLITE_BUSY", "sqlite", &sqliteish{code: 5}, false, errs.CodeLockTimeout},
 		{"a PostgreSQL serialisation failure", "postgres", pgish("40001"), false, errs.CodeSerializationFailure},
 		{"a value too long for its column", "postgres", pgish("22001"), false, errs.CodeTooLong},
+		{"an undefined table", "postgres", pgish("42P01"), false, errs.CodeSchemaNotReady},
 
 		// Neither.
-		{"an undefined table", "postgres", pgish("42P01"), false, ""},
+		{"a PostgreSQL syntax error", "postgres", pgish("42601"), false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Integrity(tc.err); got != tc.sentinel {

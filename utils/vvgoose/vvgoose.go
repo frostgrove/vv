@@ -8,9 +8,10 @@
 //	}
 //
 // Execute reads os.Args and provides migration generation, applying, status,
-// rollback and a reset followed by re-application. SQL files stay compatible
-// with the Goose CLI; the package uses Goose's instance Provider internally so
-// two database configurations never share process-global migration state.
+// rollback, a reset followed by re-application, and a development database
+// flush. SQL files stay compatible with the Goose CLI; the package uses Goose's
+// instance Provider internally so two database configurations never share
+// process-global migration state.
 package vvgoose
 
 import (
@@ -208,6 +209,20 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:   "flush",
+		Short: "Drop every object in the current development database schema",
+		Long:  "Drop every application object, including Goose history, from the current database schema. No migrations are applied afterwards. This is destructive and intended for local development only.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := runFlush(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(streams.out, "database flushed")
+			return nil
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "Show applied and pending migrations",
 		Args:  cobra.NoArgs,
@@ -256,6 +271,7 @@ const (
 	interactiveStatus    interactiveCommand = "status"
 	interactiveRollback  interactiveCommand = "rollback"
 	interactiveFresh     interactiveCommand = "fresh"
+	interactiveFlush     interactiveCommand = "flush"
 	interactiveExit      interactiveCommand = "exit"
 )
 
@@ -274,6 +290,7 @@ func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) err
 			huh.NewOption("Show migration status", interactiveStatus),
 			huh.NewOption("Roll back migrations", interactiveRollback),
 			huh.NewOption("Fresh: down all, then migrate", interactiveFresh),
+			huh.NewOption("Flush: drop every database object", interactiveFlush),
 			huh.NewOption("Exit", interactiveExit),
 		).
 		Value(&selected).
@@ -305,6 +322,8 @@ func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) err
 		return runInteractiveRollback(ctx, cfg, streams)
 	case interactiveFresh:
 		return runInteractiveFresh(ctx, cfg, streams)
+	case interactiveFlush:
+		return runInteractiveFlush(ctx, cfg, streams)
 	case interactiveExit:
 		return nil
 	default:
@@ -456,6 +475,29 @@ func runInteractiveFresh(ctx context.Context, cfg vvdb.Config, streams commandIO
 		printResults(streams.out, results)
 	}
 	return err
+}
+
+func runInteractiveFlush(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Drop every object, including Goose history, from the current database schema?").
+			Affirmative("Flush database").
+			Negative("Cancel").
+			Value(&confirmed),
+	))
+	if err := runForm(ctx, streams, form); err != nil {
+		return fmt.Errorf("vvgoose: flush confirmation: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(streams.out, "cancelled")
+		return nil
+	}
+	if err := runFlush(ctx, cfg); err != nil {
+		return err
+	}
+	fmt.Fprintln(streams.out, "database flushed")
+	return nil
 }
 
 func runForm(ctx context.Context, streams commandIO, form *huh.Form) error {

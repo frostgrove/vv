@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/frostgrove/vv/utils/vvdb"
 	mysql "github.com/go-sql-driver/mysql"
@@ -205,6 +206,212 @@ func runFresh(ctx context.Context, cfg vvdb.Config) (results []*goose.MigrationR
 	up, err := provider.Up(ctx)
 	results = append(results, up...)
 	return results, err
+}
+
+// runFlush drops all application objects from the active development database
+// without consulting migration files or Goose history. It is the recovery
+// hatch for a history table that names a migration file that no longer exists.
+// It intentionally does not run Up afterwards: the caller can inspect the
+// empty database, or run migrate explicitly.
+func runFlush(ctx context.Context, raw vvdb.Config) (err error) {
+	cfg := normalizeConfig(raw)
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("vvgoose: invalid database config: %w", err)
+	}
+
+	primary := cfg
+	primary.Replica = nil
+	db, err := vvdb.Open(primary)
+	if err != nil {
+		return fmt.Errorf("vvgoose: open primary database: %w", err)
+	}
+	defer joinCloseError(db, &err)
+
+	switch cfg.Engine {
+	case vvdb.Postgres:
+		return flushPostgres(ctx, db)
+	case vvdb.MySQL, vvdb.MariaDB:
+		return flushMySQL(ctx, db)
+	case vvdb.SQLite:
+		return flushSQLite(ctx, db)
+	default:
+		return fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, cfg.Engine)
+	}
+}
+
+func flushPostgres(ctx context.Context, db *sql.DB) error {
+	var schema string
+	if err := db.QueryRowContext(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		return fmt.Errorf("vvgoose: find PostgreSQL schema to flush: %w", err)
+	}
+	if schema == "" || schema == "information_schema" || strings.HasPrefix(schema, "pg_") {
+		return fmt.Errorf("vvgoose: refusing to flush PostgreSQL system schema %q", schema)
+	}
+
+	quoted := quoteRuntimeIdentifier(vvdb.Postgres, schema)
+	if _, err := db.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
+		return fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		return fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
+	}
+	return nil
+}
+
+func flushMySQL(ctx context.Context, db *sql.DB) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("vvgoose: acquire MySQL flush connection: %w", err)
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+
+	if _, err = conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+		return fmt.Errorf("vvgoose: disable MySQL foreign-key checks: %w", err)
+	}
+	defer func() {
+		if _, restoreErr := conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1"); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("vvgoose: restore MySQL foreign-key checks: %w", restoreErr))
+		}
+	}()
+
+	rows, err := conn.QueryContext(ctx, `
+		SELECT table_name, table_type
+		FROM information_schema.tables
+		WHERE table_schema = DATABASE()
+		ORDER BY CASE table_type WHEN 'VIEW' THEN 0 ELSE 1 END, table_name`)
+	if err != nil {
+		return fmt.Errorf("vvgoose: list MySQL objects to flush: %w", err)
+	}
+	objects, err := scanFlushObjects(rows)
+	if err != nil {
+		return err
+	}
+	if err := dropMySQLObjects(ctx, conn, objects); err != nil {
+		return err
+	}
+
+	rows, err = conn.QueryContext(ctx, `
+		SELECT routine_name, routine_type
+		FROM information_schema.routines
+		WHERE routine_schema = DATABASE()
+		ORDER BY routine_name`)
+	if err != nil {
+		return fmt.Errorf("vvgoose: list MySQL routines to flush: %w", err)
+	}
+	objects, err = scanFlushObjects(rows)
+	if err != nil {
+		return err
+	}
+	if err := dropMySQLObjects(ctx, conn, objects); err != nil {
+		return err
+	}
+
+	rows, err = conn.QueryContext(ctx, `
+		SELECT event_name, 'EVENT'
+		FROM information_schema.events
+		WHERE event_schema = DATABASE()
+		ORDER BY event_name`)
+	if err != nil {
+		return fmt.Errorf("vvgoose: list MySQL events to flush: %w", err)
+	}
+	objects, err = scanFlushObjects(rows)
+	if err != nil {
+		return err
+	}
+	if err := dropMySQLObjects(ctx, conn, objects); err != nil {
+		return err
+	}
+	return nil
+}
+
+func dropMySQLObjects(ctx context.Context, conn *sql.Conn, objects []flushObject) error {
+	for _, object := range objects {
+		statement, label := "", strings.ToLower(object.kind)
+		switch object.kind {
+		case "BASE TABLE":
+			statement = "DROP TABLE IF EXISTS "
+		case "VIEW":
+			statement = "DROP VIEW IF EXISTS "
+		case "PROCEDURE":
+			statement = "DROP PROCEDURE IF EXISTS "
+		case "FUNCTION":
+			statement = "DROP FUNCTION IF EXISTS "
+		case "EVENT":
+			statement = "DROP EVENT IF EXISTS "
+		default:
+			return fmt.Errorf("vvgoose: unsupported MySQL object %q while flushing", object.kind)
+		}
+		if _, err := conn.ExecContext(ctx, statement+quoteRuntimeIdentifier(vvdb.MySQL, object.name)); err != nil {
+			return fmt.Errorf("vvgoose: drop MySQL %s %q: %w", label, object.name, err)
+		}
+	}
+	return nil
+}
+
+func flushSQLite(ctx context.Context, db *sql.DB) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("vvgoose: acquire SQLite flush connection: %w", err)
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+
+	if _, err = conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("vvgoose: disable SQLite foreign keys: %w", err)
+	}
+	defer func() {
+		if _, restoreErr := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("vvgoose: restore SQLite foreign keys: %w", restoreErr))
+		}
+	}()
+
+	rows, err := conn.QueryContext(ctx, `
+		SELECT name, type
+		FROM sqlite_master
+		WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'
+		ORDER BY CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 ELSE 2 END, name`)
+	if err != nil {
+		return fmt.Errorf("vvgoose: list SQLite objects to flush: %w", err)
+	}
+	objects, err := scanFlushObjects(rows)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		statement := "DROP " + strings.ToUpper(object.kind) + " IF EXISTS "
+		if _, err := conn.ExecContext(ctx, statement+quoteRuntimeIdentifier(vvdb.SQLite, object.name)); err != nil {
+			return fmt.Errorf("vvgoose: drop SQLite %s %q: %w", object.kind, object.name, err)
+		}
+	}
+	return nil
+}
+
+type flushObject struct {
+	name string
+	kind string
+}
+
+func scanFlushObjects(rows *sql.Rows) ([]flushObject, error) {
+	defer rows.Close()
+
+	var objects []flushObject
+	for rows.Next() {
+		var object flushObject
+		if err := rows.Scan(&object.name, &object.kind); err != nil {
+			return nil, fmt.Errorf("vvgoose: read database object to flush: %w", err)
+		}
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vvgoose: list database objects to flush: %w", err)
+	}
+	return objects, nil
+}
+
+func quoteRuntimeIdentifier(engine vvdb.Engine, name string) string {
+	if engine == vvdb.MySQL || engine == vvdb.MariaDB {
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	}
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func runStatus(ctx context.Context, cfg vvdb.Config) (statuses []*goose.MigrationStatus, err error) {

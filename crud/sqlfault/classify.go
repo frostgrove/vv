@@ -107,6 +107,14 @@ func (c *Classifier) Classify(err error) (*errs.Fault, bool) {
 			Driver:     err,
 		})
 
+	// A known missing table is an operational problem the repository's caller
+	// can act on, usually by applying migrations. Keep that fact as a sentinel
+	// while the fault stays internal: an HTTP or RPC client must never learn a
+	// table name or whether a particular deployment has been migrated.
+	if code == errs.CodeSchemaNotReady {
+		b = b.Wrapping(crud.ErrSchemaNotReady)
+	}
+
 	// The sentinel goes inside the fault rather than around it, so the fault is
 	// the outermost error and its Error() — classification only ([[D-047]]) — is
 	// what crud/http/crudhttp:Body copies into a 409 body today. Wrap re-checks and

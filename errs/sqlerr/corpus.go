@@ -44,6 +44,11 @@ const (
 	// the engine aborted out from under the caller. Nothing the caller sent is
 	// wrong, so answering 4xx would tell them to fix something they cannot.
 	KindRetryable = "retryable"
+	// KindInternal is an operational failure the client cannot remedy. A table
+	// missing from the selected database is the current example: operators need
+	// a stable signal to apply migrations, while a transport must still answer a
+	// detail-free 500.
+	KindInternal = "internal"
 	// KindNone is an error that must stay unclassified. Without these the corpus
 	// only proves that a classifier says yes, never that it knows when to say
 	// no — and a parser that classifies everything is worse than one that

@@ -26,6 +26,7 @@ var postgresStates = map[string]errs.Code{
 	"40P01": errs.CodeDeadlock,             // deadlock
 	"40001": errs.CodeSerializationFailure, // serialization_failure
 	"25P02": errs.CodeTransactionAborted,   // transaction_aborted
+	"42P01": errs.CodeSchemaNotReady,       // undefined_table
 }
 
 // 23503 answers foreign_key for both directions and not restrict for one of

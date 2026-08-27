@@ -201,8 +201,8 @@
     },
     {
       "name": "undefined_table",
-      "kind": "none",
-      "want": "",
+      "kind": "internal",
+      "want": "schema_not_ready",
       "stmt": "SELECT id FROM cp_nope",
       "err": {
         "type": "*mysql.MySQLError",

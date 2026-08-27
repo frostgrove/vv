@@ -67,6 +67,7 @@ go run ./cmd/migrate status
 go run ./cmd/migrate rollback                # one migration
 go run ./cmd/migrate rollback 3
 go run ./cmd/migrate fresh
+go run ./cmd/migrate flush                   # delete every local database object
 ```
 
 `migration <name>` is an editable Goose skeleton; it never guesses tables from
@@ -87,6 +88,20 @@ addressable by arguments.
 
 `fresh` runs every known `Down` section and then every `Up` section. It does
 not drop tables that are not owned by migrations.
+
+`flush` is the development recovery command when Goose history refers to a
+migration file that no longer exists, so `fresh` cannot find its `Down`
+section. It drops all objects in the active schema/database, including the
+Goose history table, and does **not** run migrations afterwards. Run `migrate`
+explicitly when the empty database is the desired state. PostgreSQL recreates
+the current non-system schema; MySQL/MariaDB remove every table, view, routine,
+and event in the selected database; SQLite removes every non-system table, view,
+and trigger.
+It is destructive and must only point at a local development database.
+
+Generated table migrations use `CREATE TABLE IF NOT EXISTS`. This makes an
+initial migration safe to re-run after tables survived a failed local setup; it
+does not reconcile a schema that differs from the model.
 
 ## Model selection
 
@@ -109,5 +124,5 @@ name ()` is intentionally not emitted because MySQL and SQLite reject it.
 `--model` selects a struct explicitly for a one-table command.
 
 `migration`, `table`, and `init` never open the database. `migrate`, `status`,
-`rollback`, and `fresh` open only the primary even when a read replica is
+`rollback`, `fresh`, and `flush` open only the primary even when a read replica is
 configured.

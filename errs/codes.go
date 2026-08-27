@@ -97,6 +97,7 @@ func StandardCodes() *Codes {
 		{CodeTransactionAborted, KindRetryable, "the request could not be completed; try again"},
 		{CodeUnavailable, KindRetryable, "the request could not be completed; try again"},
 
+		{CodeSchemaNotReady, KindInternal, ""},
 		{CodeInternal, KindInternal, ""},
 	} {
 		// Every entry above is distinct, so Add cannot refuse; a typo that made

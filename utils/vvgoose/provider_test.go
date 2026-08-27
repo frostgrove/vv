@@ -135,6 +135,61 @@ func TestFreshReappliesMigrations(t *testing.T) {
 	}
 }
 
+func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
+	t.Parallel()
+
+	cfg := sqliteMigrationConfig(t)
+	ctx := context.Background()
+	if _, err := runMigrate(ctx, cfg); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+
+	db, err := vvdb.Open(cfg)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE untracked (id INTEGER PRIMARY KEY)`); err != nil {
+		_ = db.Close()
+		t.Fatalf("create untracked table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE VIEW user_names AS SELECT name FROM users`); err != nil {
+		_ = db.Close()
+		t.Fatalf("create untracked view: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	if err := runFlush(ctx, cfg); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	db, err = vvdb.Open(cfg)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	var objects int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		_ = db.Close()
+		t.Fatalf("count objects after flush: %v", err)
+	}
+	if objects != 0 {
+		_ = db.Close()
+		t.Fatalf("objects after flush = %d, want 0", objects)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close flushed sqlite: %v", err)
+	}
+
+	results, err := runMigrate(ctx, cfg)
+	if err != nil {
+		t.Fatalf("migrate after flush: %v", err)
+	}
+	if len(results) != 1 || results[0].Direction != "up" {
+		t.Fatalf("migrate after flush results = %+v, want one up migration", results)
+	}
+}
+
 func TestRollbackRejectsNonPositiveCount(t *testing.T) {
 	t.Parallel()
 

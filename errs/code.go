@@ -57,7 +57,11 @@ const (
 	// InTx is an opaque 500 the caller cannot tell from a bug.
 	CodeTransactionAborted Code = "transaction_aborted"
 	CodeUnavailable        Code = "unavailable"
-	CodeInternal           Code = "internal"
+	// CodeSchemaNotReady means the configured database is missing a table the
+	// repository uses. It is an internal operational code: it lets a process
+	// recognise an unapplied migration without disclosing its schema to clients.
+	CodeSchemaNotReady Code = "schema_not_ready"
+	CodeInternal       Code = "internal"
 )
 
 // A Kind is the transport class. Transports map the kind and never the code,

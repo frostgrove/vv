@@ -119,7 +119,10 @@ func TestEveryClassifiableCorpusCaseGetsTheCodeItsClassNames(t *testing.T) {
 	}
 }
 
-// The three refusals per engine that must stay unclassified.
+// The failures whose keys do not identify a safe operational code must stay
+// unclassified. PostgreSQL, MySQL and MariaDB identify an absent table with a
+// dedicated key; SQLite reports only primary result 1 for it, which also covers
+// unrelated SQL errors, so guessing from its English message is forbidden.
 //
 // A parser that classifies everything is worse than one that classifies
 // nothing, and the corpus supplies both input and expectation everywhere else —
@@ -132,7 +135,7 @@ func TestTheCorpusNegativesStayUnclassified(t *testing.T) {
 	// SQLite has six of them. A loop over Kind == KindNone would take those as
 	// free passes from a parser that knows nothing, so the count of *real*
 	// negatives actually walked is asserted per engine, longhand.
-	want := map[string]int{"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 2}
+	want := map[string]int{"postgres": 2, "mysql": 2, "mariadb": 2, "sqlite": 2}
 
 	for _, engine := range engines {
 		walked := 0

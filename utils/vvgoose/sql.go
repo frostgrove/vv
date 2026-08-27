@@ -131,7 +131,7 @@ func renderTableStatements(engine vvdb.Engine, table string, model *modelscan.Mo
 		columns = append(columns, "    PRIMARY KEY ("+strings.Join(quoted, ", ")+")")
 	}
 
-	return "CREATE TABLE " + quotedTable + " (\n" + strings.Join(columns, ",\n") + "\n);", "DROP TABLE IF EXISTS " + quotedTable + ";", nil
+	return "CREATE TABLE IF NOT EXISTS " + quotedTable + " (\n" + strings.Join(columns, ",\n") + "\n);", "DROP TABLE IF EXISTS " + quotedTable + ";", nil
 }
 
 func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bool) (string, error) {

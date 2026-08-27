@@ -96,6 +96,7 @@ MariaDB 11.4, SQLite 3.53.
 | serialisation failure | `40001` | `1213`/`40001` — a lock cycle to InnoDB | same | `5` |
 | lock timeout | `55P03` | `1205`/`HY000` | same | `5` |
 | transaction aborted | `25P02` | n/a — statement-level rollback | n/a | n/a |
+| table missing | `42P01` | `1146`/`42S02` | same | no safe key: primary code `1` also means other SQL errors |
 
 ### Five consequences worth knowing before you design around it
 
@@ -138,10 +139,14 @@ the statement that provoked it.
 ```
 
 The parsers are written against these entries and then run on them, so **nothing
-separates the thing tested from the thing shipped**. A case with `"want": ""`
-must stay unclassified — an undefined table, an access denial, a connection that
-never reached a server. A case with `"unreachable"` records that this engine will
-not produce that violation at all, and why.
+separates the thing tested from the thing shipped**. A PostgreSQL, MySQL or
+MariaDB missing-table key becomes internal `schema_not_ready`, which also wraps
+`crud.ErrSchemaNotReady`; apply pending migrations or verify the selected
+database/schema. SQLite's primary code `1` is ambiguous, so its missing-table
+case must stay unclassified rather than parsing the message. Access denial and a
+connection that never reached a server also stay unclassified. A case with
+`"unreachable"` records that this engine will not produce that violation at all,
+and why.
 
 `make corpus` recaptures. `sqlerr.Load(dir, engine)`, `Save`, `Path` and
 `Corpus.Case(name)` read and write it.
