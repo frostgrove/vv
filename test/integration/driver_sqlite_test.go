@@ -59,6 +59,48 @@ func TestSQLiteTakesAnOffsetWithoutALimit(t *testing.T) {
 	}
 }
 
+// SQLite has no default LIKE escape character. This is a behavioural regression
+// test, rather than just a rendered-SQL assertion: the ESCAPE clause must make
+// a caller's %, _ and backslash literal on the actual engine.
+func TestSQLiteLiteralLikeHelpers(t *testing.T) {
+	ctx := context.Background()
+	repo := Users.Bind(crudsql.SQLite(openSQLite(t)))
+	for _, user := range []User{
+		{TenantID: 1, Email: "match@x.io", Name: "100%_raw"},
+		{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
+		{TenantID: 1, Email: "plain@x.io", Name: "plain"},
+		{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
+	} {
+		if err := repo.Save(ctx, &user); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		pred crud.Predicate
+		want string
+	}{
+		{"contains", crud.Contains("Name", "%_"), "100%_raw"},
+		{"starts with", crud.StartsWith("Name", "100%"), "100%_raw"},
+		{"ends with", crud.EndsWith("Name", "_raw"), "100%_raw"},
+		{"literal backslash", crud.Contains("Name", `path\file`), `path\file`},
+		{"case-insensitive contains", crud.ContainsIgnoreCase("Name", "%_RAW"), "100%_raw"},
+		{"case-insensitive starts with", crud.StartsWithIgnoreCase("Name", "100%"), "100%_raw"},
+		{"case-insensitive ends with", crud.EndsWithIgnoreCase("Name", "_RAW"), "100%_raw"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.GetAll(ctx, crud.Where(tc.pred), crud.OrderBy(crud.Asc("ID")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Name != tc.want {
+				t.Fatalf("matched %#v, want only the literal row", got)
+			}
+		})
+	}
+}
+
 // SQLite locks the database, not the row, so there is no FOR UPDATE to render.
 // The clause is dropped rather than refused — the statement is still correct,
 // and inside a transaction SQLite gives the serialisation the caller wanted —

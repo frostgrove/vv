@@ -2,6 +2,7 @@ package specs_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,20 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
+
+type stableDriverValue struct{ value int64 }
+
+func (v stableDriverValue) Value() (driver.Value, error) { return v.value, nil }
+
+type otherDriverValue struct{}
+
+func (otherDriverValue) Value() (driver.Value, error) { return int64(7), nil }
+
+type decimalDriverValue struct{}
+
+func (decimalDriverValue) Decompose([]byte) (byte, bool, []byte, int32) {
+	return 0, false, []byte{7}, 0
+}
 
 type namedSpec struct {
 	name string
@@ -22,6 +37,9 @@ type namedSpec struct {
 // it meant to add all turned out to be optional.
 func emptySpecs() []namedSpec {
 	nothing := specs.Of[User](func(specs.Root[User], specs.Builder) crud.Predicate { return nil })
+	conjunction := specs.Of[User](func(_ specs.Root[User], cb specs.Builder) crud.Predicate {
+		return cb.Conjunction()
+	})
 	return []namedSpec{
 		{"where(nil)", specs.Where[User](nil)},
 		{"where(nil).and(nil)", specs.Where[User](nil).And(nil)},
@@ -36,21 +54,196 @@ func emptySpecs() []namedSpec {
 		{"a nil SpecFunc", specs.SpecFunc[User](nil)},
 		{"a specification that returns no predicate", nothing},
 		{"a composition of two of those", specs.Where(nothing).And(nothing)},
+		{"criteria conjunction", conjunction},
+		{"lifted true", specs.Lift[User](crud.True())},
+		{"empty and", specs.Lift[User](crud.And())},
+		{"empty not-in", User_.ID.NotIn()},
+		{"primary key is not null", User_.ID.NotNull()},
+		{"not primary key is null", specs.Not(User_.ID.IsNull())},
+		{"nullable null complement", specs.Where(User_.Age.IsNull()).Or(User_.Age.NotNull())},
+		{"nullable null complement through not", specs.Where(User_.Age.IsNull()).Or(specs.Not(User_.Age.IsNull()))},
+		{"identity-wrapped null complement", specs.Where[User](nil).And(User_.Age.IsNull()).Or(specs.Not(User_.Age.IsNull()))},
+		{"primary key equality complement", specs.Where(User_.ID.Eq(1)).Or(User_.ID.Ne(1))},
+		{"primary key range complement", specs.Where(User_.ID.Lt(1)).Or(User_.ID.Gte(1))},
+		{"primary key membership complement", specs.Where(User_.ID.In(1, 2)).Or(User_.ID.NotIn(1, 2))},
+		{"primary key reordered membership complement", specs.Where(User_.ID.In(1, 2)).Or(User_.ID.NotIn(2, 1, 1))},
+		{"primary key reordered negated membership complement", specs.Where(User_.ID.In(1, 2)).Or(specs.Not(User_.ID.In(2, 1, 1)))},
+		{"primary key nested boolean tautology", specs.Where(User_.ID.Eq(1)).
+			Or(specs.Not(User_.ID.Eq(1)).And(User_.ID.Eq(2))).
+			Or(specs.Not(User_.ID.Eq(2)))},
+		{"primary key between complement", specs.Where(User_.ID.Between(1, 2)).
+			Or(specs.Not(specs.AllOf(User_.ID.Gte(1), User_.ID.Lte(2))))},
+		{"primary key membership expansion complement", specs.Where(User_.ID.In(1, 2)).
+			Or(specs.Not(specs.AnyOf(User_.ID.Eq(1), User_.ID.Eq(2))))},
+		{"a field compared with itself", specs.Of[User](func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+			return cb.EqualTo(r.Get("ID"), r.Get("id"))
+		})},
 	}
 }
 
-// An empty specification restricts nothing, so the statement has no WHERE clause
-// at all — not `WHERE 1 = 1`, which would be the same answer through a plan the
-// database has to think about.
-func TestNoShapeOfEmptySpecificationRestrictsTheQuery(t *testing.T) {
+// An unrestricted specification may render as no WHERE clause or as `1 = 1`.
+// The latter is still a whole-table question, so bulk operations must recognise
+// the semantic identity rather than relying on a nil AST node.
+func TestEveryUnrestrictedDeclarativeSpecificationIsRecognised(t *testing.T) {
 	for _, tc := range emptySpecs() {
 		t.Run(tc.name, func(t *testing.T) {
-			clause, args := where(t, tc.spec)
-			if clause != "" {
-				t.Fatalf("%s compiled to WHERE %s", tc.name, clause)
+			if p := specs.Predicate(tc.spec); !crud.IsTautologyFor(Users.Meta(), p) {
+				t.Fatalf("%s is not recognised as unrestricted: %T", tc.name, p)
 			}
-			if len(args) != 0 {
-				t.Fatalf("%s bound %#v", tc.name, args)
+		})
+	}
+}
+
+func TestBulkSpecificationsKeepRealNullableNarrowing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec specs.Specification[User]
+	}{
+		{"nullable is not null", User_.Age.NotNull()},
+		{"nullable field equals itself", specs.Of[User](func(r specs.Root[User], cb specs.Builder) crud.Predicate {
+			return cb.EqualTo(r.Get("Age"), r.Get("age"))
+		})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+			if _, err := specs.Executor(Users.Bind(rec)).DeleteBy(context.Background(), tc.spec); err != nil {
+				t.Fatalf("DeleteBy() = %v, want nullable narrowing to reach the repository", err)
+			}
+		})
+	}
+}
+
+func TestBulkSpecificationsKeepNullablePointerChainsAsNarrowing(t *testing.T) {
+	var inner *int64
+	outer := &inner
+	p := specs.Lift[User](crud.Or(crud.Eq("ID", outer), crud.Not(crud.Eq("id", outer))))
+	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+	if _, err := specs.Executor(Users.Bind(rec)).DeleteBy(context.Background(), p); err != nil {
+		t.Fatalf("DeleteBy() = %v, want nullable pointer chain to reach the repository", err)
+	}
+}
+
+func TestBulkSpecificationsRefuseAnEquivalentNonNilPointerBind(t *testing.T) {
+	id := int64(7)
+	p := specs.Lift[User](crud.Or(crud.Eq("ID", &id), crud.Not(crud.Eq("id", id))))
+	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+	if _, err := specs.Executor(Users.Bind(rec)).DeleteBy(context.Background(), p); !errors.Is(err, specs.ErrUnboundedDelete) {
+		t.Fatalf("DeleteBy() = %v, want ErrUnboundedDelete", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("tautological pointer bind reached the database: %v", rec.SQL())
+	}
+}
+
+func TestBulkSpecificationsFailClosedOnAnOpaqueDriverValuer(t *testing.T) {
+	p := specs.Lift[User](crud.Or(
+		crud.Eq("ID", stableDriverValue{value: 7}),
+		crud.Ne("id", otherDriverValue{}),
+	))
+	for _, tc := range []struct {
+		name string
+		call func(specs.Repo[User, int64, UserUpdate]) error
+		want error
+	}{
+		{
+			name: "delete",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.DeleteBy(context.Background(), p)
+				return err
+			},
+			want: specs.ErrUnboundedDelete,
+		},
+		{
+			name: "update",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
+				return err
+			},
+			want: specs.ErrUnboundedUpdate,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+			if err := tc.call(specs.Executor(Users.Bind(rec))); !errors.Is(err, tc.want) {
+				t.Fatalf("bulk operation = %v, want %v", err, tc.want)
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("possible driver.Valuer tautology reached the database: %v", rec.SQL())
+			}
+		})
+	}
+}
+
+func TestBulkSpecificationsRefuseRawSQL(t *testing.T) {
+	p := specs.Lift[User](crud.Raw("1 = 1"))
+	for _, tc := range []struct {
+		name string
+		call func(specs.Repo[User, int64, UserUpdate]) error
+		want error
+	}{
+		{
+			name: "delete",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.DeleteBy(context.Background(), p)
+				return err
+			},
+			want: specs.ErrUnboundedDelete,
+		},
+		{
+			name: "update",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
+				return err
+			},
+			want: specs.ErrUnboundedUpdate,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+			if err := tc.call(specs.Executor(Users.Bind(rec))); !errors.Is(err, tc.want) {
+				t.Fatalf("bulk operation = %v, want %v", err, tc.want)
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("raw SQL reached the database: %v", rec.SQL())
+			}
+		})
+	}
+}
+
+func TestBulkSpecificationsRefuseOpaqueDatabaseSQLBinds(t *testing.T) {
+	p := specs.Lift[User](crud.Or(
+		crud.Eq("ID", decimalDriverValue{}),
+		crud.Ne("id", decimalDriverValue{}),
+	))
+	for _, tc := range []struct {
+		name string
+		call func(specs.Repo[User, int64, UserUpdate]) error
+		want error
+	}{
+		{
+			name: "delete",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.DeleteBy(context.Background(), p)
+				return err
+			},
+			want: specs.ErrUnboundedDelete,
+		},
+		{
+			name: "update",
+			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
+				return err
+			},
+			want: specs.ErrUnboundedUpdate,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
+			if err := tc.call(specs.Executor(Users.Bind(rec))); !errors.Is(err, tc.want) {
+				t.Fatalf("bulk operation = %v, want %v", err, tc.want)
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("opaque database/sql bind reached the database: %v", rec.SQL())
 			}
 		})
 	}
@@ -84,8 +277,34 @@ func TestDeleteByRefusesEveryShapeOfEmptySpecification(t *testing.T) {
 			if !errors.Is(err, specs.ErrUnboundedDelete) {
 				t.Fatalf("err = %v, want ErrUnboundedDelete", err)
 			}
+			if !errors.Is(err, crud.ErrBadRequest) {
+				t.Fatalf("err = %v, want the transport-safe bad-request sentinel", err)
+			}
 			if n != 0 {
 				t.Fatalf("the call reported %d rows deleted", n)
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("%s reached the database: %v", tc.name, rec.SQL())
+			}
+		})
+	}
+}
+
+func TestUpdateByRefusesEveryShapeOfEmptySpecification(t *testing.T) {
+	for _, tc := range emptySpecs() {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
+
+			n, err := specs.Executor(Users.Bind(rec)).UpdateBy(context.Background(), tc.spec, UserUpdate{})
+
+			if !errors.Is(err, specs.ErrUnboundedUpdate) {
+				t.Fatalf("err = %v, want ErrUnboundedUpdate", err)
+			}
+			if !errors.Is(err, crud.ErrBadRequest) {
+				t.Fatalf("err = %v, want the transport-safe bad-request sentinel", err)
+			}
+			if n != 0 {
+				t.Fatalf("the call reported %d rows updated", n)
 			}
 			if len(rec.Statements()) != 0 {
 				t.Fatalf("%s reached the database: %v", tc.name, rec.SQL())

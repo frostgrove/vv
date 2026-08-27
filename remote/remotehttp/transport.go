@@ -163,6 +163,12 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 // are crudnet's Mount, and the three bindings register the same ones.
 func (t *transport) route(call remote.Call) (method, path string, body []byte, err error) {
 	switch call.Method {
+	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
+		if call.ID == "" {
+			return "", "", nil, fmt.Errorf("remotehttp: %s requires a non-empty id", call.Method)
+		}
+	}
+	switch call.Method {
 	case remote.MethodList:
 		body, err = json.Marshal(call.Query)
 		return http.MethodPost, "/query", body, err
@@ -184,9 +190,15 @@ func (t *transport) route(call remote.Call) (method, path string, body []byte, e
 		return http.MethodPost, "", call.Body, nil
 
 	case remote.MethodUpdate:
+		if err := requireMutationBody(call.Method, call.Body); err != nil {
+			return "", "", nil, err
+		}
 		return http.MethodPatch, "/" + url.PathEscape(call.ID), call.Body, nil
 
 	case remote.MethodReplace:
+		if err := requireMutationBody(call.Method, call.Body); err != nil {
+			return "", "", nil, err
+		}
 		return http.MethodPut, "/" + url.PathEscape(call.ID), call.Body, nil
 
 	case remote.MethodDelete:
@@ -196,25 +208,51 @@ func (t *transport) route(call remote.Call) (method, path string, body []byte, e
 		// Assembled rather than marshalled from BulkDeleteRequest, because the
 		// keys are already JSON in the caller's own key type and re-encoding
 		// them through []string would turn 42 into "42".
-		return http.MethodPost, "/bulk-delete", []byte(`{"ids":` + string(call.IDs) + `}`), nil
+		ids := bytes.TrimSpace(call.IDs)
+		if len(ids) == 0 {
+			ids = []byte("null")
+		}
+		return http.MethodPost, "/bulk-delete", []byte(`{"ids":` + string(ids) + `}`), nil
 	}
 	return "", "", nil, fmt.Errorf("remotehttp: no route for %s", call.Method)
 }
 
+func requireMutationBody(method remote.Method, body json.RawMessage) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return fmt.Errorf("remotehttp: %s requires a non-null body", method)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return fmt.Errorf("remotehttp: %s body must be a JSON object: %w", method, err)
+	}
+	return nil
+}
+
 // entityQuery renders the shaping options GET /{id} carries.
 //
-// Only the projection and the preload paths: port.NarrowForEntity has already
-// dropped everything else, because a filter or a page number on the way to one
-// row means nothing.
+// Only the projection and the preload paths reach a direct GET /{id}. A
+// Resource switches a keyed read with a root filter or narrowed/capped preload
+// to the document-shaped List route first, so this function never flattens that
+// shape into an entity request.
 //
-// A narrowed preload is refused rather than flattened. The query string carries
-// paths and has nowhere to put a per-relation filter, so sending the path alone
-// would load every child of the row where the caller asked for some of them —
-// more rows than were asked for, over a 200. This is the one place an HTTP
-// client can do less than a gRPC one, which sends the whole document.
+// A narrowed or capped preload is refused rather than flattened. The query
+// string carries paths and has nowhere to put a per-relation filter, sort, or
+// row cap, so sending the path alone could load more children than were asked
+// for, over a 200. This defensive check also protects callers that construct a
+// transport Call directly.
 func entityQuery(req *query.Request) (string, error) {
 	if req == nil {
 		return "", nil
+	}
+	if !req.Filter.IsZero() || len(req.Terms) > 0 || req.Search != "" || len(req.SearchFields) > 0 {
+		// Resource routes these document-shaped eligibility controls through
+		// List before it reaches this function. Call is exported, though, so a
+		// direct Transport user needs the same no-silent-drop guarantee.
+		return "", &remote.OptionError{
+			Option: "root eligibility controls on GetByID",
+			Reason: "the entity route has no spelling for filter, terms, search, or searchFields; use the List route",
+		}
 	}
 	v := url.Values{}
 	if len(req.Select) > 0 {
@@ -222,10 +260,10 @@ func entityQuery(req *query.Request) (string, error) {
 	}
 	paths := make([]string, 0, len(req.Preload))
 	for _, p := range req.Preload {
-		if !p.Filter.IsZero() || len(p.Sort) > 0 {
+		if !p.Filter.IsZero() || len(p.Sort) > 0 || p.MaxRows > 0 {
 			return "", &remote.OptionError{
-				Option: "crud.PreloadWhere on GetByID",
-				Reason: "the entity route carries preload paths in a query string and has nowhere to put a per-relation filter",
+				Option: "narrowed or capped preload on GetByID",
+				Reason: "the entity route carries preload paths in a query string and has nowhere to put a per-relation filter, sort, or row cap",
 			}
 		}
 		paths = append(paths, p.Path)

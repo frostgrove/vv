@@ -33,7 +33,8 @@ The compensations, and what each one costs:
 | `OFFSET` without `LIMIT` | `OffsetLimiter.LimitAll` — MySQL `LIMIT 18446744073709551615`, SQLite `LIMIT -1`, PostgreSQL nothing | none |
 | identifier quoting | `"x"` vs `` `x` ``, each doubling its own quote character | none |
 | bind markers | `$n` vs `?` | none |
-| `ILIKE` | `crud.LikeIgnoreCase` renders `LOWER(col) LIKE LOWER(?)`, which works on both | a functional index is needed for it to use one |
+| `ILIKE` | `crud.LikeIgnoreCase` and the literal-safe `ContainsIgnoreCase` / `StartsWithIgnoreCase` / `EndsWithIgnoreCase` render `LOWER(col) LIKE LOWER(?)`, which works on both | a functional index is needed for it to use one |
+| literal `LIKE` escape syntax | optional `LikeEscaper`: PostgreSQL and SQLite use `ESCAPE '\'`; MySQL/MariaDB use `ESCAPE X'5C'` so `NO_BACKSLASH_ESCAPES` cannot change the one-character expression | hidden behind `Contains` / `StartsWith` / `EndsWith`; raw `Like` still owns its pattern |
 | a generated key on insert | `RETURNING` where available, `LastInsertID` on MySQL | none |
 | `count(DISTINCT a, b)` is MySQL-only | a derived table, which MySQL insists on being able to name (`AS vv_distinct`) | none |
 
@@ -62,7 +63,8 @@ the probe.
 4. **`LIKE` case sensitivity follows the collation.** MySQL's default collation is
    case-insensitive and PostgreSQL's is not, so `crud.Contains` gives different
    answers. That is the column's business, not the library's — and it is exactly
-   why `LikeIgnoreCase` exists as the portable spelling.
+   why `LikeIgnoreCase` and the `…IgnoreCase` literal helpers exist as the
+   portable spellings.
 5. **An upsert swallows a different set of conflicts per engine, and this is the
    worst one on the list.** `Save` is the upsert path ([[D-011]]). PostgreSQL
    emits `ON CONFLICT (pk) DO UPDATE`, which swallows the primary key only;
@@ -220,15 +222,15 @@ the probe.
 ## What it forbids
 
 - Do not branch on `Dialect.Name()` in a repository or a builder. Add a method
-  to `Dialect`, or an optional interface if not every dialect needs it. The one
-  remaining name check is `Order.render`'s `postgres` test for `NULLS LAST`, and
-  it is there because the behaviour is genuinely PostgreSQL-only rather than a
-  capability another dialect might grow.
+  to `Dialect`, or an optional interface if not every dialect needs it.
+  `Order.render`'s `postgres` test for `NULLS LAST` is the remaining name check:
+  the behaviour is genuinely PostgreSQL-only rather than a capability another
+  dialect might grow. Literal `LIKE` escaping uses the optional `LikeEscaper`.
 - Do not add a required method to `Dialect`. A dialect written outside this
   package must keep compiling; that is what `OffsetLimiter` demonstrates.
 - Do not skip the MySQL re-read to save a round trip. It has been tried; see
   [[D-011]] and [[D-010]].
-- Do not add a twelfth observable difference without adding it to the list above
+- Do not add another observable difference without adding it to the list above
   and to both usage guides.
 - Do not compensate for difference 6 with a Go-side length, range or type check.
   [[D-042]] has the argument: MySQL under a laxer `sql_mode` truncates where it
@@ -242,6 +244,8 @@ the probe.
 - `crud/dialect.go:UpsertScope` / `:StatementRollback` — difference 11's two
   halves as optional interfaces rather than name checks, each with a narrowing
   default for a dialect that implements neither.
+- `crud/dialect.go:LikeEscaper` — a dialect-specific literal `LIKE` escape
+  expression, including MySQL/MariaDB's mode-independent `X'5C'` spelling.
 - `crud/dialect.go:Postgres`, `crud/dialect.go:MySQL`, `crud/dialect.go:SQLite`.
 - `crud/dialect.go:MySQL.LimitAll` / `crud/dialect.go:SQLite.LimitAll`.
 - `crud/dialect.go:SQLite.LockClause` — empty, with the reason.
@@ -249,7 +253,8 @@ the probe.
   name.
 - `crud/predicate.go:Order.render` — the one remaining name check, and the
   `NULLS` clause it guards.
-- `crud/predicate.go:LikeIgnoreCase` — the portable spelling.
+- `crud/predicate.go:LikeIgnoreCase` and the `…IgnoreCase` literal helpers —
+  the portable spellings.
 - `crud/sqlrepo/repository.go:newRepository` — `returning` is empty when the
   dialect has none, which is what makes the two write paths diverge.
 - `crud/sqlrepo/repository.go:repository.insert` and
@@ -275,6 +280,13 @@ the probe.
   both engines.
 - `TestDialectSyntax` and `TestDialectUpsert` in `crud/dialect_test.go`;
   `TestDialectShorthands` in `crud/crudtest/recorder_test.go`.
+- `TestLiteralLikeEscapingDefaultsForAnExternalDialect` in
+  `crud/dialect_test.go` — a dialect without an optional LIKE capability keeps
+  the portable `ESCAPE '\\'` spelling.
+- `TestSQLiteLiteralLikeHelpers` and
+  `TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes` in
+  `test/integration/` — literal pattern helpers preserve `%`, `_` and `\\`,
+  including MySQL's `NO_BACKSLASH_ESCAPES` mode.
 - `TestUpsertClauseCarriesItsOwnLeadingSpace` in `crud/dialect_test.go` — the
   kind of detail that produces `usersON DUPLICATE` on exactly one engine.
 - `TestUpsertLeavesTheSameRowInEveryDialect` in

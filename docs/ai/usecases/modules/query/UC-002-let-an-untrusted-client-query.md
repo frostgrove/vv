@@ -108,68 +108,16 @@ the model before any SQL exists.
 | [[FL-013]] | that both front doors behave the same under the second binding — including repeated query-string terms, the body cap, and the refusal of an undeclared `unpaged` |
 
 ## Status
-**partially covered.** The core claim — a name is resolved before any SQL exists,
-and an unknown one is a rejection — holds for every *name position the language
-defines*, and the hostile-input suite is genuinely hostile: fifteen payloads
-through twelve name positions, values bound in every position including a
-preload's own filter, six spellings of one denied column, and a byte-for-byte
-determinism check re-run with shuffled keys. Allow-list independence, subtree
-matching, the default budgets, the shared condition counter, cross-door value
-identity, overflow refusal, search parenthesisation and wildcard escaping all
-have tests.
+**covered.** Every name is resolved before SQL exists, every public dimension
+has a declared bound, and malformed input produces no partial option set. The
+JSON and URL doors agree on coercion, null and escape rules; duplicate JSON keys
+and null controls are refused instead of choosing a last value or a default.
+Preload permissions are checked hop by hop, including their target-model
+filters; cursor predicates require a filterable root sort and consume the exact
+condition and bind budget they expand into. Static declarations are checked when
+the endpoint is assembled.
 
-Guarantees 17, 19 and 20 were the places absent configuration *was* permissive
-about volume, and all three are closed: an endpoint declares that it serves whole
-result sets rather than a request asking for it ([[D-060]]), the list and sort
-caps have non-zero defaults, and every body is read under a byte cap
-([[D-063]]) — each with a control test that the permitted case still works. "Cost" stays out of scope — these bound how much a request may
-*ask for*, not how long answering it takes.
-
-**The gap that contradicted the headline guarantee is closed.** An unknown
-top-level key in the JSON document is refused by name, with the accepted set
-offered back, and a query-string parameter one edit away from a real one is
-refused the same way. The query-string half stops there rather than closing the
-set, and that is deliberate: a handler is free to read its own parameters off
-the same URL — `?includeArchived=1` driving a scope option is the documented
-pattern — so an unrelated name has to pass. Both halves have tests, each with
-the control that the legitimate case still gets through.
-
-The gaps below are what stops this being "covered".
-
-**Gap 2 — the preload allow-list is not checked hop by hop.** An entry naming a
-deep path authorises loading every relation on the way to it, because reaching
-the far end requires reading the near end. Listing only the deep path therefore
-grants more than it appears to.
-
-**Gap 3 — the two doors disagree in four places.** A query-string `isNull` term
-whose value does not parse as a boolean silently becomes `IS NOT NULL`, where
-the JSON door rejects it. A scalar term silently keeps only the first
-comma-separated value, and there is no way to write a literal comma. Byte-slice
-columns decode base64 from JSON and raw text from the query string. And a
-`greater-than` compared against `null` binds a nil rather than being refused
-like every other null operand.
-
-**Gap 4 — a "not in" over an empty list widens to everything**, and a
-LIKE-family operator against a non-text column reaches the database and fails
-there, so it is a 500 rather than the 400 every other bad value produces.
-
-**Gap 5 — the budgets still have holes.** Search predicates and select entries
-are not charged against the condition budget, and the search-field list has no
-length cap. The depth budget does not bound a preload path — that is capped
-separately, at execution — and inside a preload's own filter both the nesting
-counter and the path-length check restart relative to the target model. Sort
-terms were in this list and are not any more: they have a cap of their own,
-because charging them to the condition budget would have measured the wrong
-thing.
-
-**Gap 6 — the page cap is not part of the query configuration.** It is a
-repository setting, so an endpoint reviewed only through its query configuration
-is reviewed through the wrong file. This is narrower than it was: an endpoint
-that says nothing now refuses `unpaged` outright, so the two open defaults no
-longer combine into no ceiling at all. What is left is that an endpoint which
-*does* serve whole result sets is bounded by a number declared somewhere else.
-
-One smaller asymmetry, behaviourally proven and worth knowing rather than
-fixing: a search field named explicitly but not permitted is a rejection, while a
-search that falls back to "every text column" and finds none permitted disappears
-silently and the request succeeds unfiltered by the search.
+The intended non-goals remain non-goals: JSON/computed-column filtering, grouped
+aggregates, filter-driven bulk mutation, and a complete URL spelling for every
+per-preload JSON feature. They need a purpose-built endpoint rather than a
+larger untrusted query language.

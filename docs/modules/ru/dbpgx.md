@@ -26,9 +26,13 @@ repo := Products.Bind(crudpgx.Open(pool))
 | `Connect(ctx, cfg, opts…)` | собрать строку, настроить пул, подключиться |
 | `MustConnect(ctx, cfg, opts…)` | то же самое с паникой — для `main` |
 | `ConnectReadWrite(ctx, cfg, opts…)` | primary и реплика; вторая — nil, если реплика не объявлена |
+| `MustConnectReadWrite(ctx, cfg, opts…)` | та же пара с паникой — для `main` |
+| `Apply(pc, pool)` | применить переносимые настройки пула к принадлежащему приложению `pgxpool.Config` |
 
-В отличие от `sql.Open`, `pgxpool.NewWithConfig` действительно подключается, так
-что отсутствующий сервер обнаруживается здесь, а не на первом запросе.
+`pgxpool.NewWithConfig` ленив. Перед возвратом `Connect` вызывает `Ping`, поэтому
+отсутствующий сервер обнаруживается здесь, а не на первом запросе. Как и
+`vvdb.Open`, `Connect` и `MustConnect` отказывают при объявленной реплике:
+используйте парный helper, чтобы её нельзя было молча проигнорировать.
 
 ## Опции доходят до pgx напрямую
 

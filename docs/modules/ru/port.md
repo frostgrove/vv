@@ -228,7 +228,7 @@ port.FaultOf(err)             *errs.Fault
 | `Sanitize(meta, *m, allowClientID)` | очистить то, что клиент не вправе выбрать при создании |
 | `ClearGenerated(meta, *m)` | очистить каждую колонку `generated` |
 | `CoerceID[ID](raw)` | параметр пути становится типом ключа |
-| `NarrowForEntity(req)` / `NarrowForCount(req)` | отбросить то, что запрос к одной сущности или count-запрос не вправе запрашивать |
+| `NarrowForEntity(req)` / `NarrowForCount(req)` | отбросить control, которые keyed entity или count не используют; entity eligibility filter остаётся |
 | `BadRequest(err)` · `BadRequestf` · `BadRequestAs(code, path, …)` | собрать 400 с указанным путём |
 | `CoversUpdate[M, U]()` / `MustCoverUpdate[M, U]()` | DTO всё ещё покрывает каждую писабельную колонку |
 | `FirstLanguageTag(list)` | первый тег из списка в форме `Accept-Language` |

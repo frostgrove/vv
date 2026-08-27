@@ -79,6 +79,9 @@ discovered by the compiler.
   the model is UC-014's.
 - **Relations in another package.** A relation whose target model lives elsewhere
   is not expanded into the generated metamodel.
+- **Arbitrary SQL in `crud.Raw`.** It is a trusted escape hatch, not a typed,
+  declarative predicate. A generic API cannot prove that arbitrary SQL narrows
+  rows, so an intentional raw bulk write uses the direct repository verb.
 
 ## Covered by
 | Flow | What it contributes |
@@ -88,10 +91,17 @@ discovered by the compiler.
 | [[FL-005]] | a relation attribute becoming a correlated subquery over the root model |
 
 ## Status
-**covered, with three caveats about how much the compiler actually checks.**
+**covered, with four caveats about how much the compiler actually checks.**
 
-Proven: composition including the nil-operand rule and the empty-filter rule,
-each against every shape of "empty" the API admits; the inability to escape a
+Proven: composition including the nil-operand rule, `If`, pointer/three-state
+optional equality and the empty-filter rule;
+literal-safe pattern helpers — including the Criteria builder and portable
+case-insensitive variants — which preserve their escaping intent through the
+query document and emit a dialect-appropriate `ESCAPE` clause;
+and the bulk refusal for every unbounded declarative shape it can prove from
+the AST and model — including PK null/self checks and two-valued Boolean
+formulas such as `p OR NOT p` — plus a fail-closed refusal of any opaque bind,
+oversized Boolean AST or `crud.Raw`; the inability to escape a
 repository narrowing, with the rendered statement and argument order asserted;
 metamodel validation at declaration time for a missing field, a mismatched type,
 a non-struct metamodel, a field that is neither an attribute nor a group, a
@@ -101,8 +111,8 @@ driving a permanent narrowing, with the literal spelling of the same declaration
 as the control that both render one statement; relation expansion rendered as SQL for all three
 edge kinds plus a related-column sort; the find-one/find-first distinction
 including the zero-model return and the fact that a caller's paging cannot
-disarm it; and the empty-filter delete refusal across thirteen spellings of
-empty.
+disarm it; and the empty-filter delete and update refusals across every public
+spelling of empty.
 
 **Caveat 1 — the metamodel checks the element type, not the attribute kind.**
 Declaring a text column as a plain attribute rather than a text attribute binds
@@ -122,8 +132,14 @@ Guarantee 11 then holds for that relation only through `RelPath()`, which
 nothing shadows and which the generated file names in that group's doc comment.
 The failure is a compile error at the call site, never a wrong path at run time.
 
-Two thinner spots in the test suite: the existence check and the update-by verb
-are exercised only in the database-backed suite, and the update-by refusal of an
-empty filter is tested for one spelling where its delete counterpart is tested
-for thirteen. Both refusals are also plain sentinels wrapping no core error, so
-a transport maps them to 500 unless it handles them.
+**Caveat 4 — opaque binds are not executed by the guard.** Calling conversion
+code while classifying a specification could be stateful, NULL-producing or
+failing, and unlike Go values can encode alike. The guard therefore rejects any
+bind it cannot normalise to a stable database/sql primitive, and bounds Boolean
+analysis before it recurses; the direct bulk verbs remain the explicit escape
+for a caller that accepts those choices.
+
+The existence check and update-by verb retain database-backed conformance tests
+in addition to the local controls. An empty filter is exhaustively refused for
+both bulk verbs, wrapping `crud.ErrBadRequest` so a transport reports the caller
+error as a 400.

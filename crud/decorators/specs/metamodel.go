@@ -57,6 +57,28 @@ func Attribute[M any, T any](field string) Attr[M, T] {
 func (a Attr[M, T]) Eq(v T) Specification[M]  { return Lift[M](crud.Eq(a.name, v)) }
 func (a Attr[M, T]) Ne(v T) Specification[M]  { return Lift[M](crud.Ne(a.name, v)) }
 func (a Attr[M, T]) IsNull() Specification[M] { return Lift[M](crud.IsNull(a.name)) }
+
+// EqPtr contributes an equality only when v is non-nil. It is the direct
+// spelling for a pointer field from a form or partial request.
+func (a Attr[M, T]) EqPtr(v *T) Specification[M] {
+	if v == nil {
+		return nil
+	}
+	return a.Eq(*v)
+}
+
+// EqOpt preserves all three states of crud.Opt: undefined contributes no
+// restriction, null asks for SQL NULL and a value asks for equality.
+func (a Attr[M, T]) EqOpt(v crud.Opt[T]) Specification[M] {
+	if !v.IsDefined() {
+		return nil
+	}
+	if v.IsNull() {
+		return a.IsNull()
+	}
+	value, _ := v.Get()
+	return a.Eq(value)
+}
 func (a Attr[M, T]) NotNull() Specification[M] {
 	return Lift[M](crud.IsNotNull(a.name))
 }
@@ -108,9 +130,18 @@ func (a Str[M]) NotLike(pattern string) Specification[M] {
 func (a Str[M]) LikeIgnoreCase(pattern string) Specification[M] {
 	return Lift[M](crud.LikeIgnoreCase(a.name, pattern))
 }
-func (a Str[M]) Contains(s string) Specification[M]   { return Lift[M](crud.Contains(a.name, s)) }
+func (a Str[M]) Contains(s string) Specification[M] { return Lift[M](crud.Contains(a.name, s)) }
+func (a Str[M]) ContainsIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.ContainsIgnoreCase(a.name, s))
+}
 func (a Str[M]) StartsWith(s string) Specification[M] { return Lift[M](crud.StartsWith(a.name, s)) }
-func (a Str[M]) EndsWith(s string) Specification[M]   { return Lift[M](crud.EndsWith(a.name, s)) }
+func (a Str[M]) StartsWithIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.StartsWithIgnoreCase(a.name, s))
+}
+func (a Str[M]) EndsWith(s string) Specification[M] { return Lift[M](crud.EndsWith(a.name, s)) }
+func (a Str[M]) EndsWithIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.EndsWithIgnoreCase(a.name, s))
+}
 
 // Cmp is a shorthand for time.Time and other ordered-by-comparison types that
 // cmp.Ordered does not cover; it exposes range operators without the

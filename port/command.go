@@ -30,8 +30,9 @@ type CountCommand struct {
 	Options []crud.Option
 }
 
-// A GetCommand is one row by key. The Service drops everything but the shaping
-// options — a filter or a sort on the way to a keyed row means nothing.
+// A GetCommand is one row by key. The Service preserves a filter because it can
+// prove the addressed row is ineligible (for example, a tenant condition), but
+// drops ordering and paging because they cannot change which keyed row answers.
 type GetCommand[ID comparable] struct {
 	ID      ID
 	Query   *query.Request

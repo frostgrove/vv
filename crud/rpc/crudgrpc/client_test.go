@@ -3,6 +3,8 @@ package crudgrpc
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,16 +21,13 @@ func remoteOver(t *testing.T, c *client) *remote.Resource[Widget, int64, WidgetU
 	return remote.New[Widget, int64, WidgetUpdate](Transport(c.conn, resource))
 }
 
-// remoted mounts a resource this client can read whole.
-//
-// AllowUnpaged is not test scaffolding. There is no "every row" call on the
-// wire — remote.GetAll is emulated with the unpaged flag — so a resource that
-// never agreed to serve whole tables refuses it, on this transport exactly as on
-// HTTP ([[D-060]], [[FL-013]]).
+// remoted mounts a resource this client can read whole. There is no separate
+// "every row" wire method; remote.GetAll walks the ordinary List pages, so a
+// page cap works as a chunk size on gRPC just as it does on HTTP.
 func remoted(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*remote.Resource[Widget, int64, WidgetUpdate], *fakeRepo) {
 	t.Helper()
 	opts = append([]Option[Widget, int64, WidgetUpdate]{
-		WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}),
+		WithQuery[Widget, int64, WidgetUpdate](&query.Config{}),
 	}, opts...)
 	c, f := mount(t, opts...)
 	return remoteOver(t, c), f
@@ -65,6 +64,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 
 	t.Run("GetAll", func(t *testing.T) {
 		r, f := remoted(t)
+		f.page = crud.NewPaginatedResponse(f.page.Items, 1, 0, int64(len(f.page.Items)))
 		all, err := r.GetAll(ctx)
 		if err != nil {
 			t.Fatalf("get all: %v", err)
@@ -72,8 +72,63 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if len(all) != 2 {
 			t.Fatalf("%d rows came back", len(all))
 		}
-		if !f.only(t, "Get").Opts.Unpaged {
-			t.Fatal("GetAll asked for one page")
+		if f.only(t, "Get").Opts.Unpaged {
+			t.Fatal("GetAll asked for an unpaged response instead of walking pages")
+		}
+	})
+
+	t.Run("GetAll refuses an inconsistent export", func(t *testing.T) {
+		r, f := remoted(t)
+		f.page = crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2)
+		f.page.HasNext = false
+		_, err := r.GetAll(ctx)
+		var partial *remote.PartialResultError
+		if !errors.As(err, &partial) || !errors.Is(err, remote.ErrPartialResult) {
+			t.Fatalf("GetAll() = %v, want PartialResultError", err)
+		}
+		if partial.Received != 1 || partial.Total != 2 {
+			t.Fatalf("partial result = %+v, want 1 of 2", partial)
+		}
+	})
+
+	t.Run("GetAll walks a remote page cap", func(t *testing.T) {
+		r, f := remoted(t)
+		f.pages = map[int]crud.PaginatedResponse[Widget]{
+			0: crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2),
+			2: crud.NewPaginatedResponse(f.page.Items[1:], 2, 1, 2),
+		}
+		all, err := r.GetAll(ctx)
+		if err != nil || len(all) != 2 {
+			t.Fatalf("GetAll() = %+v, %v", all, err)
+		}
+		if len(f.calls) != 2 || f.calls[0].Opts.Page != 0 || f.calls[1].Opts.Page != 2 {
+			t.Fatalf("remote page walk = %+v", f.calls)
+		}
+	})
+
+	t.Run("GetAll walks cursor edges", func(t *testing.T) {
+		r, f := remoted(t)
+		first := crud.NewPaginatedResponse(f.page.Items[:1], 0, 1, 2)
+		first.NextCursor = "after-first"
+		last := crud.NewPaginatedResponse(f.page.Items[1:], 0, 1, 1)
+		last.HasNext = false
+		f.cursors = map[string]crud.PaginatedResponse[Widget]{
+			"after:start":       first,
+			"after:after-first": last,
+		}
+		all, err := r.GetAll(ctx, crud.After("start"), crud.OrderBy(crud.Asc("ID")))
+		if err != nil || len(all) != 2 || all[0].ID != 1 || all[1].ID != 2 {
+			t.Fatalf("GetAll() = %+v, %v", all, err)
+		}
+	})
+
+	t.Run("Update permits an empty but explicit patch", func(t *testing.T) {
+		r, f := remoted(t)
+		if _, err := r.Update(ctx, 42, WidgetUpdate{}); err != nil {
+			t.Fatalf("empty patch = %v", err)
+		}
+		if got := f.only(t, "Update").ID; got != 42 {
+			t.Fatalf("empty patch reached id %d", got)
 		}
 	})
 
@@ -88,6 +143,63 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		}
 		if got := f.only(t, "GetByID"); got.ID != 42 {
 			t.Fatalf("the far side was asked for row %d", got.ID)
+		}
+	})
+
+	t.Run("GetByID preserves narrowing and a capped preload", func(t *testing.T) {
+		r, f := remoted(t)
+		f.page = crud.NewPaginatedResponse([]Widget{{ID: 42, Name: "bolt", Price: 250}}, 1, 1, 1)
+		w, err := r.GetByID(ctx, 42,
+			crud.Where(crud.Gte("Price", 100)),
+			crud.PreloadCap("Parts", 1,
+				crud.Where(crud.Eq("Label", "hex")),
+				crud.OrderBy(crud.Desc("ID"))),
+		)
+		if err != nil {
+			t.Fatalf("GetByID() = %v", err)
+		}
+		if w.ID != 42 {
+			t.Fatalf("GetByID() = %+v, want the keyed row", w)
+		}
+		got := f.only(t, "Get")
+		if len(got.Opts.Preloads) != 1 || got.Opts.Preloads[0].Path != "Parts" || got.Opts.Preloads[0].MaxRows != 1 {
+			t.Fatalf("preloads = %+v, want Parts capped at 1", got.Opts.Preloads)
+		}
+		sub := crud.Build(got.Opts.Preloads[0].Opts...)
+		if sub.PreloadRows != 1 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
+			t.Fatalf("narrowed preload options = %+v", sub)
+		}
+		want := `("price" >= $1 AND "id" = $2)`
+		if got := clause(t, got.Opts); got != want {
+			t.Fatalf("List filter = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("GetByID fallback sends an exact large key", func(t *testing.T) {
+		const id int64 = 9007199254740993
+		r, f := remoted(t)
+		// The response fixture uses a safe ID. Struct's documented entity-value
+		// limitation is independent of this test: it proves that the fallback
+		// reaches the peer with the exact key, where the former numeric encoding
+		// was rejected before List could run.
+		f.page = crud.NewPaginatedResponse([]Widget{{ID: 42, Name: "bolt", Price: 250}}, 1, 1, 1)
+		w, err := r.GetByID(ctx, id, crud.Where(crud.Gte("Price", 100)))
+		if err != nil {
+			t.Fatalf("GetByID() = %v", err)
+		}
+		if w.ID != 42 {
+			t.Fatalf("GetByID() = %+v, want the peer's row", w)
+		}
+		got := f.only(t, "Get").Opts
+		if rendered := clause(t, got); rendered != `("price" >= $1 AND "id" = $2)` {
+			t.Fatalf("List filter = %s", rendered)
+		}
+		_, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(got.Predicate()).Done()
+		if err != nil {
+			t.Fatalf("render List filter: %v", err)
+		}
+		if len(args) != 2 || args[1] != id {
+			t.Fatalf("List key arguments = %#v, want exact %d", args, id)
 		}
 	})
 
@@ -192,6 +304,46 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		}
 		if got := f.only(t, "Delete"); len(got.IDs) != 3 {
 			t.Fatalf("the far side was asked to delete %v", got.IDs)
+		}
+	})
+
+	t.Run("Delete many preserves an exact large key", func(t *testing.T) {
+		const id int64 = 9007199254740993
+		r, f := remoted(t)
+		n, err := r.Delete(ctx, id, 42)
+		if err != nil {
+			t.Fatalf("bulk delete: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("%d rows went away", n)
+		}
+		if got := f.only(t, "Delete").IDs; len(got) != 2 || got[0] != id || got[1] != 42 {
+			t.Fatalf("the far side was asked to delete %v", got)
+		}
+	})
+
+	t.Run("Delete preserves both signs at the Struct exactness policy boundary", func(t *testing.T) {
+		for _, id := range []int64{9007199254740992, -9007199254740992} {
+			t.Run(fmt.Sprint(id), func(t *testing.T) {
+				r, f := remoted(t)
+				n, err := r.Delete(ctx, id)
+				if err != nil || n != 1 {
+					t.Fatalf("keyed delete = %d, %v", n, err)
+				}
+				if got := f.only(t, "Delete").IDs; len(got) != 1 || got[0] != id {
+					t.Fatalf("keyed ID = %v, want %d", got, id)
+				}
+			})
+		}
+
+		r, f := remoted(t)
+		ids := []int64{9007199254740992, -9007199254740992}
+		n, err := r.Delete(ctx, ids...)
+		if err != nil || n != int64(len(ids)) {
+			t.Fatalf("bulk delete = %d, %v", n, err)
+		}
+		if got := f.only(t, "Delete").IDs; !reflect.DeepEqual(got, ids) {
+			t.Fatalf("bulk IDs = %v, want %v", got, ids)
 		}
 	})
 }

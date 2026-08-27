@@ -1,7 +1,10 @@
 package query
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -20,7 +23,84 @@ type Term struct {
 	Path   string  `json:"path"`
 	Op     string  `json:"op,omitempty"`
 	Values Strings `json:"values,omitempty"`
+
+	// flat records ParseTerm's URL grammar. A JSON terms array already gives
+	// every value its own slot; a flat `in` term alone uses commas as separators.
+	flat    bool
+	flatRaw string
+	// jsonValues retains JSON nulls, which Strings cannot represent on its own.
+	// It is intentionally private: the public Values remains the convenient
+	// string view for Go callers, while compilation and re-encoding preserve the
+	// precise wire meaning.
+	jsonValues []termValue
 }
+
+// UnmarshalJSON keeps each JSON value intact. Strings is deliberately more
+// permissive for top-level lists (`"a,b"` is useful in a URL-shaped request),
+// but applying that split to every member of Term.Values made a saved view
+// containing `"Smith, John"` silently become two values when read back. The
+// query-string door already splits its one textual value in ParseTerm; the JSON
+// door has structure and must preserve it.
+func (t *Term) UnmarshalJSON(b []byte) error {
+	type wire struct {
+		Path   string          `json:"path"`
+		Op     string          `json:"op"`
+		Values json.RawMessage `json:"values"`
+	}
+	var in wire
+	if err := decodeObject(b, &in, "terms", termKeys); err != nil {
+		return err
+	}
+	*t = Term{Path: in.Path, Op: in.Op}
+	if len(in.Values) == 0 || isNull(trim(in.Values)) {
+		return nil
+	}
+	var rawValues []json.RawMessage
+	if err := json.Unmarshal(in.Values, &rawValues); err != nil {
+		return fmt.Errorf("query: term values must be an array of strings: %w", err)
+	}
+	t.Values = make(Strings, len(rawValues))
+	t.jsonValues = make([]termValue, len(rawValues))
+	for i, raw := range rawValues {
+		raw = trim(raw)
+		if isNull(raw) {
+			t.jsonValues[i] = termValue{null: true}
+			continue
+		}
+		if err := json.Unmarshal(raw, &t.Values[i]); err != nil {
+			return fmt.Errorf("query: terms.values[%d] must be a string or null: %w", i, err)
+		}
+		t.jsonValues[i] = termValue{text: t.Values[i]}
+	}
+	return nil
+}
+
+// MarshalJSON is the other half of UnmarshalJSON: a null term operand must not
+// quietly become an empty string when a saved query is written back out.
+func (t Term) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Path   string `json:"path"`
+		Op     string `json:"op,omitempty"`
+		Values []any  `json:"values,omitempty"`
+	}
+	w := wire{Path: t.Path, Op: t.Op}
+	if t.jsonValues != nil {
+		w.Values = make([]any, len(t.jsonValues))
+		for i, value := range t.jsonValues {
+			if !value.null {
+				w.Values[i] = value.text
+			}
+		}
+	} else if len(t.Values) != 0 {
+		w.Values = make([]any, len(t.Values))
+		for i, value := range t.Values {
+			w.Values[i] = value
+		}
+	}
+	return json.Marshal(w)
+}
+
+var termKeys = []string{"path", "op", "values"}
 
 // ParseTerm reads the `field:op:value` triple. The value keeps every colon
 // after the second one, so timestamps survive. Two segments mean equality —
@@ -29,12 +109,16 @@ func ParseTerm(s string) (Term, error) {
 	parts := strings.SplitN(s, ":", 3)
 	switch len(parts) {
 	case 2:
-		return Term{Path: strings.TrimSpace(parts[0]), Op: "eq", Values: splitList(parts[1])}, nil
+		raw := strings.TrimSpace(parts[1])
+		return Term{Path: strings.TrimSpace(parts[0]), Op: "eq", Values: splitList(raw), flat: true, flatRaw: raw}, nil
 	case 3:
+		raw := strings.TrimSpace(parts[2])
 		return Term{
-			Path:   strings.TrimSpace(parts[0]),
-			Op:     strings.TrimSpace(parts[1]),
-			Values: splitList(parts[2]),
+			Path:    strings.TrimSpace(parts[0]),
+			Op:      strings.TrimSpace(parts[1]),
+			Values:  splitList(raw),
+			flat:    true,
+			flatRaw: raw,
 		}, nil
 	default:
 		return Term{}, errf("filter", "%q is not field:op:value", s)
@@ -64,12 +148,20 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 		if err := c.count("filter"); err != nil {
 			return nil, err
 		}
+		values := t.values(kind.multi())
 
 		switch {
 		case kind.unary():
 			want := true
-			if len(t.Values) > 0 {
-				want, _ = strconv.ParseBool(t.Values[0])
+			if len(values) > 1 {
+				return nil, errf("filter."+canonical, "%s accepts at most one boolean value", op)
+			}
+			if len(values) == 1 {
+				var err error
+				want, err = strconv.ParseBool(values[0].text)
+				if err != nil {
+					return nil, errf("filter."+canonical, "%s expects true or false", op)
+				}
 			}
 			if (kind == opIsNull) == want {
 				preds = append(preds, crud.IsNull(canonical))
@@ -78,10 +170,19 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			}
 
 		case kind.textual():
-			if len(t.Values) == 0 {
+			if len(values) == 0 {
 				return nil, errf("filter."+canonical, "%s needs a value", op)
 			}
-			preds = append(preds, buildText(canonical, kind, t.Values[0]))
+			if len(values) > 1 {
+				return nil, errf("filter."+canonical, "%s accepts exactly one value", op)
+			}
+			if crud.ElemType(f.Type).Kind() != reflect.String {
+				return nil, errf("filter."+canonical, "%s requires a text field", op)
+			}
+			if err := c.countBinds(1, "filter."+canonical); err != nil {
+				return nil, err
+			}
+			preds = append(preds, buildText(canonical, kind, values[0].text))
 
 		case kind.multi():
 			// The third spelling of a value list, and it was the one with no
@@ -90,10 +191,10 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			// so without this the flat-term `in` produced one bind parameter per
 			// element with nothing bounding it, reachable from POST /query
 			// through Term.Values on a stock config.
-			if err := c.countValues(len(t.Values), "filter."+canonical); err != nil {
+			if err := c.countValues(len(values), "filter."+canonical); err != nil {
 				return nil, err
 			}
-			vals, err := c.coerceAll(t.Values, f, canonical)
+			vals, err := c.coerceTerms(values, f, canonical)
 			if err != nil {
 				return nil, err
 			}
@@ -104,12 +205,23 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			preds = append(preds, p)
 
 		default:
-			if len(t.Values) == 0 {
+			if len(values) == 0 {
 				return nil, errf("filter."+canonical, "%s needs a value", op)
 			}
-			vals, err := c.coerceAll(t.Values[:1], f, canonical)
+			if len(values) > 1 {
+				return nil, errf("filter."+canonical, "%s accepts exactly one value", op)
+			}
+			if values[0].null && kind != opEq && kind != opNe {
+				return nil, errf("filter."+canonical, "%s has no meaning with null", op)
+			}
+			vals, err := c.coerceTerms(values[:1], f, canonical)
 			if err != nil {
 				return nil, err
+			}
+			if vals[0] != nil {
+				if err := c.countBinds(1, "filter."+canonical); err != nil {
+					return nil, err
+				}
 			}
 			preds = append(preds, buildScalar(canonical, kind, vals[0]))
 		}
@@ -124,24 +236,99 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 	}
 }
 
-func (c *compiler) coerceAll(raw []string, f *crud.Field, canonical string) ([]any, error) {
+func (c *compiler) coerceTerms(raw []termValue, f *crud.Field, canonical string) ([]any, error) {
 	t := crud.ElemType(f.Type)
 	out := make([]any, 0, len(raw))
-	for _, s := range raw {
-		if s == "null" {
+	for _, value := range raw {
+		if value.null {
 			out = append(out, nil)
 			continue
 		}
-		v, err := coerceString(s, t)
+		v, err := coerceString(value.text, t)
 		if err != nil {
 			// wanted, not t: this message is rendered, so a reflect.Type here
 			// puts the Go type of the consumer's own field on the wire
 			// ([[D-044]]). The query-string door had its own copy of the leak.
-			return nil, errf("filter."+canonical, "%q is not %s", s, wanted(t))
+			return nil, errf("filter."+canonical, "%q is not %s", value.text, wanted(t))
 		}
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+type termValue struct {
+	text string
+	null bool
+}
+
+// values interprets the URL term grammar only after its operator is known. A
+// comma separates values for `in` and `notIn`; for every scalar operator it is
+// just a character, so `title:eq:Smith, John` means exactly the same thing as
+// its JSON counterpart. A backslash escapes a comma in a list and turns a bare
+// `null` into the literal string `null` (`\\null`).
+func (t Term) values(split bool) []termValue {
+	if !t.flat {
+		if t.jsonValues != nil {
+			return append([]termValue(nil), t.jsonValues...)
+		}
+		out := make([]termValue, len(t.Values))
+		for i, value := range t.Values {
+			out[i] = termValue{text: value}
+		}
+		return out
+	}
+	if t.flatRaw == "" {
+		return nil
+	}
+	var out []termValue
+	out = append(out, parseTermValues(t.flatRaw, split)...)
+	return out
+}
+
+func parseTermValues(s string, split bool) []termValue {
+	var out []termValue
+	var b strings.Builder
+	escapedValue := false
+	flush := func() {
+		text := b.String()
+		out = append(out, termValue{text: text, null: text == "null" && !escapedValue})
+		b.Reset()
+		escapedValue = false
+	}
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '\\' {
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				switch next {
+				case ',', '|', '\\':
+					b.WriteRune(next)
+					escapedValue = true
+					i++
+					continue
+				case 'n':
+					if i+4 < len(runes) && string(runes[i+1:i+5]) == "null" {
+						b.WriteString("null")
+						escapedValue = true
+						i += 4
+						continue
+					}
+				}
+			}
+			// A backslash only quotes the delimiters and literal null. Preserve
+			// it in ordinary values such as Windows paths and regular expressions.
+			b.WriteRune(r)
+			continue
+		}
+		if split && r == ',' {
+			flush()
+			continue
+		}
+		b.WriteRune(r)
+	}
+	flush()
+	return out
 }
 
 // ParseQuery reads a request out of a URL query string:
@@ -159,29 +346,30 @@ func ParseQuery(v url.Values) (*Request, error) {
 	r := &Request{}
 
 	num := func(keys ...string) (int, error) {
-		for _, k := range keys {
-			if s := v.Get(k); s != "" {
-				n, err := strconv.Atoi(s)
-				if err != nil {
-					return 0, errf(k, "%q is not a number", s)
-				}
-				return n, nil
-			}
+		s, key, present, err := scalar(v, keys...)
+		if err != nil || !present {
+			return 0, err
 		}
-		return 0, nil
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return 0, errf(key, "%q is not a number", s)
+		}
+		return n, nil
 	}
 	// flag answers the value and the spelling that carried it, because a
 	// refusal has to name the parameter the client actually sent. `?all=1`
 	// blamed on `unpaged` is a 400 pointing at a key that appears nowhere in the
 	// request ([[D-013]] wants the path a client can act on).
-	flag := func(keys ...string) (bool, string) {
-		for _, k := range keys {
-			if s := v.Get(k); s != "" {
-				b, err := strconv.ParseBool(s)
-				return err == nil && b, k
-			}
+	flag := func(keys ...string) (bool, string, error) {
+		s, key, present, err := scalar(v, keys...)
+		if err != nil || !present {
+			return false, key, err
 		}
-		return false, ""
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return false, key, errf(key, "%q is not a boolean", s)
+		}
+		return b, key, nil
 	}
 
 	var err error
@@ -194,20 +382,47 @@ func ParseQuery(v url.Values) (*Request, error) {
 	if r.Offset, err = num("offset"); err != nil {
 		return nil, err
 	}
-	r.Unpaged, r.unpagedParam = flag("unpaged", "all")
-	r.SkipTotal, _ = flag("skipTotal", "skip_total", "noTotal")
-	r.Distinct, _ = flag("distinct")
+	if r.Unpaged, r.unpagedParam, err = flag("unpaged", "all"); err != nil {
+		return nil, err
+	}
+	if r.SkipTotal, _, err = flag("skipTotal", "skip_total", "noTotal"); err != nil {
+		return nil, err
+	}
+	if r.Distinct, _, err = flag("distinct"); err != nil {
+		return nil, err
+	}
 
 	r.Sort = parseSortList(multi(v, "sort", "sorts", "orderBy", "order_by"))
 	r.Select = Strings(multi(v, "select", "fields"))
 	r.Preload = pathsToPreloads(multi(v, "preload", "preloads", "with", "include"))
-	r.After = strings.TrimSpace(firstOf(v, "after", "afterCursor"))
-	r.Before = strings.TrimSpace(firstOf(v, "before", "beforeCursor"))
-	r.Search = strings.TrimSpace(firstOf(v, "search", "q"))
+	if after, key, present, err := scalar(v, "after", "afterCursor"); err != nil {
+		return nil, err
+	} else if present {
+		r.After = strings.TrimSpace(after)
+		if r.After == "" {
+			return nil, errf(key, "must not be empty")
+		}
+	}
+	if before, key, present, err := scalar(v, "before", "beforeCursor"); err != nil {
+		return nil, err
+	} else if present {
+		r.Before = strings.TrimSpace(before)
+		if r.Before == "" {
+			return nil, errf(key, "must not be empty")
+		}
+	}
+	if r.After != "" && r.Before != "" {
+		return nil, errf("after", "cannot be combined with before")
+	}
+	if search, _, present, err := scalar(v, "search", "q"); err != nil {
+		return nil, err
+	} else if present {
+		r.Search = strings.TrimSpace(search)
+	}
 	r.SearchFields = Strings(multi(v, "searchFields", "search_fields", "search-fields"))
 
 	for _, raw := range append(v["f"], v["filters"]...) {
-		for _, one := range strings.Split(raw, "|") {
+		for _, one := range splitFlatTerms(raw) {
 			if one = strings.TrimSpace(one); one == "" {
 				continue
 			}
@@ -222,10 +437,81 @@ func ParseQuery(v url.Values) (*Request, error) {
 	// no. Keeping only the documents that look like objects would turn a
 	// malformed filter into an unfiltered answer — the one failure a client
 	// cannot see.
-	if doc := strings.TrimSpace(v.Get("filter")); doc != "" {
+	if doc, key, present, err := scalar(v, "filter"); err != nil {
+		return nil, err
+	} else if present {
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			return nil, errf(key, "must not be empty")
+		}
 		r.Filter = RawFilter(doc)
 	}
 	return r, nil
+}
+
+// splitFlatTerms keeps `|` in a scalar value unless what follows is itself a
+// term. url.ParseQuery has already decoded `%7C`, so treating every pipe as a
+// separator makes `f=title:eq:a%7Cb` impossible even though the JSON door
+// accepts the same text. A pipe before a plausible `field:value` remains the
+// backwards-compatible multi-term separator; `\|` is the explicit spelling
+// for the rare ambiguous value that itself looks like a following term.
+func splitFlatTerms(raw string) []string {
+	var out []string
+	start := 0
+	escaped := false
+	for i, r := range raw {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '|' && looksLikeFlatTerm(raw[i+1:]):
+			out = append(out, raw[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, raw[start:])
+	return out
+}
+
+func looksLikeFlatTerm(s string) bool {
+	if s == "" {
+		return false
+	}
+	escaped := false
+	for _, r := range s {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '|':
+			return false
+		case r == ':':
+			return strings.TrimSpace(s[:strings.IndexRune(s, ':')]) != ""
+		}
+	}
+	return false
+}
+
+// scalar reads a single-valued control. Repeating it — including through an
+// alias — is not an order-independent query language, so it is a refusal rather
+// than a hidden preference for the first spelling in a map.
+func scalar(v url.Values, keys ...string) (value, key string, present bool, err error) {
+	for _, k := range keys {
+		values, ok := v[k]
+		if !ok {
+			continue
+		}
+		if len(values) != 1 {
+			return "", k, true, errf(k, "must occur exactly once")
+		}
+		if present {
+			return "", k, true, errf(k, "conflicts with %s", key)
+		}
+		value, key, present = values[0], k, true
+	}
+	return value, key, present, nil
 }
 
 // queryParams is every spelling ParseQuery answers to. Used only to recognise a
@@ -331,13 +617,4 @@ func multi(v url.Values, keys ...string) []string {
 		}
 	}
 	return out
-}
-
-func firstOf(v url.Values, keys ...string) string {
-	for _, k := range keys {
-		if s := v.Get(k); s != "" {
-			return s
-		}
-	}
-	return ""
 }

@@ -3,6 +3,8 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/frostgrove/vv/crud/query"
 )
@@ -38,11 +40,12 @@ type Call struct {
 	ID string
 	// IDs is the set a bulk delete names, in the order the caller gave them,
 	// already encoded as a JSON array.
+	// Its zero value means no IDs, the same as the JSON null spelling.
 	//
-	// JSON and not text, which the single ID beside it is. That one goes into a
-	// URL path and a path is text; these go into a document the far side
-	// decodes into its own key type, so an int64 key sent as "42" arrives as a
-	// string where a number was expected and the whole request is refused.
+	// HTTP sends the normal JSON values. A Struct-based transport may rewrite
+	// numeric members to decimal strings before its own encoder sees them, just
+	// as it does the single ID, because its server-side key coercer accepts both
+	// spellings and a double cannot preserve every integer.
 	IDs json.RawMessage
 	// Query is the narrowing, for the three reads that take one.
 	Query *query.Request
@@ -50,6 +53,8 @@ type Call struct {
 	// value because encoding it is the resource's job — that is where crud.Opt
 	// keeps its three states — and re-encoding it in the transport would
 	// collapse absent and null the first time it passed through a Go nil.
+	// Update and Replace require a non-empty, non-null JSON object; an array,
+	// scalar or malformed body is rejected before either transport sends a request.
 	Body json.RawMessage
 }
 
@@ -89,6 +94,25 @@ type ProtocolError struct {
 	// reaches a response: nothing renders a ProtocolError.
 	Body string
 }
+
+// ErrPartialResult marks an answer that contradicts Resource.GetAll's promise
+// to return every matching row. Callers can use errors.Is to distinguish a
+// capped remote export from a failed call.
+var ErrPartialResult = errors.New("remote: GetAll received a partial result")
+
+// PartialResultError says how much of a GetAll result a remote service returned.
+// It is an infrastructure/contract error, not a row-level fault: returning the
+// partial slice would make an export look complete.
+type PartialResultError struct {
+	Received int
+	Total    int64
+}
+
+func (e *PartialResultError) Error() string {
+	return fmt.Sprintf("%v: received %d of %d rows", ErrPartialResult, e.Received, e.Total)
+}
+
+func (e *PartialResultError) Unwrap() error { return ErrPartialResult }
 
 func (e *ProtocolError) Error() string {
 	s := "remote: " + string(e.Method) + " " + e.Where + " answered " + e.Status +

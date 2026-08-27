@@ -329,11 +329,14 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("a keyed read drops the filter", func(t *testing.T) {
+	t.Run("a keyed read keeps its eligibility filter and drops paging", func(t *testing.T) {
 		repo := &fakeRepo{}
 		svc := NewService[widget, int64, widgetUpdate](repo)
 
-		req := &query.Request{Page: 2, Limit: 5, Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
+		req := &query.Request{
+			Page: 2, Limit: 5, After: "opaque", Unpaged: true, SkipTotal: true, Distinct: true,
+			Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}},
+		}
 		if _, err := svc.Get(context.Background(), GetCommand[int64]{ID: 42, Query: req}); err != nil {
 			t.Fatalf("reading: %v", err)
 		}
@@ -341,8 +344,15 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 		if c.id != 42 {
 			t.Fatalf("the repository was asked for id %d, want 42", c.id)
 		}
-		if c.opts.Predicate() != nil || c.opts.Limit != 0 {
-			t.Fatalf("a keyed read carried a filter or a page: %+v", c.opts)
+		if c.opts.Predicate() == nil || c.opts.Limit != 0 || c.opts.After != "" || c.opts.Unpaged || c.opts.NoTotal || c.opts.Distinct {
+			t.Fatalf("a keyed read did not preserve only its eligibility filter: %+v", c.opts)
+		}
+		sql, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(c.opts.Predicate()).Done()
+		if err != nil {
+			t.Fatalf("the keyed-read filter does not resolve: %v", err)
+		}
+		if sql != `"name" = $1` || !reflect.DeepEqual(args, []any{"bolt"}) {
+			t.Fatalf("keyed-read filter = %s %#v, want name = bolt", sql, args)
 		}
 	})
 
@@ -379,6 +389,43 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	})
 }
 
+func TestReadNarrowingDoesNotMutateARequestReusedForAList(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(*DefaultService[widget, int64, widgetUpdate], *query.Request) error
+	}{
+		{
+			name: "Count",
+			read: func(svc *DefaultService[widget, int64, widgetUpdate], req *query.Request) error {
+				_, err := svc.Count(context.Background(), CountCommand{Query: req})
+				return err
+			},
+		},
+		{
+			name: "Get",
+			read: func(svc *DefaultService[widget, int64, widgetUpdate], req *query.Request) error {
+				_, err := svc.Get(context.Background(), GetCommand[int64]{ID: 1, Query: req})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepo{}
+			svc := NewService[widget, int64, widgetUpdate](repo, WithQuery(&query.Config{MaxLimit: 7}))
+			req := &query.Request{Limit: 99, Page: 3, Terms: []query.Term{{Path: "Name", Values: query.Strings{"bolt"}}}}
+			if err := tc.read(svc, req); err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if _, err := svc.List(context.Background(), ListCommand{Query: req}); err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if got := repo.only(t, "Get").opts.Limit; got != 7 {
+				t.Fatalf("list limit = %d, want the endpoint cap after reusing its request", got)
+			}
+		})
+	}
+}
+
 // A query config bounds what a client may ask for, and it is the service's
 // rather than the transport's — which is why Serving refuses the option.
 func TestWithQueryBoundsTheServiceAndNotTheTransport(t *testing.T) {
@@ -397,4 +444,44 @@ func TestWithQueryBoundsTheServiceAndNotTheTransport(t *testing.T) {
 	if _, err := svc.List(context.Background(), ListCommand{Query: req}); err != nil {
 		t.Fatalf("a filter on the allow-list was refused: %v", err)
 	}
+}
+
+func TestWithQueryForSelectsADeclaredVocabularyPerRequest(t *testing.T) {
+	type vocabularyKey struct{}
+	repo := &fakeRepo{}
+	svc := NewService[widget, int64, widgetUpdate](repo,
+		WithQueryFor(
+			&query.Config{Filterable: []string{"Name"}},
+			map[string]*query.Config{"admin": {Filterable: []string{"Name", "Price"}}},
+			func(ctx context.Context) string {
+				name, _ := ctx.Value(vocabularyKey{}).(string)
+				return name
+			},
+		),
+	)
+	price := &query.Request{Terms: []query.Term{{Path: "Price", Values: query.Strings{"1"}}}}
+	if _, err := svc.List(context.Background(), ListCommand{Query: price}); err == nil {
+		t.Fatal("the default vocabulary exposed the admin-only Price field")
+	}
+	adminCtx := context.WithValue(context.Background(), vocabularyKey{}, "admin")
+	if _, err := svc.List(adminCtx, ListCommand{Query: price}); err != nil {
+		t.Fatalf("the declared admin vocabulary was refused: %v", err)
+	}
+	unknownCtx := context.WithValue(context.Background(), vocabularyKey{}, "unknown")
+	if _, err := svc.List(unknownCtx, ListCommand{Query: price}); err == nil {
+		t.Fatal("an undeclared vocabulary silently fell back to the permissive default")
+	} else if qerr, ok := err.(*query.Error); !ok || qerr.Path != "queryConfig" {
+		t.Fatalf("err = %v, want a query refusal naming queryConfig", err)
+	}
+}
+
+func TestWithQueryValidatesItsDeclarationWhenTheServiceIsBuilt(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a query allow-list entry that names nothing did not fail at service construction")
+		}
+	}()
+	NewService[widget, int64, widgetUpdate](&fakeRepo{}, WithQuery(&query.Config{
+		Filterable: []string{"DoesNotExist"},
+	}))
 }

@@ -273,9 +273,10 @@ func TestCountAcceptsTheJSONDocumentToo(t *testing.T) {
 	}
 }
 
-// GET /:id identifies the row by the path parameter, so only the shaping
-// clauses are worth passing on; a filter or a sort could only contradict it.
-func TestGetByIDPassesThePathIDAndOnlyShapingOptions(t *testing.T) {
+// GET /:id identifies the candidate row by its path parameter, but a filter
+// can still prove that candidate ineligible (for example, outside a tenant).
+// Paging and sorting remain meaningless for one row.
+func TestGetByIDPassesThePathIDAndEligibilityOptions(t *testing.T) {
 	app, fake := mount(t)
 
 	r := ok(t, app, http.MethodGet,
@@ -291,8 +292,8 @@ func TestGetByIDPassesThePathIDAndOnlyShapingOptions(t *testing.T) {
 	if got, want := call.Opts.Fields, []string{"Name"}; !slices.Equal(got, want) {
 		t.Fatalf("projection = %v, want %v", got, want)
 	}
-	if sql, _ := whereSQL(t, call.Opts); sql != "" {
-		t.Fatalf("a filter reached a lookup by id: %s", sql)
+	if sql, _ := whereSQL(t, call.Opts); sql != `"price" >= $1` {
+		t.Fatalf("lookup filter = %s, want price >= 100", sql)
 	}
 	if len(call.Opts.Sort) != 0 || call.Opts.Page != 0 || call.Opts.Limit != 0 {
 		t.Fatalf("sorting or paging reached a lookup by id: sort %v page %d limit %d",
@@ -494,7 +495,7 @@ func TestListHonoursUnpagedAndSkipTotal(t *testing.T) {
 	// that has no ceiling — MaxLimit clamps it, and MaxLimit is unset by default
 	// ([[D-060]]). skipTotal and distinct need no declaration; neither changes
 	// how many rows come back.
-	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}))
+	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true, AllowDistinct: true}))
 
 	ok(t, app, http.MethodGet, "/widgets?unpaged=true&skipTotal=true&distinct=true", "", http.StatusOK)
 

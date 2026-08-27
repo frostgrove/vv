@@ -12,6 +12,12 @@ type Options struct {
 	Preloads []PreloadSpec
 	Fields   []string // projection; empty means every column
 
+	// PreloadRows is the maximum number of child rows one preload relation may
+	// materialise. Zero means no per-relation cap. Query endpoints set it from
+	// their Config; the preloader refuses rather than silently truncating a
+	// relation when the cap is exceeded.
+	PreloadRows int
+
 	Page   int // 1-based; 0 means the first page
 	Limit  int // 0 means "repository default"
 	Offset int // explicit offset wins over Page
@@ -189,6 +195,12 @@ func ForUpdate() Option { return func(o *Options) { o.ForUpdate = true } }
 // Distinct adds SELECT DISTINCT.
 func Distinct() Option { return func(o *Options) { o.Distinct = true } }
 
+// PreloadRows caps one preloaded relation's materialised children. It is not
+// pagination — the cap is an error when exceeded, so no parent quietly loses
+// part of its relation. Zero disables the cap for trusted direct repository
+// work; public query endpoints declare a positive value in query.Config.
+func PreloadRows(n int) Option { return func(o *Options) { o.PreloadRows = n } }
+
 // With replays a prebuilt Options as an Option, so callers can pass a stored
 // query shape around.
 //
@@ -228,6 +240,9 @@ func With(src *Options) Option {
 		o.NoTotal = o.NoTotal || src.NoTotal
 		o.ForUpdate = o.ForUpdate || src.ForUpdate
 		o.Distinct = o.Distinct || src.Distinct
+		if src.PreloadRows > 0 {
+			o.PreloadRows = src.PreloadRows
+		}
 		o.RelScopes = MergeRelationScopes(o.RelScopes, src.RelScopes)
 	}
 }

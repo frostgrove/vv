@@ -50,8 +50,8 @@ the one you already know:
 | Method | Route |
 |---|---|
 | `Get(ctx, opts...)` | `POST /query` · `List` |
-| `GetAll(ctx, opts...)` | the same, `unpaged` |
-| `GetByID(ctx, id, opts...)` | `GET /{id}` · `Get` |
+| `GetAll(ctx, opts...)` | every matching row (or the requested explicit subset); cursor-edge walks make remote page/offset caps chunking controls rather than a truncated success. Cursorless and DISTINCT-without-PK shapes still need a sufficient `MaxOffset`. |
+| `GetByID(ctx, id, opts...)` | direct: `GET /{id}` · `Get`; root filter or narrowed/capped preload: `POST /query` · `List` with the primary-key equality |
 | `Count(ctx, opts...)` | `POST /count` · `Count` |
 | `Save(ctx, *m)` | `POST /` when the key is unset, `PUT /{id}` when it is set |
 | `Update(ctx, id, dto)` | `PATCH /{id}` · `Update` |
@@ -112,8 +112,46 @@ misconfigured service would report an empty table for as long as nobody looked.
 Every `crud.Option` gets one of three answers, and never a fourth ([[D-053]]).
 
 **Translated** — `Page`, `Limit`, `Offset`, `OrderBy`/`SortBy`, `Select`,
-`Preload`, `After`, `Before`, `Unpaged`, `SkipTotal`, `Distinct`, and `Where`
-with any predicate the wire DSL can spell.
+`Preload`/`PreloadWhere`/`PreloadCap`, `After`, `Before`, `Unpaged`, `SkipTotal`, `Distinct`, and `Where`
+with any predicate the wire DSL can spell. A keyed `GetByID` keeps its root
+filter too: when one is present (or a preload is narrowed or capped), the client uses
+the document-shaped List route with an additional primary-key equality. A
+direct entity route retains only projection and plain preload paths; ordering
+and paging cannot change a keyed result and are discarded.
+
+That fallback is deliberately an ordinary public List request: a restrictive
+peer must grant its primary key **and every field in the caller's filter** in
+`query.Config.Filterable`, just as it would for a direct `Get`. Otherwise the
+peer returns its normal query refusal rather than weakening the keyed read.
+
+`GetAll` clears `SkipTotal` and turns an all-rows request — no page controls,
+or `Unpaged` (which wins a supplied page/limit) — into bounded requests. With
+`Unpaged+Offset` it returns the whole suffix after that offset. It requests one
+first page, then follows any cursor edge it receives. It uses the caller's
+sort, or an explicit primary-key sort when none was supplied; that avoids the
+far endpoint's `MaxOffset` as well as its maximum page size. An endpoint with
+restrictive allow-lists must therefore permit that sort and cursor's
+primary-key filter (or the caller supplies an allowed unique sort).
+
+There is one intentional exception: `Distinct` with an explicit projection
+that excludes the primary key cannot be safely keyset-sorted without changing
+the distinct result. That shape stays on offset pages; a custom list that emits
+no cursor edge does too, and in both cases its `MaxOffset` must cover the
+export. Otherwise the client returns the endpoint refusal instead of treating
+that refusal as a successful partial result. A non-empty cursor page with an edge is followed even when `HasNext`
+or `HasPrev` is stale; the terminal empty page reached through that edge proves
+completion. A custom cursor response with no terminal edge instead declares its
+end through the matching `HasNext`/`HasPrev` flag. An empty page claiming more,
+a repeated/missing edge, or an inconsistent offset total returns
+`*remote.PartialResultError` (`errors.Is(err, remote.ErrPartialResult)`). Only
+an explicit offset without `Unpaged`, or an explicit page/limit without
+`Unpaged`, retains ordinary one-subset semantics.
+
+Like any multi-request network read, this is an enumeration, not a transaction
+snapshot: rows inserted, deleted or reordered by the far service while it walks
+can move between pages. The consistency checks catch a contradictory protocol,
+not a changing dataset. An export that needs one database snapshot belongs to a
+far-side export/snapshot operation with its own contract.
 
 **Refused, before anything is sent** — a `*remote.OptionError`:
 
@@ -182,8 +220,10 @@ remotehttp.Transport(base, remotehttp.WithRequestHook(func(r *http.Request) erro
 
 Two differences a caller can see ([[FL-013]]):
 
-- Over HTTP, `GetByID` carries preload paths in a query string, so a **narrowed**
-  preload is refused there. gRPC sends the whole document.
+- A filtered `GetByID`, including one with a narrowed or capped preload, uses List on
+  both transports so the document crosses intact. An unfiltered HTTP entity
+  read stays `GET /{id}` and therefore carries only projection and plain
+  preload paths; gRPC can carry that same shape as a document.
 - Over gRPC, 422 and 400 are one `InvalidArgument`; the machine code undoes the
   collapse, so `errs.AsFault(err).Kind` still tells them apart.
 

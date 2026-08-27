@@ -287,7 +287,7 @@ func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
 	src := newStub(uniqueFault(), false, false)
 	repo := Docs.Bind(src,
 		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
-		security.Gate(security.Policy[Doc, int64]{}))
+		security.Gate(security.Freeze[Doc, int64]("Title")))
 
 	// Binding is half the claim. The probe has to actually run, or a source
 	// that resolved to something unusable would pass this just as well.

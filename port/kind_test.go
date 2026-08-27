@@ -81,6 +81,7 @@ func TestEverySentinelGetsItsKindWithoutAFault(t *testing.T) {
 		{"a collision", crud.ErrConflict, errs.KindConflict},
 		{"a stale write", crud.ErrStaleVersion, errs.KindConflict},
 		{"a save with no key", crud.ErrMissingID, errs.KindBadRequest},
+		{"an invalid repository operation", crud.ErrBadRequest, errs.KindBadRequest},
 		{"a rejected query document", &query.Error{Path: "filter", Reason: "unknown field"}, errs.KindBadRequest},
 		{"a field the model lacks", &crud.UnknownFieldError{Model: "Widget", Field: "nope"}, errs.KindBadRequest},
 		{"a declaration that does not hold together", &crud.SchemaError{Model: "Widget", Reason: "no primary key"}, errs.KindBadRequest},

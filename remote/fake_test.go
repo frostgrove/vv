@@ -75,11 +75,14 @@ type recordedCall struct {
 }
 
 type fakeRepo struct {
-	page  crud.PaginatedResponse[Widget]
-	all   []Widget
-	one   Widget
-	count int64
-	del   int64
+	page    crud.PaginatedResponse[Widget]
+	pages   map[int]crud.PaginatedResponse[Widget]
+	offsets map[int]crud.PaginatedResponse[Widget]
+	cursors map[string]crud.PaginatedResponse[Widget]
+	all     []Widget
+	one     Widget
+	count   int64
+	del     int64
 
 	err error
 
@@ -105,11 +108,31 @@ func newFake() *fakeRepo {
 func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
 func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[Widget], error) {
-	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: crud.Build(opts...)})
+	o := crud.Build(opts...)
+	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: o})
 	if f.err != nil {
 		return crud.PaginatedResponse[Widget]{}, f.err
 	}
+	if page, ok := f.cursors[cursorKey(o)]; ok {
+		return page, nil
+	}
+	if page, ok := f.offsets[o.Offset]; ok {
+		return page, nil
+	}
+	if page, ok := f.pages[o.Page]; ok {
+		return page, nil
+	}
 	return f.page, nil
+}
+
+func cursorKey(o *crud.Options) string {
+	if o.After != "" {
+		return "after:" + o.After
+	}
+	if o.Before != "" {
+		return "before:" + o.Before
+	}
+	return ""
 }
 
 func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]Widget, error) {
@@ -189,16 +212,14 @@ func (f *fakeRepo) last(t *testing.T) recordedCall {
 // serve mounts a real binding on a real server. Nothing here is a stub between
 // the client and the handler: what the client writes is what net/http parses.
 //
-// The endpoint declares AllowUnpaged, and that is not test scaffolding — it is
-// what a resource has to say to be consumable by remote.GetAll. There is no
-// "every row" route over HTTP; GetAll is emulated with the unpaged flag, and an
-// endpoint that never agreed to serve whole tables refuses it. A resource meant
-// to be read this way says so once, at the far end ([[D-060]]).
+// There is no separate "every row" route over HTTP. remote.GetAll walks the
+// ordinary List pages, which means an endpoint with a page cap remains
+// consumable without granting unpaged reads.
 func serve(t *testing.T, repo port.Repository[Widget, int64, WidgetUpdate], opts ...crudnet.Option[Widget, int64, WidgetUpdate]) string {
 	t.Helper()
 	mux := http.NewServeMux()
 	opts = append([]crudnet.Option[Widget, int64, WidgetUpdate]{
-		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}),
+		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowDistinct: true}),
 	}, opts...)
 	crudnet.New(repo, opts...).Mount(mux, "/widgets")
 	srv := httptest.NewServer(mux)

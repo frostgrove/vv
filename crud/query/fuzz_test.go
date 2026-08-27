@@ -160,9 +160,9 @@ func FuzzCompileQueryString(f *testing.F) {
 // assertNothingTheCallerWroteIsInTheSQL is invariant 3, stated as a check.
 //
 // It looks for the marks that would mean a value or a name reached the statement
-// as text rather than as a bind or a column the model resolved. A legitimate
-// rendered predicate contains none of them: every value is a `$n` placeholder
-// and every name is a quoted identifier that came out of the schema.
+// as text rather than as a bind or a column the model resolved. The one fixed
+// literal is the backslash in a convenience LIKE's `ESCAPE '\'` clause; remove
+// that grammar before checking the caller-controlled part of the statement.
 //
 // The double-quote case is the subtle one. Quotes are legitimate — that is how
 // identifiers are quoted — so what matters is what sits *between* them. No
@@ -170,13 +170,14 @@ func FuzzCompileQueryString(f *testing.F) {
 // that inside quotes is text that arrived from outside.
 func assertNothingTheCallerWroteIsInTheSQL(t *testing.T, input, sql string) {
 	t.Helper()
+	checked := strings.ReplaceAll(sql, ` ESCAPE '\'`, "")
 	for _, mark := range []string{"'", ";", "--", "/*", "*/"} {
-		if strings.Contains(sql, mark) {
+		if strings.Contains(checked, mark) {
 			t.Fatalf("the rendered statement carries %q, so something the caller wrote reached it as text:\ninput: %s\nsql:   %s",
 				mark, input, sql)
 		}
 	}
-	parts := strings.Split(sql, `"`)
+	parts := strings.Split(checked, `"`)
 	for i := 1; i < len(parts); i += 2 {
 		if strings.ContainsAny(parts[i], " ()\t\n\r") {
 			t.Fatalf("a quoted identifier contains %q, which is not the name of any column:\ninput: %s\nsql:   %s",

@@ -114,6 +114,7 @@ curl -XPOST /members/query -d '{
 [§14](#14-associations-filters-and-preloads).
 
 Operators: `eq ne gt gte lt lte like notLike ilike contains startsWith endsWith
+iContains iStartsWith iEndsWith
 in notIn between isNull isNotNull`, plus `$`-prefixed and symbolic aliases. A
 bare value means `eq`, a bare array means `in`, `null` means `IS NULL`.
 
@@ -779,7 +780,7 @@ request and response is a `google.protobuf.Struct` carrying the same JSON
 document the HTTP bindings speak, so there is no `.proto` to write and no
 `protoc` to install. Three things are worth knowing before you mount it: a key
 travels as a **string** (`{"id": "42"}`), because a protobuf number is a double
-and an `int64` above 2^53 would not survive one; there is no server reflection,
+and an `int64` at magnitude 2^53 and beyond must use the documented string spelling; there is no server reflection,
 because a generic resource has no compiled descriptor, so clients call by full
 method name; and a failure arrives as a status code plus `BadRequest`,
 `ErrorInfo` and `RetryInfo` details rather than as the JSON envelope.

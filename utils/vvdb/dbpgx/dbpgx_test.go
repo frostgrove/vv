@@ -3,12 +3,15 @@ package dbpgx_test
 import (
 	"context"
 	"errors"
+	"math"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/frostgrove/vv/utils/vvdb"
 	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // unreachable is a config that parses and cannot connect: the assertions here
@@ -80,5 +83,75 @@ func TestConnectRefusesBeforeItDials(t *testing.T) {
 	c.Name = ""
 	if _, err := dbpgx.Connect(context.Background(), c); !errors.Is(err, vvdb.ErrMissing) {
 		t.Fatalf("a configuration that cannot be built must not reach the network; got %v", err)
+	}
+}
+
+func TestConnectPingsRatherThanReturningALazyPool(t *testing.T) {
+	boom := errors.New("stop before dialing")
+	called := false
+	_, err := dbpgx.Connect(context.Background(), unreachable(), func(pc *pgxpool.Config) {
+		pc.BeforeConnect = func(context.Context, *pgx.ConnConfig) error {
+			called = true
+			return boom
+		}
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Connect() = %v, want the connection attempt error", err)
+	}
+	if !called {
+		t.Fatal("Connect returned a lazy pool without attempting a connection")
+	}
+}
+
+func TestConnectRefusesAReplicaAndAnUnrepresentablePoolBeforeDialing(t *testing.T) {
+	c := unreachable()
+	c.Replica = &vvdb.Config{Host: "replica"}
+	if _, err := dbpgx.Connect(context.Background(), c); !errors.Is(err, vvdb.ErrConflict) {
+		t.Fatalf("Connect() = %v, want a replica refused by the single-handle API", err)
+	}
+
+	if strconv.IntSize < 64 {
+		t.Skip("an int cannot represent a value above pgx's int32 limit here")
+	}
+	c = unreachable()
+	c.Pool.MaxOpen = math.MaxInt32 + 1
+	if _, err := dbpgx.Connect(context.Background(), c); !errors.Is(err, vvdb.ErrUnsupported) {
+		t.Fatalf("Connect() = %v, want the pgx int32 bound refused before dialing", err)
+	}
+}
+
+func TestApplySizesAnApplicationOwnedPgxConfig(t *testing.T) {
+	pc, err := pgxpool.ParseConfig("postgres://vv:secret@db.internal:5432/app?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbpgx.Apply(pc, vvdb.Pool{MaxOpen: 9, MaxIdle: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if pc.MaxConns != 9 || pc.MinConns != 3 {
+		t.Fatalf("Apply did not size the application-owned config: MaxConns=%d MinConns=%d", pc.MaxConns, pc.MinConns)
+	}
+	if err := dbpgx.Apply(pc, vvdb.Pool{MaxIdle: -1}); !errors.Is(err, vvdb.ErrUnsupported) {
+		t.Fatalf("Apply() = %v, want pgx's unsupported max-idle spelling named", err)
+	}
+	for _, p := range []vvdb.Pool{{MaxOpen: -1}, {MaxOpen: 1, MaxIdle: 2}} {
+		if err := dbpgx.Apply(pc, p); err == nil {
+			t.Fatalf("Apply(%+v) accepted a pool Config.Validate refuses", p)
+		}
+	}
+}
+
+func TestApplyRefusesMaxIdleAboveTheParsedEffectiveMaximumWithoutMutation(t *testing.T) {
+	pc, err := pgxpool.ParseConfig("postgres://vv:secret@db.internal:5432/app?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc.MaxConns = 4
+	pc.MinConns = 1
+	if err := dbpgx.Apply(pc, vvdb.Pool{MaxIdle: 5}); !errors.Is(err, vvdb.ErrConflict) {
+		t.Fatalf("Apply() = %v, want the effective pgx maximum conflict", err)
+	}
+	if pc.MaxConns != 4 || pc.MinConns != 1 {
+		t.Fatalf("Apply mutated a config it refused: MaxConns=%d MinConns=%d", pc.MaxConns, pc.MinConns)
 	}
 }

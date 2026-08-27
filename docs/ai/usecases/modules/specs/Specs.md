@@ -2,7 +2,13 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/decorators/specs` (with the metamodel `cmd/vv` writes into `vv_gen.go`)
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the edge sweep confirms three silent-wrong-answer paths before the existing data-loss guard is reached: two conditions on one to-many relation can match two different children; a parent-model specification can silently narrow child preloads; and `NotIn` of an empty upstream list reads every row. The existing bulk-write tautology and dialect-dependent escaped `LIKE` blockers remain: the former can delete or rewrite the table, the latter makes a literal search depend on the engine. Already filed, and still a live breach of [[D-015]]: the two refusal sentinels wrap nothing, so a refused bulk write reaches the client as 500. The composition algebra, relation-resolution concurrency and the find-one contract are the best-proven code in this repository.
+**Verdict (historical audit):** the findings below describe the code at the time
+of the sweep. Later work closed the bulk-write tautology guard and the escaped
+`LIKE` gap: literal convenience helpers now preserve their mode through the
+query document, emit a dialect-specific `ESCAPE` clause, and are available from
+both the typed metamodel and `specs.Builder`, including portable
+case-insensitive forms. Read the remaining findings as historical until their
+individual status is refreshed.
 
 ## What a consumer is actually trying to do
 
@@ -76,12 +82,13 @@ Guarantee 3's citation was wrong in round 1 and both reviewers caught it. `specs
 **Must hold:**
 1. An absent condition contributes no clause — not a clause that happens to be true.
 2. All conditions absent produces a statement with no `WHERE` at all and no bound arguments.
-3. A missing operand of an `or` never widens the result to everything.
+3. A missing operand of an `or` preserves every operand that remains; an `AnyOf`
+   with no remaining operand is visibly documented as unrestricted.
 4. An `in` over an empty slice matches nothing rather than failing to parse.
 5. The assembly stays an expression, so it can be returned from a function and nested inside an `AnyOf` without a statement block.
-**Today:** 🟡 partial — 1 through 4 hold; 5 does not.
-**Evidence:** the semantics are pinned harder than anything else here. `edge_test.go:45` (`TestNoShapeOfEmptySpecificationRestrictsTheQuery`) enumerates thirteen spellings of "empty" and asserts every one compiles to no `WHERE` and no args; `edge_test.go:100` (`TestANilOperandNarrowsToTheOtherSide`) asserts a nil operand narrows to the side that exists. `spec.go:174-190` is the fold that drops nil members — the property a conditional constructor would rest on, and **nothing states it**: `AllOf`'s doc comment (`spec.go:168`) says only "an empty list means no restriction", and the module doc's Composing section (`docs/modules/en/specs.md:152-160`) is silent. Guarantee 4 is `crud/predicate.go:201-209`, which degrades an empty `in` to `1 = 0` — see H-SPECS-20 for what the same node does to `not in`. Guarantee 5 fails: there is no conditional constructor anywhere in the exported surface (`docs/api/surface.md:301-331`).
-**If not ready:** the consumer writes an accumulator — one `var parts []specs.Specification[User]`, three lines per optional filter in this repository's own brace style, one fold. The line count is in the DX verdict; the checkable loss is that the accumulator is a statement block over a mutable slice, so the assembly can no longer be returned from a function or nested inside an `AnyOf`. Closing it is `EqPtr`/`EqOpt` on the attribute plus `If` for the genuine condition — see the DX section, which also names the widening `If` opens inside `AnyOf`.
+**Today:** ✅ ready.
+**Evidence:** `specs.If` makes a false condition absent; `Attr.EqPtr` makes a nil pointer absent; `Attr.EqOpt` distinguishes undefined (absent), null (`IS NULL`) and a value (equality). `TestOptionalSpecificationsStayDeclarativeAndNeverWidenAnOR` pins an all-blank expression, a mandatory `AllOf`, and nested `AnyOf`; `TestOptionalEqualityPreservesPointerAndOptStates` pins every optional state. The exported comments and module docs state the one deliberate boundary: an `AnyOf` with every member absent is unrestricted, so an admin form keeps its mandatory tenant predicate in the surrounding `AllOf`.
+**Blast radius:** closed.
 **Before reaching for any of that, note the shipped answer this case does not use.** A filter that arrives from a request is `crud/query`'s job: the wire DSL compiles one JSON document into `crud.Options` with no per-resource assembly code at all, and it is the entry point that already caps an `in` list (`crud/query/compile.go:39-46`). This module is for filters the codebase *names* and reuses. A consumer with twenty resources who hand-writes an `AllOf` block per list endpoint has picked the more laborious of two shipped answers, and nothing in either module's docs draws the line.
 
 ### H-SPECS-03 — Rename a column and have the build break, not a customer's request
@@ -177,13 +184,14 @@ Guarantee 5: `DeleteAll` becomes an `UPDATE` stamp when the blueprint declares `
 1. A user's `%`, `_` or backslash is matched literally, not as a wildcard, on every dialect the library supports and through every spelling the module doc teaches.
 2. Matching ignores case, or the call site says what decides it.
 3. Both at once, in one call.
-**Today:** ❌ 1 is false on SQLite through the typed form and false on every dialect through the literal form; 3 is missing; 2 is a filed dialect difference with nothing at the call site.
-**Evidence.** `Contains`/`StartsWith`/`EndsWith` (`crud/predicate.go:436-438`) escape with `escapeLike` (`:490-493`, a three-line `strings.NewReplacer` producing `\\`, `\%`, `\_`) and the pattern travels as a bind argument. **But `likeNode.render` (`crud/predicate.go:255-275`) emits `col LIKE ?` and nothing else — `grep -rn ESCAPE --include='*.go' .` returns only `crud/catalog/sqlite.go`, which writes `ESCAPE '\'` by hand.** PostgreSQL and MySQL default `LIKE`'s escape character to backslash, so the escaping works there by luck of the default. **SQLite has no default escape character**, so on SQLite the pattern `%50\%\_off%` is read as literal-backslash plus wildcard, and `Contains("50%")` silently returns zero rows. SQLite is a supported dialect: `crud/dialect.go:158-160`, `crud/adapter/crudsql/crudsql.go:162`, `crudtest.New(crud.SQLite{})`.
+**Today:** ✅ fixed. `Contains`, `StartsWith`, `EndsWith` and their portable ignore-case forms all make `%`, `_` and backslash literal, and the raw `Like` family remains deliberately named as a pattern operation. The call site chooses case behaviour explicitly: ordinary helpers follow the column collation and `…IgnoreCase` folds both sides.
+**Current evidence.** The mode is preserved through the predicate document; `LikeEscaper` owns the dialect spelling; `TestSQLiteLiteralLikeHelpers` and `TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes` exercise all six helpers against live engines. The latter pins MySQL/MariaDB while `NO_BACKSLASH_ESCAPES` is set. `specs.Builder` and generated `Str` expose the same literal-safe operations.
+**Historical evidence (superseded).** The following pre-fix diagnosis and remediation record is retained to explain the design constraints; it is not a current claim or implementation plan.
 **The literal form has no escaped operator at all, and that is wider than the SQLite hole.** `specs.Builder` offers `Like`, `NotLike` and `LikeIgnoreCase` and nothing else (`spec.go:78-82`; the same list printed at `docs/modules/en/specs.md:166-172`). The module doc opens with that form (`:33-46`) and `specs_test.go:69-73` uses it. So `cb.Like(root.Get("Name"), "%"+q+"%")` ships a search box where a user's `%` is a wildcard on **PostgreSQL, MySQL and SQLite alike**, and `escapeLike` is unexported, so it cannot be fixed at the call site. This re-prices the fix list: exporting `crud.EscapeLike` and giving `Builder` the three escaping operators is not the second-cheapest item, it is the one that covers the form the docs teach first.
 **Round 1's account of why the tests miss it was wrong on both halves, and both halves change the work.** Two of the three cited tests pin the clause exactly, so emitting `ESCAPE` breaks them and the owner needs that in the estimate: `crud/predicate_test.go:55-65` is a `{name, predicate, wantSQL, wantArgs}` table asserting `"title" LIKE $1` as well as the argument, and `crud/sqlrepo/repository_test.go:552-555` asserts the full clause including `"email" LIKE $7`. Only `crud/query/hostile_test.go:199` is loose. And a **live-row test of exactly this property already exists**: `test/integration/edge_test.go:748-776`, "LIKE metacharacters in a value are literal", runs `Contains("Name","%_")`, `StartsWith("Name","100%")` and `EndsWith("Name","_raw")` against seeded rows and asserts one match. It misses SQLite only because it loops over `egEngines()` (`test/integration/edge_test.go:361-368` = postgres, mysql, mariadb) while SQLite runs `RunSuite` alone (`test/integration/driver_sqlite_test.go:40-41`). The regression test belongs in that loop, not in a new file.
 This makes [[UC-007]] guarantee 9 — "pattern-matching convenience operators escape the wildcard characters in their argument, so a value containing one is matched literally" — false on one of three engines, and it makes [[D-019]]'s invariant false for an unnamed twelfth difference. **[[UC-007]]'s Status and its Index row have to move with it**: the Status reads "covered, with three caveats" (`docs/ai/usecases/modules/specs/UC-007-…:91`) and never mentions guarantee 9, and `docs/ai/usecases/Index.md:78` carries UC-007 as `covered`. An owner scanning the Index at tag time sees green for the one use case this sweep says is red.
 Guarantee 2: `Contains` renders no `LOWER()` and no `COLLATE`, so the column's collation decides — MySQL's default is case-insensitive and PostgreSQL's is not. That is **already filed** as [[D-019]] difference 4, which names `LikeIgnoreCase` as the portable spelling. Guarantee 3 is the hole that leaves: `LikeIgnoreCase` (`crud/predicate.go:430-434`, `metamodel.go:108-110`) folds both sides with `LOWER()` and passes the pattern straight through unescaped. The portable spelling and the escaping spelling are disjoint.
-**If not ready:** the consumer writes `User_.Name.LikeIgnoreCase("%" + q + "%")` and ships a search box where `50%` matches every row. Four fixes, and the first is the release blocker:
+**Historical remediation (completed):** the former proposal was:
 1. **Emit `ESCAPE` unconditionally from `likeNode.render`, dialect-aware.** Not "whenever the pattern came from an escaping constructor" — that was round 1's proposal and it breaks [[D-054]]; see "What it must not break". Unconditional is a no-op on PostgreSQL and MySQL, whose default escape character is already backslash, so behaviour changes only where it is currently wrong. It is not a three-character append: MySQL treats backslash as an escape inside string literals, so the clause has to be written `ESCAPE '\\'` there while SQLite and PostgreSQL take `ESCAPE '\'`. The seam already exists — the nulls-ordering arm branches on `w.d.Name()` at `crud/predicate.go:597`. Scope it as a writer change with a per-dialect literal, update the two pinned clauses (`crud/predicate_test.go:55-65`, `crud/sqlrepo/repository_test.go:552-555`), and add a SQLite target to `egEngines()` so the live test that already asks this question asks it on the engine that gets it wrong.
 2. **Export `crud.EscapeLike`** so a hand-built `Like` pattern can be made safe once for all three operators.
 3. **Give `specs.Builder` `Contains`/`StartsWith`/`EndsWith`** and their ignore-case siblings, in the same change. The criteria form cannot express the escaped operators at all today, so the form the module doc presents as equivalent is silently the less safe of the two.
@@ -412,7 +420,7 @@ open. `User_` is generated, so the first line of the file is already useful.
 // the same list, from an admin form where four of the five filters are blank
 sp := specs.AllOf(
     User_.TenantID.Eq(tenant),                          // mandatory, and load-bearing: see below
-    User_.Name.ContainsIgnoreCase(f.Q),                 // no-op on "" — neither operator exists today
+    specs.If(f.Q != "", User_.Name.ContainsIgnoreCase(f.Q)), // omit the optional filter; LIKE '%%' excludes NULLs
     User_.OwnerID.EqPtr(f.OwnerID),                     // *int64
     User_.ManagerID.EqOpt(f.ManagerID),                 // crud.Opt[int64]
     specs.If(f.IncludeArchived, User_.Status.Eq("archived")),
@@ -436,16 +444,14 @@ not hypothetical, because **all six** fields of this repository's own generated
 update DTO are `*T` or `crud.Opt[T]` (`_examples/example/blog/vv_gen.go:20-25`;
 round 1 said four of six).
 
-`If` stays for the genuine condition, and it carries two warnings that have to
-ship with it:
+`If` is the genuine-condition spelling, and its two boundaries are explicit:
 
 - **Inside `AnyOf`, all-absent means every row.** `fold` returns nil when no
   member yields a predicate (`spec.go:174-190`) and `AnyOf`'s doc comment says an
   empty list is no restriction. So `specs.AnyOf(If(a, x), If(b, y))` with both
-  conditions false widens to everything — which is exactly what H-SPECS-02
-  guarantee 3 promises never happens, satisfied today only because an
-  all-absent OR is hard to reach by hand. Either `If`'s doc comment says this, or
-  `AnyOf` gets an OR-safe sibling that folds to `crud.False()` instead.
+  conditions false widens to everything. `If`'s doc comment and the module
+  sample name that boundary; keep a mandatory scope in the surrounding `AllOf`,
+  or choose an explicit false predicate when an all-absent OR must match none.
 - **With every member absent, the whole filter is nil.** `FindAll` then renders
   no `WHERE` and no `LIMIT` (H-SPECS-19), so the admin form where four of five
   fields are blank becomes the form where five of five are blank the first time
@@ -453,11 +459,9 @@ ship with it:
   the sample: a mandatory member ahead of the optional ones is the guard, and it
   is worth saying rather than leaving as decoration.
 
-The property all of this rests on — that the fold drops nil members — **is stated
-nowhere today**. `AllOf`'s doc comment (`spec.go:168`) says only "an empty list
-means no restriction". Saying it on `AllOf` and in the module doc is worth doing
-whether or not any of these constructors land, and it is what lets a consumer
-write the four-line `If` in their own package in the meantime.
+The property all of this rests on — that the fold drops absent members — is now
+stated on `If` and in the module docs. It is what lets a consumer keep optional
+filters as one reusable expression rather than a mutable accumulator.
 
 And the rungs below, for the operators the metamodel has no name for, without
 leaving the expression:
@@ -700,11 +704,11 @@ wants to sort by one of them.
 |---|---|---|---|
 | Name a filter, compose it, pass it around | exactly this — `specs.Of`, `sp.And()`, `AllOf`, and `And` returns something combinable again | none | none |
 | Typed field references, generated | one line per model in `vv_gen.go`; `User_.Age.Gte(18)` | none | none |
-| Optional filters from a form | no `EqPtr`, no `EqOpt`, no `If`; a `var parts []specs.Specification[User]` accumulator — **17 lines for five filters against 8**, and the assembly stops being an expression | small | small |
+| Optional filters from a form | `EqPtr`, `EqOpt` and `If` keep the five-field form as one `AllOf` expression; undefined drops out and explicit `Opt` null is `IS NULL` | none | none |
 | A filter that arrives from a request | `crud/query` already does it with no per-resource code; nothing says so | none | small |
-| Escaped `LIKE`, typed form | `Contains` escapes the argument and no `ESCAPE` clause is emitted; correct on PostgreSQL and MySQL by their defaults, silently wrong on SQLite | large | small |
-| Escaped `LIKE`, criteria form | `Builder` has `Like`/`NotLike`/`LikeIgnoreCase` and nothing else, so the form the module doc teaches first cannot escape at all, on any dialect | small | small |
-| Case-insensitive contains | `LikeIgnoreCase` with a pattern you build and escape yourself, except `escapeLike` is unexported | small | small |
+| Escaped `LIKE`, typed form | `Contains`/`StartsWith`/`EndsWith` render a dialect-owned `ESCAPE` clause and match `%`, `_` and backslash literally | none | none |
+| Escaped `LIKE`, criteria form | Builder exposes the same literal-safe helpers; raw `Like` remains deliberately pattern-oriented | none | none |
+| Case-insensitive contains | `ContainsIgnoreCase` and its prefix/suffix siblings preserve literal escaping through the query document | none | none |
 | "Not archived" over a nullable column | `Ne` excludes the nulls; the working spelling is a two-member `AnyOf` and nothing anywhere says so | small | large |
 | A range filter on `type Cents int64` | `specs.Lift[Order](crud.Gte(Order_.Total.Name(), low))` — keeps rename safety, loses the value-type check; hand-editing `vv_gen.go` is lost at the next generate | small | small |
 | Filter across a relation | `Article_.Comments.Approved.Eq(true)`, one expression — same-package targets, within `-depth`; past either, the literal form still works | none | small |
@@ -731,8 +735,8 @@ useful call is two lines, the composition rules are the ones a consumer would
 guess, `And` gives back something combinable, and the escape ladder means
 customising extends the short path instead of abandoning it, at the cost of one
 explicit type parameter that three lines would remove. Where it gets wordy is the
-boring middle: an optional-filter form needs an accumulator that also costs the
-consumer the ability to return the assembly from a function. Where customising
+boring middle: optional fields remain one expression through `If`, `EqPtr` and
+`EqOpt`. Where customising
 means abandoning the short path is rung 3, and that is a deliberate one-way door
 rather than a gap; `CountBy` with an option is the one place it is neither. What
 should hold up the tag is none of that. It is that the module's two safety
@@ -750,7 +754,7 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 | # | What | Severity | First raised | Owner | Why it blocks |
 |---|---|---|---|---|---|
 | 1 | `DeleteBy`/`UpdateBy` refuse only a *nil* predicate, and `security.Gate.DeleteAll` tests the same thing. `User_.ID.NotIn(ids...)` over an empty `ids` renders `1 = 1` and walks through both | blocker | new | crud (+ specs, security) | Two independent guards exist to stop an accidental truncate, and the commonest way a filter empties out in production — a list that came back empty — defeats both |
-| 2 | `Contains`/`StartsWith`/`EndsWith` escape with backslash and emit no `ESCAPE` clause (wrong on SQLite), and `specs.Builder` has no escaped operator at all, so the literal form the module doc teaches first is wrong on every dialect | blocker | new | crud (+ specs) | Falsifies [[UC-007]] guarantee 9 and is an unnamed twelfth [[D-019]] difference; [[UC-007]]'s Status and its Index row still read "covered" |
+| 2 | ~~`Contains`/`StartsWith`/`EndsWith` escape with backslash and emit no `ESCAPE` clause, while `specs.Builder` has no escaped operator~~ | **closed** | new | crud (+ specs) | Convenience-mode AST nodes now survive query/remote serialization, emit `ESCAPE` for every supported dialect, and Builder exposes literal-safe and ignore-case variants. |
 | 3 | `ErrUnboundedDelete` and `ErrUnboundedUpdate` wrap no `crud` sentinel, so `port.KindOf` falls through to internal | blocker | [[UC-007]] Status | crud + specs | A live breach of [[D-015]]'s invariant, listed in its own "Where it lives" with no exception recorded — a refused bulk write reaches the client as 500 |
 | 4 | `Ne`, `NotIn` and `Not` exclude rows where the column is NULL, and nothing in the module, the docs or the constructors says so | serious | new | crud + docs | The intro's own filter — "not archived" over a nullable column — silently drops every row that was never archived, with no error and no tell at the call site |
 | 5 | Two conditions on one to-many relation compile to two independent `EXISTS`, so `AllOf(Comments.Approved, Comments.NotSpam)` means "has one of each" | serious | new | crud + docs | A silent widening with a 200 on it, and the exact habit a Spring Data reader ports in on day one; no spelling exists for the narrow question |
@@ -767,7 +771,7 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 | 16 | `not in` over an empty list renders `1 = 1` on a read too — the whole table, status 200. The rule is documented on `crud.NotIn` and on none of the typed spellings that route to it | sharp edge | new | docs (+ crud) | Blocker 1's read half, on the verb called a hundred times more often, with nothing for the caller to branch on |
 | 17 | `UpdateBy` with a DTO that defines nothing returns `(0, nil)`; nothing says a bulk update bumps the version column and stamps no updated-at | sharp edge | new | docs (+ sqlrepo) | The regressed DTO builder and the filter that matched nothing log the same line, and a consumer with optimistic locking needs the version fact before the run |
 | 18 | `UpdateBy`'s empty-filter refusal is tested for one spelling where `DeleteBy`'s is tested for thirteen | sharp edge | [[UC-007]] Status | specs | The guard is the same line, so the asymmetry is in the proof rather than the code |
-| 19 | No conditional or optional-aware constructor, and nothing states that the fold drops nil members | sharp edge | new | specs | The commonest assembly job in an admin API is an accumulator written once per resource, and the property that would remove it is undocumented |
+| 19 | ~~No conditional or optional-aware constructor, and nothing states that the fold drops nil members.~~ | **closed** | new | specs | `If`, `EqPtr` and `EqOpt` keep optional filters declarative; their comments state the absent-member rule and the all-absent `AnyOf` boundary. |
 | 20 | A relation handle has no "exists at all" spelling, positive or negative | sharp edge | new | specs | "Has at least one child" is a not-null test on the child's key, which reads as something else in review; "has none" reads worse |
 | 21 | `Where(a).And(b).Or(c)` is `(a AND b) OR c`, and the `AnyOf` spelling for the other grouping is written down nowhere | sharp edge | new | docs | A consumer who means `a AND (b OR c)` gets a silent widening, which is the failure mode this package's tests are built around |
 | 22 | `specs.Lift[M]` cannot infer `M`, so every escape-ladder call site spells the model type again | sharp edge | new | specs | The ladder is the design's best property and it is the one place the module asks for an explicit type parameter; `AndPredicate` is three lines |
@@ -834,18 +838,18 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 **Setup:** An admin searches for the literal product name `50%_off\\clearance` through `User_.Name.Contains(q)`.
 **What the consumer does:** They expect wildcard-looking characters in a search box to be data, not a wider pattern.
 **What must happen:** The typed convenience operator must match those three characters literally on every supported dialect.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `crud/decorators/specs/metamodel.go:111-113` routes `Str.Contains` to `crud.Contains`, and `crud/predicate.go:436-438,490-492` prefixes/suffixes and backslash-escapes the term. `likeNode.render` then emits only `LIKE` and the bind, with no `ESCAPE` clause (`crud/predicate.go:255-274`), so the meaning of that escape is dialect-dependent. `crud/predicate_test.go:60-65` pins the escaped bind text but no engine-behaviour test exists.
-**Blast radius:** silent wrong answer
+**Today:** ✅ fixed
+**Evidence:** the mode-aware `Contains` helper survives the predicate document round trip and the dialect's `LikeEscaper` emits its explicit `ESCAPE` clause. `TestLiteralLikeEscapingDefaultsForAnExternalDialect` pins the portable fallback; `TestSQLiteLiteralLikeHelpers` and `TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes` prove literal `%`, `_` and backslash matching on live engines, including MySQL/MariaDB `NO_BACKSLASH_ESCAPES`.
+**Blast radius:** closed
 
 ### E-SPECS-02 — The literal Criteria example receives a hostile search term
 **Shape:** adversarial input
 **Setup:** A service follows the documented literal form and builds `cb.Like(root.Get("Name"), "%"+q+"%")` from a query parameter.
 **What the consumer does:** They use the form the module teaches first for a reusable filter, with a customer-controlled `q`.
 **What must happen:** The API must offer an escaped literal-search operation, or make the unsafe pattern operation impossible to mistake for one.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Builder.Like` and `Builder.LikeIgnoreCase` only delegate to the raw-pattern constructors (`crud/decorators/specs/spec.go:78-82`); `crud.Like` preserves the pattern verbatim (`crud/predicate.go:425-434`). The literal-style test deliberately binds `%@corp.com` as a pattern (`crud/decorators/specs/specs_test.go:62-82`), and the complete Builder method set has no escaped counterpart (`crud/decorators/specs/spec.go:61-101`).
-**Blast radius:** silent wrong answer
+**Today:** ✅ fixed
+**Evidence:** `specs.Builder` now exposes `Contains`, `StartsWith`, `EndsWith` and their `IgnoreCase` counterparts alongside deliberate raw `Like` operations; generated `Str` attributes expose the same literal-safe set. `TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate` pins the named modes, and integration tests pin live literal matching.
+**Blast radius:** closed — raw `Like` remains available and is explicitly a raw pattern operation.
 
 ### E-SPECS-03 — A dynamic field name is malformed or hostile
 **Shape:** adversarial input
@@ -966,8 +970,7 @@ of this is new work: an owner triaging at a tag reads the new rows first.
 **Shape:** composition boundary
 **Setup:** A shared list specification combines the mandatory root restriction
 with an optional child specification that evaluates to nil when its form value
-is absent. (`specs.If` is the proposed convenient spelling; the source control
-is `specs.Of[User](func(specs.Root[User], specs.Builder) crud.Predicate { return nil })`.)
+is absent (`specs.If` is the convenient spelling).
 **What the consumer does:** They reuse the specification in an admin list and
 expect the blank optional child condition to disappear without discarding the
 tenant restriction that makes the list safe.
@@ -987,7 +990,7 @@ so a later option cannot replace that root restriction.
 
 ## Edge verdict
 
-The worst live edge is not a crash: a natural, readable relation filter can return the wrong root rows with status 200 because same-path child conditions are evaluated in independent `EXISTS` clauses. The wrong-model preload and empty `NotIn` read have the same silent-success shape, while the bulk-write form of empty `NotIn` escalates it to data loss because the guard checks only for nil. Pattern escaping and typed list-size limits are also open across the public typed path. Declaration-time relation-target validation, malformed runtime-path refusal, transaction propagation, remote refusal of unrepresentable predicates, and an empty optional member inside an `AllOf` retaining its mandatory root restriction are genuinely closed. Bulk-write cancellation remains unverified; relation first-use safety is a core invariant, with any wider construction audit owned by General.
+The worst live edge is not a crash: a natural, readable relation filter can return the wrong root rows with status 200 because same-path child conditions are evaluated in independent `EXISTS` clauses. The wrong-model preload and empty `NotIn` read have the same silent-success shape, while the bulk-write form of empty `NotIn` escalates it to data loss because the guard checks only for nil. Typed list-size limits remain open across the public typed path. Pattern escaping, declaration-time relation-target validation, malformed runtime-path refusal, transaction propagation, remote refusal of unrepresentable predicates, and an empty optional member inside an `AllOf` retaining its mandatory root restriction are genuinely closed. Bulk-write cancellation remains unverified; relation first-use safety is a core invariant, with any wider construction audit owned by General.
 
 ## Release blockers found here (edge)
 
@@ -996,5 +999,5 @@ The worst live edge is not a crash: a natural, readable relation filter can retu
 | 1 | Two conditions on one to-many relation can be true on two different children, while the typed call reads as one child satisfying both. | blocker | It returns a wider, plausible result with 200 and no indication that a moderation or entitlement rule changed meaning. |
 | 2 | `crud.PreloadWhere` accepts `specs.As` for the parent model and applies it to the child query after the type is erased. | blocker | Shared fields such as `TenantID` make the mistake silently load the wrong children; the typed API supplied false confidence. |
 | 3 | Typed `NotIn` over an empty list renders `1 = 1` for a normal read. | blocker | A failed upstream page becomes a whole-table success, indistinguishable from an intentional unfiltered request. |
-| 4 | Typed pattern helpers emit an escaped bind but no `ESCAPE` clause, and the literal Criteria builder has no escaped convenience operation. | blocker | Search semantics vary by dialect and can silently broaden a customer-controlled search. |
+| 4 | ~~Typed pattern helpers emit an escaped bind but no `ESCAPE` clause, and the literal Criteria builder has no escaped convenience operation.~~ | **closed** | Literal-safe and ignore-case helpers preserve their mode over the wire and emit dialect-owned `ESCAPE` syntax. |
 | 5 | The same non-nil tautology passes `DeleteBy` and `UpdateBy`'s empty-specification guard. | blocker | A commonplace empty upstream list can delete or rewrite every row despite the module’s advertised safety rail. |

@@ -10,12 +10,14 @@
 //   - Authorize — a coarse "may this principal do this kind of thing at all".
 //   - Inspect  — a fine, per-entity check that sees the actual row.
 //
-// Anything the policy leaves nil is skipped, so a gate that only scopes rows
-// costs one extra AND per query and nothing else.
+// A policy may leave individual checks nil, but it must enforce at least one
+// thing. A Gate with no effective rule is a declaration error: attaching it to
+// a repository must never look like tenant protection while passing every row.
 package security
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/frostgrove/vv/crud"
@@ -53,13 +55,28 @@ func (a Action) String() string {
 
 // Policy describes what the gate enforces. Every hook is optional.
 type Policy[M any, ID comparable] struct {
-	// Scope returns the row filter for the current principal. Returning nil
-	// means unrestricted — which is what an admin principal should return.
+	// Scope returns the row filter for the current principal. Returning nil or an
+	// unconditional predicate is refused unless AllowUnscopedScope is set. A
+	// missed tenant lookup must not be indistinguishable from an intentional
+	// administrator bypass.
 	//
 	// It narrows the statement's own FROM and nothing else. Rows of another
 	// table reached through a preload, a nested filter or a nested sort are not
 	// covered by it; RelationScopes is what covers those.
 	Scope func(ctx context.Context) (crud.Predicate, error)
+
+	// AllowUnscopedScope permits Scope to return nil or True intentionally. It is
+	// an explicit declaration for a policy that sometimes represents an
+	// unrestricted administrator; without it an unconditional predicate fails
+	// closed.
+	// It has no effect when Scope itself is nil.
+	AllowUnscopedScope bool
+
+	// AllowUnscopedRelationScopes permits RelationScopes to return nil or an
+	// empty declaration intentionally. It is the relation counterpart of
+	// AllowUnscopedScope: a failed principal lookup must not turn a preload or a
+	// nested filter into an unrestricted read.
+	AllowUnscopedRelationScopes bool
 
 	// RelationScopes returns the narrowing that follows this principal across
 	// relation boundaries. Scope hides rows of the repository's own table, and a
@@ -83,7 +100,9 @@ type Policy[M any, ID comparable] struct {
 	// ScopeRelationField writes that for one path; Combine merges several.
 	RelationScopes func(ctx context.Context) (*crud.RelationScopes, error)
 
-	// Authorize is the coarse check, called once per operation before any SQL.
+	// Authorize is the coarse check, called before any SQL. An assigned-key Save is
+	// an upsert, so the gate checks both Create and Update before it looks up which
+	// branch applies; grant both for a principal allowed to use that convenience.
 	Authorize func(ctx context.Context, action Action) error
 
 	// Inspect is the fine check and sees the row itself. On writes it is called
@@ -115,17 +134,38 @@ type Policy[M any, ID comparable] struct {
 //
 //	users := Users.Bind(db, security.Gate(tenantPolicy))
 //
-// Every field of Policy is nil-able and nil means "allow" — which is the right
-// answer for a policy that scopes rows and does not authorise verbs, and worth
-// knowing about when reading one. The zero Policy is not the same as no gate at
-// all: it still refuses an unscoped DeleteAll and an unscoped UpdateAll, which
-// are the two rules a gate applies without being asked. What it does not do is
-// authorise anything, so a policy that names a Scope and no Authorize permits
-// every verb on the rows the scope leaves visible. [[D-060]] says why the
-// default is that way round.
+// Hooks that are absent place no restriction of their own, but a policy must
+// contain at least one real rule; Gate(Policy{}) is rejected at start-up, so an
+// intentionally unrestricted repository is bound directly. A scope-only
+// policy may serve reads, but cannot write a body: Save, Update and UpdateAll
+// can change a field that moves a row out of the SQL scope. The gate needs
+// Inspect to prove the incoming state belongs to an arbitrary predicate. With
+// Inspect, an assigned-key Save becomes a create-only insert or a
+// snapshot-pinned scoped update, never an unguarded upsert. Use ScopeField for
+// the normal tenancy case (it includes Inspect), or supply Inspect beside a
+// custom Scope. [[D-060]] says why this fails closed.
 func Gate[M any, ID comparable](p Policy[M, ID]) crud.Middleware[M, ID] {
+	validate(p)
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] {
 		return &gate[M, ID]{Core: next, p: p, immutable: index[M](p.Immutable)}
+	}
+}
+
+// validate distinguishes an intentionally narrow gate (a freeze-only or
+// read-only policy is useful) from the accidental zero Policy that otherwise
+// makes a visibly gated resource completely public.
+func validate[M any, ID comparable](p Policy[M, ID]) {
+	if p.AllowUnscopedScope && p.Scope == nil {
+		panic("security: Policy.AllowUnscopedScope requires Policy.Scope")
+	}
+	if p.AllowUnscopedRelationScopes && p.RelationScopes == nil {
+		panic("security: Policy.AllowUnscopedRelationScopes requires Policy.RelationScopes")
+	}
+	if p.InspectReads && p.Inspect == nil {
+		panic("security: Policy.InspectReads requires Policy.Inspect")
+	}
+	if p.Scope == nil && p.RelationScopes == nil && p.Authorize == nil && p.Inspect == nil && len(p.Immutable) == 0 {
+		panic("security: Gate requires a scope, relation scope, authorizer, inspector, or immutable field; bind the repository directly when it is intentionally unrestricted")
 	}
 }
 
@@ -198,13 +238,21 @@ func (g *gate[M, ID]) scope(ctx context.Context) (crud.Predicate, error) {
 	if g.p.Scope == nil {
 		return nil, nil
 	}
-	return g.p.Scope(ctx)
+	p, err := g.p.Scope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if crud.IsTautologyFor(g.Meta(), p) && !g.p.AllowUnscopedScope {
+		return nil, Denied(Read, "scope returned no narrowing; set AllowUnscopedScope only for an intentional unrestricted principal")
+	}
+	return p, nil
 }
 
-// narrow builds the option that carries the policy across relation boundaries.
-// A nil Option is a no-op to Apply, so a policy that declares nothing costs one
-// nil check.
-func (g *gate[M, ID]) narrow(ctx context.Context) (crud.Option, error) {
+// relationScopes resolves the request-specific relation narrowing once. Keep
+// this separate from narrow: writes that render a relation-hopping Scope need
+// the actual declaration on the SQL builder, not merely an Option for a Core
+// call.
+func (g *gate[M, ID]) relationScopes(ctx context.Context) (*crud.RelationScopes, error) {
 	if g.p.RelationScopes == nil {
 		return nil, nil
 	}
@@ -212,7 +260,24 @@ func (g *gate[M, ID]) narrow(ctx context.Context) (crud.Option, error) {
 	if err != nil {
 		return nil, err
 	}
+	if rs.Empty() && !g.p.AllowUnscopedRelationScopes {
+		return nil, Denied(Read, "relation scopes returned no narrowing; set AllowUnscopedRelationScopes only for an intentional unrestricted principal")
+	}
 	if rs.Empty() {
+		return nil, nil
+	}
+	return rs.Resolve(g.Meta())
+}
+
+// narrow builds the option that carries the policy across relation boundaries.
+// A nil Option is a no-op to Apply, so a policy that declares nothing costs one
+// nil check.
+func (g *gate[M, ID]) narrow(ctx context.Context) (crud.Option, error) {
+	rs, err := g.relationScopes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
 		return nil, nil
 	}
 	return crud.NarrowRelations(rs), nil
@@ -237,6 +302,31 @@ func (g *gate[M, ID]) scoped(ctx context.Context, opts []crud.Option) ([]crud.Op
 	return append([]crud.Option{crud.Where(p), rel}, opts...), p, nil
 }
 
+// writeScopes resolves both policy narrowings once for a write. A generated-key
+// Save has nowhere to put either predicate, but it must still evaluate their
+// resolvers: an unavailable principal is never permission to insert an
+// unscoped row. Assigned-key saves reuse the same resolved values for their
+// preflight and conditional statement, so a time-varying resolver cannot make
+// those two phases disagree.
+func (g *gate[M, ID]) writeScopes(ctx context.Context) (crud.Predicate, *crud.RelationScopes, error) {
+	scope, err := g.scope(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	rel, err := g.relationScopes(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return scope, rel, nil
+}
+
+func relationNarrowing(rs *crud.RelationScopes) crud.Option {
+	if rs == nil {
+		return nil
+	}
+	return crud.NarrowRelations(rs)
+}
+
 // whole cancels a caller's projection, for the reads whose rows are about to be
 // handed to Inspect. Inspect is an opaque closure, so the gate cannot know which
 // columns it reads; given a projected row it compares against zero values and
@@ -249,6 +339,32 @@ func (g *gate[M, ID]) whole(willInspect bool, opts []crud.Option) []crud.Option 
 		return opts
 	}
 	return append(append([]crud.Option{}, opts...), crud.SelectAll())
+}
+
+// inspectionRead removes every caller-controlled read shape that could make an
+// Inspect loop see fewer rows than the write that follows. A bulk UPDATE or
+// DELETE has no pagination, cursor, projection, preload, sort or DISTINCT
+// clause; carrying any of those only into its preliminary GetAll would turn
+// "inspect every victim" into "inspect this page of victims". Filters and
+// relation scopes deliberately remain: they are the set the final statement
+// will address.
+//
+// Keep this here rather than making it a public Crud option. It is not a
+// request feature; it is an invariant of the gate's two-statement protocol.
+func inspectionRead() crud.Option {
+	return func(o *crud.Options) {
+		o.Sort = nil
+		o.Preloads = nil
+		o.Fields = nil
+		o.PreloadRows = 0
+		o.Page, o.Limit, o.Offset = 0, 0, 0
+		o.After, o.Before = "", ""
+		o.Unpaged = false
+		o.NoSort, o.NoTotal = true, true
+		o.ForUpdate = false
+		o.Distinct = false
+		o.Agg = crud.AggregateSpec{}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -278,19 +394,24 @@ func (g *gate[M, ID]) GetByID(ctx context.Context, id ID, opts ...crud.Option) (
 // checks a row as it was, not as it is.
 func (g *gate[M, ID]) loadScoped(ctx context.Context, id ID, opts ...crud.Option) (M, error) {
 	var zero M
-	scope, err := g.scope(ctx)
+	scope, rel, err := g.writeScopes(ctx)
 	if err != nil {
 		return zero, err
 	}
-	rel, err := g.narrow(ctx)
-	if err != nil {
-		return zero, err
-	}
+	return g.loadScopedWith(ctx, id, scope, rel, opts...)
+}
+
+// loadScopedWith is loadScoped after a write has already resolved its policy
+// narrowings. Reusing those exact values matters for the preflight/write pair:
+// a resolver may depend on a principal snapshot or current time, neither of
+// which is allowed to change the set between inspection and mutation.
+func (g *gate[M, ID]) loadScopedWith(ctx context.Context, id ID, scope crud.Predicate, rel *crud.RelationScopes, opts ...crud.Option) (M, error) {
+	var zero M
 	if scope == nil {
-		return g.Core.GetByID(ctx, id, append([]crud.Option{rel}, opts...)...)
+		return g.Core.GetByID(ctx, id, append([]crud.Option{relationNarrowing(rel)}, opts...)...)
 	}
 	items, err := g.Core.GetAll(ctx, append([]crud.Option{
-		crud.Where(scope), rel, crud.Where(crud.Eq(g.Meta().PK.Name, id)), crud.Limit(1), crud.Unsorted(),
+		crud.Where(scope), relationNarrowing(rel), crud.Where(crud.Eq(g.Meta().PK.Name, id)), crud.Limit(1), crud.Unsorted(),
 	}, opts...)...)
 	if err != nil {
 		return zero, err
@@ -413,8 +534,18 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 	if len(models) == 0 {
 		return nil
 	}
+	scope, rel, err := g.writeScopes(ctx)
+	if err != nil {
+		return err
+	}
+	if (g.p.Scope != nil || g.p.RelationScopes != nil) && g.p.Inspect == nil {
+		return Denied(Create, "a scope-only policy cannot safely authorise SaveAll; add Inspect to validate each incoming row")
+	}
 	meta := g.Meta()
-	for _, m := range models {
+	hasAssignedID := false
+	assigned := make([]bool, len(models))
+	previous := make([]*M, len(models))
+	for i, m := range models {
 		if m == nil {
 			return Denied(Create, "nil model")
 		}
@@ -424,19 +555,29 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 		}
 		action := Create
 		if hasID {
+			hasAssignedID = true
+			assigned[i] = true
+			// The key decides whether Save is an INSERT or UPDATE only after a
+			// lookup. Run both coarse permissions first so a denied caller never
+			// gets that lookup as an existence oracle.
+			if err := g.authorize(ctx, Create); err != nil {
+				return err
+			}
+			if err := g.authorize(ctx, Update); err != nil {
+				return err
+			}
 			id, err := meta.ID(m)
 			if err != nil {
 				return err
 			}
-			existing, err := g.saveTarget(ctx, meta, id)
+			existing, err := g.saveTarget(ctx, meta, id, scope, rel)
 			if err != nil {
 				return err
 			}
 			if existing != nil {
+				snapshot := *existing
+				previous[i] = &snapshot
 				action = Update
-				if err := g.authorize(ctx, Update); err != nil {
-					return err
-				}
 				if err := g.inspect(ctx, Update, existing); err != nil {
 					return err
 				}
@@ -445,7 +586,7 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 				}
 			}
 		}
-		if action == Create {
+		if action == Create && !hasID {
 			if err := g.authorize(ctx, Create); err != nil {
 				return err
 			}
@@ -454,12 +595,38 @@ func (g *gate[M, ID]) SaveAll(ctx context.Context, models []*M) error {
 			return err
 		}
 	}
+	// Any assigned key can conflict, even in an otherwise generated-key batch.
+	// Run those rows through the conditional capability in one transaction; an
+	// ordinary SaveAll is safe only when every key is database generated.
+	if hasAssignedID {
+		return g.saveTransaction(ctx, func(tx context.Context) error {
+			for i, m := range models {
+				if assigned[i] {
+					if err := g.saveScoped(tx, m, previous[i], scope, rel); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := g.Core.Save(tx, m); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
 	return g.Core.SaveAll(ctx, models)
 }
 
 func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 	if m == nil {
 		return Denied(Create, "nil model")
+	}
+	scope, rel, err := g.writeScopes(ctx)
+	if err != nil {
+		return err
+	}
+	if (g.p.Scope != nil || g.p.RelationScopes != nil) && g.p.Inspect == nil {
+		return Denied(Create, "a scope-only policy cannot safely authorise Save; add Inspect to validate the incoming row")
 	}
 	meta := g.Meta()
 	hasID, err := meta.HasID(m)
@@ -468,20 +635,28 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 	}
 
 	action := Create
+	var previous *M
 	if hasID {
+		// See SaveAll: the lookup must not be the first observable action of a
+		// caller denied either branch of an assigned-key upsert.
+		if err := g.authorize(ctx, Create); err != nil {
+			return err
+		}
+		if err := g.authorize(ctx, Update); err != nil {
+			return err
+		}
 		id, err := meta.ID(m)
 		if err != nil {
 			return err
 		}
-		existing, err := g.saveTarget(ctx, meta, id)
+		existing, err := g.saveTarget(ctx, meta, id, scope, rel)
 		if err != nil {
 			return err
 		}
 		if existing != nil {
+			snapshot := *existing
+			previous = &snapshot
 			action = Update
-			if err := g.authorize(ctx, Update); err != nil {
-				return err
-			}
 			if err := g.inspect(ctx, Update, existing); err != nil {
 				return err
 			}
@@ -490,7 +665,7 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 			}
 		}
 	}
-	if action == Create {
+	if action == Create && !hasID {
 		if err := g.authorize(ctx, Create); err != nil {
 			return err
 		}
@@ -500,29 +675,66 @@ func (g *gate[M, ID]) Save(ctx context.Context, m *M) error {
 	if err := g.inspect(ctx, action, m); err != nil {
 		return err
 	}
+	if hasID {
+		return g.saveScoped(ctx, m, previous, scope, rel)
+	}
 	return g.Core.Save(ctx, m)
+}
+
+// saveTransaction joins an executor the caller placed in the context. Executor
+// is deliberately the complete foreign-transaction seam: ORMs expose wildly
+// different concrete transaction types, but every statement still has to stay
+// on the one object they gave us. A pool must not be passed through
+// WithExecutor; doing so explicitly selects it as the operation's executor.
+// Without a contextual executor vv opens its own transaction instead.
+func (g *gate[M, ID]) saveTransaction(ctx context.Context, fn func(context.Context) error) error {
+	src, ok := crud.SourceOf(g.Core)
+	if !ok {
+		return g.Core.Tx(ctx, fn)
+	}
+	if _, found := crud.ExecutorFor(ctx, src); found {
+		return fn(ctx)
+	}
+	return crud.InNewTx(ctx, src, fn)
+}
+
+// saveScoped delegates an assigned-key Save to a storage core that can make the
+// inspected action atomic. A nil previous row means create-only: a concurrent
+// insert is a refusal, never an implicitly authorised update. A non-nil row is
+// used as an optimistic snapshot so the UPDATE cannot affect a replacement the
+// gate never inspected.
+func (g *gate[M, ID]) saveScoped(ctx context.Context, m, previous *M, scope crud.Predicate, rel *crud.RelationScopes) error {
+	err, supported := crud.SaveScopedOf(g.Core, ctx, m, crud.ScopedSave[M]{
+		Previous:       previous,
+		Scope:          scope,
+		RelationScopes: rel,
+	})
+	if !supported {
+		return Denied(Update, "the storage core cannot perform a scoped upsert atomically")
+	}
+	if previous == nil && errors.Is(err, crud.ErrCreateRaced) {
+		return Denied(Create, "assigned key was concurrently created")
+	}
+	if errors.Is(err, crud.ErrNotFound) || errors.Is(err, crud.ErrStaleVersion) {
+		if scope != nil || rel != nil {
+			return crud.ErrNotFound
+		}
+		return Denied(Update, "row is outside the scope")
+	}
+	return err
 }
 
 // saveTarget returns the row a Save with an id would overwrite, or nil when the
 // statement is a plain insert.
 //
-// The lookup goes through the scope, and a row the scope hides is refused
-// outright rather than reported as absent. Save is an upsert: there is no WHERE
-// clause for the scope to narrow, so refusing is the only move it has. Left
-// alone, a policy that scoped rows and nothing else gave Save no protection at
-// all — the insert turned into an update and re-tenanted somebody else's row
-// with err == nil.
-func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (*M, error) {
+// The lookup goes through the scope. Save is an upsert, so an invisible row
+// must be distinguished internally from an unused key before any INSERT is
+// attempted; otherwise a client could overwrite and re-tenant it. The caller
+// sees ErrNotFound in either case. That keeps the physical-existence probe an
+// integrity guard rather than an existence oracle.
+func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any, scope crud.Predicate, rel *crud.RelationScopes) (*M, error) {
 	byID := crud.Where(crud.Eq(meta.PK.Name, id))
-	scope, err := g.scope(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := g.narrow(ctx)
-	if err != nil {
-		return nil, err
-	}
-	opts := []crud.Option{byID, rel, crud.Limit(1), crud.Unsorted(), crud.PrimaryOnly()}
+	opts := []crud.Option{byID, relationNarrowing(rel), crud.Limit(1), crud.Unsorted(), crud.PrimaryOnly()}
 	if scope != nil {
 		opts = append([]crud.Option{crud.Where(scope)}, opts...)
 	}
@@ -538,12 +750,17 @@ func (g *gate[M, ID]) saveTarget(ctx context.Context, meta *crud.Meta, id any) (
 	}
 	// Nothing visible under that id. It is still an overwrite if the row is
 	// merely hidden, and only an insert if it is genuinely not there.
-	hidden, err := g.Core.Exists(ctx, byID, crud.PrimaryOnly())
+	hidden, err, supported := crud.ExistsUnscopedOf(g.Core, ctx, byID, crud.PrimaryOnly())
 	if err != nil {
 		return nil, err
 	}
+	if !supported {
+		// An unknown physical state cannot safely become an INSERT. Refuse it as
+		// absent instead of advertising that the storage core lacks this probe.
+		return nil, crud.ErrNotFound
+	}
 	if hidden {
-		return nil, Denied(Update, "row is outside the scope")
+		return nil, crud.ErrNotFound
 	}
 	return nil, nil
 }
@@ -577,9 +794,50 @@ func (g *gate[M, ID]) checkImmutableSave(meta *crud.Meta, old, next *M) error {
 	return nil
 }
 
+// snapshotPredicate pins a later statement to the complete row Inspect saw.
+// A scope only says where a row may be; Inspect can decide from any field (for
+// example, a Locked flag), so repeating only the scope would still let a
+// concurrent state change turn an approved action into a forbidden one.
+func snapshotPredicate[M any](meta *crud.Meta, m *M) (crud.Predicate, error) {
+	values, err := meta.Values(m, meta.Fields)
+	if err != nil {
+		return nil, err
+	}
+	preds := make([]crud.Predicate, 0, len(meta.Fields))
+	for i, f := range meta.Fields {
+		preds = append(preds, crud.Eq(f.Name, values[i]))
+	}
+	return crud.And(preds...), nil
+}
+
+func snapshotPredicates[M any](meta *crud.Meta, models []M) (crud.Predicate, error) {
+	preds := make([]crud.Predicate, 0, len(models))
+	for i := range models {
+		p, err := snapshotPredicate(meta, &models[i])
+		if err != nil {
+			return nil, err
+		}
+		preds = append(preds, p)
+	}
+	return crud.Or(preds...), nil
+}
+
 func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.Option) (M, error) {
 	var zero M
+	if (g.p.Scope != nil || g.p.RelationScopes != nil) && g.p.Inspect == nil {
+		if _, _, err := g.writeScopes(ctx); err != nil {
+			return zero, err
+		}
+		return zero, Denied(Update, "a scope-only policy cannot safely authorise Update; add Inspect to validate the incoming row")
+	}
 	if err := g.authorize(ctx, Update); err != nil {
+		return zero, err
+	}
+	// Resolve policy narrowings once before the check/write protocol begins. The
+	// same values protect both statements, so a time-varying resolver cannot
+	// inspect under one principal and mutate under another.
+	scope, rel, err := g.writeScopes(ctx)
+	if err != nil {
 		return zero, err
 	}
 	if len(g.immutable) > 0 {
@@ -609,8 +867,13 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.O
 	// out-of-scope-is-404 half below does not need it: the UPDATE carries the
 	// same scope, so a row outside it matches nothing and the repository answers
 	// ErrNotFound on its own ([[D-008]]).
+	var inspected crud.Predicate
 	if g.p.Inspect != nil {
-		cur, err := g.loadScoped(ctx, id, crud.PrimaryOnly())
+		cur, err := g.loadScopedWith(ctx, id, scope, rel, crud.PrimaryOnly())
+		if err != nil {
+			return zero, err
+		}
+		inspected, err = snapshotPredicate(g.Meta(), &cur)
 		if err != nil {
 			return zero, err
 		}
@@ -622,15 +885,7 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.O
 	// Checking here and writing unscoped was check-then-act: a row that left
 	// the scope in between was updated anyway, and the fresh copy of somebody
 	// else's record was handed back to this caller with err == nil.
-	scope, err := g.scope(ctx)
-	if err != nil {
-		return zero, err
-	}
-	rel, err := g.narrow(ctx)
-	if err != nil {
-		return zero, err
-	}
-	return g.Core.Update(ctx, id, dto, append([]crud.Option{crud.Where(scope), rel}, opts...)...)
+	return g.Core.Update(ctx, id, dto, append([]crud.Option{crud.Where(scope), relationNarrowing(rel), crud.Where(inspected)}, opts...)...)
 }
 
 // UpdateAll is the filtered write, and it is the one that most needs a gate: it
@@ -639,6 +894,12 @@ func (g *gate[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.O
 // WHERE — and Inspect additionally sees each row that is about to change, since
 // with no id in the call there is nothing else that could stand for consent.
 func (g *gate[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Option) (int64, error) {
+	if (g.p.Scope != nil || g.p.RelationScopes != nil) && g.p.Inspect == nil {
+		if _, _, err := g.writeScopes(ctx); err != nil {
+			return 0, err
+		}
+		return 0, Denied(Update, "a scope-only policy cannot safely authorise UpdateAll; add Inspect to validate every incoming row")
+	}
 	if err := g.authorize(ctx, Update); err != nil {
 		return 0, err
 	}
@@ -657,11 +918,18 @@ func (g *gate[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Optio
 	if err != nil {
 		return 0, err
 	}
-	if scope == nil && crud.Build(opts...).Predicate() == nil && !g.p.AllowUnscopedUpdateAll {
+	if crud.IsTautologyFor(g.Meta(), scope) && crud.IsTautologyFor(g.Meta(), crud.Build(opts...).Predicate()) && !g.p.AllowUnscopedUpdateAll {
 		return 0, Denied(Update, "refusing an unscoped UpdateAll; set AllowUnscopedUpdateAll to permit it")
 	}
 	if g.p.Inspect != nil {
-		targets, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly()))...)
+		targets, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly(), inspectionRead()))...)
+		if err != nil {
+			return 0, err
+		}
+		if len(targets) == 0 {
+			return 0, nil
+		}
+		inspected, err := snapshotPredicates(g.Meta(), targets)
 		if err != nil {
 			return 0, err
 		}
@@ -670,6 +938,7 @@ func (g *gate[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Optio
 				return 0, err
 			}
 		}
+		scoped = append(scoped, crud.Where(inspected))
 	}
 	return g.Core.UpdateAll(ctx, dto, scoped...)
 }
@@ -681,26 +950,28 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	if err := g.authorize(ctx, Delete); err != nil {
 		return 0, err
 	}
-	scope, err := g.scope(ctx)
+	scope, rel, err := g.writeScopes(ctx)
 	if err != nil {
 		return 0, err
 	}
-	if scope == nil && g.p.Inspect == nil {
+	if scope == nil && rel == nil && g.p.Inspect == nil {
 		return g.Core.Delete(ctx, ids...)
 	}
 	pk := g.Meta().PK.Name
 	within := crud.And(scope, crud.InAny(pk, ids))
-	// Hoisted above the Inspect branch, because the statement at the end needs it
-	// whether or not there is a rule to run. It used to be computed inside the
-	// branch and used only for the victim read, so a policy whose scope hops a
-	// relation issued an unnarrowed DELETE — while the same request routed
-	// through DeleteAll was narrowed ([[D-007]]).
-	rel, err := g.narrow(ctx)
-	if err != nil {
-		return 0, err
-	}
+	// The resolved relation scope goes into the final statement as well as the
+	// victim read. This is both the relation-side equivalent of the row WHERE
+	// and the reason it was resolved before the direct-delete fast path.
+	narrow := relationNarrowing(rel)
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), rel, crud.PrimaryOnly()})...)
+		victims, err := g.Core.GetAll(ctx, g.whole(true, []crud.Option{crud.Where(within), narrow, crud.PrimaryOnly()})...)
+		if err != nil {
+			return 0, err
+		}
+		if len(victims) == 0 {
+			return 0, nil
+		}
+		inspected, err := snapshotPredicates(g.Meta(), victims)
 		if err != nil {
 			return 0, err
 		}
@@ -709,8 +980,9 @@ func (g *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 				return 0, err
 			}
 		}
+		within = crud.And(within, inspected)
 	}
-	return g.Core.DeleteAll(ctx, crud.Where(within), rel)
+	return g.Core.DeleteAll(ctx, crud.Where(within), narrow)
 }
 
 func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
@@ -721,11 +993,18 @@ func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64
 	if err != nil {
 		return 0, err
 	}
-	if scope == nil && crud.Build(opts...).Predicate() == nil && !g.p.AllowUnscopedDeleteAll {
+	if crud.IsTautologyFor(g.Meta(), scope) && crud.IsTautologyFor(g.Meta(), crud.Build(opts...).Predicate()) && !g.p.AllowUnscopedDeleteAll {
 		return 0, Denied(Delete, "refusing an unscoped DeleteAll; set AllowUnscopedDeleteAll to permit it")
 	}
 	if g.p.Inspect != nil {
-		victims, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly()))...)
+		victims, err := g.Core.GetAll(ctx, g.whole(true, append(scoped, crud.PrimaryOnly(), inspectionRead()))...)
+		if err != nil {
+			return 0, err
+		}
+		if len(victims) == 0 {
+			return 0, nil
+		}
+		inspected, err := snapshotPredicates(g.Meta(), victims)
 		if err != nil {
 			return 0, err
 		}
@@ -734,6 +1013,7 @@ func (g *gate[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64
 				return 0, err
 			}
 		}
+		scoped = append(scoped, crud.Where(inspected))
 	}
 	return g.Core.DeleteAll(ctx, scoped...)
 }

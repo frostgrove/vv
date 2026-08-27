@@ -88,7 +88,7 @@ func build[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Ma
 
 // List answers the query document with a page.
 func (h *HandlerFor[M, ID, U, In]) List(ctx context.Context, req *structpb.Struct) (*structpb.Struct, error) {
-	q, err := queryOf(req)
+	q, err := queryOf(req, h.svc.Meta())
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
@@ -101,16 +101,16 @@ func (h *HandlerFor[M, ID, U, In]) List(ctx context.Context, req *structpb.Struc
 		return nil, h.fail(ctx, err)
 	}
 	if h.opt.transform == nil {
-		return h.answer(ctx, page)
+		return h.page(ctx, page.Total, page)
 	}
-	return h.answer(ctx, crud.MapPage(page, func(m M) any { return h.opt.transform(ctx, m) }))
+	return h.page(ctx, page.Total, crud.MapPage(page, func(m M) any { return h.opt.transform(ctx, m) }))
 }
 
 // Count answers the query document with the size of the result. The service
 // narrows the document first: paging left in would make the answer the size of
 // one page.
 func (h *HandlerFor[M, ID, U, In]) Count(ctx context.Context, req *structpb.Struct) (*structpb.Struct, error) {
-	q, err := queryOf(req)
+	q, err := queryOf(req, h.svc.Meta())
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
@@ -132,7 +132,7 @@ func (h *HandlerFor[M, ID, U, In]) Get(ctx context.Context, req *structpb.Struct
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
-	q, err := queryIn(req)
+	q, err := queryIn(req, h.svc.Meta())
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
@@ -177,7 +177,7 @@ func (h *HandlerFor[M, ID, U, In]) Update(ctx context.Context, req *structpb.Str
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
-	patch, err := sub(req, "patch")
+	patch, err := requiredSub(req, "patch")
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
@@ -206,7 +206,7 @@ func (h *HandlerFor[M, ID, U, In]) Replace(ctx context.Context, req *structpb.St
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
-	body, err := sub(req, "entity")
+	body, err := requiredSub(req, "entity")
 	if err != nil {
 		return nil, h.fail(ctx, err)
 	}
@@ -293,6 +293,26 @@ func (h *HandlerFor[M, ID, U, In]) entity(ctx context.Context, m M) (*structpb.S
 		return h.answer(ctx, h.opt.transform(ctx, m))
 	}
 	return h.answer(ctx, m)
+}
+
+// page mirrors answer but restores Total from its original int64 after Struct
+// has encoded the rest of the page. Struct has only a double number kind, so a
+// count at magnitude 2^53 and beyond uses the same exact decimal-string convention as Count
+// and Delete rather than silently becoming its neighbouring value.
+func (h *HandlerFor[M, ID, U, In]) page(ctx context.Context, total int64, v any) (*structpb.Struct, error) {
+	st, err := h.answer(ctx, v)
+	if err != nil {
+		return nil, err
+	}
+	st.Fields["total"] = exactIntValue(total)
+	// TotalPages is another derived count. It is normally far smaller than
+	// Total, but a page size of one makes that assumption false.
+	if page, ok := v.(crud.PaginatedResponse[M]); ok {
+		st.Fields["totalPages"] = exactIntValue(int64(page.TotalPages))
+	} else if page, ok := v.(crud.PaginatedResponse[any]); ok {
+		st.Fields["totalPages"] = exactIntValue(int64(page.TotalPages))
+	}
+	return st, nil
 }
 
 // answer is the one place a successful response leaves this package. A value

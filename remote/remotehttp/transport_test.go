@@ -2,12 +2,14 @@ package remotehttp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/frostgrove/vv/crud/query"
 	"github.com/frostgrove/vv/remote"
 )
 
@@ -97,5 +99,115 @@ func TestTheCallersDeadlineReachesTheRequest(t *testing.T) {
 	_, err := Transport(srv.URL).Do(ctx, remote.Call{Method: remote.MethodGet, ID: "1"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("a cancelled context did not stop the call: %v", err)
+	}
+}
+
+func TestADirectKeyedCallRefusesEligibilityControlsItCannotCarry(t *testing.T) {
+	for name, req := range map[string]*query.Request{
+		"filter":        {Filter: query.RawFilter(`{"name":"bolt"}`)},
+		"terms":         {Terms: []query.Term{{}}},
+		"search":        {Search: "bolt"},
+		"search fields": {SearchFields: query.Strings{"Name"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Transport("http://example.invalid/widgets").Do(context.Background(), remote.Call{
+				Method: remote.MethodGet,
+				ID:     "42",
+				Query:  req,
+			})
+			var option *remote.OptionError
+			if !errors.As(err, &option) {
+				t.Fatalf("direct keyed call = %T %v, want OptionError", err, err)
+			}
+		})
+	}
+}
+
+func TestADirectKeyedCallWithNoIDNeverReachesTheCollectionRoute(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer srv.Close()
+
+	for _, method := range []remote.Method{
+		remote.MethodGet,
+		remote.MethodUpdate,
+		remote.MethodReplace,
+		remote.MethodDelete,
+	} {
+		t.Run(string(method), func(t *testing.T) {
+			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{Method: method})
+			if err == nil || !strings.Contains(err.Error(), "non-empty id") {
+				t.Fatalf("empty %s = %v, want a local key refusal", method, err)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("%d empty keyed calls reached the server", calls)
+	}
+}
+
+func TestADirectKeyedMutationWithNoBodyNeverReachesTheServer(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		method remote.Method
+		body   json.RawMessage
+	}{
+		{remote.MethodUpdate, nil},
+		{remote.MethodReplace, nil},
+		{remote.MethodUpdate, json.RawMessage("null")},
+		{remote.MethodReplace, json.RawMessage("null")},
+	} {
+		t.Run(string(tc.method)+string(tc.body), func(t *testing.T) {
+			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{
+				Method: tc.method, ID: "42", Body: tc.body,
+			})
+			if err == nil || !strings.Contains(err.Error(), "non-null body") {
+				t.Fatalf("empty %s body = %v, want a local refusal", tc.method, err)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("%d empty keyed mutations reached the server", calls)
+	}
+}
+
+func TestADirectKeyedMutationWithNoJSONObjectNeverReachesTheServer(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		method remote.Method
+		body   json.RawMessage
+	}{
+		{remote.MethodUpdate, json.RawMessage("[]")},
+		{remote.MethodReplace, json.RawMessage("false")},
+		{remote.MethodUpdate, json.RawMessage(`"text"`)},
+		{remote.MethodReplace, json.RawMessage(`{"broken":`)},
+	} {
+		t.Run(string(tc.method)+string(tc.body), func(t *testing.T) {
+			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{
+				Method: tc.method, ID: "42", Body: tc.body,
+			})
+			if err == nil || !strings.Contains(err.Error(), "JSON object") {
+				t.Fatalf("invalid %s body = %v, want a local object refusal", tc.method, err)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("%d invalid keyed mutations reached the server", calls)
+	}
+}
+
+func TestADirectBulkDeleteWithNoIDsUsesTheEmptySetSpelling(t *testing.T) {
+	method, path, body, err := (&transport{}).route(remote.Call{Method: remote.MethodBulkDelete})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/bulk-delete" || string(body) != `{"ids":null}` {
+		t.Fatalf("route = %s %s %s, want POST /bulk-delete {\"ids\":null}", method, path, body)
 	}
 }

@@ -223,7 +223,7 @@ wants the same rules:
 | `Sanitize(meta, *m, allowClientID)` | clear what a client may not choose on create |
 | `ClearGenerated(meta, *m)` | clear every `generated` column |
 | `CoerceID[ID](raw)` | a path parameter becomes the key type |
-| `NarrowForEntity(req)` / `NarrowForCount(req)` | drop what a single-entity or count request may not ask for |
+| `NarrowForEntity(req)` / `NarrowForCount(req)` | drop controls a keyed entity or count cannot use; entity eligibility filters stay |
 | `BadRequest(err)` · `BadRequestf` · `BadRequestAs(code, path, …)` | build a 400 with a path named |
 | `CoversUpdate[M, U]()` / `MustCoverUpdate[M, U]()` | the DTO still covers every writable column |
 | `FirstLanguageTag(list)` | the first tag out of an `Accept-Language`-shaped list |

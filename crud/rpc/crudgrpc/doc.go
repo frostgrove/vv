@@ -49,10 +49,22 @@
 // generated itself.
 //
 // **A number in a Struct is a double.** google.protobuf.Value has no integer,
-// so an int64 above 2^53 loses precision *in an entity document*. Keys do not:
-// a request carries id as a string, and port.CoerceID converts it the same way
-// the HTTP path parameter is converted. A model that needs exact large keys in
-// its entity as well declares `json:"id,string"`.
+// so it cannot carry every int64 exactly. The API treats integral values at
+// magnitude 2^53 and beyond as outside its safe Struct range. An entity
+// document that needs them declares `json:"id,string"`. Keys do not: a keyed request
+// carries id as a string, and a bulk
+// request carries ids as strings. port.CoerceID converts them the same way the
+// HTTP path parameter is converted. The Remote gRPC client automatically turns
+// numeric bulk keys into their exact decimal-string spelling. A raw Struct
+// caller must do the same for an unsafe id or ids member.
+//
+// The query door refuses an unsafe integral Struct number rather than rounding
+// it. For an integral filter operand — including one in a preload filter — send
+// the exact decimal value as a JSON string; ordinary query coercion restores
+// the declared column type. `page`, `limit`, `offset` and `preload.maxRows` are
+// controls, not typed operands: they must be exact JSON integers and cannot use
+// the string recovery spelling. `count`, `deleted`, `total` and `totalPages`
+// answer as JSON numbers in the exact range and as decimal strings outside it.
 //
 // **There is no raw-body fallback.** The HTTP bindings keep the decoded request
 // bytes so a violation on a column nothing declared can still name the key the

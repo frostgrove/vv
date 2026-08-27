@@ -1,8 +1,11 @@
 package crud
 
 import (
+	"database/sql"
+	"database/sql/driver"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // Predicate is a node of the WHERE tree. The AST is closed on purpose — the
@@ -159,6 +162,17 @@ func (w *writer) bind(v any) {
 
 func (w *writer) str(s string) { w.sb.WriteString(s) }
 
+// likeEscape makes the backslash escapes the convenience operations add part
+// of SQL's grammar. Dialects own their spelling through LikeEscaper; the
+// standard form is the compatibility default for a dialect that does not.
+func (w *writer) likeEscape() {
+	if d, ok := w.d.(LikeEscaper); ok {
+		w.str(d.LikeEscapeClause())
+		return
+	}
+	w.str(` ESCAPE '\'`)
+}
+
 // ---------------------------------------------------------------------------
 // nodes
 
@@ -250,9 +264,33 @@ type likeNode struct {
 	pattern    string
 	not        bool
 	ignoreCase bool
+	mode       likeMode
 }
 
+// likeMode keeps a literal convenience operation distinct from a raw SQL LIKE
+// pattern. The former owns wildcard escaping and must emit an ESCAPE clause;
+// the latter deliberately gives a trusted caller SQL's pattern vocabulary.
+// Keeping that distinction in the AST also lets a remote filter round-trip
+// without turning an escaped helper back into an unmarked raw pattern.
+type likeMode uint8
+
+const (
+	likePattern likeMode = iota
+	likeContains
+	likeStartsWith
+	likeEndsWith
+)
+
 func (n likeNode) render(w *writer) {
+	pattern := n.pattern
+	switch n.mode {
+	case likeContains:
+		pattern = "%" + escapeLike(pattern) + "%"
+	case likeStartsWith:
+		pattern = escapeLike(pattern) + "%"
+	case likeEndsWith:
+		pattern = "%" + escapeLike(pattern)
+	}
 	w.leaf(n.field, func(col string) {
 		if n.ignoreCase {
 			w.str("LOWER(" + col + ")")
@@ -266,11 +304,14 @@ func (n likeNode) render(w *writer) {
 		}
 		if n.ignoreCase {
 			w.str("LOWER(")
-			w.bind(n.pattern)
+			w.bind(pattern)
 			w.str(")")
-			return
+		} else {
+			w.bind(pattern)
 		}
-		w.bind(n.pattern)
+		if n.mode != likePattern {
+			w.likeEscape()
+		}
 	})
 }
 
@@ -433,9 +474,32 @@ func LikeIgnoreCase(field, pattern string) Predicate {
 	return likeNode{field: field, pattern: pattern, ignoreCase: true}
 }
 
-func Contains(field, s string) Predicate   { return Like(field, "%"+escapeLike(s)+"%") }
-func StartsWith(field, s string) Predicate { return Like(field, escapeLike(s)+"%") }
-func EndsWith(field, s string) Predicate   { return Like(field, "%"+escapeLike(s)) }
+func Contains(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, mode: likeContains}
+}
+
+// ContainsIgnoreCase is Contains with portable case-insensitive matching. Like
+// Contains, % and _ in s are literal characters rather than client-supplied
+// wildcards.
+func ContainsIgnoreCase(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, ignoreCase: true, mode: likeContains}
+}
+func StartsWith(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, mode: likeStartsWith}
+}
+func EndsWith(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, mode: likeEndsWith}
+}
+
+// StartsWithIgnoreCase and EndsWithIgnoreCase are the portable,
+// case-insensitive versions of their escaping convenience counterparts.
+func StartsWithIgnoreCase(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, ignoreCase: true, mode: likeStartsWith}
+}
+
+func EndsWithIgnoreCase(field, s string) Predicate {
+	return likeNode{field: field, pattern: s, ignoreCase: true, mode: likeEndsWith}
+}
 
 func Between(field string, low, high any) Predicate {
 	return betweenNode{field: field, low: low, hi: high}
@@ -463,16 +527,823 @@ func NotInAny[T any](field string, values []T) Predicate {
 func EqField(left, right string) Predicate { return fieldCmpNode{left, right, "="} }
 
 // And is true when every non-nil argument is true (and when there are none).
-func And(preds ...Predicate) Predicate { return logicNode{"AND", preds} }
+// Copy the variadic backing slice: retaining it would let a caller mutate an
+// already-built node into a cyclic AST after this function returns.
+func And(preds ...Predicate) Predicate { return logicNode{"AND", append([]Predicate(nil), preds...)} }
 
 // Or is true when any non-nil argument is true; empty Or is false.
-func Or(preds ...Predicate) Predicate { return logicNode{"OR", preds} }
+func Or(preds ...Predicate) Predicate { return logicNode{"OR", append([]Predicate(nil), preds...)} }
 
 func Not(p Predicate) Predicate { return notNode{p} }
 
 // True and False are the identity elements, useful as a scope default.
 func True() Predicate  { return constNode(true) }
 func False() Predicate { return constNode(false) }
+
+// IsTautology reports whether the closed predicate AST is provably true for
+// every row. It is intentionally conservative: false means only "not proven
+// unconditional", because a general SQL predicate cannot be decided without a
+// database. Access-control guards use it to reject the closed constants callers
+// most commonly produce by accident, such as NotInAny(field, nil).
+func IsTautology(p Predicate) bool {
+	if !tautologyWithinBudget(p) {
+		return false
+	}
+	v, known := constantValueFor(nil, p)
+	return known && v
+}
+
+// IsTautologyFor is IsTautology with a model available to resolve field aliases.
+// In particular, EqField("ID", "id") is a same-column comparison for a model
+// whose primary key is named ID, even though the predicate was written with two
+// spellings. Security uses this form for scope and bulk-write guards.
+func IsTautologyFor(m *Meta, p Predicate) bool {
+	if !tautologyWithinBudget(p) {
+		return false
+	}
+	v, known := constantValueFor(m, p)
+	return known && v
+}
+
+// MayBeTautologyFor is IsTautologyFor with the fail-closed cases a declarative
+// bulk-write guard needs: raw SQL and a driver.Valuer. Neither can be inspected
+// without either guessing SQL or calling user code, so it reports true for
+// their presence anywhere in the closed AST. It may reject a statement that a
+// particular driver call would make narrow; use it only where a false positive
+// is safer than an unrestricted write.
+func MayBeTautologyFor(m *Meta, p Predicate) bool {
+	if !tautologyWithinBudget(p) {
+		return true
+	}
+	if containsRawForTautology(p) || containsOpaqueBindForTautology(p) {
+		// Raw has no AST semantics we can prove. Specs' direct bulk verbs are
+		// the explicit escape hatch, so its convenience bulk verbs fail closed.
+		return true
+	}
+	if IsTautologyFor(m, p) {
+		return true
+	}
+	// IsTautologyFor deliberately gives up rather than allocating without
+	// bound. A bulk guard makes the opposite trade-off for a logical formula:
+	// it rejects the expression if the exact BDD proof hit that budget.
+	if containsLogicForTautology(p) {
+		p = simplifyForTautology(m, p)
+		_, exhausted := bddTautologyFor(m, p)
+		return exhausted
+	}
+	return false
+}
+
+func containsRawForTautology(p Predicate) bool {
+	switch n := p.(type) {
+	case rawNode:
+		return true
+	case notNode:
+		return containsRawForTautology(n.inner)
+	case logicNode:
+		for _, kid := range n.kids {
+			if containsRawForTautology(kid) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsLogicForTautology(p Predicate) bool {
+	switch n := p.(type) {
+	case notNode:
+		return containsLogicForTautology(n.inner)
+	case logicNode:
+		return true
+	}
+	return false
+}
+
+func containsOpaqueBindForTautology(p Predicate) bool {
+	switch n := p.(type) {
+	case cmpNode:
+		return opaqueBindForTautology(n.value)
+	case inNode:
+		for _, value := range n.values {
+			if opaqueBindForTautology(value) {
+				return true
+			}
+		}
+	case betweenNode:
+		return opaqueBindForTautology(n.low) || opaqueBindForTautology(n.hi)
+	case notNode:
+		return containsOpaqueBindForTautology(n.inner)
+	case logicNode:
+		for _, kid := range n.kids {
+			if containsOpaqueBindForTautology(kid) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// opaqueBindForTautology is deliberately narrower than database/sql and
+// driver-specific bind support. Only the values canonicalBindForTautology can
+// prove stable, plus a known eventual NULL, are safe to let through a
+// declarative bulk-write guard. A custom driver may accept more types (for
+// example a decimal decomposition); that uncertainty is a fail-closed refusal.
+func opaqueBindForTautology(value any) bool {
+	if _, ok := canonicalBindForTautology(value); ok {
+		return false
+	}
+	return !knownNullBindForTautology(value)
+}
+
+func knownNullBindForTautology(value any) bool {
+	seenPointers := map[reflect.Value]struct{}{}
+	topLevel := true
+	for {
+		if value == nil {
+			return true
+		}
+		if named, ok := value.(sql.NamedArg); ok {
+			if !topLevel {
+				return false
+			}
+			topLevel = false
+			value = named.Value
+			continue
+		}
+		if _, out := value.(sql.Out); out {
+			return false
+		}
+		if _, valuer := value.(driver.Valuer); valuer {
+			return false
+		}
+		rv := reflect.ValueOf(value)
+		if rv.Kind() != reflect.Pointer && rv.Kind() != reflect.Interface {
+			return false
+		}
+		if rv.IsNil() {
+			return true
+		}
+		if rv.Kind() == reflect.Pointer {
+			if _, seen := seenPointers[rv]; seen {
+				return false
+			}
+			seenPointers[rv] = struct{}{}
+		}
+		topLevel = false
+		value = rv.Elem().Interface()
+	}
+}
+
+const (
+	maxTautologyASTNodes = 512
+	maxTautologyASTDepth = 64
+)
+
+type tautologyWalkNode struct {
+	p          Predicate
+	depth      int
+	underLogic bool
+}
+
+// tautologyWithinBudget is an iterative preflight before simplification or a
+// BDD recurses. Large direct IN predicates remain legitimate bulk narrowings;
+// their values count only when they sit inside a Boolean formula that would
+// expand them into BDD leaves.
+func tautologyWithinBudget(p Predicate) bool {
+	stack := []tautologyWalkNode{{p: p}}
+	seen := 0
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		seen++
+		if seen > maxTautologyASTNodes || current.depth > maxTautologyASTDepth {
+			return false
+		}
+		switch n := current.p.(type) {
+		case notNode:
+			stack = append(stack, tautologyWalkNode{p: n.inner, depth: current.depth + 1, underLogic: current.underLogic})
+		case logicNode:
+			// Refuse before appending a caller-controlled number of children.
+			// Otherwise Or(hugeSlice...) grows this preflight's own stack before
+			// it observes the AST budget.
+			if len(n.kids) > maxTautologyASTNodes-seen-len(stack) {
+				return false
+			}
+			for _, kid := range n.kids {
+				stack = append(stack, tautologyWalkNode{p: kid, depth: current.depth + 1, underLogic: true})
+			}
+		case inNode:
+			if current.underLogic {
+				seen += len(n.values)
+				if seen > maxTautologyASTNodes {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func constantValueFor(m *Meta, p Predicate) (bool, bool) {
+	p = simplifyForTautology(m, p)
+	return constantValueForSimplified(m, p)
+}
+
+// constantValueForSimplified recognises constants in a tree whose neutral
+// boolean terms have already been removed. Keeping simplification separate
+// means the AST still renders exactly as the caller wrote it; this is only the
+// model-aware proof used by scope and bulk-write guards.
+func constantValueForSimplified(m *Meta, p Predicate) (bool, bool) {
+	switch n := p.(type) {
+	case nil:
+		return true, true
+	case constNode:
+		return bool(n), true
+	case inNode:
+		if len(n.values) == 0 {
+			return n.not, true
+		}
+	case nullNode:
+		// A primary key is non-NULL by the database contract. Its IS NOT NULL
+		// spelling (including Ne(field, nil) and Not(IsNull(field))) therefore
+		// cannot narrow a guarded bulk write. Other columns may be nullable, so
+		// their IS NOT NULL is a real predicate and must remain admissible.
+		if primaryKeyField(m, n.field) {
+			return n.not, true
+		}
+	case fieldCmpNode:
+		// `nullable = nullable` excludes NULL rows, so it is a real narrowing.
+		// The equality is unconditional only when both spellings resolve to the
+		// same non-NULL primary key. Unknown names stay unknown here and are
+		// reported by normal predicate validation rather than mislabeled as an
+		// unbounded bulk write.
+		if n.op == "=" && samePrimaryKey(m, n.left, n.right) {
+			return true, true
+		}
+	case logicNode:
+		// Rendering drops nil children before applying the identity element. The
+		// constant recogniser must make that same reduction: nil is true as an
+		// AND identity, but it is not a true branch of an OR. Otherwise
+		// Not(Or(nil)) renders as `NOT (1 = 0)` while a bulk-write guard calls it
+		// non-tautological and lets an unrestricted statement through.
+		live := flatten(n.op, n.kids, nil)
+		if len(live) == 0 {
+			return n.op == "AND", true
+		}
+		if booleanTautologyFor(m, logicNode{op: n.op, kids: live}) {
+			return true, true
+		}
+		if n.op == "AND" {
+			allTrue := true
+			for _, kid := range live {
+				v, known := constantValueForSimplified(m, kid)
+				if known && !v {
+					return false, true
+				}
+				allTrue = allTrue && known && v
+			}
+			return allTrue, allTrue
+		}
+		allFalse := true
+		for _, kid := range live {
+			v, known := constantValueForSimplified(m, kid)
+			if known && v {
+				return true, true
+			}
+			allFalse = allFalse && known && !v
+		}
+		return false, allFalse
+	case notNode:
+		if v, known := constantValueForSimplified(m, n.inner); known {
+			return !v, true
+		}
+	}
+	return false, false
+}
+
+// simplifyForTautology removes only boolean identity terms. It is deliberately
+// private to the guard: SQL rendering remains a faithful record of the AST the
+// caller supplied. Besides making the proof easier to read, this makes
+// And(True(), p) and p equivalent when looking for p OR NOT p.
+func simplifyForTautology(m *Meta, p Predicate) Predicate {
+	switch n := p.(type) {
+	case notNode:
+		inner := simplifyForTautology(m, n.inner)
+		if v, known := constantValueForSimplified(m, inner); known {
+			return constNode(!v)
+		}
+		if nested, ok := inner.(notNode); ok {
+			return nested.inner
+		}
+		return notNode{inner: inner}
+	case logicNode:
+		live := flatten(n.op, n.kids, nil)
+		kept := make([]Predicate, 0, len(live))
+		for _, kid := range live {
+			kid = simplifyForTautology(m, kid)
+			if v, known := constantValueForSimplified(m, kid); known {
+				if n.op == "AND" {
+					if !v {
+						return constNode(false)
+					}
+					continue
+				}
+				if v {
+					return constNode(true)
+				}
+				continue
+			}
+			kept = append(kept, kid)
+		}
+		if len(kept) == 0 {
+			return constNode(n.op == "AND")
+		}
+		if len(kept) == 1 {
+			return kept[0]
+		}
+		return logicNode{op: n.op, kids: kept}
+	default:
+		return p
+	}
+}
+
+func primaryKeyField(m *Meta, name string) bool {
+	if m == nil || m.PK == nil {
+		return false
+	}
+	f := m.Field(name)
+	return f != nil && f == m.PK
+}
+
+func samePrimaryKey(m *Meta, a, b string) bool {
+	if !primaryKeyField(m, a) {
+		return false
+	}
+	return primaryKeyField(m, b)
+}
+
+// sameValueSet compares IN values with SQL membership semantics: their order
+// and duplicate entries do not change either IN or NOT IN. Values must still
+// be representationally equal here; a conservative missed identity is safer
+// than guessing whether two differently typed binds compare equal in a driver.
+func sameValueSet(left, right []any) bool {
+	for _, l := range left {
+		if !containsValue(right, l) {
+			return false
+		}
+	}
+	for _, r := range right {
+		if !containsValue(left, r) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsValue(values []any, want any) bool {
+	for _, value := range values {
+		if sameBindValue(value, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func allNonNil(values []any) bool {
+	for _, value := range values {
+		if !definitelyNonNullBind(value) {
+			return false
+		}
+	}
+	return true
+}
+
+// definitelyNonNullBind is stricter than a non-nil Go interface. It shares the
+// canonicalisation used to decide whether two comparison leaves are the same:
+// only a value whose eventual database/sql bind is plainly non-NULL and stable
+// is allowed into a two-valued proof.
+func definitelyNonNullBind(value any) bool {
+	_, ok := canonicalBindForTautology(value)
+	return ok
+}
+
+func sameBindValue(left, right any) bool {
+	left, leftOK := canonicalBindForTautology(left)
+	right, rightOK := canonicalBindForTautology(right)
+	return leftOK && rightOK && reflect.DeepEqual(left, right)
+}
+
+// canonicalBindForTautology mirrors only the safe, value-preserving portion of
+// database/sql's argument conversion. It unwraps non-nil pointers so &id and
+// id mean the same comparison, and unwraps NamedArg exactly as database/sql
+// does before its default conversion. It deliberately declines driver.Valuer
+// and sql.Out: their driver-facing behaviour is not a generic predicate-law
+// proof. A false result merely leaves the guard conservative.
+func canonicalBindForTautology(value any) (any, bool) {
+	seenPointers := map[reflect.Value]struct{}{}
+	namedUnwrapped := false
+	topLevel := true
+	for {
+		if isNil(value) {
+			return nil, false
+		}
+		if named, ok := value.(sql.NamedArg); ok {
+			// database/sql's namedValueToDriverValue unwraps precisely the
+			// outer argument. A nested NamedArg reaches DefaultParameterConverter
+			// as a struct and is rejected, so do not mistake it for a usable bind.
+			if namedUnwrapped || !topLevel {
+				return nil, false
+			}
+			namedUnwrapped = true
+			topLevel = false
+			value = named.Value
+			continue
+		}
+		if _, out := value.(sql.Out); out {
+			return nil, false
+		}
+		if _, mayBecomeNull := value.(driver.Valuer); mayBecomeNull {
+			return nil, false
+		}
+		rv := reflect.ValueOf(value)
+		if rv.Kind() != reflect.Pointer && rv.Kind() != reflect.Interface {
+			return primitiveDriverValue(value, rv)
+		}
+		if rv.IsNil() {
+			return nil, false
+		}
+		if rv.Kind() == reflect.Pointer {
+			if _, seen := seenPointers[rv]; seen {
+				return nil, false
+			}
+			seenPointers[rv] = struct{}{}
+		}
+		topLevel = false
+		value = rv.Elem().Interface()
+	}
+}
+
+func primitiveDriverValue(value any, rv reflect.Value) (any, bool) {
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int(), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u := rv.Uint()
+		if u > uint64(^uint64(0)>>1) {
+			return nil, false
+		}
+		return int64(u), true
+	case reflect.Float32, reflect.Float64:
+		return rv.Float(), true
+	case reflect.Bool:
+		return rv.Bool(), true
+	case reflect.String:
+		return rv.String(), true
+	case reflect.Slice:
+		// DefaultParameterConverter accepts every byte-slice type, including
+		// sql.RawBytes and application-defined []byte aliases.
+		if rv.Type().Elem().Kind() == reflect.Uint8 {
+			return rv.Bytes(), true
+		}
+	case reflect.Struct:
+		if stamped, ok := value.(time.Time); ok {
+			return stamped, true
+		}
+	}
+	return nil, false
+}
+
+// booleanTautologyFor proves a whole two-valued boolean formula, not merely a
+// literal pair at its top level. For example, P OR (NOT P AND Q) OR NOT Q is
+// a tautology but no two direct children are complements. SQL predicates are
+// eligible only when twoValuedFor has proved every leaf cannot become UNKNOWN.
+// The reduced ordered BDD shares equivalent subexpressions, keeping the usual
+// nested specification shapes compact while remaining an exact propositional
+// proof rather than a heuristic rewrite.
+func booleanTautologyFor(m *Meta, p Predicate) bool {
+	tautology, _ := bddTautologyFor(m, p)
+	return tautology
+}
+
+func bddTautologyFor(m *Meta, p Predicate) (tautology, exhausted bool) {
+	if !twoValuedFor(m, p) {
+		return false, false
+	}
+	b := tautologyBDD{nodes: []bddNode{{}, {}}}
+	root := b.build(m, p)
+	return !b.exhausted && root == bddTrue, b.exhausted
+}
+
+const (
+	bddFalse = 0
+	bddTrue  = 1
+)
+
+type bddNode struct {
+	variable  int
+	whenFalse int
+	whenTrue  int
+}
+
+type bddKey struct {
+	variable  int
+	whenFalse int
+	whenTrue  int
+}
+
+type bddApplyKey struct {
+	op    string
+	left  int
+	right int
+}
+
+type tautologyBDD struct {
+	leaves []Predicate
+	nodes  []bddNode
+	unique map[bddKey]int
+	apply  map[bddApplyKey]int
+	not    map[int]int
+
+	exhausted bool
+}
+
+// A guard is not allowed to turn an application's very large In/boolean tree
+// into an unbounded amount of CPU or memory. The exact proof remains useful
+// for ordinary composed specifications; larger BDDs are simply unproven for
+// IsTautologyFor and fail closed for MayBeTautologyFor.
+const maxTautologyBDDNodes = 512
+
+func (b *tautologyBDD) build(m *Meta, p Predicate) int {
+	if b.exhausted {
+		return bddFalse
+	}
+	switch n := p.(type) {
+	case constNode:
+		if n {
+			return bddTrue
+		}
+		return bddFalse
+	case notNode:
+		return b.negate(b.build(m, n.inner))
+	case logicNode:
+		result := bddTrue
+		if n.op == "OR" {
+			result = bddFalse
+		}
+		for _, kid := range flatten(n.op, n.kids, nil) {
+			result = b.combine(n.op, result, b.build(m, kid))
+		}
+		return result
+	case cmpNode:
+		return b.comparison(m, n)
+	case nullNode:
+		base := b.variable(m, nullNode{field: n.field})
+		if n.not {
+			return b.negate(base)
+		}
+		return base
+	case inNode:
+		result := bddFalse
+		for _, value := range n.values {
+			result = b.combine("OR", result, b.comparison(m, cmpNode{field: n.field, op: "=", value: value}))
+		}
+		if n.not {
+			return b.negate(result)
+		}
+		return result
+	case betweenNode:
+		result := b.combine("AND",
+			b.comparison(m, cmpNode{field: n.field, op: ">=", value: n.low}),
+			b.comparison(m, cmpNode{field: n.field, op: "<=", value: n.hi}),
+		)
+		if n.not {
+			return b.negate(result)
+		}
+		return result
+	case likeNode:
+		base := b.variable(m, likeNode{field: n.field, pattern: n.pattern, ignoreCase: n.ignoreCase, mode: n.mode})
+		if n.not {
+			return b.negate(base)
+		}
+		return base
+	default:
+		return b.variable(m, p)
+	}
+}
+
+func (b *tautologyBDD) comparison(m *Meta, n cmpNode) int {
+	base := n
+	switch n.op {
+	case "<>":
+		base.op = "="
+		return b.negate(b.variable(m, base))
+	case ">":
+		base.op = "<="
+		return b.negate(b.variable(m, base))
+	case ">=":
+		base.op = "<"
+		return b.negate(b.variable(m, base))
+	default:
+		return b.variable(m, base)
+	}
+}
+
+func (b *tautologyBDD) variable(m *Meta, p Predicate) int {
+	for i, leaf := range b.leaves {
+		if samePredicate(m, leaf, p) {
+			return b.make(i, bddFalse, bddTrue)
+		}
+	}
+	b.leaves = append(b.leaves, p)
+	return b.make(len(b.leaves)-1, bddFalse, bddTrue)
+}
+
+func (b *tautologyBDD) make(variable, whenFalse, whenTrue int) int {
+	if b.exhausted {
+		return bddFalse
+	}
+	if whenFalse == whenTrue {
+		return whenFalse
+	}
+	if b.unique == nil {
+		b.unique = make(map[bddKey]int)
+	}
+	key := bddKey{variable, whenFalse, whenTrue}
+	if prior, ok := b.unique[key]; ok {
+		return prior
+	}
+	if len(b.nodes) >= maxTautologyBDDNodes {
+		b.exhausted = true
+		return bddFalse
+	}
+	b.nodes = append(b.nodes, bddNode{variable, whenFalse, whenTrue})
+	id := len(b.nodes) - 1
+	b.unique[key] = id
+	return id
+}
+
+func (b *tautologyBDD) negate(node int) int {
+	if b.exhausted {
+		return bddFalse
+	}
+	if node == bddFalse {
+		return bddTrue
+	}
+	if node == bddTrue {
+		return bddFalse
+	}
+	if b.not == nil {
+		b.not = make(map[int]int)
+	}
+	if prior, ok := b.not[node]; ok {
+		return prior
+	}
+	n := b.nodes[node]
+	result := b.make(n.variable, b.negate(n.whenFalse), b.negate(n.whenTrue))
+	b.not[node] = result
+	return result
+}
+
+func (b *tautologyBDD) combine(op string, left, right int) int {
+	if b.exhausted {
+		return bddFalse
+	}
+	if b.apply == nil {
+		b.apply = make(map[bddApplyKey]int)
+	}
+	key := bddApplyKey{op, left, right}
+	if prior, ok := b.apply[key]; ok {
+		return prior
+	}
+	if left < 2 && right < 2 {
+		value := left == bddTrue && right == bddTrue
+		if op == "OR" {
+			value = left == bddTrue || right == bddTrue
+		}
+		if value {
+			return bddTrue
+		}
+		return bddFalse
+	}
+	variable := b.topVariable(left, right)
+	lf, lt := b.branch(left, variable)
+	rf, rt := b.branch(right, variable)
+	result := b.make(variable, b.combine(op, lf, rf), b.combine(op, lt, rt))
+	b.apply[key] = result
+	return result
+}
+
+func (b *tautologyBDD) topVariable(left, right int) int {
+	leftVariable, rightVariable := b.variableOf(left), b.variableOf(right)
+	if leftVariable < rightVariable {
+		return leftVariable
+	}
+	return rightVariable
+}
+
+func (b *tautologyBDD) variableOf(node int) int {
+	if node < 2 {
+		return len(b.leaves)
+	}
+	return b.nodes[node].variable
+}
+
+func (b *tautologyBDD) branch(node, variable int) (whenFalse, whenTrue int) {
+	if node < 2 || b.nodes[node].variable != variable {
+		return node, node
+	}
+	n := b.nodes[node]
+	return n.whenFalse, n.whenTrue
+}
+
+// twoValuedFor reports whether SQL evaluates a predicate to TRUE or FALSE,
+// never UNKNOWN, for every model row. That proof is what makes P OR NOT P a
+// tautology rather than merely an expression that looks like one.
+func twoValuedFor(m *Meta, p Predicate) bool {
+	switch n := p.(type) {
+	case constNode, nullNode:
+		return true
+	case cmpNode:
+		return primaryKeyField(m, n.field) && definitelyNonNullBind(n.value)
+	case inNode:
+		return primaryKeyField(m, n.field) && len(n.values) > 0 && allNonNil(n.values)
+	case betweenNode:
+		return primaryKeyField(m, n.field) && definitelyNonNullBind(n.low) && definitelyNonNullBind(n.hi)
+	case likeNode:
+		return primaryKeyField(m, n.field)
+	case fieldCmpNode:
+		return primaryKeyField(m, n.left) && primaryKeyField(m, n.right)
+	case notNode:
+		return n.inner != nil && twoValuedFor(m, n.inner)
+	case logicNode:
+		live := flatten(n.op, n.kids, nil)
+		for _, kid := range live {
+			if !twoValuedFor(m, kid) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func samePredicate(m *Meta, left, right Predicate) bool {
+	switch l := left.(type) {
+	case constNode:
+		r, ok := right.(constNode)
+		return ok && l == r
+	case cmpNode:
+		r, ok := right.(cmpNode)
+		return ok && l.op == r.op && sameField(m, l.field, r.field) && sameBindValue(l.value, r.value)
+	case nullNode:
+		r, ok := right.(nullNode)
+		return ok && l.not == r.not && sameField(m, l.field, r.field)
+	case inNode:
+		r, ok := right.(inNode)
+		return ok && l.not == r.not && sameField(m, l.field, r.field) && sameValueSet(l.values, r.values)
+	case betweenNode:
+		r, ok := right.(betweenNode)
+		return ok && l.not == r.not && sameField(m, l.field, r.field) &&
+			sameBindValue(l.low, r.low) && sameBindValue(l.hi, r.hi)
+	case likeNode:
+		r, ok := right.(likeNode)
+		return ok && l.not == r.not && l.ignoreCase == r.ignoreCase && l.mode == r.mode && l.pattern == r.pattern && sameField(m, l.field, r.field)
+	case fieldCmpNode:
+		r, ok := right.(fieldCmpNode)
+		return ok && l.op == r.op && sameField(m, l.left, r.left) && sameField(m, l.right, r.right)
+	case notNode:
+		r, ok := right.(notNode)
+		return ok && samePredicate(m, l.inner, r.inner)
+	case logicNode:
+		r, ok := right.(logicNode)
+		if !ok || l.op != r.op {
+			return false
+		}
+		leftKids, rightKids := flatten(l.op, l.kids, nil), flatten(r.op, r.kids, nil)
+		if len(leftKids) != len(rightKids) {
+			return false
+		}
+		for i := range leftKids {
+			if !samePredicate(m, leftKids[i], rightKids[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func sameField(m *Meta, a, b string) bool {
+	if m == nil {
+		return false
+	}
+	fa, fb := m.Field(a), m.Field(b)
+	return fa != nil && fa == fb
+}
 
 // Raw is the escape hatch. Use ? for bind markers regardless of dialect; they
 // are rewritten. Write ?? for a literal question mark. Column names are NOT
@@ -588,6 +1459,18 @@ func (w *writer) sortExpr(segs []string, cur scope) {
 }
 
 func (o Order) render(w *writer) {
+	// MySQL has no NULLS FIRST/LAST grammar. A boolean null key gives it the
+	// same order as PostgreSQL's clause instead of silently accepting a request
+	// and ordering it by the engine default.
+	if o.NullsSet && (w.d.Name() == "mysql" || w.d.Name() == "sqlite") {
+		w.sortExpr(strings.Split(o.Field, "."), w.current())
+		w.str(" IS NULL")
+		if o.NullsLast {
+			w.str(" ASC, ")
+		} else {
+			w.str(" DESC, ")
+		}
+	}
 	w.sortExpr(strings.Split(o.Field, "."), w.current())
 	if o.Desc {
 		w.str(" DESC")

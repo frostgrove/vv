@@ -169,7 +169,7 @@ func TestAPreloadsOwnFilterBindsItsValue(t *testing.T) {
 	}
 	st := rec.Statements()[1]
 	want := `SELECT "id", "article_id", "author_id", "body", "approved" FROM "comments" ` +
-		`WHERE "article_id" IN ($1) AND "body" = $2`
+		`WHERE "article_id" IN ($1) AND "body" = $2 LIMIT 1001`
 	if got := crudtest.Normalize(st.SQL); got != want {
 		t.Fatalf("preload = %s\nwant %s", got, want)
 	}
@@ -196,7 +196,7 @@ func TestWildcardsInAPatternAreEscaped(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if !strings.Contains(sql, "LIKE $1") {
+			if !strings.Contains(sql, "LIKE ") {
 				t.Fatalf("sql = %s, want a bound pattern", sql)
 			}
 			if len(args) != 1 || args[0] != tc.want {
@@ -280,7 +280,7 @@ func TestSearchCannotReachOutsideItsList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if got := where(sql); got != `"title" LIKE $1` || len(args) != 1 || args[0] != "%go%" {
+	if got := where(sql); got != `LOWER("title") LIKE LOWER($1) ESCAPE '\'` || len(args) != 1 || args[0] != "%go%" {
 		t.Fatalf("an unqualified search built %s %#v, want only the searchable column", got, args)
 	}
 	for _, doc := range []string{
@@ -419,7 +419,7 @@ func TestOneClauseCannotEscapeAnother(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	want := `(("title" = $1 OR "body" = $2) AND "views" >= $3 AND ("title" LIKE $4 OR "body" LIKE $5))`
+	want := `(("title" = $1 OR "body" = $2) AND "views" >= $3 AND (LOWER("title") LIKE LOWER($4) ESCAPE '\' OR LOWER("body") LIKE LOWER($5) ESCAPE '\'))`
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}

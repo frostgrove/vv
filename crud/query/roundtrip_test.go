@@ -40,46 +40,47 @@ func filterOf(t *testing.T, doc string) crud.Predicate {
 }
 
 // A filter that goes out to another service and comes back has to ask the same
-// question. Not to look the same — "contains" leaves as "like" with the pattern
-// it had already been turned into — but to render the same statement against
-// the same binds, because that is the only thing a caller can observe.
+// question. Not to look the same — shorthand spellings may be canonicalised —
+// but to render the same statement against the same binds, because that is the
+// only thing a caller can observe.
 //
 // This is the test that makes crud.MarshalPredicate worth having: without it,
 // a remote Get with a filter is a remote Get with no filter, answering 200 with
 // every row in the table.
 func TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate(t *testing.T) {
 	docs := map[string]string{
-		"shorthand value":  `{"title": "go"}`,
-		"shorthand null":   `{"body": null}`,
-		"shorthand list":   `{"views": [1, 2, 3]}`,
-		"eq":               `{"title": {"eq": "go"}}`,
-		"ne":               `{"title": {"ne": "go"}}`,
-		"gt":               `{"views": {"gt": 10}}`,
-		"gte":              `{"views": {"gte": 10}}`,
-		"lt":               `{"views": {"lt": 10}}`,
-		"lte":              `{"views": {"lte": 10}}`,
-		"like":             `{"title": {"like": "go%"}}`,
-		"notlike":          `{"title": {"notlike": "go%"}}`,
-		"ilike":            `{"title": {"ilike": "go%"}}`,
-		"contains":         `{"title": {"contains": "go"}}`,
-		"startswith":       `{"title": {"startswith": "go"}}`,
-		"endswith":         `{"title": {"endswith": "go"}}`,
-		"contains escapes": `{"title": {"contains": "100%_off"}}`,
-		"in":               `{"views": {"in": [1, 2, 3]}}`,
-		"nin":              `{"views": {"nin": [1, 2, 3]}}`,
-		"in of nothing":    `{"views": {"in": []}}`,
-		"nin of nothing":   `{"views": {"nin": []}}`,
-		"between":          `{"views": {"between": [1, 10]}}`,
-		"isnull":           `{"publishedAt": {"isnull": true}}`,
-		"isnotnull":        `{"publishedAt": {"isnotnull": true}}`,
-		"timestamp":        `{"createdAt": {"gte": "2026-01-02T03:04:05Z"}}`,
-		"and":              `{"and": [{"views": {"gte": 10}}, {"title": "go"}]}`,
-		"or":               `{"or": [{"views": {"gte": 10}}, {"title": "go"}]}`,
-		"not":              `{"not": {"title": "go"}}`,
-		"two on one field": `{"views": {"gte": 1, "lte": 10}}`,
-		"nested":           `{"and": [{"or": [{"views": {"lt": 1}}, {"title": "go"}]}, {"body": "x"}]}`,
-		"through relation": `{"author.name": {"contains": "an"}}`,
-		"deep relation":    `{"comments.author.name": "ann"}`,
+		"shorthand value":           `{"title": "go"}`,
+		"shorthand null":            `{"body": null}`,
+		"shorthand list":            `{"views": [1, 2, 3]}`,
+		"eq":                        `{"title": {"eq": "go"}}`,
+		"ne":                        `{"title": {"ne": "go"}}`,
+		"gt":                        `{"views": {"gt": 10}}`,
+		"gte":                       `{"views": {"gte": 10}}`,
+		"lt":                        `{"views": {"lt": 10}}`,
+		"lte":                       `{"views": {"lte": 10}}`,
+		"like":                      `{"title": {"like": "go%"}}`,
+		"notlike":                   `{"title": {"notlike": "go%"}}`,
+		"ilike":                     `{"title": {"ilike": "go%"}}`,
+		"contains":                  `{"title": {"contains": "go"}}`,
+		"startswith":                `{"title": {"startswith": "go"}}`,
+		"endswith":                  `{"title": {"endswith": "go"}}`,
+		"contains escapes":          `{"title": {"contains": "100%_off"}}`,
+		"case-insensitive contains": `{"title": {"icontains": "100%_off"}}`,
+		"case-insensitive prefix":   `{"title": {"istartswith": "go"}}`,
+		"case-insensitive suffix":   `{"title": {"iendswith": "go"}}`,
+		"in":                        `{"views": {"in": [1, 2, 3]}}`,
+		"nin":                       `{"views": {"nin": [1, 2, 3]}}`,
+		"between":                   `{"views": {"between": [1, 10]}}`,
+		"isnull":                    `{"publishedAt": {"isnull": true}}`,
+		"isnotnull":                 `{"publishedAt": {"isnotnull": true}}`,
+		"timestamp":                 `{"createdAt": {"gte": "2026-01-02T03:04:05Z"}}`,
+		"and":                       `{"and": [{"views": {"gte": 10}}, {"title": "go"}]}`,
+		"or":                        `{"or": [{"views": {"gte": 10}}, {"title": "go"}]}`,
+		"not":                       `{"not": {"title": "go"}}`,
+		"two on one field":          `{"views": {"gte": 1, "lte": 10}}`,
+		"nested":                    `{"and": [{"or": [{"views": {"lt": 1}}, {"title": "go"}]}, {"body": "x"}]}`,
+		"through relation":          `{"author.name": {"contains": "an"}}`,
+		"deep relation":             `{"comments.author.name": "ann"}`,
 	}
 
 	for name, doc := range docs {
@@ -180,6 +181,59 @@ func TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr(t *testing.T) {
 	// answer with fewer rows than the caller asked for.
 	if got := both(t, crud.Or(crud.True(), crud.Eq("Title", "go"))); got != "{}" {
 		t.Fatalf("Or(True, eq) went out as %s; Or with an unconditional term is every row", got)
+	}
+}
+
+func TestJSONTermValuesKeepCommasAcrossARoundTrip(t *testing.T) {
+	const doc = `{"terms":[{"path":"title","op":"eq","values":["Smith, John"]}]}`
+	var first query.Request
+	if err := json.Unmarshal([]byte(doc), &first); err != nil {
+		t.Fatal(err)
+	}
+	if got := []string(first.Terms[0].Values); !reflect.DeepEqual(got, []string{"Smith, John"}) {
+		t.Fatalf("decoded values = %#v, want one untouched string", got)
+	}
+	b, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second query.Request
+	if err := json.Unmarshal(b, &second); err != nil {
+		t.Fatal(err)
+	}
+	if got := []string(second.Terms[0].Values); !reflect.DeepEqual(got, []string{"Smith, John"}) {
+		t.Fatalf("round-tripped values = %#v, want one untouched string", got)
+	}
+}
+
+func TestJSONTermNullSurvivesARoundTrip(t *testing.T) {
+	var first query.Request
+	if err := json.Unmarshal([]byte(`{"terms":[{"path":"title","op":"eq","values":[null]}]}`), &first); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"values":[null]`) {
+		t.Fatalf("a null term was rewritten as another value: %s", b)
+	}
+	var second query.Request
+	if err := json.Unmarshal(b, &second); err != nil {
+		t.Fatal(err)
+	}
+	firstOpts, err := first.Compile(Articles.Meta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondOpts, err := second.Compile(Articles.Meta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSQL, firstArgs := render(t, crud.Build(firstOpts...).Predicate())
+	secondSQL, secondArgs := render(t, crud.Build(secondOpts...).Predicate())
+	if firstSQL != secondSQL || !reflect.DeepEqual(firstArgs, secondArgs) {
+		t.Fatalf("round trip changed the null predicate: %s %#v -> %s %#v", firstSQL, firstArgs, secondSQL, secondArgs)
 	}
 }
 

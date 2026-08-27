@@ -59,10 +59,13 @@ func TestPredicateConstructors(t *testing.T) {
 
 		// Contains and friends build the pattern, so the wildcards a user typed
 		// have to be escaped or they widen the search.
-		{"Contains", crud.Contains("Title", "go"), `"title" LIKE $1`, []any{"%go%"}},
-		{"Contains escapes wildcards", crud.Contains("Title", "50%_off"), `"title" LIKE $1`, []any{`%50\%\_off%`}},
-		{"StartsWith", crud.StartsWith("Title", "go"), `"title" LIKE $1`, []any{"go%"}},
-		{"EndsWith", crud.EndsWith("Title", "go"), `"title" LIKE $1`, []any{"%go"}},
+		{"Contains", crud.Contains("Title", "go"), `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
+		{"Contains escapes wildcards", crud.Contains("Title", "50%_off"), `"title" LIKE $1 ESCAPE '\'`, []any{`%50\%\_off%`}},
+		{"StartsWith", crud.StartsWith("Title", "go"), `"title" LIKE $1 ESCAPE '\'`, []any{"go%"}},
+		{"EndsWith", crud.EndsWith("Title", "go"), `"title" LIKE $1 ESCAPE '\'`, []any{"%go"}},
+		{"ContainsIgnoreCase", crud.ContainsIgnoreCase("Title", "go"), `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"%go%"}},
+		{"StartsWithIgnoreCase", crud.StartsWithIgnoreCase("Title", "go"), `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"go%"}},
+		{"EndsWithIgnoreCase", crud.EndsWithIgnoreCase("Title", "go"), `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"%go"}},
 
 		{"Between", crud.Between("Views", 1, 10), `"views" BETWEEN $1 AND $2`, []any{1, 10}},
 		{"In", crud.In("Views", 1, 2), `"views" IN ($1, $2)`, []any{1, 2}},
@@ -102,11 +105,11 @@ func TestPredicatesFollowTheDialect(t *testing.T) {
 	p := crud.And(crud.Eq("Title", "Go"), crud.In("Views", 1, 2), crud.Contains("Title", "x"))
 
 	checkRender(t, crud.Postgres{}, m, p,
-		`("title" = $1 AND "views" IN ($2, $3) AND "title" LIKE $4)`, []any{"Go", 1, 2, "%x%"})
+		`("title" = $1 AND "views" IN ($2, $3) AND "title" LIKE $4 ESCAPE '\')`, []any{"Go", 1, 2, "%x%"})
 	checkRender(t, crud.MySQL{}, m, p,
-		"(`title` = ? AND `views` IN (?, ?) AND `title` LIKE ?)", []any{"Go", 1, 2, "%x%"})
+		"(`title` = ? AND `views` IN (?, ?) AND `title` LIKE ? ESCAPE X'5C')", []any{"Go", 1, 2, "%x%"})
 	checkRender(t, crud.SQLite{}, m, p,
-		`("title" = ? AND "views" IN (?, ?) AND "title" LIKE ?)`, []any{"Go", 1, 2, "%x%"})
+		`("title" = ? AND "views" IN (?, ?) AND "title" LIKE ? ESCAPE '\')`, []any{"Go", 1, 2, "%x%"})
 }
 
 // A chain of .And() calls is one flat clause, not a staircase of parentheses.
@@ -171,7 +174,7 @@ func TestRelationHopsRenderAsCorrelatedExists(t *testing.T) {
 
 		{"two hops nest one EXISTS inside the other", articles, crud.Contains("Comments.Author.Name", "an"),
 			`EXISTS (SELECT 1 FROM "comments" AS rx1 WHERE rx1."article_id" = "articles"."id" ` +
-				`AND EXISTS (SELECT 1 FROM "authors" AS rx2 WHERE rx2."id" = rx1."author_id" AND rx2."name" LIKE $1))`,
+				`AND EXISTS (SELECT 1 FROM "authors" AS rx2 WHERE rx2."id" = rx1."author_id" AND rx2."name" LIKE $1 ESCAPE '\'))`,
 			[]any{"%an%"}},
 
 		{"a hop carries any predicate, not just equality", articles, crud.IsNull("Author.City"),
@@ -258,12 +261,25 @@ func TestOrderBy(t *testing.T) {
 	}
 }
 
-// MySQL has no NULLS LAST; asking for it is silently dropped rather than
-// rendered into a syntax error.
-func TestNullsOrderingIsPostgresOnly(t *testing.T) {
+// MySQL has no NULLS LAST grammar, so the renderer synthesises the same order
+// with a boolean null key rather than accepting a request and changing it.
+func TestMySQLPreservesNullsOrdering(t *testing.T) {
 	m := articleMeta(t)
-	if got := orderSQL(t, crud.MySQL{}, m, crud.Asc("Title").WithNullsLast()); got != " ORDER BY `title` ASC" {
-		t.Fatalf("sql = %s, want the NULLS clause dropped on MySQL", got)
+	if got := orderSQL(t, crud.MySQL{}, m, crud.Asc("Title").WithNullsLast()); got != " ORDER BY `title` IS NULL ASC, `title` ASC" {
+		t.Fatalf("sql = %s, want a portable NULLS LAST order", got)
+	}
+	if got := orderSQL(t, crud.MySQL{}, m, crud.Desc("Title").WithNullsFirst()); got != " ORDER BY `title` IS NULL DESC, `title` DESC" {
+		t.Fatalf("sql = %s, want a portable NULLS FIRST order", got)
+	}
+}
+
+func TestSQLitePreservesNullsOrdering(t *testing.T) {
+	m := articleMeta(t)
+	if got := orderSQL(t, crud.SQLite{}, m, crud.Asc("Title").WithNullsLast()); got != " ORDER BY \"title\" IS NULL ASC, \"title\" ASC" {
+		t.Fatalf("sql = %s, want a portable NULLS LAST order", got)
+	}
+	if got := orderSQL(t, crud.SQLite{}, m, crud.Desc("Title").WithNullsFirst()); got != " ORDER BY \"title\" IS NULL DESC, \"title\" DESC" {
+		t.Fatalf("sql = %s, want a portable NULLS FIRST order", got)
 	}
 }
 

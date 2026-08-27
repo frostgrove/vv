@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -61,6 +62,18 @@ type Request struct {
 	// spelling and needs no record of it, and an exported field would put a
 	// query-string detail on the wire shape.
 	unpagedParam string
+
+	// afterSet and beforeSet retain JSON object-key presence. An empty cursor is
+	// invalid just as `?after=` is invalid, but a Go Request with Before set and
+	// After left at its zero value is a perfectly ordinary backwards page. The
+	// value alone cannot distinguish those two cases.
+	afterSet  bool
+	beforeSet bool
+
+	// omitPaging is set by a transport that compiles this document for an
+	// operation whose own contract supplies cardinality (COUNT and GetByID).
+	// It is not JSON: a client may not turn the endpoint's hard page budget off.
+	omitPaging bool
 }
 
 // UnpagedParam is the request parameter that asked for unpaged results, for a
@@ -73,6 +86,26 @@ func (r *Request) UnpagedParam() string {
 	return r.unpagedParam
 }
 
+// OmitPaging marks this request for an operation that does not use list
+// pagination, such as a count or a lookup by primary key. It is for transport
+// adapters; it never appears on the wire and cannot be selected by a client.
+func (r *Request) OmitPaging() {
+	if r != nil {
+		r.omitPaging = true
+	}
+}
+
+// ClearCursors removes cursor controls, including the JSON presence markers.
+// Count and entity endpoints call it because a cursor has no meaning there;
+// keeping only the private marker would turn an intentionally removed cursor
+// into a misleading "must not be empty" refusal.
+func (r *Request) ClearCursors() {
+	if r != nil {
+		r.After, r.Before = "", ""
+		r.afterSet, r.beforeSet = false, false
+	}
+}
+
 // UnmarshalJSON refuses a key this document does not define.
 //
 // Every field reference *inside* the document is resolved against the model and
@@ -82,6 +115,19 @@ func (r *Request) UnpagedParam() string {
 // failure a client cannot see, and it is the failure the strictness inside the
 // document exists to prevent, so the document's own keys are held to it too.
 func (r *Request) UnmarshalJSON(b []byte) error {
+	b = trim(b)
+	if len(b) == 0 {
+		return errf("", "document must be a JSON object")
+	}
+	if isNull(b) {
+		return errf("", "document must be a JSON object, not null")
+	}
+	if b[0] != '{' {
+		return errf("", "document must be a JSON object")
+	}
+	if err := rejectDuplicateJSONKeys(b); err != nil {
+		return err
+	}
 	// A distinct type so the decoder does not call this method again. The field
 	// types keep their own unmarshallers.
 	type document Request
@@ -95,8 +141,125 @@ func (r *Request) UnmarshalJSON(b []byte) error {
 		}
 		return err
 	}
+	if err := requireJSONEOF(dec); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		return err
+	}
+	for key, raw := range keys {
+		if isNull(trim(raw)) {
+			return errf(key, "must not be null")
+		}
+	}
+	_, doc.afterSet = keys["after"]
+	_, doc.beforeSet = keys["before"]
 	*r = Request(doc)
 	return nil
+}
+
+func requireJSONEOF(dec *json.Decoder) error {
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("query: document must contain one JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func decodeObject(b []byte, dst any, where string, keys []string) error {
+	if err := rejectDuplicateJSONKeys(b); err != nil {
+		return err
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(b, &values); err != nil {
+		return err
+	}
+	for key, raw := range values {
+		if isNull(trim(raw)) {
+			path := key
+			if where != "" {
+				path = where + "." + key
+			}
+			return errf(path, "must not be null")
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if key, ok := unknownFieldOf(err); ok {
+			path := key
+			if where != "" {
+				path = where + "." + key
+			}
+			return errf(path, "no such option; this object accepts %s", strings.Join(keys, ", "))
+		}
+		return err
+	}
+	return requireJSONEOF(dec)
+}
+
+// rejectDuplicateJSONKeys closes the last-wins hole in encoding/json. Query
+// documents are policy, not a convenient map: accepting both values of a key
+// lets a proxy, logger or signature checker see a different filter than the
+// decoder that executes it.
+func rejectDuplicateJSONKeys(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if err := rejectDuplicateJSONValue(dec, ""); err != nil {
+		return err
+	}
+	return requireJSONEOF(dec)
+}
+
+func rejectDuplicateJSONValue(dec *json.Decoder, where string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	delim, isDelim := tok.(json.Delim)
+	if !isDelim {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("query: JSON object key is not a string")
+			}
+			path := key
+			if where != "" {
+				path = where + "." + key
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errf(path, "duplicate key")
+			}
+			seen[key] = struct{}{}
+			if err := rejectDuplicateJSONValue(dec, path); err != nil {
+				return err
+			}
+		}
+		_, err := dec.Token() // closing '}'
+		return err
+	case '[':
+		for dec.More() {
+			if err := rejectDuplicateJSONValue(dec, where); err != nil {
+				return err
+			}
+		}
+		_, err := dec.Token() // closing ']'
+		return err
+	default:
+		return fmt.Errorf("query: malformed JSON delimiter %q", delim)
+	}
 }
 
 // unknownFieldOf digs the offending key out of encoding/json's message. The
@@ -137,12 +300,20 @@ func (s *Strings) UnmarshalJSON(b []byte) error {
 		*s = splitList(one)
 		return nil
 	}
-	var many []string
+	var many []json.RawMessage
 	if err := json.Unmarshal(b, &many); err != nil {
 		return err
 	}
 	out := make(Strings, 0, len(many))
-	for _, v := range many {
+	for _, raw := range many {
+		raw = trim(raw)
+		if isNull(raw) {
+			return fmt.Errorf("query: string list must not contain null")
+		}
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
 		out = append(out, splitList(v)...)
 	}
 	*s = out
@@ -176,7 +347,7 @@ func (s *Sorts) UnmarshalJSON(b []byte) error {
 		return nil
 	case '{':
 		var one Sort
-		if err := json.Unmarshal(b, &one); err != nil {
+		if err := decodeObject(b, &one, "sort", sortKeys); err != nil {
 			return err
 		}
 		*s = Sorts{one}
@@ -189,12 +360,12 @@ func (s *Sorts) UnmarshalJSON(b []byte) error {
 		out := make(Sorts, 0, len(raw))
 		for _, item := range raw {
 			item = trim(item)
-			if len(item) == 0 {
-				continue
+			if len(item) == 0 || isNull(item) {
+				return fmt.Errorf("query: sort list must not contain null")
 			}
 			if item[0] == '{' {
 				var one Sort
-				if err := json.Unmarshal(item, &one); err != nil {
+				if err := decodeObject(item, &one, "sort", sortKeys); err != nil {
 					return err
 				}
 				out = append(out, one)
@@ -211,6 +382,8 @@ func (s *Sorts) UnmarshalJSON(b []byte) error {
 	}
 	return fmt.Errorf("query: sort must be a string, an object or an array, got %s", b)
 }
+
+var sortKeys = []string{"field", "desc", "nulls"}
 
 func parseSortList(items []string) Sorts {
 	out := make(Sorts, 0, len(items))
@@ -232,9 +405,10 @@ func parseSortList(items []string) Sorts {
 
 // Preload is one relation to load, optionally narrowed.
 type Preload struct {
-	Path   string `json:"path"`
-	Filter Filter `json:"filter,omitempty"`
-	Sort   Sorts  `json:"sort,omitempty"`
+	Path    string `json:"path"`
+	Filter  Filter `json:"filter,omitzero"`
+	Sort    Sorts  `json:"sort,omitempty"`
+	MaxRows int    `json:"maxRows,omitzero"`
 }
 
 // Preloads accepts "author", ["author","comments.author"] or the object form
@@ -257,7 +431,7 @@ func (p *Preloads) UnmarshalJSON(b []byte) error {
 		return nil
 	case '{':
 		var one Preload
-		if err := json.Unmarshal(b, &one); err != nil {
+		if err := decodeObject(b, &one, "preload", preloadKeys); err != nil {
 			return err
 		}
 		*p = Preloads{one}
@@ -270,12 +444,12 @@ func (p *Preloads) UnmarshalJSON(b []byte) error {
 		var out Preloads
 		for _, item := range raw {
 			item = trim(item)
-			if len(item) == 0 {
-				continue
+			if len(item) == 0 || isNull(item) {
+				return fmt.Errorf("query: preload list must not contain null")
 			}
 			if item[0] == '{' {
 				var one Preload
-				if err := json.Unmarshal(item, &one); err != nil {
+				if err := decodeObject(item, &one, "preload", preloadKeys); err != nil {
 					return err
 				}
 				out = append(out, one)
@@ -292,6 +466,8 @@ func (p *Preloads) UnmarshalJSON(b []byte) error {
 	}
 	return fmt.Errorf("query: preload must be a string, an object or an array, got %s", b)
 }
+
+var preloadKeys = []string{"path", "filter", "sort", "maxRows"}
 
 func pathsToPreloads(paths []string) Preloads {
 	out := make(Preloads, 0, len(paths))
@@ -319,8 +495,10 @@ func (f Filter) MarshalJSON() ([]byte, error) {
 	return f.raw, nil
 }
 
-// IsZero reports an absent filter, and makes `json:",omitzero"` work.
-func (f Filter) IsZero() bool { return len(trim(f.raw)) == 0 || isNull(trim(f.raw)) }
+// IsZero reports an absent filter, and makes `json:",omitzero"` work. A JSON
+// null is present input rather than absence: Compile rejects it instead of
+// treating a malformed narrowing as no narrowing at all.
+func (f Filter) IsZero() bool { return len(trim(f.raw)) == 0 }
 
 // RawFilter builds a Filter from a JSON document, for tests and for callers
 // that assemble the document themselves.

@@ -73,16 +73,11 @@ closed — never narrow nothing and look like it worked.
 | [[FL-011]] | the refusal becoming a status |
 
 ## Status
-**covered**, and it closes one of [[UC-004]]'s gaps.
-
-UC-004's Gap 1 is a policy that declares a narrowing and nothing else, leaving a
-create into another tenant unconstrained — the shape a hand-written
-principal-driven rule naturally takes. The claim-driven narrowing here is built
-on the existing helper rather than beside it, so it inherits that helper's row
-check and its frozen column, and guarantee 6 is pinned by a test that asserts
-the refused create reaches no statement. Gaps 2, 3 and 4 are untouched: they are
-about the gate's own existence probe, unique-constraint disclosure and the page
-total, none of which this changes.
+**covered.** The claim-driven narrowing is built on the existing helper rather
+than beside it, so it inherits its row check and frozen column; a refused create
+reaches no statement. The underlying tenant use case now also pins the hidden-ID
+answer, relation-aware page total and bulk inspection, so this helper does not
+leave those earlier seams behind.
 
 Guarantee 13's two answers, spelled out because the asymmetry is deliberate:
 naming no permission in an all-of rule refuses nothing, so a list built from

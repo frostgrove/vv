@@ -10,6 +10,18 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
+// requestCopy gives an operation its own query document before it removes
+// controls that are meaningless for that operation. A request is caller-owned
+// data: Count(req) or Get(req) must not turn a later List(req) into a different,
+// unbounded query.
+func requestCopy(req *query.Request) *query.Request {
+	if req == nil {
+		return &query.Request{}
+	}
+	copy := *req
+	return &copy
+}
+
 // CoerceID converts a path parameter to the repository's key type, which is why
 // a uuid or a slug key works in a URL with no extra code.
 func CoerceID[ID comparable](raw string) (ID, error) {
@@ -33,14 +45,22 @@ func CoerceID[ID comparable](raw string) (ID, error) {
 func NarrowForCount(req *query.Request) {
 	req.Page, req.Limit, req.Offset = 0, 0, 0
 	req.Sort, req.Preload, req.Select = nil, nil, nil
+	req.ClearCursors()
+	req.Unpaged, req.SkipTotal, req.Distinct = false, false, false
+	req.OmitPaging()
 }
 
-// NarrowForEntity keeps only the shaping options. A single entity is addressed
-// by its key, so a filter or a sort on the way to it is meaningless, and paging
-// it would be a way to ask for row two of one row.
+// NarrowForEntity keeps the shaping options and every condition that can prove
+// the addressed row is not eligible. A key identifies at most one row, but a
+// filter (including search terms) can still narrow that one row — for example,
+// a tenant condition on GetByID. Ordering and paging cannot change which keyed
+// row is returned, so those controls are discarded.
 func NarrowForEntity(req *query.Request) {
-	req.Filter, req.Terms, req.Search, req.Sort = query.Filter{}, nil, "", nil
+	req.Sort = nil
 	req.Page, req.Limit, req.Offset = 0, 0, 0
+	req.ClearCursors()
+	req.Unpaged, req.SkipTotal, req.Distinct = false, false, false
+	req.OmitPaging()
 }
 
 // FormatID renders a key as the text a URL path or a request document carries.

@@ -3,6 +3,11 @@
 **Status:** accepted
 **Invariant:** `query.Config` bounds what a request may *name*, and every one of those bounds is open by default. Every bound on *how much comes back* is closed by default: `AllowUnpaged` must be declared, and the list, sort and bulk-id caps have non-zero defaults.
 
+> **Remote implementation note (2026-08-26).** The historical passages below
+> about `remote.GetAll` sending `unpaged` are superseded. It now walks bounded
+> List pages and cursor edges; a cursorless/DISTINCT-without-PK export has an
+> explicit `MaxOffset` refusal boundary rather than a truncated success.
+
 ## The decision
 
 The zero `query.Config` allows anything the model maps: any field filtered,

@@ -488,6 +488,83 @@ func egNames(rows []EgRow) []string {
 	return out
 }
 
+// MySQL's NO_BACKSLASH_ESCAPES changes the parser's treatment of quoted
+// backslashes. Exercise both supported engines on one pinned connection so a
+// regression from the hexadecimal ESCAPE expression back to a quoted literal
+// cannot hide behind the pool's session selection.
+func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
+	ctx := context.Background()
+	for _, target := range []struct {
+		name string
+		db   *sql.DB
+	}{
+		{"mysql", myDB},
+		{"mariadb", mariaDB},
+	} {
+		t.Run(target.name, func(t *testing.T) {
+			conn, err := target.db.Conn(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+
+			var originalMode string
+			if err := conn.QueryRowContext(ctx, "SELECT @@SESSION.sql_mode").Scan(&originalMode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := conn.ExecContext(ctx, "SET SESSION sql_mode = ?", originalMode); err != nil {
+					t.Errorf("restoring sql_mode: %v", err)
+				}
+			})
+			if _, err := conn.ExecContext(ctx,
+				"SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',NO_BACKSLASH_ESCAPES')"); err != nil {
+				t.Fatal(err)
+			}
+
+			src := crudsql.Source(conn, crud.MySQL{})
+			if _, err := src.Exec(ctx, "DELETE FROM `users`"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := src.Exec(ctx, "DELETE FROM `users`"); err != nil {
+					t.Errorf("cleaning users: %v", err)
+				}
+			})
+			repo := Users.Bind(src)
+			for _, user := range []User{
+				{TenantID: 1, Email: "match@x.io", Name: "100%_raw"},
+				{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
+				{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
+			} {
+				if err := repo.Save(ctx, &user); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, tc := range []struct {
+				pred crud.Predicate
+				want string
+			}{
+				{crud.Contains("Name", "%_"), "100%_raw"},
+				{crud.StartsWith("Name", "100%"), "100%_raw"},
+				{crud.EndsWith("Name", "_raw"), "100%_raw"},
+				{crud.Contains("Name", `path\file`), `path\file`},
+				{crud.ContainsIgnoreCase("Name", "%_RAW"), "100%_raw"},
+				{crud.StartsWithIgnoreCase("Name", "100%"), "100%_raw"},
+				{crud.EndsWithIgnoreCase("Name", "_RAW"), "100%_raw"},
+			} {
+				got, err := repo.GetAll(ctx, crud.Where(tc.pred))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(got) != 1 || got[0].Name != tc.want {
+					t.Fatalf("%T matched %#v, want only %q", tc.pred, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func egPager[T any](p crud.PaginatedResponse[T]) string {
 	return fmt.Sprintf("items=%d page=%d limit=%d total=%d pages=%d next=%v prev=%v",
 		len(p.Items), p.Page, p.Limit, p.Total, p.TotalPages, p.HasNext, p.HasPrev)

@@ -244,14 +244,55 @@ func TestAnInt64KeyIsCarriedAsAString(t *testing.T) {
 		t.Fatalf("the entity document carried %d exactly; doc.go still says a Struct number cannot", big)
 	}
 
-	// And the same key sent as a number loses it on the way in too, which is
-	// why the string spelling exists at all.
+	// And the same key sent as a number is rejected: Struct has already rounded
+	// it, so forwarding the nearby key would address a row the caller never
+	// named. The string spelling is the only exact representation.
 	c2, f2 := mount(t)
-	c2.ok("Get", &structpb.Struct{Fields: map[string]*structpb.Value{
+	st := c2.fails("Get", &structpb.Struct{Fields: map[string]*structpb.Value{
 		"id": structpb.NewNumberValue(float64(big)),
 	}})
-	if got := f2.only(t, "GetByID").ID; got == big {
-		t.Fatalf("a number key carried %d exactly, so the string spelling proves nothing", big)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("rounded numeric ID answered %s, want InvalidArgument", st.Code())
+	}
+	if len(f2.calls) != 0 {
+		t.Fatalf("rounded numeric ID reached the service: %#v", f2.calls)
+	}
+}
+
+func TestMutationBodiesMustBeObjectsRatherThanNull(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		body   string
+	}{
+		{"Update", `{"id":"42","patch":null}`},
+		{"Replace", `{"id":"42","entity":null}`},
+		{"Update", `{"id":"42"}`},
+		{"Replace", `{"id":"42"}`},
+		{"Update", `{"id":"42","patch":false}`},
+		{"Replace", `{"id":"42","entity":[]}`},
+	} {
+		t.Run(tc.method+tc.body, func(t *testing.T) {
+			c, f := mount(t)
+			if st := c.fails(tc.method, doc(t, tc.body)); st.Code() != codes.InvalidArgument {
+				t.Fatalf("status = %s, want InvalidArgument", st.Code())
+			}
+			if len(f.calls) != 0 {
+				t.Fatalf("%s body reached the service: %#v", tc.body, f.calls)
+			}
+		})
+	}
+}
+
+func TestListTotalUsesTheExactCountConvention(t *testing.T) {
+	c, f := mount(t)
+	f.page.Total = 9007199254740993
+	f.page.TotalPages = 9007199254740993
+	out := c.ok("List", doc(t, `{}`))
+	if got := out.GetFields()["total"].GetStringValue(); got != "9007199254740993" {
+		t.Fatalf("total = %q, want exact decimal string", got)
+	}
+	if got := out.GetFields()["totalPages"].GetStringValue(); got != "9007199254740993" {
+		t.Fatalf("totalPages = %q, want exact decimal string", got)
 	}
 }
 
@@ -289,14 +330,18 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 		t.Fatalf("deleting a row that is not there answered %s", st.Code())
 	}
 
-	empty := newRecorder()
-	c2 := serve(t, Serving[Widget, int64, WidgetUpdate](empty).Desc(resource))
-	out := c2.ok("BulkDelete", doc(t, `{"ids":[]}`))
-	if got := out.GetFields()["deleted"].GetNumberValue(); got != 0 {
-		t.Fatalf("deleting an empty set answered %v deleted", got)
-	}
-	if calls := empty.repo.calls; len(calls) != 0 {
-		t.Fatalf("an empty set reached the repository as %v", calls)
+	for _, body := range []string{`{"ids":[]}`, `{}`, `{"ids":null}`} {
+		t.Run(body, func(t *testing.T) {
+			empty := newRecorder()
+			c2 := serve(t, Serving[Widget, int64, WidgetUpdate](empty).Desc(resource))
+			out := c2.ok("BulkDelete", doc(t, body))
+			if got := out.GetFields()["deleted"].GetNumberValue(); got != 0 {
+				t.Fatalf("deleting an empty set answered %v deleted", got)
+			}
+			if calls := empty.repo.calls; len(calls) != 0 {
+				t.Fatalf("an empty set reached the repository as %v", calls)
+			}
+		})
 	}
 }
 

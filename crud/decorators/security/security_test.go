@@ -3,6 +3,7 @@ package security_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,8 +171,11 @@ func TestDeleteIsScoped(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("n = %d", n)
 	}
-	if got := crudtest.Normalize(rec.Last().SQL); got != `DELETE FROM "docs" WHERE ("tenant_id" = $1 AND "id" IN ($2, $3))` {
-		t.Fatalf("sql = %s", got)
+	got := crudtest.Normalize(rec.Last().SQL)
+	for _, want := range []string{`"tenant_id" = $`, `"id" IN`, `"title" = $`, `"body" = $`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sql = %s, want snapshot condition %s", got, want)
+		}
 	}
 }
 
@@ -210,9 +214,237 @@ func TestSaveRefusesToWriteIntoAnotherTenant(t *testing.T) {
 	}
 }
 
+// The preflight can honestly see no row and still lose a race to another
+// tenant's INSERT. A Create decision must remain a create: the atomic statement
+// may report a conflict, but it must never update the newly inserted row.
+func TestScopedSaveKeepsAConcurrentCreateCreateOnly(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(), // the scoped preflight sees no row
+		crudtest.Rows(), // neither does the physical probe at that instant
+		crudtest.Rows(), // another tenant won the race; DO NOTHING returns no row
+	)
+	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
+	err := gated(rec).Save(ctx, &d)
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want forbidden rather than an overwrite", err)
+	}
+	st := rec.Last()
+	if !strings.Contains(st.SQL, `ON CONFLICT ("id") DO NOTHING`) || strings.Contains(st.SQL, `DO UPDATE`) {
+		t.Fatalf("scoped create = %s, want an atomic create-only conflict branch", st.SQL)
+	}
+}
+
+func TestScopedSaveKeepsMySQLDuplicateCreatesAsAConflict(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	rec := crudtest.MySQL().Push(
+		crudtest.Rows(), // scoped preflight
+		crudtest.Rows(), // physical probe
+	).Fail(crud.ErrConflict) // normal INSERT reports the duplicate to the adapter
+	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
+	if err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrConflict) || errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want the database duplicate conflict rather than a forbidden overwrite", err)
+	}
+	var insert string
+	for _, sql := range rec.SQL() {
+		if strings.HasPrefix(sql, "INSERT") {
+			insert = sql
+			break
+		}
+	}
+	if !strings.HasPrefix(insert, "INSERT INTO") || strings.Contains(insert, "IGNORE") || strings.Contains(insert, "ON DUPLICATE KEY UPDATE") {
+		t.Fatalf("scoped MySQL create = %s, want one ordinary create-only INSERT", insert)
+	}
+}
+
+func TestAssignedSaveAuthorizesBothBranchesBeforeItLooksUpTheKey(t *testing.T) {
+	var calls []security.Action
+	policy := security.Policy[Doc, int64]{
+		Authorize: func(_ context.Context, action security.Action) error {
+			calls = append(calls, action)
+			if action == security.Update {
+				return security.Denied(action, "write disabled")
+			}
+			return nil
+		},
+	}
+	rec := crudtest.Postgres()
+	err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &Doc{ID: 1, Title: "x"})
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want denied update authorization", err)
+	}
+	if got, want := calls, []security.Action{security.Create, security.Update}; !slices.Equal(got, want) {
+		t.Fatalf("Authorize calls = %v, want %v", got, want)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("assigned Save looked up a key before authorization: %v", rec.SQL())
+	}
+}
+
+func TestMySQLScopedSavesJoinAnOpaqueForeignExecutor(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	for _, name := range []string{"Save", "SaveAll"} {
+		t.Run(name, func(t *testing.T) {
+			source := crudtest.MySQL()
+			foreign := crudtest.MySQL().Push(
+				crudtest.Rows(docRow(1, 7, "before")), // policy snapshot
+				crudtest.Rows(docRow(1, 7, "after")),  // post-write refresh
+			).ExecResult(crud.Result{RowsAffected: 1})
+			repo := Docs.Bind(source, security.Gate(tenantPolicy))
+			// A foreign transaction needs no marker beyond Executor. The context
+			// is the caller's statement that every repository query belongs to it.
+			foreignCtx := crud.WithExecutor(ctx, foreign)
+			if name == "Save" {
+				if err := repo.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := repo.SaveAll(foreignCtx, []*Doc{{ID: 1, TenantID: 7, Title: "after", Body: "body"}}); err != nil {
+				t.Fatal(err)
+			}
+			if source.TxDepth() != 0 || len(source.Statements()) != 0 {
+				t.Fatalf("the repository opened or used its own source: tx depth %d, SQL %v", source.TxDepth(), source.SQL())
+			}
+			if foreign.TxDepth() != 0 || len(foreign.Statements()) == 0 {
+				t.Fatalf("the foreign executor did not receive every statement: tx depth %d, SQL %v", foreign.TxDepth(), foreign.SQL())
+			}
+		})
+	}
+}
+
+// An Update decision is tied to the exact row the gate inspected. If that row
+// changes after the preflight, the conditional UPDATE matches no row rather
+// than applying this request to a replacement the policy never inspected.
+func TestScopedSavePinsAnUpdateToItsInspectedSnapshot(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(docRow(41, 7, "before")), // inspected snapshot
+		crudtest.Rows(),                        // another writer changed it before our UPDATE
+	)
+	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
+	if err := gated(rec).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
+		t.Fatalf("err = %v, want not found rather than an update of a replacement", err)
+	}
+	st := rec.Last()
+	if !strings.HasPrefix(st.SQL, "UPDATE") || !strings.Contains(st.SQL, `"title" = $`) || strings.Contains(st.SQL, "ON CONFLICT") {
+		t.Fatalf("scoped update = %s, want a snapshot-pinned UPDATE", st.SQL)
+	}
+}
+
+func TestMySQLNoopScopedSaveKeepsTheSnapshotForItsRefresh(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	rec := crudtest.MySQL().Push(
+		crudtest.Rows(docRow(1, 7, "before")), // inspected snapshot
+		crudtest.Rows(),                       // snapshot refresh sees the concurrent change
+	).ExecResult(crud.Result{}) // a no-op UPDATE and a stale UPDATE both answer zero
+	d := Doc{ID: 1, TenantID: 7, Title: "before", Body: "body"}
+	if err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d); !errors.Is(err, crud.ErrNotFound) {
+		t.Fatalf("err = %v, want not found after the guarded refresh misses", err)
+	}
+	if sql := rec.Last().SQL; !strings.Contains(sql, "`title` = ?") || !strings.Contains(sql, "`body` = ?") {
+		t.Fatalf("refresh = %s, want the complete inspected snapshot in its WHERE", sql)
+	}
+}
+
+func TestARealUpdateConflictStaysAConflict(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(docRow(1, 7, "before")),
+		crudtest.RowsFailing(crud.ErrConflict), // another unique/FK/serialization conflict
+	)
+	d := Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}
+	err := Docs.Bind(rec, security.Gate(tenantPolicy)).Save(ctx, &d)
+	if !errors.Is(err, crud.ErrConflict) || errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want the underlying update conflict rather than a create denial", err)
+	}
+}
+
+// A second gate is enforcement, not a transparent storage wrapper. The atomic
+// capability must fail closed rather than tunnel past a read-only inner gate.
+func TestScopedSaveCannotBypassAnInnerSecurityGate(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	inner := security.Policy[Doc, int64]{
+		Authorize: func(_ context.Context, action security.Action) error {
+			if action == security.Update {
+				return security.Denied(action, "inner policy is read only")
+			}
+			return nil
+		},
+	}
+	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(41, 7, "before")))
+	repo := Docs.Bind(rec, security.Gate(tenantPolicy), security.Gate(inner))
+	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
+	if err := repo.Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want an inner-gate denial", err)
+	}
+	if wrote(rec, "UPDATE") || wrote(rec, "INSERT") {
+		t.Fatalf("scoped Save tunneled past the inner gate: %v", rec.SQL())
+	}
+}
+
+// A policy can rely solely on Inspect. Its assigned-key writes still need the
+// same create/update decision protection as a tenant-scoped policy.
+func TestInspectOnlySaveUsesTheAtomicSnapshotPath(t *testing.T) {
+	policy := security.Policy[Doc, int64]{
+		Inspect: func(context.Context, security.Action, *Doc) error { return nil },
+	}
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(docRow(41, 7, "before")), // inspected target
+		crudtest.Rows(),                        // snapshot UPDATE no longer matches
+	)
+	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
+	if err := Docs.Bind(rec, security.Gate(policy)).Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want a refused stale inspected row", err)
+	}
+	if sql := rec.Last().SQL; !strings.HasPrefix(sql, "UPDATE") || !strings.Contains(sql, `"title" = $`) {
+		t.Fatalf("Save used an ordinary upsert instead of a snapshot UPDATE: %s", sql)
+	}
+}
+
+func TestScopedMySQLSaveRefreshesTheModelAfterTheConditionalWrite(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+
+	for _, tc := range []struct {
+		name string
+		rows []crudtest.Result
+		doc  Doc
+		want string
+	}{
+		{
+			name: "create",
+			rows: []crudtest.Result{
+				crudtest.Rows(),                        // scoped preflight
+				crudtest.Rows(),                        // physical existence probe
+				crudtest.Rows(docRow(41, 7, "stored")), // guarded refresh
+			},
+			doc:  Doc{ID: 41, TenantID: 7, Title: "client", Body: "body"},
+			want: "stored",
+		},
+		{
+			name: "update",
+			rows: []crudtest.Result{
+				crudtest.Rows(docRow(41, 7, "before")), // inspected snapshot
+				crudtest.Rows(docRow(41, 7, "stored")), // guarded refresh
+			},
+			doc:  Doc{ID: 41, TenantID: 7, Title: "client", Body: "body"},
+			want: "stored",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.MySQL().Push(tc.rows...).ExecResult(crud.Result{RowsAffected: 1})
+			d := tc.doc
+			if err := gated(rec).Save(ctx, &d); err != nil {
+				t.Fatal(err)
+			}
+			if d.Title != tc.want {
+				t.Fatalf("Save left the caller with %+v, want database-normalized title %q", d, tc.want)
+			}
+		})
+	}
+}
+
 func TestUnscopedDeleteAllIsRefused(t *testing.T) {
 	rec := crudtest.Postgres()
-	repo := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{}))
+	repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
 
 	if _, err := repo.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
@@ -227,7 +459,10 @@ func TestUnscopedDeleteAllIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// So does opting in explicitly.
-	optIn := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{AllowUnscopedDeleteAll: true}))
+	optIn := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{
+		Immutable:              []string{"TenantID"},
+		AllowUnscopedDeleteAll: true,
+	}))
 	if _, err := optIn.DeleteAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -359,16 +594,9 @@ func TestFreezingAFieldTheModelDoesNotHavePanicsAtDeclaration(t *testing.T) {
 	security.Gate(security.Freeze[Doc, int64]("Nope"))(nil)
 }
 
-// A policy with no per-row rule does not pay for the row.
-//
-// gate.Update loaded the row and handed it to Inspect. With no Inspect wired it
-// loaded the row and did nothing with it — a whole round trip before every
-// update, on the most common policy shape there is: a scope and no per-row rule.
-//
-// The scope is not what needed it. The UPDATE carries the same scope, so a row
-// outside it matches nothing and the repository answers ErrNotFound by itself
-// ([[D-008]]), which is what the control below asserts.
-func TestAPolicyWithNoPerRowRuleDoesNotLoadTheRow(t *testing.T) {
+// A body-write policy needs Inspect. The control proves the allowed shape still
+// reaches its per-row rule before the repository's own load-diff-write path.
+func TestABodyWritePolicyInspectsTheCurrentRow(t *testing.T) {
 	title := "renamed"
 
 	// The repository loads the row itself — Update is load-diff-write ([[D-010]])
@@ -387,8 +615,6 @@ func TestAPolicyWithNoPerRowRuleDoesNotLoadTheRow(t *testing.T) {
 		return len(rec.Statements())
 	}
 
-	// A scope and nothing else. tenantPolicy is ScopeField, which sets an Inspect
-	// of its own — so it is not the shape this test is about.
 	scopeOnly := security.Policy[Doc, int64]{
 		Scope: func(ctx context.Context) (crud.Predicate, error) {
 			t, err := tenantOf(ctx)
@@ -403,25 +629,10 @@ func TestAPolicyWithNoPerRowRuleDoesNotLoadTheRow(t *testing.T) {
 		Inspect: func(context.Context, security.Action, *Doc) error { seen++; return nil },
 	})
 
-	bare := update(t, scopeOnly, 3)
-	ruled := update(t, withRule, 3)
-
+	if got := update(t, withRule, 3); got != 3 {
+		t.Fatalf("the inspected update issued %d statements, want gate load, repository load and write", got)
+	}
 	if seen == 0 {
-		t.Fatal("the rule was never shown the row, so the comparison below measures nothing")
+		t.Fatal("the rule was never shown the row")
 	}
-	if bare >= ruled {
-		t.Fatalf("a policy with no per-row rule cost %d statements and one with a rule cost %d — the gate is still loading a row it does not look at", bare, ruled)
-	}
-
-	t.Run("control: an out-of-scope id is still not found", func(t *testing.T) {
-		// This is what the load was not needed for. The UPDATE carries the scope,
-		// so the row matches nothing and the answer is ErrNotFound rather than a
-		// denial — D-008, reached without a read.
-		rec := crudtest.Postgres().Push(crudtest.Rows())
-		_, err := Docs.Bind(rec, security.Gate(scopeOnly)).
-			Update(withTenant(context.Background(), 9), 1, DocUpdate{Title: &title})
-		if !errors.Is(err, crud.ErrNotFound) {
-			t.Fatalf("an out-of-scope update answered %v, want ErrNotFound", err)
-		}
-	})
 }

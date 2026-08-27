@@ -60,7 +60,7 @@ var (
 	// about something else entirely — a preload, a sort, a coercion — and turn
 	// pagination off only so the assertion is about one list rather than a page
 	// of one.
-	exports = &query.Config{AllowUnpaged: true}
+	exports = &query.Config{AllowUnpaged: true, AllowDistinct: true}
 	_       = sqlrepo.Define[Author, int64, struct{}]("authors")
 	_       = sqlrepo.Define[Comment, int64, struct{}]("comments")
 	_       = sqlrepo.Define[Tag, int64, struct{}]("tags")
@@ -130,7 +130,7 @@ func TestFlatFilters(t *testing.T) {
 		{"null shorthand", `{"filter":{"publishedAt":null}}`, `"published_at" IS NULL`, nil},
 		{"isNull operator", `{"filter":{"publishedAt":{"isNull":true}}}`, `"published_at" IS NULL`, nil},
 		{"isNull false flips", `{"filter":{"publishedAt":{"isNull":false}}}`, `"published_at" IS NOT NULL`, nil},
-		{"contains", `{"filter":{"title":{"contains":"go"}}}`, `"title" LIKE $1`, []any{"%go%"}},
+		{"contains", `{"filter":{"title":{"contains":"go"}}}`, `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
 		{"between", `{"filter":{"views":{"between":[1,10]}}}`, `"views" BETWEEN $1 AND $2`, []any{1, 10}},
 		{"snake case path", `{"filter":{"published_at":{"isNotNull":true}}}`, `"published_at" IS NOT NULL`, nil},
 		{"column name path", `{"filter":{"author_id":7}}`, `"author_id" = $1`, []any{int64(7)}},
@@ -205,7 +205,7 @@ func TestNestedFilters(t *testing.T) {
 		{"belongs to", `{"filter":{"author.name":"Ann"}}`,
 			`EXISTS (SELECT 1 FROM "authors" AS rx1 WHERE rx1."id" = "articles"."author_id" AND rx1."name" = $1)`},
 		{"has many", `{"filter":{"comments.body":{"contains":"nice"}}}`,
-			`EXISTS (SELECT 1 FROM "comments" AS rx1 WHERE rx1."article_id" = "articles"."id" AND rx1."body" LIKE $1)`},
+			`EXISTS (SELECT 1 FROM "comments" AS rx1 WHERE rx1."article_id" = "articles"."id" AND rx1."body" LIKE $1 ESCAPE '\')`},
 		{"many to many", `{"filter":{"tags.slug":{"in":["go","rust"]}}}`,
 			`EXISTS (SELECT 1 FROM "tags" AS rx1 JOIN "article_tags" AS rx2 ON rx2."tag_id" = rx1."id" ` +
 				`WHERE rx2."article_id" = "articles"."id" AND rx1."slug" IN ($1, $2))`},
@@ -252,7 +252,7 @@ func TestSearchIsParenthesised(t *testing.T) {
 	// The classic trap: an OR of search terms must not escape the surrounding
 	// AND. The AST parenthesises it, so it cannot.
 	sql, args := run(t, `{"filter":{"views":{"gt":5}},"search":"go","searchFields":["title","body"]}`, nil)
-	want := `("views" > $1 AND ("title" LIKE $2 OR "body" LIKE $3))`
+	want := `("views" > $1 AND (LOWER("title") LIKE LOWER($2) ESCAPE '\' OR LOWER("body") LIKE LOWER($3) ESCAPE '\'))`
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}
@@ -262,7 +262,7 @@ func TestSearchIsParenthesised(t *testing.T) {
 
 	// With no field list, every text column joins the OR.
 	sql, _ = run(t, `{"search":"go"}`, nil)
-	if got := where(sql); got != `("title" LIKE $1 OR "body" LIKE $2)` {
+	if got := where(sql); got != `(LOWER("title") LIKE LOWER($1) ESCAPE '\' OR LOWER("body") LIKE LOWER($2) ESCAPE '\')` {
 		t.Fatalf("where = %s", got)
 	}
 }
@@ -292,7 +292,7 @@ func TestQueryStringForm(t *testing.T) {
 
 	want := `("views" >= $1 AND EXISTS (SELECT 1 FROM "tags" AS rx1 JOIN "article_tags" AS rx2 ` +
 		`ON rx2."tag_id" = rx1."id" WHERE rx2."article_id" = "articles"."id" AND rx1."slug" IN ($2, $3)) ` +
-		`AND "published_at" IS NULL AND "title" LIKE $4)`
+		`AND "published_at" IS NULL AND LOWER("title") LIKE LOWER($4) ESCAPE '\')`
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}

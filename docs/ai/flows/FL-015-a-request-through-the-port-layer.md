@@ -70,7 +70,7 @@ column -> model field -> command field -> transport field -> wire
 |---|---|---|
 | `GET /` · `POST /query` | `ListCommand` | `Request.Compile`, then append the caller's options |
 | `GET /count` · `POST /count` | `CountCommand` | `NarrowForCount` first — paging left in would make the answer the size of one page |
-| `GET /{id}` | `GetCommand` | `NarrowForEntity` — a filter or a sort on the way to a keyed row means nothing |
+| `GET /{id}` | `GetCommand` | `NarrowForEntity` — an eligibility filter stays; sort and paging cannot change a keyed row |
 | `POST /` | `CreateCommand` | `Sanitize`, then the hook, then `Save` |
 | `PATCH /{id}` | `UpdateCommand` | the hook on the patch, then `Update` |
 | `PUT /{id}` | `ReplaceCommand` | the existence probe ([[D-012]]), `ClearGenerated`, `SetID` from the command's key, then the hook, then `Save` |

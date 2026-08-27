@@ -197,9 +197,28 @@ func (n betweenNode) document(w *docWriter) {
 }
 
 func (n likeNode) document(w *docWriter) {
-	// Contains, StartsWith and EndsWith are all Like with an escaped pattern by
-	// the time they get here, so they go out as like with that pattern and
-	// compile back to the identical node.
+	if n.mode != likePattern && n.not {
+		// The DSL's convenience operators have no negative spellings. Preserve
+		// the meaning as a Boolean negation rather than degrading it to raw LIKE.
+		w.str(`{"not":`)
+		likeNode{field: n.field, pattern: n.pattern, ignoreCase: n.ignoreCase, mode: n.mode}.document(w)
+		w.str("}")
+		return
+	}
+	if n.mode != likePattern {
+		op := "contains"
+		switch n.mode {
+		case likeStartsWith:
+			op = "startsWith"
+		case likeEndsWith:
+			op = "endsWith"
+		}
+		if n.ignoreCase {
+			op = "i" + op[:1] + op[1:]
+		}
+		w.leaf(n.field, op, func() { w.value(n.pattern) })
+		return
+	}
 	switch {
 	case n.ignoreCase && n.not:
 		// The DSL has ilike and notlike, not both at once. Unreachable from the

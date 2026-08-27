@@ -2,8 +2,10 @@ package query
 
 import (
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"time"
@@ -20,6 +22,20 @@ func decodeValue(raw json.RawMessage, f *crud.Field) (any, error) {
 	t := crud.ElemType(f.Type)
 	ptr := reflect.New(t)
 	if err := json.Unmarshal(raw, ptr.Interface()); err != nil {
+		// A protobuf Struct carries every JSON number as float64. Sending an
+		// exact large integer as a JSON string is therefore the only lossless
+		// gRPC spelling, and it should compile exactly as the flat query-string
+		// spelling does. Keep this narrow: strings are only an alternate scalar
+		// encoding for the numeric kinds, not a way to bypass a model's own JSON
+		// decoder for arbitrary structs.
+		if numericKind(t.Kind()) {
+			var s string
+			if json.Unmarshal(raw, &s) == nil {
+				if v, serr := coerceString(s, t); serr == nil {
+					return v, nil
+				}
+			}
+		}
 		// A date-only string is worth a second try; clients send them constantly.
 		if t == reflect.TypeOf(time.Time{}) {
 			var s string
@@ -32,6 +48,17 @@ func decodeValue(raw json.RawMessage, f *crud.Field) (any, error) {
 		return nil, fmt.Errorf("%s expects %s, got %s", f.Name, wanted(t), preview(raw))
 	}
 	return ptr.Elem().Interface(), nil
+}
+
+func numericKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
 
 // decodeList decodes a JSON array into a []any of correctly typed elements.
@@ -129,10 +156,17 @@ func coerceString(s string, t reflect.Type) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return nil, fmt.Errorf("%s is not a finite %s", s, wanted(t))
+		}
 		ptr.Elem().SetFloat(n)
 	case reflect.Slice:
 		if t.Elem().Kind() == reflect.Uint8 {
-			ptr.Elem().SetBytes([]byte(s))
+			v, err := base64.StdEncoding.DecodeString(s)
+			if err != nil {
+				return nil, err
+			}
+			ptr.Elem().SetBytes(v)
 			break
 		}
 		return nil, fmt.Errorf("cannot parse %q as %s", s, wanted(t))

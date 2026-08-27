@@ -125,10 +125,18 @@ scope unremovable ([[D-003]]).
 ```go
 crud.Eq  crud.Ne  crud.Gt  crud.Gte  crud.Lt  crud.Lte
 crud.In  crud.NotIn  crud.InAny[T]  crud.NotInAny[T]  crud.Between
-crud.Like  crud.NotLike  crud.LikeIgnoreCase  crud.Contains  crud.StartsWith  crud.EndsWith
+crud.Like  crud.NotLike  crud.LikeIgnoreCase
+crud.Contains  crud.StartsWith  crud.EndsWith
+crud.ContainsIgnoreCase  crud.StartsWithIgnoreCase  crud.EndsWithIgnoreCase
 crud.IsNull  crud.IsNotNull  crud.EqField
 crud.And  crud.Or  crud.Not  crud.True  crud.False  crud.Raw
 ```
+
+`Like`, `NotLike` and `LikeIgnoreCase` accept an SQL pattern verbatim, for code
+that intentionally owns `%` and `_`. `Contains`, `StartsWith` and `EndsWith`
+accept ordinary text: they quote backslash, `%` and `_`, add the wildcard, and
+emit a dialect-safe `ESCAPE` clause. Their `IgnoreCase` forms use portable
+`LOWER()` matching.
 
 A field name may cross a relation at any depth:
 

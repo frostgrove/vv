@@ -136,6 +136,42 @@ func TestTheRelationScopeBuildersDoNotMutateWhatTheyWereCalledOn(t *testing.T) {
 	}
 }
 
+// Repeating a declaration for the same relation is not replacement syntax.
+// The two guards are usually written by different concerns (tenant and
+// visibility), so losing either one would expose rows the first was meant to
+// hide.
+func TestRepeatedRelationScopeDeclarationsComposeByAND(t *testing.T) {
+	rs := (*crud.RelationScopes)(nil).
+		AtPath("Comments", crud.Eq("AuthorID", int64(7))).
+		AtPath("Comments", crud.Eq("Approved", true))
+
+	if got := commentScope(t, rs, "Comments"); got != `("author_id" = $1 AND "approved" = $2)` {
+		t.Fatalf("same-path declarations rendered %s, want both narrowings", got)
+	}
+
+	ct := reflect.TypeOf(Comment{})
+	byModel := (*crud.RelationScopes)(nil).
+		ForModel(ct, crud.Eq("AuthorID", int64(7))).
+		ForModel(ct, crud.Eq("Approved", true))
+	if got := commentScope(t, byModel, "Comments"); got != `("author_id" = $1 AND "approved" = $2)` {
+		t.Fatalf("same-model declarations rendered %s, want both narrowings", got)
+	}
+}
+
+// A route-specific rule narrows a model invariant; it never replaces it. This
+// keeps a dynamic tenant scope from exposing soft-deleted rows through a
+// self-relation.
+func TestPathAndModelRelationScopesComposeByAND(t *testing.T) {
+	ct := reflect.TypeOf(Comment{})
+	rs := (*crud.RelationScopes)(nil).
+		ForModel(ct, crud.Eq("Approved", true)).
+		AtPath("Comments", crud.Eq("AuthorID", int64(7)))
+
+	if got := commentScope(t, rs, "Comments"); got != `("author_id" = $1 AND "approved" = $2)` {
+		t.Fatalf("path scope replaced model scope: %s", got)
+	}
+}
+
 // same reports whether two predicates are the same narrowing, which is the only
 // comparison a closed AST allows ([[D-003]]).
 //

@@ -20,12 +20,12 @@ discover, what the network costs.
 
 ## What must hold
 
-1. The calling side holds the resource with the same type it would hold a local
-   repository, and calls the same methods with the same arguments. Swapping a
-   local repository for a remote one is a change at the wiring and nowhere else.
+1. The calling side holds the resource at the same `port.Repository` seam it
+   would hold a local repository, and calls the same methods with the same
+   arguments. Swapping a local repository for a remote one is a wiring change.
 2. A filter written in the library's own predicate vocabulary asks the far side
-   the same question a local call would have asked. Not an approximation of it:
-   the same rows.
+   the same question a local call would have asked, including a filter on a
+   keyed read. Not an approximation of it: the same eligible rows.
 3. Every method the repository interface declares works — a page, everything, one
    by key, a create, a replace, a patch, one delete, a bulk delete, a count.
 4. A refusal keeps its class. A missing row is a missing row, a collision is a
@@ -52,8 +52,9 @@ discover, what the network costs.
     transport can carry less than another, the difference is stated rather than
     discovered.
 11. A remote resource can be served again. The calling service can mount it on
-    its own routes and become a gateway, or wrap it in the same decorators a
-    local repository takes.
+    its own routes and become a gateway. Decorators requiring `crud.Core`,
+    including `security.Gate`, remain an explicit far-service boundary rather
+    than a composition this transactionless resource pretends to support.
 
 ## Out of scope
 
@@ -70,6 +71,10 @@ discover, what the network costs.
   per-field methods.
 - **Aggregates and row locks.** No transport serves the first and nothing across
   a call can hold the second.
+- **A cross-page database snapshot.** `GetAll` is a sequence of bounded remote
+  reads, so concurrent far-side changes can move rows between pages. A
+  snapshot-consistent export is a separate far-side operation, not a property a
+  stateless CRUD client can manufacture.
 
 ## Covered by
 
@@ -86,16 +91,36 @@ other end: the same envelope and the same status table, inverted.
 
 **covered.**
 
-Guarantees 1 through 7 and 9 through 11 have tests over both transports, run
+Guarantees 1 through 10 and the gateway half of 11 have tests over both transports, run
 against a real binding on a real server — `httptest` for HTTP and `bufconn` for
 gRPC — so what is asserted is that the encode and the decode agree rather than
-that the client agrees with itself.
+that the client agrees with itself. In particular, both exercise `GetByID`'s
+List fallback with a root filter and a filtered, sorted, capped preload.
+
+`GetAll` is additionally checked against a far-side page cap on both transports:
+it reads one bounded page, follows its cursor edges, and returns the combined
+items. The HTTP path is also exercised against a real SQL repository with
+`MaxLimit(1)` and `MaxOffset(1)`, proving the cursor transition avoids an
+offset-budget failure. If progress is malformed — an inconsistent offset total,
+an empty page claiming more, or a missing/repeated edge — it returns
+`*remote.PartialResultError`. These checks catch detectable structural
+contradictions; they do not manufacture a cross-page snapshot or prove that a
+dishonest service omitted a row while returning internally coherent metadata.
+A custom list that does not provide cursor edges remains supported through
+offset pages and must configure a sufficient `MaxOffset`, as documented in the
+module reference.
 
 Guarantee 2 is the one that needed new machinery: the predicate AST is closed,
 so a filter could not leave the process at all. `crud.MarshalPredicate` is
 [[D-054]], and what proves it is not a table of expected documents but a round
 trip asserted on rendered SQL and binds — the document is a shape, the SQL is
-the question.
+the question. A filtered `GetByID` uses List with the key equality added to the
+same document, because an HTTP entity route has no root-filter spelling. A
+per-preload `maxRows` travels in that document too and can only tighten the
+far endpoint's `MaxPreloadRows` ceiling. Because it is the ordinary public
+List grammar, a restrictive peer must list the primary key and the caller's
+filter fields in `query.Config.Filterable`; that refusal is preferable to a
+keyed read that silently weakens its eligibility check.
 
 Guarantee 8's line is [[D-053]]: refuse what changes which rows come back,
 document what changes only their order or their freshness. Two options are in
@@ -104,12 +129,15 @@ decision. The cost is real and is stated there: `crud.PrimaryOnly` cannot be
 honoured, so a read that decides a write is served by whatever the far side's
 replica policy allows.
 
-Guarantee 10's differences are three, all in [[FL-013]]: the fault's own code
+Guarantee 10's differences are two, both in [[FL-013]]: the fault's own code
 arrives exactly over gRPC and is recovered from the first violation over HTTP,
-because the envelope carries no separate field for it; `GET /{id}` carries
-preload paths in a query string and so refuses a narrowed preload, where gRPC
-sends the whole document; and gRPC's `InvalidArgument` is two of HTTP's statuses,
+because the envelope carries no separate field for it; and gRPC's `InvalidArgument` is two of HTTP's statuses,
 so the code has to undo the collapse [[D-052]] accepted.
+
+The `crud.Core` decorator half of former guarantee 11 is deliberately not
+claimed as covered: a remote resource has no transaction and cannot make a
+client-side gate enforce the owning service's policy. The far service's gate is
+the authority for that rule.
 
 There is one HTTP client and not three. A consumer calling out uses `net/http`
 whatever it serves with, and the three bindings register the same routes —

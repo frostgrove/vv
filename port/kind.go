@@ -120,7 +120,7 @@ func sentinelKind(err error) errs.Kind {
 		return errs.KindForbidden
 	case errors.Is(err, crud.ErrConflict):
 		return errs.KindConflict
-	case errors.Is(err, ErrBadRequest), errors.As(err, &qe), errors.As(err, &uf), errors.As(err, &se),
+	case errors.Is(err, ErrBadRequest), errors.Is(err, crud.ErrBadRequest), errors.As(err, &qe), errors.As(err, &uf), errors.As(err, &se),
 		errors.Is(err, crud.ErrMissingID):
 		return errs.KindBadRequest
 	default:
@@ -185,7 +185,7 @@ func FaultOf(err error) *errs.Fault {
 	// A bare ErrBadRequest carries no code, so it renders as the coarse one and
 	// its own text stays behind. A call site that wants its sentence rendered
 	// says so with BadRequestAs.
-	case errors.Is(err, ErrBadRequest):
+	case errors.Is(err, ErrBadRequest), errors.Is(err, crud.ErrBadRequest):
 		return synth(errs.BadRequest(), errs.CodeBadQuery, nil, "")
 
 	default:

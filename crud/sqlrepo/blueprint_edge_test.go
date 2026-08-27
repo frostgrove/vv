@@ -378,6 +378,33 @@ func TestACallerFilterCannotWidenTheScope(t *testing.T) {
 	}
 }
 
+// Permanent narrowings are independently safe declarations. Repeating Scope
+// must retain both predicates — last-wins would turn adding a visibility guard
+// into removing the tenant guard it followed.
+func TestRepeatedScopesComposeByAND(t *testing.T) {
+	repo := sqlrepo.Define[User, int64, UserUpdate]("users",
+		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
+		sqlrepo.Scope(crud.Eq("Age", 30)),
+	).Bind(crudtest.Postgres().Push(crudtest.Rows()))
+
+	if _, err := repo.GetAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Bind a fresh recorder to inspect the exact declaration-derived SQL: the
+	// first repository above proves the declaration remains normally callable.
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	repo = sqlrepo.Define[User, int64, UserUpdate]("users",
+		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
+		sqlrepo.Scope(crud.Eq("Age", 30)),
+	).Bind(rec)
+	if _, err := repo.GetAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users" `+
+			`WHERE ("tenant_id" = $1 AND "age" = $2)`)
+}
+
 // An UPDATE has a WHERE clause of its own, but it is the primary key alone: the
 // scope does its work on the load that precedes it, so a row outside the scope
 // is never diffed and never written.

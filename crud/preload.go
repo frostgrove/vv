@@ -20,6 +20,12 @@ const preloadBatch = 900
 type PreloadSpec struct {
 	Path string   // "Comments" or "Comments.Author"
 	Opts []Option // extra Where/OrderBy applied to the related query
+
+	// MaxRows caps every relation hop in Path. It is separate from Opts so a
+	// request for Comments.Author cannot leave the potentially large Comments
+	// hop uncapped while only limiting Author. Zero leaves the direct repository
+	// preload uncapped.
+	MaxRows int
 }
 
 // Preload loads the named relations after the main query. Paths may be nested:
@@ -46,6 +52,17 @@ func PreloadWhere(path string, opts ...Option) Option {
 	}
 }
 
+// PreloadCap is PreloadWhere with a materialisation ceiling. The cap applies
+// to every hop in a nested path: PreloadCap("Comments.Author", 100) refuses a
+// 101st Comment before it can make the nested Author query unbounded by the
+// parent relation. A cap is a refusal rather than pagination, so no parent is
+// handed a silently partial relation.
+func PreloadCap(path string, maxRows int, opts ...Option) Option {
+	return func(o *Options) {
+		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: opts, MaxRows: maxRows})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // the tree
 
@@ -54,6 +71,7 @@ type preloadNode struct {
 	opts     []Option
 	children []*preloadNode
 	whole    bool // some spec asked for this relation unnarrowed
+	maxRows  int
 }
 
 func (n *preloadNode) child(name string) *preloadNode {
@@ -84,6 +102,9 @@ func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 				return nil, &SchemaError{Reason: "empty segment in preload path " + spec.Path}
 			}
 			cur = cur.child(seg)
+			if spec.MaxRows > 0 && (cur.maxRows == 0 || spec.MaxRows < cur.maxRows) {
+				cur.maxRows = spec.MaxRows
+			}
 		}
 		// Folding two requests for the same path into one query is what makes
 		// "Comments" and "Comments.Author" share a statement. Folding their
@@ -163,7 +184,7 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 			return &UnknownFieldError{Model: m.Name, Field: node.name}
 		}
 		path := joinPath(prefix, rel.Name)
-		children, err := p.load(m, rel, parents, node.opts, path)
+		children, err := p.load(m, rel, parents, node.opts, node.maxRows, path)
 		if err != nil {
 			return err
 		}
@@ -184,12 +205,15 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 // load fetches one relation for a whole set of parents and wires the results
 // into their fields, returning the loaded children so nested preloads can
 // continue from them.
-func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option, path string) ([]reflect.Value, error) {
+func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option, maxRows int, path string) ([]reflect.Value, error) {
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
 		return nil, err
 	}
 	o := Build(opts...)
+	if maxRows > 0 && (o.PreloadRows == 0 || maxRows < o.PreloadRows) {
+		o.PreloadRows = maxRows
+	}
 	if o.Limit != 0 || o.Page != 0 || o.Offset != 0 || o.Unpaged {
 		return nil, &SchemaError{Model: m.Name, Field: rel.Name,
 			Reason: "a preload cannot be paginated; it is loaded for every parent at once"}
@@ -219,7 +243,11 @@ func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts [
 	index := make(map[any][]reflect.Value, len(keys))
 	total := 0
 	for chunk := range slices(keys, preloadBatch) {
-		rows, owners, err := p.fetch(target, rel, local, remote, chunk, o, path)
+		remaining := -1
+		if o.PreloadRows > 0 {
+			remaining = o.PreloadRows - total
+		}
+		rows, owners, err := p.fetch(target, rel, local, remote, chunk, o, path, remaining)
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +284,7 @@ func (p *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
 
 // fetch runs one batched SELECT and returns the scanned children together with
 // the parent key each one belongs to.
-func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string) ([]reflect.Value, []any, error) {
+func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string, remaining int) ([]reflect.Value, []any, error) {
 	var (
 		b       *SQL
 		ownerAt = -1 // index of the owner-key column in the result, -1 = derive from the row
@@ -307,6 +335,12 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 		sort = []Order{Asc(target.PK.Name)}
 	}
 	b.OrderBy(sort)
+	// Fetch one row beyond the remaining budget. It is enough to make the
+	// failure exact while keeping the driver from materialising an unbounded
+	// child table merely to discover the cap was crossed.
+	if remaining >= 0 {
+		b.LimitOffset(remaining+1, 0)
+	}
 
 	q, args, err := b.Done()
 	if err != nil {
@@ -323,6 +357,10 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 		owners []any
 	)
 	for rows.Next() {
+		if remaining >= 0 && len(out) >= remaining {
+			return nil, nil, &SchemaError{Model: target.Name, Field: path,
+				Reason: "preload exceeds the configured row limit"}
+		}
 		child := reflect.New(target.Type)
 		dest, err := target.Pointers(child.Interface(), target.Fields)
 		if err != nil {

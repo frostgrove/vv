@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/rpc/crudgrpc`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — a `Replace` whose `entity` key is misspelled overwrites the row with a zero model and answers success, the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers. On the client seam, a numeric key past 2⁵³ can select a different row; path-carrier losslessness awaits an Errs-owned codec decision.
+**Verdict:** not ready — the one snippet the module page gives for the error contract is a silent no-op on all eight methods, a panic in a consumer's own hook takes the whole process down where the three HTTP bindings answer 500, and no tool and no other team's build can see what the service offers. The former 64-bit numeric-key rounding defect and missing mutation-wrapper defect are closed: unsafe `Struct` numbers are refused, framework gRPC calls carry exact decimal keys, and absent/null `patch` or `entity` is refused before the service. Path-carrier losslessness awaits an Errs-owned codec decision.
 
 ## What a consumer is actually trying to do
 
@@ -106,7 +106,7 @@ Rule 3 also collides with a claim elsewhere: [[UC-015]] guarantee 5 is "a 400 ca
 3. A missing row is `NotFound`, distinct from every other failure, with no table name in the message.
 4. A key that does not parse answers `InvalidArgument` and no statement is issued.
 **Today:** ✅ ready
-**Evidence:** `handler.go:130` (`Get`), `message.go:100` (`idOf`: a string or a number, then `port.CoerceID`), `message.go:86` (the nested `query`). `handler_test.go:228` pins the large-key round trip with a control that the same number *inside* an entity does lose precision; `handler_test.go:259` pins the unparseable key against a fake that records every call; `status_test.go:165` pins that no status message names the entity. The preload is walked at `test/integration/rpc_grpc_test.go:130` against a live database — `test/portmount/grpcmount_test.go:129` sends `select` only, and nothing in this module's own tests names a preload at all.
+**Evidence:** `handler.go:130` (`Get`), `message.go:312` (`idOf`: an exact number or decimal string, then `port.CoerceID`), `message.go:298` (the nested `query`). `handler_test.go:228` pins the large-key round trip with a control that the same number *inside* an entity does lose precision; `handler_test.go:259` pins the unparseable key against a fake that records every call; `status_test.go:165` pins that no status message names the entity. The preload is walked at `test/integration/rpc_grpc_test.go:130` against a live database — `test/portmount/grpcmount_test.go:129` sends `select` only, and nothing in this module's own tests names a preload at all.
 **If not ready:** —
 
 ### H-CRUDGRPC-04 — Create a row and let the database own the key
@@ -278,13 +278,22 @@ Rule 2 is a conformance failure against a binding decision. [[D-063]]'s Invarian
 2. The same for a patch document.
 3. A key a client did not send and a key the server did not recognise are told apart from a change the server applied.
 4. No spelling mistake in the envelope destroys data.
-**Today:** ❌ missing
+**Today:** 🟡 partial — unknown fields inside an entity or patch are still tolerated; the destructive missing-wrapper case is fixed.
 **Evidence:** The query document is strict and its own comment says why: `crud/query/request.go:84` decodes with `DisallowUnknownFields` because "a client that writes 'filtr' instead of 'filter' produces a document with no filter at all … that is the one failure a client cannot see". [[D-013]] is the decision behind it, it already owns the query document's own keys, and it already weighed and rejected the forward-compatibility trade — *"that trade is available and was not taken, because 'tolerate' here means answer a different question than the one asked"*. Its **What it forbids** list says nothing about entity bodies.
 
 The entity and patch documents get no such treatment. `message.go:50` is a plain `json.Unmarshal`, and `crud/query/request.go:89` is the only `DisallowUnknownFields` in the tree outside tests. `crud/sqlrepo/repository.go:729` then returns the current row when the patch produced no changes, so a misspelling and a deliberate no-op are the same answer, and H-CRUDGRPC-05's rule 4 blesses the no-op correctly.
 
-Rule 4 is the destructive member of the family and it is gRPC-only. `sub` returns `(nil, nil)` for an absent key (`message.go:60-67`), `fromStruct` on a nil Struct leaves the target untouched (`message.go:42-45`), and `Replace` then hands a zero `In` to the mapper and a zero model to the service (`handler.go:209-221`). `port/service.go:190-212` checks the row exists, clears the generated columns, sets the key from the request and saves. So `{"id":"42","entty":{…}}` returns a success and blanks every column of row 42. HTTP has no such hole: a `PUT` body *is* the entity, so there is no envelope key to misspell.
-**If not ready:** Two ways out for rules 1–3, both decisions rather than patches: make the entity and patch decoders strict the way the query decoder is — which is [[D-013]] extended to the bodies it deliberately does not cover, a behaviour change on all four bindings, and it breaks a client that sends an extra field today — or ship the descriptor of H-CRUDGRPC-11 so a generated stub refuses it at the caller's compile time. Rule 4 is not one of those: an absent `entity` on `Replace` is a client mistake by every reading, and `sub` refusing it the way `idOf` refuses an absent `id` is a small local change that costs nobody a working request. The same argument covers `idsOf` in H-CRUDGRPC-06.
+Rule 4, the destructive missing-wrapper member, is closed. `requiredSub` refuses
+absent, null and non-object `patch` and `entity` before a DTO or model exists,
+so a misspelled wrapper is a client error rather than a zero-model replacement.
+The remaining concern is rules 1–3: unknown fields *inside* an otherwise present
+entity or patch retain the cross-binding strict-decoding decision in [[D-013]].
+**If not ready:** Two ways out for rules 1–3, both decisions rather than patches:
+make the entity and patch decoders strict the way the query decoder is — which is
+[[D-013]] extended to the bodies it deliberately does not cover, a behaviour
+change on all four bindings, and it breaks a client that sends an extra field
+today — or ship the descriptor of H-CRUDGRPC-11 so a generated stub refuses it
+at the caller's compile time.
 
 ### H-CRUDGRPC-15 — Fifteen resources on one server
 **Who:** the platform engineer standing up the whole internal API
@@ -646,7 +655,7 @@ sixty lines. It is not the sixty lines the decision describes.
 | Survive a panic in a hook or a presenter | add a third-party recovery interceptor, or write one — a dependency this repository otherwise does not have | small to write, large to discover |
 | One message catalogue for the whole server | the documented snippet is a no-op on all eight methods; the working shape is a `Renderer` per resource, plus the same options again on `Errors` | large |
 | See why an `Internal` happened | implement `Renderer` (~10 lines), pass it per resource; the line then lands in `slog.Default()` with no method, no resource and no trace | large |
-| Tell a caller they misspelled a field | nothing does, on either side, ever — and on `Replace` the typo blanks the row | large |
+| Tell a caller they misspelled a field | unknown fields inside a present entity/patch remain a cross-binding decoding decision; a missing wrapper is refused before service | large |
 | Test the mounted resource before it ships | twenty lines of `bufconn` wiring, published nowhere, one server per test or the binary exits | large |
 | Deploy it behind a readiness probe | health, TLS and keepalive are yours, and no page says so; the probe is refused by the documented auth chain | large |
 | Load a batch in | eight methods, and the bulk one only deletes | large |
@@ -673,7 +682,7 @@ where the module stops helping.
 
 | # | What | Severity | Lands in | Why it blocks |
 |---|---|---|---|---|
-| 1 | A missing or misspelled `entity` key on `Replace` silently overwrites the row with a zero model and answers success (`message.go:60-67`, `handler.go:209-221`, `port/service.go:190-212`) | blocker | `crud/rpc/crudgrpc` | Data loss from one typo, with a success on the wire. It is gRPC-only — an HTTP `PUT` body *is* the entity, so there is no envelope key to misspell — which makes it exactly the transport-specific hazard a tag would freeze. |
+| 1 | ~~A missing or misspelled `entity` key on `Replace` silently overwrites the row with a zero model and answers success.~~ | **closed** | `crud/rpc/crudgrpc` | `requiredSub` refuses absent, null and non-object wrappers before service; the remaining unknown-inner-field decision is tracked separately. |
 | 2 | A panic in a presenter, hook or renderer kills the process; the three HTTP bindings recover the same panic and this one recovers nothing — and `Errors` is optional, so a consumer following the module page's own mount is unprotected on streams as well | blocker | `crud/rpc/crudgrpc` | The docs claim every rule is identical across the four bindings. The one that differs turns a consumer's nil dereference into an outage, and [[FL-013]]'s difference table has no row for it. |
 | 3 | `Errors(WithMessages(catalogue), WithCodes(codes))` — the only snippet either module page gives for the error contract — never runs for any of the eight methods, because the handler renders first and the interceptor passes a rendered status through | blocker | `crud/rpc/crudgrpc` + both module pages · all four bindings for the real fix | Half-working, which is worse than not working: a consumer ships untranslated sentences on every resource error and correct ones on their own methods, and nothing fails. Subsumes the `Errors`-takes-no-`Renderer` shape problem — same seam, same fix. |
 | 4 | No descriptor, no reflection — and the example instructs the reader to use grpcurl, which cannot resolve a method without one | blocker | `crud/rpc/crudgrpc` + seven documents, one of them source | Anyone who opens a terminal is stopped on day one by an instruction that cannot work. |
@@ -742,18 +751,18 @@ re-discovering them.
 **Setup:** The primary key is `9007199254740993`, the first `int64` a `google.protobuf.Value` number cannot represent exactly.
 **What the consumer does:** A hand-written native client sends that value as the numeric `id` in `Get`, as it would in JSON.
 **What must happen:** The binding either addresses that exact row or refuses the numeric spelling and tells the caller to send an `id` string; it must never turn a key into its neighbour and answer it successfully.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `message.go:94-110` accepts either scalar spelling, and `message.go:141-153` formats the already-rounded `float64`; `handler_test.go:228-256` deliberately proves that the numeric spelling does not reach the original key. The module page says keys are strings at `docs/modules/en/crudgrpc.md:200-204`, but the server still accepts the unsafe native form. No refusal test exists.
-**Blast radius:** silent wrong answer
+**Today:** ✅ fixed
+**Evidence:** `message.go` rejects an integral `Struct` number outside the exact range before ID coercion; `TestGRPCStructNeverRoundsIDsOrPreloadFilterIntegers` pins both the refusal and the exact decimal-string route. `transport.go:exactBulkIDs` makes the framework gRPC client serialize numeric bulk keys as exact decimal strings, pinned by the client transport test. A direct keyed call without an ID is also refused locally rather than falling through to a collection route.
+**Blast radius:** closed — the raw caller receives a client error; the framework route preserves the named key.
 
 ### E-CRUDGRPC-02 — `patch: null` is mistaken for an empty patch
 **Shape:** misuse
 **Setup:** A hand-written caller or a JSON-marshalling wrapper supplies `{"id":"42","patch":null}` rather than omitting the optional wrapper.
 **What the consumer does:** They expect a malformed top-level patch document to be refused; explicit null remains meaningful *inside* a patch field and must not silently acquire a second, wrapper-level meaning.
 **What must happen:** The binding rejects the null wrapper before the service is called, or gives it a documented, observable operation distinct from an empty patch.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `message.go:60-73` returns nil for both an absent and a null nested document, `message.go:42-54` then leaves the zero DTO unchanged, and `handler.go:175-192` sends it to `Update`. `handler_test.go:168-224` pins null versus absent *inside* the nested object, not `patch: null`; no test exercises the wrapper value.
-**Blast radius:** silent wrong answer
+**Today:** ✅ fixed
+**Evidence:** `requiredSub` in `message.go:83-102` distinguishes optional query documents from required mutation wrappers and refuses absent, null or non-object `patch`/`entity` values before decoding. `TestMutationBodiesMustBeObjectsRatherThanNull` pins both `Update` and `Replace`, including absent and null wrappers, and asserts the service receives no call.
+**Blast radius:** closed
 
 ### E-CRUDGRPC-03 — The protobuf decoder rejects the request before the framework can render it
 **Shape:** partial failure
@@ -869,10 +878,10 @@ proves the native status or server context completion.
 
 ## Edge verdict
 
-The release-blocking wire defect is the canonical 64-bit numeric rounding path:
-the server accepts a native number it has already rounded, then can act on a
-neighbouring row. Path reconstruction is an Errs-owned codec decision carried by
-gRPC, not a second Crudgrpc grammar. The binding does close a presenter
+The release-blocking native 64-bit numeric rounding path is closed: the server
+refuses an unsafe `Struct` number before ID coercion, while framework gRPC calls
+send keyed and bulk IDs as exact decimal strings. Path reconstruction is an
+Errs-owned codec decision carried by gRPC, not a second Crudgrpc grammar. The binding does close a presenter
 serialization failure and the normal violation cap by construction, but the
 former lacks a failing-path test and the latter is removed by a zero
 configuration. Its client half trusts remote error detail cardinality without
@@ -883,4 +892,4 @@ contracts remain partly specified rather than pinned.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | A native numeric `id` above 2⁵³ is accepted after the `Struct` has rounded it, so a successful `Get`, `Update`, `Replace` or `Delete` can address a neighbouring 64-bit key. | blocker | The client gets a successful operation on a row it did not name; the documented string route does not protect a caller the server continues to accept. |
+| 1 | ~~A native numeric `id` at magnitude 2⁵³ or greater is accepted after the `Struct` has rounded it.~~ | **closed** | Unsafe numeric spellings are rejected; keyed and bulk framework calls use exact decimal strings. |

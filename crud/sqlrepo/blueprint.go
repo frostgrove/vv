@@ -82,7 +82,9 @@ func PreloadDepth(n int) Setting { return func(s *settings) { s.preloadDepth = n
 // scope too. Reaching a *different* model is a different question, because
 // another model's rows are another repository's business — say what should
 // happen there with RelationScope.
-func Scope(p crud.Predicate) Setting { return func(s *settings) { s.scope = p } }
+func Scope(p crud.Predicate) Setting {
+	return func(s *settings) { s.scope = crud.And(s.scope, p) }
+}
 
 // SoftDelete turns deletion into a column write: Delete and DeleteAll stamp the
 // named timestamp instead of removing rows, and every read filters the stamped

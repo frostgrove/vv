@@ -62,6 +62,10 @@ the set as well — including a refusal when the set turns out to be "everything
   transaction (UC-005).
 - **A meaningful count.** Guarantee 5 is deliberately weak. Portable code should
   treat the number as advisory.
+- **Arbitrary SQL in `crud.Raw`.** This is an explicit trusted-developer escape
+  hatch, not a declarative specification. A generic guard cannot prove whether
+  arbitrary SQL is unrestricted; treating it as covered would be a wrong
+  contract. Use the direct repository bulk verb when that power is intentional.
 
 ## Covered by
 | Flow | What it contributes |
@@ -70,8 +74,8 @@ the set as well — including a refusal when the set turns out to be "everything
 | [[FL-008]] | the narrowing in the statement, the unscoped-write guards, the frozen-field check, and the row-level veto |
 
 ## Status
-**partially covered.** Guarantee 12 does not hold in one reachable case, and
-guarantee 13 is unevenly proven.
+**covered.** The runtime guarantees and refusal contract hold on their public
+paths.
 
 Proven: the one-statement shape, the write-everything-defined rule, the empty-DTO
 no-op, the repository narrowing in the statement, the version counter advancing
@@ -81,18 +85,19 @@ and the row-level veto. The conformance suite runs a filtered update against
 every driver and engine target, so the divergent row count is a measured fact
 rather than a warning.
 
-**Gap 1 — a caller-supplied limit desynchronises the row-level check from the
-statement, breaking guarantee 12.** The rows a policy inspects are fetched with
-the caller's own options, and that fetch honours a limit; the `UPDATE` and
-`DELETE` carry no limit at all. So a filtered write with a limit inspects one row
-and writes every matching row. A single-row delete by id is not affected.
+**Closed gap — caller shaping cannot desynchronise the row-level check from the
+statement.** The gate's internal victim read retains only filters and relation
+scopes. It drops paging, cursors, projection, preloads, sort and `DISTINCT`, so
+an `Inspect` hook sees every row the eventual bulk statement can touch. The
+control test supplies a limit, cursor and preload, then verifies that a rejected
+second row prevents every write.
 
-**Gap 2 — the empty-specification refusal is unevenly proven.** The delete side is
-tested against thirteen distinct spellings of "empty", each asserting no
-statement ran. The update side is tested against exactly one spelling, and only
-in the database-backed suite. Both refusals are also plain sentinels wrapping
-nothing, so an HTTP transport maps them to 500 rather than 400 unless the
-application handles them.
+**Closed gap — an unrestricted declarative specification is a client refusal.**
+Delete and update are both tested against every public AST spelling that means
+"every row", including a Criteria `Conjunction`, empty `NOT IN`, `PK IS NOT
+NULL` and a primary key compared with itself. They do not mistake a nullable
+column's `IS NOT NULL` / self-comparison for a tautology. The sentinels wrap
+`crud.ErrBadRequest`, so transports return a 400 rather than a private 500.
 
 The asymmetry worth stating: a delete by explicit ids is never subject to the
 unscoped-write guard, because the ids are the narrowing. That is right, but it

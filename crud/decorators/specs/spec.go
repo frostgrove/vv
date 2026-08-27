@@ -48,6 +48,19 @@ func Lift[M any](p crud.Predicate) Specification[M] {
 	return SpecFunc[M](func(Root[M], Builder) crud.Predicate { return p })
 }
 
+// If contributes s only when ok. A false condition is no restriction, so it
+// composes safely with AllOf, AnyOf, And and Or without an accumulator.
+//
+// If every member of an AnyOf is absent, that AnyOf is itself unrestricted.
+// Put a mandatory restriction in a surrounding AllOf when that would be too
+// broad for the operation.
+func If[M any](ok bool, s Specification[M]) Specification[M] {
+	if !ok {
+		return nil
+	}
+	return s
+}
+
 // Root resolves model attributes, like JPA's Root<T>. Attributes are addressed
 // by Go field name; a column name also works.
 type Root[M any] struct{}
@@ -79,6 +92,24 @@ func (Builder) Like(p Path, pattern string) crud.Predicate    { return crud.Like
 func (Builder) NotLike(p Path, pattern string) crud.Predicate { return crud.NotLike(p.Name, pattern) }
 func (Builder) LikeIgnoreCase(p Path, pattern string) crud.Predicate {
 	return crud.LikeIgnoreCase(p.Name, pattern)
+}
+func (Builder) Contains(p Path, value string) crud.Predicate {
+	return crud.Contains(p.Name, value)
+}
+func (Builder) StartsWith(p Path, value string) crud.Predicate {
+	return crud.StartsWith(p.Name, value)
+}
+func (Builder) EndsWith(p Path, value string) crud.Predicate {
+	return crud.EndsWith(p.Name, value)
+}
+func (Builder) ContainsIgnoreCase(p Path, value string) crud.Predicate {
+	return crud.ContainsIgnoreCase(p.Name, value)
+}
+func (Builder) StartsWithIgnoreCase(p Path, value string) crud.Predicate {
+	return crud.StartsWithIgnoreCase(p.Name, value)
+}
+func (Builder) EndsWithIgnoreCase(p Path, value string) crud.Predicate {
+	return crud.EndsWithIgnoreCase(p.Name, value)
 }
 
 func (Builder) IsNull(p Path) crud.Predicate    { return crud.IsNull(p.Name) }

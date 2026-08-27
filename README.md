@@ -180,9 +180,15 @@ db:
 ```
 
 ```go
-sqlDB := vvdb.MustOpen(cfg.DB)               // database/sql, pool sized
-pool  := dbpgx.MustConnect(ctx, cfg.DB)      // or a pgx pool
+primary, replica := vvdb.MustOpenReadWrite(cfg.DB) // database/sql, pools sized
+src := crudsql.Postgres(primary)
+if replica != nil {
+    src = crud.ReadWrite(src, crudsql.Postgres(replica))
+}
 ```
+
+For pgx, use `dbpgx.MustConnectReadWrite(ctx, cfg.DB)` instead. These are
+alternative driver families for the same configuration.
 
 Bind it to a datasource:
 
@@ -839,6 +845,7 @@ is a 400 and never a silently dropped clause.
 ```
 
 Operators: `eq ne gt gte lt lte like notLike ilike contains startsWith endsWith
+iContains iStartsWith iEndsWith
 in notIn between isNull isNotNull`, with `$`-prefixed and symbolic aliases
 (`$gte`, `>=`). A bare value means `eq`, a bare array means `in`, `null` means
 `IS NULL`.

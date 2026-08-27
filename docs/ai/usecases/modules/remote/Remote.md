@@ -2,7 +2,11 @@
 
 **Covers:** `github.com/frostgrove/vv/remote`, `github.com/frostgrove/vv/remote/remotehttp`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — `GetAll` can silently truncate, `GetByID` drops a narrowing predicate, and a remote resource has no scope seam; edge cases add credential disclosure through URL userinfo, redirect following, hooks that still run after cancellation, and ambiguous write outcomes after a lost response.
+**Verdict:** not ready — a remote resource has no local `security.Gate` seam;
+the remaining sweep findings include credential disclosure through URL userinfo,
+redirect following, hooks that still run after cancellation, and ambiguous write
+outcomes after a lost response. Earlier `GetAll` truncation and `GetByID` list-
+filter claims are superseded by H-REMOTE-08 and the entity-route contract below.
 
 ## What a consumer is actually trying to do
 
@@ -72,6 +76,13 @@ anything when one side holds an opaque predicate. `TestRawSQLIsNeverPutOnTheWire
 **If not ready:** —
 
 ### H-REMOTE-02 — One row by key, and the branch when it is not there
+
+> **Implemented after this sweep.** `port.NarrowForEntity` now preserves
+> eligibility filters, and `remote.GetByID` switches to the document-shaped
+> List route with a primary-key equality when it sees a root filter or narrowed
+> or capped preload. The old silent-drop evidence below is retained as historical review
+> evidence, not current behaviour.
+
 **Who:** the same engineer, rendering an invoice line
 **Wants:** `GetByID`, and a 404 of their own when the article is gone.
 **Story:** They call `GetByID`, and on the failure they take the branch they
@@ -88,7 +99,7 @@ multi-tenant — they add `crud.Where(crud.Eq("TenantID", …))` to the same cal
    narrows it or is refused. It is never dropped.
 5. Whatever the far service's own gate decides about a row it hides, the client
    reports faithfully and does not invent a class of its own.
-**Today:** ❌ missing — (4) is the one that fails, and it fails silently.
+**Historical sweep result — superseded by the implementation note above.**
 **Evidence:** (1) and (2) hold: `remote/resource.go:130-145`;
 `remote/remotehttp/transport.go:247-260` rebuilds the fault through
 `port.FaultFrom`, and `port.sentinelFor` (`port/kind.go:286-302`) wraps
@@ -126,7 +137,7 @@ decision, and `remote` mirrors whichever status arrived. A far side that answers
 403 hands the caller `crud.ErrForbidden`, which does confirm the row exists.
 Nothing in `remote/` constructs a policy-hidden row, so no test would fail if
 this stopped being true.
-**If not ready:** For (3), split the preload today: fetch the row, then `Get` the
+**Historical proposal — superseded:** For (3), split the preload today: fetch the row, then `Get` the
 children with their own filter. For (4) there is no workaround — the caller
 cannot see that the predicate was dropped — so the only safe advice today is
 never to pass a narrowing option to a remote `GetByID`, which is advice nobody
@@ -358,9 +369,10 @@ And the seam is narrower than it looks. `port.Repository` is eight methods
 `Count` take `crud.Option`; `Meta`, `Save` and `Delete` take none;
 `Resource.Update` refuses every non-nil option it is handed
 (`remote/resource.go:212`, `remote/resource.go:292-300`) for the good reason at
-`remote/resource.go:205-209`; and `Resource.GetByID` *accepts* a predicate and
-throws it away (H-REMOTE-02(4)). So of eight methods, **three** reads can
-actually carry a narrowing today, not four.
+`remote/resource.go:205-209`; and `Resource.GetByID` preserves a predicate by
+routing it through List with the key equality (H-REMOTE-02). So all **four**
+reads can carry a narrowing today. That still supplies no transactional,
+all-method policy seam.
 **If not ready:** Today they either pass `crud.Where(crud.Eq("TenantID", …))` at
 every call site — which is worse than a forgetting risk, because on `GetByID` it
 is a leak even when nobody forgets — or write their own eight-method wrapper
@@ -381,6 +393,16 @@ owning service's gate. The DX section below spells out what the wrapper can and
 cannot promise.
 
 ### H-REMOTE-08 — Read more rows than fit in one page
+
+> **Implemented after this sweep.** The historical analysis below is retained
+> for traceability, but its `Unpaged`/silent-truncation evidence no longer
+> describes the shipped code. Current `remote.GetAll` clears `Unpaged`, reads
+> bounded pages, follows cursor edges through a terminal empty page, and returns
+> `ErrPartialResult` for detectable malformed progress. It is not a cross-page
+> snapshot: concurrent or internally coherent dishonest far-side changes remain
+> outside a stateless client's proof. A cursorless custom list and a DISTINCT
+> projection without the primary key use offset pages and need a sufficient
+> `MaxOffset`.
 **Who:** whoever owns the reconciliation job, the search indexer or the CSV
 export
 **Wants:** every article, once a night, and to be sure it was every article.
@@ -401,7 +423,7 @@ out.
    field (1) proves can lie.
 6. A sort the far side cannot cursor is refused at the first page, with the
    remedy named, rather than silently walked by offset.
-**Today:** ❌ missing
+**Historical sweep evidence — superseded by the implementation note above.**
 **Evidence:** (1) fails under one far-side configuration, and it is not the
 exotic one. `GetAll` sets `Unpaged` on the document (`remote/resource.go:117`).
 On the far side that becomes `crud.Unpaged()`, and `crud.Options.Resolved` clamps
@@ -463,7 +485,7 @@ with no cursor: the far side declared `UnstablePagination()`, the caller passed
 sort hops a relation so the value is not on the row and `setCursors` returns
 early (`crud/sqlrepo/repository.go:243-245`). The first two are closed by putting
 the key in the `OrderBy`; the third by sorting on a root column.
-**If not ready:** Today the honest workaround is not to call `GetAll` at all:
+**Historical proposal — superseded:** Today the honest workaround is not to call `GetAll` at all:
 walk pages with `crud.Limit` plus `crud.After` by hand and hope the sort is
 unique. Three closes, in the order they pay:
 *Client-only, no far-side deploy:* when the far side clamps an unpaged request,
@@ -867,8 +889,9 @@ second contract this module's caller cannot see. Ten fields decide it:
 `MaxDepth` (default 6), `MaxConditions` (64), `MaxPreloads` (16), `MaxInValues`
 (1024), `MaxSort` (16), `AllowUnpaged` (false), and the five allow-lists
 `Filterable`, `Sortable`, `Selectable`, `Preloadable`, `Searchable` — plus
-`sqlrepo.MaxLimit` and `port.Rules.BulkCap` beside it. `remote` names exactly one
-of them anywhere in its docs (`AllowUnpaged`, via `GetAll`). There is no
+`sqlrepo.MaxLimit` and `port.Rules.BulkCap` beside it. The current `remote`
+docs disclose the export-relevant sort/filter and cursorless-offset boundary,
+but there is still no
 constructor option that takes a peer's `query.Config`, nothing that fetches one,
 nothing that validates a request against one before sending. `grep -rn
 "query.Config" remote/` returns nothing.
@@ -1180,8 +1203,8 @@ rather than left as an either/or in three places.
 
 **`ScopedReads` is named for what it can do, and the name is smaller than it
 sounds.** `port.Repository` is eight methods. `Get`, `GetAll` and `Count` take
-options a predicate can ride on; `GetByID` accepts options and drops the
-narrowing ones (H-REMOTE-02(4)); `Update` refuses them over a remote resource
+options a predicate can ride on; `GetByID` carries a narrowing through its List
+fallback (H-REMOTE-02); `Update` refuses them over a remote resource
 for a good reason of its own; `Save` and `Delete` take none. A wrapper that
 scoped the reads and forwarded the writes untouched would be
 `crudnet.WithScope`'s asymmetry under a new name — reads 404 on another tenant's
@@ -1190,13 +1213,10 @@ already says why that is not protection. So the writes refuse. Three things the
 proposal has to say out loud, because leaving any of them silent is how a
 smaller promise gets read as a bigger one:
 
-- **`GetByID` cannot be scoped by adding an option.** It has to route through
-  `Get` with an equality on the key plus the scope predicate, which is exactly
-  what `security.gate.loadScoped` already does in this process
-  (`crud/decorators/security/security.go:279-302`) — the same close H-REMOTE-02
-  needs, so one fix serves both. A `ScopedReads` that added `crud.Where` to
-  `GetByID` and shipped would be the *false* protection this paragraph is
-  arguing against.
+- **`GetByID` carries a scope predicate through List.** The resource adds the
+  equality on the key to that same document, matching the route
+  `security.gate.loadScoped` uses in process. That preserves an honest caller's
+  narrowing; it does not turn a call-site option into tenant enforcement.
 - **The write refusal needs a class, not a plain error.** A scoped resource
   mounted on `crudnet` is a gateway whose POST, PUT, PATCH and DELETE all refuse,
   and `port.KindOf` reads an unrecognised error as internal — so an unclassed
@@ -1280,12 +1300,12 @@ their own transaction/sink protocol around the callback.
   amendment makes `port.Rules.PageCap` authoritative, retains
   `sqlrepo.MaxLimit` only as a compatibility backstop, and requires every binding
   to forward one resolved cap (`docs/ai/usecases/modules/query/Query.md:931-950`).
-  Remote does not introduce another cap owner: under that pending contract,
-  `GetAll` requests the far endpoint's declared unpaged/export capability and
-  refuses if it is absent or capped; it never returns a truncated collection as
-  “all”. Proposed `port.EachPage` is the explicit multi-request alternative and
-  walks within the peer's declared page size. Until D-060 is amended, this is
-  migration guidance, not a claim about current `GetAll` behaviour.
+  Remote does not introduce another cap owner: current `GetAll` does not request
+  unpaged results. It reads bounded List pages and cursor edges; a peer without
+  edges, or a DISTINCT projection that cannot keyset-sort, has the explicit
+  `MaxOffset` boundary documented in the module reference. Proposed
+  `port.EachPage` remains the callback-shaped alternative. Until D-060 is
+  amended, this is migration guidance, not a second current cap authority.
 - [[D-047]] — a fault's `Error()` is classification only. Every far-side refusal
   this module surfaces reads as `errs: bad_request: bad_query (1 violation)` in a
   log, and the fix is **not** to put the violation message into `Error()`; that
@@ -1327,17 +1347,17 @@ their own transaction/sink protocol around the callback.
 | One peer, many resources | One `Transport(...)` per resource, each repeating host, client, hooks and cap by copy and paste | small — a peer constructor |
 | Holding the far service's model | A copy of another team's struct, and a patch DTO (or `struct{}`, undocumented). 15–30 lines of declarations, and nothing detects drift in either direction | large — it is a decision, not code |
 | The same read call as a local repository | Identical, filter and sort included | none |
-| A narrowing option on `GetByID` | Accepted and thrown away. Nothing to write instead; the only safe advice is not to pass one | small — route through `Get`, or refuse |
+| A narrowing option on `GetByID` | Carried through List with the primary-key equality, so it asks the same eligibility question as local | none |
 | The same error branches | Identical for not-found, conflict, stale, validation; the 401 goes through `AsFault` | small doc · large if it needs a new sentinel |
 | What cannot cross, refused by name | Exactly that, before anything is sent | none |
 | Knowing what the peer will accept | Read their `Define` call, or send it and dig the message out of the fault | small doc · large as a wiring assertion |
-| A narrowed preload on `GetByID` | Refused over HTTP, accepted over gRPC, documented in a flow doc | small |
+| A narrowed or capped preload on `GetByID` | Carried through List on both transports, preserving its document | none |
 | Many rows by key | Works — `crud.In` — and no doc says so, so the loop is what gets written | small (as a document) |
 | A header per request, from the context | Your own context key, extraction, inbound stash and header — about 20 lines across two packages — and you get **one** hook | small |
 | Two concerns adding headers | The second `WithRequestHook` silently deletes the first | small (one-line fix, invisible failure) |
 | A hook that knows which call and which resource | Not possible; re-parse the method and path, and there is nothing to re-parse for the resource | small (one signature, breaking, free before a tag) |
-| A tenant scope declared once | Nothing. `crud.Where` at every call site — which leaks on `GetByID` — or ~150 lines of your own wrapper that can scope three of eight methods | large |
-| Every row, for a job | `GetAll`, silently truncated wherever the far side declared a page size, with a page that says it is complete and a godoc that says the local call behaves the same | small client-side · larger for both halves |
+| A tenant scope declared once | Nothing. `crud.Where` at every call site now narrows `GetByID` too, but still is not enforcement; there is no safe all-method wrapper at this seam | large |
+| Every row, for a job | `GetAll` walks bounded pages and cursor edges; its result is an enumeration, not a far-side snapshot. Cursorless/DISTINCT-without-PK shapes need a declared offset budget. | closed client path · documented far-side boundary |
 | A cursor walk | Works, as far as anyone can tell; nothing walks one in a test, and the sending side's nulls placement is unasserted | small |
 | Writing more than one row | One round trip per row, and nowhere that says so | small (as a document) |
 | A local write and a remote write | Guesswork, and the safe version needs an idempotency key that does not exist | small (as a document) |
@@ -1358,8 +1378,8 @@ tests are the good kind: a real client against a real binding on a real server,
 with controls that fail when the assertion stops proving anything. The distance
 opens in two directions the first round did not separate. The first is inside the
 process: identity is reachable, capped at one hook, and shown nowhere; tenancy
-has no seam and cannot be given a complete one here; and `GetByID` quietly drops
-the one option that would have made the call-site workaround safe. The second is
+has no seam and cannot be given a complete one here; `GetByID` now preserves a
+call-site narrowing, but that does not make the call site an enforcement point. The second is
 everything the far service decides — its query policy, its page cap, its
 presenter, its release date — which is most of what a consumer will actually hit
 and almost none of what the module currently talks about. Customising rarely
@@ -1378,25 +1398,29 @@ here because it surfaces here.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `GetAll` comes back truncated wherever the far side declared a page size, and the page it discards claims to be complete (`remote/resource.go:112-127`, `crud/options.go:242-247`, `crud/sqlrepo/repository.go:217-218`) | blocker | Silent partial data in exports and reconciliation jobs. Query’s **pending D-060 migration contract** is the canonical proposed authority: it requires an export-capability request and refusal, never a truncated “all” result (`docs/ai/usecases/modules/query/Query.md:939-951`). The client-only half needs no far-side deploy: the far side's clamp is on the wire as `PaginatedResponse.Limit` (`crud/page.go:8`), and `GetAll` is already decoding and throwing it away |
-| 2 | A narrowing option on `GetByID` is silently dropped where the local call honours it: `port.NarrowForEntity` wipes `Filter`, `Terms`, `Search` and `Sort` (`remote/resource.go:139`, `port/request.go:38-44`) against `crud/sqlrepo/repository.go:144-150` | blocker | `GetByID(ctx, id, crud.Where(crud.Eq("TenantID", 7)))` is `ErrNotFound` locally and another tenant's row remotely, over a 200. It is the fourth answer [[D-053]] says does not exist, inside the module [[D-053]] was written for, and it falsifies the only workaround available for blocker 3 |
+| 1 | Closed: `GetAll` no longer sends `Unpaged`; it walks bounded pages and cursor edges, refusing detectable malformed progress. | closed | The old silent-truncation path is gone. See H-REMOTE-08's current implementation note for the explicit non-snapshot and cursorless-offset boundaries. |
+| 2 | Closed: keyed reads preserve eligibility filters. `remote.GetByID` uses List plus the key equality whenever the direct entity route cannot carry the narrowing. | closed | This restores local/remote predicate parity. The still-open issue is row 3: there is no local `security.Gate` composition. |
 | 3 | `security.Gate` cannot wrap a remote resource, and the obvious wrapper cannot close it: `port.Repository` carries usable options on three of eight methods (`port/repository.go:16-25`, `remote/resource.go:212`, and blocker 2) | blocker | Tenant isolation over a remote resource has no seam, and the shape everyone reaches for first — scope the reads, forward the writes — is the false protection `crud/http/crudnet/options.go:87-96` already warns about. The honest close is a smaller, named promise: reads scoped, writes refused with a rendered class, and enforcement left to the owning service's gate |
-| 4 | [[UC-018]] is marked `covered` with an empty gap list (`docs/ai/usecases/Index.md:89`), while blocker 1 falls inside its guarantee 3, blocker 2 inside guarantee 2, blocker 3 inside guarantee 11 and blocker 5 inside guarantee 7 | blocker | The use-case tree is what the next reader trusts instead of re-deriving. Either these findings are wrong or UC-018 loses `covered` and gains gap rows — deciding which is the one thing a release sweep owes the owner |
+| 4 | Closed/reclassified: [[UC-018]] remains covered with explicit out-of-scope boundaries for cross-page snapshots and transactions; row 3 remains a module-level integration limitation, not a false covered claim. | closed | The use-case status and module reference now state the boundary a calling service must respect. |
 | 5 | Any 2xx body is decoded with no content-type check and no required key, on **every** method (`remote/remotehttp/transport.go:156-158`, `remote/resource.go:280-289`) | serious | A JSON 200 from a proxy, a stub, or a peer using `crudnet.WithTransform` becomes an empty page, a zero-valued row that "exists", a count of 0, a delete that reports nothing gone, or a zero written back over the caller's model. One decode change closes this and H-REMOTE-13(3) — price it once. `decode`'s own comment states the requirement it misses |
 | 6 | A whole-row `PUT` writes zero over any column the client's copy of the model does not have (`remote/resource.go:186-200`, `crud/http/crudnet/handler.go:333-335`) | serious | The model is a hand copy of another team's struct and nothing detects drift. 200, a refreshed model that looks right, a column emptied on somebody else's row. No cheap library fix — it needs a stated position on how the model is meant to be kept in step |
 | 7 | The request hook is the wrong shape twice: `WithRequestHook` assigns instead of appending (`remote/remotehttp/transport.go:91`) and cannot tell which call or which resource it is on (`:90-92`, `:117`) | serious | Auth plus tracing is the normal wiring and the dropped one fails invisibly; and no idempotency key, metric label or per-resource branch is possible without re-parsing a URL. One signature change closes both — breaking now, free before a tag, a deprecation after |
 | 8 | A dead peer, a TLS failure, a timeout, an over-cap answer and a hook that could not mint a token are all unclassified plain errors; 429 is `KindInternal`; `Retry-After` is discarded (`remote/remotehttp/transport.go:133-155`, `port/porthttp/decode.go:22-41`) | serious | A gateway answers 500 where 503 is the truth, throttling is indistinguishable from breakage, and vv's own client throws away the header vv's own renderer wrote (`port/porthttp/render.go:146-148`) |
 | 9 | The only deadline in the module lives in `defaultClient()` (`remote/remotehttp/transport.go:71`), so a caller's longer deadline is cut to 30s **and** the documented workaround — pass your own client — removes the bound altogether | serious | The export job of blocker 1 is the caller that trips the first half, and the module's own test builds the unbounded client as a control (`remote/remotehttp/transport_test.go:37`) without noticing. Two docs assert the opposite, one of them a test comment (`transport_test.go:87-88`) whose body proves something else — the vacuous verdict [[D-020]] exists to refuse. One edit closes this and row 10 |
 | 10 | `defaultClient()` has no `http.Transport` of its own, so a hot resource gets `MaxIdleConnsPerHost` 2 (`remote/remotehttp/transport.go:71`) | sharp edge | The most common first-quarter production surprise of the set: the peer is healthy, this process is in TCP and TLS handshakes, and nothing at the wiring says to pass a tuned client. Same constructor, same edit as row 9 |
-| 11 | `GetAll`'s doc comment claims parity with a local `GetAll` that is capped (`remote/resource.go:109-111`), which [[D-060]]:68-70 and `TestGetAllIsNotCappedByMaxLimit` both say is false | sharp edge | It sits on the method that causes blocker 1, and a reader who checks the godoc before writing the export job is told the truncation is normal. One line, and it is not covered by blocker 1's own close |
+| 11 | Closed: `GetAll`'s godoc now describes the bounded page/cursor walk and its explicit cursorless-offset boundary. | closed | The old capped-parity claim was removed with the implementation of the walk. |
 | 12 | The base URL is never parsed; a missing scheme fails on the first call, not at wiring (`remote/remotehttp/transport.go:40`) | sharp edge | Every other declaration mistake in this library is a start-up failure ([[D-021]]); this one waits for traffic. `TryTransport` beside a panicking `Transport` is the existing precedent |
 | 13 | The peer's `query.Config` is a second contract with ten bounds, invisible from this side and assertable nowhere (`crud/query/compile.go:29-82`) | sharp edge | A filter, an `in` list, a nesting depth or a preload count that works locally 400s over the wire, decided by a config struct in someone else's deployment — and the refusal that names the fix does not render (row 17) |
-| 14 | Behaviours documented nowhere a caller looks: a set key does not create over the wire ([[D-012]]), a narrowed preload is refused on `GetByID`, a delete of a missing row is `(0, nil)`, there is no batch write, `crud.In` is how you read a set of keys, this only talks to a vv peer, and nothing negotiates a version between two deployables | sharp edge | Each is a correct decision or a real precondition that reads as a bug on first contact, and most of them are silent. The version one is the only item on this table that gets harder to fix after the tag rather than before |
-| 15 | No hook test, no cursor-walk test, no nulls-placement test on the sending side, no `Partial` assertion; `_examples/` contains nothing about the consuming half | sharp edge | [[D-020]] makes tests the specification, and four of the paths a consumer uses first are specified nowhere |
+| 14 | Behaviours documented nowhere a caller looks: a set key does not create over the wire ([[D-012]]), a delete of a missing row is `(0, nil)`, there is no batch write, `crud.In` is how you read a set of keys, this only talks to a vv peer, and nothing negotiates a version between two deployables | sharp edge | Each is a correct decision or a real precondition that reads as a bug on first contact, and most of them are silent. The version one is the only item on this table that gets harder to fix after the tag rather than before |
+| 15 | No hook test and no nulls-placement test on the sending side; `_examples/` contains nothing about the consuming half | sharp edge | Cursor walking and `PartialResultError` are now covered, but the remaining consumer paths still are not specified by an example or control. |
 | 16 | `docs/modules/en/remote.md` names the patch DTO `ArticleInput` in all three examples (`:24`, `:36`, `:152`) while `cmd/vv` emits `<Model>Update` (`internal/codegen/render.go:139-142`) and the same doc says to use the generated one; and `remote/remotehttp/transport.go:89` links `[AcceptLanguage]`, which is `porthttp`'s symbol, not this package's | documentation | The first code a consumer copies declares a type the generator never produced, and the option they reach for first has a dead link on its published doc page |
 | 17 | Not this module's, filed here because it surfaces here: every far-side refusal reads as `errs: bad_request: bad_query (1 violation)` because `Fault.Error()` renders classification only (`errs/fault.go:68-98`) — the unpaged refusal, the bulk-delete cap (`crud/http/crudnet/handler.go:394-395`) and every `query.Config` bound alike | cross-reference | [[D-047]] forbids enriching `Error()`, so the fix belongs to `errs`' own sweep, or to `remote` recognising the refusals it knows about and wrapping them. Two more items file the same way: a 401 sentinel would need a new name in `crud` or `errs` because `port` cannot reach `auth` ([[D-048]], `Makefile:37`), and `crudnet.WithTransform` (`crud/http/crudnet/options.go:81-85`) needs a line saying it breaks every vv client holding that resource — in the four bindings, where the serving team will read it |
 
-## Contested
+## Historical contested findings
+
+The discussion below predates the H-REMOTE-08 implementation update. Its
+arguments about the old `Unpaged` export path are retained as review history,
+not current release guidance.
 
 - **Blocker 1 keeps `blocker` severity although it fires only where the far side
   declared a `MaxLimit`.** A reviewer was right in round 1 that a stock far end

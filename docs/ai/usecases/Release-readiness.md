@@ -16,7 +16,7 @@ or make a configuration mean something different from what its author read.
 | Security | not ready | A visibly gated repository can be unscoped through a zero policy or nil scope. | [Security](modules/security/Security.md) |
 | Sqlrepo | not ready | Permanent scopes replace rather than compose, and `Save` bypasses optimistic locking. | [Sqlrepo](modules/sqlrepo/Sqlrepo.md) |
 | Utils | not ready | Configuration input can silently change meaning or be ignored. | [Utils](modules/utils/Utils.md) |
-| Remote | not ready | A remote `GetAll` can silently return a truncated export. | [Remote](modules/remote/Remote.md) |
+| Remote | not ready | `GetAll` now exhausts bounded pages through cursor edges and refuses inconsistent progress, but `remote.Resource` deliberately cannot be composed with `security.Gate` because it is not a transaction-capable `crud.Core`. | [Remote](modules/remote/Remote.md) |
 | Vvdb | not ready | Connection configuration can silently select the wrong endpoint. | [Vvdb](modules/vvdb/Vvdb.md) |
 | Auth | not ready | Empty HMAC material is a forgeable authentication configuration. | [Auth](modules/auth/Auth.md) |
 | Crud | not ready | A manual ID filter has no consumer-visible bind budget. | [Crud](modules/crud/Crud.md) |
@@ -24,7 +24,7 @@ or make a configuration mean something different from what its author read.
 | Port | not ready | The documented error-install seam does not reach generated routes. | [Port](modules/port/Port.md) |
 | Query | not ready | Empty or malformed filters can silently remove or reverse narrowing. | [Query](modules/query/Query.md) |
 | Specs | not ready | Natural typed predicates can widen a read or bulk write. | [Specs](modules/specs/Specs.md) |
-| Crudgrpc | not ready | A native numeric ID above 2⁵³ can name a neighbouring row. | [Crudgrpc](modules/crudgrpc/Crudgrpc.md) |
+| Crudgrpc | not ready | `Replace` and the published error/panic/reflection seams still need hardening; unsafe native 64-bit numeric IDs are now refused. | [Crudgrpc](modules/crudgrpc/Crudgrpc.md) |
 | Adapters | ready with gaps | Mutable transaction options can silently change live transaction policy. | [Adapters](modules/adapters/Adapters.md) |
 | Crudtest | not ready | A cancellation test can pass while the fake still records work. | [Crudtest](modules/crudtest/Crudtest.md) |
 | Errs | not ready | Invalid public error values can render as apparently valid client responses. | [Errs](modules/errs/Errs.md) |
@@ -44,12 +44,12 @@ consumer reaches it through more than one sweep.
 | 3 | Faults | `WithSource` can probe a different physical database than the catalog used to plan the check. | blocker | yes | Another database can decide this endpoint’s availability/existence answer. |
 | 4 | Auth | Empty HMAC material starts a parser that accepts publicly forgeable signatures. | blocker | yes | A forgotten secret is an authentication bypass rather than a deploy failure. |
 | 5 | Authhttp + General (merged) | Repeated credentials select a first value; General shows that chosen principal becoming generated tenant scope. | serious | yes | Header/metadata ordering can select an otherwise valid caller and tenant view with no ambiguity record. |
-| 6 | Crudgrpc | A `Struct` numeric ID above 2⁵³ is accepted after rounding. | blocker | yes | A successful operation can target a neighbouring row. |
+| 6 | Crudgrpc | ~~A `Struct` numeric ID at magnitude 2⁵³ or greater is accepted after rounding.~~ | closed | yes | Unsafe numeric spellings are refused; framework gRPC calls carry exact decimal keys. |
 | 7 | Sqlrepo | Versioned full-model `Save`/`Replace` does not refuse a stale writer; MySQL may also update a row chosen by another unique key. | blocker | yes | A common replacement route can silently overwrite newer or different-row data. |
 | 8 | Specs | Same-path relation conditions can match different children; empty typed `NotIn` can become a whole-table predicate, including bulk writes. | blocker | no | A type-safe-looking query can return too much or rewrite/delete every matching row. |
 | 9 | Crudhttp | Absent or top-level-`null` mutation bodies can create or replace a zero model; duplicate JSON keys and null bulk IDs can also change data. | blocker | yes | A proxy or client integration mistake receives success after writing the wrong record. |
-| 10 | Remote | `GetAll` throws away the far side’s page limit and presents a truncated export as complete. | blocker | yes | Reconciliation and export jobs silently act on partial data. |
-| 11 | Remote | `GetByID` drops its narrowing options and there is no safe remote `security.Gate` composition. | blocker | yes | A remote call that is `not found` locally can return another tenant’s row. |
+| 10 | Remote | Closed for detectable protocol contradictions: `GetAll` reads bounded pages, follows cursor edges, and returns `ErrPartialResult` for malformed progress. | closed | yes | On a cursor-edge walk, page and offset caps are chunking controls. This is an enumeration rather than a cross-page snapshot; a custom service without cursor edges or a DISTINCT-without-PK shape has an explicit `MaxOffset` refusal boundary. |
+| 11 | Remote | Entity routes intentionally narrow away list filters; the live blocker is that `remote.Resource` is not a `crud.Core`, so it cannot be wrapped in `security.Gate`. | blocker | yes | A calling service must rely on the far service’s tenant enforcement instead of declaring the same gate locally. |
 | 12 | Codegen | `-out` can overwrite authored files and escape via traversal or symlink. | blocker | yes | A directive typo can destroy version-controlled application source. |
 | 13 | Port + General (merged) | `Errors(...)` configures no generated route; General retains the README/all-transport blast radius. | blocker | yes | The documented catalogue installation silently leaves generated routes on default messages. |
 | 14 | Port | Installing a custom renderer silently loses generated path hops. | blocker | yes | The consumer’s error body changes from its wire field back to a model field when localisation is added. |

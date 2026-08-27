@@ -46,6 +46,29 @@ type Tx interface {
 	Rollback(ctx context.Context) error
 }
 
+// Transactional is an executor that knows it already represents a live
+// transaction. Adapters implement it for the foreign transaction handles they
+// can recognise; an application adapter can implement it too. A bare Executor
+// is intentionally not assumed transactional: it may be a pool, and treating
+// a pool as one makes a multi-statement security operation only appear atomic.
+type Transactional interface {
+	InTransaction() bool
+}
+
+// IsTransaction reports whether e is known to be a live transaction. Unknown
+// executors answer false so callers that require atomicity can start their own
+// transaction rather than trusting a pool supplied through WithExecutor.
+func IsTransaction(e Executor) bool {
+	if e == nil {
+		return false
+	}
+	if _, ok := e.(Tx); ok {
+		return true
+	}
+	t, ok := e.(Transactional)
+	return ok && t.InTransaction()
+}
+
 // Beginner is implemented by executors that can start their own transaction.
 // It is optional: an Executor handed over by a foreign framework usually is not
 // one, and vv simply joins whatever transaction it was given.
@@ -204,6 +227,78 @@ func SourceOf[M any, ID comparable](c Core[M, ID]) (Source, bool) {
 			return nil, false
 		}
 		c = n.Next()
+	}
+	return nil, false
+}
+
+// UnscopedExister is the optional capability a storage core implements to
+// answer whether a row exists without its declaration-time visibility scope.
+// It is deliberately not part of Core: normal callers must never get an API
+// that makes permanently hidden rows visible. Security uses it only to refuse
+// an upsert that would otherwise overwrite a hidden row.
+type UnscopedExister[M any, ID comparable] interface {
+	ExistsUnscoped(ctx context.Context, opts ...Option) (bool, error)
+}
+
+// ExistsUnscopedOf walks a decorator chain to its storage core and asks for the
+// optional physical-existence check. The final bool says whether the capability
+// was present; callers must fail closed when it is absent rather than treating
+// "cannot check" as "row does not exist".
+func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, opts ...Option) (bool, error, bool) {
+	for i := 0; c != nil && i < maxChainDepth; i++ {
+		if x, ok := c.(UnscopedExister[M, ID]); ok {
+			found, err := x.ExistsUnscoped(ctx, opts...)
+			return found, err, true
+		}
+		n, ok := c.(Nexter[M, ID])
+		if !ok {
+			return false, nil, false
+		}
+		c = n.Next()
+	}
+	return false, nil, false
+}
+
+// ScopedSave is the exact state a policy inspected before an assigned-key Save.
+// It lets the storage core turn that decision into one conditional statement:
+// Previous nil means "create only"; a non-nil Previous means "update precisely
+// the row I inspected". In particular, it must never silently turn a create
+// decision into an update because another request inserted the same key.
+//
+// Scope applies to the root row. RelationScopes carries the policy narrowing
+// into relation-hopping predicates in Scope, and is merged with a repository's
+// permanent relation scopes by the storage core.
+type ScopedSave[M any] struct {
+	Previous       *M
+	Scope          Predicate
+	RelationScopes *RelationScopes
+}
+
+// ScopedSaver is the optional storage capability for a Save that must make an
+// inspected create/update decision atomic. It is deliberately narrower than
+// Core.Save: regular callers should not need to reason about an upsert's
+// conflict branch, while an access-control gate must not turn a check-then-save
+// sequence into a cross-tenant overwrite.
+//
+// A storage core also keeps its own permanent scope in force. ErrNotFound means
+// an inspected update no longer matches its scoped snapshot; ErrConflict means
+// a create raced with an existing key. Callers that hide either fact should
+// translate them to their own denial.
+type ScopedSaver[M any, ID comparable] interface {
+	SaveScoped(ctx context.Context, m *M, save ScopedSave[M]) error
+}
+
+// SaveScopedOf calls ScopedSaver only on the core it was handed. It deliberately
+// does not walk Nexter: a decorator may enforce authorisation, validation or
+// auditing on Save, and tunnelling through it to an inner storage capability
+// would bypass that enforcement. A transparent decorator that wants to preserve
+// the capability must implement ScopedSaver and forward it explicitly.
+//
+// The final bool reports whether the capability exists. Security must fail
+// closed when it does not: a preceding SELECT is not an atomic substitute.
+func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool) {
+	if s, ok := c.(ScopedSaver[M, ID]); ok {
+		return s.SaveScoped(ctx, m, save), true
 	}
 	return nil, false
 }
@@ -504,6 +599,20 @@ func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (er
 	if _, ok := ExecutorFor(ctx, src); ok {
 		return fn(ctx)
 	}
+	return inNewTx(ctx, src, fn)
+}
+
+// InNewTx runs fn in a transaction newly opened from src even when ctx carries
+// another executor. It is for a multi-statement operation that requires an
+// atomic boundary and cannot prove that the supplied executor is a transaction.
+// The transaction it opens is pushed inside that binding, so all repository
+// work for src in fn uses the new transaction. Prefer InTx when joining a
+// caller's executor is semantically sufficient.
+func InNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
+	return inNewTx(ctx, src, fn)
+}
+
+func inNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
 	b, ok := BeginnerOf(src)
 	if !ok {
 		return ErrNoTxSupport

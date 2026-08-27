@@ -82,7 +82,7 @@ func (r Repo[M, ID, U]) ExistsBy(ctx context.Context, s Specification[M]) (bool,
 // DeleteBy removes every matching row and reports how many went away.
 func (r Repo[M, ID, U]) DeleteBy(ctx context.Context, s Specification[M]) (int64, error) {
 	p := Predicate(s)
-	if p == nil {
+	if p == nil || crud.MayBeTautologyFor(r.Meta(), p) {
 		return 0, ErrUnboundedDelete
 	}
 	return r.DeleteAll(ctx, crud.Where(p))
@@ -92,7 +92,7 @@ func (r Repo[M, ID, U]) DeleteBy(ctx context.Context, s Specification[M]) (int64
 // touched — JPA's bulk update, in one statement rather than a loop.
 func (r Repo[M, ID, U]) UpdateBy(ctx context.Context, s Specification[M], dto U) (int64, error) {
 	p := Predicate(s)
-	if p == nil {
+	if p == nil || crud.MayBeTautologyFor(r.Meta(), p) {
 		return 0, ErrUnboundedUpdate
 	}
 	return r.UpdateAll(ctx, dto, crud.Where(p))

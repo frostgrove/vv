@@ -552,7 +552,7 @@ func TestPredicateComposition(t *testing.T) {
 	wantSQL(t, rec.Last().SQL,
 		`SELECT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users" WHERE `+
 			`(("name" = $1 OR "name" = $2) AND NOT ("age" IS NULL) AND "created_at" BETWEEN $3 AND $4 `+
-			`AND "tenant_id" IN ($5, $6) AND "email" LIKE $7 AND lower("email") <> $8)`)
+			`AND "tenant_id" IN ($5, $6) AND "email" LIKE $7 ESCAPE '\' AND lower("email") <> $8)`)
 	if got := rec.Last().Args[6]; got != `%50\%%` {
 		t.Fatalf("LIKE argument = %q, want the %% escaped", got)
 	}

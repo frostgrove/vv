@@ -67,18 +67,90 @@ func TestAClaimOfADifferentWidthThanTheColumnStillWorks(t *testing.T) {
 	}
 }
 
-// An extractor whose type cannot be compared with the column at all fails where
-// it is written, not on the first write.
-func TestAnUncomparableClaimTypePanicsRatherThanDenyingEverything(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("a claim type that cannot be compared with the column was accepted; every write would be denied at request time")
-		}
-	}()
+// An extractor whose type cannot be compared with the column fails closed
+// instead of letting reflection invent a conversion or taking down a request.
+func TestAnUncomparableClaimTypeFailsClosed(t *testing.T) {
 	policy := security.ScopeField[Wide, uint64]("TenantID", func(context.Context) (any, error) {
 		return struct{ X int }{1}, nil
 	})
-	// The panic is at first use, which is where the extractor is first called.
 	rec := crudtest.Postgres()
-	_, _ = Wides.Bind(rec, security.Gate(policy)).GetAll(context.Background())
+	_, err := Wides.Bind(rec, security.Gate(policy)).GetAll(context.Background())
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("an incompatible claim reached the database: %v", rec.SQL())
+	}
+}
+
+type RelationValue struct {
+	ID       int64               `db:"id,pk,auto"`
+	TenantID int64               `db:"tenant_id"`
+	Notes    []RelationValueNote `rel:"has_many,fk=RelationValueID"`
+}
+
+type RelationValueNote struct {
+	ID              int64 `db:"id,pk,auto"`
+	RelationValueID int64 `db:"relation_value_id"`
+	TenantID        uint  `db:"tenant_id"`
+}
+
+// Relation scopes accept the same convenient numeric-width conversion as the
+// root scope. Before this test the root was checked at declaration time but the
+// far side handed the raw claim to a driver and failed unpredictably later.
+func TestRelationScopeReconcilesItsValueToTheFarSideColumn(t *testing.T) {
+	p := security.ScopeRelationField[RelationValue, int64]("Notes", "TenantID", func(context.Context) (any, error) {
+		return int64(7), nil
+	})
+	rs, err := p.RelationScopes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs == nil || rs.Empty() {
+		t.Fatal("relation scope is missing")
+	}
+}
+
+func TestRelationScopeRejectsANilValueBeforeItReachesTheDriver(t *testing.T) {
+	p := security.ScopeRelationField[RelationValue, int64]("Notes", "TenantID", func(context.Context) (any, error) {
+		return nil, nil
+	})
+	_, err := p.RelationScopes(context.Background())
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestRelationScopeRejectsUnsafeNumericToStringConversion(t *testing.T) {
+	type TextNote struct {
+		ID              int64  `db:"id,pk,auto"`
+		RelationValueID int64  `db:"relation_value_id"`
+		TenantID        string `db:"tenant_id"`
+	}
+	type TextRoot struct {
+		ID    int64      `db:"id,pk,auto"`
+		Notes []TextNote `rel:"has_many,fk=RelationValueID"`
+	}
+	p := security.ScopeRelationField[TextRoot, int64]("Notes", "TenantID", func(context.Context) (any, error) {
+		return int64(42), nil
+	})
+	_, err := p.RelationScopes(context.Background())
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden instead of a string converted from an integer", err)
+	}
+}
+
+func TestScopeFieldRefusesALossyFloatTenantConversion(t *testing.T) {
+	type FloatTenant struct {
+		ID       int64   `db:"id,pk"`
+		TenantID float32 `db:"tenant_id"`
+	}
+
+	p := security.ScopeField[FloatTenant, int64]("TenantID", func(context.Context) (any, error) {
+		return float64(16_777_217), nil
+	})
+	_, err := p.Scope(context.Background())
+	if !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want forbidden rather than a rounded tenant id", err)
+	}
 }

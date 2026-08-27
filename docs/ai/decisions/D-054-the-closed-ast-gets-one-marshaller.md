@@ -71,11 +71,13 @@ wrong for one of the two directions. `go/ast` over the source was considered and
 is strictly weaker: it is a test that can be skipped, where this is a build that
 cannot.
 
-**Why `Contains` comes back as `like`, and why that is not a loss.**
-`crud.Contains(f, s)` is already `likeNode` with an escaped pattern by the time
-the marshaller sees it, so it goes out as `like` with that pattern and compiles
-back to the identical node. The round trip is asserted on rendered SQL and binds
-rather than on the document, because the SQL is what a caller can observe.
+**Why literal helpers carry their own wire operation.** `crud.Contains(f, s)`,
+`StartsWith` and `EndsWith` retain their literal-helper mode until marshalling,
+then use `contains`, `startsWith` or `endsWith` (and their `i…` variants). The
+peer reconstructs the same mode, including wildcard quoting and its dialect's
+`ESCAPE` clause. Raw `like` remains a raw SQL pattern by design. The round trip
+is asserted on rendered SQL and binds rather than document spelling, because
+that is what a caller can observe.
 
 ## What it forbids
 

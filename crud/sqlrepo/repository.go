@@ -603,6 +603,29 @@ func (r *repository[M, ID, U]) Exists(ctx context.Context, opts ...crud.Option) 
 	return false, rows.Err()
 }
 
+// ExistsUnscoped is the storage capability security uses to distinguish an
+// unused client-owned key from a row hidden by this blueprint's permanent
+// scope. It intentionally bypasses only the blueprint scope; it is not part of
+// Core and ordinary application code cannot reach it through a Repo.
+func (r *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, opts ...crud.Option) (bool, error) {
+	o := crud.Build(opts...)
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(r.relScopes(o)).
+		Raw("SELECT 1 FROM ").Table().Where(o.Predicate()).Raw(" LIMIT 1")
+	q, args, err := b.Done()
+	if err != nil {
+		return false, err
+	}
+	rows, err := r.read(ctx, o).Query(ctx, q, args...)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return true, rows.Err()
+	}
+	return false, rows.Err()
+}
+
 // ---------------------------------------------------------------------------
 // writes
 
@@ -622,6 +645,212 @@ func (r *repository[M, ID, U]) Save(ctx context.Context, m *M) error {
 	default:
 		return r.insert(ctx, m, r.insertFull+r.upsertTail, r.meta.Insert, false)
 	}
+}
+
+// SaveScoped is the narrow storage primitive used by a security gate after it
+// has classified an assigned-key Save. It deliberately does not use an upsert
+// update branch. That branch cannot tell whether the conflicting row is the
+// row that was inspected: a concurrent insert would turn an authorised Create
+// into an unauthorised Update. Instead a create is INSERT-only and an update is
+// a conditional UPDATE pinned to the complete inspected snapshot.
+//
+// It is an optional capability rather than part of crud.Core because it is not
+// a general persistence verb. Security discovers it through crud.SaveScopedOf;
+// callers that cannot obtain it must refuse the scoped Save rather than fall
+// back to an ordinary upsert.
+func (r *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	// MySQL has no RETURNING. Keep its write and refresh in one transaction so a
+	// replacement cannot slip between them and become the model returned for an
+	// action the gate approved on a different row. PostgreSQL and SQLite receive
+	// the refreshed row from the conditional statement itself.
+	if !r.d.SupportsReturning() {
+		// A context executor is the foreign-transaction seam. It may not expose
+		// a concrete transaction type, but replacing it with a source-owned
+		// transaction would split a caller's unit of work and make an outer
+		// rollback leave this guarded write behind.
+		if _, inTx := crud.ExecutorFor(ctx, r.src); !inTx {
+			return crud.InNewTx(ctx, r.src, func(tx context.Context) error {
+				return r.saveScoped(tx, m, save)
+			})
+		}
+	}
+	return r.saveScoped(ctx, m, save)
+}
+
+func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	if m == nil {
+		return &crud.SchemaError{Model: r.meta.Name, Reason: "Save called with a nil model"}
+	}
+	hasID, err := r.meta.HasID(m)
+	if err != nil {
+		return err
+	}
+	if !hasID {
+		return r.Save(ctx, m)
+	}
+	rs := crud.MergeRelationScopes(r.bp.relScopes, save.RelationScopes)
+	if save.Previous == nil {
+		return r.saveScopedCreate(ctx, m, save.Scope, rs)
+	}
+	return r.saveScopedUpdate(ctx, m, save.Previous, save.Scope, rs)
+}
+
+// saveScopedCreate inserts exactly once. PostgreSQL and SQLite can make a
+// duplicate a no-row result with DO NOTHING. MySQL executes a normal INSERT:
+// its duplicate-key error is classified as crud.ErrConflict by the adapter.
+// INSERT IGNORE is not safe here because it also turns invalid data into a
+// warning and can persist a coerced row that normal Save would reject.
+func (r *repository[M, ID, U]) saveScopedCreate(ctx context.Context, m *M, scope crud.Predicate, rs *crud.RelationScopes) error {
+	values, err := r.meta.Values(m, r.meta.Insert)
+	if err != nil {
+		return err
+	}
+	b := crud.NewSQL(r.d, r.meta).Raw("INSERT INTO ").Table().Raw(" (").Columns(r.meta.Insert).Raw(") VALUES (").Binds(values).Raw(")")
+
+	if r.d.SupportsReturning() {
+		q, args, err := b.Raw(r.d.Upsert(r.meta.PK.Column, nil)).Raw(r.returning).Done()
+		if err != nil {
+			return err
+		}
+		rows, err := r.exec(ctx).Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		ok, err := r.scanOne(rows, m)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return crud.ErrCreateRaced
+		}
+		return nil
+	}
+	if r.d.Name() != "mysql" {
+		return &crud.SchemaError{Model: r.meta.Name, Reason: "dialect cannot perform a create-only scoped Save"}
+	}
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected == 0 {
+		return crud.ErrConflict
+	}
+	// The transaction SaveScoped opened for no-RETURNING dialects keeps this
+	// freshly inserted row locked through the refresh. Its root scope is enough
+	// to preserve the policy decision, while deliberately not pinning values a
+	// trigger may normalise — Save promises to hand those generated values back.
+	return r.refresh(ctx, m, crud.And(r.bp.set.scope, scope), rs)
+}
+
+func (r *repository[M, ID, U]) saveScopedUpdate(ctx context.Context, m, previous *M, scope crud.Predicate, rs *crud.RelationScopes) error {
+	guard, err := r.scopedSaveGuard(previous, scope)
+	if err != nil {
+		return err
+	}
+	values, err := r.meta.Values(m, r.meta.Update)
+	if err != nil {
+		return err
+	}
+	changed, err := r.scopedSaveChanged(previous, m)
+	if err != nil {
+		return err
+	}
+	if len(r.meta.Update) == 0 {
+		return r.refresh(ctx, m, guard, rs)
+	}
+
+	b := crud.NewSQL(r.d, r.meta).RelationScopes(rs).Raw("UPDATE ").Table().Raw(" SET ")
+	for i, f := range r.meta.Update {
+		if i > 0 {
+			b.Raw(", ")
+		}
+		b.Ident(f.Column).Raw(" = ").Bind(values[i])
+	}
+	b.Where(guard)
+	if r.d.SupportsReturning() {
+		q, args, err := b.Raw(r.returning).Done()
+		if err != nil {
+			return err
+		}
+		rows, err := r.exec(ctx).Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		ok, err := r.scanOne(rows, m)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return crud.ErrNotFound
+		}
+		return nil
+	}
+
+	q, args, err := b.Done()
+	if err != nil {
+		return err
+	}
+	res, err := r.exec(ctx).Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	// A no-op UPDATE reports zero on MySQL, so only a requested value change can
+	// use the count as a miss signal. The no-change case performs a guarded read
+	// below; it writes no confidential state either way.
+	if changed && res.RowsAffected == 0 {
+		return crud.ErrNotFound
+	}
+	// MySQL reports zero affected rows for a no-op UPDATE. It may mean the row
+	// still exactly matches the inspected snapshot, or that a concurrent writer
+	// changed it first. A broad scope refresh cannot distinguish the two and
+	// would hand back a row Inspect never approved, so the no-change arm keeps
+	// the complete snapshot guard through the refresh as well.
+	if !changed {
+		return r.refresh(ctx, m, guard, rs)
+	}
+	return r.refresh(ctx, m, crud.And(r.bp.set.scope, scope), rs)
+}
+
+// scopedSaveGuard pins an update to every scalar field the gate inspected.
+// That is stricter than a version check when a model has no version column and
+// prevents a delete/reinsert or concurrent mutation from being updated under a
+// decision made for an older row.
+func (r *repository[M, ID, U]) scopedSaveGuard(previous *M, scope crud.Predicate) (crud.Predicate, error) {
+	return r.scopedSaveFieldsGuard(previous, scope, r.meta.Fields)
+}
+
+func (r *repository[M, ID, U]) scopedSaveFieldsGuard(m *M, scope crud.Predicate, fields []*crud.Field) (crud.Predicate, error) {
+	values, err := r.meta.Values(m, fields)
+	if err != nil {
+		return nil, err
+	}
+	preds := make([]crud.Predicate, 0, len(fields)+2)
+	preds = append(preds, r.bp.set.scope, scope)
+	for i, f := range fields {
+		preds = append(preds, crud.Eq(f.Name, values[i]))
+	}
+	return crud.And(preds...), nil
+}
+
+func (r *repository[M, ID, U]) scopedSaveChanged(previous, next *M) (bool, error) {
+	before, err := r.meta.Values(previous, r.meta.Update)
+	if err != nil {
+		return false, err
+	}
+	after, err := r.meta.Values(next, r.meta.Update)
+	if err != nil {
+		return false, err
+	}
+	for i := range before {
+		if !crud.EqualValues(before[i], after[i]) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // insert runs an INSERT (optionally with a conflict clause) and refreshes the

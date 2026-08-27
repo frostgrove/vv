@@ -59,7 +59,7 @@ func TestCompileMapsEveryKnobOntoOptions(t *testing.T) {
 		"unpaged": true, "skipTotal": true, "distinct": true
 	}`, exports)
 
-	wantFilters := []string{`"views" >= $1`, `"title" LIKE $1`, `"body" LIKE $1`}
+	wantFilters := []string{`"views" >= $1`, `"title" LIKE $1 ESCAPE '\'`, `LOWER("body") LIKE LOWER($1) ESCAPE '\'`}
 	if len(o.Filter) != len(wantFilters) {
 		t.Fatalf("%d predicates, want %d (filter, terms, search)", len(o.Filter), len(wantFilters))
 	}
@@ -99,20 +99,19 @@ func TestCompileMapsEveryKnobOntoOptions(t *testing.T) {
 	}
 }
 
-// A knob the client did not touch produces no option at all. An option carrying
-// a zero would look like a request and overwrite the repository's own default.
-func TestAbsentKnobsProduceNoOptions(t *testing.T) {
+// An absent client page size still produces the endpoint's hard default. Query
+// is a public boundary: leaving limit absent cannot hand control back to an
+// arbitrarily larger repository DefaultLimit.
+func TestAbsentKnobsProduceTheEndpointPageCap(t *testing.T) {
 	for _, doc := range []string{
 		`{}`,
-		`{"filter":{}}`,
-		`{"filter":null}`,
 		`{"page":0,"limit":0,"offset":0}`,
 		`{"sort":[],"select":[],"preload":[],"terms":[]}`,
 		`{"search":"   "}`,
 		`{"unpaged":false,"skipTotal":false,"distinct":false}`,
 	} {
-		if opts := compile(t, doc, nil); len(opts) != 0 {
-			t.Fatalf("%s produced %d options, want none", doc, len(opts))
+		if o := crud.Build(compile(t, doc, nil)...); o.Limit != 100 {
+			t.Fatalf("%s produced limit %d, want the endpoint default 100", doc, o.Limit)
 		}
 	}
 
@@ -123,12 +122,79 @@ func TestAbsentKnobsProduceNoOptions(t *testing.T) {
 	}
 }
 
-// The observable consequence of the rule above: an empty document leaves the
-// repository's default page size in place instead of asking for LIMIT 0.
-func TestAnEmptyRequestKeepsTheRepositoryPageSize(t *testing.T) {
+// The observable consequence: an empty document uses query.Config's default,
+// not a repository-specific page size that can exceed the public budget.
+func TestAnEmptyRequestUsesTheEndpointPageCap(t *testing.T) {
 	sql, _ := run(t, `{}`, nil)
-	if !strings.Contains(sql, "LIMIT 20") {
-		t.Fatalf("sql = %s\nwant the repository default LIMIT 20", sql)
+	if !strings.Contains(sql, "LIMIT 100") {
+		t.Fatalf("sql = %s\nwant the endpoint default LIMIT 100", sql)
+	}
+}
+
+func TestPagingAlwaysUsesTheEndpointLimit(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"page":2}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := req.Compile(Articles.Meta(), &query.Config{MaxLimit: 1, MaxOffset: 10_000}); err != nil {
+		t.Fatal(err)
+	} else if got := crud.Build(o...); got.Limit != 1 || got.Page != 2 {
+		t.Fatalf("page options = %+v, want page 2 capped to one row", got)
+	}
+
+	if err := json.Unmarshal([]byte(`{"after":"opaque","limit":50,"sort":["id"]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	o, err := req.Compile(Articles.Meta(), &query.Config{MaxLimit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := crud.Build(o...); got.Limit != 10 || got.After != "opaque" {
+		t.Fatalf("cursor options = %+v, want its client limit clamped to 10", got)
+	}
+}
+
+func TestBothCursorDirectionsAreRefusedOnEveryRequestShape(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"after":"newer","before":"older"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(Articles.Meta(), nil); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("err = %v, want an after/before conflict", err)
+	}
+
+	if err := json.Unmarshal([]byte(`{"after":"","before":"older"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(Articles.Meta(), nil); err == nil || !strings.Contains(err.Error(), "after") {
+		t.Fatalf("err = %v, want an explicit empty after rejected like ?after=", err)
+	}
+}
+
+func TestPageDepthCannotOverflowPastTheEndpointBudget(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"page":9223372036854775807}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(Articles.Meta(), &query.Config{MaxLimit: 100, MaxOffset: 10_000}); err == nil || !strings.Contains(err.Error(), "page") {
+		t.Fatalf("err = %v, want a page-depth refusal", err)
+	}
+}
+
+func TestSelectHasABudgetAndCanonicalDeduplication(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"select":["title","Title","title"]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(Articles.Meta(), &query.Config{MaxSelect: 2}); err == nil {
+		t.Fatal("a repeated projection exceeded no input budget")
+	}
+	o, err := req.Compile(Articles.Meta(), &query.Config{MaxSelect: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields := crud.Build(o...).Fields; len(fields) != 1 || fields[0] != "Title" {
+		t.Fatalf("projection = %v, want one canonical Title", fields)
 	}
 }
 
@@ -140,7 +206,7 @@ func TestFilterTermsAndSearchAreAndedNotMerged(t *testing.T) {
 		"terms": [{"path": "authorId", "values": ["7"]}],
 		"search": "go", "searchFields": ["title", "body"]
 	}`, nil)
-	want := `("views" >= $1 AND "author_id" = $2 AND ("title" LIKE $3 OR "body" LIKE $4))`
+	want := `("views" >= $1 AND "author_id" = $2 AND (LOWER("title") LIKE LOWER($3) ESCAPE '\' OR LOWER("body") LIKE LOWER($4) ESCAPE '\'))`
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}
@@ -190,6 +256,8 @@ func TestAllowListMatching(t *testing.T) {
 			&query.Config{Filterable: []string{"views"}}, `{"filter":{"Views":1}}`, true},
 		{"the client's spelling does not matter",
 			&query.Config{Filterable: []string{"PublishedAt"}}, `{"filter":{"published_at":null}}`, true},
+		{"the declaration spelling does not matter",
+			&query.Config{Filterable: []string{"published_at"}}, `{"filter":{"publishedAt":null}}`, true},
 		{"star allows anything", &query.Config{Filterable: []string{"*"}}, `{"filter":{"views":1}}`, true},
 		{"a field outside the list is refused",
 			&query.Config{Filterable: []string{"Title"}}, `{"filter":{"views":1}}`, false},
@@ -247,8 +315,8 @@ func TestEachAllowListGuardsItsOwnVerb(t *testing.T) {
 		"preload":["author"],"search":"go","searchFields":["title"]}`, cfg)
 	// author_id is in the projection because the preload the list allowed needs
 	// it to find its parents.
-	want := `SELECT "id", "title", "author_id" FROM "articles" WHERE ("title" = $1 AND "title" LIKE $2) ` +
-		`ORDER BY "title" ASC, "id" ASC LIMIT 20`
+	want := `SELECT "id", "title", "author_id" FROM "articles" WHERE ("title" = $1 AND LOWER("title") LIKE LOWER($2) ESCAPE '\') ` +
+		`ORDER BY "title" ASC, "id" ASC LIMIT 100`
 	if sql != want {
 		t.Fatalf("sql  = %s\nwant = %s", sql, want)
 	}
@@ -262,7 +330,7 @@ func TestEachAllowListGuardsItsOwnVerb(t *testing.T) {
 func TestSearchUsesDefaultSearchFields(t *testing.T) {
 	cfg := &query.Config{DefaultSearchFields: []string{"Title"}}
 	sql, args := run(t, `{"search":"go"}`, cfg)
-	if got := where(sql); got != `"title" LIKE $1` {
+	if got := where(sql); got != `LOWER("title") LIKE LOWER($1) ESCAPE '\'` {
 		t.Fatalf("where = %s, want only the default field", got)
 	}
 	if args[0] != "%go%" {
@@ -270,7 +338,7 @@ func TestSearchUsesDefaultSearchFields(t *testing.T) {
 	}
 	// An explicit list wins over the defaults.
 	sql, _ = run(t, `{"search":"go","searchFields":["body"]}`, cfg)
-	if got := where(sql); got != `"body" LIKE $1` {
+	if got := where(sql); got != `LOWER("body") LIKE LOWER($1) ESCAPE '\'` {
 		t.Fatalf("where = %s, want the requested field", got)
 	}
 	// A default field still has to be searchable.
@@ -285,28 +353,27 @@ func TestSearchUsesDefaultSearchFields(t *testing.T) {
 func TestSearchJoinsNonTextColumnsOnlyWhenTheTermFits(t *testing.T) {
 	cfg := &query.Config{DefaultSearchFields: []string{"Title", "Views"}}
 	sql, args := run(t, `{"search":"42"}`, cfg)
-	if got := where(sql); got != `("title" LIKE $1 OR "views" = $2)` {
+	if got := where(sql); got != `(LOWER("title") LIKE LOWER($1) ESCAPE '\' OR "views" = $2)` {
 		t.Fatalf("where = %s, want the numeric column to join in", got)
 	}
 	if _, ok := args[1].(int); !ok {
 		t.Fatalf("views bound as %T, want int", args[1])
 	}
 	sql, _ = run(t, `{"search":"go"}`, cfg)
-	if got := where(sql); got != `"title" LIKE $1` {
+	if got := where(sql); got != `LOWER("title") LIKE LOWER($1) ESCAPE '\'` {
 		t.Fatalf("where = %s, want the numeric column left out", got)
 	}
 }
 
-// When nothing is searchable the search disappears instead of becoming an empty
-// OR — which renders as a constant and would quietly return no rows.
-func TestSearchWithNothingToSearchProducesNoPredicate(t *testing.T) {
-	opts := compile(t, `{"search":"go"}`, &query.Config{Searchable: []string{"Views"}})
-	if len(opts) != 0 {
-		t.Fatalf("%d options, want none", len(opts))
+// A configured search with no usable field is a refusal. Returning an
+// unfiltered list labelled as search results is worse than a visible 400.
+func TestSearchWithNothingToSearchIsRefused(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"search":"go"}`), &req); err != nil {
+		t.Fatal(err)
 	}
-	sql, _ := run(t, `{"search":"go"}`, &query.Config{Searchable: []string{"Views"}})
-	if strings.Contains(sql, "WHERE") {
-		t.Fatalf("sql = %s, want no WHERE clause at all", sql)
+	if _, err := req.Compile(Articles.Meta(), &query.Config{Searchable: []string{"Views"}}); err == nil {
+		t.Fatal("a search with no usable fields compiled into an unfiltered read")
 	}
 }
 
@@ -317,16 +384,57 @@ func TestPreloadOptionsTravelWithTheRelation(t *testing.T) {
 		t.Fatalf("preloads = %+v", o.Preloads)
 	}
 	sub := crud.Build(o.Preloads[0].Opts...)
-	if len(sub.Filter) != 1 || len(sub.Sort) != 1 {
+	if len(sub.Filter) != 1 || len(sub.Sort) != 1 || sub.PreloadRows != 1000 {
 		t.Fatalf("preload options = %d filters, %d sorts; want 1 and 1", len(sub.Filter), len(sub.Sort))
 	}
 	if sub.Sort[0] != (crud.Order{Field: "Body", Desc: true}) {
 		t.Fatalf("preload sort = %+v", sub.Sort[0])
 	}
-	// A plain path carries nothing, so the relation is loaded whole.
+	// A plain path carries no client filter or sort, but it still gets the
+	// endpoint's row budget.
 	o = resolve(t, `{"preload":["comments"]}`, nil)
-	if len(o.Preloads[0].Opts) != 0 {
-		t.Fatalf("an unqualified preload picked up %d options", len(o.Preloads[0].Opts))
+	if sub := crud.Build(o.Preloads[0].Opts...); sub.PreloadRows != 1000 {
+		t.Fatalf("an unqualified preload has row cap %d, want 1000", sub.PreloadRows)
+	}
+}
+
+func TestPreloadCanTightenButNotWidenTheEndpointRowCap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  string
+		cfg  *query.Config
+		want int
+	}{
+		{
+			name: "client tightens",
+			doc:  `{"preload":[{"path":"comments","maxRows":1}]}`,
+			cfg:  &query.Config{MaxPreloadRows: 5},
+			want: 1,
+		},
+		{
+			name: "endpoint remains the ceiling",
+			doc:  `{"preload":[{"path":"comments","maxRows":6}]}`,
+			cfg:  &query.Config{MaxPreloadRows: 5},
+			want: 5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := resolve(t, tc.doc, tc.cfg)
+			if len(o.Preloads) != 1 || o.Preloads[0].MaxRows != tc.want {
+				t.Fatalf("preload caps = %+v, want %d", o.Preloads, tc.want)
+			}
+			if sub := crud.Build(o.Preloads[0].Opts...); sub.PreloadRows != tc.want {
+				t.Fatalf("preload options have cap %d, want %d", sub.PreloadRows, tc.want)
+			}
+		})
+	}
+
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"preload":[{"path":"comments","maxRows":-1}]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(Articles.Meta(), nil); err == nil || !strings.Contains(err.Error(), "maxRows") {
+		t.Fatalf("negative preload cap = %v, want a maxRows refusal", err)
 	}
 }
 
@@ -369,6 +477,7 @@ func TestConditionBudgetCountsEveryComparison(t *testing.T) {
 		{"across the branches of an or", `{"filter":{"or":[{"title":"a"},{"body":"b"}]}}`},
 		{"flat terms", `{"terms":[{"path":"title","values":["a"]},{"path":"body","values":["b"]}]}`},
 		{"one of each form", `{"filter":{"title":"a"},"terms":[{"path":"body","values":["b"]}]}`},
+		{"a filter plus search", `{"filter":{"title":"a"},"search":"go","searchFields":["body"]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mustFail(t, tc.doc, &query.Config{MaxConditions: 1}, "at most 1 conditions")
@@ -440,7 +549,7 @@ func TestARequestSurvivesBeingWrittenBackOutAsJSON(t *testing.T) {
 
 func compileReq(t *testing.T, req *query.Request) []crud.Option {
 	t.Helper()
-	opts, err := req.Compile(Articles.Meta(), nil)
+	opts, err := req.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -611,7 +720,7 @@ func TestAClientChosenListAndSortAreBounded(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n := strings.Count(sql, `"title" LIKE`); n != 1 {
+		if n := strings.Count(sql, `LOWER("title") LIKE`); n != 1 {
 			t.Fatalf("the same column was searched %d times; the second LIKE matches the same rows and costs the same scan:\n%s", n, sql)
 		}
 	})
@@ -630,8 +739,8 @@ func TestAClientChosenListAndSortAreBounded(t *testing.T) {
 		}
 	})
 
-	t.Run("a repeated sort path is rendered once", func(t *testing.T) {
-		o := resolve(t, `{"sort":["title","title","-title"]}`, nil)
+	t.Run("an identical repeated sort path is rendered once", func(t *testing.T) {
+		o := resolve(t, `{"sort":["title","title"]}`, nil)
 		n := 0
 		for _, ord := range o.Sort {
 			if strings.EqualFold(ord.Field, "Title") {
@@ -640,6 +749,63 @@ func TestAClientChosenListAndSortAreBounded(t *testing.T) {
 		}
 		if n != 1 {
 			t.Fatalf("the same column was sorted %d times; the second term decides nothing and still costs", n)
+		}
+	})
+
+	t.Run("conflicting repeated sort paths are refused", func(t *testing.T) {
+		mustFail(t, `{"sort":["title","-title"]}`, nil, "conflicting order")
+	})
+}
+
+// The endpoint config owns work limits as well as vocabulary limits. These
+// checks deliberately use the zero config too: an unconfigured mount remains
+// convenient for its first list screen without letting a client choose an
+// unbounded page, offset scan, DISTINCT pass or statement parameter count.
+func TestTheDefaultVolumeBudgetsAreActive(t *testing.T) {
+	t.Run("limit is capped", func(t *testing.T) {
+		o := resolve(t, `{"limit":1000000}`, nil)
+		if o.Limit != 100 {
+			t.Fatalf("limit = %d, want the default cap of 100", o.Limit)
+		}
+	})
+
+	t.Run("offset and page are bounded", func(t *testing.T) {
+		for _, doc := range []string{
+			`{"offset":10001}`,
+			`{"page":102}`, // 101 * the default 100-row maximum is too deep
+			`{"page":-1}`,
+			`{"limit":-1}`,
+		} {
+			var req query.Request
+			if err := json.Unmarshal([]byte(doc), &req); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+				t.Fatalf("%s escaped the page/offset validation", doc)
+			}
+		}
+	})
+
+	t.Run("distinct needs an endpoint opt-in", func(t *testing.T) {
+		var req query.Request
+		if err := json.Unmarshal([]byte(`{"distinct":true}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+			t.Fatal("distinct was accepted by a stock endpoint")
+		}
+		if o, err := req.Compile(Articles.Meta(), &query.Config{AllowDistinct: true}); err != nil || !crud.Build(o...).Distinct {
+			t.Fatalf("an endpoint that enabled distinct did not receive it: %v", err)
+		}
+	})
+
+	t.Run("all bind values share one budget", func(t *testing.T) {
+		var req query.Request
+		if err := json.Unmarshal([]byte(`{"filter":{"views":{"in":[1,2,3]},"authorId":{"in":[4,5,6]}}}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := req.Compile(Articles.Meta(), &query.Config{MaxBindValues: 5}); err == nil {
+			t.Fatal("two individually valid lists exceeded the document bind budget")
 		}
 	})
 }
@@ -680,6 +846,25 @@ func TestACursorCannotCompareAColumnTheEndpointHidesFromFiltering(t *testing.T) 
 		t.Fatal("a cursor reached a column the endpoint hides from filtering")
 	}
 
+	// The repository appends ID for a stable cursor even when the client did not
+	// write it. Its comparison must be checked too.
+	var hiddenTiebreaker query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["title"],"after":"whatever"}`), &hiddenTiebreaker); err != nil {
+		t.Fatal(err)
+	}
+	noID := &query.Config{Filterable: []string{"Title"}, Sortable: []string{"Title"}}
+	if _, err := hiddenTiebreaker.Compile(Articles.Meta(), noID); err == nil || !strings.Contains(err.Error(), "ID") {
+		t.Fatalf("err = %v, want the hidden ID tiebreaker refused", err)
+	}
+
+	var implicitSort query.Request
+	if err := json.Unmarshal([]byte(`{"after":"whatever"}`), &implicitSort); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := implicitSort.Compile(Articles.Meta(), cfg); err == nil || !strings.Contains(err.Error(), "explicit sort") {
+		t.Fatalf("err = %v, want a cursor without reviewed sort refused", err)
+	}
+
 	// And the ordinary case still works: sorting by a filterable column and
 	// paging through it is what cursors are for.
 	var fine query.Request
@@ -698,6 +883,46 @@ func TestACursorCannotCompareAColumnTheEndpointHidesFromFiltering(t *testing.T) 
 	}
 	if _, err := sortOnly.Compile(Articles.Meta(), cfg); err != nil {
 		t.Fatalf("sorting by a sortable column was refused when no cursor was involved: %v", err)
+	}
+}
+
+func TestCursorPredicateConsumesTheSameBudgetsAsItsExpansion(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["title","id"],"after":"opaque"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	// Two sort columns expand into three predicate leaves: title > value OR
+	// (title = value AND id > value). A cursor must not bypass the document
+	// limits merely because sqlrepo builds that filter later.
+	cfg := &query.Config{Filterable: []string{"Title", "ID"}, Sortable: []string{"Title", "ID"}}
+	tooFewConditions := *cfg
+	tooFewConditions.MaxConditions = 2
+	if _, err := req.Compile(Articles.Meta(), &tooFewConditions); err == nil || !strings.Contains(err.Error(), "conditions") {
+		t.Fatalf("err = %v, want cursor condition budget refusal", err)
+	}
+	tooFewBinds := *cfg
+	tooFewBinds.MaxBindValues = 2
+	if _, err := req.Compile(Articles.Meta(), &tooFewBinds); err == nil || !strings.Contains(err.Error(), "bound values") {
+		t.Fatalf("err = %v, want cursor bind budget refusal", err)
+	}
+	withinBudget := *cfg
+	withinBudget.MaxConditions, withinBudget.MaxBindValues = 3, 3
+	if _, err := req.Compile(Articles.Meta(), &withinBudget); err != nil {
+		t.Fatalf("cursor exactly at its expansion budget was refused: %v", err)
+	}
+}
+
+func TestCursorCannotPromiseAPositionInARelationSort(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"sort":["author.name"],"after":"opaque"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &query.Config{
+		Filterable: []string{"Author.Name", "ID"},
+		Sortable:   []string{"Author.Name"},
+	}
+	if _, err := req.Compile(Articles.Meta(), cfg); err == nil || !strings.Contains(err.Error(), "relation") {
+		t.Fatalf("err = %v, want relation-sort cursor refusal", err)
 	}
 }
 
@@ -723,7 +948,18 @@ func TestAnAllowListEntryThatNamesNothingIsRefusedAtDeclaration(t *testing.T) {
 		{"defaultSearchFields", &query.Config{DefaultSearchFields: []string{"Nope"}}},
 		{"preloadable", &query.Config{Preloadable: []string{"Nope"}}},
 		{"preloadable naming a column", &query.Config{Preloadable: []string{"Title"}}},
+		{"a field rule naming a relation", &query.Config{Filterable: []string{"Comments"}}},
+		{"a default search field naming a relation", &query.Config{DefaultSearchFields: []string{"Comments"}}},
+		{"a default search wildcard", &query.Config{DefaultSearchFields: []string{"*"}}},
+		{"a default search subtree", &query.Config{DefaultSearchFields: []string{"Comments.*"}}},
+		{"a default search field outside searchable", &query.Config{Searchable: []string{"Title"}, DefaultSearchFields: []string{"Body"}}},
+		{"a deep preload without its intermediate hop", &query.Config{Preloadable: []string{"Comments.Author"}}},
 		{"a subtree whose prefix resolves to nothing", &query.Config{Filterable: []string{"Nope.*"}}},
+		{"an empty field declaration", &query.Config{Filterable: []string{""}}},
+		{"an empty preload declaration", &query.Config{Preloadable: []string{""}}},
+		{"a malformed field wildcard", &query.Config{Filterable: []string{"*.*"}}},
+		{"a malformed preload wildcard", &query.Config{Preloadable: []string{"*.*"}}},
+		{"a negative numeric declaration", &query.Config{MaxBindValues: -1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.cfg.Check(m); err == nil {
@@ -744,6 +980,7 @@ func TestAnAllowListEntryThatNamesNothingIsRefusedAtDeclaration(t *testing.T) {
 		{"a path across a relation", &query.Config{Filterable: []string{"Author.Name"}}},
 		{"a relation subtree", &query.Config{Filterable: []string{"Comments.*"}}},
 		{"a real relation to preload", &query.Config{Preloadable: []string{"Comments", "Comments.Author"}}},
+		{"a searchable default", &query.Config{Searchable: []string{"Title"}, DefaultSearchFields: []string{"Title"}}},
 		{"the wildcard", &query.Config{Filterable: []string{"*"}}},
 		{"the empty config", &query.Config{}},
 		{"nil", nil},

@@ -1,6 +1,7 @@
 package crudgrpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -97,6 +98,12 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 // nowhere else.
 func requestFor(call remote.Call) (*structpb.Struct, error) {
 	switch call.Method {
+	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
+		if call.ID == "" {
+			return nil, fmt.Errorf("crudgrpc: %s requires a non-empty id", call.Method)
+		}
+	}
+	switch call.Method {
 	case remote.MethodList, remote.MethodCount:
 		return docOf(call.Query, "the query document")
 
@@ -110,12 +117,18 @@ func requestFor(call remote.Call) (*structpb.Struct, error) {
 		return rawDoc(call.Body, "the entity")
 
 	case remote.MethodUpdate:
+		if err := requireMutationBody(call.Method, call.Body); err != nil {
+			return nil, err
+		}
 		return document(func(f map[string]*structpb.Value) error {
 			f["id"] = structpb.NewStringValue(call.ID)
 			return nestRaw(f, "patch", call.Body)
 		})
 
 	case remote.MethodReplace:
+		if err := requireMutationBody(call.Method, call.Body); err != nil {
+			return nil, err
+		}
 		return document(func(f map[string]*structpb.Value) error {
 			f["id"] = structpb.NewStringValue(call.ID)
 			return nestRaw(f, "entity", call.Body)
@@ -128,15 +141,65 @@ func requestFor(call remote.Call) (*structpb.Struct, error) {
 		})
 
 	case remote.MethodBulkDelete:
-		return rawDoc(json.RawMessage(`{"ids":`+string(call.IDs)+`}`), "the keys")
+		ids, err := exactBulkIDs(call.IDs)
+		if err != nil {
+			return nil, err
+		}
+		return rawDoc(json.RawMessage(`{"ids":`+string(ids)+`}`), "the keys")
 	}
 	return nil, fmt.Errorf("crudgrpc: no method for %s", call.Method)
 }
 
+func requireMutationBody(method remote.Method, body json.RawMessage) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return fmt.Errorf("crudgrpc: %s requires a non-null body", method)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return fmt.Errorf("crudgrpc: %s body must be a JSON object: %w", method, err)
+	}
+	return nil
+}
+
 // The key goes out as a string on every route that names one. google.protobuf
-// .Value has no integer, so a number above 2^53 would not survive being a
-// double; idOf on the far side reads either spelling and the string one is the
-// half that is always exact.
+// .Value has no integer, so the API does not send an integral key at magnitude
+// 2^53 and beyond as a number. idOf and idsOf on the far side read either spelling and the string
+// one is the half that is always exact.
+
+// exactBulkIDs turns numeric array members into decimal strings before the
+// Struct encoder sees them. Call.IDs stays JSON so HTTP keeps its ordinary
+// array shape, while gRPC gets the same exact key spelling as its entity routes.
+func exactBulkIDs(raw json.RawMessage) (json.RawMessage, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return json.RawMessage("null"), nil
+	}
+	var ids []json.RawMessage
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, fmt.Errorf("crudgrpc: encoding the keys: %w", err)
+	}
+	for i, rawID := range ids {
+		trimmed := bytes.TrimSpace(rawID)
+		if len(trimmed) == 0 || (trimmed[0] != '-' && (trimmed[0] < '0' || trimmed[0] > '9')) {
+			continue
+		}
+		var number json.Number
+		if err := json.Unmarshal(trimmed, &number); err != nil {
+			return nil, fmt.Errorf("crudgrpc: encoding key %d: %w", i, err)
+		}
+		encoded, err := json.Marshal(number.String())
+		if err != nil {
+			return nil, fmt.Errorf("crudgrpc: encoding key %d: %w", i, err)
+		}
+		ids[i] = encoded
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("crudgrpc: encoding the keys: %w", err)
+	}
+	return encoded, nil
+}
 
 func document(fill func(map[string]*structpb.Value) error) (*structpb.Struct, error) {
 	fields := map[string]*structpb.Value{}
@@ -182,10 +245,9 @@ func nestRaw(f map[string]*structpb.Value, key string, raw json.RawMessage) erro
 	if err != nil {
 		return err
 	}
-	if len(st.GetFields()) == 0 {
-		// An empty nested document is left out rather than sent as {}. sub()
-		// reads a missing key and an empty object the same way, and leaving it
-		// out keeps the request the smaller of the two.
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		// Null is absence for the optional query document. Write routes send an
+		// object (including `{}`) so their required body cannot be dropped.
 		return nil
 	}
 	f[key] = structpb.NewStructValue(st)

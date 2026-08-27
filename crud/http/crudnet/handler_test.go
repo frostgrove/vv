@@ -110,7 +110,7 @@ func TestRepeatedFilterTermsAllSurvive(t *testing.T) {
 		"/widgets?f=price:gte:100&f=name:contains:bolt&f=ownerId:eq:7", "", http.StatusOK)
 
 	sql, args := whereSQL(t, fake.only(t, "Get").Opts)
-	wantSQL := `("price" >= $1 AND "name" LIKE $2 AND "owner_id" = $3)`
+	wantSQL := `("price" >= $1 AND "name" LIKE $2 ESCAPE '\' AND "owner_id" = $3)`
 	if sql != wantSQL {
 		t.Fatalf("three ?f= terms compiled to %s, want %s", sql, wantSQL)
 	}
@@ -162,7 +162,7 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	// A relation hop in a filter is a correlated EXISTS, never a join.
 	sql, args := whereSQL(t, o)
 	wantSQL := `(EXISTS (SELECT 1 FROM "owners" AS rx1 WHERE rx1."id" = "widgets"."owner_id" ` +
-		`AND rx1."name" LIKE $1) AND "price" >= $2)`
+		`AND rx1."name" LIKE $1 ESCAPE '\') AND "price" >= $2)`
 	if sql != wantSQL {
 		t.Fatalf("the filter compiled to %s, want %s", sql, wantSQL)
 	}
@@ -175,8 +175,8 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	}
 	// The per-relation filter is compiled against the related model, not the root.
 	partsSQL, partsArgs := predSQL(t, relMeta(t, "Parts"), crud.Build(o.Preloads[1].Opts...).Predicate())
-	if partsSQL != `"label" LIKE $1` {
-		t.Fatalf("the preload filter compiled to %q, want %q", partsSQL, `"label" LIKE $1`)
+	if partsSQL != `"label" LIKE $1 ESCAPE '\'` {
+		t.Fatalf("the preload filter compiled to %q, want %q", partsSQL, `"label" LIKE $1 ESCAPE '\'`)
 	}
 	if want := []any{"%bolt%"}; !reflect.DeepEqual(partsArgs, want) {
 		t.Fatalf("the preload filter bound %#v, want %#v", partsArgs, want)
@@ -272,9 +272,10 @@ func TestCountAcceptsTheJSONDocumentToo(t *testing.T) {
 	}
 }
 
-// GET /:id identifies the row by the path parameter, so only the shaping
-// clauses are worth passing on; a filter or a sort could only contradict it.
-func TestGetByIDPassesThePathIDAndOnlyShapingOptions(t *testing.T) {
+// GET /:id identifies the candidate row by its path parameter, but a filter
+// can still prove that candidate ineligible (for example, outside a tenant).
+// Paging and sorting remain meaningless for one row.
+func TestGetByIDPassesThePathIDAndEligibilityOptions(t *testing.T) {
 	app, fake := mount(t)
 
 	r := ok(t, app, http.MethodGet,
@@ -290,8 +291,8 @@ func TestGetByIDPassesThePathIDAndOnlyShapingOptions(t *testing.T) {
 	if got, want := call.Opts.Fields, []string{"Name"}; !slices.Equal(got, want) {
 		t.Fatalf("projection = %v, want %v", got, want)
 	}
-	if sql, _ := whereSQL(t, call.Opts); sql != "" {
-		t.Fatalf("a filter reached a lookup by id: %s", sql)
+	if sql, _ := whereSQL(t, call.Opts); sql != `"price" >= $1` {
+		t.Fatalf("lookup filter = %s, want price >= 100", sql)
 	}
 	if len(call.Opts.Sort) != 0 || call.Opts.Page != 0 || call.Opts.Limit != 0 {
 		t.Fatalf("sorting or paging reached a lookup by id: sort %v page %d limit %d",
@@ -490,10 +491,9 @@ func TestCountPostAcceptsAnEmptyBody(t *testing.T) {
 func TestListHonoursUnpagedAndSkipTotal(t *testing.T) {
 	// The endpoint declares AllowUnpaged. Without it the flag is refused, which
 	// is the point of the default: unpaged is the one thing a client can ask for
-	// that has no ceiling — MaxLimit clamps it, and MaxLimit is unset by default
-	// ([[D-060]]). skipTotal and distinct need no declaration; neither changes
-	// how many rows come back.
-	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true}))
+	// that has no ceiling. DISTINCT also needs an explicit declaration because
+	// it can force a full-table deduplication pass.
+	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true, AllowDistinct: true}))
 
 	ok(t, app, http.MethodGet, "/widgets?unpaged=true&skipTotal=true&distinct=true", "", http.StatusOK)
 

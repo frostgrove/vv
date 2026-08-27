@@ -32,7 +32,12 @@ import "github.com/frostgrove/vv/crud/query"
 // arguments and an option's arguments name none of them —
 // and a shared constructor could not return one.
 type Rules struct {
-	Query         *query.Config
+	Query *query.Config
+	// QueryVariants and QuerySelector are the transport-forwardable form of
+	// WithQueryFor. The bindings set all three through their WithQueryFor
+	// helpers; callers normally use those helpers rather than these fields.
+	QueryVariants map[string]*query.Config
+	QuerySelector QuerySelector
 	ReadOnly      bool
 	AllowClientID bool
 	MaxBulk       int
@@ -69,7 +74,9 @@ func (r Rules) BulkCap() int {
 // transport into the options the default service takes.
 func (r Rules) Service() []ServiceOption {
 	var out []ServiceOption
-	if r.Query != nil {
+	if r.QuerySelector != nil || r.QueryVariants != nil {
+		out = append(out, WithQueryFor(r.Query, r.QueryVariants, r.QuerySelector))
+	} else if r.Query != nil {
 		out = append(out, WithQuery(r.Query))
 	}
 	if r.AllowClientID {
@@ -90,7 +97,7 @@ func (r Rules) Service() []ServiceOption {
 // in the caller's own vocabulary rather than this package's.
 func (r Rules) RefuseServiceOptions(who string) {
 	switch {
-	case r.Query != nil:
+	case r.Query != nil || r.QuerySelector != nil || r.QueryVariants != nil:
 		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")
 	case r.AllowClientID:
 		panic(who + ": AllowClientID configures the service, which is already built — pass port.AllowClientID to it instead")

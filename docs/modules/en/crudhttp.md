@@ -42,7 +42,7 @@ Two tests, asked in that order:
 | `BulkDeleteRequest[ID]` | the `{"ids":[…]}` body of `POST /bulk-delete` |
 | `CoerceID[ID](raw string)` | a path parameter becomes the key type — which is why a uuid or a slug key works in a URL with no extra code |
 | `NarrowForCount(*query.Request)` | drop everything that means nothing to a `COUNT` |
-| `NarrowForEntity(*query.Request)` | keep only the shaping options |
+| `NarrowForEntity(*query.Request)` | keep shaping and eligibility filters; drop keyed-read paging and ordering |
 | `Sanitize` · `ClearGenerated` | what a client may not choose on create: a generated key, a `generated` column |
 | `Rules` | the five settings that say nothing about a transport, shared by all four bindings — an alias for [`port.Rules`](port.md#the-rules-a-binding-does-not-own) |
 

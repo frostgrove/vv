@@ -84,6 +84,13 @@ func (e Executor) Unwrap() Queryer { return e.q }
 // Open.
 func (e Executor) DataSource() any { return e.q }
 
+// InTransaction reports whether this wrapper holds pgx's transaction handle.
+// Pools and connections can Begin but are not themselves transactional.
+func (e Executor) InTransaction() bool {
+	_, ok := e.q.(pgx.Tx)
+	return ok
+}
+
 func (e Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
 	tag, err := e.q.Exec(ctx, sql, args...)
 	if err != nil {

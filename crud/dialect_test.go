@@ -51,6 +51,11 @@ func TestDialectSyntax(t *testing.T) {
 	}
 }
 
+func TestLiteralLikeEscapingDefaultsForAnExternalDialect(t *testing.T) {
+	checkRender(t, other{}, articleMeta(t), crud.Contains("Title", "50%_\\"),
+		"title LIKE ? ESCAPE '\\'", []any{"%50\\%\\_\\\\%"})
+}
+
 // The three upsert forms. cols are the columns to overwrite on conflict; the
 // primary key is never among them.
 func TestDialectUpsert(t *testing.T) {

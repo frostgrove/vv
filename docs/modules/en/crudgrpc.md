@@ -198,10 +198,29 @@ descriptor, so grpcurl and its kind cannot list the methods. Clients call by ful
 method name, or the application registers a descriptor it generated itself.
 
 **A number in a Struct is a double.** `google.protobuf.Value` has no integer, so
-an `int64` above 2⁵³ loses precision *in an entity document*. **Keys do not**: a
+it cannot carry every `int64` exactly. The API treats an integral value at magnitude 2⁵³ and beyond as outside its safe `Struct` range; an entity document that needs it declares `json:"id,string"`. **Keys do not**: a
 request carries `id` as a string and `port.CoerceID` converts it the same way an
 HTTP path parameter is. A model needing exact large keys in its entity as well
 declares `json:"id,string"`.
+
+The query document takes the safe side too: an integral `Struct` number outside
+that exact range is rejected rather than rounded into a different filter value.
+Send that query operand as a decimal string; the ordinary query coercion keeps
+it exact. This includes filters inside `preload` declarations. The same rule
+applies to a numeric `id` or `ids` request value: a large key must be a decimal
+string, never a `Struct` number.
+
+`page`, `limit`, `offset` and `preload.maxRows` are controls rather than typed
+query operands. They must arrive as exact JSON integers; their string spelling
+is deliberately not accepted. The framework `remote.Resource` client using
+the gRPC transport sends bulk keys in the exact decimal-string spelling, just
+like a single keyed route. A raw `Struct` client must send an unsafe `ids`
+member as decimal strings itself.
+
+`count`, `deleted`, `total` and `totalPages` stay exact too. Values in the safe
+range return as JSON numbers; an `int64` outside it returns as its decimal
+string, because a nearby count is worse than a value whose representation makes
+its exactness explicit.
 
 **There is no raw-body fallback.** The HTTP bindings keep the decoded bytes so a
 violation on a column nothing declared can still name the key the client sent.

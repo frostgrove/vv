@@ -3,6 +3,7 @@ package specs_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -88,11 +89,29 @@ func TestMetamodelStyle(t *testing.T) {
 		And(User_.Email.In("a@x", "b@x")).
 		Or(User_.ID.Eq(1)))
 
-	if clause != `(("age" >= $1 AND "name" LIKE $2 AND "email" IN ($3, $4)) OR "id" = $5)` {
+	if clause != `(("age" >= $1 AND "name" LIKE $2 ESCAPE '\' AND "email" IN ($3, $4)) OR "id" = $5)` {
 		t.Fatalf("clause = %s", clause)
 	}
 	if args[0] != 18 || args[1] != "An%" {
 		t.Fatalf("args = %v", args)
+	}
+}
+
+func TestCriteriaBuilderConveniencePatternsAreLiteralAndPortable(t *testing.T) {
+	spec := specs.Of[User](func(root specs.Root[User], cb specs.Builder) crud.Predicate {
+		return cb.And(
+			cb.Contains(root.Get("Name"), "%_"),
+			cb.StartsWithIgnoreCase(root.Get("Email"), "A_"),
+			cb.EndsWithIgnoreCase(root.Get("Name"), "%x"),
+		)
+	})
+	clause, args := where(t, spec)
+	want := `("name" LIKE $1 ESCAPE '\' AND LOWER("email") LIKE LOWER($2) ESCAPE '\' AND LOWER("name") LIKE LOWER($3) ESCAPE '\')`
+	if clause != want {
+		t.Fatalf("clause = %s, want %s", clause, want)
+	}
+	if wantArgs := []any{`%\%\_%`, `A\_%`, `%\%x`}; !reflect.DeepEqual(args, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", args, wantArgs)
 	}
 }
 
@@ -126,6 +145,59 @@ func TestComposition(t *testing.T) {
 				t.Fatalf("clause = %s, want %s", clause, tc.want)
 			}
 		})
+	}
+}
+
+func TestOptionalSpecificationsStayDeclarativeAndNeverWidenAnOR(t *testing.T) {
+	if p := specs.Predicate(specs.AllOf(
+		specs.If(false, User_.Name.ContainsIgnoreCase("ignored")),
+		User_.ID.EqPtr(nil),
+		User_.Age.EqOpt(crud.Undefined[int]()),
+	)); p != nil {
+		t.Fatalf("all absent optional specifications = %T, want no restriction", p)
+	}
+
+	mandatory := specs.AllOf(
+		User_.Active.Eq(true),
+		specs.If(false, User_.Name.ContainsIgnoreCase("ignored")),
+	)
+	if clause, args := where(t, mandatory); clause != `"active" = $1` || !reflect.DeepEqual(args, []any{true}) {
+		t.Fatalf("mandatory filter = %s %v, want only active", clause, args)
+	}
+
+	or := specs.AnyOf(
+		specs.If(false, User_.ID.Eq(1)),
+		specs.AnyOf(specs.If(false, User_.ID.Eq(2)), User_.ID.Eq(7)),
+	)
+	if clause, args := where(t, or); clause != `"id" = $1` || !reflect.DeepEqual(args, []any{int64(7)}) {
+		t.Fatalf("optional OR = %s %v, want only id 7", clause, args)
+	}
+}
+
+func TestOptionalEqualityPreservesPointerAndOptStates(t *testing.T) {
+	id := int64(7)
+	for _, tc := range []struct {
+		name string
+		spec specs.Specification[User]
+		want string
+		args []any
+	}{
+		{"pointer", User_.ID.EqPtr(&id), `"id" = $1`, []any{int64(7)}},
+		{"optional value", User_.Age.EqOpt(crud.Set(30)), `"age" = $1`, []any{30}},
+		{"optional null", User_.Age.EqOpt(crud.Null[int]()), `"age" IS NULL`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if clause, args := where(t, tc.spec); clause != tc.want || !reflect.DeepEqual(args, tc.args) {
+				t.Fatalf("filter = %s %v, want %s %v", clause, args, tc.want, tc.args)
+			}
+		})
+	}
+
+	if p := specs.Predicate(User_.ID.EqPtr(nil)); p != nil {
+		t.Fatalf("nil pointer equality = %T, want no restriction", p)
+	}
+	if p := specs.Predicate(User_.Age.EqOpt(crud.Undefined[int]())); p != nil {
+		t.Fatalf("undefined optional equality = %T, want no restriction", p)
 	}
 }
 

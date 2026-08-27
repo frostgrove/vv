@@ -633,14 +633,14 @@ vocabulary on the single-resource route
 narrower projection, and sends the parameters it already knows.
 **Must hold:**
 1. `preload` and `select` are honoured on a `GET /{id}`.
-2. Everything meaningless there — `filter`, `sort`, `page`, `limit` — is dropped
-   rather than obeyed.
+2. An eligibility `filter` is honoured there; `sort`, `page` and `limit`, which
+   cannot change a keyed row, are dropped rather than obeyed.
 3. Whether a dropped key is a refusal or silence is the same answer the list
    route gives for a name it will not accept.
 **Today:** 🟡 partial — 1 and 2 hold, 3 does not
-**Evidence:** `port.NarrowForEntity` (`port/request.go:38-41`) zeroes `Filter`,
-`Terms`, `Search`, `Sort`, `Page`, `Limit` and `Offset` and keeps the shaping
-options, and `port.NarrowForCount` (`:33-36`) does the equivalent for a total.
+**Evidence:** `port.NarrowForEntity` preserves `Filter`, `Terms` and `Search`,
+then clears `Sort`, `Page`, `Limit` and `Offset` while retaining the shaping
+options; `port.NarrowForCount` does the equivalent for a total.
 Both are exported, which is the tell: a hand-written service has to remember to
 call them. 3 is the gap — the narrowing is **silent**, while the same document's
 unknown *key* is refused by name (`crud/query/request.go:79-100`) and its unknown
@@ -945,10 +945,11 @@ release may deprecate `MaxLimit` as an endpoint-setting rather than silently
 giving one repository two route-specific values. Crudhttp and Crudgrpc must pass
 the same resolved Rules cap into their query compilation path — neither binding
 may invent a second default or clamp after the compiler has refused. Remote
-`GetAll` must request the peer's explicitly declared unpaged/export capability
-and **refuse** when it is absent; it must never truncate at a local or remote cap
-and call the result “all”. This is the explicit migration price of choosing a
-single authority, and all four clauses await the D-060 amendment.
+`GetAll` now walks the peer's bounded List/cursor protocol rather than requesting
+an unpaged export; it must never call a capped result “all”. A cursorless peer
+or a DISTINCT projection without the primary key retains the explicit
+`MaxOffset` boundary. This is the explicit migration price of choosing a single
+authority, and all four clauses await the D-060 amendment.
 
 The selector may choose a vocabulary by principal, but it is not tenancy. A
 tenant/row policy still arrives through `security.Gate`; it prepends `crud.Where`

@@ -117,6 +117,57 @@ func TestAPreloadIsNotNarrowedWithoutTheDeclaration(t *testing.T) {
 	}
 }
 
+func TestAnEmptyRelationScopeFailsClosedUnlessExplicitlyAllowed(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	base := security.ScopeField[Folder, int64]("TenantID", tenantOf)
+	missing := security.Combine(base, security.Policy[Folder, int64]{
+		RelationScopes: func(context.Context) (*crud.RelationScopes, error) { return nil, nil },
+	})
+	rec := crudtest.Postgres()
+	if _, err := folders(rec, missing).GetAll(ctx, crud.Preload("Notes")); !errors.Is(err, security.ErrForbidden) {
+		t.Fatalf("err = %v, want a failed relation scope to refuse rather than leak", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("a failed relation scope reached SQL: %v", rec.SQL())
+	}
+
+	allowed := security.Combine(base, security.Policy[Folder, int64]{
+		RelationScopes:              func(context.Context) (*crud.RelationScopes, error) { return nil, nil },
+		AllowUnscopedRelationScopes: true,
+	})
+	rec = crudtest.Postgres().Push(crudtest.Rows())
+	if _, err := folders(rec, allowed).GetAll(ctx); err != nil {
+		t.Fatalf("an explicit unscoped-relation administrator was refused: %v", err)
+	}
+}
+
+func TestAnIneffectiveCustomRelationScopeFailsBeforeSQL(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	for _, tc := range []struct {
+		name string
+		rs   *crud.RelationScopes
+	}{
+		{"unknown path", (*crud.RelationScopes)(nil).AtPath("Notse", crud.Eq("TenantID", int64(7)))},
+		{"tautological path", (*crud.RelationScopes)(nil).AtPath("Notes", crud.True())},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres()
+			policy := security.Combine(
+				security.ScopeField[Folder, int64]("TenantID", tenantOf),
+				security.Policy[Folder, int64]{
+					RelationScopes: func(context.Context) (*crud.RelationScopes, error) { return tc.rs, nil },
+				},
+			)
+			if _, err := folders(rec, policy).GetAll(ctx, crud.Preload("Notes")); err == nil {
+				t.Fatal("an ineffective relation declaration reached the query")
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("ineffective relation scope reached SQL: %v", rec.SQL())
+			}
+		})
+	}
+}
+
 // A nested filter opens a correlated EXISTS over the target table, and that
 // subquery is just as unnarrowed as a preload is.
 func TestANestedFilterIsNarrowedByThePolicy(t *testing.T) {
@@ -135,6 +186,44 @@ func TestANestedFilterIsNarrowedByThePolicy(t *testing.T) {
 	// Two tenant checks: one on folders, one inside the EXISTS over notes.
 	if n := strings.Count(sql, `"tenant_id" = $`); n != 2 {
 		t.Fatalf("found %d tenant checks, want 2 (the table and the subquery):\n%s", n, sql)
+	}
+}
+
+// Assigned-key Save does not use the ordinary Core options path for its final
+// write. Its conditional UPDATE must nevertheless carry relation scopes into a
+// relation-hopping root Scope, or the preflight and the write judge different
+// sets of notes.
+func TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate(t *testing.T) {
+	ctx := withTenant(context.Background(), 7)
+	policy := security.Combine(
+		security.ScopeField[Folder, int64]("TenantID", tenantOf),
+		security.Policy[Folder, int64]{
+			Scope: func(context.Context) (crud.Predicate, error) {
+				return crud.Eq("Notes.Text", "visible"), nil
+			},
+			RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
+				tenant, err := tenantOf(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return (*crud.RelationScopes)(nil).AtPath("Notes", crud.Eq("TenantID", tenant)), nil
+			},
+		},
+	)
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(folderRow(1, 7, "before", 3)), // inspected snapshot
+		crudtest.Rows(folderRow(1, 7, "after", 3)),  // conditional UPDATE RETURNING
+	)
+	f := Folder{ID: 1, TenantID: 7, Name: "after", OwnerID: 3}
+	if err := folders(rec, policy).Save(ctx, &f); err != nil {
+		t.Fatal(err)
+	}
+	sql := rec.Last().SQL
+	if !strings.HasPrefix(sql, "UPDATE") || !strings.Contains(sql, "EXISTS") {
+		t.Fatalf("scoped save = %s, want a relation-hopping UPDATE", sql)
+	}
+	if !strings.Contains(sql, `rx1."tenant_id" = $`) {
+		t.Fatalf("the Notes subquery lost its relation scope in final UPDATE:\n%s", sql)
 	}
 }
 

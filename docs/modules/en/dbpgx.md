@@ -26,9 +26,13 @@ repo := Products.Bind(crudpgx.Open(pool))
 | `Connect(ctx, cfg, opts…)` | build the string, size the pool, dial |
 | `MustConnect(ctx, cfg, opts…)` | the same, panicking — for `main` |
 | `ConnectReadWrite(ctx, cfg, opts…)` | primary and replica; the second is nil when none is declared |
+| `MustConnectReadWrite(ctx, cfg, opts…)` | the same pair, panicking — for `main` |
+| `Apply(pc, pool)` | apply portable pool sizing to a `pgxpool.Config` the application owns |
 
-Unlike `sql.Open`, `pgxpool.NewWithConfig` dials, so a server that is not there
-fails here rather than at the first query.
+`pgxpool.NewWithConfig` is lazy. `Connect` calls `Ping` before returning, so a
+server that is not there fails here rather than at the first query. As with
+`vvdb.Open`, `Connect` and `MustConnect` reject a declared replica; use the
+pair-returning helpers so it cannot be silently ignored.
 
 ## Options reach pgx directly
 

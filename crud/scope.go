@@ -48,7 +48,7 @@ func (rs *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 	if out.paths == nil {
 		out.paths = map[string]Predicate{}
 	}
-	out.paths[path] = p
+	out.paths[path] = both(out.paths[path], p)
 	return out
 }
 
@@ -81,27 +81,70 @@ func (rs *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes 
 	if out.models == nil {
 		out.models = map[reflect.Type]Predicate{}
 	}
-	out.models[t] = p
+	out.models[t] = both(out.models[t], p)
 	return out
 }
 
 // At returns the narrowing that applies to a hop that arrived at target by the
-// canonical path. A path declaration wins over a model one, so a repository can
-// say something more specific about one route than about the model in general.
+// canonical path. Both declarations apply: a path rule narrows one route
+// further, while a model rule remains the invariant for every occurrence of
+// that model (including a repository's own soft-delete scope on a
+// self-relation).
 func (rs *RelationScopes) At(path string, target *Meta) Predicate {
 	if rs == nil || target == nil {
 		return nil
 	}
-	if p, ok := rs.paths[path]; ok {
-		return p
-	}
-	return rs.models[target.Type]
+	return both(rs.paths[path], rs.models[target.Type])
 }
 
 // Empty reports whether anything is declared at all, so callers can skip the
 // bookkeeping entirely.
 func (rs *RelationScopes) Empty() bool {
 	return rs == nil || (len(rs.paths) == 0 && len(rs.models) == 0)
+}
+
+// Resolve validates a request-specific relation narrowing against root and
+// returns a copy whose path keys use the model's canonical spelling.
+//
+// RelationScopes is deliberately a small, model-independent value so a policy
+// can construct it from a principal at request time. That makes validation at
+// construction impossible for custom policies: an unknown path would otherwise
+// remain a non-empty declaration that never applies, and True would look like a
+// narrowing while it narrows nothing. Resolve is the boundary where the model
+// is available, so it refuses both shapes before a query reaches SQL.
+func (rs *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
+	if rs.Empty() {
+		return rs, nil
+	}
+	if root == nil {
+		return nil, &SchemaError{Reason: "relation scopes need a root model"}
+	}
+	out := &RelationScopes{}
+	for path, p := range rs.paths {
+		rel, canonical, err := root.RelationAt(path)
+		if err != nil {
+			return nil, err
+		}
+		target, err := rel.Target()
+		if err != nil {
+			return nil, err
+		}
+		if IsTautologyFor(target, p) {
+			return nil, &SchemaError{Model: root.Name, Field: path, Reason: "relation scope must narrow rows"}
+		}
+		out = out.AtPath(canonical, p)
+	}
+	for typ, p := range rs.models {
+		schema, err := SchemaOfType(typ)
+		if err != nil {
+			return nil, err
+		}
+		if IsTautologyFor(&Meta{Schema: schema}, p) {
+			return nil, &SchemaError{Model: root.Name, Field: typ.String(), Reason: "relation scope must narrow rows"}
+		}
+		out = out.ForModel(typ, p)
+	}
+	return out, nil
 }
 
 // MergeRelationScopes combines a repository's permanent narrowings with the ones

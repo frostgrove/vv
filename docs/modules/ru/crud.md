@@ -125,10 +125,18 @@ security-скоуп неснимаемым ([[D-003]]).
 ```go
 crud.Eq  crud.Ne  crud.Gt  crud.Gte  crud.Lt  crud.Lte
 crud.In  crud.NotIn  crud.InAny[T]  crud.NotInAny[T]  crud.Between
-crud.Like  crud.NotLike  crud.LikeIgnoreCase  crud.Contains  crud.StartsWith  crud.EndsWith
+crud.Like  crud.NotLike  crud.LikeIgnoreCase
+crud.Contains  crud.StartsWith  crud.EndsWith
+crud.ContainsIgnoreCase  crud.StartsWithIgnoreCase  crud.EndsWithIgnoreCase
 crud.IsNull  crud.IsNotNull  crud.EqField
 crud.And  crud.Or  crud.Not  crud.True  crud.False  crud.Raw
 ```
+
+`Like`, `NotLike` и `LikeIgnoreCase` принимают SQL-паттерн как есть — это форма
+для кода, который намеренно управляет `%` и `_`. `Contains`, `StartsWith` и
+`EndsWith` принимают обычный текст: экранируют обратную косую черту, `%` и `_`,
+добавляют wildcard и выводят безопасный для диалекта `ESCAPE`. Их формы
+`IgnoreCase` используют переносимое сравнение через `LOWER()`.
 
 Имя поля может пересекать связь на любой глубине:
 

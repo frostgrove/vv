@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ import (
 // one — `user:pass@tcp(host:3306)/db` parses by no URI rule at all — and data
 // source name is the only word that fits both.
 func DSN(c Config) (string, error) {
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
 	switch c.Engine {
 	case Postgres:
 		return PostgresDSN(c)
@@ -46,6 +50,18 @@ func PostgresDSN(c Config) (string, error) {
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
+	// A libpq service is a second, opaque document. pgx consults it before the
+	// URI's ordinary settings, so refuse it loudly instead of silently making
+	// PGSERVICE part of an otherwise declarative Config. Raw DSN remains the
+	// explicit escape hatch for applications that intentionally use a service.
+	if os.Getenv("PGSERVICE") != "" {
+		return "", fmt.Errorf("%w: PGSERVICE is set; use Config.DSN when a libpq service is intentional", ErrConflict)
+	}
+	if os.Getenv("PGSSLNEGOTIATION") != "" {
+		// sslnegotiation is pgx-specific, so emitting an empty query key would
+		// make the database/sql lib/pq driver reject an otherwise portable URI.
+		return "", fmt.Errorf("%w: PGSSLNEGOTIATION is set; put the intended driver setting in Config.Params", ErrConflict)
+	}
 
 	u := url.URL{Scheme: "postgres", Path: "/" + c.Name}
 	switch {
@@ -56,14 +72,36 @@ func PostgresDSN(c Config) (string, error) {
 	}
 
 	q := url.Values{}
+	// pgx merges its process defaults and PG* environment after parsing only the
+	// fields absent from a URI. Render every connection fact vvdb owns,
+	// including empty credentials and the ordinary defaults, so the named config
+	// rather than a shell or ~/.pgpass decides the connection.
+	q.Set("user", c.User)
+	q.Set("password", c.Password)
+	q.Set("dbname", c.Name)
+	sslmode := c.SSLMode
+	if sslmode == "" {
+		sslmode = "prefer"
+	}
+	q.Set("sslmode", sslmode)
+	q.Set("connect_timeout", "0")
+	q.Set("passfile", "")
+	q.Set("sslcert", "")
+	q.Set("sslkey", "")
+	q.Set("sslrootcert", "")
+	q.Set("sslpassword", "")
+	q.Set("sslsni", "")
+	q.Set("target_session_attrs", "any")
+	q.Set("application_name", "")
+	q.Set("timezone", "")
+	q.Set("options", "")
 	host, port := c.Host, c.Port
 	if port == 0 {
 		port = defaultPort(Postgres)
 	}
 	if strings.HasPrefix(host, "/") {
 		// A unix socket is a directory, and a directory in the host position of
-		// a URI is not one. libpq reads it out of the query instead, and pgx
-		// follows libpq.
+		// a URI is not one. pgx reads it out of the query.
 		q.Set("host", host)
 		q.Set("port", strconv.Itoa(port))
 	} else {
@@ -71,9 +109,8 @@ func PostgresDSN(c Config) (string, error) {
 			host = "localhost"
 		}
 		u.Host = net.JoinHostPort(host, strconv.Itoa(port))
-	}
-	if c.SSLMode != "" {
-		q.Set("sslmode", c.SSLMode)
+		q.Set("host", host)
+		q.Set("port", strconv.Itoa(port))
 	}
 	if s := seconds(c.Pool.ConnectTimeout); s != "" {
 		q.Set("connect_timeout", s)
@@ -167,10 +204,34 @@ func SQLiteDSN(c Config) (string, error) {
 	for k, v := range c.Params {
 		q.Set(k, v)
 	}
-	if len(q) == 0 {
-		return "file:" + c.Path, nil
+	if len(c.Pragmas) > 0 {
+		for _, raw := range c.Pragmas {
+			name, value, _ := strings.Cut(raw, "=") // Validate already checked it.
+			name, value = strings.ToLower(strings.TrimSpace(name)), strings.TrimSpace(value)
+			switch DriverName(c) {
+			case "", "sqlite":
+				// modernc.org/sqlite consumes one _pragma query item per
+				// setting. Values.Add, not Set, is what keeps WAL and a busy
+				// timeout together in the URI.
+				q.Add("_pragma", name+"("+value+")")
+			case "sqlite3":
+				// mattn/go-sqlite3 names these connection parameters directly.
+				q.Set("_"+name, value)
+			default:
+				return "", fmt.Errorf("%w: sqlite pragmas are mapped for drivers sqlite and sqlite3; use Params or a raw dsn for %q", ErrUnsupported, DriverName(c))
+			}
+		}
 	}
-	return "file:" + c.Path + "?" + q.Encode(), nil
+	// A SQLite URI has a path and a query just like a server URI. Concatenating
+	// c.Path would turn '?' and '#' in an actual filename into URI syntax. Keep
+	// SQLite's conventional file:/absolute-path spelling while borrowing URL's
+	// path escaper for the part that is a filename rather than URI grammar.
+	u := url.URL{Path: c.Path}
+	dsn = "file:" + u.EscapedPath()
+	if encoded := q.Encode(); encoded != "" {
+		dsn += "?" + encoded
+	}
+	return dsn, nil
 }
 
 // prepare settles the two questions every builder asks first: is this config
@@ -178,14 +239,11 @@ func SQLiteDSN(c Config) (string, error) {
 // result is that string and means the builder has nothing left to do.
 func prepare(c Config, e Engine) (Config, string, error) {
 	c.Engine = e
-	if c.DSN != "" {
-		if f := c.fieldsBesideDSN(); f != "" {
-			return c, "", fmt.Errorf("%w: dsn is set and so is %s — one of them would be ignored", ErrConflict, f)
-		}
-		return c, c.DSN, nil
-	}
-	if err := c.validateFields(); err != nil {
+	if err := c.Validate(); err != nil {
 		return c, "", err
+	}
+	if c.DSN != "" {
+		return c, c.DSN, nil
 	}
 	return c, "", nil
 }

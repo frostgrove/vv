@@ -20,6 +20,9 @@ const (
 	opContains
 	opStartsWith
 	opEndsWith
+	opIContains
+	opIStartsWith
+	opIEndsWith
 	opIn
 	opNotIn
 	opBetween
@@ -41,6 +44,9 @@ var opNames = map[string]opKind{
 	"contains": opContains, "search": opContains,
 	"startswith": opStartsWith, "prefix": opStartsWith,
 	"endswith": opEndsWith, "suffix": opEndsWith,
+	"icontains": opIContains, "containsignorecase": opIContains,
+	"istartswith": opIStartsWith, "startswithignorecase": opIStartsWith,
+	"iendswith": opIEndsWith, "endswithignorecase": opIEndsWith,
 
 	"in":  opIn,
 	"nin": opNotIn, "notin": opNotIn,
@@ -64,7 +70,7 @@ func normalizeOp(s string) (opKind, bool) {
 // than a typed value, so the raw string is used instead of a coerced one.
 func (k opKind) textual() bool {
 	switch k {
-	case opLike, opNotLike, opILike, opContains, opStartsWith, opEndsWith:
+	case opLike, opNotLike, opILike, opContains, opStartsWith, opEndsWith, opIContains, opIStartsWith, opIEndsWith:
 		return true
 	}
 	return false

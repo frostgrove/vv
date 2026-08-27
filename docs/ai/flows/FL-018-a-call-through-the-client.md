@@ -136,15 +136,13 @@ binding: `remote` is in the root module and may not import grpc, so a
   arrives as a string where a number was expected.
 - **A patch DTO written by hand can empty a row.** `cmd/vv` writes `omitzero`
   on every generated `crud.Opt` field; `remote.New` refuses one that lacks it.
-- **`GetAll` is emulated with the unpaged flag**, because no transport has an
-  "every row" route. So a far endpoint that did not declare
-  `query.Config{AllowUnpaged: true}` refuses it, and the refusal names the fix
-  ([[D-060]]). That is the honest answer rather than a regression — an
-  endpoint's bounds should not depend on whether the caller is in this process —
-  but it is the one method whose availability is the *server's* decision.
-- **`GET /{id}` carries preload paths in a query string** and has nowhere to put
-  a per-relation filter, so a narrowed preload is refused there. gRPC sends the
-  whole document and does not have this limit.
+- **`GetAll` is an enumeration of bounded List calls.** It follows cursor edges
+  rather than sending `unpaged`, so a page cap is chunking rather than a
+  truncated success. A cursorless custom list and a DISTINCT projection without
+  the primary key still need a sufficient `MaxOffset`; a refusal is propagated.
+- **A filtered `GetByID` uses List as well.** The client adds the primary-key
+  equality to the filter document, so a root filter or narrowed preload is not
+  flattened to HTTP's query-string entity route.
 
 ## Failure modes
 
@@ -155,7 +153,8 @@ binding: `remote` is in the root module and may not import grpc, so a
 | a patch DTO with an untagged `crud.Opt` | a panic from `remote.New`, at start-up |
 | the address is wrong, or a proxy answered | `*remote.ProtocolError`, no sentinel |
 | the answer is larger than `MaxResponse` | a plain error naming the limit; nothing is buffered past it |
-| `GetAll` against an endpoint that did not declare `AllowUnpaged` | the far side's 400, naming `unpaged` and the fix |
+| a cursorless `GetAll` beyond the endpoint's `MaxOffset` | the far side's explicit refusal, never a successful partial export |
+| malformed GetAll progress | `*remote.PartialResultError`, with no partial slice returned |
 | the service refused, classified | `*errs.Fault`, sentinel and violations intact |
 | the service failed internally | `*errs.Fault`, `KindInternal`, no violations |
 | the answer will not decode | a plain error; `port.KindOf` reads it as internal |

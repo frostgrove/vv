@@ -50,26 +50,7 @@ func ScopeField[M any, ID comparable](field string, value func(context.Context) 
 	// is rather than on the first write ([[D-021]]). A type that cannot convert
 	// at all panics naming both sides; one that can is converted for both halves,
 	// so the predicate and the check agree by construction.
-	want := crud.ElemType(f.Type)
-	reconcile := func(v any) (any, error) {
-		if v == nil {
-			// crud.Eq(f.Name, nil) renders IS NULL, which would turn the
-			// documented "an admin returns nil" reading into an empty page and a
-			// denial of every create. A policy that means "no narrowing" says so
-			// by returning a nil *predicate*, not a nil value.
-			return nil, Denied(Read, f.Name+" extractor answered no value; return a nil predicate to mean no narrowing")
-		}
-		got := reflect.TypeOf(v)
-		if got == want {
-			return v, nil
-		}
-		if got.ConvertibleTo(want) {
-			return reflect.ValueOf(v).Convert(want).Interface(), nil
-		}
-		panic("security: the " + f.Name + " extractor answered a " + got.String() +
-			" and the column is a " + want.String() + " — the two cannot be compared, " +
-			"so every write would be denied and every read would narrow to nothing")
-	}
+	reconcile := reconcileFieldValue(f)
 
 	return Policy[M, ID]{
 		Scope: func(ctx context.Context) (crud.Predicate, error) {
@@ -124,16 +105,98 @@ func ScopeField[M any, ID comparable](field string, value func(context.Context) 
 // ("Comments.Author"); it is resolved at declaration time, so a typo panics
 // here rather than leaking rows in production.
 func ScopeRelationField[M any, ID comparable](path, field string, value func(context.Context) (any, error)) Policy[M, ID] {
-	name := relationFieldName[M](path, field)
+	f := relationField[M](path, field)
+	reconcile := reconcileFieldValue(f)
 	return Policy[M, ID]{
 		RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
 			v, err := value(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return (*crud.RelationScopes)(nil).AtPath(path, crud.Eq(name, v)), nil
+			v, err = reconcile(v)
+			if err != nil {
+				return nil, err
+			}
+			return (*crud.RelationScopes)(nil).AtPath(path, crud.Eq(f.Name, v)), nil
 		},
 	}
+}
+
+// reconcileFieldValue brings a context value to a model field's own type.
+// ScopeField and ScopeRelationField share it so a relation cannot defer an
+// ordinary declaration mismatch to driver coercion at request time.
+func reconcileFieldValue(f *crud.Field) func(any) (any, error) {
+	want := crud.ElemType(f.Type)
+	return func(v any) (any, error) {
+		if v == nil {
+			return nil, Denied(Read, f.Name+" extractor answered no value")
+		}
+		got := reflect.TypeOf(v)
+		if got == want {
+			return v, nil
+		}
+		if converted, ok := safelyConvert(reflect.ValueOf(v), want); ok {
+			return converted.Interface(), nil
+		}
+		return nil, Denied(Read, "the value for "+f.Name+" cannot be safely converted to the column type")
+	}
+}
+
+// safelyConvert admits only conversions that preserve the value's category and
+// range. reflect's ConvertibleTo is broader: int64(42) is convertible to string
+// but becomes "*", a particularly dangerous result for a tenant predicate.
+func safelyConvert(v reflect.Value, want reflect.Type) (reflect.Value, bool) {
+	got := v.Type()
+	if got.Kind() == want.Kind() && got.ConvertibleTo(want) {
+		// float64 -> float32 can turn one tenant identity into another by
+		// rounding. Context claims are authority, not approximate measurements,
+		// so a cross-type float conversion is never safe.
+		if got != want && (got.Kind() == reflect.Float32 || got.Kind() == reflect.Float64) {
+			return reflect.Value{}, false
+		}
+		return v.Convert(want), true
+	}
+
+	isSigned := func(k reflect.Kind) bool {
+		return k >= reflect.Int && k <= reflect.Int64
+	}
+	isUnsigned := func(k reflect.Kind) bool {
+		return k >= reflect.Uint && k <= reflect.Uint64
+	}
+	if (!isSigned(got.Kind()) && !isUnsigned(got.Kind())) || (!isSigned(want.Kind()) && !isUnsigned(want.Kind())) {
+		return reflect.Value{}, false
+	}
+
+	out := reflect.New(want).Elem()
+	switch {
+	case isSigned(got.Kind()) && isSigned(want.Kind()):
+		n := v.Int()
+		if out.OverflowInt(n) {
+			return reflect.Value{}, false
+		}
+		out.SetInt(n)
+	case isUnsigned(got.Kind()) && isUnsigned(want.Kind()):
+		n := v.Uint()
+		if out.OverflowUint(n) {
+			return reflect.Value{}, false
+		}
+		out.SetUint(n)
+	case isSigned(got.Kind()):
+		n := v.Int()
+		if n < 0 || out.OverflowUint(uint64(n)) {
+			return reflect.Value{}, false
+		}
+		out.SetUint(uint64(n))
+	case isUnsigned(got.Kind()):
+		n := v.Uint()
+		if n > uint64(^uint64(0)>>1) || out.OverflowInt(int64(n)) {
+			return reflect.Value{}, false
+		}
+		out.SetInt(int64(n))
+	default:
+		return reflect.Value{}, false
+	}
+	return out, true
 }
 
 // relationFieldName walks the path one relation at a time and returns the
@@ -145,7 +208,7 @@ func ScopeRelationField[M any, ID comparable](path, field string, value func(con
 // blueprint ran first — would cache a guessed table name and keep it. Stepping
 // through the element types answers the only question there is here, which is
 // whether the path and the field exist.
-func relationFieldName[M any](path, field string) string {
+func relationField[M any](path, field string) *crud.Field {
 	schema := crud.MustSchemaOf[M]()
 	at := schema
 	for seg := range strings.SplitSeq(path, ".") {
@@ -163,7 +226,7 @@ func relationFieldName[M any](path, field string) string {
 	if f == nil {
 		panic("security: " + at.Name + " (at " + path + ") has no field " + field)
 	}
-	return f.Name
+	return f
 }
 
 // ReadOnly denies every write. Compose it over a repository that a request
@@ -195,17 +258,29 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 	// no policies — must be exactly the zero Policy, not a licence to truncate
 	// the table.
 	out := Policy[M, ID]{AllowUnscopedDeleteAll: len(ps) > 0, AllowUnscopedUpdateAll: len(ps) > 0}
-	var scopes []func(context.Context) (crud.Predicate, error)
-	var relScopes []func(context.Context) (*crud.RelationScopes, error)
+	type scopeRule struct {
+		fn    func(context.Context) (crud.Predicate, error)
+		allow bool
+	}
+	var scopes []scopeRule
+	type relationScopeRule struct {
+		fn    func(context.Context) (*crud.RelationScopes, error)
+		allow bool
+	}
+	var relScopes []relationScopeRule
 	var authz []func(context.Context, Action) error
 	var inspect []func(context.Context, Action, *M) error
+	allowUnscopedScope := true
+	allowUnscopedRelationScopes := true
 
 	for _, p := range ps {
 		if p.Scope != nil {
-			scopes = append(scopes, p.Scope)
+			scopes = append(scopes, scopeRule{fn: p.Scope, allow: p.AllowUnscopedScope})
+			allowUnscopedScope = allowUnscopedScope && p.AllowUnscopedScope
 		}
 		if p.RelationScopes != nil {
-			relScopes = append(relScopes, p.RelationScopes)
+			relScopes = append(relScopes, relationScopeRule{fn: p.RelationScopes, allow: p.AllowUnscopedRelationScopes})
+			allowUnscopedRelationScopes = allowUnscopedRelationScopes && p.AllowUnscopedRelationScopes
 		}
 		if p.Authorize != nil {
 			authz = append(authz, p.Authorize)
@@ -219,12 +294,16 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 		out.AllowUnscopedUpdateAll = out.AllowUnscopedUpdateAll && p.AllowUnscopedUpdateAll
 	}
 	if len(scopes) > 0 {
+		out.AllowUnscopedScope = allowUnscopedScope
 		out.Scope = func(ctx context.Context) (crud.Predicate, error) {
 			ps := make([]crud.Predicate, 0, len(scopes))
 			for _, s := range scopes {
-				p, err := s(ctx)
+				p, err := s.fn(ctx)
 				if err != nil {
 					return nil, err
+				}
+				if crud.IsTautology(p) && !s.allow {
+					return nil, Denied(Read, "one combined scope returned no narrowing; set AllowUnscopedScope only for an intentional unrestricted principal")
 				}
 				if p != nil {
 					ps = append(ps, p)
@@ -237,12 +316,16 @@ func Combine[M any, ID comparable](ps ...Policy[M, ID]) Policy[M, ID] {
 		}
 	}
 	if len(relScopes) > 0 {
+		out.AllowUnscopedRelationScopes = allowUnscopedRelationScopes
 		out.RelationScopes = func(ctx context.Context) (*crud.RelationScopes, error) {
 			var merged *crud.RelationScopes
-			for _, f := range relScopes {
-				rs, err := f(ctx)
+			for _, rule := range relScopes {
+				rs, err := rule.fn(ctx)
 				if err != nil {
 					return nil, err
+				}
+				if rs.Empty() && !rule.allow {
+					return nil, Denied(Read, "one combined relation scope returned no narrowing; set AllowUnscopedRelationScopes only for an intentional unrestricted principal")
 				}
 				merged = crud.MergeRelationScopes(merged, rs)
 			}

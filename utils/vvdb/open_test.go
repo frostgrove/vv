@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,10 @@ import (
 // asked to open. It stands in for pgx and go-sql-driver so this package can
 // test what it builds without taking either as a dependency.
 type recorder struct{ dsn string }
+
+var pgxRecorder = &recorder{}
+
+func init() { sql.Register("pgx", pgxRecorder) }
 
 func (r *recorder) Open(name string) (driver.Conn, error) {
 	r.dsn = name
@@ -30,10 +35,10 @@ func register(t *testing.T, name string) *recorder {
 }
 
 func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
-	r := register(t, "vvdbtest-postgres")
+	pgxRecorder.dsn = ""
 	db, err := vvdb.Open(vvdb.Config{
-		Engine: vvdb.Postgres, Driver: "vvdbtest-postgres",
-		Host: "db.internal", User: "vv", Password: "s3cret", Name: "app",
+		Engine: vvdb.Postgres,
+		Host:   "db.internal", User: "vv", Password: "s3cret", Name: "app",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,15 +48,19 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	// sql.Open is lazy, so the driver is only asked once a connection is
 	// wanted. The error is the recorder's and is not the point.
 	_ = db.Ping()
-	if r.dsn != "postgres://vv:s3cret@db.internal:5432/app" {
-		t.Errorf("the driver was handed %q", r.dsn)
+	u, err := url.Parse(pgxRecorder.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Scheme != "postgres" || u.Host != "db.internal:5432" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("password") != "s3cret" || u.Query().Get("sslmode") != "prefer" {
+		t.Errorf("the driver was handed an incomplete typed PostgreSQL URI %q", pgxRecorder.dsn)
 	}
 }
 
 func TestOpenSizesThePool(t *testing.T) {
-	register(t, "vvdbtest-pool")
+	pgxRecorder.dsn = ""
 	db, err := vvdb.Open(vvdb.Config{
-		Engine: vvdb.Postgres, Driver: "vvdbtest-pool", Host: "h", Name: "app",
+		Engine: vvdb.Postgres, Host: "h", Name: "app",
 		Pool: vvdb.Pool{MaxOpen: 7, MaxIdle: 3, MaxLifetime: time.Minute},
 	})
 	if err != nil {
@@ -68,8 +77,8 @@ func TestOpenSizesThePool(t *testing.T) {
 // own default and not become a limit of zero, which would be a pool that can
 // open nothing.
 func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
-	register(t, "vvdbtest-nopool")
-	db, err := vvdb.Open(vvdb.Config{Engine: vvdb.Postgres, Driver: "vvdbtest-nopool", Host: "h", Name: "app"})
+	pgxRecorder.dsn = ""
+	db, err := vvdb.Open(vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +86,24 @@ func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
 
 	if got := db.Stats().MaxOpenConnections; got != 0 {
 		t.Errorf("database/sql spells \"unlimited\" 0, and nothing should have written a limit: got %d", got)
+	}
+}
+
+func TestPoolApplySizesAnApplicationOwnedHandle(t *testing.T) {
+	register(t, "vvdbtest-apply")
+	db, err := sql.Open("vvdbtest-apply", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := (vvdb.Pool{MaxOpen: 9, MaxIdle: -1}).Apply(db); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.Stats().MaxOpenConnections; got != 9 {
+		t.Fatalf("Pool.Apply did not size the application-owned handle: %d", got)
+	}
+	if err := (vvdb.Pool{}).Apply(nil); !errors.Is(err, vvdb.ErrMissing) {
+		t.Fatalf("Pool.Apply(nil) = %v, want a named handle error", err)
 	}
 }
 
@@ -101,10 +128,10 @@ func TestAFailureToOpenDoesNotPrintThePassword(t *testing.T) {
 }
 
 func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
-	r := register(t, "vvdbtest-rw")
+	pgxRecorder.dsn = ""
 	cfg := vvdb.Config{
-		Engine: vvdb.Postgres, Driver: "vvdbtest-rw",
-		Host: "primary.internal", User: "vv", Password: "s3cret", Name: "app",
+		Engine: vvdb.Postgres,
+		Host:   "primary.internal", User: "vv", Password: "s3cret", Name: "app",
 		Replica: &vvdb.Config{Host: "replica.internal"},
 	}
 	p, rep, err := vvdb.OpenReadWrite(cfg)
@@ -117,8 +144,8 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 	}
 	defer rep.Close()
 	_ = rep.Ping()
-	if !strings.Contains(r.dsn, "replica.internal") {
-		t.Errorf("the replica should have been opened against its own host, got %q", r.dsn)
+	if !strings.Contains(pgxRecorder.dsn, "replica.internal") {
+		t.Errorf("the replica should have been opened against its own host, got %q", pgxRecorder.dsn)
 	}
 
 	cfg.Replica = nil
@@ -129,6 +156,17 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 	defer p2.Close()
 	if rep2 != nil {
 		t.Error("no replica declared means no second handle, not a second handle on the primary")
+	}
+}
+
+func TestSingleHandleOpenRefusesToIgnoreADeclaredReplica(t *testing.T) {
+	register(t, "vvdbtest-replica-refusal")
+	_, err := vvdb.Open(vvdb.Config{
+		Engine: vvdb.Postgres, Driver: "vvdbtest-replica-refusal", Host: "primary", Name: "app",
+		Replica: &vvdb.Config{Host: "replica"},
+	})
+	if !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "OpenReadWrite") {
+		t.Fatalf("Open() = %v, want a named two-handle path", err)
 	}
 }
 

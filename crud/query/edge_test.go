@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/crudtest"
 	"github.com/frostgrove/vv/crud/query"
 )
@@ -54,6 +56,73 @@ func tryQuery(t *testing.T, qs string, cfg *query.Config) (string, []any, error)
 	return tryReq(t, req, cfg)
 }
 
+type reservedWordModel struct {
+	ID  int    `db:"id,pk"`
+	Or  string `db:"or"`
+	And int    `db:"and"`
+	Not bool   `db:"not"`
+}
+
+var reservedWordMeta = func() *crud.Meta {
+	m, err := crud.NewMeta[reservedWordModel]("reserved_words")
+	if err != nil {
+		panic(err)
+	}
+	return m
+}()
+
+func TestJSONTermsPreserveNullOperandsLikeFlatTerms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  string
+		flat string
+	}{
+		{"scalar", `{"terms":[{"path":"title","op":"eq","values":[null]}]}`, "f=title:eq:null"},
+		{"list", `{"terms":[{"path":"title","op":"in","values":["go",null]}]}`, "f=title:in:go,null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonSQL, jsonArgs, err := tryDoc(t, tc.doc, nil)
+			if err != nil {
+				t.Fatalf("JSON terms: %v", err)
+			}
+			flatSQL, flatArgs, err := tryQuery(t, tc.flat, nil)
+			if err != nil {
+				t.Fatalf("flat terms: %v", err)
+			}
+			if jsonSQL != flatSQL || !reflect.DeepEqual(jsonArgs, flatArgs) {
+				t.Fatalf("JSON terms = %s %#v\nflat terms = %s %#v", jsonSQL, jsonArgs, flatSQL, flatArgs)
+			}
+		})
+	}
+}
+
+func TestStructuredFiltersCanReachFieldsNamedLikeLogicalOperators(t *testing.T) {
+	var req query.Request
+	if err := json.Unmarshal([]byte(`{"filter":{"or":"choice","and":7,"not":true}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	opts, err := req.Compile(reservedWordMeta, nil)
+	if err != nil {
+		t.Fatalf("fields named Or/And/Not were treated as combinators: %v", err)
+	}
+	doc, err := crud.MarshalPredicate(crud.Build(opts...).Predicate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"Or":{"eq":"choice"}`, `"And":{"eq":7}`, `"Not":{"eq":true}`} {
+		if !strings.Contains(string(doc), want) {
+			t.Fatalf("filter document %s does not contain field condition %s", doc, want)
+		}
+	}
+
+	if err := json.Unmarshal([]byte(`{"filter":{"$or":[{"or":"choice"},{"and":7}]}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := req.Compile(reservedWordMeta, nil); err != nil {
+		t.Fatalf("$or did not remain available for logical composition: %v", err)
+	}
+}
+
 // A document that is not a filter object is a rejection naming what arrived,
 // not an empty WHERE clause that hands back the whole table.
 func TestMalformedFilterDocumentsAreRefused(t *testing.T) {
@@ -83,11 +152,10 @@ func TestMalformedFilterDocumentsAreRefused(t *testing.T) {
 	}
 }
 
-// The shapes that carry no constraint compile to no WHERE clause at all. The
-// alternative — an empty AND or an empty operator object rendering as a
-// constant — would either match everything or nothing depending on which, and
-// the client could not tell which it got.
-func TestDegenerateFilterShapesAddNoClause(t *testing.T) {
+// A present filter must be meaningful. Treating a malformed or half-cleared
+// filter as absent silently widens a request, which is the one answer an
+// untrusted-query API must never invent.
+func TestDegenerateFilterShapesAreRefused(t *testing.T) {
 	for _, tc := range []struct{ name, doc string }{
 		{"an empty document", `{"filter":{}}`},
 		{"an operator object with no operators", `{"filter":{"title":{}}}`},
@@ -99,42 +167,27 @@ func TestDegenerateFilterShapesAddNoClause(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sql, args, err := tryDoc(t, tc.doc, nil)
-			if err != nil {
-				t.Fatalf("%s was refused: %v", tc.doc, err)
-			}
-			if strings.Contains(sql, "WHERE") {
-				t.Fatalf("%s built %s, want no WHERE clause", tc.doc, sql)
-			}
-			if len(args) != 0 {
-				t.Fatalf("%s bound %#v", tc.doc, args)
+			if err == nil {
+				t.Fatalf("%s compiled to %s %v, want a rejection", tc.doc, sql, args)
 			}
 		})
 	}
 }
 
-// An empty value list is the one degenerate shape with a real answer: IN ()
-// is a syntax error in every database, so it degrades to a constant that
-// matches nothing — and NOT IN () to one that matches everything.
-func TestAnEmptyValueListBecomesAConstant(t *testing.T) {
-	for _, tc := range []struct{ name, doc, want string }{
-		{"in", `{"filter":{"views":{"in":[]}}}`, "1 = 0"},
-		{"the array shorthand", `{"filter":{"views":[]}}`, "1 = 0"},
-		{"notIn", `{"filter":{"views":{"nin":[]}}}`, "1 = 1"},
-		{"a term with no values", `{"terms":[{"path":"views","op":"in"}]}`, "1 = 0"},
+// Empty value lists are a UI state, not a predicate. IN and NOT IN have
+// opposite SQL constants for an empty list, so accepting either silently
+// changes the question a caller asked.
+func TestAnEmptyValueListIsRefused(t *testing.T) {
+	for _, tc := range []struct{ name, doc string }{
+		{"in", `{"filter":{"views":{"in":[]}}}`},
+		{"the array shorthand", `{"filter":{"views":[]}}`},
+		{"notIn", `{"filter":{"views":{"nin":[]}}}`},
+		{"a term with no values", `{"terms":[{"path":"views","op":"in"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sql, args, err := tryDoc(t, tc.doc, nil)
-			if err != nil {
-				t.Fatalf("%s was refused: %v", tc.doc, err)
-			}
-			if got := where(sql); got != tc.want {
-				t.Fatalf("where = %s, want %s", got, tc.want)
-			}
-			if strings.Contains(sql, "IN ()") {
-				t.Fatalf("sql = %s, which no database will parse", sql)
-			}
-			if len(args) != 0 {
-				t.Fatalf("a constant bound %#v", args)
+			if err == nil {
+				t.Fatalf("%s compiled to %s %v, want a rejection", tc.doc, where(sql), args)
 			}
 		})
 	}
@@ -233,7 +286,7 @@ func TestClientSpellingNeverReachesTheStatement(t *testing.T) {
 			t.Fatalf("%q was refused: %v", spelling, err)
 		}
 		want := `SELECT "id", "author_id" FROM "articles" WHERE "author_id" = $1 ` +
-			`ORDER BY "author_id" ASC, "id" ASC LIMIT 20`
+			`ORDER BY "author_id" ASC, "id" ASC LIMIT 100`
 		if sql != want {
 			t.Fatalf("%q built\n  %s\nwant\n  %s", spelling, sql, want)
 		}
@@ -343,7 +396,7 @@ func TestQueryStringTermEdges(t *testing.T) {
 		{name: "a repeated parameter ANDs its terms", qs: "f=views:gte:1&f=views:lt:9",
 			where: `("views" >= $1 AND "views" < $2)`, args: []any{1, 9}},
 		{name: "the same field twice keeps both terms", qs: "f=title:contains:go&f=title:contains:rust",
-			where: `("title" LIKE $1 AND "title" LIKE $2)`, args: []any{"%go%", "%rust%"}},
+			where: `("title" LIKE $1 ESCAPE '\' AND "title" LIKE $2 ESCAPE '\')`, args: []any{"%go%", "%rust%"}},
 		{name: "one colon means equality", qs: "f=title:go",
 			where: `"title" = $1`, args: []any{"go"}},
 		{name: "an empty operator falls back to equality", qs: "f=title::go",
@@ -354,6 +407,12 @@ func TestQueryStringTermEdges(t *testing.T) {
 			where: `"title" = $1`, args: []any{"a:b"}},
 		{name: "an encoded payload arrives whole", qs: "f=title:eq:%25go%25%20%2B%20rust",
 			where: `"title" = $1`, args: []any{"%go% + rust"}},
+		{name: "a scalar comma is not a hidden value list", qs: "f=title:eq:Smith%2C%20John",
+			where: `"title" = $1`, args: []any{"Smith, John"}},
+		{name: "an escaped null is the literal string", qs: "f=title:eq:%5Cnull",
+			where: `"title" = $1`, args: []any{"null"}},
+		{name: "an escaped comma remains one IN value", qs: "f=title:in:Smith%5C%2C%20John,Jane",
+			where: `"title" IN ($1, $2)`, args: []any{"Smith, John", "Jane"}},
 		{name: "a pipe separates two terms in one parameter", qs: "f=views:gte:1|title:eq:go",
 			where: `("views" >= $1 AND "title" = $2)`, args: []any{1, "go"}},
 
@@ -416,14 +475,20 @@ func TestAMalformedFilterParameterIsRefusedNotDropped(t *testing.T) {
 		})
 	}
 
-	// An absent or explicitly null filter is not malformed: it is no filter.
-	for _, qs := range []string{"", "filter=", "filter=%20", "filter=null"} {
+	// An absent filter is no filter. A present blank or null is malformed rather
+	// than an instruction to discard the caller's narrowing.
+	for _, qs := range []string{""} {
 		sql, _, err := tryQuery(t, qs, nil)
 		if err != nil {
 			t.Fatalf("%q was refused: %v", qs, err)
 		}
 		if strings.Contains(sql, "WHERE") {
 			t.Fatalf("%q built %s, want no WHERE clause", qs, sql)
+		}
+	}
+	for _, qs := range []string{"filter=", "filter=%20", "filter=null"} {
+		if _, _, err := tryQuery(t, qs, nil); err == nil {
+			t.Fatalf("%q was accepted as an unfiltered request", qs)
 		}
 	}
 
@@ -460,7 +525,7 @@ func TestTheSameDocumentAlwaysCompilesToTheSameStatement(t *testing.T) {
 	want := `SELECT "id", "title", "views", "author_id" FROM "articles" WHERE ` +
 		`(EXISTS (SELECT 1 FROM "authors" AS rx1 WHERE rx1."id" = "articles"."author_id" AND rx1."name" = $1) ` +
 		`AND "author_id" = $2 AND "body" = $3 ` +
-		`AND EXISTS (SELECT 1 FROM "comments" AS rx2 WHERE rx2."article_id" = "articles"."id" AND rx2."body" LIKE $4) ` +
+		`AND EXISTS (SELECT 1 FROM "comments" AS rx2 WHERE rx2."article_id" = "articles"."id" AND rx2."body" LIKE $4 ESCAPE '\') ` +
 		`AND "created_at" >= $5 ` +
 		`AND NOT ("title" = $6) ` +
 		`AND ("title" = $7 OR "body" = $8 OR "views" = $9) ` +
@@ -468,7 +533,7 @@ func TestTheSameDocumentAlwaysCompilesToTheSameStatement(t *testing.T) {
 		`AND EXISTS (SELECT 1 FROM "tags" AS rx3 JOIN "article_tags" AS rx4 ON rx4."tag_id" = rx3."id" ` +
 		`WHERE rx4."article_id" = "articles"."id" AND rx3."slug" IN ($10, $11)) ` +
 		`AND "title" = $12 AND "views" >= $13 AND "views" < $14 AND "views" <> $15) ` +
-		`ORDER BY "views" DESC, "title" ASC, "id" ASC LIMIT 20`
+		`ORDER BY "views" DESC, "title" ASC, "id" ASC LIMIT 100`
 	if sql != want {
 		t.Fatalf("sql  = %s\nwant = %s", sql, want)
 	}

@@ -76,13 +76,13 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | ID | Use case | Actor | Lives in | Also constrains | Status |
 |----|----------|-------|---------|-----------------|--------|
 | [UC-001](general/UC-001-expose-a-crud-api-without-handlers.md) | Expose a full CRUD API for a resource without writing handlers | application author | `general` | — | covered |
-| [UC-002](modules/query/UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted client, HTTP or gRPC | `query` | crudhttp · crudgrpc | partially covered |
+| [UC-002](modules/query/UC-002-let-an-untrusted-client-query.md) | Let an untrusted client filter, sort, page and search | untrusted client, HTTP or gRPC | `query` | crudhttp · crudgrpc | covered |
 | [UC-003](modules/sqlrepo/UC-003-partial-update-absent-vs-null.md) | Apply a partial update that tells absent from null | client sending a partial update | `sqlrepo` | codegen | covered |
-| [UC-004](modules/security/UC-004-isolate-tenants.md) | Isolate tenants so a caller cannot see or touch another's rows | application author | `security` | sqlrepo | partially covered |
+| [UC-004](modules/security/UC-004-isolate-tenants.md) | Isolate tenants so a caller cannot see or touch another's rows | application author | `security` | sqlrepo | covered |
 | [UC-005](modules/sqlrepo/UC-005-run-repository-work-in-an-orm-transaction.md) | Run repository work inside a transaction the ORM owns | application author | `sqlrepo` | adapters | covered |
 | [UC-006](modules/sqlrepo/UC-006-query-and-sort-across-relations.md) | Query and sort across relations, from the wire and from Go | client and application author | `sqlrepo` | crud | covered |
 | [UC-007](modules/specs/UC-007-write-typed-compile-checked-queries.md) | Write typed, compile-checked queries in Go | application author | `specs` | codegen | covered |
-| [UC-008](modules/sqlrepo/UC-008-write-many-rows-in-one-statement.md) | Write many rows in one statement | application author | `sqlrepo` | security | partially covered |
+| [UC-008](modules/sqlrepo/UC-008-write-many-rows-in-one-statement.md) | Write many rows in one statement | application author | `sqlrepo` | security | covered |
 | [UC-009](modules/sqlrepo/UC-009-survive-concurrent-writers.md) | Survive concurrent writers | application author | `sqlrepo` | adapters | covered |
 | [UC-010](modules/crud/UC-010-adopt-an-existing-orm-model.md) | Adopt an existing ORM's model without changing it | application author on ent or gorm | `crud` | adapters | covered |
 | [UC-011](modules/crudtest/UC-011-test-repository-behaviour-without-a-database.md) | Test repository behaviour without a database | application author writing tests | `crudtest` | — | partially covered |

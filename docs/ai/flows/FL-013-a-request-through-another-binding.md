@@ -135,7 +135,7 @@ Three differences a caller can see, in the same direction the table above reads
 | | over HTTP | over gRPC |
 |---|---|---|
 | the fault's own code | read off the first violation — the envelope carries one per violation and no field for the fault's | verbatim in `ErrorInfo.Reason` |
-| a narrowed preload on `GetByID` | **refused** — the entity route carries preload *paths* in a query string | sent, as part of the whole document |
+| a narrowed or capped preload on `GetByID` | sent through the List fallback with the primary-key equality | the same List fallback; the document crosses unchanged |
 | a 422 and a 400 | distinct statuses | one `InvalidArgument`, undone by the code ([[D-052]]) |
 | an answer from elsewhere | `Envelope.Type` says whether this library wrote it | the `ErrorInfo` domain does |
 
@@ -218,12 +218,14 @@ is the same one; everything below is the door.
   document and `crud.Opt` keeps its three states: an absent key is not in
   `Struct.Fields`, an explicit null is a `NullValue` entry.
 - **A number in a Struct is a double.** `google.protobuf.Value` has no integer,
-  so an `int64` above 2^53 loses precision *in an entity document*. Keys do not:
-  `{"id": "9007199254740993"}` is a string and `port.CoerceID` converts it the
-  same way an HTTP path parameter is converted. A model that needs exact large
-  keys in its entity declares `json:"id,string"`. The limit is measured by
-  `TestAnInt64KeyIsCarriedAsAString`, whose control asserts the entity really
-  does lose it.
+  so it cannot carry every `int64` exactly. The API treats integral values at
+  magnitude 2^53 and beyond as outside its safe Struct range: a raw caller sends
+  `id` or `ids` as decimal strings, while the framework client does that for
+  keyed and bulk routes. A model whose entity document needs such values declares
+  `json:"id,string"`. `TestGRPCStructNeverRoundsIDsOrPreloadFilterIntegers` pins
+  numeric refusal at both signs and exact string recovery;
+  `TestAnInt64KeyIsCarriedAsAString` separately shows why an entity needs the
+  string tag.
 - **No query-string door and no raw-body fallback.** A read is the query
   document or nothing, and `porthttp.WithBody`'s index — which turns a column
   name back into the key the client sent — has no counterpart. The declared hops
@@ -317,8 +319,8 @@ exactly that rather than hiding it.
 | an option that configures the service, handed to `Serving` | `port.Rules.RefuseServiceOptions` | a panic at declaration naming the option ([[D-021]]) |
 | `?filtr=` — a parameter one edit from a real one | `query.ParseQuery` → `checkParams` | 400 with the offending path named |
 | a write verb on a `ReadOnly` handler | the route was never registered | 404, or 405 with `HandleMethodNotAllowed`; `Unimplemented` on gRPC |
-| a gRPC request whose `patch` is not an object | `message.go:sub` | `InvalidArgument`, `malformed_body`, and the service is never called |
-| a gRPC key above 2^53 sent as a number | nothing catches it | it is silently rounded — send it as a string, which `doc.go` says and `TestAnInt64KeyIsCarriedAsAString` measures |
+| a gRPC request whose `patch` or `entity` is absent, null or not an object | `message.go:requiredSub` | `InvalidArgument`, `malformed_body`, and the service is never called |
+| a gRPC integral key at magnitude 2^53 or greater sent as a number | `message.go:scalar`, before ID coercion | `InvalidArgument` / `invalid_id`, telling the raw caller to send a decimal string; framework keyed and bulk calls already send that spelling |
 | `grpcurl describe` against a resource | nothing — there is no descriptor | the tool reports the service is unknown; call by full method name ([[D-052]]) |
 
 ## Files
@@ -433,8 +435,10 @@ And the `crudgrpc` half:
 - `TestAbsentNullAndValueSurviveTheStructRoundTrip` — the same file — [[UC-003]]
   on a fourth transport, with the control that an absent key and an explicit
   null produce two different `Opt` states.
-- `TestAnInt64KeyIsCarriedAsAString` — the same file — the documented precision
-  limit, with the control that the entity document really does lose it.
+- `TestGRPCStructNeverRoundsIDsOrPreloadFilterIntegers` — `message_test.go` —
+  the safe numeric edges, both refused boundaries and exact string recovery for
+  `id` and `ids`; `TestAnInt64KeyIsCarriedAsAString` separately proves the
+  entity-document string tag.
 - `TestAResourceIsRegisteredUnderItsOwnName`,
   `TestAKeyThatDoesNotParseIsAClientMistake`,
   `TestDeletingNothingIsAMissForOneRowAndZeroForASet`,

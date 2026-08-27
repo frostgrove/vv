@@ -36,8 +36,9 @@ From there, without another line anywhere:
 - a foreign id returns `crud.ErrNotFound`, never `ErrForbidden` — a 403 would
   confirm the row exists ([[D-008]]);
 - `Save` into another tenant is refused, and so is overwriting a row that
-  belongs to one — the existence probe deliberately runs **without** the
-  narrowing, so an invisible row cannot be silently overwritten;
+  belongs to one — after inspection, an assigned-key create is INSERT-only and
+  an update is pinned to the inspected row and scope **in the database**, so a
+  row inserted or replaced after the probe cannot be silently overwritten;
 - `TenantID` is frozen, so an update DTO naming it is rejected before any SQL
   runs;
 - an unscoped `DeleteAll` is refused.
@@ -46,12 +47,14 @@ From there, without another line anywhere:
 
 ## The three checks
 
-All optional, and independent.
+Each hook is optional, but a policy must contain at least one real rule:
+`security.Gate(security.Policy{})` is a start-up error. Bind the repository
+directly when it is intentionally unrestricted.
 
 | | What it is | Cost |
 |---|---|---|
 | **Scope** | a predicate ANDed into every read and every scoped write | free — it is part of the statement |
-| **Authorize** | coarse: may this principal do this kind of thing at all | one call per operation, before any SQL |
+| **Authorize** | coarse: may this principal do this kind of thing at all | before SQL; an assigned-key `Save` preflights both possible branches (`Create` and `Update`) |
 | **Inspect** | fine: per entity, seeing the actual row | one call per row it is asked about |
 
 ```go
@@ -80,11 +83,39 @@ policy := security.Policy[Doc, int64]{
 
 Actions are `security.Read`, `Create`, `Update`, `Delete`.
 
-**`Scope` returning nil means unrestricted** — which is what an admin principal
-should return. Returning an error refuses the operation.
+**A `Scope` returning nil or an unconditional predicate is refused by default.**
+This keeps a failed tenant lookup — or an accidental `crud.True()` — from
+becoming a full-table read. An administrator that is intentionally unrestricted
+declares that decision beside the scope:
+
+```go
+AllowUnscopedScope: true,
+```
+
+Returning an error still refuses the operation.
 
 **`InspectReads` is off by default.** `Scope` is the cheap way to filter a list;
 inspecting every returned row is a Go call per row.
+
+**An `Inspect` decision is part of the final write.** For `Update`, `Delete`
+and their bulk variants the gate pins the statement to the complete row (or
+rows) it inspected. A concurrent change to an action-relevant field therefore
+matches nothing instead of turning, for example, an approved unlocked delete
+into a delete of a row that was locked a moment later.
+
+**A custom `Scope` or `RelationScopes` without `Inspect` may read, but cannot write a body**:
+`Save`, `SaveAll`, `Update`, and `UpdateAll` could set a field that moves a row
+out of its old `WHERE` scope. The gate refuses that policy shape before it
+queries or writes. Use `ScopeField` for the normal tenancy case (it supplies
+the matching inspection), or add `Inspect` to the custom policy. With that
+check, an assigned-key save is create-only on a missing row and a
+snapshot-pinned, scoped update on an existing one. This is a deliberate
+fail-closed migration from older zero/Scope-only gate behaviour.
+
+The scope and relation-scope resolvers run before **every** save, including a
+generated-key insert where no SQL `WHERE` can carry their predicates. A failed
+principal lookup therefore refuses the insert; it never degrades into an
+unscoped write.
 
 ---
 
@@ -124,6 +155,12 @@ RelationScopes: func(ctx context.Context) (*crud.RelationScopes, error) {
 The per-table equivalent is `sqlrepo.RelationScope` on the blueprint. Where both
 are declared, **both apply**.
 
+**A `RelationScopes` callback returning nil or no rules is refused by default.**
+That is just as important as a root scope: a missing relation claim must not
+turn `?preload=comments` into an unrestricted relation read. An intentional
+administrator bypass sets `AllowUnscopedRelationScopes: true` beside that
+callback. `Combine` fails closed for each constituent relation scope as well.
+
 ---
 
 ## Ready-made policies
@@ -138,7 +175,9 @@ are declared, **both apply**.
 
 `Combine` is how a real policy is built: a tenant scope, a relation scope, a
 freeze and a role check are four values that compose rather than one function
-with four branches.
+with four branches. Prefer it to stacking several `Gate` middlewares: one gate
+can make the combined checked state atomic, while an opaque middleware stack is
+refused rather than bypassed on an assigned-key save.
 
 Every `field` and `path` above is a model field name or a relation path, and a
 policy that narrows nothing because somebody renamed a column is the worst
@@ -191,8 +230,10 @@ articles := Articles.Bind(db, security.Gate(policy))
 
 `ScopeAttr` **wraps `ScopeField`** rather than reimplementing it, so it inherits
 the row check and the frozen column. That matters more than it sounds: a
-principal-driven scope written by hand is the shape [[UC-004]] records as Gap 1
-— it narrows reads and leaves a create into another tenant wide open.
+principal-driven scope written by hand is read-only unless it also supplies
+`Inspect`; the gate rejects body writes before SQL instead of treating a read
+narrowing as a create policy. `ScopeAttr` supplies that inspection and is the
+ordinary tenant-safe declaration.
 
 Four things that are easy to get wrong and are decided here:
 

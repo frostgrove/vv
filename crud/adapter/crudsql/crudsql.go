@@ -85,6 +85,15 @@ func (e Executor) Unwrap() Queryer { return e.q }
 // wrapped.
 func (e Executor) DataSource() any { return e.q }
 
+// InTransaction reports whether this wrapper holds database/sql's concrete
+// transaction handle. A *sql.DB and a *sql.Conn both satisfy Queryer too, but
+// neither provides the atomic boundary a multi-statement repository operation
+// needs.
+func (e Executor) InTransaction() bool {
+	_, ok := e.q.(*sql.Tx)
+	return ok
+}
+
 func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
 	res, err := e.q.ExecContext(ctx, query, args...)
 	if err != nil {

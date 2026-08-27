@@ -33,6 +33,15 @@ type OffsetLimiter interface {
 	LimitAll() string
 }
 
+// LikeEscaper supplies the SQL fragment that selects the backslash escape
+// character for literal-safe LIKE helpers. It is optional so a dialect outside
+// this package remains source-compatible; the writer falls back to the
+// standard `ESCAPE '\'` form. MySQL implements it because a quoted backslash
+// is not stable under NO_BACKSLASH_ESCAPES.
+type LikeEscaper interface {
+	LikeEscapeClause() string
+}
+
 // UpsertScope is the optional interface a Dialect implements to say how much
 // its own Upsert clause swallows. A conflict the upsert absorbs is never
 // reported, so nothing may claim it as a violation.
@@ -76,6 +85,7 @@ func (Postgres) SupportsReturning() bool { return true }
 // the named target and nothing else. A second unique key still refuses.
 func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool { return true }
 func (Postgres) LockClause() string                 { return " FOR UPDATE" }
+func (Postgres) LikeEscapeClause() string           { return ` ESCAPE '\'` }
 
 func (d Postgres) Upsert(pk string, cols []string) string {
 	var b strings.Builder
@@ -107,10 +117,11 @@ type MySQL struct {
 	RowAlias bool
 }
 
-func (MySQL) Name() string            { return "mysql" }
-func (MySQL) Placeholder(int) string  { return "?" }
-func (MySQL) SupportsReturning() bool { return false }
-func (MySQL) LockClause() string      { return " FOR UPDATE" }
+func (MySQL) Name() string             { return "mysql" }
+func (MySQL) Placeholder(int) string   { return "?" }
+func (MySQL) SupportsReturning() bool  { return false }
+func (MySQL) LockClause() string       { return " FOR UPDATE" }
+func (MySQL) LikeEscapeClause() string { return ` ESCAPE X'5C'` }
 func (MySQL) Quote(ident string) string {
 	return "`" + strings.ReplaceAll(ident, "`", "``") + "`"
 }
@@ -164,7 +175,8 @@ func (SQLite) SupportsReturning() bool { return true }
 // LockClause is empty because SQLite has no row locks: a write transaction
 // locks the database. crud.ForUpdate() therefore renders nothing here, and the
 // serialisation a caller wanted comes from the transaction instead.
-func (SQLite) LockClause() string { return "" }
+func (SQLite) LockClause() string       { return "" }
+func (SQLite) LikeEscapeClause() string { return ` ESCAPE '\'` }
 
 // LimitAll is SQLite's spelling: a negative row count means "no limit".
 func (SQLite) LimitAll() string { return " LIMIT -1" }

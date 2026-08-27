@@ -91,7 +91,7 @@ Article_.Author.Name.Desc()          // ORDER BY (SELECT … LIMIT 1) DESC
 | `Attr[M, T]` | `Attribute[M, T](field)` | `Eq` `Ne` `In` `NotIn` `IsNull` `NotNull` `Asc` `Desc` |
 | `Cmp[M, T]` | `Comparable[M, T](field)` | то же самое плюс `Gt` `Gte` `Lt` `Lte` `Between` для типов вне `cmp.Ordered`, вроде `time.Time` |
 | `Ord[M, T]` | `Ordered[M, T](field)` | то же самое, для `cmp.Ordered` |
-| `Str[M]` | `Text[M](field)` | то же самое плюс `Like` `NotLike` `LikeIgnoreCase` `Contains` `StartsWith` `EndsWith` |
+| `Str[M]` | `Text[M](field)` | то же самое плюс `Like` `NotLike` `LikeIgnoreCase` и безопасные для литерала `Contains` / `StartsWith` / `EndsWith` с вариантами `IgnoreCase` |
 
 Каждый метод возвращает `Specification[M]`, так что они composable с `Where`,
 `AllOf`, `AnyOf` и `Not`.
@@ -160,6 +160,22 @@ specs.Not(a)
 specs.Lift[User](crud.Eq("Email", "ann@x.io"))   // обычный предикат становится спецификацией
 ```
 
+Необязательные поля формы тоже остаются декларативными:
+
+```go
+filters := specs.AllOf(
+    User_.TenantID.Eq(tenant),                 // обязательное условие
+    specs.If(q != "", User_.Name.ContainsIgnoreCase(q)),
+    User_.OwnerID.EqPtr(ownerID),               // nil: условие отсутствует
+    User_.ManagerID.EqOpt(managerID),           // undefined: отсутствует; null: IS NULL
+)
+```
+
+`If(false, ...)` не добавляет условия. То же относится к nil в `EqPtr` и
+undefined в `EqOpt`; null у `EqOpt` намеренно становится `IS NULL`. `AnyOf`,
+у которого все члены отсутствуют, не ограничивает запрос, поэтому обязательное
+сужение (например, tenant) следует помещать во внешний `AllOf`.
+
 ## Criteria builder
 
 `specs.CB` — общий инстанс; нулевой `Builder` тоже работает.
@@ -169,8 +185,17 @@ Equal        NotEqual     EqualTo      In           NotIn
 GreaterThan  GreaterThanOrEqualTo      LessThan     LessThanOrEqualTo
 Between      IsNull       IsNotNull
 Like         NotLike      LikeIgnoreCase
+Contains     StartsWith   EndsWith
+ContainsIgnoreCase  StartsWithIgnoreCase  EndsWithIgnoreCase
 And          Or           Not          Conjunction  Disjunction   Raw
 ```
+
+`Like`, `NotLike` и `LikeIgnoreCase` принимают SQL-паттерн как есть: это форма
+для вызывающего кода, который намеренно управляет `%` и `_`. Семейства
+`Contains`, `StartsWith` и `EndsWith` принимают обычный текст: они экранируют
+обратную косую черту, `%` и `_`, сами добавляют нужный wildcard и выводят
+диалектный `ESCAPE`, в том числе для SQLite. Варианты `IgnoreCase` используют
+переносимое сравнение через `LOWER()`.
 
 ---
 
@@ -200,11 +225,32 @@ n,     err  = sp.DeleteBy(ctx, User_.Active.Eq(false))
 `crud.ErrConflict` — когда совпадает больше одной строки. `FindFirst` берёт
 первую вместо этого.
 
-`DeleteBy` и `UpdateBy` отказываются работать с пустой спецификацией —
-`specs.ErrUnboundedDelete` и `specs.ErrUnboundedUpdate`. Спецификация, которая
-схлопнулась в ничто, — это та самая случайность, что вычищает таблицу; снести
-или переписать все строки — это `DeleteAll` и `UpdateAll`, у которых это
-написано в имени.
+`DeleteBy` и `UpdateBy` отказываются работать с неограниченной декларативной
+спецификацией — `specs.ErrUnboundedDelete` и `specs.ErrUnboundedUpdate`. Сюда
+входят композиция, схлопнувшаяся в ничто, Criteria `Conjunction`, пустой `NOT
+IN`, null/self-проверка primary key и доказуемые моделью двухзначные булевы
+формулы вроде `p OR NOT p` или `ID = x OR ID <> x`. Снести или переписать все
+строки — это `DeleteAll` и `UpdateAll`, у которых это написано в имени.
+`crud.Raw` —
+trusted-SQL escape hatch: его нельзя классифицировать в общем виде,
+поэтому при намеренном использовании этой силы нужен прямой bulk-метод
+репозитория.
+
+Guard также fail-closed для любого непрозрачного bind в спецификации:
+`driver.Valuer`, database/sql decimal либо driver-specific value, стабильность
+которого нельзя доказать. Он не вызывает пользовательский conversion code при
+проверке: тот может быть stateful, вернуть NULL или завершиться ошибкой, а
+разные Go-значения могут одинаково закодироваться у драйвера. Булев анализ тоже
+имеет budget: слишком широкая/глубокая композиция отклоняется вместо
+неограниченной работы в процессе. Когда это намеренно, используйте явный
+bulk-метод.
+
+Объявление модели `db:"...,pk"` — это контракт с базой: колонка обязана быть
+non-NULL. Для обычных PostgreSQL/MySQL key это автоматически, но SQLite
+допускает `NULL` в некоторых legacy primary-key без `INTEGER`; для natural key
+SQLite объявляйте `NOT NULL` либо используйте таблицу `STRICT`/`WITHOUT ROWID`.
+Bulk guard использует этот non-NULL контракт, доказывая безусловность
+primary-key predicate.
 
 ## Декоратор никогда не обязателен
 

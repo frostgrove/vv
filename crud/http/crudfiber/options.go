@@ -61,7 +61,18 @@ func collect[M any, ID comparable, U any](opts []Option[M, ID, U]) options[M, ID
 
 // WithQuery bounds what clients may filter, sort, select and preload.
 func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] {
-	return func(o *options[M, ID, U]) { o.Query = cfg }
+	return func(o *options[M, ID, U]) {
+		o.Query, o.QueryVariants, o.QuerySelector = cfg, nil, nil
+	}
+}
+
+// WithQueryFor selects one declared query vocabulary per request. The selector
+// normally reads a principal from context; an undeclared non-empty name is a
+// query refusal rather than a permissive fallback.
+func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, selectConfig port.QuerySelector) Option[M, ID, U] {
+	return func(o *options[M, ID, U]) {
+		o.Query, o.QueryVariants, o.QuerySelector = defaultConfig, variants, selectConfig
+	}
 }
 
 // WithErrorHandler replaces the error-to-response mapping.

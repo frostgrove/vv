@@ -42,7 +42,7 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 | `BulkDeleteRequest[ID]` | тело `{"ids":[…]}` для `POST /bulk-delete` |
 | `CoerceID[ID](raw string)` | параметр пути становится типом ключа — именно поэтому uuid или slug работают в URL без единой строки кода |
 | `NarrowForCount(*query.Request)` | отбросить всё, что ничего не значит для `COUNT` |
-| `NarrowForEntity(*query.Request)` | оставить только опции формы ответа |
+| `NarrowForEntity(*query.Request)` | оставить форму ответа и eligibility filter; отбросить paging и ordering keyed-read |
 | `Sanitize` · `ClearGenerated` | что клиент не может выбирать при создании: сгенерированный ключ, колонка `generated` |
 | `Rules` | пять настроек, которые ничего не говорят о транспорте, общие для всех четырёх биндингов — алиас [`port.Rules`](port.md#правила-которые-биндингу-не-принадлежат) |
 

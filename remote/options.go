@@ -92,25 +92,54 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		if err != nil {
 			return nil, err
 		}
-		req.Filter = query.RawFilter(string(doc))
+		// The DSL spells a tautology as {}. On the wire an absent filter has
+		// that meaning, while an explicit {} is deliberately rejected.
+		if string(doc) != "{}" {
+			req.Filter = query.RawFilter(string(doc))
+		}
 	}
 
 	for _, pre := range o.Preloads {
-		p := query.Preload{Path: pre.Path}
+		p := query.Preload{Path: pre.Path, MaxRows: pre.MaxRows}
 		if len(pre.Opts) > 0 {
 			// A narrowed preload is its own little query, and everything above
 			// applies to it too — including the refusals, which is why this
 			// goes back through requestOf rather than reading the fields it
 			// happens to need.
-			nested, err := requestOf(crud.Build(pre.Opts...))
+			nestedOptions := crud.Build(pre.Opts...)
+			if unsupportedPreloadOptions(nestedOptions) {
+				return nil, &OptionError{
+					Option: "crud.PreloadWhere",
+					Reason: "a remote preload carries only Where, OrderBy, and PreloadRows; the other nested options have no wire spelling",
+				}
+			}
+			nested, err := requestOf(nestedOptions)
 			if err != nil {
 				return nil, err
 			}
 			p.Filter, p.Sort = nested.Filter, nested.Sort
+			// PreloadRows is also a valid way to cap a narrowed preload. Its
+			// scope is this relation, so carry the stricter of the two spellings
+			// in the one wire field rather than silently losing it.
+			if nestedOptions.PreloadRows > 0 && (p.MaxRows == 0 || nestedOptions.PreloadRows < p.MaxRows) {
+				p.MaxRows = nestedOptions.PreloadRows
+			}
 		}
 		req.Preload = append(req.Preload, p)
 	}
 	return req, nil
+}
+
+// unsupportedPreloadOptions keeps the wire contract fail-closed. A preload is
+// its own batched relation query, but query.Preload deliberately exposes only
+// the three controls whose meaning survives that query: narrowing, ordering,
+// and its row-cap refusal. In particular, local pagination is itself refused
+// for a preload; accepting it remotely and dropping it would turn that visible
+// error into a successful, differently shaped relation.
+func unsupportedPreloadOptions(o *crud.Options) bool {
+	return len(o.Fields) > 0 || len(o.Preloads) > 0 || o.Page != 0 || o.Limit != 0 || o.Offset != 0 ||
+		o.RelScopes != nil || len(o.Agg.Aggregations) > 0 || len(o.Agg.GroupBy) > 0 || o.After != "" || o.Before != "" ||
+		o.Primary || o.Unpaged || o.NoSort || o.NoTotal || o.ForUpdate || o.Distinct
 }
 
 // sortsOf carries the ordering across, nulls placement included. crud spells it

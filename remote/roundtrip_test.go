@@ -2,21 +2,51 @@ package remote_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/query"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/remote"
 	"github.com/frostgrove/vv/remote/remotehttp"
 )
 
+type exactCountTransport map[remote.Method]json.RawMessage
+
+func (t exactCountTransport) Do(_ context.Context, call remote.Call) (json.RawMessage, error) {
+	return t[call.Method], nil
+}
+
 func client(t *testing.T, base string) *remote.Resource[Widget, int64, WidgetUpdate] {
 	t.Helper()
 	return remote.New[Widget, int64, WidgetUpdate](remotehttp.Transport(base))
+}
+
+func TestRemoteAcceptsExactStringCountsFromStructTransports(t *testing.T) {
+	tr := exactCountTransport{
+		remote.MethodCount:  json.RawMessage(`{"count":"9007199254740993"}`),
+		remote.MethodDelete: json.RawMessage(`{"deleted":"9007199254740993"}`),
+		remote.MethodList:   json.RawMessage(`{"items":[],"page":1,"limit":1,"total":"9007199254740993","totalPages":"9007199254740993","hasNext":false,"hasPrev":false}`),
+	}
+	r := remote.New[Widget, int64, WidgetUpdate](tr)
+	if got, err := r.Count(context.Background()); err != nil || got != 9007199254740993 {
+		t.Fatalf("Count = %d, %v", got, err)
+	}
+	if got, err := r.Delete(context.Background(), 1); err != nil || got != 9007199254740993 {
+		t.Fatalf("Delete = %d, %v", got, err)
+	}
+	if got, err := r.Get(context.Background()); err != nil || got.Total != 9007199254740993 || got.TotalPages != 9007199254740993 {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
 }
 
 // clause renders a narrowing the way the database would see it, which is how
@@ -52,6 +82,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 
 	t.Run("GetAll", func(t *testing.T) {
 		f := newFake()
+		f.page = crud.NewPaginatedResponse(f.page.Items, 1, 0, int64(len(f.page.Items)))
 		all, err := client(t, serve(t, f)).GetAll(ctx)
 		if err != nil {
 			t.Fatalf("get all: %v", err)
@@ -59,8 +90,8 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if len(all) != 2 {
 			t.Fatalf("%d rows came back", len(all))
 		}
-		if !f.last(t).Opts.Unpaged {
-			t.Fatal("GetAll asked for one page")
+		if f.last(t).Opts.Unpaged {
+			t.Fatal("GetAll asked for an unpaged response instead of walking pages")
 		}
 	})
 
@@ -189,6 +220,319 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 			t.Fatalf("a round trip was made to delete nothing: %v", methods(f))
 		}
 	})
+}
+
+func TestGetByIDPreservesANarrowingThroughTheListRoute(t *testing.T) {
+	f := newFake()
+	f.page = crud.NewPaginatedResponse([]Widget{{ID: 42, OwnerID: 7, Name: "bolt"}}, 1, 1, 1)
+	w, err := client(t, serve(t, f)).GetByID(context.Background(), 42,
+		crud.Where(crud.Eq("OwnerID", int64(7))),
+	)
+	if err != nil {
+		t.Fatalf("GetByID() = %v", err)
+	}
+	if w.ID != 42 {
+		t.Fatalf("GetByID() = %+v, want the keyed row", w)
+	}
+	got := f.last(t)
+	if got.Method != "Get" {
+		t.Fatalf("narrowed GetByID used %s, want the document-shaped List route", got.Method)
+	}
+	sql, args := clause(t, got.Opts)
+	if want := `("owner_id" = $1 AND "id" = $2)`; sql != want {
+		t.Fatalf("List filter = %s, want %s", sql, want)
+	}
+	if want := []any{int64(7), int64(42)}; !reflect.DeepEqual(args, want) {
+		t.Fatalf("List binds = %#v, want %#v", args, want)
+	}
+}
+
+func TestTautologicalWhereStaysAbsentOnTheRemoteWire(t *testing.T) {
+	for _, p := range []crud.Predicate{crud.True(), crud.And()} {
+		req, err := remote.ToRequest(crud.Where(p))
+		if err != nil {
+			t.Fatalf("ToRequest(%T) = %v", p, err)
+		}
+		if !req.Filter.IsZero() {
+			t.Fatalf("ToRequest(%T) sent filter %v, want absence", p, req.Filter)
+		}
+	}
+
+	f := newFake()
+	r := client(t, serve(t, f))
+	if _, err := r.Get(context.Background(), crud.Where(crud.True())); err != nil {
+		t.Fatalf("Get(Where(True())) = %v", err)
+	}
+	if got := f.last(t); got.Method != "Get" {
+		t.Fatalf("Get(Where(True())) reached %s", got.Method)
+	}
+	if _, err := r.GetByID(context.Background(), 42, crud.Where(crud.True())); err != nil {
+		t.Fatalf("GetByID(Where(True())) = %v", err)
+	}
+	if got := f.last(t); got.Method != "GetByID" {
+		t.Fatalf("GetByID(Where(True())) reached %s, want direct keyed read", got.Method)
+	}
+}
+
+func TestGetByIDPreservesNarrowedAndCappedPreloadsThroughTheListRoute(t *testing.T) {
+	f := newFake()
+	f.page = crud.NewPaginatedResponse([]Widget{{ID: 42, OwnerID: 7, Name: "bolt"}}, 1, 1, 1)
+	w, err := client(t, serve(t, f)).GetByID(context.Background(), 42,
+		crud.Where(crud.Eq("OwnerID", int64(7))),
+		crud.PreloadCap("Parts", 1,
+			crud.Where(crud.Eq("Label", "hex")),
+			crud.OrderBy(crud.Desc("ID"))),
+	)
+	if err != nil {
+		t.Fatalf("GetByID() = %v", err)
+	}
+	if w.ID != 42 {
+		t.Fatalf("GetByID() = %+v, want the keyed row", w)
+	}
+	got := f.last(t)
+	if got.Method != "Get" {
+		t.Fatalf("GetByID used %s, want List for its document-shaped preload", got.Method)
+	}
+	if len(got.Opts.Preloads) != 1 || got.Opts.Preloads[0].Path != "Parts" || got.Opts.Preloads[0].MaxRows != 1 {
+		t.Fatalf("preloads = %+v, want Parts capped at 1", got.Opts.Preloads)
+	}
+	sub := crud.Build(got.Opts.Preloads[0].Opts...)
+	if sub.PreloadRows != 1 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
+		t.Fatalf("narrowed preload options = %+v", sub)
+	}
+	sql, args := clause(t, got.Opts)
+	if want := `("owner_id" = $1 AND "id" = $2)`; sql != want {
+		t.Fatalf("List filter = %s, want %s", sql, want)
+	}
+	if want := []any{int64(7), int64(42)}; !reflect.DeepEqual(args, want) {
+		t.Fatalf("List binds = %#v, want %#v", args, want)
+	}
+}
+
+func TestPreloadRowsInsideAPreloadWhereCrossesTheWire(t *testing.T) {
+	req, err := remote.ToRequest(crud.PreloadWhere("Parts", crud.PreloadRows(1)))
+	if err != nil {
+		t.Fatalf("ToRequest() = %v", err)
+	}
+	if len(req.Preload) != 1 || req.Preload[0].MaxRows != 1 {
+		t.Fatalf("preload document = %+v, want Parts capped at 1", req.Preload)
+	}
+}
+
+func TestUnsupportedNestedPreloadOptionsAreRefusedBeforeTheyCanBeLost(t *testing.T) {
+	for name, opt := range map[string]crud.Option{
+		"pagination": crud.Limit(1),
+		"projection": crud.Select("Label"),
+		"cursor":     crud.After("edge"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := remote.ToRequest(crud.PreloadWhere("Parts", opt))
+			var option *remote.OptionError
+			if !errors.As(err, &option) || option.Option != "crud.PreloadWhere" {
+				t.Fatalf("ToRequest() = %T %v, want a PreloadWhere OptionError", err, err)
+			}
+		})
+	}
+}
+
+func TestGetAllRefusesAnInconsistentRemoteExport(t *testing.T) {
+	f := newFake()
+	f.page = crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2)
+	f.page.HasNext = false // claims the one-item page was complete despite total
+	_, err := client(t, serve(t, f)).GetAll(context.Background())
+	var partial *remote.PartialResultError
+	if !errors.As(err, &partial) {
+		t.Fatalf("GetAll() = %v, want PartialResultError", err)
+	}
+	if !errors.Is(err, remote.ErrPartialResult) || partial.Received != 1 || partial.Total != 2 {
+		t.Fatalf("partial result = %+v, want 1 of 2", partial)
+	}
+	if f.last(t).Opts.Unpaged {
+		t.Fatal("GetAll asked for an unpaged response instead of walking pages")
+	}
+}
+
+func TestGetAllWalksARemotePageCap(t *testing.T) {
+	f := newFake()
+	f.pages = map[int]crud.PaginatedResponse[Widget]{
+		0: crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2),
+		2: crud.NewPaginatedResponse(f.page.Items[1:], 2, 1, 2),
+	}
+	all, err := client(t, serve(t, f)).GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll() = %v", err)
+	}
+	if len(all) != 2 || all[0].ID != 1 || all[1].ID != 2 {
+		t.Fatalf("GetAll() = %+v, want both capped pages", all)
+	}
+	if len(f.calls) != 2 || f.calls[0].Opts.Page != 0 || f.calls[1].Opts.Page != 2 {
+		t.Fatalf("remote page walk = %+v, want page 0 then page 2", f.calls)
+	}
+}
+
+func TestGetAllSwitchesToCursorsBeforeAnEndpointsOffsetBudget(t *testing.T) {
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows([]any{int64(1), int64(7), "bolt", 250, nil, savedAt}),
+		crudtest.Rows([]any{int64(3)}),
+		crudtest.Rows(
+			[]any{int64(2), int64(7), "nut", 120, nil, savedAt},
+			[]any{int64(3), int64(7), "screw", 30, nil, savedAt},
+		),
+		crudtest.Rows([]any{int64(3), int64(7), "screw", 30, nil, savedAt}),
+	)
+	repo := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets", sqlrepo.MaxLimit(1)).Bind(rec)
+	all, err := client(t, serve(t, repo,
+		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{MaxOffset: 1}))).
+		GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll() = %v", err)
+	}
+	if len(all) != 3 || all[0].ID != 1 || all[1].ID != 2 || all[2].ID != 3 {
+		t.Fatalf("GetAll() = %+v, want every row behind MaxLimit(1)", all)
+	}
+	if got := len(rec.Statements()); got != 5 {
+		t.Fatalf("sql calls = %d, want first-page read/count, two cursor reads, and a terminal probe", got)
+	}
+}
+
+func TestGetAllWalksCursorEdges(t *testing.T) {
+	forward := newFake()
+	first := crud.NewPaginatedResponse(forward.page.Items[:1], 0, 1, 2)
+	first.NextCursor = "after-first"
+	last := crud.NewPaginatedResponse(forward.page.Items[1:], 0, 1, 1)
+	last.HasNext = false
+	forward.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"after:start":       first,
+		"after:after-first": last,
+	}
+	all, err := client(t, serve(t, forward)).GetAll(context.Background(), crud.After("start"), crud.OrderBy(crud.Asc("ID")))
+	if err != nil || len(all) != 2 || all[0].ID != 1 || all[1].ID != 2 {
+		t.Fatalf("forward cursor GetAll() = %+v, %v", all, err)
+	}
+
+	backward := newFake()
+	near := crud.NewPaginatedResponse([]Widget{{ID: 3}, {ID: 4}}, 0, 2, 2)
+	near.HasNext, near.HasPrev, near.PrevCursor = false, true, "before-first"
+	far := crud.NewPaginatedResponse([]Widget{{ID: 1}, {ID: 2}}, 0, 2, 2)
+	far.HasNext, far.HasPrev = false, false
+	backward.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"before:end":          near,
+		"before:before-first": far,
+	}
+	all, err = client(t, serve(t, backward)).GetAll(context.Background(), crud.Before("end"), crud.OrderBy(crud.Asc("ID")))
+	if err != nil || len(all) != 4 || all[0].ID != 1 || all[3].ID != 4 {
+		t.Fatalf("backward cursor GetAll() = %+v, %v", all, err)
+	}
+}
+
+func TestGetAllRefusesAnEmptyCursorPageThatClaimsMore(t *testing.T) {
+	f := newFake()
+	empty := crud.NewPaginatedResponse[Widget](nil, 0, 1, 0)
+	empty.HasNext, empty.NextCursor = true, "would-loop"
+	f.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"after:start": empty,
+	}
+	_, err := client(t, serve(t, f)).GetAll(context.Background(),
+		crud.After("start"), crud.OrderBy(crud.Asc("ID")))
+	var partial *remote.PartialResultError
+	if !errors.As(err, &partial) || partial.Received != 0 || partial.Total != 0 {
+		t.Fatalf("GetAll() = %v, want a 0-of-0 PartialResultError", err)
+	}
+	if got := len(f.calls); got != 1 {
+		t.Fatalf("empty cursor page made %d calls, want it refused before a second request", got)
+	}
+}
+
+func TestGetAllFollowsACursorEdgeEvenWhenHasNextIsFalse(t *testing.T) {
+	f := newFake()
+	first := crud.NewPaginatedResponse(f.page.Items[:1], 0, 1, 1)
+	first.NextCursor = "after-first" // a cursor edge is stronger than a stale HasNext flag
+	last := crud.NewPaginatedResponse(f.page.Items[1:], 0, 1, 1)
+	terminal := crud.NewPaginatedResponse[Widget](nil, 0, 1, 0)
+	f.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"after:start":       first,
+		"after:after-first": last,
+		"after:after-last":  terminal,
+	}
+	last.NextCursor = "after-last"
+	f.cursors["after:after-first"] = last
+
+	all, err := client(t, serve(t, f)).GetAll(context.Background(),
+		crud.After("start"), crud.OrderBy(crud.Asc("ID")))
+	if err != nil || len(all) != 2 || all[0].ID != 1 || all[1].ID != 2 {
+		t.Fatalf("GetAll() = %+v, %v; want both cursor pages", all, err)
+	}
+	if got := len(f.calls); got != 3 {
+		t.Fatalf("cursor calls = %d, want both data pages and the terminal probe", got)
+	}
+}
+
+func TestGetAllUnpagedOffsetWalksTheWholeSuffix(t *testing.T) {
+	f := newFake()
+	first := crud.NewPaginatedResponse([]Widget{{ID: 1}, {ID: 2}}, 1, 2, 3)
+	second := crud.NewPaginatedResponse([]Widget{{ID: 3}}, 0, 2, 1)
+	first.NextCursor = "after-first"
+	terminal := crud.NewPaginatedResponse[Widget](nil, 0, 1, 0)
+	second.NextCursor = "after-second"
+	f.pages = map[int]crud.PaginatedResponse[Widget]{0: first}
+	f.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"after:after-first":  second,
+		"after:after-second": terminal,
+	}
+
+	all, err := client(t, serve(t, f,
+		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{MaxOffset: 1}))).
+		GetAll(context.Background(), crud.Unpaged(), crud.Offset(2))
+	if err != nil || len(all) != 1 || all[0].ID != 3 {
+		t.Fatalf("GetAll() = %+v, %v; want every row after the offset", all, err)
+	}
+	if f.calls[0].Opts.Unpaged || f.calls[0].Opts.Offset != 0 {
+		t.Fatalf("first suffix request = %+v, want a bounded zero-offset page", f.calls[0].Opts)
+	}
+}
+
+func TestGetAllFollowsAnInitialOffsetPagesCursorEdgeDespiteHasNext(t *testing.T) {
+	f := newFake()
+	first := crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2)
+	first.HasNext, first.NextCursor = false, "after-first"
+	last := crud.NewPaginatedResponse(f.page.Items[1:], 0, 1, 1)
+	terminal := crud.NewPaginatedResponse[Widget](nil, 0, 1, 0)
+	last.NextCursor = "after-last"
+	f.pages = map[int]crud.PaginatedResponse[Widget]{0: first}
+	f.cursors = map[string]crud.PaginatedResponse[Widget]{
+		"after:after-first": last,
+		"after:after-last":  terminal,
+	}
+
+	all, err := client(t, serve(t, f)).GetAll(context.Background())
+	if err != nil || len(all) != 2 || all[0].ID != 1 || all[1].ID != 2 {
+		t.Fatalf("GetAll() = %+v, %v; want both cursor-edge pages", all, err)
+	}
+}
+
+func TestGetAllDistinctProjectionDoesNotInjectThePrimaryKeySort(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows([]any{"bolt"}))
+	repo := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets").Bind(rec)
+
+	all, err := client(t, serve(t, repo)).GetAll(context.Background(), crud.Distinct(), crud.Select("Name"))
+	if err != nil || len(all) != 1 || all[0].Name != "bolt" {
+		t.Fatalf("GetAll() = %+v, %v; want the DISTINCT projection", all, err)
+	}
+	if sql := crudtest.Normalize(rec.Last().SQL); strings.Contains(sql, "ORDER BY") {
+		t.Fatalf("DISTINCT projection unexpectedly received an injected sort: %s", sql)
+	}
+}
+
+func TestGetAllKeepsTheCompletenessTotal(t *testing.T) {
+	f := newFake()
+	f.page = crud.NewPaginatedResponse(f.page.Items, 1, 0, int64(len(f.page.Items)))
+	if _, err := client(t, serve(t, f)).GetAll(context.Background(), crud.Unpaged(), crud.Limit(1), crud.SkipTotal()); err != nil {
+		t.Fatalf("GetAll() = %v", err)
+	}
+	got := f.last(t).Opts
+	if got.Unpaged || got.NoTotal {
+		t.Fatalf("GetAll options = %+v, want an ordinary first page with total", got)
+	}
 }
 
 // The point of crud.MarshalPredicate, measured where it matters: a filter

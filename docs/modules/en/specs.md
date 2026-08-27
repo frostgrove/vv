@@ -91,7 +91,7 @@ Pick the narrowest one — it decides which methods exist.
 | `Attr[M, T]` | `Attribute[M, T](field)` | `Eq` `Ne` `In` `NotIn` `IsNull` `NotNull` `Asc` `Desc` |
 | `Cmp[M, T]` | `Comparable[M, T](field)` | the above, plus `Gt` `Gte` `Lt` `Lte` `Between` for non-`cmp.Ordered` types like `time.Time` |
 | `Ord[M, T]` | `Ordered[M, T](field)` | the above, for `cmp.Ordered` |
-| `Str[M]` | `Text[M](field)` | the above, plus `Like` `NotLike` `LikeIgnoreCase` `Contains` `StartsWith` `EndsWith` |
+| `Str[M]` | `Text[M](field)` | the above, plus `Like` `NotLike` `LikeIgnoreCase`, and literal-safe `Contains` / `StartsWith` / `EndsWith` with their `IgnoreCase` variants |
 
 Every method returns a `Specification[M]`, so they compose with `Where`, `AllOf`,
 `AnyOf` and `Not`.
@@ -159,6 +159,22 @@ specs.Not(a)
 specs.Lift[User](crud.Eq("Email", "ann@x.io"))   // a plain predicate becomes a specification
 ```
 
+Optional form fields stay declarative too:
+
+```go
+filters := specs.AllOf(
+    User_.TenantID.Eq(tenant),                 // required
+    specs.If(q != "", User_.Name.ContainsIgnoreCase(q)),
+    User_.OwnerID.EqPtr(ownerID),               // nil: absent
+    User_.ManagerID.EqOpt(managerID),           // undefined: absent; null: IS NULL
+)
+```
+
+`If(false, ...)` contributes no condition. The same is true for a nil
+`EqPtr` and an undefined `EqOpt`; an `EqOpt` null deliberately becomes `IS
+NULL`. An `AnyOf` whose every member is absent is unrestricted, so put a
+required narrowing such as the tenant condition in a surrounding `AllOf`.
+
 ## The Criteria builder
 
 `specs.CB` is a shared instance; the zero `Builder` works too.
@@ -168,8 +184,17 @@ Equal        NotEqual     EqualTo      In           NotIn
 GreaterThan  GreaterThanOrEqualTo      LessThan     LessThanOrEqualTo
 Between      IsNull       IsNotNull
 Like         NotLike      LikeIgnoreCase
+Contains     StartsWith   EndsWith
+ContainsIgnoreCase  StartsWithIgnoreCase  EndsWithIgnoreCase
 And          Or           Not          Conjunction  Disjunction   Raw
 ```
+
+`Like`, `NotLike` and `LikeIgnoreCase` take an SQL pattern verbatim: use them
+when the caller intentionally owns `%` and `_`. The `Contains`, `StartsWith`
+and `EndsWith` families take ordinary text instead. They quote backslash, `%`
+and `_`, add the appropriate wildcard themselves, and render the dialect's
+`ESCAPE` clause, including on SQLite. The `IgnoreCase` variants use portable
+`LOWER()` matching.
 
 ---
 
@@ -197,10 +222,28 @@ and everything else still work on the same value.
 `FindOne` returns `specs.ErrNotUnique` — which wraps `crud.ErrConflict` — when
 more than one row matches. `FindFirst` takes the first instead.
 
-`DeleteBy` and `UpdateBy` refuse an empty specification —
-`specs.ErrUnboundedDelete` and `specs.ErrUnboundedUpdate`. A specification that
-composes to nothing is the accident that truncates the table, and wiping or
-rewriting every row is `DeleteAll` and `UpdateAll`, which say so in their names.
+`DeleteBy` and `UpdateBy` refuse an unrestricted declarative specification —
+`specs.ErrUnboundedDelete` and `specs.ErrUnboundedUpdate`. That includes a
+composition that becomes empty, a Criteria `Conjunction`, empty `NOT IN`, a
+primary-key null/self check, and model-provable two-valued Boolean formulas
+such as `p OR NOT p` or `ID = x OR ID <> x`. Wiping or rewriting every row is
+`DeleteAll` and `UpdateAll`, which say so in their names. `crud.Raw` is a
+trusted-SQL escape hatch: it cannot be classified generically, so use the direct
+repository bulk method when that power is intentional.
+
+The guard also fails closed for any opaque bind in a specification: a
+`driver.Valuer`, a database/sql decimal or a driver-specific value it cannot
+prove stable. It never calls user conversion code while inspecting a
+specification — it may be stateful, return NULL, or fail, and unlike Go values
+may encode alike — so the direct bulk verb is required whenever one is
+intentional. Boolean analysis is budgeted too; an oversized/deep composition is
+refused rather than consuming unbounded in-process work.
+
+The model's `db:"...,pk"` declaration is a database contract: its column must
+be non-NULL. This is automatic for ordinary PostgreSQL/MySQL keys, but SQLite
+allows `NULL` in some non-`INTEGER` legacy primary-key forms; declare `NOT NULL`
+or use a `STRICT`/`WITHOUT ROWID` table for a natural SQLite key. The bulk guard
+uses that non-NULL contract when proving primary-key predicates unconditional.
 
 ## You are never forced into the decorator
 

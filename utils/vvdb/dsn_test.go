@@ -2,6 +2,8 @@ package vvdb_test
 
 import (
 	"errors"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +46,16 @@ func TestEachEngineIsBuiltInItsOwnSyntax(t *testing.T) {
 			got, err := vvdb.DSN(tc.cfg)
 			if err != nil {
 				t.Fatalf("building the %s string failed: %v", tc.cfg.Engine, err)
+			}
+			if tc.cfg.Engine == vvdb.Postgres {
+				u, err := url.Parse(got)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u.Scheme != "postgres" || u.Host != "db.internal:6000" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("sslmode") != "prefer" || u.Query().Get("passfile") != "" || u.Query().Get("connect_timeout") != "0" {
+					t.Errorf("the postgres URI does not carry its explicit typed defaults: %s", got)
+				}
+				return
 			}
 			if got != tc.want {
 				t.Errorf("the %s string is not what the driver expects\n got: %s\nwant: %s", tc.cfg.Engine, got, tc.want)
@@ -239,6 +251,148 @@ func TestADSNIsUsedAsGivenAndRefusesToShareTheJob(t *testing.T) {
 	_, err = vvdb.DSN(vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Host: "db.internal", Name: "app"})
 	if !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("a dsn beside a host means one of the two is ignored and nobody is told which; got %v", err)
+	}
+
+	_, err = vvdb.DSN(vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Pool: vvdb.Pool{ConnectTimeout: time.Second}})
+	if !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "pool.connect_timeout") {
+		t.Fatalf("a raw DSN and a pool timeout pick different sources in different adapters; got %v", err)
+	}
+}
+
+func TestSQLiteEscapesFilenameSyntaxBeforeAddingParameters(t *testing.T) {
+	cfg := vvdb.Config{Engine: vvdb.SQLite, Path: "/tmp/report?draft#1.db", Params: map[string]string{"mode": "rwc"}}
+	got, err := vvdb.SQLiteDSN(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path != cfg.Path || u.Query().Get("mode") != "rwc" {
+		t.Fatalf("SQLiteDSN() = %q parses as path %q, query %q; want original filename and parameters", got, u.Path, u.RawQuery)
+	}
+}
+
+func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
+	cfg := vvdb.Config{
+		Engine:  vvdb.SQLite,
+		Path:    "/tmp/vv.db",
+		Pragmas: vvdb.SQLitePragmas{"journal_mode=WAL", "busy_timeout=5000"},
+	}
+	got, err := vvdb.SQLiteDSN(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values := u.Query()["_pragma"]; !reflect.DeepEqual(values, []string{"journal_mode(WAL)", "busy_timeout(5000)"}) {
+		t.Fatalf("modernc pragmas = %#v, want both repeated settings", values)
+	}
+
+	cfg.Driver = "sqlite3"
+	got, err = vvdb.SQLiteDSN(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err = url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Query().Get("_journal_mode") != "WAL" || u.Query().Get("_busy_timeout") != "5000" {
+		t.Fatalf("mattn pragmas = %q, want its two driver settings", got)
+	}
+
+	for _, bad := range []vvdb.Config{
+		{Engine: vvdb.SQLite, Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"journal_mode=WAL; DROP TABLE x"}},
+		{Engine: vvdb.SQLite, Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"journal_mode=not_a_mode"}},
+		{Engine: vvdb.SQLite, Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"busy_timeout=banana"}},
+		{Engine: vvdb.SQLite, Path: "/tmp/vv.db", Params: vvdb.Params{"_pragma": "writable_schema(ON)"}},
+		{Engine: vvdb.Postgres, Host: "db", Name: "app", Pragmas: vvdb.SQLitePragmas{"busy_timeout=5000"}},
+	} {
+		if _, err := vvdb.DSN(bad); !errors.Is(err, vvdb.ErrUnsupported) {
+			t.Fatalf("DSN(%+v) = %v, want its invalid pragma named", bad, err)
+		}
+	}
+
+	// Validation is case-insensitive, and rendering has to be too: mattn reads
+	// lower-case URI names, so preserving JOURNAL_MODE would silently drop it.
+	cfg = vvdb.Config{Engine: vvdb.SQLite, Driver: "sqlite3", Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"JOURNAL_MODE=WAL"}}
+	if got, err := vvdb.SQLiteDSN(cfg); err != nil || !strings.Contains(got, "_journal_mode=WAL") {
+		t.Fatalf("case-normalized sqlite pragma = %q, %v", got, err)
+	}
+}
+
+func TestDSNUsesTheSameFullValidationAsOpen(t *testing.T) {
+	cfg := base(vvdb.Postgres)
+	cfg.Pool = vvdb.Pool{MaxOpen: 1, MaxIdle: 2}
+	if _, err := vvdb.DSN(cfg); !errors.Is(err, vvdb.ErrConflict) {
+		t.Fatalf("DSN() = %v, want the impossible pool refused before it becomes a handle", err)
+	}
+
+	cfg = base(vvdb.Postgres)
+	cfg.Replica = &vvdb.Config{Host: "replica", SSLMode: "not-a-mode"}
+	if _, err := vvdb.DSN(cfg); err == nil || !strings.Contains(err.Error(), "replica") {
+		t.Fatalf("DSN() = %v, want a named invalid replica refusal", err)
+	}
+	if _, err := vvdb.PostgresDSN(cfg); err == nil || !strings.Contains(err.Error(), "replica") {
+		t.Fatalf("PostgresDSN() = %v, want the same invalid replica refusal", err)
+	}
+}
+
+func TestParamsCannotOverrideTypedConnectionSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  vvdb.Config
+	}{
+		{"postgres TLS", func() vvdb.Config {
+			c := base(vvdb.Postgres)
+			c.SSLMode = "require"
+			c.Params = map[string]string{"sslmode": "disable"}
+			return c
+		}()},
+		{"postgres default TLS", func() vvdb.Config {
+			c := base(vvdb.Postgres)
+			c.Params = map[string]string{"sslmode": "disable"}
+			return c
+		}()},
+		{"postgres default connect timeout", func() vvdb.Config {
+			c := base(vvdb.Postgres)
+			c.Params = map[string]string{"connect_timeout": "5"}
+			return c
+		}()},
+		{"postgres socket host", func() vvdb.Config {
+			c := base(vvdb.Postgres)
+			c.Host = "/var/run/postgresql"
+			c.Params = map[string]string{"host": "other.internal"}
+			return c
+		}()},
+		{"mysql TLS", func() vvdb.Config {
+			c := base(vvdb.MySQL)
+			c.SSLMode = "require"
+			c.Params = map[string]string{"tls": "skip-verify"}
+			return c
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := vvdb.DSN(tc.cfg); !errors.Is(err, vvdb.ErrConflict) {
+				t.Fatalf("DSN() = %v, want two sources of truth refused", err)
+			}
+		})
+	}
+}
+
+func TestInvalidTCPPortAndBracketedIPv6AreRefusedBeforeTheDriver(t *testing.T) {
+	for _, tc := range []vvdb.Config{
+		func() vvdb.Config { c := base(vvdb.Postgres); c.Port = -1; return c }(),
+		func() vvdb.Config { c := base(vvdb.MySQL); c.Port = 65536; return c }(),
+		func() vvdb.Config { c := base(vvdb.Postgres); c.Host = "[2001:db8::1]"; return c }(),
+	} {
+		if _, err := vvdb.DSN(tc); !errors.Is(err, vvdb.ErrUnsupported) {
+			t.Fatalf("DSN(%+v) = %v, want a named boundary refusal", tc, err)
+		}
 	}
 }
 

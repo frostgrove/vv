@@ -99,77 +99,27 @@ it is forbidden.
 | [[FL-011]] | the 404-not-403 distinction reaching the client |
 
 ## Status
-**partially covered.** The core is solid and heavily tested; four gaps are real
-and one of them is a leak.
+**covered for declarative policies.** Reads, page totals, relations, writes and
+bulk writes all receive the same AND-composed narrowing. A hidden assigned key
+answers `ErrNotFound` without reaching a write, while a scope-only policy refuses
+body writes before it can make an unchecked create or update. `ScopeField`,
+`ScopeAttr` and `ScopeSubject` include the row inspection and frozen-column
+checks needed for an insert; a hand-written scope without `Inspect` is therefore
+fail-closed rather than a weaker version of the helper.
 
-What is proven: the narrowing on every read and on update, filtered update,
-delete-by-id and filtered delete, with the exact statements asserted; the
-404-not-403 rule in both directions; the update's own `WHERE` carrying it; the
-unscoped-bulk-write guards including the separateness of the two opt-ins and the
-fact that a table-level rule does not satisfy them; fail-closed on every entry
-point; the frozen-field refusal before any SQL; the caller's inability to widen
-via a filter, a narrowed preload or a specification; and the relation narrowing
-on preloads and nested filters, each with a negative control so the positive
-assertions mean something.
+The controls cover the update's own `WHERE`, the filtered-write snapshot,
+relation narrowing in filters, sorts, preloads and page totals, frozen names at
+declaration time, and a caller limit/cursor/projection/preload being unable to
+make `Inspect` approve only part of a bulk statement.
 
-**Gap 1 — a create is not narrowed, and with a hand-written policy it is not
-guarded either.** A create carries a whole row and there is no `WHERE` for a
-predicate to live in, so the only thing that can refuse it is a row-level check.
-The provided tenant-scope helper installs one, so the documented path is safe.
-A policy that declares only the narrowing — which is what "row-level security in
-one line" reads like — leaves a create into another tenant completely
-unconstrained, and no test covers that case.
+The unique-constraint result remains an inherent oracle of any public create
+endpoint, but no driver or constraint detail reaches the transport (UC-015); an
+application requiring non-enumerability must avoid exposing that unique-create
+question.
 
-*Narrower since the `auth` subsystem landed.* The principal-driven helpers —
-`security.ScopeAttr` and `security.ScopeSubject` — wrap the same tenant-scope
-helper rather than reimplementing it, so the row check and the frozen column
-come with them, and both halves are now tested including a create into another
-tenant that reaches no statement ([[UC-020]], [[FL-020]]). The gap that remains
-is the one this paragraph names and only that one: a `Policy` a consumer writes
-by hand with `Scope` set and `Inspect` left nil.
-
-**Gap 2 — a save is an existence oracle.** To refuse overwriting an invisible
-row, the gate checks for that row *without* the narrowing. So a save against an
-id in another tenant answers 403, and against an unused id succeeds — which
-tells a caller exactly which ids exist. This is a deliberate trade of
-confidentiality for integrity, and both halves are pinned by tests, but it
-contradicts guarantee 3 and should be read as an exception to it.
-
-**Gap 3 — a unique-constraint collision leaks the same thing, unguarded.** A
-create colliding on a unique index over some *other* column surfaces as a 409
-carrying the driver's message, including the constraint name — for a row the
-caller cannot see. Nothing in the gate addresses it and no test covers it. Read
-with UC-015's guarantee 11.
-
-The gap has two halves and they close differently, which is worth separating
-because only one of them ever closes.
-
-*The constraint name leaving the process* is [[D-044]]'s. A body names nothing
-internal at any status, and phase 4 of `ROADMAP-errors.md` is where the render
-layer enforces it. That half does close.
-
-*The oracle itself* does not. [[D-042]] is explicit that a unique constraint a
-public endpoint can trigger is an oracle by construction: the only complete fix
-is not to have such an endpoint. What phase 7 adds is that the disclosure becomes
-adjustable — a per-constraint opt-out, scope-aware probing driven by the policy
-rather than by the request, a code-only mode — and that the offending value is
-never echoed by default. It also widens the exposure before it narrows it, since
-reporting *every* violation reports every collision, and D-042 says so rather
-than presenting the feature as free.
-
-Gap 2 — the gate's own unnarrowed existence probe — is unaffected by either. It
-is the gate's trade and it stays.
-
-**Gap 4 — the page total can be computed without the relation narrowing.** The
-count that produces a list's total is built from a copy of the query options that
-drops the per-request relation narrowing (the table-level one and the root
-narrowing both survive). So a list filtered through a relation can return
-correctly narrowed items alongside a total counted over a wider set. Only
-reachable when the count actually runs.
-
-Two smaller ones worth listing because they are cheap to close: a frozen-field
-name is never validated against the model, so a typo silently protects nothing;
-and a row-level check on a filtered write inspects the rows a caller-supplied
-limit returned while the statement itself carries no limit, so a limit turns a
-whole-set write into a one-row inspection. A nested *sort* is narrowed by the
-table-level rule (proven) but the per-principal equivalent has no test.
+`ScopeRelationField` and the principal helpers resolve their path while the
+policy is declared. The escape hatch `RelationScopes func(context.Context)` is
+intentionally dynamic, so its paths cannot be proved at startup; they are
+validated and fail closed before SQL instead. Treating an arbitrary callback as
+a startup-declarative declaration would be a wrong contract — use the helper
+when startup validation is required.

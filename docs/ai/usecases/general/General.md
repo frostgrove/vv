@@ -362,9 +362,15 @@ code gets real code without the rest unravelling.
 **Must hold:**
 1. A filter written in Go reaches the far side as the same narrowing, and the local error branch still matches.
 2. `GetAll` means every matching row on both sides, or refuses.
-**Today:** 🟡 partial — 1 holds; **2 is silently wrong in the configuration D-060 recommends**
-**Evidence:** guarantee 1 is `remote/roundtrip_test.go` — `:198`, `:232`, `:287`, `:333` (a gateway's own 404 arriving as a `*remote.ProtocolError`), `:382`, `:424`, `:491`; `[[D-053]]` is the refusal rule. Guarantee 2 is the seam this file owns and no module closes: there is no "every row" route over HTTP, so `remote.GetAll` emulates it with the unpaged flag, and `crud/options.go:242-245` returns `maxLimit` rows with **no error** when `Unpaged` meets a non-zero `MaxLimit`. `[[D-060]]`'s own "What it forbids" wrote this down in advance: "a non-zero `MaxLimit` silently truncates a remote `GetAll`, which is worse than refusing it." The `remote` sweep files it as its row 1.
-**If not ready:** the far endpoint declares `AllowUnpaged` and `MaxLimit(0)`, and every consumer of a vv-served endpoint has to know that. **This is why H-GENERAL-11's `MaxLimit` fix is two changes, not one**: giving `MaxLimit` a default without making the clamp loud converts a public-endpoint memory risk into a cross-service correctness risk.
+**Today:** ✅ covered, with an explicit enumeration boundary
+**Evidence:** guarantee 1 is asserted by a real remote client against a real
+binding. For guarantee 2, `remote.GetAll` now makes bounded List calls, follows
+cursor edges, and reports malformed progress as `*remote.PartialResultError`.
+The HTTP path is exercised against `MaxLimit(1)` and `MaxOffset(1)`, proving the
+cursor transition. A cursorless custom list or DISTINCT projection without the
+primary key needs a sufficient endpoint `MaxOffset`, and the result is an
+enumeration rather than a cross-page snapshot.
+**If not ready:** —
 
 ### H-GENERAL-26 — Moving reads onto a replica, through a wrapper
 **Who:** the same team, the week the primary's CPU graph stopped being flat, who already wrote the timing wrapper from H-GENERAL-22

@@ -46,13 +46,53 @@ type ServiceOption func(*serviceConfig)
 
 type serviceConfig struct {
 	query         *query.Config
+	queryVariants map[string]*query.Config
+	querySelector QuerySelector
 	paths         errs.Resolver
 	allowClientID bool
 }
 
 // WithQuery bounds what clients may filter, sort, select and preload.
 func WithQuery(cfg *query.Config) ServiceOption {
-	return func(c *serviceConfig) { c.query = cfg }
+	return func(c *serviceConfig) {
+		c.query, c.queryVariants, c.querySelector = cfg, nil, nil
+	}
+}
+
+// QuerySelector selects a named query vocabulary for one request. Returning
+// the empty string uses the default configuration; any other value must name a
+// configuration declared in [WithQueryFor]. It is a vocabulary decision, not a
+// row-level policy: use security.Gate for the latter.
+type QuerySelector func(context.Context) string
+
+// WithQueryFor declares a default query vocabulary and named alternatives for
+// the same route. The selector normally reads the authenticated principal from
+// context, letting an administrator receive a wider *declared* vocabulary
+// without a second mount or a hand-written service.
+//
+// Every configuration is resolved against the model when NewService runs. An
+// empty or unknown selector result never falls through to an unrestricted
+// configuration: empty chooses default, unknown is a query refusal.
+func WithQueryFor(defaultConfig *query.Config, variants map[string]*query.Config, selectConfig QuerySelector) ServiceOption {
+	if defaultConfig == nil {
+		panic("port.WithQueryFor: default query config is nil")
+	}
+	if selectConfig == nil {
+		panic("port.WithQueryFor: query selector is nil")
+	}
+	copy := make(map[string]*query.Config, len(variants))
+	for key, cfg := range variants {
+		if key == "" {
+			panic("port.WithQueryFor: an alternative query config has an empty name")
+		}
+		if cfg == nil {
+			panic("port.WithQueryFor: query config " + key + " is nil")
+		}
+		copy[key] = cfg
+	}
+	return func(c *serviceConfig) {
+		c.query, c.queryVariants, c.querySelector = defaultConfig, copy, selectConfig
+	}
 }
 
 // AllowClientID lets a create request carry its own primary key even when the
@@ -70,9 +110,11 @@ func WithPaths(r errs.Resolver) ServiceOption {
 // repository rather than a service. It is the orchestration and nothing else:
 // no business rules, and no knowledge of how the request arrived.
 type DefaultService[M any, ID comparable, U any] struct {
-	repo Repository[M, ID, U]
-	meta *crud.Meta
-	cfg  *query.Config
+	repo          Repository[M, ID, U]
+	meta          *crud.Meta
+	cfg           *query.Config
+	queryVariants map[string]*query.Config
+	querySelector QuerySelector
 
 	paths         errs.Resolver
 	allowClientID bool
@@ -86,10 +128,23 @@ func NewService[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...
 			o(&c)
 		}
 	}
+	// A query allow-list is a declaration, not request data. Resolve it while
+	// the route is being built so a misspelt field stops the process next to the
+	// declaration instead of making every client request fail later. Every stock
+	// HTTP and gRPC binding constructs this service, giving all transports the
+	// same start-up guarantee.
+	if c.query != nil {
+		c.query.MustCheck(repo.Meta())
+	}
+	for _, cfg := range c.queryVariants {
+		cfg.MustCheck(repo.Meta())
+	}
 	return &DefaultService[M, ID, U]{
 		repo:          repo,
 		meta:          repo.Meta(),
 		cfg:           c.query,
+		queryVariants: c.queryVariants,
+		querySelector: c.querySelector,
 		paths:         c.paths,
 		allowClientID: c.allowClientID,
 	}
@@ -105,7 +160,7 @@ func (s *DefaultService[M, ID, U]) Paths() errs.Resolver { return s.paths }
 
 // List implements [Service].
 func (s *DefaultService[M, ID, U]) List(ctx context.Context, cmd ListCommand) (crud.PaginatedResponse[M], error) {
-	opts, err := s.compile(cmd.Query, cmd.Options)
+	opts, err := s.compile(ctx, cmd.Query, cmd.Options)
 	if err != nil {
 		return crud.PaginatedResponse[M]{}, err
 	}
@@ -114,13 +169,10 @@ func (s *DefaultService[M, ID, U]) List(ctx context.Context, cmd ListCommand) (c
 
 // Count implements [Service].
 func (s *DefaultService[M, ID, U]) Count(ctx context.Context, cmd CountCommand) (int64, error) {
-	req := cmd.Query
-	if req == nil {
-		req = &query.Request{}
-	}
+	req := requestCopy(cmd.Query)
 	NarrowForCount(req)
 
-	opts, err := s.compile(req, cmd.Options)
+	opts, err := s.compile(ctx, req, cmd.Options)
 	if err != nil {
 		return 0, err
 	}
@@ -130,13 +182,10 @@ func (s *DefaultService[M, ID, U]) Count(ctx context.Context, cmd CountCommand) 
 // Get implements [Service].
 func (s *DefaultService[M, ID, U]) Get(ctx context.Context, cmd GetCommand[ID]) (M, error) {
 	var zero M
-	req := cmd.Query
-	if req == nil {
-		req = &query.Request{}
-	}
+	req := requestCopy(cmd.Query)
 	NarrowForEntity(req)
 
-	opts, err := s.compile(req, cmd.Options)
+	opts, err := s.compile(ctx, req, cmd.Options)
 	if err != nil {
 		return zero, err
 	}
@@ -237,13 +286,32 @@ func (s *DefaultService[M, ID, U]) DeleteMany(ctx context.Context, cmd BulkDelet
 // compile turns the query document into repository options and appends the
 // caller's. Appended and not merged: crud.Where ANDs, so a transport scope
 // narrows the client's filter instead of replacing it ([[D-004]]).
-func (s *DefaultService[M, ID, U]) compile(req *query.Request, extra []crud.Option) ([]crud.Option, error) {
+func (s *DefaultService[M, ID, U]) compile(ctx context.Context, req *query.Request, extra []crud.Option) ([]crud.Option, error) {
 	if req == nil {
 		req = &query.Request{}
 	}
-	opts, err := req.Compile(s.meta, s.cfg)
+	cfg, err := s.queryConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts, err := req.Compile(s.meta, cfg)
 	if err != nil {
 		return nil, err
 	}
 	return append(opts, extra...), nil
+}
+
+func (s *DefaultService[M, ID, U]) queryConfig(ctx context.Context) (*query.Config, error) {
+	if s.querySelector == nil {
+		return s.cfg, nil
+	}
+	key := s.querySelector(ctx)
+	if key == "" {
+		return s.cfg, nil
+	}
+	cfg, ok := s.queryVariants[key]
+	if !ok {
+		return nil, &query.Error{Path: "queryConfig", Reason: "selector chose an undeclared query vocabulary"}
+	}
+	return cfg, nil
 }

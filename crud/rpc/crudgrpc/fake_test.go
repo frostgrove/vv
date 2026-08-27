@@ -31,6 +31,16 @@ type Widget struct {
 	Note      crud.Opt[string] `db:"note" json:"note"`
 	Secret    string           `db:"secret" json:"secret"`
 	CreatedAt time.Time        `db:"created_at,generated" json:"createdAt"`
+	Parts     []Part           `rel:"has_many" json:"-"`
+}
+
+// Part lets the remote-client round trip cover a narrowed preload on gRPC.
+// It stays out of fixture response JSON; the test observes the options after
+// the real binding compiles them.
+type Part struct {
+	ID       int64  `db:"id,pk,auto" json:"id"`
+	WidgetID int64  `db:"widget_id" json:"widgetId"`
+	Label    string `db:"label" json:"label"`
 }
 
 // WidgetUpdate is the patch DTO: a pointer for the two-state column and an Opt
@@ -71,9 +81,11 @@ type recordedCall struct {
 }
 
 type fakeRepo struct {
-	page  crud.PaginatedResponse[Widget]
-	one   Widget
-	count int64
+	page    crud.PaginatedResponse[Widget]
+	pages   map[int]crud.PaginatedResponse[Widget]
+	cursors map[string]crud.PaginatedResponse[Widget]
+	one     Widget
+	count   int64
 
 	// err, when set, fails every method — the seam for error-mapping tests.
 	err error
@@ -98,11 +110,28 @@ func newFake() *fakeRepo {
 func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
 func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[Widget], error) {
-	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: crud.Build(opts...)})
+	o := crud.Build(opts...)
+	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: o})
 	if f.err != nil {
 		return crud.PaginatedResponse[Widget]{}, f.err
 	}
+	if page, ok := f.cursors[cursorKey(o)]; ok {
+		return page, nil
+	}
+	if page, ok := f.pages[o.Page]; ok {
+		return page, nil
+	}
 	return f.page, nil
+}
+
+func cursorKey(o *crud.Options) string {
+	if o.After != "" {
+		return "after:" + o.After
+	}
+	if o.Before != "" {
+		return "before:" + o.Before
+	}
+	return ""
 }
 
 func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]Widget, error) {

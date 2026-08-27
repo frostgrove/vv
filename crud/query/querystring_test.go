@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/query"
 )
 
@@ -49,12 +50,16 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 		{"notLike", `"go%"`, "go%", `"title" NOT LIKE $1`, []any{"go%"}},
 		{"ilike", `"go%"`, "go%", `LOWER("title") LIKE LOWER($1)`, []any{"go%"}},
 		{"likeignorecase", `"go%"`, "go%", `LOWER("title") LIKE LOWER($1)`, []any{"go%"}},
-		{"contains", `"go"`, "go", `"title" LIKE $1`, []any{"%go%"}},
-		{"search", `"go"`, "go", `"title" LIKE $1`, []any{"%go%"}},
-		{"startswith", `"go"`, "go", `"title" LIKE $1`, []any{"go%"}},
-		{"prefix", `"go"`, "go", `"title" LIKE $1`, []any{"go%"}},
-		{"endswith", `"go"`, "go", `"title" LIKE $1`, []any{"%go"}},
-		{"suffix", `"go"`, "go", `"title" LIKE $1`, []any{"%go"}},
+		{"contains", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
+		{"search", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
+		{"startswith", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"go%"}},
+		{"prefix", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"go%"}},
+		{"endswith", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go"}},
+		{"suffix", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go"}},
+		{"icontains", `"go"`, "go", `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"%go%"}},
+		{"containsignorecase", `"go"`, "go", `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"%go%"}},
+		{"istartswith", `"go"`, "go", `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"go%"}},
+		{"iendswith", `"go"`, "go", `LOWER("title") LIKE LOWER($1) ESCAPE '\'`, []any{"%go"}},
 
 		{"in", `["go","rust"]`, "go,rust", `"title" IN ($1, $2)`, []any{"go", "rust"}},
 		{"nin", `["go","rust"]`, "go,rust", `"title" NOT IN ($1, $2)`, []any{"go", "rust"}},
@@ -71,7 +76,7 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 
 		// Case and the Mongo-style `$` prefix fold away.
 		{"GTE", `"go"`, "go", `"title" >= $1`, []any{"go"}},
-		{"Contains", `"go"`, "go", `"title" LIKE $1`, []any{"%go%"}},
+		{"Contains", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
 		{"NotIn", `["go"]`, "go", `"title" NOT IN ($1)`, []any{"go"}},
 		{"IsNull", `true`, "true", `"title" IS NULL`, nil},
 		{"$eq", `"go"`, "go", `"title" = $1`, []any{"go"}},
@@ -193,6 +198,56 @@ func TestParseTerm(t *testing.T) {
 	}
 }
 
+func TestFlatTermsKeepAPipeInsideAScalarValue(t *testing.T) {
+	for _, raw := range []string{
+		"f=title:eq:a%7Cb",
+		"f=title:eq:a%5C%7Cb|views:gte:1",
+	} {
+		v, err := url.ParseQuery(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := query.ParseQuery(v)
+		if err != nil {
+			t.Fatalf("ParseQuery(%q): %v", raw, err)
+		}
+		if len(req.Terms) == 0 {
+			t.Fatalf("ParseQuery(%q) returned no term", raw)
+		}
+		_, args := runReq(t, req, nil)
+		if len(args) == 0 || args[0] != "a|b" {
+			t.Fatalf("ParseQuery(%q) compiled args = %#v, want first value a|b", raw, args)
+		}
+		if strings.Contains(raw, "%5C") && len(req.Terms) != 2 {
+			t.Fatalf("ParseQuery(%q) terms = %#v, want the explicit second term too", raw, req.Terms)
+		}
+	}
+}
+
+func TestFlatTermBackslashesOnlyEscapeItsDeclaredGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want []any
+	}{
+		{"f=title:eq:C%3A%5Ctemp%5Cfile", []any{`C:\temp\file`}},
+		{"f=title:eq:%5Cnull", []any{"null"}},
+		{"f=title:in:one%5C,two,three", []any{"one,two", "three"}},
+	} {
+		v, err := url.ParseQuery(tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := query.ParseQuery(v)
+		if err != nil {
+			t.Fatalf("ParseQuery(%q): %v", tc.raw, err)
+		}
+		_, args := runReq(t, req, nil)
+		if !reflect.DeepEqual(args, tc.want) {
+			t.Fatalf("%s args = %#v, want %#v", tc.raw, args, tc.want)
+		}
+	}
+}
+
 // The whole query string, read in one go.
 func TestParseQueryReadsEveryParameter(t *testing.T) {
 	v, err := url.ParseQuery("page=2&limit=25&offset=5" +
@@ -229,13 +284,19 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 		t.Fatalf("search = %q %v", req.Search, req.SearchFields)
 	}
 	// Three terms: the pipe separates two of them inside one parameter.
-	wantTerms := []query.Term{
-		{Path: "views", Op: "gte", Values: query.Strings{"100"}},
-		{Path: "title", Op: "contains", Values: query.Strings{"go"}},
-		{Path: "publishedAt", Op: "isNull", Values: query.Strings{"true"}},
+	wantTerms := []struct{ path, op, value string }{
+		{"views", "gte", "100"},
+		{"title", "contains", "go"},
+		{"publishedAt", "isNull", "true"},
 	}
-	if !reflect.DeepEqual(req.Terms, wantTerms) {
-		t.Fatalf("terms = %+v, want %+v", req.Terms, wantTerms)
+	if len(req.Terms) != len(wantTerms) {
+		t.Fatalf("terms = %+v, want %d terms", req.Terms, len(wantTerms))
+	}
+	for i, want := range wantTerms {
+		got := req.Terms[i]
+		if got.Path != want.path || got.Op != want.op || !reflect.DeepEqual([]string(got.Values), []string{want.value}) {
+			t.Fatalf("term %d = %+v, want %s:%s:%s", i, got, want.path, want.op, want.value)
+		}
 	}
 	if req.Filter.IsZero() {
 		t.Fatal("the filter document was dropped")
@@ -247,8 +308,8 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 	// And it all compiles into one statement: the JSON document and the flat
 	// terms are ANDed, not one instead of the other.
 	sql, _ := runReq(t, req, exports)
-	want := `("body" = $1 AND "views" >= $2 AND "title" LIKE $3 AND "published_at" IS NULL ` +
-		`AND ("title" LIKE $4 OR "body" LIKE $5))`
+	want := `("body" = $1 AND "views" >= $2 AND "title" LIKE $3 ESCAPE '\' AND "published_at" IS NULL ` +
+		`AND (LOWER("title") LIKE LOWER($4) ESCAPE '\' OR LOWER("body") LIKE LOWER($5) ESCAPE '\'))`
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}
@@ -326,7 +387,43 @@ func TestParseQueryRejectsNonNumbers(t *testing.T) {
 	}
 }
 
-// An empty query string is an empty request, not a request for page zero.
+func TestParseQueryRejectsMalformedBooleans(t *testing.T) {
+	for _, raw := range []string{"unpaged=tru", "skipTotal=maybe", "distinct="} {
+		t.Run(raw, func(t *testing.T) {
+			v, err := url.ParseQuery(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := query.ParseQuery(v); err == nil {
+				t.Fatal("malformed boolean was silently treated as false")
+			}
+		})
+	}
+}
+
+func TestParseQueryRefusesConflictingScalarControls(t *testing.T) {
+	for _, raw := range []string{
+		"limit=20&limit=100",
+		"limit=20&perPage=100",
+		"filter=%7B%7D&filter=%7B%7D",
+		"after=one&before=two",
+		"after=one&afterCursor=two",
+		"search=one&q=two",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			v, err := url.ParseQuery(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := query.ParseQuery(v); err == nil {
+				t.Fatal("conflicting scalar controls were silently accepted")
+			}
+		})
+	}
+}
+
+// An empty query string receives the query endpoint's page cap rather than a
+// repository's potentially larger default.
 func TestParseQueryOfNothing(t *testing.T) {
 	req, err := query.ParseQuery(url.Values{})
 	if err != nil {
@@ -339,8 +436,8 @@ func TestParseQueryOfNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opts) != 0 {
-		t.Fatalf("an empty query string produced %d options", len(opts))
+	if o := crud.Build(opts...); o.Limit != 100 {
+		t.Fatalf("an empty query string produced limit %d, want 100", o.Limit)
 	}
 }
 

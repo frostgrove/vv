@@ -75,14 +75,21 @@ func ElemType(t reflect.Type) reflect.Type
 func ElemValue(v any) any
 func EncodeCursor(fields []string, values []any) (string, error)
 func EqualValues(a, b any) bool
+func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, opts ...Option) (bool, error, bool)
+func InNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error)
 func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error)
+func IsTautology(p Predicate) bool
+func IsTautologyFor(m *Meta, p Predicate) bool
+func IsTransaction(e Executor) bool
 func KeyOf(v any) any
 func MarshalPredicate(p Predicate) (json.RawMessage, error)
+func MayBeTautologyFor(m *Meta, p Predicate) bool
 func OptElem(t reflect.Type) reflect.Type
 func RegisterTable[M any](table string)
 func RegisterTableType(t reflect.Type, table string)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
 func SameDataSource(a, b any) bool
+func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool)
 func TableNameOf(t reflect.Type) string
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
@@ -111,6 +118,7 @@ type Executor interface{ ... }
     func OwnedExecutorFor(ctx context.Context, src any) (e Executor, found, owned bool)
 type Field struct{ ... }
 type Identified interface{ ... }
+type LikeEscaper interface{ ... }
 type Meta struct{ ... }
     func NewMeta[M any](table string) (*Meta, error)
 type Middleware[M any, ID comparable] func(Core[M, ID]) Core[M, ID]
@@ -135,6 +143,8 @@ type Option func(*Options)
     func OrderBy(orders ...Order) Option
     func Page(n int) Option
     func Preload(paths ...string) Option
+    func PreloadCap(path string, maxRows int, opts ...Option) Option
+    func PreloadRows(n int) Option
     func PreloadWhere(path string, opts ...Option) Option
     func PrimaryOnly() Option
     func Select(fields ...string) Option
@@ -159,8 +169,10 @@ type Predicate interface{ ... }
     func And(preds ...Predicate) Predicate
     func Between(field string, low, high any) Predicate
     func Contains(field, s string) Predicate
+    func ContainsIgnoreCase(field, s string) Predicate
     func CursorPredicate(m *Meta, sort []Order, cursor string, back bool) (Predicate, error)
     func EndsWith(field, s string) Predicate
+    func EndsWithIgnoreCase(field, s string) Predicate
     func Eq(field string, value any) Predicate
     func EqField(left, right string) Predicate
     func False() Predicate
@@ -182,6 +194,7 @@ type Predicate interface{ ... }
     func Or(preds ...Predicate) Predicate
     func Raw(sql string, args ...any) Predicate
     func StartsWith(field, s string) Predicate
+    func StartsWithIgnoreCase(field, s string) Predicate
     func True() Predicate
 type PredicateError struct{ ... }
 type PreloadSpec struct{ ... }
@@ -204,6 +217,8 @@ type Schema struct{ ... }
     func SchemaOf[M any]() (*Schema, error)
     func SchemaOfType(t reflect.Type) (*Schema, error)
 type SchemaError struct{ ... }
+type ScopedSave[M any] struct{ ... }
+type ScopedSaver[M any, ID comparable] interface{ ... }
 type Source interface{ ... }
     func ReadSourceOf(v any) (Source, bool)
     func ReadWrite(primary, replica Source) Source
@@ -212,8 +227,10 @@ type SourceUnwrapper interface{ ... }
 type Sourced interface{ ... }
 type StatementRollback interface{ ... }
 type Tabler interface{ ... }
+type Transactional interface{ ... }
 type Tx interface{ ... }
 type UnknownFieldError struct{ ... }
+type UnscopedExister[M any, ID comparable] interface{ ... }
 type UpdatePlan struct{ ... }
     func PlanFor[U any](s *Schema) (*UpdatePlan, error)
 type UpsertScope interface{ ... }
@@ -324,6 +341,7 @@ type Repo[M any, ID comparable, U any] struct{ ... }
 type Root[M any] struct{}
 type SpecFunc[M any] func(root Root[M], cb Builder) crud.Predicate
 type Specification[M any] interface{ ... }
+    func If[M any](ok bool, s Specification[M]) Specification[M]
     func Lift[M any](p crud.Predicate) Specification[M]
     func Of[M any](f func(root Root[M], cb Builder) crud.Predicate) Specification[M]
 type Str[M any] struct{ ... }
@@ -401,6 +419,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(http.ResponseWriter, *http.Request, error)) Option[M, ID, U]
     func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*http.Request) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(*http.Request, M) any) Option[M, ID, U]
@@ -591,6 +610,7 @@ type Mapper[In, M any] interface{ ... }
 type PathMap map[string]errs.Path
     func MustPathMap[M any](m PathMap, except ...string) PathMap
     func NewPathMap[M any](m PathMap, except ...string) (PathMap, error)
+type QuerySelector func(context.Context) string
 type ReplaceCommand[ID comparable, M any] struct{ ... }
 type Repository[M any, ID comparable, U any] interface{ ... }
 type Rules struct{ ... }
@@ -599,6 +619,7 @@ type ServiceOption func(*serviceConfig)
     func AllowClientID() ServiceOption
     func WithPaths(r errs.Resolver) ServiceOption
     func WithQuery(cfg *query.Config) ServiceOption
+    func WithQueryFor(defaultConfig *query.Config, variants map[string]*query.Config, ...) ServiceOption
 type UpdateCommand[ID comparable, U any] struct{ ... }
 type ViolationOptions struct{ ... }
 ```
@@ -646,12 +667,14 @@ type Renderer interface{ ... }
 
 ## github.com/frostgrove/vv/remote
 ```go
+var ErrPartialResult = errors.New("remote: GetAll received a partial result")
 func ToRequest(opts ...crud.Option) (*query.Request, error)
 func Truncate(s string, max int) string
 type Call struct{ ... }
 type Method string
     const MethodList Method = "List" ...
 type OptionError struct{ ... }
+type PartialResultError struct{ ... }
 type ProtocolError struct{ ... }
 type Resource[M any, ID comparable, U any] struct{ ... }
     func New[M any, ID comparable, U any](tr Transport) *Resource[M, ID, U]
@@ -677,6 +700,7 @@ func DSN(c Config) (string, error)
 func DriverName(c Config) string
 func MariaDBDSN(c Config) (string, error)
 func MustOpen(c Config) *sql.DB
+func MustOpenReadWrite(c Config) (primary, replica *sql.DB)
 func MySQLDSN(c Config) (string, error)
 func Open(c Config) (*sql.DB, error)
 func OpenReadWrite(c Config) (primary, replica *sql.DB, err error)
@@ -685,7 +709,9 @@ func SQLiteDSN(c Config) (string, error)
 type Config struct{ ... }
 type Engine string
     const Postgres Engine = "postgres" ...
+type Params map[string]string
 type Pool struct{ ... }
+type SQLitePragmas []string
 ```
 
 ## github.com/frostgrove/vv/utils/vvflag
@@ -779,6 +805,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(fiber.Ctx, error) error) Option[M, ID, U]
     func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Option[M, ID, U]
@@ -810,6 +837,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U]
     func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*gin.Context) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(*gin.Context, M) any) Option[M, ID, U]
@@ -848,6 +876,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(context.Context) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(context.Context, M) any) Option[M, ID, U]
@@ -873,15 +902,20 @@ var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or 
 func Auto[T any](args []string) (*T, error)
 func Find(args []string) (string, error)
 func Load[T any](path string) (*T, error)
+func LoadEnvironment[T any]() (*T, error)
 func Must[T any](cfg *T, err error) *T
+type EnvironmentApplier interface{ ... }
+type PrefixedEnvironmentApplier interface{ ... }
 type Validator interface{ ... }
 ```
 
 ## github.com/frostgrove/vv/utils/vvdb/dbpgx
 ```go
+func Apply(pc *pgxpool.Config, p vvdb.Pool) error
 func Connect(ctx context.Context, c vvdb.Config, opts ...Option) (*pgxpool.Pool, error)
 func ConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool, err error)
 func MustConnect(ctx context.Context, c vvdb.Config, opts ...Option) *pgxpool.Pool
+func MustConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool)
 type Option func(*pgxpool.Config)
 ```
 

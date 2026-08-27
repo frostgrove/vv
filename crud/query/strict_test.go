@@ -40,6 +40,71 @@ func TestAMisspelledDocumentKeyIsRefused(t *testing.T) {
 	}
 }
 
+func TestNullIsNotAnEmptyQueryOrAHiddenDefault(t *testing.T) {
+	for _, body := range []string{
+		`null`,
+		`{"limit":null}`,
+		`{"search":null}`,
+		`{"filter":null}`,
+		`{"after":null}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			var req query.Request
+			if err := json.Unmarshal([]byte(body), &req); err == nil {
+				t.Fatalf("%s decoded as %+v instead of being refused", body, req)
+			}
+		})
+	}
+}
+
+func TestDuplicateKeysAndNullListElementsAreRefused(t *testing.T) {
+	for _, body := range []string{
+		`{"limit":10,"limit":1000}`,
+		`{"filter":{"views":{"gte":1,"gte":2}}}`,
+		`{"sort":[null]}`,
+		`{"preload":[null]}`,
+		`{"select":[null]}`,
+		`{"searchFields":[null]}`,
+		`{"terms":[{"path":"title","op":null,"values":["x"]}]}`,
+		`{"sort":{"field":"title","desc":null}}`,
+		`{"preload":{"path":"comments","sort":null}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			var req query.Request
+			if err := json.Unmarshal([]byte(body), &req); err == nil {
+				t.Fatal("ambiguous or null list input decoded into a different query")
+			}
+		})
+	}
+
+	// RawFilter is the programmatic public door. It must preserve the same
+	// no-last-wins invariant as a JSON request body.
+	req := query.Request{Filter: query.RawFilter(`{"views":{"gte":1,"gte":2}}`)}
+	if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+		t.Fatal("RawFilter accepted a duplicate operator key")
+	}
+}
+
+func TestAMisspelledNestedObjectKeyIsRefused(t *testing.T) {
+	for _, body := range []string{
+		`{"sort":{"field":"title","descc":true}}`,
+		`{"preload":{"path":"comments","filtter":{"approved":true}}}`,
+		`{"terms":[{"path":"title","opp":"eq","values":["x"]}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			var req query.Request
+			err := json.Unmarshal([]byte(body), &req)
+			if err == nil {
+				t.Fatal("accepted a misspelled nested key that would widen or change the query")
+			}
+			var qe *query.Error
+			if !errors.As(err, &qe) || qe.Path == "" {
+				t.Fatalf("err = %T %v, want a query error naming the nested key", err, err)
+			}
+		})
+	}
+}
+
 // Everything the document really defines still parses, in every accepted shape.
 // Without this the strictness above could be satisfied by rejecting everything.
 func TestEveryDocumentKeyStillParses(t *testing.T) {

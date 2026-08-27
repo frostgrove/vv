@@ -1,6 +1,8 @@
 package crud_test
 
 import (
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,6 +12,23 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 )
+
+type stableDriverValue struct{ value int64 }
+
+func (v stableDriverValue) Value() (driver.Value, error) { return v.value, nil }
+
+type otherDriverValue struct{}
+
+func (otherDriverValue) Value() (driver.Value, error) { return int64(7), nil }
+
+// database/sql accepts decimal decomposition without requiring driver.Valuer.
+// A driver may bind this as a non-NULL number, but the predicate guard must not
+// depend on an implementation-specific conversion it cannot inspect.
+type decimalDriverValue struct{}
+
+func (decimalDriverValue) Decompose([]byte) (byte, bool, []byte, int32) {
+	return 0, false, []byte{7}, 0
+}
 
 // ---------------------------------------------------------------------------
 // the predicate AST
@@ -75,6 +94,245 @@ func TestInOverAnEmptyListIsAConstant(t *testing.T) {
 				t.Fatalf("args = %v, want %d of them", args, tc.binds)
 			}
 		})
+	}
+}
+
+func TestIsTautologyRecognisesClosedUnconditionalPredicates(t *testing.T) {
+	for _, p := range []crud.Predicate{
+		nil,
+		crud.True(),
+		crud.NotInAny("ID", []int64{}),
+		crud.And(crud.True(), crud.NotInAny("ID", []int64{})),
+		crud.Or(crud.False(), crud.True()),
+		crud.Not(crud.False()),
+	} {
+		if !crud.IsTautology(p) {
+			t.Fatalf("%T was not recognised as unconditional", p)
+		}
+	}
+	for _, p := range []crud.Predicate{
+		crud.False(),
+		crud.Eq("Views", 1),
+		crud.And(crud.True(), crud.Eq("Views", 1)),
+	} {
+		if crud.IsTautology(p) {
+			t.Fatalf("%T was mistaken for an unconditional predicate", p)
+		}
+	}
+}
+
+// Bulk-write guards use IsTautology, so it must share the renderer's treatment
+// of nil branches. In particular Or(nil) is false and its negation is true.
+func TestIsTautologyUsesTheRenderersNilBranchSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		p    crud.Predicate
+		want bool
+	}{
+		{"empty and", crud.And(nil), true},
+		{"empty or", crud.Or(nil), false},
+		{"negated empty or", crud.Not(crud.Or(nil)), true},
+		{"nil alongside false or", crud.Or(nil, crud.False()), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crud.IsTautology(tc.p); got != tc.want {
+				t.Fatalf("IsTautology(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBooleanConstructorsDoNotRetainACallersSlice(t *testing.T) {
+	kids := []crud.Predicate{nil}
+	p := crud.And(kids...)
+	// If And retained kids, this turns p into a self-reference. Apart from
+	// making the public AST mutable, that would recurse forever in rendering and
+	// in the bulk-write tautology guard.
+	kids[0] = p
+	if !crud.IsTautology(p) {
+		t.Fatal("the original And(nil) should stay an unconditional predicate")
+	}
+
+	orKids := []crud.Predicate{nil}
+	q := crud.Or(orKids...)
+	orKids[0] = q
+	if crud.IsTautology(q) {
+		t.Fatal("the original Or(nil) should stay a contradiction")
+	}
+}
+
+func TestIsTautologyForUsesPrimaryKeyNullability(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	for _, tc := range []struct {
+		name string
+		p    crud.Predicate
+		want bool
+	}{
+		{"primary key is not null", crud.IsNotNull("ID"), true},
+		{"primary key is not null through Ne", crud.Ne("id", nil), true},
+		{"primary key is not null through Not(IsNull)", crud.Not(crud.IsNull("id")), true},
+		{"primary key equals itself", crud.EqField("ID", "id"), true},
+		{"nullable null complement", crud.Or(crud.IsNull("Note"), crud.IsNotNull("note")), true},
+		{"nullable null complement through Not", crud.Or(crud.IsNull("Note"), crud.Not(crud.IsNull("note"))), true},
+		{"identity-wrapped null complement", crud.Or(crud.And(crud.True(), crud.IsNull("Note")), crud.Not(crud.IsNull("note"))), true},
+		{"primary key equality complement", crud.Or(crud.Eq("ID", int64(1)), crud.Ne("id", int64(1))), true},
+		{"primary key range complement", crud.Or(crud.Lt("ID", int64(1)), crud.Gte("id", int64(1))), true},
+		{"primary key membership complement", crud.Or(crud.In("ID", int64(1), int64(2)), crud.NotIn("id", int64(1), int64(2))), true},
+		{"primary key membership complement ignores list order", crud.Or(crud.In("ID", int64(1), int64(2)), crud.NotIn("id", int64(2), int64(1), int64(1))), true},
+		{"primary key negated membership complement ignores list order", crud.Or(
+			crud.In("ID", int64(1), int64(2)), crud.Not(crud.In("id", int64(2), int64(1), int64(1)))), true},
+		{"primary key propositional tautology", crud.Or(
+			crud.Eq("ID", int64(1)),
+			crud.And(crud.Not(crud.Eq("id", int64(1))), crud.Eq("ID", int64(2))),
+			crud.Not(crud.Eq("id", int64(2))),
+		), true},
+		{"primary key between complement", crud.Or(
+			crud.Between("ID", int64(1), int64(2)),
+			crud.Not(crud.And(crud.Gte("id", int64(1)), crud.Lte("id", int64(2)))),
+		), true},
+		{"primary key membership expansion complement", crud.Or(
+			crud.In("ID", int64(1), int64(2)),
+			crud.Not(crud.Or(crud.Eq("id", int64(1)), crud.Eq("id", int64(2)))),
+		), true},
+		{"nullable field is not null", crud.IsNotNull("Note"), false},
+		{"nullable field equals itself", crud.EqField("Note", "note"), false},
+		{"nullable comparison and its negation", crud.Or(crud.Eq("Note", "x"), crud.Not(crud.Eq("note", "x"))), false},
+		{"nullable driver value and its negation", crud.Or(
+			crud.Eq("ID", sql.NullInt64{}), crud.Not(crud.Eq("id", sql.NullInt64{}))), false},
+		{"named NULL bind and its negation", crud.Or(
+			crud.Eq("ID", sql.Named("id", nil)), crud.Not(crud.Eq("id", sql.Named("id", nil)))), false},
+		{"unknown field equals itself", crud.EqField("Missing", "Missing"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crud.IsTautologyFor(m, tc.p); got != tc.want {
+				t.Fatalf("IsTautologyFor(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsTautologyForRecognisesLikeComplementsOnAStringPrimaryKey(t *testing.T) {
+	type NaturalKey struct {
+		ID string `db:"id,pk"`
+	}
+	m := metaOf[NaturalKey](t, "natural_keys")
+	p := crud.Or(crud.Like("ID", "%a%"), crud.NotLike("id", "%a%"))
+	if !crud.IsTautologyFor(m, p) {
+		t.Fatal("LIKE/NOT LIKE complement on a non-NULL primary key was not recognised")
+	}
+}
+
+func TestIsTautologyForKeepsNullablePointerChainsAsNarrowing(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	var inner *int64
+	outer := &inner
+	for _, value := range []any{outer, sql.Named("id", outer)} {
+		p := crud.Or(crud.Eq("ID", value), crud.Not(crud.Eq("id", value)))
+		if crud.IsTautologyFor(m, p) {
+			t.Fatalf("nullable pointer chain %#v was classified as an unconditional predicate", value)
+		}
+	}
+}
+
+func TestIsTautologyForNormalisesANonNilPointerBind(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	id := int64(7)
+	p := crud.Or(crud.Eq("ID", &id), crud.Not(crud.Eq("id", id)))
+	if !crud.IsTautologyFor(m, p) {
+		t.Fatal("database/sql-equivalent pointer and value binds were not recognised")
+	}
+}
+
+func TestIsTautologyForNormalisesDatabaseSQLPrimitiveAliases(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	type localID int64
+	p := crud.Or(crud.Eq("ID", localID(7)), crud.Not(crud.Eq("id", int64(7))))
+	if !crud.IsTautologyFor(m, p) {
+		t.Fatal("database/sql-equivalent numeric aliases were not recognised")
+	}
+}
+
+func TestIsTautologyForNormalisesDatabaseSQLNamedAndByteSliceBinds(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	type localBytes []byte
+	for _, value := range []any{
+		sql.Named("id", int64(7)),
+		sql.RawBytes{7},
+		localBytes{7},
+	} {
+		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+			p := crud.Or(crud.Eq("ID", value), crud.Not(crud.Eq("id", value)))
+			if !crud.IsTautologyFor(m, p) {
+				t.Fatalf("database/sql-equivalent bind %T was not recognised", value)
+			}
+		})
+	}
+
+	nested := sql.Named("outer", sql.Named("inner", int64(7)))
+	p := crud.Or(crud.Eq("ID", nested), crud.Not(crud.Eq("id", nested)))
+	if crud.IsTautologyFor(m, p) {
+		t.Fatal("nested sql.Named arguments are rejected by database/sql and must not be classified as unconditional")
+	}
+
+	named := sql.Named("id", int64(7))
+	p = crud.Or(crud.Eq("ID", &named), crud.Not(crud.Eq("id", &named)))
+	if crud.IsTautologyFor(m, p) {
+		t.Fatal("a pointer to sql.Named is rejected by database/sql and must not be classified as unconditional")
+	}
+}
+
+func TestMayBeTautologyForFailsClosedOnAnOpaqueDriverValuer(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	for _, tc := range []struct {
+		name  string
+		left  any
+		right any
+	}{
+		{"same value", stableDriverValue{value: 7}, stableDriverValue{value: 7}},
+		{"distinct values that may convert alike", stableDriverValue{value: 7}, otherDriverValue{}},
+		{"an opaque value and known value may convert alike", otherDriverValue{}, int64(7)},
+		{"a database sql decimal is opaque to the guard", decimalDriverValue{}, decimalDriverValue{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := crud.Or(crud.Eq("ID", tc.left), crud.Ne("id", tc.right))
+			if crud.IsTautologyFor(m, p) {
+				t.Fatal("an opaque driver.Valuer is not a semantic proof")
+			}
+			if !crud.MayBeTautologyFor(m, p) {
+				t.Fatal("a possible driver.Valuer tautology was not marked for a bulk-write guard")
+			}
+		})
+	}
+}
+
+func TestMayBeTautologyForFailsClosedOnRawSQL(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	if !crud.MayBeTautologyFor(m, crud.Raw("1 = 1")) {
+		t.Fatal("raw SQL should be refused by a specification bulk-write guard")
+	}
+}
+
+func TestMayBeTautologyForBoundsLargeBooleanSpecifications(t *testing.T) {
+	m := metaOf[Item](t, "items")
+	terms := make([]crud.Predicate, 513)
+	values := make([]any, 513)
+	for i := range terms {
+		terms[i] = crud.Eq("ID", int64(i))
+		values[i] = int64(i)
+	}
+	if !crud.MayBeTautologyFor(m, crud.Or(terms...)) {
+		t.Fatal("a boolean formula beyond the BDD budget must be refused by a bulk-write guard")
+	}
+	if crud.MayBeTautologyFor(m, crud.In("ID", values...)) {
+		t.Fatal("a large but non-boolean In predicate should remain an allowed bulk narrowing")
+	}
+
+	p := crud.Eq("ID", int64(1))
+	for i := 0; i <= 64; i++ {
+		p = crud.And(p, crud.Eq("ID", int64(i+2)))
+	}
+	if !crud.MayBeTautologyFor(m, p) {
+		t.Fatal("a boolean formula beyond the nesting budget must be refused by a bulk-write guard")
 	}
 }
 

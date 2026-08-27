@@ -56,7 +56,7 @@ fail the statement.
   hatch, the `?` rewrite, the `??` escape and both count checks.
 - `crud/predicate.go` constructors — `Eq`, `Ne`, `Gt`, `Gte`, `Lt`, `Lte`,
   `IsNull`, `IsNotNull`, `Like`, `NotLike`, `LikeIgnoreCase`, `Contains`,
-  `StartsWith`, `EndsWith`, `Between`, `In`, `NotIn`, `InAny`, `NotInAny`,
+  `StartsWith`, `EndsWith` and their `IgnoreCase` variants, `Between`, `In`, `NotIn`, `InAny`, `NotInAny`,
   `EqField`, `And`, `Or`, `Not`, `True`, `False`.
 - `crud/predicate.go:escapeLike` — `%`, `_` and `\` in a `Contains` argument are
   escaped, so a user-supplied search term is not a wildcard.

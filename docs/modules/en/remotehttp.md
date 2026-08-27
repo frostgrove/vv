@@ -91,10 +91,13 @@ report ([[D-063]]).
 
 ## What the far end has to declare
 
-`remote.GetAll` needs `query.Config{AllowUnpaged: true}` on the resource it
-calls. There is no "every row" route: `GetAll` is emulated with the `unpaged`
-flag, and an endpoint that never agreed to serve whole tables refuses it
-([[D-060]]). The refusal names the fix.
+`remote.GetAll` never sends `unpaged`. It makes bounded List calls and follows
+cursor edges, so the far endpoint keeps its normal page budget. A restrictive
+endpoint intended for such an export permits the walk's sort and cursor filter;
+the caller's sort is used, or `remote` requests the model primary key. A custom
+list without edges falls back to offset pages and needs a `MaxOffset` large
+enough for that export. See [remote](remote.md) for the `Distinct` projection
+and non-snapshot boundaries.
 
 
 ## See also

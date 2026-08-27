@@ -233,6 +233,19 @@ func (e *enricher[M, ID]) Save(ctx context.Context, m *M) error {
 		func(ctx context.Context) error { return e.Core.Save(ctx, m) })
 }
 
+// SaveScoped explicitly preserves the internal conditional-save capability for
+// a security gate wrapped outside faults. It is intentionally a narrow forward:
+// probing a speculative duplicate-key write would execute a different statement
+// from the one whose snapshot security approved. Driver faults from the actual
+// statement are still enriched as Save faults.
+func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+	err, ok := crud.SaveScopedOf(e.Core, ctx, m, save)
+	if !ok {
+		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped Save atomically"}
+	}
+	return e.enrich("Save", err)
+}
+
 func (e *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
 	pc, ok := e.probes["SaveAll"]
 	if !ok {

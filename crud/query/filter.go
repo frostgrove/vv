@@ -2,6 +2,7 @@ package query
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Predicate, error) {
 	raw = trim(raw)
 	if len(raw) == 0 || isNull(raw) {
-		return nil, nil
+		return nil, errf(where, "filter must be a non-empty object")
 	}
 	if depth > c.cfg.maxDepth() {
 		return nil, errf(where, "filter is nested deeper than the allowed %d levels", c.cfg.maxDepth())
@@ -25,8 +26,18 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, errf(where, "expected an object, got %s", preview(raw))
 	}
+	// Request.UnmarshalJSON scans the whole document. RawFilter is also public,
+	// though, so compile its programmatic route with the same no-duplicates
+	// rule rather than granting it a last-wins escape hatch. Do it after the
+	// shape check so malformed query-string JSON keeps the useful "expected an
+	// object" diagnostic rather than exposing a decoder implementation detail.
+	if depth == 1 {
+		if err := rejectDuplicateJSONKeys(raw); err != nil {
+			return nil, err
+		}
+	}
 	if len(obj) == 0 {
-		return nil, nil
+		return nil, errf(where, "filter must not be empty")
 	}
 
 	keys := make([]string, 0, len(obj))
@@ -40,20 +51,70 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 		val := obj[key]
 		sub := where + "." + key
 
+		// A schema may legitimately expose a field called Or, And or Not. The
+		// dollar spelling is always a combinator; the bare spelling is a
+		// combinator only when it does not resolve to a model field. That keeps
+		// old documents readable on ordinary models and gives the ambiguous
+		// models both operations (`$or`) and the field itself (`or`).
+		logical := !isFilterField(c, key)
 		switch strings.ToLower(key) {
-		case "and", "$and":
+		case "$and":
 			p, err := c.list(val, sub, depth+1, "AND")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
-		case "or", "$or":
+		case "$or":
 			p, err := c.list(val, sub, depth+1, "OR")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
-		case "not", "$not":
+		case "$not":
+			inner, err := c.node(val, sub, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			if inner != nil {
+				preds = append(preds, crud.Not(inner))
+			}
+		case "and":
+			if !logical {
+				p, err := c.condition(key, val, sub)
+				if err != nil {
+					return nil, err
+				}
+				preds = appendPred(preds, p)
+				continue
+			}
+			p, err := c.list(val, sub, depth+1, "AND")
+			if err != nil {
+				return nil, err
+			}
+			preds = appendPred(preds, p)
+		case "or":
+			if !logical {
+				p, err := c.condition(key, val, sub)
+				if err != nil {
+					return nil, err
+				}
+				preds = appendPred(preds, p)
+				continue
+			}
+			p, err := c.list(val, sub, depth+1, "OR")
+			if err != nil {
+				return nil, err
+			}
+			preds = appendPred(preds, p)
+		case "not":
+			if !logical {
+				p, err := c.condition(key, val, sub)
+				if err != nil {
+					return nil, err
+				}
+				preds = appendPred(preds, p)
+				continue
+			}
 			inner, err := c.node(val, sub, depth+1)
 			if err != nil {
 				return nil, err
@@ -77,6 +138,14 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 	default:
 		return crud.And(preds...), nil
 	}
+}
+
+func isFilterField(c *compiler, key string) bool {
+	if c == nil || c.meta == nil || strings.HasPrefix(key, "$") {
+		return false
+	}
+	_, _, err := c.meta.FieldAt(key)
+	return err == nil
 }
 
 func appendPred(dst []crud.Predicate, p crud.Predicate) []crud.Predicate {
@@ -106,7 +175,7 @@ func (c *compiler) list(raw json.RawMessage, where string, depth int, op string)
 		preds = appendPred(preds, p)
 	}
 	if len(preds) == 0 {
-		return nil, nil
+		return nil, errf(where, "%s must contain at least one filter", strings.ToLower(op))
 	}
 	if op == "OR" {
 		return crud.Or(preds...), nil
@@ -127,7 +196,7 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 
 	raw = trim(raw)
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, errf(where, "filter value is missing")
 	}
 
 	switch raw[0] {
@@ -145,7 +214,7 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 		if err := c.countValues(len(vals), where); err != nil {
 			return nil, err
 		}
-		return crud.In(canonical, vals...), nil
+		return buildMulti(canonical, opIn, vals, where)
 	default:
 		if err := c.count(where); err != nil {
 			return nil, err
@@ -156,6 +225,9 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 		v, err := decodeValue(raw, f)
 		if err != nil {
 			return nil, errf(where, "%s", err)
+		}
+		if err := c.countBinds(1, where); err != nil {
+			return nil, err
 		}
 		return crud.Eq(canonical, v), nil
 	}
@@ -172,6 +244,9 @@ func (c *compiler) operators(field string, f *crud.Field, raw json.RawMessage, w
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	if len(keys) == 0 {
+		return nil, errf(where, "operator object must not be empty")
+	}
 
 	var preds []crud.Predicate
 	for _, key := range keys {
@@ -220,9 +295,15 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		return crud.IsNotNull(field), nil
 
 	case kind.textual():
+		if crud.ElemType(f.Type).Kind() != reflect.String {
+			return nil, errf(where, "%s requires a text field", op)
+		}
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return nil, errf(where, "%s expects a string", op)
+		}
+		if err := c.countBinds(1, where); err != nil {
+			return nil, err
 		}
 		return buildText(field, kind, s), nil
 
@@ -231,22 +312,24 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
-		// between carries exactly two and buildMulti checks that itself; the
-		// cap is about a list whose length the client chose.
-		if kind != opBetween {
-			if err := c.countValues(len(vals), where); err != nil {
-				return nil, err
-			}
+		if err := c.countValues(len(vals), where); err != nil {
+			return nil, err
 		}
 		return buildMulti(field, kind, vals, where)
 
 	default:
 		if isNull(trim(raw)) {
+			if kind != opEq && kind != opNe {
+				return nil, errf(where, "%s has no meaning with null", op)
+			}
 			return buildScalar(field, kind, nil), nil
 		}
 		v, err := decodeValue(raw, f)
 		if err != nil {
 			return nil, errf(where, "%s", err)
+		}
+		if err := c.countBinds(1, where); err != nil {
+			return nil, err
 		}
 		return buildScalar(field, kind, v), nil
 	}
@@ -284,12 +367,21 @@ func buildText(field string, kind opKind, s string) crud.Predicate {
 		return crud.StartsWith(field, s)
 	case opEndsWith:
 		return crud.EndsWith(field, s)
+	case opIContains:
+		return crud.ContainsIgnoreCase(field, s)
+	case opIStartsWith:
+		return crud.StartsWithIgnoreCase(field, s)
+	case opIEndsWith:
+		return crud.EndsWithIgnoreCase(field, s)
 	default:
 		return crud.Like(field, s)
 	}
 }
 
 func buildMulti(field string, kind opKind, vals []any, where string) (crud.Predicate, error) {
+	if len(vals) == 0 {
+		return nil, errf(where, "%s needs at least one value", kind.String())
+	}
 	switch kind {
 	case opNotIn:
 		return crud.NotIn(field, vals...), nil

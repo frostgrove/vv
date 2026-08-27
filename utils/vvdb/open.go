@@ -10,7 +10,7 @@ import (
 // The driver is not imported here — it is the consumer's blank import, and
 // that is what keeps this package free of dependencies:
 //
-//	import _ "github.com/jackc/pgx/v5/stdlib"   // or lib/pq, or go-sql-driver/mysql
+//	import _ "github.com/jackc/pgx/v5/stdlib"   // or go-sql-driver/mysql
 //
 //	sqlDB, err := vvdb.Open(cfg.DB)
 //
@@ -18,6 +18,16 @@ import (
 // password fails at the first query. Call PingContext if start-up should be
 // the place that finds out.
 func Open(c Config) (*sql.DB, error) {
+	if c.Replica != nil {
+		return nil, fmt.Errorf("%w: replica is declared; use OpenReadWrite so it is not silently ignored", ErrConflict)
+	}
+	return open(c)
+}
+
+// open opens exactly one already-selected database configuration. Keeping it
+// private makes Open's single-handle contract explicit while OpenReadWrite can
+// still open the validated primary and replica independently.
+func open(c Config) (*sql.DB, error) {
 	dsn, err := DSN(c)
 	if err != nil {
 		return nil, err
@@ -61,7 +71,12 @@ func MustOpen(c Config) *sql.DB {
 //	    src = crud.ReadWrite(src, crudsql.Postgres(replica))
 //	}
 func OpenReadWrite(c Config) (primary, replica *sql.DB, err error) {
-	primary, err = Open(c)
+	if err := c.Validate(); err != nil {
+		return nil, nil, err
+	}
+	primaryCfg := c
+	primaryCfg.Replica = nil
+	primary, err = open(primaryCfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -69,7 +84,7 @@ func OpenReadWrite(c Config) (primary, replica *sql.DB, err error) {
 	if !ok {
 		return primary, nil, nil
 	}
-	replica, err = Open(r)
+	replica, err = open(r)
 	if err != nil {
 		_ = primary.Close()
 		return nil, nil, fmt.Errorf("replica: %w", err)
@@ -77,13 +92,40 @@ func OpenReadWrite(c Config) (primary, replica *sql.DB, err error) {
 	return primary, replica, nil
 }
 
-// apply sizes the pool. A zero is "leave database/sql's own default alone"
-// rather than "no connections", which is what setting it would mean.
+// MustOpenReadWrite is OpenReadWrite for a main function. It returns the
+// primary and optional replica together so a declarative replica cannot be
+// accidentally ignored by a single-handle convenience call.
+func MustOpenReadWrite(c Config) (primary, replica *sql.DB) {
+	primary, replica, err := OpenReadWrite(c)
+	if err != nil {
+		panic(err)
+	}
+	return primary, replica
+}
+
+// Apply sizes a database/sql handle the application opened itself. It is the
+// companion to Open for gorm, an instrumented connector or an IAM driver: the
+// configuration remains the single declaration even when vvdb does not create
+// the handle.
+func (p Pool) Apply(db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("%w: database handle", ErrMissing)
+	}
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	p.apply(db)
+	return nil
+}
+
+// apply sizes the pool after its configuration has been validated. A zero is
+// "leave database/sql's own default alone" rather than "no connections", which
+// is what setting it would mean.
 func (p Pool) apply(db *sql.DB) {
 	if p.MaxOpen > 0 {
 		db.SetMaxOpenConns(p.MaxOpen)
 	}
-	if p.MaxIdle > 0 {
+	if p.MaxIdle != 0 {
 		db.SetMaxIdleConns(p.MaxIdle)
 	}
 	if p.MaxLifetime > 0 {

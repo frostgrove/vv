@@ -173,15 +173,15 @@ func TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden(t *testing.T) {
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		// Deleting is not a lookup, so there is nothing to leak and nothing to
-		// refuse: the statement runs, narrowed, and removes nothing.
+		// An inspecting policy has no approved victim when its scoped read is
+		// empty, so it issues no DELETE at all.
 		rec := crudtest.Postgres().Push(crudtest.Rows())
 		n, err := gated(rec).Delete(ctx, 42)
 		if err != nil || n != 0 {
-			t.Fatalf("n = %d, err = %v; want a delete that quietly matched nothing", n, err)
+			t.Fatalf("n = %d, err = %v; want no approved victim", n, err)
 		}
-		if got := crudtest.Normalize(rec.Last().SQL); got != `DELETE FROM "docs" WHERE ("tenant_id" = $1 AND "id" IN ($2))` {
-			t.Fatalf("sql = %s, want the tenant in the statement", got)
+		if wrote(rec, "DELETE") {
+			t.Fatalf("a missing victim reached DELETE: %v", rec.SQL())
 		}
 	})
 }
@@ -234,8 +234,8 @@ func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 		if err := gated(rec).Save(ctx, &d); err != nil {
 			t.Fatal(err)
 		}
-		if !wrote(rec, "INSERT") {
-			t.Fatalf("the upsert never ran: %v", rec.SQL())
+		if !wrote(rec, "UPDATE") {
+			t.Fatalf("the scoped update never ran: %v", rec.SQL())
 		}
 	})
 
@@ -252,6 +252,35 @@ func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 			t.Fatalf("a row was moved into another tenant: %v", rec.SQL())
 		}
 	})
+}
+
+// Inspect is a policy decision about the state it saw, not a best-effort audit
+// before an unconstrained write. The repository receives that snapshot as an
+// additional WHERE predicate on both its read and final UPDATE.
+func TestInspectPinsUpdateToTheRowItApproved(t *testing.T) {
+	policy := security.Policy[Doc, int64]{
+		Inspect: func(_ context.Context, a security.Action, d *Doc) error {
+			if a == security.Update && d.Body == "locked" {
+				return security.Denied(a, "document is locked")
+			}
+			return nil
+		},
+	}
+	title := "after"
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(docRow(1, 7, "before")), // gate inspection
+		crudtest.Rows(docRow(1, 7, "before")), // repository's own diff read
+		crudtest.Rows(docRow(1, 7, "after")),  // conditional UPDATE RETURNING
+	)
+	if _, err := Docs.Bind(rec, security.Gate(policy)).Update(context.Background(), 1, DocUpdate{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	where := lastWhere(rec)
+	for _, want := range []string{`"id" = $`, `"tenant_id" = $`, `"title" = $`, `"body" = $`} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("UPDATE WHERE = %s, want inspected snapshot field %s", where, want)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -439,9 +468,11 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 		if _, err := repo.DeleteAll(ctx); err != nil {
 			t.Fatal(err)
 		}
-		want := `DELETE FROM "notes" WHERE ("deleted_at" IS NULL AND "tenant_id" = $1)`
-		if got := crudtest.Normalize(rec.Last().SQL); got != want {
-			t.Fatalf("sql  = %s\nwant = %s", got, want)
+		got := crudtest.Normalize(rec.Last().SQL)
+		for _, want := range []string{`"deleted_at" IS NULL`, `"tenant_id" = $`, `"id" = $`, `"title" = $`} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("sql = %s, want snapshot condition %s", got, want)
+			}
 		}
 	})
 
@@ -449,7 +480,7 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 	// the refusal stands. Erring towards the refusal is the right way round.
 	t.Run("a repository scope does not satisfy the gate's own delete guard", func(t *testing.T) {
 		rec := crudtest.Postgres()
-		repo := liveNotes.Bind(rec, security.Gate(security.Policy[Note, int64]{}))
+		repo := liveNotes.Bind(rec, security.Gate(security.Freeze[Note, int64]("Title")))
 
 		if _, err := repo.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)

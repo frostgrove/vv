@@ -129,6 +129,10 @@ func TestBothDoorsBindTheSameValue(t *testing.T) {
 		// crud.Opt and *T columns compare against their element type.
 		{"nick", `"ann"`, "ann", "ann"},
 		{"age", `31`, "31", 31},
+		// encoding/json represents []byte as base64, so the query-string door
+		// uses the same portable spelling rather than treating the text bytes as
+		// the column value.
+		{"blob", `"aGk="`, "aGk=", []byte("hi")},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			docSQL, docArgs := runSample(t, jsonRequest(t, `{"filter":{"`+tc.field+`":`+tc.doc+`}}`))
@@ -238,9 +242,7 @@ func TestCoerceHandlesEveryScalarKind(t *testing.T) {
 		{"7", uint(7)},
 		{"1.5", float32(1.5)},
 		{"1e10", 1e10},
-		// A []byte column takes the text as it stands: a query string has no
-		// other encoding to speak of.
-		{"hi", []byte("hi")},
+		{"aGk=", []byte("hi")},
 		{"go", code("GO")},
 		{"2026-01-02T03:04:05Z", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
 	} {
@@ -270,6 +272,8 @@ func TestCoerceRefusesValuesTheColumnCannotHold(t *testing.T) {
 		{"fraction into an int", "1.5", 0},
 		{"word into a bool", "maybe", false},
 		{"word into a float", "lots", 0.0},
+		{"NaN into a float", "NaN", 0.0},
+		{"infinite float", "+Inf", 0.0},
 		{"unparsable timestamp", "yesterday", time.Time{}},
 		{"empty custom type", "", code("")},
 	} {

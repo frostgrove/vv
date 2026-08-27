@@ -48,8 +48,8 @@ articles := remote.New[Article, int64, ArticleInput](
 | Метод | Маршрут |
 |---|---|
 | `Get(ctx, opts...)` | `POST /query` · `List` |
-| `GetAll(ctx, opts...)` | то же, с `unpaged` |
-| `GetByID(ctx, id, opts...)` | `GET /{id}` · `Get` |
+| `GetAll(ctx, opts...)` | все подходящие строки (либо явно запрошенное подмножество); обход с cursor edge делает page/offset cap размером чанка, а не обрезанным успехом. Shape без cursor и DISTINCT без PK всё ещё требует достаточный `MaxOffset`. |
+| `GetByID(ctx, id, opts...)` | напрямую: `GET /{id}` · `Get`; root filter либо суженный/capped preload: `POST /query` · `List` с равенством primary key |
 | `Count(ctx, opts...)` | `POST /count` · `Count` |
 | `Save(ctx, *m)` | `POST /`, если ключ не задан, и `PUT /{id}`, если задан |
 | `Update(ctx, id, dto)` | `PATCH /{id}` · `Update` |
@@ -112,8 +112,49 @@ if errors.As(err, &pe) {
 ([[D-053]]).
 
 **Переносится** — `Page`, `Limit`, `Offset`, `OrderBy`/`SortBy`, `Select`,
-`Preload`, `After`, `Before`, `Unpaged`, `SkipTotal`, `Distinct` и `Where` с
-любым предикатом, который умеет выразить проводной DSL.
+`Preload`/`PreloadWhere`/`PreloadCap`, `After`, `Before`, `Unpaged`, `SkipTotal`, `Distinct` и `Where` с
+любым предикатом, который умеет выразить проводной DSL. Keyed `GetByID` также
+сохраняет root filter: когда он есть (либо preload сужен или capped), клиент использует
+document-shaped List route с дополнительным равенством primary key. Прямой
+entity route сохраняет только projection и обычные preload paths; ordering и
+paging не могут изменить keyed result и отбрасываются.
+
+Этот fallback намеренно является обычным публичным List-запросом: endpoint с
+ограничительным `query.Config.Filterable` должен разрешать primary key **и
+каждое поле фильтра вызывающего**, как и для прямого `Get`. Иначе endpoint
+вернёт обычный отказ query вместо ослабления keyed-read.
+
+`GetAll` сбрасывает `SkipTotal` и превращает запрос всех строк — без page
+controls либо с `Unpaged` (он побеждает переданные page/limit) — в ограниченные
+запросы. С `Unpaged+Offset` он возвращает весь suffix после этого offset. Он
+запрашивает первую страницу и затем идёт по любому полученному cursor edge. Он
+использует sort вызывающего или явный sort по primary key, если sort не задан;
+так он не упирается ни в `MaxOffset` удалённого endpoint, ни в maximum page
+size. Endpoint с ограничительными allow-list должен поэтому разрешать этот sort
+и primary-key filter курсора (либо вызывающий передаёт разрешённый уникальный
+sort).
+
+Есть одно намеренное исключение: `Distinct` с явной projection без primary key
+нельзя безопасно keyset-сортировать, не изменив distinct-результат. Такая форма
+остаётся на offset-страницах; так же ведёт себя кастомный list без cursor edge,
+и в обоих случаях его `MaxOffset` обязан покрывать export. Иначе клиент вернёт
+отказ endpoint, а не представит этот отказ успешным частичным результатом.
+Непустая cursor-страница с edge читается
+даже если `HasNext` или `HasPrev` устарел; terminal empty page, достигнутая по
+этому edge, доказывает окончание. Кастомный cursor-ответ без terminal edge
+вместо этого объявляет конец соответствующим `HasNext`/`HasPrev`. Пустая
+страница, утверждающая что есть ещё данные, повторяющийся/отсутствующий edge
+либо несогласованный offset total возвращает
+`*remote.PartialResultError` (`errors.Is(err, remote.ErrPartialResult)`).
+Только явный offset без `Unpaged`, либо явные page/limit без `Unpaged`,
+сохраняют обычную семантику одного подмножества.
+
+Как любое чтение сети из нескольких запросов, это enumeration, а не
+транзакционный snapshot: строки, которые удалённый сервис вставляет, удаляет
+или переупорядочивает во время обхода, могут перейти между страницами. Проверки
+согласованности ловят противоречивый протокол, но не меняющийся набор данных.
+Export, которому нужен один snapshot базы, должен быть отдельной far-side
+операцией со своим контрактом.
 
 **Отклоняется, до того как что-либо отправлено** — `*remote.OptionError`:
 
@@ -183,8 +224,10 @@ remotehttp.Transport(base, remotehttp.WithRequestHook(func(r *http.Request) erro
 
 Два различия, видимых вызывающей стороне ([[FL-013]]):
 
-- По HTTP `GetByID` несёт пути preload в query-строке, поэтому **сужённый**
-  preload там отклоняется. gRPC отправляет документ целиком.
+- Filtered `GetByID`, в том числе со сужённым или capped preload, использует List на
+  обоих transport, поэтому документ приходит целиком. Нефильтрованное HTTP
+  entity-чтение остаётся `GET /{id}` и несёт только projection и обычные
+  preload paths; gRPC может нести ту же форму как документ.
 - По gRPC 422 и 400 — это один `InvalidArgument`; машинный код отменяет
   схлопывание, так что `errs.AsFault(err).Kind` по-прежнему их различает.
 

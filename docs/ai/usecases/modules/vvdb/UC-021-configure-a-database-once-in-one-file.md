@@ -47,3 +47,13 @@ ends, a timeout rounded down to zero that means "wait forever" rather than
     did not create.
 11. None of this is required. A service that already builds its own handle
     passes it to an adapter exactly as before.
+
+## Status
+
+**covered.** The same typed declaration is fully validated through the generic
+and per-engine DSN builders, loads from YAML or an environment-only deployment,
+and rejects a raw DSN beside field-form facts. PostgreSQL typed configuration is
+pgx-only; another driver is an explicit raw-DSN decision. Replica inheritance,
+pool validation, escaping, and the deliberately finite SQLite pragma vocabulary
+are all tested on their public paths. `Pool.MaxIdle` is documented as
+transport-native where pgx cannot give database/sql semantics.
