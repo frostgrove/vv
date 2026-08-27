@@ -60,7 +60,8 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 		// database scalar packages is much more likely to be a relation than a
 		// column. An explicit db/column tag remains the author's escape hatch for
 		// an imported scalar type.
-		if !hasDB && gormOpts["column"] == "" && importedRelationCandidate(raw.Type, decl.imports) {
+		if !hasDB && gormOpts["column"] == "" &&
+			(gormRelationOption(gormOpts) || importedRelationCandidate(raw.Type, decl.imports)) {
 			continue
 		}
 
@@ -192,14 +193,41 @@ func formatExpression(fset *token.FileSet, expr ast.Expr) string {
 }
 
 func canonicalExpression(imports map[string]string, fset *token.FileSet, expr ast.Expr) string {
-	typ := formatExpression(fset, expr)
-	for alias, path := range imports {
-		if alias == "_" || alias == "." {
-			continue
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return expr.Name
+	case *ast.SelectorExpr:
+		if alias, ok := expr.X.(*ast.Ident); ok {
+			if path := imports[alias.Name]; path != "" {
+				return canonicalPackageName(path) + "." + expr.Sel.Name
+			}
 		}
-		typ = strings.ReplaceAll(typ, alias+".", canonicalPackageName(path)+".")
+		return formatExpression(fset, expr)
+	case *ast.StarExpr:
+		return "*" + canonicalExpression(imports, fset, expr.X)
+	case *ast.ArrayType:
+		length := ""
+		if expr.Len != nil {
+			length = formatExpression(fset, expr.Len)
+		}
+		return "[" + length + "]" + canonicalExpression(imports, fset, expr.Elt)
+	case *ast.MapType:
+		return "map[" + canonicalExpression(imports, fset, expr.Key) + "]" + canonicalExpression(imports, fset, expr.Value)
+	case *ast.IndexExpr:
+		return canonicalExpression(imports, fset, expr.X) + "[" + canonicalExpression(imports, fset, expr.Index) + "]"
+	case *ast.IndexListExpr:
+		parts := make([]string, 0, len(expr.Indices))
+		for _, index := range expr.Indices {
+			parts = append(parts, canonicalExpression(imports, fset, index))
+		}
+		return canonicalExpression(imports, fset, expr.X) + "[" + strings.Join(parts, ",") + "]"
+	case *ast.ParenExpr:
+		return "(" + canonicalExpression(imports, fset, expr.X) + ")"
+	case *ast.Ellipsis:
+		return "..." + canonicalExpression(imports, fset, expr.Elt)
+	default:
+		return formatExpression(fset, expr)
 	}
-	return typ
 }
 
 func canonicalPackageName(path string) string {
@@ -245,11 +273,14 @@ func databaseType(field Field) string {
 }
 
 func importedRelationCandidate(expr ast.Expr, imports map[string]string) bool {
+	relationShape := false
 	for {
 		switch wrapped := expr.(type) {
 		case *ast.StarExpr:
+			relationShape = true
 			expr = wrapped.X
 		case *ast.ArrayType:
+			relationShape = true
 			expr = wrapped.Elt
 		case *ast.ParenExpr:
 			expr = wrapped.X
@@ -275,7 +306,16 @@ unwrapped:
 	case "time", "database/sql", "encoding/json", "net", "net/url", "math/big", "gorm.io/gorm":
 		return false
 	}
-	return !strings.Contains(path, "uuid") && !strings.Contains(path, "decimal")
+	return relationShape && !strings.Contains(path, "uuid") && !strings.Contains(path, "decimal")
+}
+
+func gormRelationOption(options map[string]string) bool {
+	for _, name := range []string{"foreignkey", "references", "many2many", "polymorphic", "polymorphicvalue"} {
+		if hasGormOption(options, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func localTypeName(expr ast.Expr) string {

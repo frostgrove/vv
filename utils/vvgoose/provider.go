@@ -84,7 +84,8 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 // providerDatabaseConfig makes the connection suitable for Goose without
 // mutating the application's ordinary database config. Goose may execute a
 // StatementBegin block as one string; go-sql-driver/mysql refuses that unless
-// multiStatements is enabled.
+// multiStatements is enabled. Goose scans its history timestamp into time.Time,
+// so parseTime must also stay on even when a raw DSN disabled it.
 func providerDatabaseConfig(cfg vvdb.Config) (vvdb.Config, error) {
 	primary := cfg
 	primary.Replica = nil
@@ -108,6 +109,7 @@ func providerDatabaseConfig(cfg vvdb.Config) (vvdb.Config, error) {
 		params[key] = value
 	}
 	params["multiStatements"] = "true"
+	params["parseTime"] = "true"
 	primary.Params = params
 	return primary, nil
 }
