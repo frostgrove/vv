@@ -75,7 +75,10 @@ func (t *transport) vocabulary() *errs.Codes {
 }
 
 // Do implements remote.Transport.
-func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, error) {
+func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
+	if call == nil {
+		return nil, fmt.Errorf("crudgrpc: call is nil")
+	}
 	in, err := requestFor(call)
 	if err != nil {
 		return nil, err
@@ -96,7 +99,7 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 // requestFor builds the document each method reads, field for field with the
 // handler that reads it. The names are read in one place on each side and
 // nowhere else.
-func requestFor(call remote.Call) (*structpb.Struct, error) {
+func requestFor(call *remote.Call) (*structpb.Struct, error) {
 	switch call.Method {
 	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
 		if call.ID == "" {

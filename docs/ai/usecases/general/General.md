@@ -443,7 +443,7 @@ returns nobody may elide, the honest sketch is eleven lines before the first
 mount:
 
 ```go
-db := vvdb.MustOpen(cfg.DB)                        // the application still owns the handle
+db := vvdb.MustOpen(&cfg.DB)                        // the application still owns the handle
 
 cat, err := catalog.Load(ctx, crudsql.Postgres(db))
 if err != nil {

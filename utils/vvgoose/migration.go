@@ -38,7 +38,7 @@ type migrationOptions struct {
 // createTableMigration creates one conventional create_<table>_table
 // migration, inferring its columns from the matching source model.
 func createTableMigration(ctx context.Context, raw vvdb.Config, options createOptions) (string, error) {
-	cfg := normalizeConfig(raw)
+	cfg := normalizeConfig(&raw)
 	if err := cfg.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
@@ -57,7 +57,7 @@ func createTableMigration(ctx context.Context, raw vvdb.Config, options createOp
 	// into a destructive duplicate CREATE, so non-create names stay editable
 	// Goose skeletons.
 	if !options.Empty && createsTable(fileSlug) {
-		models, discoverErr := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
+		models, discoverErr := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
 		if discoverErr != nil {
 			return "", discoverErr
 		}
@@ -118,7 +118,7 @@ func createTableMigrations(ctx context.Context, raw vvdb.Config, tables []string
 // migration name, and puts all selected CREATE TABLE statements in this one
 // file.
 func createMigration(ctx context.Context, raw vvdb.Config, options migrationOptions) (string, error) {
-	cfg := normalizeConfig(raw)
+	cfg := normalizeConfig(&raw)
 	if err := cfg.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
@@ -161,14 +161,14 @@ func createMigration(ctx context.Context, raw vvdb.Config, options migrationOpti
 // models. Its version is stable: rerunning init replaces the existing *_init
 // file instead of adding another competing baseline.
 func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) {
-	cfg := normalizeConfig(raw)
+	cfg := normalizeConfig(&raw)
 	if err := cfg.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
 	if _, err := dialectFor(cfg.Engine); err != nil {
 		return "", err
 	}
-	models, err := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
+	models, err := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
 	if err != nil {
 		return "", err
 	}
@@ -187,7 +187,7 @@ func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) 
 }
 
 func selectedModels(ctx context.Context, cfg vvdb.Config, tables []string, options createOptions) ([]modelscan.Model, error) {
-	models, err := modelscan.Discover(modelscan.Options{Roots: cfg.Migration.Models})
+	models, err := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
 	if err != nil {
 		return nil, err
 	}

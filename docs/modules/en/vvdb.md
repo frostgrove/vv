@@ -79,7 +79,7 @@ type Config struct {
 func (c Config) Validate() error { return c.DB.Validate() }
 
 cfg            := vvcfg.MustLoad[Config]()
-sqlDB, replica := vvdb.MustOpenReadWrite(cfg.DB)
+sqlDB, replica := vvdb.MustOpenReadWrite(&cfg.DB)
 ```
 
 `vvcfg` invokes the top-level `Validate` method. Forwarding it deliberately
@@ -188,7 +188,7 @@ to the replica and a write, a locked read and the load half of an update do not
 ([[D-032]]):
 
 ```go
-primary, replica, err := vvdb.OpenReadWrite(cfg.DB)
+primary, replica, err := vvdb.OpenReadWrite(&cfg.DB)
 src := crudsql.Postgres(primary)
 if replica != nil {
     src = crud.ReadWrite(src, crudsql.Postgres(replica))
@@ -217,10 +217,10 @@ There is no module for ent, gorm, sqlx or sqlc, and there does not need to be:
 each takes either a `*sql.DB` or a string, and both already exist.
 
 ```go
-sqlDB := vvdb.MustOpen(cfg.DB)
+sqlDB := vvdb.MustOpen(&cfg.DB)
 client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB(dialect.Postgres, sqlDB)))
 
-dsn, err := vvdb.DSN(cfg.DB)
+dsn, err := vvdb.DSN(&cfg.DB)
 if err != nil { log.Fatal(err) }
 gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 if err != nil { log.Fatal(err) }

@@ -114,7 +114,10 @@ func (t *transport) cap() int {
 }
 
 // Do implements remote.Transport.
-func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, error) {
+func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
+	if call == nil {
+		return nil, fmt.Errorf("remotehttp: call is nil")
+	}
 	method, path, body, err := t.route(call)
 	if err != nil {
 		return nil, err
@@ -161,7 +164,7 @@ func (t *transport) Do(ctx context.Context, call remote.Call) (json.RawMessage, 
 
 // route is the one place a call becomes a verb, a path and a body. The routes
 // are crudnet's Mount, and the three bindings register the same ones.
-func (t *transport) route(call remote.Call) (method, path string, body []byte, err error) {
+func (t *transport) route(call *remote.Call) (method, path string, body []byte, err error) {
 	switch call.Method {
 	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
 		if call.ID == "" {

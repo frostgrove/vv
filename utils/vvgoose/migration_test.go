@@ -123,7 +123,7 @@ type User struct {
 	if _, err := runMigrate(context.Background(), cfg); err != nil {
 		t.Fatalf("apply generated migration: %v", err)
 	}
-	db, err := vvdb.Open(cfg)
+	db, err := vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestGeneratedInitMigrationRunsThroughGoose(t *testing.T) {
 	if _, err := runMigrate(context.Background(), cfg); err != nil {
 		t.Fatalf("apply generated init migration: %v", err)
 	}
-	db, err := vvdb.Open(cfg)
+	db, err := vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

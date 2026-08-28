@@ -74,7 +74,7 @@ type Audit struct {
 type Helper struct { Value string }
 `)
 
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func (*Account) TableName() string { return usersTable }
 type NotAModel struct { ID int64 }
 `)
 
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ type Product struct {
 }
 `)
 
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ type Person struct {
 }
 `)
 
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ type User struct {
 	CreatedAt tm.Time
 }
 `)
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ type Invoice struct {
 	Note *null.String
 }
 `)
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestDiscoverSkipsTestsGeneratedFilesAndExcludedTrees(t *testing.T) {
 		writeSource(t, root, filepath.Join(dir, "hidden.model.go"), "package hidden\ntype Hidden struct { ID int64 }\n")
 	}
 
-	models, err := Discover(Options{Roots: []string{root}})
+	models, err := Discover(&Options{Roots: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestDiscoverDeduplicatesOverlappingRoots(t *testing.T) {
 	sub := filepath.Join(root, "src")
 	writeSource(t, root, "src/model.go", "package app\ntype User struct { ID int64 }\n")
 
-	models, err := Discover(Options{Roots: []string{root, sub}})
+	models, err := Discover(&Options{Roots: []string{root, sub}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestCandidatesSelectOnlyEquallyBestMatches(t *testing.T) {
 func TestDiscoverReportsInvalidGoSource(t *testing.T) {
 	root := t.TempDir()
 	writeSource(t, root, "bad.model.go", "package app\ntype Bad struct {")
-	_, err := Discover(Options{Roots: []string{root}})
+	_, err := Discover(&Options{Roots: []string{root}})
 	if err == nil || !strings.Contains(err.Error(), "bad.model.go") {
 		t.Fatalf("error = %v, want source filename", err)
 	}

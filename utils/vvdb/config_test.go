@@ -187,7 +187,7 @@ func TestMigrationConfigurationDoesNotConflictWithAnOpaqueDSN(t *testing.T) {
 			Table: "goose_db_version",
 		},
 	}
-	got, err := vvdb.DSN(cfg)
+	got, err := vvdb.DSN(&cfg)
 	if err != nil {
 		t.Fatalf("migration metadata is outside the connection string and must not conflict with dsn: %v", err)
 	}
@@ -241,7 +241,8 @@ func TestReadReplicaDoesNotOfferFieldsBesideAnOpaquePrimaryDSN(t *testing.T) {
 }
 
 func TestNoReplicaIsNotAnEmptyReplica(t *testing.T) {
-	if _, ok := primary().ReadReplica(); ok {
+	cfg := primary()
+	if _, ok := cfg.ReadReplica(); ok {
 		t.Fatal("a config with no replica must not answer with a usable one — opening it would be a second connection to the primary")
 	}
 }
@@ -371,7 +372,7 @@ func TestDriverNameDefaultsPerEngineAndIsOverridable(t *testing.T) {
 		{vvdb.Config{Engine: vvdb.SQLite}, "sqlite"},
 		{vvdb.Config{Engine: vvdb.Postgres, Driver: "postgres"}, "postgres"},
 	} {
-		if got := vvdb.DriverName(tc.cfg); got != tc.want {
+		if got := vvdb.DriverName(&tc.cfg); got != tc.want {
 			t.Errorf("%s with driver %q should open with %q, got %q", tc.cfg.Engine, tc.cfg.Driver, tc.want, got)
 		}
 	}

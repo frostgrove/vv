@@ -20,7 +20,7 @@ import (
 
 func main() {
     cfg := vvcfg.MustLoad[config.Config]()
-    vvgoose.Execute(cfg.DB)
+    vvgoose.Execute(&cfg.DB)
 }
 ```
 

@@ -790,7 +790,7 @@ func main() {
     // vvdb builds the connection string and sizes the pool from a config file;
     // the handle stays yours and ent gets the same one vv will use. Nothing in
     // the library opens a connection ([[D-057]]).
-    db := vvdb.MustOpen(cfg.DB)
+    db := vvdb.MustOpen(&cfg.DB)
     client := ent.NewClient(ent.Driver(entsql.OpenDB(dialect.Postgres, db)))
     src := store.New(client, crud.Postgres{})
 

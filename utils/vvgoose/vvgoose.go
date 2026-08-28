@@ -4,7 +4,7 @@
 //
 //	func main() {
 //		cfg := vvcfg.MustLoad[config.Config]()
-//		vvgoose.Execute(cfg.DB)
+//		vvgoose.Execute(&cfg.DB)
 //	}
 //
 // Execute reads os.Args and provides migration generation, applying, status,
@@ -41,8 +41,8 @@ const (
 // entrypoint rather than a library-shaped error return: the intended caller is
 // cmd/migrate/main.go, and failures must result in a non-zero process status
 // even when that minimal main does not contain error handling.
-func Execute(cfg vvdb.Config) {
-	if err := execute(context.Background(), os.Args[1:], cfg, commandIO{
+func Execute(cfg *vvdb.Config) {
+	if err := execute(context.Background(), os.Args[1:], normalizeConfig(cfg), commandIO{
 		in: os.Stdin, out: os.Stdout, err: os.Stderr,
 	}); err != nil {
 		if strings.HasPrefix(err.Error(), "vvgoose:") {
@@ -59,21 +59,25 @@ type commandIO struct {
 	out, err io.Writer
 }
 
-func normalizeConfig(cfg vvdb.Config) vvdb.Config {
-	if cfg.Migration.Path == "" {
-		cfg.Migration.Path = defaultMigrationPath
+func normalizeConfig(cfg *vvdb.Config) vvdb.Config {
+	if cfg == nil {
+		return vvdb.Config{}
 	}
-	if len(cfg.Migration.Models) == 0 {
-		cfg.Migration.Models = []string{defaultMigrationModel}
+	normalized := *cfg
+	if normalized.Migration.Path == "" {
+		normalized.Migration.Path = defaultMigrationPath
 	}
-	if cfg.Migration.Table == "" {
-		cfg.Migration.Table = defaultMigrationTable
+	if len(normalized.Migration.Models) == 0 {
+		normalized.Migration.Models = []string{defaultMigrationModel}
 	}
-	return cfg
+	if normalized.Migration.Table == "" {
+		normalized.Migration.Table = defaultMigrationTable
+	}
+	return normalized
 }
 
 func execute(ctx context.Context, args []string, cfg vvdb.Config, streams commandIO) error {
-	cfg = normalizeConfig(cfg)
+	cfg = normalizeConfig(&cfg)
 	root := newRootCommand(cfg, streams)
 	root.SetArgs(args)
 	return root.ExecuteContext(ctx)

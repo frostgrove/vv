@@ -51,7 +51,10 @@ type store struct {
 	backend   Backend
 }
 
-func New(config Config) (Store, error) {
+func New(config *Config) (Store, error) {
+	if config == nil {
+		return nil, NewError("construct", KindInvalid, fmt.Errorf("config is nil"))
+	}
 	namespace, err := ParseNamespace(config.Namespace)
 	if err != nil {
 		return nil, err

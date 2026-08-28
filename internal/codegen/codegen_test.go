@@ -588,7 +588,7 @@ type placeholder struct{}
 		t.Fatal(err)
 	}
 
-	if err := Run(Options{Dir: root, Out: "vv_gen.go", WithDTO: true, WithMeta: true, Recursive: true}); err != nil {
+	if err := Run(&Options{Dir: root, Out: "vv_gen.go", WithDTO: true, WithMeta: true, Recursive: true}); err != nil {
 		t.Fatalf("recursive generation: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(productDir, "vv_gen.go")); err != nil {

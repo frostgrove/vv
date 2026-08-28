@@ -131,6 +131,64 @@ func TestSkipTotalReportsWhatWasFetchedAndNotTheOffset(t *testing.T) {
 	})
 }
 
+// A cursor is a link, not merely a serialised edge of the current result: it
+// must only be present when the page on that side actually exists. Otherwise a
+// one-page result advertises two requests that can only return an empty list.
+func TestCursorsOnlyAdvertiseExistingNeighbours(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name               string
+		page               int
+		rows               [][]any
+		total              int64
+		wantNext, wantPrev bool
+	}{
+		{
+			name:     "first page only has a next cursor",
+			page:     1,
+			rows:     [][]any{userRow(1, "a@b.c", "Ann", 30, 7), userRow(2, "b@b.c", "Bea", 31, 7)},
+			total:    3,
+			wantNext: true,
+		},
+		{
+			name:     "middle page has both cursors",
+			page:     2,
+			rows:     [][]any{userRow(3, "c@b.c", "Cam", 32, 7), userRow(4, "d@b.c", "Dee", 33, 7)},
+			total:    5,
+			wantNext: true,
+			wantPrev: true,
+		},
+		{
+			name:     "last page only has a previous cursor",
+			page:     2,
+			rows:     [][]any{userRow(3, "c@b.c", "Cam", 32, 7)},
+			total:    3,
+			wantPrev: true,
+		},
+		{
+			name:  "one page has no cursors",
+			page:  1,
+			rows:  [][]any{userRow(1, "a@b.c", "Ann", 30, 7)},
+			total: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres().Push(crudtest.Rows(tc.rows...), crudtest.Rows([]any{tc.total}))
+			got, err := Users.Bind(rec).Get(ctx, crud.Page(tc.page), crud.Limit(2))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got.NextCursor != "") != tc.wantNext {
+				t.Fatalf("nextCursor = %q, want present: %v", got.NextCursor, tc.wantNext)
+			}
+			if (got.PrevCursor != "") != tc.wantPrev {
+				t.Fatalf("prevCursor = %q, want present: %v", got.PrevCursor, tc.wantPrev)
+			}
+		})
+	}
+}
+
 // A page number is a client's number, multiplied by the page size, in an int.
 // Wrapping made the offset non-positive, SQL dropped it, and the caller was
 // handed page one wearing the page number they had asked for.

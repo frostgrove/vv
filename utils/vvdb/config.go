@@ -117,7 +117,10 @@ type Migration struct {
 //
 // Empty fields are valid. They are the zero-value spelling of the defaults in
 // the tags above for a Config assembled in Go rather than loaded by vvcfg.
-func (m Migration) Validate() error {
+func (m *Migration) Validate() error {
+	if m == nil {
+		return nil
+	}
 	if m.Path != "" && strings.TrimSpace(m.Path) == "" {
 		return fmt.Errorf("%w: migration.path is blank", ErrMissing)
 	}
@@ -331,7 +334,10 @@ func defaultPort(e Engine) int {
 // registered by an import the consumer wrote, and the wrong one is a loud
 // failure from sql.Open rather than a quiet one — so the default is the driver
 // this repository's own adapters and examples use.
-func DriverName(c Config) string {
+func DriverName(c *Config) string {
+	if c == nil {
+		return ""
+	}
 	if c.Driver != "" {
 		return c.Driver
 	}
@@ -359,7 +365,10 @@ func known(e Engine) bool {
 // by [DSN] and by [Open], so a caller who forgets it still cannot get a wrong
 // connection; it is exported because vvcfg.Load calls Validate on the struct it
 // loaded, and an application whose config embeds this one forwards to it.
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("%w: config", ErrMissing)
+	}
 	if !known(c.Engine) {
 		return fmt.Errorf("%w: %q, want one of postgres, mysql, mariadb, sqlite", ErrEngine, c.Engine)
 	}
@@ -413,7 +422,7 @@ func (c Config) Validate() error {
 }
 
 // fieldsBesideDSN names the first field that contradicts a DSN, or "".
-func (c Config) fieldsBesideDSN() string {
+func (c *Config) fieldsBesideDSN() string {
 	switch {
 	case c.Host != "":
 		return "host"
@@ -439,7 +448,7 @@ func (c Config) fieldsBesideDSN() string {
 	return ""
 }
 
-func (c Config) validateFields() error {
+func (c *Config) validateFields() error {
 	if c.Engine == SQLite {
 		if c.Path == "" {
 			return fmt.Errorf("%w: path, which is the file sqlite opens", ErrMissing)
@@ -496,7 +505,7 @@ func (c Config) validateFields() error {
 // validateParams keeps connection facts single-sourced. Params is deliberately
 // broad for driver-specific settings, but it must not be able to override a
 // typed field after vvdb has validated and rendered it.
-func (c Config) validateParams() error {
+func (c *Config) validateParams() error {
 	if c.Engine == SQLite {
 		for key := range c.Params {
 			name := strings.ToLower(strings.TrimSpace(key))
@@ -555,16 +564,16 @@ func (c Config) validateParams() error {
 // Inheritance is the point. A replica differs from its primary by hostname and
 // nothing else nine times out of ten, and repeating the credentials is how the
 // two drift apart the day one of them is rotated.
-func (c Config) ReadReplica() (Config, bool) {
-	if c.Replica == nil || replicaEmpty(*c.Replica) || c.Replica.Replica != nil || !migrationEmpty(c.Replica.Migration) {
-		return Config{}, false
+func (c *Config) ReadReplica() (*Config, bool) {
+	if c == nil || c.Replica == nil || replicaEmpty(*c.Replica) || c.Replica.Replica != nil || !migrationEmpty(c.Replica.Migration) {
+		return nil, false
 	}
 	// A field-level replica needs the primary's connection facts. An opaque
 	// primary deliberately has none to inherit, and Validate reports this as a
 	// named conflict; do not return a tempting but unusable partial replica to
 	// callers that inspect ReadReplica directly.
 	if c.DSN != "" && c.Replica.DSN == "" {
-		return Config{}, false
+		return nil, false
 	}
 	r := *c.Replica
 	// A raw replica DSN owns every connection fact in the string. Driver choice
@@ -572,7 +581,7 @@ func (c Config) ReadReplica() (Config, bool) {
 	// from the primary. ConnectTimeout is the sole pool setting encoded in a
 	// DSN, and is intentionally not inherited into one.
 	if r.DSN != "" {
-		base := c
+		base := *c
 		base.Replica = nil
 		base.Migration = Migration{}
 		base.DSN = r.DSN
@@ -589,9 +598,9 @@ func (c Config) ReadReplica() (Config, bool) {
 		if r.Driver != "" {
 			base.Driver = r.Driver
 		}
-		return base, true
+		return &base, true
 	}
-	base := c
+	base := *c
 	base.Replica = nil
 	base.Migration = Migration{}
 	base.DSN = ""
@@ -638,7 +647,7 @@ func (c Config) ReadReplica() (Config, bool) {
 		}
 		base.Params = merged
 	}
-	return base, true
+	return &base, true
 }
 
 func replicaEmpty(c Config) bool {
@@ -825,7 +834,10 @@ func (c *Config) clearFieldsBesideDSN() {
 // Validate refuses a pool that contradicts itself before an adapter translates
 // it. It is public so adapters that accept Pool directly keep the exact same
 // invariant as Config.Validate.
-func (p Pool) Validate() error {
+func (p *Pool) Validate() error {
+	if p == nil {
+		return fmt.Errorf("%w: pool", ErrMissing)
+	}
 	if p.MaxOpen < 0 {
 		return fmt.Errorf("%w: pool.max_open cannot be negative", ErrUnsupported)
 	}

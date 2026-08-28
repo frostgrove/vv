@@ -177,8 +177,8 @@ func conflict(constraint string, cols ...string) *errs.Fault {
 
 // request is the shape the faults decorator hands over, with the resolve hop
 // wired to the Doc model.
-func request(f *errs.Fault, src crud.Source, meta *crud.Meta, rows ...Row) Request {
-	return Request{
+func request(f *errs.Fault, src crud.Source, meta *crud.Meta, rows ...Row) *Request {
+	return &Request{
 		Op: "Save", Fault: f, Meta: meta, Source: src, Rows: rows,
 		Resolve: func(table string, columns []string) (errs.Path, bool) {
 			if table != "docs" {

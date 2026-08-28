@@ -109,7 +109,7 @@ func TestRepeatedFilterTermsAllSurvive(t *testing.T) {
 		"/widgets?f=price:gte:100&f=name:contains:bolt&f=ownerId:eq:7", "", http.StatusOK)
 
 	sql, args := whereSQL(t, fake.only(t, "Get").Opts)
-	wantSQL := `("price" >= $1 AND "name" LIKE $2 AND "owner_id" = $3)`
+	wantSQL := `("price" >= $1 AND "name" LIKE $2 ESCAPE '\' AND "owner_id" = $3)`
 	if sql != wantSQL {
 		t.Fatalf("three ?f= terms compiled to %s, want %s", sql, wantSQL)
 	}
@@ -161,7 +161,7 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	// A relation hop in a filter is a correlated EXISTS, never a join.
 	sql, args := whereSQL(t, o)
 	wantSQL := `(EXISTS (SELECT 1 FROM "owners" AS rx1 WHERE rx1."id" = "widgets"."owner_id" ` +
-		`AND rx1."name" LIKE $1) AND "price" >= $2)`
+		`AND rx1."name" LIKE $1 ESCAPE '\') AND "price" >= $2)`
 	if sql != wantSQL {
 		t.Fatalf("the filter compiled to %s, want %s", sql, wantSQL)
 	}
@@ -174,8 +174,8 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	}
 	// The per-relation filter is compiled against the related model, not the root.
 	partsSQL, partsArgs := predSQL(t, relMeta(t, "Parts"), crud.Build(o.Preloads[1].Opts...).Predicate())
-	if partsSQL != `"label" LIKE $1` {
-		t.Fatalf("the preload filter compiled to %q, want %q", partsSQL, `"label" LIKE $1`)
+	if partsSQL != `"label" LIKE $1 ESCAPE '\'` {
+		t.Fatalf("the preload filter compiled to %q, want %q", partsSQL, `"label" LIKE $1 ESCAPE '\'`)
 	}
 	if want := []any{"%bolt%"}; !reflect.DeepEqual(partsArgs, want) {
 		t.Fatalf("the preload filter bound %#v, want %#v", partsArgs, want)

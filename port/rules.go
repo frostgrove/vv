@@ -63,7 +63,10 @@ const DefaultMaxBulk = 1024
 // A method and not a defaulted field, so the four transports cannot disagree
 // about what an unset MaxBulk means — which is how they came to agree it meant
 // no cap at all.
-func (r Rules) BulkCap() int {
+func (r *Rules) BulkCap() int {
+	if r == nil {
+		return DefaultMaxBulk
+	}
 	if r.MaxBulk > 0 {
 		return r.MaxBulk
 	}
@@ -72,7 +75,10 @@ func (r Rules) BulkCap() int {
 
 // Service translates the rules that belong to the service rather than to the
 // transport into the options the default service takes.
-func (r Rules) Service() []ServiceOption {
+func (r *Rules) Service() []ServiceOption {
+	if r == nil {
+		return nil
+	}
 	var out []ServiceOption
 	if r.QuerySelector != nil || r.QueryVariants != nil {
 		out = append(out, WithQueryFor(r.Query, r.QueryVariants, r.QuerySelector))
@@ -95,7 +101,10 @@ func (r Rules) Service() []ServiceOption {
 //
 // who is the constructor's qualified name, so the message names the call site
 // in the caller's own vocabulary rather than this package's.
-func (r Rules) RefuseServiceOptions(who string) {
+func (r *Rules) RefuseServiceOptions(who string) {
+	if r == nil {
+		return
+	}
 	switch {
 	case r.Query != nil || r.QuerySelector != nil || r.QueryVariants != nil:
 		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")

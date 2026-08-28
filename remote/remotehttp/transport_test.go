@@ -60,7 +60,7 @@ func TestAnAnswerPastTheCapIsRefusedRatherThanBuffered(t *testing.T) {
 	defer srv.Close()
 
 	tr := Transport(srv.URL, WithMaxResponse(64))
-	_, err := tr.Do(context.Background(), remote.Call{Method: remote.MethodGet, ID: "1"})
+	_, err := tr.Do(context.Background(), &remote.Call{Method: remote.MethodGet, ID: "1"})
 	if err == nil {
 		t.Fatalf("a %d-byte answer over a 64-byte cap was accepted", sent)
 	}
@@ -77,7 +77,7 @@ func TestAnAnswerPastTheCapIsRefusedRatherThanBuffered(t *testing.T) {
 	defer small.Close()
 
 	raw, err := Transport(small.URL, WithMaxResponse(64)).
-		Do(context.Background(), remote.Call{Method: remote.MethodGet, ID: "1"})
+		Do(context.Background(), &remote.Call{Method: remote.MethodGet, ID: "1"})
 	if err != nil {
 		t.Fatalf("an 8-byte answer under a 64-byte cap was refused: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestTheCallersDeadlineReachesTheRequest(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := Transport(srv.URL).Do(ctx, remote.Call{Method: remote.MethodGet, ID: "1"})
+	_, err := Transport(srv.URL).Do(ctx, &remote.Call{Method: remote.MethodGet, ID: "1"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("a cancelled context did not stop the call: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestADirectKeyedCallRefusesEligibilityControlsItCannotCarry(t *testing.T) {
 		"search fields": {SearchFields: query.Strings{"Name"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Transport("http://example.invalid/widgets").Do(context.Background(), remote.Call{
+			_, err := Transport("http://example.invalid/widgets").Do(context.Background(), &remote.Call{
 				Method: remote.MethodGet,
 				ID:     "42",
 				Query:  req,
@@ -135,7 +135,7 @@ func TestADirectKeyedCallWithNoIDNeverReachesTheCollectionRoute(t *testing.T) {
 		remote.MethodDelete,
 	} {
 		t.Run(string(method), func(t *testing.T) {
-			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{Method: method})
+			_, err := Transport(srv.URL).Do(context.Background(), &remote.Call{Method: method})
 			if err == nil || !strings.Contains(err.Error(), "non-empty id") {
 				t.Fatalf("empty %s = %v, want a local key refusal", method, err)
 			}
@@ -161,7 +161,7 @@ func TestADirectKeyedMutationWithNoBodyNeverReachesTheServer(t *testing.T) {
 		{remote.MethodReplace, json.RawMessage("null")},
 	} {
 		t.Run(string(tc.method)+string(tc.body), func(t *testing.T) {
-			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{
+			_, err := Transport(srv.URL).Do(context.Background(), &remote.Call{
 				Method: tc.method, ID: "42", Body: tc.body,
 			})
 			if err == nil || !strings.Contains(err.Error(), "non-null body") {
@@ -189,7 +189,7 @@ func TestADirectKeyedMutationWithNoJSONObjectNeverReachesTheServer(t *testing.T)
 		{remote.MethodReplace, json.RawMessage(`{"broken":`)},
 	} {
 		t.Run(string(tc.method)+string(tc.body), func(t *testing.T) {
-			_, err := Transport(srv.URL).Do(context.Background(), remote.Call{
+			_, err := Transport(srv.URL).Do(context.Background(), &remote.Call{
 				Method: tc.method, ID: "42", Body: tc.body,
 			})
 			if err == nil || !strings.Contains(err.Error(), "JSON object") {
@@ -203,7 +203,7 @@ func TestADirectKeyedMutationWithNoJSONObjectNeverReachesTheServer(t *testing.T)
 }
 
 func TestADirectBulkDeleteWithNoIDsUsesTheEmptySetSpelling(t *testing.T) {
-	method, path, body, err := (&transport{}).route(remote.Call{Method: remote.MethodBulkDelete})
+	method, path, body, err := (&transport{}).route(&remote.Call{Method: remote.MethodBulkDelete})
 	if err != nil {
 		t.Fatal(err)
 	}

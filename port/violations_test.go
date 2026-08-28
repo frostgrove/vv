@@ -19,7 +19,7 @@ func pipeline(t *testing.T, err error, o ViolationOptions) []errs.Violation {
 
 func pipelineCtx(t *testing.T, ctx context.Context, err error, o ViolationOptions) []errs.Violation {
 	t.Helper()
-	return Violations(ctx, FaultOf(err), o)
+	return Violations(ctx, FaultOf(err), &o)
 }
 
 // bytesOf is the determinism assertion's subject: a violation marshals to the

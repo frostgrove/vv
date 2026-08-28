@@ -15,18 +15,18 @@ import (
 
 func TestNewRejectsAnInvalidNamespaceAndEveryNilBackendShape(t *testing.T) {
 	backend := &fakeBackend{}
-	if _, err := storage.New(storage.Config{Namespace: "Documents", Backend: backend}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := storage.New(&storage.Config{Namespace: "Documents", Backend: backend}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("New with invalid namespace error = %v, want ErrInvalid", err)
 	}
 	if backend.calls != 0 {
 		t.Fatalf("invalid construction made %d backend calls", backend.calls)
 	}
 
-	if _, err := storage.New(storage.Config{Namespace: "documents"}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := storage.New(&storage.Config{Namespace: "documents"}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("New with nil backend error = %v, want ErrInvalid", err)
 	}
 	var typedNil *fakeBackend
-	if _, err := storage.New(storage.Config{Namespace: "documents", Backend: typedNil}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := storage.New(&storage.Config{Namespace: "documents", Backend: typedNil}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("New with typed nil backend error = %v, want ErrInvalid", err)
 	}
 }

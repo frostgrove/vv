@@ -55,7 +55,7 @@ func (r ref) render(b *crud.SQL) {
 // arm fixes PostgreSQL and breaks MySQL, whose CAST target vocabulary is not its
 // column types: CAST(? AS varchar(64)) is a syntax error there. Binding every
 // row's values directly needs no type at all, and the caps bound what it costs.
-func (f *full) statement(p plan, req Request, scope crud.Predicate) (string, []any, error) {
+func (f *full) statement(p plan, req *Request, scope crud.Predicate) (string, []any, error) {
 	d := req.Source.Dialect()
 	b := crud.NewSQL(d, req.Meta)
 	b.Raw("SELECT ")

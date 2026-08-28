@@ -15,7 +15,10 @@ import (
 // "DSN" covers both shapes on purpose. PostgreSQL's is a URI and MySQL's is not
 // one — `user:pass@tcp(host:3306)/db` parses by no URI rule at all — and data
 // source name is the only word that fits both.
-func DSN(c Config) (string, error) {
+func DSN(c *Config) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("%w: config", ErrMissing)
+	}
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
@@ -45,8 +48,8 @@ func DSN(c Config) (string, error) {
 //
 // The whole string goes through net/url, which is the only reason a password
 // containing '@' or '/' reaches the server intact.
-func PostgresDSN(c Config) (string, error) {
-	c, dsn, err := prepare(c, Postgres)
+func PostgresDSN(cfg *Config) (string, error) {
+	c, dsn, err := prepare(cfg, Postgres)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
@@ -123,16 +126,16 @@ func PostgresDSN(c Config) (string, error) {
 }
 
 // MySQLDSN builds `user:password@tcp(host:port)/name?...`.
-func MySQLDSN(c Config) (string, error) { return mysqlish(c, MySQL) }
+func MySQLDSN(c *Config) (string, error) { return mysqlish(c, MySQL) }
 
 // MariaDBDSN builds the same shape as [MySQLDSN]. They are two functions
 // because MariaDB and MySQL are two engines, and the first thing that differs
 // between them — a CHECK constraint's error number already does ([[D-046]]) —
 // should have somewhere to be written.
-func MariaDBDSN(c Config) (string, error) { return mysqlish(c, MariaDB) }
+func MariaDBDSN(c *Config) (string, error) { return mysqlish(c, MariaDB) }
 
-func mysqlish(c Config, e Engine) (string, error) {
-	c, dsn, err := prepare(c, e)
+func mysqlish(cfg *Config, e Engine) (string, error) {
+	c, dsn, err := prepare(cfg, e)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
@@ -195,8 +198,8 @@ func mysqlish(c Config, e Engine) (string, error) {
 // SQLiteDSN builds `file:path?...`. There is no server, so there is no host,
 // no user and no TLS — [Config.Validate] refuses all three rather than
 // dropping them.
-func SQLiteDSN(c Config) (string, error) {
-	c, dsn, err := prepare(c, SQLite)
+func SQLiteDSN(cfg *Config) (string, error) {
+	c, dsn, err := prepare(cfg, SQLite)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
@@ -208,7 +211,7 @@ func SQLiteDSN(c Config) (string, error) {
 		for _, raw := range c.Pragmas {
 			name, value, _ := strings.Cut(raw, "=") // Validate already checked it.
 			name, value = strings.ToLower(strings.TrimSpace(name)), strings.TrimSpace(value)
-			switch DriverName(c) {
+			switch DriverName(&c) {
 			case "", "sqlite":
 				// modernc.org/sqlite consumes one _pragma query item per
 				// setting. Values.Add, not Set, is what keeps WAL and a busy
@@ -218,7 +221,7 @@ func SQLiteDSN(c Config) (string, error) {
 				// mattn/go-sqlite3 names these connection parameters directly.
 				q.Set("_"+name, value)
 			default:
-				return "", fmt.Errorf("%w: sqlite pragmas are mapped for drivers sqlite and sqlite3; use Params or a raw dsn for %q", ErrUnsupported, DriverName(c))
+				return "", fmt.Errorf("%w: sqlite pragmas are mapped for drivers sqlite and sqlite3; use Params or a raw dsn for %q", ErrUnsupported, DriverName(&c))
 			}
 		}
 	}
@@ -237,15 +240,19 @@ func SQLiteDSN(c Config) (string, error) {
 // prepare settles the two questions every builder asks first: is this config
 // usable at all, and did somebody hand us a finished string. A non-empty second
 // result is that string and means the builder has nothing left to do.
-func prepare(c Config, e Engine) (Config, string, error) {
-	c.Engine = e
-	if err := c.Validate(); err != nil {
-		return c, "", err
+func prepare(c *Config, e Engine) (Config, string, error) {
+	if c == nil {
+		return Config{}, "", fmt.Errorf("%w: config", ErrMissing)
 	}
-	if c.DSN != "" {
-		return c, c.DSN, nil
+	prepared := *c
+	prepared.Engine = e
+	if err := prepared.Validate(); err != nil {
+		return prepared, "", err
 	}
-	return c, "", nil
+	if prepared.DSN != "" {
+		return prepared, prepared.DSN, nil
+	}
+	return prepared, "", nil
 }
 
 // tlsParam translates SSLMode into what the MySQL driver understands, and

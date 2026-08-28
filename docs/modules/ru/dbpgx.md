@@ -15,7 +15,7 @@ import "github.com/frostgrove/vv/utils/vvdb/dbpgx"
 ## Использование
 
 ```go
-pool := dbpgx.MustConnect(ctx, cfg.DB)
+pool := dbpgx.MustConnect(ctx, &cfg.DB)
 defer pool.Close()
 
 repo := Products.Bind(crudpgx.Open(pool))

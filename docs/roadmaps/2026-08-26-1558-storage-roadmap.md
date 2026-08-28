@@ -230,9 +230,9 @@ model type, current directory, environment variable or URL string.
 ### Top-level declarative DX
 
 ```go
-documents, err := storage.New(storage.Config{
+documents, err := storage.New(&storage.Config{
     Namespace: "documents",
-    Backend: storagefs.New(storagefs.Config{Root: dataRoot}),
+    Backend: storagefs.New(&storagefs.Config{Root: dataRoot}),
 })
 ```
 
@@ -605,7 +605,7 @@ make permissions/umask behavior explicit.
 ### Top-level declarative DX
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root: "/srv/app-data/documents",
     FileMode: 0o640,
     DirMode:  0o750,

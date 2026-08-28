@@ -99,7 +99,7 @@ func (b *fakeBackend) TemporaryURL(ctx context.Context, namespace storage.Namesp
 func (b *fakeBackend) Capabilities() storage.Capabilities { return b.caps }
 
 func newStore(backend storage.Backend) storage.Store {
-	store, err := storage.New(storage.Config{Namespace: "documents", Backend: backend})
+	store, err := storage.New(&storage.Config{Namespace: "documents", Backend: backend})
 	if err != nil {
 		panic(err)
 	}

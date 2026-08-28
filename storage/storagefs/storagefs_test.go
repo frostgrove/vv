@@ -1066,23 +1066,23 @@ func TestOpenRootRefusesAParentSymlinkEscape(t *testing.T) {
 }
 
 func TestConfigRequiresAnAbsoluteRootAndSafeSigningMaterial(t *testing.T) {
-	if _, err := New(Config{Root: "relative"}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: "relative"}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("relative root error = %v, want ErrInvalid", err)
 	}
 	root := t.TempDir()
-	if _, err := New(Config{Root: root, BaseURL: "https://files.example.test/file", SigningKey: bytes.Repeat([]byte{'x'}, 31)}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: root, BaseURL: "https://files.example.test/file", SigningKey: bytes.Repeat([]byte{'x'}, 31)}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("short key error = %v, want ErrInvalid", err)
 	}
-	if _, err := New(Config{Root: root, FileMode: 0o400}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: root, FileMode: 0o400}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("read-only file mode error = %v, want ErrInvalid", err)
 	}
-	if _, err := New(Config{Root: root, FileMode: 0o620}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: root, FileMode: 0o620}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("group-writable file mode error = %v, want ErrInvalid", err)
 	}
-	if _, err := New(Config{Root: root, DirMode: 0o720}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: root, DirMode: 0o720}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("group-writable directory mode error = %v, want ErrInvalid", err)
 	}
-	if _, err := New(Config{
+	if _, err := New(&Config{
 		Root:       root,
 		BaseURL:    "https://files.example.test/file",
 		SigningKey: bytes.Repeat([]byte{'x'}, 32),
@@ -1095,7 +1095,7 @@ func TestConfigRequiresAnAbsoluteRootAndSafeSigningMaterial(t *testing.T) {
 	if err := os.Chmod(unsafeRoot, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{Root: unsafeRoot}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: unsafeRoot}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("world-writable root error = %v, want ErrInvalid", err)
 	}
 
@@ -1104,7 +1104,7 @@ func TestConfigRequiresAnAbsoluteRootAndSafeSigningMaterial(t *testing.T) {
 	if err := os.Symlink(target, linkName); err != nil {
 		t.Skipf("cannot create root symlink: %v", err)
 	}
-	if _, err := New(Config{Root: linkName}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Root: linkName}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("symlink root error = %v, want ErrInvalid", err)
 	}
 }
@@ -1127,12 +1127,12 @@ func newTestStore(t *testing.T, config Config) (*Backend, storage.Store, string)
 	if config.Root == "" {
 		config.Root = t.TempDir()
 	}
-	backend, err := New(config)
+	backend, err := New(&config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	store, err := storage.New(storage.Config{Namespace: "documents", Backend: backend})
+	store, err := storage.New(&storage.Config{Namespace: "documents", Backend: backend})
 	if err != nil {
 		t.Fatal(err)
 	}

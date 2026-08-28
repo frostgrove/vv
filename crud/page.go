@@ -11,10 +11,10 @@ type PaginatedResponse[T any] struct {
 	HasNext    bool  `json:"hasNext"`
 	HasPrev    bool  `json:"hasPrev"`
 
-	// NextCursor and PrevCursor are the page's own edges, set only on a cursor
-	// walk. Hand NextCursor back as crud.After to get the following page; a
-	// client that stores one has a position that survives concurrent writes,
-	// which a page number does not.
+	// NextCursor and PrevCursor name available neighbouring pages. Hand
+	// NextCursor back as crud.After to get the following page; a client that
+	// stores one has a position that survives concurrent writes, which a page
+	// number does not.
 	NextCursor string `json:"nextCursor,omitempty"`
 	PrevCursor string `json:"prevCursor,omitempty"`
 }

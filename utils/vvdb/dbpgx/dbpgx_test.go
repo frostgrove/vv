@@ -16,8 +16,8 @@ import (
 
 // unreachable is a config that parses and cannot connect: the assertions here
 // are about what reaches pgx, and an option runs before the first dial.
-func unreachable() vvdb.Config {
-	return vvdb.Config{
+func unreachable() *vvdb.Config {
+	return &vvdb.Config{
 		Engine: vvdb.Postgres, Host: "127.0.0.1", Port: 1,
 		User: "vv", Password: "s3cret", Name: "app", SSLMode: "disable",
 		Pool: vvdb.Pool{MaxOpen: 7, MaxIdle: 2, MaxLifetime: time.Hour, ConnectTimeout: 200 * time.Millisecond},
@@ -125,17 +125,19 @@ func TestApplySizesAnApplicationOwnedPgxConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dbpgx.Apply(pc, vvdb.Pool{MaxOpen: 9, MaxIdle: 3}); err != nil {
+	pool := vvdb.Pool{MaxOpen: 9, MaxIdle: 3}
+	if err := dbpgx.Apply(pc, &pool); err != nil {
 		t.Fatal(err)
 	}
 	if pc.MaxConns != 9 || pc.MinConns != 3 {
 		t.Fatalf("Apply did not size the application-owned config: MaxConns=%d MinConns=%d", pc.MaxConns, pc.MinConns)
 	}
-	if err := dbpgx.Apply(pc, vvdb.Pool{MaxIdle: -1}); !errors.Is(err, vvdb.ErrUnsupported) {
+	unsupported := vvdb.Pool{MaxIdle: -1}
+	if err := dbpgx.Apply(pc, &unsupported); !errors.Is(err, vvdb.ErrUnsupported) {
 		t.Fatalf("Apply() = %v, want pgx's unsupported max-idle spelling named", err)
 	}
 	for _, p := range []vvdb.Pool{{MaxOpen: -1}, {MaxOpen: 1, MaxIdle: 2}} {
-		if err := dbpgx.Apply(pc, p); err == nil {
+		if err := dbpgx.Apply(pc, &p); err == nil {
 			t.Fatalf("Apply(%+v) accepted a pool Config.Validate refuses", p)
 		}
 	}
@@ -148,7 +150,8 @@ func TestApplyRefusesMaxIdleAboveTheParsedEffectiveMaximumWithoutMutation(t *tes
 	}
 	pc.MaxConns = 4
 	pc.MinConns = 1
-	if err := dbpgx.Apply(pc, vvdb.Pool{MaxIdle: 5}); !errors.Is(err, vvdb.ErrConflict) {
+	pool := vvdb.Pool{MaxIdle: 5}
+	if err := dbpgx.Apply(pc, &pool); !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("Apply() = %v, want the effective pgx maximum conflict", err)
 	}
 	if pc.MaxConns != 4 || pc.MinConns != 1 {

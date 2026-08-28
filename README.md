@@ -149,14 +149,14 @@ client. The base contract and filesystem backend are stdlib-only; the MinIO SDK
 stays in its own module.
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root:       "/srv/app-data",
     BaseURL:    "https://files.example.com/download",
     SigningKey: signingKey, // at least 32 random bytes
 })
 defer backend.Close()
 
-files, err := storage.New(storage.Config{
+files, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })
@@ -173,7 +173,7 @@ same-filesystem hard-link/rename semantics.
 For MinIO, only construction changes:
 
 ```go
-backend, err := storageminio.New(storageminio.Config{
+backend, err := storageminio.New(&storageminio.Config{
     Client: minioClient, // credentials, endpoint, transport and lifetime are yours
     Bucket: "app-files",
     Prefix: "production",
@@ -267,14 +267,14 @@ db:
 ```
 
 ```go
-primary, replica := vvdb.MustOpenReadWrite(cfg.DB) // database/sql, pools sized
+primary, replica := vvdb.MustOpenReadWrite(&cfg.DB) // database/sql, pools sized
 src := crudsql.Postgres(primary)
 if replica != nil {
     src = crud.ReadWrite(src, crudsql.Postgres(replica))
 }
 ```
 
-For pgx, use `dbpgx.MustConnectReadWrite(ctx, cfg.DB)` instead. These are
+For pgx, use `dbpgx.MustConnectReadWrite(ctx, &cfg.DB)` instead. These are
 alternative driver families for the same configuration.
 
 Bind it to a datasource:

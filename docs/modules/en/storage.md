@@ -23,7 +23,7 @@ must close every body returned by `Open`.
 Choose and configure a backend, then scope it to one static logical namespace:
 
 ```go
-files, err := storage.New(storage.Config{
+files, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })

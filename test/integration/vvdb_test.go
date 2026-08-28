@@ -49,7 +49,7 @@ func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 		{"mariadb", vvdbConfig(t, vvdb.MariaDB, "VV_MARIADB_DSN", 53307), func(db *sql.DB) crud.Source { return crudsql.MariaDB(db) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := vvdb.Open(tc.cfg)
+			db, err := vvdb.Open(&tc.cfg)
 			if err != nil {
 				t.Fatalf("opening %s from a config failed: %v", tc.name, err)
 			}
@@ -86,7 +86,7 @@ func TestAWrongPasswordIsRefusedByTheServer(t *testing.T) {
 	}
 	c := vvdbConfig(t, vvdb.Postgres, "", 55432)
 	c.Password = "not-the-password"
-	db, err := vvdb.Open(c)
+	db, err := vvdb.Open(&c)
 	if err != nil {
 		t.Fatalf("the string should build; it is the server that must refuse it: %v", err)
 	}
@@ -98,7 +98,8 @@ func TestAWrongPasswordIsRefusedByTheServer(t *testing.T) {
 
 func TestDbpgxOpensAPoolFromTheSameConfig(t *testing.T) {
 	ctx := context.Background()
-	pool, err := dbpgx.Connect(ctx, vvdbConfig(t, vvdb.Postgres, "VV_PG_DSN", 55432))
+	database := vvdbConfig(t, vvdb.Postgres, "VV_PG_DSN", 55432)
+	pool, err := dbpgx.Connect(ctx, &database)
 	if err != nil {
 		t.Fatalf("opening a pgx pool from a config failed: %v", err)
 	}

@@ -14,14 +14,14 @@ MinIO client создаёт приложение: endpoint, credentials, TLS, tr
 policy принадлежат bootstrap-коду. Затем client передаётся адаптеру:
 
 ```go
-backend, err := storageminio.New(storageminio.Config{
+backend, err := storageminio.New(&storageminio.Config{
     Client:     minioClient,
     Bucket:     "app-files",
     Prefix:     "production", // optional, проверяется и ограничен
     MaxLinkTTL: time.Hour,
 })
 
-avatars, err := storage.New(storage.Config{
+avatars, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })

@@ -68,7 +68,7 @@ type Call struct {
 // that turns a status or a code into a kind is the inverse of the one that
 // produced it, and the two cannot drift while they share a file.
 type Transport interface {
-	Do(ctx context.Context, call Call) (json.RawMessage, error)
+	Do(ctx context.Context, call *Call) (json.RawMessage, error)
 }
 
 // A ProtocolError is an answer that did not come from this library.

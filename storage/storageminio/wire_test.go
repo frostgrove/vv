@@ -33,7 +33,7 @@ func newWireStore(t *testing.T, transport http.RoundTripper) storage.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend, err := New(Config{
+	backend, err := New(&Config{
 		Client: client,
 		Bucket: "test-bucket",
 		Prefix: "root",

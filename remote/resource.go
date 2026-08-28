@@ -99,7 +99,7 @@ func (r *Resource[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (crud
 	if err != nil {
 		return zero, err
 	}
-	raw, err := r.tr.Do(ctx, Call{Method: MethodList, Query: req})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodList, Query: req})
 	if err != nil {
 		return zero, err
 	}
@@ -157,7 +157,7 @@ func (r *Resource[M, ID, U]) First(ctx context.Context, opts ...crud.Option) (M,
 }
 
 func (r *Resource[M, ID, U]) list(ctx context.Context, req *query.Request) (crud.PaginatedResponse[M], error) {
-	raw, err := r.tr.Do(ctx, Call{Method: MethodList, Query: req})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodList, Query: req})
 	if err != nil {
 		return crud.PaginatedResponse[M]{}, err
 	}
@@ -342,7 +342,7 @@ func (r *Resource[M, ID, U]) GetByID(ctx context.Context, id ID, opts ...crud.Op
 	if entityNeedsList(req) {
 		return r.getByIDThroughList(ctx, id, req)
 	}
-	raw, err := r.tr.Do(ctx, Call{Method: MethodGet, ID: port.FormatID(id), Query: req})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodGet, ID: port.FormatID(id), Query: req})
 	if err != nil {
 		return zero, err
 	}
@@ -411,7 +411,7 @@ func (r *Resource[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (in
 		return 0, err
 	}
 	port.NarrowForCount(req)
-	raw, err := r.tr.Do(ctx, Call{Method: MethodCount, Query: req})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodCount, Query: req})
 	if err != nil {
 		return 0, err
 	}
@@ -456,23 +456,23 @@ func (r *Resource[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
 	return err
 }
 
-func (r *Resource[M, ID, U]) saveCall(m *M) (Call, error) {
+func (r *Resource[M, ID, U]) saveCall(m *M) (*Call, error) {
 	body, err := json.Marshal(m)
 	if err != nil {
-		return Call{}, fmt.Errorf("remote: encoding the model: %w", err)
+		return nil, fmt.Errorf("remote: encoding the model: %w", err)
 	}
 	has, err := r.meta.HasID(m)
 	if err != nil {
-		return Call{}, err
+		return nil, err
 	}
 
-	call := Call{Method: MethodCreate, Body: body}
+	call := &Call{Method: MethodCreate, Body: body}
 	if has {
 		key, err := keyOf[ID](r.meta, m)
 		if err != nil {
-			return Call{}, err
+			return nil, err
 		}
-		call = Call{Method: MethodReplace, ID: key, Body: body}
+		call = &Call{Method: MethodReplace, ID: key, Body: body}
 	}
 	return call, nil
 }
@@ -492,7 +492,7 @@ func (r *Resource[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...c
 	if err != nil {
 		return zero, fmt.Errorf("remote: encoding the patch: %w", err)
 	}
-	raw, err := r.tr.Do(ctx, Call{Method: MethodUpdate, ID: port.FormatID(id), Body: body})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodUpdate, ID: port.FormatID(id), Body: body})
 	if err != nil {
 		return zero, err
 	}
@@ -517,7 +517,7 @@ func (r *Resource[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, erro
 		// at the end of it. DefaultService.DeleteMany makes the same call.
 		return 0, nil
 	case 1:
-		raw, err := r.tr.Do(ctx, Call{Method: MethodDelete, ID: port.FormatID(ids[0])})
+		raw, err := r.tr.Do(ctx, &Call{Method: MethodDelete, ID: port.FormatID(ids[0])})
 		if err != nil {
 			if errors.Is(err, crud.ErrNotFound) {
 				return 0, nil
@@ -531,7 +531,7 @@ func (r *Resource[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, erro
 	if err != nil {
 		return 0, fmt.Errorf("remote: encoding the keys: %w", err)
 	}
-	raw, err := r.tr.Do(ctx, Call{Method: MethodBulkDelete, IDs: keys})
+	raw, err := r.tr.Do(ctx, &Call{Method: MethodBulkDelete, IDs: keys})
 	if err != nil {
 		return 0, err
 	}

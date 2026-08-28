@@ -272,8 +272,8 @@ meets it. `Open` never calls `ReadReplica` (`utils/vvdb/open.go:20-36`), so a
 declared `replica:` produces no second handle, no error and no log line — every
 read keeps going to the primary and the dashboard keeps hurting it. It is not
 hypothetical: `README.md:179` is `replica: { host: replica.internal }` inside a
-`db:` block, and `README.md:183-184` is `vvdb.MustOpen(cfg.DB)` and
-`dbpgx.MustConnect(ctx, cfg.DB)`, neither of which reads it.
+`db:` block, and `README.md:183-184` is `vvdb.MustOpen(&cfg.DB)` and
+`dbpgx.MustConnect(ctx, &cfg.DB)`, neither of which reads it.
 `docs/modules/en/vvdb.md:54-55` pairs the same YAML with `:67`, and
 `OpenReadWrite` appears eleven lines later at `:75`. Must-hold (4) covers the
 inverse and is tested; this direction is covered by nothing.
@@ -1105,7 +1105,7 @@ func (a *App) Validate() error { return a.DB.Validate() }
 func main() {
     cfg := vvcfg.Must(vvcfg.Auto[App](os.Args[1:]))
 
-    db := vvdb.MustOpen(cfg.DB)
+    db := vvdb.MustOpen(&cfg.DB)
     defer db.Close()
 
     src   := crudsql.Postgres(db)
@@ -1158,11 +1158,11 @@ default from silently doubling connections to the primary.
 
 ```go
 // no `replica:` key: one handle, no nil secondary to close
-primary := vvdb.MustOpen(cfg.DB)
+primary := vvdb.MustOpen(&cfg.DB)
 defer primary.Close()
 
 // a non-empty replica: proposed validation has already rejected `replica: {}`.
-primary, replica, err := vvdb.OpenReadWrite(cfg.DB)
+primary, replica, err := vvdb.OpenReadWrite(&cfg.DB)
 if err != nil { log.Fatal(err) }
 defer primary.Close()
 defer replica.Close()
@@ -1177,7 +1177,7 @@ claim about current code.
 ```go
 // 1. a replica appears in the YAML.
 // 3 statements become 7, and 4 of them are the nil guard.
-primary, replica, err := vvdb.OpenReadWrite(cfg.DB)   // and NOT MustOpen — H-VVDB-05
+primary, replica, err := vvdb.OpenReadWrite(&cfg.DB)   // and NOT MustOpen — H-VVDB-05
 if err != nil {
     log.Fatal(err)
 }

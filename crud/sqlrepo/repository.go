@@ -229,8 +229,10 @@ func (r *repository[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (cr
 	return resp, nil
 }
 
-// setCursors stamps the page's own edges, so a client can leave offsets behind
-// whenever it wants to rather than having to choose up front.
+// setCursors stamps the edges that lead to real neighbouring pages, so a client
+// can leave offsets behind whenever it wants to rather than having to choose up
+// front. An edge without a neighbour would only cause an empty request, so it
+// must not be handed out.
 //
 // They are emitted only when the sort is unique — the same condition paging by
 // cursor needs — because a cursor over a sort that ties names more than one
@@ -264,8 +266,12 @@ func (r *repository[M, ID, U]) setCursors(resp *crud.PaginatedResponse[M], sort 
 		}
 		return c
 	}
-	resp.PrevCursor = edge(&resp.Items[0])
-	resp.NextCursor = edge(&resp.Items[len(resp.Items)-1])
+	if resp.HasPrev {
+		resp.PrevCursor = edge(&resp.Items[0])
+	}
+	if resp.HasNext {
+		resp.NextCursor = edge(&resp.Items[len(resp.Items)-1])
+	}
 }
 
 func (r *repository[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, error) {
@@ -693,7 +699,7 @@ func (r *repository[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
 // a general persistence verb. Security discovers it through crud.SaveScopedOf;
 // callers that cannot obtain it must refuse the scoped Save rather than fall
 // back to an ordinary upsert.
-func (r *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (r *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	// MySQL has no RETURNING. Keep its write and refresh in one transaction so a
 	// replacement cannot slip between them and become the model returned for an
 	// action the gate approved on a different row. PostgreSQL and SQLite receive
@@ -715,7 +721,7 @@ func (r *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save crud.S
 // SaveScopedOnly preserves the gate's atomic create-or-update decision without
 // scanning a stored row. It is an internal capability, not a general CRUD
 // verb; public callers reach it through security.Gate.SaveOnly.
-func (r *repository[M, ID, U]) SaveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (r *repository[M, ID, U]) SaveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	if !r.d.SupportsReturning() {
 		if _, inTx := crud.ExecutorFor(ctx, r.src); !inTx {
 			return crud.InNewTx(ctx, r.src, func(tx context.Context) error {
@@ -726,7 +732,7 @@ func (r *repository[M, ID, U]) SaveScopedOnly(ctx context.Context, m *M, save cr
 	return r.saveScopedOnly(ctx, m, save)
 }
 
-func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	if m == nil {
 		return &crud.SchemaError{Model: r.meta.Name, Reason: "Save called with a nil model"}
 	}
@@ -749,7 +755,7 @@ func (r *repository[M, ID, U]) saveScoped(ctx context.Context, m *M, save crud.S
 	return r.saveScopedUpdate(ctx, m, save.Previous, save.Scope, rs)
 }
 
-func (r *repository[M, ID, U]) saveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (r *repository[M, ID, U]) saveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	if m == nil {
 		return &crud.SchemaError{Model: r.meta.Name, Reason: "SaveOnly called with a nil model"}
 	}

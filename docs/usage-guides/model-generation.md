@@ -81,7 +81,7 @@ factory where the application already composes infrastructure.
 `database/sql` over pgx:
 
 ```go
-sqlDB, err := vvdb.Open(cfg.DB)
+sqlDB, err := vvdb.Open(&cfg.DB)
 if err != nil {
     return err
 }
@@ -92,7 +92,7 @@ products := product.NewProductRepository(crudsql.Postgres(sqlDB))
 Native pgx:
 
 ```go
-pool, err := dbpgx.Connect(ctx, cfg.DB)
+pool, err := dbpgx.Connect(ctx, &cfg.DB)
 if err != nil {
     return err
 }

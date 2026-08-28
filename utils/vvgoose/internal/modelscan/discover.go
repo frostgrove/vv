@@ -49,7 +49,10 @@ type structSource struct {
 // `*_model.go`) are models by convention. An ordinary Go file contributes a
 // model only when its struct has db/rel/gorm evidence or a constant TableName
 // method.
-func Discover(o Options) ([]Model, error) {
+func Discover(o *Options) ([]Model, error) {
+	if o == nil {
+		return nil, fmt.Errorf("modelscan: options are nil")
+	}
 	roots := o.Roots
 	if len(roots) == 0 {
 		roots = []string{"."}

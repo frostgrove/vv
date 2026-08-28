@@ -77,14 +77,17 @@ type coreAPI interface {
 var _ storage.Backend = (*Backend)(nil)
 
 // New validates configuration without contacting MinIO.
-func New(config Config) (*Backend, error) {
+func New(config *Config) (*Backend, error) {
+	if config == nil {
+		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("config is nil"))
+	}
 	if config.Client == nil {
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("client is nil"))
 	}
 	return newBackend(config, config.Client, minio.Core{Client: config.Client})
 }
 
-func newBackend(config Config, client clientAPI, core coreAPI) (*Backend, error) {
+func newBackend(config *Config, client clientAPI, core coreAPI) (*Backend, error) {
 	if client == nil || core == nil {
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("client is nil"))
 	}

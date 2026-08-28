@@ -13,7 +13,7 @@
 // transaction", and this package does not change that: it hands back a
 // *sql.DB, and the hop into the framework stays a visible line.
 //
-//	sqlDB := vvdb.MustOpen(cfg.DB)
+//	sqlDB := vvdb.MustOpen(&cfg.DB)
 //	repo  := Products.Bind(crudsql.Postgres(sqlDB))
 //
 // Nothing here imports crud, errs or any other part of vv, and nothing here is

@@ -101,7 +101,7 @@ func TestFreshReappliesMigrations(t *testing.T) {
 		t.Fatalf("initial migrate: %v", err)
 	}
 
-	db, err := vvdb.Open(cfg)
+	db, err := vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestFreshReappliesMigrations(t *testing.T) {
 		t.Fatalf("fresh results = %+v, want down followed by up", results)
 	}
 
-	db, err = vvdb.Open(cfg)
+	db, err = vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 		t.Fatalf("initial migrate: %v", err)
 	}
 
-	db, err := vvdb.Open(cfg)
+	db, err := vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 		t.Fatalf("flush: %v", err)
 	}
 
-	db, err = vvdb.Open(cfg)
+	db, err = vvdb.Open(&cfg)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestProviderEnablesMySQLMultiStatementsWithoutMutatingTheApplicationConfig(
 			if err != nil {
 				t.Fatal(err)
 			}
-			dsn, err := vvdb.DSN(got)
+			dsn, err := vvdb.DSN(&got)
 			if err != nil {
 				t.Fatal(err)
 			}

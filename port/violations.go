@@ -52,9 +52,12 @@ type ViolationOptions struct {
 // The fault is a value two goroutines may render at once ([[D-042]]), so
 // nothing here writes through to it: a resolved path or an expanded message
 // landing on the shared fault would make the second render depend on the first.
-func Violations(ctx context.Context, f *errs.Fault, o ViolationOptions) []errs.Violation {
+func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.Violation {
 	if f == nil {
 		return nil
+	}
+	if o == nil {
+		o = &ViolationOptions{}
 	}
 	vs := make([]errs.Violation, 0, max(len(f.Violations), 1))
 	vs = append(vs, f.Violations...)
@@ -114,7 +117,7 @@ func samePath(a, b errs.Path) bool {
 // declared default, then the code itself. Never the driver's text, and never a
 // template with an unexpanded placeholder still in it — errs.Messages falls
 // back one level up rather than emitting {max}.
-func message(ctx context.Context, v errs.Violation, locale string, o ViolationOptions) string {
+func message(ctx context.Context, v errs.Violation, locale string, o *ViolationOptions) string {
 	if o.Messages != nil {
 		if m, ok := o.Messages.Message(ctx, v, locale); ok && m != "" {
 			return m

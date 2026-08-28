@@ -180,7 +180,7 @@ func anyEmpty(ss []string) bool {
 // Relevance is by written column: a constraint none of whose columns the write
 // touched cannot have been broken by it. What is left has to be bindable — every
 // key part either written, or readable from the stored row where there is one.
-func (f *full) planFor(req Request) plan {
+func (f *full) planFor(req *Request) plan {
 	d := req.Source.Dialect()
 	p := plan{mode: modeFor(req), rows: req.Rows}
 	if len(p.rows) > f.cfg.maxRows {
@@ -221,7 +221,7 @@ func (f *full) planFor(req Request) plan {
 	return p
 }
 
-func modeFor(req Request) mode {
+func modeFor(req *Request) mode {
 	switch {
 	case req.Batch:
 		return modeBulk

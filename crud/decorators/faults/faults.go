@@ -258,7 +258,7 @@ func (e *enricher[M, ID]) SaveOnly(ctx context.Context, m *M) error {
 // probing a speculative duplicate-key write would execute a different statement
 // from the one whose snapshot security approved. Driver faults from the actual
 // statement are still enriched as Save faults.
-func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	err, ok := crud.SaveScopedOf(e.Core, ctx, m, save)
 	if !ok {
 		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped Save atomically"}
@@ -268,7 +268,7 @@ func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save crud.Scoped
 
 // SaveScopedOnly forwards security's internal write-only capability without
 // probing a speculative conditional write.
-func (e *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save crud.ScopedSave[M]) error {
+func (e *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	err, ok := crud.SaveScopedOnlyOf(e.Core, ctx, m, save)
 	if !ok {
 		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped SaveOnly atomically"}

@@ -43,7 +43,7 @@ func TestEachEngineIsBuiltInItsOwnSyntax(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := vvdb.DSN(tc.cfg)
+			got, err := vvdb.DSN(&tc.cfg)
 			if err != nil {
 				t.Fatalf("building the %s string failed: %v", tc.cfg.Engine, err)
 			}
@@ -75,7 +75,7 @@ func TestAPortLeftUnsetIsTheEnginesOwn(t *testing.T) {
 	} {
 		cfg := base(tc.engine)
 		cfg.Port = 0
-		got, err := vvdb.DSN(cfg)
+		got, err := vvdb.DSN(&cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestAPasswordSurvivesEveryPunctuationMark(t *testing.T) {
 	t.Run("postgres percent-encodes it", func(t *testing.T) {
 		cfg := base(vvdb.Postgres)
 		cfg.Password = nasty
-		got, err := vvdb.PostgresDSN(cfg)
+		got, err := vvdb.PostgresDSN(&cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestAPasswordSurvivesEveryPunctuationMark(t *testing.T) {
 	t.Run("mysql leaves it alone", func(t *testing.T) {
 		cfg := base(vvdb.MySQL)
 		cfg.Password = nasty
-		got, err := vvdb.MySQLDSN(cfg)
+		got, err := vvdb.MySQLDSN(&cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestAPasswordSurvivesEveryPunctuationMark(t *testing.T) {
 func TestAParameterHoldingASlashIsEscapedForMySQL(t *testing.T) {
 	cfg := base(vvdb.MySQL)
 	cfg.Params = map[string]string{"loc": "Europe/Moscow"}
-	got, err := vvdb.MySQLDSN(cfg)
+	got, err := vvdb.MySQLDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,16 +142,17 @@ func TestAParameterHoldingASlashIsEscapedForMySQL(t *testing.T) {
 }
 
 func TestParseTimeIsOnUnlessTheConfigTurnsItOff(t *testing.T) {
-	got, err := vvdb.MySQLDSN(base(vvdb.MySQL))
+	cfg := base(vvdb.MySQL)
+	got, err := vvdb.MySQLDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, "parseTime=true") {
 		t.Fatalf("without parseTime a DATETIME arrives as bytes and scanning into time.Time fails: %s", got)
 	}
-	cfg := base(vvdb.MySQL)
+	cfg = base(vvdb.MySQL)
 	cfg.Params = map[string]string{"parseTime": "false"}
-	if got, err = vvdb.MySQLDSN(cfg); err != nil {
+	if got, err = vvdb.MySQLDSN(&cfg); err != nil {
 		t.Fatal(err)
 	} else if !strings.Contains(got, "parseTime=false") {
 		t.Errorf("params should win over the default: %s", got)
@@ -161,7 +162,7 @@ func TestParseTimeIsOnUnlessTheConfigTurnsItOff(t *testing.T) {
 func TestAUnixSocketIsNotAHost(t *testing.T) {
 	pg := base(vvdb.Postgres)
 	pg.Host = "/var/run/postgresql"
-	got, err := vvdb.PostgresDSN(pg)
+	got, err := vvdb.PostgresDSN(&pg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestAUnixSocketIsNotAHost(t *testing.T) {
 
 	my := base(vvdb.MySQL)
 	my.Host = "/tmp/mysql.sock"
-	if got, err = vvdb.MySQLDSN(my); err != nil {
+	if got, err = vvdb.MySQLDSN(&my); err != nil {
 		t.Fatal(err)
 	} else if !strings.Contains(got, "unix(/tmp/mysql.sock)") {
 		t.Errorf("mysql spells a socket unix(...), not tcp(...): %s", got)
@@ -181,7 +182,7 @@ func TestAUnixSocketIsNotAHost(t *testing.T) {
 func TestAnIPv6HostKeepsItsBrackets(t *testing.T) {
 	cfg := base(vvdb.Postgres)
 	cfg.Host = "::1"
-	got, err := vvdb.PostgresDSN(cfg)
+	got, err := vvdb.PostgresDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestAnIPv6HostKeepsItsBrackets(t *testing.T) {
 func TestASubSecondConnectTimeoutDoesNotBecomeForever(t *testing.T) {
 	cfg := base(vvdb.Postgres)
 	cfg.Pool.ConnectTimeout = 500 * time.Millisecond
-	got, err := vvdb.PostgresDSN(cfg)
+	got, err := vvdb.PostgresDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestSSLModeIsSpelledOnceAndTranslated(t *testing.T) {
 	} {
 		cfg := base(tc.engine)
 		cfg.SSLMode = tc.mode
-		got, err := vvdb.DSN(cfg)
+		got, err := vvdb.DSN(&cfg)
 		if err != nil {
 			t.Fatalf("%s %s: %v", tc.engine, tc.mode, err)
 		}
@@ -231,7 +232,7 @@ func TestSSLModeIsSpelledOnceAndTranslated(t *testing.T) {
 func TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded(t *testing.T) {
 	cfg := base(vvdb.MySQL)
 	cfg.SSLMode = "verify-ca"
-	_, err := vvdb.MySQLDSN(cfg)
+	_, err := vvdb.MySQLDSN(&cfg)
 	if !errors.Is(err, vvdb.ErrUnsupported) {
 		t.Fatalf("verify-ca has no mysql spelling; quietly sending skip-verify would claim a verification nobody does. got %v", err)
 	}
@@ -240,7 +241,7 @@ func TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded(t *testing.T) {
 func TestADSNIsUsedAsGivenAndRefusesToShareTheJob(t *testing.T) {
 	const raw = "postgres://someone:else@elsewhere:5432/other?sslmode=require"
 
-	got, err := vvdb.DSN(vvdb.Config{Engine: vvdb.Postgres, DSN: raw})
+	got, err := vvdb.DSN(&vvdb.Config{Engine: vvdb.Postgres, DSN: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,12 +249,12 @@ func TestADSNIsUsedAsGivenAndRefusesToShareTheJob(t *testing.T) {
 		t.Errorf("a DSN handed in should come back untouched\n got: %s\nwant: %s", got, raw)
 	}
 
-	_, err = vvdb.DSN(vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Host: "db.internal", Name: "app"})
+	_, err = vvdb.DSN(&vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Host: "db.internal", Name: "app"})
 	if !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("a dsn beside a host means one of the two is ignored and nobody is told which; got %v", err)
 	}
 
-	_, err = vvdb.DSN(vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Pool: vvdb.Pool{ConnectTimeout: time.Second}})
+	_, err = vvdb.DSN(&vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Pool: vvdb.Pool{ConnectTimeout: time.Second}})
 	if !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "pool.connect_timeout") {
 		t.Fatalf("a raw DSN and a pool timeout pick different sources in different adapters; got %v", err)
 	}
@@ -261,7 +262,7 @@ func TestADSNIsUsedAsGivenAndRefusesToShareTheJob(t *testing.T) {
 
 func TestSQLiteEscapesFilenameSyntaxBeforeAddingParameters(t *testing.T) {
 	cfg := vvdb.Config{Engine: vvdb.SQLite, Path: "/tmp/report?draft#1.db", Params: map[string]string{"mode": "rwc"}}
-	got, err := vvdb.SQLiteDSN(cfg)
+	got, err := vvdb.SQLiteDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 		Path:    "/tmp/vv.db",
 		Pragmas: vvdb.SQLitePragmas{"journal_mode=WAL", "busy_timeout=5000"},
 	}
-	got, err := vvdb.SQLiteDSN(cfg)
+	got, err := vvdb.SQLiteDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 	}
 
 	cfg.Driver = "sqlite3"
-	got, err = vvdb.SQLiteDSN(cfg)
+	got, err = vvdb.SQLiteDSN(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +313,7 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 		{Engine: vvdb.SQLite, Path: "/tmp/vv.db", Params: vvdb.Params{"_pragma": "writable_schema(ON)"}},
 		{Engine: vvdb.Postgres, Host: "db", Name: "app", Pragmas: vvdb.SQLitePragmas{"busy_timeout=5000"}},
 	} {
-		if _, err := vvdb.DSN(bad); !errors.Is(err, vvdb.ErrUnsupported) {
+		if _, err := vvdb.DSN(&bad); !errors.Is(err, vvdb.ErrUnsupported) {
 			t.Fatalf("DSN(%+v) = %v, want its invalid pragma named", bad, err)
 		}
 	}
@@ -320,7 +321,7 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 	// Validation is case-insensitive, and rendering has to be too: mattn reads
 	// lower-case URI names, so preserving JOURNAL_MODE would silently drop it.
 	cfg = vvdb.Config{Engine: vvdb.SQLite, Driver: "sqlite3", Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"JOURNAL_MODE=WAL"}}
-	if got, err := vvdb.SQLiteDSN(cfg); err != nil || !strings.Contains(got, "_journal_mode=WAL") {
+	if got, err := vvdb.SQLiteDSN(&cfg); err != nil || !strings.Contains(got, "_journal_mode=WAL") {
 		t.Fatalf("case-normalized sqlite pragma = %q, %v", got, err)
 	}
 }
@@ -328,16 +329,16 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 func TestDSNUsesTheSameFullValidationAsOpen(t *testing.T) {
 	cfg := base(vvdb.Postgres)
 	cfg.Pool = vvdb.Pool{MaxOpen: 1, MaxIdle: 2}
-	if _, err := vvdb.DSN(cfg); !errors.Is(err, vvdb.ErrConflict) {
+	if _, err := vvdb.DSN(&cfg); !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("DSN() = %v, want the impossible pool refused before it becomes a handle", err)
 	}
 
 	cfg = base(vvdb.Postgres)
 	cfg.Replica = &vvdb.Config{Host: "replica", SSLMode: "not-a-mode"}
-	if _, err := vvdb.DSN(cfg); err == nil || !strings.Contains(err.Error(), "replica") {
+	if _, err := vvdb.DSN(&cfg); err == nil || !strings.Contains(err.Error(), "replica") {
 		t.Fatalf("DSN() = %v, want a named invalid replica refusal", err)
 	}
-	if _, err := vvdb.PostgresDSN(cfg); err == nil || !strings.Contains(err.Error(), "replica") {
+	if _, err := vvdb.PostgresDSN(&cfg); err == nil || !strings.Contains(err.Error(), "replica") {
 		t.Fatalf("PostgresDSN() = %v, want the same invalid replica refusal", err)
 	}
 }
@@ -377,7 +378,7 @@ func TestParamsCannotOverrideTypedConnectionSettings(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := vvdb.DSN(tc.cfg); !errors.Is(err, vvdb.ErrConflict) {
+			if _, err := vvdb.DSN(&tc.cfg); !errors.Is(err, vvdb.ErrConflict) {
 				t.Fatalf("DSN() = %v, want two sources of truth refused", err)
 			}
 		})
@@ -390,7 +391,7 @@ func TestInvalidTCPPortAndBracketedIPv6AreRefusedBeforeTheDriver(t *testing.T) {
 		func() vvdb.Config { c := base(vvdb.MySQL); c.Port = 65536; return c }(),
 		func() vvdb.Config { c := base(vvdb.Postgres); c.Host = "[2001:db8::1]"; return c }(),
 	} {
-		if _, err := vvdb.DSN(tc); !errors.Is(err, vvdb.ErrUnsupported) {
+		if _, err := vvdb.DSN(&tc); !errors.Is(err, vvdb.ErrUnsupported) {
 			t.Fatalf("DSN(%+v) = %v, want a named boundary refusal", tc, err)
 		}
 	}
@@ -398,7 +399,7 @@ func TestInvalidTCPPortAndBracketedIPv6AreRefusedBeforeTheDriver(t *testing.T) {
 
 func TestAnUnknownEngineIsRefused(t *testing.T) {
 	for _, e := range []vvdb.Engine{"", "postgresql", "PostgreSQL", "cockroach"} {
-		if _, err := vvdb.DSN(vvdb.Config{Engine: e, Name: "app"}); !errors.Is(err, vvdb.ErrEngine) {
+		if _, err := vvdb.DSN(&vvdb.Config{Engine: e, Name: "app"}); !errors.Is(err, vvdb.ErrEngine) {
 			t.Errorf("engine %q should be refused rather than read as the default; got %v", e, err)
 		}
 	}
@@ -416,7 +417,7 @@ func TestAFieldThatBelongsToAnotherEngineIsRefused(t *testing.T) {
 		{"the others need a name", vvdb.Config{Engine: vvdb.Postgres, Host: "db.internal"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := vvdb.DSN(tc.cfg); err == nil {
+			if _, err := vvdb.DSN(&tc.cfg); err == nil {
 				t.Error("this configuration cannot mean what it says and was accepted anyway")
 			}
 		})
@@ -428,12 +429,12 @@ func TestAFieldThatBelongsToAnotherEngineIsRefused(t *testing.T) {
 func TestAMySQLUserCannotHoldAColon(t *testing.T) {
 	cfg := base(vvdb.MySQL)
 	cfg.User = "svc:reader"
-	if _, err := vvdb.MySQLDSN(cfg); !errors.Is(err, vvdb.ErrUnsupported) {
+	if _, err := vvdb.MySQLDSN(&cfg); !errors.Is(err, vvdb.ErrUnsupported) {
 		t.Fatalf("the driver would read \"reader\" and everything after it as the password; got %v", err)
 	}
 	pg := base(vvdb.Postgres)
 	pg.User = "svc:reader"
-	if _, err := vvdb.PostgresDSN(pg); err != nil {
+	if _, err := vvdb.PostgresDSN(&pg); err != nil {
 		t.Errorf("postgres escapes it and has no such limit: %v", err)
 	}
 }

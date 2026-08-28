@@ -89,8 +89,8 @@ func RegisterTable[M any](table string)
 func RegisterTableType(t reflect.Type, table string)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
 func SameDataSource(a, b any) bool
-func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool)
-func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool)
+func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
+func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
 func TableNameOf(t reflect.Type) string
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
@@ -596,7 +596,7 @@ func MustCoverUpdate[M, U any](except ...string)
 func NarrowForCount(req *query.Request)
 func NarrowForEntity(req *query.Request)
 func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
-func Violations(ctx context.Context, f *errs.Fault, o ViolationOptions) []errs.Violation
+func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.Violation
 func WithLocale(ctx context.Context, locale string) context.Context
 func WithLogger(ctx context.Context, l *slog.Logger) context.Context
 type BulkDeleteCommand[ID comparable] struct{ ... }
@@ -727,7 +727,7 @@ type StageID struct{ ... }
 type StageOptions struct{ ... }
 type Staged struct{ ... }
 type Store interface{ ... }
-    func New(config Config) (Store, error)
+    func New(config *Config) (Store, error)
 type TemporaryURLOptions struct{ ... }
 type WriteMode uint8
     const CreateOnly WriteMode = iota + 1 ...
@@ -737,7 +737,7 @@ type WriteMode uint8
 ```go
 const DefaultFileMode fs.FileMode = 0o600 ...
 type Backend struct{ ... }
-    func New(config Config) (*Backend, error)
+    func New(config *Config) (*Backend, error)
 type Config struct{ ... }
 ```
 
@@ -759,16 +759,16 @@ type Optional interface{ ... }
 ## github.com/frostgrove/vv/utils/vvdb
 ```go
 var ErrEngine = errors.New("vvdb: unknown engine") ...
-func DSN(c Config) (string, error)
-func DriverName(c Config) string
-func MariaDBDSN(c Config) (string, error)
-func MustOpen(c Config) *sql.DB
-func MustOpenReadWrite(c Config) (primary, replica *sql.DB)
-func MySQLDSN(c Config) (string, error)
-func Open(c Config) (*sql.DB, error)
-func OpenReadWrite(c Config) (primary, replica *sql.DB, err error)
-func PostgresDSN(c Config) (string, error)
-func SQLiteDSN(c Config) (string, error)
+func DSN(c *Config) (string, error)
+func DriverName(c *Config) string
+func MariaDBDSN(c *Config) (string, error)
+func MustOpen(c *Config) *sql.DB
+func MustOpenReadWrite(c *Config) (primary, replica *sql.DB)
+func MySQLDSN(c *Config) (string, error)
+func Open(c *Config) (*sql.DB, error)
+func OpenReadWrite(c *Config) (primary, replica *sql.DB, err error)
+func PostgresDSN(cfg *Config) (string, error)
+func SQLiteDSN(cfg *Config) (string, error)
 type Config struct{ ... }
 type Engine string
     const Postgres Engine = "postgres" ...
@@ -964,7 +964,7 @@ type TransportOption func(*transport)
 ```go
 const MaxCreateOnlySize int64 = 5 * 1024 * 1024 * 1024 ...
 type Backend struct{ ... }
-    func New(config Config) (*Backend, error)
+    func New(config *Config) (*Backend, error)
 type Clock func() time.Time
 type Config struct{ ... }
 ```
@@ -982,16 +982,16 @@ type Validator interface{ ... }
 
 ## github.com/frostgrove/vv/utils/vvdb/dbpgx
 ```go
-func Apply(pc *pgxpool.Config, p vvdb.Pool) error
-func Connect(ctx context.Context, c vvdb.Config, opts ...Option) (*pgxpool.Pool, error)
-func ConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool, err error)
-func MustConnect(ctx context.Context, c vvdb.Config, opts ...Option) *pgxpool.Pool
-func MustConnectReadWrite(ctx context.Context, c vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool)
+func Apply(pc *pgxpool.Config, p *vvdb.Pool) error
+func Connect(ctx context.Context, c *vvdb.Config, opts ...Option) (*pgxpool.Pool, error)
+func ConnectReadWrite(ctx context.Context, c *vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool, err error)
+func MustConnect(ctx context.Context, c *vvdb.Config, opts ...Option) *pgxpool.Pool
+func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool)
 type Option func(*pgxpool.Config)
 ```
 
 ## github.com/frostgrove/vv/utils/vvgoose
 ```go
-func Execute(cfg vvdb.Config)
+func Execute(cfg *vvdb.Config)
 ```
 

@@ -130,7 +130,7 @@ func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Hea
 		return status, nil, Internal()
 	}
 
-	vs := port.Violations(ctx, f, port.ViolationOptions{
+	vs := port.Violations(ctx, f, &port.ViolationOptions{
 		Resolvers: r.resolvers,
 		Fallback:  bodyResolverFrom(ctx),
 		Messages:  r.messages,

@@ -21,7 +21,7 @@ Body из `Open` всегда закрывает вызывающая сторо
 Выберите backend и привяжите его к одному статическому логическому namespace:
 
 ```go
-files, err := storage.New(storage.Config{
+files, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })

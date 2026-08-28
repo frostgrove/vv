@@ -248,7 +248,7 @@ func (r *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
 	}
 
 	f := port.FaultOf(err)
-	vs := port.Violations(ctx, f, port.ViolationOptions{
+	vs := port.Violations(ctx, f, &port.ViolationOptions{
 		Resolvers: r.resolvers,
 		Messages:  r.messages,
 		Codes:     r.codesOrNil(),

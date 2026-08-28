@@ -70,7 +70,10 @@ var caseSafeEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // New opens an explicitly configured root. It creates the root when absent,
 // but never resolves a relative path against the process working directory.
-func New(config Config) (*Backend, error) {
+func New(config *Config) (*Backend, error) {
+	if config == nil {
+		return nil, storage.NewError("construct", storage.KindInvalid, fmt.Errorf("config is nil"))
+	}
 	if !supportedOperatingSystem(runtime.GOOS) {
 		return nil, storage.NewError("construct", storage.KindUnsupported, fmt.Errorf("filesystem storage requires Unix link and rename semantics"))
 	}

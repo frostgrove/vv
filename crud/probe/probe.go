@@ -20,7 +20,7 @@ import (
 //     point — and it is genuinely failure-prone, because it re-binds values from
 //     a statement that already failed.
 type Handler interface {
-	Enrich(ctx context.Context, req Request) (*errs.Fault, error)
+	Enrich(ctx context.Context, req *Request) (*errs.Fault, error)
 }
 
 // Declarer is the optional interface a Handler implements to be bound to the
@@ -106,7 +106,10 @@ func Simple() Handler { return simple{} }
 
 type simple struct{}
 
-func (simple) Enrich(_ context.Context, req Request) (*errs.Fault, error) {
+func (simple) Enrich(_ context.Context, req *Request) (*errs.Fault, error) {
+	if req == nil {
+		return nil, nil
+	}
 	return req.Fault, nil
 }
 

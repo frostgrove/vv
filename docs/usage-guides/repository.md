@@ -89,7 +89,7 @@ func NewProductRepository(src crud.Source) *ProductRepo {
 Подключение выбирается в composition root, а не в модели или генераторе:
 
 ```go
-sqlDB, err := vvdb.Open(cfg.DB)
+sqlDB, err := vvdb.Open(&cfg.DB)
 if err != nil {
     return err
 }

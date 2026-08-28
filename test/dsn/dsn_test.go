@@ -31,7 +31,7 @@ func TestPgxReadsBackWhatVvdbWrote(t *testing.T) {
 		User: "vv", Password: nasty, Name: "app/one", SSLMode: "disable",
 		Params: map[string]string{"application_name": "orders service"},
 	}
-	dsn, err := vvdb.PostgresDSN(c)
+	dsn, err := vvdb.PostgresDSN(&c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestPgxReadsBackWhatVvdbWrote(t *testing.T) {
 
 func TestPgxFindsTheSocketVvdbPutInTheQuery(t *testing.T) {
 	c := vvdb.Config{Engine: vvdb.Postgres, Host: "/var/run/postgresql", User: "vv", Name: "app"}
-	dsn, err := vvdb.PostgresDSN(c)
+	dsn, err := vvdb.PostgresDSN(&c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestPgxDoesNotMergeAmbientPostgresSettingsIntoATypedConfig(t *testing.T) {
 	t.Setenv("PGOPTIONS", "-c search_path=ambient")
 
 	c := vvdb.Config{Engine: vvdb.Postgres, Host: "declared.internal", Port: 5432, User: "declared", Name: "orders"}
-	dsn, err := vvdb.PostgresDSN(c)
+	dsn, err := vvdb.PostgresDSN(&c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestTheMySQLDriverReadsBackWhatVvdbWrote(t *testing.T) {
 		// find where the database name ends.
 		Params: map[string]string{"loc": "Europe/Moscow"},
 	}
-	dsn, err := vvdb.MySQLDSN(c)
+	dsn, err := vvdb.MySQLDSN(&c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestTheMySQLDriverReadsBackWhatVvdbWrote(t *testing.T) {
 
 func TestTheMySQLDriverFindsTheSocketVvdbWrote(t *testing.T) {
 	c := vvdb.Config{Engine: vvdb.MySQL, Host: "/tmp/mysql.sock", User: "vv", Name: "app"}
-	dsn, err := vvdb.MySQLDSN(c)
+	dsn, err := vvdb.MySQLDSN(&c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestTheMySQLDriverFindsTheSocketVvdbWrote(t *testing.T) {
 
 func TestSQLiteOpensTheEscapedFilenameItWasGiven(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report ?#%.db")
-	dsn, err := vvdb.SQLiteDSN(vvdb.Config{
+	dsn, err := vvdb.SQLiteDSN(&vvdb.Config{
 		Engine:  vvdb.SQLite,
 		Path:    path,
 		Params:  vvdb.Params{"mode": "rwc"},

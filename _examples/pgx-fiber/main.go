@@ -74,7 +74,7 @@ func main() {
 	ctx := context.Background()
 	// dbpgx builds the connection string and sizes the pool; the application
 	// owns what comes back, and hands it to vv on the crudpgx line below.
-	pool, err := dbpgx.Connect(ctx, database)
+	pool, err := dbpgx.Connect(ctx, &database)
 	if err != nil {
 		log.Fatal(err)
 	}

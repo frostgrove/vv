@@ -285,7 +285,7 @@ type ScopedSave[M any] struct {
 // a create raced with an existing key. Callers that hide either fact should
 // translate them to their own denial.
 type ScopedSaver[M any, ID comparable] interface {
-	SaveScoped(ctx context.Context, m *M, save ScopedSave[M]) error
+	SaveScoped(ctx context.Context, m *M, save *ScopedSave[M]) error
 }
 
 // ScopedSaveOnlyer is ScopedSaver's write-only counterpart. A security gate
@@ -293,7 +293,7 @@ type ScopedSaver[M any, ID comparable] interface {
 // statement matters, but reading the row back would violate that API's
 // contract.
 type ScopedSaveOnlyer[M any, ID comparable] interface {
-	SaveScopedOnly(ctx context.Context, m *M, save ScopedSave[M]) error
+	SaveScopedOnly(ctx context.Context, m *M, save *ScopedSave[M]) error
 }
 
 // SaveScopedOf calls ScopedSaver only on the core it was handed. It deliberately
@@ -304,7 +304,10 @@ type ScopedSaveOnlyer[M any, ID comparable] interface {
 //
 // The final bool reports whether the capability exists. Security must fail
 // closed when it does not: a preceding SELECT is not an atomic substitute.
-func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool) {
+func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool) {
+	if save == nil {
+		return ErrBadRequest, true
+	}
 	if s, ok := c.(ScopedSaver[M, ID]); ok {
 		return s.SaveScoped(ctx, m, save), true
 	}
@@ -314,7 +317,10 @@ func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M
 // SaveScopedOnlyOf calls the write-only conditional-save capability when the
 // core deliberately exposes it. Like SaveScopedOf, it never walks through a
 // decorator that did not explicitly forward the capability.
-func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool) {
+func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool) {
+	if save == nil {
+		return ErrBadRequest, true
+	}
 	if s, ok := c.(ScopedSaveOnlyer[M, ID]); ok {
 		return s.SaveScopedOnly(ctx, m, save), true
 	}

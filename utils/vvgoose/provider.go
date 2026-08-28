@@ -25,7 +25,7 @@ import (
 // separately keeps that ownership visible; Provider.Close would close the same
 // handle but obscures who created it.
 func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
-	cfg := normalizeConfig(raw)
+	cfg := normalizeConfig(&raw)
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("vvgoose: invalid database config: %w", err)
 	}
@@ -46,7 +46,7 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := vvdb.Open(primary)
+	db, err := vvdb.Open(&primary)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vvgoose: open primary database: %w", err)
 	}
@@ -214,14 +214,14 @@ func runFresh(ctx context.Context, cfg vvdb.Config) (results []*goose.MigrationR
 // It intentionally does not run Up afterwards: the caller can inspect the
 // empty database, or run migrate explicitly.
 func runFlush(ctx context.Context, raw vvdb.Config) (err error) {
-	cfg := normalizeConfig(raw)
+	cfg := normalizeConfig(&raw)
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("vvgoose: invalid database config: %w", err)
 	}
 
 	primary := cfg
 	primary.Replica = nil
-	db, err := vvdb.Open(primary)
+	db, err := vvdb.Open(&primary)
 	if err != nil {
 		return fmt.Errorf("vvgoose: open primary database: %w", err)
 	}

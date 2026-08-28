@@ -14,14 +14,14 @@ Create the MinIO client in application bootstrap, including endpoint,
 credentials, TLS, transport and retry policy, then inject it:
 
 ```go
-backend, err := storageminio.New(storageminio.Config{
+backend, err := storageminio.New(&storageminio.Config{
     Client:     minioClient,
     Bucket:     "app-files",
     Prefix:     "production", // optional, validated and bounded
     MaxLinkTTL: time.Hour,
 })
 
-avatars, err := storage.New(storage.Config{
+avatars, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })

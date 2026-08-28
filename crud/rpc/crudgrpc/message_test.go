@@ -143,7 +143,7 @@ func TestRequestForRefusesAnEmptyKeyBeforeItCanInvoke(t *testing.T) {
 		remote.MethodDelete,
 	} {
 		t.Run(string(method), func(t *testing.T) {
-			if _, err := requestFor(remote.Call{Method: method}); err == nil || !strings.Contains(err.Error(), "non-empty id") {
+			if _, err := requestFor(&remote.Call{Method: method}); err == nil || !strings.Contains(err.Error(), "non-empty id") {
 				t.Fatalf("empty %s = %v, want a local key refusal", method, err)
 			}
 		})
@@ -161,7 +161,7 @@ func TestRequestForRefusesAnEmptyKeyedMutationBodyBeforeItCanInvoke(t *testing.T
 		{remote.MethodReplace, "null"},
 	} {
 		t.Run(string(tc.method)+tc.body, func(t *testing.T) {
-			_, err := requestFor(remote.Call{Method: tc.method, ID: "42", Body: []byte(tc.body)})
+			_, err := requestFor(&remote.Call{Method: tc.method, ID: "42", Body: []byte(tc.body)})
 			if err == nil || !strings.Contains(err.Error(), "non-null body") {
 				t.Fatalf("empty %s body = %v, want a local refusal", tc.method, err)
 			}
@@ -180,7 +180,7 @@ func TestRequestForRefusesANonObjectKeyedMutationBodyBeforeItCanInvoke(t *testin
 		{remote.MethodReplace, `{"broken":`},
 	} {
 		t.Run(string(tc.method)+tc.body, func(t *testing.T) {
-			_, err := requestFor(remote.Call{Method: tc.method, ID: "42", Body: []byte(tc.body)})
+			_, err := requestFor(&remote.Call{Method: tc.method, ID: "42", Body: []byte(tc.body)})
 			if err == nil || !strings.Contains(err.Error(), "JSON object") {
 				t.Fatalf("invalid %s body = %v, want a local object refusal", tc.method, err)
 			}
@@ -193,7 +193,7 @@ func TestADirectBulkDeleteWithNoIDsUsesTheEmptySetSpelling(t *testing.T) {
 	if err != nil || string(ids) != "null" {
 		t.Fatalf("zero IDs = %q, %v, want null", ids, err)
 	}
-	request, err := requestFor(remote.Call{Method: remote.MethodBulkDelete})
+	request, err := requestFor(&remote.Call{Method: remote.MethodBulkDelete})
 	if err != nil {
 		t.Fatal(err)
 	}

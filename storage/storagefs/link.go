@@ -18,7 +18,7 @@ import (
 
 const minimumSigningKeyBytes = 32
 
-func linkConfig(config Config) (*url.URL, []byte, time.Duration, error) {
+func linkConfig(config *Config) (*url.URL, []byte, time.Duration, error) {
 	configured := config.BaseURL != "" || len(config.SigningKey) != 0 || config.MaxLinkTTL != 0
 	if !configured {
 		return nil, nil, 0, nil

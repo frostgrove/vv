@@ -6,13 +6,13 @@ explicit local directory using only the standard library.
 ## Construct it
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root: "/srv/app-data",
 })
 if err != nil { return err }
 defer backend.Close()
 
-avatars, err := storage.New(storage.Config{
+avatars, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })
@@ -50,7 +50,7 @@ Configure the public URL at which the backend's handler will be mounted and a
 random secret of at least 32 bytes:
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root:       "/srv/app-data",
     BaseURL:    "https://files.example.com/download",
     SigningKey: signingKey,

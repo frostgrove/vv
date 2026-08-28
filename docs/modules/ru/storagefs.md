@@ -6,13 +6,13 @@
 ## Создание
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root: "/srv/app-data",
 })
 if err != nil { return err }
 defer backend.Close()
 
-avatars, err := storage.New(storage.Config{
+avatars, err := storage.New(&storage.Config{
     Namespace: "avatars",
     Backend:   backend,
 })
@@ -48,7 +48,7 @@ durability для первой записи в новый key path. Если р�
 Укажите публичный URL handler и случайный секрет длиной не менее 32 байт:
 
 ```go
-backend, err := storagefs.New(storagefs.Config{
+backend, err := storagefs.New(&storagefs.Config{
     Root:       "/srv/app-data",
     BaseURL:    "https://files.example.com/download",
     SigningKey: signingKey,

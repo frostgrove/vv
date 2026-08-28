@@ -117,6 +117,7 @@ and the next decision written before its code does should say so here.
 | [D-062](D-062-the-library-logs-through-the-callers-logger.md) | The library never writes to a process-wide logger; every line goes through `port.Logger(ctx)`, and statements are instrumented by wrapping the `Source` | accepted | process & tooling, transports |
 | [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
 | [D-064](D-064-migration-generation-never-guesses-a-model.md) | Automatic migration generation uses only one uniquely best model; ambiguity is interactive or empty, never guessed | accepted | process & tooling, migrations |
+| [D-065](D-065-structs-have-reference-semantics-unless-they-are-values.md) | A struct crosses an application boundary by pointer unless copying is its documented value semantics | accepted | API design, process & tooling |
 
 ## By area
 

@@ -20,7 +20,7 @@ this repository still compiles.
 **It returns a handle and stops.** The caller writes the next line:
 
 ```go
-pool := dbpgx.MustConnect(ctx, cfg.DB)
+pool := dbpgx.MustConnect(ctx, &cfg.DB)
 repo := Products.Bind(crudpgx.Open(pool))
 ```
 

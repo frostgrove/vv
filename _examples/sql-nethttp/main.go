@@ -71,7 +71,7 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := vvdb.Open(database)
+	db, err := vvdb.Open(&database)
 	if err != nil {
 		log.Fatal(err)
 	}

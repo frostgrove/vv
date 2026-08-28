@@ -129,7 +129,7 @@ func (e *enricher[M, ID]) entity() string {
 // savepoint cannot be taken after the fact, and on an engine that poisons a
 // transaction there is nothing left to run the probe on. This is the only part
 // of the subsystem that touches the happy path, which is why it is opt-in.
-func (e *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, req probe.Request, run func(context.Context) error) error {
+func (e *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, req *probe.Request, run func(context.Context) error) error {
 	if pc.savepoints {
 		sp, res := e.savepoint(ctx, pc.budget)
 		switch res {
@@ -155,7 +155,7 @@ func (e *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, re
 	return e.enrichProbed(ctx, op, run(ctx), pc, req, false)
 }
 
-func (e *enricher[M, ID]) enrichProbed(ctx context.Context, op string, err error, pc probeCfg, req probe.Request, capped bool) error {
+func (e *enricher[M, ID]) enrichProbed(ctx context.Context, op string, err error, pc probeCfg, req *probe.Request, capped bool) error {
 	if err == nil {
 		return nil
 	}
@@ -227,18 +227,18 @@ func (e *enricher[M, ID]) savepoint(ctx context.Context, budget int) (crud.Tx, s
 // constraints are even relevant. Values go through crud.ElemValue so a null
 // Opt arrives as nil rather than as an Opt that happens to be empty — the probe
 // keys and null-guards on it.
-func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) probe.Request {
-	req := probe.Request{Batch: batch}
+func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) *probe.Request {
+	req := &probe.Request{Batch: batch}
 	if e.meta == nil || len(ms) == 0 {
 		return req
 	}
 	for _, m := range ms {
 		if m == nil {
-			return probe.Request{Batch: batch}
+			return &probe.Request{Batch: batch}
 		}
 		hasID, err := e.meta.HasID(m)
 		if err != nil {
-			return probe.Request{Batch: batch}
+			return &probe.Request{Batch: batch}
 		}
 		fields := e.meta.InsertGen
 		if hasID {
@@ -246,7 +246,7 @@ func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) probe.Request {
 		}
 		vals, err := e.meta.Values(m, fields)
 		if err != nil {
-			return probe.Request{Batch: batch}
+			return &probe.Request{Batch: batch}
 		}
 		row := probe.Row{Values: make(map[string]any, len(fields))}
 		for i, f := range fields {
@@ -255,7 +255,7 @@ func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) probe.Request {
 		if hasID {
 			id, err := e.meta.ID(m)
 			if err != nil {
-				return probe.Request{Batch: batch}
+				return &probe.Request{Batch: batch}
 			}
 			row.ID, row.HasID = crud.ElemValue(id), true
 			// A keyed Save is the upsert path ([[D-011]]), so the engine
@@ -273,17 +273,17 @@ func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) probe.Request {
 // already matches the stored one, so the unchanged half of a composite key has
 // no value here at all. The probe reads that half out of the stored row in SQL
 // rather than being handed a copy that may already be stale.
-func (e *enricher[M, ID]) updateRequest(id ID, dto any) probe.Request {
+func (e *enricher[M, ID]) updateRequest(id ID, dto any) *probe.Request {
 	if e.meta == nil {
-		return probe.Request{}
+		return &probe.Request{}
 	}
 	changes, err := crud.DefinedChanges(e.meta.Schema, dto)
 	if err != nil {
-		return probe.Request{}
+		return &probe.Request{}
 	}
 	row := probe.Row{Values: make(map[string]any, len(changes)), ID: id, HasID: true}
 	for _, c := range changes {
 		row.Values[c.Field.Column] = c.Value
 	}
-	return probe.Request{Rows: []probe.Row{row}, Stored: true}
+	return &probe.Request{Rows: []probe.Row{row}, Stored: true}
 }

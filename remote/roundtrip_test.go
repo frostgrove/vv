@@ -22,7 +22,7 @@ import (
 
 type exactCountTransport map[remote.Method]json.RawMessage
 
-func (t exactCountTransport) Do(_ context.Context, call remote.Call) (json.RawMessage, error) {
+func (t exactCountTransport) Do(_ context.Context, call *remote.Call) (json.RawMessage, error) {
 	return t[call.Method], nil
 }
 

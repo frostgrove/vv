@@ -539,7 +539,10 @@ const (
 
 // Run generates from o and writes the result. The output path is Out resolved
 // against Into when set, Dir otherwise.
-func Run(o Options) error {
+func Run(o *Options) error {
+	if o == nil {
+		return fmt.Errorf("codegen: options are nil")
+	}
 	if o.Recursive {
 		if o.Into != "" || o.Import != "" {
 			return fmt.Errorf("-recursive writes beside each model package and cannot be combined with -into or -import")
@@ -549,10 +552,10 @@ func Run(o Options) error {
 			return err
 		}
 		for _, dir := range dirs {
-			one := o
+			one := *o
 			one.Dir = dir
 			one.Recursive = false
-			if err := Run(one); err != nil {
+			if err := Run(&one); err != nil {
 				// A model file may carry only package-private helpers. It is not a
 				// generation target, and must not make an application-wide scan fail.
 				if strings.Contains(err.Error(), "no models found in ") {

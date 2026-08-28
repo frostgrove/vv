@@ -15,7 +15,7 @@ not `database/sql`, so it is a module of its own and a consumer on ent, gorm or
 ## Using it
 
 ```go
-pool := dbpgx.MustConnect(ctx, cfg.DB)
+pool := dbpgx.MustConnect(ctx, &cfg.DB)
 defer pool.Close()
 
 repo := Products.Bind(crudpgx.Open(pool))

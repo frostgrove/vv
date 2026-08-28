@@ -762,7 +762,7 @@ func (g *gate[M, ID]) saveTransaction(ctx context.Context, fn func(context.Conte
 // used as an optimistic snapshot so the UPDATE cannot affect a replacement the
 // gate never inspected.
 func (g *gate[M, ID]) saveScoped(ctx context.Context, m, previous *M, scope crud.Predicate, rel *crud.RelationScopes) error {
-	err, supported := crud.SaveScopedOf(g.Core, ctx, m, crud.ScopedSave[M]{
+	err, supported := crud.SaveScopedOf(g.Core, ctx, m, &crud.ScopedSave[M]{
 		Previous:       previous,
 		Scope:          scope,
 		RelationScopes: rel,
@@ -783,7 +783,7 @@ func (g *gate[M, ID]) saveScoped(ctx context.Context, m, previous *M, scope crud
 }
 
 func (g *gate[M, ID]) saveScopedOnly(ctx context.Context, m, previous *M, scope crud.Predicate, rel *crud.RelationScopes) error {
-	err, supported := crud.SaveScopedOnlyOf(g.Core, ctx, m, crud.ScopedSave[M]{
+	err, supported := crud.SaveScopedOnlyOf(g.Core, ctx, m, &crud.ScopedSave[M]{
 		Previous:       previous,
 		Scope:          scope,
 		RelationScopes: rel,

@@ -94,7 +94,7 @@ func main() {
 	o.WithMeta = !*noMeta
 	o.Log = os.Stdout
 
-	if err := codegen.Run(o); err != nil {
+	if err := codegen.Run(&o); err != nil {
 		fmt.Fprintln(os.Stderr, "vv:", err)
 		os.Exit(1)
 	}

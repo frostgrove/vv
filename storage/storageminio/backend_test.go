@@ -84,7 +84,7 @@ func newTestBackend(t *testing.T, client *fakeClient, core *fakeCore, mutate ...
 	for _, fn := range mutate {
 		fn(&config)
 	}
-	backend, err := newBackend(config, client, core)
+	backend, err := newBackend(&config, client, core)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func newTestBackend(t *testing.T, client *fakeClient, core *fakeCore, mutate ...
 
 func newTestStore(t *testing.T, backend *Backend) storage.Store {
 	t.Helper()
-	store, err := storage.New(storage.Config{Namespace: "tenant", Backend: backend})
+	store, err := storage.New(&storage.Config{Namespace: "tenant", Backend: backend})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func (r *blockedFailureReader) Read([]byte) (int, error) {
 }
 
 func TestNewValidatesConfiguration(t *testing.T) {
-	if _, err := New(Config{Bucket: "test-bucket"}); !errors.Is(err, storage.ErrInvalid) {
+	if _, err := New(&Config{Bucket: "test-bucket"}); !errors.Is(err, storage.ErrInvalid) {
 		t.Fatalf("nil client error = %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestNewValidatesConfiguration(t *testing.T) {
 		{Bucket: "test-bucket", MaxLinkTTL: storage.MaxTemporaryURLTTL + time.Second},
 	}
 	for _, config := range tests {
-		if _, err := newBackend(config, client, core); !errors.Is(err, storage.ErrInvalid) {
+		if _, err := newBackend(&config, client, core); !errors.Is(err, storage.ErrInvalid) {
 			t.Fatalf("config %#v error = %v, want invalid", config, err)
 		}
 	}

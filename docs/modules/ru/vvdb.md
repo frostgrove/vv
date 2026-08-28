@@ -79,7 +79,7 @@ type Config struct {
 func (c Config) Validate() error { return c.DB.Validate() }
 
 cfg            := vvcfg.MustLoad[Config]()
-sqlDB, replica := vvdb.MustOpenReadWrite(cfg.DB)
+sqlDB, replica := vvdb.MustOpenReadWrite(&cfg.DB)
 ```
 
 `vvcfg` вызывает только метод `Validate` верхней структуры. Явный форвардер
@@ -186,7 +186,7 @@ vvdb рендерит повторяющиеся ключи `_pragma`, для `m
 update — нет ([[D-032]]):
 
 ```go
-primary, replica, err := vvdb.OpenReadWrite(cfg.DB)
+primary, replica, err := vvdb.OpenReadWrite(&cfg.DB)
 src := crudsql.Postgres(primary)
 if replica != nil {
     src = crud.ReadWrite(src, crudsql.Postgres(replica))
@@ -214,10 +214,10 @@ lifetime, idle time), поэтому оба хендла используют о
 либо `*sql.DB`, либо строку, а есть уже и то и другое.
 
 ```go
-sqlDB := vvdb.MustOpen(cfg.DB)
+sqlDB := vvdb.MustOpen(&cfg.DB)
 client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB(dialect.Postgres, sqlDB)))
 
-dsn, err := vvdb.DSN(cfg.DB)
+dsn, err := vvdb.DSN(&cfg.DB)
 if err != nil { log.Fatal(err) }
 gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 if err != nil { log.Fatal(err) }

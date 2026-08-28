@@ -44,8 +44,8 @@ func (f *full) Savepoints() (bool, int) { return f.cfg.savepoints, f.cfg.maxSave
 // The returned fault is a copy. A *Fault is a value two goroutines may render at
 // once, the adapter that produced it may have handed the same pointer to a
 // caller who already wrapped it, and [[D-042]] treats it as immutable.
-func (f *full) Enrich(ctx context.Context, req Request) (*errs.Fault, error) {
-	if req.Fault == nil {
+func (f *full) Enrich(ctx context.Context, req *Request) (*errs.Fault, error) {
+	if req == nil || req.Fault == nil {
 		return nil, nil
 	}
 	if f.meta == nil {
@@ -82,7 +82,7 @@ func (f *full) Enrich(ctx context.Context, req Request) (*errs.Fault, error) {
 
 // runs answers the transaction matrix. Which side of it a dialect is on comes
 // from crud.StatementRollback and never from its name ([[D-019]]).
-func (f *full) runs(ctx context.Context, req Request) bool {
+func (f *full) runs(ctx context.Context, req *Request) bool {
 	_, inTx, owned := crud.OwnedExecutorFor(ctx, req.Source)
 	if !inTx {
 		return true
@@ -96,7 +96,7 @@ func (f *full) runs(ctx context.Context, req Request) bool {
 }
 
 // run renders the statement, sends it, and reads the answer by position.
-func (f *full) run(ctx context.Context, req Request, p plan) ([]finding, error) {
+func (f *full) run(ctx context.Context, req *Request, p plan) ([]finding, error) {
 	var scope crud.Predicate
 	if f.cfg.scope != nil {
 		s, err := f.cfg.scope(ctx)
@@ -154,7 +154,7 @@ func (f *full) run(ctx context.Context, req Request, p plan) ([]finding, error) 
 
 // merge builds the answer: the driver's violations, then the probe's, with the
 // duplicate between them folded rather than listed twice.
-func (f *full) merge(req Request, found []finding, partial bool) *errs.Fault {
+func (f *full) merge(req *Request, found []finding, partial bool) *errs.Fault {
 	g := *req.Fault
 	g.Violations = make([]errs.Violation, len(req.Fault.Violations))
 	copy(g.Violations, req.Fault.Violations)
@@ -239,7 +239,7 @@ func fold(dv *errs.Violation, pv errs.Violation, codeOnly bool) {
 }
 
 // violation turns one finding into the public shape.
-func (f *full) violation(req Request, fd finding) errs.Violation {
+func (f *full) violation(req *Request, fd finding) errs.Violation {
 	v := errs.Violation{
 		Code:   fd.cand.kind.code(),
 		Origin: errs.OriginState,
@@ -268,7 +268,7 @@ func (f *full) violation(req Request, fd finding) errs.Violation {
 // is this package's own — nobody else knows which row of the batch a term ran
 // for — and the column-to-field hop belongs to the layer that performed the
 // mapping ([[D-043]]).
-func (f *full) path(req Request, fd finding) (errs.Path, bool) {
+func (f *full) path(req *Request, fd finding) (errs.Path, bool) {
 	var head errs.Path
 	if fd.row >= 0 {
 		head = errs.Path{errs.Indexed(fd.row)}
@@ -283,7 +283,7 @@ func (f *full) path(req Request, fd finding) (errs.Path, bool) {
 	return append(head, tail...), false
 }
 
-func valueOf(req Request, fd finding) (any, bool) {
+func valueOf(req *Request, fd finding) (any, bool) {
 	i := fd.row
 	if i < 0 {
 		i = 0

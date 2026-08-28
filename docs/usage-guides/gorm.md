@@ -744,7 +744,7 @@ func main() {
     // gorm takes a string rather than a handle, so vvdb's first level is all
     // that is needed: one config struct, the escaping the engine's own parser
     // expects. Nothing in the library opens a connection ([[D-057]]).
-    dsn, _ := vvdb.PostgresDSN(cfg.DB)
+    dsn, _ := vvdb.PostgresDSN(&cfg.DB)
     db, _ := gorm.Open(postgres.Open(dsn), &gorm.Config{})
     sqlDB, _ := db.DB()
     src := crudsql.Postgres(sqlDB)

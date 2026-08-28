@@ -80,7 +80,7 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	dsn, err := vvdb.MySQLDSN(database)
+	dsn, err := vvdb.MySQLDSN(&database)
 	if err != nil {
 		log.Fatal(err)
 	}

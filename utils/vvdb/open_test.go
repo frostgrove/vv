@@ -36,10 +36,11 @@ func register(t *testing.T, name string) *recorder {
 
 func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(vvdb.Config{
+	db, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres,
 		Host:   "db.internal", User: "vv", Password: "s3cret", Name: "app",
 	})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +60,11 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 
 func TestOpenSizesThePool(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(vvdb.Config{
+	db, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres, Host: "h", Name: "app",
 		Pool: vvdb.Pool{MaxOpen: 7, MaxIdle: 3, MaxLifetime: time.Minute},
 	})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func TestOpenSizesThePool(t *testing.T) {
 // open nothing.
 func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})
+	db, err := vvdb.Open(&vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,29 +98,32 @@ func TestPoolApplySizesAnApplicationOwnedHandle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := (vvdb.Pool{MaxOpen: 9, MaxIdle: -1}).Apply(db); err != nil {
+	pool := vvdb.Pool{MaxOpen: 9, MaxIdle: -1}
+	if err := pool.Apply(db); err != nil {
 		t.Fatal(err)
 	}
 	if got := db.Stats().MaxOpenConnections; got != 9 {
 		t.Fatalf("Pool.Apply did not size the application-owned handle: %d", got)
 	}
-	if err := (vvdb.Pool{}).Apply(nil); !errors.Is(err, vvdb.ErrMissing) {
+	empty := vvdb.Pool{}
+	if err := empty.Apply(nil); !errors.Is(err, vvdb.ErrMissing) {
 		t.Fatalf("Pool.Apply(nil) = %v, want a named handle error", err)
 	}
 }
 
 func TestOpenRefusesBeforeItReachesTheDriver(t *testing.T) {
-	_, err := vvdb.Open(vvdb.Config{Engine: "cockroach", Name: "app"})
+	_, err := vvdb.Open(&vvdb.Config{Engine: "cockroach", Name: "app"})
 	if !errors.Is(err, vvdb.ErrEngine) {
 		t.Fatalf("a configuration that cannot be built must not reach sql.Open; got %v", err)
 	}
 }
 
 func TestAFailureToOpenDoesNotPrintThePassword(t *testing.T) {
-	_, err := vvdb.Open(vvdb.Config{
+	_, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres, Driver: "vvdbtest-not-registered",
 		Host: "h", User: "vv", Password: "s3cret", Name: "app",
 	})
+
 	if err == nil {
 		t.Fatal("an unregistered driver should fail at once")
 	}
@@ -134,7 +139,7 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 		Host:   "primary.internal", User: "vv", Password: "s3cret", Name: "app",
 		Replica: &vvdb.Config{Host: "replica.internal"},
 	}
-	p, rep, err := vvdb.OpenReadWrite(cfg)
+	p, rep, err := vvdb.OpenReadWrite(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +154,7 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 	}
 
 	cfg.Replica = nil
-	p2, rep2, err := vvdb.OpenReadWrite(cfg)
+	p2, rep2, err := vvdb.OpenReadWrite(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +166,11 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 
 func TestSingleHandleOpenRefusesToIgnoreADeclaredReplica(t *testing.T) {
 	register(t, "vvdbtest-replica-refusal")
-	_, err := vvdb.Open(vvdb.Config{
+	_, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres, Driver: "vvdbtest-replica-refusal", Host: "primary", Name: "app",
 		Replica: &vvdb.Config{Host: "replica"},
 	})
+
 	if !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "OpenReadWrite") {
 		t.Fatalf("Open() = %v, want a named two-handle path", err)
 	}
@@ -176,5 +182,5 @@ func TestMustOpenPanicsSoStartUpStops(t *testing.T) {
 			t.Error("a configuration that cannot be opened must stop the process, not return a handle that fails later")
 		}
 	}()
-	vvdb.MustOpen(vvdb.Config{Engine: vvdb.Postgres})
+	vvdb.MustOpen(&vvdb.Config{Engine: vvdb.Postgres})
 }

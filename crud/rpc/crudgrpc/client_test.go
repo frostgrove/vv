@@ -217,11 +217,15 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	t.Run("Save creates", func(t *testing.T) {
 		r, f := remoted(t)
 		w := Widget{Name: "washer", Price: 10}
-		if err := r.Save(ctx, &w); err != nil {
+		saved, err := r.Save(ctx, &w)
+		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if w.ID != 7 || !w.CreatedAt.Equal(savedAt) {
-			t.Fatalf("the model came back as %+v", w)
+		if saved.ID != 7 || !saved.CreatedAt.Equal(savedAt) {
+			t.Fatalf("the stored model came back as %+v", saved)
+		}
+		if w.ID != 0 || !w.CreatedAt.IsZero() {
+			t.Fatalf("Save mutated its input: %+v", w)
 		}
 		if got := f.only(t, "Save"); got.Model.Name != "washer" {
 			t.Fatalf("the far side was handed %+v", got.Model)
@@ -231,11 +235,12 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	t.Run("Save replaces", func(t *testing.T) {
 		r, f := remoted(t)
 		w := Widget{ID: 42, Name: "bolt"}
-		if err := r.Save(ctx, &w); err != nil {
+		saved, err := r.Save(ctx, &w)
+		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if w.ID != 42 {
-			t.Fatalf("the key moved to %d", w.ID)
+		if saved.ID != 42 || w.ID != 42 {
+			t.Fatalf("the key moved: input=%d stored=%d", w.ID, saved.ID)
 		}
 		// Replace loads the row first, so a set key shows a GetByID before the
 		// Save. A key that had gone out as a create would show none.
@@ -476,7 +481,7 @@ func TestAnUnregisteredMethodIsNotAMissingRow(t *testing.T) {
 	r, _ := remoted(t, ReadOnly[Widget, int64, WidgetUpdate]())
 
 	w := Widget{Name: "washer"}
-	err := r.Save(context.Background(), &w)
+	_, err := r.Save(context.Background(), &w)
 	if err == nil {
 		t.Fatal("a create reached a read-only service")
 	}
