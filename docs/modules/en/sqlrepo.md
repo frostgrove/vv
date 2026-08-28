@@ -219,7 +219,7 @@ func Log() crud.Middleware[User, int64] {
 
 A decorator sees `crud.Core[M, ID]` — two type parameters, not three — which is
 what keeps the middleware signature writable ([[D-001]]). The three-parameter
-`crud.Repo[M, ID, U]` is the façade a consumer holds.
+`crud.Repo[M, ID, U]` is the façade; a consumer holds `*crud.Repo[M, ID, U]`.
 
 **A new verb on the seam is a decorator obligation** ([[D-030]]): adding a method
 to `Core` means every decorator in the tree forwards it, or it silently bypasses

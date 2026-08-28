@@ -208,7 +208,7 @@ func pbLiteral(_ pbTarget, s string) string {
 // silently refused every statement would leave most of this file green: the
 // driver's own violation would still be there and the assertions on it would
 // still hold.
-func pbRepo(t *testing.T, tg pbTarget, opts ...probe.Option) crud.Repo[PbDoc, int64, PbDocUpdate] {
+func pbRepo(t *testing.T, tg pbTarget, opts ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
 	t.Helper()
 	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
 		faults.WithProbe(probe.Full(tg.cat, opts...)),
@@ -219,14 +219,14 @@ func pbRepo(t *testing.T, tg pbTarget, opts ...probe.Option) crud.Repo[PbDoc, in
 
 // pbRepoQuiet is pbRepo without the assertion that the probe never fails. Only
 // the test that deliberately breaks the probe uses it.
-func pbRepoQuiet(tg pbTarget, opts ...probe.Option) crud.Repo[PbDoc, int64, PbDocUpdate] {
+func pbRepoQuiet(tg pbTarget, opts ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
 	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
 		faults.WithProbe(probe.Full(tg.cat, opts...))))
 }
 
 // pbPlain binds it with no probe at all — the "before" half of the positive
 // control.
-func pbPlain(tg pbTarget) crud.Repo[PbDoc, int64, PbDocUpdate] {
+func pbPlain(tg pbTarget) *crud.Repo[PbDoc, int64, PbDocUpdate] {
 	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64]())
 }
 

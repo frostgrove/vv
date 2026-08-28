@@ -120,13 +120,13 @@ func TestATautologicalPolicyScopeDoesNotPermitBulkWrites(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		call func(crud.Repo[Doc, int64, DocUpdate]) error
+		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
-		{"UpdateAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+		{"UpdateAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := repo.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")})
 			return err
 		}},
-		{"DeleteAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+		{"DeleteAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := repo.DeleteAll(context.Background())
 			return err
 		}},
@@ -216,11 +216,11 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func(crud.Repo[Doc, int64, DocUpdate]) error
+		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
 		{
 			name: "UpdateAll",
-			call: func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := repo.UpdateAll(ctx, DocUpdate{Title: ptrTo("x")},
 					crud.Where(crud.Eq("Body", "body")), crud.Limit(1), crud.After("ignored"), crud.Preload("Comments"))
 				return err
@@ -228,7 +228,7 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 		},
 		{
 			name: "DeleteAll",
-			call: func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := repo.DeleteAll(ctx,
 					crud.Where(crud.Eq("Body", "body")), crud.Limit(1), crud.After("ignored"), crud.Preload("Comments"))
 				return err

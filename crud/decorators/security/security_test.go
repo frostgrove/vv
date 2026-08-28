@@ -48,7 +48,7 @@ func docRow(id, tenant int64, title string) []any {
 	return []any{id, tenant, title, "body"}
 }
 
-func gated(rec *crudtest.Recorder) crud.Repo[Doc, int64, DocUpdate] {
+func gated(rec *crudtest.Recorder) *crud.Repo[Doc, int64, DocUpdate] {
 	return Docs.Bind(rec, security.Gate(tenantPolicy))
 }
 
@@ -67,23 +67,23 @@ func TestScopeIsAppendedToEveryRead(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		push []crudtest.Result
-		call func(r crud.Repo[Doc, int64, DocUpdate]) error
+		call func(r *crud.Repo[Doc, int64, DocUpdate]) error
 		want string
 	}{
 		{"GetAll", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.GetAll(ctx); return err },
+			func(r *crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.GetAll(ctx); return err },
 			`"tenant_id" = $1`},
 		{"GetAll with a caller filter", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[Doc, int64, DocUpdate]) error {
+			func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := r.GetAll(ctx, crud.Where(crud.Eq("Title", "x")))
 				return err
 			},
 			`("tenant_id" = $1 AND "title" = $2)`},
 		{"Count", []crudtest.Result{crudtest.Rows([]any{int64(0)})},
-			func(r crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.Count(ctx); return err },
+			func(r *crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.Count(ctx); return err },
 			`"tenant_id" = $1`},
 		{"Exists", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.Exists(ctx); return err },
+			func(r *crud.Repo[Doc, int64, DocUpdate]) error { _, err := r.Exists(ctx); return err },
 			`"tenant_id" = $1`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -171,7 +171,7 @@ func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 }
 
 // mustCursorAt reads one page of n rows and returns its trailing cursor.
-func mustCursorAt(t *testing.T, rows crud.Repo[EgRow, int64, EgRowUpdate], sort crud.Option, n int) string {
+func mustCursorAt(t *testing.T, rows *crud.Repo[EgRow, int64, EgRowUpdate], sort crud.Option, n int) string {
 	t.Helper()
 	page, err := rows.Get(context.Background(), sort, crud.Limit(n))
 	if err != nil {

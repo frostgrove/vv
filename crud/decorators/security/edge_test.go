@@ -52,55 +52,55 @@ func TestAScopeThatFailsClosesEveryDoor(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		call func(*testing.T, crud.Repo[Doc, int64, DocUpdate]) error
+		call func(*testing.T, *crud.Repo[Doc, int64, DocUpdate]) error
 	}{
-		{"GetByID", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"GetByID", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			d, err := r.GetByID(ctx, 1)
 			if d != (Doc{}) {
 				t.Errorf("a row came back from a call that failed: %+v", d)
 			}
 			return err
 		}},
-		{"Get", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Get", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			page, err := r.Get(ctx)
 			if len(page.Items) != 0 {
 				t.Errorf("%d rows came back from a call that failed", len(page.Items))
 			}
 			return err
 		}},
-		{"GetAll", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"GetAll", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			items, err := r.GetAll(ctx)
 			if len(items) != 0 {
 				t.Errorf("%d rows came back from a call that failed", len(items))
 			}
 			return err
 		}},
-		{"Count", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Count", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			n, err := r.Count(ctx)
 			if n != 0 {
 				t.Errorf("count = %d from a call that failed", n)
 			}
 			return err
 		}},
-		{"Exists", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Exists", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			ok, err := r.Exists(ctx)
 			if ok {
 				t.Error("exists answered true from a call that failed")
 			}
 			return err
 		}},
-		{"Update", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Update", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Update(ctx, 1, DocUpdate{Title: ptrTo("new")})
 			return err
 		}},
-		{"Delete", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Delete", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			n, err := r.Delete(ctx, 1)
 			if n != 0 {
 				t.Errorf("%d rows deleted by a call that failed", n)
 			}
 			return err
 		}},
-		{"DeleteAll", func(t *testing.T, r crud.Repo[Doc, int64, DocUpdate]) error {
+		{"DeleteAll", func(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate]) error {
 			n, err := r.DeleteAll(ctx, crud.Where(crud.Eq("Title", "junk")))
 			if n != 0 {
 				t.Errorf("%d rows deleted by a call that failed", n)

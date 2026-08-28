@@ -64,8 +64,7 @@ type ProductRepo = crud.Repo[Product, uuid.UUID, ProductUpdate]
 var ProductRepository = sqlrepo.Define[Product, uuid.UUID, ProductUpdate]("")
 
 func NewProductRepository(src crud.Source) *ProductRepo {
-    repo := ProductRepository.Bind(src)
-    return &repo
+    return ProductRepository.Bind(src)
 }
 ```
 

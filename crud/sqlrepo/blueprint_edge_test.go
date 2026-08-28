@@ -321,29 +321,29 @@ func TestScopeIsANDedIntoEveryStatementWithAWhereClause(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		push []crudtest.Result
-		call func(crud.Repo[User, int64, UserUpdate]) error
+		call func(*crud.Repo[User, int64, UserUpdate]) error
 		want string
 	}{
 		{"GetAll", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.GetAll(ctx); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.GetAll(ctx); return err },
 			`SELECT ` + cols + ` FROM "users" WHERE "tenant_id" = $1`},
 		{"GetAll with a caller filter", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[User, int64, UserUpdate]) error {
+			func(r *crud.Repo[User, int64, UserUpdate]) error {
 				_, err := r.GetAll(ctx, crud.Where(crud.Eq("Email", "a@b.c")))
 				return err
 			},
 			`SELECT ` + cols + ` FROM "users" WHERE ("tenant_id" = $1 AND "email" = $2)`},
 		{"GetByID", []crudtest.Result{crudtest.Rows(userRow(5, "a@b.c", "Ann", 30, 1))},
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.GetByID(ctx, 5); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.GetByID(ctx, 5); return err },
 			`SELECT ` + cols + ` FROM "users" WHERE ("tenant_id" = $1 AND "id" = $2) LIMIT 1`},
 		{"Count", []crudtest.Result{crudtest.Rows([]any{int64(0)})},
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.Count(ctx); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.Count(ctx); return err },
 			`SELECT count(*) FROM "users" WHERE "tenant_id" = $1`},
 		{"Exists", []crudtest.Result{crudtest.Rows()},
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.Exists(ctx); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.Exists(ctx); return err },
 			`SELECT 1 FROM "users" WHERE "tenant_id" = $1 LIMIT 1`},
 		{"DeleteAll", nil,
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.DeleteAll(ctx); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.DeleteAll(ctx); return err },
 			`DELETE FROM "users" WHERE "tenant_id" = $1`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

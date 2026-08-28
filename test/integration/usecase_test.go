@@ -34,7 +34,7 @@ type promoteResult struct {
 
 type teamUsecase struct {
 	db      *gorm.DB
-	members crud.Repo[Member, uint, MemberUpdate]
+	members *crud.Repo[Member, uint, MemberUpdate]
 	cfg     *query.Config
 }
 
@@ -186,7 +186,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 
 type userUsecase struct {
 	client *entpkg.Client
-	users  crud.Repo[entpkg.User, int64, entstore.UserUpdate]
+	users  *crud.Repo[entpkg.User, int64, entstore.UserUpdate]
 	cfg    *query.Config
 }
 

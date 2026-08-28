@@ -48,8 +48,7 @@ var DocumentRepository = sqlrepo.Define[Document, int64, DocumentUpdate]("")
 
 // NewDocumentRepository binds DocumentRepository to src.
 func NewDocumentRepository(src crud.Source) *DocumentRepo {
-	repo := DocumentRepository.Bind(src)
-	return &repo
+	return DocumentRepository.Bind(src)
 }
 
 // DocumentInput is the entity body for Document: what a create or a replace carries,

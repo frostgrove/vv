@@ -471,7 +471,7 @@ var _ crud.Source = (*egSpy)(nil)
 // ---------------------------------------------------------------------------
 // helpers
 
-func egSeed(t *testing.T, repo crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
+func egSeed(t *testing.T, repo *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
 	t.Helper()
 	for _, r := range rows {
 		if err := repo.Save(context.Background(), &r); err != nil {

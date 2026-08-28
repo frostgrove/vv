@@ -268,7 +268,7 @@ repository with the compiled DSL *inside that same transaction*, and commits.
 ```go
 type teamUsecase struct {
     db      *gorm.DB
-    members crud.Repo[Member, uint, store.MemberUpdate]
+    members *crud.Repo[Member, uint, store.MemberUpdate]
     cfg     *query.Config
 }
 
@@ -868,7 +868,7 @@ what you care about, and the handler cannot tell the difference:
 
 ```go
 type MemberService struct {
-    crud.Repo[Member, uint, store.MemberUpdate]   // embedding gives you every method
+    *crud.Repo[Member, uint, store.MemberUpdate]  // embedding gives you every method
     db *gorm.DB
 }
 

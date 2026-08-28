@@ -66,8 +66,7 @@ type ProductRepo = crud.Repo[Product, uuid.UUID, ProductUpdate]
 var ProductRepository = sqlrepo.Define[Product, uuid.UUID, ProductUpdate]("")
 
 func NewProductRepository(src crud.Source) *ProductRepo {
-    repo := ProductRepository.Bind(src)
-    return &repo
+    return ProductRepository.Bind(src)
 }
 ```
 
@@ -242,6 +241,119 @@ page, err := products.Get(ctx,
 У метамодели компилятор проверяет тип значения: в `Product_.CreatedAt.Gte(...)`
 нельзя случайно передать строку. Полный разбор `Attrs`, `Product_`, композиции
 и отношений — на странице [specs](../modules/ru/specs.md).
+
+### Текстовый поиск: точный шаблон, а не магия
+
+В репозитории поиск — обычный предикат. Выберите форму по нужному шаблону:
+
+| API | SQL-форма | Что происходит с пользовательским текстом |
+|---|---|---|
+| `Contains(s)` | `%s%` | ищет вхождение; `%`, `_` и `\\` экранируются |
+| `StartsWith(s)` | `s%` | ищет префикс; спецсимволы экранируются |
+| `EndsWith(s)` | `%s` | ищет суффикс; спецсимволы экранируются |
+| `Like(pattern)` | ровно `pattern` | сырой SQL LIKE-паттерн: wildcard'ами управляете вы |
+| варианты `…IgnoreCase` | та же форма через `LOWER()` | переносимый case-insensitive поиск |
+
+~~~go
+filter := specs.AnyOf(
+    Product_.Name.ContainsIgnoreCase(q),        // %q%
+    Product_.Description.ContainsIgnoreCase(q), // %q%
+)
+
+page, err := products.Get(ctx, specs.As(filter))
+~~~
+
+То же работает через связи: этот запрос выбирает продукты, у которых категория
+или хотя бы одно изображение соответствуют условию.
+
+~~~go
+filter := specs.AllOf(
+    Product_.Category.Name.ContainsIgnoreCase(categoryQuery),
+    Product_.Images.Path.EndsWith(".webp"),
+)
+~~~
+
+Фильтр через to-one и to-many relation реализуется не небезопасным join'ом, а
+коррелированным <code>EXISTS</code>. Поэтому несколько подходящих изображений
+не дублируют один Product в странице. Сортировка через to-one relation разрешена;
+по to-many она намеренно отклоняется, потому что у коллекции нет единственного
+значения для порядка.
+
+### Если поиск и фильтры приходят от клиента
+
+Для HTTP/gRPC не пробрасывайте названия полей из запроса прямо в репозиторий.
+Пакет [query](../modules/ru/query.md) компилирует строгий JSON или query string
+в те же <code>crud.Option</code>, проверяет каждый путь по модели и ставит
+бюджеты на глубину, условия, preload и число bind-параметров.
+
+~~~http
+GET /products?q=chair&searchFields=name,category.name
+    &f=price:gte:10000
+    &f=images.path:endsWith:.webp
+    &sort=-createdAt,category.name
+    &preload=category,images
+~~~
+
+Эквивалентный JSON для POST query-endpoint:
+
+~~~json
+{
+  "search": "chair",
+  "searchFields": ["name", "category.name"],
+  "filter": {
+    "price": {"gte": 10000},
+    "images.path": {"endsWith": ".webp"}
+  },
+  "sort": ["-createdAt", "category.name"],
+  "preload": ["category", "images"]
+}
+~~~
+
+<code>search</code> (алиас в строке запроса — <code>q</code>) — это
+регистронезависимое <code>Contains</code> по указанным полям, соединённое через
+OR и заключённое в скобки. В примере это
+<code>LOWER(name) LIKE LOWER('%chair%') OR LOWER(category.name) LIKE
+LOWER('%chair%')</code>; остальные фильтры по-прежнему добавляются через AND.
+Если в <code>searchFields</code> явно назвать нестроковое поле и строка поиска
+парсится в его тип, оно добавится через equality; иначе игнорируется. Если
+<code>searchFields</code> не передан, берётся <code>DefaultSearchFields</code>,
+а при его отсутствии — все строковые поля корневой модели, разрешённые
+конфигурацией.
+
+Объявите положительный список на **каждом публичном endpoint-е**:
+
+~~~go
+cfg := &query.Config{
+    // Колонки и пути, которыми клиент вправе фильтровать.
+    // Category.* даёт всё поддерево; Images.Path — ровно одно поле.
+    Filterable: []string{
+        "Name", "Price", "Category.*", "Images.Path",
+    },
+
+    // searchFields может только сузить этот список, но не расширить его.
+    Searchable: []string{
+        "Name", "Description", "Category.Name",
+    },
+    DefaultSearchFields: []string{"Name", "Description"},
+
+    Sortable:    []string{"Name", "Price", "CreatedAt", "Category.Name"},
+    Selectable:  []string{"ID", "Name", "Price", "CategoryID"},
+    Preloadable: []string{"Category", "Images"},
+
+    MaxLimit:      50,
+    MaxConditions: 24,
+    MaxPreloads:   2,
+}
+~~~
+
+Это include/allow-list модель. Отдельных <code>ExcludeFields</code> и
+<code>ExcludeRelations</code> сейчас нет: пустой список разрешает всё, что
+маппит модель, а чтобы закрыть поле — задайте явный список разрешённых путей,
+не добавляя его. Для всех полей relation используйте <code>Category.*</code>;
+для одного — <code>Category.Name</code>. Preload управляется отдельно:
+<code>Preloadable</code> перечисляет именно relation paths, а не их колонки.
+
+Полный wire-формат, все операторы и ограничения — в [query](../modules/ru/query.md).
 
 ## 5. От простого фильтра к запросу по связям
 

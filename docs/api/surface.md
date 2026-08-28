@@ -90,6 +90,7 @@ func RegisterTableType(t reflect.Type, table string)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
 func SameDataSource(a, b any) bool
 func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool)
+func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save ScopedSave[M]) (error, bool)
 func TableNameOf(t reflect.Type) string
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
@@ -125,7 +126,7 @@ type Middleware[M any, ID comparable] func(Core[M, ID]) Core[M, ID]
 type MySQL struct{ ... }
 type Nexter[M any, ID comparable] interface{ ... }
 type OffsetLimiter interface{ ... }
-type Opt[T any] struct{ ... }
+type Opt[T any] = utils.Opt[T]
     func FromPtr[T any](p *T) Opt[T]
     func Null[T any]() Opt[T]
     func Set[T any](v T) Opt[T]
@@ -155,6 +156,7 @@ type Option func(*Options)
     func Unsorted() Option
     func Where(p Predicate) Option
     func With(src *Options) Option
+type Optional = utils.Optional
 type Options struct{ ... }
     func Build(opts ...Option) *Options
 type Order struct{ ... }
@@ -205,8 +207,8 @@ type Relation struct{ ... }
 type RelationScopes struct{ ... }
     func MergeRelationScopes(a, b *RelationScopes) *RelationScopes
 type Repo[M any, ID comparable, U any] struct{ ... }
-    func Decorate[M any, ID comparable, U any](r Repo[M, ID, U], mw ...Middleware[M, ID]) Repo[M, ID, U]
-    func Wrap[M any, ID comparable, U any](c Core[M, ID]) Repo[M, ID, U]
+    func Decorate[M any, ID comparable, U any](r *Repo[M, ID, U], mw ...Middleware[M, ID]) *Repo[M, ID, U]
+    func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U]
 type Result struct{ ... }
 type Rows interface{ ... }
 type SQL struct{ ... }
@@ -218,6 +220,7 @@ type Schema struct{ ... }
     func SchemaOfType(t reflect.Type) (*Schema, error)
 type SchemaError struct{ ... }
 type ScopedSave[M any] struct{ ... }
+type ScopedSaveOnlyer[M any, ID comparable] interface{ ... }
 type ScopedSaver[M any, ID comparable] interface{ ... }
 type Source interface{ ... }
     func ReadSourceOf(v any) (Source, bool)
@@ -337,7 +340,7 @@ type Ord[M any, T cmp.Ordered] struct{ ... }
 type Path struct{ ... }
 type Rel[M any, T any] struct{ ... }
 type Repo[M any, ID comparable, U any] struct{ ... }
-    func Executor[M any, ID comparable, U any](r crud.Repo[M, ID, U]) Repo[M, ID, U]
+    func Executor[M any, ID comparable, U any](r *crud.Repo[M, ID, U]) *Repo[M, ID, U]
 type Root[M any] struct{}
 type SpecFunc[M any] func(root Root[M], cb Builder) crud.Predicate
 type Specification[M any] interface{ ... }
@@ -489,7 +492,7 @@ type Option func(*Classifier)
 ## github.com/frostgrove/vv/crud/sqlrepo
 ```go
 const DefaultPageSize = 20
-func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) crud.Repo[M, ID, U]
+func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) *crud.Repo[M, ID, U]
 type Blueprint[M any, ID comparable, U any] struct{ ... }
     func Define[M any, ID comparable, U any](table string, opts ...Setting) *Blueprint[M, ID, U]
     func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blueprint[M, ID, U], error)
@@ -691,6 +694,66 @@ type TransportOption func(*transport)
     func WithClient(c *http.Client) TransportOption
     func WithMaxResponse(n int) TransportOption
     func WithRequestHook(fn func(*http.Request) error) TransportOption
+```
+
+## github.com/frostgrove/vv/storage
+```go
+const MaxKeyBytes = 768 ...
+var ErrInvalid = kindError{ ... } ...
+func ExactSize(n int64) *int64
+func NewError(operation string, kind Kind, cause error) error
+type Backend interface{ ... }
+type Capabilities struct{ ... }
+type CleanupOptions struct{ ... }
+type CleanupResult struct{ ... }
+type Config struct{ ... }
+type Error struct{ ... }
+type Info struct{ ... }
+type Key struct{ ... }
+    func ParseKey(raw string) (Key, error)
+type Kind string
+    const KindInvalid Kind = "invalid" ...
+    func KindOf(err error) Kind
+type Link struct{ ... }
+    func NewLink(rawURL string, expiresAt time.Time) (Link, error)
+type Metadata map[string]string
+type Namespace struct{ ... }
+    func ParseNamespace(raw string) (Namespace, error)
+type PromoteOptions struct{ ... }
+type PutOptions struct{ ... }
+type StageID struct{ ... }
+    func NewStageID() (StageID, error)
+    func ParseStageID(raw string) (StageID, error)
+type StageOptions struct{ ... }
+type Staged struct{ ... }
+type Store interface{ ... }
+    func New(config Config) (Store, error)
+type TemporaryURLOptions struct{ ... }
+type WriteMode uint8
+    const CreateOnly WriteMode = iota + 1 ...
+```
+
+## github.com/frostgrove/vv/storage/storagefs
+```go
+const DefaultFileMode fs.FileMode = 0o600 ...
+type Backend struct{ ... }
+    func New(config Config) (*Backend, error)
+type Config struct{ ... }
+```
+
+## github.com/frostgrove/vv/utils
+```go
+func Inspect(v any) (value any, defined, null, ok bool)
+func IsOptType(t reflect.Type) bool
+func Must[T any](v T, err error) T
+func OptElem(t reflect.Type) reflect.Type
+func Ptr[T any](v T) *T
+type Opt[T any] struct{ ... }
+    func FromPtr[T any](p *T) Opt[T]
+    func Null[T any]() Opt[T]
+    func Set[T any](v T) Opt[T]
+    func Undefined[T any]() Opt[T]
+type Optional interface{ ... }
 ```
 
 ## github.com/frostgrove/vv/utils/vvdb
@@ -895,6 +958,15 @@ type StatusRenderer struct{ ... }
 type TransportOption func(*transport)
     func WithCallOptions(opts ...grpc.CallOption) TransportOption
     func WithVocabulary(c *errs.Codes) TransportOption
+```
+
+## github.com/frostgrove/vv/storage/storageminio
+```go
+const MaxCreateOnlySize int64 = 5 * 1024 * 1024 * 1024 ...
+type Backend struct{ ... }
+    func New(config Config) (*Backend, error)
+type Clock func() time.Time
+type Config struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/utils/vvcfg

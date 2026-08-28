@@ -170,8 +170,7 @@ type ArticleRepo = crud.Repo[Article, int64, ArticleUpdate]
 var ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("")
 
 func NewArticleRepository(src crud.Source) *ArticleRepo {
-    repo := ArticleRepository.Bind(src)
-    return &repo
+    return ArticleRepository.Bind(src)
 }
 ```
 

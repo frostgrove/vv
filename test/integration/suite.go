@@ -715,7 +715,7 @@ func byCriteria(f func(specs.Root[User], specs.Builder) crud.Predicate) specs.Sp
 }
 
 // seed inserts n users with predictable emails, names and ages 20..20+n.
-func seed(t *testing.T, repo crud.Repo[User, int64, UserUpdate], n int) []User {
+func seed(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], n int) []User {
 	t.Helper()
 	ctx := context.Background()
 	out := make([]User, 0, n)
@@ -735,7 +735,7 @@ func seed(t *testing.T, repo crud.Repo[User, int64, UserUpdate], n int) []User {
 	return out
 }
 
-func mustID(t *testing.T, repo crud.Repo[User, int64, UserUpdate], email string) int64 {
+func mustID(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], email string) int64 {
 	t.Helper()
 	got, err := repo.GetAll(context.Background(), crud.Where(crud.Eq("Email", email)))
 	if err != nil || len(got) != 1 {

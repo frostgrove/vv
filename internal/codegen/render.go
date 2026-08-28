@@ -150,7 +150,7 @@ func (g *generator) renderRepository(m *model) (string, used, error) {
 		m.Name, g.qual(m.Name), pk.Type, m.Name)
 	fmt.Fprintf(&b, "// New%sRepository binds %sRepository to src.\n", m.Name, m.Name)
 	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) *%sRepo {\n", m.Name, m.Name)
-	fmt.Fprintf(&b, "\trepo := %sRepository.Bind(src)\n\treturn &repo\n}\n\n", m.Name)
+	fmt.Fprintf(&b, "\treturn %sRepository.Bind(src)\n}\n\n", m.Name)
 	return b.String(), used{crud: true, sqlrepo: true}, nil
 }
 

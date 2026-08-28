@@ -25,7 +25,7 @@ func as(p auth.Principal) context.Context {
 	return auth.WithPrincipal(context.Background(), p)
 }
 
-func bound(rec *crudtest.Recorder, p security.Policy[Doc, int64]) crud.Repo[Doc, int64, DocUpdate] {
+func bound(rec *crudtest.Recorder, p security.Policy[Doc, int64]) *crud.Repo[Doc, int64, DocUpdate] {
 	return Docs.Bind(rec, security.Gate(p))
 }
 

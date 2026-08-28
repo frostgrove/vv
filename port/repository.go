@@ -6,8 +6,8 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Repository is everything a Service needs. crud.Repo[M, ID, U] satisfies it,
-// and so does specs.Repo and any struct that embeds either — which is how a
+// Repository is everything a Service needs. *crud.Repo[M, ID, U] satisfies it,
+// and so does *specs.Repo and any struct that embeds either — which is how a
 // service layer with extra checks takes the repository's place ([[D-022]]).
 //
 // It is narrow on purpose: it lists what the routes call, not what the

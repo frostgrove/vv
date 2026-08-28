@@ -47,8 +47,7 @@ var UserRepository = sqlrepo.Define[ent.User, int64, UserUpdate]("")
 
 // NewUserRepository binds UserRepository to src.
 func NewUserRepository(src crud.Source) *UserRepo {
-	repo := UserRepository.Bind(src)
-	return &repo
+	return UserRepository.Bind(src)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

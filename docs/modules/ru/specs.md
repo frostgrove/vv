@@ -218,13 +218,12 @@ one, err := products.First(ctx,
 JPA-подобные методы. Обычные <code>GetByID</code>, <code>Save</code>,
 <code>Update</code> и остальные никуда не исчезают.
 
-Генерируемая фабрика возвращает указатель, чтобы его было удобно отдать в DI.
-<code>specs.Executor</code> принимает сам маленький value-объект
-<code>crud.Repo</code>, поэтому в этом одном месте передайте
-<code>*product.NewProductRepository(src)</code>.
+Генерируемая фабрика возвращает указатель, и <code>specs.Executor</code>
+принимает тот же указатель. Репозиторий не нужно копировать или разыменовывать
+ради подключения спецификаций.
 
 ~~~go
-products := specs.Executor(*product.NewProductRepository(src))
+products := specs.Executor(product.NewProductRepository(src))
 
 one, err := products.FindOne(ctx, Product_.Slug.Eq(slug))
 first, err := products.FindFirst(ctx, AvailableProducts(now),
@@ -249,6 +248,28 @@ ok, err := products.ExistsBy(ctx, Product_.Slug.Eq(slug))
 <code>DeleteAll</code>. У <code>UpdateBy</code>/<code>DeleteBy</code> защита
 намеренная: она не даст случайно сделать write по всей таблице, если
 необязательные части фильтра схлопнулись в ничто.
+
+## Поиск — это спецификация по строковым attrs
+
+У <code>specs</code> нет отдельного магического метода Search: в прикладном
+коде это обычная, явно собранная спецификация. Это позволяет видеть, по каким
+полям и с какой логикой идёт поиск.
+
+~~~go
+search := specs.AnyOf(
+    Product_.Name.ContainsIgnoreCase(q),        // %q%
+    Product_.Description.ContainsIgnoreCase(q), // %q%
+)
+
+page, err := products.Get(ctx, specs.As(search))
+~~~
+
+<code>Contains</code> даёт <code>%str%</code>, <code>StartsWith</code> —
+<code>str%</code>, а <code>EndsWith</code> — <code>%str</code>; эти формы
+экранируют пользовательские wildcard'ы. Если паттерн намеренно собирает
+разработчик, есть <code>Like("%vip%")</code>. Для публичного общего search и
+allow-list полей используйте [query](query.md), а не вручную принимайте имена
+полей из HTTP.
 
 ## Связи: фильтровать родителей, загружать детей — разные операции
 

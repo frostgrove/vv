@@ -245,12 +245,12 @@ func (bp *Blueprint[M, ID, U]) Meta() *crud.Meta { return bp.meta }
 
 // Bind attaches the blueprint to a datasource, wrapping it in the given
 // decorators. The first decorator ends up outermost.
-func (bp *Blueprint[M, ID, U]) Bind(src crud.Source, mw ...crud.Middleware[M, ID]) crud.Repo[M, ID, U] {
+func (bp *Blueprint[M, ID, U]) Bind(src crud.Source, mw ...crud.Middleware[M, ID]) *crud.Repo[M, ID, U] {
 	core := crud.Core[M, ID](newRepository[M, ID, U](src, bp))
 	return crud.Wrap[M, ID, U](crud.Chain(core, mw...))
 }
 
 // New declares and binds in one call.
-func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) crud.Repo[M, ID, U] {
+func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) *crud.Repo[M, ID, U] {
 	return Define[M, ID, U](table, opts...).Bind(src)
 }

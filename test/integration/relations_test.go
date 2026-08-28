@@ -24,11 +24,11 @@ type blog struct {
 	name     string
 	db       *sql.DB
 	src      crud.Source
-	articles crud.Repo[Article, int64, ArticleUpdate]
-	authors  crud.Repo[Author, int64, struct{}]
-	comments crud.Repo[Comment, int64, CommentUpdate]
-	tags     crud.Repo[Tag, int64, struct{}]
-	stats    crud.Repo[ArticleStats, int64, struct{}]
+	articles *crud.Repo[Article, int64, ArticleUpdate]
+	authors  *crud.Repo[Author, int64, struct{}]
+	comments *crud.Repo[Comment, int64, CommentUpdate]
+	tags     *crud.Repo[Tag, int64, struct{}]
+	stats    *crud.Repo[ArticleStats, int64, struct{}]
 }
 
 // blogs is every distinct crud.Source the relation subsystem can be reached

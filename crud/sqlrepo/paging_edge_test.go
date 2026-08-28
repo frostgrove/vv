@@ -20,14 +20,14 @@ func TestScopeReachesDeleteByID(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		call func(crud.Repo[User, int64, UserUpdate]) error
+		call func(*crud.Repo[User, int64, UserUpdate]) error
 		want string
 	}{
 		{"one id",
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.Delete(ctx, 42); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.Delete(ctx, 42); return err },
 			`DELETE FROM "users" WHERE ("tenant_id" = $1 AND "id" = $2)`},
 		{"several ids",
-			func(r crud.Repo[User, int64, UserUpdate]) error { _, err := r.Delete(ctx, 42, 43); return err },
+			func(r *crud.Repo[User, int64, UserUpdate]) error { _, err := r.Delete(ctx, 42, 43); return err },
 			`DELETE FROM "users" WHERE ("tenant_id" = $1 AND "id" IN ($2, $3))`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

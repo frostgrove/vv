@@ -65,7 +65,7 @@ var tenantEverywhere = security.Combine(
 	security.ScopeRelationField[Folder, int64]("Owner", "TenantID", tenantOf),
 )
 
-func folders(rec *crudtest.Recorder, p security.Policy[Folder, int64]) crud.Repo[Folder, int64, FolderUpdate] {
+func folders(rec *crudtest.Recorder, p security.Policy[Folder, int64]) *crud.Repo[Folder, int64, FolderUpdate] {
 	return Folders.Bind(rec, security.Gate(p))
 }
 
@@ -252,20 +252,20 @@ func TestTheNarrowingReachesEveryReadPath(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		push []crudtest.Result
-		call func(r crud.Repo[Folder, int64, FolderUpdate]) error
+		call func(r *crud.Repo[Folder, int64, FolderUpdate]) error
 	}{
 		{"GetByID", []crudtest.Result{crudtest.Rows(folderRow(1, 7, "mine", 3)), crudtest.Rows()},
-			func(r crud.Repo[Folder, int64, FolderUpdate]) error {
+			func(r *crud.Repo[Folder, int64, FolderUpdate]) error {
 				_, err := r.GetByID(ctx, 1, crud.Preload("Notes"))
 				return err
 			}},
 		{"Get", []crudtest.Result{crudtest.Rows(folderRow(1, 7, "mine", 3)), crudtest.Rows()},
-			func(r crud.Repo[Folder, int64, FolderUpdate]) error {
+			func(r *crud.Repo[Folder, int64, FolderUpdate]) error {
 				_, err := r.Get(ctx, crud.Preload("Notes"), crud.SkipTotal())
 				return err
 			}},
 		{"GetAll", []crudtest.Result{crudtest.Rows(folderRow(1, 7, "mine", 3)), crudtest.Rows()},
-			func(r crud.Repo[Folder, int64, FolderUpdate]) error {
+			func(r *crud.Repo[Folder, int64, FolderUpdate]) error {
 				_, err := r.GetAll(ctx, crud.Preload("Notes"))
 				return err
 			}},
@@ -291,12 +291,12 @@ func TestCountAndExistsNarrowTheirSubqueries(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		push crudtest.Result
-		call func(r crud.Repo[Folder, int64, FolderUpdate]) error
+		call func(r *crud.Repo[Folder, int64, FolderUpdate]) error
 	}{
 		{"Count", crudtest.Rows([]any{int64(0)}),
-			func(r crud.Repo[Folder, int64, FolderUpdate]) error { _, err := r.Count(ctx, where); return err }},
+			func(r *crud.Repo[Folder, int64, FolderUpdate]) error { _, err := r.Count(ctx, where); return err }},
 		{"Exists", crudtest.Rows(),
-			func(r crud.Repo[Folder, int64, FolderUpdate]) error { _, err := r.Exists(ctx, where); return err }},
+			func(r *crud.Repo[Folder, int64, FolderUpdate]) error { _, err := r.Exists(ctx, where); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(tc.push)

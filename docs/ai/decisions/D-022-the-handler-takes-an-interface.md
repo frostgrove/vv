@@ -7,7 +7,7 @@
 
 `crudhttp.Repository[M, ID, U]` declares the eight methods the handler calls:
 `Meta`, `GetByID`, `Get`, `GetAll`, `Save`, `Update`, `Delete`, `Count`.
-`crud.Repo[M, ID, U]` satisfies it, `specs.Repo` satisfies it, and so does any
+`*crud.Repo[M, ID, U]` satisfies it, `*specs.Repo` satisfies it, and so does any
 struct that embeds either. `Handler` stores the interface and nothing else.
 
 `crudfiber.Repository`, `crudgin.Repository` and `crudnet.Repository` are type

@@ -93,7 +93,7 @@ var OwnPolicy = security.ScopeField[Article, int64]("AuthorID", authorOf)
 // Repo is the fully decorated repository a handler would hold: scoped by
 // author, with the specification surface on top.
 type Repo struct {
-	specs.Repo[Article, int64, ArticleUpdate]
+	*specs.Repo[Article, int64, ArticleUpdate]
 }
 
 // Open wires everything together. This is the whole set-up cost.

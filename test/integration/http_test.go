@@ -24,7 +24,7 @@ import (
 // the repository: it embeds the specification-decorated repo, so it satisfies
 // crudfiber.Repository for free, and overrides just the method it cares about.
 type articleService struct {
-	specs.Repo[Article, int64, ArticleUpdate]
+	*specs.Repo[Article, int64, ArticleUpdate]
 	blocked string
 }
 

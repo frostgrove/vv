@@ -8,7 +8,7 @@
 `crud.Core[M, ID]` is the interface every decorator implements. Its `Update`
 takes `dto any`. `crud.Repo[M, ID, U]` is a struct that embeds a `Core` and
 shadows `Update` and `UpdateAll` with versions typed against the update DTO `U`.
-Consumers hold a `Repo`; decorators only ever see a `Core`.
+Consumers hold `*Repo`; decorators only ever see a `Core`.
 
 ## Why
 

@@ -512,7 +512,7 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 // join it with crud.WithExecutor) is the same code on both engines.
 type mxTeamUsecase struct {
 	db      *gorm.DB
-	members crud.Repo[Member, uint, MemberUpdate]
+	members *crud.Repo[Member, uint, MemberUpdate]
 	promote string
 }
 
@@ -736,8 +736,8 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 type mxRelTarget struct {
 	name   string
 	src    crud.Source
-	owners crud.Repo[MxOwner, int64, struct{}]
-	items  crud.Repo[MxItem, int64, struct{}]
+	owners *crud.Repo[MxOwner, int64, struct{}]
+	items  *crud.Repo[MxItem, int64, struct{}]
 }
 
 func mxRelTargets(t *testing.T) []mxRelTarget {

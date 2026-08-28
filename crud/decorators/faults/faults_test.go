@@ -50,7 +50,7 @@ func conflict(table string, columns ...string) error {
 		Wrapping(crud.ErrConflict).Fault()
 }
 
-func docs(rec *crudtest.Recorder) crud.Repo[Doc, int64, DocUpdate] {
+func docs(rec *crudtest.Recorder) *crud.Repo[Doc, int64, DocUpdate] {
 	return Docs.Bind(rec, faults.Enrich[Doc, int64]())
 }
 
@@ -68,7 +68,7 @@ func failWith(rec *crudtest.Recorder, err error) *crudtest.Recorder {
 
 // saveFailing runs one Save that the recorder refuses with err, and hands back
 // whatever the decorator turned it into.
-func saveFailing(t *testing.T, r crud.Repo[Doc, int64, DocUpdate], rec *crudtest.Recorder, err error) *errs.Fault {
+func saveFailing(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate], rec *crudtest.Recorder, err error) *errs.Fault {
 	t.Helper()
 	failWith(rec, err)
 	_, got := r.Save(context.Background(), &Doc{Title: "a"})
@@ -264,63 +264,63 @@ func TestTheDecoratorDoesNotMutateTheFaultItWasGiven(t *testing.T) {
 func TestEveryVerbIsDecorated(t *testing.T) {
 	// Each entry drives one Core method to failure and reports the fault the
 	// decorator produced, so "decorated" means observed rather than declared.
-	verbs := map[string]func(crud.Repo[Doc, int64, DocUpdate]) error{
-		"GetByID": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+	verbs := map[string]func(*crud.Repo[Doc, int64, DocUpdate]) error{
+		"GetByID": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.GetByID(context.Background(), 1)
 			return err
 		},
-		"Get": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Get": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Get(context.Background())
 			return err
 		},
-		"GetAll": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"GetAll": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.GetAll(context.Background())
 			return err
 		},
-		"First": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"First": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.First(context.Background())
 			return err
 		},
-		"Save": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Save": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Save(context.Background(), &Doc{Title: "a"})
 			return err
 		},
-		"SaveOnly": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"SaveOnly": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			return r.SaveOnly(context.Background(), &Doc{Title: "a"})
 		},
-		"SaveAll": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"SaveAll": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			return r.SaveAll(context.Background(), []*Doc{{Title: "a"}})
 		},
-		"Update": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Update": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Update(context.Background(), 1, DocUpdate{})
 			return err
 		},
-		"UpdateAll": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"UpdateAll": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			title := "t"
 			_, err := r.UpdateAll(context.Background(), DocUpdate{Title: &title}, crud.Where(crud.Eq("ID", int64(1))))
 			return err
 		},
-		"Aggregate": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Aggregate": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Aggregate(context.Background(), crud.Aggregate(crud.CountAll("n")))
 			return err
 		},
-		"Delete": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Delete": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Delete(context.Background(), 1)
 			return err
 		},
-		"DeleteAll": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"DeleteAll": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.DeleteAll(context.Background(), crud.Where(crud.Eq("ID", int64(1))))
 			return err
 		},
-		"Count": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Count": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Count(context.Background())
 			return err
 		},
-		"Exists": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Exists": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.Exists(context.Background())
 			return err
 		},
-		"Tx": func(r crud.Repo[Doc, int64, DocUpdate]) error {
+		"Tx": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			return r.Tx(context.Background(), func(ctx context.Context) error {
 				return r.SaveOnly(ctx, &Doc{Title: "a"})
 			})

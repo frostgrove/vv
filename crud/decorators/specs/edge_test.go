@@ -142,12 +142,12 @@ func TestBulkSpecificationsFailClosedOnAnOpaqueDriverValuer(t *testing.T) {
 	))
 	for _, tc := range []struct {
 		name string
-		call func(specs.Repo[User, int64, UserUpdate]) error
+		call func(*specs.Repo[User, int64, UserUpdate]) error
 		want error
 	}{
 		{
 			name: "delete",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.DeleteBy(context.Background(), p)
 				return err
 			},
@@ -155,7 +155,7 @@ func TestBulkSpecificationsFailClosedOnAnOpaqueDriverValuer(t *testing.T) {
 		},
 		{
 			name: "update",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
 				return err
 			},
@@ -178,12 +178,12 @@ func TestBulkSpecificationsRefuseRawSQL(t *testing.T) {
 	p := specs.Lift[User](crud.Raw("1 = 1"))
 	for _, tc := range []struct {
 		name string
-		call func(specs.Repo[User, int64, UserUpdate]) error
+		call func(*specs.Repo[User, int64, UserUpdate]) error
 		want error
 	}{
 		{
 			name: "delete",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.DeleteBy(context.Background(), p)
 				return err
 			},
@@ -191,7 +191,7 @@ func TestBulkSpecificationsRefuseRawSQL(t *testing.T) {
 		},
 		{
 			name: "update",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
 				return err
 			},
@@ -217,12 +217,12 @@ func TestBulkSpecificationsRefuseOpaqueDatabaseSQLBinds(t *testing.T) {
 	))
 	for _, tc := range []struct {
 		name string
-		call func(specs.Repo[User, int64, UserUpdate]) error
+		call func(*specs.Repo[User, int64, UserUpdate]) error
 		want error
 	}{
 		{
 			name: "delete",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.DeleteBy(context.Background(), p)
 				return err
 			},
@@ -230,7 +230,7 @@ func TestBulkSpecificationsRefuseOpaqueDatabaseSQLBinds(t *testing.T) {
 		},
 		{
 			name: "update",
-			call: func(r specs.Repo[User, int64, UserUpdate]) error {
+			call: func(r *specs.Repo[User, int64, UserUpdate]) error {
 				_, err := r.UpdateBy(context.Background(), p, UserUpdate{})
 				return err
 			},

@@ -22,7 +22,7 @@ type verb struct {
 	// call drives the method through a gated repository. It exists because the
 	// interesting question is behavioural: a gate that declared an override and
 	// checked nothing would satisfy any list-comparison test ever written.
-	call func(context.Context, crud.Repo[Doc, int64, DocUpdate]) error
+	call func(context.Context, *crud.Repo[Doc, int64, DocUpdate]) error
 	// gated is false for a method inherited from the wrapped Core.
 	gated  bool
 	reason string
@@ -30,59 +30,59 @@ type verb struct {
 
 // coreVerbs is the whole of crud.Core, decided one method at a time.
 var coreVerbs = []verb{
-	{name: "GetByID", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "GetByID", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.GetByID(ctx, 1)
 		return err
 	}},
-	{name: "Get", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Get", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Get(ctx)
 		return err
 	}},
-	{name: "GetAll", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "GetAll", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.GetAll(ctx)
 		return err
 	}},
-	{name: "First", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "First", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.First(ctx)
 		return err
 	}},
-	{name: "Count", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Count", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Count(ctx)
 		return err
 	}},
-	{name: "Exists", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Exists", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Exists(ctx)
 		return err
 	}},
-	{name: "Aggregate", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Aggregate", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Aggregate(ctx, crud.Aggregate(crud.CountAll("n")), crud.GroupBy("TenantID"))
 		return err
 	}},
-	{name: "Save", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Save", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Save(ctx, &Doc{Title: "a"})
 		return err
 	}},
-	{name: "SaveOnly", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "SaveOnly", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		return r.SaveOnly(ctx, &Doc{Title: "a"})
 	}},
-	{name: "SaveAll", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "SaveAll", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		return r.SaveAll(ctx, []*Doc{{Title: "a"}})
 	}},
-	{name: "Update", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Update", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		title := "b"
 		_, err := r.Update(ctx, 1, DocUpdate{Title: &title})
 		return err
 	}},
-	{name: "UpdateAll", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "UpdateAll", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		title := "b"
 		_, err := r.UpdateAll(ctx, DocUpdate{Title: &title})
 		return err
 	}},
-	{name: "Delete", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "Delete", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.Delete(ctx, 1)
 		return err
 	}},
-	{name: "DeleteAll", gated: true, call: func(ctx context.Context, r crud.Repo[Doc, int64, DocUpdate]) error {
+	{name: "DeleteAll", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.DeleteAll(ctx)
 		return err
 	}},

@@ -74,8 +74,12 @@ type Repo[M any, ID comparable, U any] struct {
 }
 
 // Wrap lifts a Core into a typed Repo.
-func Wrap[M any, ID comparable, U any](c Core[M, ID]) Repo[M, ID, U] {
-	return Repo[M, ID, U]{Core: c}
+//
+// Repositories are passed by pointer throughout the public composition API.
+// Repo is currently a small façade over Core, but that implementation detail
+// should not force consumers to copy a dependency to decorate or inject it.
+func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U] {
+	return &Repo[M, ID, U]{Core: c}
 }
 
 // Update applies a partial update DTO and returns the refreshed model. Options
@@ -86,7 +90,7 @@ func Wrap[M any, ID comparable, U any](c Core[M, ID]) Repo[M, ID, U] {
 // plain T field is always applied. Only fields whose value actually differs
 // from the stored row reach the UPDATE statement; when nothing differs the
 // loaded row is returned without a write.
-func (r Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Option) (M, error) {
+func (r *Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Option) (M, error) {
 	return r.Core.Update(ctx, id, dto, opts...)
 }
 
@@ -102,17 +106,17 @@ func (r Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Option
 // The row count is the database's own, and the two engines count differently:
 // PostgreSQL reports the rows it matched, MySQL the rows it actually changed, so
 // writing a value a row already holds is counted by one and not by the other.
-func (r Repo[M, ID, U]) UpdateAll(ctx context.Context, dto U, opts ...Option) (int64, error) {
+func (r *Repo[M, ID, U]) UpdateAll(ctx context.Context, dto U, opts ...Option) (int64, error) {
 	return r.Core.UpdateAll(ctx, dto, opts...)
 }
 
 // Unwrap returns the decorated Core, e.g. to add another layer.
-func (r Repo[M, ID, U]) Unwrap() Core[M, ID] { return r.Core }
+func (r *Repo[M, ID, U]) Unwrap() Core[M, ID] { return r.Core }
 
 // Decorate applies middlewares to an existing typed repo. The first middleware
 // ends up outermost, so it observes calls first.
-func Decorate[M any, ID comparable, U any](r Repo[M, ID, U], mw ...Middleware[M, ID]) Repo[M, ID, U] {
-	return Repo[M, ID, U]{Core: Chain(r.Core, mw...)}
+func Decorate[M any, ID comparable, U any](r *Repo[M, ID, U], mw ...Middleware[M, ID]) *Repo[M, ID, U] {
+	return Wrap[M, ID, U](Chain(r.Core, mw...))
 }
 
 // Chain applies middlewares to a Core; mw[0] ends up outermost.

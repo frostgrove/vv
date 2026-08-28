@@ -62,18 +62,18 @@ func TestAScopeWithoutInspectRefusesEveryWriteWithABody(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	for _, tc := range []struct {
 		name string
-		call func(crud.Repo[Doc, int64, DocUpdate]) error
+		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
 		{
 			name: "Update",
-			call: func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := repo.Update(ctx, 1, DocUpdate{TenantID: ptrTo(int64(8))})
 				return err
 			},
 		},
 		{
 			name: "UpdateAll",
-			call: func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := repo.UpdateAll(ctx, DocUpdate{TenantID: ptrTo(int64(8))})
 				return err
 			},
@@ -154,13 +154,13 @@ func TestScopeOnlySavePreservesResolverFailures(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		call func(crud.Repo[Doc, int64, DocUpdate]) error
+		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
-		{"Save", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+		{"Save", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := repo.Save(context.Background(), &Doc{Title: "x"})
 			return err
 		}},
-		{"SaveAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+		{"SaveAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 			return repo.SaveAll(context.Background(), []*Doc{{Title: "x"}})
 		}},
 	} {
@@ -204,13 +204,13 @@ func TestGeneratedSaveStillFailsWhenAScopeResolverFails(t *testing.T) {
 	for _, policy := range policies {
 		for _, save := range []struct {
 			name string
-			call func(crud.Repo[Doc, int64, DocUpdate]) error
+			call func(*crud.Repo[Doc, int64, DocUpdate]) error
 		}{
-			{"Save", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			{"Save", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				_, err := repo.Save(context.Background(), &Doc{TenantID: 7, Title: "x"})
 				return err
 			}},
-			{"SaveAll", func(repo crud.Repo[Doc, int64, DocUpdate]) error {
+			{"SaveAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
 				return repo.SaveAll(context.Background(), []*Doc{{TenantID: 7, Title: "x"}})
 			}},
 		} {
