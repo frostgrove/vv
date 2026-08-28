@@ -7,6 +7,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179 h1:gRecY9L0e2+Z1tGaDN4w4w8I4hsRYdvpiGKIdBeMUEU=
 github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260828080731-73ebf0e2ce96 h1:0U6RYNW0X7XYE2/7XpeFcxHTxr4t1bSd8yIj00U3cho=
+github.com/frostgrove/vv v0.0.0-20260828080731-73ebf0e2ce96/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/klauspost/compress v1.19.2 h1:hMRETovs/pu/dVWN7zIT1PGG8t509MwT6bO7XSi26R8=

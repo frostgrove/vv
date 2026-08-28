@@ -23,6 +23,8 @@ github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038 h1:D4mC6F8kE0cx6R7fA
 github.com/frostgrove/vv v0.0.0-20260827101522-0cd9a2220038/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179 h1:gRecY9L0e2+Z1tGaDN4w4w8I4hsRYdvpiGKIdBeMUEU=
 github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
+github.com/frostgrove/vv v0.0.0-20260828080731-73ebf0e2ce96 h1:0U6RYNW0X7XYE2/7XpeFcxHTxr4t1bSd8yIj00U3cho=
+github.com/frostgrove/vv v0.0.0-20260828080731-73ebf0e2ce96/go.mod h1:UFEB/ZnGrDmtqwYD0vPgCNYnWelZMD9OV56zh8BgSic=
 github.com/gabriel-vasile/mimetype v1.4.12 h1:e9hWvmLYvtp846tLHam2o++qitpguFiYCKbn0w9jyqw=
 github.com/gabriel-vasile/mimetype v1.4.12/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
 github.com/gin-contrib/sse v1.1.0 h1:n0w2GMuUpWDVp7qSpvze6fAu9iRxJY4Hmj6AmBOU05w=

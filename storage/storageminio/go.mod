@@ -5,7 +5,7 @@ module github.com/frostgrove/vv/storage/storageminio
 go 1.26
 
 require (
-	github.com/frostgrove/vv v0.0.0-20260827111007-82f77fd2c179
+	github.com/frostgrove/vv v0.0.0-20260828080731-73ebf0e2ce96
 	github.com/minio/minio-go/v7 v7.3.0
 )
 
