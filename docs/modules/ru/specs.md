@@ -1,269 +1,345 @@
-# specs — спецификации и Criteria API
+# specs — типизированные запросы без строковых полей
 
-```go
+~~~go
 import "github.com/frostgrove/vv/crud/decorators/specs"
-```
+~~~
 
-**Модуль:** корневой · **Зависит от:** `crud` и стандартной библиотеки
+<code>specs</code> — необязательный слой над обычным репозиторием. Он превращает
+переиспользуемый фильтр в значение <code>Specification[M]</code> и даёт
+метамодель, которую проверяет компилятор.
 
-`Specification<T>` и `CriteriaBuilder` из JPA, плюс генерируемая метамодель,
-которую проверяет компилятор. Собирайте переиспользуемые фрагменты запроса,
-называйте их и передавайте как обычные значения.
+Если нужен общий путь «модель → генерация → Get/Save», начните с
+[руководства по репозиторию](../../usage-guides/repository.md).
 
-**Берите его, когда** один и тот же фильтр встречается в трёх обработчиках,
-когда запрос собирается из частей, которые выбирает вызывающий код, или когда
-вы хотите, чтобы переименованная колонка ломала сборку, а не запрос.
+## За минуту: что это даёт
 
----
+Без метамодели разовый запрос выглядит так:
 
-## Соответствие
-
-| JPA | vv |
-|---|---|
-| `Specification<T>` | `specs.Specification[M]` |
-| `Root<T>`, `CriteriaBuilder` | `specs.Root[M]`, `specs.Builder` |
-| `Specification.where(a).and(b).or(c).not()` | `specs.Where(a).And(b).Or(c).Not()` |
-| `JpaSpecificationExecutor<T>` | `specs.Executor(repo)` |
-| сгенерированная метамодель `User_` | `specs.Metamodel[User, userAttrs]()` |
-
----
-
-## Два способа написать спецификацию
-
-### Буквальная форма
-
-```go
-func IsActive() specs.Specification[User] {
-    return specs.Of[User](func(root specs.Root[User], cb specs.Builder) crud.Predicate {
-        return cb.Equal(root.Get("Active"), true)
-    })
-}
-
-adults := specs.Where(IsActive()).And(specs.Of[User](
-    func(r specs.Root[User], cb specs.Builder) crud.Predicate {
-        return cb.GreaterThanOrEqualTo(r.Get("Age"), 18)
-    }))
-```
-
-`Root.Get` принимает имя поля Go — имя колонки тоже подойдёт — и может
-пересекать связь: `root.Get("Author.Name")`.
-
-### Форма с метамоделью
-
-Тот же результат, но проверенный компилятором. [`cmd/vv`](vv-cli.md) сам
-пишет структуру атрибутов за вас.
-
-```go
-type userAttrs struct {
-    ID        specs.Ord[User, int64]
-    Email     specs.Str[User]
-    Age       specs.Ord[User, int]
-    Active    specs.Attr[User, bool]
-    CreatedAt specs.Cmp[User, time.Time]
-}
-
-var User_ = specs.Metamodel[User, userAttrs]()   // проверяется при инициализации пакета
-
-adults := specs.Where(User_.Active.Eq(true)).And(User_.Age.Gte(18))
-```
-
-Переименованная колонка падает при инициализации, называя поле. Значение
-неверного типа не пройдёт компиляцию.
-
-Сгенерированная метамодель раскрывается и через связи, до `-depth` (по
-умолчанию 2), и никогда не возвращается в модель, уже стоящую на пути:
-
-```go
-Article_.Views.Gte(100)              // "views" >= $1
-Article_.Author.Name.Eq("Ann")       // EXISTS (… authors … name = $1)
-Article_.Comments.Approved.Eq(true)  // EXISTS (… comments … approved = $1)
-Article_.Author.Name.Desc()          // ORDER BY (SELECT … LIMIT 1) DESC
-```
-
----
-
-## Типы атрибутов
-
-Выбирайте самый узкий — от него зависит набор доступных методов.
-
-| Тип | Конструктор | Добавляет |
-|---|---|---|
-| `Attr[M, T]` | `Attribute[M, T](field)` | `Eq` `Ne` `In` `NotIn` `IsNull` `NotNull` `Asc` `Desc` |
-| `Cmp[M, T]` | `Comparable[M, T](field)` | то же самое плюс `Gt` `Gte` `Lt` `Lte` `Between` для типов вне `cmp.Ordered`, вроде `time.Time` |
-| `Ord[M, T]` | `Ordered[M, T](field)` | то же самое, для `cmp.Ordered` |
-| `Str[M]` | `Text[M](field)` | то же самое плюс `Like` `NotLike` `LikeIgnoreCase` и безопасные для литерала `Contains` / `StartsWith` / `EndsWith` с вариантами `IgnoreCase` |
-
-Каждый метод возвращает `Specification[M]`, так что они composable с `Where`,
-`AllOf`, `AnyOf` и `Not`.
-
-`Name()` у любого атрибута отвечает каноническим именем поля модели, к которому
-он привязался. Именно им адресуются настройки и опции, принимающие *имя*, а не
-предикат:
-
-```go
-sqlrepo.SoftDelete(Doc_.DeletedAt.Name())
-crud.GroupBy(Order_.Status.Name())
-crud.Sum("total", Order_.Amount.Name())
-security.Freeze[Doc, int64](Doc_.TenantID.Name())
-```
-
-## Хэндлы связей
-
-Сгенерированная группа связи несёт собственный путь, поэтому и связь
-адресуется идентификатором:
-
-```go
-Article_.Comments.Path()          // "Comments"
-Article_.Comments.Author.Path()   // "Comments.Author"
-```
-
-Именно это принимают `sqlrepo.RelationScope`, `crud.Preload`, `crud.PreloadWhere`
-и `security.ScopeRelationField` вместо литерала. Хэндл также помнит модель, на
-которую путь приземляется, поэтому хэндл, указывающий на не ту модель, падает
-при инициализации пакета, а не сужает не ту таблицу.
-
-`Path`, `RelPath` и `String` отвечают одной и той же строкой, и три формы — из-за
-встраивания. Хэндл встроен в группу, поэтому `Path` продвинут на уровень наружу,
-а каждая колонка *целевой* модели — поле той же группы на уровень ближе, и Go
-разрешает ближнее. Колонка `Path` у цели, таким образом, затеняет метод, и
-`Folder_.Files.Path()` перестаёт компилироваться для этой одной связи.
-Сгенерированный файл говорит об этом в doc-комментарии группы; `RelPath()` —
-форма, которую ничто не затеняет.
-
-Группа существует только там, где генератор раскрыл связь, а этим управляет
-`-depth`; связь, целевая модель которой живёт в другом пакете, не раскрывается
-вовсе ([[UC-007]]).
-
-### Дальняя сторона связи — это другая метамодель
-
-Предикат скоупа связи пишется против *целевой* модели, поэтому берётся из её
-собственной метамодели:
-
-```go
-sqlrepo.RelationScope(
-    Article_.Comments.Path(),                    // "Comments"
-    specs.Predicate(Comment_.Approved.Eq(true))) // "approved" = $1
-```
-
-Не `Article_.Comments.Approved` — это атрибут *статьи*, привязанный к
-`Comments.Approved`, и он фильтрует статьи по их комментариям через
-коррелированный `EXISTS` ([[D-005]]). Полезны обе формы; они отвечают на разные
-вопросы.
-
-## Композиция
-
-```go
-specs.Where(a).And(b).Or(c).Not()
-specs.AllOf(a, b, c)     // AND
-specs.AnyOf(a, b, c)     // OR
-specs.Not(a)
-specs.Lift[User](crud.Eq("Email", "ann@x.io"))   // обычный предикат становится спецификацией
-```
-
-Необязательные поля формы тоже остаются декларативными:
-
-```go
-filters := specs.AllOf(
-    User_.TenantID.Eq(tenant),                 // обязательное условие
-    specs.If(q != "", User_.Name.ContainsIgnoreCase(q)),
-    User_.OwnerID.EqPtr(ownerID),               // nil: условие отсутствует
-    User_.ManagerID.EqOpt(managerID),           // undefined: отсутствует; null: IS NULL
+~~~go
+products.Get(ctx,
+    crud.Where(crud.Gte("Price", 10_000)),
+    crud.Where(crud.ContainsIgnoreCase("Name", q)),
 )
-```
+~~~
 
-`If(false, ...)` не добавляет условия. То же относится к nil в `EqPtr` и
-undefined в `EqOpt`; null у `EqOpt` намеренно становится `IS NULL`. `AnyOf`,
-у которого все члены отсутствуют, не ограничивает запрос, поэтому обязательное
-сужение (например, tenant) следует помещать во внешний `AllOf`.
+Это нормально для простого случая. Но <code>"Price"</code> — строка: опечатку,
+удалённое поле и неверный тип значения Go не увидит до запуска.
 
-## Criteria builder
+С генератором тот же запрос:
 
-`specs.CB` — общий инстанс; нулевой `Builder` тоже работает.
+~~~go
+products.Get(ctx,
+    specs.As(specs.AllOf(
+        Product_.Price.Gte(10_000),
+        Product_.Name.ContainsIgnoreCase(q),
+    )),
+    crud.OrderBy(Product_.CreatedAt.Desc()),
+)
+~~~
 
-```
-Equal        NotEqual     EqualTo      In           NotIn
-GreaterThan  GreaterThanOrEqualTo      LessThan     LessThanOrEqualTo
-Between      IsNull       IsNotNull
-Like         NotLike      LikeIgnoreCase
-Contains     StartsWith   EndsWith
-ContainsIgnoreCase  StartsWithIgnoreCase  EndsWithIgnoreCase
-And          Or           Not          Conjunction  Disjunction   Raw
-```
+<code>Product_.Price.Gte</code> принимает только тип цены, а
+<code>Product_.Name</code> предлагает строковые операции. Переименовали поле и
+перегенерировали <code>vv_gen.go</code> — старые обращения становятся ошибками
+компиляции.
 
-`Like`, `NotLike` и `LikeIgnoreCase` принимают SQL-паттерн как есть: это форма
-для вызывающего кода, который намеренно управляет `%` и `_`. Семейства
-`Contains`, `StartsWith` и `EndsWith` принимают обычный текст: они экранируют
-обратную косую черту, `%` и `_`, сами добавляют нужный wildcard и выводят
-диалектный `ESCAPE`, в том числе для SQLite. Варианты `IgnoreCase` используют
-переносимое сравнение через `LOWER()`.
+| Когда | Что использовать |
+|---|---|
+| одно условие, нигде больше не повторится | <code>crud.Where(crud.Eq("Field", value))</code> |
+| фильтр собирается из необязательных частей | <code>specs.AllOf</code> / <code>specs.If</code> / <code>EqPtr</code> / <code>EqOpt</code> |
+| правило нужно в разных сервисах | именованную <code>Specification[M]</code> |
+| нужны связи, типизированная сортировка и preload-пути | метамодель <code>Product_</code> |
 
----
+## ProductAttrs и Product_: что именно генерируется
 
-## Запросы с ним
+Для модели:
 
-```go
-sp := specs.Executor(Users.Bind(db))
+~~~go
+type Product struct {
+    ID            uuid.UUID
+    TenantID      uuid.UUID
+    CategoryID    *uuid.UUID
+    BrandID       *uuid.UUID
+    Slug          string
+    Name          string
+    Price         int64
+    Published     bool
+    AvailableFrom time.Time
+    CreatedAt     time.Time
+}
+~~~
 
-one,   err := sp.FindOne(ctx, User_.Email.Eq("ann@x.io"))   // ErrNotFound / ErrNotUnique
-first, err := sp.FindFirst(ctx, adults, crud.OrderBy(User_.Age.Desc()))
-list,  err := sp.FindAll(ctx, adults, crud.OrderBy(User_.Age.Desc()))
-page,  err := sp.FindPage(ctx, adults, crud.Page(2), crud.Limit(20))
-n,     err := sp.CountBy(ctx, adults)
-ok,    err := sp.ExistsBy(ctx, User_.Email.Eq("ann@x.io"))
-n,     err  = sp.UpdateBy(ctx, adults, UserUpdate{Active: ptr(true)})
-n,     err  = sp.DeleteBy(ctx, User_.Active.Eq(false))
-```
+<code>vv generate</code> записывает в <code>vv_gen.go</code> примерно следующее:
 
-У `count`, `exists` и `delete` есть суффикс `By`, потому что в Go нет
-перегрузки, а простые имена уже заняты репозиторием, который этот декоратор
-встраивает.
+~~~go
+// Техническая форма полей модели — обычно её не пишут и не меняют руками.
+type ProductAttrs struct {
+    ID        specs.Attr[Product, uuid.UUID]
+    Name      specs.Str[Product]
+    Price     specs.Ord[Product, int64]
+    CreatedAt specs.Cmp[Product, time.Time]
+    // ... остальные поля Product
+}
 
-`specs.Executor` **встраивает** обычный репозиторий, так что `GetByID`,
-`Save`, `Update` и всё остальное продолжают работать на том же значении.
+// Готовое значение этой формы.
+var Product_ = specs.Metamodel[Product, ProductAttrs]()
+~~~
 
-`FindOne` возвращает `specs.ErrNotUnique` — который оборачивает
-`crud.ErrConflict` — когда совпадает больше одной строки. `FindFirst` берёт
-первую вместо этого.
+<code>ProductAttrs</code> — описание **какие операции допустимы для каждого
+поля**. <code>Product_</code> (то, что иногда называют <code>Entity_</code>) —
+один готовый экземпляр этого описания. Суффикс <code>_</code> — соглашение,
+взятое из JPA; это не отдельный тип модели, не таблица и не объект из БД.
 
-`DeleteBy` и `UpdateBy` отказываются работать с неограниченной декларативной
-спецификацией — `specs.ErrUnboundedDelete` и `specs.ErrUnboundedUpdate`. Сюда
-входят композиция, схлопнувшаяся в ничто, Criteria `Conjunction`, пустой `NOT
-IN`, null/self-проверка primary key и доказуемые моделью двухзначные булевы
-формулы вроде `p OR NOT p` или `ID = x OR ID <> x`. Снести или переписать все
-строки — это `DeleteAll` и `UpdateAll`, у которых это написано в имени.
-`crud.Raw` —
-trusted-SQL escape hatch: его нельзя классифицировать в общем виде,
-поэтому при намеренном использовании этой силы нужен прямой bulk-метод
-репозитория.
+~~~go
+Product_.Name                       // ссылка на поле Name
+Product_.Name.Contains("chair")    // Specification[Product]
+Product_.Price.Gte(10_000)          // Specification[Product]
+Product_.CreatedAt.Desc()           // crud.Order
+Product_.Name.Name()                // "Name" — для API, ожидающего имя поля
+~~~
 
-Guard также fail-closed для любого непрозрачного bind в спецификации:
-`driver.Valuer`, database/sql decimal либо driver-specific value, стабильность
-которого нельзя доказать. Он не вызывает пользовательский conversion code при
-проверке: тот может быть stateful, вернуть NULL или завершиться ошибкой, а
-разные Go-значения могут одинаково закодироваться у драйвера. Булев анализ тоже
-имеет budget: слишком широкая/глубокая композиция отклоняется вместо
-неограниченной работы в процессе. Когда это намеренно, используйте явный
-bulk-метод.
+Метамодель валидируется при инициализации пакета: если сгенерированный тип
+говорит, что <code>Price</code> — <code>int64</code>, а модель уже изменилась,
+приложение сразу назовёт несовпавшее поле. Если тип значения неверен в самом
+вызове, код вообще не скомпилируется.
 
-Объявление модели `db:"...,pk"` — это контракт с базой: колонка обязана быть
-non-NULL. Для обычных PostgreSQL/MySQL key это автоматически, но SQLite
-допускает `NULL` в некоторых legacy primary-key без `INTEGER`; для natural key
-SQLite объявляйте `NOT NULL` либо используйте таблицу `STRICT`/`WITHOUT ROWID`.
-Bulk guard использует этот non-NULL контракт, доказывая безусловность
-primary-key predicate.
+> Не создавайте <code>ProductAttrs</code> вручную в прикладном коде. Поменяли
+> модель — выполните <code>make generate</code> и закоммитьте обновлённый
+> <code>vv_gen.go</code>.
 
-## Декоратор никогда не обязателен
+## Атрибуты: какие методы появятся
 
-Спецификация — это ещё и обычный option:
+Генератор выбирает самый узкий тип по Go-типу поля.
 
-```go
-users.Get(ctx, specs.As(adults), crud.Page(2))
-crud.Where(specs.Predicate(adults))
-```
+| Поле модели | Генерируемый attr | Полезные методы |
+|---|---|---|
+| <code>bool</code>, UUID, enum, struct-значение | <code>specs.Attr[M, T]</code> | <code>Eq</code>, <code>Ne</code>, <code>In</code>, <code>NotIn</code>, <code>IsNull</code>, <code>NotNull</code>, <code>Asc</code>, <code>Desc</code> |
+| <code>int</code>, <code>float</code> и другие <code>cmp.Ordered</code> типы | <code>specs.Ord[M, T]</code> | всё выше + <code>Gt</code>, <code>Gte</code>, <code>Lt</code>, <code>Lte</code>, <code>Between</code> |
+| <code>time.Time</code> и другой сравнимый, но не <code>cmp.Ordered</code> тип | <code>specs.Cmp[M, T]</code> | равенство, сортировка и диапазоны |
+| <code>string</code> | <code>specs.Str[M]</code> | всё у <code>Ord</code> + <code>Contains</code>, <code>StartsWith</code>, <code>EndsWith</code>, <code>Like</code> и варианты <code>IgnoreCase</code> |
 
-## Смотрите также
+<code>Contains</code>, <code>StartsWith</code> и <code>EndsWith</code> принимают
+обычный пользовательский текст: они сами экранируют <code>%</code>,
+<code>_</code> и обратную косую черту. <code>Like</code> принимает SQL-паттерн
+буквально — используйте его, только когда wildcard нужен намеренно.
 
-- [cmd/vv](vv-cli.md) — генерирует структуру атрибутов и метамодель
-- [crud](crud.md) — AST предикатов под капотом
-- [[UC-007]] пишите типизированные, проверяемые компилятором запросы
-- [[D-018]] DTO и метамодели генерируются
+## Пишите спецификации как маленькие правила
+
+Метод атрибута уже возвращает <code>Specification[M]</code>. Поэтому можно
+собрать правило один раз и передавать дальше как обычное значение:
+
+~~~go
+func AvailableProducts(now time.Time) specs.Specification[Product] {
+    return specs.AllOf(
+        Product_.Published.Eq(true),
+        Product_.AvailableFrom.Lte(now),
+    )
+}
+
+func InPriceRange(min, max *int64) specs.Specification[Product] {
+    return specs.AllOf(
+        PriceAtLeast(min),
+        PriceAtMost(max),
+    )
+}
+
+func PriceAtLeast(min *int64) specs.Specification[Product] {
+    if min == nil {
+        return nil
+    }
+    return Product_.Price.Gte(*min)
+}
+
+func PriceAtMost(max *int64) specs.Specification[Product] {
+    if max == nil {
+        return nil
+    }
+    return Product_.Price.Lte(*max)
+}
+~~~
+
+Все следующие формы возвращают ту же <code>Specification[Product]</code>:
+
+~~~go
+specs.AllOf(a, b, c)        // a AND b AND c
+specs.AnyOf(a, b, c)        // a OR b OR c
+specs.Not(a)                // NOT a
+specs.Where(a).And(b).Or(c).Not()
+specs.If(enabled, a)        // nil, если enabled == false
+specs.Lift[Product](crud.Eq("Published", true))
+~~~
+
+<code>nil</code>-спецификация в <code>AllOf</code>/<code>AnyOf</code> просто не
+добавляет условия. Это удобно для формы поиска, но обязательный scope (например,
+tenant) кладите отдельным внешним условием:
+
+~~~go
+filter := specs.AllOf(
+    Product_.TenantID.Eq(tenantID), // всегда есть
+    specs.If(q != "", Product_.Name.ContainsIgnoreCase(q)),
+    Product_.CategoryID.EqPtr(categoryID),
+    Product_.BrandID.EqOpt(brandID),
+)
+~~~
+
+<code>EqPtr(nil)</code> ничего не добавляет. <code>EqOpt</code> сохраняет три
+состояния <code>utils.Opt</code>: undefined не добавляет условие, null означает
+<code>IS NULL</code>, значение означает <code>=</code>.
+
+## Передайте спецификацию обычному репозиторию
+
+Спецификация становится обычной <code>crud.Option</code> через
+<code>specs.As</code>:
+
+~~~go
+filter := specs.AllOf(
+    AvailableProducts(clock.Now()),
+    Product_.Name.ContainsIgnoreCase(q),
+)
+
+page, err := products.Get(ctx,
+    specs.As(filter),
+    crud.OrderBy(Product_.Price.Asc(), Product_.ID.Asc()),
+    crud.Page(1),
+    crud.Limit(24),
+)
+
+one, err := products.First(ctx,
+    specs.As(Product_.Slug.Eq(slug)),
+    crud.Unsorted(),
+)
+~~~
+
+Это не требует декоратора. Если хотите вызвать <code>crud.Where</code> сами,
+используйте <code>crud.Where(specs.Predicate(filter))</code> — результат такой же.
+
+## Или включите specs.Executor
+
+<code>specs.Executor</code> встраивает исходный репозиторий и добавляет
+JPA-подобные методы. Обычные <code>GetByID</code>, <code>Save</code>,
+<code>Update</code> и остальные никуда не исчезают.
+
+Генерируемая фабрика возвращает указатель, чтобы его было удобно отдать в DI.
+<code>specs.Executor</code> принимает сам маленький value-объект
+<code>crud.Repo</code>, поэтому в этом одном месте передайте
+<code>*product.NewProductRepository(src)</code>.
+
+~~~go
+products := specs.Executor(*product.NewProductRepository(src))
+
+one, err := products.FindOne(ctx, Product_.Slug.Eq(slug))
+first, err := products.FindFirst(ctx, AvailableProducts(now),
+    crud.OrderBy(Product_.CreatedAt.Desc()))
+items, err := products.FindAll(ctx, AvailableProducts(now))
+page, err := products.FindPage(ctx, AvailableProducts(now),
+    crud.Page(2), crud.Limit(24))
+
+n, err := products.CountBy(ctx, AvailableProducts(now))
+ok, err := products.ExistsBy(ctx, Product_.Slug.Eq(slug))
+~~~
+
+| Метод | Отличие от базового репозитория |
+|---|---|
+| <code>FindOne</code> | требует ровно одну строку: <code>crud.ErrNotFound</code> или <code>specs.ErrNotUnique</code> |
+| <code>FindFirst</code> | берёт первую подходящую строку; передавайте сортировку |
+| <code>FindAll</code> / <code>FindPage</code> | то же, что <code>GetAll</code> / <code>Get</code>, но спецификация отдельным аргументом |
+| <code>CountBy</code> / <code>ExistsBy</code> | count/existence для спецификации |
+| <code>UpdateBy</code> / <code>DeleteBy</code> | bulk-write по спецификации; отказываются от пустого или доказуемо широкого фильтра |
+
+Для явного «обновить всё» по options остаются базовые <code>UpdateAll</code> и
+<code>DeleteAll</code>. У <code>UpdateBy</code>/<code>DeleteBy</code> защита
+намеренная: она не даст случайно сделать write по всей таблице, если
+необязательные части фильтра схлопнулись в ничто.
+
+## Связи: фильтровать родителей, загружать детей — разные операции
+
+Пусть <code>Article</code> имеет <code>Author</code> и <code>Comments</code>.
+Генератор добавит вложенные группы в <code>Article_</code>:
+
+~~~go
+Article_.Author.Name.Eq("Ann")          // спецификация Article
+Article_.Comments.Approved.Eq(true)     // спецификация Article
+Article_.Comments.Path()                // "Comments", но без строкового literal
+Article_.Comments.Author.Path()         // "Comments.Author"
+~~~
+
+Первый и второй вызов **отбирают статьи**. Они не наполняют поля
+<code>Author</code> или <code>Comments</code> в ответе. Для загрузки данных нужен
+preload:
+
+~~~go
+articles, err := articlesRepo.GetAll(ctx,
+    specs.As(Article_.Comments.Approved.Eq(true)),
+    crud.Preload(
+        Article_.Author.Path(),
+        Article_.Comments.Path(),
+    ),
+)
+~~~
+
+<code>Preload</code> грузит каждую связь батчем, а не N+1 запросом. Условие
+именно для загружаемых детей пишется от метамодели целевой модели:
+
+~~~go
+crud.PreloadWhere(
+    Article_.Comments.Path(),
+    specs.As(Comment_.Approved.Eq(true)),
+)
+~~~
+
+Почему не <code>Article_.Comments.Approved</code>? Потому что это условие для
+**статей, у которых есть** такой comment. <code>Comment_.Approved</code> в
+<code>PreloadWhere</code> — условие для **самого списка загружаемых comments**.
+
+Связи раскрываются генератором до <code>-depth</code> (по умолчанию 2) и не идут
+по циклу обратно в уже встреченную модель. Если поля связи в <code>Article_</code>
+нет, увеличьте глубину и перегенерируйте.
+
+## Когда строки всё-таки оправданы
+
+Метамодель покрывает прикладные запросы. Для динамического админ-фильтра,
+приходящего из JSON, естественно использовать уже проверенный парсер
+<code>query</code>, а для ручной конструкции — <code>crud</code>:
+
+~~~go
+filter := crud.And(
+    crud.Gte("CreatedAt", since),
+    crud.In("Status", "draft", "published"),
+)
+products.Get(ctx, crud.Where(filter))
+~~~
+
+Полная literal-форма <code>specs.Of</code>/<code>Root</code>/<code>Builder</code>
+нужна редко, когда поле действительно вычисляется в рантайме:
+
+~~~go
+byField := specs.Of[Product](func(root specs.Root[Product], cb specs.Builder) crud.Predicate {
+    return cb.Equal(root.Get(fieldFromConfig), value)
+})
+~~~
+
+<code>crud.Raw</code> — escape hatch для доверенного SQL. Он не валидирует имена
+и не безопасен для пользовательского ввода; не подставляйте в него строки из
+HTTP-параметров.
+
+## Генерация и типичные ошибки
+
+~~~bash
+go run github.com/frostgrove/vv/cmd/vv generate -dir ./src/app
+make generate
+git diff --exit-code
+~~~
+
+| Симптом | Что проверить |
+|---|---|
+| <code>Product_</code> не существует | модель должна быть экспортирована и лежать в <code>model.go</code>, <code>*.model.go</code> или <code>*_model.go</code>; затем выполните generate |
+| Нет поля связи в <code>Product_</code> | связь нужна в модели, а глубина генерации должна её достигать (<code>-depth</code>) |
+| panic при старте про metamodel | модель и старый <code>vv_gen.go</code> разошлись; перегенерируйте |
+| тип не компилируется в <code>Eq</code>/<code>Gte</code> | это полезная проверка: возьмите значение типа поля или используйте подходящий attr-метод |
+| Нужен <code>Path()</code>, но метод затенён колонкой <code>Path</code> у цели | вызовите <code>RelPath()</code> — он всегда доступен |
+
+## Дальше
+
+- [Репозиторий от модели до транзакции](../../usage-guides/repository.md)
+- [crud](crud.md) — options, предикаты, пагинация, транзакционный executor
+- [crud/sqlrepo](sqlrepo.md) — <code>Define</code>, <code>Scope</code>, soft delete, реплики
+- [cmd/vv](vv-cli.md) — флаги генератора

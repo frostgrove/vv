@@ -10,6 +10,7 @@ use (
 	./crud/http/crudfiber
 	./crud/http/crudgin
 	./crud/rpc/crudgrpc
+	./storage/storageminio
 	./test
 	./utils/vvcfg
 	./utils/vvdb/dbpgx

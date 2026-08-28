@@ -35,6 +35,8 @@ remote/                     the consuming half: another service's resource, held
 └── remotehttp/             the HTTP client transport
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI — stdlib only
 └── sqlerr/                 a driver error becomes a code, one table per dialect
+storage/                    streaming object store, staged UI uploads, temporary links — stdlib only
+└── storagefs/              atomic filesystem backend and HMAC-protected HTTP links
 utils/                      for your application, never for the library
 ├── vvdb/                   one config -> a DSN or a *sql.DB: postgres, mysql, mariadb, sqlite — stdlib only
 └── vvflag/                 one typed flag, without owning the command line
@@ -49,6 +51,7 @@ auth/authjwt/               JWT verification, generic over your claims
 auth/http/authgin/          the Gin auth middleware
 auth/http/authfiber/        the Fiber auth middleware
 auth/rpc/authgrpc/          the gRPC auth interceptors
+storage/storageminio/       MinIO backend and native pre-signed GET
 utils/vvdb/dbpgx/           the same config, a pgx pool
 utils/vvcfg/                a config struct, loaded and validated at start-up
 utils/vvgoose/              Goose migrations and SQL generation from Go models
@@ -122,6 +125,7 @@ go get github.com/frostgrove/vv/crud/adapter/crudpgx # …and pgx, if that is yo
 go get github.com/frostgrove/vv/utils/vvdb/dbpgx     # …and a pgx pool opened from your config file
 go get github.com/frostgrove/vv/utils/vvgoose        # …or the application migration CLI
 go get github.com/frostgrove/vv/auth/authjwt        # …and JWT, if that is how you authenticate
+go get github.com/frostgrove/vv/storage/storageminio # …and MinIO, if files are not local
 ```
 
 The library has **no external dependencies at all**. Anything that would add one
@@ -137,6 +141,83 @@ blank imports of its own.
 Versions move in lockstep: the library and every binding are tagged together, so
 `@v0.1.0` means the same thing everywhere. No `replace` is ever needed
 ([`D-033`](docs/ai/decisions/D-033-optional-dependencies-are-their-own-modules.md)).
+
+## Object storage
+
+The same streaming store runs on a local filesystem or a caller-owned MinIO
+client. The base contract and filesystem backend are stdlib-only; the MinIO SDK
+stays in its own module.
+
+```go
+backend, err := storagefs.New(storagefs.Config{
+    Root:       "/srv/app-data",
+    BaseURL:    "https://files.example.com/download",
+    SigningKey: signingKey, // at least 32 random bytes
+})
+defer backend.Close()
+
+files, err := storage.New(storage.Config{
+    Namespace: "avatars",
+    Backend:   backend,
+})
+downloadMux.Handle("/download", backend.Handler())
+```
+
+`Sync` flushes the completed file and leaf destination directory, but does not
+promise crash durability for every newly created ancestor directory. Serve the
+download handler on a dedicated cookie-less origin. It forces attachment,
+`nosniff`, sandbox CSP and no-referrer headers as defense in depth.
+The FS adapter requires a Unix-family target and a local filesystem with atomic
+same-filesystem hard-link/rename semantics.
+
+For MinIO, only construction changes:
+
+```go
+backend, err := storageminio.New(storageminio.Config{
+    Client: minioClient, // credentials, endpoint, transport and lifetime are yours
+    Bucket: "app-files",
+    Prefix: "production",
+})
+```
+
+Upload bytes before the surrounding form is submitted, round-trip only the
+opaque stage ID through the UI, then promote the already present object after
+domain validation:
+
+```go
+staged, err := files.Stage(ctx, upload, storage.StageOptions{
+    ContentType: "image/png",
+    ExpiresIn:   time.Hour,
+})
+
+stageID, err := storage.ParseStageID(form.UploadID) // staged.ID.Value() from the first request
+info, err := files.Promote(ctx, stageID, finalKey, storage.PromoteOptions{})
+```
+
+The stage ID is a bearer value: bind it server-side to the authenticated actor
+or form and verify that binding before promotion or abort.
+
+A stage's TTL starts when `Stage` begins, so allow for the maximum upload
+duration.
+
+`Put` and `Promote` are create-only unless `storage.Replace` is explicit.
+Abandoned uploads are removed in bounded batches by `CleanupExpired`; storage
+starts no background goroutine. Its `Limit` counts removals rather than entries
+inspected, so invoke it with a deadline-bearing context. Both backends return
+temporary download links through the same method:
+
+```go
+link, err := files.TemporaryURL(ctx, finalKey, storage.TemporaryURLOptions{
+    ExpiresIn: 10 * time.Minute,
+})
+sendToClient(link.URL()) // ordinary Link formatting is redacted
+```
+
+The filesystem handler verifies an HMAC and never exposes a local path; MinIO
+uses native pre-signed GET. Link TTLs are whole-second durations. See
+[storage](docs/modules/en/storage.md),
+[storagefs](docs/modules/en/storagefs.md) and
+[storageminio](docs/modules/en/storageminio.md) for the full contract.
 
 ## Quick start
 

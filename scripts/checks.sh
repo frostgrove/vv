@@ -8,7 +8,7 @@ cd "$REPO_ROOT"
 TIER0=(crud crud/crudtest crud/query errs errs/sqlerr port port/porthttp)
 TIER0_SEALED=(errs)
 TIER0_STDLIB=(crud)
-SUBSYSTEMS=(crud auth port remote)
+SUBSYSTEMS=(crud auth port remote storage)
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'

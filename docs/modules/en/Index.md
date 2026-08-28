@@ -75,6 +75,14 @@ long form of it.
 two implementations of its own interface, which is the normal case rather than
 the exception ([[D-048]], [[D-055]]).
 
+## Storage — bytes before and after a form commit
+
+| Module | Import | What it is |
+|---|---|---|
+| [storage](storage.md) | `vv/storage` | Streaming object-store contract, staged UI uploads and temporary download links |
+| [storagefs](storagefs.md) | `vv/storage/storagefs` | Secure stdlib filesystem backend plus an HMAC link handler |
+| [storageminio](storageminio.md) | `vv/storage/storageminio` | **Module** — MinIO SDK backend and native pre-signed GET |
+
 ## The request — one document, four transports
 
 | Module | Import | What it is |

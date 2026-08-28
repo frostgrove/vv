@@ -7,6 +7,17 @@
 Сначала прочитайте [README](../../../README.md), если ещё не читали. Эти страницы —
 его развёрнутая версия.
 
+## Практический старт
+
+Если вы подключаете vv в приложение, идите в таком порядке:
+
+1. [Репозиторий: от модели до сложного запроса](../../usage-guides/repository.md) —
+   генерация, чтение, specs, запись и транзакции на одном примере.
+2. [specs](specs.md) — отдельно и подробно про сгенерированные ProductAttrs и
+   Product_, композицию фильтров и связи.
+3. [crud/sqlrepo](sqlrepo.md) — настройки самого SQL-репозитория: лимиты,
+   permanent scope, soft delete и реплики.
+
 ## Карта
 
 ```
@@ -74,6 +85,14 @@
 `auth` намеренно **не** входит в манифест контрактов. Это пакет с двумя
 реализациями собственного интерфейса — нормальный случай, а не исключение
 ([[D-048]], [[D-055]]).
+
+## Storage — байты до и после фиксации формы
+
+| Модуль | Импорт | Что это |
+|---|---|---|
+| [storage](storage.md) | `vv/storage` | Потоковый object-store contract, staged UI uploads и временные download-ссылки |
+| [storagefs](storagefs.md) | `vv/storage/storagefs` | Безопасный stdlib filesystem backend и HMAC link handler |
+| [storageminio](storageminio.md) | `vv/storage/storageminio` | **Модуль** — MinIO SDK backend и штатный pre-signed GET |
 
 ## Запрос — один документ, четыре транспорта
 

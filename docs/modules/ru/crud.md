@@ -20,6 +20,11 @@ SQL здесь никто не выполняет — этим занимает�
 лежат в `github.com/frostgrove/vv/utils`; основной код приложения трогает
 `crud.Where`, `utils.Opt`, `utils.Ptr` и `crud.Page`.
 
+> Нужна инструкция по применению репозитория, а не справочник контракта?
+> Начните с [репозитория: от модели до сложного запроса](../../usage-guides/repository.md).
+> Там последовательно разобраны GetByID, First, Get, specs, preload, Save,
+> SaveOnly, Update и транзакции.
+
 ---
 
 ## Что вы получаете
