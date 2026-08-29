@@ -149,11 +149,30 @@ func (this *Registrar) Create(ctx context.Context, form SignUpForm) (uuid.UUID, 
 }
 
 func (this *Registrar) Password(form SignUpForm) string { return form.Password }
-func (this *Registrar) Role() auth.Role                 { return "client" }
 ```
 
 Adding a field to the sign-up form is an edit to `SignUpForm` and to `Create`,
 and to nothing under `access`.
+
+**There is no `Role()` here, and that is [[D-070]].** What a registration grants
+is a row in `subject_default_roles`, keyed by the subject type — not a constant,
+and not a configuration key. Both of those are strings nothing compares to the
+`roles` table until the first sign-up, where a typo answers 500 to a stranger
+weeks after it was deployed. A row is resolved when it is written:
+
+```go
+seeder := runtime.Seeder()
+
+seeder.EnsureRole(ctx, access.RoleSpec{
+	Slug: "client", Name: "Client", System: true,
+	Permissions: []auth.Permission{PermInvoiceRead},
+})
+seeder.SetDefaultRole(ctx, "user", "client")   // refused now if "client" does not exist
+```
+
+Both are idempotent, and both are for a seed command rather than for start-up —
+see [Seeding](#seeding). No binding grants nothing, which is what an
+invitation-only deployment wants.
 
 ## Signing in
 

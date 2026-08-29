@@ -1,6 +1,6 @@
 # D-016 — One published module; package `crud` stays stdlib-only
 
-**Status:** superseded by [[D-033]] — the module half only. The stdlib rule stands.
+**Status:** superseded by [[D-033]] — the module half — and by [[D-069]] — the stdlib half.
 **Invariant:** `go get github.com/frostgrove/vv` must be the whole installation — no `replace` directive — and no file in package `crud` outside `_test.go` may import anything but the standard library.
 
 > **What changed.** The single-module half of this decision was reversed: an
@@ -11,9 +11,15 @@
 > fact one MVS floor per optional dependency, paid by everybody. [[D-033]] has
 > the new arrangement and answers the `replace` problem this file raises.
 >
-> **The second half is untouched and still binding:** no file in package `crud`
-> outside `_test.go` may import anything but the standard library. [[D-033]]
-> widens it to the whole root module rather than relaxing it.
+> **The second half was narrowed at [[D-069]].** It read "anything but the
+> standard library", absolutely, and that was written when `Opt[T]` still lived
+> in `crud` so the rule and the code agreed by construction. `Opt` has since
+> moved to `utils`, which imports the standard library and nothing else, and
+> `crud` imports it. [[D-069]] names that tier `SHARED`, permits it to `crud`
+> and to every contract package, and checks the stdlib-only property on its
+> members instead of assuming it. What the rule protects — a consumer's
+> dependency graph — is unchanged: [[D-033]] still forbids the root module any
+> third-party dependency at all.
 >
 > **The scope of that half was clarified at [[D-058]], not changed.** This was
 > written when `crud/` held exactly one package, so "no file in `crud/`" and "no

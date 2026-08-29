@@ -51,9 +51,12 @@ func TestGeneratedMetamodelReachesThroughRelations(t *testing.T) {
 		{"many_to_many", blog.Article_.Tags.Slug.In("go", "rust"),
 			`EXISTS (SELECT 1 FROM "tags" AS rx1 JOIN "article_tags" AS rx2 ON rx2."tag_id" = rx1."id" ` +
 				`WHERE rx2."article_id" = "articles"."id" AND rx1."slug" IN ($1, $2))`},
+		// Contains renders with the escape clause the dialect names, so a literal
+		// % or _ in what the caller typed stays literal rather than becoming a
+		// wildcard. See crud.LikeEscaper.
 		{"composed", specs.Where(blog.Article_.Views.Gte(100)).And(blog.Article_.Author.Name.Contains("an")),
 			`("views" >= $1 AND EXISTS (SELECT 1 FROM "authors" AS rx1 WHERE rx1."id" = "articles"."author_id" ` +
-				`AND rx1."name" LIKE $2))`},
+				`AND rx1."name" LIKE $2 ESCAPE '\'))`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := where(sqlOf(t, specs.As(tc.spec))); got != tc.want {

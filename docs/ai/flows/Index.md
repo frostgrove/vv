@@ -280,6 +280,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/access/usecase.login.go` | FL-023 |
 | `auth/access/usecase.signup.go` | FL-023 |
 | `auth/access/usecase.enroll.go` | FL-023 |
+| `auth/access/access.defaults.go` | FL-023 |
+| `auth/access/access.seed.go` | FL-023 |
 | `auth/access/http/accesshttp/accesshttp.go` | FL-023 |
 | `auth/access/accessjwt/rotation.go` | FL-023 |
 | `auth/access/accessjwt/accessjwt.go` | FL-023 |

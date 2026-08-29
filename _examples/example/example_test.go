@@ -42,13 +42,19 @@ func Example_partialUpdate() {
 		fmt.Println(err)
 		return
 	}
+	// The long WHERE on the second and third statements is the gate pinning them
+	// to the exact row it approved. A scope only says where a row may be; the
+	// policy's Inspect may decide from any field, so repeating the scope alone
+	// would let a concurrent change turn an approved update into a forbidden
+	// one. The key and the scope appear twice because the snapshot names every
+	// column, including those two.
 	for _, s := range rec.SQL() {
 		fmt.Println(s)
 	}
 	// Output:
 	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("author_id" = $1 AND "id" = $2) LIMIT 1
-	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("id" = $1 AND "author_id" = $2) LIMIT 1
-	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE ("id" = $3 AND "author_id" = $4) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
+	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("id" = $1 AND "author_id" = $2 AND "id" = $3 AND "author_id" = $4 AND "title" = $5 AND "body" = $6 AND "views" = $7 AND "published_at" = $8 AND "created_at" = $9) LIMIT 1
+	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE ("id" = $3 AND "author_id" = $4 AND "id" = $5 AND "author_id" = $6 AND "title" = $7 AND "body" = $8 AND "views" = $9 AND "published_at" = $10 AND "created_at" = $11) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
 }
 
 // Unpublishing writes NULL; leaving the field out would have written nothing.
@@ -70,7 +76,7 @@ func Example_nullVersusAbsent() {
 	fmt.Println("arg is nil:", rec.Last().Args[0] == nil)
 	fmt.Println("published:", a.PublishedAt.IsSet())
 	// Output:
-	// UPDATE "articles" SET "published_at" = $1 WHERE ("id" = $2 AND "author_id" = $3) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
+	// UPDATE "articles" SET "published_at" = $1 WHERE ("id" = $2 AND "author_id" = $3 AND "id" = $4 AND "author_id" = $5 AND "title" = $6 AND "body" = $7 AND "views" = $8 AND "published_at" = $9 AND "created_at" = $10) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
 	// arg is nil: true
 	// published: false
 }
@@ -117,7 +123,8 @@ func Example_frozenColumn() {
 	ctx := example.WithAuthor(context.Background(), 7)
 
 	a := example.Article{AuthorID: 8, Title: "theirs"}
-	fmt.Println(repository.Save(ctx, &a))
+	_, err := repository.Save(ctx, &a)
+	fmt.Println(err)
 	fmt.Println("statements:", len(rec.Statements()))
 	// Output:
 	// security: forbidden: create: row belongs to a different AuthorID

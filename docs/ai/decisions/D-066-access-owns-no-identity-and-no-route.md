@@ -65,7 +65,9 @@ for its own column.
 - Do not add a method to `Directory` that writes. It reads, and the count of its
   methods is the load-bearing part.
 - Do not add a subject-type constant, a role-slug constant beyond `RoleAdmin`,
-  or a configuration key naming either.
+  or a configuration key naming either. This holds on the consumer's side too:
+  the role a sign-up grants is a row, not a `Registrar` method — [[D-070]],
+  which closed the one place the string had escaped to.
 - Do not call `strings.ToLower`, `TrimSpace` or any equivalent on an identifier
   anywhere under `auth/access/`.
 - Do not import a web framework from `auth/access`. A binding lives under
@@ -89,7 +91,8 @@ for its own column.
 | `auth/access/access.config.go` | `Config` — sessions and a password floor, and nothing else |
 | `auth/access/usecase.enroll.go` | the half of registration that is not the consumer's |
 | `auth/access/usecase.signup.go` | `SignUpUseCase[P]`, the only generic thing in the module |
-| `auth/access/access.subject.go` | `Subject` and `Registrar[P]` — what a consumer must supply, as types rather than as prose |
+| `auth/access/access.subject.go` | `Subject` and `Registrar[P]` — what a consumer must supply, as types rather than as prose, and the note where `Role()` used to be |
+| `auth/access/access.defaults.go` | the role a sign-up grants, read from a row rather than named anywhere ([[D-070]]) |
 | `auth/access/access.runtime.go` | `RuntimeSpec` and `SubjectSpec[P]`, the two structs that are the whole of what a consumer fills in |
 | `auth/access/http/accesshttp/` | the route table and the step between a decoded body and a use case |
 | `auth/access/migrations/00001_access.sql` | the seven tables, as a file to copy rather than an embedded FS |
@@ -111,3 +114,5 @@ for its own column.
 
 - [[D-067]] — why an identifier is unique within a subject type.
 - [[D-068]] — why a strategy declares both ends and a guard is per subject.
+- [[D-070]] — why the role a sign-up grants is a row, and not the `Registrar`
+  method this decision's first draft left open.

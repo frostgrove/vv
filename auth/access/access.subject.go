@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 
-	"github.com/frostgrove/vv/auth"
 	"github.com/google/uuid"
 )
 
@@ -77,8 +76,10 @@ type Registrar[P any] interface {
 	// rather than a field so P stays the application's own struct, with no
 	// tag, embedding or field name this module has to agree with.
 	Password(payload P) string
-
-	// Role is granted to what Create made. Empty grants nothing, which is the
-	// safe reading of "not configured".
-	Role() auth.Role
 }
+
+// There is no Role method here, and its absence is [[D-070]]. What a sign-up
+// grants is read from subject_default_roles, keyed by this subject's type: a
+// registrar that answered it would be the application spelling a role slug in
+// Go, and the slug it spelled would be checked against the roles table for the
+// first time at the first registration.

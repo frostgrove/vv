@@ -1,5 +1,7 @@
 package access
 
+//go:generate go run github.com/frostgrove/vv/cmd/vv -types Permission,Role,RolePermission,SubjectRole,SubjectPermission,SubjectDefaultRole,Credential,Session
+
 import (
 	"time"
 
@@ -53,6 +55,30 @@ type RolePermission struct {
 	ID           uuid.UUID `db:"id,pk,auto" json:"id"`
 	RoleID       uuid.UUID `json:"roleId"`
 	PermissionID uuid.UUID `json:"permissionId"`
+}
+
+// A SubjectDefaultRole is the role a freshly registered caller of one kind is
+// given when nothing named one.
+//
+// A row and not a setting. A default role is a statement about *this database* —
+// the role it points at has to exist in it, and the id is what says so — while a
+// configuration key is a string nothing checks until the first sign-up, where a
+// typo grants nothing and reads as a person who registered and cannot do
+// anything. See [[D-070]].
+//
+// Keyed by subject type rather than global, because the answer differs per kind
+// of caller: a person who signs up is a client, and a service account that
+// enrols is not.
+type SubjectDefaultRole struct {
+	ID uuid.UUID `db:"id,pk,auto" json:"id"`
+	// SubjectType is unique. One kind of caller has one default, and a second
+	// row for the same type would be a question with two answers resolved by
+	// whichever the engine reached first.
+	SubjectType string    `json:"subjectType"`
+	RoleID      uuid.UUID `json:"roleId"`
+	UpdatedAt   time.Time `db:"updated_at,generated" json:"updatedAt"`
+
+	Role *Role `rel:"belongs_to" json:"role,omitempty"`
 }
 
 // A SubjectRole grants a role to one subject.

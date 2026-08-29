@@ -1,4 +1,4 @@
--- The access context's seven tables.
+-- The access context's eight tables.
 --
 -- Copy this file into your own migrations directory and rename it with your own
 -- timestamp. It is a file to copy and not an embedded FS on purpose: a
@@ -74,6 +74,31 @@ CREATE TABLE IF NOT EXISTS "subject_roles" (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_subject_roles"
     ON "subject_roles" ("subject_type", "subject_id", "role_id");
+
+-- Which role a freshly registered caller of one kind is given.
+--
+-- A table and not a configuration key: the default is a statement about *this*
+-- database, and a foreign key is what makes "that role exists" checkable. A
+-- setting naming a slug is a string nothing verifies until the first sign-up,
+-- where a typo grants nothing and looks like a person who registered and cannot
+-- do anything.
+CREATE TABLE IF NOT EXISTS "subject_default_roles" (
+    "id"           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "subject_type" TEXT        NOT NULL,
+    -- RESTRICT rather than CASCADE. Deleting the role a sign-up grants must be
+    -- refused, not silently turned into "new accounts get nothing" — that is a
+    -- change nobody would see until somebody registered and could not work.
+    "role_id"      UUID        NOT NULL REFERENCES "roles" ("id") ON DELETE RESTRICT,
+    "updated_at"   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- One default per kind of caller. Without this a second row is a question with
+-- two answers, resolved by whichever the engine reached first.
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_subject_default_roles_subject_type"
+    ON "subject_default_roles" ("subject_type");
+
+CREATE TRIGGER "subject_default_roles_set_updated_at"
+    BEFORE UPDATE ON "subject_default_roles"
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE IF NOT EXISTS "subject_permissions" (
     "id"            UUID PRIMARY KEY DEFAULT gen_random_uuid(),

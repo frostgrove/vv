@@ -53,10 +53,24 @@ func NewSignUp[P any](
 // The identifier is folded once, here, by [Subject.Normalize] — the same
 // function [LoginUseCase] is given by the same binding, which is what makes the
 // two sides of the column meet.
+//
+// The role comes from subject_default_roles and not from the registrar. That is
+// [[D-070]]: which role a stranger gets is a decision an operator makes about a
+// deployment, and holding it in code or in a configuration key put it where
+// nothing could check it existed.
+//
+// It is read *inside* the transaction, so a seed command changing the default
+// while a registration is in flight cannot produce an account granted a role
+// that no longer exists by the time the credential commits.
 func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agent) (AuthResponse, error) {
 	var subject SubjectRef
 
 	err := this.Store.Tx(ctx, func(txCtx context.Context) error {
+		role, err := this.DefaultRole(txCtx, this.subject.Type)
+		if err != nil {
+			return err
+		}
+
 		id, identifier, err := this.registrar.Create(txCtx, payload)
 		if err != nil {
 			return err
@@ -67,7 +81,7 @@ func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agen
 			Subject:    subject,
 			Identifier: this.subject.Identifier(identifier),
 			Password:   this.registrar.Password(payload),
-			Role:       this.registrar.Role(),
+			Role:       role,
 		})
 	})
 	if err != nil {

@@ -1,7 +1,7 @@
 # FL-023 — A sign-in becomes a session
 
 **Entry point:** `auth/access/access.runtime.go:New` and `auth/access/access.runtime.go:Mount`
-**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-033]] [[D-058]]
+**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-033]] [[D-058]]
 
 ## Wiring, once
 
@@ -52,8 +52,32 @@
    opens the transaction, calls `Registrar.Create`, then `EnrollUseCase` inside
    it. `crud.InTx` joins rather than nests, so the account row and the credential
    commit together.
-3. **the session, after the commit** — opening it inside would let a failure
+3. **`Deps.DefaultRole`** — `auth/access/access.defaults.go` — the first
+   statement, before anything is created: the role this subject type's sign-ups
+   grant, read from `subject_default_roles` ([[D-070]]). No row grants nothing.
+   It is inside the transaction, so a seed command changing the binding
+   mid-registration cannot grant a role that is no longer the default by the
+   time the credential commits.
+4. **the session, after the commit** — opening it inside would let a failure
    with nothing to do with signing in roll it back.
+
+## Arranging what a sign-up grants
+
+Not a request path — this is what a consumer's seed command runs, once, out of
+band ([[D-070]]).
+
+1. **`Runtime.Seeder`** — `auth/access/access.runtime.go` — the idempotent write
+   half, over the same `Store`.
+2. **`Seeder.EnsureRole`** — `auth/access/access.defaults.go` — creates the role
+   if the slug is free and attaches the permissions it does not hold. An
+   existing role is not overwritten with the spec, and a permission no module
+   declared is refused rather than attached.
+3. **`Seeder.SetDefaultRole`** — resolves the slug against `roles`, locks the
+   binding with `FOR UPDATE`, and writes nothing when it already points there.
+   The unique index on `subject_type` is what covers the absent-row race the
+   lock cannot.
+4. **`Runtime.Sync`** — `auth/access/access.seed.go` — the *other* pass, and not
+   this one: it folds in what the code declares and runs at every start.
 
 ## Verifying a request
 
@@ -89,6 +113,8 @@
 | `auth/access/access.runtime.go` | the factory, the mount refusals, the guards |
 | `auth/access/access.strategy.go` | the strategy seam and the opaque implementation |
 | `auth/access/access.subject.go` | `Subject`, `Registrar[P]` |
+| `auth/access/access.defaults.go` | the default role: the read a sign-up makes, and the `Seeder` writes that arrange it |
+| `auth/access/access.seed.go` | `Sync` — the start-up pass over what the code declared |
 | `auth/access/access.endpoints.go` | the seven transport-neutral operations |
 | `auth/access/access.authenticator.go` | a session row becomes a principal |
 | `auth/access/usecase.*.go` | the use cases |
@@ -102,6 +128,9 @@
 
 - `auth/access/access_runtime_test.go` — the mount refusals and their control,
   and that an enrolment refuses before it writes anything.
+- `auth/access/access.defaults_test.go` — the default role is whatever the table
+  says, an absent binding grants nothing, a sign-up reads it before it creates,
+  and the seed writes are idempotent with their controls.
 - `auth/access/accessjwt/rotation_test.go` — every arm of `Classify`, including
   the grace boundary on both sides.
 - `auth/access/http/access{net,gin,fiber}/*_test.go` — the triplet: the prefix,

@@ -407,6 +407,18 @@ func egWatch(source crud.Source) *egSpy {
 
 func (this *egSpy) Dialect() crud.Dialect { return this.d }
 
+// UnwrapSource hands the library the source underneath, which is what lets it
+// find the optional interfaces this spy does not itself implement — Beginner
+// above all. Without it a repository over this wrapper cannot open a
+// transaction, and a Save on a dialect with no RETURNING (which reads the
+// stored row back in a second statement) fails with "executor cannot begin
+// transactions". That is [[D-061]]: a wrapper has lost every method its own
+// interface does not name, silently, and forwarding is how it gets them back.
+func (this *egSpy) UnwrapSource() crud.Source {
+	source, _ := this.ex.(crud.Source)
+	return source
+}
+
 func (this *egSpy) record(q string) {
 	this.mu.Lock()
 	this.seen = append(this.seen, q)

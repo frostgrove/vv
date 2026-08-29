@@ -7,22 +7,24 @@ import (
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/crud/http/crudnet"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/utils"
 	"net/http"
 	"time"
 )
 
 // ArticleUpdate is the partial-update DTO for Article.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type ArticleUpdate struct {
-	AuthorID    *int64              `json:"authorID,omitempty"`
-	Title       *string             `json:"title,omitempty"`
-	Body        *string             `json:"body,omitempty"`
-	Views       *int                `json:"views,omitempty"`
-	Rating      crud.Opt[float64]   `json:"rating,omitzero"`
-	PublishedAt crud.Opt[time.Time] `json:"publishedAt,omitzero"`
+	AuthorID    *int64               `json:"authorID,omitempty"`
+	Title       *string              `json:"title,omitempty"`
+	Body        *string              `json:"body,omitempty"`
+	Views       *int                 `json:"views,omitempty"`
+	Rating      utils.Opt[float64]   `json:"rating,omitzero"`
+	PublishedAt utils.Opt[time.Time] `json:"publishedAt,omitzero"`
 }
 
 // ArticleAuthorAttrs reaches Article through Author.
@@ -68,6 +70,18 @@ type ArticleAttrs struct {
 // Article_ is the metamodel of Article: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Article_ = specs.Metamodel[Article, ArticleAttrs]()
+
+// ArticleRepo is the typed repository for Article.
+type ArticleRepo = crud.Repo[Article, int64, ArticleUpdate]
+
+// ArticleRepository describes Article independently of a database driver.
+// Bind it through NewArticleRepository with the application's datasource.
+var ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("")
+
+// NewArticleRepository binds ArticleRepository to src.
+func NewArticleRepository(src crud.Source) *ArticleRepo {
+	return ArticleRepository.Bind(src)
+}
 
 // ArticleInput is the entity body for Article: what a create or a replace carries,
 // under this resource's own wire names. ArticleUpdate is the PATCH shape; a
@@ -132,8 +146,8 @@ type ArticleService struct {
 var _ port.Service[Article, int64, ArticleUpdate] = (*ArticleService)(nil)
 
 // NewArticleService builds the service over a repository.
-func NewArticleService(repository port.Repository[Article, int64, ArticleUpdate], options ...port.ServiceOption) *ArticleService {
-	return &ArticleService{DefaultService: port.NewService(repository, options...)}
+func NewArticleService(repo port.Repository[Article, int64, ArticleUpdate], opts ...port.ServiceOption) *ArticleService {
+	return &ArticleService{DefaultService: port.NewService(repo, opts...)}
 }
 
 // MountArticle mounts the resource on a ServeMux under prefix, behind ArticleMapper.
@@ -141,12 +155,12 @@ func NewArticleService(repository port.Repository[Article, int64, ArticleUpdate]
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountArticle(mux *http.ServeMux, prefix string, service port.Service[Article, int64, ArticleUpdate], options ...crudnet.Option[Article, int64, ArticleUpdate]) {
-	crudnet.ServingFor(service, ArticleMapper{}, options...).Mount(mux, prefix)
+func MountArticle(mux *http.ServeMux, prefix string, svc port.Service[Article, int64, ArticleUpdate], opts ...crudnet.Option[Article, int64, ArticleUpdate]) {
+	crudnet.ServingFor(svc, ArticleMapper{}, opts...).Mount(mux, prefix)
 }
 
 // AuthorUpdate is the partial-update DTO for Author.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type AuthorUpdate struct {
 	Name *string `json:"name,omitempty"`
@@ -176,6 +190,18 @@ type AuthorAttrs struct {
 // Author_ is the metamodel of Author: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Author_ = specs.Metamodel[Author, AuthorAttrs]()
+
+// AuthorRepo is the typed repository for Author.
+type AuthorRepo = crud.Repo[Author, int64, AuthorUpdate]
+
+// AuthorRepository describes Author independently of a database driver.
+// Bind it through NewAuthorRepository with the application's datasource.
+var AuthorRepository = sqlrepo.Define[Author, int64, AuthorUpdate]("")
+
+// NewAuthorRepository binds AuthorRepository to src.
+func NewAuthorRepository(src crud.Source) *AuthorRepo {
+	return AuthorRepository.Bind(src)
+}
 
 // AuthorInput is the entity body for Author: what a create or a replace carries,
 // under this resource's own wire names. AuthorUpdate is the PATCH shape; a
@@ -222,8 +248,8 @@ type AuthorService struct {
 var _ port.Service[Author, int64, AuthorUpdate] = (*AuthorService)(nil)
 
 // NewAuthorService builds the service over a repository.
-func NewAuthorService(repository port.Repository[Author, int64, AuthorUpdate], options ...port.ServiceOption) *AuthorService {
-	return &AuthorService{DefaultService: port.NewService(repository, options...)}
+func NewAuthorService(repo port.Repository[Author, int64, AuthorUpdate], opts ...port.ServiceOption) *AuthorService {
+	return &AuthorService{DefaultService: port.NewService(repo, opts...)}
 }
 
 // MountAuthor mounts the resource on a ServeMux under prefix, behind AuthorMapper.
@@ -231,12 +257,12 @@ func NewAuthorService(repository port.Repository[Author, int64, AuthorUpdate], o
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountAuthor(mux *http.ServeMux, prefix string, service port.Service[Author, int64, AuthorUpdate], options ...crudnet.Option[Author, int64, AuthorUpdate]) {
-	crudnet.ServingFor(service, AuthorMapper{}, options...).Mount(mux, prefix)
+func MountAuthor(mux *http.ServeMux, prefix string, svc port.Service[Author, int64, AuthorUpdate], opts ...crudnet.Option[Author, int64, AuthorUpdate]) {
+	crudnet.ServingFor(svc, AuthorMapper{}, opts...).Mount(mux, prefix)
 }
 
 // CommentUpdate is the partial-update DTO for Comment.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type CommentUpdate struct {
 	ArticleID *int64  `json:"articleID,omitempty"`
@@ -265,6 +291,18 @@ type CommentAttrs struct {
 // Comment_ is the metamodel of Comment: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Comment_ = specs.Metamodel[Comment, CommentAttrs]()
+
+// CommentRepo is the typed repository for Comment.
+type CommentRepo = crud.Repo[Comment, int64, CommentUpdate]
+
+// CommentRepository describes Comment independently of a database driver.
+// Bind it through NewCommentRepository with the application's datasource.
+var CommentRepository = sqlrepo.Define[Comment, int64, CommentUpdate]("")
+
+// NewCommentRepository binds CommentRepository to src.
+func NewCommentRepository(src crud.Source) *CommentRepo {
+	return CommentRepository.Bind(src)
+}
 
 // CommentInput is the entity body for Comment: what a create or a replace carries,
 // under this resource's own wire names. CommentUpdate is the PATCH shape; a
@@ -320,8 +358,8 @@ type CommentService struct {
 var _ port.Service[Comment, int64, CommentUpdate] = (*CommentService)(nil)
 
 // NewCommentService builds the service over a repository.
-func NewCommentService(repository port.Repository[Comment, int64, CommentUpdate], options ...port.ServiceOption) *CommentService {
-	return &CommentService{DefaultService: port.NewService(repository, options...)}
+func NewCommentService(repo port.Repository[Comment, int64, CommentUpdate], opts ...port.ServiceOption) *CommentService {
+	return &CommentService{DefaultService: port.NewService(repo, opts...)}
 }
 
 // MountComment mounts the resource on a ServeMux under prefix, behind CommentMapper.
@@ -329,12 +367,12 @@ func NewCommentService(repository port.Repository[Comment, int64, CommentUpdate]
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountComment(mux *http.ServeMux, prefix string, service port.Service[Comment, int64, CommentUpdate], options ...crudnet.Option[Comment, int64, CommentUpdate]) {
-	crudnet.ServingFor(service, CommentMapper{}, options...).Mount(mux, prefix)
+func MountComment(mux *http.ServeMux, prefix string, svc port.Service[Comment, int64, CommentUpdate], opts ...crudnet.Option[Comment, int64, CommentUpdate]) {
+	crudnet.ServingFor(svc, CommentMapper{}, opts...).Mount(mux, prefix)
 }
 
 // TagUpdate is the partial-update DTO for Tag.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type TagUpdate struct {
 	Slug *string `json:"slug,omitempty"`
@@ -349,6 +387,18 @@ type TagAttrs struct {
 // Tag_ is the metamodel of Tag: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Tag_ = specs.Metamodel[Tag, TagAttrs]()
+
+// TagRepo is the typed repository for Tag.
+type TagRepo = crud.Repo[Tag, int64, TagUpdate]
+
+// TagRepository describes Tag independently of a database driver.
+// Bind it through NewTagRepository with the application's datasource.
+var TagRepository = sqlrepo.Define[Tag, int64, TagUpdate]("")
+
+// NewTagRepository binds TagRepository to src.
+func NewTagRepository(src crud.Source) *TagRepo {
+	return TagRepository.Bind(src)
+}
 
 // TagInput is the entity body for Tag: what a create or a replace carries,
 // under this resource's own wire names. TagUpdate is the PATCH shape; a
@@ -395,8 +445,8 @@ type TagService struct {
 var _ port.Service[Tag, int64, TagUpdate] = (*TagService)(nil)
 
 // NewTagService builds the service over a repository.
-func NewTagService(repository port.Repository[Tag, int64, TagUpdate], options ...port.ServiceOption) *TagService {
-	return &TagService{DefaultService: port.NewService(repository, options...)}
+func NewTagService(repo port.Repository[Tag, int64, TagUpdate], opts ...port.ServiceOption) *TagService {
+	return &TagService{DefaultService: port.NewService(repo, opts...)}
 }
 
 // MountTag mounts the resource on a ServeMux under prefix, behind TagMapper.
@@ -404,8 +454,8 @@ func NewTagService(repository port.Repository[Tag, int64, TagUpdate], options ..
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountTag(mux *http.ServeMux, prefix string, service port.Service[Tag, int64, TagUpdate], options ...crudnet.Option[Tag, int64, TagUpdate]) {
-	crudnet.ServingFor(service, TagMapper{}, options...).Mount(mux, prefix)
+func MountTag(mux *http.ServeMux, prefix string, svc port.Service[Tag, int64, TagUpdate], opts ...crudnet.Option[Tag, int64, TagUpdate]) {
+	crudnet.ServingFor(svc, TagMapper{}, opts...).Mount(mux, prefix)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

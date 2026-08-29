@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud/crudtest"
 	"github.com/frostgrove/vv/errs"
 	"github.com/google/uuid"
@@ -242,5 +241,3 @@ func (refusingRegistrar) Create(context.Context, testForm) (uuid.UUID, string, e
 }
 
 func (refusingRegistrar) Password(form testForm) string { return form.Password }
-
-func (refusingRegistrar) Role() auth.Role { return "" }

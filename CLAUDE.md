@@ -228,11 +228,13 @@ The code has a voice. Match it rather than averaging toward generic Go.
 - Prefer the boring construct. The magic in this library is deliberate and
   concentrated (reflection over models, codegen, type inference at the seam) —
   see `[[D-021]]`. Everywhere else, be ordinary.
-- **Package** `crud` imports the standard library only — the package, not the
-  subtree: `crud/sqlrepo`, `crud/query` and the rest below it are ordinary
-  packages with ordinary dependencies ([[D-016]], and `scripts/checks.sh:TIER0_STDLIB` is
-  what holds it). The whole root *module* still takes no third-party
-  dependency at all: a package that needs one becomes a module. `[[D-033]]`.
+- **Package** `crud` imports the standard library and the `SHARED` tier only —
+  the package, not the subtree: `crud/sqlrepo`, `crud/query` and the rest below
+  it are ordinary packages with ordinary dependencies ([[D-016]], narrowed by
+  [[D-069]]; `scripts/checks.sh:TIER0_STDLIB` is what holds it). `SHARED` is
+  `utils`, which is itself checked stdlib-only. The whole root *module* still
+  takes no third-party dependency at all: a package that needs one becomes a
+  module. `[[D-033]]`.
 
 ---
 
@@ -282,7 +284,8 @@ remote/                     the consuming half: another service's resource, held
 errs/                       the error contract: Code, Kind, Path, Violation, Fault, the SPI
 └── sqlerr/                 a driver error becomes a code, one table per dialect
 
-utils/                      for the consumer's application, never for the library
+utils/                      the SHARED tier and the consumer's application helpers ([[D-069]])
+├── optional.go             MODEL PRIMITIVE — Opt[T]: absent, null and set are three states
 ├── vvflag/                 one typed flag, without owning the command line
 ├── vvcfg/                  MODULE — a config struct, loaded and validated at start-up
 ├── vvgoose/                MODULE — Goose CLI and SQL generation from Go models

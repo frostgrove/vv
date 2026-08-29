@@ -23,6 +23,7 @@ type Store struct {
 	RolePermissions    *RolePermissionRepo
 	SubjectRoles       *SubjectRoleRepo
 	SubjectPermissions *SubjectPermissionRepo
+	DefaultRoles       *SubjectDefaultRoleRepo
 	Credentials        *CredentialRepo
 	Sessions           *SessionRepo
 }
@@ -42,6 +43,7 @@ func NewStore(src crud.Source) *Store {
 		RolePermissions:    crud.Decorate(NewRolePermissionRepository(src), faults.Enrich[RolePermission, uuid.UUID]()),
 		SubjectRoles:       crud.Decorate(NewSubjectRoleRepository(src), faults.Enrich[SubjectRole, uuid.UUID]()),
 		SubjectPermissions: crud.Decorate(NewSubjectPermissionRepository(src), faults.Enrich[SubjectPermission, uuid.UUID]()),
+		DefaultRoles:       crud.Decorate(NewSubjectDefaultRoleRepository(src), faults.Enrich[SubjectDefaultRole, uuid.UUID]()),
 		Credentials:        crud.Decorate(NewCredentialRepository(src), faults.Enrich[Credential, uuid.UUID]()),
 		Sessions:           crud.Decorate(NewSessionRepository(src), faults.Enrich[Session, uuid.UUID]()),
 	}
@@ -90,6 +92,21 @@ func (this *Store) PermissionByCode(ctx context.Context, code auth.Permission) (
 // RoleBySlug finds one role by the identifier a caller spells.
 func (this *Store) RoleBySlug(ctx context.Context, slug auth.Role) (Role, error) {
 	return this.Roles.First(ctx, specs.As(Role_.Slug.Eq(string(slug))))
+}
+
+// DefaultRoleRow finds the default-role binding for one kind of caller, with
+// the role it points at loaded.
+//
+// It answers crud.ErrNotFound when the type has no default, which is a state a
+// deployment is allowed to be in: an invitation-only product grants nothing on
+// sign-up and an administrator does the granting. The caller branches on
+// [IsNotFound] rather than getting a zero Role back, because a zero Role is
+// indistinguishable from one whose slug is empty.
+func (this *Store) DefaultRoleRow(ctx context.Context, subjectType SubjectType) (SubjectDefaultRole, error) {
+	return this.DefaultRoles.First(ctx,
+		specs.As(SubjectDefaultRole_.SubjectType.Eq(string(subjectType))),
+		crud.Preload(SubjectDefaultRole_.Role.Path()),
+	)
 }
 
 // CredentialFor finds the credential a caller is signing in with.

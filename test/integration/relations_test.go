@@ -79,9 +79,14 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	ann = Author{Name: "Ann"}
 	bob = Author{Name: "Bob"}
 	for _, a := range []*Author{&ann, &bob} {
-		if _, err := b.authors.Save(ctx, a); err != nil {
+		stored, err := b.authors.Save(ctx, a)
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Save answers the stored row and never changes what it was
+		// handed, so the generated key has to be written back here or
+		// every row that references it is seeded against a zero id.
+		*a = stored
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -89,16 +94,26 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	draft = Article{AuthorID: ann.ID, Title: "draft", Body: "wip", Views: 1}
 	traits = Article{AuthorID: bob.ID, Title: "rust traits", Body: "about traits", Views: 50, PublishedAt: crud.Set(now)}
 	for _, a := range []*Article{&generics, &draft, &traits} {
-		if _, err := b.articles.Save(ctx, a); err != nil {
+		stored, err := b.articles.Save(ctx, a)
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Save answers the stored row and never changes what it was
+		// handed, so the generated key has to be written back here or
+		// every row that references it is seeded against a zero id.
+		*a = stored
 	}
 
 	goTag, rustTag := Tag{Slug: "go"}, Tag{Slug: "rust"}
 	for _, tg := range []*Tag{&goTag, &rustTag} {
-		if _, err := b.tags.Save(ctx, tg); err != nil {
+		stored, err := b.tags.Save(ctx, tg)
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Save answers the stored row and never changes what it was
+		// handed, so the generated key has to be written back here or
+		// every row that references it is seeded against a zero id.
+		*tg = stored
 	}
 	for _, link := range [][2]int64{
 		{generics.ID, goTag.ID}, {generics.ID, rustTag.ID}, {traits.ID, rustTag.ID},
@@ -115,9 +130,14 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		{ArticleID: generics.ID, WordCount: 500},
 		{ArticleID: traits.ID, WordCount: 50},
 	} {
-		if _, err := b.stats.Save(ctx, st); err != nil {
+		stored, err := b.stats.Save(ctx, st)
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Save answers the stored row and never changes what it was
+		// handed, so the generated key has to be written back here or
+		// every row that references it is seeded against a zero id.
+		*st = stored
 	}
 
 	for _, c := range []*Comment{
@@ -125,9 +145,14 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		{ArticleID: generics.ID, AuthorID: ann.ID, Body: "thanks", Approved: false},
 		{ArticleID: traits.ID, AuthorID: ann.ID, Body: "clear", Approved: true},
 	} {
-		if _, err := b.comments.Save(ctx, c); err != nil {
+		stored, err := b.comments.Save(ctx, c)
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Save answers the stored row and never changes what it was
+		// handed, so the generated key has to be written back here or
+		// every row that references it is seeded against a zero id.
+		*c = stored
 	}
 	return ann, bob, generics, draft, traits
 }

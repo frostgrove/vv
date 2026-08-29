@@ -744,10 +744,14 @@ func seed(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], n int) [
 			Age:      crud.Set(20 + i),
 			Active:   true,
 		}
-		if _, err := repository.Save(ctx, &u); err != nil {
+		// The stored row and not the one handed in: Save answers what the
+		// database has — the generated key above all — and never changes its
+		// argument. Appending u would seed every later assertion with id 0.
+		stored, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
-		out = append(out, u)
+		out = append(out, stored)
 	}
 	return out
 }

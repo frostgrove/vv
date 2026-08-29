@@ -121,6 +121,8 @@ and the next decision written before its code does should say so here.
 | [D-066](D-066-access-owns-no-identity-and-no-route.md) | `access` names no subject type, no route and no identifier rule; the consumer creates the identity and normalises what it stores | accepted | auth, security, API design |
 | [D-067](D-067-an-identifier-is-unique-within-a-subject-type.md) | `credentials` is unique on (subject_type, provider, identifier); every lookup carries the type, and a sign-in without one is refused | accepted | auth, security |
 | [D-068](D-068-a-strategy-declares-issuing-and-verifying-together.md) | One strategy value produces both the issuer and the verifier; a guard is per subject and the verifier set is what was declared | accepted | auth, security, API design |
+| [D-069](D-069-a-shared-stdlib-only-tier-sits-under-everything.md) | A first-party stdlib-only `SHARED` tier that `crud` and every contract package may import; supersedes D-016's stdlib half | accepted | core seam, process & tooling |
+| [D-070](D-070-the-default-role-is-a-row-not-a-setting.md) | What a sign-up grants is a row in `subject_default_roles`, resolved against `roles` when written; no config key, no `Registrar.Role` | accepted | auth, security, migrations |
 
 ## By area
 
@@ -146,7 +148,8 @@ manifest and why a `Principal` is an interface), D-056 (the 401's shape, why the
 reason lives in the wrapped error, and where 401 sits between 403 and 404),
 D-048 (the rule D-055 obeys rather than amends), D-035 (the `auth` row of the
 naming grid), D-051 (why an `auth*` binding does not require its `crud*`
-sibling).
+sibling), D-070 (the default role a sign-up grants is a row, which is the last
+hole in D-066).
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).

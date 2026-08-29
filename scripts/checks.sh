@@ -5,9 +5,16 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 cd "$REPO_ROOT"
 
-TIER0=(crud crud/crudtest crud/query errs errs/sqlerr port port/porthttp)
+# SHARED is the first-party stdlib-only tier every other tier may import: types
+# that are a primitive of the model and the wire rather than of any subsystem.
+# A package joins it only if it imports the standard library and nothing else,
+# which the TIER0_STDLIB arm below checks for each of them. See D-069.
+SHARED=(utils)
+TIER0=(crud crud/crudtest crud/query errs errs/sqlerr port port/porthttp "${SHARED[@]}")
 TIER0_SEALED=(errs)
-TIER0_STDLIB=(crud)
+# A stdlib-only package may import the standard library and SHARED, and nothing
+# else of this repository.
+TIER0_STDLIB=(crud "${SHARED[@]}")
 SUBSYSTEMS=(crud auth port remote storage)
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
@@ -32,7 +39,7 @@ check_deps() {
 }
 
 check_tiers() {
-	local package dependencies invalid failed=0 tier0_re
+	local package dependencies invalid failed=0 tier0_re shared_re
 	tier0_re=$(IFS='|'; echo "${TIER0[*]}")
 	for package in "${TIER0[@]}"; do
 		[[ -d $package ]] || continue
@@ -57,7 +64,8 @@ check_tiers() {
 			failed=1
 			continue
 		fi
-		invalid=$(echo "$dependencies" | grep "^$VV_MODULE" | sed "s|^$VV_MODULE/||" | grep -Ev "^$package$" || true)
+		shared_re=$(IFS='|'; echo "${SHARED[*]}")
+		invalid=$(echo "$dependencies" | grep "^$VV_MODULE" | sed "s|^$VV_MODULE/||" | grep -Ev "^($package|$shared_re)$" || true)
 		if [[ -n $invalid ]]; then
 			echo "stdlib-only package $package may import only the standard library:"
 			echo "$invalid" | sort -u | sed 's/^/  /'

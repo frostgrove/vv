@@ -206,6 +206,49 @@ func NewSessionRepository(src crud.Source) *SessionRepo {
 	return SessionRepository.Bind(src)
 }
 
+// SubjectDefaultRoleUpdate is the partial-update DTO for SubjectDefaultRole.
+// A pointer field is optional; a utils.Opt field is optional and nullable,
+// so an absent key, an explicit null and a value stay three different things.
+type SubjectDefaultRoleUpdate struct {
+	SubjectType *string    `json:"subjectType,omitempty"`
+	RoleID      *uuid.UUID `json:"roleID,omitempty"`
+}
+
+// SubjectDefaultRoleRoleAttrs reaches SubjectDefaultRole through Role.
+type SubjectDefaultRoleRoleAttrs struct {
+	specs.Rel[SubjectDefaultRole, Role]
+	ID        specs.Attr[SubjectDefaultRole, uuid.UUID]
+	Slug      specs.Str[SubjectDefaultRole]
+	Name      specs.Str[SubjectDefaultRole]
+	IsSystem  specs.Attr[SubjectDefaultRole, bool]
+	CreatedAt specs.Cmp[SubjectDefaultRole, time.Time]
+}
+
+// SubjectDefaultRoleAttrs is the generated metamodel shape for SubjectDefaultRole.
+type SubjectDefaultRoleAttrs struct {
+	ID          specs.Attr[SubjectDefaultRole, uuid.UUID]
+	SubjectType specs.Str[SubjectDefaultRole]
+	RoleID      specs.Attr[SubjectDefaultRole, uuid.UUID]
+	UpdatedAt   specs.Cmp[SubjectDefaultRole, time.Time]
+	Role        SubjectDefaultRoleRoleAttrs
+}
+
+// SubjectDefaultRole_ is the metamodel of SubjectDefaultRole: typed, path-aware field references.
+// It is validated against the model at package initialisation.
+var SubjectDefaultRole_ = specs.Metamodel[SubjectDefaultRole, SubjectDefaultRoleAttrs]()
+
+// SubjectDefaultRoleRepo is the typed repository for SubjectDefaultRole.
+type SubjectDefaultRoleRepo = crud.Repo[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]
+
+// SubjectDefaultRoleRepository describes SubjectDefaultRole independently of a database driver.
+// Bind it through NewSubjectDefaultRoleRepository with the application's datasource.
+var SubjectDefaultRoleRepository = sqlrepo.Define[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]("")
+
+// NewSubjectDefaultRoleRepository binds SubjectDefaultRoleRepository to src.
+func NewSubjectDefaultRoleRepository(src crud.Source) *SubjectDefaultRoleRepo {
+	return SubjectDefaultRoleRepository.Bind(src)
+}
+
 // SubjectPermissionUpdate is the partial-update DTO for SubjectPermission.
 // A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
@@ -307,6 +350,7 @@ func init() {
 	port.MustCoverUpdate[Role, RoleUpdate]()
 	port.MustCoverUpdate[RolePermission, RolePermissionUpdate]()
 	port.MustCoverUpdate[Session, SessionUpdate]()
+	port.MustCoverUpdate[SubjectDefaultRole, SubjectDefaultRoleUpdate]()
 	port.MustCoverUpdate[SubjectPermission, SubjectPermissionUpdate]()
 	port.MustCoverUpdate[SubjectRole, SubjectRoleUpdate]()
 }

@@ -217,7 +217,8 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 			}
 			row.Tenant = 999 // immutable: the conflict clause will not write it
 			row.Name = "after"
-			if _, err := rows.Save(ctx, &row); err != nil {
+			answered, err := rows.Save(ctx, &row)
+			if err != nil {
 				t.Fatal(err)
 			}
 
@@ -230,13 +231,19 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 			if egRowText(stored) != want {
 				t.Fatalf("the stored row is\n  %s\nwant\n  %s", egRowText(stored), want)
 			}
-			// And so does the caller's copy of it — including tenant 7, which
-			// the caller had set to 999 and the conflict clause refused, and
-			// note, which is an explicit null in the table rather than the
-			// undefined Opt that was written.
-			if egRowText(row) != want {
-				t.Fatalf("Save left the caller with\n  %s\nwhere the row is\n  %s",
-					egRowText(row), want)
+			// And so does what Save answered — including tenant 7, which the
+			// caller had set to 999 and the conflict clause refused, and note,
+			// which is an explicit null in the table rather than the undefined
+			// Opt that was written.
+			if egRowText(answered) != want {
+				t.Fatalf("Save answered\n  %s\nwhere the row is\n  %s",
+					egRowText(answered), want)
+			}
+			// The caller's own value is untouched, which is the contract: Save
+			// answers the stored row and never edits what it was handed, so a
+			// caller that wants the refreshed one uses the return value.
+			if row.Tenant != 999 {
+				t.Fatalf("Save edited the caller's model: tenant = %d, want the 999 it set", row.Tenant)
 			}
 		})
 	}
@@ -399,11 +406,12 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 
 			// row is the copy from before the update: version 0, stale.
 			row.Name = "resaved"
-			if _, err := vers.Save(ctx, &row); err != nil {
+			resaved, err := vers.Save(ctx, &row)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if row.Version != 1 {
-				t.Fatalf("the model came back at version %d; Save refreshes it, so it has to describe the row that is there", row.Version)
+			if resaved.Version != 1 {
+				t.Fatalf("Save answered version %d; it answers the row that is there, so a stale caller's copy is refreshed by using the return value", resaved.Version)
 			}
 			after, err := vers.GetByID(ctx, 1)
 			if err != nil {

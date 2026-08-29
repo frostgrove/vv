@@ -74,6 +74,13 @@ func (this *Runtime) Store() *Store { return this.store }
 // Config answers the settings this runtime was built with.
 func (this *Runtime) Config() Config { return this.config }
 
+// Seeder answers the idempotent writes an application's seed command performs:
+// the roles a product has, and which one a kind of caller is given on sign-up.
+//
+// Separate from [Runtime.Sync], which is the code's own facts and runs at every
+// start. See [Seeder] for why the two are not one pass.
+func (this *Runtime) Seeder() *Seeder { return NewSeeder(this.store, this.logger) }
+
 // Declare adds a module's permissions and system roles to what [Runtime.Sync]
 // will fold into the tables.
 func (this *Runtime) Declare(grants ...ModuleGrants) {
