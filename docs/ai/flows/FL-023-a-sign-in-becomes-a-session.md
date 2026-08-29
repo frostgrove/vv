@@ -1,7 +1,7 @@
 # FL-023 — A sign-in becomes a session
 
 **Entry point:** `auth/access/access.runtime.go:New` and `auth/access/access.runtime.go:Mount`
-**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-072]] [[D-033]] [[D-058]]
+**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-072]] [[D-075]] [[D-033]] [[D-058]]
 
 ## Wiring, once
 
@@ -27,7 +27,9 @@
 ## Signing in
 
 1. **the binding** — `auth/access/http/accessfiber/accessfiber.go:SignIn`,
-   `accessgin`, `accessnet` — decode, call, write, and nothing else.
+   `accessgin`, `accessnet` — decode, read the delivery, call, write. The
+   delivery is read *before* the password is checked, so a request nobody can
+   answer costs no hash and mints no session.
 2. **`Endpoints.SignIn`** — `auth/access/access.endpoints.go` — supplies the
    subject type and folds the identifier through `Subject.Identifier`. Both come
    from the surface and never from the body: with an identifier unique per type
@@ -43,6 +45,38 @@
    kind comes into existence.
 6. **`Directory.Touch`** — best effort, after the session exists. A directory
    that cannot record a sign-in has not stopped one.
+7. **`Credentials.Answer`** — `auth/access/http/accesshttp/cookies.go` — splits
+   the minted session between the body and the cookies, and clears the cookie a
+   half delivered to the body did not go into.
+
+## Delivering the credentials
+
+Where a session's two credentials go, and the one place it is not the caller's
+to say ([[D-075]]).
+
+1. **`Credentials.Requested`** — `auth/access/http/accesshttp/delivery.go` —
+   reads `X-Auth-Delivery` through the binding's own header getter. Silence takes
+   the most closed delivery the deployment offers; a value nobody defined is
+   `invalid_enum`, and so is a cookie asked of a surface with none configured.
+2. **`NewCredentials`** — `auth/access/http/accesshttp/cookies.go` — built once
+   per handler from the binding's `Delivering` option. It derives both cookie
+   names from the subject's prefix and both paths from the API's, and refuses at
+   start-up a policy a browser would silently discard.
+3. **`Credentials.Answer`** — what goes into a cookie leaves the body, and what
+   goes into the body clears its cookie.
+4. **`accesshttp.Rotating`** — the rotating half is forced to the channel the
+   presented credential arrived on; the request still decides the access token.
+5. **`Cookie.HTTP`** — the net/http rendering `accessnet` and `accessgin` write
+   through, with HttpOnly set here and nowhere else. `accessfiber` translates to
+   Fiber's own cookie type in `accessfiber.go:jar.write`.
+6. **`Credentials.Clear` / `ClearRefresh`** — a sign-out takes both cookies away;
+   a refused rotation takes only the one that failed to rotate anything, because
+   a rotation is anonymous and the caller may hold a good access cookie from a
+   session it knows nothing about.
+7. **the guard** — `auth/http/authhttp/cookie.go:Cookie` — the other half of the
+   closed delivery: a browser holding its access token in a cookie sends no
+   Authorization header, so the guard is given a lookup that reads the cookie and
+   falls back to the header. See [[FL-019]].
 
 ## Registering
 
@@ -99,17 +133,21 @@ band ([[D-070]]).
 
 ## Rotating
 
-1. **`Endpoints.Refresh`** — mounted only for a strategy that rotates.
-2. **`core.find`** — `auth/access/accessjwt/accessjwt.go` — the digest as the
+1. **the binding** — the body is read first and the cookie is the fallback: a
+   caller that sent a credential meant that one, and a cookie left over from a
+   browser session must not quietly rotate a native client's lineage instead. A
+   refusal clears the cookie when that is where the credential came from.
+2. **`Endpoints.Refresh`** — mounted only for a strategy that rotates.
+3. **`core.find`** — `auth/access/accessjwt/accessjwt.go` — the digest as the
    current credential, then as the previous one.
-3. **`Classify`** — `auth/access/accessjwt/rotation.go:71` — pure, no database.
+4. **`Classify`** — `auth/access/accessjwt/rotation.go:71` — pure, no database.
    `Rotate`, `RotateAgain` inside the grace window, `Replay` after it, `Unusable`
    otherwise.
-4. **`core.rotate`** — a compare-and-swap on the current digest. Two simultaneous
+5. **`core.rotate`** — a compare-and-swap on the current digest. Two simultaneous
    refreshes: exactly one matches, the other lands in the previous-digest branch
    and is told apart there. A read-then-write would issue two lineages from one
    session.
-5. **`core.close`** — on a replay the whole lineage goes, and the revocation list
+6. **`core.close`** — on a replay the whole lineage goes, and the revocation list
    is written if one is configured.
 
 ## Closing a session
@@ -156,8 +194,11 @@ builds, including the one behind `Runtime.SetPassword`.
 | `auth/access/access.endpoints.go` | the seven transport-neutral operations |
 | `auth/access/access.authenticator.go` | a session row becomes a principal |
 | `auth/access/usecase.*.go` | the use cases |
-| `auth/access/http/accesshttp/` | the route table and the endpoint names |
-| `auth/access/http/access{net,gin,fiber}/` | decode, call, write |
+| `auth/access/http/accesshttp/accesshttp.go` | the route table and the endpoint names |
+| `auth/access/http/accesshttp/delivery.go` | the three deliveries, what silence takes, and what a rotation is not allowed to move |
+| `auth/access/http/accesshttp/cookies.go` | the cookie policy, the names and paths, and the split between body and cookie |
+| `auth/access/http/access{net,gin,fiber}/` | decode, read the delivery, call, write, set the cookies |
+| `auth/http/authhttp/cookie.go` | the guard's other end of a cookie-borne access token |
 | `auth/access/accessjwt/rotation.go` | `Classify`, the pure half of rotation |
 | `auth/access/accessjwt/accessjwt.go` | issuing, the CAS, the replay response |
 | `auth/access/accessjwt/revokeredis/` | the deny-list |
@@ -172,5 +213,10 @@ builds, including the one behind `Runtime.SetPassword`.
 - `auth/access/accessjwt/rotation_test.go` — every arm of `Classify`, including
   the grace boundary on both sides.
 - `auth/access/http/access{net,gin,fiber}/*_test.go` — the triplet: the prefix,
-  the separately-mounted sign-up, and that every named endpoint reaches a
-  handler.
+  the separately-mounted sign-up, that every named endpoint reaches a handler,
+  and that each transport reads the delivery header and writes a credential
+  cookie with its attributes intact.
+- `auth/access/http/accesshttp/delivery_test.go` and `cookies_test.go` — the
+  delivery rules and the cookie split, which is where the behaviour lives.
+- `auth/http/authhttp/cookie_test.go` — the guard reads the cookie and still
+  reads the Authorization header.

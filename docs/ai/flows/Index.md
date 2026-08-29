@@ -121,6 +121,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/authjwt/claims.go` | FL-019 |
 | `auth/authjwt/authenticator.go` | FL-019 |
 | `auth/http/authhttp/authhttp.go` | FL-019, FL-011 |
+| `auth/http/authhttp/cookie.go` | FL-019, FL-023 |
 | `auth/http/authnet/authnet.go` | FL-019, FL-013 |
 | `auth/http/authgin/authgin.go` | FL-019, FL-013 |
 | `auth/http/authfiber/authfiber.go` | FL-019, FL-013 |
@@ -305,6 +306,11 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/access/access.defaults.go` | FL-023 |
 | `auth/access/access.seed.go` | FL-023 |
 | `auth/access/http/accesshttp/accesshttp.go` | FL-023 |
+| `auth/access/http/accesshttp/delivery.go` | FL-023 |
+| `auth/access/http/accesshttp/cookies.go` | FL-023 |
+| `auth/access/http/accessnet/accessnet.go` | FL-023 |
+| `auth/access/http/accessgin/accessgin.go` | FL-023 |
+| `auth/access/http/accessfiber/accessfiber.go` | FL-023 |
 | `auth/access/accessjwt/rotation.go` | FL-023 |
 | `auth/access/accessjwt/accessjwt.go` | FL-023 |
 | `utils/vvgoose/provider.go` | FL-022 |

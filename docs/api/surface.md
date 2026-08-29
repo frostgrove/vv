@@ -63,6 +63,7 @@ type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, erro
 ## github.com/frostgrove/vv/auth/http/authhttp
 ```go
 var ErrSurface = errors.New("the API and its access declarations disagree")
+func Cookie(name string) auth.Option
 func Locale(r *http.Request) context.Context
 func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error)
 func RendererFor(options []porthttp.RenderOption) porthttp.Renderer
@@ -1035,7 +1036,17 @@ type SubjectType string
 ## github.com/frostgrove/vv/auth/access/http/accesshttp
 ```go
 const Register = "register" ...
+const DeliveryHeader = "X-Auth-Delivery"
+type Cookie struct{ ... }
+type Cookies struct{ ... }
+type Credentials struct{ ... }
+    func NewCredentials(table Table, policy Cookies) Credentials
+type Delivery string
+    const DeliverCookies Delivery = "cookies" ...
+    func Rotating(requested Delivery, byCookie bool) Delivery
 type Route struct{ ... }
+type SameSite string
+    const SameSiteStrict SameSite = "Strict" ...
 type Table struct{ ... }
     func For(mounted *access.MountedSubject) Table
 ```
@@ -1043,9 +1054,12 @@ type Table struct{ ... }
 ## github.com/frostgrove/vv/auth/access/http/accessnet
 ```go
 type Handler struct{ ... }
-    func New(mounted *access.MountedSubject, options ...porthttp.RenderOption) *Handler
+    func New(mounted *access.MountedSubject, options ...Option) *Handler
+type Option func(*settings)
+    func Delivering(cookies accesshttp.Cookies) Option
+    func Rendering(options ...porthttp.RenderOption) Option
 type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject, options ...porthttp.RenderOption) *RefreshHandler
+    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
 type RegisterHandler[P any] struct{ ... }
     func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
 ```
@@ -1054,7 +1068,7 @@ type RegisterHandler[P any] struct{ ... }
 ```go
 func AsGrants(constructor any) any
 func AsSubject(constructor any) any
-func Module(configuration access.Config) fx.Option
+func Module(configuration access.Config, options ...auth.Option) fx.Option
 type Registered struct{ ... }
 ```
 
@@ -1084,21 +1098,25 @@ type Option func(*List)
 ## github.com/frostgrove/vv/auth/access/http/accessfiber
 ```go
 type Handler struct{ ... }
-    func New(mounted *access.MountedSubject) *Handler
+    func New(mounted *access.MountedSubject, options ...Option) *Handler
+type Option func(*settings)
+    func Delivering(cookies accesshttp.Cookies) Option
 type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject) *RefreshHandler
+    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
 type RegisterHandler[P any] struct{ ... }
-    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P]) *RegisterHandler[P]
+    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
 ```
 
 ## github.com/frostgrove/vv/auth/access/http/accessgin
 ```go
 type Handler struct{ ... }
-    func New(mounted *access.MountedSubject) *Handler
+    func New(mounted *access.MountedSubject, options ...Option) *Handler
+type Option func(*settings)
+    func Delivering(cookies accesshttp.Cookies) Option
 type RefreshHandler struct{ ... }
-    func NewRefresh(mounted *access.MountedSubject) *RefreshHandler
+    func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler
 type RegisterHandler[P any] struct{ ... }
-    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P]) *RegisterHandler[P]
+    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
 ```
 
 ## github.com/frostgrove/vv/auth/authjwt

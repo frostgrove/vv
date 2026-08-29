@@ -8,22 +8,91 @@ import (
 
 	"github.com/frostgrove/vv/auth/access"
 	"github.com/frostgrove/vv/auth/access/http/accesshttp"
+	"github.com/frostgrove/vv/port/porthttp"
 )
+
+// An Option configures the handlers this package builds.
+type Option func(*settings)
+
+type settings struct {
+	cookies    accesshttp.Cookies
+	delivering bool
+}
+
+// Delivering lets a caller ask for its credentials in HttpOnly cookies.
+//
+// Without it every credential travels in the body and a request that asks for a
+// cookie is refused, which is the honest answer from a deployment that has not
+// decided what Secure and SameSite should be. With it the three deliveries in
+// [accesshttp.Delivery] are all available, and a request that names none gets
+// the most closed one.
+func Delivering(cookies accesshttp.Cookies) Option {
+	return func(s *settings) { s.cookies, s.delivering = cookies, true }
+}
+
+// jar is the cookie half of these handlers, shared by all three of them so that
+// the sign-in, the sign-up and the rotation cannot drift on where a credential
+// goes. It is a field rather than an embedded type: promoting
+// [accesshttp.Credentials]'s methods would put Answer and Clear on the public
+// surface of every handler here.
+type jar struct{ credentials accesshttp.Credentials }
+
+func newJar(table accesshttp.Table, options []Option) jar {
+	var chosen settings
+	for _, option := range options {
+		if option != nil {
+			option(&chosen)
+		}
+	}
+	if !chosen.delivering {
+		return jar{}
+	}
+	return jar{credentials: accesshttp.NewCredentials(table, chosen.cookies)}
+}
+
+// requested answers the delivery this request asked for, or refuses it.
+func (this jar) requested(c *gin.Context) (accesshttp.Delivery, error) {
+	return this.credentials.Requested(c.GetHeader)
+}
+
+// answer writes the response with each credential in exactly one place.
+func (this jar) answer(
+	c *gin.Context,
+	status int,
+	response access.AuthResponse,
+	delivery accesshttp.Delivery,
+) {
+	body, cookies := this.credentials.Answer(response, delivery)
+	this.write(c, cookies)
+	c.JSON(status, body)
+}
+
+// write sets the cookies through net/http rather than through c.SetCookie,
+// which takes a Max-Age and would make every call compute one from an expiry
+// the library already knows.
+func (this jar) write(c *gin.Context, cookies []accesshttp.Cookie) {
+	for _, cookie := range cookies {
+		http.SetCookie(c.Writer, cookie.HTTP())
+	}
+}
 
 // Handler is one subject's endpoints, ready to register on a router.
 type Handler struct {
 	endpoints access.Endpoints
 	table     accesshttp.Table
+	jar       jar
 }
 
 // New builds the handler for a mounted subject.
 //
 // No error and no type parameter: everything it needs is on the mounted
 // subject already. The sign-up route is NewRegister, separately.
-func New(mounted *access.MountedSubject) *Handler {
+func New(mounted *access.MountedSubject, options ...Option) *Handler {
+	table := accesshttp.For(mounted)
 	return &Handler{
 		endpoints: mounted.Endpoints(),
-		table:     accesshttp.For(mounted),
+		table:     table,
+		jar:       newJar(table, options),
 	}
 }
 
@@ -56,31 +125,49 @@ func (this *Handler) dispatch(name string) gin.HandlerFunc {
 func (this *Handler) SignIn(c *gin.Context) {
 	var body access.SignInRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
-		this.refuse(c, err)
+		refuse(c, porthttp.BadRequest(err))
+		return
+	}
+	// Before the password is checked rather than after: a request nobody can
+	// answer is refused without spending a hash, and without minting a session
+	// whose credentials have nowhere to go.
+	delivery, err := this.jar.requested(c)
+	if err != nil {
+		refuse(c, err)
 		return
 	}
 	response, err := this.endpoints.SignIn(c.Request.Context(), body, agentOf(c))
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, response)
+	this.jar.answer(c, http.StatusOK, response, delivery)
 }
 
+// SignOut closes the session and takes the browser's copy of the credentials
+// with it.
 func (this *Handler) SignOut(c *gin.Context) {
 	response, err := this.endpoints.SignOut(c.Request.Context())
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
+	this.jar.write(c, this.jar.credentials.Clear())
 	c.JSON(http.StatusOK, response)
 }
 
 func (this *Handler) SignOutAll(c *gin.Context) {
-	response, err := this.endpoints.SignOutAll(c.Request.Context(), c.Query("all") == "true")
+	everywhere := c.Query("all") == "true"
+	response, err := this.endpoints.SignOutAll(c.Request.Context(), everywhere)
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
+	}
+	// Only when this session went with them. Closing the others leaves the
+	// caller signed in, and clearing the cookies would sign them out of the
+	// browser while the server still holds their session.
+	if everywhere {
+		this.jar.write(c, this.jar.credentials.Clear())
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -88,12 +175,12 @@ func (this *Handler) SignOutAll(c *gin.Context) {
 func (this *Handler) ChangeSecret(c *gin.Context) {
 	var body access.ChangeSecretRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
-		this.refuse(c, err)
+		refuse(c, porthttp.BadRequest(err))
 		return
 	}
 	response, err := this.endpoints.ChangeSecret(c.Request.Context(), body)
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, response)
@@ -102,7 +189,7 @@ func (this *Handler) ChangeSecret(c *gin.Context) {
 func (this *Handler) WhoAmI(c *gin.Context) {
 	response, err := this.endpoints.WhoAmI(c.Request.Context())
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, response)
@@ -111,7 +198,7 @@ func (this *Handler) WhoAmI(c *gin.Context) {
 func (this *Handler) ListSessions(c *gin.Context) {
 	response, err := this.endpoints.ListSessions(c.Request.Context())
 	if err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, response)
@@ -119,14 +206,14 @@ func (this *Handler) ListSessions(c *gin.Context) {
 
 func (this *Handler) KillSession(c *gin.Context) {
 	if err := this.endpoints.KillSession(c.Request.Context(), c.Param("id")); err != nil {
-		this.refuse(c, err)
+		refuse(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
 // refuse hands the error to the application's error middleware.
-func (this *Handler) refuse(c *gin.Context, err error) {
+func refuse(c *gin.Context, err error) {
 	_ = c.Error(err)
 	c.Abort()
 }
@@ -147,14 +234,24 @@ func agentOf(c *gin.Context) access.Agent {
 type RegisterHandler[P any] struct {
 	signUp *access.SignUpUseCase[P]
 	route  accesshttp.Route
+	jar    jar
 }
 
 // NewRegister builds the sign-up route for a mounted subject.
 //
 // The use case is the one access.Mount answered with, so the payload type is
 // carried rather than erased and asserted back.
-func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P]) *RegisterHandler[P] {
-	return &RegisterHandler[P]{signUp: signUp, route: accesshttp.For(mounted).RegisterRoute()}
+func NewRegister[P any](
+	mounted *access.MountedSubject,
+	signUp *access.SignUpUseCase[P],
+	options ...Option,
+) *RegisterHandler[P] {
+	table := accesshttp.For(mounted)
+	return &RegisterHandler[P]{
+		signUp: signUp,
+		route:  table.RegisterRoute(),
+		jar:    newJar(table, options),
+	}
 }
 
 // Mount registers the sign-up route.
@@ -168,17 +265,20 @@ func (this *RegisterHandler[P]) Route() accesshttp.Route { return this.route }
 func (this *RegisterHandler[P]) Register(c *gin.Context) {
 	var payload P
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		_ = c.Error(err)
-		c.Abort()
+		refuse(c, porthttp.BadRequest(err))
+		return
+	}
+	delivery, err := this.jar.requested(c)
+	if err != nil {
+		refuse(c, err)
 		return
 	}
 	response, err := this.signUp.Execute(c.Request.Context(), payload, agentOf(c))
 	if err != nil {
-		_ = c.Error(err)
-		c.Abort()
+		refuse(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, response)
+	this.jar.answer(c, http.StatusCreated, response, delivery)
 }
 
 // RefreshHandler is the rotation route, mounted only for a strategy that
@@ -190,13 +290,16 @@ func (this *RegisterHandler[P]) Register(c *gin.Context) {
 type RefreshHandler struct {
 	endpoints access.Endpoints
 	route     accesshttp.Route
+	jar       jar
 }
 
 // NewRefresh builds the rotation route for a mounted subject.
-func NewRefresh(mounted *access.MountedSubject) *RefreshHandler {
+func NewRefresh(mounted *access.MountedSubject, options ...Option) *RefreshHandler {
+	table := accesshttp.For(mounted)
 	return &RefreshHandler{
 		endpoints: mounted.Endpoints(),
-		route:     accesshttp.For(mounted).RefreshRoute(),
+		route:     table.RefreshRoute(),
+		jar:       newJar(table, options),
 	}
 }
 
@@ -208,18 +311,47 @@ func (this *RefreshHandler) Mount(r gin.IRouter) {
 // Route answers where it was mounted.
 func (this *RefreshHandler) Route() accesshttp.Route { return this.route }
 
+// Refresh rotates, and answers the rotating credential through the channel it
+// arrived on — see [accesshttp.Rotating] for why the caller has no say in that.
+//
+// The body is read first and the cookie is the fallback, not the other way
+// round: a caller that sent a credential meant that one, and a cookie left over
+// from a browser session must not quietly rotate a native client's lineage
+// instead.
 func (this *RefreshHandler) Refresh(c *gin.Context) {
 	var body access.RefreshRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		c.Abort()
-		return
+	// An absent body is the ordinary case and not a malformed request: a browser
+	// rotating by cookie has nothing to send, and demanding `{}` of it would
+	// make the common path the one that needs explaining.
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			refuse(c, porthttp.BadRequest(err))
+			return
+		}
 	}
-	response, err := this.endpoints.Refresh(c.Request.Context(), body, agentOf(c))
+	requested, err := this.jar.requested(c)
 	if err != nil {
-		_ = c.Error(err)
-		c.Abort()
+		refuse(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, response)
+
+	credential, byCookie := body.Refresh, false
+	if credential == "" && this.jar.credentials.InCookies() {
+		if presented, err := c.Cookie(this.jar.credentials.RefreshCookie()); err == nil && presented != "" {
+			credential, byCookie = presented, true
+		}
+	}
+
+	response, err := this.endpoints.Refresh(c.Request.Context(),
+		access.RefreshRequest{Refresh: credential}, agentOf(c))
+	if err != nil {
+		// A cookie that no longer rotates anything is worth taking away, so the
+		// browser stops presenting it and the next sign-in starts clean.
+		if byCookie {
+			this.jar.write(c, this.jar.credentials.ClearRefresh())
+		}
+		refuse(c, err)
+		return
+	}
+	this.jar.answer(c, http.StatusOK, response, accesshttp.Rotating(requested, byCookie))
 }

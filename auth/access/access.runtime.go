@@ -173,8 +173,13 @@ func (this *MountedSubject) Prefix() string { return this.prefix }
 // handler without a principal — which is what a sign-in route needs — and every
 // handler that needs a caller asks for one. A *bad* credential is still a 401
 // at the door.
-func (this *MountedSubject) Guard() *auth.Guard {
-	return auth.NewGuard(this.authenticator, auth.Optional())
+//
+// The options are appended to that one, so a deployment can say where the
+// credential is read from without restating what a guard here is for. A browser
+// holding its access token in a cookie is the reason this is not fixed:
+// `subject.Guard(authhttp.Cookie(table.AccessCookie()))`.
+func (this *MountedSubject) Guard(options ...auth.Option) *auth.Guard {
+	return auth.NewGuard(this.authenticator, append([]auth.Option{auth.Optional()}, options...)...)
 }
 
 // Issuer answers what mints a session for this subject.
@@ -299,12 +304,16 @@ func (this *Runtime) Grants() *GrantsService { return this.grants }
 // A chain over the *declared* strategies and not over every format this library
 // can verify: a deployment that issues one kind of token runs one verifier, and
 // adding a second is a decision somebody made in a SubjectSpec.
-func (this *Runtime) AdminGuard() *auth.Guard {
+//
+// The options are [MountedSubject.Guard]'s: whatever says where the credential
+// is read from has to be said in both places, or the routes under a prefix and
+// the routes above it disagree about what a caller presented.
+func (this *Runtime) AdminGuard(options ...auth.Option) *auth.Guard {
 	authenticators := make([]auth.Authenticator, 0, len(this.subjects))
 	for _, mounted := range this.subjects {
 		authenticators = append(authenticators, mounted.authenticator)
 	}
-	return auth.NewGuard(auth.Chain(authenticators...), auth.Optional())
+	return auth.NewGuard(auth.Chain(authenticators...), append([]auth.Option{auth.Optional()}, options...)...)
 }
 
 // Sync folds every declaration into the tables. It runs once, before the server

@@ -26,6 +26,7 @@ binding, or to render a refusal yourself.
 | `RendererFor(opts)` | the renderer these options describe, sharing one value when there are none |
 | `Refuse(w, r, rd, err)` | the one place a 401 leaves a net/http-shaped binding |
 | `Locale(r)` | the rendering context, read from `Accept-Language` |
+| `Cookie(name)` | an `auth.Option` that reads the credential from a cookie |
 
 ## Why a refusal is written here rather than deferred
 
@@ -56,7 +57,42 @@ whether a second install re-authenticates, which header is read — all of that 
 `auth.Guard`, so the gRPC interceptor gets the same decisions with no HTTP
 package in its build ([[D-045]]).
 
-Nothing here knows what a credential is.
+Nothing here knows what a credential *means*. `Cookie` below knows where one may
+be written down, which is an HTTP fact and is why it is on this side of the line.
+
+## Reading the credential out of a cookie
+
+A browser that holds its access token in an HttpOnly cookie sends no
+`Authorization` header at all, so a guard that only reads one refuses every
+request the page makes.
+
+```go
+guard := auth.NewGuard(authn, authhttp.Cookie("access"))
+```
+
+| | |
+|---|---|
+| `Cookie(name)` | an `auth.Option`: read the credential from that cookie, **falling back to the Authorization header** |
+
+Three things about it are load-bearing:
+
+- **It falls back.** `auth.Lookup` replaces the credential lookup rather than
+  adding to it, so a cookie option written the obvious way turns the header off —
+  in the same application that wants both, because its pages send a cookie and
+  its native client sends a header. The fallback also keeps a guard usable from
+  `authgrpc`, where `Cookie` is a metadata key no client sends.
+- **It supplies the `Bearer` scheme**, which a cookie does not carry and every
+  authenticator here requires. Presenting a token in a cookie means what
+  presenting it in an `Authorization: Bearer` header means.
+- **The header it falls back to is `Authorization`**, not whatever
+  [auth.Header](auth.md) was given: an option cannot read another option's
+  choice. A guard that needs both a cookie and a header of its own writes its own
+  `auth.Lookup`, with this function's body as the shape.
+
+It is here rather than in `auth` because it needs an RFC 6265 parser and
+`net/http` has one ([[D-055]]). The other end of the arrangement — which cookie
+the access token was written into, and under what name — is
+[access](access.md)'s.
 
 ## The boot access gate
 
@@ -106,4 +142,5 @@ off as "no permissions needed" ([[D-073]]).
 - [auth](auth.md) — the transport-neutral half
 - [porthttp](porthttp.md) — the renderer, the envelope and the status table this refuses through
 - [crudhttp](crudhttp.md) — the same split, for the CRUD bindings
-- [[D-055]] · [[D-056]] · [[FL-019]]
+- [access](access.md) — the surface that writes the cookie `Cookie` reads
+- [[D-055]] · [[D-056]] · [[D-075]] · [[FL-019]]

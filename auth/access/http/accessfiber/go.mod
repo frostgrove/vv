@@ -9,13 +9,13 @@ module github.com/frostgrove/vv/auth/access/http/accessfiber
 go 1.26.5
 
 require (
+	github.com/frostgrove/vv v0.0.0-20260829170205-3b943f2e18f1
 	github.com/frostgrove/vv/auth/access v0.0.0-00010101000000-000000000000
 	github.com/gofiber/fiber/v3 v3.4.0
 )
 
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
-	github.com/frostgrove/vv v0.0.0-20260829170205-3b943f2e18f1 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

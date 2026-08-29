@@ -66,10 +66,21 @@ declaration, not to the sign-in code.
     was spent closes the session it belonged to.
 14. Routes exist for a framework the author already uses, and choosing one does
     not drag in the others.
+15. One deployment serves a browser and a native client without either of them
+    holding a credential the other's threat model forbids. Where a session's two
+    credentials go is said per request — both in HttpOnly cookies, the rotating
+    one alone, or both in the body — a request that says nothing gets the most
+    closed of those, and a request that says something unknown is refused rather
+    than quietly given the default. The one exception is rotation: the rotating
+    credential comes back through the channel it arrived on, because a script on
+    the page can make the browser send a cookie it cannot read, and an endpoint
+    that honoured "put it in the body" would hand that script a durable
+    credential. See [[D-075]].
 
 ## Status
 
 Covered. The session, credential and grant halves are in place with both an
-opaque and a signed strategy; the identity-linking half — signing in through an
-external provider — is not, and an author who needs it today writes their own
-`Registrar` and calls the enrolment use case.
+opaque and a signed strategy, and a browser can hold both credentials where no
+script reaches them; the identity-linking half — signing in through an external
+provider — is not, and an author who needs it today writes their own `Registrar`
+and calls the enrolment use case.

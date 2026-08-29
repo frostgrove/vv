@@ -1,7 +1,7 @@
 # FL-019 — A token becomes a principal
 
 **Entry point:** `auth/http/authnet/authnet.go:Middleware`, `auth/http/authgin/authgin.go:Middleware`, `auth/http/authfiber/authfiber.go:Middleware` and `auth/rpc/authgrpc/interceptor.go:Unary`
-**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-045]] [[D-021]] [[D-044]]
+**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-045]] [[D-021]] [[D-044]] [[D-075]]
 
 ## The path
 
@@ -16,7 +16,16 @@
    carries a principal is returned untouched. A guard mounted globally and again
    on a group verifies once.
 4. **`Guard.credential`** — `auth/guard.go:116` — the configured `Lookup`, or
-   `ParseAuthorization` over the configured header.
+   `ParseAuthorization` over the configured header. `Lookup` *replaces* the
+   header rather than adding to it, which is why the one lookup this library
+   ships falls back explicitly: `auth/http/authhttp/cookie.go:Cookie` reads a
+   named cookie out of the `Cookie` header with `http.ParseCookie`, supplies the
+   `Bearer` scheme no cookie carries, and reads the Authorization header when
+   there is no such cookie — so a browser holding its access token in an
+   HttpOnly cookie ([[D-075]]) and a native client sending a bearer are served by
+   one guard. It lives in `authhttp` because `auth` takes no HTTP dependency
+   ([[D-055]]); on `authgrpc` the metadata key is one no client sends, and the
+   fallback is what keeps that guard working.
 5. **`ParseAuthorization`** — `auth/credential.go:55` — splits on the first
    space, trims, and refuses a header with no space: a bare token is a scheme
    with nothing under it, and a truncating proxy produces exactly that.

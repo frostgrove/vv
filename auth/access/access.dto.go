@@ -6,21 +6,29 @@ import (
 	"github.com/google/uuid"
 )
 
-// AuthResponse is the single answer to register, login and "who am I".
+// AuthResponse is the single answer to register, login and rotating.
 //
 // One shape for all three on purpose: a client that has just signed up and a
 // client that has just signed in are in the same state, and a second shape for
 // the second case is a second branch in every consumer of it.
+//
+// Every credential field is omitzero, and that is what lets one shape also serve
+// a caller who asked for its credentials in cookies: what an HTTP binding put in
+// a cookie it clears here, and the field is then absent rather than empty. A
+// `"token": ""` is a field a client has to know to ignore, and one that did not
+// would present the empty string as a bearer and be told it is not signed in.
+// omitzero and not omitempty because a time.Time is a struct, and omitempty has
+// never omitted one.
 type AuthResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	Token     string    `json:"token,omitzero"`
+	ExpiresAt time.Time `json:"expiresAt,omitzero"`
 
 	// Refresh is present only for a strategy that rotates. An opaque session
 	// has nothing to refresh — its token is valid until the row says otherwise
 	// — so the field is omitted rather than filled with a copy of Token, which
 	// a client would then send to a /auth/refresh that does not exist.
-	Refresh          string    `json:"refresh,omitempty"`
-	RefreshExpiresAt time.Time `json:"refreshExpiresAt,omitempty"`
+	Refresh          string    `json:"refresh,omitzero"`
+	RefreshExpiresAt time.Time `json:"refreshExpiresAt,omitzero"`
 
 	Principal PrincipalDto `json:"principal"`
 }

@@ -79,7 +79,12 @@ type Registered struct {
 // The configuration is passed rather than resolved, because a deployment keeps
 // it inside a configuration struct of its own shape and this package must not
 // have an opinion about that shape.
-func Module(configuration access.Config) fx.Option {
+//
+// The options are the admin guard's, and the one there is a reason to pass is
+// where the credential is read from: a deployment whose browser holds the access
+// token in an HttpOnly cookie hands over `authhttp.Cookie(name)`, or every
+// request it makes arrives with no Authorization header and no principal.
+func Module(configuration access.Config, options ...auth.Option) fx.Option {
 	return fx.Module("vv.access",
 		fx.Provide(
 			func(source crud.Source, logger *slog.Logger) (*access.Runtime, error) {
@@ -90,7 +95,9 @@ func Module(configuration access.Config) fx.Option {
 				})
 			},
 			newGrants,
-			newAdminGuard,
+			func(runtime *access.Runtime, grants *access.GrantsService) *auth.Guard {
+				return newAdminGuard(runtime, grants, options)
+			},
 			newSetPassword,
 			newRoleService,
 			newPermissionService,
@@ -117,8 +124,8 @@ func newGrants(runtime *access.Runtime, registered Registered) (*access.GrantsSe
 // It takes the resolver rather than the runtime so it inherits the same
 // ordering: a chain assembled before the last Mount would verify some formats
 // and silently refuse the rest.
-func newAdminGuard(runtime *access.Runtime, _ *access.GrantsService) *auth.Guard {
-	return runtime.AdminGuard()
+func newAdminGuard(runtime *access.Runtime, _ *access.GrantsService, options []auth.Option) *auth.Guard {
+	return runtime.AdminGuard(options...)
 }
 
 // newSetPassword is the administrative password reset, and what makes an account

@@ -1,8 +1,14 @@
 package accessgin
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
+	"github.com/frostgrove/vv/auth/access"
 	"github.com/frostgrove/vv/auth/access/http/accesshttp"
 )
 
@@ -59,5 +65,88 @@ func TestEveryNamedEndpointHasAHandler(t *testing.T) {
 	}
 	if len(seen) != 7 {
 		t.Fatalf("the table mounts %d endpoints, want 7", len(seen))
+	}
+}
+
+// The delivery is a request header, so each binding has to read one — and each
+// of the three reads headers its own way.
+func TestTheDeliveryHeaderIsReadFromThisTransportsRequest(t *testing.T) {
+	jar := newJar(accesshttp.Table{}, []Option{Delivering(accesshttp.Cookies{Prefix: "/api"})})
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+
+	got, err := jar.requested(c)
+	if err != nil {
+		t.Fatalf("a request with no delivery header was refused: %v", err)
+	}
+	if got != accesshttp.DeliverCookies {
+		t.Fatalf("silence took %q, want the most closed delivery", got)
+	}
+
+	c.Request.Header.Set(accesshttp.DeliveryHeader, string(accesshttp.DeliverBody))
+	if got, err = jar.requested(c); err != nil || got != accesshttp.DeliverBody {
+		t.Fatalf("the header asked for the body and this binding read %q (%v)", got, err)
+	}
+}
+
+// The cookie half is where the three bindings differ most: each has its own
+// cookie type or setter, and an attribute lost in one of them is a credential a
+// script can read.
+func TestACredentialCookieIsWrittenThroughThisTransport(t *testing.T) {
+	jar := newJar(accesshttp.Table{}, []Option{
+		Delivering(accesshttp.Cookies{Prefix: "/api", Secure: true}),
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+
+	jar.answer(c, http.StatusOK, access.AuthResponse{
+		Token:   "an access token",
+		Refresh: "a rotating credential",
+	}, accesshttp.DeliverCookies)
+
+	assertCookiesLeftTheBody(t, recorder.Result(), recorder.Body.Bytes())
+}
+
+// assertCookiesLeftTheBody is the check the three bindings share: both
+// credentials arrive in cookies a script cannot read, and no copy of either
+// stayed in the body.
+func assertCookiesLeftTheBody(t *testing.T, response *http.Response, body []byte) {
+	t.Helper()
+
+	set := map[string]*http.Cookie{}
+	for _, cookie := range response.Cookies() {
+		set[cookie.Name] = cookie
+	}
+	for name, path := range map[string]string{"access": "/api", "refresh": "/api/auth/refresh"} {
+		cookie, ok := set[name]
+		if !ok || cookie.Value == "" {
+			t.Fatalf("no %q cookie was set: %v", name, response.Cookies())
+		}
+		if !cookie.HttpOnly {
+			t.Fatalf("the %q cookie is readable from JavaScript, which is the one thing it must not be", name)
+		}
+		if !cookie.Secure {
+			t.Fatalf("the %q cookie would travel over plain HTTP", name)
+		}
+		if cookie.SameSite != http.SameSiteStrictMode {
+			t.Fatalf("the %q cookie is SameSite=%v, want Strict", name, cookie.SameSite)
+		}
+		if cookie.Path != path {
+			t.Fatalf("the %q cookie is scoped to %q, want %q", name, cookie.Path, path)
+		}
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("the response body is not JSON: %s", body)
+	}
+	if _, present := decoded["token"]; present {
+		t.Fatalf("the access token went into a cookie and stayed in the body: %s", body)
+	}
+	if _, present := decoded["refresh"]; present {
+		t.Fatalf("the rotating credential went into a cookie and stayed in the body: %s", body)
 	}
 }

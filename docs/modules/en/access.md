@@ -121,6 +121,9 @@ guard := users.Guard()          // this subject's verifier
 admin := runtime.AdminGuard()   // a chain over the declared strategies, for shared routes
 ```
 
+Both take `auth.Option`s, which is how a deployment says where the credential is
+read from — see [Where the credentials go](#where-the-credentials-go).
+
 A deployment that issues one kind of token runs one verifier and answers "that
 is not a valid token" rather than a 401 after several failed attempts.
 
@@ -222,6 +225,74 @@ Every refusal is the same refusal — an unknown identifier, a wrong password an
 a deactivated account answer alike, and the password is verified against
 `DummyHash()` when no credential was found so the response time says nothing
 either.
+
+## Where the credentials go
+
+A session has two credentials with opposite lifetimes, and where each of them
+should go depends on what is calling. So it is the request's to say, in one
+header, and a deployment serves a browser and a native client with one surface
+([[D-075]]).
+
+```go
+handler := accessfiber.New(users, accessfiber.Delivering(accesshttp.Cookies{
+    Prefix: "/api/v1",   // where this API is mounted
+    Secure: true,        // false only on a workstation serving http://localhost
+}))
+```
+
+| `X-Auth-Delivery` | access token | rotating credential | who asks |
+|---|---|---|---|
+| `cookies` | HttpOnly cookie | HttpOnly cookie | a browser |
+| `refresh-cookie` | body | HttpOnly cookie | a page that sends its own header |
+| `body` | body | body | a native client, a command-line tool |
+
+**Silence takes the most closed delivery on offer** — both cookies where they are
+configured, the body where they are not. A browser that forgets to ask is still a
+browser that cannot read its own credentials; a native client that forgets finds
+an empty body and no session, which is a failure somebody sees at once. A value
+nobody defined is `invalid_enum` rather than the default, and so is a cookie
+asked of a surface with none configured.
+
+**What goes into a cookie leaves the body**, and what goes into the body clears
+the cookie it did not go into. Two copies of a credential is one place too many,
+and a stale access cookie is worse than that: a guard reading cookies prefers one
+to the header, so the page would hold a fresh token and go on acting as the
+session it just replaced.
+
+**Rotation is not a choice.** The rotating credential comes back through the
+channel it arrived on, whatever the request asks. A script injected into the page
+cannot read an HttpOnly cookie but can make the browser send one — and an
+endpoint that honoured "give it back in the body" would hand that script a
+credential good for weeks from its own machine. What the request still decides
+there is the access token.
+
+Without `Delivering`, every credential travels in the body and a request that
+asks for a cookie is refused. That is the honest answer from a deployment that
+has not decided what `Secure` and `SameSite` should be.
+
+### What the library decides, and you do not
+
+| | |
+|---|---|
+| the names | `access` and `refresh`, prefixed with the subject's own prefix — `staff_access`. Two kinds of caller on one host would otherwise overwrite each other's access cookie, which is scoped to the whole API rather than to one endpoint |
+| the paths | the access cookie to `Cookies.Prefix`, the rotating one to that subject's rotation endpoint alone. A credential attached to every request reaches every log and proxy in front of the API |
+| `HttpOnly` | always. A credential cookie a script can read is what this is for avoiding, and an option to turn it off is an option somebody would find |
+| `SameSite` | `Strict` unless `Cookies.SameSite` says otherwise. `None` without `Secure` panics at start-up, because a browser discards such a cookie and every session would end at the next request with nothing in any log to say why |
+
+### The other end: a guard that reads the cookie
+
+Both credentials in cookies means no `Authorization` header, so the guard has to
+be told where to look. It is one option, and it falls back to the header — so the
+same guard serves the browser and the native client:
+
+```go
+guard := users.Guard(authhttp.Cookie(accesshttp.For(users).AccessCookie()))
+admin := runtime.AdminGuard(authhttp.Cookie(accesshttp.Table{}.AccessCookie()))
+```
+
+Under `accessfx`, the same option goes to `Module`, which hands it to the admin
+guard. Forgetting it is a sign-in that looks perfectly successful followed by a
+401 on everything after it.
 
 ## Declaring permissions
 
@@ -336,7 +407,7 @@ never resolves one ([[D-074]]).
 
 | | |
 |---|---|
-| `Module(config)` | the runtime, the resolver, the admin guard, the three services, the administrative password reset, and the start-up sync |
+| `Module(config, guardOptions…)` | the runtime, the resolver, the admin guard, the three services, the administrative password reset, and the start-up sync |
 | `AsSubject(ctor)` | a mounted subject joins the group |
 | `AsGrants(ctor)` | an `access.ModuleGrants` joins the group |
 | `Registered` | both groups, as an `fx.In` parameter object |

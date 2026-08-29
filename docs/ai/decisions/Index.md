@@ -127,6 +127,7 @@ and the next decision written before its code does should say so here.
 | [D-072](D-072-closing-a-session-reaches-the-strategy-that-issued-it.md) | Every closing path goes through `Deps.revoke`, which reads before it writes so the issuing strategy can be named; a strategy that verifies without reading declares a `RevocationSink`, announced after the commit | accepted | auth, security |
 | [D-073](D-073-a-mounted-route-declares-its-access-or-start-up-fails.md) | Every mounted route names its permissions or the reason it is open, and the router is compared against those declarations at assembly; both directions of disagreement are a start-up failure | accepted | auth, security, transports |
 | [D-074](D-074-a-container-binding-is-a-satellite.md) | The library resolves no component by type; a dependency-injection container is bound to from a satellite whose only job is that binding (narrows D-037) | accepted | process & tooling, philosophy |
+| [D-075](D-075-where-a-credential-goes-is-the-requests-choice-except-on-rotation.md) | A request names one of three deliveries and gets it or a refusal; silence takes the most closed one, and a rotation answers through the channel the credential arrived on | accepted | auth, transports |
 
 ## By area
 
@@ -156,7 +157,9 @@ D-048 (the rule D-055 obeys rather than amends), D-035 (the `auth` row of the
 naming grid), D-051 (why an `auth*` binding does not require its `crud*`
 sibling), D-070 (the default role a sign-up grants is a row, which is the last
 hole in D-066), D-072 (closing a session has to reach the strategy that issued
-it, because a verifier that reads no row cannot see a `revoked_at`).
+it, because a verifier that reads no row cannot see a `revoked_at`), D-075 (where
+a session's two credentials go is the request's to say, what silence takes, and
+the one case — rotation — where the caller is deliberately given no say).
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
