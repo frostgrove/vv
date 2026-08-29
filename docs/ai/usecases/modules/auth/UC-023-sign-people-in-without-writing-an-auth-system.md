@@ -48,18 +48,23 @@ declaration, not to the sign-in code.
    account locks it out on the next request, not when its credential expires.
 8. Roles and permissions are read from stored rows on every request, so taking a
    role away takes effect on the next call.
-9. A failed sign-in says nothing about which half was wrong, and costs the same
-   whether or not the identifier exists.
-10. A caller can only close their own sessions. A session id belonging to
+9. What a registration grants is data, changed on a running system and
+   inspectable afterwards, and it can be wrong out loud: naming a role that does
+   not exist is refused when it is set, not weeks later at somebody's first
+   sign-up. Naming none is a supported state, not a misconfiguration, and it
+   grants nothing.
+10. A failed sign-in says nothing about which half was wrong, and costs the same
+    whether or not the identifier exists.
+11. A caller can only close their own sessions. A session id belonging to
     somebody else answers as though it did not exist, rather than confirming
     that it does.
-11. Choosing signed tokens instead is one declaration. It changes what a client
+12. Choosing signed tokens instead is one declaration. It changes what a client
     receives and what a verifier checks, and changes nothing about how the
     author writes sign-up, sign-in or authorization.
-12. With signed tokens, a credential used twice is detected. Two browser tabs
+13. With signed tokens, a credential used twice is detected. Two browser tabs
     refreshing at the same moment is not an error; a credential replayed after it
     was spent closes the session it belonged to.
-13. Routes exist for a framework the author already uses, and choosing one does
+14. Routes exist for a framework the author already uses, and choosing one does
     not drag in the others.
 
 ## Status

@@ -2,6 +2,8 @@ package access
 
 import (
 	"context"
+
+	"github.com/frostgrove/vv/auth"
 )
 
 // SignUpUseCase is the whole of a self-service registration: the application's
@@ -77,12 +79,20 @@ func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agen
 		}
 		subject = this.subject.Ref(id)
 
-		return this.enroll.Execute(txCtx, EnrollCommand{
+		// The role goes through resolved as well as named. It is the row this
+		// use case just read, so the enrolment grants it without looking the
+		// slug up a second time; a subject type with no default passes nil and
+		// an empty name, which grants nothing.
+		var slug auth.Role
+		if role != nil {
+			slug = auth.Role(role.Slug)
+		}
+		return this.enroll.execute(txCtx, EnrollCommand{
 			Subject:    subject,
 			Identifier: this.subject.Identifier(identifier),
 			Password:   this.registrar.Password(payload),
-			Role:       role,
-		})
+			Role:       slug,
+		}, role)
 	})
 	if err != nil {
 		return AuthResponse{}, err

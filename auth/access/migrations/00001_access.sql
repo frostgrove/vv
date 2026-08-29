@@ -162,9 +162,14 @@ CREATE INDEX IF NOT EXISTS "ix_sessions_subject"
 CREATE INDEX IF NOT EXISTS "ix_sessions_expires_at" ON "sessions" ("expires_at");
 
 -- +goose Down
+--
+-- Referencing tables first. A DROP in the wrong order does not skip a table, it
+-- fails the whole rollback: "cannot drop table roles because other objects
+-- depend on it" leaves the schema half down and the goose version row untouched.
 DROP TABLE IF EXISTS "sessions";
 DROP TABLE IF EXISTS "credentials";
 DROP TABLE IF EXISTS "subject_permissions";
+DROP TABLE IF EXISTS "subject_default_roles";
 DROP TABLE IF EXISTS "subject_roles";
 DROP TABLE IF EXISTS "role_permissions";
 DROP TABLE IF EXISTS "roles";

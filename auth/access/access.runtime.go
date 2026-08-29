@@ -81,6 +81,21 @@ func (this *Runtime) Config() Config { return this.config }
 // start. See [Seeder] for why the two are not one pass.
 func (this *Runtime) Seeder() *Seeder { return NewSeeder(this.store, this.logger) }
 
+// SetPassword answers the administrator's password reset, which is also what
+// makes an account somebody provisioned able to sign in at all.
+//
+// Handed out assembled rather than as the pieces, for the reason [RuntimeSpec]
+// gives: an application building this itself would pass the store, the hasher
+// and the config in some order, and every wrong one of those compiles.
+//
+// It is a method and not a field because it needs the resolver, and the
+// resolver does not exist until the last [Mount]. Calling this before then
+// answers a use case whose directory lookup fails at run time, which is the one
+// mistake a lazy constructor here removes.
+func (this *Runtime) SetPassword() *SetPasswordUseCase {
+	return NewSetPassword(newDeps(this.store, this.grants, this.hasher, this.config, this.logger))
+}
+
 // Declare adds a module's permissions and system roles to what [Runtime.Sync]
 // will fold into the tables.
 func (this *Runtime) Declare(grants ...ModuleGrants) {

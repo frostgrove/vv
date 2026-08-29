@@ -60,6 +60,11 @@ type Backend struct {
 	prefix     string
 	maxLinkTTL time.Duration
 	clock      Clock
+	// admin is the real client, kept apart from clientAPI because bucket
+	// administration is not part of the object surface a decorator or a test
+	// double has to implement. It is nil for a backend built from a double,
+	// which is what [Backend.EnsureBucket] reports on.
+	admin bucketAdmin
 }
 
 type clientAPI interface {
@@ -84,7 +89,12 @@ func New(config *Config) (*Backend, error) {
 	if config.Client == nil {
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("client is nil"))
 	}
-	return newBackend(config, config.Client, minio.Core{Client: config.Client})
+	backend, err := newBackend(config, config.Client, minio.Core{Client: config.Client})
+	if err != nil {
+		return nil, err
+	}
+	backend.admin = config.Client
+	return backend, nil
 }
 
 func newBackend(config *Config, client clientAPI, core coreAPI) (*Backend, error) {

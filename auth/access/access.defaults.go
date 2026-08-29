@@ -20,25 +20,29 @@ import (
 
 // DefaultRole answers the role a freshly registered caller of this kind gets.
 //
-// An empty slug means the deployment has no default for this subject type, and
-// that is a state rather than a fault: an invitation-only product grants nothing
-// on sign-up and an administrator does the granting afterwards. What it must
-// never be is a *guess* — see [[D-070]] for why this is a row and not a setting.
-func (this *Deps) DefaultRole(ctx context.Context, subjectType SubjectType) (auth.Role, error) {
+// nil means the deployment has no default for this subject type, and that is a
+// state rather than a fault: an invitation-only product grants nothing on
+// sign-up and an administrator does the granting afterwards. What it must never
+// be is a *guess* — see [[D-070]] for why this is a row and not a setting.
+//
+// It answers the whole role and not its slug, because the caller is about to
+// grant it: handing back a name that the enrolment then looks up again is a
+// second statement for a row this one already read.
+func (this *Deps) DefaultRole(ctx context.Context, subjectType SubjectType) (*Role, error) {
 	row, err := this.Store.DefaultRoleRow(ctx, subjectType)
 	switch {
 	case notFound(err):
-		return "", nil
+		return nil, nil
 	case err != nil:
-		return "", err
+		return nil, err
 	case row.Role == nil:
 		// The foreign key is RESTRICT, so the role cannot have been deleted out
 		// from under this row. Reaching here means the preload did not run, and
 		// granting nothing while the table says otherwise is the one outcome
 		// worth refusing over.
-		return "", fmt.Errorf("access: the default role of %q resolved to no role", subjectType)
+		return nil, fmt.Errorf("access: the default role of %q resolved to no role", subjectType)
 	}
-	return auth.Role(row.Role.Slug), nil
+	return row.Role, nil
 }
 
 // A Seeder is the idempotent write half of this context: what an application's
@@ -126,11 +130,24 @@ func (this *Seeder) EnsureRole(ctx context.Context, spec RoleSpec) (Role, error)
 // An existing role is not overwritten with the spec's name and flag. Renaming a
 // role somebody edited in the admin screen back to what a Go literal says, on
 // every run of the seed, is the failure mode that makes people stop running it.
-// What the spec decides is what the role starts as.
+// What the spec decides is what the role *starts* as.
+//
+// The one case worth saying out loud is a spec that wants a system role and
+// finds an ordinary one — somebody created the slug through the API before the
+// seed ever ran. The application then believes the role cannot be renamed or
+// deleted and it can, which is a difference nothing else would report. It is a
+// warning and not a refusal: the deployment works, and promoting the row is a
+// decision with an audit story rather than something a seed does on its way
+// past. IsSystem is `immutable` besides, so no update DTO can reach it.
 func (this *Seeder) upsertRole(ctx context.Context, spec RoleSpec) (Role, error) {
 	role, err := this.store.RoleBySlug(ctx, spec.Slug)
 	switch {
 	case err == nil:
+		if spec.System && !role.IsSystem {
+			this.logger.WarnContext(ctx, "seeded role exists but is not a system role",
+				slog.String("slug", string(spec.Slug)),
+				slog.String("consequence", "it can be renamed or deleted through the API"))
+		}
 		return role, nil
 	case !notFound(err):
 		return Role{}, err

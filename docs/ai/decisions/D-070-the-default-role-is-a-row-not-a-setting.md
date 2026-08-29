@@ -90,6 +90,7 @@ standing in for.
 | `auth/access/access.defaults.go` | `Deps.DefaultRole` (the read), `Seeder` (the idempotent writes) |
 | `auth/access/access.repo.go` | `Store.DefaultRoles`, `Store.DefaultRoleRow` |
 | `auth/access/usecase.signup.go` | the read, inside the registration transaction |
+| `auth/access/usecase.enroll.go` | `grantRole`, and the seam that lets the sign-up hand the row it already read |
 | `auth/access/access.subject.go` | `Registrar[P]`, and the note where `Role()` used to be |
 | `auth/access/migrations/00001_access.sql` | the table, the unique index on `subject_type`, the RESTRICT |
 
@@ -107,6 +108,10 @@ standing in for.
 - `access.TestSettingTheDefaultRoleToWhatItAlreadyIsWritesNothing`, with
   `TestSettingTheDefaultRoleToADifferentRoleWrites` as the control that keeps it
   from passing on a `SetDefaultRole` that never writes at all.
+- `access.TestAResolvedRoleIsGrantedWithoutASecondLookup` — the row the sign-up
+  read is the row the enrolment grants, with the no-resolved-role arm as its
+  control, and `TestAResolvedRoleForAnotherSlugIsLookedUpAnyway` for the arm
+  that refuses to trust a mismatched one.
 
 ## See also
 

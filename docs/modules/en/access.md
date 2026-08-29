@@ -12,7 +12,7 @@ go get github.com/frostgrove/vv/auth/access
 `google/uuid`, `golang.org/x/crypto`
 
 `auth` is the contract — a `Principal` and a `Guard`. `access` is a working
-implementation of one, the way `apikey` and `authjwt` are: seven tables, session
+implementation of one, the way `apikey` and `authjwt` are: eight tables, session
 credentials, argon2id passwords, and RBAC with per-subject exceptions.
 
 Import it when you want sign-in and authorization as rows in your database
@@ -174,6 +174,27 @@ Both are idempotent, and both are for a seed command rather than for start-up �
 see [Seeding](#seeding). No binding grants nothing, which is what an
 invitation-only deployment wants.
 
+## Provisioning somebody
+
+An account an administrator created has a profile and no secret, so it cannot
+sign in until access has a credential for it. `runtime.SetPassword()` is what
+gives it one, and it is the same use case behind an administrator's reset:
+
+```go
+closed, err := runtime.SetPassword().Execute(ctx, access.SetPasswordCommand{
+	Subject:  access.SubjectRef{Type: "user", ID: account.ID},
+	Password: chosen,
+})
+```
+
+The identifier is the directory's, never the caller's — an administrator who
+could choose it could point a credential at an address they control. It closes
+every session the subject held and reports how many, because the reason to
+perform one is usually that somebody else may be holding one.
+
+It is a method on the runtime and not a value, because it needs the resolver:
+call it after the last `Mount`.
+
 ## Signing in
 
 An identifier is unique **within** a subject type ([[D-067]]), so a sign-in says
@@ -207,6 +228,37 @@ runtime.Declare(access.ModuleGrants{
 never deletes, and recomputes `admin` to hold everything — including permissions
 declared after it was seeded.
 
+## Seeding
+
+Two passes, and they are not one on purpose.
+
+| | `runtime.Sync(ctx)` | `runtime.Seeder()` |
+|---|---|---|
+| what it writes | what the **code** declares: permissions, the roles a `ModuleGrants` names, `admin` | what the **product** decided: the roles this deployment has, and what a sign-up grants |
+| when | every start, before the first request | a seed command, when somebody runs it |
+| why not the other | which permissions exist follows from which modules are compiled in | running it at every start would revert an administrator's change on the next deploy |
+
+```go
+seeder := runtime.Seeder()
+
+_, err := seeder.EnsureRole(ctx, access.RoleSpec{
+	Slug: "lawyer", Name: "Lawyer", System: true,
+	Permissions: []auth.Permission{PermContractRead, PermContractWrite},
+})
+_, err = seeder.SetDefaultRole(ctx, "user", "client")
+```
+
+`EnsureRole` creates the role if the slug is free and attaches the permissions it
+does not already hold. It does **not** overwrite an existing role's name or flag:
+renaming a role somebody edited in the admin screen back to what a Go literal
+says, on every run, is what makes people stop running the seed. A permission no
+module declared is refused rather than attached — a code nothing enforces is a
+row that reads like a grant and decides nothing.
+
+`SetDefaultRole` resolves the slug, and writes nothing at all when the binding
+already points there, so `updated_at` still answers "when did this last change".
+`ClearDefaultRole` turns it off; `DefaultRole` reads it back.
+
 ## Configuration
 
 `access.Config` carries cleanenv tags, so keep one field for the whole context:
@@ -238,10 +290,14 @@ directory and rename it with your own timestamp. It is a file to copy rather
 than an embedded FS on purpose: a migration is a fact about *your* schema,
 applied on your schedule.
 
-Seven tables: `permissions`, `roles`, `role_permissions`, `subject_roles`,
-`subject_permissions`, `credentials`, `sessions`. Adding columns of your own is
-safe — a repository selects the columns its model names, so a column this module
-has never heard of is yours alone.
+Eight tables: `permissions`, `roles`, `role_permissions`, `subject_roles`,
+`subject_permissions`, `subject_default_roles`, `credentials`, `sessions`.
+Adding columns of your own is safe — a repository selects the columns its model
+names, so a column this module has never heard of is yours alone.
+
+`subject_default_roles` is unique on `subject_type` — one kind of caller has one
+default — and its `role_id` is `ON DELETE RESTRICT`: deleting the role a sign-up
+grants is refused rather than silently turned into "new accounts get nothing".
 
 `credentials` is unique on `(subject_type, provider, identifier)`: two
 independent domains may both know an `ops@example.com` ([[D-067]]).

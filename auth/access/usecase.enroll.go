@@ -53,6 +53,17 @@ func NewEnroll(dependencies *Deps) *EnrollUseCase { return &EnrollUseCase{Deps: 
 // has to be the same rule it applies before [LoginUseCase], because these two
 // are the only places the column is written and read.
 func (this *EnrollUseCase) Execute(ctx context.Context, cmd EnrollCommand) error {
+	return this.execute(ctx, cmd, nil)
+}
+
+// execute is Execute with the role optionally already resolved.
+//
+// The seam exists for one caller: [SignUpUseCase] reads the default role out of
+// subject_default_roles with the role row preloaded, so it is holding the very
+// row a slug lookup here would fetch again. Passing it through turns three
+// statements into two on the registration path, and nothing else changes —
+// resolved is nil everywhere else and the slug is looked up as before.
+func (this *EnrollUseCase) execute(ctx context.Context, cmd EnrollCommand, resolved *Role) error {
 	if cmd.Subject.Zero() {
 		return fmt.Errorf("access: enrolling an empty subject")
 	}
@@ -80,7 +91,7 @@ func (this *EnrollUseCase) Execute(ctx context.Context, cmd EnrollCommand) error
 		}); err != nil {
 			return err
 		}
-		return this.grantRole(txCtx, cmd.Subject, cmd.Role)
+		return this.grantRole(txCtx, cmd.Subject, cmd.Role, resolved)
 	})
 }
 
@@ -90,13 +101,20 @@ func (this *EnrollUseCase) Execute(ctx context.Context, cmd EnrollCommand) error
 // somebody enrolled who can do nothing is a support ticket, and somebody who
 // inherits a role a typo named is an incident. A role that does not exist is an
 // error rather than a silent skip, for the same reason.
-func (this *EnrollUseCase) grantRole(ctx context.Context, subject SubjectRef, slug auth.Role) error {
+func (this *EnrollUseCase) grantRole(ctx context.Context, subject SubjectRef, slug auth.Role, resolved *Role) error {
 	if slug == "" {
 		return nil
 	}
-	role, err := this.Store.RoleBySlug(ctx, slug)
-	if err != nil {
-		return fmt.Errorf("access: the role %q does not exist: %w", slug, err)
+	role := resolved
+	if role == nil || role.Slug != string(slug) {
+		// The mismatch arm is not defensive noise: a caller that passed a
+		// resolved role belonging to a different slug would otherwise grant one
+		// role while the command named another, and nothing would say so.
+		found, err := this.Store.RoleBySlug(ctx, slug)
+		if err != nil {
+			return fmt.Errorf("access: the role %q does not exist: %w", slug, err)
+		}
+		role = &found
 	}
 	return this.Store.SubjectRoles.SaveOnly(ctx, &SubjectRole{
 		SubjectType: string(subject.Type),

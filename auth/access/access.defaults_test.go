@@ -63,8 +63,12 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the default role: %v", err)
 	}
-	if role != "client" {
-		t.Fatalf("the default role is %q, want the slug the table pointed at", role)
+	if role == nil || role.Slug != "client" {
+		t.Fatalf("the default role is %+v, want the role the table pointed at", role)
+	}
+	// The whole row, so the enrolment grants it without a second lookup.
+	if role.ID != roleID {
+		t.Fatalf("the default role came back with id %s, want %s", role.ID, roleID)
 	}
 
 	// The lookup is keyed on the subject type. Without it in the predicate, one
@@ -88,8 +92,8 @@ func TestASubjectTypeWithNoDefaultRoleGrantsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an absent default is a state, not a failure: %v", err)
 	}
-	if role != "" {
-		t.Fatalf("the default role is %q, want nothing at all", role)
+	if role != nil {
+		t.Fatalf("the default role is %+v, want nothing at all", role)
 	}
 }
 
@@ -206,4 +210,105 @@ func TestSeedingARoleRefusesAPermissionNobodyDeclared(t *testing.T) {
 	if !strings.Contains(err.Error(), "contract.redline") {
 		t.Fatalf("the refusal does not name the permission: %v", err)
 	}
+}
+
+// A role the caller already resolved is granted without looking its slug up
+// again. That is the whole reason the sign-up reads the binding with the role
+// preloaded: it is holding the row a second statement would fetch.
+func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
+	recorder := crudtest.Postgres()
+	runtime, err := New(RuntimeSpec{
+		Source: recorder,
+		Logger: slog.New(slog.DiscardHandler),
+		Hasher: cheapHasher{},
+		Config: Config{Password: PasswordConfig{MinLength: 10}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+
+	resolved := &Role{ID: uuid.New(), Slug: "client"}
+	command := EnrollCommand{
+		Subject:    SubjectRef{Type: testSubject, ID: uuid.New()},
+		Identifier: "ann@example.com",
+		Password:   "0123456789",
+		Role:       "client",
+	}
+
+	if err := enrol.execute(context.Background(), command, resolved); err != nil {
+		t.Fatalf("enrolling with a resolved role: %v", err)
+	}
+	if reads(recorder, `FROM "roles"`) {
+		t.Fatalf("the role was looked up again: %v", recorder.SQL())
+	}
+	if !wroteInto(recorder, "subject_roles") {
+		t.Fatalf("no role was granted at all: %v", recorder.SQL())
+	}
+
+	// The control, and it is the one that matters: without a resolved role the
+	// lookup still happens. Otherwise the test above would pass on an enrolment
+	// that had stopped granting roles entirely.
+	recorder.Reset()
+	recorder.Push(crudtest.Rows(roleRow(uuid.New(), "client")))
+	if err := enrol.execute(context.Background(), command, nil); err != nil {
+		t.Fatalf("enrolling without a resolved role: %v", err)
+	}
+	if !reads(recorder, `FROM "roles"`) {
+		t.Fatalf("an unresolved role was granted without being looked up: %v", recorder.SQL())
+	}
+}
+
+// A resolved role belonging to another slug is not trusted. Granting it would
+// give the subject one role while the command named a different one, and
+// nothing anywhere would report the difference.
+func TestAResolvedRoleForAnotherSlugIsLookedUpAnyway(t *testing.T) {
+	recorder := crudtest.Postgres()
+	runtime, err := New(RuntimeSpec{
+		Source: recorder,
+		Logger: slog.New(slog.DiscardHandler),
+		Hasher: cheapHasher{},
+		Config: Config{Password: PasswordConfig{MinLength: 10}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+
+	wanted := uuid.New()
+	recorder.Push(crudtest.Rows(roleRow(wanted, "client")))
+
+	err = enrol.execute(context.Background(), EnrollCommand{
+		Subject:    SubjectRef{Type: testSubject, ID: uuid.New()},
+		Identifier: "ann@example.com",
+		Password:   "0123456789",
+		Role:       "client",
+	}, &Role{ID: uuid.New(), Slug: "lawyer"})
+	if err != nil {
+		t.Fatalf("enrolling: %v", err)
+	}
+	if !reads(recorder, `FROM "roles"`) {
+		t.Fatalf("a role resolved for another slug was granted as-is: %v", recorder.SQL())
+	}
+}
+
+func reads(recorder *crudtest.Recorder, fragment string) bool {
+	for _, statement := range recorder.SQL() {
+		if strings.Contains(statement, fragment) && strings.HasPrefix(strings.TrimSpace(statement), "SELECT") {
+			return true
+		}
+	}
+	return false
+}
+
+// wroteInto looks at every statement, not only the first write: an enrolment
+// writes the credential before it writes the grant, so "the first write
+// mentioned this table" is a different question from the one being asked.
+func wroteInto(recorder *crudtest.Recorder, table string) bool {
+	for _, statement := range recorder.SQL() {
+		if strings.HasPrefix(strings.TrimSpace(statement), "INSERT") && strings.Contains(statement, table) {
+			return true
+		}
+	}
+	return false
 }

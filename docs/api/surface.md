@@ -814,6 +814,8 @@ var RoleRepository = sqlrepo.Define[Role, uuid.UUID, RoleUpdate]("")
 var Role_ = specs.Metamodel[Role, RoleAttrs]()
 var SessionRepository = sqlrepo.Define[Session, uuid.UUID, SessionUpdate]("")
 var Session_ = specs.Metamodel[Session, SessionAttrs]()
+var SubjectDefaultRoleRepository = sqlrepo.Define[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]("")
+var SubjectDefaultRole_ = specs.Metamodel[SubjectDefaultRole, SubjectDefaultRoleAttrs]()
 var SubjectPermissionRepository = sqlrepo.Define[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]("")
 var SubjectPermission_ = specs.Metamodel[SubjectPermission, SubjectPermissionAttrs]()
 var SubjectRoleRepository = sqlrepo.Define[SubjectRole, uuid.UUID, SubjectRoleUpdate]("")
@@ -911,10 +913,13 @@ type RoleRepo = crud.Repo[Role, uuid.UUID, RoleUpdate]
     func NewRoleRepository(src crud.Source) *RoleRepo
 type RoleService struct{ ... }
     func NewRoleService(store *Store) *RoleService
+type RoleSpec struct{ ... }
 type RoleUpdate struct{ ... }
 type Runtime struct{ ... }
     func New(spec RuntimeSpec) (*Runtime, error)
 type RuntimeSpec struct{ ... }
+type Seeder struct{ ... }
+    func NewSeeder(store *Store, logger *slog.Logger) *Seeder
 type Session struct{ ... }
 type SessionAttrs struct{ ... }
 type SessionAuthenticator struct{ ... }
@@ -939,6 +944,12 @@ type Strategy interface{ ... }
     func OpaqueToken() Strategy
 type StrategyDeps struct{ ... }
 type Subject struct{ ... }
+type SubjectDefaultRole struct{ ... }
+type SubjectDefaultRoleAttrs struct{ ... }
+type SubjectDefaultRoleRepo = crud.Repo[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]
+    func NewSubjectDefaultRoleRepository(src crud.Source) *SubjectDefaultRoleRepo
+type SubjectDefaultRoleRoleAttrs struct{ ... }
+type SubjectDefaultRoleUpdate struct{ ... }
 type SubjectPermission struct{ ... }
 type SubjectPermissionAttrs struct{ ... }
 type SubjectPermissionPermissionAttrs struct{ ... }

@@ -54,10 +54,12 @@
    commit together.
 3. **`Deps.DefaultRole`** — `auth/access/access.defaults.go` — the first
    statement, before anything is created: the role this subject type's sign-ups
-   grant, read from `subject_default_roles` ([[D-070]]). No row grants nothing.
-   It is inside the transaction, so a seed command changing the binding
-   mid-registration cannot grant a role that is no longer the default by the
-   time the credential commits.
+   grant, read from `subject_default_roles` with the role preloaded ([[D-070]]).
+   No row grants nothing. It is inside the transaction, so a seed command
+   changing the binding mid-registration cannot grant a role that is no longer
+   the default by the time the credential commits. The row travels on to
+   `EnrollUseCase.grantRole`, which therefore does not look the slug up again —
+   unless the two disagree, which is not a state any caller should be trusted in.
 4. **the session, after the commit** — opening it inside would let a failure
    with nothing to do with signing in roll it back.
 
@@ -78,6 +80,10 @@ band ([[D-070]]).
    lock cannot.
 4. **`Runtime.Sync`** — `auth/access/access.seed.go` — the *other* pass, and not
    this one: it folds in what the code declares and runs at every start.
+5. **`Runtime.SetPassword`** — `auth/access/access.runtime.go` — what a seed or
+   an administration screen calls to make a provisioned account able to sign in.
+   A method rather than a field: it needs the resolver, which does not exist
+   until the last `Mount`.
 
 ## Verifying a request
 

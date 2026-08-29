@@ -31,6 +31,24 @@ The adapter does not read environment credentials, create the client, contact
 the server during construction or own client shutdown. Logical keys never
 contain the endpoint, bucket or physical prefix.
 
+## Making the bucket exist
+
+`Backend.EnsureBucket(ctx)` creates the configured bucket when it is missing and
+is the only call in this package that contacts the server outside an object
+operation. Every other method assumes the bucket is there and reports a missing
+one as a failed write, which reaches a user as data they could not save rather
+than as a deployment that is not finished — so call it once at start-up.
+
+A bucket this creates is not the bucket an operator would have provisioned: it
+has no versioning, retention or replication, and it is indistinguishable from
+one that has. Decide deliberately whether production calls it.
+
+A bucket that appears between the existence check and the create is success:
+two replicas starting together both wanted it to exist, and it does.
+
+It needs the real client, so it is available on a backend built by `New` and
+returns `storage.ErrInternal` on one built from a test double.
+
 ## Write and promotion semantics
 
 `CreateOnly` sends `If-None-Match: *`; an existing object becomes
