@@ -24,8 +24,8 @@ const (
 )
 
 // String names the origin, for a log line.
-func (o Origin) String() string {
-	if o == OriginState {
+func (this Origin) String() string {
+	if this == OriginState {
 		return "state"
 	}
 	return "input"
@@ -80,11 +80,11 @@ type Violation struct {
 // map entry and of a struct field all bypass this method and emit Source in
 // full — three of the five ways a violation is ever marshalled. That is
 // [[D-044]] carried by the type instead of remembered by a renderer.
-func (v Violation) MarshalJSON() ([]byte, error) {
+func (this Violation) MarshalJSON() ([]byte, error) {
 	var b strings.Builder
 	b.WriteByte('{')
-	if len(v.Path) > 0 {
-		field, err := v.Path.MarshalJSON()
+	if len(this.Path) > 0 {
+		field, err := this.Path.MarshalJSON()
 		if err != nil {
 			return nil, err
 		}
@@ -92,19 +92,19 @@ func (v Violation) MarshalJSON() ([]byte, error) {
 		b.Write(field)
 		b.WriteByte(',')
 	}
-	code, err := json.Marshal(string(v.Code))
+	code, err := json.Marshal(string(this.Code))
 	if err != nil {
 		return nil, err
 	}
 	b.WriteString(`"error_code":`)
 	b.Write(code)
-	if v.Message != "" {
-		msg, err := json.Marshal(v.Message)
+	if this.Message != "" {
+		message, err := json.Marshal(this.Message)
 		if err != nil {
 			return nil, err
 		}
 		b.WriteString(`,"message":`)
-		b.Write(msg)
+		b.Write(message)
 	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
@@ -113,16 +113,16 @@ func (v Violation) MarshalJSON() ([]byte, error) {
 // String carries the same three things the public shape does and never
 // [Source]. A violation printed into a log with %v must not be the thing that
 // ships a constraint name.
-func (v Violation) String() string {
+func (this Violation) String() string {
 	var b strings.Builder
-	if len(v.Path) > 0 {
-		b.WriteString(v.Path.String())
+	if len(this.Path) > 0 {
+		b.WriteString(this.Path.String())
 		b.WriteString(": ")
 	}
-	b.WriteString(string(v.Code))
-	if v.Message != "" {
+	b.WriteString(string(this.Code))
+	if this.Message != "" {
 		b.WriteString(": ")
-		b.WriteString(v.Message)
+		b.WriteString(this.Message)
 	}
 	return b.String()
 }

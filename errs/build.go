@@ -62,106 +62,106 @@ func Retryable() *Builder { return New(KindRetryable) }
 func Internal() *Builder { return New(KindInternal) }
 
 // Field opens a violation at a single-step path.
-func (b *Builder) Field(name string) *Builder { return b.At(Path{Named(name)}) }
+func (this *Builder) Field(name string) *Builder { return this.At(Path{Named(name)}) }
 
 // At opens a violation at a path.
-func (b *Builder) At(p Path) *Builder {
-	b.f.Violations = append(b.f.Violations, Violation{Path: p})
-	b.open = len(b.f.Violations) - 1
-	return b
+func (this *Builder) At(p Path) *Builder {
+	this.f.Violations = append(this.f.Violations, Violation{Path: p})
+	this.open = len(this.f.Violations) - 1
+	return this
 }
 
 // General opens a violation with no path, for something the client cannot fix
 // by editing one field.
-func (b *Builder) General() *Builder { return b.At(nil) }
+func (this *Builder) General() *Builder { return this.At(nil) }
 
 // current returns the open violation, opening a general one if a per-violation
 // step arrived before any Field/At/General.
-func (b *Builder) current() *Violation {
-	if b.open < 0 {
-		b.General()
+func (this *Builder) current() *Violation {
+	if this.open < 0 {
+		this.General()
 	}
-	return &b.f.Violations[b.open]
+	return &this.f.Violations[this.open]
 }
 
 // Code sets the open violation's code, or the fault's if none is open.
-func (b *Builder) Code(c Code) *Builder {
-	if b.open < 0 {
-		b.f.Code = c
-		return b
+func (this *Builder) Code(c Code) *Builder {
+	if this.open < 0 {
+		this.f.Code = c
+		return this
 	}
-	b.f.Violations[b.open].Code = c
-	return b
+	this.f.Violations[this.open].Code = c
+	return this
 }
 
 // Params merges into the open violation's parameters. Merging rather than
 // replacing, so a second call cannot silently drop a placeholder the first one
 // set.
-func (b *Builder) Params(p P) *Builder {
-	v := b.current()
+func (this *Builder) Params(p P) *Builder {
+	v := this.current()
 	if v.Params == nil {
 		v.Params = make(P, len(p))
 	}
 	for k, val := range p {
 		v.Params[k] = val
 	}
-	return b
+	return this
 }
 
 // Message sets the open violation's message, or the fault's developer-facing
 // message if none is open. A violation's message is normally left to the
 // [MessageSource]; this is for a rule whose text has nowhere else to live.
-func (b *Builder) Message(s string) *Builder {
-	if b.open < 0 {
-		b.f.Message = s
-		return b
+func (this *Builder) Message(s string) *Builder {
+	if this.open < 0 {
+		this.f.Message = s
+		return this
 	}
-	b.f.Violations[b.open].Message = s
-	return b
+	this.f.Violations[this.open].Message = s
+	return this
 }
 
 // Origin marks the open violation as input-shaped or state-shaped.
-func (b *Builder) Origin(o Origin) *Builder {
-	b.current().Origin = o
-	return b
+func (this *Builder) Origin(o Origin) *Builder {
+	this.current().Origin = o
+	return this
 }
 
 // Source attaches storage provenance to the open violation.
-func (b *Builder) Source(s Source) *Builder {
-	b.current().Source = s
-	return b
+func (this *Builder) Source(s Source) *Builder {
+	this.current().Source = s
+	return this
 }
 
 // Approximate marks the open violation's path as unresolved rather than
 // resolved ([[D-043]]).
-func (b *Builder) Approximate(yes bool) *Builder {
-	b.current().Approximate = yes
-	return b
+func (this *Builder) Approximate(yes bool) *Builder {
+	this.current().Approximate = yes
+	return this
 }
 
 // Op names the repository verb.
-func (b *Builder) Op(op string) *Builder {
-	b.f.Op = op
-	return b
+func (this *Builder) Op(op string) *Builder {
+	this.f.Op = op
+	return this
 }
 
 // Entity names the model.
-func (b *Builder) Entity(e string) *Builder {
-	b.f.Entity = e
-	return b
+func (this *Builder) Entity(e string) *Builder {
+	this.f.Entity = e
+	return this
 }
 
 // Partial says a cap was hit and the set is incomplete. A capped answer says so
 // rather than listing four violations in a way that implies there are four.
-func (b *Builder) Partial(yes bool) *Builder {
-	b.f.Partial = yes
-	return b
+func (this *Builder) Partial(yes bool) *Builder {
+	this.f.Partial = yes
+	return this
 }
 
 // Detail attaches the internal provenance. Nothing in it is ever rendered.
-func (b *Builder) Detail(d Detail) *Builder {
-	b.f.Detail = d
-	return b
+func (this *Builder) Detail(d Detail) *Builder {
+	this.f.Detail = d
+	return this
 }
 
 // Wrapping attaches the errors this fault describes, and is the only way
@@ -172,13 +172,13 @@ func (b *Builder) Detail(d Detail) *Builder {
 // needs to learn a new type ([[D-038]]). It is also why a third-party
 // [Classifier] cannot forge a match — it returns a *Fault, and the field behind
 // this step is unexported.
-func (b *Builder) Wrapping(errs ...error) *Builder {
+func (this *Builder) Wrapping(errs ...error) *Builder {
 	for _, err := range errs {
 		if err != nil {
-			b.f.wrapped = append(b.f.wrapped, err)
+			this.f.wrapped = append(this.f.wrapped, err)
 		}
 	}
-	return b
+	return this
 }
 
 // Fault returns the built fault. The violations are copied all the way down —
@@ -189,13 +189,13 @@ func (b *Builder) Wrapping(errs ...error) *Builder {
 // A shallow copy would leave two faults from one builder sharing one Path
 // array. A resolver that rewrites a hop in place, which [[D-043]] invites, then
 // rewrites every fault that builder ever produced.
-func (b *Builder) Fault() *Fault {
-	f := b.f
-	f.Detail.Columns = cloneStrings(b.f.Detail.Columns)
-	f.Detail.RefColumns = cloneStrings(b.f.Detail.RefColumns)
-	if n := len(b.f.Violations); n > 0 {
+func (this *Builder) Fault() *Fault {
+	f := this.f
+	f.Detail.Columns = cloneStrings(this.f.Detail.Columns)
+	f.Detail.RefColumns = cloneStrings(this.f.Detail.RefColumns)
+	if n := len(this.f.Violations); n > 0 {
 		f.Violations = make([]Violation, n)
-		copy(f.Violations, b.f.Violations)
+		copy(f.Violations, this.f.Violations)
 		for i := range f.Violations {
 			v := &f.Violations[i]
 			if len(v.Path) > 0 {
@@ -210,9 +210,9 @@ func (b *Builder) Fault() *Fault {
 			}
 		}
 	}
-	if n := len(b.f.wrapped); n > 0 {
+	if n := len(this.f.wrapped); n > 0 {
 		f.wrapped = make([]error, n)
-		copy(f.wrapped, b.f.wrapped)
+		copy(f.wrapped, this.f.wrapped)
 	}
 	return &f
 }

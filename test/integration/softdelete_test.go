@@ -68,9 +68,9 @@ func sdSetup(t *testing.T) {
 	ctx := context.Background()
 	sdOnce.Do(func() {
 		for _, tg := range egEngines() {
-			for _, stmt := range sdSchema[tg.db] {
-				if _, err := tg.src.Exec(ctx, stmt); err != nil {
-					sdErr = errors.New(tg.db + ": " + err.Error())
+			for _, stmt := range sdSchema[tg.database] {
+				if _, err := tg.source.Exec(ctx, stmt); err != nil {
+					sdErr = errors.New(tg.database + ": " + err.Error())
 					return
 				}
 			}
@@ -80,7 +80,7 @@ func sdSetup(t *testing.T) {
 		t.Fatalf("the sd table was never built: %v", sdErr)
 	}
 	for _, tg := range egEngines() {
-		if _, err := tg.src.Exec(ctx, "DELETE FROM "+tg.src.Dialect().Quote("sd_rows")); err != nil {
+		if _, err := tg.source.Exec(ctx, "DELETE FROM "+tg.source.Dialect().Quote("sd_rows")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -93,8 +93,8 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			sdSetup(t)
-			soft := SoftRows.Bind(tg.src)
-			raw := RawRows.Bind(tg.src) // the same table, without the setting
+			soft := SoftRows.Bind(tg.source)
+			raw := RawRows.Bind(tg.source) // the same table, without the setting
 
 			for _, r := range []SdRow{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}, {ID: 3, Name: "c"}} {
 				row := r
@@ -142,8 +142,8 @@ func TestASoftDeleteAllHonoursTheFilter(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			sdSetup(t)
-			soft := SoftRows.Bind(tg.src)
-			raw := RawRows.Bind(tg.src)
+			soft := SoftRows.Bind(tg.source)
+			raw := RawRows.Bind(tg.source)
 
 			for _, r := range []SdRow{{ID: 1, Name: "keep"}, {ID: 2, Name: "drop"}, {ID: 3, Name: "drop"}} {
 				row := r
@@ -176,7 +176,7 @@ func TestDeletingATombstoneAgainChangesNothing(t *testing.T) {
 
 	tg := egEngines()[0]
 	sdSetup(t)
-	soft := SoftRows.Bind(tg.src)
+	soft := SoftRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
 	if err := soft.Save(ctx, &row); err != nil {
@@ -198,7 +198,7 @@ func TestATombstonedRowCannotBeUpdated(t *testing.T) {
 
 	tg := egEngines()[0]
 	sdSetup(t)
-	soft := SoftRows.Bind(tg.src)
+	soft := SoftRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
 	if err := soft.Save(ctx, &row); err != nil {
@@ -220,7 +220,7 @@ func TestWithoutTheSettingADeleteStillRemovesTheRow(t *testing.T) {
 
 	tg := egEngines()[0]
 	sdSetup(t)
-	raw := RawRows.Bind(tg.src)
+	raw := RawRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
 	if err := raw.Save(ctx, &row); err != nil {

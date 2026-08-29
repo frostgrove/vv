@@ -32,11 +32,11 @@ func gormPGDialector() gorm.Dialector { return gormpg.New(gormpg.Config{Conn: pg
 
 func openGorm(t *testing.T, d gorm.Dialector) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(d, &gorm.Config{Logger: logger.Discard})
+	database, err := gorm.Open(d, &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db
+	return database
 }
 
 // The suite runs on the *sql.DB gorm is pooling, so both libraries share one
@@ -51,8 +51,8 @@ func TestGorm(t *testing.T) {
 		{"gorm+mysql", gormmysql.New(gormmysql.Config{Conn: myDB}), crud.MySQL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db := openGorm(t, tc.dial)
-			sqlDB, err := db.DB()
+			database := openGorm(t, tc.dial)
+			sqlDB, err := database.DB()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,14 +66,14 @@ func TestGorm(t *testing.T) {
 func TestGormSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	db := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
-	repo := Users.Bind(crudsql.Postgres(pgDB))
+	database := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
+	repository := Users.Bind(crudsql.Postgres(pgDB))
 
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
 		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByVV", Active: true}
-		if err := repo.Save(txCtx, &u); err != nil {
+		if err := repository.Save(txCtx, &u); err != nil {
 			return err
 		}
 		// gorm sees the row vv wrote, in the same transaction.
@@ -88,7 +88,7 @@ func TestGormSharedTransaction(t *testing.T) {
 		if err := tx.Create(&GormUser{TenantID: 1, Email: "by-gorm@x.io", Name: "ByGorm", Active: true}).Error; err != nil {
 			return err
 		}
-		n, err := repo.Count(txCtx)
+		n, err := repository.Count(txCtx)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ func TestGormSharedTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := repo.Count(ctx)
+	n, err := repository.Count(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,14 +114,14 @@ func TestGormSharedTransaction(t *testing.T) {
 func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	db := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
-	repo := Users.Bind(crudsql.Postgres(pgDB))
+	database := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
+	repository := Users.Bind(crudsql.Postgres(pgDB))
 
 	boom := errNotNil("rollback please")
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 		u := User{TenantID: 1, Email: "doomed@x.io", Name: "Doomed"}
-		if err := repo.Save(txCtx, &u); err != nil {
+		if err := repository.Save(txCtx, &u); err != nil {
 			return err
 		}
 		return boom
@@ -129,12 +129,12 @@ func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	if err != boom {
 		t.Fatalf("err = %v", err)
 	}
-	if n, _ := repo.Count(ctx); n != 0 {
+	if n, _ := repository.Count(ctx); n != 0 {
 		t.Fatalf("count = %d: the rollback did not reach vv's write", n)
 	}
 }
 
 type sentinel string
 
-func (s sentinel) Error() string { return string(s) }
-func errNotNil(s string) error   { return sentinel(s) }
+func (this sentinel) Error() string { return string(this) }
+func errNotNil(s string) error      { return sentinel(s) }

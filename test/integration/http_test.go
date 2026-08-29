@@ -28,11 +28,11 @@ type articleService struct {
 	blocked string
 }
 
-func (s articleService) Save(ctx context.Context, a *Article) (Article, error) {
-	if a.Title == s.blocked {
+func (this articleService) Save(ctx context.Context, a *Article) (Article, error) {
+	if a.Title == this.blocked {
 		return Article{}, crud.ErrForbidden
 	}
-	return s.Repo.Save(ctx, a)
+	return this.Repo.Save(ctx, a)
 }
 
 // The handler only ever sees the interface, so the service slots straight in.
@@ -40,11 +40,11 @@ var _ crudfiber.Repository[Article, int64, ArticleUpdate] = articleService{}
 
 func newApp(t *testing.T, b blog) *fiber.App {
 	t.Helper()
-	svc := articleService{
-		Repo:    specs.Executor(Articles.Bind(b.src)),
+	service := articleService{
+		Repo:    specs.Executor(Articles.Bind(b.source)),
 		blocked: "forbidden title",
 	}
-	h := crudfiber.New[Article, int64, ArticleUpdate](svc,
+	h := crudfiber.New[Article, int64, ArticleUpdate](service,
 		crudfiber.WithQuery[Article, int64, ArticleUpdate](&query.Config{
 			Preloadable: []string{"Author", "Tags", "Comments", "Comments.Author"},
 			MaxPreloads: 4,
@@ -55,19 +55,19 @@ func newApp(t *testing.T, b blog) *fiber.App {
 	return app
 }
 
-type resp struct {
+type response struct {
 	status int
 	body   []byte
 }
 
-func (r resp) decode(t *testing.T, into any) {
+func (this response) decode(t *testing.T, into any) {
 	t.Helper()
-	if err := json.Unmarshal(r.body, into); err != nil {
-		t.Fatalf("decoding %s: %v", r.body, err)
+	if err := json.Unmarshal(this.body, into); err != nil {
+		t.Fatalf("decoding %s: %v", this.body, err)
 	}
 }
 
-func call(t *testing.T, app *fiber.App, method, target string, body any) resp {
+func call(t *testing.T, app *fiber.App, method, target string, body any) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
@@ -77,36 +77,36 @@ func call(t *testing.T, app *fiber.App, method, target string, body any) resp {
 		}
 		rdr = bytes.NewReader(raw)
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	httpResponse, err := app.Test(request, fiber.TestConfig{Timeout: 0})
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}
-	defer res.Body.Close()
-	raw, _ := io.ReadAll(res.Body)
-	return resp{status: res.StatusCode, body: raw}
+	defer httpResponse.Body.Close()
+	raw, _ := io.ReadAll(httpResponse.Body)
+	return response{status: httpResponse.StatusCode, body: raw}
 }
 
-func raw(t *testing.T, app *fiber.App, method, target, body string) resp {
+func raw(t *testing.T, app *fiber.App, method, target, body string) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	httpResponse, err := app.Test(request, fiber.TestConfig{Timeout: 0})
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}
-	defer res.Body.Close()
-	out, _ := io.ReadAll(res.Body)
-	return resp{status: res.StatusCode, body: out}
+	defer httpResponse.Body.Close()
+	out, _ := io.ReadAll(httpResponse.Body)
+	return response{status: httpResponse.StatusCode, body: out}
 }
 
 type page struct {
@@ -438,7 +438,7 @@ func TestHTTPWorksWithoutExtraDeclarations(t *testing.T) {
 	b := newBlog("postgres", pgDB, crudsql.Postgres(pgDB))
 	seedBlog(t, b)
 
-	h := crudfiber.New[Comment, int64, CommentUpdate](Comments.Bind(b.src))
+	h := crudfiber.New[Comment, int64, CommentUpdate](Comments.Bind(b.source))
 	app := fiber.New()
 	app.Use("/comments", h.Routes())
 

@@ -30,10 +30,10 @@ type deferred struct {
 	err error
 }
 
-func (d deferred) Next() bool      { return false }
-func (d deferred) Err() error      { return d.err }
-func (d deferred) Close()          {}
-func (d deferred) Conn() *pgx.Conn { return nil }
+func (this deferred) Next() bool      { return false }
+func (this deferred) Err() error      { return this.err }
+func (this deferred) Close()          {}
+func (this deferred) Conn() *pgx.Conn { return nil }
 
 // fake is a pgx handle that fails the way the server does.
 type fake struct {
@@ -41,15 +41,15 @@ type fake struct {
 	deferErr bool // report through Rows.Err rather than from Query
 }
 
-func (f fake) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, f.err
+func (this fake) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, this.err
 }
 
-func (f fake) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
-	if f.deferErr {
-		return deferred{err: f.err}, nil
+func (this fake) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+	if this.deferErr {
+		return deferred{err: this.err}, nil
 	}
-	return nil, f.err
+	return nil, this.err
 }
 
 func duplicateKey() error {
@@ -313,8 +313,8 @@ type stateful struct {
 	state          string
 }
 
-func (s *stateful) Error() string    { return "insert or update failed" }
-func (s *stateful) SQLState() string { return s.state }
+func (this *stateful) Error() string    { return "insert or update failed" }
+func (this *stateful) SQLState() string { return this.state }
 
 func TestANonPgErrorStillReachesTheByShapeReader(t *testing.T) {
 	err := &stateful{state: "23505", ConstraintName: "users_email_key", TableName: "users"}

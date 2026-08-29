@@ -49,9 +49,9 @@ import (
 // one violation into every violation the payload caused:
 //
 //	faults.Enrich[User, int64](faults.WithProbe(probe.Full(cat)))
-func Enrich[M any, ID comparable](opts ...Option) crud.Middleware[M, ID] {
+func Enrich[M any, ID comparable](options ...Option) crud.Middleware[M, ID] {
 	var s settings
-	for _, o := range opts {
+	for _, o := range options {
 		o(&s)
 	}
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] {
@@ -66,14 +66,14 @@ type enricher[M any, ID comparable] struct {
 	meta *crud.Meta
 	// src is the datasource the probe runs its own statement on, and nil when no
 	// probe is wired.
-	src        crud.Source
+	source     crud.Source
 	probes     map[string]probeCfg
 	onProbeErr func(op string, err error)
 }
 
 // Next hands back the Core this enricher wraps, so a chain with faults in the
 // middle stays walkable ([[crud.Nexter]]).
-func (e *enricher[M, ID]) Next() crud.Core[M, ID] { return e.Core }
+func (this *enricher[M, ID]) Next() crud.Core[M, ID] { return this.Core }
 
 // enrich is the whole of this package. Everything below it is one line per verb.
 //
@@ -81,7 +81,7 @@ func (e *enricher[M, ID]) Next() crud.Core[M, ID] { return e.Core }
 // goroutines may render at once and [[D-042]] treats it as immutable; the
 // adapter that produced it may also have handed the same pointer to a caller
 // who already wrapped it.
-func (e *enricher[M, ID]) enrich(op string, err error) error {
+func (this *enricher[M, ID]) enrich(op string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -89,7 +89,7 @@ func (e *enricher[M, ID]) enrich(op string, err error) error {
 	if !ok {
 		return err
 	}
-	return e.finish(op, f, false)
+	return this.finish(op, f, false)
 }
 
 // finish is the last hop: the verb, the entity, the column-to-field translation
@@ -99,7 +99,7 @@ func (e *enricher[M, ID]) enrich(op string, err error) error {
 // here — a savepoint budget refused, a probe that failed. A capped answer says
 // so rather than listing four violations in a way that implies there are four
 // ([[D-042]]).
-func (e *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) error {
+func (this *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) error {
 	g := *f
 	g.Violations = make([]errs.Violation, len(f.Violations))
 	copy(g.Violations, f.Violations)
@@ -109,14 +109,14 @@ func (e *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) error {
 	if g.Op == "" {
 		g.Op = op
 	}
-	if g.Entity == "" && e.meta != nil {
-		g.Entity = e.meta.Schema.Name
+	if g.Entity == "" && this.meta != nil {
+		g.Entity = this.meta.Schema.Name
 	}
 	if partial {
 		g.Partial = true
 	}
 	for i := range g.Violations {
-		e.resolve(&g.Violations[i])
+		this.resolve(&g.Violations[i])
 	}
 	// One order for the fault and for the body. crud/http/crudhttp sorts what it
 	// renders, so without this a consumer reading Fault.Violations would read a
@@ -135,14 +135,14 @@ func (e *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) error {
 // Through crud.Meta and never crud.Schema. Schema is cached per type and
 // table-independent, so it cannot tell two databases' `users` apart, and a
 // process holds several ([[UC-012]], [[D-043]]).
-func (e *enricher[M, ID]) resolve(v *errs.Violation) {
-	if len(v.Path) > 0 || e.meta == nil {
+func (this *enricher[M, ID]) resolve(v *errs.Violation) {
+	if len(v.Path) > 0 || this.meta == nil {
 		return // already translated by a layer closer to the driver
 	}
 	if v.Source.Table == "" || len(v.Source.Columns) == 0 {
 		return // nothing to translate; not knowing is not being wrong
 	}
-	p, ok := e.resolvePath(v.Source.Table, v.Source.Columns)
+	p, ok := this.resolvePath(v.Source.Table, v.Source.Columns)
 	if !ok {
 		v.Approximate = true
 		return
@@ -153,14 +153,14 @@ func (e *enricher[M, ID]) resolve(v *errs.Violation) {
 // resolvePath is the hop on its own, so the probe can compose a row index in
 // front of it without learning what a model field is called ([[D-043]]). It is
 // handed in as probe.Request.Resolve.
-func (e *enricher[M, ID]) resolvePath(table string, columns []string) (errs.Path, bool) {
-	if e.meta == nil {
+func (this *enricher[M, ID]) resolvePath(table string, columns []string) (errs.Path, bool) {
+	if this.meta == nil {
 		return nil, false
 	}
 	// Folded rather than compared byte for byte: PostgreSQL lowercases an
 	// unquoted identifier, so a model declared `Users` and a driver reporting
 	// `users` are one table.
-	if !strings.EqualFold(table, e.meta.Table) {
+	if !strings.EqualFold(table, this.meta.Table) {
 		// The right column name on the wrong table. Two tables in one database
 		// have a `name`, and translating this one would name a field of a model
 		// that had nothing to do with the write.
@@ -168,7 +168,7 @@ func (e *enricher[M, ID]) resolvePath(table string, columns []string) (errs.Path
 	}
 	paths := make([]errs.Path, 0, len(columns))
 	for _, col := range columns {
-		f := e.meta.Schema.Field(col)
+		f := this.meta.Schema.Field(col)
 		if f == nil {
 			return nil, false
 		}
@@ -209,48 +209,48 @@ func commonPrefix(ps []errs.Path) errs.Path {
 // interface's own method set so a verb added later reddens rather than
 // silently skipping enrichment.
 
-func (e *enricher[M, ID]) GetByID(ctx context.Context, id ID, opts ...crud.Option) (M, error) {
-	m, err := e.Core.GetByID(ctx, id, opts...)
-	return m, e.enrich("GetByID", err)
+func (this *enricher[M, ID]) GetByID(ctx context.Context, id ID, options ...crud.Option) (M, error) {
+	m, err := this.Core.GetByID(ctx, id, options...)
+	return m, this.enrich("GetByID", err)
 }
 
-func (e *enricher[M, ID]) Get(ctx context.Context, opts ...crud.Option) (crud.PaginatedResponse[M], error) {
-	p, err := e.Core.Get(ctx, opts...)
-	return p, e.enrich("Get", err)
+func (this *enricher[M, ID]) Get(ctx context.Context, options ...crud.Option) (crud.PaginatedResponse[M], error) {
+	p, err := this.Core.Get(ctx, options...)
+	return p, this.enrich("Get", err)
 }
 
-func (e *enricher[M, ID]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, error) {
-	ms, err := e.Core.GetAll(ctx, opts...)
-	return ms, e.enrich("GetAll", err)
+func (this *enricher[M, ID]) GetAll(ctx context.Context, options ...crud.Option) ([]M, error) {
+	ms, err := this.Core.GetAll(ctx, options...)
+	return ms, this.enrich("GetAll", err)
 }
 
-func (e *enricher[M, ID]) First(ctx context.Context, opts ...crud.Option) (M, error) {
-	m, err := e.Core.First(ctx, opts...)
-	return m, e.enrich("First", err)
+func (this *enricher[M, ID]) First(ctx context.Context, options ...crud.Option) (M, error) {
+	m, err := this.Core.First(ctx, options...)
+	return m, this.enrich("First", err)
 }
 
-func (e *enricher[M, ID]) Save(ctx context.Context, m *M) (M, error) {
+func (this *enricher[M, ID]) Save(ctx context.Context, m *M) (M, error) {
 	var saved M
-	pc, ok := e.probes["Save"]
+	pc, ok := this.probes["Save"]
 	if !ok {
-		saved, err := e.Core.Save(ctx, m)
-		return saved, e.enrich("Save", err)
+		saved, err := this.Core.Save(ctx, m)
+		return saved, this.enrich("Save", err)
 	}
-	err := e.probed(ctx, "Save", pc, e.insertRequest(false, m), func(ctx context.Context) error {
+	err := this.probed(ctx, "Save", pc, this.insertRequest(false, m), func(ctx context.Context) error {
 		var err error
-		saved, err = e.Core.Save(ctx, m)
+		saved, err = this.Core.Save(ctx, m)
 		return err
 	})
 	return saved, err
 }
 
-func (e *enricher[M, ID]) SaveOnly(ctx context.Context, m *M) error {
-	pc, ok := e.probes["SaveOnly"]
+func (this *enricher[M, ID]) SaveOnly(ctx context.Context, m *M) error {
+	pc, ok := this.probes["SaveOnly"]
 	if !ok {
-		return e.enrich("SaveOnly", e.Core.SaveOnly(ctx, m))
+		return this.enrich("SaveOnly", this.Core.SaveOnly(ctx, m))
 	}
-	return e.probed(ctx, "SaveOnly", pc, e.insertRequest(false, m),
-		func(ctx context.Context) error { return e.Core.SaveOnly(ctx, m) })
+	return this.probed(ctx, "SaveOnly", pc, this.insertRequest(false, m),
+		func(ctx context.Context) error { return this.Core.SaveOnly(ctx, m) })
 }
 
 // SaveScoped explicitly preserves the internal conditional-save capability for
@@ -258,78 +258,78 @@ func (e *enricher[M, ID]) SaveOnly(ctx context.Context, m *M) error {
 // probing a speculative duplicate-key write would execute a different statement
 // from the one whose snapshot security approved. Driver faults from the actual
 // statement are still enriched as Save faults.
-func (e *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
-	err, ok := crud.SaveScopedOf(e.Core, ctx, m, save)
+func (this *enricher[M, ID]) SaveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
+	err, ok := crud.SaveScopedOf(this.Core, ctx, m, save)
 	if !ok {
-		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped Save atomically"}
+		return &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot perform a scoped Save atomically"}
 	}
-	return e.enrich("Save", err)
+	return this.enrich("Save", err)
 }
 
 // SaveScopedOnly forwards security's internal write-only capability without
 // probing a speculative conditional write.
-func (e *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
-	err, ok := crud.SaveScopedOnlyOf(e.Core, ctx, m, save)
+func (this *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
+	err, ok := crud.SaveScopedOnlyOf(this.Core, ctx, m, save)
 	if !ok {
-		return &crud.SchemaError{Model: e.meta.Name, Reason: "inner core cannot perform a scoped SaveOnly atomically"}
+		return &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot perform a scoped SaveOnly atomically"}
 	}
-	return e.enrich("SaveOnly", err)
+	return this.enrich("SaveOnly", err)
 }
 
-func (e *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
-	pc, ok := e.probes["SaveAll"]
+func (this *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
+	pc, ok := this.probes["SaveAll"]
 	if !ok {
-		return e.enrich("SaveAll", e.Core.SaveAll(ctx, ms))
+		return this.enrich("SaveAll", this.Core.SaveAll(ctx, ms))
 	}
-	return e.probed(ctx, "SaveAll", pc, e.insertRequest(true, ms...),
-		func(ctx context.Context) error { return e.Core.SaveAll(ctx, ms) })
+	return this.probed(ctx, "SaveAll", pc, this.insertRequest(true, ms...),
+		func(ctx context.Context) error { return this.Core.SaveAll(ctx, ms) })
 }
 
-func (e *enricher[M, ID]) Update(ctx context.Context, id ID, dto any, opts ...crud.Option) (M, error) {
-	pc, ok := e.probes["Update"]
+func (this *enricher[M, ID]) Update(ctx context.Context, id ID, dataTransferObject any, options ...crud.Option) (M, error) {
+	pc, ok := this.probes["Update"]
 	if !ok {
-		m, err := e.Core.Update(ctx, id, dto, opts...)
-		return m, e.enrich("Update", err)
+		m, err := this.Core.Update(ctx, id, dataTransferObject, options...)
+		return m, this.enrich("Update", err)
 	}
 	var m M
-	err := e.probed(ctx, "Update", pc, e.updateRequest(id, dto), func(ctx context.Context) error {
+	err := this.probed(ctx, "Update", pc, this.updateRequest(id, dataTransferObject), func(ctx context.Context) error {
 		var err error
-		m, err = e.Core.Update(ctx, id, dto, opts...)
+		m, err = this.Core.Update(ctx, id, dataTransferObject, options...)
 		return err
 	})
 	return m, err
 }
 
-func (e *enricher[M, ID]) UpdateAll(ctx context.Context, dto any, opts ...crud.Option) (int64, error) {
-	n, err := e.Core.UpdateAll(ctx, dto, opts...)
-	return n, e.enrich("UpdateAll", err)
+func (this *enricher[M, ID]) UpdateAll(ctx context.Context, dataTransferObject any, options ...crud.Option) (int64, error) {
+	n, err := this.Core.UpdateAll(ctx, dataTransferObject, options...)
+	return n, this.enrich("UpdateAll", err)
 }
 
-func (e *enricher[M, ID]) Aggregate(ctx context.Context, opts ...crud.Option) ([]crud.AggregateRow, error) {
-	rows, err := e.Core.Aggregate(ctx, opts...)
-	return rows, e.enrich("Aggregate", err)
+func (this *enricher[M, ID]) Aggregate(ctx context.Context, options ...crud.Option) ([]crud.AggregateRow, error) {
+	rows, err := this.Core.Aggregate(ctx, options...)
+	return rows, this.enrich("Aggregate", err)
 }
 
-func (e *enricher[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
-	n, err := e.Core.Delete(ctx, ids...)
-	return n, e.enrich("Delete", err)
+func (this *enricher[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
+	n, err := this.Core.Delete(ctx, ids...)
+	return n, this.enrich("Delete", err)
 }
 
-func (e *enricher[M, ID]) DeleteAll(ctx context.Context, opts ...crud.Option) (int64, error) {
-	n, err := e.Core.DeleteAll(ctx, opts...)
-	return n, e.enrich("DeleteAll", err)
+func (this *enricher[M, ID]) DeleteAll(ctx context.Context, options ...crud.Option) (int64, error) {
+	n, err := this.Core.DeleteAll(ctx, options...)
+	return n, this.enrich("DeleteAll", err)
 }
 
-func (e *enricher[M, ID]) Count(ctx context.Context, opts ...crud.Option) (int64, error) {
-	n, err := e.Core.Count(ctx, opts...)
-	return n, e.enrich("Count", err)
+func (this *enricher[M, ID]) Count(ctx context.Context, options ...crud.Option) (int64, error) {
+	n, err := this.Core.Count(ctx, options...)
+	return n, this.enrich("Count", err)
 }
 
-func (e *enricher[M, ID]) Exists(ctx context.Context, opts ...crud.Option) (bool, error) {
-	ok, err := e.Core.Exists(ctx, opts...)
-	return ok, e.enrich("Exists", err)
+func (this *enricher[M, ID]) Exists(ctx context.Context, options ...crud.Option) (bool, error) {
+	ok, err := this.Core.Exists(ctx, options...)
+	return ok, this.enrich("Exists", err)
 }
 
-func (e *enricher[M, ID]) Tx(ctx context.Context, fn func(context.Context) error) error {
-	return e.enrich("Tx", e.Core.Tx(ctx, fn))
+func (this *enricher[M, ID]) Tx(ctx context.Context, fn func(context.Context) error) error {
+	return this.enrich("Tx", this.Core.Tx(ctx, fn))
 }

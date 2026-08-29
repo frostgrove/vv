@@ -65,8 +65,8 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			odd := EgOdds.Bind(tg.src)
+			egWipe(t, tg.source)
+			odd := EgOdds.Bind(tg.source)
 
 			for _, o := range []EgOdd{
 				{ID: 1, Select: "from", FullName: "Ada Lovelace", Flag: true},
@@ -165,8 +165,8 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 
 	for _, tg := range targets {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
 			first := EgRow{ID: 1, Tenant: 7, Name: "before", Note: crud.Set("kept"), Score: crud.Set(1)}
 			if err := rows.Save(ctx, &first); err != nil {
@@ -208,8 +208,8 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
 			row := EgRow{ID: 1, Tenant: 7, Name: "before"}
 			if err := rows.Save(ctx, &row); err != nil {
@@ -252,13 +252,13 @@ func TestUpdateOfARowThatVanishesUnderneathIt(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			plain := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			plain := EgRows.Bind(tg.source)
 			egSeed(t, plain, EgRow{ID: 1, Tenant: 1, Name: "doomed"})
 
 			// The gap between the read and the write is the only place this race
 			// lives, so the delete is wedged into exactly that gap.
-			s := egWatch(tg.src)
+			s := egWatch(tg.source)
 			s.beforeFirst("UPDATE ", func() {
 				if _, err := plain.Delete(ctx, 1); err != nil {
 					t.Errorf("deleting the row mid-update: %v", err)
@@ -288,8 +288,8 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 
 	for _, tg := range egTargets() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			plain := EgVers.Bind(tg.src)
+			egWipe(t, tg.source)
+			plain := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
 			if err := plain.Save(ctx, &row); err != nil {
 				t.Fatal(err)
@@ -297,7 +297,7 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 
 			// The other writer goes in the gap between this Update's read and its
 			// write — the only place a lost update can happen.
-			s := egWatch(tg.src)
+			s := egWatch(tg.source)
 			s.beforeFirst("UPDATE ", func() {
 				if _, err := plain.Update(ctx, 1, EgVerUpdate{Name: ptr("theirs")}); err != nil {
 					t.Errorf("the concurrent write failed: %v", err)
@@ -347,14 +347,14 @@ func TestAFilteredUpdateIsAlsoNoticedByTheLock(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			plain := EgVers.Bind(tg.src)
+			egWipe(t, tg.source)
+			plain := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
 			if err := plain.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 
-			s := egWatch(tg.src)
+			s := egWatch(tg.source)
 			s.beforeFirst("UPDATE ", func() {
 				if _, err := plain.UpdateAll(ctx, EgVerUpdate{Name: ptr("bulk")},
 					crud.Where(crud.Eq("ID", int64(1)))); err != nil {
@@ -387,8 +387,8 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			vers := EgVers.Bind(tg.src)
+			egWipe(t, tg.source)
+			vers := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
 			if err := vers.Save(ctx, &row); err != nil {
 				t.Fatal(err)
@@ -432,8 +432,8 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 			egSeed(t, rows,
 				EgRow{ID: 1, Tenant: 1, Name: "Alpha"},
 				EgRow{ID: 2, Tenant: 1, Name: "beta"},
@@ -462,7 +462,7 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			switch tg.db {
+			switch tg.database {
 			case "postgres":
 				if mismatched != 0 {
 					t.Fatalf(`Contains("LPH") matched %d rows, want none on a case-sensitive collation`, mismatched)
@@ -494,8 +494,8 @@ func TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly(t *testing.T) 
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 			egSeed(t, rows,
 				EgRow{ID: 1, Tenant: 1, Name: "a", Score: crud.Null[int]()},
 				EgRow{ID: 2, Tenant: 1, Name: "b", Score: crud.Set(5)},
@@ -526,7 +526,7 @@ func TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly(t *testing.T) 
 						t.Fatal(err)
 					}
 					want := tc.postgres
-					if tg.db == "mysql" {
+					if tg.database == "mysql" {
 						want = tc.mysql
 					}
 					if egScores(got) != want {
@@ -554,8 +554,8 @@ func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 			egSeed(t, rows,
 				EgRow{ID: 1, Tenant: 1, Name: "repeat", Score: crud.Set(3)},
 				EgRow{ID: 2, Tenant: 1, Name: "repeat", Score: crud.Set(2)},
@@ -611,8 +611,8 @@ func TestDistinctRefusesASortOutsideItsProjectionOnBothEngines(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			s := egWatch(tg.src)
+			egWipe(t, tg.source)
+			s := egWatch(tg.source)
 			rows := EgRows.Bind(s)
 			egSeed(t, rows, EgRow{ID: 1, Tenant: 1, Name: "a", Score: crud.Set(1)})
 			s.forget()
@@ -648,8 +648,8 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			s := egWatch(tg.src)
+			egWipe(t, tg.source)
+			s := egWatch(tg.source)
 			rows := EgRows.Bind(s)
 
 			// Twelve rows and two distinct sort values: every page is nothing but
@@ -689,7 +689,7 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 
 			// And the reason it holds, in the statement itself: the sort the
 			// caller asked for, then the key.
-			q := tg.src.Dialect().Quote
+			q := tg.source.Dialect().Quote
 			tail := fmt.Sprintf("ORDER BY %s ASC, %s ASC LIMIT %d OFFSET %d", q("score"), q("id"), size, size)
 			if stmts := s.matching(tail); len(stmts) == 0 {
 				t.Fatalf("no statement carried %q; the paged reads were %v", tail, s.matching("SELECT"))
@@ -750,8 +750,8 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 
 	for _, tg := range egTargets() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			cons := EgConses.Bind(tg.src)
+			egWipe(t, tg.source)
+			cons := EgConses.Bind(tg.source)
 
 			anchor := EgCons{Slug: "taken", Tag: crud.Set("t")}
 			if err := cons.Save(ctx, &anchor); err != nil {

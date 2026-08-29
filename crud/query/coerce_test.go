@@ -21,12 +21,12 @@ import (
 // arrives as text.
 type code string
 
-func (c *code) UnmarshalText(b []byte) error {
+func (this *code) UnmarshalText(b []byte) error {
 	s := strings.TrimSpace(string(b))
 	if s == "" {
 		return errors.New("empty code")
 	}
-	*c = code(strings.ToUpper(s))
+	*this = code(strings.ToUpper(s))
 	return nil
 }
 
@@ -55,14 +55,14 @@ var Samples = sqlrepo.Define[Sample, int64, struct{}]("samples")
 
 // runSample compiles a request against the sample model and returns the WHERE
 // clause and the arguments the database would receive.
-func runSample(t *testing.T, req *query.Request) (string, []any) {
+func runSample(t *testing.T, request *query.Request) (string, []any) {
 	t.Helper()
-	opts, err := req.Compile(Samples.Meta(), nil)
+	options, err := request.Compile(Samples.Meta(), nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	if _, err := Samples.Bind(rec).GetAll(context.Background(), opts...); err != nil {
+	if _, err := Samples.Bind(rec).GetAll(context.Background(), options...); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	st := rec.Last()
@@ -71,20 +71,20 @@ func runSample(t *testing.T, req *query.Request) (string, []any) {
 
 func jsonRequest(t *testing.T, doc string) *query.Request {
 	t.Helper()
-	var req query.Request
-	if err := json.Unmarshal([]byte(doc), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(doc), &request); err != nil {
 		t.Fatalf("decode %s: %v", doc, err)
 	}
-	return &req
+	return &request
 }
 
 func termRequest(t *testing.T, terms ...string) *query.Request {
 	t.Helper()
-	req, err := query.ParseQuery(url.Values{"f": terms})
+	request, err := query.ParseQuery(url.Values{"f": terms})
 	if err != nil {
 		t.Fatalf("parse %v: %v", terms, err)
 	}
-	return req
+	return request
 }
 
 // same compares two bound arguments the way the database would see them.
@@ -296,11 +296,11 @@ func TestBadValuesAreRejectedByBothDoors(t *testing.T) {
 		{"word into a bool", `{"filter":{"active":"yes"}}`, "active:eq:yes", "active"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for door, req := range map[string]*query.Request{
+			for door, request := range map[string]*query.Request{
 				"json":         jsonRequest(t, tc.doc),
 				"query string": termRequest(t, tc.term),
 			} {
-				_, err := req.Compile(Samples.Meta(), nil)
+				_, err := request.Compile(Samples.Meta(), nil)
 				if err == nil {
 					t.Fatalf("the %s door accepted %s", door, tc.name)
 				}
@@ -315,8 +315,8 @@ func TestBadValuesAreRejectedByBothDoors(t *testing.T) {
 // An int8 overflow is the loudest case: 300 into an int8 would wrap to 44 and
 // quietly match the wrong rows.
 func TestOverflowNeverWraps(t *testing.T) {
-	req := jsonRequest(t, `{"filter":{"small":300}}`)
-	if _, err := req.Compile(Samples.Meta(), nil); err == nil {
+	request := jsonRequest(t, `{"filter":{"small":300}}`)
+	if _, err := request.Compile(Samples.Meta(), nil); err == nil {
 		t.Fatal("300 was accepted for an int8 column; it would have bound as 44")
 	}
 }

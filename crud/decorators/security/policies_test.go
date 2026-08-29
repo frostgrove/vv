@@ -41,10 +41,10 @@ func TestAClaimOfADifferentWidthThanTheColumnStillWorks(t *testing.T) {
 		return int64(7), nil
 	})
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
-	repo := Wides.Bind(rec, security.Gate(policy))
+	repository := Wides.Bind(rec, security.Gate(policy))
 
 	// The read narrows, and binds the value the column can hold.
-	if _, err := repo.GetAll(context.Background()); err != nil {
+	if _, err := repository.GetAll(context.Background()); err != nil {
 		t.Fatalf("a read under a width-mismatched claim failed: %v", err)
 	}
 	if !strings.Contains(rec.Last().SQL, `"tenant_id" = $`) {
@@ -54,7 +54,7 @@ func TestAClaimOfADifferentWidthThanTheColumnStillWorks(t *testing.T) {
 	// And the write is authorised rather than denied. This is the half that was
 	// broken: every create refused with "row belongs to a different TenantID".
 	row := Wide{TenantID: 7, Name: "mine"}
-	_, err := repo.Save(context.Background(), &row)
+	_, err := repository.Save(context.Background(), &row)
 	if errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("a create carrying the caller's own tenant was denied: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestAClaimOfADifferentWidthThanTheColumnStillWorks(t *testing.T) {
 	// The control: a row of somebody else's tenant is still refused, so the
 	// conversion did not turn the check off.
 	other := Wide{TenantID: 9, Name: "theirs"}
-	if _, err := repo.Save(context.Background(), &other); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.Save(context.Background(), &other); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("a create for another tenant was allowed: %v", err)
 	}
 }

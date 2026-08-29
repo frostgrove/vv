@@ -41,7 +41,7 @@ func NewPaginatedResponse[T any](items []T, page, limit int, total int64) Pagina
 }
 
 // IsEmpty reports whether the page has no items.
-func (r PaginatedResponse[T]) IsEmpty() bool { return len(r.Items) == 0 }
+func (this PaginatedResponse[T]) IsEmpty() bool { return len(this.Items) == 0 }
 
 // MapPage converts the items of a page while keeping the pager intact — handy
 // for turning entities into DTOs at the transport edge.

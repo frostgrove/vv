@@ -30,8 +30,8 @@ func BadRequestf(format string, args ...any) error {
 // Error() is classification only ([[D-047]]), so a call site that wants its
 // sentence rendered has to say so by naming a code.
 func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) error {
-	msg := fmt.Sprintf(format, args...)
-	return errs.BadRequest().Code(code).Message(msg).
-		At(path).Code(code).Message(msg).
+	message := fmt.Sprintf(format, args...)
+	return errs.BadRequest().Code(code).Message(message).
+		At(path).Code(code).Message(message).
 		Wrapping(ErrBadRequest).Fault()
 }

@@ -23,9 +23,9 @@ type Target struct {
 
 func ptr[T any](v T) *T { return &v }
 
-func (tg Target) reset(t *testing.T) {
+func (this Target) reset(t *testing.T) {
 	t.Helper()
-	if _, err := tg.Source.Exec(context.Background(), "DELETE FROM users"); err != nil {
+	if _, err := this.Source.Exec(context.Background(), "DELETE FROM users"); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 }
@@ -33,13 +33,13 @@ func (tg Target) reset(t *testing.T) {
 // RunSuite is the conformance suite. Every driver runs exactly this.
 func RunSuite(t *testing.T, tg Target) {
 	ctx := context.Background()
-	repo := Users.Bind(tg.Source)
+	repository := Users.Bind(tg.Source)
 
 	t.Run("SaveAssignsGeneratedKeyAndDefaults", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "ann@x.io", Name: "Ann", Age: crud.Set(31), Active: true}
 
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
 		if u.ID == 0 {
@@ -52,7 +52,7 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("created_at = %v, looks wrong", u.CreatedAt)
 		}
 
-		got, err := repo.GetByID(ctx, u.ID)
+		got, err := repository.GetByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,10 +67,10 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("NullableColumnRoundTrip", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "no-age@x.io", Name: "NoAge"}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
-		got, err := repo.GetByID(ctx, u.ID)
+		got, err := repository.GetByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,17 +82,17 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("SaveWithKeyUpserts", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "up@x.io", Name: "Before", Active: true}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
 		created := u.CreatedAt
 
 		u.Name = "After"
 		u.TenantID = 99 // immutable: must not be written on conflict
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
-		got, err := repo.GetByID(ctx, u.ID)
+		got, err := repository.GetByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,14 +105,14 @@ func RunSuite(t *testing.T, tg Target) {
 		if !got.CreatedAt.Equal(created) {
 			t.Fatalf("created_at changed: %v -> %v", created, got.CreatedAt)
 		}
-		if n, err := repo.Count(ctx); err != nil || n != 1 {
+		if n, err := repository.Count(ctx); err != nil || n != 1 {
 			t.Fatalf("count = %d err = %v: the upsert inserted a second row", n, err)
 		}
 	})
 
 	t.Run("GetByIDMissing", func(t *testing.T) {
 		tg.reset(t)
-		if _, err := repo.GetByID(ctx, 999999); !errors.Is(err, crud.ErrNotFound) {
+		if _, err := repository.GetByID(ctx, 999999); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
@@ -120,11 +120,11 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateWritesOnlyWhatChanged", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "u@x.io", Name: "Ann", Age: crud.Set(31), Active: true}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
 
-		got, err := repo.Update(ctx, u.ID, UserUpdate{
+		got, err := repository.Update(ctx, u.ID, UserUpdate{
 			Email: ptr("u@x.io"), // same value — no-op
 			Name:  ptr("Anna"),
 		})
@@ -145,12 +145,12 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateTellsUndefinedFromNull", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "n@x.io", Name: "N", Age: crud.Set(20)}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
 
 		// Undefined: age survives.
-		got, err := repo.Update(ctx, u.ID, UserUpdate{Name: ptr("N2")})
+		got, err := repository.Update(ctx, u.ID, UserUpdate{Name: ptr("N2")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 
 		// Explicit null: age is cleared.
-		got, err = repo.Update(ctx, u.ID, UserUpdate{Age: crud.Null[int]()})
+		got, err = repository.Update(ctx, u.ID, UserUpdate{Age: crud.Null[int]()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,7 +168,7 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 
 		// And back to a value.
-		got, err = repo.Update(ctx, u.ID, UserUpdate{Age: crud.Set(21)})
+		got, err = repository.Update(ctx, u.ID, UserUpdate{Age: crud.Set(21)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,10 +180,10 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateWithNothingToDo", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "same@x.io", Name: "Same", Active: true}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatal(err)
 		}
-		got, err := repo.Update(ctx, u.ID, UserUpdate{Name: ptr("Same"), Active: ptr(true)})
+		got, err := repository.Update(ctx, u.ID, UserUpdate{Name: ptr("Same"), Active: ptr(true)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,24 +194,24 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("UpdateMissing", func(t *testing.T) {
 		tg.reset(t)
-		if _, err := repo.Update(ctx, 424242, UserUpdate{Name: ptr("x")}); !errors.Is(err, crud.ErrNotFound) {
+		if _, err := repository.Update(ctx, 424242, UserUpdate{Name: ptr("x")}); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("UpdateAllWritesEveryMatchingRowInOneStatement", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 6)
+		seed(t, repository, 6)
 
 		// The filtered write: one statement for "everybody over 22".
-		n, err := repo.UpdateAll(ctx, UserUpdate{Active: ptr(false)}, crud.Where(crud.Gt("Age", 22)))
+		n, err := repository.UpdateAll(ctx, UserUpdate{Active: ptr(false)}, crud.Where(crud.Gt("Age", 22)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if n != 3 {
 			t.Fatalf("rows affected = %d, want the 3 rows over 22", n)
 		}
-		off, err := repo.Count(ctx, crud.Where(crud.Eq("Active", false)))
+		off, err := repository.Count(ctx, crud.Where(crud.Eq("Active", false)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,10 +221,10 @@ func RunSuite(t *testing.T, tg Target) {
 
 		// Undefined stays undefined, and a null Opt still means NULL — the two
 		// rules Update lives by, on a write with no row to diff against.
-		if _, err := repo.UpdateAll(ctx, UserUpdate{Age: crud.Null[int]()}, crud.Where(crud.Eq("Email", "user-00@x.io"))); err != nil {
+		if _, err := repository.UpdateAll(ctx, UserUpdate{Age: crud.Null[int]()}, crud.Where(crud.Eq("Email", "user-00@x.io"))); err != nil {
 			t.Fatal(err)
 		}
-		got, err := repo.GetAll(ctx, crud.Where(crud.Eq("Email", "user-00@x.io")))
+		got, err := repository.GetAll(ctx, crud.Where(crud.Eq("Email", "user-00@x.io")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,22 +236,22 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 
 		// A DTO that defines nothing is not a request to rewrite the table.
-		if n, err := repo.UpdateAll(ctx, UserUpdate{}); err != nil || n != 0 {
+		if n, err := repository.UpdateAll(ctx, UserUpdate{}); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v: an empty DTO must write nothing", n, err)
 		}
 
 		// Matching nothing is not an error; it is a count of zero.
-		if n, err := repo.UpdateAll(ctx, UserUpdate{Name: ptr("x")}, crud.Where(crud.Eq("Email", "nobody@x.io"))); err != nil || n != 0 {
+		if n, err := repository.UpdateAll(ctx, UserUpdate{Name: ptr("x")}, crud.Where(crud.Eq("Email", "nobody@x.io"))); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
 
 		// The engines disagree about what "affected" counts — PostgreSQL reports
 		// the rows it matched, MySQL the rows whose values actually changed — so
 		// what is pinned here is the row count in the table, not the number.
-		if _, err := repo.UpdateAll(ctx, UserUpdate{Name: ptr("all the same")}); err != nil {
+		if _, err := repository.UpdateAll(ctx, UserUpdate{Name: ptr("all the same")}); err != nil {
 			t.Fatal(err)
 		}
-		same, err := repo.Count(ctx, crud.Where(crud.Eq("Name", "all the same")))
+		same, err := repository.Count(ctx, crud.Where(crud.Eq("Name", "all the same")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -262,9 +262,9 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("Pagination", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 25)
+		seed(t, repository, 25)
 
-		page, err := repo.Get(ctx, crud.Page(2), crud.Limit(10), crud.OrderBy(crud.Asc("Email")))
+		page, err := repository.Get(ctx, crud.Page(2), crud.Limit(10), crud.OrderBy(crud.Asc("Email")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -278,7 +278,7 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("first item of page 2 = %s", page.Items[0].Email)
 		}
 
-		last, err := repo.Get(ctx, crud.Page(3), crud.Limit(10))
+		last, err := repository.Get(ctx, crud.Page(3), crud.Limit(10))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 
 		// SkipTotal answers HasNext without a COUNT.
-		probe, err := repo.Get(ctx, crud.Page(1), crud.Limit(10), crud.SkipTotal())
+		probe, err := repository.Get(ctx, crud.Page(1), crud.Limit(10), crud.SkipTotal())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +295,7 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("probe = %+v", pageOf(probe))
 		}
 
-		all, err := repo.GetAll(ctx)
+		all, err := repository.GetAll(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -306,8 +306,8 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("Predicates", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 10)
-		if _, err := repo.Update(ctx, mustID(t, repo, "user-00@x.io"), UserUpdate{Age: crud.Null[int]()}); err != nil {
+		seed(t, repository, 10)
+		if _, err := repository.Update(ctx, mustID(t, repository, "user-00@x.io"), UserUpdate{Age: crud.Null[int]()}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -353,7 +353,7 @@ func RunSuite(t *testing.T, tg Target) {
 			{"a column compared with another column", crud.EqField("Name", "Name"), 10},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				n, err := repo.Count(ctx, crud.Where(tc.pred))
+				n, err := repository.Count(ctx, crud.Where(tc.pred))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -366,8 +366,8 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("Sorting", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 5)
-		desc, err := repo.GetAll(ctx, crud.OrderBy(crud.Desc("Email")))
+		seed(t, repository, 5)
+		desc, err := repository.GetAll(ctx, crud.OrderBy(crud.Desc("Email")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -378,15 +378,15 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("CountAndExists", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 3)
-		if n, err := repo.Count(ctx); err != nil || n != 3 {
+		seed(t, repository, 3)
+		if n, err := repository.Count(ctx); err != nil || n != 3 {
 			t.Fatalf("count = %d err = %v", n, err)
 		}
-		ok, err := repo.Exists(ctx, crud.Where(crud.Eq("Email", "user-01@x.io")))
+		ok, err := repository.Exists(ctx, crud.Where(crud.Eq("Email", "user-01@x.io")))
 		if err != nil || !ok {
 			t.Fatalf("exists = %v err = %v", ok, err)
 		}
-		ok, err = repo.Exists(ctx, crud.Where(crud.Eq("Email", "nobody@x.io")))
+		ok, err = repository.Exists(ctx, crud.Where(crud.Eq("Email", "nobody@x.io")))
 		if err != nil || ok {
 			t.Fatalf("exists = %v err = %v", ok, err)
 		}
@@ -394,36 +394,36 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("Delete", func(t *testing.T) {
 		tg.reset(t)
-		users := seed(t, repo, 5)
+		users := seed(t, repository, 5)
 
-		n, err := repo.Delete(ctx, users[0].ID, users[1].ID)
+		n, err := repository.Delete(ctx, users[0].ID, users[1].ID)
 		if err != nil || n != 2 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
-		if _, err := repo.GetByID(ctx, users[0].ID); !errors.Is(err, crud.ErrNotFound) {
+		if _, err := repository.GetByID(ctx, users[0].ID); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 
 		// Deleting rows that are already gone is not an error.
-		if n, err := repo.Delete(ctx, users[0].ID); err != nil || n != 0 {
+		if n, err := repository.Delete(ctx, users[0].ID); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
 
-		if n, err := repo.DeleteAll(ctx, crud.Where(crud.Gte("Age", 23))); err != nil || n != 2 {
+		if n, err := repository.DeleteAll(ctx, crud.Where(crud.Gte("Age", 23))); err != nil || n != 2 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
-		if n, err := repo.DeleteAll(ctx); err != nil || n != 1 {
+		if n, err := repository.DeleteAll(ctx); err != nil || n != 1 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
-		if n, err := repo.Count(ctx); err != nil || n != 0 {
+		if n, err := repository.Count(ctx); err != nil || n != 0 {
 			t.Fatalf("count = %d err = %v", n, err)
 		}
 	})
 
 	t.Run("Specifications", func(t *testing.T) {
 		tg.reset(t)
-		seed(t, repo, 10)
-		sp := specs.Executor(repo)
+		seed(t, repository, 10)
+		sp := specs.Executor(repository)
 
 		adults := specs.Where(User_.Age.Gte(25)).And(User_.Active.Eq(true))
 		found, err := sp.FindAll(ctx, adults, crud.OrderBy(User_.Age.Desc()))
@@ -596,7 +596,7 @@ func RunSuite(t *testing.T, tg Target) {
 			{TenantID: 1, Email: "t1-b@x.io", Name: "B", Active: true},
 			{TenantID: 2, Email: "t2-a@x.io", Name: "C", Active: true},
 		} {
-			if err := repo.Save(ctx, &u); err != nil {
+			if err := repository.Save(ctx, &u); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -611,7 +611,7 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("tenant 1 sees %d rows, want 2", len(got))
 		}
 
-		other, err := repo.GetAll(theirs, crud.Where(crud.Eq("TenantID", 2)))
+		other, err := repository.GetAll(theirs, crud.Where(crud.Eq("TenantID", 2)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -627,7 +627,7 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("n = %d err = %v: a foreign row must not be deletable", n, err)
 		}
 		// The row is untouched.
-		if _, err := repo.GetByID(ctx, foreignID); err != nil {
+		if _, err := repository.GetByID(ctx, foreignID); err != nil {
 			t.Fatalf("the foreign row is gone: %v", err)
 		}
 
@@ -651,10 +651,10 @@ func RunSuite(t *testing.T, tg Target) {
 
 	t.Run("TransactionCommits", func(t *testing.T) {
 		tg.reset(t)
-		err := repo.Tx(ctx, func(ctx context.Context) error {
+		err := repository.Tx(ctx, func(ctx context.Context) error {
 			for i := range 3 {
 				u := User{TenantID: 1, Email: fmt.Sprintf("tx-%d@x.io", i), Name: "tx"}
-				if err := repo.Save(ctx, &u); err != nil {
+				if err := repository.Save(ctx, &u); err != nil {
 					return err
 				}
 			}
@@ -663,7 +663,7 @@ func RunSuite(t *testing.T, tg Target) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n, err := repo.Count(ctx); err != nil || n != 3 {
+		if n, err := repository.Count(ctx); err != nil || n != 3 {
 			t.Fatalf("count = %d err = %v", n, err)
 		}
 	})
@@ -671,12 +671,12 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("TransactionRollsBack", func(t *testing.T) {
 		tg.reset(t)
 		boom := errors.New("boom")
-		err := repo.Tx(ctx, func(ctx context.Context) error {
+		err := repository.Tx(ctx, func(ctx context.Context) error {
 			u := User{TenantID: 1, Email: "rollback@x.io", Name: "gone"}
-			if err := repo.Save(ctx, &u); err != nil {
+			if err := repository.Save(ctx, &u); err != nil {
 				return err
 			}
-			if n, err := repo.Count(ctx); err != nil || n != 1 {
+			if n, err := repository.Count(ctx); err != nil || n != 1 {
 				t.Errorf("inside the transaction count = %d err = %v", n, err)
 			}
 			return boom
@@ -684,25 +684,25 @@ func RunSuite(t *testing.T, tg Target) {
 		if !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
-		if n, err := repo.Count(ctx); err != nil || n != 0 {
+		if n, err := repository.Count(ctx); err != nil || n != 0 {
 			t.Fatalf("the transaction was not rolled back: count = %d err = %v", n, err)
 		}
 	})
 
 	t.Run("NestedTransactionJoins", func(t *testing.T) {
 		tg.reset(t)
-		err := repo.Tx(ctx, func(ctx context.Context) error {
+		err := repository.Tx(ctx, func(ctx context.Context) error {
 			// A second Tx on a context that already carries one must join it
 			// rather than open a competing transaction.
-			return repo.Tx(ctx, func(ctx context.Context) error {
+			return repository.Tx(ctx, func(ctx context.Context) error {
 				u := User{TenantID: 1, Email: "nested@x.io", Name: "n"}
-				return repo.Save(ctx, &u)
+				return repository.Save(ctx, &u)
 			})
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n, err := repo.Count(ctx); err != nil || n != 1 {
+		if n, err := repository.Count(ctx); err != nil || n != 1 {
 			t.Fatalf("count = %d err = %v", n, err)
 		}
 	})
@@ -715,7 +715,7 @@ func byCriteria(f func(specs.Root[User], specs.Builder) crud.Predicate) specs.Sp
 }
 
 // seed inserts n users with predictable emails, names and ages 20..20+n.
-func seed(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], n int) []User {
+func seed(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], n int) []User {
 	t.Helper()
 	ctx := context.Background()
 	out := make([]User, 0, n)
@@ -727,7 +727,7 @@ func seed(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], n int) []User 
 			Age:      crud.Set(20 + i),
 			Active:   true,
 		}
-		if err := repo.Save(ctx, &u); err != nil {
+		if err := repository.Save(ctx, &u); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 		out = append(out, u)
@@ -735,9 +735,9 @@ func seed(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], n int) []User 
 	return out
 }
 
-func mustID(t *testing.T, repo *crud.Repo[User, int64, UserUpdate], email string) int64 {
+func mustID(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], email string) int64 {
 	t.Helper()
-	got, err := repo.GetAll(context.Background(), crud.Where(crud.Eq("Email", email)))
+	got, err := repository.GetAll(context.Background(), crud.Where(crud.Eq("Email", email)))
 	if err != nil || len(got) != 1 {
 		t.Fatalf("looking up %s: %d rows, err = %v", email, len(got), err)
 	}

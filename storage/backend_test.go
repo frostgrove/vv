@@ -24,79 +24,79 @@ type fakeBackend struct {
 	caps      storage.Capabilities
 }
 
-func (b *fakeBackend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, opts storage.PutOptions) (storage.Info, error) {
-	b.calls++
-	if b.put == nil {
+func (this *fakeBackend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
+	this.calls++
+	if this.put == nil {
 		panic("unexpected Backend.Put")
 	}
-	return b.put(ctx, namespace, key, source, opts)
+	return this.put(ctx, namespace, key, source, options)
 }
 
-func (b *fakeBackend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
-	b.calls++
-	if b.open == nil {
+func (this *fakeBackend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+	this.calls++
+	if this.open == nil {
 		panic("unexpected Backend.Open")
 	}
-	return b.open(ctx, namespace, key)
+	return this.open(ctx, namespace, key)
 }
 
-func (b *fakeBackend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
-	b.calls++
-	if b.head == nil {
+func (this *fakeBackend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
+	this.calls++
+	if this.head == nil {
 		panic("unexpected Backend.Head")
 	}
-	return b.head(ctx, namespace, key)
+	return this.head(ctx, namespace, key)
 }
 
-func (b *fakeBackend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
-	b.calls++
-	if b.delete == nil {
+func (this *fakeBackend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+	this.calls++
+	if this.delete == nil {
 		panic("unexpected Backend.Delete")
 	}
-	return b.delete(ctx, namespace, key)
+	return this.delete(ctx, namespace, key)
 }
 
-func (b *fakeBackend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, opts storage.StageOptions) (storage.Staged, error) {
-	b.calls++
-	if b.stage == nil {
+func (this *fakeBackend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
+	this.calls++
+	if this.stage == nil {
 		panic("unexpected Backend.Stage")
 	}
-	return b.stage(ctx, namespace, source, opts)
+	return this.stage(ctx, namespace, source, options)
 }
 
-func (b *fakeBackend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, opts storage.PromoteOptions) (storage.Info, error) {
-	b.calls++
-	if b.promote == nil {
+func (this *fakeBackend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, options storage.PromoteOptions) (storage.Info, error) {
+	this.calls++
+	if this.promote == nil {
 		panic("unexpected Backend.Promote")
 	}
-	return b.promote(ctx, namespace, id, key, opts)
+	return this.promote(ctx, namespace, id, key, options)
 }
 
-func (b *fakeBackend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) error {
-	b.calls++
-	if b.abort == nil {
+func (this *fakeBackend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) error {
+	this.calls++
+	if this.abort == nil {
 		panic("unexpected Backend.Abort")
 	}
-	return b.abort(ctx, namespace, id)
+	return this.abort(ctx, namespace, id)
 }
 
-func (b *fakeBackend) CleanupExpired(ctx context.Context, namespace storage.Namespace, opts storage.CleanupOptions) (storage.CleanupResult, error) {
-	b.calls++
-	if b.cleanup == nil {
+func (this *fakeBackend) CleanupExpired(ctx context.Context, namespace storage.Namespace, options storage.CleanupOptions) (storage.CleanupResult, error) {
+	this.calls++
+	if this.cleanup == nil {
 		panic("unexpected Backend.CleanupExpired")
 	}
-	return b.cleanup(ctx, namespace, opts)
+	return this.cleanup(ctx, namespace, options)
 }
 
-func (b *fakeBackend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, opts storage.TemporaryURLOptions) (storage.Link, error) {
-	b.calls++
-	if b.temporary == nil {
+func (this *fakeBackend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.TemporaryURLOptions) (storage.Link, error) {
+	this.calls++
+	if this.temporary == nil {
 		panic("unexpected Backend.TemporaryURL")
 	}
-	return b.temporary(ctx, namespace, key, opts)
+	return this.temporary(ctx, namespace, key, options)
 }
 
-func (b *fakeBackend) Capabilities() storage.Capabilities { return b.caps }
+func (this *fakeBackend) Capabilities() storage.Capabilities { return this.caps }
 
 func newStore(backend storage.Backend) storage.Store {
 	store, err := storage.New(&storage.Config{Namespace: "documents", Backend: backend})

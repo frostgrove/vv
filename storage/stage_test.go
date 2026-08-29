@@ -31,26 +31,26 @@ func TestAStagedUploadRoundTripsThroughAFormBeforePromotion(t *testing.T) {
 	var promotedKey storage.Key
 	var promotedOptions storage.PromoteOptions
 	backend := &fakeBackend{
-		stage: func(_ context.Context, namespace storage.Namespace, src io.Reader, opts storage.StageOptions) (storage.Staged, error) {
-			if namespace.Value() != "documents" || src != source {
-				t.Fatalf("Stage boundary namespace=%q source identity=%t", namespace.Value(), src == source)
+		stage: func(_ context.Context, namespace storage.Namespace, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
+			if namespace.Value() != "documents" || source != source {
+				t.Fatalf("Stage boundary namespace=%q source identity=%t", namespace.Value(), source == source)
 			}
-			stagedOptions = opts
-			body, err := io.ReadAll(src)
+			stagedOptions = options
+			body, err := io.ReadAll(source)
 			if err != nil {
 				return storage.Staged{}, err
 			}
 			return storage.Staged{
 				ID:        id,
-				Info:      storage.Info{Size: int64(len(body)), ContentType: opts.ContentType, Metadata: backendStageMetadata},
-				ExpiresAt: now.Add(opts.ExpiresIn),
+				Info:      storage.Info{Size: int64(len(body)), ContentType: options.ContentType, Metadata: backendStageMetadata},
+				ExpiresAt: now.Add(options.ExpiresIn),
 			}, nil
 		},
-		promote: func(_ context.Context, namespace storage.Namespace, gotID storage.StageID, gotKey storage.Key, opts storage.PromoteOptions) (storage.Info, error) {
+		promote: func(_ context.Context, namespace storage.Namespace, gotID storage.StageID, gotKey storage.Key, options storage.PromoteOptions) (storage.Info, error) {
 			if namespace.Value() != "documents" {
 				t.Fatalf("Promote namespace = %q", namespace.Value())
 			}
-			promotedID, promotedKey, promotedOptions = gotID, gotKey, opts
+			promotedID, promotedKey, promotedOptions = gotID, gotKey, options
 			return storage.Info{Size: size, ContentType: "image/png", Metadata: backendPromoteMetadata}, nil
 		},
 	}
@@ -107,8 +107,8 @@ func TestAStagedUploadRoundTripsThroughAFormBeforePromotion(t *testing.T) {
 func TestInvalidStageInputNeverStartsAnUpload(t *testing.T) {
 	negative := int64(-1)
 	cases := []struct {
-		name string
-		opts storage.StageOptions
+		name    string
+		options storage.StageOptions
 	}{
 		{"negative size", storage.StageOptions{Size: &negative}},
 		{"expiry below minimum", storage.StageOptions{ExpiresIn: time.Millisecond}},
@@ -119,7 +119,7 @@ func TestInvalidStageInputNeverStartsAnUpload(t *testing.T) {
 	for _, tc := range cases {
 		backend := &fakeBackend{}
 		source := &trackedSource{Reader: bytes.NewReader([]byte("must stay unread"))}
-		staged, err := newStore(backend).Stage(context.Background(), source, tc.opts)
+		staged, err := newStore(backend).Stage(context.Background(), source, tc.options)
 		if !errors.Is(err, storage.ErrInvalid) {
 			t.Errorf("%s: Stage error = %v, want ErrInvalid", tc.name, err)
 		}
@@ -150,11 +150,11 @@ func TestStageCanonicalizesEveryEmptyMetadataMapToNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := &fakeBackend{stage: func(_ context.Context, _ storage.Namespace, _ io.Reader, opts storage.StageOptions) (storage.Staged, error) {
-		if opts.Metadata != nil {
-			t.Fatalf("backend metadata = %#v, want canonical nil", opts.Metadata)
+	backend := &fakeBackend{stage: func(_ context.Context, _ storage.Namespace, _ io.Reader, options storage.StageOptions) (storage.Staged, error) {
+		if options.Metadata != nil {
+			t.Fatalf("backend metadata = %#v, want canonical nil", options.Metadata)
 		}
-		return storage.Staged{ID: id, ExpiresAt: time.Now().Add(opts.ExpiresIn)}, nil
+		return storage.Staged{ID: id, ExpiresAt: time.Now().Add(options.ExpiresIn)}, nil
 	}}
 	staged, err := newStore(backend).Stage(context.Background(), strings.NewReader("body"), storage.StageOptions{Metadata: storage.Metadata{}})
 	if err != nil {
@@ -204,10 +204,10 @@ func TestPromoteValidatesItsSerializableInputsAndReturnsNoInfoOnFailure(t *testi
 	}
 
 	invalidCases := []struct {
-		name string
-		id   storage.StageID
-		key  storage.Key
-		opts storage.PromoteOptions
+		name    string
+		id      storage.StageID
+		key     storage.Key
+		options storage.PromoteOptions
 	}{
 		{"zero stage id", storage.StageID{}, key, storage.PromoteOptions{}},
 		{"zero key", id, storage.Key{}, storage.PromoteOptions{}},
@@ -215,7 +215,7 @@ func TestPromoteValidatesItsSerializableInputsAndReturnsNoInfoOnFailure(t *testi
 	}
 	for _, tc := range invalidCases {
 		fresh := &fakeBackend{}
-		_, err := newStore(fresh).Promote(context.Background(), tc.id, tc.key, tc.opts)
+		_, err := newStore(fresh).Promote(context.Background(), tc.id, tc.key, tc.options)
 		if !errors.Is(err, storage.ErrInvalid) {
 			t.Errorf("%s: Promote error = %v, want ErrInvalid", tc.name, err)
 		}

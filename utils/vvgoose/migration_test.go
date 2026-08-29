@@ -18,7 +18,7 @@ func TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase(t *testi
 	t.Parallel()
 	root := t.TempDir()
 	migrations := filepath.Join(root, "migrations")
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		// This is deliberately not a usable SQLite connection. Generation only
 		// needs the dialect and must not validate/open the database.
 		Engine: vvdb.SQLite,
@@ -28,7 +28,7 @@ func TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase(t *testi
 		},
 	}
 	var out bytes.Buffer
-	err := execute(context.Background(), []string{"migration", "init_permissions"}, cfg, commandIO{
+	err := execute(context.Background(), []string{"migration", "init_permissions"}, config, commandIO{
 		in: strings.NewReader(""), out: &out, err: &out,
 	})
 	if err != nil {
@@ -63,14 +63,14 @@ type User struct {
 	Manager   *User      @rel:"belongs_to"@
 }
 `)
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.Postgres,
 		Migration: vvdb.Migration{
 			Path:   filepath.Join(root, "migrations"),
 			Models: []string{models},
 		},
 	}
-	path, err := createTableMigration(context.Background(), cfg, createOptions{
+	path, err := createTableMigration(context.Background(), config, createOptions{
 		Name: "users",
 		Now:  func() time.Time { return time.Date(2026, 8, 27, 12, 34, 56, 0, time.UTC) },
 	})
@@ -109,7 +109,7 @@ type User struct {
 	Alias *string @db:"alias"@
 }
 `)
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Path:   filepath.Join(root, "app.sqlite"),
 		Migration: vvdb.Migration{
@@ -117,18 +117,18 @@ type User struct {
 			Models: []string{models},
 		},
 	}
-	if _, err := createTableMigration(context.Background(), cfg, createOptions{Name: "users"}); err != nil {
+	if _, err := createTableMigration(context.Background(), config, createOptions{Name: "users"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runMigrate(context.Background(), cfg); err != nil {
+	if _, err := runMigrate(context.Background(), config); err != nil {
 		t.Fatalf("apply generated migration: %v", err)
 	}
-	db, err := vvdb.Open(&cfg)
+	database, err := vvdb.Open(&config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	rows, err := db.Query(`PRAGMA table_info("users")`)
+	defer database.Close()
+	rows, err := database.Query(`PRAGMA table_info("users")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,14 +159,14 @@ func TestAmbiguousModelIsEmptyOutsideInteractiveMode(t *testing.T) {
 	for _, pkg := range []string{"billing", "identity"} {
 		writeTestSource(t, filepath.Join(root, pkg, "user.model.go"), "package "+pkg+"\ntype User struct { ID int64 }\n")
 	}
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.MySQL,
 		Migration: vvdb.Migration{
 			Path:   filepath.Join(root, "migrations"),
 			Models: []string{root},
 		},
 	}
-	path, err := createTableMigration(context.Background(), cfg, createOptions{Name: "users"})
+	path, err := createTableMigration(context.Background(), config, createOptions{Name: "users"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,20 +197,20 @@ func TestCreateMigrationNeverOverwritesTheSameTimestamp(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	now := func() time.Time { return time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC) }
-	cfg := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{Path: root, Models: []string{"."}}}
+	config := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{Path: root, Models: []string{"."}}}
 	options := createOptions{Name: "users", Empty: true, Now: now}
-	first, err := createTableMigration(context.Background(), cfg, options)
+	first, err := createTableMigration(context.Background(), config, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := createTableMigration(context.Background(), cfg, options)
+	second, err := createTableMigration(context.Background(), config, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first == second || filepath.Base(second) != "20260827120001_create_users_table.sql" {
 		t.Fatalf("first = %s, second = %s; want next second without overwrite", first, second)
 	}
-	third, err := createTableMigration(context.Background(), cfg, createOptions{Name: "teams", Empty: true, Now: now})
+	third, err := createTableMigration(context.Background(), config, createOptions{Name: "teams", Empty: true, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,14 +239,14 @@ func TestMigrationNameDoesNotInferATableWithoutExplicitTables(t *testing.T) {
 	root := t.TempDir()
 	models := filepath.Join(root, "src")
 	writeTestSource(t, filepath.Join(models, "user.model.go"), "package account\ntype User struct { ID int64; Email string }\n")
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.Postgres,
 		Migration: vvdb.Migration{
 			Path:   filepath.Join(root, "migrations"),
 			Models: []string{models},
 		},
 	}
-	path, err := createMigration(context.Background(), cfg, migrationOptions{Name: "add_email_to_users"})
+	path, err := createMigration(context.Background(), config, migrationOptions{Name: "add_email_to_users"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,16 +261,16 @@ func TestTableCommandCreatesOneMigrationForEachCommaSeparatedTable(t *testing.T)
 	models := filepath.Join(root, "src")
 	writeTestSource(t, filepath.Join(models, "user.model.go"), "package app\ntype User struct { ID int64; Email string }\n")
 	writeTestSource(t, filepath.Join(models, "product.model.go"), "package app\ntype Product struct { ID int64; SKU string }\n")
-	cfg := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{
+	config := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{
 		Path: filepath.Join(root, "migrations"), Models: []string{models},
 	}}
 	var out bytes.Buffer
-	if err := execute(context.Background(), []string{"table", "users,products"}, cfg, commandIO{
+	if err := execute(context.Background(), []string{"table", "users,products"}, config, commandIO{
 		in: strings.NewReader(""), out: &out, err: &out,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	files := migrationFiles(t, cfg.Migration.Path)
+	files := migrationFiles(t, config.Migration.Path)
 	if len(files) != 2 || !strings.HasSuffix(files[0], "_create_users_table.sql") || !strings.HasSuffix(files[1], "_create_products_table.sql") {
 		t.Fatalf("table migrations = %v", files)
 	}
@@ -287,16 +287,16 @@ func TestMigrationCommandGeneratesExplicitTablesInOneNamedFile(t *testing.T) {
 	models := filepath.Join(root, "src")
 	writeTestSource(t, filepath.Join(models, "permission.model.go"), "package app\ntype Permission struct { ID int64; Name string }\n")
 	writeTestSource(t, filepath.Join(models, "role.model.go"), "package app\ntype Role struct { ID int64; Name string }\n")
-	cfg := vvdb.Config{Engine: vvdb.Postgres, Migration: vvdb.Migration{
+	config := vvdb.Config{Engine: vvdb.Postgres, Migration: vvdb.Migration{
 		Path: filepath.Join(root, "migrations"), Models: []string{models},
 	}}
 	var out bytes.Buffer
-	if err := execute(context.Background(), []string{"migration", "init_permission_tables", "-t", "permissions,roles"}, cfg, commandIO{
+	if err := execute(context.Background(), []string{"migration", "init_permission_tables", "-t", "permissions,roles"}, config, commandIO{
 		in: strings.NewReader(""), out: &out, err: &out,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	files := migrationFiles(t, cfg.Migration.Path)
+	files := migrationFiles(t, config.Migration.Path)
 	if len(files) != 1 || !strings.HasSuffix(files[0], "_init_permission_tables.sql") {
 		t.Fatalf("migration files = %v", files)
 	}
@@ -313,15 +313,15 @@ func TestMigrationCommandAcceptsTablesAsItsSecondPositionalArgument(t *testing.T
 	root := t.TempDir()
 	models := filepath.Join(root, "src")
 	writeTestSource(t, filepath.Join(models, "permission.model.go"), "package app\ntype Permission struct { ID int64; Name string }\n")
-	cfg := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{
+	config := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{
 		Path: filepath.Join(root, "migrations"), Models: []string{models},
 	}}
-	if err := execute(context.Background(), []string{"migration", "init_permissions", "permissions"}, cfg, commandIO{
+	if err := execute(context.Background(), []string{"migration", "init_permissions", "permissions"}, config, commandIO{
 		in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	files := migrationFiles(t, cfg.Migration.Path)
+	files := migrationFiles(t, config.Migration.Path)
 	if len(files) != 1 || !strings.Contains(readFile(t, files[0]), `CREATE TABLE IF NOT EXISTS "permissions"`) {
 		t.Fatalf("positional tables migration = %v", files)
 	}
@@ -336,11 +336,11 @@ func TestInitMigrationIncludesAllModelsAndOverwritesItsOwnFile(t *testing.T) {
 	writeTestSource(t, permission, "package app\ntype Permission struct { ID int64; Name string }\n")
 	writeTestSource(t, role, "package app\ntype Role struct { ID int64; Title string }\n")
 	writeTestSource(t, filepath.Join(models, "stub.model.go"), "package app\ntype Stub struct{}\n")
-	cfg := vvdb.Config{Engine: vvdb.Postgres, Migration: vvdb.Migration{
+	config := vvdb.Config{Engine: vvdb.Postgres, Migration: vvdb.Migration{
 		Path: filepath.Join(root, "migrations"), Models: []string{models},
 	}}
 	now := func() time.Time { return time.Date(2026, 8, 27, 13, 0, 0, 0, time.UTC) }
-	first, err := createInitMigration(cfg, now)
+	first, err := createInitMigration(config, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestInitMigrationIncludesAllModelsAndOverwritesItsOwnFile(t *testing.T) {
 		t.Fatalf("initial SQL =\n%s", firstSQL)
 	}
 	writeTestSource(t, permission, "package app\ntype Permission struct { ID int64; Code string }\n")
-	second, err := createInitMigration(cfg, now)
+	second, err := createInitMigration(config, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestInitMigrationIncludesAllModelsAndOverwritesItsOwnFile(t *testing.T) {
 	if strings.Contains(secondSQL, `"name"`) || !strings.Contains(secondSQL, `"code"`) {
 		t.Fatalf("init SQL was not replaced:\n%s", secondSQL)
 	}
-	files := migrationFiles(t, cfg.Migration.Path)
+	files := migrationFiles(t, config.Migration.Path)
 	if len(files) != 1 || files[0] != first {
 		t.Fatalf("init files = %v, want exactly %s", files, first)
 	}
@@ -375,27 +375,27 @@ func TestGeneratedInitMigrationRunsThroughGoose(t *testing.T) {
 	models := filepath.Join(root, "src")
 	writeTestSource(t, filepath.Join(models, "user.model.go"), "package app\ntype User struct { ID int64; Email string }\n")
 	writeTestSource(t, filepath.Join(models, "product.model.go"), "package app\ntype Product struct { ID int64; SKU string }\n")
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Path:   filepath.Join(root, "app.sqlite"),
 		Migration: vvdb.Migration{
 			Path: filepath.Join(root, "migrations"), Models: []string{models},
 		},
 	}
-	if _, err := createInitMigration(cfg, nil); err != nil {
+	if _, err := createInitMigration(config, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runMigrate(context.Background(), cfg); err != nil {
+	if _, err := runMigrate(context.Background(), config); err != nil {
 		t.Fatalf("apply generated init migration: %v", err)
 	}
-	db, err := vvdb.Open(&cfg)
+	database, err := vvdb.Open(&config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 	for _, table := range []string{"users", "products"} {
 		var count int
-		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+		if err := database.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
@@ -423,8 +423,8 @@ func TestNoArgumentsPrintsTheAvailableCommands(t *testing.T) {
 func TestConfigPathFlagCanRemainAfterVVCfgConsumesIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	cfg := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{Path: root}}
-	err := execute(context.Background(), []string{"--config-path", "config/app.yml", "table", "audit", "--empty"}, cfg, commandIO{
+	config := vvdb.Config{Engine: vvdb.SQLite, Migration: vvdb.Migration{Path: root}}
+	err := execute(context.Background(), []string{"--config-path", "config/app.yml", "table", "audit", "--empty"}, config, commandIO{
 		in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{},
 	})
 	if err != nil {
@@ -454,7 +454,7 @@ func TestBufferedOutputIsNotAnInteractiveTerminal(t *testing.T) {
 func TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	root := t.TempDir()
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Migration: vvdb.Migration{
 			Path:   filepath.Join(root, "migrations"),
@@ -462,14 +462,14 @@ func TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments(t *testing.T)
 		},
 	}
 	var out bytes.Buffer
-	err := runInteractive(context.Background(), cfg, commandIO{
+	err := runInteractive(context.Background(), config, commandIO{
 		// 1 = migration, then its name, then an empty optional tables field.
 		in: &byteAtATimeReader{Reader: strings.NewReader("1\ninit_users\n\n")}, out: &out, err: &out,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := migrationFiles(t, cfg.Migration.Path)
+	files := migrationFiles(t, config.Migration.Path)
 	if len(files) != 1 || !strings.HasSuffix(files[0], "_init_users.sql") {
 		t.Fatalf("interactive migration files = %v", files)
 	}
@@ -483,11 +483,11 @@ func TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments(t *testing.T)
 // buffer every later answer; limiting reads models the terminal accurately.
 type byteAtATimeReader struct{ io.Reader }
 
-func (r *byteAtATimeReader) Read(p []byte) (int, error) {
+func (this *byteAtATimeReader) Read(p []byte) (int, error) {
 	if len(p) > 1 {
 		p = p[:1]
 	}
-	return r.Reader.Read(p)
+	return this.Reader.Read(p)
 }
 
 func TestInteractiveMenuCanExitWithoutOpeningTheDatabase(t *testing.T) {

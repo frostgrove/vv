@@ -119,26 +119,26 @@ func newFakeCatalog(dialect string, tables ...catalog.Table) *fakeCatalog {
 	return c
 }
 
-func (c *fakeCatalog) Dialect() string { return c.dialect }
+func (this *fakeCatalog) Dialect() string { return this.dialect }
 
-func (c *fakeCatalog) Table(name string) (*catalog.Table, bool) {
-	for i := range c.tables {
-		if c.tables[i].Name == name {
-			return &c.tables[i], true
+func (this *fakeCatalog) Table(name string) (*catalog.Table, bool) {
+	for i := range this.tables {
+		if this.tables[i].Name == name {
+			return &this.tables[i], true
 		}
 	}
 	return nil, false
 }
 
-func (c *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bool) {
-	t, ok := c.Table(table)
+func (this *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bool) {
+	t, ok := this.Table(table)
 	if !ok {
 		return nil, false
 	}
 	return t.Constraint(name)
 }
 
-func (c *fakeCatalog) ReferencedBy(table string) []*catalog.Constraint { return c.refs[table] }
+func (this *fakeCatalog) ReferencedBy(table string) []*catalog.Constraint { return this.refs[table] }
 
 // newUnique is a plain single-column unique key, for a test that needs one more.
 func newUnique(name, column string) catalog.Constraint {
@@ -177,9 +177,9 @@ func conflict(constraint string, cols ...string) *errs.Fault {
 
 // request is the shape the faults decorator hands over, with the resolve hop
 // wired to the Doc model.
-func request(f *errs.Fault, src crud.Source, meta *crud.Meta, rows ...Row) *Request {
+func request(f *errs.Fault, source crud.Source, meta *crud.Meta, rows ...Row) *Request {
 	return &Request{
-		Op: "Save", Fault: f, Meta: meta, Source: src, Rows: rows,
+		Op: "Save", Fault: f, Meta: meta, Source: source, Rows: rows,
 		Resolve: func(table string, columns []string) (errs.Path, bool) {
 			if table != "docs" {
 				return nil, false

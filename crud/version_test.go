@@ -97,11 +97,11 @@ func TestADeclarationThatCannotBeALockIsRefused(t *testing.T) {
 // caller who can set their own lock value, which is no lock at all — so the
 // mistake is refused where every other mapping mistake is, at start-up.
 func TestAnUpdateDTOCannotSetTheVersion(t *testing.T) {
-	type dto struct {
+	type dataTransferObject struct {
 		Title   *string
 		Version *int
 	}
-	_, err := crud.PlanFor[dto](crud.MustSchemaOf[versioned]())
+	_, err := crud.PlanFor[dataTransferObject](crud.MustSchemaOf[versioned]())
 	if err == nil {
 		t.Fatal("an update DTO was allowed to write the version column")
 	}

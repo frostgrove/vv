@@ -33,10 +33,10 @@ type entSource struct {
 	d      crud.Dialect
 }
 
-func (s entSource) Dialect() crud.Dialect { return s.d }
+func (this entSource) Dialect() crud.Dialect { return this.d }
 
-func (s entSource) Begin(ctx context.Context) (crud.Tx, error) {
-	tx, err := s.client.Tx(ctx)
+func (this entSource) Begin(ctx context.Context) (crud.Tx, error) {
+	tx, err := this.client.Tx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,15 +53,15 @@ type entTx struct {
 	tx *ent.Tx
 }
 
-func (t entTx) Commit(context.Context) error   { return t.tx.Commit() }
-func (t entTx) Rollback(context.Context) error { return t.tx.Rollback() }
+func (this entTx) Commit(context.Context) error   { return this.tx.Commit() }
+func (this entTx) Rollback(context.Context) error { return this.tx.Rollback() }
 
 func newEntSource(client *ent.Client, d crud.Dialect) entSource {
 	return entSource{Executor: crudsql.From(client), client: client, d: d}
 }
 
-func entClient(db *sql.DB, d string) *ent.Client {
-	return ent.NewClient(ent.Driver(entsql.OpenDB(d, db)))
+func entClient(database *sql.DB, d string) *ent.Client {
+	return ent.NewClient(ent.Driver(entsql.OpenDB(d, database)))
 }
 
 // The full conformance suite, executed entirely through ent's driver and ent's
@@ -87,7 +87,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
-	repo := Users.Bind(crudsql.Postgres(pgDB))
+	repository := Users.Bind(crudsql.Postgres(pgDB))
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	}
 
 	// vv sees it inside the transaction.
-	got, err := repo.GetByID(txCtx, byEnt.ID)
+	got, err := repository.GetByID(txCtx, byEnt.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestEntSharedTransaction(t *testing.T) {
 
 	// vv writes, ent reads.
 	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", Active: true}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	back, err := tx.User.Query().Where(entuser.IDEQ(u.ID)).Only(ctx)
@@ -131,7 +131,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	}
 
 	// vv's partial update is visible to ent.
-	if _, err := repo.Update(txCtx, byEnt.ID, UserUpdate{Name: ptr("Renamed"), Age: crud.Null[int]()}); err != nil {
+	if _, err := repository.Update(txCtx, byEnt.ID, UserUpdate{Name: ptr("Renamed"), Age: crud.Null[int]()}); err != nil {
 		t.Fatal(err)
 	}
 	renamed, err := tx.User.Get(ctx, byEnt.ID)
@@ -145,7 +145,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.Count(ctx); err != nil || n != 2 {
+	if n, err := repository.Count(ctx); err != nil || n != 2 {
 		t.Fatalf("after commit count = %d err = %v", n, err)
 	}
 }
@@ -155,20 +155,20 @@ func TestEntRollback(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
-	repo := Users.Bind(crudsql.Postgres(pgDB))
+	repository := Users.Bind(crudsql.Postgres(pgDB))
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u := User{TenantID: 1, Email: "gone@x.io", Name: "Gone"}
-	if err := repo.Save(crud.WithExecutor(ctx, crudsql.From(tx)), &u); err != nil {
+	if err := repository.Save(crud.WithExecutor(ctx, crudsql.From(tx)), &u); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.Count(ctx); err != nil || n != 0 {
+	if n, err := repository.Count(ctx); err != nil || n != 0 {
 		t.Fatalf("count = %d err = %v: the rollback missed vv's write", n, err)
 	}
 }
@@ -181,11 +181,11 @@ func TestEntRollback(t *testing.T) {
 func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	src := newEntSource(entClient(pgDB, dialect.Postgres), crud.Postgres{})
-	repo := Users.Bind(src)
+	source := newEntSource(entClient(pgDB, dialect.Postgres), crud.Postgres{})
+	repository := Users.Bind(source)
 
-	err := crud.InTx(ctx, src, func(ctx context.Context) error {
-		if err := repo.Save(ctx, &User{TenantID: 1, Email: "ent-outer@x.io", Name: "outer"}); err != nil {
+	err := crud.InTx(ctx, source, func(ctx context.Context) error {
+		if err := repository.Save(ctx, &User{TenantID: 1, Email: "ent-outer@x.io", Name: "outer"}); err != nil {
 			return err
 		}
 		ex, _ := crud.ExecutorFrom(ctx)
@@ -199,14 +199,14 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 		}
 		// Joining, on the other hand, works: this is the second write in the
 		// same physical transaction.
-		return repo.Tx(ctx, func(ctx context.Context) error {
-			return repo.Save(ctx, &User{TenantID: 1, Email: "ent-inner@x.io", Name: "inner"})
+		return repository.Tx(ctx, func(ctx context.Context) error {
+			return repository.Save(ctx, &User{TenantID: 1, Email: "ent-inner@x.io", Name: "inner"})
 		})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.Count(ctx); err != nil || n != 2 {
+	if n, err := repository.Count(ctx); err != nil || n != 2 {
 		t.Fatalf("count = %d err = %v: both writes belong to the one transaction ent committed", n, err)
 	}
 }

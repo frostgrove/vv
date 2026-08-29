@@ -20,8 +20,8 @@ import (
 // where the freedom comes from: the registered claims are validated by
 // golang-jwt against the map, and only then is the payload shaped into C.
 type Parser[C any] struct {
-	key  KeySource
-	opts []jwt.ParserOption
+	key     KeySource
+	options []jwt.ParserOption
 }
 
 // An Option configures a [Parser].
@@ -98,12 +98,12 @@ func AllowNoExpiry() Option {
 // whose consequence is a parser that over-trusts, and a process that does not
 // start is a far better outcome than a request that is quietly accepted
 // ([[D-021]]). Every one of them is fixed by adding one line at the call site.
-func New[C any](k KeySource, opts ...Option) *Parser[C] {
+func New[C any](k KeySource, options ...Option) *Parser[C] {
 	if !k.valid() {
 		panic("authjwt: New needs a KeySource that carries both a key and the methods it verifies")
 	}
 	var s settings
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(&s)
 		}
@@ -144,7 +144,7 @@ func New[C any](k KeySource, opts ...Option) *Parser[C] {
 		// the tree passed exactly one audience, so nothing caught it.
 		po = append(po, jwt.WithAllAudiences(s.audience...))
 	}
-	return &Parser[C]{key: k, opts: po}
+	return &Parser[C]{key: k, options: po}
 }
 
 // Parse verifies the token and answers the claims.
@@ -158,14 +158,14 @@ func New[C any](k KeySource, opts ...Option) *Parser[C] {
 // The context is taken but not consulted here. It is what a [KeySource] built
 // by [JWKS] uses to fetch and to time out, and taking it on every parser keeps
 // the signature the same whichever key source is wired.
-func (p *Parser[C]) Parse(ctx context.Context, token string) (C, error) {
+func (this *Parser[C]) Parse(ctx context.Context, token string) (C, error) {
 	var zero C
 	if token == "" {
 		return zero, auth.Unauthenticated("no token presented")
 	}
 
 	claims := jwt.MapClaims{}
-	if _, err := jwt.ParseWithClaims(token, claims, p.keyfuncFor(ctx), p.opts...); err != nil {
+	if _, err := jwt.ParseWithClaims(token, claims, this.keyfuncFor(ctx), this.options...); err != nil {
 		return zero, auth.Unauthenticatedf("token rejected: %v", err)
 	}
 
@@ -179,11 +179,11 @@ func (p *Parser[C]) Parse(ctx context.Context, token string) (C, error) {
 // keyfuncFor adapts this package's context-carrying [Keyfunc] to the signature
 // golang-jwt calls. The context is closed over per request rather than stored
 // on the parser, which two goroutines share.
-func (p *Parser[C]) keyfuncFor(ctx context.Context) jwt.Keyfunc {
+func (this *Parser[C]) keyfuncFor(ctx context.Context) jwt.Keyfunc {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return func(t *jwt.Token) (any, error) { return p.key.keyfunc(ctx, t) }
+	return func(t *jwt.Token) (any, error) { return this.key.keyfunc(ctx, t) }
 }
 
 // decode reshapes the verified claim map into the caller's type.

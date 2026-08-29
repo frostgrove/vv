@@ -38,13 +38,13 @@ func ParseNamespace(raw string) (Namespace, error) {
 	return Namespace{value: raw}, nil
 }
 
-func (n Namespace) Value() string  { return n.value }
-func (n Namespace) String() string { return "[storage namespace]" }
-func (n Namespace) Format(state fmt.State, _ rune) {
-	_, _ = fmt.Fprint(state, n.String())
+func (this Namespace) Value() string  { return this.value }
+func (this Namespace) String() string { return "[storage namespace]" }
+func (this Namespace) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, this.String())
 }
-func (n Namespace) valid() bool {
-	return validateNamespace(n.value) == nil
+func (this Namespace) valid() bool {
+	return validateNamespace(this.value) == nil
 }
 
 // Key is one canonical logical object identifier. Parsing is intentionally
@@ -62,12 +62,12 @@ func ParseKey(raw string) (Key, error) {
 // Value deliberately exposes the already validated representation for domain
 // persistence and adapter implementations. String stays redacted so accidental
 // formatting does not disclose the key.
-func (k Key) Value() string  { return k.value }
-func (k Key) String() string { return "[storage key]" }
-func (k Key) Format(state fmt.State, _ rune) {
-	_, _ = fmt.Fprint(state, k.String())
+func (this Key) Value() string  { return this.value }
+func (this Key) String() string { return "[storage key]" }
+func (this Key) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, this.String())
 }
-func (k Key) valid() bool { return validateKey(k.value) == nil }
+func (this Key) valid() bool { return validateKey(this.value) == nil }
 
 // StageID identifies an unconfirmed upload. It is safe to round-trip through a
 // form, but is still an authorization-sensitive opaque value.
@@ -92,13 +92,13 @@ func ParseStageID(raw string) (StageID, error) {
 	return StageID{value: raw}, nil
 }
 
-func (id StageID) Value() string  { return id.value }
-func (id StageID) String() string { return "[storage stage]" }
-func (id StageID) Format(state fmt.State, _ rune) {
-	_, _ = fmt.Fprint(state, id.String())
+func (this StageID) Value() string  { return this.value }
+func (this StageID) String() string { return "[storage stage]" }
+func (this StageID) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, this.String())
 }
-func (id StageID) valid() bool {
-	_, err := ParseStageID(id.value)
+func (this StageID) valid() bool {
+	_, err := ParseStageID(this.value)
 	return err == nil
 }
 
@@ -189,11 +189,11 @@ func NewLink(rawURL string, expiresAt time.Time) (Link, error) {
 	return Link{rawURL: rawURL, expiresAt: expiresAt}, nil
 }
 
-func (l Link) URL() string          { return l.rawURL }
-func (l Link) ExpiresAt() time.Time { return l.expiresAt }
-func (l Link) String() string       { return "[temporary storage URL]" }
-func (l Link) Format(state fmt.State, _ rune) {
-	_, _ = fmt.Fprint(state, l.String())
+func (this Link) URL() string          { return this.rawURL }
+func (this Link) ExpiresAt() time.Time { return this.expiresAt }
+func (this Link) String() string       { return "[temporary storage URL]" }
+func (this Link) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, this.String())
 }
 
 type Capabilities struct {

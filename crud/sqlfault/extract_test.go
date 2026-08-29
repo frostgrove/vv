@@ -149,22 +149,22 @@ func TestAnErrorWithNothingInItExtractsToNothing(t *testing.T) {
 // would go red.
 type sqliteCode int
 
-func (c sqliteCode) Error() string { return "constraint failed" }
-func (c sqliteCode) Code() int     { return int(c) }
+func (this sqliteCode) Error() string { return "constraint failed" }
+func (this sqliteCode) Code() int     { return int(this) }
 
 type pqState string
 
-func (s pqState) Error() string    { return "pq: " + string(s) }
-func (s pqState) SQLState() string { return string(s) }
+func (this pqState) Error() string    { return "pq: " + string(this) }
+func (this pqState) SQLState() string { return string(this) }
 
 // The controls: the same underlying types with no method at all.
 type bareCode int
 
-func (c bareCode) Error() string { return "constraint failed" }
+func (this bareCode) Error() string { return "constraint failed" }
 
 type bareState string
 
-func (s bareState) Error() string { return string(s) }
+func (this bareState) Error() string { return string(this) }
 
 func TestTheMethodPathIsReachedOnAnErrorThatIsNotAStruct(t *testing.T) {
 	if got := Extract(sqliteCode(2067)).Native; got != 2067 {
@@ -269,8 +269,8 @@ type noisy struct {
 	err    error
 }
 
-func (n *noisy) Error() string { return n.Detail + ": " + n.err.Error() }
-func (n *noisy) Unwrap() error { return n.err }
+func (this *noisy) Error() string { return this.Detail + ": " + this.err.Error() }
+func (this *noisy) Unwrap() error { return this.err }
 
 func TestAWrappersOwnFieldsAreNotTheDriversFields(t *testing.T) {
 	pg := duplicateKey()

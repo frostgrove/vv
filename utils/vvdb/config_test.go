@@ -19,10 +19,10 @@ func primary() vvdb.Config {
 }
 
 func TestAReplicaInheritsEverythingItDoesNotRestate(t *testing.T) {
-	cfg := primary()
-	cfg.Replica = &vvdb.Config{Host: "replica.internal"}
+	config := primary()
+	config.Replica = &vvdb.Config{Host: "replica.internal"}
 
-	r, ok := cfg.ReadReplica()
+	r, ok := config.ReadReplica()
 	if !ok {
 		t.Fatal("a declared replica should be returned")
 	}
@@ -43,10 +43,10 @@ func TestAReplicaInheritsEverythingItDoesNotRestate(t *testing.T) {
 }
 
 func TestAReplicaOverridesRatherThanMerges(t *testing.T) {
-	cfg := primary()
-	cfg.Replica = &vvdb.Config{Host: "replica.internal", User: "readonly", Params: map[string]string{"application_name": "orders-ro"}}
+	config := primary()
+	config.Replica = &vvdb.Config{Host: "replica.internal", User: "readonly", Params: map[string]string{"application_name": "orders-ro"}}
 
-	r, _ := cfg.ReadReplica()
+	r, _ := config.ReadReplica()
 	if r.User != "readonly" {
 		t.Errorf("a field the replica states is the replica's, got %q", r.User)
 	}
@@ -56,47 +56,47 @@ func TestAReplicaOverridesRatherThanMerges(t *testing.T) {
 	if r.Params["application_name"] != "orders-ro" {
 		t.Errorf("a param the replica states wins, got %v", r.Params)
 	}
-	if cfg.Params["application_name"] != "orders" {
+	if config.Params["application_name"] != "orders" {
 		t.Error("merging must not write into the primary's own map")
 	}
 }
 
 func TestAReplicaMergesPoolFieldsAndDoesNotAliasPrimaryParams(t *testing.T) {
-	cfg := primary()
-	cfg.Pool = vvdb.Pool{MaxOpen: 20, MaxIdle: 5, MaxLifetime: time.Minute}
-	cfg.Replica = &vvdb.Config{
+	config := primary()
+	config.Pool = vvdb.Pool{MaxOpen: 20, MaxIdle: 5, MaxLifetime: time.Minute}
+	config.Replica = &vvdb.Config{
 		Host: "replica.internal",
 		Pool: vvdb.Pool{MaxOpen: 8},
 	}
-	r, _ := cfg.ReadReplica()
+	r, _ := config.ReadReplica()
 	if r.Pool.MaxOpen != 8 || r.Pool.MaxIdle != 5 || r.Pool.MaxLifetime != time.Minute {
 		t.Fatalf("replica pool = %+v, want its max_open plus inherited limits", r.Pool)
 	}
 	r.Params["application_name"] = "replica"
-	if cfg.Params["application_name"] != "orders" {
-		t.Fatalf("replica params mutated the primary config: %+v", cfg.Params)
+	if config.Params["application_name"] != "orders" {
+		t.Fatalf("replica params mutated the primary config: %+v", config.Params)
 	}
 }
 
 func TestMigrationConfigurationValidatesDeclarationWithoutInspectingTheFilesystem(t *testing.T) {
-	cfg := primary()
+	config := primary()
 	// The migration command may create this directory later, and the ordinary
 	// server binary need not ship migration sources at all. Config validation is
 	// therefore deliberately about the declaration rather than current disk
 	// state.
-	cfg.Migration = vvdb.Migration{
+	config.Migration = vvdb.Migration{
 		Path:   t.TempDir() + "/not-created",
 		Models: []string{".", "./src/app"},
 		Table:  "audit.goose_versions",
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatalf("a valid migration declaration whose directory is not created yet = %v", err)
 	}
 
 	// A Config assembled in Go does not pass through cleanenv's env-default
 	// tags. Its zero value remains valid and is resolved by the migration tool.
-	cfg.Migration = vvdb.Migration{}
-	if err := cfg.Validate(); err != nil {
+	config.Migration = vvdb.Migration{}
+	if err := config.Validate(); err != nil {
 		t.Fatalf("zero migration configuration should select downstream defaults: %v", err)
 	}
 }
@@ -121,9 +121,9 @@ func TestMigrationConfigurationRefusesBlankPathsAndSQLSyntaxAsHistoryTable(t *te
 		{"sql syntax", vvdb.Migration{Table: "goose; DROP TABLE users"}, vvdb.ErrUnsupported, "migration.table"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := primary()
-			cfg.Migration = tc.migration
-			err := cfg.Validate()
+			config := primary()
+			config.Migration = tc.migration
+			err := config.Validate()
 			if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.field) {
 				t.Fatalf("Validate() = %v, want %v naming %s", err, tc.want, tc.field)
 			}
@@ -140,17 +140,17 @@ func TestMigrationConfigurationIsPrimaryOnlyAndDoesNotLeakIntoAReplica(t *testin
 		{"raw dsn replica", &vvdb.Config{DSN: "postgres://readonly@replica.internal/app"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := primary()
-			cfg.Migration = vvdb.Migration{
+			config := primary()
+			config.Migration = vvdb.Migration{
 				Path:   "./migrations",
 				Models: []string{"./src/app"},
 				Table:  "goose_db_version",
 			}
-			cfg.Replica = tc.replica
-			if err := cfg.Validate(); err != nil {
+			config.Replica = tc.replica
+			if err := config.Validate(); err != nil {
 				t.Fatalf("primary migration plus ordinary replica should be valid: %v", err)
 			}
-			r, ok := cfg.ReadReplica()
+			r, ok := config.ReadReplica()
 			if !ok {
 				t.Fatal("ordinary replica was not returned")
 			}
@@ -166,20 +166,20 @@ func TestAReplicaCannotDeclareItsOwnMigrationConfiguration(t *testing.T) {
 		{Migration: vvdb.Migration{Path: "./replica-migrations"}},
 		{Host: "replica.internal", Migration: vvdb.Migration{Table: "replica_versions"}},
 	} {
-		cfg := primary()
-		cfg.Replica = replica
-		err := cfg.Validate()
+		config := primary()
+		config.Replica = replica
+		err := config.Validate()
 		if !errors.Is(err, vvdb.ErrUnsupported) || !strings.Contains(err.Error(), "replica.migration") {
 			t.Fatalf("Validate() = %v, want a named primary-only migration refusal", err)
 		}
-		if _, ok := cfg.ReadReplica(); ok {
+		if _, ok := config.ReadReplica(); ok {
 			t.Fatal("ReadReplica offered a replica with its own migration configuration")
 		}
 	}
 }
 
 func TestMigrationConfigurationDoesNotConflictWithAnOpaqueDSN(t *testing.T) {
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.Postgres,
 		DSN:    "postgres://vv:secret@primary.internal/app",
 		Migration: vvdb.Migration{
@@ -187,22 +187,22 @@ func TestMigrationConfigurationDoesNotConflictWithAnOpaqueDSN(t *testing.T) {
 			Table: "goose_db_version",
 		},
 	}
-	got, err := vvdb.DSN(&cfg)
+	got, err := vvdb.DSN(&config)
 	if err != nil {
 		t.Fatalf("migration metadata is outside the connection string and must not conflict with dsn: %v", err)
 	}
-	if got != cfg.DSN {
+	if got != config.DSN {
 		t.Fatalf("DSN() = %q, want opaque string unchanged", got)
 	}
 }
 
 func TestAReplicaGivenAWholeDSNInheritsTheHandlePolicyNotConnectionFacts(t *testing.T) {
-	cfg := primary()
-	cfg.Driver = "postgres"
-	cfg.Pool = vvdb.Pool{MaxOpen: 20, MaxIdle: 5, MaxLifetime: time.Minute}
-	cfg.Replica = &vvdb.Config{DSN: "postgres://ro:pw@replica.internal:5432/app"}
+	config := primary()
+	config.Driver = "postgres"
+	config.Pool = vvdb.Pool{MaxOpen: 20, MaxIdle: 5, MaxLifetime: time.Minute}
+	config.Replica = &vvdb.Config{DSN: "postgres://ro:pw@replica.internal:5432/app"}
 
-	r, _ := cfg.ReadReplica()
+	r, _ := config.ReadReplica()
 	if r.Host != "" || r.User != "" {
 		t.Errorf("a finished string cannot be merged into; the fields would only contradict it, got %+v", r)
 	}
@@ -219,77 +219,77 @@ func TestAReplicaGivenAWholeDSNInheritsTheHandlePolicyNotConnectionFacts(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != cfg.Replica.DSN {
+	if got != config.Replica.DSN {
 		t.Errorf("the replica string should be used as given, got %s", got)
 	}
 }
 
 func TestReadReplicaDoesNotOfferFieldsBesideAnOpaquePrimaryDSN(t *testing.T) {
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.Postgres,
 		DSN:    "postgres://primary.internal/orders",
 		Replica: &vvdb.Config{
 			Host: "replica.internal",
 		},
 	}
-	if _, ok := cfg.ReadReplica(); ok {
+	if _, ok := config.ReadReplica(); ok {
 		t.Fatal("a field replica cannot be derived from an opaque primary DSN")
 	}
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrConflict) {
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("Validate() = %v, want the named opaque-DSN conflict", err)
 	}
 }
 
 func TestNoReplicaIsNotAnEmptyReplica(t *testing.T) {
-	cfg := primary()
-	if _, ok := cfg.ReadReplica(); ok {
+	config := primary()
+	if _, ok := config.ReadReplica(); ok {
 		t.Fatal("a config with no replica must not answer with a usable one — opening it would be a second connection to the primary")
 	}
 }
 
 func TestAReplicaOfAnotherEngineIsRefused(t *testing.T) {
-	cfg := primary()
-	cfg.Replica = &vvdb.Config{Engine: vvdb.MySQL, Host: "replica.internal"}
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrConflict) {
+	config := primary()
+	config.Replica = &vvdb.Config{Engine: vvdb.MySQL, Host: "replica.internal"}
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrConflict) {
 		t.Fatalf("the two would generate different SQL for the same repository; got %v", err)
 	}
 }
 
 func TestTypedPostgresRefusesLibPQRatherThanLosingItsSingleConfigurationSource(t *testing.T) {
-	cfg := primary()
-	cfg.Driver = "postgres"
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrUnsupported) {
+	config := primary()
+	config.Driver = "postgres"
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrUnsupported) {
 		t.Fatalf("typed postgres with lib/pq = %v, want the named unsupported driver", err)
 	}
 
 	// A raw DSN is intentionally different: it is the escape hatch where the
 	// caller owns every lib/pq option and its interaction with the environment.
-	cfg = vvdb.Config{Engine: vvdb.Postgres, Driver: "postgres", DSN: "postgres://db.internal/orders"}
-	if err := cfg.Validate(); err != nil {
+	config = vvdb.Config{Engine: vvdb.Postgres, Driver: "postgres", DSN: "postgres://db.internal/orders"}
+	if err := config.Validate(); err != nil {
 		t.Fatalf("raw lib/pq DSN = %v, want the explicit escape hatch", err)
 	}
 
 	// The driver name is not a security proof. An alias can point at lib/pq just
 	// as easily, so typed PostgreSQL accepts the one documented pgx name only.
-	cfg = primary()
-	cfg.Driver = "company-postgres"
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrUnsupported) {
+	config = primary()
+	config.Driver = "company-postgres"
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrUnsupported) {
 		t.Fatalf("typed postgres with a custom driver alias = %v, want pgx-only refusal", err)
 	}
 }
 
 func TestReplicaTopologyIsClosedRatherThanSilentlyRewritten(t *testing.T) {
-	cfg := primary()
-	cfg.Replica = &vvdb.Config{}
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrMissing) || !strings.Contains(err.Error(), "replica") {
+	config := primary()
+	config.Replica = &vvdb.Config{}
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrMissing) || !strings.Contains(err.Error(), "replica") {
 		t.Fatalf("empty replica Validate() = %v, want a named refusal", err)
 	}
-	if _, ok := cfg.ReadReplica(); ok {
+	if _, ok := config.ReadReplica(); ok {
 		t.Fatal("an empty replica must not derive a second primary configuration")
 	}
 
-	cfg.Replica = &vvdb.Config{Host: "replica", Replica: &vvdb.Config{Host: "third"}}
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrUnsupported) || !strings.Contains(err.Error(), "replica.replica") {
+	config.Replica = &vvdb.Config{Host: "replica", Replica: &vvdb.Config{Host: "third"}}
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrUnsupported) || !strings.Contains(err.Error(), "replica.replica") {
 		t.Fatalf("nested replica Validate() = %v, want a named topology refusal", err)
 	}
 }
@@ -297,14 +297,14 @@ func TestReplicaTopologyIsClosedRatherThanSilentlyRewritten(t *testing.T) {
 func TestAReplicaIsValidatedAsItWillBeOpened(t *testing.T) {
 	// The control case: the replica fragment on its own has no database name,
 	// and validating the fragment rather than the merge would call it invalid.
-	cfg := primary()
-	cfg.Replica = &vvdb.Config{Host: "replica.internal"}
-	if err := cfg.Validate(); err != nil {
+	config := primary()
+	config.Replica = &vvdb.Config{Host: "replica.internal"}
+	if err := config.Validate(); err != nil {
 		t.Fatalf("a replica that inherits its name is valid: %v", err)
 	}
 
-	cfg.Replica = &vvdb.Config{Host: "replica.internal", SSLMode: "nonsense"}
-	if err := cfg.Validate(); err == nil {
+	config.Replica = &vvdb.Config{Host: "replica.internal", SSLMode: "nonsense"}
+	if err := config.Validate(); err == nil {
 		t.Error("a replica with an impossible setting should stop start-up like any other")
 	} else if !strings.Contains(err.Error(), "replica") {
 		t.Errorf("the message should say which of the two servers is wrong: %v", err)
@@ -312,29 +312,29 @@ func TestAReplicaIsValidatedAsItWillBeOpened(t *testing.T) {
 }
 
 func TestAFieldReplicaCannotPretendToInheritAnOpaquePrimaryDSN(t *testing.T) {
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine:  vvdb.Postgres,
 		DSN:     "postgres://vv:secret@primary.internal:5432/app",
 		Replica: &vvdb.Config{Host: "replica.internal"},
 	}
-	if err := cfg.Validate(); !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "replica.dsn") {
+	if err := config.Validate(); !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "replica.dsn") {
 		t.Fatalf("Validate() = %v, want a named refusal rather than a derived replica with an empty database name", err)
 	}
 }
 
 func TestValidateNamesTheFieldThatIsWrong(t *testing.T) {
 	for _, tc := range []struct {
-		cfg  vvdb.Config
-		says string
+		config vvdb.Config
+		says   string
 	}{
 		{vvdb.Config{Engine: vvdb.Postgres, Host: "h"}, "name"},
 		{vvdb.Config{Engine: vvdb.SQLite}, "path"},
 		{vvdb.Config{Engine: vvdb.Postgres, Name: "app", DSN: "postgres://x/y", Host: "h"}, "host"},
 		{vvdb.Config{Engine: vvdb.Postgres, DSN: "postgres://x/y", Pool: vvdb.Pool{ConnectTimeout: time.Second}}, "pool.connect_timeout"},
 	} {
-		err := tc.cfg.Validate()
+		err := tc.config.Validate()
 		if err == nil {
-			t.Fatalf("%+v was accepted", tc.cfg)
+			t.Fatalf("%+v was accepted", tc.config)
 		}
 		if !strings.Contains(err.Error(), tc.says) {
 			t.Errorf("the message should name %q so the operator knows which line to edit: %v", tc.says, err)
@@ -344,9 +344,9 @@ func TestValidateNamesTheFieldThatIsWrong(t *testing.T) {
 
 func TestValidateRefusesImplicitServerIdentityAndImpossiblePool(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		cfg  vvdb.Config
-		want error
+		name   string
+		config vvdb.Config
+		want   error
 	}{
 		{"server without host", vvdb.Config{Engine: vvdb.Postgres, Name: "app"}, vvdb.ErrMissing},
 		{"password without user", vvdb.Config{Engine: vvdb.Postgres, Host: "db", Name: "app", Password: "secret"}, vvdb.ErrConflict},
@@ -354,7 +354,7 @@ func TestValidateRefusesImplicitServerIdentityAndImpossiblePool(t *testing.T) {
 		{"idle above open", vvdb.Config{Engine: vvdb.Postgres, Host: "db", Name: "app", Pool: vvdb.Pool{MaxOpen: 2, MaxIdle: 3}}, vvdb.ErrConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.cfg.Validate(); !errors.Is(err, tc.want) {
+			if err := tc.config.Validate(); !errors.Is(err, tc.want) {
 				t.Fatalf("Validate() = %v, want %v", err, tc.want)
 			}
 		})
@@ -363,8 +363,8 @@ func TestValidateRefusesImplicitServerIdentityAndImpossiblePool(t *testing.T) {
 
 func TestDriverNameDefaultsPerEngineAndIsOverridable(t *testing.T) {
 	for _, tc := range []struct {
-		cfg  vvdb.Config
-		want string
+		config vvdb.Config
+		want   string
 	}{
 		{vvdb.Config{Engine: vvdb.Postgres}, "pgx"},
 		{vvdb.Config{Engine: vvdb.MySQL}, "mysql"},
@@ -372,8 +372,8 @@ func TestDriverNameDefaultsPerEngineAndIsOverridable(t *testing.T) {
 		{vvdb.Config{Engine: vvdb.SQLite}, "sqlite"},
 		{vvdb.Config{Engine: vvdb.Postgres, Driver: "postgres"}, "postgres"},
 	} {
-		if got := vvdb.DriverName(&tc.cfg); got != tc.want {
-			t.Errorf("%s with driver %q should open with %q, got %q", tc.cfg.Engine, tc.cfg.Driver, tc.want, got)
+		if got := vvdb.DriverName(&tc.config); got != tc.want {
+			t.Errorf("%s with driver %q should open with %q, got %q", tc.config.Engine, tc.config.Driver, tc.want, got)
 		}
 	}
 }

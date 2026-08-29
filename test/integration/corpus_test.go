@@ -128,15 +128,15 @@ func TestEveryCorpusCaseClassifiesAsTheCorpusSays(t *testing.T) {
 	ctx := context.Background()
 	for _, e := range corpus.Engines(t.TempDir()) {
 		t.Run(e.Name, func(t *testing.T) {
-			db, err := e.Open(ctx)
+			database, err := e.Open(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer database.Close()
 
 			for _, p := range e.Cases {
 				t.Run(p.Name, func(t *testing.T) {
-					err := replay(ctx, t, e, db, p)
+					err := replay(ctx, t, e, database, p)
 					if p.Unreachable != "" {
 						if err != nil {
 							t.Fatalf("the corpus says this engine accepts it — %s — and it did not: %v",
@@ -173,7 +173,7 @@ func TestEveryCorpusCaseClassifiesAsTheCorpusSays(t *testing.T) {
 // point is that the same choreography goes through the adapter this time. What
 // is not deliberate is the two drifting apart, which is why the default arm
 // fails instead of quietly running nothing.
-func replay(ctx context.Context, t *testing.T, e corpus.Engine, db *sql.DB, p corpus.Probe) error {
+func replay(ctx context.Context, t *testing.T, e corpus.Engine, database *sql.DB, p corpus.Probe) error {
 	t.Helper()
 	// The engine string is the corpus's own name, which is where MariaDB and
 	// MySQL part company: crud.Dialect is crud.MySQL for both ([[D-046]]).
@@ -182,12 +182,12 @@ func replay(ctx context.Context, t *testing.T, e corpus.Engine, db *sql.DB, p co
 	case p.Contend:
 		// The waiting statement has to run on the connection whose patience was
 		// cut, so the source is built over that connection rather than the pool.
-		return e.Contend(ctx, db, func(wait *sql.Conn) error {
+		return e.Contend(ctx, database, func(wait *sql.Conn) error {
 			_, err := crudsql.Source(wait, e.Dialect, faults).Exec(ctx, e.Lock)
 			return err
 		})
 	case p.RaceA != nil:
-		return e.Race(ctx, db, p, func(c *sql.Conn, stmt string) error {
+		return e.Race(ctx, database, p, func(c *sql.Conn, stmt string) error {
 			_, err := crudsql.Source(c, e.Dialect, faults).Exec(ctx, stmt)
 			return err
 		})
@@ -195,7 +195,7 @@ func replay(ctx context.Context, t *testing.T, e corpus.Engine, db *sql.DB, p co
 		// Through the source's own Begin, so the savepoint seam ([[FL-009]]) is
 		// the one under test and Commit is the adapter's rather than the
 		// driver's — which is where a deferred constraint arrives.
-		tx, err := crudsql.Open(db, e.Dialect, faults).Begin(ctx)
+		tx, err := crudsql.Open(database, e.Dialect, faults).Begin(ctx)
 		if err != nil {
 			return err
 		}
@@ -219,7 +219,7 @@ func replay(ctx context.Context, t *testing.T, e corpus.Engine, db *sql.DB, p co
 		_, err = crudsql.Source(bad, e.Dialect, faults).Exec(ctx, "SELECT 1")
 		return err
 	case p.Stmt != "":
-		_, err := crudsql.Source(db, e.Dialect, faults).Exec(ctx, p.Stmt)
+		_, err := crudsql.Source(database, e.Dialect, faults).Exec(ctx, p.Stmt)
 		return err
 	case p.Unreachable != "":
 		// Nothing to run: a case this engine cannot reach at all, stated as an
@@ -252,13 +252,13 @@ func TestADeferredConstraintArrivesFromTheCommitAndNotTheStatement(t *testing.T)
 			continue
 		}
 		t.Run(e.Name, func(t *testing.T) {
-			db, err := e.Open(ctx)
+			database, err := e.Open(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer database.Close()
 
-			for _, b := range beginners(t, e, db) {
+			for _, b := range beginners(t, e, database) {
 				t.Run(b.name, func(t *testing.T) {
 					tx, err := b.begin(ctx)
 					if err != nil {
@@ -313,9 +313,9 @@ type beginner struct {
 	begin func(context.Context) (crud.Tx, error)
 }
 
-func beginners(t *testing.T, e corpus.Engine, db *sql.DB) []beginner {
+func beginners(t *testing.T, e corpus.Engine, database *sql.DB) []beginner {
 	t.Helper()
-	out := []beginner{{"crudsql", crudsql.Open(db, e.Dialect).Begin}}
+	out := []beginner{{"crudsql", crudsql.Open(database, e.Dialect).Begin}}
 	if e.Name != "postgres" {
 		return out
 	}
@@ -353,11 +353,11 @@ func TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reading the checked-in corpus: %v", err)
 			}
-			db, err := e.Open(ctx)
+			database, err := e.Open(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer database.Close()
 
 			// Nothing here runs in parallel, so plain counters closed over by
 			// the subtests are safe. Both are asserted below: without the first
@@ -372,7 +372,7 @@ func TestEveryCorpusCaseReachesTheCallerAsTheFaultTheCorpusNames(t *testing.T) {
 					if !ok {
 						t.Fatalf("the corpus has no entry for this case — run make corpus")
 					}
-					got := replay(ctx, t, e, db, p)
+					got := replay(ctx, t, e, database, p)
 					if p.Unreachable != "" {
 						return
 					}
@@ -437,13 +437,13 @@ func TestAMariaDBCheckIsOnlyClassifiedWhenTheSourceSaysMariaDB(t *testing.T) {
 		t.Fatal("mariadb has no check probe")
 	}
 
-	db, err := maria.Open(ctx)
+	database, err := maria.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
-	_, err = crudsql.MariaDB(db).Exec(ctx, check.Stmt)
+	_, err = crudsql.MariaDB(database).Exec(ctx, check.Stmt)
 	f, has := errs.AsFault(err)
 	if !has || f.Code != errs.CodeCheck {
 		t.Fatalf("a failed CHECK through crudsql.MariaDB came back as %T: %v", err, err)
@@ -456,7 +456,7 @@ func TestAMariaDBCheckIsOnlyClassifiedWhenTheSourceSaysMariaDB(t *testing.T) {
 	// constructor exists: through crudsql.MySQL the same violation on the same
 	// server is still a 409 — class 23 covers it — and carries no code, because
 	// 4025 is not in MySQL's table.
-	_, err = crudsql.MySQL(db).Exec(ctx, check.Stmt)
+	_, err = crudsql.MySQL(database).Exec(ctx, check.Stmt)
 	if !errors.Is(err, crud.ErrConflict) {
 		t.Fatalf("the status was lost as well as the code: %T: %v", err, err)
 	}
@@ -483,11 +483,11 @@ func TestAUniqueIndexOnAnExpressionFillsNoColumns(t *testing.T) {
 			pg = e
 		}
 	}
-	db, err := pg.Open(ctx)
+	database, err := pg.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	// One table carrying both kinds of key, so the control below is the same
 	// lookup on the same catalog and differs only in what the key is made of.
@@ -503,17 +503,17 @@ func TestAUniqueIndexOnAnExpressionFillsNoColumns(t *testing.T) {
 		`CREATE UNIQUE INDEX cp_expr_email ON cp_expr (tenant, lower(email))`,
 		`INSERT INTO cp_expr (id, tenant, email, slug) VALUES (1, 1, 'a@b.c', 's1')`,
 	} {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
+		if _, err := database.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", firstLineOf(stmt), err)
 		}
 	}
-	t.Cleanup(func() { db.ExecContext(context.Background(), `DROP TABLE IF EXISTS cp_expr`) })
+	t.Cleanup(func() { database.ExecContext(context.Background(), `DROP TABLE IF EXISTS cp_expr`) })
 
-	cat, err := catalog.Load(ctx, crudsql.Postgres(db))
+	cat, err := catalog.Load(ctx, crudsql.Postgres(database))
 	if err != nil {
 		t.Fatalf("loading the catalog: %v", err)
 	}
-	src := crudsql.Postgres(db, crudsql.WithFaults(
+	source := crudsql.Postgres(database, crudsql.WithFaults(
 		sqlfault.New("postgres", sqlfault.WithColumns(sqlfault.FromCatalog(cat)))))
 
 	// The control on the fixture: the catalog has to have recorded the expression
@@ -529,7 +529,7 @@ func TestAUniqueIndexOnAnExpressionFillsNoColumns(t *testing.T) {
 
 	// The expression key. Same tenant, same lower(email), a different slug, so
 	// only the expression index is violated.
-	_, err = src.Exec(ctx, `INSERT INTO cp_expr (id, tenant, email, slug) VALUES (2, 1, 'A@B.C', 's2')`)
+	_, err = source.Exec(ctx, `INSERT INTO cp_expr (id, tenant, email, slug) VALUES (2, 1, 'A@B.C', 's2')`)
 	f, has := errs.AsFault(err)
 	if !has {
 		t.Fatalf("the expression-key violation produced no fault: %T: %v", err, err)
@@ -548,7 +548,7 @@ func TestAUniqueIndexOnAnExpressionFillsNoColumns(t *testing.T) {
 	// The control: the plain key on the same table, through the same catalog,
 	// still fills. Without it a classifier that stopped filling anything at all
 	// would pass everything above.
-	_, err = src.Exec(ctx, `INSERT INTO cp_expr (id, tenant, email, slug) VALUES (3, 1, 'z@z.z', 's1')`)
+	_, err = source.Exec(ctx, `INSERT INTO cp_expr (id, tenant, email, slug) VALUES (3, 1, 'z@z.z', 's1')`)
 	f, has = errs.AsFault(err)
 	if !has {
 		t.Fatalf("the plain-key violation produced no fault: %T: %v", err, err)
@@ -583,17 +583,17 @@ func TestACatalogFillsTheColumnsAUniqueViolationDoesNotName(t *testing.T) {
 		t.Fatal("postgres has no not_null probe")
 	}
 
-	db, err := pg.Open(ctx)
+	database, err := pg.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
-	cat, err := catalog.Load(ctx, crudsql.Postgres(db))
+	cat, err := catalog.Load(ctx, crudsql.Postgres(database))
 	if err != nil {
 		t.Fatalf("loading the catalog: %v", err)
 	}
-	withCat := crudsql.Postgres(db, crudsql.WithFaults(
+	withCat := crudsql.Postgres(database, crudsql.WithFaults(
 		sqlfault.New("postgres", sqlfault.WithColumns(sqlfault.FromCatalog(cat)))))
 
 	_, err = withCat.Exec(ctx, composite.Stmt)
@@ -608,7 +608,7 @@ func TestACatalogFillsTheColumnsAUniqueViolationDoesNotName(t *testing.T) {
 	// The first control: the identical live error with no catalog leaves the
 	// list nil — nil, not empty — while the constraint name is the real one, so
 	// the fill demonstrably came from the catalog and not from the driver.
-	_, err = crudsql.Postgres(db).Exec(ctx, composite.Stmt)
+	_, err = crudsql.Postgres(database).Exec(ctx, composite.Stmt)
 	f, has = errs.AsFault(err)
 	if !has {
 		t.Fatalf("no fault: %v", err)
@@ -626,14 +626,14 @@ func TestACatalogFillsTheColumnsAUniqueViolationDoesNotName(t *testing.T) {
 	// classifier that consults the catalog on everything and overwrites what
 	// the engine saw.
 	for _, tc := range []struct {
-		name string
-		src  crud.Source
+		name   string
+		source crud.Source
 	}{
 		{"with a catalog", withCat},
-		{"without one", crudsql.Postgres(db)},
+		{"without one", crudsql.Postgres(database)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tc.src.Exec(ctx, notNull.Stmt)
+			_, err := tc.source.Exec(ctx, notNull.Stmt)
 			f, has := errs.AsFault(err)
 			if !has {
 				t.Fatalf("no fault: %v", err)

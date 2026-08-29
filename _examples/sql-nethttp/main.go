@@ -71,19 +71,19 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := vvdb.Open(&database)
+	database, err := vvdb.Open(&database)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
-	if err := bootstrap(db); err != nil {
+	defer database.Close()
+	if err := bootstrap(database); err != nil {
 		log.Fatal(err)
 	}
 
-	repo := specs.Executor(Products.Bind(crudsql.Postgres(db)))
+	repository := specs.Executor(Products.Bind(crudsql.Postgres(database)))
 
 	mux := http.NewServeMux()
-	crudnet.New(repo,
+	crudnet.New(repository,
 		crudnet.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
@@ -97,7 +97,7 @@ func main() {
 
 // bootstrap creates the table and seeds it, so the example runs against an
 // empty database. A real application would use its own migrations.
-func bootstrap(db *sql.DB) error {
+func bootstrap(database *sql.DB) error {
 	for _, stmt := range []string{
 		`DROP TABLE IF EXISTS sql_nethttp_products`,
 		`CREATE TABLE sql_nethttp_products (
@@ -113,7 +113,7 @@ func bootstrap(db *sql.DB) error {
 			('NUT-1',  'hex nut',  120, NULL),
 			('WSH-1',  'washer',    35, 900)`,
 	} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := database.Exec(stmt); err != nil {
 			return err
 		}
 	}

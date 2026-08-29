@@ -21,16 +21,16 @@ import (
 // writers anyway, and a queue is a friendlier failure than SQLITE_BUSY.
 func openSQLite(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "vv.db"))
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "vv.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
-	if _, err := db.ExecContext(context.Background(), schemaSQLite); err != nil {
+	t.Cleanup(func() { _ = database.Close() })
+	database.SetMaxOpenConns(1)
+	if _, err := database.ExecContext(context.Background(), schemaSQLite); err != nil {
 		t.Fatal(err)
 	}
-	return db
+	return database
 }
 
 // The third dialect, running the same conformance suite as the two servers.
@@ -47,10 +47,10 @@ func TestSQLite(t *testing.T) {
 // database as `... OFFSET 5`, which SQLite rejects outright.
 func TestSQLiteTakesAnOffsetWithoutALimit(t *testing.T) {
 	ctx := context.Background()
-	repo := Users.Bind(crudsql.SQLite(openSQLite(t)))
-	seed(t, repo, 5)
+	repository := Users.Bind(crudsql.SQLite(openSQLite(t)))
+	seed(t, repository, 5)
 
-	rest, err := repo.GetAll(ctx, crud.Unpaged(), crud.Offset(2), crud.OrderBy(crud.Asc("Email")))
+	rest, err := repository.GetAll(ctx, crud.Unpaged(), crud.Offset(2), crud.OrderBy(crud.Asc("Email")))
 	if err != nil {
 		t.Fatalf("an unpaged read with an offset: %v", err)
 	}
@@ -64,14 +64,14 @@ func TestSQLiteTakesAnOffsetWithoutALimit(t *testing.T) {
 // a caller's %, _ and backslash literal on the actual engine.
 func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 	ctx := context.Background()
-	repo := Users.Bind(crudsql.SQLite(openSQLite(t)))
+	repository := Users.Bind(crudsql.SQLite(openSQLite(t)))
 	for _, user := range []User{
 		{TenantID: 1, Email: "match@x.io", Name: "100%_raw"},
 		{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
 		{TenantID: 1, Email: "plain@x.io", Name: "plain"},
 		{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 	} {
-		if err := repo.Save(ctx, &user); err != nil {
+		if err := repository.Save(ctx, &user); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,7 +90,7 @@ func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 		{"case-insensitive ends with", crud.EndsWithIgnoreCase("Name", "_RAW"), "100%_raw"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := repo.GetAll(ctx, crud.Where(tc.pred), crud.OrderBy(crud.Asc("ID")))
+			got, err := repository.GetAll(ctx, crud.Where(tc.pred), crud.OrderBy(crud.Asc("ID")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,11 +108,11 @@ func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 // edges for the same reason.
 func TestForUpdateIsANoOpOnSQLite(t *testing.T) {
 	ctx := context.Background()
-	db := openSQLite(t)
-	repo := Users.Bind(crudsql.SQLite(db))
-	seed(t, repo, 2)
+	database := openSQLite(t)
+	repository := Users.Bind(crudsql.SQLite(database))
+	seed(t, repository, 2)
 
-	got, err := repo.GetAll(ctx, crud.ForUpdate(), crud.OrderBy(crud.Asc("Email")))
+	got, err := repository.GetAll(ctx, crud.ForUpdate(), crud.OrderBy(crud.Asc("Email")))
 	if err != nil {
 		t.Fatalf("SELECT ... FOR UPDATE reached SQLite: %v", err)
 	}
@@ -128,12 +128,12 @@ func TestForUpdateIsANoOpOnSQLite(t *testing.T) {
 // gives every *sql.DB the same nested Begin, and SQLite honours it.
 func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 	ctx := context.Background()
-	src := crudsql.SQLite(openSQLite(t))
-	repo := Users.Bind(src)
+	source := crudsql.SQLite(openSQLite(t))
+	repository := Users.Bind(source)
 
-	err := crud.InTx(ctx, src, func(ctx context.Context) error {
+	err := crud.InTx(ctx, source, func(ctx context.Context) error {
 		keep := User{TenantID: 1, Email: "keep@x.io", Name: "keep"}
-		if err := repo.Save(ctx, &keep); err != nil {
+		if err := repository.Save(ctx, &keep); err != nil {
 			return err
 		}
 		ex, _ := crud.ExecutorFrom(ctx)
@@ -142,7 +142,7 @@ func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 			return err
 		}
 		drop := User{TenantID: 1, Email: "drop@x.io", Name: "drop"}
-		if err := repo.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
+		if err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)
@@ -150,7 +150,7 @@ func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, err := repo.GetAll(ctx)
+	all, err := repository.GetAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

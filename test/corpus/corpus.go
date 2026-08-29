@@ -101,19 +101,19 @@ func Dir() (string, error) {
 // and a broken fixture look the same in a JSON file, and only one of them is
 // evidence.
 func Capture(ctx context.Context, e Engine) (*sqlerr.Corpus, error) {
-	db, err := e.Open(ctx)
+	database, err := e.Open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer database.Close()
 
 	out := &sqlerr.Corpus{Engine: e.Name, Driver: e.Pkg}
-	if err := db.QueryRowContext(ctx, e.version).Scan(&out.Server); err != nil {
+	if err := database.QueryRowContext(ctx, e.version).Scan(&out.Server); err != nil {
 		return nil, fmt.Errorf("%s: reading the server version: %w", e.Name, err)
 	}
 
 	for _, p := range e.Cases {
-		err := e.provoke(ctx, db, p)
+		err := e.provoke(ctx, database, p)
 		switch {
 		case errors.Is(err, errHarness):
 			return nil, fmt.Errorf("%s: %s: %w", e.Name, p.Name, err)
@@ -142,40 +142,40 @@ func Capture(ctx context.Context, e Engine) (*sqlerr.Corpus, error) {
 // the corpus's own, nothing else reads them, and a case that leaves a row behind
 // — SQLite accepts three the others refuse — would otherwise change what the
 // next run's duplicate-key case collides with.
-func (e Engine) Open(ctx context.Context) (*sql.DB, error) {
-	db, err := sql.Open(e.Driver, e.DSN)
+func (this Engine) Open(ctx context.Context) (*sql.DB, error) {
+	database, err := sql.Open(this.Driver, this.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", e.Name, err)
+		return nil, fmt.Errorf("%s: %w", this.Name, err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("%s: %w", e.Name, err)
+	if err := database.PingContext(ctx); err != nil {
+		database.Close()
+		return nil, fmt.Errorf("%s: %w", this.Name, err)
 	}
-	for _, stmt := range append(append([]string{}, e.schema...), e.seed...) {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("%s: %s: %w", e.Name, firstLine(stmt), err)
+	for _, stmt := range append(append([]string{}, this.schema...), this.seed...) {
+		if _, err := database.ExecContext(ctx, stmt); err != nil {
+			database.Close()
+			return nil, fmt.Errorf("%s: %s: %w", this.Name, firstLine(stmt), err)
 		}
 	}
-	return db, nil
+	return database, nil
 }
 
 // provoke runs one case against a raw handle. A case with nothing to run at all
 // is one this engine cannot reach, and says so in Unreachable.
-func (e Engine) provoke(ctx context.Context, db *sql.DB, p Probe) error {
+func (this Engine) provoke(ctx context.Context, database *sql.DB, p Probe) error {
 	switch {
 	case p.Contend:
-		return e.Contend(ctx, db, func(wait *sql.Conn) error {
-			_, err := wait.ExecContext(ctx, e.Lock)
+		return this.Contend(ctx, database, func(wait *sql.Conn) error {
+			_, err := wait.ExecContext(ctx, this.Lock)
 			return err
 		})
 	case p.RaceA != nil:
-		return e.Race(ctx, db, p, func(c *sql.Conn, stmt string) error {
+		return this.Race(ctx, database, p, func(c *sql.Conn, stmt string) error {
 			_, err := c.ExecContext(ctx, stmt)
 			return err
 		})
 	case p.Tx != nil:
-		tx, err := db.BeginTx(ctx, nil)
+		tx, err := database.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("%w: opening the transaction: %v", errHarness, err)
 		}
@@ -184,14 +184,14 @@ func (e Engine) provoke(ctx context.Context, db *sql.DB, p Probe) error {
 			func(stmt string) error { _, err := tx.ExecContext(ctx, stmt); return err },
 			tx.Commit)
 	case p.Session != nil:
-		return e.Session(ctx, p, func(c *sql.Conn) error {
+		return this.Session(ctx, p, func(c *sql.Conn) error {
 			_, err := c.ExecContext(ctx, p.Stmt)
 			return err
 		})
 	case p.Connect != "":
-		return e.Reach(ctx, p.Connect)
+		return this.Reach(ctx, p.Connect)
 	case p.Stmt != "":
-		_, err := db.ExecContext(ctx, p.Stmt)
+		_, err := database.ExecContext(ctx, p.Stmt)
 		return err
 	default:
 		return nil
@@ -239,17 +239,17 @@ func Script(stmts []string, exec func(string) error, commit func() error) error 
 // two sides race from there is what made a deadlock look like something that
 // needed a barrier and a retry ([[D-040]]); with the rendezvous it fires every
 // run.
-func (e Engine) Race(ctx context.Context, db *sql.DB, p Probe, exec func(*sql.Conn, string) error) error {
+func (this Engine) Race(ctx context.Context, database *sql.DB, p Probe, exec func(*sql.Conn, string) error) error {
 	if len(p.RaceA) != len(p.RaceB) {
 		return fmt.Errorf("%w: %s: the two sides have %d and %d statements and would wait for each other forever",
 			errHarness, p.Name, len(p.RaceA), len(p.RaceB))
 	}
-	a, err := db.Conn(ctx)
+	a, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: first connection: %v", errHarness, err)
 	}
 	defer a.Close()
-	b, err := db.Conn(ctx)
+	b, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: second connection: %v", errHarness, err)
 	}
@@ -308,8 +308,8 @@ func (e Engine) Race(ctx context.Context, db *sql.DB, p Probe, exec func(*sql.Co
 // other holds. That is Engine.Race, and a rendezvous between every pair of
 // statements is what made it deterministic — the entry regenerates identically
 // because the key does, even though which side loses is the engine's choice.
-func (e Engine) Contend(ctx context.Context, db *sql.DB, wait func(*sql.Conn) error) error {
-	holder, err := db.Conn(ctx)
+func (this Engine) Contend(ctx context.Context, database *sql.DB, wait func(*sql.Conn) error) error {
+	holder, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: holding connection: %v", errHarness, err)
 	}
@@ -319,16 +319,16 @@ func (e Engine) Contend(ctx context.Context, db *sql.DB, wait func(*sql.Conn) er
 		return fmt.Errorf("%w: holding transaction: %v", errHarness, err)
 	}
 	defer held.Rollback()
-	if _, err := held.ExecContext(ctx, e.Lock); err != nil {
+	if _, err := held.ExecContext(ctx, this.Lock); err != nil {
 		return fmt.Errorf("%w: taking the lock: %v", errHarness, err)
 	}
 
-	waiter, err := db.Conn(ctx)
+	waiter, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: waiting connection: %v", errHarness, err)
 	}
 	defer waiter.Close()
-	for _, stmt := range e.Waiter {
+	for _, stmt := range this.Waiter {
 		if _, err := waiter.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("%w: %s: %v", errHarness, stmt, err)
 		}
@@ -336,7 +336,7 @@ func (e Engine) Contend(ctx context.Context, db *sql.DB, wait func(*sql.Conn) er
 	// The connection goes back to the pool when this returns, and a cut-down
 	// patience left on it is measured by whatever probe draws it next.
 	defer func() {
-		for _, stmt := range e.Restore {
+		for _, stmt := range this.Restore {
 			waiter.ExecContext(ctx, stmt)
 		}
 	}()
@@ -351,13 +351,13 @@ func (e Engine) Contend(ctx context.Context, db *sql.DB, wait func(*sql.Conn) er
 // pool with it: the first capture recorded the undefined-table message in
 // Russian, two cases after the locale probe, because the locale outlived the
 // probe that set it. Closing this handle closes the connection for real.
-func (e Engine) Session(ctx context.Context, p Probe, run func(*sql.Conn) error) error {
-	db, err := sql.Open(e.Driver, e.DSN)
+func (this Engine) Session(ctx context.Context, p Probe, run func(*sql.Conn) error) error {
+	database, err := sql.Open(this.Driver, this.DSN)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errHarness, err)
 	}
-	defer db.Close()
-	conn, err := db.Conn(ctx)
+	defer database.Close()
+	conn, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: taking a connection: %v", errHarness, err)
 	}
@@ -373,13 +373,13 @@ func (e Engine) Session(ctx context.Context, p Probe, run func(*sql.Conn) error)
 // Reach opens a second handle at dsn and pings it. Both connection-time
 // negatives are refusals no statement on the main handle can produce, and a
 // repository bound to such a DSN meets them on its first call.
-func (e Engine) Reach(ctx context.Context, dsn string) error {
-	db, err := sql.Open(e.Driver, dsn)
+func (this Engine) Reach(ctx context.Context, dsn string) error {
+	database, err := sql.Open(this.Driver, dsn)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	return db.PingContext(ctx)
+	defer database.Close()
+	return database.PingContext(ctx)
 }
 
 func firstLine(s string) string {

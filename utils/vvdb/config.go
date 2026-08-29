@@ -117,20 +117,20 @@ type Migration struct {
 //
 // Empty fields are valid. They are the zero-value spelling of the defaults in
 // the tags above for a Config assembled in Go rather than loaded by vvcfg.
-func (m *Migration) Validate() error {
-	if m == nil {
+func (this *Migration) Validate() error {
+	if this == nil {
 		return nil
 	}
-	if m.Path != "" && strings.TrimSpace(m.Path) == "" {
+	if this.Path != "" && strings.TrimSpace(this.Path) == "" {
 		return fmt.Errorf("%w: migration.path is blank", ErrMissing)
 	}
-	for i, dir := range m.Models {
+	for i, dir := range this.Models {
 		if strings.TrimSpace(dir) == "" {
 			return fmt.Errorf("%w: migration.models[%d] is blank", ErrMissing, i)
 		}
 	}
-	if m.Table != "" && !validMigrationTable(m.Table) {
-		return fmt.Errorf("%w: migration.table %q must be a non-reserved lower-case identifier or schema.identifier", ErrUnsupported, m.Table)
+	if this.Table != "" && !validMigrationTable(this.Table) {
+		return fmt.Errorf("%w: migration.table %q must be a non-reserved lower-case identifier or schema.identifier", ErrUnsupported, this.Table)
 	}
 	return nil
 }
@@ -209,7 +209,7 @@ type Pool struct {
 type Params map[string]string
 
 // SetValue parses the DB_PARAMS URL-query representation.
-func (p *Params) SetValue(raw string) error {
+func (this *Params) SetValue(raw string) error {
 	values, err := url.ParseQuery(raw)
 	if err != nil {
 		return fmt.Errorf("params must be an URL query: %w", err)
@@ -224,7 +224,7 @@ func (p *Params) SetValue(raw string) error {
 		}
 		out[key] = vals[0]
 	}
-	*p = out
+	*this = out
 	return nil
 }
 
@@ -235,9 +235,9 @@ func (p *Params) SetValue(raw string) error {
 type SQLitePragmas []string
 
 // SetValue parses DB_SQLITE_PRAGMAS and DB_REPLICA_PRAGMAS.
-func (p *SQLitePragmas) SetValue(raw string) error {
+func (this *SQLitePragmas) SetValue(raw string) error {
 	if raw == "" {
-		*p = nil
+		*this = nil
 		return nil
 	}
 	items := strings.Split(raw, ",")
@@ -249,14 +249,14 @@ func (p *SQLitePragmas) SetValue(raw string) error {
 		}
 		out = append(out, item)
 	}
-	*p = out
+	*this = out
 	return nil
 }
 
 // Validate keeps pragmas declarative and portable across the two SQLite
 // drivers vvdb documents. Arbitrary SQL does not belong in a configuration
 // value; the accepted settings cover connection durability and lock behaviour.
-func (p SQLitePragmas) Validate() error {
+func (this SQLitePragmas) Validate() error {
 	allowed := map[string]bool{
 		"journal_mode": true,
 		"busy_timeout": true,
@@ -265,8 +265,8 @@ func (p SQLitePragmas) Validate() error {
 		"cache_size":   true,
 		"temp_store":   true,
 	}
-	seen := make(map[string]bool, len(p))
-	for _, raw := range p {
+	seen := make(map[string]bool, len(this))
+	for _, raw := range this {
 		name, value, ok := strings.Cut(raw, "=")
 		name, value = strings.ToLower(strings.TrimSpace(name)), strings.TrimSpace(value)
 		if !ok || name == "" || value == "" {
@@ -365,51 +365,51 @@ func known(e Engine) bool {
 // by [DSN] and by [Open], so a caller who forgets it still cannot get a wrong
 // connection; it is exported because vvcfg.Load calls Validate on the struct it
 // loaded, and an application whose config embeds this one forwards to it.
-func (c *Config) Validate() error {
-	if c == nil {
+func (this *Config) Validate() error {
+	if this == nil {
 		return fmt.Errorf("%w: config", ErrMissing)
 	}
-	if !known(c.Engine) {
-		return fmt.Errorf("%w: %q, want one of postgres, mysql, mariadb, sqlite", ErrEngine, c.Engine)
+	if !known(this.Engine) {
+		return fmt.Errorf("%w: %q, want one of postgres, mysql, mariadb, sqlite", ErrEngine, this.Engine)
 	}
-	if err := c.Pool.Validate(); err != nil {
+	if err := this.Pool.Validate(); err != nil {
 		return err
 	}
-	if err := c.Migration.Validate(); err != nil {
+	if err := this.Migration.Validate(); err != nil {
 		return err
 	}
-	if c.DSN != "" {
-		if f := c.fieldsBesideDSN(); f != "" {
+	if this.DSN != "" {
+		if f := this.fieldsBesideDSN(); f != "" {
 			return fmt.Errorf("%w: dsn is set and so is %s — one of them would be ignored", ErrConflict, f)
 		}
-	} else if err := c.validateFields(); err != nil {
+	} else if err := this.validateFields(); err != nil {
 		return err
 	}
-	if c.Replica != nil {
-		if c.Engine == SQLite {
+	if this.Replica != nil {
+		if this.Engine == SQLite {
 			return fmt.Errorf("%w: replica is not available for sqlite", ErrUnsupported)
 		}
-		if !migrationEmpty(c.Replica.Migration) {
+		if !migrationEmpty(this.Replica.Migration) {
 			return fmt.Errorf("%w: replica.migration belongs to the primary database", ErrUnsupported)
 		}
-		if replicaEmpty(*c.Replica) {
+		if replicaEmpty(*this.Replica) {
 			return fmt.Errorf("%w: replica is declared but names no difference from the primary", ErrMissing)
 		}
-		if c.Replica.Replica != nil {
+		if this.Replica.Replica != nil {
 			return fmt.Errorf("%w: replica.replica, only one primary and one read replica are supported", ErrUnsupported)
 		}
-		if c.DSN != "" && c.Replica.DSN == "" {
+		if this.DSN != "" && this.Replica.DSN == "" {
 			return fmt.Errorf("%w: replica fields cannot inherit from opaque dsn; set replica.dsn instead", ErrConflict)
 		}
-		if c.Replica.DSN != "" {
-			if f := c.Replica.fieldsBesideDSN(); f != "" {
+		if this.Replica.DSN != "" {
+			if f := this.Replica.fieldsBesideDSN(); f != "" {
 				return fmt.Errorf("replica: %w: dsn is set and so is %s — one of them would be ignored", ErrConflict, f)
 			}
 		}
-		r, _ := c.ReadReplica()
-		if r.Engine != c.Engine {
+		r, _ := this.ReadReplica()
+		if r.Engine != this.Engine {
 			return fmt.Errorf("%w: replica engine %q differs from %q — a replica of another engine is not a replica",
-				ErrConflict, r.Engine, c.Engine)
+				ErrConflict, r.Engine, this.Engine)
 		}
 		// The merged replica is what will be opened, so it is what is checked.
 		// Validating the fragment as written would pass a replica missing
@@ -422,92 +422,92 @@ func (c *Config) Validate() error {
 }
 
 // fieldsBesideDSN names the first field that contradicts a DSN, or "".
-func (c *Config) fieldsBesideDSN() string {
+func (this *Config) fieldsBesideDSN() string {
 	switch {
-	case c.Host != "":
+	case this.Host != "":
 		return "host"
-	case c.Port != 0:
+	case this.Port != 0:
 		return "port"
-	case c.User != "":
+	case this.User != "":
 		return "user"
-	case c.Password != "":
+	case this.Password != "":
 		return "password"
-	case c.Name != "":
+	case this.Name != "":
 		return "name"
-	case c.SSLMode != "":
+	case this.SSLMode != "":
 		return "sslmode"
-	case c.Path != "":
+	case this.Path != "":
 		return "path"
-	case len(c.Pragmas) != 0:
+	case len(this.Pragmas) != 0:
 		return "pragmas"
-	case len(c.Params) != 0:
+	case len(this.Params) != 0:
 		return "params"
-	case c.Pool.ConnectTimeout != 0:
+	case this.Pool.ConnectTimeout != 0:
 		return "pool.connect_timeout"
 	}
 	return ""
 }
 
-func (c *Config) validateFields() error {
-	if c.Engine == SQLite {
-		if c.Path == "" {
+func (this *Config) validateFields() error {
+	if this.Engine == SQLite {
+		if this.Path == "" {
 			return fmt.Errorf("%w: path, which is the file sqlite opens", ErrMissing)
 		}
-		if c.Host != "" || c.Port != 0 || c.User != "" || c.Password != "" || c.Name != "" {
+		if this.Host != "" || this.Port != 0 || this.User != "" || this.Password != "" || this.Name != "" {
 			return fmt.Errorf("%w: sqlite has no host, port, user, password or database name — it has a path", ErrUnsupported)
 		}
-		if c.SSLMode != "" {
+		if this.SSLMode != "" {
 			return fmt.Errorf("%w: sqlite is a file, not a connection, and has no sslmode", ErrUnsupported)
 		}
-		if c.Pool.ConnectTimeout != 0 {
+		if this.Pool.ConnectTimeout != 0 {
 			return fmt.Errorf("%w: pool.connect_timeout is for a server connection, not sqlite", ErrUnsupported)
 		}
-		if err := c.Pragmas.Validate(); err != nil {
+		if err := this.Pragmas.Validate(); err != nil {
 			return err
 		}
-		return c.validateParams()
+		return this.validateParams()
 	}
-	if len(c.Pragmas) != 0 {
-		return fmt.Errorf("%w: pragmas are sqlite settings, and %q is not sqlite", ErrUnsupported, c.Engine)
+	if len(this.Pragmas) != 0 {
+		return fmt.Errorf("%w: pragmas are sqlite settings, and %q is not sqlite", ErrUnsupported, this.Engine)
 	}
-	if c.Engine == Postgres && c.Driver != "" && c.Driver != "pgx" {
-		return fmt.Errorf("%w: typed postgres configuration requires driver pgx; use Config.DSN for %q", ErrUnsupported, c.Driver)
+	if this.Engine == Postgres && this.Driver != "" && this.Driver != "pgx" {
+		return fmt.Errorf("%w: typed postgres configuration requires driver pgx; use Config.DSN for %q", ErrUnsupported, this.Driver)
 	}
-	if c.Name == "" {
+	if this.Name == "" {
 		return fmt.Errorf("%w: name, the database to connect to", ErrMissing)
 	}
-	if c.Host == "" {
+	if this.Host == "" {
 		return fmt.Errorf("%w: host, the database server to connect to", ErrMissing)
 	}
-	if c.Port < 0 || c.Port > 65535 {
-		return fmt.Errorf("%w: port %d is outside the TCP range 1..65535", ErrUnsupported, c.Port)
+	if this.Port < 0 || this.Port > 65535 {
+		return fmt.Errorf("%w: port %d is outside the TCP range 1..65535", ErrUnsupported, this.Port)
 	}
-	if strings.HasPrefix(c.Host, "[") && strings.HasSuffix(c.Host, "]") {
-		return fmt.Errorf("%w: host %q is an already-bracketed IPv6 literal; use the bare address", ErrUnsupported, c.Host)
+	if strings.HasPrefix(this.Host, "[") && strings.HasSuffix(this.Host, "]") {
+		return fmt.Errorf("%w: host %q is an already-bracketed IPv6 literal; use the bare address", ErrUnsupported, this.Host)
 	}
-	if c.Password != "" && c.User == "" {
+	if this.Password != "" && this.User == "" {
 		return fmt.Errorf("%w: password is set without user, so a driver could authenticate as the process user instead", ErrConflict)
 	}
-	if c.Path != "" {
-		return fmt.Errorf("%w: path is sqlite's, and %q is not sqlite", ErrUnsupported, c.Engine)
+	if this.Path != "" {
+		return fmt.Errorf("%w: path is sqlite's, and %q is not sqlite", ErrUnsupported, this.Engine)
 	}
-	if _, err := tlsParam(c.Engine, c.SSLMode); err != nil {
+	if _, err := tlsParam(this.Engine, this.SSLMode); err != nil {
 		return err
 	}
-	if c.Engine != Postgres && strings.Contains(c.User, ":") {
+	if this.Engine != Postgres && strings.Contains(this.User, ":") {
 		// The MySQL driver splits user from password at the *first* colon, so a
 		// colon in the user silently moves half the name into the password.
 		return fmt.Errorf("%w: a mysql user name cannot contain ':' — the driver reads everything after it as the password", ErrUnsupported)
 	}
-	return c.validateParams()
+	return this.validateParams()
 }
 
 // validateParams keeps connection facts single-sourced. Params is deliberately
 // broad for driver-specific settings, but it must not be able to override a
 // typed field after vvdb has validated and rendered it.
-func (c *Config) validateParams() error {
-	if c.Engine == SQLite {
-		for key := range c.Params {
+func (this *Config) validateParams() error {
+	if this.Engine == SQLite {
+		for key := range this.Params {
 			name := strings.ToLower(strings.TrimSpace(key))
 			if name == "_pragma" || name == "pragma" || name == "_journal_mode" ||
 				name == "_busy_timeout" || name == "_foreign_keys" ||
@@ -516,15 +516,15 @@ func (c *Config) validateParams() error {
 			}
 		}
 	}
-	if c.Engine == Postgres {
+	if this.Engine == Postgres {
 		for _, key := range []string{"service", "servicefile"} {
-			if _, ok := c.Params[key]; ok {
+			if _, ok := this.Params[key]; ok {
 				return fmt.Errorf("%w: params.%s makes a second configuration document; use Config.DSN when a libpq service is intentional", ErrUnsupported, key)
 			}
 		}
 	}
 	reserved := map[string]string{}
-	switch c.Engine {
+	switch this.Engine {
 	case Postgres:
 		for key, field := range map[string]string{
 			"host":     "host",
@@ -542,15 +542,15 @@ func (c *Config) validateParams() error {
 		reserved["sslmode"] = "sslmode"
 		reserved["connect_timeout"] = "pool.connect_timeout"
 	case MySQL, MariaDB:
-		if c.SSLMode != "" {
+		if this.SSLMode != "" {
 			reserved["tls"] = "sslmode"
 		}
-		if c.Pool.ConnectTimeout != 0 {
+		if this.Pool.ConnectTimeout != 0 {
 			reserved["timeout"] = "pool.connect_timeout"
 		}
 	}
 	for key, field := range reserved {
-		if _, ok := c.Params[key]; ok {
+		if _, ok := this.Params[key]; ok {
 			return fmt.Errorf("%w: params.%s conflicts with %s", ErrConflict, key, field)
 		}
 	}
@@ -564,24 +564,24 @@ func (c *Config) validateParams() error {
 // Inheritance is the point. A replica differs from its primary by hostname and
 // nothing else nine times out of ten, and repeating the credentials is how the
 // two drift apart the day one of them is rotated.
-func (c *Config) ReadReplica() (*Config, bool) {
-	if c == nil || c.Replica == nil || replicaEmpty(*c.Replica) || c.Replica.Replica != nil || !migrationEmpty(c.Replica.Migration) {
+func (this *Config) ReadReplica() (*Config, bool) {
+	if this == nil || this.Replica == nil || replicaEmpty(*this.Replica) || this.Replica.Replica != nil || !migrationEmpty(this.Replica.Migration) {
 		return nil, false
 	}
 	// A field-level replica needs the primary's connection facts. An opaque
 	// primary deliberately has none to inherit, and Validate reports this as a
 	// named conflict; do not return a tempting but unusable partial replica to
 	// callers that inspect ReadReplica directly.
-	if c.DSN != "" && c.Replica.DSN == "" {
+	if this.DSN != "" && this.Replica.DSN == "" {
 		return nil, false
 	}
-	r := *c.Replica
+	r := *this.Replica
 	// A raw replica DSN owns every connection fact in the string. Driver choice
 	// and the database/sql pool are outside that string, so they keep inheriting
 	// from the primary. ConnectTimeout is the sole pool setting encoded in a
 	// DSN, and is intentionally not inherited into one.
 	if r.DSN != "" {
-		base := *c
+		base := *this
 		base.Replica = nil
 		base.Migration = Migration{}
 		base.DSN = r.DSN
@@ -600,12 +600,12 @@ func (c *Config) ReadReplica() (*Config, bool) {
 		}
 		return &base, true
 	}
-	base := *c
+	base := *this
 	base.Replica = nil
 	base.Migration = Migration{}
 	base.DSN = ""
-	base.Params = cloneParams(c.Params)
-	base.Pragmas = clonePragmas(c.Pragmas)
+	base.Params = cloneParams(this.Params)
+	base.Pragmas = clonePragmas(this.Pragmas)
 	if r.Engine != "" {
 		base.Engine = r.Engine
 	}
@@ -709,14 +709,14 @@ func mergePool(base, override Pool) Pool {
 // DB_REPLICA_PASSWORD, DB_REPLICA_NAME, DB_REPLICA_SSLMODE,
 // DB_REPLICA_PATH, DB_REPLICA_DSN, DB_REPLICA_PARAMS and
 // DB_REPLICA_POOL_{MAX_OPEN,MAX_IDLE,MAX_LIFETIME,MAX_IDLE_TIME,CONNECT_TIMEOUT}.
-func (c *Config) ApplyEnvironment() error { return c.ApplyEnvironmentPrefix("") }
+func (this *Config) ApplyEnvironment() error { return this.ApplyEnvironmentPrefix("") }
 
 // ApplyEnvironmentPrefix is the env-prefix-aware form vvcfg.Load invokes for a
 // nested Config. A field tagged `env-prefix:"ANALYTICS_"` therefore uses
 // ANALYTICS_DB_REPLICA_HOST rather than accidentally applying DB_REPLICA_HOST
 // to every database block in one process.
-func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
-	if c == nil {
+func (this *Config) ApplyEnvironmentPrefix(prefix string) error {
+	if this == nil {
 		return nil
 	}
 	// cleanenv has already overlaid the scalar DB_* values when this hook runs.
@@ -724,23 +724,23 @@ func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
 	// replaces those connection facts as a group, instead of leaving a YAML host
 	// beside DB_DSN and refusing an environment-only deployment at startup.
 	if _, set := os.LookupEnv(prefix + "DB_DSN"); set {
-		c.clearFieldsBesideDSN()
+		this.clearFieldsBesideDSN()
 	}
 	r := Config{}
-	if c.Replica != nil {
-		r = *c.Replica
+	if this.Replica != nil {
+		r = *this.Replica
 		r.Params = cloneParams(r.Params)
 	}
 
 	found := false
-	stringField := func(name string, dst *string) {
+	stringField := func(name string, destination *string) {
 		name = prefix + name
 		if value, ok := os.LookupEnv(name); ok {
-			*dst = value
+			*destination = value
 			found = true
 		}
 	}
-	intField := func(name string, dst *int) error {
+	intField := func(name string, destination *int) error {
 		name = prefix + name
 		value, ok := os.LookupEnv(name)
 		if !ok {
@@ -750,11 +750,11 @@ func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
 		if err != nil {
 			return fmt.Errorf("parsing %s: %w", name, err)
 		}
-		*dst = n
+		*destination = n
 		found = true
 		return nil
 	}
-	durationField := func(name string, dst *time.Duration) error {
+	durationField := func(name string, destination *time.Duration) error {
 		name = prefix + name
 		value, ok := os.LookupEnv(name)
 		if !ok {
@@ -764,7 +764,7 @@ func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
 		if err != nil {
 			return fmt.Errorf("parsing %s: %w", name, err)
 		}
-		*dst = d
+		*destination = d
 		found = true
 		return nil
 	}
@@ -816,7 +816,7 @@ func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
 		return err
 	}
 	if found {
-		c.Replica = &r
+		this.Replica = &r
 	}
 	return nil
 }
@@ -825,32 +825,32 @@ func (c *Config) ApplyEnvironmentPrefix(prefix string) error {
 // place, but removes facts an opaque DSN owns. It is only used for an explicit
 // environment DSN overlay; a Config assembled in Go still receives the normal
 // conflict refusal from Validate.
-func (c *Config) clearFieldsBesideDSN() {
-	c.Host, c.Port, c.User, c.Password, c.Name, c.SSLMode, c.Path = "", 0, "", "", "", "", ""
-	c.Params, c.Pragmas = nil, nil
-	c.Pool.ConnectTimeout = 0
+func (this *Config) clearFieldsBesideDSN() {
+	this.Host, this.Port, this.User, this.Password, this.Name, this.SSLMode, this.Path = "", 0, "", "", "", "", ""
+	this.Params, this.Pragmas = nil, nil
+	this.Pool.ConnectTimeout = 0
 }
 
 // Validate refuses a pool that contradicts itself before an adapter translates
 // it. It is public so adapters that accept Pool directly keep the exact same
 // invariant as Config.Validate.
-func (p *Pool) Validate() error {
-	if p == nil {
+func (this *Pool) Validate() error {
+	if this == nil {
 		return fmt.Errorf("%w: pool", ErrMissing)
 	}
-	if p.MaxOpen < 0 {
+	if this.MaxOpen < 0 {
 		return fmt.Errorf("%w: pool.max_open cannot be negative", ErrUnsupported)
 	}
-	if p.MaxOpen > 0 && p.MaxIdle > p.MaxOpen {
-		return fmt.Errorf("%w: pool.max_idle %d exceeds pool.max_open %d", ErrConflict, p.MaxIdle, p.MaxOpen)
+	if this.MaxOpen > 0 && this.MaxIdle > this.MaxOpen {
+		return fmt.Errorf("%w: pool.max_idle %d exceeds pool.max_open %d", ErrConflict, this.MaxIdle, this.MaxOpen)
 	}
-	if p.MaxLifetime < 0 {
+	if this.MaxLifetime < 0 {
 		return fmt.Errorf("%w: pool.max_lifetime cannot be negative", ErrUnsupported)
 	}
-	if p.MaxIdleTime < 0 {
+	if this.MaxIdleTime < 0 {
 		return fmt.Errorf("%w: pool.max_idle_time cannot be negative", ErrUnsupported)
 	}
-	if p.ConnectTimeout < 0 {
+	if this.ConnectTimeout < 0 {
 		return fmt.Errorf("%w: pool.connect_timeout cannot be negative", ErrUnsupported)
 	}
 	return nil

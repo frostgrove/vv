@@ -13,13 +13,13 @@ import (
 // at request time, which is exactly what [[D-021]] says must not happen.
 func TestWithPathsPutsTheServicesHopIntoTheChain(t *testing.T) {
 	declared := Fields{"Name": At("title")}
-	svc := NewService[widget, int64, widgetUpdate](&fakeRepo{}, WithPaths(declared))
+	service := NewService[widget, int64, widgetUpdate](&fakeRepo{}, WithPaths(declared))
 
-	if svc.Paths() == nil {
+	if service.Paths() == nil {
 		t.Fatal("a service built with WithPaths answers no hop at all")
 	}
 
-	hops := Hops[widget, int64, widgetUpdate, widget](svc, Identity[widget]())
+	hops := Hops[widget, int64, widgetUpdate, widget](service, Identity[widget]())
 	if len(hops) != 1 {
 		t.Fatalf("the declared hop reached the chain %d times, want once", len(hops))
 	}

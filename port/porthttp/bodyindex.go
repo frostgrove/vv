@@ -69,7 +69,7 @@ type bodyIndex struct {
 
 // index reads the body, or leaves the maps empty — which is the declining
 // state, and the one a form or XML body lands in.
-func (b *bodyIndex) index(raw []byte) {
+func (this *bodyIndex) index(raw []byte) {
 	raw = bytes.TrimSpace(raw)
 	if raw[0] != '{' && raw[0] != '[' {
 		return
@@ -78,11 +78,11 @@ func (b *bodyIndex) index(raw []byte) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return
 	}
-	b.walk(doc, nil, 0)
+	this.walk(doc, nil, 0)
 }
 
 // Resolve implements errs.Resolver.
-func (b *bodyIndex) Resolve(p errs.Path) (errs.Path, bool) {
+func (this *bodyIndex) Resolve(p errs.Path) (errs.Path, bool) {
 	// An empty path is a complete answer rather than an unresolved one: a
 	// violation that names no field — a composite key at its common ancestor, a
 	// fault with nothing to attribute — must not be marked approximate for
@@ -94,54 +94,54 @@ func (b *bodyIndex) Resolve(p errs.Path) (errs.Path, bool) {
 	// this, a violation that arrived already translated — a validation bridge's
 	// ["user","email"] — would be re-matched on its last step and could collide
 	// with a same-named key elsewhere in the payload.
-	if b.exact[p.Pointer()] {
+	if this.exact[p.Pointer()] {
 		return p, true
 	}
 	last := p[len(p)-1]
 	if last.IsIndex {
 		return p, false
 	}
-	got := b.byName[fold(last.Name)]
+	got := this.byName[fold(last.Name)]
 	if len(got) != 1 {
 		return p, false
 	}
 	return got[0], true
 }
 
-func (b *bodyIndex) walk(v any, at errs.Path, depth int) {
-	if depth > maxBodyDepth || b.leaves >= maxBodyLeaves {
+func (this *bodyIndex) walk(v any, at errs.Path, depth int) {
+	if depth > maxBodyDepth || this.leaves >= maxBodyLeaves {
 		return
 	}
 	switch t := v.(type) {
 	case map[string]any:
 		for k, sub := range t {
-			b.walk(sub, append(at, errs.Named(k)), depth+1)
+			this.walk(sub, append(at, errs.Named(k)), depth+1)
 		}
 	case []any:
 		for i, sub := range t {
-			b.walk(sub, append(at, errs.Indexed(i)), depth+1)
+			this.walk(sub, append(at, errs.Indexed(i)), depth+1)
 		}
 	default:
 		if len(at) == 0 {
 			return
 		}
-		b.record(at)
+		this.record(at)
 	}
 }
 
 // record files a leaf under both lookups. The path is copied because walk
 // appends into a shared backing array.
-func (b *bodyIndex) record(at errs.Path) {
+func (this *bodyIndex) record(at errs.Path) {
 	p := make(errs.Path, len(at))
 	copy(p, at)
-	b.leaves++
-	b.exact[p.Pointer()] = true
+	this.leaves++
+	this.exact[p.Pointer()] = true
 	last := p[len(p)-1]
 	if last.IsIndex {
 		return
 	}
 	key := fold(last.Name)
-	b.byName[key] = append(b.byName[key], p)
+	this.byName[key] = append(this.byName[key], p)
 }
 
 // fold matches the way crud.Schema resolves a field reference: case- and

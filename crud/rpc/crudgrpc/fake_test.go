@@ -107,21 +107,21 @@ func newFake() *fakeRepo {
 	return f
 }
 
-func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
+func (this *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
-func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[Widget], error) {
-	o := crud.Build(opts...)
-	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: o})
-	if f.err != nil {
-		return crud.PaginatedResponse[Widget]{}, f.err
+func (this *fakeRepo) Get(_ context.Context, options ...crud.Option) (crud.PaginatedResponse[Widget], error) {
+	o := crud.Build(options...)
+	this.calls = append(this.calls, recordedCall{Method: "Get", Opts: o})
+	if this.err != nil {
+		return crud.PaginatedResponse[Widget]{}, this.err
 	}
-	if page, ok := f.cursors[cursorKey(o)]; ok {
+	if page, ok := this.cursors[cursorKey(o)]; ok {
 		return page, nil
 	}
-	if page, ok := f.pages[o.Page]; ok {
+	if page, ok := this.pages[o.Page]; ok {
 		return page, nil
 	}
-	return f.page, nil
+	return this.page, nil
 }
 
 func cursorKey(o *crud.Options) string {
@@ -134,38 +134,38 @@ func cursorKey(o *crud.Options) string {
 	return ""
 }
 
-func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "GetAll", Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return nil, f.err
+func (this *fakeRepo) GetAll(_ context.Context, options ...crud.Option) ([]Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "GetAll", Opts: crud.Build(options...)})
+	if this.err != nil {
+		return nil, this.err
 	}
-	return f.page.Items, nil
+	return this.page.Items, nil
 }
 
-func (f *fakeRepo) GetByID(_ context.Context, id int64, opts ...crud.Option) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "GetByID", ID: id, Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) GetByID(_ context.Context, id int64, options ...crud.Option) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "GetByID", ID: id, Opts: crud.Build(options...)})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
-	w := f.one
+	w := this.one
 	w.ID = id
 	return w, nil
 }
 
-func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Count", Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return 0, f.err
+func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Count", Opts: crud.Build(options...)})
+	if this.err != nil {
+		return 0, this.err
 	}
-	return f.count, nil
+	return this.count, nil
 }
 
 // Save records the model as it arrived — before the key is filled in — because
 // what the handler handed over is exactly what the write tests are about.
-func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Save", Model: *m})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Save", Model: *m})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
 	saved := *m
 	if saved.ID == 0 {
@@ -175,39 +175,39 @@ func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	return saved, nil
 }
 
-func (f *fakeRepo) Update(_ context.Context, id int64, dto WidgetUpdate, _ ...crud.Option) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Update", ID: id, DTO: dto})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) Update(_ context.Context, id int64, dataTransferObject WidgetUpdate, _ ...crud.Option) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Update", ID: id, DTO: dataTransferObject})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
-	w := f.one
+	w := this.one
 	w.ID = id
-	if dto.Name != nil {
-		w.Name = *dto.Name
+	if dataTransferObject.Name != nil {
+		w.Name = *dataTransferObject.Name
 	}
-	if dto.Price != nil {
-		w.Price = *dto.Price
+	if dataTransferObject.Price != nil {
+		w.Price = *dataTransferObject.Price
 	}
-	if dto.Note.IsDefined() {
-		w.Note = dto.Note
+	if dataTransferObject.Note.IsDefined() {
+		w.Note = dataTransferObject.Note
 	}
 	return w, nil
 }
 
-func (f *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Delete", IDs: ids})
-	if f.err != nil {
-		return 0, f.err
+func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Delete", IDs: ids})
+	if this.err != nil {
+		return 0, this.err
 	}
 	return int64(len(ids)), nil
 }
 
 // only returns the one call the handler made to method, failing when it made
 // none or several.
-func (f *fakeRepo) only(t *testing.T, method string) recordedCall {
+func (this *fakeRepo) only(t *testing.T, method string) recordedCall {
 	t.Helper()
 	var found []recordedCall
-	for _, c := range f.calls {
+	for _, c := range this.calls {
 		if c.Method == method {
 			found = append(found, c)
 		}
@@ -216,16 +216,16 @@ func (f *fakeRepo) only(t *testing.T, method string) recordedCall {
 	case 1:
 		return found[0]
 	case 0:
-		t.Fatalf("the handler never called %s; it called %v", method, f.methods())
+		t.Fatalf("the handler never called %s; it called %v", method, this.methods())
 	default:
 		t.Fatalf("the handler called %s %d times, expected once", method, len(found))
 	}
 	return recordedCall{}
 }
 
-func (f *fakeRepo) methods() []string {
-	out := make([]string, len(f.calls))
-	for i, c := range f.calls {
+func (this *fakeRepo) methods() []string {
+	out := make([]string, len(this.calls))
+	for i, c := range this.calls {
 		out[i] = c.Method
 	}
 	return out
@@ -241,10 +241,10 @@ const resource = "Widget"
 // serve runs a handler on an in-process gRPC server and answers a client that
 // calls it by full method name — no generated stub, which is the point of the
 // Struct shape.
-func serve(t *testing.T, desc *grpc.ServiceDesc, opts ...grpc.ServerOption) *client {
+func serve(t *testing.T, desc *grpc.ServiceDesc, options ...grpc.ServerOption) *client {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	srv := grpc.NewServer(opts...)
+	srv := grpc.NewServer(options...)
 	srv.RegisterService(desc, nil)
 	go func() { _ = srv.Serve(lis) }()
 
@@ -264,10 +264,10 @@ func serve(t *testing.T, desc *grpc.ServiceDesc, opts ...grpc.ServerOption) *cli
 
 // mount builds a handler over a fresh fake and serves it the way the package
 // documentation says to.
-func mount(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*client, *fakeRepo) {
+func mount(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*client, *fakeRepo) {
 	t.Helper()
 	f := newFake()
-	return serve(t, New[Widget, int64, WidgetUpdate](f, opts...).Desc(resource)), f
+	return serve(t, New[Widget, int64, WidgetUpdate](f, options...).Desc(resource)), f
 }
 
 type client struct {
@@ -278,8 +278,8 @@ type client struct {
 }
 
 // with answers a client that sends the given metadata on every call.
-func (c *client) with(md metadata.MD) *client {
-	out := *c
+func (this *client) with(md metadata.MD) *client {
+	out := *this
 	out.md = md
 	return &out
 }
@@ -287,41 +287,41 @@ func (c *client) with(md metadata.MD) *client {
 // call sends one request and hands back the answer and the status. Both, always:
 // a test that only ever saw the error could not tell an empty answer from a
 // missing one.
-func (c *client) call(method string, in *structpb.Struct) (*structpb.Struct, *status.Status) {
-	c.t.Helper()
+func (this *client) call(method string, in *structpb.Struct) (*structpb.Struct, *status.Status) {
+	this.t.Helper()
 	ctx := context.Background()
-	if len(c.md) > 0 {
-		ctx = metadata.NewOutgoingContext(ctx, c.md)
+	if len(this.md) > 0 {
+		ctx = metadata.NewOutgoingContext(ctx, this.md)
 	}
 	out := &structpb.Struct{}
-	err := c.conn.Invoke(ctx, "/"+c.service+"/"+method, in, out)
+	err := this.conn.Invoke(ctx, "/"+this.service+"/"+method, in, out)
 	if err == nil {
 		return out, nil
 	}
 	st, ok := status.FromError(err)
 	if !ok {
-		c.t.Fatalf("%s answered an error with no status: %v", method, err)
+		this.t.Fatalf("%s answered an error with no status: %v", method, err)
 	}
 	return nil, st
 }
 
 // ok sends a request and insists it succeeded, so a test that is about the
 // answer fails with the server's own words when there was none.
-func (c *client) ok(method string, in *structpb.Struct) *structpb.Struct {
-	c.t.Helper()
-	out, st := c.call(method, in)
+func (this *client) ok(method string, in *structpb.Struct) *structpb.Struct {
+	this.t.Helper()
+	out, st := this.call(method, in)
 	if st != nil {
-		c.t.Fatalf("%s answered %s: %s", method, st.Code(), st.Message())
+		this.t.Fatalf("%s answered %s: %s", method, st.Code(), st.Message())
 	}
 	return out
 }
 
 // fails sends a request and insists it did not succeed.
-func (c *client) fails(method string, in *structpb.Struct) *status.Status {
-	c.t.Helper()
-	out, st := c.call(method, in)
+func (this *client) fails(method string, in *structpb.Struct) *status.Status {
+	this.t.Helper()
+	out, st := this.call(method, in)
 	if st == nil {
-		c.t.Fatalf("%s succeeded with %v, want a failure", method, out.AsMap())
+		this.t.Fatalf("%s succeeded with %v, want a failure", method, out.AsMap())
 	}
 	return st
 }

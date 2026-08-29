@@ -38,8 +38,8 @@ import (
 
 // mxProvider is one supported way of reaching one of the two databases.
 type mxProvider struct {
-	name string
-	src  crud.Source
+	name   string
+	source crud.Source
 }
 
 // mxProviders is one entry per crud.Source these two databases can be reached
@@ -87,14 +87,14 @@ func mxUsers() []User {
 func mxSeedUsers(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	for _, src := range []crud.Source{crudsql.Postgres(pgDB), crudsql.MySQL(myDB)} {
-		if _, err := src.Exec(ctx, "DELETE FROM users"); err != nil {
-			t.Fatalf("%s: reset: %v", src.Dialect().Name(), err)
+	for _, source := range []crud.Source{crudsql.Postgres(pgDB), crudsql.MySQL(myDB)} {
+		if _, err := source.Exec(ctx, "DELETE FROM users"); err != nil {
+			t.Fatalf("%s: reset: %v", source.Dialect().Name(), err)
 		}
-		repo := Users.Bind(src)
+		repository := Users.Bind(source)
 		for _, u := range mxUsers() {
-			if err := repo.Save(ctx, &u); err != nil {
-				t.Fatalf("%s: seeding %s: %v", src.Dialect().Name(), u.Email, err)
+			if err := repository.Save(ctx, &u); err != nil {
+				t.Fatalf("%s: seeding %s: %v", source.Dialect().Name(), u.Email, err)
 			}
 		}
 	}
@@ -183,11 +183,11 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var req query.Request
-			if err := json.Unmarshal([]byte(tc.doc), &req); err != nil {
+			var request query.Request
+			if err := json.Unmarshal([]byte(tc.doc), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(Users.Meta(), unpagedOK)
+			options, err := request.Compile(Users.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,8 +197,8 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 			}
 
 			for _, p := range providers {
-				repo := Users.Bind(p.src)
-				page, err := repo.Get(ctx, opts...)
+				repository := Users.Bind(p.source)
+				page, err := repository.Get(ctx, options...)
 				if err != nil {
 					t.Fatalf("%s: %v", p.name, err)
 				}
@@ -210,7 +210,7 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 					t.Fatalf("%s paged %d rows over %d pages, want %d over %d",
 						p.name, page.Total, page.TotalPages, tc.total, tc.pages)
 				}
-				n, err := repo.Count(ctx, opts...)
+				n, err := repository.Count(ctx, options...)
 				if err != nil {
 					t.Fatalf("%s: %v", p.name, err)
 				}
@@ -228,30 +228,30 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 // mxGorm is one database with gorm's own schema on it, plus the one piece of
 // SQL a gorm application still has to spell differently per engine.
 type mxGorm struct {
-	name    string
-	db      *gorm.DB
-	src     crud.Source
-	promote string // appends " (promoted)" to teams.name
+	name     string
+	database *gorm.DB
+	source   crud.Source
+	promote  string // appends " (promoted)" to teams.name
 }
 
 func mxGorms(t *testing.T) []mxGorm {
 	t.Helper()
 	out := []mxGorm{
 		{
-			name: "postgres", db: openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB})),
-			src: crudsql.Postgres(pgDB), promote: "name || ' (promoted)'",
+			name: "postgres", database: openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB})),
+			source: crudsql.Postgres(pgDB), promote: "name || ' (promoted)'",
 		},
 		{
-			name: "mysql", db: openGorm(t, gormmysql.New(gormmysql.Config{Conn: myDB})),
-			src: crudsql.MySQL(myDB), promote: "CONCAT(name, ' (promoted)')",
+			name: "mysql", database: openGorm(t, gormmysql.New(gormmysql.Config{Conn: myDB})),
+			source: crudsql.MySQL(myDB), promote: "CONCAT(name, ' (promoted)')",
 		},
 	}
 	for _, g := range out {
-		if err := g.db.AutoMigrate(&Team{}, &Member{}, &Label{}); err != nil {
+		if err := g.database.AutoMigrate(&Team{}, &Member{}, &Label{}); err != nil {
 			t.Fatalf("%s: AutoMigrate: %v", g.name, err)
 		}
 		for _, table := range []string{"team_labels", "members", "labels", "teams"} {
-			if err := g.db.Exec("DELETE FROM " + table).Error; err != nil {
+			if err := g.database.Exec("DELETE FROM " + table).Error; err != nil {
 				t.Fatalf("%s: reset %s: %v", g.name, table, err)
 			}
 		}
@@ -276,20 +276,20 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			teams := specs.Executor(GormTeams.Bind(g.src))
-			members := GormMembers.Bind(g.src)
+			teams := specs.Executor(GormTeams.Bind(g.source))
+			members := GormMembers.Bind(g.source)
 
 			goLbl, rust := Label{Slug: "go"}, Label{Slug: "rust"}
-			if err := g.db.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
+			if err := g.database.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
 				t.Fatal(err)
 			}
 			core := Team{Name: "core", Labels: []Label{goLbl, rust}}
 			ops := Team{Name: "ops", Labels: []Label{rust}}
-			if err := g.db.Create(&[]*Team{&core, &ops}).Error; err != nil {
+			if err := g.database.Create(&[]*Team{&core, &ops}).Error; err != nil {
 				t.Fatal(err)
 			}
 			age := 31
-			if err := g.db.Create(&[]*Member{
+			if err := g.database.Create(&[]*Member{
 				{TeamID: core.ID, Name: "Ann", Age: &age},
 				{TeamID: core.ID, Name: "Bob"},
 				{TeamID: ops.ID, Name: "Cid"},
@@ -299,20 +299,20 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 
 			// A filter that walks the association gorm declared, and a preload
 			// back along the same edge.
-			var req query.Request
+			var request query.Request
 			if err := json.Unmarshal([]byte(`{
 				"filter":  {"team.name": "core"},
 				"preload": ["team"],
 				"sort":    ["name"],
 				"unpaged": true
-			}`), &req); err != nil {
+			}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(GormMembers.Meta(), unpagedOK)
+			options, err := request.Compile(GormMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := members.GetAll(ctx, opts...)
+			got, err := members.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,18 +357,18 @@ func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			members := GormMembers.Bind(g.src)
+			members := GormMembers.Bind(g.source)
 
 			team := Team{Name: "core"}
-			if err := g.db.Create(&team).Error; err != nil {
+			if err := g.database.Create(&team).Error; err != nil {
 				t.Fatal(err)
 			}
 			ann := Member{TeamID: team.ID, Name: "Ann"}
 			bob := Member{TeamID: team.ID, Name: "Bob"}
-			if err := g.db.Create(&[]*Member{&ann, &bob}).Error; err != nil {
+			if err := g.database.Create(&[]*Member{&ann, &bob}).Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := g.db.Delete(&ann).Error; err != nil {
+			if err := g.database.Delete(&ann).Error; err != nil {
 				t.Fatal(err)
 			}
 
@@ -386,7 +386,7 @@ func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 				t.Fatalf("a caller widened the scope back open: %+v", all)
 			}
 			var raw int64
-			if err := g.db.Unscoped().Model(&Member{}).Count(&raw).Error; err != nil {
+			if err := g.database.Unscoped().Model(&Member{}).Count(&raw).Error; err != nil {
 				t.Fatal(err)
 			}
 			if raw != 2 {
@@ -402,10 +402,10 @@ func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 // mxEnt is one database reached both ways: through ent's client and through
 // vv's source.
 type mxEnt struct {
-	name    string
-	db      *sql.DB
-	dialect string
-	src     crud.Source
+	name     string
+	database *sql.DB
+	dialect  string
+	source   crud.Source
 }
 
 func mxEnts() []mxEnt {
@@ -421,9 +421,9 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 	for _, e := range mxEnts() {
 		t.Run(e.name, func(t *testing.T) {
 			ctx := context.Background()
-			truncate(t, e.db)
-			client := entClient(e.db, e.dialect)
-			users := EntUsers.Bind(e.src)
+			truncate(t, e.database)
+			client := entClient(e.database, e.dialect)
+			users := EntUsers.Bind(e.source)
 			sp := specs.Executor(users)
 
 			for i, name := range []string{"Ann", "Bob", "Cid"} {
@@ -434,16 +434,16 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 				}
 			}
 
-			var req query.Request
+			var request query.Request
 			if err := json.Unmarshal([]byte(
-				`{"filter":{"active":true,"age":{"gte":30}},"sort":["-age"],"page":1,"limit":10}`), &req); err != nil {
+				`{"filter":{"active":true,"age":{"gte":30}},"sort":["-age"],"page":1,"limit":10}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(EntUsers.Meta(), unpagedOK)
+			options, err := request.Compile(EntUsers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			page, err := users.Get(ctx, opts...)
+			page, err := users.Get(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -511,34 +511,34 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 // that makes it a usecase (compile the DSL, let the ORM own the transaction,
 // join it with crud.WithExecutor) is the same code on both engines.
 type mxTeamUsecase struct {
-	db      *gorm.DB
-	members *crud.Repo[Member, uint, MemberUpdate]
-	promote string
+	database *gorm.DB
+	members  *crud.Repo[Member, uint, MemberUpdate]
+	promote  string
 }
 
-func (uc mxTeamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *query.Request) (promoteResult, error) {
-	opts, err := req.Compile(uc.members.Meta(), unpagedOK)
+func (this mxTeamUsecase) PromoteMembers(ctx context.Context, teamID uint, request *query.Request) (promoteResult, error) {
+	options, err := request.Compile(this.members.Meta(), unpagedOK)
 	if err != nil {
 		return promoteResult{}, err
 	}
 
 	var out promoteResult
-	err = uc.db.Transaction(func(tx *gorm.DB) error {
+	err = this.database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
-		page, err := uc.members.Get(txCtx, append(opts, crud.Where(crud.Eq("TeamID", teamID)))...)
+		page, err := this.members.Get(txCtx, append(options, crud.Where(crud.Eq("TeamID", teamID)))...)
 		if err != nil {
 			return err
 		}
 		out.Matched = page.Total
 
 		if err := tx.Model(&Team{}).Where("id = ?", teamID).
-			Update("name", gorm.Expr(uc.promote)).Error; err != nil {
+			Update("name", gorm.Expr(this.promote)).Error; err != nil {
 			return err
 		}
 		for _, m := range page.Items {
 			renamed := "Sr. " + m.Name
-			updated, err := uc.members.Update(txCtx, m.ID, MemberUpdate{Name: &renamed})
+			updated, err := this.members.Update(txCtx, m.ID, MemberUpdate{Name: &renamed})
 			if err != nil {
 				return err
 			}
@@ -556,14 +556,14 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			uc := mxTeamUsecase{db: g.db, members: GormMembers.Bind(g.src), promote: g.promote}
+			uc := mxTeamUsecase{database: g.database, members: GormMembers.Bind(g.source), promote: g.promote}
 
 			team := Team{Name: "core"}
-			if err := g.db.Create(&team).Error; err != nil {
+			if err := g.database.Create(&team).Error; err != nil {
 				t.Fatal(err)
 			}
 			young, senior := 22, 41
-			if err := g.db.Create(&[]*Member{
+			if err := g.database.Create(&[]*Member{
 				{TeamID: team.ID, Name: "Ann", Age: &senior},
 				{TeamID: team.ID, Name: "Bob", Age: &young},
 				{TeamID: team.ID, Name: "Cid", Age: &senior},
@@ -571,12 +571,12 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var req query.Request
+			var request query.Request
 			if err := json.Unmarshal([]byte(
-				`{"filter":{"age":{"gte":30}},"sort":["name"],"limit":50}`), &req); err != nil {
+				`{"filter":{"age":{"gte":30}},"sort":["name"],"limit":50}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			got, err := uc.PromoteMembers(ctx, team.ID, &req)
+			got, err := uc.PromoteMembers(ctx, team.ID, &request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -586,14 +586,14 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 
 			// Both halves of the one transaction landed.
 			var reloaded Team
-			if err := g.db.First(&reloaded, team.ID).Error; err != nil {
+			if err := g.database.First(&reloaded, team.ID).Error; err != nil {
 				t.Fatal(err)
 			}
 			if reloaded.Name != "core (promoted)" {
 				t.Fatalf("the ORM's half of the transaction = %q", reloaded.Name)
 			}
 			var bob Member
-			if err := g.db.Where("name = ?", "Bob").First(&bob).Error; err != nil {
+			if err := g.database.Where("name = ?", "Bob").First(&bob).Error; err != nil {
 				t.Fatalf("a member outside the filter was renamed: %v", err)
 			}
 		})
@@ -622,12 +622,12 @@ func TestEntUsecaseDSLInsideTransactionOnMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var req query.Request
+	var request query.Request
 	if err := json.Unmarshal([]byte(
-		`{"filter":{"age":{"gte":33}},"sort":["email"],"limit":50}`), &req); err != nil {
+		`{"filter":{"age":{"gte":33}},"sort":["email"],"limit":50}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	got, err := uc.DeactivateUsers(ctx, 1, &req)
+	got, err := uc.DeactivateUsers(ctx, 1, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,17 +673,17 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
+			var request query.Request
 			if err := json.Unmarshal([]byte(
-				`{"preload":["author","tags"],"sort":["title"],"page":1,"limit":2}`), &req); err != nil {
+				`{"preload":["author","tags"],"sort":["title"],"page":1,"limit":2}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			first, err := b.articles.Get(ctx, opts...)
+			first, err := b.articles.Get(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -705,12 +705,12 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 				t.Fatalf("go generics has 2 tags, the preload found %d", n)
 			}
 
-			req.Page = 2
-			opts, err = req.Compile(Articles.Meta(), unpagedOK)
+			request.Page = 2
+			options, err = request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := b.articles.Get(ctx, opts...)
+			second, err := b.articles.Get(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -735,7 +735,7 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 // mxRelTarget is one database with the matrix-only relation on it.
 type mxRelTarget struct {
 	name   string
-	src    crud.Source
+	source crud.Source
 	owners *crud.Repo[MxOwner, int64, struct{}]
 	items  *crud.Repo[MxItem, int64, struct{}]
 }
@@ -744,17 +744,17 @@ func mxRelTargets(t *testing.T) []mxRelTarget {
 	t.Helper()
 	ctx := context.Background()
 	out := []mxRelTarget{
-		{name: "postgres", src: crudsql.Postgres(pgDB)},
-		{name: "mysql", src: crudsql.MySQL(myDB)},
+		{name: "postgres", source: crudsql.Postgres(pgDB)},
+		{name: "mysql", source: crudsql.MySQL(myDB)},
 	}
 	for i, stmts := range [][]string{schemaMatrixPostgres, schemaMatrixMySQL} {
 		for _, stmt := range stmts {
-			if _, err := out[i].src.Exec(ctx, stmt); err != nil {
+			if _, err := out[i].source.Exec(ctx, stmt); err != nil {
 				t.Fatalf("%s: %s: %v", out[i].name, stmt, err)
 			}
 		}
-		out[i].owners = MxOwners.Bind(out[i].src)
-		out[i].items = MxItems.Bind(out[i].src)
+		out[i].owners = MxOwners.Bind(out[i].source)
+		out[i].items = MxItems.Bind(out[i].source)
 	}
 	return out
 }
@@ -762,10 +762,10 @@ func mxRelTargets(t *testing.T) []mxRelTarget {
 // mxBulkInsert writes the fixture a few hundred rows per statement. The whole
 // point of this fixture is its size, and one INSERT per row would be the slowest
 // thing in the suite by an order of magnitude.
-func mxBulkInsert(t *testing.T, src crud.Source, table string, cols []string, rows [][]any) {
+func mxBulkInsert(t *testing.T, source crud.Source, table string, cols []string, rows [][]any) {
 	t.Helper()
 	ctx := context.Background()
-	d := src.Dialect()
+	d := source.Dialect()
 	for start := 0; start < len(rows); start += 200 {
 		end := min(start+200, len(rows))
 		var b strings.Builder
@@ -792,7 +792,7 @@ func mxBulkInsert(t *testing.T, src crud.Source, table string, cols []string, ro
 			b.WriteString(")")
 			args = append(args, rows[r]...)
 		}
-		if _, err := src.Exec(ctx, b.String(), args...); err != nil {
+		if _, err := source.Exec(ctx, b.String(), args...); err != nil {
 			t.Fatalf("seeding %s: %v", table, err)
 		}
 	}
@@ -824,8 +824,8 @@ func TestPreloadBatchesSpanTheChunkBoundary(t *testing.T) {
 			for i := 1; i <= extras; i++ {
 				items = append(items, []any{int64(mxOwnerCount + i), int64(1), fmt.Sprintf("extra-%d", i)})
 			}
-			mxBulkInsert(t, tg.src, "mx_owners", []string{"id", "name"}, owners)
-			mxBulkInsert(t, tg.src, "mx_items", []string{"id", "owner_id", "label"}, items)
+			mxBulkInsert(t, tg.source, "mx_owners", []string{"id", "name"}, owners)
+			mxBulkInsert(t, tg.source, "mx_items", []string{"id", "owner_id", "label"}, items)
 
 			// has_many, from the side with more keys than one batch holds.
 			gotOwners, err := tg.owners.GetAll(ctx, crud.Preload("Items"), crud.OrderBy(crud.Asc("ID")))

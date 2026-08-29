@@ -47,34 +47,34 @@ func linkConfig(config *Config) (*url.URL, []byte, time.Duration, error) {
 	return parsed, key, maxTTL, nil
 }
 
-func (b *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, opts storage.TemporaryURLOptions) (storage.Link, error) {
+func (this *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.TemporaryURLOptions) (storage.Link, error) {
 	if err := contextError(ctx); err != nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindCancelled, err)
 	}
-	if b == nil || b.baseURL == nil {
+	if this == nil || this.baseURL == nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindUnsupported, fmt.Errorf("filesystem link signer is not configured"))
 	}
-	ttl := opts.ExpiresIn
+	ttl := options.ExpiresIn
 	if ttl == 0 {
 		ttl = storage.DefaultTemporaryURLTTL
 	}
-	if ttl < time.Second || ttl > b.maxLinkTTL || ttl%time.Second != 0 {
+	if ttl < time.Second || ttl > this.maxLinkTTL || ttl%time.Second != 0 {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInvalid, fmt.Errorf("temporary URL expiry exceeds filesystem policy"))
 	}
-	expiresAt := b.now().UTC().Add(ttl)
+	expiresAt := this.now().UTC().Add(ttl)
 	expiry := strconv.FormatInt(expiresAt.UnixNano(), 10)
-	copyURL := *b.baseURL
+	copyURL := *this.baseURL
 	query := make(url.Values, 4)
 	query.Set("namespace", namespace.Value())
 	query.Set("key", key.Value())
 	query.Set("expires", expiry)
-	query.Set("token", b.sign(namespace.Value(), key.Value(), expiry))
+	query.Set("token", this.sign(namespace.Value(), key.Value(), expiry))
 	copyURL.RawQuery = query.Encode()
 	return storage.NewLink(copyURL.String(), expiresAt)
 }
 
-func (b *Backend) sign(namespace, key, expiry string) string {
-	mac := hmac.New(sha256.New, b.signingKey)
+func (this *Backend) sign(namespace, key, expiry string) string {
+	mac := hmac.New(sha256.New, this.signingKey)
 	_, _ = mac.Write([]byte(namespace))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write([]byte(key))
@@ -83,9 +83,9 @@ func (b *Backend) sign(namespace, key, expiry string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (b *Backend) linkHandler() http.Handler {
+func (this *Backend) linkHandler() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if b == nil || b.baseURL == nil {
+		if this == nil || this.baseURL == nil {
 			http.NotFound(response, request)
 			return
 		}
@@ -94,16 +94,16 @@ func (b *Backend) linkHandler() http.Handler {
 			http.Error(response, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 			return
 		}
-		if request.URL.Path != b.baseURL.Path {
+		if request.URL.Path != this.baseURL.Path {
 			http.NotFound(response, request)
 			return
 		}
-		if !strings.EqualFold(request.Host, b.baseURL.Host) {
+		if !strings.EqualFold(request.Host, this.baseURL.Host) {
 			http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
 		namespaceRaw, keyRaw, expiryRaw, token, ok := signedQuery(request.URL.Query())
-		if !ok || !b.validSignature(namespaceRaw, keyRaw, expiryRaw, token) {
+		if !ok || !this.validSignature(namespaceRaw, keyRaw, expiryRaw, token) {
 			http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -112,13 +112,13 @@ func (b *Backend) linkHandler() http.Handler {
 			http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		now := b.now().UTC()
+		now := this.now().UTC()
 		expiresAt := time.Unix(0, expiryNanos).UTC()
 		if !now.Before(expiresAt) {
 			http.Error(response, http.StatusText(http.StatusGone), http.StatusGone)
 			return
 		}
-		if expiresAt.Sub(now) > b.maxLinkTTL {
+		if expiresAt.Sub(now) > this.maxLinkTTL {
 			http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -132,7 +132,7 @@ func (b *Backend) linkHandler() http.Handler {
 			http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		body, info, err := b.Open(request.Context(), namespace, key)
+		body, info, err := this.Open(request.Context(), namespace, key)
 		if err != nil {
 			writeLinkError(response, err)
 			return
@@ -157,12 +157,12 @@ func (b *Backend) linkHandler() http.Handler {
 	})
 }
 
-func (b *Backend) validSignature(namespace, key, expiry, token string) bool {
+func (this *Backend) validSignature(namespace, key, expiry, token string) bool {
 	provided, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(provided) != sha256.Size {
 		return false
 	}
-	expected, err := base64.RawURLEncoding.DecodeString(b.sign(namespace, key, expiry))
+	expected, err := base64.RawURLEncoding.DecodeString(this.sign(namespace, key, expiry))
 	return err == nil && hmac.Equal(provided, expected)
 }
 

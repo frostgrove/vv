@@ -48,8 +48,8 @@ func DSN(c *Config) (string, error) {
 //
 // The whole string goes through net/url, which is the only reason a password
 // containing '@' or '/' reaches the server intact.
-func PostgresDSN(cfg *Config) (string, error) {
-	c, dsn, err := prepare(cfg, Postgres)
+func PostgresDSN(config *Config) (string, error) {
+	c, dsn, err := prepare(config, Postgres)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
@@ -134,8 +134,8 @@ func MySQLDSN(c *Config) (string, error) { return mysqlish(c, MySQL) }
 // should have somewhere to be written.
 func MariaDBDSN(c *Config) (string, error) { return mysqlish(c, MariaDB) }
 
-func mysqlish(cfg *Config, e Engine) (string, error) {
-	c, dsn, err := prepare(cfg, e)
+func mysqlish(config *Config, e Engine) (string, error) {
+	c, dsn, err := prepare(config, e)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}
@@ -198,8 +198,8 @@ func mysqlish(cfg *Config, e Engine) (string, error) {
 // SQLiteDSN builds `file:path?...`. There is no server, so there is no host,
 // no user and no TLS — [Config.Validate] refuses all three rather than
 // dropping them.
-func SQLiteDSN(cfg *Config) (string, error) {
-	c, dsn, err := prepare(cfg, SQLite)
+func SQLiteDSN(config *Config) (string, error) {
+	c, dsn, err := prepare(config, SQLite)
 	if err != nil || dsn != "" {
 		return dsn, err
 	}

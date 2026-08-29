@@ -17,14 +17,14 @@ import (
 )
 
 // render is what most tests here measure: the status a client would read.
-func render(t *testing.T, err error, opts ...RenderOption) *status.Status {
+func render(t *testing.T, err error, options ...RenderOption) *status.Status {
 	t.Helper()
-	return renderCtx(t, context.Background(), err, opts...)
+	return renderCtx(t, context.Background(), err, options...)
 }
 
-func renderCtx(t *testing.T, ctx context.Context, err error, opts ...RenderOption) *status.Status {
+func renderCtx(t *testing.T, ctx context.Context, err error, options ...RenderOption) *status.Status {
 	t.Helper()
-	st := NewRenderer(opts...).Render(ctx, err)
+	st := NewRenderer(options...).Render(ctx, err)
 	if st == nil {
 		t.Fatal("the renderer answered no status for an error")
 	}
@@ -507,7 +507,7 @@ func secretsOf(e *sqlerr.Err) map[string]string {
 // adapters use, so what is rendered is what a caller would actually be handed.
 func faultFromCorpus(t *testing.T, engine string, tc sqlerr.Case) error {
 	t.Helper()
-	code, src, ok := sqlerr.Classify(engine, tc.Err)
+	code, source, ok := sqlerr.Classify(engine, tc.Err)
 	if !ok {
 		// An entry the parsers refuse still reaches a client, as the Internal
 		// status that says nothing. Rendering it is worth doing: the leak would
@@ -515,21 +515,21 @@ func faultFromCorpus(t *testing.T, engine string, tc sqlerr.Case) error {
 		return fmt.Errorf("%s", tc.Err.Message)
 	}
 	kind, _ := errs.StandardCodes().KindOf(code)
-	return errs.New(kind).Code(code).Op("Save").Entity(src.Table).
-		General().Code(code).Origin(errs.OriginState).Source(src).
+	return errs.New(kind).Code(code).Op("Save").Entity(source.Table).
+		General().Code(code).Origin(errs.OriginState).Source(source).
 		Detail(errs.Detail{
 			Dialect:    engine,
 			SQLState:   tc.Err.SQLState,
 			Native:     int(tc.Err.Native),
-			Constraint: src.Constraint,
-			Table:      src.Table,
-			Columns:    src.Columns,
+			Constraint: source.Constraint,
+			Table:      source.Table,
+			Columns:    source.Columns,
 			Value:      tc.Err.Fields["Detail"],
 			Driver:     fmt.Errorf("%s", tc.Err.Message),
 		}).
 		// The two channels a renderer could copy into a status without ever
 		// touching err.Error(), and the ones [[D-044]] owed an extension to.
-		Params(errs.P{"constraint": src.Constraint, "table": src.Table}).
+		Params(errs.P{"constraint": source.Constraint, "table": source.Table}).
 		Wrapping(fmt.Errorf("%s", tc.Err.Message)).
 		Fault()
 }

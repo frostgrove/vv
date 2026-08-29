@@ -20,7 +20,7 @@ func TestPgx(t *testing.T) {
 func TestPgxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repo := Users.Bind(crudpgx.Open(pgPool))
+	repository := Users.Bind(crudpgx.Open(pgPool))
 
 	tx, err := pgPool.Begin(ctx)
 	if err != nil {
@@ -29,7 +29,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
 
 	u := User{TenantID: 1, Email: "pgx-tx@x.io", Name: "Joined"}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	// A raw pgx statement in the same transaction sees the row vv wrote.
@@ -44,7 +44,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	if _, err := tx.Exec(ctx, "UPDATE users SET name = 'ByPgx' WHERE id = $1", u.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(txCtx, u.ID)
+	got, err := repository.GetByID(txCtx, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,14 @@ func TestPgxSharedTransaction(t *testing.T) {
 		t.Fatalf("github.com/frostgrove/vv read back %q", got.Name)
 	}
 	// Outside the transaction the row does not exist yet.
-	if _, err := repo.GetByID(ctx, u.ID); !errors.Is(err, crud.ErrNotFound) {
+	if _, err := repository.GetByID(ctx, u.ID); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v: the write leaked out of the transaction", err)
 	}
 
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.Count(ctx); err != nil || n != 0 {
+	if n, err := repository.Count(ctx); err != nil || n != 0 {
 		t.Fatalf("count = %d err = %v: the rollback did not take", n, err)
 	}
 }
@@ -69,12 +69,12 @@ func TestPgxSharedTransaction(t *testing.T) {
 func TestPgxNestedSavepoint(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	src := crudpgx.Open(pgPool)
-	repo := Users.Bind(src)
+	source := crudpgx.Open(pgPool)
+	repository := Users.Bind(source)
 
-	err := crud.InTx(ctx, src, func(ctx context.Context) error {
+	err := crud.InTx(ctx, source, func(ctx context.Context) error {
 		outer := User{TenantID: 1, Email: "outer@x.io", Name: "outer"}
-		if err := repo.Save(ctx, &outer); err != nil {
+		if err := repository.Save(ctx, &outer); err != nil {
 			return err
 		}
 		inner, _ := crud.ExecutorFrom(ctx)
@@ -84,7 +84,7 @@ func TestPgxNestedSavepoint(t *testing.T) {
 		}
 		spCtx := crud.WithExecutor(ctx, sp)
 		doomed := User{TenantID: 1, Email: "doomed@x.io", Name: "doomed"}
-		if err := repo.Save(spCtx, &doomed); err != nil {
+		if err := repository.Save(spCtx, &doomed); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)
@@ -93,7 +93,7 @@ func TestPgxNestedSavepoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, err := repo.GetAll(ctx)
+	all, err := repository.GetAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +106,9 @@ func TestPgxNestedSavepoint(t *testing.T) {
 func TestPgxBulkCopy(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	src := crudpgx.Open(pgPool)
+	source := crudpgx.Open(pgPool)
 
-	bulk, ok := any(src).(crud.BulkInserter)
+	bulk, ok := any(source).(crud.BulkInserter)
 	if !ok {
 		t.Fatal("the pgx adapter should implement crud.BulkInserter")
 	}
@@ -123,7 +123,7 @@ func TestPgxBulkCopy(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("copied %d rows", n)
 	}
-	if got, err := Users.Bind(src).Count(ctx); err != nil || got != 2 {
+	if got, err := Users.Bind(source).Count(ctx); err != nil || got != 2 {
 		t.Fatalf("count = %d err = %v", got, err)
 	}
 }

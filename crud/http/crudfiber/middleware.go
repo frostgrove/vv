@@ -18,10 +18,10 @@ import (
 // produces a corrupt one. And it is safe to install twice — once on the app and
 // once on a group is the ordinary way that happens; the inner copy renders and
 // returns nil, so the outer copy has nothing to render.
-func Errors(opts ...crudhttp.RenderOption) fiber.Handler {
+func Errors(options ...crudhttp.RenderOption) fiber.Handler {
 	rd := crudhttp.Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = crudhttp.NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
 	}
 	return func(c fiber.Ctx) (err error) {
 		defer func() {
@@ -54,10 +54,10 @@ func Errors(opts ...crudhttp.RenderOption) fiber.Handler {
 //
 // Every handler in the app then answers failures the way the CRUD routes do,
 // with nothing wrapped around anything.
-func ErrorHandler(opts ...crudhttp.RenderOption) fiber.ErrorHandler {
+func ErrorHandler(options ...crudhttp.RenderOption) fiber.ErrorHandler {
 	rd := crudhttp.Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = crudhttp.NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
 	}
 	return func(c fiber.Ctx, err error) error {
 		if len(c.Response().Body()) > 0 {

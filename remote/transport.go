@@ -108,17 +108,17 @@ type PartialResultError struct {
 	Total    int64
 }
 
-func (e *PartialResultError) Error() string {
-	return fmt.Sprintf("%v: received %d of %d rows", ErrPartialResult, e.Received, e.Total)
+func (this *PartialResultError) Error() string {
+	return fmt.Sprintf("%v: received %d of %d rows", ErrPartialResult, this.Received, this.Total)
 }
 
-func (e *PartialResultError) Unwrap() error { return ErrPartialResult }
+func (this *PartialResultError) Unwrap() error { return ErrPartialResult }
 
-func (e *ProtocolError) Error() string {
-	s := "remote: " + string(e.Method) + " " + e.Where + " answered " + e.Status +
+func (this *ProtocolError) Error() string {
+	s := "remote: " + string(this.Method) + " " + this.Where + " answered " + this.Status +
 		", which is not this library speaking"
-	if e.Body != "" {
-		s += ": " + e.Body
+	if this.Body != "" {
+		s += ": " + this.Body
 	}
 	return s
 }

@@ -51,8 +51,8 @@ type seen struct {
 	found     bool
 }
 
-func (s *seen) handle(c fiber.Ctx) error {
-	s.ran = true
-	s.principal, s.found = auth.PrincipalFrom(c.Context())
+func (this *seen) handle(c fiber.Ctx) error {
+	this.ran = true
+	this.principal, this.found = auth.PrincipalFrom(c.Context())
 	return c.SendString("ok")
 }

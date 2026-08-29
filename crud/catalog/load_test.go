@@ -63,8 +63,8 @@ func TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog(t *testin
 	// of oneTable()'s three result sets have a row and one has none, so both
 	// shapes of a truncated read are walked.
 	for _, how := range []struct {
-		name string
-		res  func(crudtest.Result) crudtest.Result
+		name     string
+		response func(crudtest.Result) crudtest.Result
 	}{
 		{"refused by Query", func(crudtest.Result) crudtest.Result {
 			return crudtest.Result{Err: blocked}
@@ -78,9 +78,9 @@ func TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog(t *testin
 				ctx := context.Background()
 				rec := crudtest.Postgres()
 				s := oneTable()
-				res := s.results()
-				res[k] = how.res(res[k])
-				rec.Push(res...)
+				response := s.results()
+				response[k] = how.response(response[k])
+				rec.Push(response...)
 
 				cat, err := Load(ctx, rec)
 				if !errors.Is(err, ErrIntrospection) {

@@ -96,8 +96,8 @@ const (
 
 // String is total: an unrecognised kind renders as internal, so a value that
 // escaped its own table cannot be rendered as something a client may act on.
-func (k Kind) String() string {
-	switch k {
+func (this Kind) String() string {
+	switch this {
 	case KindNotFound:
 		return "not_found"
 	case KindUnauthorized:
@@ -122,6 +122,6 @@ func (k Kind) String() string {
 // MarshalJSON is on the value receiver, like every other renderer here: a
 // pointer receiver is bypassed when the value is marshalled as a field, a map
 // entry or on its own. See [Violation.MarshalJSON].
-func (k Kind) MarshalJSON() ([]byte, error) {
-	return []byte(strconv.Quote(k.String())), nil
+func (this Kind) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(this.String())), nil
 }

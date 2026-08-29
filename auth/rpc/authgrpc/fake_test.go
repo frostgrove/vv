@@ -47,9 +47,9 @@ type seen struct {
 	found     bool
 }
 
-func (s *seen) handle(ctx context.Context, _ any) (any, error) {
-	s.ran = true
-	s.principal, s.found = auth.PrincipalFrom(ctx)
+func (this *seen) handle(ctx context.Context, _ any) (any, error) {
+	this.ran = true
+	this.principal, this.found = auth.PrincipalFrom(ctx)
 	return "ok", nil
 }
 

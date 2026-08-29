@@ -28,9 +28,9 @@ func TestTheCauseIsFiledWithGinsErrorBag(t *testing.T) {
 	r.Use(authgin.Middleware(auth.NewGuard(refuses())))
 	r.GET("/articles", h.handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
-	req.Header.Set("Authorization", "Bearer forged")
-	r.ServeHTTP(httptest.NewRecorder(), req)
+	request := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	request.Header.Set("Authorization", "Bearer forged")
+	r.ServeHTTP(httptest.NewRecorder(), request)
 
 	if filed == 0 {
 		t.Fatal("the refusal was not filed with c.Error, so Gin's logger sees nothing at all")

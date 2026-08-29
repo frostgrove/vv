@@ -31,9 +31,9 @@ type wireViolation struct {
 
 // path renders the field array the dotted way, so a test can say
 // "filter.Price" instead of building a slice.
-func (v wireViolation) path() string {
+func (this wireViolation) path() string {
 	var b strings.Builder
-	for i, step := range v.Field {
+	for i, step := range this.Field {
 		if n, ok := step.(float64); ok {
 			fmt.Fprintf(&b, "[%d]", int(n))
 			continue
@@ -381,8 +381,8 @@ func TestStatusMapsWhatItPromisesTo(t *testing.T) {
 // the statement runs, and it matches no rows.
 type deletesNothing struct{ *fakeRepo }
 
-func (d deletesNothing) Delete(ctx context.Context, ids ...int64) (int64, error) {
-	_, err := d.fakeRepo.Delete(ctx, ids...)
+func (this deletesNothing) Delete(ctx context.Context, ids ...int64) (int64, error) {
+	_, err := this.fakeRepo.Delete(ctx, ids...)
 	return 0, err
 }
 
@@ -478,7 +478,7 @@ type pathService struct {
 	fields port.Fields
 }
 
-func (s *pathService) Paths() errs.Resolver { return s.fields }
+func (this *pathService) Paths() errs.Resolver { return this.fields }
 
 // The service's hop of the path chain reaches the rendered body: a violation
 // the repository raised at a model field arrives as the key the client actually
@@ -490,11 +490,11 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 		fake := newFake()
 		fake.err = errs.Conflict().Code(errs.CodeUnique).
 			Field(field).Code(errs.CodeUnique).Fault()
-		svc := &pathService{
+		service := &pathService{
 			DefaultService: port.NewService[Widget, int64, WidgetUpdate](fake),
 			fields:         port.Fields{"Name": errs.Path{errs.Named("label")}},
 		}
-		app := mountHandler(ServingFor(Service[Widget, int64, WidgetUpdate](svc), widgetMapper{}))
+		app := mountHandler(ServingFor(Service[Widget, int64, WidgetUpdate](service), widgetMapper{}))
 		r := do(t, app, http.MethodPost, "/widgets", `{"label":"bolt","price":250}`)
 		if r.status != http.StatusConflict {
 			t.Fatalf("a duplicate key answered %d, want 409: %s", r.status, r.body)

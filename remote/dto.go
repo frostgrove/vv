@@ -38,11 +38,11 @@ func checkPatchable(u reflect.Type) error {
 		if !f.IsExported() || crud.OptElem(f.Type) == nil {
 			continue
 		}
-		name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "-" && opts == "" {
+		name, options, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" && options == "" {
 			continue // never sent, so never wrong
 		}
-		if !hasOpt(opts, "omitzero") {
+		if !hasOpt(options, "omitzero") {
 			return fmt.Errorf(
 				"remote: %s.%s is a crud.Opt with no `omitzero` in its json tag, "+
 					"so a patch that leaves it undefined would arrive as an explicit null "+

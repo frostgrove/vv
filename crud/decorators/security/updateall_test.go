@@ -89,8 +89,8 @@ func TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt(t *testing.T) {
 // must not be able to make a policy's unscoped-write guard think there is one.
 func TestATautologicalFilterDoesNotPermitAnUnscopedUpdateAll(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
-	repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
-	_, err := repo.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
+	repository := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
+	_, err := repository.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
 		crud.Where(crud.NotInAny("ID", []int64{})))
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
@@ -101,8 +101,8 @@ func TestATautologicalFilterDoesNotPermitAnUnscopedUpdateAll(t *testing.T) {
 }
 
 func TestASameFieldComparisonDoesNotPermitAnUnscopedBulkWrite(t *testing.T) {
-	repo := Docs.Bind(crudtest.Postgres(), security.Gate(security.Freeze[Doc, int64]("TenantID")))
-	_, err := repo.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
+	repository := Docs.Bind(crudtest.Postgres(), security.Gate(security.Freeze[Doc, int64]("TenantID")))
+	_, err := repository.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
 		crud.Where(crud.EqField("ID", "id")))
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want an unscoped bulk-write denial", err)
@@ -122,12 +122,12 @@ func TestATautologicalPolicyScopeDoesNotPermitBulkWrites(t *testing.T) {
 		name string
 		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
-		{"UpdateAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-			_, err := repo.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")})
+		{"UpdateAll", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+			_, err := repository.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")})
 			return err
 		}},
-		{"DeleteAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-			_, err := repo.DeleteAll(context.Background())
+		{"DeleteAll", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+			_, err := repository.DeleteAll(context.Background())
 			return err
 		}},
 	} {
@@ -164,9 +164,9 @@ func TestUpdateAllRefusesAFrozenField(t *testing.T) {
 // A read-only repository has no filtered write either.
 func TestUpdateAllIsRefusedByAReadOnlyPolicy(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
-	repo := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()))
+	repository := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()))
 
-	if _, err := repo.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
+	if _, err := repository.UpdateAll(context.Background(), DocUpdate{Title: ptrTo("x")},
 		crud.Where(crud.Eq("Body", "y"))); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
@@ -192,9 +192,9 @@ func TestUpdateAllInspectsEveryRowItIsAboutToWrite(t *testing.T) {
 			return nil
 		},
 	}
-	repo := sqlrepo.Define[Doc, int64, DocUpdate]("docs").Bind(rec, security.Gate(policy))
+	repository := sqlrepo.Define[Doc, int64, DocUpdate]("docs").Bind(rec, security.Gate(policy))
 
-	_, err := repo.UpdateAll(ctx, DocUpdate{Title: ptrTo("x")}, crud.Where(crud.Eq("Body", "body")))
+	_, err := repository.UpdateAll(ctx, DocUpdate{Title: ptrTo("x")}, crud.Where(crud.Eq("Body", "body")))
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v: Inspect refused a row and the update went ahead anyway", err)
 	}
@@ -220,16 +220,16 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 	}{
 		{
 			name: "UpdateAll",
-			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				_, err := repo.UpdateAll(ctx, DocUpdate{Title: ptrTo("x")},
+			call: func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				_, err := repository.UpdateAll(ctx, DocUpdate{Title: ptrTo("x")},
 					crud.Where(crud.Eq("Body", "body")), crud.Limit(1), crud.After("ignored"), crud.Preload("Comments"))
 				return err
 			},
 		},
 		{
 			name: "DeleteAll",
-			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				_, err := repo.DeleteAll(ctx,
+			call: func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				_, err := repository.DeleteAll(ctx,
 					crud.Where(crud.Eq("Body", "body")), crud.Limit(1), crud.After("ignored"), crud.Preload("Comments"))
 				return err
 			},
@@ -238,7 +238,7 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			seen := 0
 			rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "one"), docRow(2, 7, "sealed")))
-			repo := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{
+			repository := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{
 				Inspect: func(_ context.Context, _ security.Action, d *Doc) error {
 					seen++
 					if d.Title == "sealed" {
@@ -248,7 +248,7 @@ func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 				},
 			}))
 
-			if err := tc.call(repo); !errors.Is(err, security.ErrForbidden) {
+			if err := tc.call(repository); !errors.Is(err, security.ErrForbidden) {
 				t.Fatalf("err = %v, want ErrForbidden", err)
 			}
 			if seen != 2 {

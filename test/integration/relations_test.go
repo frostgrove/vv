@@ -22,8 +22,8 @@ import (
 // blog is one database's worth of bound repositories.
 type blog struct {
 	name     string
-	db       *sql.DB
-	src      crud.Source
+	database *sql.DB
+	source   crud.Source
 	articles *crud.Repo[Article, int64, ArticleUpdate]
 	authors  *crud.Repo[Author, int64, struct{}]
 	comments *crud.Repo[Comment, int64, CommentUpdate]
@@ -49,16 +49,16 @@ func blogs(t *testing.T) []blog {
 
 // newBlog binds every repository in the fixture. Building one by hand is how a
 // test ends up with a nil repository the day the fixture grows another model.
-func newBlog(name string, db *sql.DB, src crud.Source) blog {
+func newBlog(name string, database *sql.DB, source crud.Source) blog {
 	return blog{
 		name:     name,
-		db:       db,
-		src:      src,
-		articles: Articles.Bind(src),
-		authors:  Authors.Bind(src),
-		comments: Comments.Bind(src),
-		tags:     Tags.Bind(src),
-		stats:    Stats.Bind(src),
+		database: database,
+		source:   source,
+		articles: Articles.Bind(source),
+		authors:  Authors.Bind(source),
+		comments: Comments.Bind(source),
+		tags:     Tags.Bind(source),
+		stats:    Stats.Bind(source),
 	}
 }
 
@@ -71,7 +71,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{"article_stats", "article_tags", "comments", "articles", "authors", "tags"} {
-		if _, err := b.db.Exec("DELETE FROM " + stmt); err != nil {
+		if _, err := b.database.Exec("DELETE FROM " + stmt); err != nil {
 			t.Fatalf("%s: reset %s: %v", b.name, stmt, err)
 		}
 	}
@@ -103,7 +103,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	for _, link := range [][2]int64{
 		{generics.ID, goTag.ID}, {generics.ID, rustTag.ID}, {traits.ID, rustTag.ID},
 	} {
-		if _, err := b.src.Exec(ctx,
+		if _, err := b.source.Exec(ctx,
 			insertPair(b.name, "article_tags", "article_id", "tag_id"), link[0], link[1]); err != nil {
 			t.Fatal(err)
 		}
@@ -195,16 +195,16 @@ func TestNestedFiltersAgainstDatabases(t *testing.T) {
 					[]string{"go generics", "rust traits"}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					var req query.Request
-					if err := json.Unmarshal([]byte(tc.doc), &req); err != nil {
+					var request query.Request
+					if err := json.Unmarshal([]byte(tc.doc), &request); err != nil {
 						t.Fatal(err)
 					}
-					req.Unpaged = true
-					opts, err := req.Compile(Articles.Meta(), unpagedOK)
+					request.Unpaged = true
+					options, err := request.Compile(Articles.Meta(), unpagedOK)
 					if err != nil {
 						t.Fatal(err)
 					}
-					got, err := b.articles.GetAll(ctx, opts...)
+					got, err := b.articles.GetAll(ctx, options...)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -225,13 +225,13 @@ func TestToManyFilterDoesNotDuplicateOrInflateCount(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
-			_ = json.Unmarshal([]byte(`{"filter":{"tags.slug":{"in":["go","rust"]}},"limit":10}`), &req)
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			var request query.Request
+			_ = json.Unmarshal([]byte(`{"filter":{"tags.slug":{"in":["go","rust"]}},"limit":10}`), &request)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			page, err := b.articles.Get(ctx, opts...)
+			page, err := b.articles.Get(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -239,7 +239,7 @@ func TestToManyFilterDoesNotDuplicateOrInflateCount(t *testing.T) {
 				t.Fatalf("items=%d total=%d, want 2/2 — a join would have said 3",
 					len(page.Items), page.Total)
 			}
-			n, err := b.articles.Count(ctx, opts...)
+			n, err := b.articles.Count(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -256,16 +256,16 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
-			_ = json.Unmarshal([]byte(`{"sort":["author.name","-views"],"unpaged":true}`), &req)
+			var request query.Request
+			_ = json.Unmarshal([]byte(`{"sort":["author.name","-views"],"unpaged":true}`), &request)
 			// The endpoint declares AllowUnpaged: this route serves whole
 			// result sets, which is a thing an endpoint says rather than a
 			// thing a request may decide for it ([[D-060]]).
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.articles.GetAll(ctx, opts...)
+			got, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -280,11 +280,11 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			// that have one.
 			var byWords query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["-stats.wordCount"],"filter":{"stats.wordCount":{"gt":0}},"unpaged":true}`), &byWords)
-			opts, err = byWords.Compile(Articles.Meta(), unpagedOK)
+			options, err = byWords.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			ranked, err := b.articles.GetAll(ctx, opts...)
+			ranked, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,11 +295,11 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			// Sorting through a to-many has no single value and is refused.
 			var bad query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["comments.body"]}`), &bad)
-			opts, err = bad.Compile(Articles.Meta(), unpagedOK)
+			options, err = bad.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := b.articles.GetAll(ctx, opts...); err == nil {
+			if _, err := b.articles.GetAll(ctx, options...); err == nil {
 				t.Fatal("sorting through a has_many should fail")
 			}
 		})
@@ -331,7 +331,7 @@ func TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime(t *testing.T) {
 				t.Fatalf("%d stats rows, want the two this test is about", len(first))
 			}
 
-			spy := egWatch(b.src)
+			spy := egWatch(b.source)
 			articles := Articles.Bind(spy)
 			for i := range 3 {
 				got, err := articles.GetByID(ctx, generics.ID, crud.Preload("Stats"))
@@ -370,17 +370,17 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 			ctx := context.Background()
 			_, _, generics, draft, _ := seedBlog(t, b)
 
-			var req query.Request
+			var request query.Request
 			_ = json.Unmarshal([]byte(
-				`{"preload":["author","stats","tags","comments.author"],"sort":["title"],"unpaged":true}`), &req)
+				`{"preload":["author","stats","tags","comments.author"],"sort":["title"],"unpaged":true}`), &request)
 			// The endpoint declares AllowUnpaged: this route serves whole
 			// result sets, which is a thing an endpoint says rather than a
 			// thing a request may decide for it ([[D-060]]).
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.articles.GetAll(ctx, opts...)
+			got, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -460,20 +460,20 @@ func TestFilteredPreloadAgainstDatabases(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
+			var request query.Request
 			_ = json.Unmarshal([]byte(`{
 				"preload": [{"path":"comments","filter":{"approved":true},"sort":["body"]}],
 				"filter":  {"title":"go generics"},
 				"unpaged": true
-			}`), &req)
+			}`), &request)
 			// The endpoint declares AllowUnpaged: this route serves whole
 			// result sets, which is a thing an endpoint says rather than a
 			// thing a request may decide for it ([[D-060]]).
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.articles.GetAll(ctx, opts...)
+			got, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -494,13 +494,13 @@ func TestReverseRelation(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
-			_ = json.Unmarshal([]byte(`{"filter":{"articles.views":{"gte":100}},"preload":["articles"]}`), &req)
-			opts, err := req.Compile(Authors.Meta(), unpagedOK)
+			var request query.Request
+			_ = json.Unmarshal([]byte(`{"filter":{"articles.views":{"gte":100}},"preload":["articles"]}`), &request)
+			options, err := request.Compile(Authors.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.authors.GetAll(ctx, opts...)
+			got, err := b.authors.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -522,21 +522,21 @@ func TestSearchDoesNotEscapeItsScope(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			var req query.Request
+			var request query.Request
 			_ = json.Unmarshal([]byte(`{
 				"filter":  {"publishedAt": {"isNotNull": true}},
 				"search":  "generics",
 				"searchFields": ["title", "body"],
 				"unpaged": true
-			}`), &req)
+			}`), &request)
 			// The endpoint declares AllowUnpaged: this route serves whole
 			// result sets, which is a thing an endpoint says rather than a
 			// thing a request may decide for it ([[D-060]]).
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.articles.GetAll(ctx, opts...)
+			got, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -553,7 +553,7 @@ func TestQueryStringAgainstDatabases(t *testing.T) {
 			ctx := context.Background()
 			seedBlog(t, b)
 
-			req, err := query.ParseQuery(values(
+			request, err := query.ParseQuery(values(
 				"f=views:gte:50", "f=tags.slug:in:go,rust", "sort=-views", "preload=author", "unpaged=1"))
 			if err != nil {
 				t.Fatal(err)
@@ -561,11 +561,11 @@ func TestQueryStringAgainstDatabases(t *testing.T) {
 			// The endpoint declares AllowUnpaged: this route serves whole
 			// result sets, which is a thing an endpoint says rather than a
 			// thing a request may decide for it ([[D-060]]).
-			opts, err := req.Compile(Articles.Meta(), unpagedOK)
+			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := b.articles.GetAll(ctx, opts...)
+			got, err := b.articles.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -26,11 +26,11 @@ import "github.com/frostgrove/vv/errs"
 type Fields map[string]errs.Path
 
 // Resolve implements errs.Resolver.
-func (f Fields) Resolve(p errs.Path) (errs.Path, bool) {
-	if len(f) == 0 || len(p) == 0 || p[0].IsIndex {
+func (this Fields) Resolve(p errs.Path) (errs.Path, bool) {
+	if len(this) == 0 || len(p) == 0 || p[0].IsIndex {
 		return p, true
 	}
-	to, ok := f[p[0].Name]
+	to, ok := this[p[0].Name]
 	if !ok {
 		return p, true
 	}
@@ -50,10 +50,10 @@ func (f Fields) Resolve(p errs.Path) (errs.Path, bool) {
 // A binding wires these ahead of the raw-body fallback, so a declared mapping
 // always beats a guess ([[D-043]]). An empty result is the ordinary case and
 // means the binding keeps its shared default renderer.
-func Hops[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver {
+func Hops[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver {
 	var out []errs.Resolver
-	if svc != nil {
-		if r := svc.Paths(); r != nil {
+	if service != nil {
+		if r := service.Paths(); r != nil {
 			out = append(out, r)
 		}
 	}

@@ -31,8 +31,8 @@ type pgconnish struct {
 	Position int32
 }
 
-func (e *pgconnish) Error() string    { return e.Message }
-func (e *pgconnish) SQLState() string { return e.Code }
+func (this *pgconnish) Error() string    { return this.Message }
+func (this *pgconnish) SQLState() string { return this.Code }
 
 func pgish(state string) *pgconnish {
 	return &pgconnish{Code: state, Message: "ERROR: something the server said"}
@@ -46,10 +46,10 @@ type mysqlish struct {
 	Message  string
 }
 
-func (e *mysqlish) Error() string { return e.Message }
+func (this *mysqlish) Error() string { return this.Message }
 
-func myish(number uint16, state, msg string) *mysqlish {
-	e := &mysqlish{Number: number, Message: msg}
+func myish(number uint16, state, message string) *mysqlish {
+	e := &mysqlish{Number: number, Message: message}
 	copy(e.SQLState[:], state)
 	return e
 }
@@ -58,8 +58,8 @@ func myish(number uint16, state, msg string) *mysqlish {
 // exported field for anything.
 type sqliteish struct{ code int }
 
-func (e *sqliteish) Error() string { return "constraint failed" }
-func (e *sqliteish) Code() int     { return e.code }
+func (this *sqliteish) Error() string { return "constraint failed" }
+func (this *sqliteish) Code() int     { return this.code }
 
 // mattnish is mattn/go-sqlite3's: two integer fields, the extended one being the
 // one that names the constraint.
@@ -68,4 +68,4 @@ type mattnish struct {
 	ExtendedCode int
 }
 
-func (e *mattnish) Error() string { return "constraint failed" }
+func (this *mattnish) Error() string { return "constraint failed" }

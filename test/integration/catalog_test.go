@@ -28,10 +28,10 @@ import (
 
 // catTarget is one database reached one way, plus what the catalog must call it.
 type catTarget struct {
-	name    string
-	db      string // which catSchema built it
-	dialect string // what catalog.Catalog.Dialect must answer
-	src     crud.Source
+	name     string
+	database string // which catSchema built it
+	dialect  string // what catalog.Catalog.Dialect must answer
+	source   crud.Source
 }
 
 var (
@@ -60,16 +60,16 @@ func catEngines(t *testing.T) []catTarget {
 	// reports a missing table instead of the DDL error that caused it.
 	catOnce.Do(func() {
 		for _, s := range []struct {
-			db  string
-			src crud.Source
+			database string
+			source   crud.Source
 		}{
 			{"postgres", crudsql.Postgres(pgDB)},
 			{"mysql", crudsql.MySQL(myDB)},
 			{"mariadb", crudsql.MySQL(mariaDB)},
 		} {
-			for _, stmt := range catSchema[s.db] {
-				if _, err := s.src.Exec(ctx, stmt); err != nil {
-					catErr = fmt.Errorf("%s: %s: %w", s.db, catFirstLine(stmt), err)
+			for _, stmt := range catSchema[s.database] {
+				if _, err := s.source.Exec(ctx, stmt); err != nil {
+					catErr = fmt.Errorf("%s: %s: %w", s.database, catFirstLine(stmt), err)
 					return
 				}
 			}
@@ -91,18 +91,18 @@ func catEngines(t *testing.T) []catTarget {
 // catOpenSQLite builds a fresh file-backed database holding only this fixture.
 func catOpenSQLite(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "catalog.db"))
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "catalog.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = database.Close() })
+	database.SetMaxOpenConns(1)
 	for _, stmt := range catSchema["sqlite"] {
-		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+		if _, err := database.ExecContext(context.Background(), stmt); err != nil {
 			t.Fatalf("sqlite: %s: %v", catFirstLine(stmt), err)
 		}
 	}
-	return db
+	return database
 }
 
 func catFirstLine(s string) string {
@@ -113,7 +113,7 @@ func catFirstLine(s string) string {
 // catLoad loads one target's catalog, or fails the test.
 func catLoad(t *testing.T, tg catTarget) catalog.Catalog {
 	t.Helper()
-	cat, err := catalog.Load(context.Background(), tg.src)
+	cat, err := catalog.Load(context.Background(), tg.source)
 	if err != nil {
 		t.Fatalf("%s: loading the catalog: %v", tg.name, err)
 	}
@@ -175,7 +175,7 @@ func TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot(t *testing.T) {
 			}
 
 			// And the marker is the engine's own, not any marker at all.
-			switch tg.db {
+			switch tg.database {
 			case "postgres":
 				if !hard.Partial {
 					t.Error("the partial index is not marked partial")
@@ -270,7 +270,7 @@ func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) 
 			easy := catConstraint(t, cat, "cat_rows", "cat_rows_ux_easy")
 
 			expr, ok := cat.Constraint("cat_rows", "cat_rows_ux_expr")
-			if tg.db == "mariadb" {
+			if tg.database == "mariadb" {
 				absent++
 				if ok {
 					t.Error("MariaDB reported an expression index and the fixture builds none here — if the server grew them, D-019 difference 9 needs rewriting")
@@ -297,7 +297,7 @@ func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) 
 				}
 			}
 
-			switch tg.db {
+			switch tg.database {
 			case "postgres", "mysql":
 				// These two hand the text back — pg_get_indexdef with a column
 				// number, information_schema.STATISTICS.EXPRESSION.
@@ -342,7 +342,7 @@ func TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot(t *testing.T) {
 	for _, tg := range catEngines(t) {
 		t.Run(tg.name, func(t *testing.T) {
 			cat := catLoad(t, tg)
-			if tg.db != "postgres" {
+			if tg.database != "postgres" {
 				flat++
 				tbl, ok := cat.Table("cat_rows")
 				if !ok {
@@ -350,7 +350,7 @@ func TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot(t *testing.T) {
 				}
 				for i := range tbl.Constraints {
 					if c := &tbl.Constraints[i]; c.Deferrable {
-						t.Errorf("%s reported %s as deferrable and this engine has no deferred constraints, so something invented one", tg.db, c.Name)
+						t.Errorf("%s reported %s as deferrable and this engine has no deferred constraints, so something invented one", tg.database, c.Name)
 					}
 				}
 				return
@@ -383,7 +383,7 @@ func TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot(t *testing.T) {
 func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
-		if tg.db != "postgres" {
+		if tg.database != "postgres" {
 			continue
 		}
 		t.Run(tg.name, func(t *testing.T) {
@@ -436,7 +436,7 @@ func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 func TestAShorthandReferencesRecordsNoParentColumnAndItsExplicitTwinDoes(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
-		if tg.db != "sqlite" {
+		if tg.database != "sqlite" {
 			continue
 		}
 		t.Run(tg.name, func(t *testing.T) {
@@ -509,7 +509,7 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 				seen[name] = 1
 			}
 
-			if tg.db == "sqlite" {
+			if tg.database == "sqlite" {
 				// Neither collision is expressible: no pragma names a CHECK and
 				// none names a foreign key, so SQLite has nothing to collide.
 				if len(dual) != 0 {
@@ -526,7 +526,7 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 			for _, c := range dual {
 				byKind[c.Kind] = c
 			}
-			switch tg.db {
+			switch tg.database {
 			case "postgres":
 				check, ok := byKind[catalog.KindCheck]
 				if !ok {
@@ -557,7 +557,7 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 				if !ok {
 					t.Fatalf("neither cat_dual is the unique key: %+v", dual)
 				}
-				answered[tg.db] = catConstraint(t, cat, "cat_rows", "cat_dual").Kind
+				answered[tg.database] = catConstraint(t, cat, "cat_rows", "cat_dual").Kind
 				if strings.Join(key.Columns, ",") != "shr_id" {
 					t.Errorf("the unique key named cat_dual covers %q, want [shr_id]", key.Columns)
 				}
@@ -589,7 +589,7 @@ func TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApar
 			index := catConstraint(t, cat, "cat_rows", "cat_rows_ux_easy")
 			checked++
 
-			switch tg.db {
+			switch tg.database {
 			case "postgres":
 				declared := catConstraint(t, cat, "cat_rows", "cat_rows_uc")
 				if declared.Kind != catalog.KindUnique {
@@ -671,8 +671,8 @@ func TestTheCatalogNamesMariaDBRatherThanCallingItMySQL(t *testing.T) {
 			// The half that shows the detection is worth its round trip: the
 			// seam calls both servers "mysql", so the name above is information
 			// the seam does not have.
-			if tg.db == "mysql" || tg.db == "mariadb" {
-				if got := tg.src.Dialect().Name(); got != "mysql" {
+			if tg.database == "mysql" || tg.database == "mariadb" {
+				if got := tg.source.Dialect().Name(); got != "mysql" {
 					t.Errorf("crud.Dialect.Name answers %q here — if it tells the two apart now, the version probe is dead weight", got)
 				}
 			}
@@ -696,8 +696,8 @@ func TestABareTableNameResolvesOnceAndTheResolvedSchemaIsRecorded(t *testing.T) 
 		}
 	}
 
-	one := catLoad(t, catTarget{name: "cat_s1", src: crudsql.Postgres(catSearchPath(t, "cat_s1"))})
-	two := catLoad(t, catTarget{name: "cat_s2", src: crudsql.Postgres(catSearchPath(t, "cat_s2"))})
+	one := catLoad(t, catTarget{name: "cat_s1", source: crudsql.Postgres(catSearchPath(t, "cat_s1"))})
+	two := catLoad(t, catTarget{name: "cat_s2", source: crudsql.Postgres(catSearchPath(t, "cat_s2"))})
 
 	a, ok := one.Table("cat_same")
 	if !ok {
@@ -718,7 +718,7 @@ func TestABareTableNameResolvesOnceAndTheResolvedSchemaIsRecorded(t *testing.T) 
 	// The control. Without it the difference above could be two unrelated
 	// reads; with it, a loader that resolved the bare name lazily on whatever
 	// connection asked would answer identically from both and fail here.
-	alsoOne := catLoad(t, catTarget{name: "cat_s1 again", src: crudsql.Postgres(catSearchPath(t, "cat_s1"))})
+	alsoOne := catLoad(t, catTarget{name: "cat_s1 again", source: crudsql.Postgres(catSearchPath(t, "cat_s1"))})
 	c, ok := alsoOne.Table("cat_same")
 	if !ok {
 		t.Fatal("a second connection on the same search_path does not know cat_same")
@@ -739,13 +739,13 @@ func catSearchPath(t *testing.T, schema string) *sql.DB {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	db, err := sql.Open("pgx", u.String())
+	database, err := sql.Open("pgx", u.String())
 	if err != nil {
 		t.Fatalf("opening a handle on search_path=%s: %v", schema, err)
 	}
-	db.SetMaxOpenConns(2)
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+	database.SetMaxOpenConns(2)
+	t.Cleanup(func() { _ = database.Close() })
+	return database
 }
 
 // SQLite's pragma reports on_update before on_delete, which is the opposite of
@@ -782,7 +782,7 @@ func TestForeignKeysCarryTheirActionsInTheOrderTheEngineReportsThem(t *testing.T
 				}
 			}
 
-			if tg.db == "sqlite" {
+			if tg.database == "sqlite" {
 				// A foreign key SQLite records no name for gets one from its
 				// position, and the constraint map keys on the name: a synthetic
 				// name equal to a real index name would answer about the wrong
@@ -794,8 +794,8 @@ func TestForeignKeysCarryTheirActionsInTheOrderTheEngineReportsThem(t *testing.T
 				// The control: the prefix protects nothing unless the engine
 				// refuses it for user objects. If this CREATE ever succeeds, the
 				// assertion above has stopped proving anything.
-				if _, err := tg.src.Exec(context.Background(), "CREATE TABLE sqlite_cat_probe (id INTEGER)"); err == nil {
-					_, _ = tg.src.Exec(context.Background(), "DROP TABLE sqlite_cat_probe")
+				if _, err := tg.source.Exec(context.Background(), "CREATE TABLE sqlite_cat_probe (id INTEGER)"); err == nil {
+					_, _ = tg.source.Exec(context.Background(), "DROP TABLE sqlite_cat_probe")
 					t.Error("this SQLite accepts a sqlite_-prefixed user table, so the prefix no longer keeps synthetic constraint names out of the user's namespace")
 				}
 			}
@@ -837,7 +837,7 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			}
 			checked++
 
-			req := catColumn(t, tbl, "req")
+			request := catColumn(t, tbl, "req")
 			opt := catColumn(t, tbl, "opt")
 			gen := catColumn(t, tbl, "gen")
 			plain := catColumn(t, tbl, "plain")
@@ -856,13 +856,13 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			for _, w := range []struct {
 				col *catalog.Column
 				pos int
-			}{{req, 2}, {opt, 3}, {qty, 4}, {note, 5}, {gen, 6}, {plain, 7}} {
+			}{{request, 2}, {opt, 3}, {qty, 4}, {note, 5}, {gen, 6}, {plain, 7}} {
 				if w.col.Position != w.pos {
 					t.Errorf("%s reports position %d, want the engine's own 1-based ordinal %d", w.col.Name, w.col.Position, w.pos)
 				}
 			}
 
-			if req.Nullable {
+			if request.Nullable {
 				t.Error("a NOT NULL column is reported nullable — a probe built on that bit invents violations on correct fields")
 			}
 			if !opt.Nullable {
@@ -873,16 +873,16 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			// so a catalog answering 255 there would claim an enforcement that
 			// does not exist ([[D-019]] difference 6).
 			wantMax := 255
-			if tg.db == "sqlite" {
+			if tg.database == "sqlite" {
 				wantMax = 0
-				if !strings.Contains(strings.ToUpper(req.Type), "VARCHAR(255)") {
-					t.Errorf("the declared width is not even carried as type text: %q", req.Type)
+				if !strings.Contains(strings.ToUpper(request.Type), "VARCHAR(255)") {
+					t.Errorf("the declared width is not even carried as type text: %q", request.Type)
 				}
 			}
-			if req.MaxLength != wantMax {
-				t.Errorf("a VARCHAR(255) reports MaxLength %d, want %d", req.MaxLength, wantMax)
+			if request.MaxLength != wantMax {
+				t.Errorf("a VARCHAR(255) reports MaxLength %d, want %d", request.MaxLength, wantMax)
 			}
-			if opt.MaxLength == req.MaxLength && wantMax != 0 {
+			if opt.MaxLength == request.MaxLength && wantMax != 0 {
 				t.Errorf("an unbounded column reports the same MaxLength as a bounded one (%d)", opt.MaxLength)
 			}
 
@@ -906,7 +906,7 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 				t.Errorf("the primary key came back %v, want [id]", tbl.PrimaryKey)
 			}
 
-			if tg.db == "sqlite" {
+			if tg.database == "sqlite" {
 				// No PRAGMA lists a CHECK, and the alternative is finding it in
 				// the table's DDL, which is the DDL model D-041 forbids. The
 				// text is carried verbatim and read by nobody.
@@ -933,7 +933,7 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			// by position would bind the violation to a field that is not there,
 			// and a loader that dropped every CHECK column would pass the second
 			// half alone.
-			if tg.db == "postgres" {
+			if tg.database == "postgres" {
 				if strings.Join(check.Columns, ",") != "qty" {
 					t.Errorf("the CHECK over qty covers %v, want [qty]", check.Columns)
 				}
@@ -950,7 +950,7 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 				// reproducible key. Written as a nil test and never as
 				// len() == 0: the len form passes under exactly the mutation
 				// this exists to catch.
-				t.Errorf("%s reported CHECK columns %#v — an empty non-nil slice here is the conflation crud/catalog/doc.go forbids; if it grew a reader, that rule needs rewriting", tg.db, check.Columns)
+				t.Errorf("%s reported CHECK columns %#v — an empty non-nil slice here is the conflation crud/catalog/doc.go forbids; if it grew a reader, that rule needs rewriting", tg.database, check.Columns)
 			}
 
 			// The control for the line above: a constraint whose columns every
@@ -989,7 +989,7 @@ func TestOneSetHoldsFourLiveDatabasesWithoutMergingThem(t *testing.T) {
 
 	seen := map[catalog.Catalog]string{}
 	for _, tg := range catEngines(t) {
-		cat, err := set.Load(ctx, tg.src)
+		cat, err := set.Load(ctx, tg.source)
 		if err != nil {
 			t.Fatalf("%s: %v", tg.name, err)
 		}
@@ -998,14 +998,14 @@ func TestOneSetHoldsFourLiveDatabasesWithoutMergingThem(t *testing.T) {
 		}
 		seen[cat] = tg.name
 
-		again, err := set.Load(ctx, tg.src)
+		again, err := set.Load(ctx, tg.source)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if again != cat {
 			t.Errorf("%s was introspected twice through one Set", tg.name)
 		}
-		if found, ok := set.For(tg.src); !ok || found != cat {
+		if found, ok := set.For(tg.source); !ok || found != cat {
 			t.Errorf("%s could not be found again in the Set that just loaded it", tg.name)
 		}
 		if cat.Dialect() != tg.dialect {

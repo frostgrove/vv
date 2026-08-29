@@ -14,11 +14,11 @@ import (
 // controls that are meaningless for that operation. A request is caller-owned
 // data: Count(req) or Get(req) must not turn a later List(req) into a different,
 // unbounded query.
-func requestCopy(req *query.Request) *query.Request {
-	if req == nil {
+func requestCopy(request *query.Request) *query.Request {
+	if request == nil {
 		return &query.Request{}
 	}
-	copy := *req
+	copy := *request
 	return &copy
 }
 
@@ -42,12 +42,12 @@ func CoerceID[ID comparable](raw string) (ID, error) {
 
 // NarrowForCount drops everything that means nothing to a COUNT. Leaving paging
 // in would make the answer the size of one page rather than of the result.
-func NarrowForCount(req *query.Request) {
-	req.Page, req.Limit, req.Offset = 0, 0, 0
-	req.Sort, req.Preload, req.Select = nil, nil, nil
-	req.ClearCursors()
-	req.Unpaged, req.SkipTotal, req.Distinct = false, false, false
-	req.OmitPaging()
+func NarrowForCount(request *query.Request) {
+	request.Page, request.Limit, request.Offset = 0, 0, 0
+	request.Sort, request.Preload, request.Select = nil, nil, nil
+	request.ClearCursors()
+	request.Unpaged, request.SkipTotal, request.Distinct = false, false, false
+	request.OmitPaging()
 }
 
 // NarrowForEntity keeps the shaping options and every condition that can prove
@@ -55,12 +55,12 @@ func NarrowForCount(req *query.Request) {
 // filter (including search terms) can still narrow that one row — for example,
 // a tenant condition on GetByID. Ordering and paging cannot change which keyed
 // row is returned, so those controls are discarded.
-func NarrowForEntity(req *query.Request) {
-	req.Sort = nil
-	req.Page, req.Limit, req.Offset = 0, 0, 0
-	req.ClearCursors()
-	req.Unpaged, req.SkipTotal, req.Distinct = false, false, false
-	req.OmitPaging()
+func NarrowForEntity(request *query.Request) {
+	request.Sort = nil
+	request.Page, request.Limit, request.Offset = 0, 0, 0
+	request.ClearCursors()
+	request.Unpaged, request.SkipTotal, request.Distinct = false, false, false
+	request.OmitPaging()
 }
 
 // FormatID renders a key as the text a URL path or a request document carries.

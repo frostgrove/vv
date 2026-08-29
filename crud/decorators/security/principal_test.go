@@ -222,8 +222,8 @@ var Tickets = sqlrepo.Define[Ticket, int64, TicketUpdate]("tickets")
 
 func TestScopeSubjectNarrowsToTheCallersOwnRows(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	repo := Tickets.Bind(rec, security.Gate(security.ScopeSubject[Ticket, int64]("Owner")))
-	if _, err := repo.GetAll(as(editor)); err != nil {
+	repository := Tickets.Bind(rec, security.Gate(security.ScopeSubject[Ticket, int64]("Owner")))
+	if _, err := repository.GetAll(as(editor)); err != nil {
 		t.Fatal(err)
 	}
 	if got := lastWhere(rec); got != `"owner" = $1` {

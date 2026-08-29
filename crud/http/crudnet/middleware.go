@@ -19,8 +19,8 @@ type HandlerFunc func(http.ResponseWriter, *http.Request) error
 // When the writer is the middleware's own, the error is handed up rather than
 // rendered here. That is what makes a double install render once: the inner
 // copy records, the outer copy writes.
-func (f HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	err := f(w, r)
+func (this HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	err := this(w, r)
 	if err == nil {
 		return
 	}
@@ -33,8 +33,8 @@ func (f HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // WithErrors adapts one error-returning handler, rendering whatever it returns
 // through the shared envelope.
-func WithErrors(f HandlerFunc, opts ...crudhttp.RenderOption) http.Handler {
-	return Errors(opts...)(f)
+func WithErrors(f HandlerFunc, options ...crudhttp.RenderOption) http.Handler {
+	return Errors(options...)(f)
 }
 
 // Errors is the middleware. It renders an error a [HandlerFunc] returned,
@@ -48,10 +48,10 @@ func WithErrors(f HandlerFunc, opts ...crudhttp.RenderOption) http.Handler {
 // Installing it twice renders once. The marker is the response-writer wrapper
 // rather than anything on the error: a Fault is a value two goroutines may
 // render at once, and [[D-042]] treats it as immutable.
-func Errors(opts ...crudhttp.RenderOption) func(http.Handler) http.Handler {
+func Errors(options ...crudhttp.RenderOption) func(http.Handler) http.Handler {
 	rd := crudhttp.Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = crudhttp.NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,16 +90,16 @@ type recorder struct {
 	err   error
 }
 
-func (r *recorder) WriteHeader(status int) {
-	r.wrote = true
-	r.ResponseWriter.WriteHeader(status)
+func (this *recorder) WriteHeader(status int) {
+	this.wrote = true
+	this.ResponseWriter.WriteHeader(status)
 }
 
-func (r *recorder) Write(b []byte) (int, error) {
-	r.wrote = true
-	return r.ResponseWriter.Write(b)
+func (this *recorder) Write(b []byte) (int, error) {
+	this.wrote = true
+	return this.ResponseWriter.Write(b)
 }
 
 // Unwrap is what http.ResponseController uses to reach the real writer, so
 // flushing and hijacking still work through the wrapper.
-func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+func (this *recorder) Unwrap() http.ResponseWriter { return this.ResponseWriter }

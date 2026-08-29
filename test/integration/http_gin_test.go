@@ -26,11 +26,11 @@ var _ crudgin.Repository[Article, int64, ArticleUpdate] = articleService{}
 
 func newGinApp(t *testing.T, b blog) *gin.Engine {
 	t.Helper()
-	svc := articleService{
-		Repo:    specs.Executor(Articles.Bind(b.src)),
+	service := articleService{
+		Repo:    specs.Executor(Articles.Bind(b.source)),
 		blocked: "forbidden title",
 	}
-	h := crudgin.New[Article, int64, ArticleUpdate](svc,
+	h := crudgin.New[Article, int64, ArticleUpdate](service,
 		crudgin.WithQuery[Article, int64, ArticleUpdate](&query.Config{
 			Preloadable: []string{"Author", "Tags", "Comments", "Comments.Author"},
 			MaxPreloads: 4,
@@ -41,7 +41,7 @@ func newGinApp(t *testing.T, b blog) *gin.Engine {
 	return app
 }
 
-func ginCall(t *testing.T, app *gin.Engine, method, target string, body any) resp {
+func ginCall(t *testing.T, app *gin.Engine, method, target string, body any) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
@@ -51,28 +51,28 @@ func ginCall(t *testing.T, app *gin.Engine, method, target string, body any) res
 		}
 		rdr = bytes.NewReader(raw)
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	app.ServeHTTP(w, req)
-	return resp{status: w.Code, body: w.Body.Bytes()}
+	app.ServeHTTP(w, request)
+	return response{status: w.Code, body: w.Body.Bytes()}
 }
 
-func ginRaw(t *testing.T, app *gin.Engine, method, target, body string) resp {
+func ginRaw(t *testing.T, app *gin.Engine, method, target, body string) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	app.ServeHTTP(w, req)
-	return resp{status: w.Code, body: w.Body.Bytes()}
+	app.ServeHTTP(w, request)
+	return response{status: w.Code, body: w.Body.Bytes()}
 }
 
 func TestGinHTTPListAndQuery(t *testing.T) {
@@ -394,7 +394,7 @@ func TestGinHTTPWorksWithoutExtraDeclarations(t *testing.T) {
 	b := newBlog("postgres", pgDB, crudsql.Postgres(pgDB))
 	seedBlog(t, b)
 
-	h := crudgin.New[Comment, int64, CommentUpdate](Comments.Bind(b.src))
+	h := crudgin.New[Comment, int64, CommentUpdate](Comments.Bind(b.source))
 	app := gin.New()
 	h.Mount(app, "/comments")
 

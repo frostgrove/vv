@@ -49,12 +49,12 @@ type Options struct {
 }
 
 // Cursor reports whether this query pages by cursor, and in which direction.
-func (o *Options) Cursor() (token string, back, ok bool) {
+func (this *Options) Cursor() (token string, back, ok bool) {
 	switch {
-	case o.After != "":
-		return o.After, false, true
-	case o.Before != "":
-		return o.Before, true, true
+	case this.After != "":
+		return this.After, false, true
+	case this.Before != "":
+		return this.Before, true, true
 	}
 	return "", false, false
 }
@@ -63,30 +63,30 @@ func (o *Options) Cursor() (token string, back, ok bool) {
 type Option func(*Options)
 
 // Build resolves a list of options into an Options value.
-func Build(opts ...Option) *Options {
+func Build(options ...Option) *Options {
 	o := &Options{}
-	o.Apply(opts...)
+	o.Apply(options...)
 	return o
 }
 
 // Apply runs more options over an existing Options.
-func (o *Options) Apply(opts ...Option) {
-	for _, opt := range opts {
+func (this *Options) Apply(options ...Option) {
+	for _, opt := range options {
 		if opt != nil {
-			opt(o)
+			opt(this)
 		}
 	}
 }
 
 // Predicate folds Filter into a single AND node, or nil when empty.
-func (o *Options) Predicate() Predicate {
-	switch len(o.Filter) {
+func (this *Options) Predicate() Predicate {
+	switch len(this.Filter) {
 	case 0:
 		return nil
 	case 1:
-		return o.Filter[0]
+		return this.Filter[0]
 	default:
-		return And(o.Filter...)
+		return And(this.Filter...)
 	}
 }
 
@@ -216,34 +216,34 @@ func PreloadRows(n int) Option { return func(o *Options) { o.PreloadRows = n } }
 // sort it was made for ([[D-028]]) and an aggregate is a different statement, so
 // replaying either into a second query would be carrying state across a boundary
 // rather than reusing a shape.
-func With(src *Options) Option {
+func With(source *Options) Option {
 	return func(o *Options) {
-		if src == nil {
+		if source == nil {
 			return
 		}
-		o.Filter = append(o.Filter, src.Filter...)
-		o.Sort = append(o.Sort, src.Sort...)
-		o.Preloads = append(o.Preloads, src.Preloads...)
-		o.Fields = append(o.Fields, src.Fields...)
-		if src.Page != 0 {
-			o.Page = src.Page
+		o.Filter = append(o.Filter, source.Filter...)
+		o.Sort = append(o.Sort, source.Sort...)
+		o.Preloads = append(o.Preloads, source.Preloads...)
+		o.Fields = append(o.Fields, source.Fields...)
+		if source.Page != 0 {
+			o.Page = source.Page
 		}
-		if src.Limit != 0 {
-			o.Limit = src.Limit
+		if source.Limit != 0 {
+			o.Limit = source.Limit
 		}
-		if src.Offset != 0 {
-			o.Offset = src.Offset
+		if source.Offset != 0 {
+			o.Offset = source.Offset
 		}
-		o.Primary = o.Primary || src.Primary
-		o.Unpaged = o.Unpaged || src.Unpaged
-		o.NoSort = o.NoSort || src.NoSort
-		o.NoTotal = o.NoTotal || src.NoTotal
-		o.ForUpdate = o.ForUpdate || src.ForUpdate
-		o.Distinct = o.Distinct || src.Distinct
-		if src.PreloadRows > 0 {
-			o.PreloadRows = src.PreloadRows
+		o.Primary = o.Primary || source.Primary
+		o.Unpaged = o.Unpaged || source.Unpaged
+		o.NoSort = o.NoSort || source.NoSort
+		o.NoTotal = o.NoTotal || source.NoTotal
+		o.ForUpdate = o.ForUpdate || source.ForUpdate
+		o.Distinct = o.Distinct || source.Distinct
+		if source.PreloadRows > 0 {
+			o.PreloadRows = source.PreloadRows
 		}
-		o.RelScopes = MergeRelationScopes(o.RelScopes, src.RelScopes)
+		o.RelScopes = MergeRelationScopes(o.RelScopes, source.RelScopes)
 	}
 }
 
@@ -253,21 +253,21 @@ func With(src *Options) Option {
 // Unpaged is honoured only as far as maxLimit: a repository that declares a
 // maximum page size must not be talked out of it by one flag arriving from the
 // wire. With no maximum declared, Unpaged really does mean everything.
-func (o *Options) Resolved(defLimit, maxLimit int) (limit, offset, page int) {
-	if o.Unpaged {
+func (this *Options) Resolved(defLimit, maxLimit int) (limit, offset, page int) {
+	if this.Unpaged {
 		if maxLimit > 0 {
-			return maxLimit, max(o.Offset, 0), 1
+			return maxLimit, max(this.Offset, 0), 1
 		}
-		return 0, max(o.Offset, 0), 1
+		return 0, max(this.Offset, 0), 1
 	}
-	limit = o.Limit
+	limit = this.Limit
 	if limit <= 0 {
 		limit = defLimit
 	}
 	if maxLimit > 0 && limit > maxLimit {
 		limit = maxLimit
 	}
-	page = o.Page
+	page = this.Page
 	if page <= 0 {
 		page = 1
 	}
@@ -285,8 +285,8 @@ func (o *Options) Resolved(defLimit, maxLimit int) (limit, offset, page int) {
 		}
 	}
 	offset = int(off)
-	if o.Offset > 0 {
-		offset = o.Offset
+	if this.Offset > 0 {
+		offset = this.Offset
 	}
 	return limit, offset, page
 }

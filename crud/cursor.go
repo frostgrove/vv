@@ -82,13 +82,13 @@ func decodeCursor(s string, sort []Order) (*cursorPayload, error) {
 // value decodes the i-th cursor value against the Go type of the column it will
 // be compared with, so a JSON number reaches the driver as the column's own
 // integer type and a quoted timestamp as a time.Time.
-func (p *cursorPayload) value(i int, t reflect.Type) (any, error) {
-	dst := reflect.New(t)
-	if err := json.Unmarshal(p.V[i], dst.Interface()); err != nil {
+func (this *cursorPayload) value(i int, t reflect.Type) (any, error) {
+	destination := reflect.New(t)
+	if err := json.Unmarshal(this.V[i], destination.Interface()); err != nil {
 		return nil, &SchemaError{Field: "cursor",
-			Reason: fmt.Sprintf("value for %s does not fit %s", p.F[i], t)}
+			Reason: fmt.Sprintf("value for %s does not fit %s", this.F[i], t)}
 	}
-	return dst.Elem().Interface(), nil
+	return destination.Elem().Interface(), nil
 }
 
 // CursorPredicate turns a cursor into the row-comparison that selects what comes

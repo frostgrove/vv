@@ -145,12 +145,12 @@ func main() {
 	// The gate goes on the repository, not on the route. That is the whole
 	// point: every entry point this repository has is covered, including the
 	// ones a handler does not spell out.
-	repo := specs.Executor(Notes.Bind(crudpgx.Open(pool), security.Gate(policy)))
+	repository := specs.Executor(Notes.Bind(crudpgx.Open(pool), security.Gate(policy)))
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(crudgin.Errors(), authgin.Middleware(guard))
-	crudgin.New(repo,
+	crudgin.New(repository,
 		crudgin.WithQuery[Note, int64, NoteUpdate](&query.Config{
 			Filterable: []string{"Author", "Title", "CreatedAt"},
 			Sortable:   []string{"Title", "CreatedAt"},

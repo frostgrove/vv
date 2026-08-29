@@ -78,8 +78,8 @@ func TestANestedPreloadFillsEveryParentsOwnCopy(t *testing.T) {
 // subset would receive only the subset, with a 200 and no way to notice.
 func TestABarePreloadWinsOverANarrowedOneForTheSamePath(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		opts []crud.Option
+		name    string
+		options []crud.Option
 	}{
 		{"the bare request first", []crud.Option{
 			crud.Preload("Comments"),
@@ -92,7 +92,7 @@ func TestABarePreloadWinsOverANarrowedOneForTheSamePath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows())
-			o := crud.Build(tc.opts...)
+			o := crud.Build(tc.options...)
 
 			if err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
 				articleMeta(t), []Article{{ID: 1}}, o.Preloads, 0, nil); err != nil {

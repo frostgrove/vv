@@ -68,23 +68,23 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := sqlx.Connect("pgx", dsn)
+	database, err := sqlx.Connect("pgx", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
-	if err := bootstrap(db); err != nil {
+	defer database.Close()
+	if err := bootstrap(database); err != nil {
 		log.Fatal(err)
 	}
 
 	// sqlx.DB embeds the *sql.DB vv needs, so the same pool serves both:
 	// sqlx for the bootstrap statements below, crudsql for everything the API
 	// serves.
-	repo := specs.Executor(Products.Bind(crudsql.Postgres(db.DB)))
+	repository := specs.Executor(Products.Bind(crudsql.Postgres(database.DB)))
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	crudgin.New(repo,
+	crudgin.New(repository,
 		crudgin.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
@@ -98,7 +98,7 @@ func main() {
 
 // bootstrap creates the table and seeds it, so the example runs against an
 // empty database. A real application would use its own migrations.
-func bootstrap(db *sqlx.DB) error {
+func bootstrap(database *sqlx.DB) error {
 	for _, stmt := range []string{
 		`DROP TABLE IF EXISTS sqlx_gin_products`,
 		`CREATE TABLE sqlx_gin_products (
@@ -114,7 +114,7 @@ func bootstrap(db *sqlx.DB) error {
 			('NUT-1',  'hex nut',  120, NULL),
 			('WSH-1',  'washer',    35, 900)`,
 	} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := database.Exec(stmt); err != nil {
 			return err
 		}
 	}

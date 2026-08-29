@@ -53,9 +53,9 @@ type serviceConfig struct {
 }
 
 // WithQuery bounds what clients may filter, sort, select and preload.
-func WithQuery(cfg *query.Config) ServiceOption {
+func WithQuery(config *query.Config) ServiceOption {
 	return func(c *serviceConfig) {
-		c.query, c.queryVariants, c.querySelector = cfg, nil, nil
+		c.query, c.queryVariants, c.querySelector = config, nil, nil
 	}
 }
 
@@ -81,14 +81,14 @@ func WithQueryFor(defaultConfig *query.Config, variants map[string]*query.Config
 		panic("port.WithQueryFor: query selector is nil")
 	}
 	copy := make(map[string]*query.Config, len(variants))
-	for key, cfg := range variants {
+	for key, config := range variants {
 		if key == "" {
 			panic("port.WithQueryFor: an alternative query config has an empty name")
 		}
-		if cfg == nil {
+		if config == nil {
 			panic("port.WithQueryFor: query config " + key + " is nil")
 		}
-		copy[key] = cfg
+		copy[key] = config
 	}
 	return func(c *serviceConfig) {
 		c.query, c.queryVariants, c.querySelector = defaultConfig, copy, selectConfig
@@ -110,9 +110,9 @@ func WithPaths(r errs.Resolver) ServiceOption {
 // repository rather than a service. It is the orchestration and nothing else:
 // no business rules, and no knowledge of how the request arrived.
 type DefaultService[M any, ID comparable, U any] struct {
-	repo          Repository[M, ID, U]
+	repository    Repository[M, ID, U]
 	meta          *crud.Meta
-	cfg           *query.Config
+	config        *query.Config
 	queryVariants map[string]*query.Config
 	querySelector QuerySelector
 
@@ -121,9 +121,9 @@ type DefaultService[M any, ID comparable, U any] struct {
 }
 
 // NewService builds the default service over a repository.
-func NewService[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...ServiceOption) *DefaultService[M, ID, U] {
+func NewService[M any, ID comparable, U any](repository Repository[M, ID, U], options ...ServiceOption) *DefaultService[M, ID, U] {
 	var c serviceConfig
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(&c)
 		}
@@ -134,15 +134,15 @@ func NewService[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...
 	// HTTP and gRPC binding constructs this service, giving all transports the
 	// same start-up guarantee.
 	if c.query != nil {
-		c.query.MustCheck(repo.Meta())
+		c.query.MustCheck(repository.Meta())
 	}
-	for _, cfg := range c.queryVariants {
-		cfg.MustCheck(repo.Meta())
+	for _, config := range c.queryVariants {
+		config.MustCheck(repository.Meta())
 	}
 	return &DefaultService[M, ID, U]{
-		repo:          repo,
-		meta:          repo.Meta(),
-		cfg:           c.query,
+		repository:    repository,
+		meta:          repository.Meta(),
+		config:        c.query,
 		queryVariants: c.queryVariants,
 		querySelector: c.querySelector,
 		paths:         c.paths,
@@ -153,43 +153,43 @@ func NewService[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...
 var _ Service[struct{}, int, struct{}] = (*DefaultService[struct{}, int, struct{}])(nil)
 
 // Meta implements [Service].
-func (s *DefaultService[M, ID, U]) Meta() *crud.Meta { return s.meta }
+func (this *DefaultService[M, ID, U]) Meta() *crud.Meta { return this.meta }
 
 // Paths implements [Service].
-func (s *DefaultService[M, ID, U]) Paths() errs.Resolver { return s.paths }
+func (this *DefaultService[M, ID, U]) Paths() errs.Resolver { return this.paths }
 
 // List implements [Service].
-func (s *DefaultService[M, ID, U]) List(ctx context.Context, cmd ListCommand) (crud.PaginatedResponse[M], error) {
-	opts, err := s.compile(ctx, cmd.Query, cmd.Options)
+func (this *DefaultService[M, ID, U]) List(ctx context.Context, cmd ListCommand) (crud.PaginatedResponse[M], error) {
+	options, err := this.compile(ctx, cmd.Query, cmd.Options)
 	if err != nil {
 		return crud.PaginatedResponse[M]{}, err
 	}
-	return s.repo.Get(ctx, opts...)
+	return this.repository.Get(ctx, options...)
 }
 
 // Count implements [Service].
-func (s *DefaultService[M, ID, U]) Count(ctx context.Context, cmd CountCommand) (int64, error) {
-	req := requestCopy(cmd.Query)
-	NarrowForCount(req)
+func (this *DefaultService[M, ID, U]) Count(ctx context.Context, cmd CountCommand) (int64, error) {
+	request := requestCopy(cmd.Query)
+	NarrowForCount(request)
 
-	opts, err := s.compile(ctx, req, cmd.Options)
+	options, err := this.compile(ctx, request, cmd.Options)
 	if err != nil {
 		return 0, err
 	}
-	return s.repo.Count(ctx, opts...)
+	return this.repository.Count(ctx, options...)
 }
 
 // Get implements [Service].
-func (s *DefaultService[M, ID, U]) Get(ctx context.Context, cmd GetCommand[ID]) (M, error) {
+func (this *DefaultService[M, ID, U]) Get(ctx context.Context, cmd GetCommand[ID]) (M, error) {
 	var zero M
-	req := requestCopy(cmd.Query)
-	NarrowForEntity(req)
+	request := requestCopy(cmd.Query)
+	NarrowForEntity(request)
 
-	opts, err := s.compile(ctx, req, cmd.Options)
+	options, err := this.compile(ctx, request, cmd.Options)
 	if err != nil {
 		return zero, err
 	}
-	return s.repo.GetByID(ctx, cmd.ID, opts...)
+	return this.repository.GetByID(ctx, cmd.ID, options...)
 }
 
 // Create implements [Service].
@@ -198,10 +198,10 @@ func (s *DefaultService[M, ID, U]) Get(ctx context.Context, cmd GetCommand[ID]) 
 // and only then does the hook see the model. A hook that ran before the
 // clearing would be handed a client-chosen key and a forged timestamp
 // ([[UC-013]] guarantee 7).
-func (s *DefaultService[M, ID, U]) Create(ctx context.Context, cmd CreateCommand[M]) (M, error) {
+func (this *DefaultService[M, ID, U]) Create(ctx context.Context, cmd CreateCommand[M]) (M, error) {
 	var zero M
 	m := cmd.Model
-	if err := Sanitize(s.meta, &m, s.allowClientID); err != nil {
+	if err := Sanitize(this.meta, &m, this.allowClientID); err != nil {
 		return zero, err
 	}
 	if cmd.Before != nil {
@@ -209,11 +209,11 @@ func (s *DefaultService[M, ID, U]) Create(ctx context.Context, cmd CreateCommand
 			return zero, err
 		}
 	}
-	return s.repo.Save(ctx, &m)
+	return this.repository.Save(ctx, &m)
 }
 
 // Update implements [Service].
-func (s *DefaultService[M, ID, U]) Update(ctx context.Context, cmd UpdateCommand[ID, U]) (M, error) {
+func (this *DefaultService[M, ID, U]) Update(ctx context.Context, cmd UpdateCommand[ID, U]) (M, error) {
 	var zero M
 	patch := cmd.Patch
 	if cmd.Before != nil {
@@ -221,7 +221,7 @@ func (s *DefaultService[M, ID, U]) Update(ctx context.Context, cmd UpdateCommand
 			return zero, err
 		}
 	}
-	return s.repo.Update(ctx, cmd.ID, patch)
+	return this.repository.Update(ctx, cmd.ID, patch)
 }
 
 // Replace implements [Service].
@@ -233,18 +233,18 @@ func (s *DefaultService[M, ID, U]) Update(ctx context.Context, cmd UpdateCommand
 // sequence, so the next create collides on the primary key and keeps colliding
 // until somebody repairs the sequence by hand ([[D-012]]). A key the client
 // owns (a uuid, a slug) is a different matter and is still created.
-func (s *DefaultService[M, ID, U]) Replace(ctx context.Context, cmd ReplaceCommand[ID, M]) (M, error) {
+func (this *DefaultService[M, ID, U]) Replace(ctx context.Context, cmd ReplaceCommand[ID, M]) (M, error) {
 	var zero M
-	if s.meta.PK.Auto && !s.allowClientID {
-		if _, err := s.repo.GetByID(ctx, cmd.ID); err != nil {
+	if this.meta.PK.Auto && !this.allowClientID {
+		if _, err := this.repository.GetByID(ctx, cmd.ID); err != nil {
 			return zero, err
 		}
 	}
 	m := cmd.Model
-	if err := ClearGenerated(s.meta, &m); err != nil {
+	if err := ClearGenerated(this.meta, &m); err != nil {
 		return zero, err
 	}
-	if err := s.meta.SetID(&m, cmd.ID); err != nil {
+	if err := this.meta.SetID(&m, cmd.ID); err != nil {
 		return zero, BadRequestAs(errs.CodeInvalidID, nil, "%s", err)
 	}
 	if cmd.Before != nil {
@@ -252,13 +252,13 @@ func (s *DefaultService[M, ID, U]) Replace(ctx context.Context, cmd ReplaceComma
 			return zero, err
 		}
 	}
-	return s.repo.Save(ctx, &m)
+	return this.repository.Save(ctx, &m)
 }
 
 // Delete implements [Service]. Removing nothing is crud.ErrNotFound: the caller
 // named one row, and it was not there.
-func (s *DefaultService[M, ID, U]) Delete(ctx context.Context, cmd DeleteCommand[ID]) (int64, error) {
-	n, err := s.repo.Delete(ctx, cmd.ID)
+func (this *DefaultService[M, ID, U]) Delete(ctx context.Context, cmd DeleteCommand[ID]) (int64, error) {
+	n, err := this.repository.Delete(ctx, cmd.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -270,42 +270,42 @@ func (s *DefaultService[M, ID, U]) Delete(ctx context.Context, cmd DeleteCommand
 
 // DeleteMany implements [Service]. An empty set never reaches the repository:
 // asking a database to delete nothing is a statement with no rows in it.
-func (s *DefaultService[M, ID, U]) DeleteMany(ctx context.Context, cmd BulkDeleteCommand[ID]) (int64, error) {
+func (this *DefaultService[M, ID, U]) DeleteMany(ctx context.Context, cmd BulkDeleteCommand[ID]) (int64, error) {
 	if len(cmd.IDs) == 0 {
 		return 0, nil
 	}
-	return s.repo.Delete(ctx, cmd.IDs...)
+	return this.repository.Delete(ctx, cmd.IDs...)
 }
 
 // compile turns the query document into repository options and appends the
 // caller's. Appended and not merged: crud.Where ANDs, so a transport scope
 // narrows the client's filter instead of replacing it ([[D-004]]).
-func (s *DefaultService[M, ID, U]) compile(ctx context.Context, req *query.Request, extra []crud.Option) ([]crud.Option, error) {
-	if req == nil {
-		req = &query.Request{}
+func (this *DefaultService[M, ID, U]) compile(ctx context.Context, request *query.Request, extra []crud.Option) ([]crud.Option, error) {
+	if request == nil {
+		request = &query.Request{}
 	}
-	cfg, err := s.queryConfig(ctx)
+	config, err := this.queryConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	opts, err := req.Compile(s.meta, cfg)
+	options, err := request.Compile(this.meta, config)
 	if err != nil {
 		return nil, err
 	}
-	return append(opts, extra...), nil
+	return append(options, extra...), nil
 }
 
-func (s *DefaultService[M, ID, U]) queryConfig(ctx context.Context) (*query.Config, error) {
-	if s.querySelector == nil {
-		return s.cfg, nil
+func (this *DefaultService[M, ID, U]) queryConfig(ctx context.Context) (*query.Config, error) {
+	if this.querySelector == nil {
+		return this.config, nil
 	}
-	key := s.querySelector(ctx)
+	key := this.querySelector(ctx)
 	if key == "" {
-		return s.cfg, nil
+		return this.config, nil
 	}
-	cfg, ok := s.queryVariants[key]
+	config, ok := this.queryVariants[key]
 	if !ok {
 		return nil, &query.Error{Path: "queryConfig", Reason: "selector chose an undeclared query vocabulary"}
 	}
-	return cfg, nil
+	return config, nil
 }

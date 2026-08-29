@@ -85,10 +85,10 @@ func main() {
 
 	// crudpgx.Open is the whole adapter: vv asks the pool to run a
 	// statement and to give back rows, and never opens a connection of its own.
-	repo := specs.Executor(Products.Bind(crudpgx.Open(pool)))
+	repository := specs.Executor(Products.Bind(crudpgx.Open(pool)))
 
 	app := fiber.New()
-	app.Use("/products", crudfiber.New(repo,
+	app.Use("/products", crudfiber.New(repository,
 		crudfiber.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},

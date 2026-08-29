@@ -16,8 +16,8 @@ type OptionError struct {
 	Reason string
 }
 
-func (e *OptionError) Error() string {
-	return "remote: " + e.Option + " cannot cross a transport: " + e.Reason
+func (this *OptionError) Error() string {
+	return "remote: " + this.Option + " cannot cross a transport: " + this.Reason
 }
 
 // ToRequest turns repository options into the query document a service reads,
@@ -54,8 +54,8 @@ func (e *OptionError) Error() string {
 //
 // The line is that an option which changes *which* rows come back is refused,
 // and one which changes only their order or their freshness is documented.
-func ToRequest(opts ...crud.Option) (*query.Request, error) {
-	return requestOf(crud.Build(opts...))
+func ToRequest(options ...crud.Option) (*query.Request, error) {
+	return requestOf(crud.Build(options...))
 }
 
 func requestOf(o *crud.Options) (*query.Request, error) {
@@ -72,7 +72,7 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 			"a row lock belongs to a transaction, and the transaction is not in this process"}
 	}
 
-	req := &query.Request{
+	request := &query.Request{
 		Page:      o.Page,
 		Limit:     o.Limit,
 		Offset:    o.Offset,
@@ -83,9 +83,9 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		Distinct:  o.Distinct,
 	}
 	if len(o.Fields) > 0 {
-		req.Select = query.Strings(o.Fields)
+		request.Select = query.Strings(o.Fields)
 	}
-	req.Sort = sortsOf(o.Sort)
+	request.Sort = sortsOf(o.Sort)
 
 	if p := o.Predicate(); p != nil {
 		doc, err := crud.MarshalPredicate(p)
@@ -95,7 +95,7 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		// The DSL spells a tautology as {}. On the wire an absent filter has
 		// that meaning, while an explicit {} is deliberately rejected.
 		if string(doc) != "{}" {
-			req.Filter = query.RawFilter(string(doc))
+			request.Filter = query.RawFilter(string(doc))
 		}
 	}
 
@@ -125,9 +125,9 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 				p.MaxRows = nestedOptions.PreloadRows
 			}
 		}
-		req.Preload = append(req.Preload, p)
+		request.Preload = append(request.Preload, p)
 	}
-	return req, nil
+	return request, nil
 }
 
 // unsupportedPreloadOptions keeps the wire contract fail-closed. A preload is

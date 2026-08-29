@@ -22,8 +22,8 @@ import (
 
 type exactCountTransport map[remote.Method]json.RawMessage
 
-func (t exactCountTransport) Do(_ context.Context, call *remote.Call) (json.RawMessage, error) {
-	return t[call.Method], nil
+func (this exactCountTransport) Do(_ context.Context, call *remote.Call) (json.RawMessage, error) {
+	return this[call.Method], nil
 }
 
 func client(t *testing.T, base string) *remote.Resource[Widget, int64, WidgetUpdate] {
@@ -267,12 +267,12 @@ func TestGetByIDPreservesANarrowingThroughTheListRoute(t *testing.T) {
 
 func TestTautologicalWhereStaysAbsentOnTheRemoteWire(t *testing.T) {
 	for _, p := range []crud.Predicate{crud.True(), crud.And()} {
-		req, err := remote.ToRequest(crud.Where(p))
+		request, err := remote.ToRequest(crud.Where(p))
 		if err != nil {
 			t.Fatalf("ToRequest(%T) = %v", p, err)
 		}
-		if !req.Filter.IsZero() {
-			t.Fatalf("ToRequest(%T) sent filter %v, want absence", p, req.Filter)
+		if !request.Filter.IsZero() {
+			t.Fatalf("ToRequest(%T) sent filter %v, want absence", p, request.Filter)
 		}
 	}
 
@@ -328,12 +328,12 @@ func TestGetByIDPreservesNarrowedAndCappedPreloadsThroughTheListRoute(t *testing
 }
 
 func TestPreloadRowsInsideAPreloadWhereCrossesTheWire(t *testing.T) {
-	req, err := remote.ToRequest(crud.PreloadWhere("Parts", crud.PreloadRows(1)))
+	request, err := remote.ToRequest(crud.PreloadWhere("Parts", crud.PreloadRows(1)))
 	if err != nil {
 		t.Fatalf("ToRequest() = %v", err)
 	}
-	if len(req.Preload) != 1 || req.Preload[0].MaxRows != 1 {
-		t.Fatalf("preload document = %+v, want Parts capped at 1", req.Preload)
+	if len(request.Preload) != 1 || request.Preload[0].MaxRows != 1 {
+		t.Fatalf("preload document = %+v, want Parts capped at 1", request.Preload)
 	}
 }
 
@@ -398,8 +398,8 @@ func TestGetAllSwitchesToCursorsBeforeAnEndpointsOffsetBudget(t *testing.T) {
 		),
 		crudtest.Rows([]any{int64(3), int64(7), "screw", 30, nil, savedAt}),
 	)
-	repo := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets", sqlrepo.MaxLimit(1)).Bind(rec)
-	all, err := client(t, serve(t, repo,
+	repository := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets", sqlrepo.MaxLimit(1)).Bind(rec)
+	all, err := client(t, serve(t, repository,
 		crudnet.WithQuery[Widget, int64, WidgetUpdate](&query.Config{MaxOffset: 1}))).
 		GetAll(context.Background())
 	if err != nil {
@@ -530,9 +530,9 @@ func TestGetAllFollowsAnInitialOffsetPagesCursorEdgeDespiteHasNext(t *testing.T)
 
 func TestGetAllDistinctProjectionDoesNotInjectThePrimaryKeySort(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{"bolt"}))
-	repo := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets").Bind(rec)
+	repository := sqlrepo.Define[Widget, int64, WidgetUpdate]("widgets").Bind(rec)
 
-	all, err := client(t, serve(t, repo)).GetAll(context.Background(), crud.Distinct(), crud.Select("Name"))
+	all, err := client(t, serve(t, repository)).GetAll(context.Background(), crud.Distinct(), crud.Select("Name"))
 	if err != nil || len(all) != 1 || all[0].Name != "bolt" {
 		t.Fatalf("GetAll() = %+v, %v; want the DISTINCT projection", all, err)
 	}
@@ -561,16 +561,16 @@ func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	f := newFake()
 	base := serve(t, f)
 
-	opts := []crud.Option{
+	options := []crud.Option{
 		crud.Where(crud.Eq("Name", "bolt")),
 		crud.Where(crud.Gte("Price", 100)),
 		crud.OrderBy(crud.Desc("Price")),
 	}
-	if _, err := client(t, base).Get(context.Background(), opts...); err != nil {
+	if _, err := client(t, base).Get(context.Background(), options...); err != nil {
 		t.Fatalf("list: %v", err)
 	}
 
-	wantSQL, wantArgs := clause(t, crud.Build(opts...))
+	wantSQL, wantArgs := clause(t, crud.Build(options...))
 	gotSQL, gotArgs := clause(t, f.last(t).Opts)
 
 	if wantSQL == "" {

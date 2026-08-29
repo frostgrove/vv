@@ -76,9 +76,9 @@ func WithRetryAfter(seconds int) RenderOption {
 }
 
 // NewRenderer builds the default renderer.
-func NewRenderer(opts ...RenderOption) *EnvelopeRenderer {
+func NewRenderer(options ...RenderOption) *EnvelopeRenderer {
 	r := &EnvelopeRenderer{max: MaxViolations, retryAfter: DefaultRetryAfter}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(r)
 		}
@@ -90,20 +90,20 @@ func NewRenderer(opts ...RenderOption) *EnvelopeRenderer {
 // standard one. It is never a value: port answers the kind and the default
 // message through behaviour, so a *errs.Codes a caller could reach never
 // exists to be fought over.
-func (r *EnvelopeRenderer) codesOrNil() *errs.Codes {
-	if r == nil {
+func (this *EnvelopeRenderer) codesOrNil() *errs.Codes {
+	if this == nil {
 		return nil
 	}
-	return r.codes
+	return this.codes
 }
 
 // Status answers the status this renderer would give the error, without
 // building a body — for a binding that has to decide before it renders.
-func (r *EnvelopeRenderer) Status(err error) int {
+func (this *EnvelopeRenderer) Status(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
-	return StatusFor(port.KindOfWith(err, r.codesOrNil()))
+	return StatusFor(port.KindOfWith(err, this.codesOrNil()))
 }
 
 // Render implements [Renderer].
@@ -120,22 +120,22 @@ func (r *EnvelopeRenderer) Status(err error) int {
 // from the path. Expanding first would key a catalogue entry on the model's
 // field name on one deployment and the client's on another, for the same
 // violation.
-func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Header, any) {
+func (this *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Header, any) {
 	if err == nil {
 		return http.StatusOK, nil, nil
 	}
 	f := port.FaultOf(err)
-	status := StatusFor(port.KindOfWith(err, r.codesOrNil()))
+	status := StatusFor(port.KindOfWith(err, this.codesOrNil()))
 	if status == http.StatusInternalServerError {
 		return status, nil, Internal()
 	}
 
 	vs := port.Violations(ctx, f, &port.ViolationOptions{
-		Resolvers: r.resolvers,
+		Resolvers: this.resolvers,
 		Fallback:  bodyResolverFrom(ctx),
-		Messages:  r.messages,
-		Codes:     r.codesOrNil(),
-		Max:       r.max,
+		Messages:  this.messages,
+		Codes:     this.codesOrNil(),
+		Max:       this.max,
 	})
 	env := Envelope{Type: "error", Partial: f.Partial, Errors: group(vs)}
 	if len(vs) < len(f.Violations) {
@@ -143,8 +143,8 @@ func (r *EnvelopeRenderer) Render(ctx context.Context, err error) (int, http.Hea
 	}
 
 	var h http.Header
-	if status == http.StatusServiceUnavailable && r.retryAfter > 0 {
-		h = http.Header{"Retry-After": []string{strconv.Itoa(r.retryAfter)}}
+	if status == http.StatusServiceUnavailable && this.retryAfter > 0 {
+		h = http.Header{"Retry-After": []string{strconv.Itoa(this.retryAfter)}}
 	}
 	return status, h, env
 }

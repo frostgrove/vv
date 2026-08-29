@@ -18,10 +18,10 @@ import (
 
 var Articles = sqlrepo.Define[blog.Article, int64, blog.ArticleUpdate]("articles")
 
-func sqlOf(t *testing.T, opts ...crud.Option) string {
+func sqlOf(t *testing.T, options ...crud.Option) string {
 	t.Helper()
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	if _, err := Articles.Bind(rec).GetAll(context.Background(), opts...); err != nil {
+	if _, err := Articles.Bind(rec).GetAll(context.Background(), options...); err != nil {
 		t.Fatal(err)
 	}
 	return crudtest.Normalize(rec.Last().SQL)
@@ -74,18 +74,18 @@ func TestGeneratedMetamodelSorts(t *testing.T) {
 
 // The generated DTO carries the three-state semantics: absent, null, value.
 func TestGeneratedUpdateDTO(t *testing.T) {
-	var dto blog.ArticleUpdate
-	if err := json.Unmarshal([]byte(`{"title":"new","publishedAt":null}`), &dto); err != nil {
+	var dataTransferObject blog.ArticleUpdate
+	if err := json.Unmarshal([]byte(`{"title":"new","publishedAt":null}`), &dataTransferObject); err != nil {
 		t.Fatal(err)
 	}
-	if dto.Title == nil || *dto.Title != "new" {
-		t.Fatalf("title = %v", dto.Title)
+	if dataTransferObject.Title == nil || *dataTransferObject.Title != "new" {
+		t.Fatalf("title = %v", dataTransferObject.Title)
 	}
-	if !dto.PublishedAt.IsNull() {
-		t.Fatalf("publishedAt = %v, want an explicit null", dto.PublishedAt)
+	if !dataTransferObject.PublishedAt.IsNull() {
+		t.Fatalf("publishedAt = %v, want an explicit null", dataTransferObject.PublishedAt)
 	}
-	if dto.Rating.IsDefined() {
-		t.Fatalf("rating = %v, want undefined", dto.Rating)
+	if dataTransferObject.Rating.IsDefined() {
+		t.Fatalf("rating = %v, want undefined", dataTransferObject.Rating)
 	}
 
 	// The columns a client must not set are simply not in the DTO — which the
@@ -142,11 +142,11 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 		t.Skip("no go toolchain")
 	}
 	dir := t.TempDir()
-	src, err := os.ReadFile("model.go")
+	source, err := os.ReadFile("model.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "model.go"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "model.go"), source, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,11 +172,11 @@ func TestGeneratedFileIsUpToDate(t *testing.T) {
 
 func assertDirective(t *testing.T, file, want string) {
 	t.Helper()
-	src, err := os.ReadFile(file)
+	source, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(string(src), "\n") {
+	for _, line := range strings.Split(string(source), "\n") {
 		if strings.HasPrefix(line, "//go:generate") {
 			if strings.TrimSpace(line) != want {
 				t.Fatalf("%s carries\n  %s\nbut this test regenerates with\n  %s", file, strings.TrimSpace(line), want)

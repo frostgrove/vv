@@ -114,24 +114,24 @@ type Err struct {
 // that rewords one sentence would otherwise turn the whole suite red over a
 // change no parser can see. What a parser is keyed on is asserted; what it may
 // not read is recorded for a human.
-func (e *Err) SameKey(o *Err) bool {
-	if e == nil || o == nil {
-		return e == o
+func (this *Err) SameKey(o *Err) bool {
+	if this == nil || o == nil {
+		return this == o
 	}
-	if e.Type != o.Type || e.SQLState != o.SQLState || e.Native != o.Native {
+	if this.Type != o.Type || this.SQLState != o.SQLState || this.Native != o.Native {
 		return false
 	}
-	return strings.Join(fieldNames(e.Fields), ",") == strings.Join(fieldNames(o.Fields), ",")
+	return strings.Join(fieldNames(this.Fields), ",") == strings.Join(fieldNames(o.Fields), ",")
 }
 
 // Key renders the tuple a classifier dispatches on, for a test failure that
 // says what changed rather than printing two structs.
-func (e *Err) Key() string {
-	if e == nil {
+func (this *Err) Key() string {
+	if this == nil {
 		return "<no error>"
 	}
 	return fmt.Sprintf("%s sqlstate=%q native=%d fields=[%s]",
-		e.Type, e.SQLState, e.Native, strings.Join(fieldNames(e.Fields), " "))
+		this.Type, this.SQLState, this.Native, strings.Join(fieldNames(this.Fields), " "))
 }
 
 func fieldNames(m map[string]string) []string {
@@ -144,8 +144,8 @@ func fieldNames(m map[string]string) []string {
 }
 
 // Case finds one by name.
-func (c *Corpus) Case(name string) (Case, bool) {
-	for _, cs := range c.Cases {
+func (this *Corpus) Case(name string) (Case, bool) {
+	for _, cs := range this.Cases {
 		if cs.Name == name {
 			return cs, true
 		}

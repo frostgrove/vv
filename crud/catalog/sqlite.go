@@ -93,7 +93,7 @@ ORDER BY m.name, f.id, f.seq`
 // handle key exists to prevent ([[D-041]]).
 const sqliteSchema = "main"
 
-func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
+func readSQLite(ctx context.Context, source crud.Source) ([]Table, error) {
 	b := newBuilder()
 	b.schema = sqliteSchema
 
@@ -104,7 +104,7 @@ func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
 		onDelete, onUpdate                                                    string
 	)
 
-	err := eachRow(ctx, src, "tables", sqliteTables, nil, func(rows crud.Rows) error {
+	err := eachRow(ctx, source, "tables", sqliteTables, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &def); err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
 	// outside it. A rowid primary key has no index at all, so this pragma is the
 	// only place SQLite reports one.
 	pkParts := map[string][]pkPart{}
-	err = eachRow(ctx, src, "columns", sqliteColumns, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "columns", sqliteColumns, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &cid, &name, &typ, &notNull, &pk, &hidden, &hasDef, &def); err != nil {
 			return err
 		}
@@ -159,7 +159,7 @@ func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
 		}
 	}
 
-	err = eachRow(ctx, src, "indexes", sqliteIndexes, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "indexes", sqliteIndexes, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &idxName, &unique, &origin, &partial, &idxDef); err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
 		return nil, err
 	}
 
-	err = eachRow(ctx, src, "index key columns", sqliteIndexColumns, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "index key columns", sqliteIndexColumns, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &idxName, &cid, &col); err != nil {
 			return err
 		}
@@ -197,7 +197,7 @@ func readSQLite(ctx context.Context, src crud.Source) ([]Table, error) {
 		return nil, err
 	}
 
-	err = eachRow(ctx, src, "foreign keys", sqliteForeignKeys, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "foreign keys", sqliteForeignKeys, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &fkID, &refTable, &col, &refCol, &onUpdate, &onDelete); err != nil {
 			return err
 		}

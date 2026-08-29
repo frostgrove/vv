@@ -41,13 +41,13 @@ type Schema struct {
 func NewSchema(drv dialect.Driver) *Schema { return &Schema{drv: drv} }
 
 // Create creates all schema resources.
-func (s *Schema) Create(ctx context.Context, opts ...schema.MigrateOption) error {
-	return Create(ctx, s, Tables, opts...)
+func (this *Schema) Create(ctx context.Context, options ...schema.MigrateOption) error {
+	return Create(ctx, this, Tables, options...)
 }
 
 // Create creates all table resources using the given schema driver.
-func Create(ctx context.Context, s *Schema, tables []*schema.Table, opts ...schema.MigrateOption) error {
-	migrate, err := schema.NewMigrate(s.drv, opts...)
+func Create(ctx context.Context, s *Schema, tables []*schema.Table, options ...schema.MigrateOption) error {
+	migrate, err := schema.NewMigrate(s.drv, options...)
 	if err != nil {
 		return fmt.Errorf("ent/migrate: %w", err)
 	}
@@ -59,6 +59,6 @@ func Create(ctx context.Context, s *Schema, tables []*schema.Table, opts ...sche
 //	if err := client.Schema.WriteTo(context.Background(), os.Stdout); err != nil {
 //		log.Fatal(err)
 //	}
-func (s *Schema) WriteTo(ctx context.Context, w io.Writer, opts ...schema.MigrateOption) error {
-	return Create(ctx, &Schema{drv: &schema.WriteDriver{Writer: w, Driver: s.drv}}, Tables, opts...)
+func (this *Schema) WriteTo(ctx context.Context, w io.Writer, options ...schema.MigrateOption) error {
+	return Create(ctx, &Schema{drv: &schema.WriteDriver{Writer: w, Driver: this.drv}}, Tables, options...)
 }

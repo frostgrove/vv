@@ -52,8 +52,8 @@ const (
 	KindCheck
 )
 
-func (k Kind) String() string {
-	switch k {
+func (this Kind) String() string {
+	switch this {
 	case KindPrimaryKey:
 		return "primary key"
 	case KindUnique:
@@ -113,13 +113,13 @@ type Table struct {
 
 // Column finds a column by name. A nil table answers false rather than
 // panicking.
-func (t *Table) Column(name string) (*Column, bool) {
-	if t == nil {
+func (this *Table) Column(name string) (*Column, bool) {
+	if this == nil {
 		return nil, false
 	}
-	for i := range t.Columns {
-		if t.Columns[i].Name == name {
-			return &t.Columns[i], true
+	for i := range this.Columns {
+		if this.Columns[i].Name == name {
+			return &this.Columns[i], true
 		}
 	}
 	return nil, false
@@ -127,13 +127,13 @@ func (t *Table) Column(name string) (*Column, bool) {
 
 // Constraint finds one of this table's constraints by name. A nil table answers
 // false.
-func (t *Table) Constraint(name string) (*Constraint, bool) {
-	if t == nil {
+func (this *Table) Constraint(name string) (*Constraint, bool) {
+	if this == nil {
 		return nil, false
 	}
-	for i := range t.Constraints {
-		if t.Constraints[i].Name == name {
-			return &t.Constraints[i], true
+	for i := range this.Constraints {
+		if this.Constraints[i].Name == name {
+			return &this.Constraints[i], true
 		}
 	}
 	return nil, false

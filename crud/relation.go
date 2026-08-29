@@ -36,8 +36,8 @@ const (
 	ManyToMany
 )
 
-func (k RelKind) String() string {
-	switch k {
+func (this RelKind) String() string {
+	switch this {
 	case BelongsTo:
 		return "belongs_to"
 	case HasOne:
@@ -51,7 +51,7 @@ func (k RelKind) String() string {
 }
 
 // ToMany reports whether the relation yields a collection.
-func (k RelKind) ToMany() bool { return k == HasMany || k == ManyToMany }
+func (this RelKind) ToMany() bool { return this == HasMany || this == ManyToMany }
 
 // Relation is one navigable edge out of a model.
 type Relation struct {
@@ -92,54 +92,54 @@ type Relation struct {
 
 // Target resolves (and caches) the metadata of the model on the other side.
 // Resolution is lazy so that models may reference each other in a cycle.
-func (r *Relation) Target() (*Meta, error) {
-	r.once.Do(func() {
-		s, err := schemaOfType(r.Elem)
+func (this *Relation) Target() (*Meta, error) {
+	this.once.Do(func() {
+		s, err := schemaOfType(this.Elem)
 		if err != nil {
-			r.err = err
+			this.err = err
 			return
 		}
-		table := r.table
+		table := this.table
 		if table == "" {
-			table = TableNameOf(r.Elem)
+			table = TableNameOf(this.Elem)
 		}
-		r.meta = &Meta{Schema: s, Table: table}
+		this.meta = &Meta{Schema: s, Table: table}
 	})
-	return r.meta, r.err
+	return this.meta, this.err
 }
 
 // Local is the field on the owner used to join, resolved through Target so that
 // defaults (the primary keys) are available.
-func (r *Relation) Local() (*Field, error) {
-	if _, err := r.Target(); err != nil {
+func (this *Relation) Local() (*Field, error) {
+	if _, err := this.Target(); err != nil {
 		return nil, err
 	}
-	f := r.Owner.Field(r.LocalField)
+	f := this.Owner.Field(this.LocalField)
 	if f == nil {
-		return nil, &SchemaError{Model: r.Owner.Name, Field: r.Name,
-			Reason: "relation references unknown field " + r.LocalField}
+		return nil, &SchemaError{Model: this.Owner.Name, Field: this.Name,
+			Reason: "relation references unknown field " + this.LocalField}
 	}
 	return f, nil
 }
 
 // Remote is the field on the target used to join.
-func (r *Relation) Remote() (*Field, error) {
-	t, err := r.Target()
+func (this *Relation) Remote() (*Field, error) {
+	t, err := this.Target()
 	if err != nil {
 		return nil, err
 	}
-	f := t.Field(r.TargetField)
+	f := t.Field(this.TargetField)
 	if f == nil {
-		return nil, &SchemaError{Model: t.Name, Field: r.Name,
-			Reason: "relation references unknown field " + r.TargetField + " on " + t.Name}
+		return nil, &SchemaError{Model: t.Name, Field: this.Name,
+			Reason: "relation references unknown field " + this.TargetField + " on " + t.Name}
 	}
 	return f, nil
 }
 
 // fieldValue returns an addressable reflect.Value of the relation field inside
 // the model at base.
-func (r *Relation) fieldValue(base unsafe.Pointer) reflect.Value {
-	return reflect.NewAt(r.Type, unsafe.Add(base, r.Offset)).Elem()
+func (this *Relation) fieldValue(base unsafe.Pointer) reflect.Value {
+	return reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Elem()
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 		return &SchemaError{Model: s.Type.String(), Field: sf.Name, Reason: reason}
 	}
 
-	kind, opts := parseTag(tag)
+	kind, options := parseTag(tag)
 	r := &Relation{
 		Name:   sf.Name,
 		Owner:  s,
@@ -215,7 +215,7 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 		Elem:   elem,
 	}
 	var fk, ref string
-	for _, o := range opts {
+	for _, o := range options {
 		k, v, _ := strings.Cut(strings.TrimSpace(o), "=")
 		switch k {
 		case "fk":
@@ -300,35 +300,35 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 // resolveDefaults fills the join fields that default to a primary key. It runs
 // on first use rather than at build time, because the target schema may not be
 // buildable yet when models reference each other.
-func (r *Relation) resolveDefaults() error {
-	r.defaults.Do(func() {
-		t, err := r.Target()
+func (this *Relation) resolveDefaults() error {
+	this.defaults.Do(func() {
+		t, err := this.Target()
 		if err != nil {
-			r.defaultsErr = err
+			this.defaultsErr = err
 			return
 		}
-		if r.LocalField == "" {
-			r.LocalField = r.Owner.PK.Name
+		if this.LocalField == "" {
+			this.LocalField = this.Owner.PK.Name
 		}
-		if r.TargetField == "" {
-			r.TargetField = t.PK.Name
+		if this.TargetField == "" {
+			this.TargetField = t.PK.Name
 		}
 	})
-	return r.defaultsErr
+	return this.defaultsErr
 }
 
 // Resolve returns everything the query layer needs in one call.
-func (r *Relation) Resolve() (target *Meta, local, remote *Field, err error) {
-	if err = r.resolveDefaults(); err != nil {
+func (this *Relation) Resolve() (target *Meta, local, remote *Field, err error) {
+	if err = this.resolveDefaults(); err != nil {
 		return nil, nil, nil, err
 	}
-	if target, err = r.Target(); err != nil {
+	if target, err = this.Target(); err != nil {
 		return nil, nil, nil, err
 	}
-	if local, err = r.Local(); err != nil {
+	if local, err = this.Local(); err != nil {
 		return nil, nil, nil, err
 	}
-	if remote, err = r.Remote(); err != nil {
+	if remote, err = this.Remote(); err != nil {
 		return nil, nil, nil, err
 	}
 	return target, local, remote, nil
@@ -353,9 +353,9 @@ type PathHop struct {
 //
 // It is the single source of truth for path resolution: the SQL writer, the
 // preloader and the HTTP DSL all go through it.
-func (m *Meta) WalkPath(path string) (hops []PathHop, field *Field, canonical string, err error) {
+func (this *Meta) WalkPath(path string) (hops []PathHop, field *Field, canonical string, err error) {
 	segs := strings.Split(path, ".")
-	cur := m
+	cur := this
 	names := make([]string, 0, len(segs))
 
 	for i, seg := range segs {
@@ -390,31 +390,31 @@ func (m *Meta) WalkPath(path string) (hops []PathHop, field *Field, canonical st
 		names = append(names, rel.Name)
 		cur = target
 	}
-	return nil, nil, "", &UnknownFieldError{Model: m.Name, Field: path}
+	return nil, nil, "", &UnknownFieldError{Model: this.Name, Field: path}
 }
 
 // FieldAt resolves a path to its terminal column, refusing paths that stop on a
 // relation.
-func (m *Meta) FieldAt(path string) (*Field, string, error) {
-	_, f, canonical, err := m.WalkPath(path)
+func (this *Meta) FieldAt(path string) (*Field, string, error) {
+	_, f, canonical, err := this.WalkPath(path)
 	if err != nil {
 		return nil, "", err
 	}
 	if f == nil {
-		return nil, "", &SchemaError{Model: m.Name, Field: path,
+		return nil, "", &SchemaError{Model: this.Name, Field: path,
 			Reason: "path names a relation, not a column"}
 	}
 	return f, canonical, nil
 }
 
 // RelationAt resolves a path that ends on a relation, e.g. a preload target.
-func (m *Meta) RelationAt(path string) (*Relation, string, error) {
-	hops, f, canonical, err := m.WalkPath(path)
+func (this *Meta) RelationAt(path string) (*Relation, string, error) {
+	hops, f, canonical, err := this.WalkPath(path)
 	if err != nil {
 		return nil, "", err
 	}
 	if f != nil || len(hops) == 0 {
-		return nil, "", &SchemaError{Model: m.Name, Field: path,
+		return nil, "", &SchemaError{Model: this.Name, Field: path,
 			Reason: "path names a column, not a relation"}
 	}
 	return hops[len(hops)-1].Rel, canonical, nil

@@ -17,10 +17,10 @@ import (
 )
 
 // call runs one unary call through the interceptor.
-func call(t *testing.T, g *auth.Guard, ctx context.Context, opts ...authgrpc.Option) (*seen, error) {
+func call(t *testing.T, guard *auth.Guard, ctx context.Context, options ...authgrpc.Option) (*seen, error) {
 	t.Helper()
 	h := &seen{}
-	_, err := authgrpc.Unary(g, opts...)(ctx, nil, info(articleCreate), h.handle)
+	_, err := authgrpc.Unary(guard, options...)(ctx, nil, info(articleCreate), h.handle)
 	return h, err
 }
 
@@ -118,14 +118,14 @@ func TestAnOptionalGuardLetsAnAnonymousCallThrough(t *testing.T) {
 
 func TestADoubleInstallAuthenticatesOnce(t *testing.T) {
 	n := 0
-	g := auth.NewGuard(counting(&n))
+	guard := auth.NewGuard(counting(&n))
 	h := &seen{}
 	ctx := incoming("authorization", "Bearer t")
 
-	inner := authgrpc.Unary(g)
-	outer := authgrpc.Unary(g)
-	_, err := outer(ctx, nil, info(articleCreate), func(ctx context.Context, req any) (any, error) {
-		return inner(ctx, req, info(articleCreate), h.handle)
+	inner := authgrpc.Unary(guard)
+	outer := authgrpc.Unary(guard)
+	_, err := outer(ctx, nil, info(articleCreate), func(ctx context.Context, request any) (any, error) {
+		return inner(ctx, request, info(articleCreate), h.handle)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,11 +176,11 @@ func TestSkipLeavesTheNamedMethodAlone(t *testing.T) {
 }
 
 func TestAStreamIsAuthenticatedWhenItOpens(t *testing.T) {
-	g := auth.NewGuard(accepts())
+	guard := auth.NewGuard(accepts())
 
 	t.Run("the handler's stream carries the principal", func(t *testing.T) {
 		var found bool
-		err := authgrpc.Stream(g)(nil, &fakeStream{ctx: incoming("authorization", "Bearer t")},
+		err := authgrpc.Stream(guard)(nil, &fakeStream{ctx: incoming("authorization", "Bearer t")},
 			&grpc.StreamServerInfo{FullMethod: articleCreate},
 			func(_ any, ss grpc.ServerStream) error {
 				_, found = auth.PrincipalFrom(ss.Context())
@@ -196,7 +196,7 @@ func TestAStreamIsAuthenticatedWhenItOpens(t *testing.T) {
 
 	t.Run("an unauthenticated stream never opens", func(t *testing.T) {
 		ran := false
-		err := authgrpc.Stream(g)(nil, &fakeStream{ctx: incoming()},
+		err := authgrpc.Stream(guard)(nil, &fakeStream{ctx: incoming()},
 			&grpc.StreamServerInfo{FullMethod: articleCreate},
 			func(any, grpc.ServerStream) error { ran = true; return nil })
 		if !errors.Is(err, auth.ErrUnauthenticated) {
@@ -213,7 +213,7 @@ type fakeStream struct {
 	ctx context.Context
 }
 
-func (s *fakeStream) Context() context.Context { return s.ctx }
+func (this *fakeStream) Context() context.Context { return this.ctx }
 
 func TestANilGuardRefusesToStart(t *testing.T) {
 	for _, tc := range []struct {

@@ -62,25 +62,25 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := sql.Open("pgx", dsn)
+	database, err := sql.Open("pgx", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	ctx := context.Background()
-	if err := bootstrap(ctx, db); err != nil {
+	if err := bootstrap(ctx, database); err != nil {
 		log.Fatal(err)
 	}
 
 	// The same *sql.DB backs both halves: ent's client does the bootstrap and
 	// the seed, crudsql.Postgres does everything the repository runs
 	// afterwards. Neither owns the connection; vv never dials one itself.
-	repo := specs.Executor(Products.Bind(crudsql.Postgres(db)))
+	repository := specs.Executor(Products.Bind(crudsql.Postgres(database)))
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	crudgin.New(repo,
+	crudgin.New(repository,
 		crudgin.WithQuery[entmodel.Product, int64, entstore.ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
@@ -110,11 +110,11 @@ func main() {
 // bootstrap creates the table through ent's own migration and reseeds it, so
 // the example runs against a known set of rows every time. A real application
 // would use its own migrations instead of Schema.Create.
-func bootstrap(ctx context.Context, db *sql.DB) error {
+func bootstrap(ctx context.Context, database *sql.DB) error {
 	// Closing the ent client closes the driver it wraps, and entsql.OpenDB
 	// wraps this *sql.DB directly rather than a connection of its own — so the
 	// client is never closed here. main owns db and closes it on the way out.
-	client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB("postgres", db)))
+	client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB("postgres", database)))
 
 	if err := client.Schema.Create(ctx); err != nil {
 		return err

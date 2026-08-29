@@ -95,9 +95,9 @@ func authToken(t *testing.T, role string, tenant int64, mutate func(jwt.MapClaim
 
 // authSeed writes two tenants' rows, so a narrowing that does nothing is
 // visible as extra rows rather than as no rows.
-func authSeed(t *testing.T, src crud.Source) {
+func authSeed(t *testing.T, source crud.Source) {
 	t.Helper()
-	rows := AuthRows.Bind(src)
+	rows := AuthRows.Bind(source)
 	for _, r := range []EgRow{
 		{ID: 1, Tenant: 1, Name: "t1-first"},
 		{ID: 2, Tenant: 1, Name: "t1-second"},
@@ -114,9 +114,9 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			authSeed(t, tg.src)
-			gated := AuthRows.Bind(tg.src, security.Gate(authPolicy))
+			egWipe(t, tg.source)
+			authSeed(t, tg.source)
+			gated := AuthRows.Bind(tg.source, security.Gate(authPolicy))
 
 			t.Run("a list carries only the token's tenant", func(t *testing.T) {
 				ctx := authenticate(t, authToken(t, "editor", 1, nil))
@@ -163,7 +163,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 					t.Fatalf("writing into another tenant answered %v, want a denial", err)
 				}
 				// And it really did not land.
-				if _, err := AuthRows.Bind(tg.src).GetByID(context.Background(), 99); !errors.Is(err, crud.ErrNotFound) {
+				if _, err := AuthRows.Bind(tg.source).GetByID(context.Background(), 99); !errors.Is(err, crud.ErrNotFound) {
 					t.Fatal("the refused row is in the table")
 				}
 			})
@@ -174,7 +174,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 				if err := gated.Save(ctx, &row); err != nil {
 					t.Fatalf("writing into the caller's own tenant was refused: %v", err)
 				}
-				if _, err := AuthRows.Bind(tg.src).GetByID(context.Background(), 98); err != nil {
+				if _, err := AuthRows.Bind(tg.source).GetByID(context.Background(), 98); err != nil {
 					t.Fatalf("the accepted row is not in the table: %v", err)
 				}
 			})
@@ -184,7 +184,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 				if _, err := gated.Delete(ctx, 1); !errors.Is(err, crud.ErrForbidden) {
 					t.Fatalf("a reader deleted a row, or answered %v", err)
 				}
-				if _, err := AuthRows.Bind(tg.src).GetByID(context.Background(), 1); err != nil {
+				if _, err := AuthRows.Bind(tg.source).GetByID(context.Background(), 1); err != nil {
 					t.Fatalf("the row a reader was refused is gone anyway: %v", err)
 				}
 			})
@@ -205,9 +205,9 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 func TestAGatedRepositoryRefusesWhatTheTokenDoesNotCarry(t *testing.T) {
 	egSetup(t)
 	tg := egEngines()[0]
-	egWipe(t, tg.src)
-	authSeed(t, tg.src)
-	gated := AuthRows.Bind(tg.src, security.Gate(authPolicy))
+	egWipe(t, tg.source)
+	authSeed(t, tg.source)
+	gated := AuthRows.Bind(tg.source, security.Gate(authPolicy))
 
 	t.Run("no principal at all is unauthenticated", func(t *testing.T) {
 		_, err := gated.GetAll(context.Background())

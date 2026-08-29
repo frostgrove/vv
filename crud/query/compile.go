@@ -15,11 +15,11 @@ type Error struct {
 	Reason string
 }
 
-func (e *Error) Error() string {
-	if e.Path == "" {
-		return "query: " + e.Reason
+func (this *Error) Error() string {
+	if this.Path == "" {
+		return "query: " + this.Reason
 	}
-	return "query: " + e.Path + ": " + e.Reason
+	return "query: " + this.Path + ": " + this.Reason
 }
 
 func errf(path, format string, args ...any) *Error {
@@ -126,72 +126,72 @@ const (
 	defaultMaxPreloadRows = 1_000
 )
 
-func (c *Config) maxDepth() int {
-	if c != nil && c.MaxDepth > 0 {
-		return c.MaxDepth
+func (this *Config) maxDepth() int {
+	if this != nil && this.MaxDepth > 0 {
+		return this.MaxDepth
 	}
 	return defaultMaxDepth
 }
 
-func (c *Config) maxConditions() int {
-	if c != nil && c.MaxConditions > 0 {
-		return c.MaxConditions
+func (this *Config) maxConditions() int {
+	if this != nil && this.MaxConditions > 0 {
+		return this.MaxConditions
 	}
 	return defaultMaxConditions
 }
 
-func (c *Config) maxPreloads() int {
-	if c != nil && c.MaxPreloads > 0 {
-		return c.MaxPreloads
+func (this *Config) maxPreloads() int {
+	if this != nil && this.MaxPreloads > 0 {
+		return this.MaxPreloads
 	}
 	return defaultMaxPreloads
 }
 
-func (c *Config) maxInValues() int {
-	if c != nil && c.MaxInValues > 0 {
-		return c.MaxInValues
+func (this *Config) maxInValues() int {
+	if this != nil && this.MaxInValues > 0 {
+		return this.MaxInValues
 	}
 	return defaultMaxInValues
 }
 
-func (c *Config) maxSort() int {
-	if c != nil && c.MaxSort > 0 {
-		return c.MaxSort
+func (this *Config) maxSort() int {
+	if this != nil && this.MaxSort > 0 {
+		return this.MaxSort
 	}
 	return defaultMaxSort
 }
 
-func (c *Config) maxSelect() int {
-	if c != nil && c.MaxSelect > 0 {
-		return c.MaxSelect
+func (this *Config) maxSelect() int {
+	if this != nil && this.MaxSelect > 0 {
+		return this.MaxSelect
 	}
 	return defaultMaxSelect
 }
 
-func (c *Config) maxLimit() int {
-	if c != nil && c.MaxLimit > 0 {
-		return c.MaxLimit
+func (this *Config) maxLimit() int {
+	if this != nil && this.MaxLimit > 0 {
+		return this.MaxLimit
 	}
 	return defaultMaxLimit
 }
 
-func (c *Config) maxOffset() int {
-	if c != nil && c.MaxOffset > 0 {
-		return c.MaxOffset
+func (this *Config) maxOffset() int {
+	if this != nil && this.MaxOffset > 0 {
+		return this.MaxOffset
 	}
 	return defaultMaxOffset
 }
 
-func (c *Config) maxBindValues() int {
-	if c != nil && c.MaxBindValues > 0 {
-		return c.MaxBindValues
+func (this *Config) maxBindValues() int {
+	if this != nil && this.MaxBindValues > 0 {
+		return this.MaxBindValues
 	}
 	return defaultMaxBinds
 }
 
-func (c *Config) maxPreloadRows() int {
-	if c != nil && c.MaxPreloadRows > 0 {
-		return c.MaxPreloadRows
+func (this *Config) maxPreloadRows() int {
+	if this != nil && this.MaxPreloadRows > 0 {
+		return this.MaxPreloadRows
 	}
 	return defaultMaxPreloadRows
 }
@@ -218,24 +218,24 @@ func (c *Config) maxPreloadRows() int {
 // A bare "*" and an empty list mean "anything the model maps" and are always
 // legal. A trailing ".*" is a subtree: the prefix must resolve, the rest is what
 // it covers.
-func (c *Config) Check(meta *crud.Meta) error {
-	if c == nil {
+func (this *Config) Check(meta *crud.Meta) error {
+	if this == nil {
 		return nil
 	}
 	for _, bound := range []struct {
 		name  string
 		value int
 	}{
-		{"maxDepth", c.MaxDepth},
-		{"maxConditions", c.MaxConditions},
-		{"maxPreloads", c.MaxPreloads},
-		{"maxInValues", c.MaxInValues},
-		{"maxSort", c.MaxSort},
-		{"maxSelect", c.MaxSelect},
-		{"maxLimit", c.MaxLimit},
-		{"maxOffset", c.MaxOffset},
-		{"maxBindValues", c.MaxBindValues},
-		{"maxPreloadRows", c.MaxPreloadRows},
+		{"maxDepth", this.MaxDepth},
+		{"maxConditions", this.MaxConditions},
+		{"maxPreloads", this.MaxPreloads},
+		{"maxInValues", this.MaxInValues},
+		{"maxSort", this.MaxSort},
+		{"maxSelect", this.MaxSelect},
+		{"maxLimit", this.MaxLimit},
+		{"maxOffset", this.MaxOffset},
+		{"maxBindValues", this.MaxBindValues},
+		{"maxPreloadRows", this.MaxPreloadRows},
 	} {
 		if bound.value < 0 {
 			return errf(bound.name, "must not be negative; zero uses the safe default")
@@ -276,10 +276,10 @@ func (c *Config) Check(meta *crud.Meta) error {
 		list  []string
 		where string
 	}{
-		{c.Filterable, "filterable"},
-		{c.Sortable, "sortable"},
-		{c.Selectable, "selectable"},
-		{c.Searchable, "searchable"},
+		{this.Filterable, "filterable"},
+		{this.Sortable, "sortable"},
+		{this.Selectable, "selectable"},
+		{this.Searchable, "searchable"},
 	} {
 		if err := field(l.list, l.where); err != nil {
 			return err
@@ -290,7 +290,7 @@ func (c *Config) Check(meta *crud.Meta) error {
 	// time. Resolve every direct field now, and ensure the default is inside
 	// the endpoint's searchable vocabulary rather than saving a route mistake
 	// for the first client who happens to search it.
-	for _, entry := range c.DefaultSearchFields {
+	for _, entry := range this.DefaultSearchFields {
 		if entry == "*" || strings.HasSuffix(entry, ".*") {
 			return errf("defaultSearchFields", "%s is an allow-list wildcard, not a search field", entry)
 		}
@@ -301,11 +301,11 @@ func (c *Config) Check(meta *crud.Meta) error {
 		if err != nil {
 			return errf("defaultSearchFields", "%s must name a field on %s, so it can search when the route starts", entry, meta.Name)
 		}
-		if !allowed(c.Searchable, canonical) {
+		if !allowed(this.Searchable, canonical) {
 			return errf("defaultSearchFields", "%s is not granted by searchable", canonical)
 		}
 	}
-	for _, entry := range c.Preloadable {
+	for _, entry := range this.Preloadable {
 		if entry == "*" {
 			continue
 		}
@@ -322,7 +322,7 @@ func (c *Config) Check(meta *crud.Meta) error {
 		}
 		for i := range strings.Split(name, ".") {
 			hop := strings.Join(strings.Split(name, ".")[:i+1], ".")
-			if !allowed(c.Preloadable, hop) {
+			if !allowed(this.Preloadable, hop) {
 				return errf("preloadable", "%s loads %s too, so %s must be declared explicitly", entry, hop, hop)
 			}
 		}
@@ -332,11 +332,11 @@ func (c *Config) Check(meta *crud.Meta) error {
 
 // MustCheck is [Check] for a package-level declaration, where there is nowhere to
 // return an error to.
-func (c *Config) MustCheck(meta *crud.Meta) *Config {
-	if err := c.Check(meta); err != nil {
+func (this *Config) MustCheck(meta *crud.Meta) *Config {
+	if err := this.Check(meta); err != nil {
 		panic("query: " + err.Error())
 	}
-	return c
+	return this
 }
 
 // allowed matches a canonical path against an allow-list. An empty list allows
@@ -406,82 +406,82 @@ func foldSegment(s string) string {
 
 // Compile turns the request into repository options, validating every path
 // against the model on the way. Nothing reaches SQL that did not resolve.
-func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
-	if r == nil {
+func (this *Request) Compile(meta *crud.Meta, config *Config) ([]crud.Option, error) {
+	if this == nil {
 		return nil, nil
 	}
-	c := &compiler{meta: meta, cfg: cfg, conds: new(int), binds: new(int)}
-	var opts []crud.Option
-	cursoring := r.After != "" || r.Before != ""
-	if r.Page < 0 {
+	c := &compiler{meta: meta, config: config, conds: new(int), binds: new(int)}
+	var options []crud.Option
+	cursoring := this.After != "" || this.Before != ""
+	if this.Page < 0 {
 		return nil, errf("page", "must not be negative")
 	}
-	if r.Limit < 0 {
+	if this.Limit < 0 {
 		return nil, errf("limit", "must not be negative")
 	}
-	if r.Offset < 0 {
+	if this.Offset < 0 {
 		return nil, errf("offset", "must not be negative")
 	}
-	if r.afterSet && strings.TrimSpace(r.After) == "" {
+	if this.afterSet && strings.TrimSpace(this.After) == "" {
 		return nil, errf("after", "must not be empty")
 	}
-	if r.beforeSet && strings.TrimSpace(r.Before) == "" {
+	if this.beforeSet && strings.TrimSpace(this.Before) == "" {
 		return nil, errf("before", "must not be empty")
 	}
-	if (r.After != "" || r.afterSet) && (r.Before != "" || r.beforeSet) {
+	if (this.After != "" || this.afterSet) && (this.Before != "" || this.beforeSet) {
 		return nil, errf("after", "cannot be combined with before")
 	}
 
 	// filter
-	if !r.Filter.IsZero() {
-		p, err := c.node(r.Filter.raw, "filter", 1)
+	if !this.Filter.IsZero() {
+		p, err := c.node(this.Filter.raw, "filter", 1)
 		if err != nil {
 			return nil, err
 		}
 		if p != nil {
-			opts = append(opts, crud.Where(p))
+			options = append(options, crud.Where(p))
 		}
 	}
 
 	// flat terms, ANDed with the structured filter
-	if len(r.Terms) > 0 {
-		p, err := c.terms(r.Terms)
+	if len(this.Terms) > 0 {
+		p, err := c.terms(this.Terms)
 		if err != nil {
 			return nil, err
 		}
 		if p != nil {
-			opts = append(opts, crud.Where(p))
+			options = append(options, crud.Where(p))
 		}
 	}
 
 	// search
-	if s := strings.TrimSpace(r.Search); s != "" {
-		p, err := c.search(s, r.SearchFields)
+	if s := strings.TrimSpace(this.Search); s != "" {
+		p, err := c.search(s, this.SearchFields)
 		if err != nil {
 			return nil, err
 		}
 		if p != nil {
-			opts = append(opts, crud.Where(p))
+			options = append(options, crud.Where(p))
 		}
 	}
 
 	// sort
-	if len(r.Sort) > c.cfg.maxSort() {
+	if len(this.Sort) > c.config.maxSort() {
 		return nil, errf("sort", "at most %d sort terms per query, got %d",
-			c.cfg.maxSort(), len(r.Sort))
+			c.config.maxSort(), len(this.Sort))
 	}
 	// A repeated canonical path is dropped rather than rendered twice: crud.OrderBy
 	// appends, and the second ORDER BY term over a column already sorted decides
 	// nothing while costing whatever the term costs — which for a relation hop is
 	// a correlated subquery ([[D-005]]).
-	sorted := make(map[string]crud.Order, len(r.Sort))
-	sortedPaths := make([]string, 0, len(r.Sort))
-	for _, s := range r.Sort {
+	sorted := make(map[string]crud.Order, len(this.Sort))
+	sortedPaths := make([]string, 0, len(this.Sort))
+	for _, s := range this.Sort {
 		f, canonical, err := c.path(s.Field, "sort")
 		if err != nil {
 			return nil, err
 		}
-		if !allowed(c.cfg.sortable(), canonical) {
+		if !allowed(c.config.sortable(), canonical) {
 			return nil, errf("sort", "%s is not sortable", canonical)
 		}
 		o := crud.Order{Field: canonical, Desc: s.Desc}
@@ -503,15 +503,15 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 		sorted[canonical] = o
 		sortedPaths = append(sortedPaths, canonical)
 		_ = f
-		opts = append(opts, crud.OrderBy(o))
+		options = append(options, crud.OrderBy(o))
 	}
 
 	// projection
-	if len(r.Select) > c.cfg.maxSelect() {
-		return nil, errf("select", "at most %d fields may be selected", c.cfg.maxSelect())
+	if len(this.Select) > c.config.maxSelect() {
+		return nil, errf("select", "at most %d fields may be selected", c.config.maxSelect())
 	}
-	selected := make(map[string]bool, len(r.Select))
-	for _, name := range r.Select {
+	selected := make(map[string]bool, len(this.Select))
+	for _, name := range this.Select {
 		f, canonical, err := c.path(name, "select")
 		if err != nil {
 			return nil, err
@@ -519,7 +519,7 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 		if strings.Contains(canonical, ".") {
 			return nil, errf("select", "%s crosses a relation; use preload instead", canonical)
 		}
-		if !allowed(c.cfg.selectable(), canonical) {
+		if !allowed(c.config.selectable(), canonical) {
 			return nil, errf("select", "%s cannot be selected", canonical)
 		}
 		if selected[canonical] {
@@ -527,23 +527,23 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 		}
 		selected[canonical] = true
 		_ = f
-		opts = append(opts, crud.Select(canonical))
+		options = append(options, crud.Select(canonical))
 	}
 
 	// preloads
-	if len(r.Preload) > c.cfg.maxPreloads() {
-		return nil, errf("preload", "at most %d relations may be preloaded", c.cfg.maxPreloads())
+	if len(this.Preload) > c.config.maxPreloads() {
+		return nil, errf("preload", "at most %d relations may be preloaded", c.config.maxPreloads())
 	}
-	canonicalPreloads := make([]string, len(r.Preload))
-	loaded := make(map[string]struct{}, len(r.Preload))
-	for i, p := range r.Preload {
+	canonicalPreloads := make([]string, len(this.Preload))
+	loaded := make(map[string]struct{}, len(this.Preload))
+	for i, p := range this.Preload {
 		_, canonical, err := meta.RelationAt(p.Path)
 		if err != nil {
 			return nil, errf("preload", "%s", cleanErr(err))
 		}
 		canonicalPreloads[i] = canonical
-		if strings.Count(canonical, ".")+1 > c.cfg.maxDepth() {
-			return nil, errf("preload", "path %s is deeper than the allowed %d segments", canonical, c.cfg.maxDepth())
+		if strings.Count(canonical, ".")+1 > c.config.maxDepth() {
+			return nil, errf("preload", "path %s is deeper than the allowed %d segments", canonical, c.config.maxDepth())
 		}
 		// A nested preload materialises every relation it walks. Requiring an
 		// explicit grant for every hop keeps a declaration of Comments.Author
@@ -551,16 +551,16 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 		segments := strings.Split(canonical, ".")
 		for i := range segments {
 			hop := strings.Join(segments[:i+1], ".")
-			if !allowed(c.cfg.preloadable(), hop) {
+			if !allowed(c.config.preloadable(), hop) {
 				return nil, errf("preload", "%s cannot be preloaded", hop)
 			}
 			loaded[hop] = struct{}{}
 		}
 	}
-	if len(loaded) > c.cfg.maxPreloads() {
-		return nil, errf("preload", "at most %d relations may be preloaded", c.cfg.maxPreloads())
+	if len(loaded) > c.config.maxPreloads() {
+		return nil, errf("preload", "at most %d relations may be preloaded", c.config.maxPreloads())
 	}
-	for i, p := range r.Preload {
+	for i, p := range this.Preload {
 		canonical := canonicalPreloads[i]
 		if p.MaxRows < 0 {
 			return nil, errf("preload."+canonical+".maxRows", "must not be negative")
@@ -572,12 +572,12 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 		// A client may tighten an endpoint's cap, never widen it. The cap is a
 		// refusal rather than pagination, so neither value permits a partial
 		// relation.
-		maxRows := c.cfg.maxPreloadRows()
+		maxRows := c.config.maxPreloadRows()
 		if p.MaxRows > 0 && p.MaxRows < maxRows {
 			maxRows = p.MaxRows
 		}
 		sub = append(sub, crud.PreloadRows(maxRows))
-		opts = append(opts, crud.PreloadCap(canonical, maxRows, sub...))
+		options = append(options, crud.PreloadCap(canonical, maxRows, sub...))
 	}
 
 	// paging
@@ -589,29 +589,29 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 	// Limit, including when the request omitted limit and when it pages by
 	// cursor; otherwise sqlrepo falls back to its independently configured
 	// DefaultLimit and a small endpoint budget is only aspirational.
-	limit := r.Limit
-	if limit == 0 || limit > c.cfg.maxLimit() {
-		limit = c.cfg.maxLimit()
+	limit := this.Limit
+	if limit == 0 || limit > c.config.maxLimit() {
+		limit = c.config.maxLimit()
 	}
-	if !cursoring && !r.omitPaging {
-		if r.Offset > c.cfg.maxOffset() {
-			return nil, errf("offset", "must not exceed %d", c.cfg.maxOffset())
+	if !cursoring && !this.omitPaging {
+		if this.Offset > c.config.maxOffset() {
+			return nil, errf("offset", "must not exceed %d", c.config.maxOffset())
 		}
-		if r.Page > 0 {
+		if this.Page > 0 {
 			// Compare before multiplying. At the public boundary an overflowing
 			// page number must be a normal depth refusal, not an enormous offset
 			// that a lower layer happens to saturate.
-			if r.Offset == 0 && r.Page > 1 && r.Page-1 > c.cfg.maxOffset()/limit {
-				return nil, errf("page", "is deeper than the allowed offset of %d", c.cfg.maxOffset())
+			if this.Offset == 0 && this.Page > 1 && this.Page-1 > c.config.maxOffset()/limit {
+				return nil, errf("page", "is deeper than the allowed offset of %d", c.config.maxOffset())
 			}
-			opts = append(opts, crud.Page(r.Page))
+			options = append(options, crud.Page(this.Page))
 		}
-		if r.Offset > 0 {
-			opts = append(opts, crud.Offset(r.Offset))
+		if this.Offset > 0 {
+			options = append(options, crud.Offset(this.Offset))
 		}
 	}
-	if !r.omitPaging {
-		opts = append(opts, crud.Limit(limit))
+	if !this.omitPaging {
+		options = append(options, crud.Limit(limit))
 	}
 	// A cursor is checked against the sort by the repository, which is the only
 	// place the sort that actually runs is known. What the repository cannot
@@ -641,7 +641,7 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 			if strings.Contains(name, ".") {
 				return nil, errf("after", "cursor pagination cannot sort through relation %s; use a root-model sort", name)
 			}
-			if !allowed(c.cfg.filterable(), name) {
+			if !allowed(c.config.filterable(), name) {
 				return nil, errf("after", "a cursor compares %s, which this endpoint does not expose to filtering; "+
 					"sort by a filterable column or page by offset", name)
 			}
@@ -662,35 +662,35 @@ func (r *Request) Compile(meta *crud.Meta, cfg *Config) ([]crud.Option, error) {
 			return nil, err
 		}
 	}
-	if r.After != "" {
-		opts = append(opts, crud.After(r.After))
+	if this.After != "" {
+		options = append(options, crud.After(this.After))
 	}
-	if r.Before != "" {
-		opts = append(opts, crud.Before(r.Before))
+	if this.Before != "" {
+		options = append(options, crud.Before(this.Before))
 	}
-	if r.Unpaged {
-		if c.cfg == nil || !c.cfg.AllowUnpaged {
-			return nil, errf(r.UnpagedParam(), "this endpoint does not serve unpaged results; "+
+	if this.Unpaged {
+		if c.config == nil || !c.config.AllowUnpaged {
+			return nil, errf(this.UnpagedParam(), "this endpoint does not serve unpaged results; "+
 				"ask for a page, or declare query.Config{AllowUnpaged: true} for it")
 		}
-		opts = append(opts, crud.Unpaged())
+		options = append(options, crud.Unpaged())
 	}
-	if r.SkipTotal {
-		opts = append(opts, crud.SkipTotal())
+	if this.SkipTotal {
+		options = append(options, crud.SkipTotal())
 	}
-	if r.Distinct {
-		if c.cfg == nil || !c.cfg.AllowDistinct {
+	if this.Distinct {
+		if c.config == nil || !c.config.AllowDistinct {
 			return nil, errf("distinct", "this endpoint does not serve distinct results; declare query.Config{AllowDistinct: true} to enable it")
 		}
-		opts = append(opts, crud.Distinct())
+		options = append(options, crud.Distinct())
 	}
-	return opts, nil
+	return options, nil
 }
 
 // preloadOpts compiles a per-relation filter and sort against the *target*
 // model, so `{"path":"comments","filter":{"approved":true}}` validates against
 // Comment rather than against the root.
-func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]crud.Option, error) {
+func (this *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]crud.Option, error) {
 	if p.Filter.IsZero() && len(p.Sort) == 0 {
 		return nil, nil
 	}
@@ -709,20 +709,20 @@ func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]
 	// root's own Body silently authorised every preloaded relation's Body, and
 	// the documented `Comments.Body` spelling authorised the root path while
 	// refusing the preload route that looks exactly like it.
-	sub := &compiler{meta: target, cfg: c.cfg, conds: c.conds, binds: c.binds, prefix: canonical}
-	var opts []crud.Option
+	sub := &compiler{meta: target, config: this.config, conds: this.conds, binds: this.binds, prefix: canonical}
+	var options []crud.Option
 	if !p.Filter.IsZero() {
 		pred, err := sub.node(p.Filter.raw, "preload."+canonical+".filter", 1)
 		if err != nil {
 			return nil, err
 		}
 		if pred != nil {
-			opts = append(opts, crud.Where(pred))
+			options = append(options, crud.Where(pred))
 		}
 	}
-	if len(p.Sort) > c.cfg.maxSort() {
+	if len(p.Sort) > this.config.maxSort() {
 		return nil, errf("preload."+canonical+".sort", "at most %d sort terms per query, got %d",
-			c.cfg.maxSort(), len(p.Sort))
+			this.config.maxSort(), len(p.Sort))
 	}
 	sorted := make(map[string]crud.Order, len(p.Sort))
 	for _, s := range p.Sort {
@@ -733,7 +733,7 @@ func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]
 		// A preload's sort used to skip both of these, so a column the config
 		// never named was sortable through a relation and an invalid `nulls`
 		// was accepted and thrown away — on the same axis the root sort guards.
-		if !allowed(c.cfg.sortable(), sub.qualify(sortPath)) {
+		if !allowed(this.config.sortable(), sub.qualify(sortPath)) {
 			return nil, errf("preload."+canonical+".sort", "%s is not sortable", sub.qualify(sortPath))
 		}
 		o := crud.Order{Field: sortPath, Desc: s.Desc}
@@ -754,61 +754,61 @@ func (c *compiler) preloadOpts(root *crud.Meta, canonical string, p Preload) ([]
 			continue
 		}
 		sorted[fullPath] = o
-		opts = append(opts, crud.OrderBy(o))
+		options = append(options, crud.OrderBy(o))
 	}
-	return opts, nil
+	return options, nil
 }
 
-func (c *Config) sortable() []string {
-	if c == nil {
+func (this *Config) sortable() []string {
+	if this == nil {
 		return nil
 	}
-	return c.Sortable
+	return this.Sortable
 }
 
-func (c *Config) selectable() []string {
-	if c == nil {
+func (this *Config) selectable() []string {
+	if this == nil {
 		return nil
 	}
-	return c.Selectable
+	return this.Selectable
 }
 
-func (c *Config) preloadable() []string {
-	if c == nil {
+func (this *Config) preloadable() []string {
+	if this == nil {
 		return nil
 	}
-	return c.Preloadable
+	return this.Preloadable
 }
 
-func (c *Config) filterable() []string {
-	if c == nil {
+func (this *Config) filterable() []string {
+	if this == nil {
 		return nil
 	}
-	return c.Filterable
+	return this.Filterable
 }
 
-func (c *Config) searchable() []string {
-	if c == nil {
+func (this *Config) searchable() []string {
+	if this == nil {
 		return nil
 	}
-	return c.Searchable
+	return this.Searchable
 }
 
-func (c *Config) defaultSearchFields() []string {
-	if c == nil {
+func (this *Config) defaultSearchFields() []string {
+	if this == nil {
 		return nil
 	}
-	return c.DefaultSearchFields
+	return this.DefaultSearchFields
 }
 
 // compiler carries the schema and limits through the recursion. A preload
 // compiles against its own model but shares the condition counter, because the
 // budget is the whole document's.
 type compiler struct {
-	meta  *crud.Meta
-	cfg   *Config
-	conds *int
-	binds *int
+	meta   *crud.Meta
+	config *Config
+	conds  *int
+	binds  *int
 
 	// prefix is where this compiler sits relative to the root, because the
 	// allow-lists are the root's and are spelled from there.
@@ -816,27 +816,27 @@ type compiler struct {
 }
 
 // qualify spells a path the way the allow-lists do.
-func (c *compiler) qualify(canonical string) string {
-	if c.prefix == "" {
+func (this *compiler) qualify(canonical string) string {
+	if this.prefix == "" {
 		return canonical
 	}
-	return c.prefix + "." + canonical
+	return this.prefix + "." + canonical
 }
 
 // count charges one leaf comparison against the document's budget. Every shape
 // a comparison can take goes through here, so a client cannot buy itself more
 // conditions by spelling them as shorthand equalities.
-func (c *compiler) count(where string) error {
-	return c.countConditions(1, where)
+func (this *compiler) count(where string) error {
+	return this.countConditions(1, where)
 }
 
-func (c *compiler) countConditions(n uint64, where string) error {
-	max := uint64(c.cfg.maxConditions())
-	used := uint64(*c.conds)
+func (this *compiler) countConditions(n uint64, where string) error {
+	max := uint64(this.config.maxConditions())
+	used := uint64(*this.conds)
 	if n > max || used > max-n {
-		return errf(where, "at most %d conditions per query", c.cfg.maxConditions())
+		return errf(where, "at most %d conditions per query", this.config.maxConditions())
 	}
-	*c.conds += int(n)
+	*this.conds += int(n)
 	return nil
 }
 
@@ -845,31 +845,31 @@ func (c *compiler) countConditions(n uint64, where string) error {
 // Separate from count because the two measure different things: a list is one
 // condition however long it is, so the condition budget never sees its length,
 // and every element becomes a bound parameter in the statement.
-func (c *compiler) countValues(n int, where string) error {
+func (this *compiler) countValues(n int, where string) error {
 	if n == 0 {
 		return errf(where, "needs at least one value")
 	}
-	if n > c.cfg.maxInValues() {
-		return errf(where, "at most %d values per list, got %d", c.cfg.maxInValues(), n)
+	if n > this.config.maxInValues() {
+		return errf(where, "at most %d values per list, got %d", this.config.maxInValues(), n)
 	}
-	return c.countBinds(n, where)
+	return this.countBinds(n, where)
 }
 
 // countBinds accounts for every value that becomes a SQL parameter. It is a
 // document-wide budget: a request can spell values through nested filters,
 // flat terms, search fields and preload filters, but all of them land in one
 // statement (or one family of statements) the server still has to carry.
-func (c *compiler) countBinds(n int, where string) error {
-	return c.countBindValues(uint64(n), where)
+func (this *compiler) countBinds(n int, where string) error {
+	return this.countBindValues(uint64(n), where)
 }
 
-func (c *compiler) countBindValues(n uint64, where string) error {
-	max := uint64(c.cfg.maxBindValues())
-	used := uint64(*c.binds)
+func (this *compiler) countBindValues(n uint64, where string) error {
+	max := uint64(this.config.maxBindValues())
+	used := uint64(*this.binds)
 	if n > max || used > max-n {
-		return errf(where, "at most %d bound values per query", c.cfg.maxBindValues())
+		return errf(where, "at most %d bound values per query", this.config.maxBindValues())
 	}
-	*c.binds += int(n)
+	*this.binds += int(n)
 	return nil
 }
 
@@ -889,19 +889,19 @@ func triangular(n uint64) (uint64, bool) {
 
 // path resolves and validates a dotted field path, returning the field and its
 // canonical spelling.
-func (c *compiler) path(raw, where string) (*crud.Field, string, error) {
+func (this *compiler) path(raw, where string) (*crud.Field, string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, "", errf(where, "empty field path")
 	}
 	depth := strings.Count(raw, ".") + 1
-	if c.prefix != "" {
-		depth += strings.Count(c.prefix, ".") + 1
+	if this.prefix != "" {
+		depth += strings.Count(this.prefix, ".") + 1
 	}
-	if depth > c.cfg.maxDepth() {
-		return nil, "", errf(where, "path %s is deeper than the allowed %d segments", raw, c.cfg.maxDepth())
+	if depth > this.config.maxDepth() {
+		return nil, "", errf(where, "path %s is deeper than the allowed %d segments", raw, this.config.maxDepth())
 	}
-	f, canonical, err := c.meta.FieldAt(raw)
+	f, canonical, err := this.meta.FieldAt(raw)
 	if err != nil {
 		return nil, "", errf(where, "%s", cleanErr(err))
 	}
@@ -912,21 +912,21 @@ func (c *compiler) path(raw, where string) (*crud.Field, string, error) {
 // wrapped in its own node, so it can never leak out of the surrounding AND —
 // the precedence trap that a hand-built "a LIKE ? OR b LIKE ?" string falls
 // straight into.
-func (c *compiler) search(term string, fields []string) (crud.Predicate, error) {
+func (this *compiler) search(term string, fields []string) (crud.Predicate, error) {
 	names := fields
 	if len(names) == 0 {
-		names = c.cfg.defaultSearchFields()
+		names = this.config.defaultSearchFields()
 	}
 	var preds []crud.Predicate
 
 	if len(names) == 0 {
 		// Everything textual on the root model.
-		for _, f := range c.meta.Fields {
-			if crud.ElemType(f.Type).Kind() == reflect.String && allowed(c.cfg.searchable(), f.Name) {
-				if err := c.count("search"); err != nil {
+		for _, f := range this.meta.Fields {
+			if crud.ElemType(f.Type).Kind() == reflect.String && allowed(this.config.searchable(), f.Name) {
+				if err := this.count("search"); err != nil {
 					return nil, err
 				}
-				if err := c.countBinds(1, "search"); err != nil {
+				if err := this.countBinds(1, "search"); err != nil {
 					return nil, err
 				}
 				preds = append(preds, crud.ContainsIgnoreCase(f.Name, term))
@@ -944,17 +944,17 @@ func (c *compiler) search(term string, fields []string) (crud.Predicate, error) 
 	// `searchFields` instead of `in`. The sort list is bounded by MaxSort for the
 	// same reason; this one shares MaxSort's budget rather than growing a
 	// twelfth cap for a list of column names.
-	if len(names) > c.cfg.maxSort() {
+	if len(names) > this.config.maxSort() {
 		return nil, errf("searchFields", "at most %d search fields per query, got %d",
-			c.cfg.maxSort(), len(names))
+			this.config.maxSort(), len(names))
 	}
 	seen := make(map[string]bool, len(names))
 	for _, name := range names {
-		f, canonical, err := c.path(name, "searchFields")
+		f, canonical, err := this.path(name, "searchFields")
 		if err != nil {
 			return nil, err
 		}
-		if !allowed(c.cfg.searchable(), canonical) {
+		if !allowed(this.config.searchable(), canonical) {
 			return nil, errf("searchFields", "%s is not searchable", canonical)
 		}
 		// A repeated field is one LIKE, not two. Deduplicated the way the sort
@@ -965,10 +965,10 @@ func (c *compiler) search(term string, fields []string) (crud.Predicate, error) 
 		}
 		seen[canonical] = true
 		if crud.ElemType(f.Type).Kind() == reflect.String {
-			if err := c.count("searchFields"); err != nil {
+			if err := this.count("searchFields"); err != nil {
 				return nil, err
 			}
-			if err := c.countBinds(1, "searchFields"); err != nil {
+			if err := this.countBinds(1, "searchFields"); err != nil {
 				return nil, err
 			}
 			preds = append(preds, crud.ContainsIgnoreCase(canonical, term))
@@ -976,10 +976,10 @@ func (c *compiler) search(term string, fields []string) (crud.Predicate, error) 
 		}
 		// A non-text column only joins the search when the term fits it.
 		if v, err := coerceString(term, crud.ElemType(f.Type)); err == nil {
-			if err := c.count("searchFields"); err != nil {
+			if err := this.count("searchFields"); err != nil {
 				return nil, err
 			}
-			if err := c.countBinds(1, "searchFields"); err != nil {
+			if err := this.countBinds(1, "searchFields"); err != nil {
 				return nil, err
 			}
 			preds = append(preds, crud.Eq(canonical, v))

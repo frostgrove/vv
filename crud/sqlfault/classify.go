@@ -41,9 +41,9 @@ func WithColumns(c Columns) Option { return func(k *Classifier) { k.cols = c } }
 //
 // The engine is declared by the caller and derived from nothing. See the package
 // doc for why a type switch over crud.Dialect is not a shortcut to it.
-func New(engine string, opts ...Option) *Classifier {
+func New(engine string, options ...Option) *Classifier {
 	c := &Classifier{engine: engine, codes: errs.StandardCodes()}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(c)
 		}
@@ -52,11 +52,11 @@ func New(engine string, opts ...Option) *Classifier {
 }
 
 // Engine names the dialect this classifier was declared for.
-func (c *Classifier) Engine() string {
-	if c == nil {
+func (this *Classifier) Engine() string {
+	if this == nil {
 		return ""
 	}
-	return c.engine
+	return this.engine
 }
 
 // Classify implements errs.Classifier.
@@ -68,23 +68,23 @@ func (c *Classifier) Engine() string {
 // A refusal is not a failure. An engine this classifier was not declared for, an
 // unlisted state, a code nobody wired: all three answer false, and [Wrap] then
 // still attaches the sentinel where [Integrity] says one belongs.
-func (c *Classifier) Classify(err error) (*errs.Fault, bool) {
-	if c == nil || err == nil {
+func (this *Classifier) Classify(err error) (*errs.Fault, bool) {
+	if this == nil || err == nil {
 		return nil, false
 	}
-	e := c.extract(err)
+	e := this.extract(err)
 	if e == nil {
 		return nil, false
 	}
-	code, src, ok := sqlerr.Classify(c.engine, e)
+	code, source, ok := sqlerr.Classify(this.engine, e)
 	if !ok {
 		return nil, false
 	}
-	kind, ok := c.codes.KindOf(code)
+	kind, ok := this.codes.KindOf(code)
 	if !ok {
 		return nil, false
 	}
-	src = c.fill(src)
+	source = this.fill(source)
 
 	b := errs.New(kind).Code(code).
 		// Origin is written out because errs.OriginInput is the zero value: a
@@ -96,14 +96,14 @@ func (c *Classifier) Classify(err error) (*errs.Fault, bool) {
 		// translation belongs to the decorator that has crud.Meta ([[D-043]]) —
 		// and a nil path is not an unresolved one, so nothing is marked
 		// approximate either.
-		General().Code(code).Origin(errs.OriginState).Source(src).
+		General().Code(code).Origin(errs.OriginState).Source(source).
 		Detail(errs.Detail{
-			Dialect:    c.engine,
+			Dialect:    this.engine,
 			SQLState:   e.SQLState,
 			Native:     int(e.Native),
-			Constraint: src.Constraint,
-			Table:      src.Table,
-			Columns:    src.Columns,
+			Constraint: source.Constraint,
+			Table:      source.Table,
+			Columns:    source.Columns,
 			Driver:     err,
 		})
 
@@ -125,9 +125,9 @@ func (c *Classifier) Classify(err error) (*errs.Fault, bool) {
 	return b.Wrapping(err).Fault(), true
 }
 
-func (c *Classifier) extract(err error) *sqlerr.Err {
-	if c.ex != nil {
-		return c.ex.Extract(err)
+func (this *Classifier) extract(err error) *sqlerr.Err {
+	if this.ex != nil {
+		return this.ex.Extract(err)
 	}
 	return Extract(err)
 }

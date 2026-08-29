@@ -41,13 +41,13 @@ func TestPreloadBatchesAndWires(t *testing.T) {
 		crudtest.Rows([]any{int64(10), "Ann"}, []any{int64(11), "Bob"}),
 	)
 
-	var req query.Request
-	_ = json.Unmarshal([]byte(`{"preload":["author","comments.author"],"unpaged":true}`), &req)
-	opts, err := req.Compile(Articles.Meta(), exports)
+	var request query.Request
+	_ = json.Unmarshal([]byte(`{"preload":["author","comments.author"],"unpaged":true}`), &request)
+	options, err := request.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Articles.Bind(rec).GetAll(context.Background(), opts...)
+	got, err := Articles.Bind(rec).GetAll(context.Background(), options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,17 +121,17 @@ func TestFilteredPreload(t *testing.T) {
 		crudtest.Rows(articleRow(1, 10, "first")),
 		crudtest.Rows([]any{int64(100), int64(1), int64(11), "nice", true}),
 	)
-	var req query.Request
+	var request query.Request
 	if err := json.Unmarshal([]byte(`{"preload":[
 		{"path":"comments","filter":{"approved":true},"sort":["-body"]}
-	],"unpaged":true}`), &req); err != nil {
+	],"unpaged":true}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(Articles.Meta(), exports)
+	options, err := request.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Articles.Bind(rec).GetAll(context.Background(), opts...)
+	got, err := Articles.Bind(rec).GetAll(context.Background(), options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +148,9 @@ func TestFilteredPreload(t *testing.T) {
 // A preload filter is checked against the related model, so a root-only field
 // is a rejection rather than a confusing SQL error.
 func TestPreloadFilterIsScopedToTheTarget(t *testing.T) {
-	var req query.Request
-	_ = json.Unmarshal([]byte(`{"preload":[{"path":"comments","filter":{"views":1}}]}`), &req)
-	_, err := req.Compile(Articles.Meta(), exports)
+	var request query.Request
+	_ = json.Unmarshal([]byte(`{"preload":[{"path":"comments","filter":{"views":1}}]}`), &request)
+	_, err := request.Compile(Articles.Meta(), exports)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("err = %v, want an unknown-field rejection", err)
 	}
@@ -168,11 +168,11 @@ func TestPreloadCannotBePaginated(t *testing.T) {
 }
 
 func TestQueryPreloadRowsAreCappedWithoutPartialRelations(t *testing.T) {
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"preload":["comments"]}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"preload":["comments"]}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(Articles.Meta(), &query.Config{MaxPreloadRows: 1})
+	options, err := request.Compile(Articles.Meta(), &query.Config{MaxPreloadRows: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestQueryPreloadRowsAreCappedWithoutPartialRelations(t *testing.T) {
 			[]any{int64(101), int64(1), int64(11), "two", true},
 		),
 	)
-	if _, err := Articles.Bind(rec).GetAll(context.Background(), opts...); err == nil || !strings.Contains(err.Error(), "preload exceeds") {
+	if _, err := Articles.Bind(rec).GetAll(context.Background(), options...); err == nil || !strings.Contains(err.Error(), "preload exceeds") {
 		t.Fatalf("err = %v, want a row-cap refusal rather than a partial relation", err)
 	}
 	if got := rec.Last().SQL; !strings.Contains(got, "LIMIT 2") {
@@ -192,11 +192,11 @@ func TestQueryPreloadRowsAreCappedWithoutPartialRelations(t *testing.T) {
 }
 
 func TestNestedQueryPreloadCapsEveryRelationHop(t *testing.T) {
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"preload":["comments.author"]}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"preload":["comments.author"]}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(Articles.Meta(), &query.Config{MaxPreloadRows: 1})
+	options, err := request.Compile(Articles.Meta(), &query.Config{MaxPreloadRows: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestNestedQueryPreloadCapsEveryRelationHop(t *testing.T) {
 			[]any{int64(101), int64(1), int64(12), "two", true},
 		),
 	)
-	if _, err := Articles.Bind(rec).GetAll(context.Background(), opts...); err == nil || !strings.Contains(err.Error(), "preload exceeds") {
+	if _, err := Articles.Bind(rec).GetAll(context.Background(), options...); err == nil || !strings.Contains(err.Error(), "preload exceeds") {
 		t.Fatalf("err = %v, want the intermediate Comments cap to refuse", err)
 	}
 	if sql := rec.Last().SQL; !strings.Contains(sql, "LIMIT 2") {
@@ -216,11 +216,11 @@ func TestNestedQueryPreloadCapsEveryRelationHop(t *testing.T) {
 }
 
 func TestPreloadBudgetCountsEveryRelationHop(t *testing.T) {
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"preload":["comments.author"]}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"preload":["comments.author"]}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	_, err := req.Compile(Articles.Meta(), &query.Config{MaxPreloads: 1})
+	_, err := request.Compile(Articles.Meta(), &query.Config{MaxPreloads: 1})
 	if err == nil || !strings.Contains(err.Error(), "at most 1 relations") {
 		t.Fatalf("err = %v, want the nested preload to consume two relation slots", err)
 	}
@@ -228,36 +228,36 @@ func TestPreloadBudgetCountsEveryRelationHop(t *testing.T) {
 
 func TestNestedPreloadsRequireEveryHopAndShareTheDepthAndSortBudgets(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		cfg  *query.Config
-		doc  string
-		want string
+		name   string
+		config *query.Config
+		doc    string
+		want   string
 	}{
 		{
-			name: "intermediate hop has no grant",
-			cfg:  &query.Config{Preloadable: []string{"Comments.Author"}},
-			doc:  `{"preload":["comments.author"]}`,
-			want: "Comments cannot be preloaded",
+			name:   "intermediate hop has no grant",
+			config: &query.Config{Preloadable: []string{"Comments.Author"}},
+			doc:    `{"preload":["comments.author"]}`,
+			want:   "Comments cannot be preloaded",
 		},
 		{
-			name: "path is deeper than the endpoint budget",
-			cfg:  &query.Config{MaxDepth: 1},
-			doc:  `{"preload":["comments.author"]}`,
-			want: "deeper",
+			name:   "path is deeper than the endpoint budget",
+			config: &query.Config{MaxDepth: 1},
+			doc:    `{"preload":["comments.author"]}`,
+			want:   "deeper",
 		},
 		{
-			name: "preload sort has the same cap",
-			cfg:  &query.Config{MaxSort: 1},
-			doc:  `{"preload":[{"path":"comments","sort":["body","approved"]}]}`,
-			want: "at most 1 sort terms",
+			name:   "preload sort has the same cap",
+			config: &query.Config{MaxSort: 1},
+			doc:    `{"preload":[{"path":"comments","sort":["body","approved"]}]}`,
+			want:   "at most 1 sort terms",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var req query.Request
-			if err := json.Unmarshal([]byte(tc.doc), &req); err != nil {
+			var request query.Request
+			if err := json.Unmarshal([]byte(tc.doc), &request); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := req.Compile(Articles.Meta(), tc.cfg); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := request.Compile(Articles.Meta(), tc.config); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})

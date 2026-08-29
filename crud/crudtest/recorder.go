@@ -22,7 +22,7 @@ type Statement struct {
 	Query bool // Query rather than Exec
 }
 
-func (s Statement) String() string { return fmt.Sprintf("%s %v", s.SQL, s.Args) }
+func (this Statement) String() string { return fmt.Sprintf("%s %v", this.SQL, this.Args) }
 
 // Result is a canned query response. Values are assigned to scan destinations
 // positionally, converting where Go allows and honouring sql.Scanner.
@@ -67,42 +67,42 @@ func New(d crud.Dialect) *Recorder { return &Recorder{D: d} }
 func Postgres() *Recorder { return New(crud.Postgres{}) }
 func MySQL() *Recorder    { return New(crud.MySQL{}) }
 
-func (r *Recorder) Dialect() crud.Dialect { return r.D }
+func (this *Recorder) Dialect() crud.Dialect { return this.D }
 
 // Push queues result sets, consumed by successive Query calls in order.
-func (r *Recorder) Push(results ...Result) *Recorder {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.queue = append(r.queue, results...)
-	return r
+func (this *Recorder) Push(results ...Result) *Recorder {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.queue = append(this.queue, results...)
+	return this
 }
 
 // ExecResult sets what Exec reports back.
-func (r *Recorder) ExecResult(res crud.Result) *Recorder {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.exec = res
-	return r
+func (this *Recorder) ExecResult(response crud.Result) *Recorder {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.exec = response
+	return this
 }
 
 // Fail makes the next Exec return err.
-func (r *Recorder) Fail(err error) *Recorder {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.execErr = err
-	return r
+func (this *Recorder) Fail(err error) *Recorder {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.execErr = err
+	return this
 }
 
 // Statements returns everything recorded so far.
-func (r *Recorder) Statements() []Statement {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]Statement(nil), r.statements...)
+func (this *Recorder) Statements() []Statement {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return append([]Statement(nil), this.statements...)
 }
 
 // Last returns the most recent statement.
-func (r *Recorder) Last() Statement {
-	s := r.Statements()
+func (this *Recorder) Last() Statement {
+	s := this.Statements()
 	if len(s) == 0 {
 		return Statement{}
 	}
@@ -110,60 +110,60 @@ func (r *Recorder) Last() Statement {
 }
 
 // SQL returns just the recorded statement texts.
-func (r *Recorder) SQL() []string {
+func (this *Recorder) SQL() []string {
 	out := []string{}
-	for _, s := range r.Statements() {
+	for _, s := range this.Statements() {
 		out = append(out, s.SQL)
 	}
 	return out
 }
 
 // Reset clears the recording and the queue.
-func (r *Recorder) Reset() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.statements, r.queue = nil, nil
+func (this *Recorder) Reset() {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.statements, this.queue = nil, nil
 }
 
 // TxDepth reports how many transactions were begun.
-func (r *Recorder) TxDepth() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.txDepth
+func (this *Recorder) TxDepth() int {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return this.txDepth
 }
 
-func (r *Recorder) Exec(_ context.Context, q string, args ...any) (crud.Result, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.statements = append(r.statements, Statement{SQL: q, Args: args})
-	if r.execErr != nil {
-		err := r.execErr
-		r.execErr = nil
+func (this *Recorder) Exec(_ context.Context, q string, args ...any) (crud.Result, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.statements = append(this.statements, Statement{SQL: q, Args: args})
+	if this.execErr != nil {
+		err := this.execErr
+		this.execErr = nil
 		return crud.Result{}, err
 	}
-	return r.exec, nil
+	return this.exec, nil
 }
 
-func (r *Recorder) Query(_ context.Context, q string, args ...any) (crud.Rows, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.statements = append(r.statements, Statement{SQL: q, Args: args, Query: true})
-	var res Result
-	if len(r.queue) > 0 {
-		res, r.queue = r.queue[0], r.queue[1:]
+func (this *Recorder) Query(_ context.Context, q string, args ...any) (crud.Rows, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.statements = append(this.statements, Statement{SQL: q, Args: args, Query: true})
+	var response Result
+	if len(this.queue) > 0 {
+		response, this.queue = this.queue[0], this.queue[1:]
 	}
-	if res.Err != nil {
-		return nil, res.Err
+	if response.Err != nil {
+		return nil, response.Err
 	}
-	return &rows{data: res.Rows, err: res.RowsErr}, nil
+	return &rows{data: response.Rows, err: response.RowsErr}, nil
 }
 
 // Begin hands out a transaction that records into the same recorder.
-func (r *Recorder) Begin(context.Context) (crud.Tx, error) {
-	r.mu.Lock()
-	r.txDepth++
-	r.mu.Unlock()
-	return &tx{Recorder: r}, nil
+func (this *Recorder) Begin(context.Context) (crud.Tx, error) {
+	this.mu.Lock()
+	this.txDepth++
+	this.mu.Unlock()
+	return &tx{Recorder: this}, nil
 }
 
 type tx struct {
@@ -172,8 +172,8 @@ type tx struct {
 	RolledBack bool
 }
 
-func (t *tx) Commit(context.Context) error   { t.Committed = true; return nil }
-func (t *tx) Rollback(context.Context) error { t.RolledBack = true; return nil }
+func (this *tx) Commit(context.Context) error   { this.Committed = true; return nil }
+func (this *tx) Rollback(context.Context) error { this.RolledBack = true; return nil }
 
 type rows struct {
 	data [][]any
@@ -182,63 +182,63 @@ type rows struct {
 	err  error
 }
 
-func (r *rows) Next() bool {
-	if r.i >= len(r.data) {
+func (this *rows) Next() bool {
+	if this.i >= len(this.data) {
 		return false
 	}
-	r.cur = r.data[r.i]
-	r.i++
+	this.cur = this.data[this.i]
+	this.i++
 	return true
 }
 
-func (r *rows) Err() error { return r.err }
-func (r *rows) Close()     {}
+func (this *rows) Err() error { return this.err }
+func (this *rows) Close()     {}
 
-func (r *rows) Scan(dest ...any) error {
-	if len(dest) != len(r.cur) {
-		return fmt.Errorf("crudtest: scanning %d values into %d destinations", len(r.cur), len(dest))
+func (this *rows) Scan(dest ...any) error {
+	if len(dest) != len(this.cur) {
+		return fmt.Errorf("crudtest: scanning %d values into %d destinations", len(this.cur), len(dest))
 	}
 	for i, d := range dest {
-		if err := assign(d, r.cur[i]); err != nil {
+		if err := assign(d, this.cur[i]); err != nil {
 			return fmt.Errorf("crudtest: column %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func assign(dst, src any) error {
-	if s, ok := dst.(sql.Scanner); ok {
-		return s.Scan(src)
+func assign(destination, source any) error {
+	if s, ok := destination.(sql.Scanner); ok {
+		return s.Scan(source)
 	}
-	dv := reflect.ValueOf(dst)
+	dv := reflect.ValueOf(destination)
 	if dv.Kind() != reflect.Pointer || dv.IsNil() {
-		return fmt.Errorf("destination %T is not a non-nil pointer", dst)
+		return fmt.Errorf("destination %T is not a non-nil pointer", destination)
 	}
-	return setValue(dv.Elem(), src)
+	return setValue(dv.Elem(), source)
 }
 
 // setValue writes src into dst, allocating through a pointer column on the way.
-func setValue(dst reflect.Value, src any) error {
-	if src == nil {
-		dst.SetZero()
+func setValue(destination reflect.Value, source any) error {
+	if source == nil {
+		destination.SetZero()
 		return nil
 	}
-	if dst.Kind() == reflect.Pointer {
-		p := reflect.New(dst.Type().Elem())
-		if err := setValue(p.Elem(), src); err != nil {
+	if destination.Kind() == reflect.Pointer {
+		p := reflect.New(destination.Type().Elem())
+		if err := setValue(p.Elem(), source); err != nil {
 			return err
 		}
-		dst.Set(p)
+		destination.Set(p)
 		return nil
 	}
-	sv := reflect.ValueOf(src)
+	sv := reflect.ValueOf(source)
 	switch {
-	case sv.Type().AssignableTo(dst.Type()):
-		dst.Set(sv)
-	case sv.Type().ConvertibleTo(dst.Type()):
-		dst.Set(sv.Convert(dst.Type()))
+	case sv.Type().AssignableTo(destination.Type()):
+		destination.Set(sv)
+	case sv.Type().ConvertibleTo(destination.Type()):
+		destination.Set(sv.Convert(destination.Type()))
 	default:
-		return fmt.Errorf("cannot assign %T to %s", src, dst.Type())
+		return fmt.Errorf("cannot assign %T to %s", source, destination.Type())
 	}
 	return nil
 }

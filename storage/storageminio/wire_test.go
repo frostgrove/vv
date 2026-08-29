@@ -16,8 +16,8 @@ import (
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return f(request)
+func (this roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return this(request)
 }
 
 func newWireStore(t *testing.T, transport http.RoundTripper) storage.Store {

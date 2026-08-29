@@ -28,9 +28,9 @@ func Executor[M any, ID comparable, U any](r *crud.Repo[M, ID, U]) *Repo[M, ID, 
 // FindOne returns the single row matching the specification. It reports
 // crud.ErrNotFound when there is none and ErrNotUnique when there is more than
 // one — the same contract as JPA's findOne.
-func (r *Repo[M, ID, U]) FindOne(ctx context.Context, s Specification[M], opts ...crud.Option) (M, error) {
+func (this *Repo[M, ID, U]) FindOne(ctx context.Context, s Specification[M], options ...crud.Option) (M, error) {
 	var zero M
-	items, err := r.GetAll(ctx, take(2, s, opts))
+	items, err := this.GetAll(ctx, take(2, s, options))
 	if err != nil {
 		return zero, err
 	}
@@ -46,48 +46,48 @@ func (r *Repo[M, ID, U]) FindOne(ctx context.Context, s Specification[M], opts .
 
 // FindFirst returns the first match, or crud.ErrNotFound. Pair it with
 // crud.OrderBy to make "first" mean something.
-func (r *Repo[M, ID, U]) FindFirst(ctx context.Context, s Specification[M], opts ...crud.Option) (M, error) {
-	return r.First(ctx, append([]crud.Option{As(s)}, opts...)...)
+func (this *Repo[M, ID, U]) FindFirst(ctx context.Context, s Specification[M], options ...crud.Option) (M, error) {
+	return this.First(ctx, append([]crud.Option{As(s)}, options...)...)
 }
 
 // FindAll returns every row matching the specification.
-func (r *Repo[M, ID, U]) FindAll(ctx context.Context, s Specification[M], opts ...crud.Option) ([]M, error) {
-	return r.GetAll(ctx, append([]crud.Option{As(s)}, opts...)...)
+func (this *Repo[M, ID, U]) FindAll(ctx context.Context, s Specification[M], options ...crud.Option) ([]M, error) {
+	return this.GetAll(ctx, append([]crud.Option{As(s)}, options...)...)
 }
 
 // FindPage returns a page of rows matching the specification — findAll(spec,
 // pageable).
-func (r *Repo[M, ID, U]) FindPage(ctx context.Context, s Specification[M], opts ...crud.Option) (crud.PaginatedResponse[M], error) {
-	return r.Get(ctx, append([]crud.Option{As(s)}, opts...)...)
+func (this *Repo[M, ID, U]) FindPage(ctx context.Context, s Specification[M], options ...crud.Option) (crud.PaginatedResponse[M], error) {
+	return this.Get(ctx, append([]crud.Option{As(s)}, options...)...)
 }
 
 // CountBy counts matching rows.
-func (r *Repo[M, ID, U]) CountBy(ctx context.Context, s Specification[M]) (int64, error) {
-	return r.Count(ctx, As(s))
+func (this *Repo[M, ID, U]) CountBy(ctx context.Context, s Specification[M]) (int64, error) {
+	return this.Count(ctx, As(s))
 }
 
 // ExistsBy reports whether anything matches.
-func (r *Repo[M, ID, U]) ExistsBy(ctx context.Context, s Specification[M]) (bool, error) {
-	return r.Exists(ctx, As(s))
+func (this *Repo[M, ID, U]) ExistsBy(ctx context.Context, s Specification[M]) (bool, error) {
+	return this.Exists(ctx, As(s))
 }
 
 // DeleteBy removes every matching row and reports how many went away.
-func (r *Repo[M, ID, U]) DeleteBy(ctx context.Context, s Specification[M]) (int64, error) {
+func (this *Repo[M, ID, U]) DeleteBy(ctx context.Context, s Specification[M]) (int64, error) {
 	p := Predicate(s)
-	if p == nil || crud.MayBeTautologyFor(r.Meta(), p) {
+	if p == nil || crud.MayBeTautologyFor(this.Meta(), p) {
 		return 0, ErrUnboundedDelete
 	}
-	return r.DeleteAll(ctx, crud.Where(p))
+	return this.DeleteAll(ctx, crud.Where(p))
 }
 
 // UpdateBy writes the DTO to every matching row and reports how many were
 // touched — JPA's bulk update, in one statement rather than a loop.
-func (r *Repo[M, ID, U]) UpdateBy(ctx context.Context, s Specification[M], dto U) (int64, error) {
+func (this *Repo[M, ID, U]) UpdateBy(ctx context.Context, s Specification[M], dataTransferObject U) (int64, error) {
 	p := Predicate(s)
-	if p == nil || crud.MayBeTautologyFor(r.Meta(), p) {
+	if p == nil || crud.MayBeTautologyFor(this.Meta(), p) {
 		return 0, ErrUnboundedUpdate
 	}
-	return r.UpdateAll(ctx, dto, crud.Where(p))
+	return this.UpdateAll(ctx, dataTransferObject, crud.Where(p))
 }
 
 // take fixes how many rows a lookup may see, on top of whatever the caller
@@ -96,8 +96,8 @@ func (r *Repo[M, ID, U]) UpdateBy(ctx context.Context, s Specification[M], dto U
 // order to notice a second match, and a caller's crud.Limit(1) — or
 // crud.Unpaged(), which skips the limit entirely — used to win and turn the
 // uniqueness assertion into a silent "first match wins".
-func take[M any](n int, s Specification[M], opts []crud.Option) crud.Option {
-	o := crud.Build(append([]crud.Option{As(s)}, opts...)...)
+func take[M any](n int, s Specification[M], options []crud.Option) crud.Option {
+	o := crud.Build(append([]crud.Option{As(s)}, options...)...)
 	o.Page, o.Offset, o.Limit, o.Unpaged = 0, 0, n, false
 	return crud.With(o)
 }

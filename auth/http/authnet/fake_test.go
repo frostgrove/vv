@@ -49,7 +49,7 @@ type seen struct {
 	found     bool
 }
 
-func (s *seen) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
-	s.ran = true
-	s.principal, s.found = auth.PrincipalFrom(r.Context())
+func (this *seen) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
+	this.ran = true
+	this.principal, this.found = auth.PrincipalFrom(r.Context())
 }

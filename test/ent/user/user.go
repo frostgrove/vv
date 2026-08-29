@@ -61,36 +61,36 @@ var (
 type OrderOption func(*sql.Selector)
 
 // ByID orders the results by the id field.
-func ByID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldID, opts...).ToFunc()
+func ByID(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldID, options...).ToFunc()
 }
 
 // ByTenantID orders the results by the tenant_id field.
-func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
+func ByTenantID(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, options...).ToFunc()
 }
 
 // ByEmail orders the results by the email field.
-func ByEmail(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldEmail, opts...).ToFunc()
+func ByEmail(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEmail, options...).ToFunc()
 }
 
 // ByName orders the results by the name field.
-func ByName(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldName, opts...).ToFunc()
+func ByName(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldName, options...).ToFunc()
 }
 
 // ByAge orders the results by the age field.
-func ByAge(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldAge, opts...).ToFunc()
+func ByAge(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAge, options...).ToFunc()
 }
 
 // ByActive orders the results by the active field.
-func ByActive(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldActive, opts...).ToFunc()
+func ByActive(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldActive, options...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.
-func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
+func ByCreatedAt(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCreatedAt, options...).ToFunc()
 }

@@ -64,40 +64,40 @@ func validateSegment(segment string) error {
 	return nil
 }
 
-func normalizePutOptions(opts PutOptions) (PutOptions, error) {
-	mode, err := normalizeMode(opts.Mode)
+func normalizePutOptions(options PutOptions) (PutOptions, error) {
+	mode, err := normalizeMode(options.Mode)
 	if err != nil {
 		return PutOptions{}, err
 	}
-	size, err := copySize(opts.Size)
+	size, err := copySize(options.Size)
 	if err != nil {
 		return PutOptions{}, err
 	}
-	contentType, err := normalizeContentType(opts.ContentType)
+	contentType, err := normalizeContentType(options.ContentType)
 	if err != nil {
 		return PutOptions{}, err
 	}
-	metadata, err := normalizeMetadata(opts.Metadata)
+	metadata, err := normalizeMetadata(options.Metadata)
 	if err != nil {
 		return PutOptions{}, err
 	}
 	return PutOptions{Mode: mode, Size: size, ContentType: contentType, Metadata: metadata}, nil
 }
 
-func normalizeStageOptions(opts StageOptions) (StageOptions, error) {
-	size, err := copySize(opts.Size)
+func normalizeStageOptions(options StageOptions) (StageOptions, error) {
+	size, err := copySize(options.Size)
 	if err != nil {
 		return StageOptions{}, err
 	}
-	contentType, err := normalizeContentType(opts.ContentType)
+	contentType, err := normalizeContentType(options.ContentType)
 	if err != nil {
 		return StageOptions{}, err
 	}
-	metadata, err := normalizeMetadata(opts.Metadata)
+	metadata, err := normalizeMetadata(options.Metadata)
 	if err != nil {
 		return StageOptions{}, err
 	}
-	ttl := opts.ExpiresIn
+	ttl := options.ExpiresIn
 	if ttl == 0 {
 		ttl = DefaultStageTTL
 	}
@@ -117,8 +117,8 @@ func normalizeMode(mode WriteMode) (WriteMode, error) {
 	return mode, nil
 }
 
-func normalizeTemporaryURLOptions(opts TemporaryURLOptions) (TemporaryURLOptions, error) {
-	ttl := opts.ExpiresIn
+func normalizeTemporaryURLOptions(options TemporaryURLOptions) (TemporaryURLOptions, error) {
+	ttl := options.ExpiresIn
 	if ttl == 0 {
 		ttl = DefaultTemporaryURLTTL
 	}
@@ -128,8 +128,8 @@ func normalizeTemporaryURLOptions(opts TemporaryURLOptions) (TemporaryURLOptions
 	return TemporaryURLOptions{ExpiresIn: ttl}, nil
 }
 
-func normalizeCleanupOptions(opts CleanupOptions) (CleanupOptions, error) {
-	limit := opts.Limit
+func normalizeCleanupOptions(options CleanupOptions) (CleanupOptions, error) {
+	limit := options.Limit
 	if limit == 0 {
 		limit = DefaultCleanupLimit
 	}

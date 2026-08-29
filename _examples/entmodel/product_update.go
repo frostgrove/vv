@@ -23,128 +23,128 @@ type ProductUpdate struct {
 }
 
 // Where appends a list predicates to the ProductUpdate builder.
-func (_u *ProductUpdate) Where(ps ...predicate.Product) *ProductUpdate {
-	_u.mutation.Where(ps...)
-	return _u
+func (this *ProductUpdate) Where(ps ...predicate.Product) *ProductUpdate {
+	this.mutation.Where(ps...)
+	return this
 }
 
 // SetSku sets the "sku" field.
-func (_u *ProductUpdate) SetSku(v string) *ProductUpdate {
-	_u.mutation.SetSku(v)
-	return _u
+func (this *ProductUpdate) SetSku(v string) *ProductUpdate {
+	this.mutation.SetSku(v)
+	return this
 }
 
 // SetNillableSku sets the "sku" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillableSku(v *string) *ProductUpdate {
+func (this *ProductUpdate) SetNillableSku(v *string) *ProductUpdate {
 	if v != nil {
-		_u.SetSku(*v)
+		this.SetSku(*v)
 	}
-	return _u
+	return this
 }
 
 // SetName sets the "name" field.
-func (_u *ProductUpdate) SetName(v string) *ProductUpdate {
-	_u.mutation.SetName(v)
-	return _u
+func (this *ProductUpdate) SetName(v string) *ProductUpdate {
+	this.mutation.SetName(v)
+	return this
 }
 
 // SetNillableName sets the "name" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillableName(v *string) *ProductUpdate {
+func (this *ProductUpdate) SetNillableName(v *string) *ProductUpdate {
 	if v != nil {
-		_u.SetName(*v)
+		this.SetName(*v)
 	}
-	return _u
+	return this
 }
 
 // SetPrice sets the "price" field.
-func (_u *ProductUpdate) SetPrice(v int) *ProductUpdate {
-	_u.mutation.ResetPrice()
-	_u.mutation.SetPrice(v)
-	return _u
+func (this *ProductUpdate) SetPrice(v int) *ProductUpdate {
+	this.mutation.ResetPrice()
+	this.mutation.SetPrice(v)
+	return this
 }
 
 // SetNillablePrice sets the "price" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillablePrice(v *int) *ProductUpdate {
+func (this *ProductUpdate) SetNillablePrice(v *int) *ProductUpdate {
 	if v != nil {
-		_u.SetPrice(*v)
+		this.SetPrice(*v)
 	}
-	return _u
+	return this
 }
 
 // AddPrice adds value to the "price" field.
-func (_u *ProductUpdate) AddPrice(v int) *ProductUpdate {
-	_u.mutation.AddPrice(v)
-	return _u
+func (this *ProductUpdate) AddPrice(v int) *ProductUpdate {
+	this.mutation.AddPrice(v)
+	return this
 }
 
 // SetStock sets the "stock" field.
-func (_u *ProductUpdate) SetStock(v int) *ProductUpdate {
-	_u.mutation.ResetStock()
-	_u.mutation.SetStock(v)
-	return _u
+func (this *ProductUpdate) SetStock(v int) *ProductUpdate {
+	this.mutation.ResetStock()
+	this.mutation.SetStock(v)
+	return this
 }
 
 // SetNillableStock sets the "stock" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillableStock(v *int) *ProductUpdate {
+func (this *ProductUpdate) SetNillableStock(v *int) *ProductUpdate {
 	if v != nil {
-		_u.SetStock(*v)
+		this.SetStock(*v)
 	}
-	return _u
+	return this
 }
 
 // AddStock adds value to the "stock" field.
-func (_u *ProductUpdate) AddStock(v int) *ProductUpdate {
-	_u.mutation.AddStock(v)
-	return _u
+func (this *ProductUpdate) AddStock(v int) *ProductUpdate {
+	this.mutation.AddStock(v)
+	return this
 }
 
 // ClearStock clears the value of the "stock" field.
-func (_u *ProductUpdate) ClearStock() *ProductUpdate {
-	_u.mutation.ClearStock()
-	return _u
+func (this *ProductUpdate) ClearStock() *ProductUpdate {
+	this.mutation.ClearStock()
+	return this
 }
 
 // SetActive sets the "active" field.
-func (_u *ProductUpdate) SetActive(v bool) *ProductUpdate {
-	_u.mutation.SetActive(v)
-	return _u
+func (this *ProductUpdate) SetActive(v bool) *ProductUpdate {
+	this.mutation.SetActive(v)
+	return this
 }
 
 // SetNillableActive sets the "active" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillableActive(v *bool) *ProductUpdate {
+func (this *ProductUpdate) SetNillableActive(v *bool) *ProductUpdate {
 	if v != nil {
-		_u.SetActive(*v)
+		this.SetActive(*v)
 	}
-	return _u
+	return this
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (_u *ProductUpdate) SetCreatedAt(v time.Time) *ProductUpdate {
-	_u.mutation.SetCreatedAt(v)
-	return _u
+func (this *ProductUpdate) SetCreatedAt(v time.Time) *ProductUpdate {
+	this.mutation.SetCreatedAt(v)
+	return this
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_u *ProductUpdate) SetNillableCreatedAt(v *time.Time) *ProductUpdate {
+func (this *ProductUpdate) SetNillableCreatedAt(v *time.Time) *ProductUpdate {
 	if v != nil {
-		_u.SetCreatedAt(*v)
+		this.SetCreatedAt(*v)
 	}
-	return _u
+	return this
 }
 
 // Mutation returns the ProductMutation object of the builder.
-func (_u *ProductUpdate) Mutation() *ProductMutation {
-	return _u.mutation
+func (this *ProductUpdate) Mutation() *ProductMutation {
+	return this.mutation
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
-func (_u *ProductUpdate) Save(ctx context.Context) (int, error) {
-	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
+func (this *ProductUpdate) Save(ctx context.Context) (int, error) {
+	return withHooks(ctx, this.sqlSave, this.mutation, this.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *ProductUpdate) SaveX(ctx context.Context) int {
-	affected, err := _u.Save(ctx)
+func (this *ProductUpdate) SaveX(ctx context.Context) int {
+	affected, err := this.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -152,63 +152,63 @@ func (_u *ProductUpdate) SaveX(ctx context.Context) int {
 }
 
 // Exec executes the query.
-func (_u *ProductUpdate) Exec(ctx context.Context) error {
-	_, err := _u.Save(ctx)
+func (this *ProductUpdate) Exec(ctx context.Context) error {
+	_, err := this.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *ProductUpdate) ExecX(ctx context.Context) {
-	if err := _u.Exec(ctx); err != nil {
+func (this *ProductUpdate) ExecX(ctx context.Context) {
+	if err := this.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
-func (_u *ProductUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+func (this *ProductUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	_spec := sqlgraph.NewUpdateSpec(product.Table, product.Columns, sqlgraph.NewFieldSpec(product.FieldID, field.TypeInt64))
-	if ps := _u.mutation.predicates; len(ps) > 0 {
+	if ps := this.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := _u.mutation.Sku(); ok {
+	if value, ok := this.mutation.Sku(); ok {
 		_spec.SetField(product.FieldSku, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Name(); ok {
+	if value, ok := this.mutation.Name(); ok {
 		_spec.SetField(product.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Price(); ok {
+	if value, ok := this.mutation.Price(); ok {
 		_spec.SetField(product.FieldPrice, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedPrice(); ok {
+	if value, ok := this.mutation.AddedPrice(); ok {
 		_spec.AddField(product.FieldPrice, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.Stock(); ok {
+	if value, ok := this.mutation.Stock(); ok {
 		_spec.SetField(product.FieldStock, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedStock(); ok {
+	if value, ok := this.mutation.AddedStock(); ok {
 		_spec.AddField(product.FieldStock, field.TypeInt, value)
 	}
-	if _u.mutation.StockCleared() {
+	if this.mutation.StockCleared() {
 		_spec.ClearField(product.FieldStock, field.TypeInt)
 	}
-	if value, ok := _u.mutation.Active(); ok {
+	if value, ok := this.mutation.Active(); ok {
 		_spec.SetField(product.FieldActive, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.CreatedAt(); ok {
+	if value, ok := this.mutation.CreatedAt(); ok {
 		_spec.SetField(product.FieldCreatedAt, field.TypeTime, value)
 	}
-	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
+	if _node, err = sqlgraph.UpdateNodes(ctx, this.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{product.Label}
 		} else if sqlgraph.IsConstraintError(err) {
-			err = &ConstraintError{msg: err.Error(), wrap: err}
+			err = &ConstraintError{message: err.Error(), wrap: err}
 		}
 		return 0, err
 	}
-	_u.mutation.done = true
+	this.mutation.done = true
 	return _node, nil
 }
 
@@ -221,135 +221,135 @@ type ProductUpdateOne struct {
 }
 
 // SetSku sets the "sku" field.
-func (_u *ProductUpdateOne) SetSku(v string) *ProductUpdateOne {
-	_u.mutation.SetSku(v)
-	return _u
+func (this *ProductUpdateOne) SetSku(v string) *ProductUpdateOne {
+	this.mutation.SetSku(v)
+	return this
 }
 
 // SetNillableSku sets the "sku" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillableSku(v *string) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillableSku(v *string) *ProductUpdateOne {
 	if v != nil {
-		_u.SetSku(*v)
+		this.SetSku(*v)
 	}
-	return _u
+	return this
 }
 
 // SetName sets the "name" field.
-func (_u *ProductUpdateOne) SetName(v string) *ProductUpdateOne {
-	_u.mutation.SetName(v)
-	return _u
+func (this *ProductUpdateOne) SetName(v string) *ProductUpdateOne {
+	this.mutation.SetName(v)
+	return this
 }
 
 // SetNillableName sets the "name" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillableName(v *string) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillableName(v *string) *ProductUpdateOne {
 	if v != nil {
-		_u.SetName(*v)
+		this.SetName(*v)
 	}
-	return _u
+	return this
 }
 
 // SetPrice sets the "price" field.
-func (_u *ProductUpdateOne) SetPrice(v int) *ProductUpdateOne {
-	_u.mutation.ResetPrice()
-	_u.mutation.SetPrice(v)
-	return _u
+func (this *ProductUpdateOne) SetPrice(v int) *ProductUpdateOne {
+	this.mutation.ResetPrice()
+	this.mutation.SetPrice(v)
+	return this
 }
 
 // SetNillablePrice sets the "price" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillablePrice(v *int) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillablePrice(v *int) *ProductUpdateOne {
 	if v != nil {
-		_u.SetPrice(*v)
+		this.SetPrice(*v)
 	}
-	return _u
+	return this
 }
 
 // AddPrice adds value to the "price" field.
-func (_u *ProductUpdateOne) AddPrice(v int) *ProductUpdateOne {
-	_u.mutation.AddPrice(v)
-	return _u
+func (this *ProductUpdateOne) AddPrice(v int) *ProductUpdateOne {
+	this.mutation.AddPrice(v)
+	return this
 }
 
 // SetStock sets the "stock" field.
-func (_u *ProductUpdateOne) SetStock(v int) *ProductUpdateOne {
-	_u.mutation.ResetStock()
-	_u.mutation.SetStock(v)
-	return _u
+func (this *ProductUpdateOne) SetStock(v int) *ProductUpdateOne {
+	this.mutation.ResetStock()
+	this.mutation.SetStock(v)
+	return this
 }
 
 // SetNillableStock sets the "stock" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillableStock(v *int) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillableStock(v *int) *ProductUpdateOne {
 	if v != nil {
-		_u.SetStock(*v)
+		this.SetStock(*v)
 	}
-	return _u
+	return this
 }
 
 // AddStock adds value to the "stock" field.
-func (_u *ProductUpdateOne) AddStock(v int) *ProductUpdateOne {
-	_u.mutation.AddStock(v)
-	return _u
+func (this *ProductUpdateOne) AddStock(v int) *ProductUpdateOne {
+	this.mutation.AddStock(v)
+	return this
 }
 
 // ClearStock clears the value of the "stock" field.
-func (_u *ProductUpdateOne) ClearStock() *ProductUpdateOne {
-	_u.mutation.ClearStock()
-	return _u
+func (this *ProductUpdateOne) ClearStock() *ProductUpdateOne {
+	this.mutation.ClearStock()
+	return this
 }
 
 // SetActive sets the "active" field.
-func (_u *ProductUpdateOne) SetActive(v bool) *ProductUpdateOne {
-	_u.mutation.SetActive(v)
-	return _u
+func (this *ProductUpdateOne) SetActive(v bool) *ProductUpdateOne {
+	this.mutation.SetActive(v)
+	return this
 }
 
 // SetNillableActive sets the "active" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillableActive(v *bool) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillableActive(v *bool) *ProductUpdateOne {
 	if v != nil {
-		_u.SetActive(*v)
+		this.SetActive(*v)
 	}
-	return _u
+	return this
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (_u *ProductUpdateOne) SetCreatedAt(v time.Time) *ProductUpdateOne {
-	_u.mutation.SetCreatedAt(v)
-	return _u
+func (this *ProductUpdateOne) SetCreatedAt(v time.Time) *ProductUpdateOne {
+	this.mutation.SetCreatedAt(v)
+	return this
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_u *ProductUpdateOne) SetNillableCreatedAt(v *time.Time) *ProductUpdateOne {
+func (this *ProductUpdateOne) SetNillableCreatedAt(v *time.Time) *ProductUpdateOne {
 	if v != nil {
-		_u.SetCreatedAt(*v)
+		this.SetCreatedAt(*v)
 	}
-	return _u
+	return this
 }
 
 // Mutation returns the ProductMutation object of the builder.
-func (_u *ProductUpdateOne) Mutation() *ProductMutation {
-	return _u.mutation
+func (this *ProductUpdateOne) Mutation() *ProductMutation {
+	return this.mutation
 }
 
 // Where appends a list predicates to the ProductUpdate builder.
-func (_u *ProductUpdateOne) Where(ps ...predicate.Product) *ProductUpdateOne {
-	_u.mutation.Where(ps...)
-	return _u
+func (this *ProductUpdateOne) Where(ps ...predicate.Product) *ProductUpdateOne {
+	this.mutation.Where(ps...)
+	return this
 }
 
 // Select allows selecting one or more fields (columns) of the returned entity.
 // The default is selecting all fields defined in the entity schema.
-func (_u *ProductUpdateOne) Select(field string, fields ...string) *ProductUpdateOne {
-	_u.fields = append([]string{field}, fields...)
-	return _u
+func (this *ProductUpdateOne) Select(field string, fields ...string) *ProductUpdateOne {
+	this.fields = append([]string{field}, fields...)
+	return this
 }
 
 // Save executes the query and returns the updated Product entity.
-func (_u *ProductUpdateOne) Save(ctx context.Context) (*Product, error) {
-	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
+func (this *ProductUpdateOne) Save(ctx context.Context) (*Product, error) {
+	return withHooks(ctx, this.sqlSave, this.mutation, this.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *ProductUpdateOne) SaveX(ctx context.Context) *Product {
-	node, err := _u.Save(ctx)
+func (this *ProductUpdateOne) SaveX(ctx context.Context) *Product {
+	node, err := this.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -357,26 +357,26 @@ func (_u *ProductUpdateOne) SaveX(ctx context.Context) *Product {
 }
 
 // Exec executes the query on the entity.
-func (_u *ProductUpdateOne) Exec(ctx context.Context) error {
-	_, err := _u.Save(ctx)
+func (this *ProductUpdateOne) Exec(ctx context.Context) error {
+	_, err := this.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *ProductUpdateOne) ExecX(ctx context.Context) {
-	if err := _u.Exec(ctx); err != nil {
+func (this *ProductUpdateOne) ExecX(ctx context.Context) {
+	if err := this.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
-func (_u *ProductUpdateOne) sqlSave(ctx context.Context) (_node *Product, err error) {
+func (this *ProductUpdateOne) sqlSave(ctx context.Context) (_node *Product, err error) {
 	_spec := sqlgraph.NewUpdateSpec(product.Table, product.Columns, sqlgraph.NewFieldSpec(product.FieldID, field.TypeInt64))
-	id, ok := _u.mutation.ID()
+	id, ok := this.mutation.ID()
 	if !ok {
 		return nil, &ValidationError{Name: "id", err: errors.New(`entmodel: missing "Product.id" for update`)}
 	}
 	_spec.Node.ID.Value = id
-	if fields := _u.fields; len(fields) > 0 {
+	if fields := this.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
 		_spec.Node.Columns = append(_spec.Node.Columns, product.FieldID)
 		for _, f := range fields {
@@ -388,51 +388,51 @@ func (_u *ProductUpdateOne) sqlSave(ctx context.Context) (_node *Product, err er
 			}
 		}
 	}
-	if ps := _u.mutation.predicates; len(ps) > 0 {
+	if ps := this.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := _u.mutation.Sku(); ok {
+	if value, ok := this.mutation.Sku(); ok {
 		_spec.SetField(product.FieldSku, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Name(); ok {
+	if value, ok := this.mutation.Name(); ok {
 		_spec.SetField(product.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Price(); ok {
+	if value, ok := this.mutation.Price(); ok {
 		_spec.SetField(product.FieldPrice, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedPrice(); ok {
+	if value, ok := this.mutation.AddedPrice(); ok {
 		_spec.AddField(product.FieldPrice, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.Stock(); ok {
+	if value, ok := this.mutation.Stock(); ok {
 		_spec.SetField(product.FieldStock, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedStock(); ok {
+	if value, ok := this.mutation.AddedStock(); ok {
 		_spec.AddField(product.FieldStock, field.TypeInt, value)
 	}
-	if _u.mutation.StockCleared() {
+	if this.mutation.StockCleared() {
 		_spec.ClearField(product.FieldStock, field.TypeInt)
 	}
-	if value, ok := _u.mutation.Active(); ok {
+	if value, ok := this.mutation.Active(); ok {
 		_spec.SetField(product.FieldActive, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.CreatedAt(); ok {
+	if value, ok := this.mutation.CreatedAt(); ok {
 		_spec.SetField(product.FieldCreatedAt, field.TypeTime, value)
 	}
-	_node = &Product{config: _u.config}
+	_node = &Product{config: this.config}
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
-	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
+	if err = sqlgraph.UpdateNode(ctx, this.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{product.Label}
 		} else if sqlgraph.IsConstraintError(err) {
-			err = &ConstraintError{msg: err.Error(), wrap: err}
+			err = &ConstraintError{message: err.Error(), wrap: err}
 		}
 		return nil, err
 	}
-	_u.mutation.done = true
+	this.mutation.done = true
 	return _node, nil
 }

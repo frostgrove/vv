@@ -84,14 +84,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repo := specs.Executor(Products.Bind(crudpgx.Open(pool)))
+	repository := specs.Executor(Products.Bind(crudpgx.Open(pool)))
 
 	// The interceptor covers methods this binding did not write. The eight it
 	// did render their own failures, so it is optional here and is installed
 	// anyway, because that is what an application with hand-written methods
 	// beside the CRUD ones does.
 	srv := grpc.NewServer(grpc.UnaryInterceptor(crudgrpc.Errors()))
-	crudgrpc.New(repo,
+	crudgrpc.New(repository,
 		crudgrpc.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},

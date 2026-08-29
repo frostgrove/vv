@@ -65,26 +65,26 @@ func New(config *Config) (Store, error) {
 	return &store{namespace: namespace, backend: config.Backend}, nil
 }
 
-func (s *store) Put(ctx context.Context, key Key, source io.Reader, opts PutOptions) (Info, error) {
+func (this *store) Put(ctx context.Context, key Key, source io.Reader, options PutOptions) (Info, error) {
 	if err := validateCall(ctx, key, source); err != nil {
 		return Info{}, NewError("put", KindInvalid, err)
 	}
-	normalized, err := normalizePutOptions(opts)
+	normalized, err := normalizePutOptions(options)
 	if err != nil {
 		return Info{}, NewError("put", KindInvalid, err)
 	}
-	info, err := s.backend.Put(ctx, s.namespace, key, source, normalized)
+	info, err := this.backend.Put(ctx, this.namespace, key, source, normalized)
 	if err != nil {
 		return Info{}, projectError("put", err)
 	}
 	return cloneInfo(info), nil
 }
 
-func (s *store) Open(ctx context.Context, key Key) (io.ReadCloser, Info, error) {
+func (this *store) Open(ctx context.Context, key Key) (io.ReadCloser, Info, error) {
 	if err := validateReadCall(ctx, key); err != nil {
 		return nil, Info{}, NewError("open", KindInvalid, err)
 	}
-	body, info, err := s.backend.Open(ctx, s.namespace, key)
+	body, info, err := this.backend.Open(ctx, this.namespace, key)
 	if err != nil {
 		if !nilInterface(body) {
 			_ = body.Close()
@@ -97,33 +97,33 @@ func (s *store) Open(ctx context.Context, key Key) (io.ReadCloser, Info, error) 
 	return body, cloneInfo(info), nil
 }
 
-func (s *store) Head(ctx context.Context, key Key) (Info, error) {
+func (this *store) Head(ctx context.Context, key Key) (Info, error) {
 	if err := validateReadCall(ctx, key); err != nil {
 		return Info{}, NewError("head", KindInvalid, err)
 	}
-	info, err := s.backend.Head(ctx, s.namespace, key)
+	info, err := this.backend.Head(ctx, this.namespace, key)
 	if err != nil {
 		return Info{}, projectError("head", err)
 	}
 	return cloneInfo(info), nil
 }
 
-func (s *store) Delete(ctx context.Context, key Key) error {
+func (this *store) Delete(ctx context.Context, key Key) error {
 	if err := validateReadCall(ctx, key); err != nil {
 		return NewError("delete", KindInvalid, err)
 	}
-	return projectError("delete", s.backend.Delete(ctx, s.namespace, key))
+	return projectError("delete", this.backend.Delete(ctx, this.namespace, key))
 }
 
-func (s *store) Stage(ctx context.Context, source io.Reader, opts StageOptions) (Staged, error) {
+func (this *store) Stage(ctx context.Context, source io.Reader, options StageOptions) (Staged, error) {
 	if nilInterface(ctx) || nilInterface(source) {
 		return Staged{}, NewError("stage", KindInvalid, fmt.Errorf("context or source is nil"))
 	}
-	normalized, err := normalizeStageOptions(opts)
+	normalized, err := normalizeStageOptions(options)
 	if err != nil {
 		return Staged{}, NewError("stage", KindInvalid, err)
 	}
-	staged, err := s.backend.Stage(ctx, s.namespace, source, normalized)
+	staged, err := this.backend.Stage(ctx, this.namespace, source, normalized)
 	if err != nil {
 		return Staged{}, projectError("stage", err)
 	}
@@ -134,52 +134,52 @@ func (s *store) Stage(ctx context.Context, source io.Reader, opts StageOptions) 
 	return staged, nil
 }
 
-func (s *store) Promote(ctx context.Context, id StageID, key Key, opts PromoteOptions) (Info, error) {
+func (this *store) Promote(ctx context.Context, id StageID, key Key, options PromoteOptions) (Info, error) {
 	if nilInterface(ctx) || !id.valid() || !key.valid() {
 		return Info{}, NewError("promote", KindInvalid, fmt.Errorf("context, stage id or key is invalid"))
 	}
-	mode, err := normalizeMode(opts.Mode)
+	mode, err := normalizeMode(options.Mode)
 	if err != nil {
 		return Info{}, NewError("promote", KindInvalid, err)
 	}
-	info, err := s.backend.Promote(ctx, s.namespace, id, key, PromoteOptions{Mode: mode})
+	info, err := this.backend.Promote(ctx, this.namespace, id, key, PromoteOptions{Mode: mode})
 	if err != nil {
 		return Info{}, projectError("promote", err)
 	}
 	return cloneInfo(info), nil
 }
 
-func (s *store) Abort(ctx context.Context, id StageID) error {
+func (this *store) Abort(ctx context.Context, id StageID) error {
 	if nilInterface(ctx) || !id.valid() {
 		return NewError("abort", KindInvalid, fmt.Errorf("context or stage id is invalid"))
 	}
-	return projectError("abort", s.backend.Abort(ctx, s.namespace, id))
+	return projectError("abort", this.backend.Abort(ctx, this.namespace, id))
 }
 
-func (s *store) CleanupExpired(ctx context.Context, opts CleanupOptions) (CleanupResult, error) {
+func (this *store) CleanupExpired(ctx context.Context, options CleanupOptions) (CleanupResult, error) {
 	if nilInterface(ctx) {
 		return CleanupResult{}, NewError("cleanup", KindInvalid, fmt.Errorf("context is nil"))
 	}
-	normalized, err := normalizeCleanupOptions(opts)
+	normalized, err := normalizeCleanupOptions(options)
 	if err != nil {
 		return CleanupResult{}, NewError("cleanup", KindInvalid, err)
 	}
-	result, err := s.backend.CleanupExpired(ctx, s.namespace, normalized)
+	result, err := this.backend.CleanupExpired(ctx, this.namespace, normalized)
 	if err != nil {
 		return CleanupResult{}, projectError("cleanup", err)
 	}
 	return result, nil
 }
 
-func (s *store) TemporaryURL(ctx context.Context, key Key, opts TemporaryURLOptions) (Link, error) {
+func (this *store) TemporaryURL(ctx context.Context, key Key, options TemporaryURLOptions) (Link, error) {
 	if err := validateReadCall(ctx, key); err != nil {
 		return Link{}, NewError("temporary URL", KindInvalid, err)
 	}
-	normalized, err := normalizeTemporaryURLOptions(opts)
+	normalized, err := normalizeTemporaryURLOptions(options)
 	if err != nil {
 		return Link{}, NewError("temporary URL", KindInvalid, err)
 	}
-	link, err := s.backend.TemporaryURL(ctx, s.namespace, key, normalized)
+	link, err := this.backend.TemporaryURL(ctx, this.namespace, key, normalized)
 	if err != nil {
 		return Link{}, projectError("temporary URL", err)
 	}
@@ -189,7 +189,7 @@ func (s *store) TemporaryURL(ctx context.Context, key Key, opts TemporaryURLOpti
 	return link, nil
 }
 
-func (s *store) Capabilities() Capabilities { return s.backend.Capabilities() }
+func (this *store) Capabilities() Capabilities { return this.backend.Capabilities() }
 
 func validateCall(ctx context.Context, key Key, source io.Reader) error {
 	if nilInterface(source) {

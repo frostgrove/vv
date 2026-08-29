@@ -24,12 +24,12 @@ func remoteOver(t *testing.T, c *client) *remote.Resource[Widget, int64, WidgetU
 // remoted mounts a resource this client can read whole. There is no separate
 // "every row" wire method; remote.GetAll walks the ordinary List pages, so a
 // page cap works as a chunk size on gRPC just as it does on HTTP.
-func remoted(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*remote.Resource[Widget, int64, WidgetUpdate], *fakeRepo) {
+func remoted(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*remote.Resource[Widget, int64, WidgetUpdate], *fakeRepo) {
 	t.Helper()
-	opts = append([]Option[Widget, int64, WidgetUpdate]{
+	options = append([]Option[Widget, int64, WidgetUpdate]{
 		WithQuery[Widget, int64, WidgetUpdate](&query.Config{}),
-	}, opts...)
-	c, f := mount(t, opts...)
+	}, options...)
+	c, f := mount(t, options...)
 	return remoteOver(t, c), f
 }
 
@@ -359,15 +359,15 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	r, f := remoted(t)
 
-	opts := []crud.Option{
+	options := []crud.Option{
 		crud.Where(crud.Eq("Name", "bolt")),
 		crud.Where(crud.Gte("Price", 100)),
 	}
-	if _, err := r.Get(context.Background(), opts...); err != nil {
+	if _, err := r.Get(context.Background(), options...); err != nil {
 		t.Fatalf("list: %v", err)
 	}
 
-	want := clause(t, crud.Build(opts...))
+	want := clause(t, crud.Build(options...))
 	if want == "" {
 		t.Fatal("the local options render nothing, so this proves nothing")
 	}

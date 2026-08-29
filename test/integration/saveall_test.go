@@ -22,8 +22,8 @@ func TestSaveAllWritesTheWholeBatch(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
 			batch := []*EgRow{
 				{ID: 1, Name: "a", Score: crud.Set(1)},
@@ -54,8 +54,8 @@ func TestSaveAllIsOneStatement(t *testing.T) {
 	egSetup(t)
 
 	tg := egEngines()[0]
-	egWipe(t, tg.src)
-	rec := newCountingSource(tg.src)
+	egWipe(t, tg.source)
+	rec := newCountingSource(tg.source)
 	rows := EgRows.Bind(rec)
 
 	if err := rows.SaveAll(ctx, []*EgRow{
@@ -74,7 +74,7 @@ func TestSaveAllIsOneStatement(t *testing.T) {
 func TestSaveAllRefusesAMixedBatch(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
-	rows := EgAutos.Bind(egEngines()[0].src)
+	rows := EgAutos.Bind(egEngines()[0].source)
 
 	err := rows.SaveAll(ctx, []*EgAuto{{Name: "keyed", ID: 5}, {Name: "unkeyed"}})
 	if err == nil {
@@ -94,8 +94,8 @@ func TestSaveAllReadsGeneratedKeysBackWhereItCan(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgAutos.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgAutos.Bind(tg.source)
 
 			batch := []*EgAuto{{Name: "first"}, {Name: "second"}, {Name: "third"}}
 			if err := rows.SaveAll(ctx, batch); err != nil {
@@ -104,7 +104,7 @@ func TestSaveAllReadsGeneratedKeysBackWhereItCan(t *testing.T) {
 			if n, _ := rows.Count(ctx); n != 3 {
 				t.Fatalf("count = %d, want 3", n)
 			}
-			if !tg.src.Dialect().SupportsReturning() {
+			if !tg.source.Dialect().SupportsReturning() {
 				// MySQL reports one LastInsertId for the statement and only
 				// guarantees the rest are contiguous under some settings, so the
 				// library does not guess. Documented, and pinned here so the
@@ -143,8 +143,8 @@ func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			gated := EgRows.Bind(tg.src, security.Gate(policy))
+			egWipe(t, tg.source)
+			gated := EgRows.Bind(tg.source, security.Gate(policy))
 			mine := context.WithValue(ctx, gatePrincipal{}, int64(1))
 
 			// One row of somebody else's is enough to refuse the batch.
@@ -156,7 +156,7 @@ func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 				t.Fatalf("err = %v, want ErrForbidden", err)
 			}
 			// And nothing was written: the checks all run before the statement.
-			if n, _ := EgRows.Bind(tg.src).Count(ctx); n != 0 {
+			if n, _ := EgRows.Bind(tg.source).Count(ctx); n != 0 {
 				t.Fatalf("%d rows written by a refused batch", n)
 			}
 
@@ -181,12 +181,12 @@ type countingSource struct {
 
 func newCountingSource(s crud.Source) *countingSource { return &countingSource{Source: s} }
 
-func (c *countingSource) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
-	c.n++
-	return c.Source.Exec(ctx, q, args...)
+func (this *countingSource) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
+	this.n++
+	return this.Source.Exec(ctx, q, args...)
 }
 
-func (c *countingSource) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	c.n++
-	return c.Source.Query(ctx, q, args...)
+func (this *countingSource) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	this.n++
+	return this.Source.Query(ctx, q, args...)
 }

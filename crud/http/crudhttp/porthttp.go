@@ -50,7 +50,7 @@ const (
 var ErrBadRequest = porthttp.ErrBadRequest
 
 // NewRenderer builds the default renderer.
-func NewRenderer(opts ...RenderOption) *EnvelopeRenderer { return porthttp.NewRenderer(opts...) }
+func NewRenderer(options ...RenderOption) *EnvelopeRenderer { return porthttp.NewRenderer(options...) }
 
 // WithCodes replaces the vocabulary the kind and the default messages are
 // resolved through.

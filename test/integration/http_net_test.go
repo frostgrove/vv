@@ -24,11 +24,11 @@ var _ crudnet.Repository[Article, int64, ArticleUpdate] = articleService{}
 
 func newNetApp(t *testing.T, b blog) *http.ServeMux {
 	t.Helper()
-	svc := articleService{
-		Repo:    specs.Executor(Articles.Bind(b.src)),
+	service := articleService{
+		Repo:    specs.Executor(Articles.Bind(b.source)),
 		blocked: "forbidden title",
 	}
-	h := crudnet.New[Article, int64, ArticleUpdate](svc,
+	h := crudnet.New[Article, int64, ArticleUpdate](service,
 		crudnet.WithQuery[Article, int64, ArticleUpdate](&query.Config{
 			Preloadable: []string{"Author", "Tags", "Comments", "Comments.Author"},
 			MaxPreloads: 4,
@@ -39,7 +39,7 @@ func newNetApp(t *testing.T, b blog) *http.ServeMux {
 	return mux
 }
 
-func netCall(t *testing.T, app *http.ServeMux, method, target string, body any) resp {
+func netCall(t *testing.T, app *http.ServeMux, method, target string, body any) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
@@ -49,28 +49,28 @@ func netCall(t *testing.T, app *http.ServeMux, method, target string, body any) 
 		}
 		rdr = bytes.NewReader(raw)
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	app.ServeHTTP(w, req)
-	return resp{status: w.Code, body: w.Body.Bytes()}
+	app.ServeHTTP(w, request)
+	return response{status: w.Code, body: w.Body.Bytes()}
 }
 
-func netRaw(t *testing.T, app *http.ServeMux, method, target, body string) resp {
+func netRaw(t *testing.T, app *http.ServeMux, method, target, body string) response {
 	t.Helper()
 	var rdr io.Reader
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	app.ServeHTTP(w, req)
-	return resp{status: w.Code, body: w.Body.Bytes()}
+	app.ServeHTTP(w, request)
+	return response{status: w.Code, body: w.Body.Bytes()}
 }
 
 func TestNetHTTPListAndQuery(t *testing.T) {
@@ -392,7 +392,7 @@ func TestNetHTTPWorksWithoutExtraDeclarations(t *testing.T) {
 	b := newBlog("postgres", pgDB, crudsql.Postgres(pgDB))
 	seedBlog(t, b)
 
-	h := crudnet.New[Comment, int64, CommentUpdate](Comments.Bind(b.src))
+	h := crudnet.New[Comment, int64, CommentUpdate](Comments.Bind(b.source))
 	app := http.NewServeMux()
 	h.Mount(app, "/comments")
 

@@ -118,36 +118,36 @@ func StandardCodes() *Codes {
 // this one's. Declaring it with a different kind returns an error wrapping
 // [ErrCodeRedeclared] and leaves the existing declaration untouched: a caller
 // told its declaration was refused must not then find the table changed.
-func (c *Codes) Add(code Code, kind Kind, message string) error {
-	if c.defs == nil {
-		c.defs = map[Code]CodeDef{}
+func (this *Codes) Add(code Code, kind Kind, message string) error {
+	if this.defs == nil {
+		this.defs = map[Code]CodeDef{}
 	}
-	if have, ok := c.defs[code]; ok {
+	if have, ok := this.defs[code]; ok {
 		if have.Kind != kind {
 			return fmt.Errorf("errs: %q is %s, not %s: %w", code, have.Kind, kind, ErrCodeRedeclared)
 		}
 		return nil
 	}
-	c.defs[code] = CodeDef{Kind: kind, Message: message}
+	this.defs[code] = CodeDef{Kind: kind, Message: message}
 	return nil
 }
 
 // KindOf answers the transport class of a declared code.
-func (c *Codes) KindOf(code Code) (Kind, bool) {
-	if c == nil {
+func (this *Codes) KindOf(code Code) (Kind, bool) {
+	if this == nil {
 		return KindInternal, false
 	}
-	d, ok := c.defs[code]
+	d, ok := this.defs[code]
 	return d.Kind, ok
 }
 
 // MessageFor answers the code's default message. A declared code with no
 // message answers ("", false), which is [CodeInternal]'s whole behaviour.
-func (c *Codes) MessageFor(code Code) (string, bool) {
-	if c == nil {
+func (this *Codes) MessageFor(code Code) (string, bool) {
+	if this == nil {
 		return "", false
 	}
-	d, ok := c.defs[code]
+	d, ok := this.defs[code]
 	if !ok || d.Message == "" {
 		return "", false
 	}

@@ -24,8 +24,8 @@ func TestAMisspelledDocumentKeyIsRefused(t *testing.T) {
 		`{"preloads":["author"]}`, // the query-string spelling, not the document's
 	} {
 		t.Run(body, func(t *testing.T) {
-			var req query.Request
-			err := json.Unmarshal([]byte(body), &req)
+			var request query.Request
+			err := json.Unmarshal([]byte(body), &request)
 			if err == nil {
 				t.Fatal("accepted — a typo in the key that carries the filter returns the whole table")
 			}
@@ -49,9 +49,9 @@ func TestNullIsNotAnEmptyQueryOrAHiddenDefault(t *testing.T) {
 		`{"after":null}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			var req query.Request
-			if err := json.Unmarshal([]byte(body), &req); err == nil {
-				t.Fatalf("%s decoded as %+v instead of being refused", body, req)
+			var request query.Request
+			if err := json.Unmarshal([]byte(body), &request); err == nil {
+				t.Fatalf("%s decoded as %+v instead of being refused", body, request)
 			}
 		})
 	}
@@ -70,8 +70,8 @@ func TestDuplicateKeysAndNullListElementsAreRefused(t *testing.T) {
 		`{"preload":{"path":"comments","sort":null}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			var req query.Request
-			if err := json.Unmarshal([]byte(body), &req); err == nil {
+			var request query.Request
+			if err := json.Unmarshal([]byte(body), &request); err == nil {
 				t.Fatal("ambiguous or null list input decoded into a different query")
 			}
 		})
@@ -79,8 +79,8 @@ func TestDuplicateKeysAndNullListElementsAreRefused(t *testing.T) {
 
 	// RawFilter is the programmatic public door. It must preserve the same
 	// no-last-wins invariant as a JSON request body.
-	req := query.Request{Filter: query.RawFilter(`{"views":{"gte":1,"gte":2}}`)}
-	if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+	request := query.Request{Filter: query.RawFilter(`{"views":{"gte":1,"gte":2}}`)}
+	if _, err := request.Compile(Articles.Meta(), nil); err == nil {
 		t.Fatal("RawFilter accepted a duplicate operator key")
 	}
 }
@@ -92,8 +92,8 @@ func TestAMisspelledNestedObjectKeyIsRefused(t *testing.T) {
 		`{"terms":[{"path":"title","opp":"eq","values":["x"]}]}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			var req query.Request
-			err := json.Unmarshal([]byte(body), &req)
+			var request query.Request
+			err := json.Unmarshal([]byte(body), &request)
 			if err == nil {
 				t.Fatal("accepted a misspelled nested key that would widen or change the query")
 			}
@@ -118,20 +118,20 @@ func TestEveryDocumentKeyStillParses(t *testing.T) {
 		"search": "go", "searchFields": ["title"],
 		"unpaged": false, "skipTotal": true, "distinct": true
 	}`
-	var req query.Request
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
 		t.Fatalf("a document using every key was refused: %v", err)
 	}
-	if req.Page != 2 || req.Limit != 20 || req.Offset != 5 {
-		t.Fatalf("paging = %+v", req)
+	if request.Page != 2 || request.Limit != 20 || request.Offset != 5 {
+		t.Fatalf("paging = %+v", request)
 	}
-	if len(req.Sort) != 2 || len(req.Preload) != 2 || len(req.Select) != 2 {
-		t.Fatalf("lists = sort %d preload %d select %d", len(req.Sort), len(req.Preload), len(req.Select))
+	if len(request.Sort) != 2 || len(request.Preload) != 2 || len(request.Select) != 2 {
+		t.Fatalf("lists = sort %d preload %d select %d", len(request.Sort), len(request.Preload), len(request.Select))
 	}
-	if !req.SkipTotal || !req.Distinct || req.Unpaged {
-		t.Fatalf("flags = %+v", req)
+	if !request.SkipTotal || !request.Distinct || request.Unpaged {
+		t.Fatalf("flags = %+v", request)
 	}
-	if req.Filter.IsZero() {
+	if request.Filter.IsZero() {
 		t.Fatal("the filter was dropped")
 	}
 }
@@ -150,8 +150,8 @@ func TestTheOfferedKeyListMatchesTheStruct(t *testing.T) {
 	}
 
 	// Provoke the message and read the offer back out of it.
-	var req query.Request
-	err := json.Unmarshal([]byte(`{"nope":1}`), &req)
+	var request query.Request
+	err := json.Unmarshal([]byte(`{"nope":1}`), &request)
 	if err == nil {
 		t.Fatal("an unknown key was accepted")
 	}

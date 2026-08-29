@@ -35,27 +35,27 @@ var (
 // It returns a new handler rather than mutating the receiver: one Full value
 // used to declare two models would otherwise end up describing whichever was
 // declared last, and the first repository would probe the wrong table.
-func (f *full) Declare(meta *crud.Meta) (Handler, error) {
+func (this *full) Declare(meta *crud.Meta) (Handler, error) {
 	if meta == nil || meta.PK == nil {
 		return nil, fmt.Errorf("%w: the model declares no primary key", ErrKeyDoesNotIdentify)
 	}
-	tbl, ok := f.cat.Table(meta.Table)
+	tbl, ok := this.cat.Table(meta.Table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s (dialect %s). An empty catalog reads exactly like this: check that the "+
-			"connection may read the schema", ErrUnknownTable, meta.Table, f.cat.Dialect())
+			"connection may read the schema", ErrUnknownTable, meta.Table, this.cat.Dialect())
 	}
 	if !identifies(tbl, meta.PK.Column) {
 		return nil, fmt.Errorf("%w: %s.%s is neither the whole primary key nor a unique key of its own",
 			ErrKeyDoesNotIdentify, tbl.Name, meta.PK.Column)
 	}
-	for name := range f.cfg.skip {
+	for name := range this.config.skip {
 		if _, ok := tbl.Constraint(name); !ok {
 			return nil, fmt.Errorf("%w: %s on %s", ErrUnknownConstraint, name, tbl.Name)
 		}
 	}
-	g := *f
+	g := *this
 	g.meta, g.tbl, g.pkCol = meta, tbl, meta.PK.Column
-	g.cands = candidatesFor(f.cat, tbl, meta.PK.Column)
+	g.cands = candidatesFor(this.cat, tbl, meta.PK.Column)
 	return &g, nil
 }
 

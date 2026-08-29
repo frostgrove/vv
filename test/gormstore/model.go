@@ -43,10 +43,10 @@ var LabelCreations atomic.Int64
 
 // BeforeCreate is an ordinary gorm hook: it counts, and it defaults the slug, so
 // a test can see whether it ran from the row itself and not only from a counter.
-func (l *Label) BeforeCreate(*gorm.DB) error {
+func (this *Label) BeforeCreate(*gorm.DB) error {
 	LabelCreations.Add(1)
-	if l.Slug == "" {
-		l.Slug = "defaulted by the hook"
+	if this.Slug == "" {
+		this.Slug = "defaulted by the hook"
 	}
 	return nil
 }

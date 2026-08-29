@@ -29,15 +29,15 @@ type Client struct {
 }
 
 // NewClient creates a new client configured with the given options.
-func NewClient(opts ...Option) *Client {
-	client := &Client{config: newConfig(opts...)}
+func NewClient(options ...Option) *Client {
+	client := &Client{config: newConfig(options...)}
 	client.init()
 	return client
 }
 
-func (c *Client) init() {
-	c.Schema = migrate.NewSchema(c.driver)
-	c.User = NewUserClient(c.config)
+func (this *Client) init() {
+	this.Schema = migrate.NewSchema(this.driver)
+	this.User = NewUserClient(this.config)
 }
 
 type (
@@ -59,19 +59,19 @@ type (
 )
 
 // newConfig creates a new config for the client.
-func newConfig(opts ...Option) config {
-	cfg := config{log: log.Println, hooks: &hooks{}, inters: &inters{}}
-	cfg.options(opts...)
-	return cfg
+func newConfig(options ...Option) config {
+	config := config{log: log.Println, hooks: &hooks{}, inters: &inters{}}
+	config.options(options...)
+	return config
 }
 
 // options applies the options on the config object.
-func (c *config) options(opts ...Option) {
-	for _, opt := range opts {
-		opt(c)
+func (this *config) options(options ...Option) {
+	for _, opt := range options {
+		opt(this)
 	}
-	if c.debug {
-		c.driver = dialect.Debug(c.driver, c.log)
+	if this.debug {
+		this.driver = dialect.Debug(this.driver, this.log)
 	}
 }
 
@@ -117,40 +117,40 @@ var ErrTxStarted = errors.New("ent: cannot start a transaction within a transact
 
 // Tx returns a new transactional client. The provided context
 // is used until the transaction is committed or rolled back.
-func (c *Client) Tx(ctx context.Context) (*Tx, error) {
-	if _, ok := c.driver.(*txDriver); ok {
+func (this *Client) Tx(ctx context.Context) (*Tx, error) {
+	if _, ok := this.driver.(*txDriver); ok {
 		return nil, ErrTxStarted
 	}
-	tx, err := newTx(ctx, c.driver)
+	tx, err := newTx(ctx, this.driver)
 	if err != nil {
 		return nil, fmt.Errorf("ent: starting a transaction: %w", err)
 	}
-	cfg := c.config
-	cfg.driver = tx
+	config := this.config
+	config.driver = tx
 	return &Tx{
 		ctx:    ctx,
-		config: cfg,
-		User:   NewUserClient(cfg),
+		config: config,
+		User:   NewUserClient(config),
 	}, nil
 }
 
 // BeginTx returns a transactional client with specified options.
-func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
-	if _, ok := c.driver.(*txDriver); ok {
+func (this *Client) BeginTx(ctx context.Context, options *sql.TxOptions) (*Tx, error) {
+	if _, ok := this.driver.(*txDriver); ok {
 		return nil, errors.New("ent: cannot start a transaction within a transaction")
 	}
-	tx, err := c.driver.(interface {
+	tx, err := this.driver.(interface {
 		BeginTx(context.Context, *sql.TxOptions) (dialect.Tx, error)
-	}).BeginTx(ctx, opts)
+	}).BeginTx(ctx, options)
 	if err != nil {
 		return nil, fmt.Errorf("ent: starting a transaction: %w", err)
 	}
-	cfg := c.config
-	cfg.driver = &txDriver{tx: tx, drv: c.driver}
+	config := this.config
+	config.driver = &txDriver{tx: tx, drv: this.driver}
 	return &Tx{
 		ctx:    ctx,
-		config: cfg,
-		User:   NewUserClient(cfg),
+		config: config,
+		User:   NewUserClient(config),
 	}, nil
 }
 
@@ -160,39 +160,39 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 //		User.
 //		Query().
 //		Count(ctx)
-func (c *Client) Debug() *Client {
-	if c.debug {
-		return c
+func (this *Client) Debug() *Client {
+	if this.debug {
+		return this
 	}
-	cfg := c.config
-	cfg.driver = dialect.Debug(c.driver, c.log)
-	client := &Client{config: cfg}
+	config := this.config
+	config.driver = dialect.Debug(this.driver, this.log)
+	client := &Client{config: config}
 	client.init()
 	return client
 }
 
 // Close closes the database connection and prevents new queries from starting.
-func (c *Client) Close() error {
-	return c.driver.Close()
+func (this *Client) Close() error {
+	return this.driver.Close()
 }
 
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
-func (c *Client) Use(hooks ...Hook) {
-	c.User.Use(hooks...)
+func (this *Client) Use(hooks ...Hook) {
+	this.User.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
-func (c *Client) Intercept(interceptors ...Interceptor) {
-	c.User.Intercept(interceptors...)
+func (this *Client) Intercept(interceptors ...Interceptor) {
+	this.User.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
-func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
+func (this *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
 	case *UserMutation:
-		return c.User.mutate(ctx, m)
+		return this.User.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -210,96 +210,96 @@ func NewUserClient(c config) *UserClient {
 
 // Use adds a list of mutation hooks to the hooks stack.
 // A call to `Use(f, g, h)` equals to `user.Hooks(f(g(h())))`.
-func (c *UserClient) Use(hooks ...Hook) {
-	c.hooks.User = append(c.hooks.User, hooks...)
+func (this *UserClient) Use(hooks ...Hook) {
+	this.hooks.User = append(this.hooks.User, hooks...)
 }
 
 // Intercept adds a list of query interceptors to the interceptors stack.
 // A call to `Intercept(f, g, h)` equals to `user.Intercept(f(g(h())))`.
-func (c *UserClient) Intercept(interceptors ...Interceptor) {
-	c.inters.User = append(c.inters.User, interceptors...)
+func (this *UserClient) Intercept(interceptors ...Interceptor) {
+	this.inters.User = append(this.inters.User, interceptors...)
 }
 
 // Create returns a builder for creating a User entity.
-func (c *UserClient) Create() *UserCreate {
-	mutation := newUserMutation(c.config, OpCreate)
-	return &UserCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (this *UserClient) Create() *UserCreate {
+	mutation := newUserMutation(this.config, OpCreate)
+	return &UserCreate{config: this.config, hooks: this.Hooks(), mutation: mutation}
 }
 
 // CreateBulk returns a builder for creating a bulk of User entities.
-func (c *UserClient) CreateBulk(builders ...*UserCreate) *UserCreateBulk {
-	return &UserCreateBulk{config: c.config, builders: builders}
+func (this *UserClient) CreateBulk(builders ...*UserCreate) *UserCreateBulk {
+	return &UserCreateBulk{config: this.config, builders: builders}
 }
 
 // MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
 // a builder and applies setFunc on it.
-func (c *UserClient) MapCreateBulk(slice any, setFunc func(*UserCreate, int)) *UserCreateBulk {
+func (this *UserClient) MapCreateBulk(slice any, setFunc func(*UserCreate, int)) *UserCreateBulk {
 	rv := reflect.ValueOf(slice)
 	if rv.Kind() != reflect.Slice {
 		return &UserCreateBulk{err: fmt.Errorf("calling to UserClient.MapCreateBulk with wrong type %T, need slice", slice)}
 	}
 	builders := make([]*UserCreate, rv.Len())
 	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
+		builders[i] = this.Create()
 		setFunc(builders[i], i)
 	}
-	return &UserCreateBulk{config: c.config, builders: builders}
+	return &UserCreateBulk{config: this.config, builders: builders}
 }
 
 // Update returns an update builder for User.
-func (c *UserClient) Update() *UserUpdate {
-	mutation := newUserMutation(c.config, OpUpdate)
-	return &UserUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (this *UserClient) Update() *UserUpdate {
+	mutation := newUserMutation(this.config, OpUpdate)
+	return &UserUpdate{config: this.config, hooks: this.Hooks(), mutation: mutation}
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (c *UserClient) UpdateOne(_m *User) *UserUpdateOne {
-	mutation := newUserMutation(c.config, OpUpdateOne, withUser(_m))
-	return &UserUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (this *UserClient) UpdateOne(_m *User) *UserUpdateOne {
+	mutation := newUserMutation(this.config, OpUpdateOne, withUser(_m))
+	return &UserUpdateOne{config: this.config, hooks: this.Hooks(), mutation: mutation}
 }
 
 // UpdateOneID returns an update builder for the given id.
-func (c *UserClient) UpdateOneID(id int64) *UserUpdateOne {
-	mutation := newUserMutation(c.config, OpUpdateOne, withUserID(id))
-	return &UserUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (this *UserClient) UpdateOneID(id int64) *UserUpdateOne {
+	mutation := newUserMutation(this.config, OpUpdateOne, withUserID(id))
+	return &UserUpdateOne{config: this.config, hooks: this.Hooks(), mutation: mutation}
 }
 
 // Delete returns a delete builder for User.
-func (c *UserClient) Delete() *UserDelete {
-	mutation := newUserMutation(c.config, OpDelete)
-	return &UserDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (this *UserClient) Delete() *UserDelete {
+	mutation := newUserMutation(this.config, OpDelete)
+	return &UserDelete{config: this.config, hooks: this.Hooks(), mutation: mutation}
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (c *UserClient) DeleteOne(_m *User) *UserDeleteOne {
-	return c.DeleteOneID(_m.ID)
+func (this *UserClient) DeleteOne(_m *User) *UserDeleteOne {
+	return this.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *UserClient) DeleteOneID(id int64) *UserDeleteOne {
-	builder := c.Delete().Where(user.ID(id))
+func (this *UserClient) DeleteOneID(id int64) *UserDeleteOne {
+	builder := this.Delete().Where(user.ID(id))
 	builder.mutation.id = &id
 	builder.mutation.op = OpDeleteOne
 	return &UserDeleteOne{builder}
 }
 
 // Query returns a query builder for User.
-func (c *UserClient) Query() *UserQuery {
+func (this *UserClient) Query() *UserQuery {
 	return &UserQuery{
-		config: c.config,
+		config: this.config,
 		ctx:    &QueryContext{Type: TypeUser},
-		inters: c.Interceptors(),
+		inters: this.Interceptors(),
 	}
 }
 
 // Get returns a User entity by its id.
-func (c *UserClient) Get(ctx context.Context, id int64) (*User, error) {
-	return c.Query().Where(user.ID(id)).Only(ctx)
+func (this *UserClient) Get(ctx context.Context, id int64) (*User, error) {
+	return this.Query().Where(user.ID(id)).Only(ctx)
 }
 
 // GetX is like Get, but panics if an error occurs.
-func (c *UserClient) GetX(ctx context.Context, id int64) *User {
-	obj, err := c.Get(ctx, id)
+func (this *UserClient) GetX(ctx context.Context, id int64) *User {
+	obj, err := this.Get(ctx, id)
 	if err != nil {
 		panic(err)
 	}
@@ -307,25 +307,25 @@ func (c *UserClient) GetX(ctx context.Context, id int64) *User {
 }
 
 // Hooks returns the client hooks.
-func (c *UserClient) Hooks() []Hook {
-	return c.hooks.User
+func (this *UserClient) Hooks() []Hook {
+	return this.hooks.User
 }
 
 // Interceptors returns the client interceptors.
-func (c *UserClient) Interceptors() []Interceptor {
-	return c.inters.User
+func (this *UserClient) Interceptors() []Interceptor {
+	return this.inters.User
 }
 
-func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error) {
+func (this *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error) {
 	switch m.Op() {
 	case OpCreate:
-		return (&UserCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&UserCreate{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdate:
-		return (&UserUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&UserUpdate{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdateOne:
-		return (&UserUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&UserUpdateOne{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
 	case OpDelete, OpDeleteOne:
-		return (&UserDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+		return (&UserDelete{config: this.config, hooks: this.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown User mutation op: %q", m.Op())
 	}
@@ -343,8 +343,8 @@ type (
 
 // ExecContext allows calling the underlying ExecContext method of the driver if it is supported by it.
 // See, database/sql#DB.ExecContext for more information.
-func (c *config) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
-	ex, ok := c.driver.(interface {
+func (this *config) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
+	ex, ok := this.driver.(interface {
 		ExecContext(context.Context, string, ...any) (stdsql.Result, error)
 	})
 	if !ok {
@@ -355,8 +355,8 @@ func (c *config) ExecContext(ctx context.Context, query string, args ...any) (st
 
 // QueryContext allows calling the underlying QueryContext method of the driver if it is supported by it.
 // See, database/sql#DB.QueryContext for more information.
-func (c *config) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
-	q, ok := c.driver.(interface {
+func (this *config) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
+	q, ok := this.driver.(interface {
 		QueryContext(context.Context, string, ...any) (*stdsql.Rows, error)
 	})
 	if !ok {

@@ -52,21 +52,21 @@ func TestQueryOfRefusesAnUnsafeIntegralNumber(t *testing.T) {
 
 	// Struct preserves the decimal string, and the whole query pipeline — not
 	// merely queryOf — accepts it as the same integer a query string carries.
-	req, err := queryOf(doc(t, `{"filter":{"price":"9007199254740993"}}`), widgetMeta)
+	request, err := queryOf(doc(t, `{"filter":{"price":"9007199254740993"}}`), widgetMeta)
 	if err != nil {
 		t.Fatalf("the exact string spelling was refused at the gRPC door: %v", err)
 	}
-	if _, err := req.Compile(widgetMeta, nil); err != nil {
+	if _, err := request.Compile(widgetMeta, nil); err != nil {
 		t.Fatalf("the exact string spelling did not compile: %v", err)
 	}
 
 	// A huge float does not pretend to be an exact integer. It is representable
 	// as the float64 Struct transports and must reach a float model field.
-	req, err = queryOf(doc(t, `{"filter":{"score":1e100}}`), queryNumberMeta)
+	request, err = queryOf(doc(t, `{"filter":{"score":1e100}}`), queryNumberMeta)
 	if err != nil {
 		t.Fatalf("a high-magnitude float was refused at the gRPC door: %v", err)
 	}
-	if _, err := req.Compile(queryNumberMeta, nil); err != nil {
+	if _, err := request.Compile(queryNumberMeta, nil); err != nil {
 		t.Fatalf("a high-magnitude float did not compile: %v", err)
 	}
 }

@@ -33,10 +33,10 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
+	repository := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
 
 	t.Run("a list read is served by the replica", func(t *testing.T) {
-		got, err := repo.GetAll(ctx, crud.OrderBy(crud.Asc("ID")))
+		got, err := repository.GetAll(ctx, crud.OrderBy(crud.Asc("ID")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,17 +46,17 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 	})
 
 	t.Run("Count and Exists too", func(t *testing.T) {
-		if n, err := repo.Count(ctx); err != nil || n != 2 {
+		if n, err := repository.Count(ctx); err != nil || n != 2 {
 			t.Fatalf("count = %d err = %v, want the replica's 2", n, err)
 		}
-		ok, err := repo.Exists(ctx, crud.Where(crud.Eq("Name", "replica-only")))
+		ok, err := repository.Exists(ctx, crud.Where(crud.Eq("Name", "replica-only")))
 		if err != nil || !ok {
 			t.Fatalf("exists = %v err = %v", ok, err)
 		}
 	})
 
 	t.Run("an aggregate too", func(t *testing.T) {
-		rows, err := repo.Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
+		rows, err := repository.Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 
 	t.Run("a write lands on the primary", func(t *testing.T) {
 		row := ShardRow{ID: 9, Name: "written"}
-		if err := repo.Save(ctx, &row); err != nil {
+		if err := repository.Save(ctx, &row); err != nil {
 			t.Fatal(err)
 		}
 		var name string
@@ -80,7 +80,7 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 	})
 
 	t.Run("PrimaryOnly opts a read back out", func(t *testing.T) {
-		got, err := repo.GetAll(ctx, crud.PrimaryOnly(), crud.OrderBy(crud.Asc("ID")))
+		got, err := repository.GetAll(ctx, crud.PrimaryOnly(), crud.OrderBy(crud.Asc("ID")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,11 +104,11 @@ func TestUpdateDiffsAgainstThePrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
+	repository := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
 
 	// Setting the name to what the *replica* holds must still be a real change,
 	// because the row on the primary says something else.
-	got, err := repo.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("stale")})
+	got, err := repository.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("stale")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,12 +159,12 @@ func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 		},
 	}
 
-	repo := ReplicaRows.Bind(
+	repository := ReplicaRows.Bind(
 		crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)),
 		security.Gate(policy),
 	)
 
-	_, err := repo.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")})
+	_, err := repository.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")})
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("the update was allowed on the strength of the replica's copy (Inspect saw %q): %v", seen, err)
 	}
@@ -177,7 +177,7 @@ func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 	if _, err := primary.ExecContext(ctx, `UPDATE shard_rows SET name = 'still-mine' WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")}); err != nil {
+	if _, err := repository.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("rewritten")}); err != nil {
 		t.Fatalf("the same update was refused when the primary agreed: %v", err)
 	}
 }
@@ -191,16 +191,16 @@ func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 	if _, err := replica.ExecContext(ctx, `INSERT INTO shard_rows (id, name) VALUES (7, 'replica-only')`); err != nil {
 		t.Fatal(err)
 	}
-	repo := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
+	repository := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
 
-	err := repo.Tx(ctx, func(ctx context.Context) error {
+	err := repository.Tx(ctx, func(ctx context.Context) error {
 		row := ShardRow{ID: 42, Name: "in-tx"}
-		if err := repo.Save(ctx, &row); err != nil {
+		if err := repository.Save(ctx, &row); err != nil {
 			return err
 		}
 		// Read-your-own-writes: the row exists only in this transaction, on the
 		// primary. A read served by the replica would not see it.
-		got, err := repo.GetByID(ctx, 42)
+		got, err := repository.GetByID(ctx, 42)
 		if err != nil {
 			return err
 		}
@@ -208,7 +208,7 @@ func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 			t.Errorf("read back %q", got.Name)
 		}
 		// And the replica's row is not visible from in here.
-		if n, err := repo.Count(ctx); err != nil || n != 1 {
+		if n, err := repository.Count(ctx); err != nil || n != 1 {
 			t.Errorf("count inside the transaction = %d err = %v, want just the row written here", n, err)
 		}
 		return nil

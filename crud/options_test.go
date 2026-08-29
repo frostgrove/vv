@@ -138,7 +138,7 @@ func TestWithLeavesUnsetFieldsAlone(t *testing.T) {
 func TestResolved(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		opts     []crud.Option
+		options  []crud.Option
 		defLimit int
 		maxLimit int
 		limit    int
@@ -170,7 +170,7 @@ func TestResolved(t *testing.T) {
 			[]crud.Option{crud.Page(math.MaxInt), crud.Limit(20)}, 20, 100, 20, math.MaxInt, math.MaxInt},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			limit, offset, page := crud.Build(tc.opts...).Resolved(tc.defLimit, tc.maxLimit)
+			limit, offset, page := crud.Build(tc.options...).Resolved(tc.defLimit, tc.maxLimit)
 			if limit != tc.limit || offset != tc.offset || page != tc.page {
 				t.Fatalf("Resolved(%d, %d) = (limit %d, offset %d, page %d), want (%d, %d, %d)",
 					tc.defLimit, tc.maxLimit, limit, offset, page, tc.limit, tc.offset, tc.page)

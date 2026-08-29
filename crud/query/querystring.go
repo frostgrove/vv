@@ -41,7 +41,7 @@ type Term struct {
 // containing `"Smith, John"` silently become two values when read back. The
 // query-string door already splits its one textual value in ParseTerm; the JSON
 // door has structure and must preserve it.
-func (t *Term) UnmarshalJSON(b []byte) error {
+func (this *Term) UnmarshalJSON(b []byte) error {
 	type wire struct {
 		Path   string          `json:"path"`
 		Op     string          `json:"op"`
@@ -51,7 +51,7 @@ func (t *Term) UnmarshalJSON(b []byte) error {
 	if err := decodeObject(b, &in, "terms", termKeys); err != nil {
 		return err
 	}
-	*t = Term{Path: in.Path, Op: in.Op}
+	*this = Term{Path: in.Path, Op: in.Op}
 	if len(in.Values) == 0 || isNull(trim(in.Values)) {
 		return nil
 	}
@@ -59,41 +59,41 @@ func (t *Term) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(in.Values, &rawValues); err != nil {
 		return fmt.Errorf("query: term values must be an array of strings: %w", err)
 	}
-	t.Values = make(Strings, len(rawValues))
-	t.jsonValues = make([]termValue, len(rawValues))
+	this.Values = make(Strings, len(rawValues))
+	this.jsonValues = make([]termValue, len(rawValues))
 	for i, raw := range rawValues {
 		raw = trim(raw)
 		if isNull(raw) {
-			t.jsonValues[i] = termValue{null: true}
+			this.jsonValues[i] = termValue{null: true}
 			continue
 		}
-		if err := json.Unmarshal(raw, &t.Values[i]); err != nil {
+		if err := json.Unmarshal(raw, &this.Values[i]); err != nil {
 			return fmt.Errorf("query: terms.values[%d] must be a string or null: %w", i, err)
 		}
-		t.jsonValues[i] = termValue{text: t.Values[i]}
+		this.jsonValues[i] = termValue{text: this.Values[i]}
 	}
 	return nil
 }
 
 // MarshalJSON is the other half of UnmarshalJSON: a null term operand must not
 // quietly become an empty string when a saved query is written back out.
-func (t Term) MarshalJSON() ([]byte, error) {
+func (this Term) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Path   string `json:"path"`
 		Op     string `json:"op,omitempty"`
 		Values []any  `json:"values,omitempty"`
 	}
-	w := wire{Path: t.Path, Op: t.Op}
-	if t.jsonValues != nil {
-		w.Values = make([]any, len(t.jsonValues))
-		for i, value := range t.jsonValues {
+	w := wire{Path: this.Path, Op: this.Op}
+	if this.jsonValues != nil {
+		w.Values = make([]any, len(this.jsonValues))
+		for i, value := range this.jsonValues {
 			if !value.null {
 				w.Values[i] = value.text
 			}
 		}
-	} else if len(t.Values) != 0 {
-		w.Values = make([]any, len(t.Values))
-		for i, value := range t.Values {
+	} else if len(this.Values) != 0 {
+		w.Values = make([]any, len(this.Values))
+		for i, value := range this.Values {
 			w.Values[i] = value
 		}
 	}
@@ -127,14 +127,14 @@ func ParseTerm(s string) (Term, error) {
 
 // compileTerms turns the flat form into predicates, coercing each text value to
 // the column's Go type.
-func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
+func (this *compiler) terms(terms []Term) (crud.Predicate, error) {
 	var preds []crud.Predicate
 	for _, t := range terms {
-		f, canonical, err := c.path(t.Path, "filter")
+		f, canonical, err := this.path(t.Path, "filter")
 		if err != nil {
 			return nil, err
 		}
-		if !allowed(c.cfg.filterable(), canonical) {
+		if !allowed(this.config.filterable(), canonical) {
 			return nil, errf("filter", "%s is not filterable", canonical)
 		}
 		op := t.Op
@@ -145,7 +145,7 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 		if !ok {
 			return nil, errf("filter."+canonical, "unknown operator %q", t.Op)
 		}
-		if err := c.count("filter"); err != nil {
+		if err := this.count("filter"); err != nil {
 			return nil, err
 		}
 		values := t.values(kind.multi())
@@ -179,7 +179,7 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			if crud.ElemType(f.Type).Kind() != reflect.String {
 				return nil, errf("filter."+canonical, "%s requires a text field", op)
 			}
-			if err := c.countBinds(1, "filter."+canonical); err != nil {
+			if err := this.countBinds(1, "filter."+canonical); err != nil {
 				return nil, err
 			}
 			preds = append(preds, buildText(canonical, kind, values[0].text))
@@ -191,10 +191,10 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			// so without this the flat-term `in` produced one bind parameter per
 			// element with nothing bounding it, reachable from POST /query
 			// through Term.Values on a stock config.
-			if err := c.countValues(len(values), "filter."+canonical); err != nil {
+			if err := this.countValues(len(values), "filter."+canonical); err != nil {
 				return nil, err
 			}
-			vals, err := c.coerceTerms(values, f, canonical)
+			vals, err := this.coerceTerms(values, f, canonical)
 			if err != nil {
 				return nil, err
 			}
@@ -214,12 +214,12 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 			if values[0].null && kind != opEq && kind != opNe {
 				return nil, errf("filter."+canonical, "%s has no meaning with null", op)
 			}
-			vals, err := c.coerceTerms(values[:1], f, canonical)
+			vals, err := this.coerceTerms(values[:1], f, canonical)
 			if err != nil {
 				return nil, err
 			}
 			if vals[0] != nil {
-				if err := c.countBinds(1, "filter."+canonical); err != nil {
+				if err := this.countBinds(1, "filter."+canonical); err != nil {
 					return nil, err
 				}
 			}
@@ -236,7 +236,7 @@ func (c *compiler) terms(terms []Term) (crud.Predicate, error) {
 	}
 }
 
-func (c *compiler) coerceTerms(raw []termValue, f *crud.Field, canonical string) ([]any, error) {
+func (this *compiler) coerceTerms(raw []termValue, f *crud.Field, canonical string) ([]any, error) {
 	t := crud.ElemType(f.Type)
 	out := make([]any, 0, len(raw))
 	for _, value := range raw {
@@ -266,22 +266,22 @@ type termValue struct {
 // just a character, so `title:eq:Smith, John` means exactly the same thing as
 // its JSON counterpart. A backslash escapes a comma in a list and turns a bare
 // `null` into the literal string `null` (`\\null`).
-func (t Term) values(split bool) []termValue {
-	if !t.flat {
-		if t.jsonValues != nil {
-			return append([]termValue(nil), t.jsonValues...)
+func (this Term) values(split bool) []termValue {
+	if !this.flat {
+		if this.jsonValues != nil {
+			return append([]termValue(nil), this.jsonValues...)
 		}
-		out := make([]termValue, len(t.Values))
-		for i, value := range t.Values {
+		out := make([]termValue, len(this.Values))
+		for i, value := range this.Values {
 			out[i] = termValue{text: value}
 		}
 		return out
 	}
-	if t.flatRaw == "" {
+	if this.flatRaw == "" {
 		return nil
 	}
 	var out []termValue
-	out = append(out, parseTermValues(t.flatRaw, split)...)
+	out = append(out, parseTermValues(this.flatRaw, split)...)
 	return out
 }
 

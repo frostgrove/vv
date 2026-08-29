@@ -50,8 +50,8 @@ type PredicateError struct {
 	Reason string
 }
 
-func (e *PredicateError) Error() string {
-	return "crud: " + e.Node + " has no filter document: " + e.Reason
+func (this *PredicateError) Error() string {
+	return "crud: " + this.Node + " has no filter document: " + this.Reason
 }
 
 // docWriter accumulates a document and remembers the first refusal, the way
@@ -62,35 +62,35 @@ type docWriter struct {
 	err error
 }
 
-func (w *docWriter) failWith(err error) {
-	if w.err == nil {
-		w.err = err
+func (this *docWriter) failWith(err error) {
+	if this.err == nil {
+		this.err = err
 	}
 }
 
-func (w *docWriter) fail(node, reason string) {
-	w.failWith(&PredicateError{Node: node, Reason: reason})
+func (this *docWriter) fail(node, reason string) {
+	this.failWith(&PredicateError{Node: node, Reason: reason})
 }
 
-func (w *docWriter) str(s string) { w.sb.WriteString(s) }
+func (this *docWriter) str(s string) { this.sb.WriteString(s) }
 
 // text writes a JSON string. Field names go through it as well as values: a
 // field named `a"b` would otherwise close the key and the remainder of the
 // document would be whatever that produced.
-func (w *docWriter) text(s string) {
+func (this *docWriter) text(s string) {
 	b, _ := json.Marshal(s) // a string always encodes
-	w.sb.Write(b)
+	this.sb.Write(b)
 }
 
 // value writes a bind value. A value encoding/json refuses — a channel, a NaN —
 // fails here rather than producing a document the server would answer 400 to.
-func (w *docWriter) value(v any) {
+func (this *docWriter) value(v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		w.fail("crud", "a filter value cannot be encoded as JSON: "+err.Error())
+		this.fail("crud", "a filter value cannot be encoded as JSON: "+err.Error())
 		return
 	}
-	w.sb.Write(b)
+	this.sb.Write(b)
 }
 
 // leaf writes {"field":{"op":…}}, the shape every comparison has, with emit
@@ -100,14 +100,14 @@ func (w *docWriter) value(v any) {
 // object would need the field name twice, and a JSON object with a repeated key
 // decodes to whichever copy came last — half the caller's filter silently gone.
 // logicNode writes an array for exactly this reason.
-func (w *docWriter) leaf(field, op string, emit func()) {
-	w.str("{")
-	w.text(field)
-	w.str(":{")
-	w.text(op)
-	w.str(":")
+func (this *docWriter) leaf(field, op string, emit func()) {
+	this.str("{")
+	this.text(field)
+	this.str(":{")
+	this.text(op)
+	this.str(":")
 	emit()
-	w.str("}}")
+	this.str("}}")
 }
 
 // sub renders one node on its own, so a parent can look at what it got before
@@ -130,13 +130,13 @@ const everyRow = "{}"
 // ---------------------------------------------------------------------------
 // the nodes, in predicate.go's order
 
-func (n cmpNode) document(w *docWriter) {
-	op, ok := docOps[n.op]
+func (this cmpNode) document(w *docWriter) {
+	op, ok := docOps[this.op]
 	if !ok {
-		w.fail("crud", "no wire operator for "+n.op)
+		w.fail("crud", "no wire operator for "+this.op)
 		return
 	}
-	w.leaf(n.field, op, func() { w.value(n.value) })
+	w.leaf(this.field, op, func() { w.value(this.value) })
 }
 
 // docOps is the SQL operator each comparison renders with, back to the word the
@@ -146,24 +146,24 @@ var docOps = map[string]string{
 	"=": "eq", "<>": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte",
 }
 
-func (n nullNode) document(w *docWriter) {
+func (this nullNode) document(w *docWriter) {
 	op := "isnull"
-	if n.not {
+	if this.not {
 		op = "isnotnull"
 	}
-	w.leaf(n.field, op, func() { w.str("true") })
+	w.leaf(this.field, op, func() { w.str("true") })
 }
 
-func (n inNode) document(w *docWriter) {
+func (this inNode) document(w *docWriter) {
 	op := "in"
-	if n.not {
+	if this.not {
 		op = "nin"
 	}
 	// An empty list is kept and not refused: the DSL compiles {"in":[]} back to
 	// the same always-false node, and {"nin":[]} to the same always-true one.
-	w.leaf(n.field, op, func() {
+	w.leaf(this.field, op, func() {
 		w.str("[")
-		for i, v := range n.values {
+		for i, v := range this.values {
 			if i > 0 {
 				w.str(",")
 			}
@@ -173,17 +173,17 @@ func (n inNode) document(w *docWriter) {
 	})
 }
 
-func (n betweenNode) document(w *docWriter) {
+func (this betweenNode) document(w *docWriter) {
 	emit := func() {
-		w.leaf(n.field, "between", func() {
+		w.leaf(this.field, "between", func() {
 			w.str("[")
-			w.value(n.low)
+			w.value(this.low)
 			w.str(",")
-			w.value(n.hi)
+			w.value(this.hi)
 			w.str("]")
 		})
 	}
-	if n.not {
+	if this.not {
 		// No notBetween in the DSL, and no NotBetween constructor here either,
 		// so this arm is unreachable today. Negation rather than refusal
 		// because NOT (a BETWEEN b AND c) is the same set of rows, spelled
@@ -196,52 +196,52 @@ func (n betweenNode) document(w *docWriter) {
 	emit()
 }
 
-func (n likeNode) document(w *docWriter) {
-	if n.mode != likePattern && n.not {
+func (this likeNode) document(w *docWriter) {
+	if this.mode != likePattern && this.not {
 		// The DSL's convenience operators have no negative spellings. Preserve
 		// the meaning as a Boolean negation rather than degrading it to raw LIKE.
 		w.str(`{"not":`)
-		likeNode{field: n.field, pattern: n.pattern, ignoreCase: n.ignoreCase, mode: n.mode}.document(w)
+		likeNode{field: this.field, pattern: this.pattern, ignoreCase: this.ignoreCase, mode: this.mode}.document(w)
 		w.str("}")
 		return
 	}
-	if n.mode != likePattern {
+	if this.mode != likePattern {
 		op := "contains"
-		switch n.mode {
+		switch this.mode {
 		case likeStartsWith:
 			op = "startsWith"
 		case likeEndsWith:
 			op = "endsWith"
 		}
-		if n.ignoreCase {
+		if this.ignoreCase {
 			op = "i" + op[:1] + op[1:]
 		}
-		w.leaf(n.field, op, func() { w.value(n.pattern) })
+		w.leaf(this.field, op, func() { w.value(this.pattern) })
 		return
 	}
 	switch {
-	case n.ignoreCase && n.not:
+	case this.ignoreCase && this.not:
 		// The DSL has ilike and notlike, not both at once. Unreachable from the
 		// constructors, and negated rather than refused for betweenNode's
 		// reason.
 		w.str(`{"not":`)
-		w.leaf(n.field, "ilike", func() { w.value(n.pattern) })
+		w.leaf(this.field, "ilike", func() { w.value(this.pattern) })
 		w.str("}")
-	case n.ignoreCase:
-		w.leaf(n.field, "ilike", func() { w.value(n.pattern) })
-	case n.not:
-		w.leaf(n.field, "notlike", func() { w.value(n.pattern) })
+	case this.ignoreCase:
+		w.leaf(this.field, "ilike", func() { w.value(this.pattern) })
+	case this.not:
+		w.leaf(this.field, "notlike", func() { w.value(this.pattern) })
 	default:
-		w.leaf(n.field, "like", func() { w.value(n.pattern) })
+		w.leaf(this.field, "like", func() { w.value(this.pattern) })
 	}
 }
 
-func (n fieldCmpNode) document(w *docWriter) {
+func (this fieldCmpNode) document(w *docWriter) {
 	w.fail("crud.EqField", "the wire DSL compares a field to a value, never to another field")
 }
 
-func (n logicNode) document(w *docWriter) {
-	live := flatten(n.op, n.kids, nil)
+func (this logicNode) document(w *docWriter) {
+	live := flatten(this.op, this.kids, nil)
 	docs := make([]string, 0, len(live))
 	for _, k := range live {
 		doc, err := sub(k)
@@ -254,7 +254,7 @@ func (n logicNode) document(w *docWriter) {
 			// one is unconditional. Getting either backwards changes which rows
 			// come back, so neither is left to the server to work out from a
 			// document with an empty object in it.
-			if n.op == "OR" {
+			if this.op == "OR" {
 				w.str(everyRow)
 				return
 			}
@@ -265,7 +265,7 @@ func (n logicNode) document(w *docWriter) {
 
 	switch len(docs) {
 	case 0:
-		if n.op == "AND" {
+		if this.op == "AND" {
 			w.str(everyRow)
 			return
 		}
@@ -274,7 +274,7 @@ func (n logicNode) document(w *docWriter) {
 		w.str(docs[0])
 	default:
 		key := "and"
-		if n.op == "OR" {
+		if this.op == "OR" {
 			key = "or"
 		}
 		w.str(`{"`)
@@ -285,12 +285,12 @@ func (n logicNode) document(w *docWriter) {
 	}
 }
 
-func (n notNode) document(w *docWriter) {
-	if n.inner == nil {
+func (this notNode) document(w *docWriter) {
+	if this.inner == nil {
 		w.fail("crud.Not", "Not(nil) matches no rows, which no filter document says")
 		return
 	}
-	doc, err := sub(n.inner)
+	doc, err := sub(this.inner)
 	if err != nil {
 		w.failWith(err)
 		return
@@ -308,14 +308,14 @@ func (n notNode) document(w *docWriter) {
 	w.str("}")
 }
 
-func (n constNode) document(w *docWriter) {
-	if n {
+func (this constNode) document(w *docWriter) {
+	if this {
 		w.str(everyRow)
 		return
 	}
 	w.fail("crud.False", "False matches no rows, which no filter document says; sending it as an empty filter would return every row")
 }
 
-func (n rawNode) document(w *docWriter) {
+func (this rawNode) document(w *docWriter) {
 	w.fail("crud.Raw", "it is SQL, and a filter document carries field paths and values")
 }

@@ -47,8 +47,8 @@ func Authenticator[C any](p *Parser[C], to func(ctx context.Context, c C) (auth.
 //
 // A nil role map is fine and means the token's permissions are taken as they
 // come.
-func Standard(k KeySource, roles auth.RoleMap, opts ...Option) auth.Authenticator {
-	p := New[Claims](k, opts...)
+func Standard(k KeySource, roles auth.RoleMap, options ...Option) auth.Authenticator {
+	p := New[Claims](k, options...)
 	return Authenticator(p, func(_ context.Context, c Claims) (auth.Principal, error) {
 		return c.Grant(roles), nil
 	})

@@ -1185,8 +1185,8 @@ type bytesReadCloser struct {
 
 type emptyReader struct{ reads int }
 
-func (r *emptyReader) Read([]byte) (int, error) {
-	r.reads++
+func (this *emptyReader) Read([]byte) (int, error) {
+	this.reads++
 	return 0, nil
 }
 
@@ -1201,26 +1201,26 @@ func newBlockedReader(err error) *blockedReader {
 	return &blockedReader{started: make(chan struct{}), release: make(chan struct{}), err: err}
 }
 
-func (r *blockedReader) Read([]byte) (int, error) {
-	r.once.Do(func() { close(r.started) })
-	<-r.release
-	return 0, r.err
+func (this *blockedReader) Read([]byte) (int, error) {
+	this.once.Do(func() { close(this.started) })
+	<-this.release
+	return 0, this.err
 }
 
-func (r *bytesReadCloser) Close() error {
-	r.closed.Store(true)
+func (this *bytesReadCloser) Close() error {
+	this.closed.Store(true)
 	return nil
 }
 
-func (r *failingReadCloser) Read(buffer []byte) (int, error) {
-	if r.reads == 0 {
-		r.reads++
+func (this *failingReadCloser) Read(buffer []byte) (int, error) {
+	if this.reads == 0 {
+		this.reads++
 		return copy(buffer, "partial"), nil
 	}
-	return 0, r.failure
+	return 0, this.failure
 }
 
-func (r *failingReadCloser) Close() error {
-	r.closed.Store(true)
+func (this *failingReadCloser) Close() error {
+	this.closed.Store(true)
 	return nil
 }

@@ -113,11 +113,11 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 func TestUnknownOperatorIsRefusedOnBothDoors(t *testing.T) {
 	mustFail(t, `{"filter":{"title":{"approximately":"go"}}}`, nil, `unknown operator "approximately"`)
 
-	req, err := query.ParseQuery(url.Values{"f": {"title:approximately:go"}})
+	request, err := query.ParseQuery(url.Values{"f": {"title:approximately:go"}})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := req.Compile(Articles.Meta(), nil); err == nil ||
+	if _, err := request.Compile(Articles.Meta(), nil); err == nil ||
 		!strings.Contains(err.Error(), `unknown operator "approximately"`) {
 		t.Fatalf("err = %v, want an unknown-operator rejection", err)
 	}
@@ -149,8 +149,8 @@ func TestTermWithoutAValueIsRefused(t *testing.T) {
 		{Path: "title", Op: "eq"},
 		{Path: "title", Op: "contains"},
 	} {
-		req := &query.Request{Terms: []query.Term{term}}
-		if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+		request := &query.Request{Terms: []query.Term{term}}
+		if _, err := request.Compile(Articles.Meta(), nil); err == nil {
 			t.Fatalf("%s with no value was accepted", term.Op)
 		} else if !strings.Contains(err.Error(), "needs a value") {
 			t.Fatalf("err = %v, want it to say the operator needs a value", err)
@@ -207,19 +207,19 @@ func TestFlatTermsKeepAPipeInsideAScalarValue(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req, err := query.ParseQuery(v)
+		request, err := query.ParseQuery(v)
 		if err != nil {
 			t.Fatalf("ParseQuery(%q): %v", raw, err)
 		}
-		if len(req.Terms) == 0 {
+		if len(request.Terms) == 0 {
 			t.Fatalf("ParseQuery(%q) returned no term", raw)
 		}
-		_, args := runReq(t, req, nil)
+		_, args := runReq(t, request, nil)
 		if len(args) == 0 || args[0] != "a|b" {
 			t.Fatalf("ParseQuery(%q) compiled args = %#v, want first value a|b", raw, args)
 		}
-		if strings.Contains(raw, "%5C") && len(req.Terms) != 2 {
-			t.Fatalf("ParseQuery(%q) terms = %#v, want the explicit second term too", raw, req.Terms)
+		if strings.Contains(raw, "%5C") && len(request.Terms) != 2 {
+			t.Fatalf("ParseQuery(%q) terms = %#v, want the explicit second term too", raw, request.Terms)
 		}
 	}
 }
@@ -237,11 +237,11 @@ func TestFlatTermBackslashesOnlyEscapeItsDeclaredGrammar(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req, err := query.ParseQuery(v)
+		request, err := query.ParseQuery(v)
 		if err != nil {
 			t.Fatalf("ParseQuery(%q): %v", tc.raw, err)
 		}
-		_, args := runReq(t, req, nil)
+		_, args := runReq(t, request, nil)
 		if !reflect.DeepEqual(args, tc.want) {
 			t.Fatalf("%s args = %#v, want %#v", tc.raw, args, tc.want)
 		}
@@ -262,26 +262,26 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := query.ParseQuery(v)
+	request, err := query.ParseQuery(v)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if req.Page != 2 || req.Limit != 25 || req.Offset != 5 {
-		t.Fatalf("paging = %d/%d/%d, want 2/25/5", req.Page, req.Limit, req.Offset)
+	if request.Page != 2 || request.Limit != 25 || request.Offset != 5 {
+		t.Fatalf("paging = %d/%d/%d, want 2/25/5", request.Page, request.Limit, request.Offset)
 	}
 	wantSort := query.Sorts{{Field: "views", Desc: true}, {Field: "title"}, {Field: "createdAt"}}
-	if !reflect.DeepEqual(req.Sort, wantSort) {
-		t.Fatalf("sort = %+v, want %+v", req.Sort, wantSort)
+	if !reflect.DeepEqual(request.Sort, wantSort) {
+		t.Fatalf("sort = %+v, want %+v", request.Sort, wantSort)
 	}
-	if !reflect.DeepEqual([]string(req.Select), []string{"id", "title", "views", "createdAt"}) {
-		t.Fatalf("select = %v", req.Select)
+	if !reflect.DeepEqual([]string(request.Select), []string{"id", "title", "views", "createdAt"}) {
+		t.Fatalf("select = %v", request.Select)
 	}
-	if len(req.Preload) != 2 || req.Preload[0].Path != "author" || req.Preload[1].Path != "comments.author" {
-		t.Fatalf("preload = %+v", req.Preload)
+	if len(request.Preload) != 2 || request.Preload[0].Path != "author" || request.Preload[1].Path != "comments.author" {
+		t.Fatalf("preload = %+v", request.Preload)
 	}
-	if req.Search != "go" || !reflect.DeepEqual([]string(req.SearchFields), []string{"title", "body"}) {
-		t.Fatalf("search = %q %v", req.Search, req.SearchFields)
+	if request.Search != "go" || !reflect.DeepEqual([]string(request.SearchFields), []string{"title", "body"}) {
+		t.Fatalf("search = %q %v", request.Search, request.SearchFields)
 	}
 	// Three terms: the pipe separates two of them inside one parameter.
 	wantTerms := []struct{ path, op, value string }{
@@ -289,25 +289,25 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 		{"title", "contains", "go"},
 		{"publishedAt", "isNull", "true"},
 	}
-	if len(req.Terms) != len(wantTerms) {
-		t.Fatalf("terms = %+v, want %d terms", req.Terms, len(wantTerms))
+	if len(request.Terms) != len(wantTerms) {
+		t.Fatalf("terms = %+v, want %d terms", request.Terms, len(wantTerms))
 	}
 	for i, want := range wantTerms {
-		got := req.Terms[i]
+		got := request.Terms[i]
 		if got.Path != want.path || got.Op != want.op || !reflect.DeepEqual([]string(got.Values), []string{want.value}) {
 			t.Fatalf("term %d = %+v, want %s:%s:%s", i, got, want.path, want.op, want.value)
 		}
 	}
-	if req.Filter.IsZero() {
+	if request.Filter.IsZero() {
 		t.Fatal("the filter document was dropped")
 	}
-	if !req.Unpaged || !req.SkipTotal || !req.Distinct {
-		t.Fatalf("flags = %v/%v/%v, want all true", req.Unpaged, req.SkipTotal, req.Distinct)
+	if !request.Unpaged || !request.SkipTotal || !request.Distinct {
+		t.Fatalf("flags = %v/%v/%v, want all true", request.Unpaged, request.SkipTotal, request.Distinct)
 	}
 
 	// And it all compiles into one statement: the JSON document and the flat
 	// terms are ANDed, not one instead of the other.
-	sql, _ := runReq(t, req, exports)
+	sql, _ := runReq(t, request, exports)
 	want := `("body" = $1 AND "views" >= $2 AND "title" LIKE $3 ESCAPE '\' AND "published_at" IS NULL ` +
 		`AND (LOWER("title") LIKE LOWER($4) ESCAPE '\' OR LOWER("body") LIKE LOWER($5) ESCAPE '\'))`
 	if got := where(sql); got != want {
@@ -356,12 +356,12 @@ func TestParseQueryAliases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req, err := query.ParseQuery(v)
+			request, err := query.ParseQuery(v)
 			if err != nil {
 				t.Fatalf("ParseQuery(%s): %v", tc.query, err)
 			}
-			if !tc.check(req) {
-				t.Fatalf("%s did not reach the request: %+v", tc.query, req)
+			if !tc.check(request) {
+				t.Fatalf("%s did not reach the request: %+v", tc.query, request)
 			}
 		})
 	}
@@ -425,18 +425,18 @@ func TestParseQueryRefusesConflictingScalarControls(t *testing.T) {
 // An empty query string receives the query endpoint's page cap rather than a
 // repository's potentially larger default.
 func TestParseQueryOfNothing(t *testing.T) {
-	req, err := query.ParseQuery(url.Values{})
+	request, err := query.ParseQuery(url.Values{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req == nil {
+	if request == nil {
 		t.Fatal("ParseQuery returned no request")
 	}
-	opts, err := req.Compile(Articles.Meta(), exports)
+	options, err := request.Compile(Articles.Meta(), exports)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := crud.Build(opts...); o.Limit != 100 {
+	if o := crud.Build(options...); o.Limit != 100 {
 		t.Fatalf("an empty query string produced limit %d, want 100", o.Limit)
 	}
 }
@@ -448,17 +448,17 @@ func TestParseQuerySkipsBlankEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := query.ParseQuery(v)
+	request, err := query.ParseQuery(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(req.Sort) != 1 || req.Sort[0].Field != "title" {
-		t.Fatalf("sort = %+v, want just title", req.Sort)
+	if len(request.Sort) != 1 || request.Sort[0].Field != "title" {
+		t.Fatalf("sort = %+v, want just title", request.Sort)
 	}
-	if len(req.Select) != 0 || len(req.Preload) != 0 {
-		t.Fatalf("select = %v, preload = %+v; want both empty", req.Select, req.Preload)
+	if len(request.Select) != 0 || len(request.Preload) != 0 {
+		t.Fatalf("select = %v, preload = %+v; want both empty", request.Select, request.Preload)
 	}
-	if len(req.Terms) != 1 || req.Terms[0].Path != "views" {
-		t.Fatalf("terms = %+v", req.Terms)
+	if len(request.Terms) != 1 || request.Terms[0].Path != "views" {
+		t.Fatalf("terms = %+v", request.Terms)
 	}
 }

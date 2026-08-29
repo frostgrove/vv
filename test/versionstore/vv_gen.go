@@ -47,8 +47,8 @@ type DocumentRepo = crud.Repo[Document, int64, DocumentUpdate]
 var DocumentRepository = sqlrepo.Define[Document, int64, DocumentUpdate]("")
 
 // NewDocumentRepository binds DocumentRepository to src.
-func NewDocumentRepository(src crud.Source) *DocumentRepo {
-	return DocumentRepository.Bind(src)
+func NewDocumentRepository(source crud.Source) *DocumentRepo {
+	return DocumentRepository.Bind(source)
 }
 
 // DocumentInput is the entity body for Document: what a create or a replace carries,
@@ -105,8 +105,8 @@ type DocumentService struct {
 var _ port.Service[Document, int64, DocumentUpdate] = (*DocumentService)(nil)
 
 // NewDocumentService builds the service over a repository.
-func NewDocumentService(repo port.Repository[Document, int64, DocumentUpdate], opts ...port.ServiceOption) *DocumentService {
-	return &DocumentService{DefaultService: port.NewService(repo, opts...)}
+func NewDocumentService(repository port.Repository[Document, int64, DocumentUpdate], options ...port.ServiceOption) *DocumentService {
+	return &DocumentService{DefaultService: port.NewService(repository, options...)}
 }
 
 // MountDocument mounts the resource on a ServeMux under prefix, behind DocumentMapper.
@@ -114,8 +114,8 @@ func NewDocumentService(repo port.Repository[Document, int64, DocumentUpdate], o
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountDocument(mux *http.ServeMux, prefix string, svc port.Service[Document, int64, DocumentUpdate], opts ...crudnet.Option[Document, int64, DocumentUpdate]) {
-	crudnet.ServingFor(svc, DocumentMapper{}, opts...).Mount(mux, prefix)
+func MountDocument(mux *http.ServeMux, prefix string, service port.Service[Document, int64, DocumentUpdate], options ...crudnet.Option[Document, int64, DocumentUpdate]) {
+	crudnet.ServingFor(service, DocumentMapper{}, options...).Mount(mux, prefix)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

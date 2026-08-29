@@ -79,19 +79,19 @@ type Request struct {
 // UnpagedParam is the request parameter that asked for unpaged results, for a
 // caller building its own refusal. It is "unpaged" for a JSON document and for
 // a query string that spelled it that way, and "all" for the alias.
-func (r *Request) UnpagedParam() string {
-	if r == nil || r.unpagedParam == "" {
+func (this *Request) UnpagedParam() string {
+	if this == nil || this.unpagedParam == "" {
 		return "unpaged"
 	}
-	return r.unpagedParam
+	return this.unpagedParam
 }
 
 // OmitPaging marks this request for an operation that does not use list
 // pagination, such as a count or a lookup by primary key. It is for transport
 // adapters; it never appears on the wire and cannot be selected by a client.
-func (r *Request) OmitPaging() {
-	if r != nil {
-		r.omitPaging = true
+func (this *Request) OmitPaging() {
+	if this != nil {
+		this.omitPaging = true
 	}
 }
 
@@ -99,10 +99,10 @@ func (r *Request) OmitPaging() {
 // Count and entity endpoints call it because a cursor has no meaning there;
 // keeping only the private marker would turn an intentionally removed cursor
 // into a misleading "must not be empty" refusal.
-func (r *Request) ClearCursors() {
-	if r != nil {
-		r.After, r.Before = "", ""
-		r.afterSet, r.beforeSet = false, false
+func (this *Request) ClearCursors() {
+	if this != nil {
+		this.After, this.Before = "", ""
+		this.afterSet, this.beforeSet = false, false
 	}
 }
 
@@ -114,7 +114,7 @@ func (r *Request) ClearCursors() {
 // all, and the endpoint answers 200 with every row in the table. That is the one
 // failure a client cannot see, and it is the failure the strictness inside the
 // document exists to prevent, so the document's own keys are held to it too.
-func (r *Request) UnmarshalJSON(b []byte) error {
+func (this *Request) UnmarshalJSON(b []byte) error {
 	b = trim(b)
 	if len(b) == 0 {
 		return errf("", "document must be a JSON object")
@@ -155,7 +155,7 @@ func (r *Request) UnmarshalJSON(b []byte) error {
 	}
 	_, doc.afterSet = keys["after"]
 	_, doc.beforeSet = keys["before"]
-	*r = Request(doc)
+	*this = Request(doc)
 	return nil
 }
 
@@ -170,7 +170,7 @@ func requireJSONEOF(dec *json.Decoder) error {
 	return nil
 }
 
-func decodeObject(b []byte, dst any, where string, keys []string) error {
+func decodeObject(b []byte, destination any, where string, keys []string) error {
 	if err := rejectDuplicateJSONKeys(b); err != nil {
 		return err
 	}
@@ -189,7 +189,7 @@ func decodeObject(b []byte, dst any, where string, keys []string) error {
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	if err := dec.Decode(destination); err != nil {
 		if key, ok := unknownFieldOf(err); ok {
 			path := key
 			if where != "" {
@@ -267,12 +267,12 @@ func rejectDuplicateJSONValue(dec *json.Decoder, where string) error {
 // worth a better diagnostic than passing it through raw.
 func unknownFieldOf(err error) (string, bool) {
 	const prefix = "json: unknown field "
-	msg := err.Error()
-	i := strings.Index(msg, prefix)
+	message := err.Error()
+	i := strings.Index(message, prefix)
 	if i < 0 {
 		return "", false
 	}
-	return strings.Trim(msg[i+len(prefix):], `"`), true
+	return strings.Trim(message[i+len(prefix):], `"`), true
 }
 
 // requestKeys is what the error message offers back. Kept next to the struct so
@@ -286,10 +286,10 @@ var requestKeys = []string{
 // `"select": "id,title"` and `"select": ["id","title"]` both work.
 type Strings []string
 
-func (s *Strings) UnmarshalJSON(b []byte) error {
+func (this *Strings) UnmarshalJSON(b []byte) error {
 	b = trim(b)
 	if isNull(b) {
-		*s = nil
+		*this = nil
 		return nil
 	}
 	if b[0] == '"' {
@@ -297,7 +297,7 @@ func (s *Strings) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &one); err != nil {
 			return err
 		}
-		*s = splitList(one)
+		*this = splitList(one)
 		return nil
 	}
 	var many []json.RawMessage
@@ -316,7 +316,7 @@ func (s *Strings) UnmarshalJSON(b []byte) error {
 		}
 		out = append(out, splitList(v)...)
 	}
-	*s = out
+	*this = out
 	return nil
 }
 
@@ -331,10 +331,10 @@ type Sort struct {
 // Sorts accepts "-createdAt", ["-createdAt","title"] or the object form.
 type Sorts []Sort
 
-func (s *Sorts) UnmarshalJSON(b []byte) error {
+func (this *Sorts) UnmarshalJSON(b []byte) error {
 	b = trim(b)
 	if isNull(b) {
-		*s = nil
+		*this = nil
 		return nil
 	}
 	switch b[0] {
@@ -343,14 +343,14 @@ func (s *Sorts) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &one); err != nil {
 			return err
 		}
-		*s = parseSortList(splitList(one))
+		*this = parseSortList(splitList(one))
 		return nil
 	case '{':
 		var one Sort
 		if err := decodeObject(b, &one, "sort", sortKeys); err != nil {
 			return err
 		}
-		*s = Sorts{one}
+		*this = Sorts{one}
 		return nil
 	case '[':
 		var raw []json.RawMessage
@@ -377,7 +377,7 @@ func (s *Sorts) UnmarshalJSON(b []byte) error {
 			}
 			out = append(out, parseSortList(splitList(str))...)
 		}
-		*s = out
+		*this = out
 		return nil
 	}
 	return fmt.Errorf("query: sort must be a string, an object or an array, got %s", b)
@@ -415,10 +415,10 @@ type Preload struct {
 // with a per-relation filter.
 type Preloads []Preload
 
-func (p *Preloads) UnmarshalJSON(b []byte) error {
+func (this *Preloads) UnmarshalJSON(b []byte) error {
 	b = trim(b)
 	if isNull(b) {
-		*p = nil
+		*this = nil
 		return nil
 	}
 	switch b[0] {
@@ -427,14 +427,14 @@ func (p *Preloads) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &one); err != nil {
 			return err
 		}
-		*p = pathsToPreloads(splitList(one))
+		*this = pathsToPreloads(splitList(one))
 		return nil
 	case '{':
 		var one Preload
 		if err := decodeObject(b, &one, "preload", preloadKeys); err != nil {
 			return err
 		}
-		*p = Preloads{one}
+		*this = Preloads{one}
 		return nil
 	case '[':
 		var raw []json.RawMessage
@@ -461,7 +461,7 @@ func (p *Preloads) UnmarshalJSON(b []byte) error {
 			}
 			out = append(out, pathsToPreloads(splitList(str))...)
 		}
-		*p = out
+		*this = out
 		return nil
 	}
 	return fmt.Errorf("query: preload must be a string, an object or an array, got %s", b)
@@ -483,22 +483,22 @@ func pathsToPreloads(paths []string) Preloads {
 // schema, so errors can point at the exact path that was wrong.
 type Filter struct{ raw json.RawMessage }
 
-func (f *Filter) UnmarshalJSON(b []byte) error {
-	f.raw = append(f.raw[:0], b...)
+func (this *Filter) UnmarshalJSON(b []byte) error {
+	this.raw = append(this.raw[:0], b...)
 	return nil
 }
 
-func (f Filter) MarshalJSON() ([]byte, error) {
-	if len(f.raw) == 0 {
+func (this Filter) MarshalJSON() ([]byte, error) {
+	if len(this.raw) == 0 {
 		return []byte("null"), nil
 	}
-	return f.raw, nil
+	return this.raw, nil
 }
 
 // IsZero reports an absent filter, and makes `json:",omitzero"` work. A JSON
 // null is present input rather than absence: Compile rejects it instead of
 // treating a malformed narrowing as no narrowing at all.
-func (f Filter) IsZero() bool { return len(trim(f.raw)) == 0 }
+func (this Filter) IsZero() bool { return len(trim(this.raw)) == 0 }
 
 // RawFilter builds a Filter from a JSON document, for tests and for callers
 // that assemble the document themselves.

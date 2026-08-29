@@ -103,11 +103,11 @@ func TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog(t *testing.T) {
 	got := make([]Catalog, len(srcs))
 	errs := make([]error, len(srcs))
 	var wg sync.WaitGroup
-	for i, src := range srcs {
+	for i, source := range srcs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got[i], errs[i] = set.Load(ctx, src)
+			got[i], errs[i] = set.Load(ctx, source)
 		}()
 	}
 	wg.Wait()
@@ -136,8 +136,8 @@ func TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog(t *testing.T) {
 	// scan and the assertions above proved nothing about the second. One pass
 	// each is what the unlocked load makes them run — asserting a single pass
 	// between them would fail against correct code.
-	for i, src := range srcs {
-		if got := passes(t, src.Recorder); got != 1 {
+	for i, source := range srcs {
+		if got := passes(t, source.Recorder); got != 1 {
 			t.Errorf("declarer %d ran %d introspection passes, so it never reached the load the re-scan exists to reconcile", i, got)
 		}
 	}
@@ -288,8 +288,8 @@ func TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam(t *testing.T) {
 func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 	weird := []int{1, 2, 3}
 	for _, tc := range []struct {
-		name string
-		src  func(*crudtest.Recorder) crud.Source
+		name   string
+		source func(*crudtest.Recorder) crud.Source
 	}{
 		// The handle itself is a slice: reflect calls the type uncomparable and
 		// crud.SameDataSource answers false without ever comparing.
@@ -315,7 +315,7 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 			}()
 
 			var set Set
-			cat, err := set.Load(ctx, tc.src(rec))
+			cat, err := set.Load(ctx, tc.source(rec))
 			if !errors.Is(err, ErrUncomparableHandle) {
 				t.Fatalf("loading over %s answered %v, want ErrUncomparableHandle", tc.name, err)
 			}
@@ -336,14 +336,14 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 func TestAComparableHandleIsAcceptedAndFoundAgain(t *testing.T) {
 	ctx := context.Background()
 	rec := recorder(oneTable(), 2)
-	src := identified{Recorder: rec, handle: new(int)}
+	source := identified{Recorder: rec, handle: new(int)}
 
 	var set Set
-	cat, err := set.Load(ctx, src)
+	cat, err := set.Load(ctx, source)
 	if err != nil {
 		t.Fatalf("a comparable handle was refused: %v", err)
 	}
-	again, err := set.Load(ctx, src)
+	again, err := set.Load(ctx, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestAComparableHandleIsAcceptedAndFoundAgain(t *testing.T) {
 		t.Errorf("the handle was introspected %d times, want once", got)
 	}
 
-	found, ok := set.For(src)
+	found, ok := set.For(source)
 	if !ok || found != cat {
 		t.Error("For could not find a catalog Load had just stored")
 	}

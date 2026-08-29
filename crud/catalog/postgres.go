@@ -109,7 +109,7 @@ WHERE i.indisunique AND i.indisvalid AND i.indislive
                   WHERE con.conindid = i.indexrelid AND con.contype IN ('p', 'u', 'x'))
 ORDER BY n.nspname, tc.relname, ic.relname, k.ord`
 
-func readPostgres(ctx context.Context, src crud.Source) ([]Table, error) {
+func readPostgres(ctx context.Context, source crud.Source) ([]Table, error) {
 	b := newBuilder()
 
 	var (
@@ -117,7 +117,7 @@ func readPostgres(ctx context.Context, src crud.Source) ([]Table, error) {
 		pos, maxLen                   int
 		notNull, generated, hasDef    bool
 	)
-	err := eachRow(ctx, src, "columns", pgColumns, nil, func(rows crud.Rows) error {
+	err := eachRow(ctx, source, "columns", pgColumns, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&schema, &table, &name, &pos, &typ, &notNull, &generated, &hasDef, &def, &maxLen); err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func readPostgres(ctx context.Context, src crud.Source) ([]Table, error) {
 		deferrable                    bool
 		ord                           int
 	)
-	err = eachRow(ctx, src, "constraints", pgConstraints, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "constraints", pgConstraints, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&schema, &table, &conName, &conType, &deferrable, &ord,
 			&col, &refCol, &refSchema, &refTable, &onDelete, &onUpdate, &conDef); err != nil {
 			return err
@@ -180,7 +180,7 @@ func readPostgres(ctx context.Context, src crud.Source) ([]Table, error) {
 		idxName, expr, predicate, idxDef string
 		partial                          bool
 	)
-	err = eachRow(ctx, src, "unique indexes", pgUniqueIndexes, nil, func(rows crud.Rows) error {
+	err = eachRow(ctx, source, "unique indexes", pgUniqueIndexes, nil, func(rows crud.Rows) error {
 		// The key position is the row's place in the result, pinned by the
 		// ORDER BY, so k.ord is in the statement and not in the SELECT.
 		if err := rows.Scan(&schema, &table, &idxName, &col, &expr, &partial, &predicate, &idxDef); err != nil {

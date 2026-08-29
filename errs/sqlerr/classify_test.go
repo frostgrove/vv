@@ -146,14 +146,14 @@ func TestTheCorpusNegativesStayUnclassified(t *testing.T) {
 			if cs.Err == nil {
 				continue // stated as unreachable; there is nothing to classify
 			}
-			code, src, ok := sqlerr.Classify(engine, cs.Err)
+			code, source, ok := sqlerr.Classify(engine, cs.Err)
 			if ok {
 				t.Errorf("%s/%s: classified %s as %q, and it must stay unclassified",
 					engine, cs.Name, cs.Err.Key(), code)
 			}
-			if code != "" || !isZero(src) {
+			if code != "" || !isZero(source) {
 				t.Errorf("%s/%s: refused and still answered code=%q source=%+v",
-					engine, cs.Name, code, src)
+					engine, cs.Name, code, source)
 			}
 			walked++
 		}
@@ -239,10 +239,10 @@ func TestAParserAnswersTheSameWhateverTheServerSaid(t *testing.T) {
 			}
 
 			for what, v := range variants {
-				code, src, ok := sqlerr.Classify(engine, &v)
-				if code != wantCode || ok != wantOK || !sameSource(src, wantSrc) {
+				code, source, ok := sqlerr.Classify(engine, &v)
+				if code != wantCode || ok != wantOK || !sameSource(source, wantSrc) {
 					t.Errorf("%s/%s with %s classified as (%q, %+v, %v), and as captured it is (%q, %+v, %v) — the text is not part of the key",
-						engine, cs.Name, what, code, src, ok, wantCode, wantSrc, wantOK)
+						engine, cs.Name, what, code, source, ok, wantCode, wantSrc, wantOK)
 				}
 				compared++
 			}
@@ -322,8 +322,8 @@ func TestTheSameViolationInAnotherLocaleClassifiesIdentically(t *testing.T) {
 			t.Fatalf("%s: the English duplicate key does not classify, so the twin agreeing with it is one refusal agreeing with another",
 				engine)
 		}
-		code, src, ok := sqlerr.Classify(engine, twin.Err)
-		if code != wantCode || ok != wantOK || !sameSource(src, wantSrc) {
+		code, source, ok := sqlerr.Classify(engine, twin.Err)
+		if code != wantCode || ok != wantOK || !sameSource(source, wantSrc) {
 			t.Errorf("%s: the Russian capture is (%q, %v) and the English one is (%q, %v)\n  ru: %s\n  en: %s",
 				engine, code, ok, wantCode, wantOK, twin.Err.Message, plain.Err.Message)
 		}
@@ -444,21 +444,21 @@ func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 	pg := all["postgres"]
 
 	uq := find(t, pg, "unique")
-	_, src, ok := sqlerr.Classify("postgres", uq.Err)
+	_, source, ok := sqlerr.Classify("postgres", uq.Err)
 	if !ok {
 		t.Fatal("postgres/unique did not classify")
 	}
-	if src.Constraint != "cp_parent_slug_key" || src.Table != "cp_parent" || src.Schema != "public" {
-		t.Errorf("the source is %+v, and the corpus records constraint cp_parent_slug_key on public.cp_parent", src)
+	if source.Constraint != "cp_parent_slug_key" || source.Table != "cp_parent" || source.Schema != "public" {
+		t.Errorf("the source is %+v, and the corpus records constraint cp_parent_slug_key on public.cp_parent", source)
 	}
-	if src.Columns != nil {
-		t.Errorf("a unique violation names no column and the source carries %v", src.Columns)
+	if source.Columns != nil {
+		t.Errorf("a unique violation names no column and the source carries %v", source.Columns)
 	}
 
 	nn := find(t, pg, "not_null")
-	_, src, _ = sqlerr.Classify("postgres", nn.Err)
-	if len(src.Columns) != 1 || src.Columns[0] != "need" {
-		t.Errorf("a NOT NULL violation carries ColumnName and the source's columns are %v", src.Columns)
+	_, source, _ = sqlerr.Classify("postgres", nn.Err)
+	if len(source.Columns) != 1 || source.Columns[0] != "need" {
+		t.Errorf("a NOT NULL violation carries ColumnName and the source's columns are %v", source.Columns)
 	}
 
 	// The corpus records no fields at all for this one, and an absent column
@@ -468,12 +468,12 @@ func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 	if tl.Err.Fields != nil {
 		t.Fatalf("postgres/too_long now carries fields %v, so it no longer tests the empty case", tl.Err.Fields)
 	}
-	_, src, _ = sqlerr.Classify("postgres", tl.Err)
-	if !isZero(src) {
-		t.Errorf("a violation the driver said nothing structural about produced %+v", src)
+	_, source, _ = sqlerr.Classify("postgres", tl.Err)
+	if !isZero(source) {
+		t.Errorf("a violation the driver said nothing structural about produced %+v", source)
 	}
-	if src.Columns != nil {
-		t.Errorf("the column list came back as %#v rather than nil, which reads as \"no columns\" instead of \"not known\"", src.Columns)
+	if source.Columns != nil {
+		t.Errorf("the column list came back as %#v rather than nil, which reads as \"no columns\" instead of \"not known\"", source.Columns)
 	}
 
 	// The control: on the other three the driver carries nothing, so a parser
@@ -495,11 +495,11 @@ func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 func TestAnUnknownDialectAndANilErrorAreRefusedRatherThanPanicking(t *testing.T) {
 	entry := find(t, corpora(t)["postgres"], "unique")
 
-	if code, src, ok := sqlerr.Classify("oracle", entry.Err); ok || code != "" || !isZero(src) {
-		t.Errorf("a dialect nothing here parses answered (%q, %+v, %v)", code, src, ok)
+	if code, source, ok := sqlerr.Classify("oracle", entry.Err); ok || code != "" || !isZero(source) {
+		t.Errorf("a dialect nothing here parses answered (%q, %+v, %v)", code, source, ok)
 	}
-	if code, src, ok := sqlerr.Classify("postgres", nil); ok || code != "" || !isZero(src) {
-		t.Errorf("a nil error answered (%q, %+v, %v)", code, src, ok)
+	if code, source, ok := sqlerr.Classify("postgres", nil); ok || code != "" || !isZero(source) {
+		t.Errorf("a nil error answered (%q, %+v, %v)", code, source, ok)
 	}
 
 	// The control: without it both assertions pass for a Classify stubbed to

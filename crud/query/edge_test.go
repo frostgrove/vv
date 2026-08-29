@@ -18,23 +18,23 @@ import (
 // tryDoc compiles a JSON document and hands back the statement the repository
 // would run, or the error the compiler raised. Unlike run() it never fails the
 // test itself: these tests are about which of the two happens.
-func tryDoc(t *testing.T, doc string, cfg *query.Config) (string, []any, error) {
+func tryDoc(t *testing.T, doc string, config *query.Config) (string, []any, error) {
 	t.Helper()
-	var req query.Request
-	if err := json.Unmarshal([]byte(doc), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(doc), &request); err != nil {
 		return "", nil, err
 	}
-	return tryReq(t, &req, cfg)
+	return tryReq(t, &request, config)
 }
 
-func tryReq(t *testing.T, req *query.Request, cfg *query.Config) (string, []any, error) {
+func tryReq(t *testing.T, request *query.Request, config *query.Config) (string, []any, error) {
 	t.Helper()
-	opts, err := req.Compile(Articles.Meta(), cfg)
+	options, err := request.Compile(Articles.Meta(), config)
 	if err != nil {
 		return "", nil, err
 	}
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(0)}))
-	if _, err := Articles.Bind(rec).Get(context.Background(), opts...); err != nil {
+	if _, err := Articles.Bind(rec).Get(context.Background(), options...); err != nil {
 		return "", nil, err
 	}
 	st := rec.Statements()[0]
@@ -43,17 +43,17 @@ func tryReq(t *testing.T, req *query.Request, cfg *query.Config) (string, []any,
 
 // tryQuery is the same for the query-string door, including ParseQuery's own
 // rejections.
-func tryQuery(t *testing.T, qs string, cfg *query.Config) (string, []any, error) {
+func tryQuery(t *testing.T, qs string, config *query.Config) (string, []any, error) {
 	t.Helper()
 	v, err := url.ParseQuery(qs)
 	if err != nil {
 		t.Fatalf("the test's own query string %q is malformed: %v", qs, err)
 	}
-	req, err := query.ParseQuery(v)
+	request, err := query.ParseQuery(v)
 	if err != nil {
 		return "", nil, err
 	}
-	return tryReq(t, req, cfg)
+	return tryReq(t, request, config)
 }
 
 type reservedWordModel struct {
@@ -97,15 +97,15 @@ func TestJSONTermsPreserveNullOperandsLikeFlatTerms(t *testing.T) {
 }
 
 func TestStructuredFiltersCanReachFieldsNamedLikeLogicalOperators(t *testing.T) {
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"filter":{"or":"choice","and":7,"not":true}}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"filter":{"or":"choice","and":7,"not":true}}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(reservedWordMeta, nil)
+	options, err := request.Compile(reservedWordMeta, nil)
 	if err != nil {
 		t.Fatalf("fields named Or/And/Not were treated as combinators: %v", err)
 	}
-	doc, err := crud.MarshalPredicate(crud.Build(opts...).Predicate())
+	doc, err := crud.MarshalPredicate(crud.Build(options...).Predicate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,10 +115,10 @@ func TestStructuredFiltersCanReachFieldsNamedLikeLogicalOperators(t *testing.T) 
 		}
 	}
 
-	if err := json.Unmarshal([]byte(`{"filter":{"$or":[{"or":"choice"},{"and":7}]}}`), &req); err != nil {
+	if err := json.Unmarshal([]byte(`{"filter":{"$or":[{"or":"choice"},{"and":7}]}}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := req.Compile(reservedWordMeta, nil); err != nil {
+	if _, err := request.Compile(reservedWordMeta, nil); err != nil {
 		t.Fatalf("$or did not remain available for logical composition: %v", err)
 	}
 }
@@ -322,13 +322,13 @@ func TestUncoercibleValuesAreRejectedNotZeroed(t *testing.T) {
 		{"a unix epoch into a time", `{"filter":{"at":1735689600}}`, "at:eq:1735689600", "at", "a timestamp"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for door, req := range map[string]*query.Request{
+			for door, request := range map[string]*query.Request{
 				"json":         jsonRequest(t, tc.doc),
 				"query string": termRequest(t, tc.term),
 			} {
-				opts, err := req.Compile(Samples.Meta(), nil)
+				options, err := request.Compile(Samples.Meta(), nil)
 				if err == nil {
-					t.Fatalf("the %s door accepted %s and compiled %d options", door, tc.name, len(opts))
+					t.Fatalf("the %s door accepted %s and compiled %d options", door, tc.name, len(options))
 				}
 				var qerr *query.Error
 				if !errors.As(err, &qerr) {
@@ -358,16 +358,16 @@ func TestTimestampZonesSurviveCoercion(t *testing.T) {
 		{"a date on its own", "2026-01-02", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for door, req := range map[string]*query.Request{
+			for door, request := range map[string]*query.Request{
 				"json":         jsonRequest(t, `{"filter":{"at":{"gte":"`+tc.text+`"}}}`),
 				"query string": termRequest(t, "at:gte:"+tc.text),
 			} {
-				opts, err := req.Compile(Samples.Meta(), nil)
+				options, err := request.Compile(Samples.Meta(), nil)
 				if err != nil {
 					t.Fatalf("the %s door refused %q: %v", door, tc.text, err)
 				}
 				rec := crudtest.Postgres().Push(crudtest.Rows())
-				if _, err := Samples.Bind(rec).GetAll(context.Background(), opts...); err != nil {
+				if _, err := Samples.Bind(rec).GetAll(context.Background(), options...); err != nil {
 					t.Fatalf("query: %v", err)
 				}
 				got, ok := rec.Last().Args[0].(time.Time)

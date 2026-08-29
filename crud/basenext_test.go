@@ -50,18 +50,18 @@ func TestADecoratorBuiltOnBaseIsStillWalkableToItsDatasource(t *testing.T) {
 
 	// First that there is something to find at all, or neither half below says
 	// anything: the repository itself answers with the source it was bound to.
-	if src, ok := crud.SourceOf(walkArticles.Bind(rec).Unwrap()); !ok || src != crud.Source(rec) {
+	if source, ok := crud.SourceOf(walkArticles.Bind(rec).Unwrap()); !ok || source != crud.Source(rec) {
 		t.Fatal("the repository does not answer with its own datasource, so nothing here proves anything about decorators")
 	}
 
 	// Two layers, so this is a walk and not a single hop past the outermost.
-	repo := walkArticles.Bind(rec, auditingLayer(), auditingLayer())
-	src, ok := crud.SourceOf(repo.Unwrap())
+	repository := walkArticles.Bind(rec, auditingLayer(), auditingLayer())
+	source, ok := crud.SourceOf(repository.Unwrap())
 	if !ok {
 		t.Fatal("a decorator built on crud.Base hid the datasource underneath it — a probe wired above it would refuse at start-up")
 	}
-	if src != crud.Source(rec) {
-		t.Fatalf("the walk answered with %T, want the source the repository was bound to", src)
+	if source != crud.Source(rec) {
+		t.Fatalf("the walk answered with %T, want the source the repository was bound to", source)
 	}
 
 	// The control. Every assertion above would hold for a walk that reached
@@ -86,7 +86,7 @@ func TestADecoratorBuiltOnBaseIsStillWalkableToItsDatasource(t *testing.T) {
 // assembled at start-up and a hang there is a process that never serves.
 type looping struct{ crud.Base[Article, int64] }
 
-func (l *looping) Next() crud.Core[Article, int64] { return l }
+func (this *looping) Next() crud.Core[Article, int64] { return this }
 
 func TestAChainThatWalksBackIntoItselfEndsRatherThanHangs(t *testing.T) {
 	done := make(chan bool, 1)

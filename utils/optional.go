@@ -71,48 +71,48 @@ func Must[T any](v T, err error) T {
 }
 
 // IsDefined reports whether the field was provided at all (set or null).
-func (o Opt[T]) IsDefined() bool { return o.state != optUndefined }
+func (this Opt[T]) IsDefined() bool { return this.state != optUndefined }
 
 // IsNull reports whether the field was explicitly null.
-func (o Opt[T]) IsNull() bool { return o.state == optNull }
+func (this Opt[T]) IsNull() bool { return this.state == optNull }
 
 // IsSet reports whether the field carries a value.
-func (o Opt[T]) IsSet() bool { return o.state == optSet }
+func (this Opt[T]) IsSet() bool { return this.state == optSet }
 
 // Get returns the value and whether it is set.
-func (o Opt[T]) Get() (T, bool) { return o.value, o.state == optSet }
+func (this Opt[T]) Get() (T, bool) { return this.value, this.state == optSet }
 
 // MustGet returns the value and panics if it is not set.
-func (o Opt[T]) MustGet() T {
-	if o.state != optSet {
+func (this Opt[T]) MustGet() T {
+	if this.state != optSet {
 		panic("utils: MustGet on an Opt that is not set")
 	}
-	return o.value
+	return this.value
 }
 
 // OrElse returns the value if set, otherwise def.
-func (o Opt[T]) OrElse(def T) T {
-	if o.state == optSet {
-		return o.value
+func (this Opt[T]) OrElse(def T) T {
+	if this.state == optSet {
+		return this.value
 	}
 	return def
 }
 
 // Ptr returns a pointer to the value, or nil when it is not set.
-func (o Opt[T]) Ptr() *T {
-	if o.state != optSet {
+func (this Opt[T]) Ptr() *T {
+	if this.state != optSet {
 		return nil
 	}
-	return Ptr(o.value)
+	return Ptr(this.value)
 }
 
 // IsZero makes json:",omitzero" skip undefined fields on marshal.
-func (o Opt[T]) IsZero() bool { return o.state == optUndefined }
+func (this Opt[T]) IsZero() bool { return this.state == optUndefined }
 
-func (o Opt[T]) String() string {
-	switch o.state {
+func (this Opt[T]) String() string {
+	switch this.state {
 	case optSet:
-		return fmt.Sprintf("%v", o.value)
+		return fmt.Sprintf("%v", this.value)
 	case optNull:
 		return "<null>"
 	default:
@@ -121,39 +121,39 @@ func (o Opt[T]) String() string {
 }
 
 // Value implements driver.Valuer.
-func (o Opt[T]) Value() (driver.Value, error) {
-	if o.state != optSet {
+func (this Opt[T]) Value() (driver.Value, error) {
+	if this.state != optSet {
 		return nil, nil
 	}
-	if v, ok := any(o.value).(driver.Valuer); ok {
+	if v, ok := any(this.value).(driver.Valuer); ok {
 		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() &&
 			rv.Type().Elem().Implements(valuerType) {
 			return nil, nil
 		}
 		return v.Value()
 	}
-	if cv, err := driver.DefaultParameterConverter.ConvertValue(o.value); err == nil {
+	if cv, err := driver.DefaultParameterConverter.ConvertValue(this.value); err == nil {
 		return cv, nil
 	}
-	return any(o.value), nil
+	return any(this.value), nil
 }
 
 // Scan implements sql.Scanner. NULL becomes null; every non-NULL scan becomes
 // set. A scan never manufactures the undefined state.
-func (o *Opt[T]) Scan(src any) error {
-	if src == nil {
-		*o = Null[T]()
+func (this *Opt[T]) Scan(source any) error {
+	if source == nil {
+		*this = Null[T]()
 		return nil
 	}
 	var n sql.Null[T]
-	if err := n.Scan(src); err != nil {
+	if err := n.Scan(source); err != nil {
 		return err
 	}
 	if !n.Valid {
-		*o = Null[T]()
+		*this = Null[T]()
 		return nil
 	}
-	*o = Set(n.V)
+	*this = Set(n.V)
 	return nil
 }
 
@@ -161,25 +161,25 @@ var jsonNull = []byte("null")
 
 // MarshalJSON encodes set values normally and both other states as null.
 // Undefined is omitted only when its containing field uses json:",omitzero".
-func (o Opt[T]) MarshalJSON() ([]byte, error) {
-	if o.state != optSet {
+func (this Opt[T]) MarshalJSON() ([]byte, error) {
+	if this.state != optSet {
 		return jsonNull, nil
 	}
-	return json.Marshal(o.value)
+	return json.Marshal(this.value)
 }
 
 // UnmarshalJSON preserves an explicit null. An absent object key never calls
 // this method, so its field remains undefined.
-func (o *Opt[T]) UnmarshalJSON(b []byte) error {
+func (this *Opt[T]) UnmarshalJSON(b []byte) error {
 	if bytes.Equal(bytes.TrimSpace(b), jsonNull) {
-		*o = Null[T]()
+		*this = Null[T]()
 		return nil
 	}
 	var v T
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
-	*o = Set(v)
+	*this = Set(v)
 	return nil
 }
 
@@ -191,11 +191,11 @@ type optional interface {
 	optValue() any
 }
 
-func (o Opt[T]) optValue() any {
-	if o.state != optSet {
+func (this Opt[T]) optValue() any {
+	if this.state != optSet {
 		return nil
 	}
-	return any(o.value)
+	return any(this.value)
 }
 
 var (

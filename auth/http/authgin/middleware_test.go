@@ -19,19 +19,19 @@ func TestMain(m *testing.M) {
 
 // serve runs one request through the middleware and answers what the handler
 // saw and what the client got.
-func serve(t *testing.T, g *auth.Guard, header string) (*seen, *httptest.ResponseRecorder) {
+func serve(t *testing.T, guard *auth.Guard, header string) (*seen, *httptest.ResponseRecorder) {
 	t.Helper()
 	h := &seen{}
 	r := gin.New()
-	r.Use(authgin.Middleware(g))
+	r.Use(authgin.Middleware(guard))
 	r.GET("/articles", h.handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	request := httptest.NewRequest(http.MethodGet, "/articles", nil)
 	if header != "" {
-		req.Header.Set("Authorization", header)
+		request.Header.Set("Authorization", header)
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(w, request)
 	return h, w
 }
 
@@ -116,16 +116,16 @@ func TestAnOptionalGuardLetsAnAnonymousRequestThrough(t *testing.T) {
 
 func TestADoubleInstallAuthenticatesOnce(t *testing.T) {
 	n := 0
-	g := auth.NewGuard(counting(&n))
+	guard := auth.NewGuard(counting(&n))
 	h := &seen{}
 
 	r := gin.New()
-	r.Use(authgin.Middleware(g), authgin.Middleware(g))
+	r.Use(authgin.Middleware(guard), authgin.Middleware(guard))
 	r.GET("/articles", h.handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
-	req.Header.Set("Authorization", "Bearer t")
-	r.ServeHTTP(httptest.NewRecorder(), req)
+	request := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	request.Header.Set("Authorization", "Bearer t")
+	r.ServeHTTP(httptest.NewRecorder(), request)
 
 	if !h.found {
 		t.Fatal("a double install lost the principal")

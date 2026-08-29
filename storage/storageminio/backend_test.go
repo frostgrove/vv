@@ -28,50 +28,50 @@ type fakeClient struct {
 	presigned func(context.Context, string, string, time.Duration, url.Values) (*url.URL, error)
 }
 
-func (f *fakeClient) PutObject(ctx context.Context, bucket, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-	if f.put == nil {
+func (this *fakeClient) PutObject(ctx context.Context, bucket, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+	if this.put == nil {
 		panic("unexpected PutObject")
 	}
-	return f.put(ctx, bucket, object, source, size, opts)
+	return this.put(ctx, bucket, object, source, size, options)
 }
 
-func (f *fakeClient) StatObject(ctx context.Context, bucket, object string, opts minio.StatObjectOptions) (minio.ObjectInfo, error) {
-	if f.stat == nil {
+func (this *fakeClient) StatObject(ctx context.Context, bucket, object string, options minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	if this.stat == nil {
 		panic("unexpected StatObject")
 	}
-	return f.stat(ctx, bucket, object, opts)
+	return this.stat(ctx, bucket, object, options)
 }
 
-func (f *fakeClient) RemoveObject(ctx context.Context, bucket, object string, opts minio.RemoveObjectOptions) error {
-	if f.remove == nil {
+func (this *fakeClient) RemoveObject(ctx context.Context, bucket, object string, options minio.RemoveObjectOptions) error {
+	if this.remove == nil {
 		panic("unexpected RemoveObject")
 	}
-	return f.remove(ctx, bucket, object, opts)
+	return this.remove(ctx, bucket, object, options)
 }
 
-func (f *fakeClient) ListObjects(ctx context.Context, bucket string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
-	if f.list == nil {
+func (this *fakeClient) ListObjects(ctx context.Context, bucket string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+	if this.list == nil {
 		panic("unexpected ListObjects")
 	}
-	return f.list(ctx, bucket, opts)
+	return this.list(ctx, bucket, options)
 }
 
-func (f *fakeClient) PresignedGetObject(ctx context.Context, bucket, object string, ttl time.Duration, values url.Values) (*url.URL, error) {
-	if f.presigned == nil {
+func (this *fakeClient) PresignedGetObject(ctx context.Context, bucket, object string, ttl time.Duration, values url.Values) (*url.URL, error) {
+	if this.presigned == nil {
 		panic("unexpected PresignedGetObject")
 	}
-	return f.presigned(ctx, bucket, object, ttl, values)
+	return this.presigned(ctx, bucket, object, ttl, values)
 }
 
 type fakeCore struct {
 	get func(context.Context, string, string, minio.GetObjectOptions) (io.ReadCloser, minio.ObjectInfo, http.Header, error)
 }
 
-func (f *fakeCore) GetObject(ctx context.Context, bucket, object string, opts minio.GetObjectOptions) (io.ReadCloser, minio.ObjectInfo, http.Header, error) {
-	if f.get == nil {
+func (this *fakeCore) GetObject(ctx context.Context, bucket, object string, options minio.GetObjectOptions) (io.ReadCloser, minio.ObjectInfo, http.Header, error) {
+	if this.get == nil {
 		panic("unexpected GetObject")
 	}
-	return f.get(ctx, bucket, object, opts)
+	return this.get(ctx, bucket, object, options)
 }
 
 func newTestBackend(t *testing.T, client *fakeClient, core *fakeCore, mutate ...func(*Config)) *Backend {
@@ -114,25 +114,25 @@ type closeSpy struct {
 	closed int
 }
 
-func (r *closeSpy) Close() error {
-	r.closed++
+func (this *closeSpy) Close() error {
+	this.closed++
 	return nil
 }
 
 type readSpy struct{ reads int }
 
-func (r *readSpy) Read([]byte) (int, error) {
-	r.reads++
+func (this *readSpy) Read([]byte) (int, error) {
+	this.reads++
 	return 0, io.EOF
 }
 
 type errorReader struct{ err error }
 
-func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+func (this errorReader) Read([]byte) (int, error) { return 0, this.err }
 
 type readerFunc func([]byte) (int, error)
 
-func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+func (this readerFunc) Read(p []byte) (int, error) { return this(p) }
 
 type hostileBody struct {
 	read   func([]byte) (int, error)
@@ -140,22 +140,22 @@ type hostileBody struct {
 	closed int
 }
 
-func (b *hostileBody) Read(p []byte) (int, error) {
-	return b.read(p)
+func (this *hostileBody) Read(p []byte) (int, error) {
+	return this.read(p)
 }
 
-func (b *hostileBody) Close() error {
-	b.closed++
-	if b.close == nil {
+func (this *hostileBody) Close() error {
+	this.closed++
+	if this.close == nil {
 		return nil
 	}
-	return b.close()
+	return this.close()
 }
 
 type noProgressReader struct{ reads int }
 
-func (r *noProgressReader) Read([]byte) (int, error) {
-	r.reads++
+func (this *noProgressReader) Read([]byte) (int, error) {
+	this.reads++
 	return 0, nil
 }
 
@@ -170,10 +170,10 @@ func newBlockedFailureReader(err error) *blockedFailureReader {
 	return &blockedFailureReader{started: make(chan struct{}), release: make(chan struct{}), err: err}
 }
 
-func (r *blockedFailureReader) Read([]byte) (int, error) {
-	r.once.Do(func() { close(r.started) })
-	<-r.release
-	return 0, r.err
+func (this *blockedFailureReader) Read([]byte) (int, error) {
+	this.once.Do(func() { close(this.started) })
+	<-this.release
+	return 0, this.err
 }
 
 func TestNewValidatesConfiguration(t *testing.T) {
@@ -212,11 +212,11 @@ func TestPutModesMetadataAndSourceOwnership(t *testing.T) {
 			var gotObject string
 			var gotOptions minio.PutObjectOptions
 			var gotSize int64
-			client := &fakeClient{put: func(_ context.Context, bucket, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+			client := &fakeClient{put: func(_ context.Context, bucket, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 				if bucket != "test-bucket" {
 					t.Fatalf("bucket = %q", bucket)
 				}
-				gotObject, gotOptions, gotSize = object, opts, size
+				gotObject, gotOptions, gotSize = object, options, size
 				body, err := io.ReadAll(source)
 				if err != nil {
 					return minio.UploadInfo{}, err
@@ -465,7 +465,7 @@ func TestUnknownSizeCreateOnlyStagesThenConditionallyWritesFinal(t *testing.T) {
 	putCalls := 0
 	var removed []string
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			putCalls++
 			body, err := io.ReadAll(source)
 			if err != nil {
@@ -474,16 +474,16 @@ func TestUnknownSizeCreateOnlyStagesThenConditionallyWritesFinal(t *testing.T) {
 			switch putCalls {
 			case 1:
 				stageObject = object
-				if !strings.HasPrefix(object, "root/.vv-stage/tenant/") || size != -1 || opts.Header().Get("If-None-Match") != "" {
-					t.Fatalf("stage target/size/condition = %q/%d/%q", object, size, opts.Header().Get("If-None-Match"))
+				if !strings.HasPrefix(object, "root/.vv-stage/tenant/") || size != -1 || options.Header().Get("If-None-Match") != "" {
+					t.Fatalf("stage target/size/condition = %q/%d/%q", object, size, options.Header().Get("If-None-Match"))
 				}
-				if opts.UserMetadata[stageMarkerKey] != stageMarkerValue || string(body) != "abc" {
-					t.Fatalf("stage metadata/body = %#v/%q", opts.UserMetadata, body)
+				if options.UserMetadata[stageMarkerKey] != stageMarkerValue || string(body) != "abc" {
+					t.Fatalf("stage metadata/body = %#v/%q", options.UserMetadata, body)
 				}
 				return minio.UploadInfo{Size: 3}, nil
 			case 2:
-				if object != "root/tenant/final" || size != 3 || opts.Header().Get("If-None-Match") != "*" || !opts.DisableMultipart || string(body) != "abc" {
-					t.Fatalf("final target/size/condition/single/body = %q/%d/%q/%v/%q", object, size, opts.Header().Get("If-None-Match"), opts.DisableMultipart, body)
+				if object != "root/tenant/final" || size != 3 || options.Header().Get("If-None-Match") != "*" || !options.DisableMultipart || string(body) != "abc" {
+					t.Fatalf("final target/size/condition/single/body = %q/%d/%q/%v/%q", object, size, options.Header().Get("If-None-Match"), options.DisableMultipart, body)
 				}
 				return minio.UploadInfo{Size: 3, ETag: "final-etag"}, nil
 			default:
@@ -799,10 +799,10 @@ func TestBackendOwnedStageReadFailuresAreNotCallerSourceFailures(t *testing.T) {
 	t.Run("promote truncated backend body", func(t *testing.T) {
 		id, _ := storage.NewStageID()
 		putCalls := 0
-		client := &fakeClient{put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		client := &fakeClient{put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			putCalls++
 			if strings.Contains(object, "/"+claimDirectory+"/") {
-				return successfulClaimPut(t, source, size, opts)
+				return successfulClaimPut(t, source, size, options)
 			}
 			written, err := io.Copy(io.Discard, source)
 			return minio.UploadInfo{Size: written}, err
@@ -834,8 +834,8 @@ func TestBareProvider404IsUnavailableNotLogicalNotFound(t *testing.T) {
 func TestStageAddsReservedMetadataWithoutExposingIt(t *testing.T) {
 	var gotObject string
 	var gotOptions minio.PutObjectOptions
-	client := &fakeClient{put: func(_ context.Context, _, object string, source io.Reader, _ int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-		gotObject, gotOptions = object, opts
+	client := &fakeClient{put: func(_ context.Context, _, object string, source io.Reader, _ int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+		gotObject, gotOptions = object, options
 		body, err := io.ReadAll(source)
 		return minio.UploadInfo{Size: int64(len(body)), ETag: "stage-etag"}, err
 	}}
@@ -865,10 +865,10 @@ func TestStageAddsReservedMetadataWithoutExposingIt(t *testing.T) {
 func TestStageMetadataAtPortableBoundaryFitsMinIOWireBudget(t *testing.T) {
 	metadata := metadataAtPortableLimit(t)
 	clock := time.Date(2026, time.August, 27, 12, 0, 0, 123456789, time.UTC)
-	client := &fakeClient{put: func(_ context.Context, _, _ string, source io.Reader, _ int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+	client := &fakeClient{put: func(_ context.Context, _, _ string, source io.Reader, _ int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 		headerBytes := 0
 		headerEntries := 0
-		for key, values := range opts.Header() {
+		for key, values := range options.Header() {
 			if !strings.HasPrefix(strings.ToLower(key), minioMetadataPrefix) {
 				continue
 			}
@@ -877,8 +877,8 @@ func TestStageMetadataAtPortableBoundaryFitsMinIOWireBudget(t *testing.T) {
 				headerEntries++
 			}
 		}
-		if headerBytes != minioUserMetadataSize(opts.UserMetadata) {
-			t.Fatalf("wire/adapter metadata bytes = %d/%d", headerBytes, minioUserMetadataSize(opts.UserMetadata))
+		if headerBytes != minioUserMetadataSize(options.UserMetadata) {
+			t.Fatalf("wire/adapter metadata bytes = %d/%d", headerBytes, minioUserMetadataSize(options.UserMetadata))
 		}
 		if headerBytes > minioUserMetadataLimit || headerEntries != storage.MaxMetadataEntries+2 {
 			t.Fatalf("metadata bytes/entries = %d/%d", headerBytes, headerEntries)
@@ -935,10 +935,10 @@ func TestAbsentOrEmptyMetadataIsCanonicalNilAcrossResults(t *testing.T) {
 		id, _ := storage.NewStageID()
 		putCalls := 0
 		client := &fakeClient{
-			put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+			put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 				putCalls++
 				if strings.Contains(object, "/"+claimDirectory+"/") {
-					return successfulClaimPut(t, source, size, opts)
+					return successfulClaimPut(t, source, size, options)
 				}
 				_, err := io.ReadAll(source)
 				return minio.UploadInfo{}, err
@@ -1041,15 +1041,15 @@ func TestPromoteStreamsConditionallyThenRemovesStage(t *testing.T) {
 	}}
 	var removed []string
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			if strings.Contains(object, "/"+claimDirectory+"/") {
-				return successfulClaimPut(t, source, size, opts)
+				return successfulClaimPut(t, source, size, options)
 			}
-			if object != "root/tenant/final.png" || size != 3 || opts.Header().Get("If-None-Match") != "*" || !opts.DisableMultipart {
-				t.Fatalf("put target/size/condition/single = %q/%d/%q/%v", object, size, opts.Header().Get("If-None-Match"), opts.DisableMultipart)
+			if object != "root/tenant/final.png" || size != 3 || options.Header().Get("If-None-Match") != "*" || !options.DisableMultipart {
+				t.Fatalf("put target/size/condition/single = %q/%d/%q/%v", object, size, options.Header().Get("If-None-Match"), options.DisableMultipart)
 			}
-			if _, ok := opts.UserMetadata[stageMarkerKey]; ok || opts.UserMetadata["owner"] != "avatar" {
-				t.Fatalf("promoted metadata = %#v", opts.UserMetadata)
+			if _, ok := options.UserMetadata[stageMarkerKey]; ok || options.UserMetadata["owner"] != "avatar" {
+				t.Fatalf("promoted metadata = %#v", options.UserMetadata)
 			}
 			body, err := io.ReadAll(source)
 			if string(body) != "abc" || err != nil {
@@ -1104,9 +1104,9 @@ func TestPromoteCollisionAndExpiryKeepStage(t *testing.T) {
 			}}
 			putCalled := false
 			client := &fakeClient{
-				put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+				put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 					if strings.Contains(object, "/"+claimDirectory+"/") {
-						return successfulClaimPut(t, source, size, opts)
+						return successfulClaimPut(t, source, size, options)
 					}
 					putCalled = true
 					_, _ = io.ReadAll(source)
@@ -1139,14 +1139,14 @@ func TestPromoteSurfacesClaimReleaseFailureAfterFinalCollision(t *testing.T) {
 	}}
 	var activeClaim minio.ObjectInfo
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			_, _ = io.ReadAll(source)
 			if strings.Contains(object, "/"+claimDirectory+"/") {
-				if opts.Header().Get("If-Match") != "" {
+				if options.Header().Get("If-Match") != "" {
 					return minio.UploadInfo{}, minio.ErrorResponse{Code: "SlowDown", StatusCode: http.StatusServiceUnavailable}
 				}
-				upload, err := successfulClaimPut(t, strings.NewReader(opts.UserMetadata[claimTokenKey]), size, opts)
-				activeClaim = claimInfoFromPut(upload, opts)
+				upload, err := successfulClaimPut(t, strings.NewReader(options.UserMetadata[claimTokenKey]), size, options)
+				activeClaim = claimInfoFromPut(upload, options)
 				return upload, err
 			}
 			return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.PreconditionFailed, StatusCode: http.StatusPreconditionFailed}
@@ -1176,16 +1176,16 @@ func TestAbortSurfacesClaimReleaseFailure(t *testing.T) {
 	var removed []string
 	var activeClaim minio.ObjectInfo
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			if object != claimObject {
 				t.Fatalf("claim = %q", object)
 			}
-			if opts.Header().Get("If-Match") != "" {
+			if options.Header().Get("If-Match") != "" {
 				_, _ = io.ReadAll(source)
 				return minio.UploadInfo{}, minio.ErrorResponse{Code: "SlowDown", StatusCode: http.StatusServiceUnavailable}
 			}
-			upload, err := successfulClaimPut(t, source, size, opts)
-			activeClaim = claimInfoFromPut(upload, opts)
+			upload, err := successfulClaimPut(t, source, size, options)
+			activeClaim = claimInfoFromPut(upload, options)
 			return upload, err
 		},
 		stat: func(context.Context, string, string, minio.StatObjectOptions) (minio.ObjectInfo, error) {
@@ -1213,8 +1213,8 @@ func TestAbortDeleteNotFoundIsIdempotentAndCleansTerminalClaim(t *testing.T) {
 	claims := newFakeClaimState(t)
 	stageDeletes := 0
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-			return claims.put(object, source, size, opts)
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			return claims.put(object, source, size, options)
 		},
 		stat: stageAndClaimStat(t, claims),
 		remove: func(_ context.Context, _, object string, _ minio.RemoveObjectOptions) error {
@@ -1253,15 +1253,15 @@ func TestCleanupExpiredScansPastLiveStages(t *testing.T) {
 	}
 	var removed []string
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			if !strings.Contains(object, "/"+claimDirectory+"/") {
 				t.Fatalf("claim put = %q", object)
 			}
-			return successfulClaimPut(t, source, size, opts)
+			return successfulClaimPut(t, source, size, options)
 		},
-		list: func(_ context.Context, bucket string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
-			if bucket != "test-bucket" || opts.Prefix != prefix || !opts.Recursive || opts.MaxKeys != 0 {
-				t.Fatalf("list = %q/%#v", bucket, opts)
+		list: func(_ context.Context, bucket string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+			if bucket != "test-bucket" || options.Prefix != prefix || !options.Recursive || options.MaxKeys != 0 {
+				t.Fatalf("list = %q/%#v", bucket, options)
 			}
 			result := make(chan minio.ObjectInfo, len(objects))
 			for _, object := range objects {
@@ -1305,15 +1305,15 @@ func TestConcurrentPromoteElectsExactlyOneClaim(t *testing.T) {
 	var mu sync.Mutex
 	finalObjects := make([]string, 0, 1)
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			if strings.Contains(object, "/"+claimDirectory+"/") {
-				upload, err := claims.put(object, source, size, opts)
-				if err == nil && opts.Header().Get("If-None-Match") == "*" {
+				upload, err := claims.put(object, source, size, options)
+				if err == nil && options.Header().Get("If-None-Match") == "*" {
 					acquiredOnce.Do(func() { close(claimAcquired) })
 				}
 				return upload, err
 			}
-			if opts.Header().Get("If-None-Match") != "*" {
+			if options.Header().Get("If-None-Match") != "*" {
 				t.Fatalf("winner final write is not conditional")
 			}
 			_, err := io.ReadAll(source)
@@ -1364,16 +1364,16 @@ func TestClaimReleaseLostResponseRetryCannotOverwriteSuccessor(t *testing.T) {
 	injectedABA := false
 
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 			if object != claimObject {
 				t.Fatalf("claim object = %q", object)
 			}
-			if opts.UserMetadata[claimStateKey] != claimStateRetired || injectedABA {
-				return claims.put(object, source, size, opts)
+			if options.UserMetadata[claimStateKey] != claimStateRetired || injectedABA {
+				return claims.put(object, source, size, options)
 			}
 
 			// A's active -> retired CAS commits, but its response is lost.
-			if _, err := claims.put(object, source, size, opts); err != nil {
+			if _, err := claims.put(object, source, size, options); err != nil {
 				return minio.UploadInfo{}, err
 			}
 			// Before A's SDK retry is observed by the adapter, B acquires the
@@ -1432,13 +1432,13 @@ func TestClaimAcquireReconcilesCommittedConditionalWrite(t *testing.T) {
 			lostResponse := false
 			var committedCondition string
 			client := &fakeClient{
-				put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-					upload, err := claims.put(object, source, size, opts)
-					if err == nil && opts.UserMetadata[claimStateKey] == claimStateActive && !lostResponse {
+				put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+					upload, err := claims.put(object, source, size, options)
+					if err == nil && options.UserMetadata[claimStateKey] == claimStateActive && !lostResponse {
 						lostResponse = true
-						committedCondition = opts.Header().Get("If-Match")
+						committedCondition = options.Header().Get("If-Match")
 						if committedCondition == "" {
-							committedCondition = opts.Header().Get("If-None-Match")
+							committedCondition = options.Header().Get("If-None-Match")
 						}
 						return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.PreconditionFailed, StatusCode: http.StatusPreconditionFailed}
 					}
@@ -1504,10 +1504,10 @@ func TestClaimAcquirePostcheckTerminalizesMissingStage(t *testing.T) {
 	claims := newFakeClaimState(t)
 	stageStats := 0
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-			return claims.put(object, source, size, opts)
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			return claims.put(object, source, size, options)
 		},
-		stat: func(ctx context.Context, bucket, object string, opts minio.StatObjectOptions) (minio.ObjectInfo, error) {
+		stat: func(ctx context.Context, bucket, object string, options minio.StatObjectOptions) (minio.ObjectInfo, error) {
 			if strings.Contains(object, "/"+stageDirectory+"/") {
 				stageStats++
 				if stageStats == 1 {
@@ -1515,7 +1515,7 @@ func TestClaimAcquirePostcheckTerminalizesMissingStage(t *testing.T) {
 				}
 				return minio.ObjectInfo{}, minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
 			}
-			return claims.stat(ctx, bucket, object, opts)
+			return claims.stat(ctx, bucket, object, options)
 		},
 		remove: func(_ context.Context, _, object string, _ minio.RemoveObjectOptions) error {
 			claims.remove(object)
@@ -1539,12 +1539,12 @@ func TestCleanupExpiredDeletesTerminalizedOrphanClaim(t *testing.T) {
 	claims := newFakeClaimState(t)
 	claims.seed(claimObject, "orphan-generation", claimStateActive, testNow.Add(-time.Minute))
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-			return claims.put(object, source, size, opts)
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			return claims.put(object, source, size, options)
 		},
-		list: func(_ context.Context, _ string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+		list: func(_ context.Context, _ string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
 			result := make(chan minio.ObjectInfo, 1)
-			if opts.Prefix == claimPrefix {
+			if options.Prefix == claimPrefix {
 				result <- minio.ObjectInfo{Key: claimObject}
 			}
 			close(result)
@@ -1596,9 +1596,9 @@ func TestCleanupExpiredPropagatesClaimReadFailuresAndSkipsMalformed(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &fakeClient{
-				list: func(_ context.Context, _ string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+				list: func(_ context.Context, _ string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
 					objects := make(chan minio.ObjectInfo, 1)
-					if opts.Prefix == claimPrefix {
+					if options.Prefix == claimPrefix {
 						objects <- minio.ObjectInfo{Key: claimObject}
 					}
 					close(objects)
@@ -1643,20 +1643,20 @@ func TestCleanupExpiredClaimLostResponseCannotDeleteSuccessor(t *testing.T) {
 	var successorToken string
 	injectedABA := false
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-			if opts.UserMetadata[claimStateKey] != claimStateTerminal || injectedABA {
-				return claims.put(object, source, size, opts)
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			if options.UserMetadata[claimStateKey] != claimStateTerminal || injectedABA {
+				return claims.put(object, source, size, options)
 			}
-			if _, err := claims.put(object, source, size, opts); err != nil {
+			if _, err := claims.put(object, source, size, options); err != nil {
 				return minio.UploadInfo{}, err
 			}
 			successorToken = claims.acquireSuccessor(object)
 			injectedABA = true
 			return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.PreconditionFailed, StatusCode: http.StatusPreconditionFailed}
 		},
-		list: func(_ context.Context, _ string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+		list: func(_ context.Context, _ string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
 			objects := make(chan minio.ObjectInfo, 1)
-			if opts.Prefix == claimPrefix {
+			if options.Prefix == claimPrefix {
 				objects <- minio.ObjectInfo{Key: claimObject}
 			}
 			close(objects)
@@ -1695,12 +1695,12 @@ func TestCleanupExpiredSharesOneRemovalBudgetAcrossStagesAndOrphanClaims(t *test
 	claims := newFakeClaimState(t)
 	claims.seed(orphanClaim, "orphan-generation", claimStateActive, testNow.Add(-time.Minute))
 	client := &fakeClient{
-		put: func(_ context.Context, _, object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-			return claims.put(object, source, size, opts)
+		put: func(_ context.Context, _, object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+			return claims.put(object, source, size, options)
 		},
-		list: func(_ context.Context, _ string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+		list: func(_ context.Context, _ string, options minio.ListObjectsOptions) <-chan minio.ObjectInfo {
 			result := make(chan minio.ObjectInfo, 1)
-			switch opts.Prefix {
+			switch options.Prefix {
 			case stagePrefix:
 				result <- minio.ObjectInfo{Key: stageObject}
 			case claimPrefix:
@@ -1780,37 +1780,37 @@ func stageObjectInfo(expiresAt time.Time) minio.ObjectInfo {
 	}
 }
 
-func successfulClaimPut(t *testing.T, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+func successfulClaimPut(t *testing.T, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
 	t.Helper()
 	body, err := io.ReadAll(source)
 	if err != nil {
 		return minio.UploadInfo{}, err
 	}
-	token := opts.UserMetadata[claimTokenKey]
+	token := options.UserMetadata[claimTokenKey]
 	if token == "" || string(body) != token || size != int64(len(token)) {
 		t.Fatalf("claim token/body/size = %q/%q/%d", token, body, size)
 	}
-	if opts.UserMetadata[claimMarkerKey] != claimMarkerValue ||
-		(opts.UserMetadata[claimStateKey] != claimStateActive && opts.UserMetadata[claimStateKey] != claimStateRetired && opts.UserMetadata[claimStateKey] != claimStateTerminal) ||
-		!opts.DisableMultipart || !opts.SendContentMd5 {
-		t.Fatalf("claim metadata/options = %#v/%#v", opts.UserMetadata, opts)
+	if options.UserMetadata[claimMarkerKey] != claimMarkerValue ||
+		(options.UserMetadata[claimStateKey] != claimStateActive && options.UserMetadata[claimStateKey] != claimStateRetired && options.UserMetadata[claimStateKey] != claimStateTerminal) ||
+		!options.DisableMultipart || !options.SendContentMd5 {
+		t.Fatalf("claim metadata/options = %#v/%#v", options.UserMetadata, options)
 	}
-	ifNone, ifMatch := opts.Header().Get("If-None-Match"), opts.Header().Get("If-Match")
+	ifNone, ifMatch := options.Header().Get("If-None-Match"), options.Header().Get("If-Match")
 	if (ifNone == "*") == (ifMatch != "") {
 		t.Fatalf("claim conditions If-None-Match/If-Match = %q/%q", ifNone, ifMatch)
 	}
 	return minio.UploadInfo{Size: size, ETag: "etag-" + token}, nil
 }
 
-func claimInfoFromPut(upload minio.UploadInfo, opts minio.PutObjectOptions) minio.ObjectInfo {
-	metadata := make(minio.StringMap, len(opts.UserMetadata))
-	for key, value := range opts.UserMetadata {
+func claimInfoFromPut(upload minio.UploadInfo, options minio.PutObjectOptions) minio.ObjectInfo {
+	metadata := make(minio.StringMap, len(options.UserMetadata))
+	for key, value := range options.UserMetadata {
 		metadata[key] = value
 	}
 	return minio.ObjectInfo{
 		Size:         upload.Size,
 		ETag:         upload.ETag,
-		ContentType:  opts.ContentType,
+		ContentType:  options.ContentType,
 		LastModified: testNow,
 		UserMetadata: metadata,
 	}
@@ -1828,22 +1828,22 @@ func newFakeClaimState(t *testing.T) *fakeClaimState {
 	return &fakeClaimState{t: t, objects: make(map[string]minio.ObjectInfo)}
 }
 
-func (s *fakeClaimState) put(object string, source io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-	s.t.Helper()
-	base, err := successfulClaimPut(s.t, source, size, opts)
+func (this *fakeClaimState) put(object string, source io.Reader, size int64, options minio.PutObjectOptions) (minio.UploadInfo, error) {
+	this.t.Helper()
+	base, err := successfulClaimPut(this.t, source, size, options)
 	if err != nil {
 		return minio.UploadInfo{}, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, exists := s.objects[object]
-	if opts.Header().Get("If-None-Match") == "*" {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	current, exists := this.objects[object]
+	if options.Header().Get("If-None-Match") == "*" {
 		if exists {
 			return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.PreconditionFailed, StatusCode: http.StatusPreconditionFailed}
 		}
 	} else {
-		match := strings.Trim(opts.Header().Get("If-Match"), `"`)
+		match := strings.Trim(options.Header().Get("If-Match"), `"`)
 		if !exists {
 			return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
 		}
@@ -1852,29 +1852,29 @@ func (s *fakeClaimState) put(object string, source io.Reader, size int64, opts m
 		}
 	}
 
-	s.nextETag++
-	base.ETag = fmt.Sprintf("claim-etag-%d", s.nextETag)
-	s.objects[object] = claimInfoFromPut(base, opts)
+	this.nextETag++
+	base.ETag = fmt.Sprintf("claim-etag-%d", this.nextETag)
+	this.objects[object] = claimInfoFromPut(base, options)
 	return base, nil
 }
 
-func (s *fakeClaimState) stat(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	info, ok := s.objects[object]
+func (this *fakeClaimState) stat(_ context.Context, _, object string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	info, ok := this.objects[object]
 	if !ok {
 		return minio.ObjectInfo{}, minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
 	}
 	return cloneObjectInfo(info), nil
 }
 
-func (s *fakeClaimState) seed(object, token, state string, expiresAt time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nextETag++
-	s.objects[object] = minio.ObjectInfo{
+func (this *fakeClaimState) seed(object, token, state string, expiresAt time.Time) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.nextETag++
+	this.objects[object] = minio.ObjectInfo{
 		Size:         int64(len(token)),
-		ETag:         fmt.Sprintf("claim-etag-%d", s.nextETag),
+		ETag:         fmt.Sprintf("claim-etag-%d", this.nextETag),
 		ContentType:  "application/octet-stream",
 		LastModified: testNow,
 		UserMetadata: minio.StringMap{
@@ -1886,15 +1886,15 @@ func (s *fakeClaimState) seed(object, token, state string, expiresAt time.Time) 
 	}
 }
 
-func (s *fakeClaimState) acquireSuccessor(object string) string {
-	s.t.Helper()
-	retired := s.object(object)
+func (this *fakeClaimState) acquireSuccessor(object string) string {
+	this.t.Helper()
+	retired := this.object(object)
 	id, err := storage.NewStageID()
 	if err != nil {
-		s.t.Fatal(err)
+		this.t.Fatal(err)
 	}
 	token := id.Value()
-	opts := minio.PutObjectOptions{
+	options := minio.PutObjectOptions{
 		ContentType:      "application/octet-stream",
 		DisableMultipart: true,
 		SendContentMd5:   true,
@@ -1905,40 +1905,40 @@ func (s *fakeClaimState) acquireSuccessor(object string) string {
 			stageExpiryKey: testNow.Add(storage.MaxStageTTL).Format(time.RFC3339Nano),
 		},
 	}
-	opts.SetMatchETag(retired.ETag)
-	if _, err := s.put(object, strings.NewReader(token), int64(len(token)), opts); err != nil {
-		s.t.Fatal(err)
+	options.SetMatchETag(retired.ETag)
+	if _, err := this.put(object, strings.NewReader(token), int64(len(token)), options); err != nil {
+		this.t.Fatal(err)
 	}
 	return token
 }
 
-func (s *fakeClaimState) object(object string) minio.ObjectInfo {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return cloneObjectInfo(s.objects[object])
+func (this *fakeClaimState) object(object string) minio.ObjectInfo {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return cloneObjectInfo(this.objects[object])
 }
 
-func (s *fakeClaimState) lookup(object string) (minio.ObjectInfo, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	info, ok := s.objects[object]
+func (this *fakeClaimState) lookup(object string) (minio.ObjectInfo, bool) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	info, ok := this.objects[object]
 	return cloneObjectInfo(info), ok
 }
 
-func (s *fakeClaimState) remove(object string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.objects, object)
+func (this *fakeClaimState) remove(object string) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	delete(this.objects, object)
 }
 
 func stageAndClaimStat(t *testing.T, claims *fakeClaimState) func(context.Context, string, string, minio.StatObjectOptions) (minio.ObjectInfo, error) {
 	t.Helper()
-	return func(ctx context.Context, bucket, object string, opts minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	return func(ctx context.Context, bucket, object string, options minio.StatObjectOptions) (minio.ObjectInfo, error) {
 		if strings.Contains(object, "/"+stageDirectory+"/") {
 			return stageObjectInfo(testNow.Add(time.Hour)), nil
 		}
 		if claims != nil {
-			return claims.stat(ctx, bucket, object, opts)
+			return claims.stat(ctx, bucket, object, options)
 		}
 		t.Fatalf("unexpected StatObject target %q", object)
 		return minio.ObjectInfo{}, nil

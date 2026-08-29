@@ -152,16 +152,16 @@ func TestAPreloadsOwnFilterBindsItsValue(t *testing.T) {
 		crudtest.Rows(articleRow(1, 10, "first")),
 		crudtest.Rows(),
 	)
-	var req query.Request
+	var request query.Request
 	doc := `{"preload":[{"path":"comments","filter":{"body":` + quoted(payload) + `}}]}`
-	if err := json.Unmarshal([]byte(doc), &req); err != nil {
+	if err := json.Unmarshal([]byte(doc), &request); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	opts, err := req.Compile(Articles.Meta(), nil)
+	options, err := request.Compile(Articles.Meta(), nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if _, err := Articles.Bind(rec).GetAll(context.Background(), opts...); err != nil {
+	if _, err := Articles.Bind(rec).GetAll(context.Background(), options...); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if len(rec.Statements()) != 2 {
@@ -209,7 +209,7 @@ func TestWildcardsInAPatternAreEscaped(t *testing.T) {
 // An allow-list is matched on the canonical path, so none of the spellings that
 // reach the same column reach it around the list.
 func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
-	cfg := &query.Config{
+	config := &query.Config{
 		Filterable:  []string{"Title"},
 		Sortable:    []string{"Title"},
 		Selectable:  []string{"Title"},
@@ -226,7 +226,7 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 			`{"select":[` + quoted(spelling) + `]}`,
 			`{"search":"go","searchFields":[` + quoted(spelling) + `]}`,
 		} {
-			sql, _, err := tryDoc(t, doc, cfg)
+			sql, _, err := tryDoc(t, doc, config)
 			if err == nil {
 				t.Fatalf("%s slipped past the allow-list as %q and built\n  %s", doc, spelling, sql)
 			}
@@ -240,7 +240,7 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 		`{"preload":["comments"]}`,
 		`{"search":"go","searchFields":["author.name"]}`,
 	} {
-		if sql, _, err := tryDoc(t, doc, cfg); err == nil {
+		if sql, _, err := tryDoc(t, doc, config); err == nil {
 			t.Fatalf("%s walked to an unlisted relation and built\n  %s", doc, sql)
 		}
 	}
@@ -250,8 +250,8 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 // allow-list is applied there too: a relation being preloadable does not make
 // its columns filterable.
 func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
-	cfg := &query.Config{Filterable: []string{"Title"}, Preloadable: []string{"Comments"}}
-	sql, _, err := tryDoc(t, `{"preload":["comments"]}`, cfg)
+	config := &query.Config{Filterable: []string{"Title"}, Preloadable: []string{"Comments"}}
+	sql, _, err := tryDoc(t, `{"preload":["comments"]}`, config)
 	if err != nil {
 		t.Fatalf("the preload the list allows was refused: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
 		`{"preload":[{"path":"comments","filter":{"or":[{"approved":true}]}}]}`,
 		`{"preload":[{"path":"comments","filter":{"author.name":"Ann"}}]}`,
 	} {
-		if _, _, err := tryDoc(t, doc, cfg); err == nil {
+		if _, _, err := tryDoc(t, doc, config); err == nil {
 			t.Fatalf("%s filtered a relation on a column no list named", doc)
 		} else if !strings.Contains(err.Error(), "not filterable") {
 			t.Fatalf("error = %q, want it to say the column is not filterable", err)
@@ -275,8 +275,8 @@ func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
 // request tries to widen it: an explicit field list, a nested path, or a
 // default list the config itself carries.
 func TestSearchCannotReachOutsideItsList(t *testing.T) {
-	cfg := &query.Config{Searchable: []string{"Title"}}
-	sql, args, err := tryDoc(t, `{"search":"go"}`, cfg)
+	config := &query.Config{Searchable: []string{"Title"}}
+	sql, args, err := tryDoc(t, `{"search":"go"}`, config)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestSearchCannotReachOutsideItsList(t *testing.T) {
 		`{"search":"go","searchFields":["title","body"]}`,
 		`{"search":"go","searchFields":["author.name"]}`,
 	} {
-		if _, _, err := tryDoc(t, doc, cfg); err == nil {
+		if _, _, err := tryDoc(t, doc, config); err == nil {
 			t.Fatalf("%s searched a column outside the list", doc)
 		}
 	}
@@ -389,8 +389,8 @@ func TestADocumentTooDeepToParseIsRejectedNotFatal(t *testing.T) {
 		raw := strings.Repeat(`{"not":`, depth) + `{"title":"a"}` + strings.Repeat(`}`, depth)
 
 		// The whole-document door: json.Unmarshal draws its own line.
-		var req query.Request
-		docErr := json.Unmarshal([]byte(`{"filter":`+raw+`}`), &req)
+		var request query.Request
+		docErr := json.Unmarshal([]byte(`{"filter":`+raw+`}`), &request)
 
 		// And the query-string door, where the document is kept raw until the
 		// compiler walks it.
@@ -399,7 +399,7 @@ func TestADocumentTooDeepToParseIsRejectedNotFatal(t *testing.T) {
 			t.Fatalf("a filter nested %d deep compiled", depth)
 		}
 		if docErr == nil {
-			if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+			if _, err := request.Compile(Articles.Meta(), nil); err == nil {
 				t.Fatalf("a request nested %d deep compiled", depth)
 			}
 		}
@@ -453,16 +453,16 @@ func TestARejectedDocumentCompilesToNoOptions(t *testing.T) {
 		`{"filter":{"title":"a"},"search":"go","searchFields":["nope"]}`,
 		`{"limit":5,"filter":{"views":"lots"}}`,
 	} {
-		var req query.Request
-		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+		var request query.Request
+		if err := json.Unmarshal([]byte(doc), &request); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		opts, err := req.Compile(Articles.Meta(), nil)
+		options, err := request.Compile(Articles.Meta(), nil)
 		if err == nil {
 			t.Fatalf("%s compiled", doc)
 		}
-		if opts != nil {
-			t.Fatalf("%s was rejected but still handed back %d options", doc, len(opts))
+		if options != nil {
+			t.Fatalf("%s was rejected but still handed back %d options", doc, len(options))
 		}
 	}
 }

@@ -63,9 +63,9 @@ type Mapper[In, M any] = port.Mapper[In, M]
 // alias that fills In in with the model, so every existing signature still
 // compiles and only NewFor has to name a fourth type ([[D-022]]).
 type HandlerFor[M any, ID comparable, U any, In any] struct {
-	svc    Service[M, ID, U]
-	mapper Mapper[In, M]
-	opt    options[M, ID, U]
+	service Service[M, ID, U]
+	mapper  Mapper[In, M]
+	opt     options[M, ID, U]
 }
 
 // Handler is the mounted API — a HandlerFor whose input type is the model,
@@ -77,17 +77,17 @@ type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
 //
 // The service it builds is the default one, configured from the options that
 // are about rules rather than about transport.
-func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
-	o := collect(opts)
-	return build(port.NewService(repo, o.Service()...), port.Identity[M](), o)
+func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
+	o := collect(options)
+	return build(port.NewService(repository, o.Service()...), port.Identity[M](), o)
 }
 
 // NewFor builds a handler whose request body is a type of its own, mapped onto
 // the model before the service sees it. All four type parameters are inferred
 // from the repository and the mapper.
-func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
-	o := collect(opts)
-	return build(port.NewService(repo, o.Service()...), mapper, o)
+func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	o := collect(options)
+	return build(port.NewService(repository, o.Service()...), mapper, o)
 }
 
 // Serving mounts a service that is already built — the one a generator wrote,
@@ -96,30 +96,30 @@ func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper M
 // An option that configures the service is refused here rather than ignored:
 // the service is already made, and a silent no-op is the wrong answer to
 // "bound what clients may ask for" ([[D-021]]).
-func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U] {
-	o := collect(opts)
+func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U] {
+	o := collect(options)
 	o.RefuseServiceOptions("crudfiber.Serving")
-	return build(svc, port.Identity[M](), o)
+	return build(service, port.Identity[M](), o)
 }
 
 // ServingFor mounts an already-built service behind an input type of its own.
-func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
-	o := collect(opts)
+func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	o := collect(options)
 	o.RefuseServiceOptions("crudfiber.ServingFor")
-	return build(svc, mapper, o)
+	return build(service, mapper, o)
 }
 
 // build is the one place a handler is assembled, so the four constructors
 // cannot drift in what they wire.
-func build[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Mapper[In, M], o options[M, ID, U]) *HandlerFor[M, ID, U, In] {
-	h := &HandlerFor[M, ID, U, In]{svc: svc, mapper: mapper, opt: o}
+func build[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M], o options[M, ID, U]) *HandlerFor[M, ID, U, In] {
+	h := &HandlerFor[M, ID, U, In]{service: service, mapper: mapper, opt: o}
 	if h.opt.errorHandler == nil {
 		// After the options, not before: WithRenderer has to be able to reach
 		// the handler the routes actually call, and a default installed first
 		// would have closed over the wrong renderer.
 		rd := h.opt.renderer
 		if rd == nil {
-			rd = rendererFor(port.Hops(svc, mapper))
+			rd = rendererFor(port.Hops(service, mapper))
 		}
 		h.opt.errorHandler = func(c fiber.Ctx, err error) error { return render(rd, c, err) }
 	}
@@ -133,38 +133,38 @@ func build[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Ma
 // the same one crudnet and crudgin enforce. Register cannot do that — the limit
 // belongs to the app, which the caller owns there — and [[FL-013]] carries the
 // difference.
-func (h *HandlerFor[M, ID, U, In]) Routes() *fiber.App {
-	app := fiber.New(fiber.Config{BodyLimit: h.bodyLimit()})
-	h.Register(app)
+func (this *HandlerFor[M, ID, U, In]) Routes() *fiber.App {
+	app := fiber.New(fiber.Config{BodyLimit: this.bodyLimit()})
+	this.Register(app)
 	return app
 }
 
 // bodyLimit is what Fiber is told to accept: one byte past our own cap, so the
 // body that is exactly at the cap reaches the decoder and the one past it is
 // refused by us, with our envelope, rather than by Fiber with its own.
-func (h *HandlerFor[M, ID, U, In]) bodyLimit() int {
-	if h.opt.MaxBody > 0 {
-		return h.opt.MaxBody + 1
+func (this *HandlerFor[M, ID, U, In]) bodyLimit() int {
+	if this.opt.MaxBody > 0 {
+		return this.opt.MaxBody + 1
 	}
 	return crudhttp.MaxBody + 1
 }
 
 // Register mounts the routes on an existing router or group. `/count` is
 // registered before `/:id` so it is not swallowed by the parameter route.
-func (h *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
-	if !h.opt.ReadOnly {
-		r.Post("/", h.Create)
-		r.Post("/bulk-delete", h.BulkDelete)
+func (this *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
+	if !this.opt.ReadOnly {
+		r.Post("/", this.Create)
+		r.Post("/bulk-delete", this.BulkDelete)
 	}
-	r.Post("/query", h.Query)
-	r.Get("/count", h.CountGet)
-	r.Post("/count", h.CountPost)
-	r.Get("/", h.List)
-	r.Get("/:id", h.GetByID)
-	if !h.opt.ReadOnly {
-		r.Patch("/:id", h.Update)
-		r.Put("/:id", h.Replace)
-		r.Delete("/:id", h.Delete)
+	r.Post("/query", this.Query)
+	r.Get("/count", this.CountGet)
+	r.Post("/count", this.CountPost)
+	r.Get("/", this.List)
+	r.Get("/:id", this.GetByID)
+	if !this.opt.ReadOnly {
+		r.Patch("/:id", this.Update)
+		r.Put("/:id", this.Replace)
+		r.Delete("/:id", this.Delete)
 	}
 }
 
@@ -172,89 +172,89 @@ func (h *HandlerFor[M, ID, U, In]) Register(r fiber.Router) {
 // reads
 
 // List answers GET / using the query-string DSL.
-func (h *HandlerFor[M, ID, U, In]) List(c fiber.Ctx) error {
-	req, err := h.parseQueryString(c)
+func (this *HandlerFor[M, ID, U, In]) List(c fiber.Ctx) error {
+	request, err := this.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.list(c, req)
+	return this.list(c, request)
 }
 
 // Query answers POST /query using the full JSON DSL.
-func (h *HandlerFor[M, ID, U, In]) Query(c fiber.Ctx) error {
-	req, err := h.parseBody(c)
+func (this *HandlerFor[M, ID, U, In]) Query(c fiber.Ctx) error {
+	request, err := this.parseBody(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.list(c, req)
+	return this.list(c, request)
 }
 
-func (h *HandlerFor[M, ID, U, In]) list(c fiber.Ctx, req *query.Request) error {
-	scope, err := h.scope(c)
+func (this *HandlerFor[M, ID, U, In]) list(c fiber.Ctx, request *query.Request) error {
+	scope, err := this.scope(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	page, err := h.svc.List(c.Context(), port.ListCommand{Query: req, Options: scope})
+	page, err := this.service.List(c.Context(), port.ListCommand{Query: request, Options: scope})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	if h.opt.transform == nil {
+	if this.opt.transform == nil {
 		return writeJSON(c, fiber.StatusOK, page)
 	}
 	return writeJSON(c, fiber.StatusOK, crud.MapPage(page, func(m M) any {
-		return h.opt.transform(c, m)
+		return this.opt.transform(c, m)
 	}))
 }
 
 // CountGet answers GET /count.
-func (h *HandlerFor[M, ID, U, In]) CountGet(c fiber.Ctx) error {
-	req, err := h.parseQueryString(c)
+func (this *HandlerFor[M, ID, U, In]) CountGet(c fiber.Ctx) error {
+	request, err := this.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.count(c, req)
+	return this.count(c, request)
 }
 
 // CountPost answers POST /count.
-func (h *HandlerFor[M, ID, U, In]) CountPost(c fiber.Ctx) error {
-	req, err := h.parseBody(c)
+func (this *HandlerFor[M, ID, U, In]) CountPost(c fiber.Ctx) error {
+	request, err := this.parseBody(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.count(c, req)
+	return this.count(c, request)
 }
 
-func (h *HandlerFor[M, ID, U, In]) count(c fiber.Ctx, req *query.Request) error {
-	scope, err := h.scope(c)
+func (this *HandlerFor[M, ID, U, In]) count(c fiber.Ctx, request *query.Request) error {
+	scope, err := this.scope(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	n, err := h.svc.Count(c.Context(), port.CountCommand{Query: req, Options: scope})
+	n, err := this.service.Count(c.Context(), port.CountCommand{Query: request, Options: scope})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
 	return writeJSON(c, fiber.StatusOK, fiber.Map{"count": n})
 }
 
 // GetByID answers GET /:id, honouring ?preload= and ?select=.
-func (h *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
-	id, err := h.id(c)
+func (this *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
+	id, err := this.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	req, err := h.parseQueryString(c)
+	request, err := this.parseQueryString(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	scope, err := h.scope(c)
+	scope, err := this.scope(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err := h.svc.Get(c.Context(), port.GetCommand[ID]{ID: id, Query: req, Options: scope})
+	m, err := this.service.Get(c.Context(), port.GetCommand[ID]{ID: id, Query: request, Options: scope})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	return this.entity(c, fiber.StatusOK, m)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,41 +264,41 @@ func (h *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
 // mapped onto the model; the service then clears a database-generated key and
 // every `generated` column, so a client cannot pick its own id or forge a
 // server-side timestamp.
-func (h *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
+func (this *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
 	var in In
-	raw, err := h.decode(c, &in)
+	raw, err := this.decode(c, &in)
 	keep(c, raw)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err := h.mapper.Model(c.Context(), in)
+	m, err := this.mapper.Model(c.Context(), in)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err = h.svc.Create(c.Context(), port.CreateCommand[M]{Model: m, Before: h.beforeSave(c)})
+	m, err = this.service.Create(c.Context(), port.CreateCommand[M]{Model: m, Before: this.beforeSave(c)})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.entity(c, fiber.StatusCreated, m)
+	return this.entity(c, fiber.StatusCreated, m)
 }
 
 // Update answers PATCH /:id with the partial-update DTO.
-func (h *HandlerFor[M, ID, U, In]) Update(c fiber.Ctx) error {
-	id, err := h.id(c)
+func (this *HandlerFor[M, ID, U, In]) Update(c fiber.Ctx) error {
+	id, err := this.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	var dto U
-	raw, err := h.decode(c, &dto)
+	var dataTransferObject U
+	raw, err := this.decode(c, &dataTransferObject)
 	keep(c, raw)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err := h.svc.Update(c.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dto, Before: h.beforeUpdate(c, id)})
+	m, err := this.service.Update(c.Context(), port.UpdateCommand[ID, U]{ID: id, Patch: dataTransferObject, Before: this.beforeUpdate(c, id)})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	return this.entity(c, fiber.StatusOK, m)
 }
 
 // Replace answers PUT /:id: the body becomes the whole row, with the id taken
@@ -311,37 +311,37 @@ func (h *HandlerFor[M, ID, U, In]) Update(c fiber.Ctx) error {
 // advance the sequence, so the next POST collides on the primary key and keeps
 // colliding until somebody repairs the sequence by hand. A key the client owns
 // (a uuid, a slug) is a different matter and PUT still creates those.
-func (h *HandlerFor[M, ID, U, In]) Replace(c fiber.Ctx) error {
-	id, err := h.id(c)
+func (this *HandlerFor[M, ID, U, In]) Replace(c fiber.Ctx) error {
+	id, err := this.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
 	var in In
-	raw, err := h.decode(c, &in)
+	raw, err := this.decode(c, &in)
 	keep(c, raw)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err := h.mapper.Model(c.Context(), in)
+	m, err := this.mapper.Model(c.Context(), in)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	m, err = h.svc.Replace(c.Context(), port.ReplaceCommand[ID, M]{ID: id, Model: m, Before: h.beforeSave(c)})
+	m, err = this.service.Replace(c.Context(), port.ReplaceCommand[ID, M]{ID: id, Model: m, Before: this.beforeSave(c)})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	return h.entity(c, fiber.StatusOK, m)
+	return this.entity(c, fiber.StatusOK, m)
 }
 
 // Delete answers DELETE /:id.
-func (h *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
-	id, err := h.id(c)
+func (this *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
+	id, err := this.id(c)
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
-	n, err := h.svc.Delete(c.Context(), port.DeleteCommand[ID]{ID: id})
+	n, err := this.service.Delete(c.Context(), port.DeleteCommand[ID]{ID: id})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
 	return writeJSON(c, fiber.StatusOK, fiber.Map{"deleted": n})
 }
@@ -350,17 +350,17 @@ func (h *HandlerFor[M, ID, U, In]) Delete(c fiber.Ctx) error {
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 
 // BulkDelete answers POST /bulk-delete.
-func (h *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
-	var req BulkDeleteRequest[ID]
-	if err := h.decodeOnly(c, &req); err != nil {
-		return h.fail(c, err)
+func (this *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
+	var request BulkDeleteRequest[ID]
+	if err := this.decodeOnly(c, &request); err != nil {
+		return this.fail(c, err)
 	}
-	if len(req.IDs) > h.opt.BulkCap() {
-		return h.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", h.opt.BulkCap()))
+	if len(request.IDs) > this.opt.BulkCap() {
+		return this.fail(c, crudhttp.BadRequestAs(errs.CodeBadQuery, nil, "at most %d ids per request", this.opt.BulkCap()))
 	}
-	n, err := h.svc.DeleteMany(c.Context(), port.BulkDeleteCommand[ID]{IDs: req.IDs})
+	n, err := this.service.DeleteMany(c.Context(), port.BulkDeleteCommand[ID]{IDs: request.IDs})
 	if err != nil {
-		return h.fail(c, err)
+		return this.fail(c, err)
 	}
 	return writeJSON(c, fiber.StatusOK, fiber.Map{"deleted": n})
 }
@@ -371,32 +371,32 @@ func (h *HandlerFor[M, ID, U, In]) BulkDelete(c fiber.Ctx) error {
 // scope is the transport's own narrowing, handed to the service as options it
 // appends after the query document compiles. Appended and not merged, because
 // crud.Where ANDs ([[D-004]]).
-func (h *HandlerFor[M, ID, U, In]) scope(c fiber.Ctx) ([]crud.Option, error) {
-	if h.opt.scope == nil {
+func (this *HandlerFor[M, ID, U, In]) scope(c fiber.Ctx) ([]crud.Option, error) {
+	if this.opt.scope == nil {
 		return nil, nil
 	}
-	return h.opt.scope(c)
+	return this.opt.scope(c)
 }
 
 // beforeSave binds the create-and-replace hook to this request, so the service
 // can run it in the one place the order is documented: after the server-owned
 // fields are cleared ([[UC-013]] guarantee 7).
-func (h *HandlerFor[M, ID, U, In]) beforeSave(c fiber.Ctx) func(*M) error {
-	if h.opt.beforeSave == nil {
+func (this *HandlerFor[M, ID, U, In]) beforeSave(c fiber.Ctx) func(*M) error {
+	if this.opt.beforeSave == nil {
 		return nil
 	}
-	return func(m *M) error { return h.opt.beforeSave(c, m) }
+	return func(m *M) error { return this.opt.beforeSave(c, m) }
 }
 
 // beforeUpdate binds the PATCH hook to this request and its path id.
-func (h *HandlerFor[M, ID, U, In]) beforeUpdate(c fiber.Ctx, id ID) func(*U) error {
-	if h.opt.beforeUpdate == nil {
+func (this *HandlerFor[M, ID, U, In]) beforeUpdate(c fiber.Ctx, id ID) func(*U) error {
+	if this.opt.beforeUpdate == nil {
 		return nil
 	}
-	return func(dto *U) error { return h.opt.beforeUpdate(c, id, dto) }
+	return func(dataTransferObject *U) error { return this.opt.beforeUpdate(c, id, dataTransferObject) }
 }
 
-func (h *HandlerFor[M, ID, U, In]) parseQueryString(c fiber.Ctx) (*query.Request, error) {
+func (this *HandlerFor[M, ID, U, In]) parseQueryString(c fiber.Ctx) (*query.Request, error) {
 	return query.ParseQuery(queryValues(c))
 }
 
@@ -410,12 +410,12 @@ func queryValues(c fiber.Ctx) url.Values {
 	return v
 }
 
-func (h *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, error) {
-	req := &query.Request{}
-	if err := h.decodeOnly(c, req); err != nil {
+func (this *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, error) {
+	request := &query.Request{}
+	if err := this.decodeOnly(c, request); err != nil {
 		return nil, err
 	}
-	return req, nil
+	return request, nil
 }
 
 // decode reads a JSON body onto v under this handler's cap and hands back the
@@ -426,31 +426,31 @@ func (h *HandlerFor[M, ID, U, In]) parseBody(c fiber.Ctx) (*query.Request, error
 // XML body, and the one where a `binding:"required"` tag in the consumer's own
 // model changes what the routes accept — a difference in what the API is, owned
 // by nobody and visible only under Fiber ([[FL-013]]).
-func (h *HandlerFor[M, ID, U, In]) decode(c fiber.Ctx, v any) ([]byte, error) {
-	return crudhttp.DecodeJSONKeepLimit(bytes.NewReader(c.Body()), v, h.opt.MaxBody)
+func (this *HandlerFor[M, ID, U, In]) decode(c fiber.Ctx, v any) ([]byte, error) {
+	return crudhttp.DecodeJSONKeepLimit(bytes.NewReader(c.Body()), v, this.opt.MaxBody)
 }
 
 // decodeOnly is decode for the routes whose body carries no field values, so
 // there is nothing worth keeping.
-func (h *HandlerFor[M, ID, U, In]) decodeOnly(c fiber.Ctx, v any) error {
-	_, err := h.decode(c, v)
+func (this *HandlerFor[M, ID, U, In]) decodeOnly(c fiber.Ctx, v any) error {
+	_, err := this.decode(c, v)
 	return err
 }
 
 // id reads and converts the :id path parameter.
-func (h *HandlerFor[M, ID, U, In]) id(c fiber.Ctx) (ID, error) {
+func (this *HandlerFor[M, ID, U, In]) id(c fiber.Ctx) (ID, error) {
 	return port.CoerceID[ID](c.Params("id"))
 }
 
-func (h *HandlerFor[M, ID, U, In]) entity(c fiber.Ctx, status int, m M) error {
-	if h.opt.transform != nil {
-		return writeJSON(c, status, h.opt.transform(c, m))
+func (this *HandlerFor[M, ID, U, In]) entity(c fiber.Ctx, status int, m M) error {
+	if this.opt.transform != nil {
+		return writeJSON(c, status, this.opt.transform(c, m))
 	}
 	return writeJSON(c, status, m)
 }
 
-func (h *HandlerFor[M, ID, U, In]) fail(c fiber.Ctx, err error) error {
-	return h.opt.errorHandler(c, err)
+func (this *HandlerFor[M, ID, U, In]) fail(c fiber.Ctx, err error) error {
+	return this.opt.errorHandler(c, err)
 }
 
 // bodyKey is where the retained request body lives on this binding. Locals and

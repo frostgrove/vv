@@ -14,14 +14,14 @@ import (
 // CoerceID exist for: an int would survive fmt.Sprint and strconv on its own.
 type slug struct{ v string }
 
-func (s slug) MarshalText() ([]byte, error) { return []byte("s-" + s.v), nil }
+func (this slug) MarshalText() ([]byte, error) { return []byte("s-" + this.v), nil }
 
-func (s *slug) UnmarshalText(b []byte) error {
+func (this *slug) UnmarshalText(b []byte) error {
 	t, ok := strings.CutPrefix(string(b), "s-")
 	if !ok {
 		return errors.New("a slug key starts with s-")
 	}
-	s.v = t
+	this.v = t
 	return nil
 }
 

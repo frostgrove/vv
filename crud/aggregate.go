@@ -53,14 +53,14 @@ type AggregateRow struct {
 }
 
 // Int reads an aggregate as an integer, whatever shape the driver chose.
-func (r AggregateRow) Int(name string) (int64, bool) {
-	n, err := toInt64(r.Value[name])
+func (this AggregateRow) Int(name string) (int64, bool) {
+	n, err := toInt64(this.Value[name])
 	return n, err == nil
 }
 
 // Float reads an aggregate as a float, for AVG and for a SUM over a decimal.
-func (r AggregateRow) Float(name string) (float64, bool) {
-	f, err := toFloat64(r.Value[name])
+func (this AggregateRow) Float(name string) (float64, bool) {
+	f, err := toFloat64(this.Value[name])
 	return f, err == nil
 }
 
@@ -84,13 +84,13 @@ func GroupBy(fields ...string) Option {
 // validate resolves every name against the model and refuses an aggregate the
 // engines do not agree on. It is the same rule as everywhere else: a name that
 // does not exist is a refusal, never a clause that quietly disappears.
-func (a AggregateSpec) Validate(m *Meta) error {
-	if len(a.Aggregations) == 0 {
+func (this AggregateSpec) Validate(m *Meta) error {
+	if len(this.Aggregations) == 0 {
 		return &SchemaError{Model: m.Name, Field: "aggregate",
 			Reason: "an aggregate read needs at least one aggregation"}
 	}
-	seen := make(map[string]bool, len(a.Aggregations))
-	for _, ag := range a.Aggregations {
+	seen := make(map[string]bool, len(this.Aggregations))
+	for _, ag := range this.Aggregations {
 		if ag.As == "" {
 			return &SchemaError{Model: m.Name, Field: "aggregate",
 				Reason: "every aggregation needs a name to come back under"}
@@ -133,7 +133,7 @@ func (a AggregateSpec) Validate(m *Meta) error {
 			}
 		}
 	}
-	for _, g := range a.GroupBy {
+	for _, g := range this.GroupBy {
 		f, _, err := m.FieldAt(g)
 		if err != nil {
 			return err
@@ -156,15 +156,15 @@ func (a AggregateSpec) Validate(m *Meta) error {
 var aggFuncs = map[string]bool{"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true}
 
 // render writes the projection: the grouping columns first, then the aggregates.
-func (a AggregateSpec) Render(w *SQL) {
-	for i, g := range a.GroupBy {
+func (this AggregateSpec) Render(w *SQL) {
+	for i, g := range this.GroupBy {
 		if i > 0 {
 			w.Raw(", ")
 		}
 		w.Column(g)
 	}
-	for i, ag := range a.Aggregations {
-		if i > 0 || len(a.GroupBy) > 0 {
+	for i, ag := range this.Aggregations {
+		if i > 0 || len(this.GroupBy) > 0 {
 			w.Raw(", ")
 		}
 		w.Raw(strings.ToUpper(ag.Fn) + "(")

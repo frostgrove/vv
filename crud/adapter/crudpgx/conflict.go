@@ -18,7 +18,7 @@ import (
 // same question over the same shapes, and the last time one rule lived in both
 // adapters they diverged: a deferred constraint was a 409 through one and a 500
 // through the other, with both test suites green.
-func (e Executor) conflict(err error) error { return sqlfault.Wrap(e.faults, err) }
+func (this Executor) conflict(err error) error { return sqlfault.Wrap(this.faults, err) }
 
 // extract reads *pgconn.PgError by name. This module may name it, so it does —
 // a field pgx renames breaks the build here, where the by-shape reader in

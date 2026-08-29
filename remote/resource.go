@@ -75,8 +75,8 @@ func TryNew[M any, ID comparable, U any](tr Transport) (*Resource[M, ID, U], err
 	if err := meta.CheckID(reflect.TypeOf(&id).Elem()); err != nil {
 		return nil, err
 	}
-	var dto U
-	if err := checkPatchable(reflect.TypeOf(&dto).Elem()); err != nil {
+	var dataTransferObject U
+	if err := checkPatchable(reflect.TypeOf(&dataTransferObject).Elem()); err != nil {
 		return nil, err
 	}
 	return &Resource[M, ID, U]{tr: tr, meta: meta}, nil
@@ -87,19 +87,19 @@ var _ port.Repository[struct{}, int, struct{}] = (*Resource[struct{}, int, struc
 // Meta describes the bound model. It is built by reflection over M and reaches
 // no database, which is what lets a remote resource be handed straight back to
 // a binding and re-exposed.
-func (r *Resource[M, ID, U]) Meta() *crud.Meta { return r.meta }
+func (this *Resource[M, ID, U]) Meta() *crud.Meta { return this.meta }
 
 // ---------------------------------------------------------------------------
 // reads
 
 // Get returns a page of rows.
-func (r *Resource[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (crud.PaginatedResponse[M], error) {
+func (this *Resource[M, ID, U]) Get(ctx context.Context, options ...crud.Option) (crud.PaginatedResponse[M], error) {
 	var zero crud.PaginatedResponse[M]
-	req, err := ToRequest(opts...)
+	request, err := ToRequest(options...)
 	if err != nil {
 		return zero, err
 	}
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodList, Query: req})
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodList, Query: request})
 	if err != nil {
 		return zero, err
 	}
@@ -115,38 +115,38 @@ func (r *Resource[M, ID, U]) Get(ctx context.Context, opts ...crud.Option) (crud
 // silently truncated export. Explicit page, limit or offset without Unpaged
 // remain the caller's request and return that subset; Unpaged plus Offset
 // returns the whole suffix after the offset.
-func (r *Resource[M, ID, U]) GetAll(ctx context.Context, opts ...crud.Option) ([]M, error) {
-	req, err := ToRequest(opts...)
+func (this *Resource[M, ID, U]) GetAll(ctx context.Context, options ...crud.Option) ([]M, error) {
+	request, err := ToRequest(options...)
 	if err != nil {
 		return nil, err
 	}
 	// Unpaged wins over page/limit in crud.Options, so it remains an all-rows
 	// request even when a caller accidentally supplied both. Offset is the one
 	// control that intentionally selects a suffix; page/limit select one page.
-	if (req.Offset != 0 && !req.Unpaged) || (!req.Unpaged && (req.Page != 0 || req.Limit != 0)) {
-		page, err := r.list(ctx, req)
+	if (request.Offset != 0 && !request.Unpaged) || (!request.Unpaged && (request.Page != 0 || request.Limit != 0)) {
+		page, err := this.list(ctx, request)
 		if err != nil {
 			return nil, err
 		}
 		return page.Items, nil
 	}
-	return r.allPages(ctx, req)
+	return this.allPages(ctx, request)
 }
 
 // First asks the remote list endpoint for one matching row. The remote protocol
 // has no separate first route, so its list shape is normalised exactly as the
 // local repository normalises Get's paging controls.
-func (r *Resource[M, ID, U]) First(ctx context.Context, opts ...crud.Option) (M, error) {
+func (this *Resource[M, ID, U]) First(ctx context.Context, options ...crud.Option) (M, error) {
 	var zero M
-	req, err := ToRequest(opts...)
+	request, err := ToRequest(options...)
 	if err != nil {
 		return zero, err
 	}
-	q := *req
+	q := *request
 	q.Page, q.Limit, q.Offset = 0, 1, 0
 	q.After, q.Before = "", ""
 	q.Unpaged, q.SkipTotal = false, true
-	page, err := r.list(ctx, &q)
+	page, err := this.list(ctx, &q)
 	if err != nil {
 		return zero, err
 	}
@@ -156,8 +156,8 @@ func (r *Resource[M, ID, U]) First(ctx context.Context, opts ...crud.Option) (M,
 	return page.Items[0], nil
 }
 
-func (r *Resource[M, ID, U]) list(ctx context.Context, req *query.Request) (crud.PaginatedResponse[M], error) {
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodList, Query: req})
+func (this *Resource[M, ID, U]) list(ctx context.Context, request *query.Request) (crud.PaginatedResponse[M], error) {
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodList, Query: request})
 	if err != nil {
 		return crud.PaginatedResponse[M]{}, err
 	}
@@ -167,26 +167,26 @@ func (r *Resource[M, ID, U]) list(ctx context.Context, req *query.Request) (crud
 // allPages preserves the query document while changing only the paging edge.
 // A list response is the only cross-process read primitive, so walking it is
 // the one way to keep GetAll honest when the far repository caps a page.
-func (r *Resource[M, ID, U]) allPages(ctx context.Context, req *query.Request) ([]M, error) {
-	q := *req
+func (this *Resource[M, ID, U]) allPages(ctx context.Context, request *query.Request) ([]M, error) {
+	q := *request
 	q.Unpaged, q.SkipTotal = false, false
 	q.Page, q.Limit = 0, 0
 	backward := q.Before != ""
 	cursoring := q.After != "" || backward
 	offsetWalk := q.Offset != 0 && !cursoring
 	skip := 0
-	if req.Unpaged && q.Offset > 0 && !cursoring {
+	if request.Unpaged && q.Offset > 0 && !cursoring {
 		// The remote endpoint is allowed to reject a deep offset before it
 		// can return a cursor edge. Start at zero and discard the prefix here
 		// instead, preserving GetAll(Unpaged, Offset(k))'s whole-suffix
 		// contract without asking the public endpoint to widen MaxOffset.
 		skip, q.Offset, offsetWalk = q.Offset, 0, false
 	}
-	if len(q.Sort) == 0 && !(q.Distinct && len(q.Select) > 0 && !selectsPrimaryKey(r.meta, q.Select)) {
+	if len(q.Sort) == 0 && !(q.Distinct && len(q.Select) > 0 && !selectsPrimaryKey(this.meta, q.Select)) {
 		// A cursor names values in a sort tuple. The repository default is not
 		// part of the wire contract, so name the universal stable tuple rather
 		// than relying on it when this walk switches to a cursor after page one.
-		q.Sort = query.Sorts{{Field: r.meta.PK.Name}}
+		q.Sort = query.Sorts{{Field: this.meta.PK.Name}}
 	}
 
 	seenCursors := map[string]struct{}{}
@@ -203,7 +203,7 @@ func (r *Resource[M, ID, U]) allPages(ctx context.Context, req *query.Request) (
 	var expectedTotal int64 = -1
 	var last crud.PaginatedResponse[M]
 	for {
-		page, err := r.list(ctx, &q)
+		page, err := this.list(ctx, &q)
 		if err != nil {
 			return nil, err
 		}
@@ -268,8 +268,8 @@ func (r *Resource[M, ID, U]) allPages(ctx context.Context, req *query.Request) (
 			// Cursor responses deliberately omit a whole-set COUNT, so compare
 			// the completed cursor walk with this value at the end instead.
 			expectedTotal = page.Total
-			if offsetWalk || (req.Unpaged && req.Offset > 0) {
-				expectedTotal -= int64(req.Offset)
+			if offsetWalk || (request.Unpaged && request.Offset > 0) {
+				expectedTotal -= int64(request.Offset)
 				if expectedTotal < 0 {
 					expectedTotal = 0
 				}
@@ -289,7 +289,7 @@ func (r *Resource[M, ID, U]) allPages(ctx context.Context, req *query.Request) (
 			return nil, &PartialResultError{Received: received, Total: page.Total}
 		}
 		if offsetWalk {
-			q.Offset = req.Offset + received
+			q.Offset = request.Offset + received
 			continue
 		}
 		q.Page, q.Limit = page.Page+1, page.Limit
@@ -307,8 +307,8 @@ func (r *Resource[M, ID, U]) allPages(ctx context.Context, req *query.Request) (
 	total := last.Total
 	if expectedTotal >= 0 {
 		total = expectedTotal
-	} else if offsetWalk || (req.Unpaged && req.Offset > 0) {
-		total -= int64(req.Offset)
+	} else if offsetWalk || (request.Unpaged && request.Offset > 0) {
+		total -= int64(request.Offset)
 		if total < 0 {
 			total = 0
 		}
@@ -329,20 +329,20 @@ func selectsPrimaryKey(m *crud.Meta, fields query.Strings) bool {
 }
 
 // GetByID returns one row, or an error matching crud.ErrNotFound.
-func (r *Resource[M, ID, U]) GetByID(ctx context.Context, id ID, opts ...crud.Option) (M, error) {
+func (this *Resource[M, ID, U]) GetByID(ctx context.Context, id ID, options ...crud.Option) (M, error) {
 	var zero M
-	req, err := ToRequest(opts...)
+	request, err := ToRequest(options...)
 	if err != nil {
 		return zero, err
 	}
 	// The same narrowing the service applies on the way in: paging and ordering
 	// cannot affect a primary-key lookup, but a predicate can still prove the
 	// named row is outside the caller's scope.
-	port.NarrowForEntity(req)
-	if entityNeedsList(req) {
-		return r.getByIDThroughList(ctx, id, req)
+	port.NarrowForEntity(request)
+	if entityNeedsList(request) {
+		return this.getByIDThroughList(ctx, id, request)
 	}
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodGet, ID: port.FormatID(id), Query: req})
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodGet, ID: port.FormatID(id), Query: request})
 	if err != nil {
 		return zero, err
 	}
@@ -354,14 +354,14 @@ func (r *Resource[M, ID, U]) GetByID(ctx context.Context, id ID, opts ...crud.Op
 // carries only projection and plain preload paths; using List preserves a root
 // filter and a narrowed or capped preload rather than silently flattening any
 // of them.
-func entityNeedsList(req *query.Request) bool {
-	if req == nil {
+func entityNeedsList(request *query.Request) bool {
+	if request == nil {
 		return false
 	}
-	if !req.Filter.IsZero() {
+	if !request.Filter.IsZero() {
 		return true
 	}
-	for _, pre := range req.Preload {
+	for _, pre := range request.Preload {
 		if !pre.Filter.IsZero() || len(pre.Sort) > 0 || pre.MaxRows > 0 {
 			return true
 		}
@@ -369,28 +369,28 @@ func entityNeedsList(req *query.Request) bool {
 	return false
 }
 
-func (r *Resource[M, ID, U]) getByIDThroughList(ctx context.Context, id ID, req *query.Request) (M, error) {
+func (this *Resource[M, ID, U]) getByIDThroughList(ctx context.Context, id ID, request *query.Request) (M, error) {
 	var zero M
 	// The List fallback travels through the query document. Spell the key as
 	// text, as keyed calls already do, so an int64 at magnitude 2^53 and beyond stays out of
 	// protobuf Struct before the peer coerces it back to the primary-key type.
-	idFilter, err := crud.MarshalPredicate(crud.Eq(r.meta.PK.Name, port.FormatID(id)))
+	idFilter, err := crud.MarshalPredicate(crud.Eq(this.meta.PK.Name, port.FormatID(id)))
 	if err != nil {
 		return zero, &OptionError{
 			Option: "GetByID filter",
 			Reason: "the primary-key value cannot be encoded for the List fallback: " + err.Error(),
 		}
 	}
-	if req.Filter.IsZero() {
-		req.Filter = query.RawFilter(string(idFilter))
+	if request.Filter.IsZero() {
+		request.Filter = query.RawFilter(string(idFilter))
 	} else {
-		filter, err := req.Filter.MarshalJSON()
+		filter, err := request.Filter.MarshalJSON()
 		if err != nil {
 			return zero, err
 		}
-		req.Filter = query.RawFilter(`{"and":[` + string(filter) + `,` + string(idFilter) + `]}`)
+		request.Filter = query.RawFilter(`{"and":[` + string(filter) + `,` + string(idFilter) + `]}`)
 	}
-	page, err := r.list(ctx, req)
+	page, err := this.list(ctx, request)
 	if err != nil {
 		return zero, err
 	}
@@ -405,13 +405,13 @@ func (r *Resource[M, ID, U]) getByIDThroughList(ctx context.Context, id ID, req 
 }
 
 // Count reports how many rows match.
-func (r *Resource[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (int64, error) {
-	req, err := ToRequest(opts...)
+func (this *Resource[M, ID, U]) Count(ctx context.Context, options ...crud.Option) (int64, error) {
+	request, err := ToRequest(options...)
 	if err != nil {
 		return 0, err
 	}
-	port.NarrowForCount(req)
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodCount, Query: req})
+	port.NarrowForCount(request)
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodCount, Query: request})
 	if err != nil {
 		return 0, err
 	}
@@ -430,13 +430,13 @@ func (r *Resource[M, ID, U]) Count(ctx context.Context, opts ...crud.Option) (in
 // That is crud.Core.Save's own rule read onto two routes rather than a choice
 // made here: an unset key is a POST because the service is the thing that
 // generates one, and a set key is a PUT because the caller named the row.
-func (r *Resource[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
+func (this *Resource[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
 	var zero M
-	call, err := r.saveCall(m)
+	call, err := this.saveCall(m)
 	if err != nil {
 		return zero, err
 	}
-	raw, err := r.tr.Do(ctx, call)
+	raw, err := this.tr.Do(ctx, call)
 	if err != nil {
 		return zero, err
 	}
@@ -447,28 +447,28 @@ func (r *Resource[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
 // the entity response. A remote API still produces that response for its own
 // default create/replace contract; this method simply never decodes or applies
 // it to the caller's model.
-func (r *Resource[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
-	call, err := r.saveCall(m)
+func (this *Resource[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
+	call, err := this.saveCall(m)
 	if err != nil {
 		return err
 	}
-	_, err = r.tr.Do(ctx, call)
+	_, err = this.tr.Do(ctx, call)
 	return err
 }
 
-func (r *Resource[M, ID, U]) saveCall(m *M) (*Call, error) {
+func (this *Resource[M, ID, U]) saveCall(m *M) (*Call, error) {
 	body, err := json.Marshal(m)
 	if err != nil {
 		return nil, fmt.Errorf("remote: encoding the model: %w", err)
 	}
-	has, err := r.meta.HasID(m)
+	has, err := this.meta.HasID(m)
 	if err != nil {
 		return nil, err
 	}
 
 	call := &Call{Method: MethodCreate, Body: body}
 	if has {
-		key, err := keyOf[ID](r.meta, m)
+		key, err := keyOf[ID](this.meta, m)
 		if err != nil {
 			return nil, err
 		}
@@ -483,16 +483,16 @@ func (r *Resource[M, ID, U]) saveCall(m *M) (*Call, error) {
 // and the UPDATE's own WHERE, which is how a decorator keeps a row that moved
 // out of scope from being written anyway; there is no route that carries them,
 // so accepting one would be accepting a promise this cannot keep.
-func (r *Resource[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...crud.Option) (M, error) {
+func (this *Resource[M, ID, U]) Update(ctx context.Context, id ID, dataTransferObject U, options ...crud.Option) (M, error) {
 	var zero M
-	if err := refuseOptions("Update", opts); err != nil {
+	if err := refuseOptions("Update", options); err != nil {
 		return zero, err
 	}
-	body, err := json.Marshal(dto)
+	body, err := json.Marshal(dataTransferObject)
 	if err != nil {
 		return zero, fmt.Errorf("remote: encoding the patch: %w", err)
 	}
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodUpdate, ID: port.FormatID(id), Body: body})
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodUpdate, ID: port.FormatID(id), Body: body})
 	if err != nil {
 		return zero, err
 	}
@@ -510,14 +510,14 @@ func (r *Resource[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...c
 // is what turns that into crud.ErrNotFound, and it would do it twice if this
 // returned the error as well — harmless for a direct caller, wrong for a
 // bulk delete that routed through here.
-func (r *Resource[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, error) {
+func (this *Resource[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	switch len(ids) {
 	case 0:
 		// Asking a service to delete nothing is a round trip with no statement
 		// at the end of it. DefaultService.DeleteMany makes the same call.
 		return 0, nil
 	case 1:
-		raw, err := r.tr.Do(ctx, &Call{Method: MethodDelete, ID: port.FormatID(ids[0])})
+		raw, err := this.tr.Do(ctx, &Call{Method: MethodDelete, ID: port.FormatID(ids[0])})
 		if err != nil {
 			if errors.Is(err, crud.ErrNotFound) {
 				return 0, nil
@@ -531,7 +531,7 @@ func (r *Resource[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64, erro
 	if err != nil {
 		return 0, fmt.Errorf("remote: encoding the keys: %w", err)
 	}
-	raw, err := r.tr.Do(ctx, &Call{Method: MethodBulkDelete, IDs: keys})
+	raw, err := this.tr.Do(ctx, &Call{Method: MethodBulkDelete, IDs: keys})
 	if err != nil {
 		return 0, err
 	}
@@ -550,14 +550,14 @@ func deletedCount(raw json.RawMessage) (int64, error) {
 // (|n| < 2^53).
 type exactInt64 int64
 
-func (n *exactInt64) UnmarshalJSON(raw []byte) error {
+func (this *exactInt64) UnmarshalJSON(raw []byte) error {
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
 		value, err := strconv.ParseInt(asString, 10, 64)
 		if err != nil {
 			return fmt.Errorf("exact integer %q: %w", asString, err)
 		}
-		*n = exactInt64(value)
+		*this = exactInt64(value)
 		return nil
 	}
 	var number json.Number
@@ -568,7 +568,7 @@ func (n *exactInt64) UnmarshalJSON(raw []byte) error {
 	if err != nil {
 		return fmt.Errorf("exact integer %s: %w", number, err)
 	}
-	*n = exactInt64(value)
+	*this = exactInt64(value)
 	return nil
 }
 
@@ -628,8 +628,8 @@ func decode[T any](raw json.RawMessage, what string) (T, error) {
 }
 
 // refuseOptions rejects any option on a route that carries none.
-func refuseOptions(method string, opts []crud.Option) error {
-	for _, o := range opts {
+func refuseOptions(method string, options []crud.Option) error {
+	for _, o := range options {
 		if o != nil {
 			return &OptionError{"an option on " + method,
 				"the route carries no query document, so nothing would be narrowed"}

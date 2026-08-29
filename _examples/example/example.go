@@ -97,13 +97,13 @@ type Repo struct {
 }
 
 // Open wires everything together. This is the whole set-up cost.
-func Open(src crud.Source) Repo {
-	return Repo{specs.Executor(Articles.Bind(src, security.Gate(OwnPolicy)))}
+func Open(source crud.Source) Repo {
+	return Repo{specs.Executor(Articles.Bind(source, security.Gate(OwnPolicy)))}
 }
 
 // Publish is what a handler looks like: no SQL, no mapping, no manual diffing.
-func (r Repo) Publish(ctx context.Context, id int64, at time.Time) (Article, error) {
-	a, err := r.Update(ctx, id, ArticleUpdate{PublishedAt: crud.Set(at)})
+func (this Repo) Publish(ctx context.Context, id int64, at time.Time) (Article, error) {
+	a, err := this.Update(ctx, id, ArticleUpdate{PublishedAt: crud.Set(at)})
 	if errors.Is(err, crud.ErrNotFound) {
 		return Article{}, err // out of scope articles look missing, by design
 	}
@@ -112,12 +112,12 @@ func (r Repo) Publish(ctx context.Context, id int64, at time.Time) (Article, err
 
 // Unpublish clears the column instead of leaving it alone — the distinction Opt
 // exists for.
-func (r Repo) Unpublish(ctx context.Context, id int64) (Article, error) {
-	return r.Update(ctx, id, ArticleUpdate{PublishedAt: crud.Null[time.Time]()})
+func (this Repo) Unpublish(ctx context.Context, id int64) (Article, error) {
+	return this.Update(ctx, id, ArticleUpdate{PublishedAt: crud.Null[time.Time]()})
 }
 
 // Feed is a paginated, specification-filtered read.
-func (r Repo) Feed(ctx context.Context, page int) (crud.PaginatedResponse[Article], error) {
-	return r.FindPage(ctx, Trending(), crud.Page(page), crud.Limit(20),
+func (this Repo) Feed(ctx context.Context, page int) (crud.PaginatedResponse[Article], error) {
+	return this.FindPage(ctx, Trending(), crud.Page(page), crud.Limit(20),
 		crud.OrderBy(Article_.Views.Desc()))
 }

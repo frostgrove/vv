@@ -78,19 +78,19 @@ func Load[T any](path string) (*T, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("vvcfg: %w", err)
 	}
-	var cfg T
-	if err := cleanenv.ReadConfig(path, &cfg); err != nil {
+	var config T
+	if err := cleanenv.ReadConfig(path, &config); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading %s: %w", path, err)
 	}
-	if err := applyEnvironment(reflect.ValueOf(&cfg), ""); err != nil {
+	if err := applyEnvironment(reflect.ValueOf(&config), ""); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading environment for %s: %w", path, err)
 	}
-	if v, ok := any(&cfg).(Validator); ok {
+	if v, ok := any(&config).(Validator); ok {
 		if err := v.Validate(); err != nil {
 			return nil, fmt.Errorf("vvcfg: %s is not valid: %w", path, err)
 		}
 	}
-	return &cfg, nil
+	return &config, nil
 }
 
 // loadEnvironment builds a configuration from environment variables alone.
@@ -98,19 +98,19 @@ func Load[T any](path string) (*T, error) {
 // ship no configuration file. Validation and nested environment appliers run
 // exactly as they do after a file, so this is not a weaker startup path.
 func loadEnvironment[T any]() (*T, error) {
-	var cfg T
-	if err := cleanenv.ReadEnv(&cfg); err != nil {
+	var config T
+	if err := cleanenv.ReadEnv(&config); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading environment: %w", err)
 	}
-	if err := applyEnvironment(reflect.ValueOf(&cfg), ""); err != nil {
+	if err := applyEnvironment(reflect.ValueOf(&config), ""); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading environment: %w", err)
 	}
-	if v, ok := any(&cfg).(Validator); ok {
+	if v, ok := any(&config).(Validator); ok {
 		if err := v.Validate(); err != nil {
 			return nil, fmt.Errorf("vvcfg: environment is not valid: %w", err)
 		}
 	}
-	return &cfg, nil
+	return &config, nil
 }
 
 // applyEnvironment walks the public shape of a configuration and invokes an
@@ -173,23 +173,23 @@ func applyEnvironment(v reflect.Value, prefix string) error {
 //
 //	cfg := vvcfg.MustLoad[Config]("config", "app.yml")
 func MustLoad[T any](paths ...string) *T {
-	var cfg *T
+	var config *T
 	var err error
 
 	if len(paths) > 0 {
-		cfg, err = Load[T](filepath.Join(paths...))
+		config, err = Load[T](filepath.Join(paths...))
 	} else if path, findErr := find(os.Args[1:]); findErr == nil {
-		cfg, err = Load[T](path)
+		config, err = Load[T](path)
 	} else if !errors.Is(findErr, ErrNoPath) {
 		err = findErr
 	} else if DefaultCfgPath != "" {
-		cfg, err = Load[T](DefaultCfgPath)
+		config, err = Load[T](DefaultCfgPath)
 	} else {
-		cfg, err = loadEnvironment[T]()
+		config, err = loadEnvironment[T]()
 	}
 
 	if err != nil {
 		panic(err)
 	}
-	return cfg
+	return config
 }

@@ -24,22 +24,22 @@ type databaseConf struct {
 	DB vvdb.Config `yaml:"db"`
 }
 
-func (c *databaseConf) Validate() error { return c.DB.Validate() }
+func (this *databaseConf) Validate() error { return this.DB.Validate() }
 
 type twoDatabaseConf struct {
 	DB        vvdb.Config `yaml:"db"`
 	Analytics vvdb.Config `yaml:"analytics" env-prefix:"ANALYTICS_"`
 }
 
-func (c *twoDatabaseConf) Validate() error {
-	if err := c.DB.Validate(); err != nil {
+func (this *twoDatabaseConf) Validate() error {
+	if err := this.DB.Validate(); err != nil {
 		return err
 	}
-	return c.Analytics.Validate()
+	return this.Analytics.Validate()
 }
 
-func (c *strictConf) Validate() error {
-	if c.Port == 0 {
+func (this *strictConf) Validate() error {
+	if this.Port == 0 {
 		return errors.New("port is required")
 	}
 	return nil

@@ -15,7 +15,7 @@ import (
 
 type stableDriverValue struct{ value int64 }
 
-func (v stableDriverValue) Value() (driver.Value, error) { return v.value, nil }
+func (this stableDriverValue) Value() (driver.Value, error) { return this.value, nil }
 
 type otherDriverValue struct{}
 
@@ -647,7 +647,7 @@ func TestPlanReportsBadArgumentsInsteadOfPanicking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dto := Patch{Token: ptr("t")}
+	dataTransferObject := Patch{Token: ptr("t")}
 
 	t.Run("a nil DTO", func(t *testing.T) {
 		_, err := p.Changes(nil, &Session{})
@@ -658,15 +658,15 @@ func TestPlanReportsBadArgumentsInsteadOfPanicking(t *testing.T) {
 		wantSchemaError(t, err, "", "update called with")
 	})
 	t.Run("a nil model", func(t *testing.T) {
-		_, err := p.Changes(dto, nil)
+		_, err := p.Changes(dataTransferObject, nil)
 		wantSchemaError(t, err, "", "pointer to the model")
 	})
 	t.Run("a model by value rather than by pointer", func(t *testing.T) {
-		_, err := p.Changes(dto, Session{})
+		_, err := p.Changes(dataTransferObject, Session{})
 		wantSchemaError(t, err, "", "pointer to the model")
 	})
 	t.Run("a pointer to the wrong model", func(t *testing.T) {
-		_, err := p.Changes(dto, &Article{})
+		_, err := p.Changes(dataTransferObject, &Article{})
 		wantSchemaError(t, err, "", "pointer to the model")
 	})
 	t.Run("Defined of a foreign DTO", func(t *testing.T) {
@@ -687,11 +687,11 @@ func TestPlanReportsBadArgumentsInsteadOfPanicking(t *testing.T) {
 // query shape by appending to it rather than by rebuilding it.
 func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		opts   []crud.Option
-		limit  int
-		offset int
-		page   int
+		name    string
+		options []crud.Option
+		limit   int
+		offset  int
+		page    int
 	}{
 		{"a second limit replaces the first", []crud.Option{crud.Limit(50), crud.Limit(5)}, 5, 0, 1},
 		{"a limit of zero hands the decision back to the repository",
@@ -706,7 +706,7 @@ func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 		{"and after it too", []crud.Option{crud.Unpaged(), crud.Limit(10)}, 100, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			limit, offset, page := crud.Build(tc.opts...).Resolved(20, 100)
+			limit, offset, page := crud.Build(tc.options...).Resolved(20, 100)
 			if limit != tc.limit || offset != tc.offset || page != tc.page {
 				t.Fatalf("Resolved = (limit %d, offset %d, page %d), want (%d, %d, %d)",
 					limit, offset, page, tc.limit, tc.offset, tc.page)
@@ -719,15 +719,15 @@ func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 // the statement — whatever a client managed to send.
 func TestANegativeOffsetNeverReachesTheStatement(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		opts []crud.Option
+		name    string
+		options []crud.Option
 	}{
 		{"paged", []crud.Option{crud.Offset(-5)}},
 		{"unpaged", []crud.Option{crud.Unpaged(), crud.Offset(-5)}},
 		{"with a page that would have set one", []crud.Option{crud.Page(1), crud.Offset(-5)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, offset, _ := crud.Build(tc.opts...).Resolved(20, 100); offset != 0 {
+			if _, offset, _ := crud.Build(tc.options...).Resolved(20, 100); offset != 0 {
 				t.Fatalf("offset = %d, want 0", offset)
 			}
 		})

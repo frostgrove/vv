@@ -65,7 +65,7 @@ func LoadMessages(codes *Codes, fsys fs.FS, dir string) (*Messages, error) {
 // Loading twice is allowed and the second load adds to the first. A key
 // declared twice with different text in one locale is [ErrMessageRedeclared] —
 // a catalogue that renders differently depending on load order is not one.
-func (m *Messages) Load(fsys fs.FS, dir string) error {
+func (this *Messages) Load(fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return fmt.Errorf("errs: reading the message catalogue %s: %w", dir, err)
@@ -88,7 +88,7 @@ func (m *Messages) Load(fsys fs.FS, dir string) error {
 		if err != nil {
 			return fmt.Errorf("errs: reading %s: %w", name, err)
 		}
-		if err := m.loadFile(localeOf(name), name, raw); err != nil {
+		if err := this.loadFile(localeOf(name), name, raw); err != nil {
 			return err
 		}
 	}
@@ -106,7 +106,7 @@ func localeOf(name string) string {
 
 // loadFile adds one file's templates, in sorted key order for the same reason
 // the files are sorted.
-func (m *Messages) loadFile(locale, name string, raw []byte) error {
+func (this *Messages) loadFile(locale, name string, raw []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("errs: %s is not a flat object of message keys: %w", name, err)
@@ -122,7 +122,7 @@ func (m *Messages) loadFile(locale, name string, raw []byte) error {
 		if err := json.Unmarshal(fields[k], &template); err != nil {
 			return fmt.Errorf("errs: %s: %q is not a string — a catalogue file is flat, and a nested object produces keys the ladder never asks for", name, k)
 		}
-		if err := m.Add(locale, k, template); err != nil {
+		if err := this.Add(locale, k, template); err != nil {
 			return fmt.Errorf("errs: %s: %w", name, err)
 		}
 	}
@@ -131,9 +131,9 @@ func (m *Messages) loadFile(locale, name string, raw []byte) error {
 
 // Locales lists the locales this catalogue declares templates for, sorted. The
 // default one is the empty string and sorts first.
-func (m *Messages) Locales() []string {
-	out := make([]string, 0, len(m.templates))
-	for locale := range m.templates {
+func (this *Messages) Locales() []string {
+	out := make([]string, 0, len(this.templates))
+	for locale := range this.templates {
 		out = append(out, locale)
 	}
 	sort.Strings(out)
@@ -157,16 +157,16 @@ func (m *Messages) Locales() []string {
 // The locale ladder is walked, not just the locale: a code en-GB leaves to en
 // is not missing from en-GB, because that is what the ladder is for. What is
 // missing is what falls all the way through.
-func (m *Messages) Missing(locale string) []Code {
-	if m == nil || m.codes == nil {
+func (this *Messages) Missing(locale string) []Code {
+	if this == nil || this.codes == nil {
 		return nil
 	}
 	rungs := locales(locale)
 	var out []Code
-	for code := range m.codes.defs {
+	for code := range this.codes.defs {
 		found := false
 		for _, rung := range rungs {
-			if _, ok := m.templates[rung][string(code)]; ok {
+			if _, ok := this.templates[rung][string(code)]; ok {
 				found = true
 				break
 			}

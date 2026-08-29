@@ -38,7 +38,7 @@ type driverErr struct {
 	SchemaName     string
 }
 
-func (e *driverErr) Error() string { return e.Message }
+func (this *driverErr) Error() string { return this.Message }
 
 func TestAFaultWrappingASentinelMatchesIt(t *testing.T) {
 	drv := unique()

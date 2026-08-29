@@ -36,8 +36,8 @@ func TestRedeclaringACodeWithADifferentKindIsRefused(t *testing.T) {
 	if err := c.Add("too_long", errs.KindValidation, "a different sentence"); err != nil {
 		t.Fatalf("a redeclaration with the same kind was refused: %v", err)
 	}
-	if msg, _ := c.MessageFor("too_long"); msg != "this value is too long" {
-		t.Fatalf("the second declaration overwrote the message: %q", msg)
+	if message, _ := c.MessageFor("too_long"); message != "this value is too long" {
+		t.Fatalf("the second declaration overwrote the message: %q", message)
 	}
 
 	err := c.Add("too_long", errs.KindConflict, "this value is already taken")
@@ -103,8 +103,8 @@ func TestTheRetryableCodesAreTheirOwnKind(t *testing.T) {
 
 func TestTheInternalCodeHasNoDefaultMessage(t *testing.T) {
 	c := errs.StandardCodes()
-	if msg, ok := c.MessageFor(errs.CodeInternal); ok || msg != "" {
-		t.Fatalf(`the internal code answered (%q, %v) — a 500 says nothing, and that has to hold by construction`, msg, ok)
+	if message, ok := c.MessageFor(errs.CodeInternal); ok || message != "" {
+		t.Fatalf(`the internal code answered (%q, %v) — a 500 says nothing, and that has to hold by construction`, message, ok)
 	}
 
 	// The control: an empty Codes would pass the assertion above.
@@ -115,7 +115,7 @@ func TestTheInternalCodeHasNoDefaultMessage(t *testing.T) {
 		if _, ok := c.KindOf(code); !ok {
 			t.Fatalf("%s is not in the standard vocabulary", code)
 		}
-		if msg, ok := c.MessageFor(code); !ok || msg == "" {
+		if message, ok := c.MessageFor(code); !ok || message == "" {
 			t.Fatalf("%s has no default message, so nothing distinguishes it from the internal code", code)
 		}
 	}
@@ -161,8 +161,8 @@ func TestANilCodesReadsAsEmptyInsteadOfPanicking(t *testing.T) {
 	if k, ok := none.KindOf(errs.CodeUnique); ok || k != errs.KindInternal {
 		t.Fatalf("a nil Codes answered (%v, %v) for a code it cannot know", k, ok)
 	}
-	if msg, ok := none.MessageFor(errs.CodeUnique); ok || msg != "" {
-		t.Fatalf("a nil Codes produced the message %q", msg)
+	if message, ok := none.MessageFor(errs.CodeUnique); ok || message != "" {
+		t.Fatalf("a nil Codes produced the message %q", message)
 	}
 
 	v := errs.Violation{Path: errs.Path{errs.Named("email")}, Code: errs.CodeUnique}

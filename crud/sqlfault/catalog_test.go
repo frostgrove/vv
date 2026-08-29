@@ -19,13 +19,13 @@ type fakeColumns struct {
 	lastCn string
 }
 
-func (f *fakeColumns) ConstraintColumns(table, constraint string) ([]string, bool) {
-	f.asked++
-	f.lastTb, f.lastCn = table, constraint
-	if f.cols == nil {
+func (this *fakeColumns) ConstraintColumns(table, constraint string) ([]string, bool) {
+	this.asked++
+	this.lastTb, this.lastCn = table, constraint
+	if this.cols == nil {
 		return nil, false
 	}
-	return f.cols, true
+	return this.cols, true
 }
 
 // A PostgreSQL unique violation names the constraint and the table and no
@@ -154,15 +154,15 @@ type fakeCatalog struct {
 	kept int
 }
 
-func (f *fakeCatalog) Table(string) (*catalog.Table, bool) { return nil, false }
-func (f *fakeCatalog) Dialect() string                     { return "postgres" }
+func (this *fakeCatalog) Table(string) (*catalog.Table, bool) { return nil, false }
+func (this *fakeCatalog) Dialect() string                     { return "postgres" }
 
-func (f *fakeCatalog) Constraint(string, string) (*catalog.Constraint, bool) {
-	f.kept++
-	if f.con == nil {
+func (this *fakeCatalog) Constraint(string, string) (*catalog.Constraint, bool) {
+	this.kept++
+	if this.con == nil {
 		return nil, false
 	}
-	return f.con, true
+	return this.con, true
 }
 
 // A unique index on an expression — CREATE UNIQUE INDEX ... ON users

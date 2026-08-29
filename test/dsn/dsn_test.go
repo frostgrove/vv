@@ -167,20 +167,20 @@ func TestSQLiteOpensTheEscapedFilenameItWasGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", dsn)
+	database, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err := db.Exec("CREATE TABLE proof (id INTEGER PRIMARY KEY)"); err != nil {
+	defer database.Close()
+	if _, err := database.Exec("CREATE TABLE proof (id INTEGER PRIMARY KEY)"); err != nil {
 		t.Fatalf("sqlite did not open vvdb's escaped URI %q: %v", dsn, err)
 	}
 	var journal string
-	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journal); err != nil || journal != "wal" {
+	if err := database.QueryRow("PRAGMA journal_mode").Scan(&journal); err != nil || journal != "wal" {
 		t.Fatalf("sqlite journal mode = %q (%v), want wal from the repeated vvdb pragma", journal, err)
 	}
 	var timeout int
-	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != 5000 {
+	if err := database.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != 5000 {
 		t.Fatalf("sqlite busy timeout = %d (%v), want 5000 from the repeated vvdb pragma", timeout, err)
 	}
 	if _, err := os.Stat(path); err != nil {

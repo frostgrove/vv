@@ -30,7 +30,7 @@ func inputFields(m *model) []field {
 	return out
 }
 
-func (g *generator) renderAdapter(m *model) (string, used, error) {
+func (this *generator) renderAdapter(m *model) (string, used, error) {
 	pk, ok := m.pk()
 	if !ok {
 		return "", used{}, fmt.Errorf(`-adapter needs a key it can name: tag one field of %s db:",pk"`, m.Name)
@@ -43,7 +43,7 @@ func (g *generator) renderAdapter(m *model) (string, used, error) {
 
 	var b strings.Builder
 	u := used{port: true, errs: true, context: true}
-	model := g.qual(m.Name)
+	model := this.qual(m.Name)
 
 	// ---- the entity body
 	fmt.Fprintf(&b, "// %sInput is the entity body for %s: what a create or a replace carries,\n", m.Name, model)
@@ -112,7 +112,7 @@ func (g *generator) renderAdapter(m *model) (string, used, error) {
 	fmt.Fprintf(&b, "\treturn &%sService{DefaultService: port.NewService(repo, opts...)}\n}\n\n", m.Name)
 
 	// ---- the wiring
-	if g.binding == "net" {
+	if this.binding == "net" {
 		u.http, u.net = true, true
 		fmt.Fprintf(&b, "// Mount%s mounts the resource on a ServeMux under prefix, behind %sMapper.\n", m.Name, m.Name)
 		fmt.Fprintf(&b, "//\n")
@@ -130,7 +130,7 @@ func (g *generator) renderAdapter(m *model) (string, used, error) {
 // renderCoverage is the half that ships whether or not -adapter is on. It is
 // what makes a new column a start-up refusal for every consumer rather than
 // only for the ones that generate an adapter.
-func (g *generator) renderCoverage() string {
+func (this *generator) renderCoverage() string {
 	var b strings.Builder
 	b.WriteString("// A writable column the update DTO does not name refuses to start, rather than\n")
 	b.WriteString("// becoming a column updates silently cannot reach ([[D-050]]). The generator\n")
@@ -138,9 +138,9 @@ func (g *generator) renderCoverage() string {
 	b.WriteString("// can drift apart — and this is what says so when they do, with nothing\n")
 	b.WriteString("// regenerated.\n")
 	b.WriteString("func init() {\n")
-	for _, name := range g.order {
-		m := g.models[name]
-		fmt.Fprintf(&b, "\tport.MustCoverUpdate[%s, %sUpdate](%s)\n", g.qual(m.Name), m.Name, quoteList(m.excluded()))
+	for _, name := range this.order {
+		m := this.models[name]
+		fmt.Fprintf(&b, "\tport.MustCoverUpdate[%s, %sUpdate](%s)\n", this.qual(m.Name), m.Name, quoteList(m.excluded()))
 	}
 	b.WriteString("}\n\n")
 	return b.String()

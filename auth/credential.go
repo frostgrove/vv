@@ -19,8 +19,8 @@ type Credential struct {
 }
 
 // Is reports whether the credential carries the named scheme.
-func (c Credential) Is(scheme string) bool {
-	return strings.EqualFold(c.Scheme, scheme)
+func (this Credential) Is(scheme string) bool {
+	return strings.EqualFold(this.Scheme, scheme)
 }
 
 // SchemeBearer is the scheme a JWT arrives under.
@@ -42,8 +42,8 @@ type Authenticator interface {
 type AuthenticatorFunc func(ctx context.Context, c Credential) (Principal, error)
 
 // Authenticate implements [Authenticator].
-func (f AuthenticatorFunc) Authenticate(ctx context.Context, c Credential) (Principal, error) {
-	return f(ctx, c)
+func (this AuthenticatorFunc) Authenticate(ctx context.Context, c Credential) (Principal, error) {
+	return this(ctx, c)
 }
 
 // ParseAuthorization splits an Authorization header into a credential.

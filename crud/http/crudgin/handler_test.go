@@ -527,13 +527,13 @@ func TestUnpagedIsRefusedOnAnEndpointThatDidNotDeclareIt(t *testing.T) {
 // service layer with its own rules stand in for the repository.
 func TestAServiceLayerCanStandInForTheRepository(t *testing.T) {
 	fake := newFake()
-	svc := &widgetService{fakeRepo: fake}
+	service := &widgetService{fakeRepo: fake}
 	app := gin.New()
-	New[Widget, int64, WidgetUpdate](svc).Mount(app, "/widgets")
+	New[Widget, int64, WidgetUpdate](service).Mount(app, "/widgets")
 
 	ok(t, app, http.MethodPost, "/widgets", `{"name":"bolt"}`, http.StatusCreated)
 
-	if !svc.saved {
+	if !service.saved {
 		t.Fatal("the handler bypassed the service and called the repository directly")
 	}
 	if got := fake.only(t, "Save").Model.Name; got != "BOLT" {
@@ -548,11 +548,11 @@ type widgetService struct {
 	saved bool
 }
 
-func (s *widgetService) Save(ctx context.Context, w *Widget) (Widget, error) {
-	s.saved = true
+func (this *widgetService) Save(ctx context.Context, w *Widget) (Widget, error) {
+	this.saved = true
 	copy := *w
 	copy.Name = strings.ToUpper(copy.Name)
-	return s.fakeRepo.Save(ctx, &copy)
+	return this.fakeRepo.Save(ctx, &copy)
 }
 
 // A request body that is not the model reaches the repository as the model,

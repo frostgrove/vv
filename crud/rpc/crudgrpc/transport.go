@@ -32,9 +32,9 @@ import (
 // is one google.protobuf.Struct in and one out, so a call is grpc.Invoke with
 // the document in it — which is the property [[D-052]] chose the Struct shape
 // for, read from the other side.
-func Transport(conn grpc.ClientConnInterface, name string, opts ...TransportOption) remote.Transport {
+func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport {
 	t := &transport{conn: conn, service: ServiceName(name)}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(t)
 		}
@@ -54,8 +54,8 @@ func WithVocabulary(c *errs.Codes) TransportOption {
 
 // WithCallOptions adds gRPC call options to every call — a per-call credential,
 // a compressor, a size limit.
-func WithCallOptions(opts ...grpc.CallOption) TransportOption {
-	return func(t *transport) { t.call = append(t.call, opts...) }
+func WithCallOptions(options ...grpc.CallOption) TransportOption {
+	return func(t *transport) { t.call = append(t.call, options...) }
 }
 
 type transport struct {
@@ -67,15 +67,15 @@ type transport struct {
 
 var standardCodes = sync.OnceValue(errs.StandardCodes)
 
-func (t *transport) vocabulary() *errs.Codes {
-	if t.codes != nil {
-		return t.codes
+func (this *transport) vocabulary() *errs.Codes {
+	if this.codes != nil {
+		return this.codes
 	}
 	return standardCodes()
 }
 
 // Do implements remote.Transport.
-func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
+func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
 	if call == nil {
 		return nil, fmt.Errorf("crudgrpc: call is nil")
 	}
@@ -83,11 +83,11 @@ func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	method := "/" + t.service + "/" + string(call.Method)
+	method := "/" + this.service + "/" + string(call.Method)
 
 	out := &structpb.Struct{}
-	if err := t.conn.Invoke(ctx, method, in, out, t.call...); err != nil {
-		return nil, t.fault(call.Method, method, err)
+	if err := this.conn.Invoke(ctx, method, in, out, this.call...); err != nil {
+		return nil, this.fault(call.Method, method, err)
 	}
 	raw, err := protojson.Marshal(out)
 	if err != nil {
@@ -265,7 +265,7 @@ func nestRaw(f map[string]*structpb.Value, key string, raw json.RawMessage) erro
 // interceptor in between. What tells them apart is the ErrorInfo detail — the
 // [ErrorDomain] is this library's name, and a status without it did not come
 // from a renderer here.
-func (t *transport) fault(m remote.Method, where string, err error) error {
+func (this *transport) fault(m remote.Method, where string, err error) error {
 	st, ok := status.FromError(err)
 	if !ok {
 		return fmt.Errorf("crudgrpc: calling %s: %w", where, err)
@@ -311,7 +311,7 @@ func (t *transport) fault(m remote.Method, where string, err error) error {
 		}
 	}
 
-	return port.FaultFrom(t.kindOf(st.Code(), code), code, vs, partial)
+	return port.FaultFrom(this.kindOf(st.Code(), code), code, vs, partial)
 }
 
 // kindOf answers the class, sharpened by the code where the status word cannot
@@ -323,12 +323,12 @@ func (t *transport) fault(m remote.Method, where string, err error) error {
 // declare contributes nothing, which is the same rule port.KindOfWith follows
 // on the way out — a service that declared a code and forgot to wire it must
 // not have its 422 turned into something else by the omission.
-func (t *transport) kindOf(c codes.Code, code errs.Code) errs.Kind {
+func (this *transport) kindOf(c codes.Code, code errs.Code) errs.Kind {
 	kind := KindForCode(c)
 	if c != codes.InvalidArgument {
 		return kind
 	}
-	if refined, ok := t.vocabulary().KindOf(code); ok {
+	if refined, ok := this.vocabulary().KindOf(code); ok {
 		return refined
 	}
 	return kind

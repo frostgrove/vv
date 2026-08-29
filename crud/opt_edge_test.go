@@ -249,10 +249,10 @@ func TestOptScanOfAnImpossibleValueFailsAndChangesNothing(t *testing.T) {
 // Drivers reuse the byte slice they hand to Scan, so an Opt that kept the
 // original would change under the caller as the next row is read.
 func TestOptScanCopiesTheDriversBytes(t *testing.T) {
-	src := []byte("first")
+	source := []byte("first")
 	var o crud.Opt[[]byte]
-	mustScan(t, &o, src)
-	copy(src, "SECON")
+	mustScan(t, &o, source)
+	copy(source, "SECON")
 
 	if v, _ := o.Get(); string(v) != "first" {
 		t.Fatalf("the scanned value followed the driver's buffer: %q, want %q", v, "first")
@@ -262,13 +262,13 @@ func TestOptScanCopiesTheDriversBytes(t *testing.T) {
 // Scanning never produces undefined: a row always answers the question, either
 // with a value or with NULL. Only a DTO that was never written to is undefined.
 func TestScanningNeverProducesUndefined(t *testing.T) {
-	for _, src := range []any{nil, int64(1), "x"} {
+	for _, source := range []any{nil, int64(1), "x"} {
 		var o crud.Opt[string]
-		if err := o.Scan(src); err != nil {
+		if err := o.Scan(source); err != nil {
 			continue // a conversion this element type refuses proves nothing here
 		}
 		if !o.IsDefined() {
-			t.Fatalf("scanning %#v left the Opt undefined", src)
+			t.Fatalf("scanning %#v left the Opt undefined", source)
 		}
 	}
 }
@@ -307,7 +307,7 @@ func TestOptValueForEveryState(t *testing.T) {
 // reflected over.
 type Money struct{ Cents int64 }
 
-func (m Money) Value() (driver.Value, error) { return m.Cents, nil }
+func (this Money) Value() (driver.Value, error) { return this.Cents, nil }
 
 func TestOptAsksItsElementTypeForItsDriverValue(t *testing.T) {
 	got, err := crud.Set(Money{Cents: 250}).Value()
@@ -400,9 +400,9 @@ func TestMustGetPanicsOnlyWhenThereIsNoValue(t *testing.T) {
 	}
 }
 
-func mustScan(t *testing.T, o interface{ Scan(any) error }, src any) {
+func mustScan(t *testing.T, o interface{ Scan(any) error }, source any) {
 	t.Helper()
-	if err := o.Scan(src); err != nil {
-		t.Fatalf("Scan(%#v): %v", src, err)
+	if err := o.Scan(source); err != nil {
+		t.Fatalf("Scan(%#v): %v", source, err)
 	}
 }

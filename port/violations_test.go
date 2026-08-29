@@ -187,14 +187,14 @@ func TestAFaultWithNoViolationsStillNamesItsCode(t *testing.T) {
 // say which key was consulted.
 type catalogue map[string]string
 
-func (c catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
+func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
 	var last string
 	for _, s := range v.Path {
 		if !s.IsIndex {
 			last = s.Name
 		}
 	}
-	m, ok := c[last+"."+string(v.Code)]
+	m, ok := this[last+"."+string(v.Code)]
 	return m, ok
 }
 
@@ -203,11 +203,11 @@ func (c catalogue) Message(_ context.Context, v errs.Violation, _ string) (strin
 // the ordering property is measured without a body format in the way.
 type renamer map[string]string
 
-func (r renamer) Resolve(p errs.Path) (errs.Path, bool) {
+func (this renamer) Resolve(p errs.Path) (errs.Path, bool) {
 	if len(p) != 1 || p[0].IsIndex {
 		return p, true
 	}
-	to, ok := r[p[0].Name]
+	to, ok := this[p[0].Name]
 	if !ok {
 		return p, false
 	}

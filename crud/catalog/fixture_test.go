@@ -27,18 +27,18 @@ type pgSchema struct {
 	indexes     [][]any
 }
 
-func (s pgSchema) results() []crudtest.Result {
+func (this pgSchema) results() []crudtest.Result {
 	return []crudtest.Result{
-		crudtest.Rows(s.columns...),
-		crudtest.Rows(s.constraints...),
-		crudtest.Rows(s.indexes...),
+		crudtest.Rows(this.columns...),
+		crudtest.Rows(this.constraints...),
+		crudtest.Rows(this.indexes...),
 	}
 }
 
 // push queues n passes of the same schema.
-func (s pgSchema) push(r *crudtest.Recorder, n int) *crudtest.Recorder {
+func (this pgSchema) push(r *crudtest.Recorder, n int) *crudtest.Recorder {
 	for range n {
-		r.Push(s.results()...)
+		r.Push(this.results()...)
 	}
 	return r
 }
@@ -81,7 +81,7 @@ type identified struct {
 	handle any
 }
 
-func (s identified) DataSource() any { return s.handle }
+func (this identified) DataSource() any { return this.handle }
 
 // gated holds its first statement until every declarer has reached one, so the
 // interleaving the concurrent declaration test is about happens rather than
@@ -92,9 +92,9 @@ type gated struct {
 	once   *sync.Once
 }
 
-func (g gated) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	g.once.Do(func() { g.arrive.Done(); g.arrive.Wait() })
-	return g.identified.Query(ctx, q, args...)
+func (this gated) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	this.once.Do(func() { this.arrive.Done(); this.arrive.Wait() })
+	return this.identified.Query(ctx, q, args...)
 }
 
 // awkward is a Source that cannot name a database and cannot be compared
@@ -111,7 +111,7 @@ type namedDialect struct {
 	name string
 }
 
-func (d namedDialect) Name() string { return d.name }
+func (this namedDialect) Name() string { return this.name }
 
 var (
 	_ crud.Source     = awkward{}

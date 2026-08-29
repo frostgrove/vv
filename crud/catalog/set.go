@@ -43,39 +43,39 @@ type entry struct {
 // A handle whose identity cannot be compared is refused before any statement
 // runs. Stored, it could never be found again, so every Load would re-introspect
 // and every For would miss — a catalog that looks like it is working.
-func (s *Set) Load(ctx context.Context, src crud.Source) (Catalog, error) {
-	k := crud.KeyOf(src)
+func (this *Set) Load(ctx context.Context, source crud.Source) (Catalog, error) {
+	k := crud.KeyOf(source)
 	if !findable(k) {
 		return nil, fmt.Errorf("%w: %T", ErrUncomparableHandle, k)
 	}
 
-	s.mu.Lock()
-	for _, e := range s.entries {
+	this.mu.Lock()
+	for _, e := range this.entries {
 		if crud.SameDataSource(e.key, k) {
-			s.mu.Unlock()
+			this.mu.Unlock()
 			return e.cat, nil
 		}
 	}
-	s.mu.Unlock()
+	this.mu.Unlock()
 
 	// Loaded outside the lock: introspection is several round trips, and holding
 	// the lock across them would serialise the start-up of every other database
 	// in the process behind the slowest one.
-	cat, err := Load(ctx, src)
+	cat, err := Load(ctx, source)
 	if err != nil {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	this.mu.Lock()
+	defer this.mu.Unlock()
 	// Two goroutines declaring over one handle at once both read; the first one
 	// back wins, so everybody afterwards sees one catalog rather than two.
-	for _, e := range s.entries {
+	for _, e := range this.entries {
 		if crud.SameDataSource(e.key, k) {
 			return e.cat, nil
 		}
 	}
-	s.entries = append(s.entries, entry{key: k, cat: cat})
+	this.entries = append(this.entries, entry{key: k, cat: cat})
 	return cat, nil
 }
 
@@ -104,11 +104,11 @@ func findable(k any) (ok bool) {
 // For answers the catalog already loaded for src. It does no I/O and takes no
 // context — a lookup that could load is a lazy loader, and a lazy loader cannot
 // fail at start-up.
-func (s *Set) For(src crud.Source) (Catalog, bool) {
-	k := crud.KeyOf(src)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, e := range s.entries {
+func (this *Set) For(source crud.Source) (Catalog, bool) {
+	k := crud.KeyOf(source)
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	for _, e := range this.entries {
 		if crud.SameDataSource(e.key, k) {
 			return e.cat, true
 		}

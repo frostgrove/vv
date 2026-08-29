@@ -40,9 +40,9 @@ func plan(t *testing.T) *crud.UpdatePlan {
 	return p
 }
 
-func changeMap(t *testing.T, p *crud.UpdatePlan, dto any, cur *Item) map[string]any {
+func changeMap(t *testing.T, p *crud.UpdatePlan, dataTransferObject any, cur *Item) map[string]any {
 	t.Helper()
-	changes, err := p.Changes(dto, cur)
+	changes, err := p.Changes(dataTransferObject, cur)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,13 +146,13 @@ func TestDefinedChangesCarriesTheValuesDefinedFieldsOnlyNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dto := ItemPatch{Name: ptr("x"), Note: crud.Null[string]()}
+	dataTransferObject := ItemPatch{Name: ptr("x"), Note: crud.Null[string]()}
 
-	names, err := crud.DefinedFields(s, dto)
+	names, err := crud.DefinedFields(s, dataTransferObject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changes, err := crud.DefinedChanges(s, dto)
+	changes, err := crud.DefinedChanges(s, dataTransferObject)
 	if err != nil {
 		t.Fatal(err)
 	}

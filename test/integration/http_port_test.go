@@ -34,11 +34,11 @@ type articlePort struct {
 	blocked string
 }
 
-func (s articlePort) Create(ctx context.Context, cmd port.CreateCommand[Article]) (Article, error) {
-	if cmd.Model.Title == s.blocked {
+func (this articlePort) Create(ctx context.Context, cmd port.CreateCommand[Article]) (Article, error) {
+	if cmd.Model.Title == this.blocked {
 		return Article{}, crud.ErrForbidden
 	}
-	return s.DefaultService.Create(ctx, cmd)
+	return this.DefaultService.Create(ctx, cmd)
 }
 
 // The three bindings hold one Service type, because a generic alias is the same
@@ -53,7 +53,7 @@ var (
 func newPortService(b blog) articlePort {
 	return articlePort{
 		DefaultService: port.NewService[Article, int64, ArticleUpdate](
-			specs.Executor(Articles.Bind(b.src)),
+			specs.Executor(Articles.Bind(b.source)),
 			port.WithQuery(&query.Config{
 				Preloadable: []string{"Author", "Tags", "Comments", "Comments.Author"},
 				MaxPreloads: 4,
@@ -66,7 +66,7 @@ func newPortService(b blog) articlePort {
 // portBinding is one transport's whole job: mount the service, send a request.
 type portBinding struct {
 	name  string
-	serve func(t *testing.T, svc articlePort, method, target, body string) resp
+	serve func(t *testing.T, service articlePort, method, target, body string) response
 }
 
 func portRequest(method, target, body string) *http.Request {
@@ -74,44 +74,44 @@ func portRequest(method, target, body string) *http.Request {
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	return req
+	return request
 }
 
 var portBindings = []portBinding{
-	{"crudnet", func(t *testing.T, svc articlePort, method, target, body string) resp {
+	{"crudnet", func(t *testing.T, service articlePort, method, target, body string) response {
 		t.Helper()
 		mux := http.NewServeMux()
-		crudnet.Serving[Article, int64, ArticleUpdate](svc).Mount(mux, "/articles")
+		crudnet.Serving[Article, int64, ArticleUpdate](service).Mount(mux, "/articles")
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, portRequest(method, target, body))
-		return resp{status: w.Code, body: w.Body.Bytes()}
+		return response{status: w.Code, body: w.Body.Bytes()}
 	}},
-	{"crudgin", func(t *testing.T, svc articlePort, method, target, body string) resp {
+	{"crudgin", func(t *testing.T, service articlePort, method, target, body string) response {
 		t.Helper()
 		app := gin.New()
-		crudgin.Serving[Article, int64, ArticleUpdate](svc).Mount(app, "/articles")
+		crudgin.Serving[Article, int64, ArticleUpdate](service).Mount(app, "/articles")
 		w := httptest.NewRecorder()
 		app.ServeHTTP(w, portRequest(method, target, body))
-		return resp{status: w.Code, body: w.Body.Bytes()}
+		return response{status: w.Code, body: w.Body.Bytes()}
 	}},
-	{"crudfiber", func(t *testing.T, svc articlePort, method, target, body string) resp {
+	{"crudfiber", func(t *testing.T, service articlePort, method, target, body string) response {
 		t.Helper()
 		app := fiber.New()
-		app.Use("/articles", crudfiber.Serving[Article, int64, ArticleUpdate](svc).Routes())
-		res, err := app.Test(portRequest(method, target, body), fiber.TestConfig{Timeout: 0})
+		app.Use("/articles", crudfiber.Serving[Article, int64, ArticleUpdate](service).Routes())
+		httpResponse, err := app.Test(portRequest(method, target, body), fiber.TestConfig{Timeout: 0})
 		if err != nil {
 			t.Fatalf("crudfiber: %s %s: %v", method, target, err)
 		}
-		defer res.Body.Close()
-		raw, err := io.ReadAll(res.Body)
+		defer httpResponse.Body.Close()
+		raw, err := io.ReadAll(httpResponse.Body)
 		if err != nil {
 			t.Fatalf("crudfiber: reading the response: %v", err)
 		}
-		return resp{status: res.StatusCode, body: raw}
+		return response{status: httpResponse.StatusCode, body: raw}
 	}},
 }
 
@@ -122,13 +122,13 @@ func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
 			ann, _, generics, _, _ := seedBlog(t, b)
-			svc := newPortService(b)
+			service := newPortService(b)
 
 			t.Run("the same read is byte-identical on all three", func(t *testing.T) {
 				var first portBinding
-				var want resp
+				var want response
 				for i, bind := range portBindings {
-					got := bind.serve(t, svc, http.MethodGet, "/articles/"+itoa64(generics.ID)+"?preload=author", "")
+					got := bind.serve(t, service, http.MethodGet, "/articles/"+itoa64(generics.ID)+"?preload=author", "")
 					if got.status != http.StatusOK {
 						t.Fatalf("%s answered %d: %s", bind.name, got.status, got.body)
 					}
@@ -144,7 +144,7 @@ func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 
 			t.Run("the service's own rule holds on all three", func(t *testing.T) {
 				for _, bind := range portBindings {
-					got := bind.serve(t, svc, http.MethodPost, "/articles",
+					got := bind.serve(t, service, http.MethodPost, "/articles",
 						`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "forbidden title"}`)
 					if got.status != http.StatusForbidden {
 						t.Fatalf("%s answered %d for the title the service refuses: %s", bind.name, got.status, got.body)
@@ -158,7 +158,7 @@ func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 			// never mounted at all.
 			t.Run("and the control: a title it allows is written", func(t *testing.T) {
 				for _, bind := range portBindings {
-					got := bind.serve(t, svc, http.MethodPost, "/articles",
+					got := bind.serve(t, service, http.MethodPost, "/articles",
 						`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "through the port", "ID": 999999}`)
 					if got.status != http.StatusCreated {
 						t.Fatalf("%s answered %d: %s", bind.name, got.status, got.body)

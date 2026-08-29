@@ -57,9 +57,9 @@ type config struct{ faults errs.Classifier }
 //	crudsql.From(tx, crudsql.WithFaults(sqlfault.New("postgres")))
 func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = c } }
 
-func classifier(def errs.Classifier, opts []Option) errs.Classifier {
+func classifier(def errs.Classifier, options []Option) errs.Classifier {
 	o := config{faults: def}
-	for _, fn := range opts {
+	for _, fn := range options {
 		if fn != nil {
 			fn(&o)
 		}
@@ -72,49 +72,49 @@ func classifier(def errs.Classifier, opts []Option) errs.Classifier {
 // It names no engine and so gets no classifier: a violation through it is the
 // sentinel and no code. Deriving the engine from the dialect is what [[D-046]]
 // forbids, because crud.MySQL is MariaDB too. Pass WithFaults to say which.
-func From(q Queryer, opts ...Option) Executor {
-	return Executor{q: q, faults: classifier(nil, opts)}
+func From(q Queryer, options ...Option) Executor {
+	return Executor{q: q, faults: classifier(nil, options)}
 }
 
 // Unwrap returns the wrapped handle.
-func (e Executor) Unwrap() Queryer { return e.q }
+func (this Executor) Unwrap() Queryer { return this.q }
 
 // DataSource names the database this executor speaks to, which is what
 // crud.WithExecutorFor matches on. For a DB built by Open it is the *sql.DB, so
 // every repository over that pool answers with the same handle however it was
 // wrapped.
-func (e Executor) DataSource() any { return e.q }
+func (this Executor) DataSource() any { return this.q }
 
 // InTransaction reports whether this wrapper holds database/sql's concrete
 // transaction handle. A *sql.DB and a *sql.Conn both satisfy Queryer too, but
 // neither provides the atomic boundary a multi-statement repository operation
 // needs.
-func (e Executor) InTransaction() bool {
-	_, ok := e.q.(*sql.Tx)
+func (this Executor) InTransaction() bool {
+	_, ok := this.q.(*sql.Tx)
 	return ok
 }
 
-func (e Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
-	res, err := e.q.ExecContext(ctx, query, args...)
+func (this Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
+	response, err := this.q.ExecContext(ctx, query, args...)
 	if err != nil {
-		return crud.Result{}, e.conflict(err)
+		return crud.Result{}, this.conflict(err)
 	}
 	out := crud.Result{}
-	if n, err := res.RowsAffected(); err == nil {
+	if n, err := response.RowsAffected(); err == nil {
 		out.RowsAffected = n
 	}
 	// Not every driver supports it; MySQL does and that is where we need it.
-	if id, err := res.LastInsertId(); err == nil {
+	if id, err := response.LastInsertId(); err == nil {
 		out.LastInsertID, out.HasLastInsertID = id, true
 	}
 	return out, nil
 }
 
-func (e Executor) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
+func (this Executor) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
 	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
-	rs, err := e.q.QueryContext(ctx, query, args...)
+	rs, err := this.q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, e.conflict(err)
+		return nil, this.conflict(err)
 	}
 	return rows{rs}, nil
 }
@@ -123,7 +123,7 @@ func (e Executor) Query(ctx context.Context, query string, args ...any) (crud.Ro
 // want. The outer method shadows the embedded one.
 type rows struct{ *sql.Rows }
 
-func (r rows) Close() { _ = r.Rows.Close() }
+func (this rows) Close() { _ = this.Rows.Close() }
 
 // source pairs an arbitrary Queryer with a dialect.
 type source struct {
@@ -131,23 +131,23 @@ type source struct {
 	d crud.Dialect
 }
 
-func (s source) Dialect() crud.Dialect { return s.d }
+func (this source) Dialect() crud.Dialect { return this.d }
 
 // Source builds a crud.Source over any Queryer. Use it when a framework hands
 // you a handle rather than a *sql.DB and you want to build repositories on it
 // directly; use Open when you have the *sql.DB and want transactions too.
 //
 // It names no engine either, for the same reason From does not.
-func Source(q Queryer, d crud.Dialect, opts ...Option) crud.Source {
-	return source{Executor{q: q, faults: classifier(nil, opts)}, d}
+func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source {
+	return source{Executor{q: q, faults: classifier(nil, options)}, d}
 }
 
 // DB is a full crud.Source over a *sql.DB: executes, knows its dialect and can
 // start transactions.
 type DB struct {
 	Executor
-	db *sql.DB
-	d  crud.Dialect
+	database *sql.DB
+	d        crud.Dialect
 	// TxOptions is used by Begin; nil means the driver default.
 	TxOptions *sql.TxOptions
 }
@@ -157,41 +157,49 @@ type DB struct {
 // crud.Dialect says how to write SQL and not which server is answering —
 // crud.MySQL targets MySQL and MariaDB both — so Open cannot name an engine and
 // gets no classifier. The four constructors below each name theirs.
-func Open(db *sql.DB, d crud.Dialect, opts ...Option) DB {
-	return DB{Executor{q: db, faults: classifier(nil, opts)}, db, d, nil}
+func Open(database *sql.DB, d crud.Dialect, options ...Option) DB {
+	return DB{Executor{q: database, faults: classifier(nil, options)}, database, d, nil}
 }
 
 // The four engine shorthands. Each writes its engine string here, as a literal,
 // because that string is a declaration and not something to be derived: MariaDB
 // and MySQL share a driver, a dialect and a wire protocol, and answer a failed
 // CHECK with two different numbers ([[D-046]]).
-func Postgres(db *sql.DB, opts ...Option) DB { return engine(db, crud.Postgres{}, "postgres", opts) }
-func MySQL(db *sql.DB, opts ...Option) DB    { return engine(db, crud.MySQL{}, "mysql", opts) }
-func MariaDB(db *sql.DB, opts ...Option) DB  { return engine(db, crud.MySQL{}, "mariadb", opts) }
-func SQLite(db *sql.DB, opts ...Option) DB   { return engine(db, crud.SQLite{}, "sqlite", opts) }
-
-func engine(db *sql.DB, d crud.Dialect, name string, opts []Option) DB {
-	return DB{Executor{q: db, faults: classifier(sqlfault.New(name), opts)}, db, d, nil}
+func Postgres(database *sql.DB, options ...Option) DB {
+	return engine(database, crud.Postgres{}, "postgres", options)
+}
+func MySQL(database *sql.DB, options ...Option) DB {
+	return engine(database, crud.MySQL{}, "mysql", options)
+}
+func MariaDB(database *sql.DB, options ...Option) DB {
+	return engine(database, crud.MySQL{}, "mariadb", options)
+}
+func SQLite(database *sql.DB, options ...Option) DB {
+	return engine(database, crud.SQLite{}, "sqlite", options)
 }
 
-func (d DB) Dialect() crud.Dialect { return d.d }
+func engine(database *sql.DB, d crud.Dialect, name string, options []Option) DB {
+	return DB{Executor{q: database, faults: classifier(sqlfault.New(name), options)}, database, d, nil}
+}
+
+func (this DB) Dialect() crud.Dialect { return this.d }
 
 // DB returns the underlying handle.
-func (d DB) DB() *sql.DB { return d.db }
+func (this DB) DB() *sql.DB { return this.database }
 
 // WithTxOptions returns a copy that starts transactions with the given options.
-func (d DB) WithTxOptions(o *sql.TxOptions) DB { d.TxOptions = o; return d }
+func (this DB) WithTxOptions(o *sql.TxOptions) DB { this.TxOptions = o; return this }
 
 // Begin starts a transaction.
-func (d DB) Begin(ctx context.Context) (crud.Tx, error) {
-	tx, err := d.db.BeginTx(ctx, d.TxOptions)
+func (this DB) Begin(ctx context.Context) (crud.Tx, error) {
+	tx, err := this.database.BeginTx(ctx, this.TxOptions)
 	if err != nil {
 		return nil, err
 	}
 	// The classifier goes into the transaction. A deferred constraint fires at
 	// COMMIT, and a Tx without it would make that one shape of conflict a
 	// sentinel with no code while the immediate shape carried one.
-	return &Tx{Executor: Executor{q: tx, faults: d.faults}, tx: tx}, nil
+	return &Tx{Executor: Executor{q: tx, faults: this.faults}, tx: tx}, nil
 }
 
 // Tx is a database/sql transaction. database/sql has no nested transactions, so
@@ -207,19 +215,19 @@ type Tx struct {
 // here and not at the statement, so a duplicate key or a missing parent arrives
 // with no statement having just failed — and returning it untouched made that
 // one shape of conflict a 500 while the immediate shape was a 409.
-func (t *Tx) Commit(ctx context.Context) error   { return t.conflict(t.tx.Commit()) }
-func (t *Tx) Rollback(ctx context.Context) error { return t.tx.Rollback() }
+func (this *Tx) Commit(ctx context.Context) error   { return this.conflict(this.tx.Commit()) }
+func (this *Tx) Rollback(ctx context.Context) error { return this.tx.Rollback() }
 
 // Tx returns the underlying *sql.Tx, e.g. to hand it to another library.
-func (t *Tx) Tx() *sql.Tx { return t.tx }
+func (this *Tx) Tx() *sql.Tx { return this.tx }
 
 // Begin opens a savepoint inside the transaction.
-func (t *Tx) Begin(ctx context.Context) (crud.Tx, error) {
-	name := "vv_sp_" + strconv.FormatInt(t.depth.Add(1), 10)
-	if _, err := t.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+func (this *Tx) Begin(ctx context.Context) (crud.Tx, error) {
+	name := "vv_sp_" + strconv.FormatInt(this.depth.Add(1), 10)
+	if _, err := this.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
 		return nil, err
 	}
-	return &savepoint{Executor: t.Executor, parent: t, name: name}, nil
+	return &savepoint{Executor: this.Executor, parent: this, name: name}, nil
 }
 
 type savepoint struct {
@@ -239,17 +247,17 @@ type savepoint struct {
 // keeps the two PostgreSQL adapters in step, because crudpgx's nested Begin
 // returns the same Tx whose Commit classifies and one nested write must not be a
 // 409 through pgx and a 500 through database/sql.
-func (s *savepoint) Commit(ctx context.Context) error {
-	_, err := s.parent.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+s.name)
-	return s.conflict(err)
+func (this *savepoint) Commit(ctx context.Context) error {
+	_, err := this.parent.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+this.name)
+	return this.conflict(err)
 }
 
-func (s *savepoint) Rollback(ctx context.Context) error {
-	_, err := s.parent.tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+s.name)
+func (this *savepoint) Rollback(ctx context.Context) error {
+	_, err := this.parent.tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+this.name)
 	return err
 }
 
-func (s *savepoint) Begin(ctx context.Context) (crud.Tx, error) { return s.parent.Begin(ctx) }
+func (this *savepoint) Begin(ctx context.Context) (crud.Tx, error) { return this.parent.Begin(ctx) }
 
 var (
 	_ crud.Source     = DB{}

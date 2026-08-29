@@ -38,20 +38,20 @@ import (
 //
 // Installing it twice authenticates once: [auth.Guard] hands back a context
 // that already carries a principal untouched.
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) gin.HandlerFunc {
-	if g == nil {
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.HandlerFunc {
+	if guard == nil {
 		panic("authgin: Middleware needs a Guard; without one nothing is authenticated")
 	}
-	rd := authhttp.RendererFor(opts)
-	return func(c *gin.Context) {
-		ctx, err := g.Authenticate(c.Request.Context(), c.GetHeader)
+	renderer := authhttp.RendererFor(options)
+	return func(ginContext *gin.Context) {
+		ctx, err := guard.Authenticate(ginContext.Request.Context(), ginContext.GetHeader)
 		if err != nil {
-			_ = c.Error(err)
-			authhttp.Refuse(c.Writer, c.Request, rd, err)
-			c.Abort()
+			_ = ginContext.Error(err)
+			authhttp.Refuse(ginContext.Writer, ginContext.Request, renderer, err)
+			ginContext.Abort()
 			return
 		}
-		c.Request = c.Request.WithContext(ctx)
-		c.Next()
+		ginContext.Request = ginContext.Request.WithContext(ctx)
+		ginContext.Next()
 	}
 }

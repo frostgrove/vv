@@ -46,10 +46,10 @@ var gateTableOnlyPolicy = security.ScopeField[EgParent, int64]("Name", gateTenan
 
 var GateParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents")
 
-func gateSeed(t *testing.T, src crud.Source) {
+func gateSeed(t *testing.T, source crud.Source) {
 	t.Helper()
 	ctx := context.Background()
-	parents, kids := EgParents.Bind(src), EgKids.Bind(src)
+	parents, kids := EgParents.Bind(source), EgKids.Bind(source)
 
 	for _, p := range []EgParent{{ID: 1, Name: "t1"}, {ID: 2, Name: "t2"}} {
 		if err := parents.Save(ctx, &p); err != nil {
@@ -72,12 +72,12 @@ func TestTheGatesScopeFollowsAPreload(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			gateSeed(t, tg.src)
+			egWipe(t, tg.source)
+			gateSeed(t, tg.source)
 			ctx := asTenant(context.Background(), "t1")
 
 			t.Run("declared", func(t *testing.T) {
-				gated := GateParents.Bind(tg.src, security.Gate(gateWholePolicy))
+				gated := GateParents.Bind(tg.source, security.Gate(gateWholePolicy))
 				got, err := gated.GetAll(ctx, crud.Preload("Kids"), crud.OrderBy(crud.Asc("ID")))
 				if err != nil {
 					t.Fatal(err)
@@ -91,7 +91,7 @@ func TestTheGatesScopeFollowsAPreload(t *testing.T) {
 			})
 
 			t.Run("not declared", func(t *testing.T) {
-				gated := GateParents.Bind(tg.src, security.Gate(gateTableOnlyPolicy))
+				gated := GateParents.Bind(tg.source, security.Gate(gateTableOnlyPolicy))
 				got, err := gated.GetAll(ctx, crud.Preload("Kids"))
 				if err != nil {
 					t.Fatal(err)
@@ -116,13 +116,13 @@ func TestTheGatesScopeFollowsANestedFilter(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			gateSeed(t, tg.src)
+			egWipe(t, tg.source)
+			gateSeed(t, tg.source)
 			ctx := asTenant(context.Background(), "t1")
 
 			// "give me parents that have a t2 kid" — a question t1 may ask and
 			// must always be answered no, because t1 cannot see t2's kids.
-			gated := GateParents.Bind(tg.src, security.Gate(gateWholePolicy))
+			gated := GateParents.Bind(tg.source, security.Gate(gateWholePolicy))
 			n, err := gated.Count(ctx, crud.Where(crud.Eq("Kids.Name", "t2")))
 			if err != nil {
 				t.Fatal(err)
@@ -142,7 +142,7 @@ func TestTheGatesScopeFollowsANestedFilter(t *testing.T) {
 			}
 
 			// Without the declaration the oracle answers.
-			leaky := GateParents.Bind(tg.src, security.Gate(gateTableOnlyPolicy))
+			leaky := GateParents.Bind(tg.source, security.Gate(gateTableOnlyPolicy))
 			n, err = leaky.Count(ctx, crud.Where(crud.Eq("Kids.Name", "t2")))
 			if err != nil {
 				t.Fatal(err)
@@ -165,17 +165,17 @@ func TestABlueprintNarrowingAndAPolicyNarrowingBothApply(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			gateSeed(t, tg.src)
+			egWipe(t, tg.source)
+			gateSeed(t, tg.source)
 			ctx := asTenant(context.Background(), "t1")
 
 			// One more kid of t1's, tombstoned.
 			extra := EgKid{ID: 12, ParentID: crud.Set(int64(1)), Name: "TOMBSTONE"}
-			if err := EgKids.Bind(tg.src).Save(context.Background(), &extra); err != nil {
+			if err := EgKids.Bind(tg.source).Save(context.Background(), &extra); err != nil {
 				t.Fatal(err)
 			}
 
-			gated := scoped.Bind(tg.src, security.Gate(gateWholePolicy))
+			gated := scoped.Bind(tg.source, security.Gate(gateWholePolicy))
 			got, err := gated.GetAll(ctx, crud.Preload("Kids"))
 			if err != nil {
 				t.Fatal(err)

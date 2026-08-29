@@ -185,9 +185,9 @@ func WithRetryDelay(d time.Duration) RenderOption {
 }
 
 // NewRenderer builds the default renderer.
-func NewRenderer(opts ...RenderOption) *StatusRenderer {
+func NewRenderer(options ...RenderOption) *StatusRenderer {
 	r := &StatusRenderer{max: MaxViolations, retryDelay: DefaultRetryDelay}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(r)
 		}
@@ -201,20 +201,20 @@ var _ Renderer = (*StatusRenderer)(nil)
 // standard one. It is never a value: port answers the kind and the default
 // message through behaviour, so a *errs.Codes a caller could reach never exists
 // to be fought over.
-func (r *StatusRenderer) codesOrNil() *errs.Codes {
-	if r == nil {
+func (this *StatusRenderer) codesOrNil() *errs.Codes {
+	if this == nil {
 		return nil
 	}
-	return r.codes
+	return this.codes
 }
 
 // Code answers the code this renderer would give the error, without building
 // the details — for a caller that has to decide before it renders.
-func (r *StatusRenderer) Code(err error) codes.Code {
+func (this *StatusRenderer) Code(err error) codes.Code {
 	if err == nil {
 		return codes.OK
 	}
-	return CodeFor(port.KindOfWith(err, r.codesOrNil()))
+	return CodeFor(port.KindOfWith(err, this.codesOrNil()))
 }
 
 // Render implements [Renderer].
@@ -234,11 +234,11 @@ func (r *StatusRenderer) Code(err error) codes.Code {
 // instead is the message ladder's answer: for a fault carrying violations, the
 // first one in the rendered order; for a fault carrying none, the ladder's
 // answer for the fault's own code, which the pipeline synthesises.
-func (r *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
+func (this *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
 	if err == nil {
 		return nil
 	}
-	code := CodeFor(port.KindOfWith(err, r.codesOrNil()))
+	code := CodeFor(port.KindOfWith(err, this.codesOrNil()))
 	if code == codes.Internal {
 		// The one status an internal failure ever has. It carries no details,
 		// so the silence holds by construction rather than by a case in a
@@ -249,14 +249,14 @@ func (r *StatusRenderer) Render(ctx context.Context, err error) *status.Status {
 
 	f := port.FaultOf(err)
 	vs := port.Violations(ctx, f, &port.ViolationOptions{
-		Resolvers: r.resolvers,
-		Messages:  r.messages,
-		Codes:     r.codesOrNil(),
-		Max:       r.max,
+		Resolvers: this.resolvers,
+		Messages:  this.messages,
+		Codes:     this.codesOrNil(),
+		Max:       this.max,
 	})
 
 	st := status.New(code, headline(vs))
-	full, attachErr := st.WithDetails(r.details(ctx, f, vs, code)...)
+	full, attachErr := st.WithDetails(this.details(ctx, f, vs, code)...)
 	if attachErr != nil {
 		// A detail that will not marshal must not cost the caller its status.
 		// The code and the sentence are what a client branches on; the details
@@ -291,7 +291,7 @@ func headline(vs []errs.Violation) string {
 // split under another name. A violation that names no field becomes a field
 // violation with an empty Field, which is lossless and is what the envelope's
 // `general` group says in its own shape.
-func (r *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []errs.Violation, code codes.Code) []protoadapt.MessageV1 {
+func (this *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []errs.Violation, code codes.Code) []protoadapt.MessageV1 {
 	locale := port.LocaleFrom(ctx)
 	br := &errdetails.BadRequest{FieldViolations: make([]*errdetails.BadRequest_FieldViolation, 0, len(vs))}
 	for _, v := range vs {
@@ -331,8 +331,8 @@ func (r *StatusRenderer) details(ctx context.Context, f *errs.Fault, vs []errs.V
 	}
 
 	out := []protoadapt.MessageV1{br, info}
-	if code == codes.Unavailable && r.retryDelay > 0 {
-		out = append(out, &errdetails.RetryInfo{RetryDelay: durationpb.New(r.retryDelay)})
+	if code == codes.Unavailable && this.retryDelay > 0 {
+		out = append(out, &errdetails.RetryInfo{RetryDelay: durationpb.New(this.retryDelay)})
 	}
 	return out
 }

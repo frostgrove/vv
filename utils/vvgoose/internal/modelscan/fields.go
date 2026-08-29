@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[string]bool) []Field {
+func (this *packageSource) fields(decl *structSource, prefix string, seen map[string]bool) []Field {
 	if seen[decl.name] {
 		return nil
 	}
@@ -20,7 +20,7 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 	var out []Field
 	for _, raw := range decl.typ.Fields.List {
 		tag := fieldTag(raw)
-		db, hasDB := tag.Lookup("db")
+		database, hasDB := tag.Lookup("db")
 		rel, hasRel := tag.Lookup("rel")
 		gorm, _ := tag.Lookup("gorm")
 		gormOpts := parseGormTag(gorm)
@@ -34,8 +34,8 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 				embeddedPrefix += value
 			}
 			if name := localTypeName(raw.Type); name != "" {
-				if embedded := pkg.structs[name]; embedded != nil {
-					out = append(out, pkg.fields(embedded, embeddedPrefix, seen)...)
+				if embedded := this.structs[name]; embedded != nil {
+					out = append(out, this.fields(embedded, embeddedPrefix, seen)...)
 				}
 				continue
 			}
@@ -45,14 +45,14 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 			continue
 		}
 
-		if db == "-" || hasRel || hasGormOption(gormOpts, "-") {
+		if database == "-" || hasRel || hasGormOption(gormOpts, "-") {
 			continue
 		}
 		// A named local struct is normally a relation/bookkeeping field. GORM's
 		// explicit embedded spelling is the exception and flattens its columns.
-		if name := localTypeName(raw.Type); name != "" && pkg.structs[name] != nil {
+		if name := localTypeName(raw.Type); name != "" && this.structs[name] != nil {
 			if hasGormOption(gormOpts, "embedded") || gormOpts["embeddedprefix"] != "" {
-				out = append(out, pkg.fields(pkg.structs[name], prefix+gormOpts["embeddedprefix"], seen)...)
+				out = append(out, this.fields(this.structs[name], prefix+gormOpts["embeddedprefix"], seen)...)
 			}
 			continue
 		}
@@ -69,7 +69,7 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 			if !ident.IsExported() {
 				continue
 			}
-			column, dbOpts := parseDBTag(db)
+			column, dbOpts := parseDBTag(database)
 			if column == "" {
 				column = gormOpts["column"]
 			}
@@ -83,10 +83,10 @@ func (pkg *packageSource) fields(decl *structSource, prefix string, seen map[str
 				Column:         column,
 				GoType:         expression(decl, raw.Type),
 				CanonicalType:  canonicalExpression(decl.imports, decl.fset, raw.Type),
-				UnderlyingType: pkg.underlyingType(decl.imports, decl.fset, raw.Type, map[string]bool{}),
+				UnderlyingType: this.underlyingType(decl.imports, decl.fset, raw.Type, map[string]bool{}),
 				File:           displayPath(decl.file),
 				Line:           line,
-				Nullable:       pkg.resolvedNullable(decl.imports, raw.Type, map[string]bool{}),
+				Nullable:       this.resolvedNullable(decl.imports, raw.Type, map[string]bool{}),
 				PrimaryKey:     dbOpts["pk"] || dbOpts["primarykey"] || dbOpts["primary_key"] || hasGormOption(gormOpts, "primarykey"),
 				Auto:           dbOpts["auto"] || dbOpts["identity"] || dbOpts["serial"] || dbOpts["autoincrement"] || gormBool(gormOpts, "autoincrement", true),
 				NoAuto:         dbOpts["noauto"] || gormBool(gormOpts, "autoincrement", false),
@@ -140,14 +140,14 @@ func fieldTag(field *ast.Field) reflect.StructTag {
 func parseDBTag(raw string) (string, map[string]bool) {
 	parts := strings.Split(raw, ",")
 	name := strings.TrimSpace(parts[0])
-	opts := map[string]bool{}
+	options := map[string]bool{}
 	for _, option := range parts[1:] {
 		option = strings.ToLower(strings.TrimSpace(option))
 		if option != "" {
-			opts[option] = true
+			options[option] = true
 		}
 	}
-	return name, opts
+	return name, options
 }
 
 func parseGormTag(raw string) map[string]string {
@@ -243,24 +243,24 @@ func canonicalPackageName(path string) string {
 	return path
 }
 
-func (pkg *packageSource) underlyingType(imports map[string]string, fset *token.FileSet, expr ast.Expr, seen map[string]bool) string {
+func (this *packageSource) underlyingType(imports map[string]string, fset *token.FileSet, expr ast.Expr, seen map[string]bool) string {
 	switch expr := expr.(type) {
 	case *ast.StarExpr:
-		return pkg.underlyingType(imports, fset, expr.X, seen)
+		return this.underlyingType(imports, fset, expr.X, seen)
 	case *ast.ParenExpr:
-		return pkg.underlyingType(imports, fset, expr.X, seen)
+		return this.underlyingType(imports, fset, expr.X, seen)
 	case *ast.IndexExpr:
 		if genericNullable(expr.X) {
-			return pkg.underlyingType(imports, fset, expr.Index, seen)
+			return this.underlyingType(imports, fset, expr.Index, seen)
 		}
 	case *ast.IndexListExpr:
 		if genericNullable(expr.X) && len(expr.Indices) == 1 {
-			return pkg.underlyingType(imports, fset, expr.Indices[0], seen)
+			return this.underlyingType(imports, fset, expr.Indices[0], seen)
 		}
 	case *ast.Ident:
-		if source := pkg.types[expr.Name]; source != nil && !seen[expr.Name] {
+		if source := this.types[expr.Name]; source != nil && !seen[expr.Name] {
 			seen[expr.Name] = true
-			resolved := pkg.underlyingType(source.imports, source.fset, source.typ, seen)
+			resolved := this.underlyingType(source.imports, source.fset, source.typ, seen)
 			delete(seen, expr.Name)
 			return resolved
 		}
@@ -394,17 +394,17 @@ func nullableType(expr ast.Expr) bool {
 	}
 }
 
-func (pkg *packageSource) resolvedNullable(imports map[string]string, expr ast.Expr, seen map[string]bool) bool {
+func (this *packageSource) resolvedNullable(imports map[string]string, expr ast.Expr, seen map[string]bool) bool {
 	if nullableType(expr) {
 		return true
 	}
 	switch expr := expr.(type) {
 	case *ast.ParenExpr:
-		return pkg.resolvedNullable(imports, expr.X, seen)
+		return this.resolvedNullable(imports, expr.X, seen)
 	case *ast.Ident:
-		if source := pkg.types[expr.Name]; source != nil && !seen[expr.Name] {
+		if source := this.types[expr.Name]; source != nil && !seen[expr.Name] {
 			seen[expr.Name] = true
-			resolved := pkg.resolvedNullable(source.imports, source.typ, seen)
+			resolved := this.resolvedNullable(source.imports, source.typ, seen)
 			delete(seen, expr.Name)
 			return resolved
 		}

@@ -26,16 +26,16 @@ import (
 // It takes no options. §16 of ROADMAP-errors.md still owes a number for catalog
 // load time, and a knob whose default nobody has decided is surface for nobody;
 // the caller's context is the only bound.
-func Load(ctx context.Context, src crud.Source) (Catalog, error) {
-	b, err := backendFor(ctx, src)
+func Load(ctx context.Context, source crud.Source) (Catalog, error) {
+	b, err := backendFor(ctx, source)
 	if err != nil {
 		return nil, err
 	}
-	tables, err := b.read(ctx, src)
+	tables, err := b.read(ctx, source)
 	if err != nil {
 		return nil, err
 	}
-	c := &loaded{src: src, backend: b, now: time.Now}
+	c := &loaded{source: source, backend: b, now: time.Now}
 	c.snap.Store(newSnapshot(tables))
 	return c, nil
 }
@@ -44,7 +44,7 @@ func Load(ctx context.Context, src crud.Source) (Catalog, error) {
 // the vocabulary errs.Detail.Dialect uses.
 type backend struct {
 	dialect string
-	read    func(ctx context.Context, src crud.Source) ([]Table, error)
+	read    func(ctx context.Context, source crud.Source) ([]Table, error)
 }
 
 // backendFor chooses the statements before any of them run.
@@ -55,8 +55,8 @@ type backend struct {
 // statement text cannot serve both, so the dialect has to be known before the
 // first statement is sent. crud.Dialect.Name answers "mysql" for both, which is
 // exactly what errs/sqlerr says it cannot be the source of.
-func backendFor(ctx context.Context, src crud.Source) (backend, error) {
-	d := src.Dialect()
+func backendFor(ctx context.Context, source crud.Source) (backend, error) {
+	d := source.Dialect()
 	if d == nil {
 		return backend{}, fmt.Errorf("%w: the source has no dialect", ErrUnknownDialect)
 	}
@@ -66,7 +66,7 @@ func backendFor(ctx context.Context, src crud.Source) (backend, error) {
 	case "sqlite":
 		return backend{dialect: "sqlite", read: readSQLite}, nil
 	case "mysql":
-		maria, err := isMariaDB(ctx, src)
+		maria, err := isMariaDB(ctx, source)
 		if err != nil {
 			return backend{}, err
 		}
@@ -82,9 +82,9 @@ func backendFor(ctx context.Context, src crud.Source) (backend, error) {
 // API rather than localised error text, so [[D-039]] is not in play — but it
 // costs one round trip per Load, and a MySQL-compatible proxy that rewrites the
 // banner would be misread.
-func isMariaDB(ctx context.Context, src crud.Source) (bool, error) {
+func isMariaDB(ctx context.Context, source crud.Source) (bool, error) {
 	var banner string
-	err := eachRow(ctx, src, "the server version", "SELECT VERSION()", nil, func(rows crud.Rows) error {
+	err := eachRow(ctx, source, "the server version", "SELECT VERSION()", nil, func(rows crud.Rows) error {
 		return rows.Scan(&banner)
 	})
 	if err != nil {
@@ -106,8 +106,8 @@ func isMariaDB(ctx context.Context, src crud.Source) (bool, error) {
 // text and stays inside the process on both call paths: Load fails before any
 // request exists, and Reload — the request-time one — returns an error no
 // transport recognises, so it renders as a 500 with a silent body ([[D-044]]).
-func eachRow(ctx context.Context, src crud.Source, what, q string, args []any, scan func(crud.Rows) error) error {
-	rows, err := src.Query(ctx, q, args...)
+func eachRow(ctx context.Context, source crud.Source, what, q string, args []any, scan func(crud.Rows) error) error {
+	rows, err := source.Query(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("%w: reading %s: %w", ErrIntrospection, what, err)
 	}
@@ -185,14 +185,14 @@ func familyOf(k Kind) conFamily {
 func newBuilder() *builder { return &builder{byKey: map[tableKey]*tableBuild{}} }
 
 // table finds or starts a table. First sight fixes its position.
-func (b *builder) table(schema, name string) *tableBuild {
+func (this *builder) table(schema, name string) *tableBuild {
 	k := tableKey{schema, name}
-	if tb, ok := b.byKey[k]; ok {
+	if tb, ok := this.byKey[k]; ok {
 		return tb
 	}
 	tb := &tableBuild{t: Table{Name: name, Schema: schema}, byCon: map[conBuildKey]*Constraint{}}
-	b.byKey[k] = tb
-	b.tables = append(b.tables, tb)
+	this.byKey[k] = tb
+	this.tables = append(this.tables, tb)
 	return tb
 }
 
@@ -207,14 +207,14 @@ func (b *builder) table(schema, name string) *tableBuild {
 // Expressions and RefColumns, which is the position parallel a probe reads its
 // results by ([[D-042]]) — and with a Kind that differed between the two servers
 // for identical DDL, because it was whichever row the server returned first.
-func (tb *tableBuild) constraint(name string, kind Kind) *Constraint {
+func (this *tableBuild) constraint(name string, kind Kind) *Constraint {
 	k := conBuildKey{name: name, family: familyOf(kind)}
-	if c, ok := tb.byCon[k]; ok {
+	if c, ok := this.byCon[k]; ok {
 		return c
 	}
-	c := &Constraint{Name: name, Table: tb.t.Name, Schema: tb.t.Schema, Kind: kind}
-	tb.byCon[k] = c
-	tb.cons = append(tb.cons, c)
+	c := &Constraint{Name: name, Table: this.t.Name, Schema: this.t.Schema, Kind: kind}
+	this.byCon[k] = c
+	this.cons = append(this.cons, c)
 	return c
 }
 
@@ -222,9 +222,9 @@ func (tb *tableBuild) constraint(name string, kind Kind) *Constraint {
 // taken from the primary-key constraint where one was read and left alone where
 // a back-end filled it in itself — SQLite reports a rowid primary key through
 // its column pragma and through no index at all.
-func (b *builder) finish() []Table {
-	out := make([]Table, 0, len(b.tables))
-	for _, tb := range b.tables {
+func (this *builder) finish() []Table {
+	out := make([]Table, 0, len(this.tables))
+	for _, tb := range this.tables {
 		tb.t.Constraints = make([]Constraint, len(tb.cons))
 		for i, c := range tb.cons {
 			tb.t.Constraints[i] = *c
@@ -292,7 +292,7 @@ func newSnapshot(tables []Table) *snapshot {
 // loaded is the Catalog Load returns. It is also a Reloader — see reload.go for
 // why that is a separate interface.
 type loaded struct {
-	src     crud.Source
+	source  crud.Source
 	backend backend
 	snap    atomic.Pointer[snapshot]
 
@@ -302,10 +302,10 @@ type loaded struct {
 	now    func() time.Time
 }
 
-func (c *loaded) Dialect() string { return c.backend.dialect }
+func (this *loaded) Dialect() string { return this.backend.dialect }
 
-func (c *loaded) Table(name string) (*Table, bool) {
-	s := c.snap.Load()
+func (this *loaded) Table(name string) (*Table, bool) {
+	s := this.snap.Load()
 	i, ok := s.byName[name]
 	if !ok {
 		return nil, false
@@ -316,12 +316,12 @@ func (c *loaded) Table(name string) (*Table, bool) {
 // ReferencedBy answers the inbound direction. A table nothing points at answers
 // nil rather than an empty slice, because the two mean the same thing to every
 // reader and one of them costs an allocation per lookup.
-func (c *loaded) ReferencedBy(table string) []*Constraint {
-	return c.snap.Load().refs[table]
+func (this *loaded) ReferencedBy(table string) []*Constraint {
+	return this.snap.Load().refs[table]
 }
 
-func (c *loaded) Constraint(table, name string) (*Constraint, bool) {
-	s := c.snap.Load()
+func (this *loaded) Constraint(table, name string) (*Constraint, bool) {
+	s := this.snap.Load()
 	con, ok := s.byCons[consKey{table: table, name: name}]
 	return con, ok
 }

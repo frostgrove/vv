@@ -35,19 +35,19 @@ func docsCatalog() catalog.Catalog {
 
 type fakeCatalog struct{ tables []catalog.Table }
 
-func (c *fakeCatalog) Dialect() string { return "postgres" }
+func (this *fakeCatalog) Dialect() string { return "postgres" }
 
-func (c *fakeCatalog) Table(name string) (*catalog.Table, bool) {
-	for i := range c.tables {
-		if c.tables[i].Name == name {
-			return &c.tables[i], true
+func (this *fakeCatalog) Table(name string) (*catalog.Table, bool) {
+	for i := range this.tables {
+		if this.tables[i].Name == name {
+			return &this.tables[i], true
 		}
 	}
 	return nil, false
 }
 
-func (c *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bool) {
-	t, ok := c.Table(table)
+func (this *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bool) {
+	t, ok := this.Table(table)
 	if !ok {
 		return nil, false
 	}
@@ -72,81 +72,81 @@ func newStub(fail error, cells ...any) *stub {
 	return &stub{d: crud.Postgres{}, fail: fail, cells: cells}
 }
 
-func (s *stub) Dialect() crud.Dialect { return s.d }
+func (this *stub) Dialect() crud.Dialect { return this.d }
 
 // The probe's own statement, told from the write's. A bulk probe leads with the
 // row index rather than with the first term, so a prefix test misses it.
-func (s *stub) isProbe(q string) bool { return strings.Contains(q, "EXISTS(SELECT 1 FROM") }
+func (this *stub) isProbe(q string) bool { return strings.Contains(q, "EXISTS(SELECT 1 FROM") }
 
-func (s *stub) record(q string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stmts = append(s.stmts, q)
-	if s.isProbe(q) {
-		s.probes++
+func (this *stub) record(q string) bool {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.stmts = append(this.stmts, q)
+	if this.isProbe(q) {
+		this.probes++
 		return true
 	}
 	return false
 }
 
-func (s *stub) Exec(_ context.Context, q string, _ ...any) (crud.Result, error) {
-	if s.record(q) {
+func (this *stub) Exec(_ context.Context, q string, _ ...any) (crud.Result, error) {
+	if this.record(q) {
 		return crud.Result{}, nil
 	}
-	return crud.Result{}, s.fail
+	return crud.Result{}, this.fail
 }
 
-func (s *stub) Query(_ context.Context, q string, _ ...any) (crud.Rows, error) {
-	if s.record(q) {
-		return &oneRow{cells: s.cells}, nil
+func (this *stub) Query(_ context.Context, q string, _ ...any) (crud.Rows, error) {
+	if this.record(q) {
+		return &oneRow{cells: this.cells}, nil
 	}
-	return nil, s.fail
+	return nil, this.fail
 }
 
-func (s *stub) Begin(context.Context) (crud.Tx, error) {
-	s.mu.Lock()
-	s.depth++
-	s.mu.Unlock()
-	return stubTx{s}, nil
+func (this *stub) Begin(context.Context) (crud.Tx, error) {
+	this.mu.Lock()
+	this.depth++
+	this.mu.Unlock()
+	return stubTx{this}, nil
 }
 
-func (s *stub) probeCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.probes
+func (this *stub) probeCount() int {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return this.probes
 }
 
-func (s *stub) beginCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.depth
+func (this *stub) beginCount() int {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return this.depth
 }
 
 type stubTx struct{ *stub }
 
-func (t stubTx) Commit(context.Context) error   { return nil }
-func (t stubTx) Rollback(context.Context) error { return nil }
+func (this stubTx) Commit(context.Context) error   { return nil }
+func (this stubTx) Rollback(context.Context) error { return nil }
 
 type oneRow struct {
 	cells []any
 	done  bool
 }
 
-func (r *oneRow) Next() bool {
-	if r.done {
+func (this *oneRow) Next() bool {
+	if this.done {
 		return false
 	}
-	r.done = true
+	this.done = true
 	return true
 }
 
-func (r *oneRow) Err() error { return nil }
-func (r *oneRow) Close()     {}
+func (this *oneRow) Err() error { return nil }
+func (this *oneRow) Close()     {}
 
-func (r *oneRow) Scan(dest ...any) error {
+func (this *oneRow) Scan(dest ...any) error {
 	for i := range dest {
-		if p, ok := dest[i].(*any); ok && i < len(r.cells) {
-			*p = r.cells[i]
+		if p, ok := dest[i].(*any); ok && i < len(this.cells) {
+			*p = this.cells[i]
 		}
 	}
 	return nil
@@ -173,10 +173,10 @@ func paths(err error) []string {
 
 func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		opts  []faults.Option
-		save  int
-		batch int
+		name    string
+		options []faults.Option
+		save    int
+		batch   int
 	}{
 		{"the default set", []faults.Option{faults.WithProbe(probe.Full(docsCatalog()))}, 1, 0},
 		// The control: naming the verb flips exactly one of them.
@@ -186,17 +186,17 @@ func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) 
 		}, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := newStub(uniqueFault(), false, false)
-			repo := Docs.Bind(src, faults.Enrich[Doc, int64](tc.opts...))
-			if err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
+			source := newStub(uniqueFault(), false, false)
+			repository := Docs.Bind(source, faults.Enrich[Doc, int64](tc.options...))
+			if err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
 				t.Fatal("the write was supposed to fail")
 			}
-			if got := src.probeCount(); got != tc.save {
+			if got := source.probeCount(); got != tc.save {
 				t.Fatalf("Save ran %d probes, want %d", got, tc.save)
 			}
 
 			batchSrc := newStub(uniqueFault(), int64(0), false, false)
-			batch := Docs.Bind(batchSrc, faults.Enrich[Doc, int64](tc.opts...))
+			batch := Docs.Bind(batchSrc, faults.Enrich[Doc, int64](tc.options...))
 			if err := batch.SaveAll(context.Background(), []*Doc{{Title: "a", Body: "b"}}); err == nil {
 				t.Fatal("the batch write was supposed to fail")
 			}
@@ -210,10 +210,10 @@ func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) 
 // The probe's violations go through the same column-to-field hop the driver's
 // do, and exactly once.
 func TestTheProbesViolationsGetTheSameFieldHopTheDriversDoes(t *testing.T) {
-	src := newStub(uniqueFault(), false, true) // the body key, not the title one
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
+	source := newStub(uniqueFault(), false, true) // the body key, not the title one
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 
-	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	got := paths(err)
 	if len(got) != 2 {
 		t.Fatalf("violations = %v, want the driver's and the probe's", got)
@@ -229,9 +229,9 @@ func TestTheProbesViolationsGetTheSameFieldHopTheDriversDoes(t *testing.T) {
 // The control for the hop: a probe violation over another table is marked
 // approximate rather than translated onto a field of this model.
 func TestAProbeViolationNamingAnotherTableIsMarkedApproximate(t *testing.T) {
-	src := newStub(uniqueFault(), false, false)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
-	_ = repo
+	source := newStub(uniqueFault(), false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
+	_ = repository
 
 	// The decorator's own hop, exercised through the fault it produces for a
 	// driver violation on a table this model is not bound to.
@@ -259,17 +259,17 @@ func TestAProbeViolationNamingAnotherTableIsMarkedApproximate(t *testing.T) {
 
 func TestAProbeIsNotRunForAnErrorThatIsNotAFault(t *testing.T) {
 	boom := errors.New("the pool is closed")
-	src := newStub(boom, false, false)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
+	source := newStub(boom, false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 
-	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the original", err)
 	}
 	if _, ok := errs.AsFault(err); ok {
 		t.Fatal("the decorator invented a fault for an error that was not one")
 	}
-	if n := src.probeCount(); n != 0 {
+	if n := source.probeCount(); n != 0 {
 		t.Fatalf("%d probes ran for an error nothing classified", n)
 	}
 }
@@ -284,17 +284,17 @@ func TestAProbeIsNotRunForAnErrorThatIsNotAFault(t *testing.T) {
 // answered no. The chain always knew; only the type system did not. crud.SourceOf
 // walks it through Next().
 func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
-	src := newStub(uniqueFault(), false, false)
-	repo := Docs.Bind(src,
+	source := newStub(uniqueFault(), false, false)
+	repository := Docs.Bind(source,
 		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
 		security.Gate(security.Freeze[Doc, int64]("Title")))
 
 	// Binding is half the claim. The probe has to actually run, or a source
 	// that resolved to something unusable would pass this just as well.
-	if err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
+	if err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail with the stub's unique violation")
 	}
-	if n := src.probeCount(); n == 0 {
+	if n := source.probeCount(); n == 0 {
 		t.Fatal("the probe bound but never ran its own statement")
 	}
 }
@@ -311,8 +311,8 @@ func TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime(t *testing.T) {
 			t.Fatal("a probe with nothing to run its statement on bound quietly")
 		}
 	}()
-	src := newStub(uniqueFault(), false, false)
-	Docs.Bind(src,
+	source := newStub(uniqueFault(), false, false)
+	Docs.Bind(source,
 		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
 		opaque[Doc, int64]())
 }
@@ -327,11 +327,11 @@ type opaqueCore[M any, ID comparable] struct{ crud.Core[M, ID] }
 
 // The control: named explicitly, any order binds, including through opaque.
 func TestAProbeWithAnExplicitSourceBindsWhereverItSits(t *testing.T) {
-	src := newStub(uniqueFault(), false, false)
-	Docs.Bind(src,
+	source := newStub(uniqueFault(), false, false)
+	Docs.Bind(source,
 		faults.Enrich[Doc, int64](
 			faults.WithProbe(probe.Full(docsCatalog())),
-			faults.WithSource(src)),
+			faults.WithSource(source)),
 		opaque[Doc, int64]())
 }
 
@@ -341,20 +341,20 @@ func TestADeclarationAgainstACatalogWithoutTheTableRefusesAtBindTime(t *testing.
 			t.Fatal("a probe over a table the catalog does not know bound quietly")
 		}
 	}()
-	src := newStub(uniqueFault(), false, false)
-	Docs.Bind(src, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(&fakeCatalog{}))))
+	source := newStub(uniqueFault(), false, false)
+	Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(&fakeCatalog{}))))
 }
 
 func TestPastTheSavepointBudgetTheAnswerIsPartial(t *testing.T) {
 	cat := docsCatalog()
-	src := newStub(uniqueFault(), false, false)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](
+	source := newStub(uniqueFault(), false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(cat, probe.WithSavepoints(), probe.WithMaxSavepoints(1)))))
 
 	var first, second error
-	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		first = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
-		second = repo.SaveOnly(ctx, &Doc{Title: "c", Body: "d"})
+	err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
+		first = repository.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
+		second = repository.SaveOnly(ctx, &Doc{Title: "c", Body: "d"})
 		return nil
 	})
 	if err != nil {
@@ -373,7 +373,7 @@ func TestPastTheSavepointBudgetTheAnswerIsPartial(t *testing.T) {
 	}
 	// The control that the budget did the refusing: one savepoint was taken and
 	// not two. The outer count is InTx's own Begin.
-	if got := src.beginCount(); got != 2 {
+	if got := source.beginCount(); got != 2 {
 		t.Fatalf("%d transactions were begun, want the outer one plus exactly one savepoint", got)
 	}
 }
@@ -381,40 +381,40 @@ func TestPastTheSavepointBudgetTheAnswerIsPartial(t *testing.T) {
 // A foreign transaction is never given a savepoint, whatever WithSavepoints
 // says.
 func TestAForeignTransactionIsNeverGivenASavepoint(t *testing.T) {
-	src := newStub(uniqueFault(), false, false)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](
+	source := newStub(uniqueFault(), false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(docsCatalog(), probe.WithSavepoints()))))
 
-	ctx := crud.WithExecutor(context.Background(), src)
-	if err := repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"}); err == nil {
+	ctx := crud.WithExecutor(context.Background(), source)
+	if err := repository.SaveOnly(ctx, &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail")
 	}
-	if got := src.beginCount(); got != 0 {
+	if got := source.beginCount(); got != 0 {
 		t.Fatalf("%d savepoints were taken inside somebody else's transaction", got)
 	}
-	if got := src.probeCount(); got != 0 {
+	if got := source.probeCount(); got != 0 {
 		t.Fatalf("the probe ran %d times inside a foreign transaction on an engine that poisons it", got)
 	}
 }
 
 // The control: our own transaction does get one, and the probe does run.
 func TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns(t *testing.T) {
-	src := newStub(uniqueFault(), false, true)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](
+	source := newStub(uniqueFault(), false, true)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(docsCatalog(), probe.WithSavepoints()))))
 
 	var got error
-	if err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		got = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
+	if err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
+		got = repository.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if src.beginCount() != 2 {
-		t.Fatalf("%d transactions were begun, want the outer one plus a savepoint", src.beginCount())
+	if source.beginCount() != 2 {
+		t.Fatalf("%d transactions were begun, want the outer one plus a savepoint", source.beginCount())
 	}
-	if src.probeCount() != 1 {
-		t.Fatalf("the probe ran %d times inside a restored transaction", src.probeCount())
+	if source.probeCount() != 1 {
+		t.Fatalf("the probe ran %d times inside a restored transaction", source.probeCount())
 	}
 	if p := paths(got); len(p) != 2 {
 		t.Fatalf("violations = %v, want the driver's and the probe's", p)
@@ -424,21 +424,21 @@ func TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns(t *testing.T) {
 // Without the savepoint mode the same write inside the same transaction
 // degrades to one violation rather than erroring.
 func TestWithoutSavepointsATransactionDegradesRatherThanErroring(t *testing.T) {
-	src := newStub(uniqueFault(), false, true)
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](
+	source := newStub(uniqueFault(), false, true)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(docsCatalog()))))
 
 	var got error
-	if err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		got = repo.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
+	if err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
+		got = repository.SaveOnly(ctx, &Doc{Title: "a", Body: "b"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if src.beginCount() != 1 {
-		t.Fatalf("%d transactions were begun with the savepoint mode off", src.beginCount())
+	if source.beginCount() != 1 {
+		t.Fatalf("%d transactions were begun with the savepoint mode off", source.beginCount())
 	}
-	if src.probeCount() != 0 {
+	if source.probeCount() != 0 {
 		t.Fatal("the probe ran inside a poisoned transaction")
 	}
 	if p := paths(got); len(p) != 1 {
@@ -450,13 +450,13 @@ func TestWithoutSavepointsATransactionDegradesRatherThanErroring(t *testing.T) {
 }
 
 func TestAProbeFailureIsHandedToTheCallerAndNotToTheClient(t *testing.T) {
-	src := &failingProbe{stub: newStub(uniqueFault(), false, false)}
+	source := &failingProbe{stub: newStub(uniqueFault(), false, false)}
 	var seen error
-	repo := Docs.Bind(src, faults.Enrich[Doc, int64](
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(docsCatalog())),
 		faults.WithProbeError(func(_ string, err error) { seen = err })))
 
-	err := repo.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
+	err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
 	if seen == nil {
 		t.Fatal("the probe's failure reached nobody")
 	}
@@ -471,10 +471,10 @@ func TestAProbeFailureIsHandedToTheCallerAndNotToTheClient(t *testing.T) {
 
 type failingProbe struct{ *stub }
 
-func (f *failingProbe) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	if f.isProbe(q) {
-		f.record(q)
+func (this *failingProbe) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	if this.isProbe(q) {
+		this.record(q)
 		return nil, errors.New("the probe statement was refused")
 	}
-	return f.stub.Query(ctx, q, args...)
+	return this.stub.Query(ctx, q, args...)
 }

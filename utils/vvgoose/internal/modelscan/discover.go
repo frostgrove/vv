@@ -296,38 +296,38 @@ func structTagged(st *ast.StructType, imports map[string]string) bool {
 	return false
 }
 
-func (pkg *packageSource) models() ([]Model, error) {
-	for name := range pkg.constExprs {
-		if value, ok := pkg.evalConst(name, map[string]bool{}); ok {
-			pkg.consts[name] = value
+func (this *packageSource) models() ([]Model, error) {
+	for name := range this.constExprs {
+		if value, ok := this.evalConst(name, map[string]bool{}); ok {
+			this.consts[name] = value
 		}
 	}
 	tables := map[string]string{}
-	for _, method := range pkg.methods {
+	for _, method := range this.methods {
 		name := receiverName(method)
-		if name == "" || pkg.structs[name] == nil {
+		if name == "" || this.structs[name] == nil {
 			continue
 		}
 		table, ok := constantReturn(method, func(expr ast.Expr) (string, bool) {
-			return pkg.evalString(expr, map[string]bool{})
+			return this.evalString(expr, map[string]bool{})
 		})
 		if !ok || strings.TrimSpace(table) == "" {
 			continue
 		}
 		if previous := tables[name]; previous != "" && previous != table {
-			return nil, fmt.Errorf("modelscan: %s.%s has conflicting constant TableName values %q and %q", pkg.key.name, name, previous, table)
+			return nil, fmt.Errorf("modelscan: %s.%s has conflicting constant TableName values %q and %q", this.key.name, name, previous, table)
 		}
 		tables[name] = table
 	}
 
-	names := make([]string, 0, len(pkg.structs))
-	for name := range pkg.structs {
+	names := make([]string, 0, len(this.structs))
+	for name := range this.structs {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	var out []Model
 	for _, name := range names {
-		decl := pkg.structs[name]
+		decl := this.structs[name]
 		table, explicit := tables[name]
 		if !decl.preferred && !decl.tagged && !explicit {
 			continue
@@ -335,14 +335,14 @@ func (pkg *packageSource) models() ([]Model, error) {
 		if table == "" {
 			table = pluralise(snake(name))
 		}
-		fields := pkg.fields(decl, "", map[string]bool{})
+		fields := this.fields(decl, "", map[string]bool{})
 		finishPrimaryKey(fields)
 		out = append(out, Model{
-			Package:       pkg.key.name,
+			Package:       this.key.name,
 			Name:          name,
 			Table:         table,
 			ExplicitTable: explicit,
-			Dir:           displayPath(pkg.key.dir),
+			Dir:           displayPath(this.key.dir),
 			File:          displayPath(decl.file),
 			Line:          decl.line,
 			Fields:        fields,
@@ -387,27 +387,27 @@ func constantReturn(fn *ast.FuncDecl, eval func(ast.Expr) (string, bool)) (strin
 	return eval(ret.Results[0])
 }
 
-func (pkg *packageSource) evalConst(name string, seen map[string]bool) (string, bool) {
-	if value, ok := pkg.consts[name]; ok {
+func (this *packageSource) evalConst(name string, seen map[string]bool) (string, bool) {
+	if value, ok := this.consts[name]; ok {
 		return value, true
 	}
 	if seen[name] {
 		return "", false
 	}
-	expr := pkg.constExprs[name]
+	expr := this.constExprs[name]
 	if expr == nil {
 		return "", false
 	}
 	seen[name] = true
-	value, ok := pkg.evalString(expr, seen)
+	value, ok := this.evalString(expr, seen)
 	delete(seen, name)
 	if ok {
-		pkg.consts[name] = value
+		this.consts[name] = value
 	}
 	return value, ok
 }
 
-func (pkg *packageSource) evalString(expr ast.Expr, seen map[string]bool) (string, bool) {
+func (this *packageSource) evalString(expr ast.Expr, seen map[string]bool) (string, bool) {
 	switch expr := expr.(type) {
 	case *ast.BasicLit:
 		if expr.Kind != token.STRING {
@@ -416,19 +416,19 @@ func (pkg *packageSource) evalString(expr ast.Expr, seen map[string]bool) (strin
 		value, err := strconv.Unquote(expr.Value)
 		return value, err == nil
 	case *ast.Ident:
-		return pkg.evalConst(expr.Name, seen)
+		return this.evalConst(expr.Name, seen)
 	case *ast.BinaryExpr:
 		if expr.Op != token.ADD {
 			return "", false
 		}
-		left, ok := pkg.evalString(expr.X, seen)
+		left, ok := this.evalString(expr.X, seen)
 		if !ok {
 			return "", false
 		}
-		right, ok := pkg.evalString(expr.Y, seen)
+		right, ok := this.evalString(expr.Y, seen)
 		return left + right, ok
 	case *ast.ParenExpr:
-		return pkg.evalString(expr.X, seen)
+		return this.evalString(expr.X, seen)
 	default:
 		return "", false
 	}

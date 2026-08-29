@@ -40,16 +40,16 @@ import (
 // Installing it twice authenticates once — [auth.Guard] hands back a context
 // that already carries a principal untouched — so mounting it globally and
 // again on a subtree costs one verification, not two.
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) func(http.Handler) http.Handler {
-	if g == nil {
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.Handler) http.Handler {
+	if guard == nil {
 		panic("authnet: Middleware needs a Guard; without one nothing is authenticated")
 	}
-	rd := authhttp.RendererFor(opts)
+	renderer := authhttp.RendererFor(options)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, err := g.Authenticate(r.Context(), r.Header.Get)
+			ctx, err := guard.Authenticate(r.Context(), r.Header.Get)
 			if err != nil {
-				authhttp.Refuse(w, r, rd, err)
+				authhttp.Refuse(w, r, renderer, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -59,6 +59,6 @@ func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) func(http.Handler)
 
 // Handler is [Middleware] applied to one handler, for a route that is
 // authenticated where its neighbours are not.
-func Handler(g *auth.Guard, next http.Handler, opts ...porthttp.RenderOption) http.Handler {
-	return Middleware(g, opts...)(next)
+func Handler(guard *auth.Guard, next http.Handler, options ...porthttp.RenderOption) http.Handler {
+	return Middleware(guard, options...)(next)
 }

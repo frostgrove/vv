@@ -142,12 +142,12 @@ func TestTheTransactionMatrixDecidesWhetherTheProbeRunsAtAll(t *testing.T) {
 		t.Run(a.name, func(t *testing.T) {
 			rec := crudtest.New(a.dialect)
 			f := declared(t, fixture())
-			req := request(conflict("", ""), rec, docMeta(t), row(insert()))
-			req.Recovered = a.recovered
+			request := request(conflict("", ""), rec, docMeta(t), row(insert()))
+			request.Recovered = a.recovered
 
 			run := func(ctx context.Context) {
 				walked++
-				if got := f.runs(ctx, req); got != a.want {
+				if got := f.runs(ctx, request); got != a.want {
 					t.Fatalf("the probe would run = %v, want %v", got, a.want)
 				}
 			}

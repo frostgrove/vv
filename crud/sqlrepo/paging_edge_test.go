@@ -65,8 +65,8 @@ func TestMaxLimitSurvivesEveryWayAPageCanBeAskedFor(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range []struct {
-		name string
-		opts []crud.Option
+		name    string
+		options []crud.Option
 	}{
 		{"no options at all", nil},
 		{"a limit over the cap", []crud.Option{crud.Limit(5000)}},
@@ -75,7 +75,7 @@ func TestMaxLimitSurvivesEveryWayAPageCanBeAskedFor(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows())
-			if _, err := cappedUsers.Bind(rec).Get(ctx, tc.opts...); err != nil {
+			if _, err := cappedUsers.Bind(rec).Get(ctx, tc.options...); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(rec.Last().SQL, " LIMIT ") {
@@ -241,10 +241,10 @@ func TestDistinctRefusesASortItCannotProject(t *testing.T) {
 // in an order anyway, only values.
 func TestDistinctDropsADefaultSortItCannotProject(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	repo := sqlrepo.Define[User, int64, UserUpdate]("users",
+	repository := sqlrepo.Define[User, int64, UserUpdate]("users",
 		sqlrepo.DefaultSort(crud.Desc("CreatedAt"))).Bind(rec)
 
-	if _, err := repo.GetAll(context.Background(), crud.Distinct(), crud.Select("Name")); err != nil {
+	if _, err := repository.GetAll(context.Background(), crud.Distinct(), crud.Select("Name")); err != nil {
 		t.Fatal(err)
 	}
 	wantSQL(t, rec.Last().SQL, `SELECT DISTINCT "name" FROM "users"`)

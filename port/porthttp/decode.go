@@ -78,10 +78,10 @@ func ParseEnvelope(body []byte) (Envelope, bool) {
 // [group] split them: an empty path is shorter than any other, and a shorter
 // path sorts first. Restoring it means a gateway that decodes a failure and
 // renders it again produces the same body it received.
-func (e Envelope) Violations() []errs.Violation {
-	out := make([]errs.Violation, 0, len(e.Errors.General)+len(e.Errors.Validation))
-	out = append(out, e.Errors.General...)
-	out = append(out, e.Errors.Validation...)
+func (this Envelope) Violations() []errs.Violation {
+	out := make([]errs.Violation, 0, len(this.Errors.General)+len(this.Errors.Validation))
+	out = append(out, this.Errors.General...)
+	out = append(out, this.Errors.Validation...)
 	return out
 }
 

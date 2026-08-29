@@ -75,16 +75,16 @@ func TestEmptyPageMarshalsAsAnEmptyArray(t *testing.T) {
 // — or mistyping — the pager.
 func TestMapPageKeepsThePagerAndChangesTheItems(t *testing.T) {
 	type user struct{ Name string }
-	src := crud.NewPaginatedResponse([]user{{"ann"}, {"bo"}}, 2, 2, 5)
+	source := crud.NewPaginatedResponse([]user{{"ann"}, {"bo"}}, 2, 2, 5)
 
-	got := crud.MapPage(src, func(u user) string { return u.Name })
+	got := crud.MapPage(source, func(u user) string { return u.Name })
 
 	if len(got.Items) != 2 || got.Items[0] != "ann" || got.Items[1] != "bo" {
 		t.Fatalf("items = %v, want the mapped names in order", got.Items)
 	}
-	if got.Page != src.Page || got.Limit != src.Limit || got.Total != src.Total ||
-		got.TotalPages != src.TotalPages || got.HasNext != src.HasNext || got.HasPrev != src.HasPrev {
-		t.Fatalf("the pager changed under mapping:\ngot  %+v\nwant %+v", got, src)
+	if got.Page != source.Page || got.Limit != source.Limit || got.Total != source.Total ||
+		got.TotalPages != source.TotalPages || got.HasNext != source.HasNext || got.HasPrev != source.HasPrev {
+		t.Fatalf("the pager changed under mapping:\ngot  %+v\nwant %+v", got, source)
 	}
 }
 

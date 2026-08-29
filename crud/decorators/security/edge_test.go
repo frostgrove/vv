@@ -308,9 +308,9 @@ func TestInspectAbortsTheWholeCall(t *testing.T) {
 	t.Run("Update never reaches the write", func(t *testing.T) {
 		seen := 0
 		rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "sealed")))
-		repo := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
+		repository := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
 
-		_, err := repo.Update(ctx, 1, DocUpdate{Title: ptrTo("new")})
+		_, err := repository.Update(ctx, 1, DocUpdate{Title: ptrTo("new")})
 
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
@@ -325,9 +325,9 @@ func TestInspectAbortsTheWholeCall(t *testing.T) {
 		rec := crudtest.Postgres().
 			Push(crudtest.Rows(docRow(1, 7, "fine"), docRow(2, 7, "sealed"))).
 			ExecResult(crud.Result{RowsAffected: 2})
-		repo := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
+		repository := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
 
-		n, err := repo.Delete(ctx, 1, 2)
+		n, err := repository.Delete(ctx, 1, 2)
 
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
@@ -345,9 +345,9 @@ func TestInspectAbortsTheWholeCall(t *testing.T) {
 		rec := crudtest.Postgres().
 			Push(crudtest.Rows(docRow(1, 7, "fine"), docRow(2, 7, "sealed"))).
 			ExecResult(crud.Result{RowsAffected: 2})
-		repo := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
+		repository := Docs.Bind(rec, security.Gate(rejecting("sealed", &seen)))
 
-		n, err := repo.DeleteAll(ctx, crud.Where(crud.Eq("TenantID", int64(7))))
+		n, err := repository.DeleteAll(ctx, crud.Where(crud.Eq("TenantID", int64(7))))
 
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
@@ -447,9 +447,9 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 
 	t.Run("on a read", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows())
-		repo := liveNotes.Bind(rec, security.Gate(notePolicy))
+		repository := liveNotes.Bind(rec, security.Gate(notePolicy))
 
-		if _, err := repo.GetAll(ctx, crud.Where(crud.Eq("Title", "x"))); err != nil {
+		if _, err := repository.GetAll(ctx, crud.Where(crud.Eq("Title", "x"))); err != nil {
 			t.Fatal(err)
 		}
 		want := `SELECT "id", "tenant_id", "title", "deleted_at" FROM "notes" ` +
@@ -463,9 +463,9 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 		rec := crudtest.Postgres().
 			Push(crudtest.Rows(noteRow(1, 7, "mine"))). // the policy inspects the victims
 			ExecResult(crud.Result{RowsAffected: 1})
-		repo := liveNotes.Bind(rec, security.Gate(notePolicy))
+		repository := liveNotes.Bind(rec, security.Gate(notePolicy))
 
-		if _, err := repo.DeleteAll(ctx); err != nil {
+		if _, err := repository.DeleteAll(ctx); err != nil {
 			t.Fatal(err)
 		}
 		got := crudtest.Normalize(rec.Last().SQL)
@@ -480,9 +480,9 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 	// the refusal stands. Erring towards the refusal is the right way round.
 	t.Run("a repository scope does not satisfy the gate's own delete guard", func(t *testing.T) {
 		rec := crudtest.Postgres()
-		repo := liveNotes.Bind(rec, security.Gate(security.Freeze[Note, int64]("Title")))
+		repository := liveNotes.Bind(rec, security.Gate(security.Freeze[Note, int64]("Title")))
 
-		if _, err := repo.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
+		if _, err := repository.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
 		}
 		if len(rec.Statements()) != 0 {

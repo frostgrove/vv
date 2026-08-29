@@ -37,7 +37,7 @@ import (
 // nonexistent kids turning into a stream of requests to the provider. That is
 // the shape of the denial-of-service a naive implementation hands an attacker:
 // one forged token per fetch.
-func JWKS(rawURL string, opts ...JWKSOption) KeySource {
+func JWKS(rawURL string, options ...JWKSOption) KeySource {
 	// An empty URL is the hardest misconfiguration in this package to diagnose
 	// from outside: every request answers the same reasonless 401 a forged token
 	// does ([[D-056]] keeps the reason inside the process), so nothing in the logs
@@ -51,7 +51,7 @@ func JWKS(rawURL string, opts ...JWKSOption) KeySource {
 		client:     http.DefaultClient,
 		minRefresh: JWKSMinRefresh,
 	}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(s)
 		}
@@ -125,16 +125,16 @@ type jwks struct {
 }
 
 // key answers the verification key for one token.
-func (s *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
+func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	kid, _ := t.Header["kid"].(string)
 
-	if k, ok := s.cached(kid); ok {
+	if k, ok := this.cached(kid); ok {
 		return k, nil
 	}
-	if err := s.refresh(ctx); err != nil {
+	if err := this.refresh(ctx); err != nil {
 		return nil, err
 	}
-	if k, ok := s.cached(kid); ok {
+	if k, ok := this.cached(kid); ok {
 		return k, nil
 	}
 	return nil, errNoKeyForToken
@@ -143,17 +143,17 @@ func (s *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 // cached answers a key already held. A token with no kid matches only when the
 // set holds exactly one key — anything else would be this package choosing
 // which key to trust on the caller's behalf.
-func (s *jwks) cached(kid string) (any, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (this *jwks) cached(kid string) (any, bool) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
 	if kid != "" {
-		k, ok := s.keys[kid]
+		k, ok := this.keys[kid]
 		return k, ok
 	}
-	if len(s.keys) != 1 {
+	if len(this.keys) != 1 {
 		return nil, false
 	}
-	for _, k := range s.keys {
+	for _, k := range this.keys {
 		return k, true
 	}
 	return nil, false
@@ -178,10 +178,10 @@ func (s *jwks) cached(kid string) (any, bool) {
 // an attempt. Waiters share the in-flight fetch rather than being refused,
 // because after a key rotation they are asking for a kid that really is about to
 // exist, and refusing them would turn one rotation into a wave of 401s.
-func (s *jwks) refresh(ctx context.Context) error {
-	s.mu.Lock()
-	if wait := s.inflight; wait != nil {
-		s.mu.Unlock()
+func (this *jwks) refresh(ctx context.Context) error {
+	this.mu.Lock()
+	if wait := this.inflight; wait != nil {
+		this.mu.Unlock()
 		select {
 		case <-wait:
 			// The fetch that was already running has finished. Whether it found
@@ -191,14 +191,14 @@ func (s *jwks) refresh(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	if !s.attempted.IsZero() && time.Since(s.attempted) < s.minRefresh {
-		s.mu.Unlock()
+	if !this.attempted.IsZero() && time.Since(this.attempted) < this.minRefresh {
+		this.mu.Unlock()
 		return errNoKeyForToken
 	}
 	done := make(chan struct{})
-	s.inflight = done
-	s.attempted = time.Now()
-	s.mu.Unlock()
+	this.inflight = done
+	this.attempted = time.Now()
+	this.mu.Unlock()
 
 	// The fetch runs on a context of its own, not the leader's.
 	//
@@ -214,15 +214,15 @@ func (s *jwks) refresh(ctx context.Context) error {
 	// own, so the leader cannot park the waiters indefinitely either.
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), JWKSFetchTimeout)
 	defer cancel()
-	keys, err := s.fetch(fctx)
+	keys, err := this.fetch(fctx)
 
-	s.mu.Lock()
+	this.mu.Lock()
 	if err == nil {
-		s.keys = keys
-		s.fetched = time.Now()
+		this.keys = keys
+		this.fetched = time.Now()
 	}
-	s.inflight = nil
-	s.mu.Unlock()
+	this.inflight = nil
+	this.mu.Unlock()
 	close(done)
 
 	return err
@@ -233,24 +233,24 @@ func (s *jwks) refresh(ctx context.Context) error {
 // into a reflector ([[D-056]]).
 var errNoKeyForToken = errors.New("authjwt: the key set has no key for this token")
 
-func (s *jwks) fetch(ctx context.Context) (map[string]any, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
+func (this *jwks) fetch(ctx context.Context) (map[string]any, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, this.url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.client.Do(req)
+	response, err := this.client.Do(request)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("authjwt: the key set answered %s", resp.Status)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("authjwt: the key set answered %s", response.Status)
 	}
 
 	var set struct {
 		Keys []jsonWebKey `json:"keys"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, JWKSMaxBody)).Decode(&set); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, JWKSMaxBody)).Decode(&set); err != nil {
 		return nil, fmt.Errorf("authjwt: reading the key set: %w", err)
 	}
 
@@ -287,14 +287,14 @@ type jsonWebKey struct {
 	Y   string `json:"y"`
 }
 
-func (k jsonWebKey) public() (any, error) {
-	switch k.Kty {
+func (this jsonWebKey) public() (any, error) {
+	switch this.Kty {
 	case "RSA":
-		n, err := b64uint(k.N)
+		n, err := b64uint(this.N)
 		if err != nil {
 			return nil, err
 		}
-		e, err := b64uint(k.E)
+		e, err := b64uint(this.E)
 		if err != nil {
 			return nil, err
 		}
@@ -305,7 +305,7 @@ func (k jsonWebKey) public() (any, error) {
 
 	case "EC":
 		var curve elliptic.Curve
-		switch k.Crv {
+		switch this.Crv {
 		case "P-256":
 			curve = elliptic.P256()
 		case "P-384":
@@ -313,13 +313,13 @@ func (k jsonWebKey) public() (any, error) {
 		case "P-521":
 			curve = elliptic.P521()
 		default:
-			return nil, fmt.Errorf("authjwt: unsupported curve %q", k.Crv)
+			return nil, fmt.Errorf("authjwt: unsupported curve %q", this.Crv)
 		}
-		x, err := b64uint(k.X)
+		x, err := b64uint(this.X)
 		if err != nil {
 			return nil, err
 		}
-		y, err := b64uint(k.Y)
+		y, err := b64uint(this.Y)
 		if err != nil {
 			return nil, err
 		}
@@ -330,10 +330,10 @@ func (k jsonWebKey) public() (any, error) {
 		return pub, nil
 
 	case "OKP":
-		if k.Crv != "Ed25519" {
-			return nil, fmt.Errorf("authjwt: unsupported curve %q", k.Crv)
+		if this.Crv != "Ed25519" {
+			return nil, fmt.Errorf("authjwt: unsupported curve %q", this.Crv)
 		}
-		x, err := base64.RawURLEncoding.DecodeString(k.X)
+		x, err := base64.RawURLEncoding.DecodeString(this.X)
 		if err != nil {
 			return nil, err
 		}
@@ -343,7 +343,7 @@ func (k jsonWebKey) public() (any, error) {
 		return ed25519.PublicKey(x), nil
 
 	default:
-		return nil, fmt.Errorf("authjwt: unsupported key type %q", k.Kty)
+		return nil, fmt.Errorf("authjwt: unsupported key type %q", this.Kty)
 	}
 }
 

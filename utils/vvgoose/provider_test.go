@@ -45,16 +45,16 @@ func TestDialectFor(t *testing.T) {
 func TestSQLiteProviderLifecycle(t *testing.T) {
 	t.Parallel()
 
-	cfg := sqliteMigrationConfig(t)
+	config := sqliteMigrationConfig(t)
 	ctx := context.Background()
 
-	statuses, err := runStatus(ctx, cfg)
+	statuses, err := runStatus(ctx, config)
 	if err != nil {
 		t.Fatalf("initial status: %v", err)
 	}
 	assertMigrationState(t, statuses, goose.StatePending)
 
-	up, err := runMigrate(ctx, cfg)
+	up, err := runMigrate(ctx, config)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -62,13 +62,13 @@ func TestSQLiteProviderLifecycle(t *testing.T) {
 		t.Fatalf("migrate results = %+v, want one up migration", up)
 	}
 
-	statuses, err = runStatus(ctx, cfg)
+	statuses, err = runStatus(ctx, config)
 	if err != nil {
 		t.Fatalf("status after migrate: %v", err)
 	}
 	assertMigrationState(t, statuses, goose.StateApplied)
 
-	rolledBack, err := runRollback(ctx, cfg, 1)
+	rolledBack, err := runRollback(ctx, config, 1)
 	if err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
@@ -76,14 +76,14 @@ func TestSQLiteProviderLifecycle(t *testing.T) {
 		t.Fatalf("rollback results = %+v, want one down migration", rolledBack)
 	}
 
-	statuses, err = runStatus(ctx, cfg)
+	statuses, err = runStatus(ctx, config)
 	if err != nil {
 		t.Fatalf("status after rollback: %v", err)
 	}
 	assertMigrationState(t, statuses, goose.StatePending)
 
 	// Rolling back an already empty database is an intentional no-op.
-	rolledBack, err = runRollback(ctx, cfg, 2)
+	rolledBack, err = runRollback(ctx, config, 2)
 	if err != nil {
 		t.Fatalf("rollback at version zero: %v", err)
 	}
@@ -95,25 +95,25 @@ func TestSQLiteProviderLifecycle(t *testing.T) {
 func TestFreshReappliesMigrations(t *testing.T) {
 	t.Parallel()
 
-	cfg := sqliteMigrationConfig(t)
+	config := sqliteMigrationConfig(t)
 	ctx := context.Background()
-	if _, err := runMigrate(ctx, cfg); err != nil {
+	if _, err := runMigrate(ctx, config); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
 
-	db, err := vvdb.Open(&cfg)
+	database, err := vvdb.Open(&config)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO users (name) VALUES ('temporary')`); err != nil {
-		_ = db.Close()
+	if _, err := database.ExecContext(ctx, `INSERT INTO users (name) VALUES ('temporary')`); err != nil {
+		_ = database.Close()
 		t.Fatalf("insert temporary row: %v", err)
 	}
-	if err := db.Close(); err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	results, err := runFresh(ctx, cfg)
+	results, err := runFresh(ctx, config)
 	if err != nil {
 		t.Fatalf("fresh: %v", err)
 	}
@@ -121,13 +121,13 @@ func TestFreshReappliesMigrations(t *testing.T) {
 		t.Fatalf("fresh results = %+v, want down followed by up", results)
 	}
 
-	db, err = vvdb.Open(&cfg)
+	database, err = vvdb.Open(&config)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
-	defer db.Close()
+	defer database.Close()
 	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&count); err != nil {
 		t.Fatalf("count users after fresh: %v", err)
 	}
 	if count != 1 {
@@ -138,50 +138,50 @@ func TestFreshReappliesMigrations(t *testing.T) {
 func TestFlushDropsEverySQLiteObjectAndMigrationHistory(t *testing.T) {
 	t.Parallel()
 
-	cfg := sqliteMigrationConfig(t)
+	config := sqliteMigrationConfig(t)
 	ctx := context.Background()
-	if _, err := runMigrate(ctx, cfg); err != nil {
+	if _, err := runMigrate(ctx, config); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
 
-	db, err := vvdb.Open(&cfg)
+	database, err := vvdb.Open(&config)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE untracked (id INTEGER PRIMARY KEY)`); err != nil {
-		_ = db.Close()
+	if _, err := database.ExecContext(ctx, `CREATE TABLE untracked (id INTEGER PRIMARY KEY)`); err != nil {
+		_ = database.Close()
 		t.Fatalf("create untracked table: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `CREATE VIEW user_names AS SELECT name FROM users`); err != nil {
-		_ = db.Close()
+	if _, err := database.ExecContext(ctx, `CREATE VIEW user_names AS SELECT name FROM users`); err != nil {
+		_ = database.Close()
 		t.Fatalf("create untracked view: %v", err)
 	}
-	if err := db.Close(); err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	if err := runFlush(ctx, cfg); err != nil {
+	if err := runFlush(ctx, config); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 
-	db, err = vvdb.Open(&cfg)
+	database, err = vvdb.Open(&config)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
 	var objects int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
-		_ = db.Close()
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		_ = database.Close()
 		t.Fatalf("count objects after flush: %v", err)
 	}
 	if objects != 0 {
-		_ = db.Close()
+		_ = database.Close()
 		t.Fatalf("objects after flush = %d, want 0", objects)
 	}
-	if err := db.Close(); err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatalf("close flushed sqlite: %v", err)
 	}
 
-	results, err := runMigrate(ctx, cfg)
+	results, err := runMigrate(ctx, config)
 	if err != nil {
 		t.Fatalf("migrate after flush: %v", err)
 	}
@@ -203,20 +203,20 @@ func TestRollbackRejectsNonPositiveCount(t *testing.T) {
 func TestRollbackHonoursCount(t *testing.T) {
 	t.Parallel()
 
-	cfg := sqliteMigrationConfig(t)
+	config := sqliteMigrationConfig(t)
 	const second = `-- +goose Up
 CREATE TABLE teams (id INTEGER PRIMARY KEY);
 
 -- +goose Down
 DROP TABLE teams;
 `
-	if err := os.WriteFile(filepath.Join(cfg.Migration.Path, "20260827000001_create_teams.sql"), []byte(second), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(config.Migration.Path, "20260827000001_create_teams.sql"), []byte(second), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if results, err := runMigrate(context.Background(), cfg); err != nil || len(results) != 2 {
+	if results, err := runMigrate(context.Background(), config); err != nil || len(results) != 2 {
 		t.Fatalf("migrate two files = %v, %v", results, err)
 	}
-	results, err := runRollback(context.Background(), cfg, 2)
+	results, err := runRollback(context.Background(), config, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestAnExistingDirectoryWithNoMigrationFilesHasNothingToDo(t *testing.T) {
 	if err := os.Mkdir(migrations, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Path:   filepath.Join(root, "app.sqlite"),
 		Migration: vvdb.Migration{
@@ -240,13 +240,13 @@ func TestAnExistingDirectoryWithNoMigrationFilesHasNothingToDo(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	if statuses, err := runStatus(ctx, cfg); err != nil || len(statuses) != 0 {
+	if statuses, err := runStatus(ctx, config); err != nil || len(statuses) != 0 {
 		t.Fatalf("empty status = %v, %v; want no migrations", statuses, err)
 	}
-	if results, err := runMigrate(ctx, cfg); err != nil || len(results) != 0 {
+	if results, err := runMigrate(ctx, config); err != nil || len(results) != 0 {
 		t.Fatalf("empty migrate = %v, %v; want nothing to do", results, err)
 	}
-	if _, err := os.Stat(cfg.Migration.Path); err != nil {
+	if _, err := os.Stat(config.Migration.Path); err != nil {
 		t.Fatalf("migration directory disappeared: %v", err)
 	}
 }
@@ -254,17 +254,17 @@ func TestAnExistingDirectoryWithNoMigrationFilesHasNothingToDo(t *testing.T) {
 func TestRuntimeCommandsRefuseAMissingMigrationDirectory(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.SQLite,
 		Path:   filepath.Join(root, "app.sqlite"),
 		Migration: vvdb.Migration{
 			Path: filepath.Join(root, "misspelled-migrations"),
 		},
 	}
-	if _, err := runMigrate(context.Background(), cfg); !errors.Is(err, os.ErrNotExist) {
+	if _, err := runMigrate(context.Background(), config); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing migration path error = %v, want os.ErrNotExist", err)
 	}
-	if _, err := os.Stat(cfg.Migration.Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(config.Migration.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("runtime command created a typoed path: %v", err)
 	}
 }
@@ -282,9 +282,9 @@ func TestProviderEnablesMySQLMultiStatementsWithoutMutatingTheApplicationConfig(
 		Engine: vvdb.MySQL,
 		DSN:    "app:secret@tcp(localhost:3306)/app?multiStatements=false",
 	}
-	for name, cfg := range map[string]vvdb.Config{"structured": structured, "raw dsn": raw} {
+	for name, config := range map[string]vvdb.Config{"structured": structured, "raw dsn": raw} {
 		t.Run(name, func(t *testing.T) {
-			got, err := providerDatabaseConfig(cfg)
+			got, err := providerDatabaseConfig(config)
 			if err != nil {
 				t.Fatal(err)
 			}

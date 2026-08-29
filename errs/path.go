@@ -40,10 +40,10 @@ type Path []Step
 // The receiver is the value one. With a pointer receiver, marshalling a Path
 // held in a struct field, a map entry, or on its own bypasses this method
 // entirely and emits the struct.
-func (p Path) MarshalJSON() ([]byte, error) {
+func (this Path) MarshalJSON() ([]byte, error) {
 	var b strings.Builder
 	b.WriteByte('[')
-	for i, s := range p {
+	for i, s := range this {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -73,7 +73,7 @@ func (p Path) MarshalJSON() ([]byte, error) {
 // Origin, Params and Source are the zero value and say so nowhere. Whoever
 // reads a violation off a wire has to see that they are getting three fields,
 // which is why each transport spells its own shape out.
-func (p *Path) UnmarshalJSON(b []byte) error {
+func (this *Path) UnmarshalJSON(b []byte) error {
 	var steps []json.RawMessage
 	if err := json.Unmarshal(b, &steps); err != nil {
 		return fmt.Errorf("errs: a path is a JSON array: %w", err)
@@ -99,10 +99,10 @@ func (p *Path) UnmarshalJSON(b []byte) error {
 		// An empty array is a violation that names no field, and nil is how
 		// that is spelled everywhere else here — len(v.Path) > 0 is what sorts
 		// it into the envelope's general group.
-		*p = nil
+		*this = nil
 		return nil
 	}
-	*p = out
+	*this = out
 	return nil
 }
 
@@ -117,9 +117,9 @@ func (p *Path) UnmarshalJSON(b []byte) error {
 // renders as if it were two steps, and nothing escapes it, because a log line
 // is read by a person. [ParsePath] round-trips everything else; that name is
 // the documented exception.
-func (p Path) String() string {
+func (this Path) String() string {
 	var b strings.Builder
-	for i, s := range p {
+	for i, s := range this {
 		if s.IsIndex {
 			b.WriteByte('[')
 			b.WriteString(strconv.Itoa(s.Index))
@@ -141,9 +141,9 @@ func (p Path) String() string {
 // different node, and nothing downstream would catch it. It applies here and in
 // neither other rendering — the envelope's field is an array, where a slash is
 // an ordinary character.
-func (p Path) Pointer() string {
+func (this Path) Pointer() string {
 	var b strings.Builder
-	for _, s := range p {
+	for _, s := range this {
 		b.WriteByte('/')
 		if s.IsIndex {
 			b.WriteString(strconv.Itoa(s.Index))

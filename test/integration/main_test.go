@@ -77,15 +77,15 @@ func setup() error {
 	if _, err := pgDB.ExecContext(ctx, schemaPostgres); err != nil {
 		return fmt.Errorf("postgres schema: %w", err)
 	}
-	for _, db := range []struct {
-		name string
-		db   *sql.DB
+	for _, database := range []struct {
+		name     string
+		database *sql.DB
 	}{{"mysql", myDB}, {"mariadb", mariaDB}} {
-		if _, err := db.db.ExecContext(ctx, "DROP TABLE IF EXISTS users"); err != nil {
-			return fmt.Errorf("%s drop: %w", db.name, err)
+		if _, err := database.database.ExecContext(ctx, "DROP TABLE IF EXISTS users"); err != nil {
+			return fmt.Errorf("%s drop: %w", database.name, err)
 		}
-		if _, err := db.db.ExecContext(ctx, schemaMySQL); err != nil {
-			return fmt.Errorf("%s schema: %w", db.name, err)
+		if _, err := database.database.ExecContext(ctx, schemaMySQL); err != nil {
+			return fmt.Errorf("%s schema: %w", database.name, err)
 		}
 	}
 
@@ -101,15 +101,15 @@ func setup() error {
 }
 
 func openAndWait(ctx context.Context, driver, dsn string) (*sql.DB, error) {
-	db, err := sql.Open(driver, dsn)
+	database, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(8)
+	database.SetMaxOpenConns(8)
 	deadline := time.Now().Add(45 * time.Second)
 	for {
-		if err = db.PingContext(ctx); err == nil {
-			return db, nil
+		if err = database.PingContext(ctx); err == nil {
+			return database, nil
 		}
 		if time.Now().After(deadline) {
 			return nil, err
@@ -122,18 +122,18 @@ func teardown() {
 	if pgPool != nil {
 		pgPool.Close()
 	}
-	for _, db := range []*sql.DB{pgDB, myDB, mariaDB} {
-		if db != nil {
-			_ = db.Close()
+	for _, database := range []*sql.DB{pgDB, myDB, mariaDB} {
+		if database != nil {
+			_ = database.Close()
 		}
 	}
 }
 
 // truncate wipes the shared table; the suite calls it between subtests, but
 // interop tests that build their own repositories use it directly.
-func truncate(t *testing.T, db *sql.DB) {
+func truncate(t *testing.T, database *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec("DELETE FROM users"); err != nil {
+	if _, err := database.Exec("DELETE FROM users"); err != nil {
 		t.Fatal(err)
 	}
 }

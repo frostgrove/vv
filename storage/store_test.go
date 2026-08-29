@@ -42,16 +42,16 @@ func TestPutNormalizesAndCopiesEverythingBeforeTheBackend(t *testing.T) {
 	var gotKey storage.Key
 	var gotSource io.Reader
 	var gotOptions storage.PutOptions
-	backend := &fakeBackend{put: func(_ context.Context, namespace storage.Namespace, key storage.Key, src io.Reader, opts storage.PutOptions) (storage.Info, error) {
-		gotNamespace, gotKey, gotSource, gotOptions = namespace, key, src, opts
-		body, err := io.ReadAll(src)
+	backend := &fakeBackend{put: func(_ context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
+		gotNamespace, gotKey, gotSource, gotOptions = namespace, key, source, options
+		body, err := io.ReadAll(source)
 		if err != nil {
 			return storage.Info{}, err
 		}
 		if string(body) != "report bytes" {
 			t.Fatalf("backend read %q", body)
 		}
-		return storage.Info{Size: int64(len(body)), ContentType: opts.ContentType, Metadata: backendInfoMetadata}, nil
+		return storage.Info{Size: int64(len(body)), ContentType: options.ContentType, Metadata: backendInfoMetadata}, nil
 	}}
 
 	info, err := newStore(backend).Put(context.Background(), key, source, storage.PutOptions{
@@ -106,8 +106,8 @@ func TestInvalidPutInputIsRejectedBeforeTheSourceOrBackend(t *testing.T) {
 	negative := int64(-1)
 
 	cases := []struct {
-		name string
-		opts storage.PutOptions
+		name    string
+		options storage.PutOptions
 	}{
 		{"unknown mode", storage.PutOptions{Mode: storage.WriteMode(99)}},
 		{"negative size", storage.PutOptions{Size: &negative}},
@@ -125,7 +125,7 @@ func TestInvalidPutInputIsRejectedBeforeTheSourceOrBackend(t *testing.T) {
 	for _, tc := range cases {
 		backend := &fakeBackend{}
 		source := &trackedSource{Reader: bytes.NewReader([]byte("must stay unread"))}
-		_, err := newStore(backend).Put(context.Background(), mustKey(t, "valid/key"), source, tc.opts)
+		_, err := newStore(backend).Put(context.Background(), mustKey(t, "valid/key"), source, tc.options)
 		if !errors.Is(err, storage.ErrInvalid) {
 			t.Errorf("%s: Put error = %v, want ErrInvalid", tc.name, err)
 		}
@@ -184,9 +184,9 @@ func TestExactSizeReturnsAnIndependentOptionalValue(t *testing.T) {
 }
 
 func TestPutCanonicalizesEveryEmptyMetadataMapToNil(t *testing.T) {
-	backend := &fakeBackend{put: func(_ context.Context, _ storage.Namespace, _ storage.Key, _ io.Reader, opts storage.PutOptions) (storage.Info, error) {
-		if opts.Metadata != nil {
-			t.Fatalf("backend metadata = %#v, want canonical nil", opts.Metadata)
+	backend := &fakeBackend{put: func(_ context.Context, _ storage.Namespace, _ storage.Key, _ io.Reader, options storage.PutOptions) (storage.Info, error) {
+		if options.Metadata != nil {
+			t.Fatalf("backend metadata = %#v, want canonical nil", options.Metadata)
 		}
 		return storage.Info{}, nil
 	}}
@@ -292,13 +292,13 @@ type trackedSource struct {
 	closes int
 }
 
-func (r *trackedSource) Read(p []byte) (int, error) {
-	r.reads++
-	return r.Reader.Read(p)
+func (this *trackedSource) Read(p []byte) (int, error) {
+	this.reads++
+	return this.Reader.Read(p)
 }
 
-func (r *trackedSource) Close() error {
-	r.closes++
+func (this *trackedSource) Close() error {
+	this.closes++
 	return nil
 }
 
@@ -307,8 +307,8 @@ type trackedBody struct {
 	closes int
 }
 
-func (b *trackedBody) Close() error {
-	b.closes++
+func (this *trackedBody) Close() error {
+	this.closes++
 	return nil
 }
 

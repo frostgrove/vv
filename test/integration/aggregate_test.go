@@ -20,7 +20,7 @@ import (
 func aggSeed(t *testing.T, tg egTarget) {
 	t.Helper()
 	ctx := context.Background()
-	rows := EgRows.Bind(tg.src)
+	rows := EgRows.Bind(tg.source)
 	for _, r := range []EgRow{
 		{ID: 1, Tenant: 1, Name: "a", Score: crud.Set(10)},
 		{ID: 2, Tenant: 1, Name: "b", Score: crud.Set(20)},
@@ -41,9 +41,9 @@ func TestAggregatesGroupAndSummarise(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			aggSeed(t, tg)
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 
 			got, err := rows.Aggregate(ctx,
 				crud.GroupBy("Tenant"),
@@ -96,9 +96,9 @@ func TestAnAggregateHonoursTheFilter(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			aggSeed(t, tg)
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 
 			got, err := rows.Aggregate(ctx,
 				crud.Where(crud.Eq("Tenant", 1)),
@@ -127,10 +127,10 @@ func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			aggSeed(t, tg)
 
-			got, err := scoped.Bind(tg.src).Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
+			got, err := scoped.Bind(tg.source).Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 
 			// The control: without the scope the same call sees everything, so
 			// the assertion above is measuring the scope and not the fixture.
-			all, err := EgRows.Bind(tg.src).Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
+			all, err := EgRows.Bind(tg.source).Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,9 +168,9 @@ func TestAnAggregateHonoursTheSecurityGate(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			aggSeed(t, tg)
-			gated := EgRows.Bind(tg.src, security.Gate(policy))
+			gated := EgRows.Bind(tg.source, security.Gate(policy))
 
 			mine := context.WithValue(ctx, gatePrincipal{}, int64(1))
 			got, err := gated.Aggregate(mine, crud.Aggregate(crud.CountAll("n"), crud.Sum("total", "Score")))
@@ -197,11 +197,11 @@ func TestAnAggregateHonoursTheSecurityGate(t *testing.T) {
 func TestAnAggregateRefusesWhatTheModelDoesNotHave(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
-	rows := EgRows.Bind(egEngines()[0].src)
+	rows := EgRows.Bind(egEngines()[0].source)
 
 	for _, tc := range []struct {
-		name string
-		opts []crud.Option
+		name    string
+		options []crud.Option
 	}{
 		{"unknown field", []crud.Option{crud.Aggregate(crud.Sum("s", "Nope"))}},
 		{"unknown group", []crud.Option{crud.Aggregate(crud.CountAll("n")), crud.GroupBy("Nope")}},
@@ -211,7 +211,7 @@ func TestAnAggregateRefusesWhatTheModelDoesNotHave(t *testing.T) {
 		{"a sum with no field", []crud.Option{crud.Aggregate(crud.Aggregation{As: "s", Fn: "SUM"})}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := rows.Aggregate(ctx, tc.opts...); err == nil {
+			if _, err := rows.Aggregate(ctx, tc.options...); err == nil {
 				t.Fatal("accepted")
 			} else if errors.Is(err, crud.ErrNotFound) {
 				t.Fatalf("err = %v, want a declaration error", err)

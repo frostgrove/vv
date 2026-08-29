@@ -55,19 +55,19 @@ type Field struct {
 }
 
 // Label is a stable, human-readable option for an interactive model picker.
-func (m Model) Label() string {
-	name := m.Name
-	if m.Package != "" {
-		name = m.Package + "." + name
+func (this Model) Label() string {
+	name := this.Name
+	if this.Package != "" {
+		name = this.Package + "." + name
 	}
-	where := m.File
-	if m.Line > 0 {
-		where = fmt.Sprintf("%s:%d", where, m.Line)
+	where := this.File
+	if this.Line > 0 {
+		where = fmt.Sprintf("%s:%d", where, this.Line)
 	}
 	if where == "" {
-		return fmt.Sprintf("%s (table %s)", name, m.Table)
+		return fmt.Sprintf("%s (table %s)", name, this.Table)
 	}
-	return fmt.Sprintf("%s (table %s) — %s", name, m.Table, where)
+	return fmt.Sprintf("%s (table %s) — %s", name, this.Table, where)
 }
 
 // Candidates returns the most likely models for target. It intentionally

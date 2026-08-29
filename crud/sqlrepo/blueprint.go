@@ -148,8 +148,8 @@ type Blueprint[M any, ID comparable, U any] struct {
 // Define declares a repository for model M with primary key ID and update DTO
 // U, and panics if the declaration does not hold together. An empty table name
 // falls back to the snake_case plural of the model type name.
-func Define[M any, ID comparable, U any](table string, opts ...Setting) *Blueprint[M, ID, U] {
-	bp, err := TryDefine[M, ID, U](table, opts...)
+func Define[M any, ID comparable, U any](table string, options ...Setting) *Blueprint[M, ID, U] {
+	bp, err := TryDefine[M, ID, U](table, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -157,7 +157,7 @@ func Define[M any, ID comparable, U any](table string, opts ...Setting) *Bluepri
 }
 
 // TryDefine is Define without the panic.
-func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blueprint[M, ID, U], error) {
+func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*Blueprint[M, ID, U], error) {
 	meta, err := crud.NewMeta[M](table)
 	if err != nil {
 		return nil, err
@@ -182,7 +182,7 @@ func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blu
 	// Declaring the repository is also what teaches relations on other models
 	// which table this one lives in.
 	crud.RegisterTable[M](meta.Table)
-	for _, o := range opts {
+	for _, o := range options {
 		o(&bp.set)
 	}
 	if bp.set.defaultLimit <= 0 {
@@ -201,25 +201,25 @@ func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blu
 // test into the permanent scope — so declaring the delete behaviour is what
 // declares the read behaviour, and the two cannot be added separately or fall
 // out of step.
-func (bp *Blueprint[M, ID, U]) resolveSoftDelete() error {
-	if bp.set.softDelete == "" {
+func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
+	if this.set.softDelete == "" {
 		return nil
 	}
-	f := bp.meta.Field(bp.set.softDelete)
+	f := this.meta.Field(this.set.softDelete)
 	if f == nil {
-		return &crud.SchemaError{Model: bp.meta.Name, Field: bp.set.softDelete,
+		return &crud.SchemaError{Model: this.meta.Name, Field: this.set.softDelete,
 			Reason: "no such field to soft-delete into"}
 	}
 	if !f.Optional && f.Type.Kind() != reflect.Pointer {
-		return &crud.SchemaError{Model: bp.meta.Name, Field: f.Name,
+		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
 			Reason: "a soft-delete column has to be nullable, or there is no value that means `not deleted`"}
 	}
 	if f.PK || f.Immutable || f.Generated || f.Version {
-		return &crud.SchemaError{Model: bp.meta.Name, Field: f.Name,
+		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
 			Reason: "a soft-delete column has to be writable"}
 	}
-	bp.softDelete = f
-	bp.set.scope = crud.And(bp.set.scope, crud.IsNull(f.Name))
+	this.softDelete = f
+	this.set.scope = crud.And(this.set.scope, crud.IsNull(f.Name))
 	return nil
 }
 
@@ -227,30 +227,30 @@ func (bp *Blueprint[M, ID, U]) resolveSoftDelete() error {
 // the preloader consult, and settles the one case that needs no declaring: a
 // relation that points back at this repository's own model is narrowed by
 // Scope, because there is only one possible answer to what those rows are.
-func (bp *Blueprint[M, ID, U]) resolveRelationScopes() error {
-	for _, rs := range bp.set.relScopes {
-		_, canonical, err := bp.meta.RelationAt(rs.path)
+func (this *Blueprint[M, ID, U]) resolveRelationScopes() error {
+	for _, rs := range this.set.relScopes {
+		_, canonical, err := this.meta.RelationAt(rs.path)
 		if err != nil {
 			return err
 		}
-		bp.relScopes = bp.relScopes.AtPath(canonical, rs.pred)
+		this.relScopes = this.relScopes.AtPath(canonical, rs.pred)
 	}
-	bp.relScopes = bp.relScopes.ForModel(bp.meta.Type, bp.set.scope)
+	this.relScopes = this.relScopes.ForModel(this.meta.Type, this.set.scope)
 	return nil
 }
 
 // Meta exposes the bound model description — useful for building specifications
 // or introspecting columns.
-func (bp *Blueprint[M, ID, U]) Meta() *crud.Meta { return bp.meta }
+func (this *Blueprint[M, ID, U]) Meta() *crud.Meta { return this.meta }
 
 // Bind attaches the blueprint to a datasource, wrapping it in the given
 // decorators. The first decorator ends up outermost.
-func (bp *Blueprint[M, ID, U]) Bind(src crud.Source, mw ...crud.Middleware[M, ID]) *crud.Repo[M, ID, U] {
-	core := crud.Core[M, ID](newRepository[M, ID, U](src, bp))
+func (this *Blueprint[M, ID, U]) Bind(source crud.Source, mw ...crud.Middleware[M, ID]) *crud.Repo[M, ID, U] {
+	core := crud.Core[M, ID](newRepository[M, ID, U](source, this))
 	return crud.Wrap[M, ID, U](crud.Chain(core, mw...))
 }
 
 // New declares and binds in one call.
-func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) *crud.Repo[M, ID, U] {
-	return Define[M, ID, U](table, opts...).Bind(src)
+func New[M any, ID comparable, U any](source crud.Source, table string, options ...Setting) *crud.Repo[M, ID, U] {
+	return Define[M, ID, U](table, options...).Bind(source)
 }

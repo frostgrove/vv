@@ -84,26 +84,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	sqlDB, err := db.DB()
+	sqlDB, err := database.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := bootstrap(db); err != nil {
+	if err := bootstrap(database); err != nil {
 		log.Fatal(err)
 	}
 
 	// crudsql.MySQL wraps the *sql.DB gorm already opened. vv sends its
 	// own statements over it; gorm's callback chain never runs on them.
-	repo := specs.Executor(Products.Bind(crudsql.MySQL(sqlDB)))
+	repository := specs.Executor(Products.Bind(crudsql.MySQL(sqlDB)))
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	crudgin.New(repo,
+	crudgin.New(repository,
 		crudgin.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
@@ -117,11 +117,11 @@ func main() {
 
 // bootstrap migrates the table and reseeds it, so the example runs the same
 // way every time it starts. A real application would use its own migrations.
-func bootstrap(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Product{}); err != nil {
+func bootstrap(database *gorm.DB) error {
+	if err := database.AutoMigrate(&Product{}); err != nil {
 		return err
 	}
-	if err := db.Exec("DELETE FROM gorm_mysql_products").Error; err != nil {
+	if err := database.Exec("DELETE FROM gorm_mysql_products").Error; err != nil {
 		return err
 	}
 	rows := []Product{
@@ -129,5 +129,5 @@ func bootstrap(db *gorm.DB) error {
 		{Sku: "NUT-1", Name: "hex nut", Price: 120, Active: true},
 		{Sku: "WSH-1", Name: "washer", Price: 35, Stock: crud.Set(900), Active: true},
 	}
-	return db.Create(&rows).Error
+	return database.Create(&rows).Error
 }

@@ -302,8 +302,8 @@ func TestAMalformedBodyIsRefusedWithoutNamingGoTypes(t *testing.T) {
 // [[D-013]] requires to name the key — into "the request body could not be
 // read". One disclosure bug traded for a refusal that says nothing.
 func TestAnAuditedRefusalStillReachesTheClientWhole(t *testing.T) {
-	var req query.Request
-	err := DecodeJSON(strings.NewReader(`{"filtr":{"name":"x"}}`), &req)
+	var request query.Request
+	err := DecodeJSON(strings.NewReader(`{"filtr":{"name":"x"}}`), &request)
 	if err == nil {
 		t.Fatal("an option the document does not define was accepted")
 	}

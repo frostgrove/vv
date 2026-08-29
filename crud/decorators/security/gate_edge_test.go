@@ -66,15 +66,15 @@ func TestAScopeWithoutInspectRefusesEveryWriteWithABody(t *testing.T) {
 	}{
 		{
 			name: "Update",
-			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				_, err := repo.Update(ctx, 1, DocUpdate{TenantID: ptrTo(int64(8))})
+			call: func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				_, err := repository.Update(ctx, 1, DocUpdate{TenantID: ptrTo(int64(8))})
 				return err
 			},
 		},
 		{
 			name: "UpdateAll",
-			call: func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				_, err := repo.UpdateAll(ctx, DocUpdate{TenantID: ptrTo(int64(8))})
+			call: func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				_, err := repository.UpdateAll(ctx, DocUpdate{TenantID: ptrTo(int64(8))})
 				return err
 			},
 		},
@@ -110,9 +110,9 @@ func TestSaveRefusesToOverwriteATombstoneHiddenByRepositoryScope(t *testing.T) {
 		crudtest.Rows(),                // no visible row under the dynamic scope
 		crudtest.Rows([]any{int64(1)}), // unscoped physical-existence probe sees the tombstone
 	)
-	repo := docs.Bind(rec, security.Gate(security.ScopeField[softDoc, int64]("TenantID", tenantOf)))
+	repository := docs.Bind(rec, security.Gate(security.ScopeField[softDoc, int64]("TenantID", tenantOf)))
 
-	_, err := repo.Save(ctx, &softDoc{ID: 1, TenantID: 7, Title: "resurrect"})
+	_, err := repository.Save(ctx, &softDoc{ID: 1, TenantID: 7, Title: "resurrect"})
 	if !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for an invisible tombstone", err)
 	}
@@ -156,12 +156,12 @@ func TestScopeOnlySavePreservesResolverFailures(t *testing.T) {
 		name string
 		call func(*crud.Repo[Doc, int64, DocUpdate]) error
 	}{
-		{"Save", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-			_, err := repo.Save(context.Background(), &Doc{Title: "x"})
+		{"Save", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+			_, err := repository.Save(context.Background(), &Doc{Title: "x"})
 			return err
 		}},
-		{"SaveAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-			return repo.SaveAll(context.Background(), []*Doc{{Title: "x"}})
+		{"SaveAll", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+			return repository.SaveAll(context.Background(), []*Doc{{Title: "x"}})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,12 +206,12 @@ func TestGeneratedSaveStillFailsWhenAScopeResolverFails(t *testing.T) {
 			name string
 			call func(*crud.Repo[Doc, int64, DocUpdate]) error
 		}{
-			{"Save", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				_, err := repo.Save(context.Background(), &Doc{TenantID: 7, Title: "x"})
+			{"Save", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				_, err := repository.Save(context.Background(), &Doc{TenantID: 7, Title: "x"})
 				return err
 			}},
-			{"SaveAll", func(repo *crud.Repo[Doc, int64, DocUpdate]) error {
-				return repo.SaveAll(context.Background(), []*Doc{{TenantID: 7, Title: "x"}})
+			{"SaveAll", func(repository *crud.Repo[Doc, int64, DocUpdate]) error {
+				return repository.SaveAll(context.Background(), []*Doc{{TenantID: 7, Title: "x"}})
 			}},
 		} {
 			t.Run(policy.name+"/"+save.name, func(t *testing.T) {
@@ -481,8 +481,8 @@ func TestATautologicalFilterDoesNotPermitAnUnscopedDeleteAll(t *testing.T) {
 		crud.Not(crud.Or(nil)),
 	} {
 		rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
-		repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
-		_, err := repo.DeleteAll(context.Background(), crud.Where(p))
+		repository := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
+		_, err := repository.DeleteAll(context.Background(), crud.Where(p))
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
 		}
@@ -543,9 +543,9 @@ func TestARelationScopeStillAppliesUnderAGate(t *testing.T) {
 		crudtest.Rows([]any{int64(1), int64(7), "mine"}),
 		crudtest.Rows(),
 	)
-	repo := docs.Bind(rec, security.Gate(security.ScopeField[TaggedDoc, int64]("TenantID", tenantOf)))
+	repository := docs.Bind(rec, security.Gate(security.ScopeField[TaggedDoc, int64]("TenantID", tenantOf)))
 
-	if _, err := repo.GetAll(ctx, crud.Preload("Tags")); err != nil {
+	if _, err := repository.GetAll(ctx, crud.Preload("Tags")); err != nil {
 		t.Fatal(err)
 	}
 	if got := rec.Last().SQL; !strings.Contains(got, `"hidden" = `) {

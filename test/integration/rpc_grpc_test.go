@@ -35,14 +35,14 @@ var _ crudgrpc.Service[Article, int64, ArticleUpdate] = articlePort{}
 
 // grpcServe mounts one service on an in-process server and answers a client
 // that calls it by full method name.
-func grpcServe(t *testing.T, svc articlePort) *grpcClient {
+func grpcServe(t *testing.T, service articlePort) *grpcClient {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listening: %v", err)
 	}
 	srv := grpc.NewServer()
-	crudgrpc.Serving[Article, int64, ArticleUpdate](svc).Register(srv, "Article")
+	crudgrpc.Serving[Article, int64, ArticleUpdate](service).Register(srv, "Article")
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -58,14 +58,14 @@ func grpcServe(t *testing.T, svc articlePort) *grpcClient {
 
 // grpcServeRepo mounts a repository directly, for a fixture that has no service
 // of its own.
-func grpcServeRepo[M any, ID comparable, U any](t *testing.T, repo crudgrpc.Repository[M, ID, U]) *grpcClient {
+func grpcServeRepo[M any, ID comparable, U any](t *testing.T, repository crudgrpc.Repository[M, ID, U]) *grpcClient {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listening: %v", err)
 	}
 	srv := grpc.NewServer()
-	crudgrpc.New(repo).Register(srv, "Fixture")
+	crudgrpc.New(repository).Register(srv, "Fixture")
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -85,30 +85,30 @@ type grpcClient struct {
 	service string
 }
 
-func (c *grpcClient) call(method, request string) (*structpb.Struct, *status.Status) {
-	c.t.Helper()
+func (this *grpcClient) call(method, request string) (*structpb.Struct, *status.Status) {
+	this.t.Helper()
 	in := &structpb.Struct{}
 	if request != "" {
 		if err := in.UnmarshalJSON([]byte(request)); err != nil {
-			c.t.Fatalf("the fixture %s is not a JSON object: %v", request, err)
+			this.t.Fatalf("the fixture %s is not a JSON object: %v", request, err)
 		}
 	}
 	out := &structpb.Struct{}
-	if err := c.conn.Invoke(context.Background(), "/"+c.service+"/"+method, in, out); err != nil {
+	if err := this.conn.Invoke(context.Background(), "/"+this.service+"/"+method, in, out); err != nil {
 		st, ok := status.FromError(err)
 		if !ok {
-			c.t.Fatalf("%s answered an error with no status: %v", method, err)
+			this.t.Fatalf("%s answered an error with no status: %v", method, err)
 		}
 		return nil, st
 	}
 	return out, nil
 }
 
-func (c *grpcClient) ok(method, request string) *structpb.Struct {
-	c.t.Helper()
-	out, st := c.call(method, request)
+func (this *grpcClient) ok(method, request string) *structpb.Struct {
+	this.t.Helper()
+	out, st := this.call(method, request)
 	if st != nil {
-		c.t.Fatalf("%s answered %s: %s", method, st.Code(), st.Message())
+		this.t.Fatalf("%s answered %s: %s", method, st.Code(), st.Message())
 	}
 	return out
 }
@@ -124,8 +124,8 @@ func TestOnePortServiceAlsoMountsOnGRPC(t *testing.T) {
 		engines++
 		t.Run(b.name, func(t *testing.T) {
 			ann, _, generics, _, _ := seedBlog(t, b)
-			svc := newPortService(b)
-			c := grpcServe(t, svc)
+			service := newPortService(b)
+			c := grpcServe(t, service)
 
 			t.Run("a keyed read with a preload", func(t *testing.T) {
 				out := c.ok("Get", `{"id":"`+itoa64(generics.ID)+`","query":{"preload":["Author"]}}`)
@@ -231,12 +231,12 @@ func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) 
 	for _, tg := range egTargets() {
 		t.Run(tg.name, func(t *testing.T) {
 			walked++
-			egWipe(t, tg.src)
-			repo := EgConses.Bind(tg.src)
-			if err := repo.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("t")}); err != nil {
+			egWipe(t, tg.source)
+			repository := EgConses.Bind(tg.source)
+			if err := repository.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("t")}); err != nil {
 				t.Fatal(err)
 			}
-			c := grpcServeRepo(t, repo)
+			c := grpcServeRepo(t, repository)
 
 			_, st := c.call("Create", `{"Slug":"taken","Tag":"other"}`)
 			if st == nil {

@@ -56,28 +56,28 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 
 // decl returns the generated declaration that starts with header, through its
 // closing brace, so one type can be compared at a time.
-func decl(t *testing.T, src, header string) string {
+func decl(t *testing.T, source, header string) string {
 	t.Helper()
-	i := strings.Index(src, header)
+	i := strings.Index(source, header)
 	if i < 0 {
-		t.Fatalf("the generated file declares no %s:\n%s", header, src)
+		t.Fatalf("the generated file declares no %s:\n%s", header, source)
 	}
-	rest := src[i:]
+	rest := source[i:]
 	j := strings.Index(rest, "\n}\n")
 	if j < 0 {
-		t.Fatalf("%s is never closed:\n%s", header, src)
+		t.Fatalf("%s is never closed:\n%s", header, source)
 	}
 	return rest[:j+2]
 }
 
 // comment returns the doc comment block that starts with header, so a test can
 // assert what the generator said about a declaration rather than about the file.
-func comment(src, header string) string {
-	i := strings.Index(src, header)
+func comment(source, header string) string {
+	i := strings.Index(source, header)
 	if i < 0 {
 		return ""
 	}
-	rest := src[i:]
+	rest := source[i:]
 	j := strings.Index(rest, "\ntype ")
 	if j < 0 {
 		return rest
@@ -191,20 +191,20 @@ type Product struct {
 // took out of the mapping altogether.
 func TestUpdateDTOLeavesOutWhatCannotBeWritten(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
-	dto := decl(t, out, "type ArticleUpdate struct {")
+	dataTransferObject := decl(t, out, "type ArticleUpdate struct {")
 	attrs := decl(t, out, "type ArticleAttrs struct {")
 
 	for _, f := range []string{"ID", "Slug", "Rendered"} {
-		if declares(dto, f) {
-			t.Fatalf("%s is in the update DTO, so a client could write it:\n%s", f, dto)
+		if declares(dataTransferObject, f) {
+			t.Fatalf("%s is in the update DTO, so a client could write it:\n%s", f, dataTransferObject)
 		}
 		if !declares(attrs, f) {
 			t.Fatalf("%s left the metamodel too, so it can no longer be filtered or sorted:\n%s", f, attrs)
 		}
 	}
 	// db:"-" is not a column at all, so it is in neither.
-	if declares(dto, "Secret") || declares(attrs, "Secret") {
-		t.Fatalf("an unmapped field reached the generated code:\n%s\n%s", dto, attrs)
+	if declares(dataTransferObject, "Secret") || declares(attrs, "Secret") {
+		t.Fatalf("an unmapped field reached the generated code:\n%s\n%s", dataTransferObject, attrs)
 	}
 }
 
@@ -214,8 +214,8 @@ func TestReadonlyKeepsAFieldQueryableButNotWritable(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) {
 		g.readonly = names("Title,CreatedAt")
 	})
-	if dto := decl(t, out, "type ArticleUpdate struct {"); declares(dto, "Title") || declares(dto, "CreatedAt") {
-		t.Fatalf("a readonly field is writable:\n%s", dto)
+	if dataTransferObject := decl(t, out, "type ArticleUpdate struct {"); declares(dataTransferObject, "Title") || declares(dataTransferObject, "CreatedAt") {
+		t.Fatalf("a readonly field is writable:\n%s", dataTransferObject)
 	}
 	attrs := decl(t, out, "type ArticleAttrs struct {")
 	if !declares(attrs, "Title") || !declares(attrs, "CreatedAt") {
@@ -406,12 +406,12 @@ type Product struct {
 			t.Fatalf("%s did not come through the embedding:\n%s", f, attrs)
 		}
 	}
-	dto := decl(t, out, "type ProductUpdate struct {")
-	if declares(dto, "ID") || declares(dto, "CreatedAt") {
-		t.Fatalf("an embedded key or immutable column became writable:\n%s", dto)
+	dataTransferObject := decl(t, out, "type ProductUpdate struct {")
+	if declares(dataTransferObject, "ID") || declares(dataTransferObject, "CreatedAt") {
+		t.Fatalf("an embedded key or immutable column became writable:\n%s", dataTransferObject)
 	}
-	if !declares(dto, "Name") {
-		t.Fatalf("the model's own column was lost:\n%s", dto)
+	if !declares(dataTransferObject, "Name") {
+		t.Fatalf("the model's own column was lost:\n%s", dataTransferObject)
 	}
 }
 
@@ -443,10 +443,10 @@ type Team struct {
 		t.Fatalf("the generated file does not import gorm:\n%s", out)
 	}
 	// Nothing gorm manages is writable through the DTO.
-	dto := decl(t, out, "type TeamUpdate struct {")
+	dataTransferObject := decl(t, out, "type TeamUpdate struct {")
 	for _, f := range []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt"} {
-		if declares(dto, f) {
-			t.Fatalf("%s is writable, and gorm owns it:\n%s", f, dto)
+		if declares(dataTransferObject, f) {
+			t.Fatalf("%s is writable, and gorm owns it:\n%s", f, dataTransferObject)
 		}
 	}
 }
@@ -711,16 +711,16 @@ func runGenerated(t *testing.T, model, generated string) (string, error) {
 	cmd := exec.Command("go", "run", ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off")
-	res, err := cmd.CombinedOutput()
-	return string(res), err
+	response, err := cmd.CombinedOutput()
+	return string(response), err
 }
 
 // The proof that matters: the generated file builds, and the metamodel's
 // package-init check agrees with the model it was generated from.
 func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
-	if res, err := runGenerated(t, tags(blogModel), out); err != nil {
-		t.Fatalf("the generated code does not build and run: %v\n%s\n---- generated ----\n%s", err, res, out)
+	if response, err := runGenerated(t, tags(blogModel), out); err != nil {
+		t.Fatalf("the generated code does not build and run: %v\n%s\n---- generated ----\n%s", err, response, out)
 	}
 }
 
@@ -753,8 +753,8 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 	// reason would pass both arms below by failing for the wrong cause.
 	t.Run("the untampered resource starts", func(t *testing.T) {
 		out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
-		if res, err := runGenerated(t, tags(resourceModel), out); err != nil {
-			t.Fatalf("the generated resource refused to start: %v\n%s\n---- generated ----\n%s", err, res, out)
+		if response, err := runGenerated(t, tags(resourceModel), out); err != nil {
+			t.Fatalf("the generated resource refused to start: %v\n%s\n---- generated ----\n%s", err, response, out)
 		}
 	})
 
@@ -770,12 +770,12 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 		if grown == tags(resourceModel) {
 			t.Fatal("the fixture did not gain a column, so this measures nothing")
 		}
-		res, err := runGenerated(t, grown, out)
+		response, err := runGenerated(t, grown, out)
 		if err == nil {
-			t.Fatalf("a column the DTO does not cover started cleanly; it is silently unpatchable:\n%s", res)
+			t.Fatalf("a column the DTO does not cover started cleanly; it is silently unpatchable:\n%s", response)
 		}
-		if !strings.Contains(res, "Colour") {
-			t.Fatalf("the refusal does not name the column somebody has to act on:\n%s", res)
+		if !strings.Contains(response, "Colour") {
+			t.Fatalf("the refusal does not name the column somebody has to act on:\n%s", response)
 		}
 	})
 
@@ -787,12 +787,12 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 		if cut == out {
 			t.Fatalf("the fixture has no Title entry to delete:\n%s", out)
 		}
-		res, err := runGenerated(t, tags(resourceModel), cut)
+		response, err := runGenerated(t, tags(resourceModel), cut)
 		if err == nil {
-			t.Fatalf("a map missing a column started cleanly; the wrong path would ship:\n%s", res)
+			t.Fatalf("a map missing a column started cleanly; the wrong path would ship:\n%s", response)
 		}
-		if !strings.Contains(res, "Title") {
-			t.Fatalf("the refusal does not name the column:\n%s", res)
+		if !strings.Contains(response, "Title") {
+			t.Fatalf("the refusal does not name the column:\n%s", response)
 		}
 	})
 }
@@ -848,7 +848,7 @@ func TestAVersionedModelGeneratesAResourceThatStarts(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go toolchain")
 	}
-	src := `package m
+	source := `package m
 
 type Doc struct {
 	ID      int64  @db:"id,pk,auto"@
@@ -856,9 +856,9 @@ type Doc struct {
 	Version int    @db:"version,version"@
 }
 `
-	out := gen(t, map[string]string{"model.go": src}, withAdapter)
-	if res, err := runGenerated(t, tags(src), out); err != nil {
-		t.Fatalf("a versioned model produced a package that does not start: %v\n%s\n---- generated ----\n%s", err, res, out)
+	out := gen(t, map[string]string{"model.go": source}, withAdapter)
+	if response, err := runGenerated(t, tags(source), out); err != nil {
+		t.Fatalf("a versioned model produced a package that does not start: %v\n%s\n---- generated ----\n%s", err, response, out)
 	}
 
 	if declares(decl(t, out, "type DocInput struct {"), "Version") {
@@ -873,12 +873,12 @@ type Doc struct {
 	if named == out {
 		t.Fatalf("the fixture has no Title entry to extend:\n%s", out)
 	}
-	res, err := runGenerated(t, tags(src), named)
+	response, err := runGenerated(t, tags(source), named)
 	if err == nil {
-		t.Fatalf("a map claiming the lock as a request key started cleanly:\n%s", res)
+		t.Fatalf("a map claiming the lock as a request key started cleanly:\n%s", response)
 	}
-	if !strings.Contains(res, "Version") {
-		t.Fatalf("the refusal does not name the entry:\n%s", res)
+	if !strings.Contains(response, "Version") {
+		t.Fatalf("the refusal does not name the entry:\n%s", response)
 	}
 }
 
@@ -887,7 +887,7 @@ type Doc struct {
 // a generator that emitted it produced a package which panicked at Define time —
 // the two features shipped in the same change and did not know about each other.
 func TestTheVersionColumnIsLeftOutOfTheDTO(t *testing.T) {
-	src := tags(`package m
+	source := tags(`package m
 
 import "time"
 
@@ -899,16 +899,16 @@ type Doc struct {
 	UpdatedAt time.Time @db:"updated_at"@
 }
 `)
-	out := gen(t, map[string]string{"model.go": src}, nil)
+	out := gen(t, map[string]string{"model.go": source}, nil)
 
-	dto := decl(t, out, "type DocUpdate struct {")
+	dataTransferObject := decl(t, out, "type DocUpdate struct {")
 	for _, f := range []string{"Version", "Revision"} {
-		if declares(dto, f) {
-			t.Fatalf("%s is in the update DTO; sqlrepo.Define will panic on it:\n%s", f, dto)
+		if declares(dataTransferObject, f) {
+			t.Fatalf("%s is in the update DTO; sqlrepo.Define will panic on it:\n%s", f, dataTransferObject)
 		}
 	}
-	if !declares(dto, "Title") {
-		t.Fatalf("an ordinary column left the DTO with it:\n%s", dto)
+	if !declares(dataTransferObject, "Title") {
+		t.Fatalf("an ordinary column left the DTO with it:\n%s", dataTransferObject)
 	}
 
 	// It is still a column, so filtering and sorting by it must keep working —

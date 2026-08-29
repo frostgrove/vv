@@ -39,7 +39,7 @@ func At(names ...string) errs.Path {
 }
 
 // Resolve implements errs.Resolver.
-func (m PathMap) Resolve(p errs.Path) (errs.Path, bool) {
+func (this PathMap) Resolve(p errs.Path) (errs.Path, bool) {
 	// Leading index steps are positions rather than fields, so a bulk write's
 	// [0,"Email"] keeps its row number and the step after it is translated.
 	// Fields deliberately does not do this: a hand-written map may declare a
@@ -55,7 +55,7 @@ func (m PathMap) Resolve(p errs.Path) (errs.Path, bool) {
 		// having nothing to say.
 		return p, true
 	}
-	to, ok := m[p[i].Name]
+	to, ok := this[p[i].Name]
 	if !ok {
 		return p, false
 	}

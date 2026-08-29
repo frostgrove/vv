@@ -24,10 +24,10 @@ var egLiveParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
 	sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE")),
 	sqlrepo.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
 
-func egSeedTree(t *testing.T, src crud.Source) {
+func egSeedTree(t *testing.T, source crud.Source) {
 	t.Helper()
 	ctx := context.Background()
-	parents, kids := EgParents.Bind(src), EgKids.Bind(src)
+	parents, kids := EgParents.Bind(source), EgKids.Bind(source)
 
 	for _, p := range []EgParent{{ID: 1, Name: "live"}, {ID: 2, Name: "TOMBSTONE"}} {
 		if err := parents.Save(ctx, &p); err != nil {
@@ -50,9 +50,9 @@ func TestARelationScopeHidesTheSameRowsAPreloadWouldHaveExposed(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			egSeedTree(t, tg.src)
-			live := egLiveParents.Bind(tg.src)
+			egWipe(t, tg.source)
+			egSeedTree(t, tg.source)
+			live := egLiveParents.Bind(tg.source)
 
 			t.Run("the preload", func(t *testing.T) {
 				got, err := live.GetAll(ctx, crud.Preload("Kids"), crud.OrderBy(crud.Asc("ID")))
@@ -111,11 +111,11 @@ func TestARelationNobodyNarrowedIsStillReadWhole(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			egSeedTree(t, tg.src)
+			egWipe(t, tg.source)
+			egSeedTree(t, tg.source)
 
 			plain := sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
-				sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE"))).Bind(tg.src)
+				sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE"))).Bind(tg.source)
 
 			got, err := plain.GetAll(ctx, crud.Preload("Kids"))
 			if err != nil {

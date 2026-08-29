@@ -30,11 +30,11 @@ func Example_partialUpdate() {
 		crudtest.Rows(row(1, 7, "Old", 10, nil)), // the repository loads to diff
 		crudtest.Rows(row(1, 7, "New", 10, published)),
 	)
-	repo := example.Open(rec)
+	repository := example.Open(rec)
 	ctx := example.WithAuthor(context.Background(), 7)
 
 	title := "New"
-	if _, err := repo.Update(ctx, 1, example.ArticleUpdate{
+	if _, err := repository.Update(ctx, 1, example.ArticleUpdate{
 		Title:       &title,
 		Body:        ptr("body"), // unchanged: never reaches the statement
 		PublishedAt: crud.Set(published),
@@ -58,10 +58,10 @@ func Example_nullVersusAbsent() {
 		crudtest.Rows(row(1, 7, "T", 10, published)),
 		crudtest.Rows(row(1, 7, "T", 10, nil)),
 	)
-	repo := example.Open(rec)
+	repository := example.Open(rec)
 	ctx := example.WithAuthor(context.Background(), 7)
 
-	a, err := repo.Unpublish(ctx, 1)
+	a, err := repository.Unpublish(ctx, 1)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -81,10 +81,10 @@ func Example_specificationsAndPaging() {
 		crudtest.Rows(row(1, 7, "A", 5000, published)),
 		crudtest.Rows([]any{int64(41)}),
 	)
-	repo := example.Open(rec)
+	repository := example.Open(rec)
 	ctx := example.WithAuthor(context.Background(), 7)
 
-	page, err := repo.Feed(ctx, 2)
+	page, err := repository.Feed(ctx, 2)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -100,9 +100,9 @@ func Example_specificationsAndPaging() {
 // Another author's article is missing, not forbidden.
 func Example_scopeHidesForeignRows() {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	repo := example.Open(rec)
+	repository := example.Open(rec)
 
-	_, err := repo.GetByID(example.WithAuthor(context.Background(), 7), 99)
+	_, err := repository.GetByID(example.WithAuthor(context.Background(), 7), 99)
 	fmt.Println(err)
 	// Output:
 	// crud: not found
@@ -113,11 +113,11 @@ func Example_scopeHidesForeignRows() {
 // tell an insert from an overwrite.)
 func Example_frozenColumn() {
 	rec := crudtest.Postgres()
-	repo := example.Open(rec)
+	repository := example.Open(rec)
 	ctx := example.WithAuthor(context.Background(), 7)
 
 	a := example.Article{AuthorID: 8, Title: "theirs"}
-	fmt.Println(repo.Save(ctx, &a))
+	fmt.Println(repository.Save(ctx, &a))
 	fmt.Println("statements:", len(rec.Statements()))
 	// Output:
 	// security: forbidden: create: row belongs to a different AuthorID
@@ -127,13 +127,13 @@ func Example_frozenColumn() {
 // The DTO is a JSON PATCH body: absent, null and set are three different things.
 func Example_patchSemantics() {
 	for _, body := range []string{`{}`, `{"title":"T"}`, `{"publishedAt":null}`} {
-		var dto example.ArticleUpdate
-		if err := json.Unmarshal([]byte(body), &dto); err != nil {
+		var dataTransferObject example.ArticleUpdate
+		if err := json.Unmarshal([]byte(body), &dataTransferObject); err != nil {
 			fmt.Println(err)
 			return
 		}
 		fmt.Printf("%-24s title=%v publishedAt defined=%v null=%v\n",
-			body, dto.Title != nil, dto.PublishedAt.IsDefined(), dto.PublishedAt.IsNull())
+			body, dataTransferObject.Title != nil, dataTransferObject.PublishedAt.IsDefined(), dataTransferObject.PublishedAt.IsNull())
 	}
 	// Output:
 	// {}                       title=false publishedAt defined=false null=false

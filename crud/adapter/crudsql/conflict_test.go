@@ -25,8 +25,8 @@ var gate = From(nil)
 // pgErr is the shape pgx and lib/pq present: a method.
 type pgErr struct{ state string }
 
-func (e pgErr) Error() string    { return "pq: " + e.state }
-func (e pgErr) SQLState() string { return e.state }
+func (this pgErr) Error() string    { return "pq: " + this.state }
+func (this pgErr) SQLState() string { return this.state }
 
 // myErr is go-sql-driver/mysql's shape: an exported [5]byte field on a struct
 // reached through a pointer.
@@ -36,13 +36,13 @@ type myErr struct {
 	Message  string
 }
 
-func (e *myErr) Error() string { return e.Message }
+func (this *myErr) Error() string { return this.Message }
 
 // oddErr has a SQLState field of a type nothing can read a state out of. It must
 // not panic and must not be classified.
 type oddErr struct{ SQLState int }
 
-func (e oddErr) Error() string { return "odd" }
+func (this oddErr) Error() string { return "odd" }
 
 func state(s string) [5]byte {
 	var b [5]byte
@@ -107,10 +107,10 @@ type mysqlish struct {
 	Message  string
 }
 
-func (e *mysqlish) Error() string { return e.Message }
+func (this *mysqlish) Error() string { return this.Message }
 
-func newMySQLish(number uint16, state, msg string) *mysqlish {
-	e := &mysqlish{Number: number, Message: msg}
+func newMySQLish(number uint16, state, message string) *mysqlish {
+	e := &mysqlish{Number: number, Message: message}
 	copy(e.SQLState[:], state)
 	return e
 }
@@ -121,15 +121,15 @@ func TestMySQLIntegrityErrorsOutsideClass23BecomeConflicts(t *testing.T) {
 	// this, neither was classified and a client got a bare 500 where FL-011
 	// promises 409.
 	for _, tc := range []struct {
-		name   string
-		number uint16
-		msg    string
+		name    string
+		number  uint16
+		message string
 	}{
 		{"check constraint", 3819, "Check constraint 'ck_age' is violated."},
 		{"missing default", 1364, "Field 'nodef' doesn't have a default value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gate.conflict(newMySQLish(tc.number, "HY000", tc.msg))
+			got := gate.conflict(newMySQLish(tc.number, "HY000", tc.message))
 			if !errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("MySQL %d is an integrity violation and did not classify as one: %v", tc.number, got)
 			}
@@ -177,15 +177,15 @@ func TestANumberIsOnlyTrustedUnderHY000(t *testing.T) {
 // types, exactly as the pgx and MySQL cases above do.
 type sqliteish struct{ code int }
 
-func (e *sqliteish) Error() string { return "constraint failed" }
-func (e *sqliteish) Code() int     { return e.code }
+func (this *sqliteish) Error() string { return "constraint failed" }
+func (this *sqliteish) Code() int     { return this.code }
 
 type mattnish struct {
 	Code         int
 	ExtendedCode int
 }
 
-func (e *mattnish) Error() string { return "constraint failed" }
+func (this *mattnish) Error() string { return "constraint failed" }
 
 func TestSQLiteConstraintViolationsBecomeConflicts(t *testing.T) {
 	// SQLite has no SQLSTATE and never will, so a classifier keyed on SQLSTATE
@@ -279,16 +279,16 @@ func TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault(t *testing.T) {
 		{"a SQLite unique violation", &sqliteish{code: 2067}, errs.CodeUnique, &sqliteish{code: 14}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := Postgres(nil)
+			source := Postgres(nil)
 			switch tc.driver.(type) {
 			case *mysqlish:
-				src = MySQL(nil)
+				source = MySQL(nil)
 			case *sqliteish:
-				src = SQLite(nil)
+				source = SQLite(nil)
 			}
 
 			t.Run("through a multi-error", func(t *testing.T) {
-				got := src.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.driver))
+				got := source.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.driver))
 				f, ok := errs.AsFault(got)
 				if !ok {
 					t.Fatalf("no code was learned, so the SQLSTATE was not found through the multi-error: %v", got)
@@ -304,7 +304,7 @@ func TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault(t *testing.T) {
 				// violation must learn nothing — the sentinel in it came from
 				// the fixture, so errors.Is says nothing here and only the
 				// absence of a code does.
-				if f, ok := errs.AsFault(src.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.unwanted))); ok {
+				if f, ok := errs.AsFault(source.conflict(fmt.Errorf("%w: %w", crud.ErrConflict, tc.unwanted))); ok {
 					t.Fatalf("a code (%q) was learned for something that is not a violation", f.Code)
 				}
 			})
@@ -324,7 +324,7 @@ func TestASQLSTATEIsStillFoundThroughAMultiErrorAndThroughAFault(t *testing.T) {
 
 			t.Run("an error that already carries a fault is left alone", func(t *testing.T) {
 				already := errs.Conflict().Code(tc.code).Wrapping(crud.ErrConflict, tc.driver).Fault()
-				got := src.conflict(already)
+				got := source.conflict(already)
 				if got != error(already) {
 					t.Fatalf("the fault was classified a second time: %v", got)
 				}
@@ -347,8 +347,8 @@ type pgconnish struct {
 	DataTypeName, Detail, Hint, Routine string
 }
 
-func (e *pgconnish) Error() string    { return e.Message }
-func (e *pgconnish) SQLState() string { return e.Code }
+func (this *pgconnish) Error() string    { return this.Message }
+func (this *pgconnish) SQLState() string { return this.Code }
 
 // pqish is lib/pq's shape, which spells the same three fields differently. No
 // capture exists for it, so nothing here reads them — deliberately, and this is
@@ -359,8 +359,8 @@ type pqish struct {
 	Constraint, Table, Column string
 }
 
-func (e *pqish) Error() string    { return "pq: duplicate key" }
-func (e *pqish) SQLState() string { return e.state }
+func (this *pqish) Error() string    { return "pq: duplicate key" }
+func (this *pqish) SQLState() string { return this.state }
 
 func TestTheExtractorReachesTheStructuredFieldsByShape(t *testing.T) {
 	driver := &pgconnish{
@@ -398,8 +398,8 @@ func TestTheExtractorReachesTheStructuredFieldsByShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("a lib/pq-shaped error stopped classifying at all: %v", got)
 	}
-	if src := f.Violations[0].Source; src.Constraint != "" || src.Table != "" || src.Schema != "" || src.Columns != nil {
-		t.Fatalf("Source = %+v: lib/pq's spellings are read, and no capture exists for them", src)
+	if source := f.Violations[0].Source; source.Constraint != "" || source.Table != "" || source.Schema != "" || source.Columns != nil {
+		t.Fatalf("Source = %+v: lib/pq's spellings are read, and no capture exists for them", source)
 	}
 	if f.Detail.Constraint != "" || f.Detail.Table != "" {
 		t.Fatalf("Detail = %+v, want nothing carried across", f.Detail)

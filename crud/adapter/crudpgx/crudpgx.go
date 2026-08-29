@@ -32,7 +32,7 @@ type Queryer interface {
 
 // copier is the optional COPY fast path.
 type copier interface {
-	CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, src pgx.CopyFromSource) (int64, error)
+	CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, source pgx.CopyFromSource) (int64, error)
 }
 
 // beginner is implemented by pools, connections and transactions; a nested
@@ -63,9 +63,9 @@ func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = 
 // refuse: pgx speaks to PostgreSQL and nothing else, so the engine is a literal
 // here and derived from nothing. The typed extractor is wired in because this
 // module may name *pgconn.PgError.
-func faults(opts []Option) errs.Classifier {
+func faults(options []Option) errs.Classifier {
 	o := config{faults: sqlfault.New("postgres", sqlfault.WithExtractor(sqlfault.ExtractorFunc(extract)))}
-	for _, fn := range opts {
+	for _, fn := range options {
 		if fn != nil {
 			fn(&o)
 		}
@@ -74,38 +74,38 @@ func faults(opts []Option) errs.Classifier {
 }
 
 // From wraps a pgx handle — typically a transaction owned by somebody else.
-func From(q Queryer, opts ...Option) Executor { return Executor{q: q, faults: faults(opts)} }
+func From(q Queryer, options ...Option) Executor { return Executor{q: q, faults: faults(options)} }
 
 // Unwrap returns the wrapped handle.
-func (e Executor) Unwrap() Queryer { return e.q }
+func (this Executor) Unwrap() Queryer { return this.q }
 
 // DataSource names the database this executor speaks to, which is what
 // crud.WithExecutorFor matches on — the *pgxpool.Pool for a source built by
 // Open.
-func (e Executor) DataSource() any { return e.q }
+func (this Executor) DataSource() any { return this.q }
 
 // InTransaction reports whether this wrapper holds pgx's transaction handle.
 // Pools and connections can Begin but are not themselves transactional.
-func (e Executor) InTransaction() bool {
-	_, ok := e.q.(pgx.Tx)
+func (this Executor) InTransaction() bool {
+	_, ok := this.q.(pgx.Tx)
 	return ok
 }
 
-func (e Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
-	tag, err := e.q.Exec(ctx, sql, args...)
+func (this Executor) Exec(ctx context.Context, sql string, args ...any) (crud.Result, error) {
+	tag, err := this.q.Exec(ctx, sql, args...)
 	if err != nil {
-		return crud.Result{}, e.conflict(err)
+		return crud.Result{}, this.conflict(err)
 	}
 	return crud.Result{RowsAffected: tag.RowsAffected()}, nil
 }
 
-func (e Executor) Query(ctx context.Context, sql string, args ...any) (crud.Rows, error) {
+func (this Executor) Query(ctx context.Context, sql string, args ...any) (crud.Rows, error) {
 	// Queries fail on integrity too: an INSERT ... RETURNING is a query.
-	rs, err := e.q.Query(ctx, sql, args...)
+	rs, err := this.q.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, e.conflict(err)
+		return nil, this.conflict(err)
 	}
-	return rows{rs, e}, nil
+	return rows{rs, this}, nil
 }
 
 // rows exists for one reason: pgx does not report a failed statement from
@@ -119,12 +119,12 @@ type rows struct {
 	e Executor
 }
 
-func (r rows) Err() error { return r.e.conflict(r.Rows.Err()) }
+func (this rows) Err() error { return this.e.conflict(this.Rows.Err()) }
 
 // CopyFrom implements crud.BulkInserter when the underlying handle supports
 // COPY, which every pool, connection and transaction does.
-func (e Executor) CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
-	c, ok := e.q.(copier)
+func (this Executor) CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
+	c, ok := this.q.(copier)
 	if !ok {
 		return 0, crud.ErrNoTxSupport
 	}
@@ -132,8 +132,8 @@ func (e Executor) CopyFrom(ctx context.Context, table string, columns []string, 
 }
 
 // Begin starts a transaction, or a savepoint when the handle already is one.
-func (e Executor) Begin(ctx context.Context) (crud.Tx, error) {
-	b, ok := e.q.(beginner)
+func (this Executor) Begin(ctx context.Context) (crud.Tx, error) {
+	b, ok := this.q.(beginner)
 	if !ok {
 		return nil, crud.ErrNoTxSupport
 	}
@@ -144,14 +144,14 @@ func (e Executor) Begin(ctx context.Context) (crud.Tx, error) {
 	// The classifier goes into the transaction. A deferred constraint fires at
 	// COMMIT, and a Tx without it would make that one shape of conflict a
 	// sentinel with no code while the immediate shape carried one.
-	return Tx{Executor: Executor{q: tx, faults: e.faults}, tx: tx}, nil
+	return Tx{Executor: Executor{q: tx, faults: this.faults}, tx: tx}, nil
 }
 
 // Dialect makes any wrapped handle a full crud.Source.
 func (Executor) Dialect() crud.Dialect { return crud.Postgres{} }
 
 // Open binds a pool (or connection) as a datasource.
-func Open(q Queryer, opts ...Option) Executor { return Executor{q: q, faults: faults(opts)} }
+func Open(q Queryer, options ...Option) Executor { return Executor{q: q, faults: faults(options)} }
 
 // Tx is a pgx transaction. A nested Begin issues a SAVEPOINT, courtesy of pgx.
 type Tx struct {
@@ -162,11 +162,11 @@ type Tx struct {
 // Commit classifies too. A deferred constraint fires here rather than at the
 // statement, and both PostgreSQL adapters have to answer the same or the same
 // write is a 409 through database/sql and a 500 through pgx.
-func (t Tx) Commit(ctx context.Context) error   { return t.conflict(t.tx.Commit(ctx)) }
-func (t Tx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
+func (this Tx) Commit(ctx context.Context) error   { return this.conflict(this.tx.Commit(ctx)) }
+func (this Tx) Rollback(ctx context.Context) error { return this.tx.Rollback(ctx) }
 
 // Tx returns the underlying pgx.Tx, e.g. to hand to sqlc.
-func (t Tx) Tx() pgx.Tx { return t.tx }
+func (this Tx) Tx() pgx.Tx { return this.tx }
 
 var (
 	_ crud.Source       = Executor{}

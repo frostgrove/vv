@@ -22,30 +22,30 @@ func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 	t.Run("a grant on the root's own column does not leak sideways", func(t *testing.T) {
 		// Article.Body and Comment.Body are different columns on different
 		// tables that happen to share a name.
-		cfg := &query.Config{Filterable: []string{"Body"}, Preloadable: []string{"Comments"}}
+		config := &query.Config{Filterable: []string{"Body"}, Preloadable: []string{"Comments"}}
 
-		if _, _, err := tryDoc(t, byFilter, cfg); err == nil {
+		if _, _, err := tryDoc(t, byFilter, config); err == nil {
 			t.Fatal("Comments.Body was filterable on a grant that named only the root's Body")
 		}
-		if _, _, err := tryDoc(t, byPreload, cfg); err == nil {
+		if _, _, err := tryDoc(t, byPreload, config); err == nil {
 			t.Fatal("the same column, reached through a preload, was filterable on the same grant")
 		}
 	})
 
 	t.Run("the subtree spelling authorises the route it looks like it authorises", func(t *testing.T) {
-		cfg := &query.Config{Filterable: []string{"Comments.Body"}, Preloadable: []string{"Comments"}}
+		config := &query.Config{Filterable: []string{"Comments.Body"}, Preloadable: []string{"Comments"}}
 
-		if _, _, err := tryDoc(t, byFilter, cfg); err != nil {
+		if _, _, err := tryDoc(t, byFilter, config); err != nil {
 			t.Fatalf("Comments.Body was refused on a grant that names it: %v", err)
 		}
-		if _, _, err := tryDoc(t, byPreload, cfg); err != nil {
+		if _, _, err := tryDoc(t, byPreload, config); err != nil {
 			t.Fatalf("the preload route was refused on a grant that names the column: %v", err)
 		}
 	})
 
 	t.Run("a subtree wildcard covers it too", func(t *testing.T) {
-		cfg := &query.Config{Filterable: []string{"Comments.*"}, Preloadable: []string{"Comments"}}
-		if _, _, err := tryDoc(t, byPreload, cfg); err != nil {
+		config := &query.Config{Filterable: []string{"Comments.*"}, Preloadable: []string{"Comments"}}
+		if _, _, err := tryDoc(t, byPreload, config); err != nil {
 			t.Fatalf("Comments.* did not cover Comments.Body: %v", err)
 		}
 	})
@@ -55,20 +55,20 @@ func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 // skip the guard entirely: a column the config never named was sortable as long
 // as the request went through a relation.
 func TestAPreloadSortObeysTheSortableList(t *testing.T) {
-	cfg := &query.Config{
+	config := &query.Config{
 		Sortable:    []string{"Title"},
 		Preloadable: []string{"Comments"},
 	}
 
 	// The root refuses it, and so must the preload.
-	if _, _, err := tryDoc(t, `{"sort":["-body"]}`, cfg); err == nil {
+	if _, _, err := tryDoc(t, `{"sort":["-body"]}`, config); err == nil {
 		t.Fatal("the root sort accepted a column the list does not name")
 	}
 	for _, doc := range []string{
 		`{"preload":[{"path":"comments","sort":["-body"]}]}`,
 		`{"preload":[{"path":"comments","sort":["-approved"]}]}`,
 	} {
-		_, _, err := tryDoc(t, doc, cfg)
+		_, _, err := tryDoc(t, doc, config)
 		if err == nil {
 			t.Fatalf("%s sorted a preload by a column no list named", doc)
 		}

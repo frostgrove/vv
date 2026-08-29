@@ -16,8 +16,8 @@ func TestCleanupIsExplicitBoundedAndDefaultsToOneBatch(t *testing.T) {
 	want := storage.CleanupResult{Removed: 7, More: true}
 	var gotNamespace storage.Namespace
 	var gotOptions storage.CleanupOptions
-	backend := &fakeBackend{cleanup: func(_ context.Context, namespace storage.Namespace, opts storage.CleanupOptions) (storage.CleanupResult, error) {
-		gotNamespace, gotOptions = namespace, opts
+	backend := &fakeBackend{cleanup: func(_ context.Context, namespace storage.Namespace, options storage.CleanupOptions) (storage.CleanupResult, error) {
+		gotNamespace, gotOptions = namespace, options
 		return want, nil
 	}}
 	got, err := newStore(backend).CleanupExpired(context.Background(), storage.CleanupOptions{})
@@ -71,9 +71,9 @@ func TestTemporaryURLUsesTheCommonDefaultAndOnlyTheExplicitAccessorRevealsIt(t *
 	var gotNamespace storage.Namespace
 	var gotKey storage.Key
 	var gotOptions storage.TemporaryURLOptions
-	backend := &fakeBackend{temporary: func(_ context.Context, namespace storage.Namespace, key storage.Key, opts storage.TemporaryURLOptions) (storage.Link, error) {
-		gotNamespace, gotKey, gotOptions = namespace, key, opts
-		return storage.NewLink(secretURL, now.Add(opts.ExpiresIn))
+	backend := &fakeBackend{temporary: func(_ context.Context, namespace storage.Namespace, key storage.Key, options storage.TemporaryURLOptions) (storage.Link, error) {
+		gotNamespace, gotKey, gotOptions = namespace, key, options
+		return storage.NewLink(secretURL, now.Add(options.ExpiresIn))
 	}}
 
 	link, err := newStore(backend).TemporaryURL(context.Background(), key, storage.TemporaryURLOptions{})

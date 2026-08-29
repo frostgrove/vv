@@ -64,13 +64,13 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
-	db, err := sql.Open("pgx", dsn)
+	database, err := sql.Open("pgx", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
-	client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	client := entmodel.NewClient(entmodel.Driver(entsql.OpenDB(dialect.Postgres, database)))
 	defer client.Close()
 	if err := bootstrap(ctx, client); err != nil {
 		log.Fatal(err)
@@ -78,10 +78,10 @@ func main() {
 
 	// crudsql.Postgres wraps the same *sql.DB ent's driver holds — the pool
 	// that just migrated and seeded is the pool that serves every request.
-	repo := specs.Executor(Products.Bind(crudsql.Postgres(db)))
+	repository := specs.Executor(Products.Bind(crudsql.Postgres(database)))
 
 	app := fiber.New()
-	app.Use("/products", crudfiber.New(repo,
+	app.Use("/products", crudfiber.New(repository,
 		crudfiber.WithQuery[entmodel.Product, int64, entstore.ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},

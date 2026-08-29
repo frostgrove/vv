@@ -25,11 +25,11 @@ type Specification[M any] interface {
 // lambda would be.
 type SpecFunc[M any] func(root Root[M], cb Builder) crud.Predicate
 
-func (f SpecFunc[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
-	if f == nil {
+func (this SpecFunc[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
+	if this == nil {
 		return nil
 	}
-	return f(root, cb)
+	return this(root, cb)
 }
 
 // Of adapts a function into a Specification:
@@ -141,26 +141,26 @@ type Composite[M any] struct{ inner Specification[M] }
 // exactly like Specification.where(null) in Spring Data.
 func Where[M any](s Specification[M]) Composite[M] { return Composite[M]{inner: s} }
 
-func (c Composite[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
-	if c.inner == nil {
+func (this Composite[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
+	if this.inner == nil {
 		return nil
 	}
-	return c.inner.ToPredicate(root, cb)
+	return this.inner.ToPredicate(root, cb)
 }
 
 // And restricts further.
-func (c Composite[M]) And(o Specification[M]) Composite[M] {
-	return combine(c.inner, o, "AND")
+func (this Composite[M]) And(o Specification[M]) Composite[M] {
+	return combine(this.inner, o, "AND")
 }
 
 // Or widens.
-func (c Composite[M]) Or(o Specification[M]) Composite[M] {
-	return combine(c.inner, o, "OR")
+func (this Composite[M]) Or(o Specification[M]) Composite[M] {
+	return combine(this.inner, o, "OR")
 }
 
 // Not negates the whole composition so far.
-func (c Composite[M]) Not() Composite[M] {
-	inner := c.inner
+func (this Composite[M]) Not() Composite[M] {
+	inner := this.inner
 	return Composite[M]{inner: SpecFunc[M](func(r Root[M], cb Builder) crud.Predicate {
 		p := eval(inner, r, cb)
 		if p == nil {

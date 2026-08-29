@@ -123,9 +123,9 @@ func TestInspectOwnerIsToldWhichVerbIsBeingAttempted(t *testing.T) {
 		})
 
 	rec := crudtest.Postgres().Push(crudtest.Rows(ticketRow(1, "u-1", "mine")))
-	repo := Tickets.Bind(rec, security.Gate(readOnlyOwner))
+	repository := Tickets.Bind(rec, security.Gate(readOnlyOwner))
 
-	if _, err := repo.Delete(as(editor), 1); !errors.Is(err, crud.ErrForbidden) {
+	if _, err := repository.Delete(as(editor), 1); !errors.Is(err, crud.ErrForbidden) {
 		t.Fatalf("the delete answered %v, want the rule's refusal of that verb", err)
 	}
 	if len(seen) == 0 {

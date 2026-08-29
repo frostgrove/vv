@@ -58,27 +58,27 @@ type Field struct {
 }
 
 // pointerTo returns a *T aimed at this field inside the model at base.
-func (f *Field) pointerTo(base unsafe.Pointer) any {
-	return reflect.NewAt(f.Type, unsafe.Add(base, f.Offset)).Interface()
+func (this *Field) pointerTo(base unsafe.Pointer) any {
+	return reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Interface()
 }
 
 // valueOf reads the field out of the model at base.
-func (f *Field) valueOf(base unsafe.Pointer) any {
-	return reflect.NewAt(f.Type, unsafe.Add(base, f.Offset)).Elem().Interface()
+func (this *Field) valueOf(base unsafe.Pointer) any {
+	return reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Elem().Interface()
 }
 
 // comparable returns the field value normalised for diffing: nil for NULL,
 // the bare element otherwise.
-func (f *Field) comparableOf(base unsafe.Pointer) any {
-	v := reflect.NewAt(f.Type, unsafe.Add(base, f.Offset)).Elem()
-	if f.Optional {
+func (this *Field) comparableOf(base unsafe.Pointer) any {
+	v := reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Elem()
+	if this.Optional {
 		value, defined, null, _ := utils.Inspect(v.Interface())
 		if !defined || null {
 			return nil
 		}
 		return value
 	}
-	if f.Type.Kind() == reflect.Pointer {
+	if this.Type.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil
 		}
@@ -116,14 +116,14 @@ type Schema struct {
 // case- and separator-insensitive match. That last step is what lets an HTTP
 // client send `createdAt`, `created_at` or `CreatedAt` and mean the same
 // column. An alias that would be ambiguous is not registered at all.
-func (s *Schema) Field(ref string) *Field {
-	if f, ok := s.byName[ref]; ok {
+func (this *Schema) Field(ref string) *Field {
+	if f, ok := this.byName[ref]; ok {
 		return f
 	}
-	if f, ok := s.byCol[ref]; ok {
+	if f, ok := this.byCol[ref]; ok {
 		return f
 	}
-	if f, ok := s.byFold[fold(ref)]; ok && f != ambiguousField {
+	if f, ok := this.byFold[fold(ref)]; ok && f != ambiguousField {
 		return f
 	}
 	return nil
@@ -131,11 +131,11 @@ func (s *Schema) Field(ref string) *Field {
 
 // Relation resolves an edge the same way, so `author.name` and `Author.Name`
 // are the same path.
-func (s *Schema) Relation(ref string) *Relation {
-	if r, ok := s.byRel[ref]; ok {
+func (this *Schema) Relation(ref string) *Relation {
+	if r, ok := this.byRel[ref]; ok {
 		return r
 	}
-	if r, ok := s.byRelFold[fold(ref)]; ok && r != ambiguousRel {
+	if r, ok := this.byRelFold[fold(ref)]; ok && r != ambiguousRel {
 		return r
 	}
 	return nil
@@ -161,26 +161,26 @@ func fold(s string) string {
 var ambiguousField = &Field{}
 var ambiguousRel = &Relation{}
 
-func (s *Schema) addFold(key string, f *Field) {
-	if prev, ok := s.byFold[key]; ok && prev != f {
-		s.byFold[key] = ambiguousField
+func (this *Schema) addFold(key string, f *Field) {
+	if prev, ok := this.byFold[key]; ok && prev != f {
+		this.byFold[key] = ambiguousField
 		return
 	}
-	s.byFold[key] = f
+	this.byFold[key] = f
 }
 
-func (s *Schema) addRelFold(key string, r *Relation) {
-	if prev, ok := s.byRelFold[key]; ok && prev != r {
-		s.byRelFold[key] = ambiguousRel
+func (this *Schema) addRelFold(key string, r *Relation) {
+	if prev, ok := this.byRelFold[key]; ok && prev != r {
+		this.byRelFold[key] = ambiguousRel
 		return
 	}
-	s.byRelFold[key] = r
+	this.byRelFold[key] = r
 }
 
 // Columns returns every mapped column, primary key first.
-func (s *Schema) Columns() []string {
-	cols := make([]string, len(s.Fields))
-	for i, f := range s.Fields {
+func (this *Schema) Columns() []string {
+	cols := make([]string, len(this.Fields))
+	for i, f := range this.Fields {
 		cols[i] = f.Column
 	}
 	return cols
@@ -394,7 +394,7 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 				Reason: "rel tag on a type that is not a struct, *struct or []struct"}
 		}
 
-		name, opts := parseTag(tag)
+		name, options := parseTag(tag)
 		f := &Field{
 			Name:   sf.Name,
 			Column: cmpOr(name, snake(sf.Name)),
@@ -402,7 +402,7 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 			Offset: base + sf.Offset,
 		}
 		f.Optional = isOptType(sf.Type)
-		for _, o := range opts {
+		for _, o := range options {
 			switch o {
 			case "pk", "primarykey", "primary_key":
 				f.PK = true
@@ -463,7 +463,7 @@ func NewMeta[M any](table string) (*Meta, error) {
 	return &Meta{Schema: s, Table: table}, nil
 }
 
-func parseTag(tag string) (name string, opts []string) {
+func parseTag(tag string) (name string, options []string) {
 	if tag == "" {
 		return "", nil
 	}

@@ -89,43 +89,43 @@ type fakeRepo struct {
 	err error
 }
 
-func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
+func (this *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
-func (f *fakeRepo) record(method string, o *crud.Options) {
-	f.calls = append(f.calls, repoCall{
+func (this *fakeRepo) record(method string, o *crud.Options) {
+	this.calls = append(this.calls, repoCall{
 		Method: method, Limit: o.Limit, Offset: o.Offset,
 		Sorted: len(o.Sort) > 0, Filter: o.Predicate() != nil,
 	})
 }
 
-func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[Widget], error) {
-	f.record("Get", crud.Build(opts...))
+func (this *fakeRepo) Get(_ context.Context, options ...crud.Option) (crud.PaginatedResponse[Widget], error) {
+	this.record("Get", crud.Build(options...))
 	return crud.NewPaginatedResponse([]Widget{{ID: 1, Name: "bolt", Price: 250, CreatedAt: savedAt}}, 1, 1, 1), nil
 }
 
-func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]Widget, error) {
-	f.record("GetAll", crud.Build(opts...))
+func (this *fakeRepo) GetAll(_ context.Context, options ...crud.Option) ([]Widget, error) {
+	this.record("GetAll", crud.Build(options...))
 	return nil, nil
 }
 
-func (f *fakeRepo) GetByID(_ context.Context, id int64, opts ...crud.Option) (Widget, error) {
-	o := crud.Build(opts...)
-	f.calls = append(f.calls, repoCall{
+func (this *fakeRepo) GetByID(_ context.Context, id int64, options ...crud.Option) (Widget, error) {
+	o := crud.Build(options...)
+	this.calls = append(this.calls, repoCall{
 		Method: "GetByID", ID: id, Limit: o.Limit, Offset: o.Offset,
 		Sorted: len(o.Sort) > 0, Filter: o.Predicate() != nil,
 	})
 	return Widget{ID: id, Name: "bolt", Price: 250, CreatedAt: savedAt}, nil
 }
 
-func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) {
-	f.record("Count", crud.Build(opts...))
+func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, error) {
+	this.record("Count", crud.Build(options...))
 	return 5, nil
 }
 
-func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
-	f.calls = append(f.calls, repoCall{Method: "Save", Model: *m})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
+	this.calls = append(this.calls, repoCall{Method: "Save", Model: *m})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
 	saved := *m
 	saved.CreatedAt = savedAt
@@ -135,13 +135,13 @@ func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	return saved, nil
 }
 
-func (f *fakeRepo) Update(_ context.Context, id int64, _ WidgetUpdate, _ ...crud.Option) (Widget, error) {
-	f.calls = append(f.calls, repoCall{Method: "Update", ID: id})
+func (this *fakeRepo) Update(_ context.Context, id int64, _ WidgetUpdate, _ ...crud.Option) (Widget, error) {
+	this.calls = append(this.calls, repoCall{Method: "Update", ID: id})
 	return Widget{ID: id, Name: "patched", CreatedAt: savedAt}, nil
 }
 
-func (f *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
-	f.calls = append(f.calls, repoCall{Method: "Delete", IDs: ids})
+func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
+	this.calls = append(this.calls, repoCall{Method: "Delete", IDs: ids})
 	return int64(len(ids)), nil
 }
 
@@ -169,68 +169,68 @@ type command struct {
 // recorder is a Service that records what it was handed and then behaves like
 // the default one. It is the seam [[D-045]] is about: three bindings, one value.
 type recorder struct {
-	inner *port.DefaultService[Widget, int64, WidgetUpdate]
-	repo  *fakeRepo
-	got   []command
+	inner      *port.DefaultService[Widget, int64, WidgetUpdate]
+	repository *fakeRepo
+	got        []command
 }
 
 func newRecorder() *recorder {
-	repo := &fakeRepo{}
-	return &recorder{inner: port.NewService[Widget, int64, WidgetUpdate](repo), repo: repo}
+	repository := &fakeRepo{}
+	return &recorder{inner: port.NewService[Widget, int64, WidgetUpdate](repository), repository: repository}
 }
 
-func snap(req *query.Request) (query.Request, bool) {
-	if req == nil {
+func snap(request *query.Request) (query.Request, bool) {
+	if request == nil {
 		return query.Request{}, false
 	}
-	return *req, true
+	return *request, true
 }
 
-func (s *recorder) Meta() *crud.Meta { return s.inner.Meta() }
+func (this *recorder) Meta() *crud.Meta { return this.inner.Meta() }
 
-func (s *recorder) Paths() errs.Resolver { return s.inner.Paths() }
+func (this *recorder) Paths() errs.Resolver { return this.inner.Paths() }
 
-func (s *recorder) List(ctx context.Context, cmd port.ListCommand) (crud.PaginatedResponse[Widget], error) {
+func (this *recorder) List(ctx context.Context, cmd port.ListCommand) (crud.PaginatedResponse[Widget], error) {
 	q, ok := snap(cmd.Query)
-	s.got = append(s.got, command{Verb: "List", Query: q, HasQuery: ok, Options: len(cmd.Options)})
-	return s.inner.List(ctx, cmd)
+	this.got = append(this.got, command{Verb: "List", Query: q, HasQuery: ok, Options: len(cmd.Options)})
+	return this.inner.List(ctx, cmd)
 }
 
-func (s *recorder) Count(ctx context.Context, cmd port.CountCommand) (int64, error) {
+func (this *recorder) Count(ctx context.Context, cmd port.CountCommand) (int64, error) {
 	q, ok := snap(cmd.Query)
-	s.got = append(s.got, command{Verb: "Count", Query: q, HasQuery: ok, Options: len(cmd.Options)})
-	return s.inner.Count(ctx, cmd)
+	this.got = append(this.got, command{Verb: "Count", Query: q, HasQuery: ok, Options: len(cmd.Options)})
+	return this.inner.Count(ctx, cmd)
 }
 
-func (s *recorder) Get(ctx context.Context, cmd port.GetCommand[int64]) (Widget, error) {
+func (this *recorder) Get(ctx context.Context, cmd port.GetCommand[int64]) (Widget, error) {
 	q, ok := snap(cmd.Query)
-	s.got = append(s.got, command{Verb: "Get", Query: q, HasQuery: ok, ID: cmd.ID, Options: len(cmd.Options)})
-	return s.inner.Get(ctx, cmd)
+	this.got = append(this.got, command{Verb: "Get", Query: q, HasQuery: ok, ID: cmd.ID, Options: len(cmd.Options)})
+	return this.inner.Get(ctx, cmd)
 }
 
-func (s *recorder) Create(ctx context.Context, cmd port.CreateCommand[Widget]) (Widget, error) {
-	s.got = append(s.got, command{Verb: "Create", Model: cmd.Model, Hook: cmd.Before != nil})
-	return s.inner.Create(ctx, cmd)
+func (this *recorder) Create(ctx context.Context, cmd port.CreateCommand[Widget]) (Widget, error) {
+	this.got = append(this.got, command{Verb: "Create", Model: cmd.Model, Hook: cmd.Before != nil})
+	return this.inner.Create(ctx, cmd)
 }
 
-func (s *recorder) Update(ctx context.Context, cmd port.UpdateCommand[int64, WidgetUpdate]) (Widget, error) {
-	s.got = append(s.got, command{Verb: "Update", ID: cmd.ID, Patched: cmd.Patch.Name != nil, Hook: cmd.Before != nil})
-	return s.inner.Update(ctx, cmd)
+func (this *recorder) Update(ctx context.Context, cmd port.UpdateCommand[int64, WidgetUpdate]) (Widget, error) {
+	this.got = append(this.got, command{Verb: "Update", ID: cmd.ID, Patched: cmd.Patch.Name != nil, Hook: cmd.Before != nil})
+	return this.inner.Update(ctx, cmd)
 }
 
-func (s *recorder) Replace(ctx context.Context, cmd port.ReplaceCommand[int64, Widget]) (Widget, error) {
-	s.got = append(s.got, command{Verb: "Replace", ID: cmd.ID, Model: cmd.Model, Hook: cmd.Before != nil})
-	return s.inner.Replace(ctx, cmd)
+func (this *recorder) Replace(ctx context.Context, cmd port.ReplaceCommand[int64, Widget]) (Widget, error) {
+	this.got = append(this.got, command{Verb: "Replace", ID: cmd.ID, Model: cmd.Model, Hook: cmd.Before != nil})
+	return this.inner.Replace(ctx, cmd)
 }
 
-func (s *recorder) Delete(ctx context.Context, cmd port.DeleteCommand[int64]) (int64, error) {
-	s.got = append(s.got, command{Verb: "Delete", ID: cmd.ID})
-	return s.inner.Delete(ctx, cmd)
+func (this *recorder) Delete(ctx context.Context, cmd port.DeleteCommand[int64]) (int64, error) {
+	this.got = append(this.got, command{Verb: "Delete", ID: cmd.ID})
+	return this.inner.Delete(ctx, cmd)
 }
 
-func (s *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[int64]) (int64, error) {
-	s.got = append(s.got, command{Verb: "DeleteMany", IDs: cmd.IDs})
-	return s.inner.DeleteMany(ctx, cmd)
+func (this *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[int64]) (int64, error) {
+	this.got = append(this.got, command{Verb: "DeleteMany", IDs: cmd.IDs})
+	return this.inner.DeleteMany(ctx, cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -240,10 +240,10 @@ func (s *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[in
 // the same service and a way to send it a request.
 type binding struct {
 	name  string
-	serve func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
+	serve func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
 	// mappedServe mounts the same service behind a generated mapper, which is
 	// the only difference between the two halves of the path-translation test.
-	mappedServe func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
+	mappedServe func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
 }
 
 func request(method, target, body string) *http.Request {
@@ -251,56 +251,56 @@ func request(method, target, body string) *http.Request {
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	return req
+	return request
 }
 
 var bindings = []binding{
 	{
 		name: "crudnet",
-		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		serve: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			mux := http.NewServeMux()
-			crudnet.Serving(svc).Mount(mux, "/widgets")
+			crudnet.Serving(service).Mount(mux, "/widgets")
 			return throughMux(mux, method, target, body)
 		},
-		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		mappedServe: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			mux := http.NewServeMux()
-			crudnet.ServingFor(svc, WidgetMapper{}).Mount(mux, "/widgets")
+			crudnet.ServingFor(service, WidgetMapper{}).Mount(mux, "/widgets")
 			return throughMux(mux, method, target, body)
 		},
 	},
 	{
 		name: "crudgin",
-		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		serve: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			r := gin.New()
-			crudgin.Serving(svc).Mount(r, "/widgets")
+			crudgin.Serving(service).Mount(r, "/widgets")
 			return throughMux(r, method, target, body)
 		},
-		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		mappedServe: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			r := gin.New()
-			crudgin.ServingFor(svc, WidgetMapper{}).Mount(r, "/widgets")
+			crudgin.ServingFor(service, WidgetMapper{}).Mount(r, "/widgets")
 			return throughMux(r, method, target, body)
 		},
 	},
 	{
 		name: "crudfiber",
-		serve: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		serve: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			app := fiber.New()
-			app.Use("/widgets", crudfiber.Serving(svc).Routes())
+			app.Use("/widgets", crudfiber.Serving(service).Routes())
 			return throughFiber(t, app, method, target, body)
 		},
-		mappedServe: func(t *testing.T, svc port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
+		mappedServe: func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte) {
 			t.Helper()
 			app := fiber.New()
-			app.Use("/widgets", crudfiber.ServingFor(svc, WidgetMapper{}).Routes())
+			app.Use("/widgets", crudfiber.ServingFor(service, WidgetMapper{}).Routes())
 			return throughFiber(t, app, method, target, body)
 		},
 	},
@@ -314,16 +314,16 @@ func throughMux(h http.Handler, method, target, body string) (int, []byte) {
 
 func throughFiber(t *testing.T, app *fiber.App, method, target, body string) (int, []byte) {
 	t.Helper()
-	res, err := app.Test(request(method, target, body), fiber.TestConfig{Timeout: 0})
+	response, err := app.Test(request(method, target, body), fiber.TestConfig{Timeout: 0})
 	if err != nil {
 		t.Fatalf("crudfiber: %s %s: %v", method, target, err)
 	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("crudfiber: reading the response: %v", err)
 	}
-	return res.StatusCode, raw
+	return response.StatusCode, raw
 }
 
 // ---------------------------------------------------------------------------
@@ -364,10 +364,10 @@ func TestOneServiceMountsOnAllThreeBindings(t *testing.T) {
 				calls  []repoCall
 			)
 			for i, b := range bindings {
-				svc := newRecorder()
-				gotStatus, gotBody := b.serve(t, svc, tc.method, tc.target, tc.body)
+				service := newRecorder()
+				gotStatus, gotBody := b.serve(t, service, tc.method, tc.target, tc.body)
 				if i == 0 {
-					first, status, body, cmds, calls = b, gotStatus, gotBody, svc.got, svc.repo.calls
+					first, status, body, cmds, calls = b, gotStatus, gotBody, service.got, service.repository.calls
 					continue
 				}
 				if gotStatus != status {
@@ -378,13 +378,13 @@ func TestOneServiceMountsOnAllThreeBindings(t *testing.T) {
 					t.Fatalf("%s answered %s and %s answered %s — the same service, byte for byte, is the claim",
 						first.name, body, b.name, gotBody)
 				}
-				if !reflect.DeepEqual(svc.got, cmds) {
+				if !reflect.DeepEqual(service.got, cmds) {
 					t.Fatalf("%s handed the service %+v and %s handed it %+v — one of them is re-deriving a rule the service owns",
-						first.name, cmds, b.name, svc.got)
+						first.name, cmds, b.name, service.got)
 				}
-				if !reflect.DeepEqual(svc.repo.calls, calls) {
+				if !reflect.DeepEqual(service.repository.calls, calls) {
 					t.Fatalf("under %s the service called the repository with %+v and under %s with %+v",
-						first.name, calls, b.name, svc.repo.calls)
+						first.name, calls, b.name, service.repository.calls)
 				}
 			}
 		})
@@ -443,11 +443,11 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, b := range bindings {
-				svc := newRecorder()
-				if _, body := b.serve(t, svc, tc.method, tc.target, tc.body); len(body) == 0 {
+				service := newRecorder()
+				if _, body := b.serve(t, service, tc.method, tc.target, tc.body); len(body) == 0 {
 					t.Fatalf("%s answered nothing", b.name)
 				}
-				t.Run(b.name, func(t *testing.T) { tc.want(t, svc.got, svc.repo.calls) })
+				t.Run(b.name, func(t *testing.T) { tc.want(t, service.got, service.repository.calls) })
 			}
 		})
 	}
@@ -496,9 +496,9 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) 
 	// The mapper's key is what the client sent, on every binding.
 	mapped := map[string]string{}
 	for _, b := range bindings {
-		svc := newRecorder()
-		svc.repo.err = fault()
-		status, raw := b.mappedServe(t, svc, http.MethodPost, "/widgets", body)
+		service := newRecorder()
+		service.repository.err = fault()
+		status, raw := b.mappedServe(t, service, http.MethodPost, "/widgets", body)
 		if status != http.StatusConflict {
 			t.Fatalf("%s answered %d for a duplicate key: %s", b.name, status, raw)
 		}
@@ -516,9 +516,9 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) 
 	// the model's own field name back. Without this the test above passes for a
 	// binding that never wired the hop at all.
 	for _, b := range bindings {
-		svc := newRecorder()
-		svc.repo.err = fault()
-		status, raw := b.serve(t, svc, http.MethodPost, "/widgets", body)
+		service := newRecorder()
+		service.repository.err = fault()
+		status, raw := b.serve(t, service, http.MethodPost, "/widgets", body)
 		if status != http.StatusConflict {
 			t.Fatalf("%s answered %d for a duplicate key: %s", b.name, status, raw)
 		}

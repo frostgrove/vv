@@ -31,7 +31,7 @@ type finding struct {
 //
 // Only the constraints the plan already probes are keyed, so a partial index is
 // not replayed here either.
-func (f *full) duplicates(p plan) []finding {
+func (this *full) duplicates(p plan) []finding {
 	if p.mode != modeBulk || len(p.rows) < 2 {
 		return nil
 	}

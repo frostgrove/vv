@@ -14,14 +14,14 @@ import (
 )
 
 // render is what every test here measures: the bytes a client would read.
-func render(t *testing.T, err error, opts ...RenderOption) (int, []byte, Envelope) {
+func render(t *testing.T, err error, options ...RenderOption) (int, []byte, Envelope) {
 	t.Helper()
-	return renderCtx(t, context.Background(), err, opts...)
+	return renderCtx(t, context.Background(), err, options...)
 }
 
-func renderCtx(t *testing.T, ctx context.Context, err error, opts ...RenderOption) (int, []byte, Envelope) {
+func renderCtx(t *testing.T, ctx context.Context, err error, options ...RenderOption) (int, []byte, Envelope) {
 	t.Helper()
-	status, _, body := NewRenderer(opts...).Render(ctx, err)
+	status, _, body := NewRenderer(options...).Render(ctx, err)
 	raw, marshalErr := json.Marshal(body)
 	if marshalErr != nil {
 		t.Fatalf("the envelope does not marshal: %v", marshalErr)
@@ -122,7 +122,7 @@ func secretsOf(e *sqlerr.Err) map[string]string {
 // adapters use, so what is rendered is what a caller would actually be handed.
 func faultFromCorpus(t *testing.T, engine string, tc sqlerr.Case) error {
 	t.Helper()
-	code, src, ok := sqlerr.Classify(engine, tc.Err)
+	code, source, ok := sqlerr.Classify(engine, tc.Err)
 	if !ok {
 		// An entry the parsers refuse still reaches a client, as the 500 that
 		// says nothing. Rendering it is worth doing: the leak would be the
@@ -130,20 +130,20 @@ func faultFromCorpus(t *testing.T, engine string, tc sqlerr.Case) error {
 		return fmt.Errorf("%s", tc.Err.Message)
 	}
 	b := errs.New(kindOfCode(code)).Code(code).
-		General().Code(code).Origin(errs.OriginState).Source(src).
+		General().Code(code).Origin(errs.OriginState).Source(source).
 		Detail(errs.Detail{
 			Dialect:    engine,
 			SQLState:   tc.Err.SQLState,
 			Native:     int(tc.Err.Native),
-			Constraint: src.Constraint,
-			Table:      src.Table,
-			Columns:    src.Columns,
+			Constraint: source.Constraint,
+			Table:      source.Table,
+			Columns:    source.Columns,
 			Value:      tc.Err.Fields["Detail"],
 			Driver:     fmt.Errorf("%s", tc.Err.Message),
 		}).
 		// The two channels a renderer could copy into a body without ever
 		// touching err.Error(), and the ones [[D-044]] owed an extension to.
-		Params(errs.P{"constraint": src.Constraint, "table": src.Table}).
+		Params(errs.P{"constraint": source.Constraint, "table": source.Table}).
 		Wrapping(fmt.Errorf("%s", tc.Err.Message))
 	return b.Fault()
 }
@@ -202,8 +202,8 @@ func TestACappedListSaysItIsPartial(t *testing.T) {
 // say which key was consulted.
 type catalogue map[string]string
 
-func (c catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
-	m, ok := c[v.Path.String()+"."+string(v.Code)]
+func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
+	m, ok := this[v.Path.String()+"."+string(v.Code)]
 	return m, ok
 }
 

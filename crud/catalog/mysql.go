@@ -94,16 +94,16 @@ JOIN information_schema.TABLE_CONSTRAINTS t
 WHERE c.CONSTRAINT_SCHEMA = DATABASE() AND t.CONSTRAINT_TYPE = 'CHECK'
 ORDER BY t.TABLE_NAME, c.CONSTRAINT_NAME`
 
-func readMySQL(ctx context.Context, src crud.Source) ([]Table, error) {
+func readMySQL(ctx context.Context, source crud.Source) ([]Table, error) {
 	b := newBuilder()
 	// Kinds before key parts: a STATISTICS row is shaped by what
 	// TABLE_CONSTRAINTS already said the index is.
 	for _, step := range []func() error{
-		func() error { return myReadColumns(ctx, src, b, myColumns, false) },
-		func() error { return myReadTableConstraints(ctx, src, b, myTableConstraints) },
-		func() error { return myReadStatistics(ctx, src, b, myStatistics, true) },
-		func() error { return myReadForeignKeys(ctx, src, b, myForeignKeys) },
-		func() error { return myReadChecks(ctx, src, b, myChecks) },
+		func() error { return myReadColumns(ctx, source, b, myColumns, false) },
+		func() error { return myReadTableConstraints(ctx, source, b, myTableConstraints) },
+		func() error { return myReadStatistics(ctx, source, b, myStatistics, true) },
+		func() error { return myReadForeignKeys(ctx, source, b, myForeignKeys) },
+		func() error { return myReadChecks(ctx, source, b, myChecks) },
 	} {
 		if err := step(); err != nil {
 			return nil, err
@@ -123,13 +123,13 @@ func readMySQL(ctx context.Context, src crud.Source) ([]Table, error) {
 // NULL. Read literally, every nullable MariaDB column would have a default of
 // the four-character string "NULL". A column declared DEFAULT 'NULL' comes back
 // quoted, so the two are still told apart.
-func myReadColumns(ctx context.Context, src crud.Source, b *builder, stmt string, maria bool) error {
+func myReadColumns(ctx context.Context, source crud.Source, b *builder, stmt string, maria bool) error {
 	var (
 		schema, table, name, typ, def string
 		pos, maxLen                   int
 		nullable, hasDef, generated   bool
 	)
-	return eachRow(ctx, src, "columns", stmt, nil, func(rows crud.Rows) error {
+	return eachRow(ctx, source, "columns", stmt, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&schema, &table, &name, &pos, &typ,
 			&nullable, &hasDef, &def, &maxLen, &generated); err != nil {
 			return err
@@ -152,9 +152,9 @@ func myReadColumns(ctx context.Context, src crud.Source, b *builder, stmt string
 	})
 }
 
-func myReadTableConstraints(ctx context.Context, src crud.Source, b *builder, stmt string) error {
+func myReadTableConstraints(ctx context.Context, source crud.Source, b *builder, stmt string) error {
 	var table, name, kind string
-	return eachRow(ctx, src, "constraints", stmt, nil, func(rows crud.Rows) error {
+	return eachRow(ctx, source, "constraints", stmt, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &name, &kind); err != nil {
 			return err
 		}
@@ -177,14 +177,14 @@ func myReadTableConstraints(ctx context.Context, src crud.Source, b *builder, st
 // An index STATISTICS knows and TABLE_CONSTRAINTS does not becomes a
 // KindUniqueIndex. Neither measured server produces one; the branch is what
 // keeps the reading right if one ever stops listing them.
-func myReadStatistics(ctx context.Context, src crud.Source, b *builder, stmt string, withExpression bool) error {
+func myReadStatistics(ctx context.Context, source crud.Source, b *builder, stmt string, withExpression bool) error {
 	var table, name, col, expr string
 	var sub int
 	var unique bool
 	// SEQ_IN_INDEX is in the ORDER BY and not in the SELECT: the position is the
 	// row's place in the result, and a scanned value nothing reads is one more
 	// thing to keep in step with the statement.
-	return eachRow(ctx, src, "index key columns", stmt, nil, func(rows crud.Rows) error {
+	return eachRow(ctx, source, "index key columns", stmt, nil, func(rows crud.Rows) error {
 		var err error
 		if withExpression {
 			err = rows.Scan(&table, &name, &col, &sub, &expr, &unique)
@@ -208,9 +208,9 @@ func myReadStatistics(ctx context.Context, src crud.Source, b *builder, stmt str
 	})
 }
 
-func myReadForeignKeys(ctx context.Context, src crud.Source, b *builder, stmt string) error {
+func myReadForeignKeys(ctx context.Context, source crud.Source, b *builder, stmt string) error {
 	var table, name, col, refSchema, refTable, refCol, onDelete, onUpdate string
-	return eachRow(ctx, src, "foreign keys", stmt, nil, func(rows crud.Rows) error {
+	return eachRow(ctx, source, "foreign keys", stmt, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &name, &col, &refSchema, &refTable, &refCol,
 			&onDelete, &onUpdate); err != nil {
 			return err
@@ -224,9 +224,9 @@ func myReadForeignKeys(ctx context.Context, src crud.Source, b *builder, stmt st
 	})
 }
 
-func myReadChecks(ctx context.Context, src crud.Source, b *builder, stmt string) error {
+func myReadChecks(ctx context.Context, source crud.Source, b *builder, stmt string) error {
 	var table, name, clause string
-	return eachRow(ctx, src, "check constraints", stmt, nil, func(rows crud.Rows) error {
+	return eachRow(ctx, source, "check constraints", stmt, nil, func(rows crud.Rows) error {
 		if err := rows.Scan(&table, &name, &clause); err != nil {
 			return err
 		}

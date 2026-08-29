@@ -95,11 +95,11 @@ func TestAnEmptyFieldsMapIsTheIdentity(t *testing.T) {
 // Hops is what a binding wires ahead of the raw-body fallback: the service's
 // own translation, then the mapper's when it declares one.
 func TestHopsCollectsTheServiceAndTheMapperInThatOrder(t *testing.T) {
-	svc := &fakeService{paths: Fields{"Name": errs.Path{errs.Named("title")}}}
+	service := &fakeService{paths: Fields{"Name": errs.Path{errs.Named("title")}}}
 
 	// A mapper that is not a resolver contributes nothing, which is what keeps
 	// a hand-written one from having to write a path map it has no use for.
-	if got := Hops[widget, int64, widgetUpdate](svc, Identity[widget]()); len(got) != 1 {
+	if got := Hops[widget, int64, widgetUpdate](service, Identity[widget]()); len(got) != 1 {
 		t.Fatalf("a mapper that declares no hop contributed %d, want only the service's", len(got))
 	}
 
@@ -110,7 +110,7 @@ func TestHopsCollectsTheServiceAndTheMapperInThatOrder(t *testing.T) {
 		t.Fatalf("a service with no hop contributed %d hops, want only the mapper's", len(got))
 	}
 
-	hops := errs.Chain(Hops[widget, int64, widgetUpdate](svc, mappingIn{})...)
+	hops := errs.Chain(Hops[widget, int64, widgetUpdate](service, mappingIn{})...)
 	got, ok := hops.Resolve(errs.Path{errs.Named("Name")})
 	want := errs.Path{errs.Named("payload"), errs.Named("title")}
 	if !ok || !reflect.DeepEqual(got, want) {

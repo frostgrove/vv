@@ -87,10 +87,10 @@ func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool { return true }
 func (Postgres) LockClause() string                 { return " FOR UPDATE" }
 func (Postgres) LikeEscapeClause() string           { return ` ESCAPE '\'` }
 
-func (d Postgres) Upsert(pk string, cols []string) string {
+func (this Postgres) Upsert(pk string, cols []string) string {
 	var b strings.Builder
 	b.WriteString(" ON CONFLICT (")
-	b.WriteString(d.Quote(pk))
+	b.WriteString(this.Quote(pk))
 	b.WriteString(") DO ")
 	if len(cols) == 0 {
 		b.WriteString("NOTHING")
@@ -101,9 +101,9 @@ func (d Postgres) Upsert(pk string, cols []string) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(d.Quote(c))
+		b.WriteString(this.Quote(c))
 		b.WriteString(" = EXCLUDED.")
-		b.WriteString(d.Quote(c))
+		b.WriteString(this.Quote(c))
 	}
 	return b.String()
 }
@@ -134,31 +134,31 @@ func (MySQL) LimitAll() string { return " LIMIT 18446744073709551615" }
 // is undone on its own and the transaction stays usable.
 func (MySQL) RollsBackStatementOnly() bool { return true }
 
-func (d MySQL) Upsert(pk string, cols []string) string {
+func (this MySQL) Upsert(pk string, cols []string) string {
 	var b strings.Builder
-	if d.RowAlias {
+	if this.RowAlias {
 		b.WriteString(" AS new")
 	}
 	b.WriteString(" ON DUPLICATE KEY UPDATE ")
 	if len(cols) == 0 {
 		// A no-op assignment keeps the statement valid and reports 0 rows.
-		b.WriteString(d.Quote(pk))
+		b.WriteString(this.Quote(pk))
 		b.WriteString(" = ")
-		b.WriteString(d.Quote(pk))
+		b.WriteString(this.Quote(pk))
 		return b.String()
 	}
 	for i, c := range cols {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(d.Quote(c))
+		b.WriteString(this.Quote(c))
 		b.WriteString(" = ")
-		if d.RowAlias {
+		if this.RowAlias {
 			b.WriteString("new.")
-			b.WriteString(d.Quote(c))
+			b.WriteString(this.Quote(c))
 		} else {
 			b.WriteString("VALUES(")
-			b.WriteString(d.Quote(c))
+			b.WriteString(this.Quote(c))
 			b.WriteString(")")
 		}
 	}
@@ -188,10 +188,10 @@ func (SQLite) UpsertSwallowsPrimaryKeyOnly() bool { return true }
 // RollsBackStatementOnly reports SQLite's ON CONFLICT ABORT default: the
 // statement is undone and the transaction carries on.
 func (SQLite) RollsBackStatementOnly() bool { return true }
-func (d SQLite) Quote(ident string) string {
+func (this SQLite) Quote(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
-func (d SQLite) Upsert(pk string, cols []string) string { return Postgres{}.Upsert(pk, cols) }
+func (this SQLite) Upsert(pk string, cols []string) string { return Postgres{}.Upsert(pk, cols) }
 
 var (
 	_ Dialect           = Postgres{}

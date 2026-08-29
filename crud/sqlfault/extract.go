@@ -19,7 +19,7 @@ type Extractor interface {
 // ExtractorFunc adapts a function to [Extractor].
 type ExtractorFunc func(error) *sqlerr.Err
 
-func (f ExtractorFunc) Extract(err error) *sqlerr.Err { return f(err) }
+func (this ExtractorFunc) Extract(err error) *sqlerr.Err { return this(err) }
 
 // carried is what may be read off a driver error, and the whole list. There is
 // one such list in the tree and this is it: test/corpus captures through

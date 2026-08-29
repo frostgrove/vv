@@ -22,7 +22,7 @@ import (
 func cursorSeed(t *testing.T, tg egTarget, names ...string) {
 	t.Helper()
 	ctx := context.Background()
-	rows := EgRows.Bind(tg.src)
+	rows := EgRows.Bind(tg.source)
 	for i, n := range names {
 		row := EgRow{ID: int64(i + 1), Name: n, Tenant: 1}
 		if err := rows.Save(ctx, &row); err != nil {
@@ -48,9 +48,9 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			cursorSeed(t, tg, "b", "c", "d", "e")
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 			byName := crud.OrderBy(crud.Asc("Name"))
 
 			// Page one, both ways.
@@ -102,18 +102,18 @@ func TestACursorWalkVisitsEveryRowOnce(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			cursorSeed(t, tg, "a", "b", "c", "d", "e", "f", "g")
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 
 			var seen []string
 			cursor := ""
 			for range 10 { // bounded so a bug cannot spin forever
-				opts := []crud.Option{crud.OrderBy(crud.Asc("Name")), crud.Limit(3)}
+				options := []crud.Option{crud.OrderBy(crud.Asc("Name")), crud.Limit(3)}
 				if cursor != "" {
-					opts = append(opts, crud.After(cursor))
+					options = append(options, crud.After(cursor))
 				}
-				page, err := rows.Get(ctx, opts...)
+				page, err := rows.Get(ctx, options...)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -144,9 +144,9 @@ func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			cursorSeed(t, tg, "a", "b", "c", "d", "e", "f")
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 			byName := crud.OrderBy(crud.Asc("Name"))
 
 			// Walk to the last page, then step back.
@@ -192,9 +192,9 @@ func TestACursorFollowsEachColumnsOwnDirection(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 			// Two tenants so the first sort column ties and the second decides.
-			rows := EgRows.Bind(tg.src)
+			rows := EgRows.Bind(tg.source)
 			for i, r := range []EgRow{
 				{ID: 1, Name: "x", Tenant: 1}, {ID: 2, Name: "x", Tenant: 2},
 				{ID: 3, Name: "y", Tenant: 1}, {ID: 4, Name: "y", Tenant: 2},
@@ -240,9 +240,9 @@ func TestACursorIsRefusedUnderADifferentSort(t *testing.T) {
 	egSetup(t)
 
 	tg := egEngines()[0]
-	egWipe(t, tg.src)
+	egWipe(t, tg.source)
 	cursorSeed(t, tg, "a", "b", "c")
-	rows := EgRows.Bind(tg.src)
+	rows := EgRows.Bind(tg.source)
 
 	page, err := rows.Get(ctx, crud.OrderBy(crud.Asc("Name")), crud.Limit(1))
 	if err != nil {
@@ -263,21 +263,21 @@ func TestACursorWalkOverTheWireDSL(t *testing.T) {
 	egSetup(t)
 
 	tg := egEngines()[0]
-	egWipe(t, tg.src)
+	egWipe(t, tg.source)
 	cursorSeed(t, tg, "a", "b", "c", "d")
-	rows := EgRows.Bind(tg.src)
+	rows := EgRows.Bind(tg.source)
 
 	compile := func(body string) []crud.Option {
 		t.Helper()
-		var req query.Request
-		if err := json.Unmarshal([]byte(body), &req); err != nil {
+		var request query.Request
+		if err := json.Unmarshal([]byte(body), &request); err != nil {
 			t.Fatalf("body %s: %v", body, err)
 		}
-		opts, err := req.Compile(EgRows.Meta(), unpagedOK)
+		options, err := request.Compile(EgRows.Meta(), unpagedOK)
 		if err != nil {
 			t.Fatalf("compiling %s: %v", body, err)
 		}
-		return opts
+		return options
 	}
 
 	first, err := rows.Get(ctx, compile(`{"sort":["name"],"limit":2}`)...)
@@ -303,15 +303,15 @@ func TestACursorWalkOverTheWireDSL(t *testing.T) {
 
 	// The query-string door says the same thing.
 	v, _ := url.ParseQuery("sort=name&limit=2&after=" + url.QueryEscape(first.NextCursor))
-	req, err := query.ParseQuery(v)
+	request, err := query.ParseQuery(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(EgRows.Meta(), unpagedOK)
+	options, err := request.Compile(EgRows.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}
-	viaQS, err := rows.Get(ctx, opts...)
+	viaQS, err := rows.Get(ctx, options...)
 	if err != nil {
 		t.Fatal(err)
 	}

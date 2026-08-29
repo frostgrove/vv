@@ -27,10 +27,10 @@ const installed = "crudgin.errors"
 // is left alone, because writing a second body produces a corrupt one. And it
 // is safe to install twice — once on the engine and once on a group is the
 // ordinary way that happens.
-func Errors(opts ...crudhttp.RenderOption) gin.HandlerFunc {
+func Errors(options ...crudhttp.RenderOption) gin.HandlerFunc {
 	rd := crudhttp.Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = crudhttp.NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
 	}
 	return func(c *gin.Context) {
 		if _, already := c.Get(installed); already {

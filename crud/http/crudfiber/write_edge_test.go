@@ -154,9 +154,9 @@ func TestAnIntegrityConflictIsA409WithAMessage(t *testing.T) {
 func TestAMisspelledQueryKeyIs400(t *testing.T) {
 	app, fake := mount(t)
 
-	res := ok(t, app, http.MethodPost, "/widgets/query", `{"filtr":{"name":"x"}}`, http.StatusBadRequest)
-	if !strings.Contains(string(res.body), "filtr") {
-		t.Fatalf("the body does not name the offending key: %s", res.body)
+	response := ok(t, app, http.MethodPost, "/widgets/query", `{"filtr":{"name":"x"}}`, http.StatusBadRequest)
+	if !strings.Contains(string(response.body), "filtr") {
+		t.Fatalf("the body does not name the offending key: %s", response.body)
 	}
 	if len(fake.calls) != 0 {
 		t.Fatalf("%d repository calls: the statement went out anyway", len(fake.calls))
@@ -185,8 +185,8 @@ type leaky struct {
 	ColumnName                            string
 }
 
-func (e *leaky) Error() string    { return e.Message }
-func (e *leaky) SQLState() string { return e.Code }
+func (this *leaky) Error() string    { return this.Message }
+func (this *leaky) SQLState() string { return this.Code }
 
 // mysqlish is the other shape, and it is here for one assertion the PostgreSQL
 // one cannot make: the engine's own number. Searching a body for a zero would be
@@ -197,7 +197,7 @@ type mysqlish struct {
 	Message  string
 }
 
-func (e *mysqlish) Error() string { return e.Message }
+func (this *mysqlish) Error() string { return this.Message }
 
 // [[D-044]] on the wire, and [[D-038]]'s seam control against a real produced
 // fault: the fault still answers 409 because the sentinel it wraps is still

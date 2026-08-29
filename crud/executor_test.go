@@ -18,14 +18,14 @@ func (fakeExec) Exec(context.Context, string, ...any) (crud.Result, error) {
 	return crud.Result{}, nil
 }
 func (fakeExec) Query(context.Context, string, ...any) (crud.Rows, error) { return nil, nil }
-func (f fakeExec) Dialect() crud.Dialect                                  { return crud.Postgres{} }
+func (this fakeExec) Dialect() crud.Dialect                               { return crud.Postgres{} }
 
 // named is a source that can say which database it speaks to.
 type named struct {
 	fakeExec
 }
 
-func (n named) DataSource() any { return n.ds }
+func (this named) DataSource() any { return this.ds }
 
 // beginnerSource hands out a transaction so InTx has something to open.
 type beginnerSource struct {
@@ -33,7 +33,7 @@ type beginnerSource struct {
 	tx *fakeTx
 }
 
-func (b beginnerSource) Begin(context.Context) (crud.Tx, error) { return b.tx, nil }
+func (this beginnerSource) Begin(context.Context) (crud.Tx, error) { return this.tx, nil }
 
 type fakeTx struct {
 	fakeExec
@@ -41,8 +41,8 @@ type fakeTx struct {
 	rolledBack bool
 }
 
-func (t *fakeTx) Commit(context.Context) error   { t.committed = true; return nil }
-func (t *fakeTx) Rollback(context.Context) error { t.rolledBack = true; return nil }
+func (this *fakeTx) Commit(context.Context) error   { this.committed = true; return nil }
+func (this *fakeTx) Rollback(context.Context) error { this.rolledBack = true; return nil }
 
 var (
 	dbA = new(int) // two handles that are only ever compared by identity
@@ -56,13 +56,13 @@ func srcOn(ds any, name string) named { return named{fakeExec{name: name, ds: ds
 func TestAnUnscopedExecutorReachesEverySource(t *testing.T) {
 	ctx := crud.WithExecutor(context.Background(), fakeExec{name: "foreign"})
 
-	for _, src := range []any{srcOn(dbA, "a"), srcOn(dbB, "b"), fakeExec{name: "anonymous"}} {
-		e, ok := crud.ExecutorFor(ctx, src)
+	for _, source := range []any{srcOn(dbA, "a"), srcOn(dbB, "b"), fakeExec{name: "anonymous"}} {
+		e, ok := crud.ExecutorFor(ctx, source)
 		if !ok {
-			t.Fatalf("%v found no executor", src)
+			t.Fatalf("%v found no executor", source)
 		}
 		if e.(fakeExec).name != "foreign" {
-			t.Fatalf("%v ran on %q", src, e.(fakeExec).name)
+			t.Fatalf("%v ran on %q", source, e.(fakeExec).name)
 		}
 	}
 }
@@ -140,9 +140,9 @@ func TestAnUncomparableDataSourceDoesNotPanic(t *testing.T) {
 // it reaches siblings on the same database and nothing else.
 func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}
-	src := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
 
-	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
+	err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
 		if e, ok := crud.ExecutorFor(ctx, srcOn(dbA, "sibling")); !ok || e.(*fakeTx) != tx {
 			t.Error("a sibling repository on the same database did not join")
 		}
@@ -165,12 +165,12 @@ func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 // as silent, so third-party adapters are left as they were.
 func TestInTxLeavesAnUnidentifiedSourceUnscoped(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "anonymous-tx"}}
-	src := struct {
+	source := struct {
 		fakeExec
 		beginner
 	}{fakeExec{name: "anonymous"}, beginner{tx}}
 
-	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
+	err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
 		if e, ok := crud.ExecutorFor(ctx, srcOn(dbB, "b")); !ok || e.(*fakeTx) != tx {
 			t.Error("an unidentified source did not bind unscoped")
 		}
@@ -183,19 +183,19 @@ func TestInTxLeavesAnUnidentifiedSourceUnscoped(t *testing.T) {
 
 type beginner struct{ tx crud.Tx }
 
-func (b beginner) Begin(context.Context) (crud.Tx, error) { return b.tx, nil }
+func (this beginner) Begin(context.Context) (crud.Tx, error) { return this.tx, nil }
 
 // Already inside a transaction of my own database means join it, not open a
 // second one.
 func TestInTxJoinsRatherThanNests(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "outer"}}
-	src := beginnerSource{named: srcOn(dbA, "a"), tx: &fakeTx{fakeExec: fakeExec{name: "should-not-open"}}}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: &fakeTx{fakeExec: fakeExec{name: "should-not-open"}}}
 
 	ctx := crud.WithExecutorFor(context.Background(), dbA, tx)
-	if err := crud.InTx(ctx, src, func(context.Context) error { return nil }); err != nil {
+	if err := crud.InTx(ctx, source, func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if src.tx.committed || src.tx.rolledBack {
+	if source.tx.committed || source.tx.rolledBack {
 		t.Fatal("InTx opened a competing transaction instead of joining")
 	}
 }
@@ -203,10 +203,10 @@ func TestInTxJoinsRatherThanNests(t *testing.T) {
 // But a transaction on somebody else's database is not one to join.
 func TestInTxDoesNotJoinAnotherDatabasesTransaction(t *testing.T) {
 	own := &fakeTx{fakeExec: fakeExec{name: "own"}}
-	src := beginnerSource{named: srcOn(dbA, "a"), tx: own}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: own}
 
 	ctx := crud.WithExecutorFor(context.Background(), dbB, &fakeTx{fakeExec: fakeExec{name: "b"}})
-	if err := crud.InTx(ctx, src, func(context.Context) error { return nil }); err != nil {
+	if err := crud.InTx(ctx, source, func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if !own.committed {
@@ -230,16 +230,16 @@ func TestInTxWithoutABeginnerIsRefused(t *testing.T) {
 // InTx and WithExecutorFor pushed the same binding.
 func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}
-	src := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
 
-	err := crud.InTx(context.Background(), src, func(ctx context.Context) error {
-		if _, found, owned := crud.OwnedExecutorFor(ctx, src); !found || !owned {
+	err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
+		if _, found, owned := crud.OwnedExecutorFor(ctx, source); !found || !owned {
 			t.Errorf("a transaction vv opened reports found=%v owned=%v", found, owned)
 		}
 		// Joining it keeps it ours: InTx joins rather than nests, so the
 		// binding underneath is still the one InTx pushed.
-		return crud.InTx(ctx, src, func(inner context.Context) error {
-			if _, _, owned := crud.OwnedExecutorFor(inner, src); !owned {
+		return crud.InTx(ctx, source, func(inner context.Context) error {
+			if _, _, owned := crud.OwnedExecutorFor(inner, source); !owned {
 				t.Error("joining our own transaction gave up ownership of it")
 			}
 			return nil
@@ -252,18 +252,18 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	// The control, and the whole reason for the flag: an ent or gorm transaction
 	// pushed in with WithExecutor is found and is not ours.
 	foreign := crud.WithExecutor(context.Background(), tx)
-	if _, found, owned := crud.OwnedExecutorFor(foreign, src); !found || owned {
+	if _, found, owned := crud.OwnedExecutorFor(foreign, source); !found || owned {
 		t.Fatalf("a foreign transaction reports found=%v owned=%v", found, owned)
 	}
 	scoped := crud.WithExecutorFor(context.Background(), dbA, tx)
-	if _, found, owned := crud.OwnedExecutorFor(scoped, src); !found || owned {
+	if _, found, owned := crud.OwnedExecutorFor(scoped, source); !found || owned {
 		t.Fatalf("a foreign transaction named by handle reports found=%v owned=%v", found, owned)
 	}
 	// And the trap the matrix names: a foreign transaction scoped to another
 	// handle is not this repository's transaction at all, however much
 	// ExecutorFrom says there is one.
 	elsewhere := crud.WithExecutorFor(context.Background(), dbB, tx)
-	if _, found, _ := crud.OwnedExecutorFor(elsewhere, src); found {
+	if _, found, _ := crud.OwnedExecutorFor(elsewhere, source); found {
 		t.Fatal("a transaction on another database was reported as this repository's")
 	}
 	if _, ok := crud.ExecutorFrom(elsewhere); !ok {
@@ -307,16 +307,16 @@ func TestASavepointClaimCountsPerTransactionAndNotPerRepository(t *testing.T) {
 
 // Nothing claims a savepoint inside somebody else's unit of work.
 func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
-	src := srcOn(dbA, "a")
-	if _, ok := crud.ClaimSavepoint(context.Background(), src); ok {
+	source := srcOn(dbA, "a")
+	if _, ok := crud.ClaimSavepoint(context.Background(), source); ok {
 		t.Error("a savepoint was claimed with no transaction in sight")
 	}
 	foreign := crud.WithExecutor(context.Background(), fakeExec{name: "ent"})
-	if _, ok := crud.ClaimSavepoint(foreign, src); ok {
+	if _, ok := crud.ClaimSavepoint(foreign, source); ok {
 		t.Error("a savepoint was claimed inside a transaction vv does not own")
 	}
 	// The control: our own transaction hands one out.
-	own := beginnerSource{named: src, tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
+	own := beginnerSource{named: source, tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
 	if err := crud.InTx(context.Background(), own, func(ctx context.Context) error {
 		if _, ok := crud.ClaimSavepoint(ctx, own); !ok {
 			t.Error("our own transaction refused a savepoint, so the refusals above say nothing")

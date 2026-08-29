@@ -275,9 +275,9 @@ func TestAnUpsertSkipsTheConflictsItsOwnTargetSwallows(t *testing.T) {
 			}
 			tc.rec.Push(crudtest.Rows(cells))
 			f := declared(t, fixture())
-			req := request(conflict("", ""), tc.rec, docMeta(t), idRow(int64(5), insert()))
-			req.Upsert = true
-			if _, err := f.Enrich(ctx, req); err != nil {
+			request := request(conflict("", ""), tc.rec, docMeta(t), idRow(int64(5), insert()))
+			request.Upsert = true
+			if _, err := f.Enrich(ctx, request); err != nil {
 				t.Fatalf("the probe reported %v", err)
 			}
 			got := contains(lastSQL(tc.rec), tc.rec.Dialect().Quote("email"))
@@ -309,9 +309,9 @@ func TestOnlyConstraintsTheWriteCouldHaveBrokenAreProbed(t *testing.T) {
 	rec.Push(answer(false))
 	f := declared(t, fixture())
 	// An update that changes the email and nothing else.
-	req := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"email": "b@x.io"}))
-	req.Op, req.Stored = "Update", true
-	if _, err := f.Enrich(ctx, req); err != nil {
+	request := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"email": "b@x.io"}))
+	request.Op, request.Stored = "Update", true
+	if _, err := f.Enrich(ctx, request); err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
 	q := lastSQL(rec)
@@ -327,9 +327,9 @@ func TestAnUpdateExcludesItsOwnRow(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(answer(false))
 	f := declared(t, fixture())
-	req := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"email": "b@x.io"}))
-	req.Op, req.Stored = "Update", true
-	if _, err := f.Enrich(ctx, req); err != nil {
+	request := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"email": "b@x.io"}))
+	request.Op, request.Stored = "Update", true
+	if _, err := f.Enrich(ctx, request); err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
 	if !contains(lastSQL(rec), `<>`) {
@@ -382,9 +382,9 @@ func TestPastTheRowCapTheAnswerIsPartial(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(flatAnswer(5, 1))
 	f := declared(t, fixture(), WithMaxRows(1))
-	req := request(conflict("", ""), rec, docMeta(t), row(insert()), row(insert()))
-	req.Batch = true
-	got, err := f.Enrich(ctx, req)
+	request := request(conflict("", ""), rec, docMeta(t), row(insert()), row(insert()))
+	request.Batch = true
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -397,9 +397,9 @@ func TestUnderTheRowCapTheAnswerIsComplete(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(flatAnswer(5, 2))
 	f := declared(t, fixture(), WithMaxRows(2))
-	req := request(conflict("", ""), rec, docMeta(t), row(insert()), row(insert()))
-	req.Batch = true
-	got, err := f.Enrich(ctx, req)
+	request := request(conflict("", ""), rec, docMeta(t), row(insert()), row(insert()))
+	request.Batch = true
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -440,13 +440,13 @@ type slowRecorder struct {
 	delay time.Duration
 }
 
-func (s *slowRecorder) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+func (this *slowRecorder) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-time.After(s.delay):
+	case <-time.After(this.delay):
 	}
-	return s.Recorder.Query(ctx, q, args...)
+	return this.Recorder.Query(ctx, q, args...)
 }
 
 func TestAConstraintOptedOutIsNeverProbed(t *testing.T) {
@@ -494,9 +494,9 @@ func TestTheDefaultModeNamesTheField(t *testing.T) {
 
 func TestTheValueReachesTheAnswerOnlyWhenAsked(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		opts []Option
-		want any
+		name    string
+		options []Option
+		want    any
 	}{
 		{"default", nil, nil},
 		{"with values", []Option{WithValues()}, "a@x.io"},
@@ -504,7 +504,7 @@ func TestTheValueReachesTheAnswerOnlyWhenAsked(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres()
 			rec.Push(answer(true, false, false, false, false))
-			f := declared(t, fixture(), tc.opts...)
+			f := declared(t, fixture(), tc.options...)
 			got, err := f.Enrich(ctx, request(conflict("", ""), rec, docMeta(t), row(insert())))
 			if err != nil {
 				t.Fatalf("the probe reported %v", err)
@@ -565,9 +565,9 @@ func TestAnInboundRestrictIsProbedAndACascadeIsNot(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(answer(false, false))
 	f := declared(t, fixture())
-	req := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"code": "C2"}))
-	req.Op, req.Stored = "Update", true
-	if _, err := f.Enrich(ctx, req); err != nil {
+	request := request(conflict("", ""), rec, docMeta(t), idRow(int64(9), map[string]any{"code": "C2"}))
+	request.Op, request.Stored = "Update", true
+	if _, err := f.Enrich(ctx, request); err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
 	q := lastSQL(rec)

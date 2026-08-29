@@ -65,39 +65,39 @@ type negative struct {
 // A name that is still unknown after a pass is not an error: the caller looks it
 // up again and finds nothing, which is the answer. Only a read that failed
 // returns one, and it wraps ErrIntrospection.
-func (c *loaded) Reload(ctx context.Context, table, name string) error {
+func (this *loaded) Reload(ctx context.Context, table, name string) error {
 	k := consKey{table: table, name: name}
-	now := c.clock()
+	now := this.clock()
 
-	c.mu.Lock()
-	if n, ok := c.misses[k]; ok && now.Before(n.until) {
-		c.mu.Unlock()
+	this.mu.Lock()
+	if n, ok := this.misses[k]; ok && now.Before(n.until) {
+		this.mu.Unlock()
 		return nil
 	}
-	if now.Before(c.floor) {
-		c.mu.Unlock()
+	if now.Before(this.floor) {
+		this.mu.Unlock()
 		return nil
 	}
-	c.floor = now.Add(reloadFloor)
-	c.mu.Unlock()
+	this.floor = now.Add(reloadFloor)
+	this.mu.Unlock()
 
-	tables, err := c.backend.read(ctx, c.src)
+	tables, err := this.backend.read(ctx, this.source)
 	if err != nil {
 		return err
 	}
 	s := newSnapshot(tables)
-	c.snap.Store(s)
+	this.snap.Store(s)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	this.mu.Lock()
+	defer this.mu.Unlock()
 	if _, found := s.byCons[k]; found {
-		delete(c.misses, k)
+		delete(this.misses, k)
 		return nil
 	}
-	if c.misses == nil {
-		c.misses = map[consKey]negative{}
+	if this.misses == nil {
+		this.misses = map[consKey]negative{}
 	}
-	n := c.misses[k]
+	n := this.misses[k]
 	switch {
 	case n.wait == 0:
 		n.wait = minBackoff
@@ -106,7 +106,7 @@ func (c *loaded) Reload(ctx context.Context, table, name string) error {
 		n.wait = min(n.wait, maxBackoff)
 	}
 	n.until = now.Add(n.wait)
-	c.misses[k] = n
+	this.misses[k] = n
 	return nil
 }
 
@@ -114,9 +114,9 @@ func (c *loaded) Reload(ctx context.Context, table, name string) error {
 // close. Nothing else in the root module's non-test source reads a clock, so
 // this is the first, and an injectable one is what makes the backoff testable at
 // all rather than testable by sleeping.
-func (c *loaded) clock() time.Time {
-	if c.now == nil {
+func (this *loaded) clock() time.Time {
+	if this.now == nil {
 		return time.Now()
 	}
-	return c.now()
+	return this.now()
 }

@@ -23,128 +23,128 @@ type UserUpdate struct {
 }
 
 // Where appends a list predicates to the UserUpdate builder.
-func (_u *UserUpdate) Where(ps ...predicate.User) *UserUpdate {
-	_u.mutation.Where(ps...)
-	return _u
+func (this *UserUpdate) Where(ps ...predicate.User) *UserUpdate {
+	this.mutation.Where(ps...)
+	return this
 }
 
 // SetTenantID sets the "tenant_id" field.
-func (_u *UserUpdate) SetTenantID(v int64) *UserUpdate {
-	_u.mutation.ResetTenantID()
-	_u.mutation.SetTenantID(v)
-	return _u
+func (this *UserUpdate) SetTenantID(v int64) *UserUpdate {
+	this.mutation.ResetTenantID()
+	this.mutation.SetTenantID(v)
+	return this
 }
 
 // SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableTenantID(v *int64) *UserUpdate {
+func (this *UserUpdate) SetNillableTenantID(v *int64) *UserUpdate {
 	if v != nil {
-		_u.SetTenantID(*v)
+		this.SetTenantID(*v)
 	}
-	return _u
+	return this
 }
 
 // AddTenantID adds value to the "tenant_id" field.
-func (_u *UserUpdate) AddTenantID(v int64) *UserUpdate {
-	_u.mutation.AddTenantID(v)
-	return _u
+func (this *UserUpdate) AddTenantID(v int64) *UserUpdate {
+	this.mutation.AddTenantID(v)
+	return this
 }
 
 // SetEmail sets the "email" field.
-func (_u *UserUpdate) SetEmail(v string) *UserUpdate {
-	_u.mutation.SetEmail(v)
-	return _u
+func (this *UserUpdate) SetEmail(v string) *UserUpdate {
+	this.mutation.SetEmail(v)
+	return this
 }
 
 // SetNillableEmail sets the "email" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableEmail(v *string) *UserUpdate {
+func (this *UserUpdate) SetNillableEmail(v *string) *UserUpdate {
 	if v != nil {
-		_u.SetEmail(*v)
+		this.SetEmail(*v)
 	}
-	return _u
+	return this
 }
 
 // SetName sets the "name" field.
-func (_u *UserUpdate) SetName(v string) *UserUpdate {
-	_u.mutation.SetName(v)
-	return _u
+func (this *UserUpdate) SetName(v string) *UserUpdate {
+	this.mutation.SetName(v)
+	return this
 }
 
 // SetNillableName sets the "name" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableName(v *string) *UserUpdate {
+func (this *UserUpdate) SetNillableName(v *string) *UserUpdate {
 	if v != nil {
-		_u.SetName(*v)
+		this.SetName(*v)
 	}
-	return _u
+	return this
 }
 
 // SetAge sets the "age" field.
-func (_u *UserUpdate) SetAge(v int) *UserUpdate {
-	_u.mutation.ResetAge()
-	_u.mutation.SetAge(v)
-	return _u
+func (this *UserUpdate) SetAge(v int) *UserUpdate {
+	this.mutation.ResetAge()
+	this.mutation.SetAge(v)
+	return this
 }
 
 // SetNillableAge sets the "age" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableAge(v *int) *UserUpdate {
+func (this *UserUpdate) SetNillableAge(v *int) *UserUpdate {
 	if v != nil {
-		_u.SetAge(*v)
+		this.SetAge(*v)
 	}
-	return _u
+	return this
 }
 
 // AddAge adds value to the "age" field.
-func (_u *UserUpdate) AddAge(v int) *UserUpdate {
-	_u.mutation.AddAge(v)
-	return _u
+func (this *UserUpdate) AddAge(v int) *UserUpdate {
+	this.mutation.AddAge(v)
+	return this
 }
 
 // ClearAge clears the value of the "age" field.
-func (_u *UserUpdate) ClearAge() *UserUpdate {
-	_u.mutation.ClearAge()
-	return _u
+func (this *UserUpdate) ClearAge() *UserUpdate {
+	this.mutation.ClearAge()
+	return this
 }
 
 // SetActive sets the "active" field.
-func (_u *UserUpdate) SetActive(v bool) *UserUpdate {
-	_u.mutation.SetActive(v)
-	return _u
+func (this *UserUpdate) SetActive(v bool) *UserUpdate {
+	this.mutation.SetActive(v)
+	return this
 }
 
 // SetNillableActive sets the "active" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableActive(v *bool) *UserUpdate {
+func (this *UserUpdate) SetNillableActive(v *bool) *UserUpdate {
 	if v != nil {
-		_u.SetActive(*v)
+		this.SetActive(*v)
 	}
-	return _u
+	return this
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (_u *UserUpdate) SetCreatedAt(v time.Time) *UserUpdate {
-	_u.mutation.SetCreatedAt(v)
-	return _u
+func (this *UserUpdate) SetCreatedAt(v time.Time) *UserUpdate {
+	this.mutation.SetCreatedAt(v)
+	return this
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableCreatedAt(v *time.Time) *UserUpdate {
+func (this *UserUpdate) SetNillableCreatedAt(v *time.Time) *UserUpdate {
 	if v != nil {
-		_u.SetCreatedAt(*v)
+		this.SetCreatedAt(*v)
 	}
-	return _u
+	return this
 }
 
 // Mutation returns the UserMutation object of the builder.
-func (_u *UserUpdate) Mutation() *UserMutation {
-	return _u.mutation
+func (this *UserUpdate) Mutation() *UserMutation {
+	return this.mutation
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
-func (_u *UserUpdate) Save(ctx context.Context) (int, error) {
-	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
+func (this *UserUpdate) Save(ctx context.Context) (int, error) {
+	return withHooks(ctx, this.sqlSave, this.mutation, this.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *UserUpdate) SaveX(ctx context.Context) int {
-	affected, err := _u.Save(ctx)
+func (this *UserUpdate) SaveX(ctx context.Context) int {
+	affected, err := this.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -152,63 +152,63 @@ func (_u *UserUpdate) SaveX(ctx context.Context) int {
 }
 
 // Exec executes the query.
-func (_u *UserUpdate) Exec(ctx context.Context) error {
-	_, err := _u.Save(ctx)
+func (this *UserUpdate) Exec(ctx context.Context) error {
+	_, err := this.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *UserUpdate) ExecX(ctx context.Context) {
-	if err := _u.Exec(ctx); err != nil {
+func (this *UserUpdate) ExecX(ctx context.Context) {
+	if err := this.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
-func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+func (this *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	_spec := sqlgraph.NewUpdateSpec(user.Table, user.Columns, sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64))
-	if ps := _u.mutation.predicates; len(ps) > 0 {
+	if ps := this.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := _u.mutation.TenantID(); ok {
+	if value, ok := this.mutation.TenantID(); ok {
 		_spec.SetField(user.FieldTenantID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AddedTenantID(); ok {
+	if value, ok := this.mutation.AddedTenantID(); ok {
 		_spec.AddField(user.FieldTenantID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.Email(); ok {
+	if value, ok := this.mutation.Email(); ok {
 		_spec.SetField(user.FieldEmail, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Name(); ok {
+	if value, ok := this.mutation.Name(); ok {
 		_spec.SetField(user.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Age(); ok {
+	if value, ok := this.mutation.Age(); ok {
 		_spec.SetField(user.FieldAge, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedAge(); ok {
+	if value, ok := this.mutation.AddedAge(); ok {
 		_spec.AddField(user.FieldAge, field.TypeInt, value)
 	}
-	if _u.mutation.AgeCleared() {
+	if this.mutation.AgeCleared() {
 		_spec.ClearField(user.FieldAge, field.TypeInt)
 	}
-	if value, ok := _u.mutation.Active(); ok {
+	if value, ok := this.mutation.Active(); ok {
 		_spec.SetField(user.FieldActive, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.CreatedAt(); ok {
+	if value, ok := this.mutation.CreatedAt(); ok {
 		_spec.SetField(user.FieldCreatedAt, field.TypeTime, value)
 	}
-	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
+	if _node, err = sqlgraph.UpdateNodes(ctx, this.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{user.Label}
 		} else if sqlgraph.IsConstraintError(err) {
-			err = &ConstraintError{msg: err.Error(), wrap: err}
+			err = &ConstraintError{message: err.Error(), wrap: err}
 		}
 		return 0, err
 	}
-	_u.mutation.done = true
+	this.mutation.done = true
 	return _node, nil
 }
 
@@ -221,135 +221,135 @@ type UserUpdateOne struct {
 }
 
 // SetTenantID sets the "tenant_id" field.
-func (_u *UserUpdateOne) SetTenantID(v int64) *UserUpdateOne {
-	_u.mutation.ResetTenantID()
-	_u.mutation.SetTenantID(v)
-	return _u
+func (this *UserUpdateOne) SetTenantID(v int64) *UserUpdateOne {
+	this.mutation.ResetTenantID()
+	this.mutation.SetTenantID(v)
+	return this
 }
 
 // SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableTenantID(v *int64) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableTenantID(v *int64) *UserUpdateOne {
 	if v != nil {
-		_u.SetTenantID(*v)
+		this.SetTenantID(*v)
 	}
-	return _u
+	return this
 }
 
 // AddTenantID adds value to the "tenant_id" field.
-func (_u *UserUpdateOne) AddTenantID(v int64) *UserUpdateOne {
-	_u.mutation.AddTenantID(v)
-	return _u
+func (this *UserUpdateOne) AddTenantID(v int64) *UserUpdateOne {
+	this.mutation.AddTenantID(v)
+	return this
 }
 
 // SetEmail sets the "email" field.
-func (_u *UserUpdateOne) SetEmail(v string) *UserUpdateOne {
-	_u.mutation.SetEmail(v)
-	return _u
+func (this *UserUpdateOne) SetEmail(v string) *UserUpdateOne {
+	this.mutation.SetEmail(v)
+	return this
 }
 
 // SetNillableEmail sets the "email" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableEmail(v *string) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableEmail(v *string) *UserUpdateOne {
 	if v != nil {
-		_u.SetEmail(*v)
+		this.SetEmail(*v)
 	}
-	return _u
+	return this
 }
 
 // SetName sets the "name" field.
-func (_u *UserUpdateOne) SetName(v string) *UserUpdateOne {
-	_u.mutation.SetName(v)
-	return _u
+func (this *UserUpdateOne) SetName(v string) *UserUpdateOne {
+	this.mutation.SetName(v)
+	return this
 }
 
 // SetNillableName sets the "name" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableName(v *string) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableName(v *string) *UserUpdateOne {
 	if v != nil {
-		_u.SetName(*v)
+		this.SetName(*v)
 	}
-	return _u
+	return this
 }
 
 // SetAge sets the "age" field.
-func (_u *UserUpdateOne) SetAge(v int) *UserUpdateOne {
-	_u.mutation.ResetAge()
-	_u.mutation.SetAge(v)
-	return _u
+func (this *UserUpdateOne) SetAge(v int) *UserUpdateOne {
+	this.mutation.ResetAge()
+	this.mutation.SetAge(v)
+	return this
 }
 
 // SetNillableAge sets the "age" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableAge(v *int) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableAge(v *int) *UserUpdateOne {
 	if v != nil {
-		_u.SetAge(*v)
+		this.SetAge(*v)
 	}
-	return _u
+	return this
 }
 
 // AddAge adds value to the "age" field.
-func (_u *UserUpdateOne) AddAge(v int) *UserUpdateOne {
-	_u.mutation.AddAge(v)
-	return _u
+func (this *UserUpdateOne) AddAge(v int) *UserUpdateOne {
+	this.mutation.AddAge(v)
+	return this
 }
 
 // ClearAge clears the value of the "age" field.
-func (_u *UserUpdateOne) ClearAge() *UserUpdateOne {
-	_u.mutation.ClearAge()
-	return _u
+func (this *UserUpdateOne) ClearAge() *UserUpdateOne {
+	this.mutation.ClearAge()
+	return this
 }
 
 // SetActive sets the "active" field.
-func (_u *UserUpdateOne) SetActive(v bool) *UserUpdateOne {
-	_u.mutation.SetActive(v)
-	return _u
+func (this *UserUpdateOne) SetActive(v bool) *UserUpdateOne {
+	this.mutation.SetActive(v)
+	return this
 }
 
 // SetNillableActive sets the "active" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableActive(v *bool) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableActive(v *bool) *UserUpdateOne {
 	if v != nil {
-		_u.SetActive(*v)
+		this.SetActive(*v)
 	}
-	return _u
+	return this
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (_u *UserUpdateOne) SetCreatedAt(v time.Time) *UserUpdateOne {
-	_u.mutation.SetCreatedAt(v)
-	return _u
+func (this *UserUpdateOne) SetCreatedAt(v time.Time) *UserUpdateOne {
+	this.mutation.SetCreatedAt(v)
+	return this
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableCreatedAt(v *time.Time) *UserUpdateOne {
+func (this *UserUpdateOne) SetNillableCreatedAt(v *time.Time) *UserUpdateOne {
 	if v != nil {
-		_u.SetCreatedAt(*v)
+		this.SetCreatedAt(*v)
 	}
-	return _u
+	return this
 }
 
 // Mutation returns the UserMutation object of the builder.
-func (_u *UserUpdateOne) Mutation() *UserMutation {
-	return _u.mutation
+func (this *UserUpdateOne) Mutation() *UserMutation {
+	return this.mutation
 }
 
 // Where appends a list predicates to the UserUpdate builder.
-func (_u *UserUpdateOne) Where(ps ...predicate.User) *UserUpdateOne {
-	_u.mutation.Where(ps...)
-	return _u
+func (this *UserUpdateOne) Where(ps ...predicate.User) *UserUpdateOne {
+	this.mutation.Where(ps...)
+	return this
 }
 
 // Select allows selecting one or more fields (columns) of the returned entity.
 // The default is selecting all fields defined in the entity schema.
-func (_u *UserUpdateOne) Select(field string, fields ...string) *UserUpdateOne {
-	_u.fields = append([]string{field}, fields...)
-	return _u
+func (this *UserUpdateOne) Select(field string, fields ...string) *UserUpdateOne {
+	this.fields = append([]string{field}, fields...)
+	return this
 }
 
 // Save executes the query and returns the updated User entity.
-func (_u *UserUpdateOne) Save(ctx context.Context) (*User, error) {
-	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
+func (this *UserUpdateOne) Save(ctx context.Context) (*User, error) {
+	return withHooks(ctx, this.sqlSave, this.mutation, this.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *UserUpdateOne) SaveX(ctx context.Context) *User {
-	node, err := _u.Save(ctx)
+func (this *UserUpdateOne) SaveX(ctx context.Context) *User {
+	node, err := this.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -357,26 +357,26 @@ func (_u *UserUpdateOne) SaveX(ctx context.Context) *User {
 }
 
 // Exec executes the query on the entity.
-func (_u *UserUpdateOne) Exec(ctx context.Context) error {
-	_, err := _u.Save(ctx)
+func (this *UserUpdateOne) Exec(ctx context.Context) error {
+	_, err := this.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *UserUpdateOne) ExecX(ctx context.Context) {
-	if err := _u.Exec(ctx); err != nil {
+func (this *UserUpdateOne) ExecX(ctx context.Context) {
+	if err := this.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
-func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
+func (this *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	_spec := sqlgraph.NewUpdateSpec(user.Table, user.Columns, sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64))
-	id, ok := _u.mutation.ID()
+	id, ok := this.mutation.ID()
 	if !ok {
 		return nil, &ValidationError{Name: "id", err: errors.New(`ent: missing "User.id" for update`)}
 	}
 	_spec.Node.ID.Value = id
-	if fields := _u.fields; len(fields) > 0 {
+	if fields := this.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
 		_spec.Node.Columns = append(_spec.Node.Columns, user.FieldID)
 		for _, f := range fields {
@@ -388,51 +388,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			}
 		}
 	}
-	if ps := _u.mutation.predicates; len(ps) > 0 {
+	if ps := this.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := _u.mutation.TenantID(); ok {
+	if value, ok := this.mutation.TenantID(); ok {
 		_spec.SetField(user.FieldTenantID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AddedTenantID(); ok {
+	if value, ok := this.mutation.AddedTenantID(); ok {
 		_spec.AddField(user.FieldTenantID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.Email(); ok {
+	if value, ok := this.mutation.Email(); ok {
 		_spec.SetField(user.FieldEmail, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Name(); ok {
+	if value, ok := this.mutation.Name(); ok {
 		_spec.SetField(user.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Age(); ok {
+	if value, ok := this.mutation.Age(); ok {
 		_spec.SetField(user.FieldAge, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.AddedAge(); ok {
+	if value, ok := this.mutation.AddedAge(); ok {
 		_spec.AddField(user.FieldAge, field.TypeInt, value)
 	}
-	if _u.mutation.AgeCleared() {
+	if this.mutation.AgeCleared() {
 		_spec.ClearField(user.FieldAge, field.TypeInt)
 	}
-	if value, ok := _u.mutation.Active(); ok {
+	if value, ok := this.mutation.Active(); ok {
 		_spec.SetField(user.FieldActive, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.CreatedAt(); ok {
+	if value, ok := this.mutation.CreatedAt(); ok {
 		_spec.SetField(user.FieldCreatedAt, field.TypeTime, value)
 	}
-	_node = &User{config: _u.config}
+	_node = &User{config: this.config}
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
-	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
+	if err = sqlgraph.UpdateNode(ctx, this.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{user.Label}
 		} else if sqlgraph.IsConstraintError(err) {
-			err = &ConstraintError{msg: err.Error(), wrap: err}
+			err = &ConstraintError{message: err.Error(), wrap: err}
 		}
 		return nil, err
 	}
-	_u.mutation.done = true
+	this.mutation.done = true
 	return _node, nil
 }

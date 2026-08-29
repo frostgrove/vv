@@ -215,9 +215,9 @@ func TestEmptySpecificationDoesNotRestrict(t *testing.T) {
 
 func TestFindOne(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(row(1, "a@x", "Ann")))
-	repo := specs.Executor(Users.Bind(rec))
+	repository := specs.Executor(Users.Bind(rec))
 
-	u, err := repo.FindOne(context.Background(), User_.Email.Eq("a@x"))
+	u, err := repository.FindOne(context.Background(), User_.Email.Eq("a@x"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,13 +231,13 @@ func TestFindOne(t *testing.T) {
 
 	rec.Reset()
 	rec.Push(crudtest.Rows(row(1, "a@x", "Ann"), row(2, "a@x", "Bob")))
-	if _, err := repo.FindOne(context.Background(), User_.Email.Eq("a@x")); !errors.Is(err, specs.ErrNotUnique) {
+	if _, err := repository.FindOne(context.Background(), User_.Email.Eq("a@x")); !errors.Is(err, specs.ErrNotUnique) {
 		t.Fatalf("err = %v, want ErrNotUnique", err)
 	}
 
 	rec.Reset()
 	rec.Push(crudtest.Rows())
-	if _, err := repo.FindOne(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
+	if _, err := repository.FindOne(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -247,9 +247,9 @@ func TestFindPageCountsAndDeletes(t *testing.T) {
 		crudtest.Rows(row(1, "a@x", "Ann"), row(2, "b@x", "Bob")),
 		crudtest.Rows([]any{int64(9)}),
 	)
-	repo := specs.Executor(Users.Bind(rec))
+	repository := specs.Executor(Users.Bind(rec))
 
-	page, err := repo.FindPage(context.Background(), User_.Active.Eq(true), crud.Page(1), crud.Limit(2))
+	page, err := repository.FindPage(context.Background(), User_.Active.Eq(true), crud.Page(1), crud.Limit(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,13 +259,13 @@ func TestFindPageCountsAndDeletes(t *testing.T) {
 
 	rec.Reset()
 	rec.Push(crudtest.Rows([]any{int64(3)}))
-	if n, err := repo.CountBy(context.Background(), User_.Active.Eq(false)); err != nil || n != 3 {
+	if n, err := repository.CountBy(context.Background(), User_.Active.Eq(false)); err != nil || n != 3 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 
 	rec.Reset()
 	rec.ExecResult(crud.Result{RowsAffected: 3})
-	if n, err := repo.DeleteBy(context.Background(), User_.Active.Eq(false)); err != nil || n != 3 {
+	if n, err := repository.DeleteBy(context.Background(), User_.Active.Eq(false)); err != nil || n != 3 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	if got := crudtest.Normalize(rec.Last().SQL); got != `DELETE FROM "users" WHERE "active" = $1` {
@@ -277,8 +277,8 @@ func TestFindPageCountsAndDeletes(t *testing.T) {
 // deliberate, so it is refused here.
 func TestDeleteByRefusesEmptySpecification(t *testing.T) {
 	rec := crudtest.Postgres()
-	repo := specs.Executor(Users.Bind(rec))
-	if _, err := repo.DeleteBy(context.Background(), specs.Where[User](nil)); !errors.Is(err, specs.ErrUnboundedDelete) {
+	repository := specs.Executor(Users.Bind(rec))
+	if _, err := repository.DeleteBy(context.Background(), specs.Where[User](nil)); !errors.Is(err, specs.ErrUnboundedDelete) {
 		t.Fatalf("err = %v, want ErrUnboundedDelete", err)
 	}
 	if len(rec.Statements()) != 0 {
@@ -289,14 +289,14 @@ func TestDeleteByRefusesEmptySpecification(t *testing.T) {
 // The decorator keeps the whole basic surface.
 func TestExecutorStillHasTheBasicMethods(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(row(1, "a@x", "Ann")))
-	repo := specs.Executor(Users.Bind(rec))
-	if _, err := repo.GetByID(context.Background(), 1); err != nil {
+	repository := specs.Executor(Users.Bind(rec))
+	if _, err := repository.GetByID(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	name := "Bob"
 	rec.Reset()
 	rec.Push(crudtest.Rows(row(1, "a@x", "Ann")), crudtest.Rows(row(1, "a@x", "Bob")))
-	u, err := repo.Update(context.Background(), 1, UserUpdate{Name: &name})
+	u, err := repository.Update(context.Background(), 1, UserUpdate{Name: &name})
 	if err != nil {
 		t.Fatal(err)
 	}

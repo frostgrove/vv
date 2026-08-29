@@ -54,7 +54,7 @@ func (*Product) scanValues(columns []string) ([]any, error) {
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
 // to the Product fields.
-func (_m *Product) assignValues(columns []string, values []any) error {
+func (this *Product) assignValues(columns []string, values []any) error {
 	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}
@@ -65,46 +65,46 @@ func (_m *Product) assignValues(columns []string, values []any) error {
 			if !ok {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
-			_m.ID = int64(value.Int64)
+			this.ID = int64(value.Int64)
 		case product.FieldSku:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field sku", values[i])
 			} else if value.Valid {
-				_m.Sku = value.String
+				this.Sku = value.String
 			}
 		case product.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field name", values[i])
 			} else if value.Valid {
-				_m.Name = value.String
+				this.Name = value.String
 			}
 		case product.FieldPrice:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field price", values[i])
 			} else if value.Valid {
-				_m.Price = int(value.Int64)
+				this.Price = int(value.Int64)
 			}
 		case product.FieldStock:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field stock", values[i])
 			} else if value.Valid {
-				_m.Stock = new(int)
-				*_m.Stock = int(value.Int64)
+				this.Stock = new(int)
+				*this.Stock = int(value.Int64)
 			}
 		case product.FieldActive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field active", values[i])
 			} else if value.Valid {
-				_m.Active = value.Bool
+				this.Active = value.Bool
 			}
 		case product.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
-				_m.CreatedAt = value.Time
+				this.CreatedAt = value.Time
 			}
 		default:
-			_m.selectValues.Set(columns[i], values[i])
+			this.selectValues.Set(columns[i], values[i])
 		}
 	}
 	return nil
@@ -112,52 +112,52 @@ func (_m *Product) assignValues(columns []string, values []any) error {
 
 // Value returns the ent.Value that was dynamically selected and assigned to the Product.
 // This includes values selected through modifiers, order, etc.
-func (_m *Product) Value(name string) (ent.Value, error) {
-	return _m.selectValues.Get(name)
+func (this *Product) Value(name string) (ent.Value, error) {
+	return this.selectValues.Get(name)
 }
 
 // Update returns a builder for updating this Product.
 // Note that you need to call Product.Unwrap() before calling this method if this Product
 // was returned from a transaction, and the transaction was committed or rolled back.
-func (_m *Product) Update() *ProductUpdateOne {
-	return NewProductClient(_m.config).UpdateOne(_m)
+func (this *Product) Update() *ProductUpdateOne {
+	return NewProductClient(this.config).UpdateOne(this)
 }
 
 // Unwrap unwraps the Product entity that was returned from a transaction after it was closed,
 // so that all future queries will be executed through the driver which created the transaction.
-func (_m *Product) Unwrap() *Product {
-	_tx, ok := _m.config.driver.(*txDriver)
+func (this *Product) Unwrap() *Product {
+	_tx, ok := this.config.driver.(*txDriver)
 	if !ok {
 		panic("entmodel: Product is not a transactional entity")
 	}
-	_m.config.driver = _tx.drv
-	return _m
+	this.config.driver = _tx.drv
+	return this
 }
 
 // String implements the fmt.Stringer.
-func (_m *Product) String() string {
+func (this *Product) String() string {
 	var builder strings.Builder
 	builder.WriteString("Product(")
-	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString(fmt.Sprintf("id=%v, ", this.ID))
 	builder.WriteString("sku=")
-	builder.WriteString(_m.Sku)
+	builder.WriteString(this.Sku)
 	builder.WriteString(", ")
 	builder.WriteString("name=")
-	builder.WriteString(_m.Name)
+	builder.WriteString(this.Name)
 	builder.WriteString(", ")
 	builder.WriteString("price=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Price))
+	builder.WriteString(fmt.Sprintf("%v", this.Price))
 	builder.WriteString(", ")
-	if v := _m.Stock; v != nil {
+	if v := this.Stock; v != nil {
 		builder.WriteString("stock=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
 	builder.WriteString("active=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Active))
+	builder.WriteString(fmt.Sprintf("%v", this.Active))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
-	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))
+	builder.WriteString(this.CreatedAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

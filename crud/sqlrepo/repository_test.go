@@ -228,8 +228,8 @@ func TestDistinctRefusesAPreloadItCannotAttach(t *testing.T) {
 
 func TestMaxLimitClamps(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(0)}))
-	repo := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.MaxLimit(50)).Bind(rec)
-	if _, err := repo.Get(context.Background(), crud.Limit(1000)); err != nil {
+	repository := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.MaxLimit(50)).Bind(rec)
+	if _, err := repository.Get(context.Background(), crud.Limit(1000)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(mustSQL(t, rec, 0).SQL, "LIMIT 50") {
@@ -553,15 +553,15 @@ func TestDeleteAll(t *testing.T) {
 
 func TestCountAndExists(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(4)}), crudtest.Rows([]any{1}))
-	repo := Users.Bind(rec)
+	repository := Users.Bind(rec)
 
-	n, err := repo.Count(context.Background(), crud.Where(crud.Eq("TenantID", 2)))
+	n, err := repository.Count(context.Background(), crud.Where(crud.Eq("TenantID", 2)))
 	if err != nil || n != 4 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	wantSQL(t, mustSQL(t, rec, 0).SQL, `SELECT count(*) FROM "users" WHERE "tenant_id" = $1`)
 
-	ok, err := repo.Exists(context.Background(), crud.Where(crud.Eq("Email", "a@b")))
+	ok, err := repository.Exists(context.Background(), crud.Where(crud.Eq("Email", "a@b")))
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}

@@ -30,20 +30,20 @@ type scope struct {
 }
 
 // qualify renders a column for use inside its own scope.
-func (s scope) qualify(d Dialect, col string) string {
-	if s.alias == "" {
+func (this scope) qualify(d Dialect, col string) string {
+	if this.alias == "" {
 		return d.Quote(col)
 	}
-	return s.alias + "." + d.Quote(col)
+	return this.alias + "." + d.Quote(col)
 }
 
 // correlate renders a column of this scope for use from a deeper one, where
 // bare names would be ambiguous.
-func (s scope) correlate(d Dialect, col string) string {
-	if s.alias == "" {
-		return d.Quote(s.meta.Table) + "." + d.Quote(col)
+func (this scope) correlate(d Dialect, col string) string {
+	if this.alias == "" {
+		return d.Quote(this.meta.Table) + "." + d.Quote(col)
 	}
-	return s.alias + "." + d.Quote(col)
+	return this.alias + "." + d.Quote(col)
 }
 
 // writer renders an AST against a dialect, resolving field references through
@@ -63,80 +63,80 @@ type writer struct {
 	path string
 }
 
-func (w *writer) fail(err error) {
-	if w.err == nil {
-		w.err = err
+func (this *writer) fail(err error) {
+	if this.err == nil {
+		this.err = err
 	}
 }
 
-func (w *writer) nextAlias() string {
-	w.alias++
-	return "rx" + itoa(w.alias)
+func (this *writer) nextAlias() string {
+	this.alias++
+	return "rx" + itoa(this.alias)
 }
 
 // current returns the scope in effect, defaulting to the root model.
-func (w *writer) current() scope {
-	if w.cur.meta == nil {
-		return scope{meta: w.m}
+func (this *writer) current() scope {
+	if this.cur.meta == nil {
+		return scope{meta: this.m}
 	}
-	return w.cur
+	return this.cur
 }
 
 // leaf resolves a possibly-nested field path and hands the rendered column
 // expression to emit. Every relation hop on the way wraps the condition in a
 // correlated EXISTS, which is what keeps `Comments.Body eq x` from multiplying
 // rows the way a join would — COUNT and LIMIT stay honest.
-func (w *writer) leaf(path string, emit func(col string)) {
-	cur := w.current()
+func (this *writer) leaf(path string, emit func(col string)) {
+	cur := this.current()
 	hops, f, _, err := cur.meta.WalkPath(path)
 	if err != nil {
-		w.fail(err)
-		w.str("1 = 0")
+		this.fail(err)
+		this.str("1 = 0")
 		return
 	}
 	if f == nil {
-		w.fail(&SchemaError{Model: cur.meta.Name, Field: path, Reason: "path names a relation, not a column"})
-		w.str("1 = 0")
+		this.fail(&SchemaError{Model: cur.meta.Name, Field: path, Reason: "path names a relation, not a column"})
+		this.str("1 = 0")
 		return
 	}
 	if len(hops) == 0 {
-		emit(cur.qualify(w.d, f.Column))
+		emit(cur.qualify(this.d, f.Column))
 		return
 	}
 
-	saved, savedPath := w.cur, w.path
-	defer func() { w.cur, w.path = saved, savedPath }()
+	saved, savedPath := this.cur, this.path
+	defer func() { this.cur, this.path = saved, savedPath }()
 
 	for _, hop := range hops {
-		alias := w.nextAlias()
-		w.str("EXISTS (SELECT 1 FROM ")
-		w.str(w.d.Quote(hop.Target.Table))
-		w.str(" AS " + alias)
+		alias := this.nextAlias()
+		this.str("EXISTS (SELECT 1 FROM ")
+		this.str(this.d.Quote(hop.Target.Table))
+		this.str(" AS " + alias)
 		if hop.Rel.Kind == ManyToMany {
-			j := w.nextAlias()
-			w.str(" JOIN " + w.d.Quote(hop.Rel.JoinTable) + " AS " + j +
-				" ON " + j + "." + w.d.Quote(hop.Rel.JoinRef) + " = " + alias + "." + w.d.Quote(hop.Remote.Column))
-			w.str(" WHERE " + j + "." + w.d.Quote(hop.Rel.JoinLocal) + " = " + cur.correlate(w.d, hop.Local.Column))
+			j := this.nextAlias()
+			this.str(" JOIN " + this.d.Quote(hop.Rel.JoinTable) + " AS " + j +
+				" ON " + j + "." + this.d.Quote(hop.Rel.JoinRef) + " = " + alias + "." + this.d.Quote(hop.Remote.Column))
+			this.str(" WHERE " + j + "." + this.d.Quote(hop.Rel.JoinLocal) + " = " + cur.correlate(this.d, hop.Local.Column))
 		} else {
-			w.str(" WHERE " + alias + "." + w.d.Quote(hop.Remote.Column) + " = " + cur.correlate(w.d, hop.Local.Column))
+			this.str(" WHERE " + alias + "." + this.d.Quote(hop.Remote.Column) + " = " + cur.correlate(this.d, hop.Local.Column))
 		}
-		w.str(" AND ")
+		this.str(" AND ")
 		cur = scope{meta: hop.Target, alias: alias}
-		w.cur, w.path = cur, joinPath(w.path, hop.Rel.Name)
-		if w.hopScope() {
-			w.str(" AND ")
+		this.cur, this.path = cur, joinPath(this.path, hop.Rel.Name)
+		if this.hopScope() {
+			this.str(" AND ")
 		}
 	}
-	emit(cur.qualify(w.d, f.Column))
-	w.str(strings.Repeat(")", len(hops)))
+	emit(cur.qualify(this.d, f.Column))
+	this.str(strings.Repeat(")", len(hops)))
 }
 
 // hopScope renders the narrowing that applies to the table the writer has just
 // stepped into. Without it a filter through a relation reads rows the caller's
 // own repository would refuse to hand over — the subquery has its own FROM and
 // inherits nothing.
-func (w *writer) hopScope() bool {
-	p := w.rel.At(w.path, w.cur.meta)
+func (this *writer) hopScope() bool {
+	p := this.rel.At(this.path, this.cur.meta)
 	if p == nil {
 		return false
 	}
@@ -144,33 +144,33 @@ func (w *writer) hopScope() bool {
 	// is rendered without narrowing anything further. That also settles the
 	// only way this could fail to terminate: a scope on a model whose own path
 	// walks back into that same model.
-	saved := w.rel
-	w.rel = nil
-	p.render(w)
-	w.rel = saved
+	saved := this.rel
+	this.rel = nil
+	p.render(this)
+	this.rel = saved
 	return true
 }
 
-func (w *writer) column(ref string) {
-	w.leaf(ref, func(col string) { w.sb.WriteString(col) })
+func (this *writer) column(ref string) {
+	this.leaf(ref, func(col string) { this.sb.WriteString(col) })
 }
 
-func (w *writer) bind(v any) {
-	w.args = append(w.args, v)
-	w.sb.WriteString(w.d.Placeholder(len(w.args)))
+func (this *writer) bind(v any) {
+	this.args = append(this.args, v)
+	this.sb.WriteString(this.d.Placeholder(len(this.args)))
 }
 
-func (w *writer) str(s string) { w.sb.WriteString(s) }
+func (this *writer) str(s string) { this.sb.WriteString(s) }
 
 // likeEscape makes the backslash escapes the convenience operations add part
 // of SQL's grammar. Dialects own their spelling through LikeEscaper; the
 // standard form is the compatibility default for a dialect that does not.
-func (w *writer) likeEscape() {
-	if d, ok := w.d.(LikeEscaper); ok {
-		w.str(d.LikeEscapeClause())
+func (this *writer) likeEscape() {
+	if d, ok := this.d.(LikeEscaper); ok {
+		this.str(d.LikeEscapeClause())
 		return
 	}
-	w.str(` ESCAPE '\'`)
+	this.str(` ESCAPE '\'`)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +182,11 @@ type cmpNode struct {
 	value any
 }
 
-func (n cmpNode) render(w *writer) {
-	w.leaf(n.field, func(col string) {
+func (this cmpNode) render(w *writer) {
+	w.leaf(this.field, func(col string) {
 		w.str(col)
-		w.str(" " + n.op + " ")
-		w.bind(n.value)
+		w.str(" " + this.op + " ")
+		w.bind(this.value)
 	})
 }
 
@@ -195,10 +195,10 @@ type nullNode struct {
 	not   bool
 }
 
-func (n nullNode) render(w *writer) {
-	w.leaf(n.field, func(col string) {
+func (this nullNode) render(w *writer) {
+	w.leaf(this.field, func(col string) {
 		w.str(col)
-		if n.not {
+		if this.not {
 			w.str(" IS NOT NULL")
 		} else {
 			w.str(" IS NULL")
@@ -212,24 +212,24 @@ type inNode struct {
 	not    bool
 }
 
-func (n inNode) render(w *writer) {
-	if len(n.values) == 0 {
+func (this inNode) render(w *writer) {
+	if len(this.values) == 0 {
 		// IN () is a syntax error everywhere; degrade to a constant.
-		if n.not {
+		if this.not {
 			w.str("1 = 1")
 		} else {
 			w.str("1 = 0")
 		}
 		return
 	}
-	w.leaf(n.field, func(col string) {
+	w.leaf(this.field, func(col string) {
 		w.str(col)
-		if n.not {
+		if this.not {
 			w.str(" NOT IN (")
 		} else {
 			w.str(" IN (")
 		}
-		for i, v := range n.values {
+		for i, v := range this.values {
 			if i > 0 {
 				w.str(", ")
 			}
@@ -245,17 +245,17 @@ type betweenNode struct {
 	not     bool
 }
 
-func (n betweenNode) render(w *writer) {
-	w.leaf(n.field, func(col string) {
+func (this betweenNode) render(w *writer) {
+	w.leaf(this.field, func(col string) {
 		w.str(col)
-		if n.not {
+		if this.not {
 			w.str(" NOT BETWEEN ")
 		} else {
 			w.str(" BETWEEN ")
 		}
-		w.bind(n.low)
+		w.bind(this.low)
 		w.str(" AND ")
-		w.bind(n.hi)
+		w.bind(this.hi)
 	})
 }
 
@@ -281,9 +281,9 @@ const (
 	likeEndsWith
 )
 
-func (n likeNode) render(w *writer) {
-	pattern := n.pattern
-	switch n.mode {
+func (this likeNode) render(w *writer) {
+	pattern := this.pattern
+	switch this.mode {
 	case likeContains:
 		pattern = "%" + escapeLike(pattern) + "%"
 	case likeStartsWith:
@@ -291,25 +291,25 @@ func (n likeNode) render(w *writer) {
 	case likeEndsWith:
 		pattern = "%" + escapeLike(pattern)
 	}
-	w.leaf(n.field, func(col string) {
-		if n.ignoreCase {
+	w.leaf(this.field, func(col string) {
+		if this.ignoreCase {
 			w.str("LOWER(" + col + ")")
 		} else {
 			w.str(col)
 		}
-		if n.not {
+		if this.not {
 			w.str(" NOT LIKE ")
 		} else {
 			w.str(" LIKE ")
 		}
-		if n.ignoreCase {
+		if this.ignoreCase {
 			w.str("LOWER(")
 			w.bind(pattern)
 			w.str(")")
 		} else {
 			w.bind(pattern)
 		}
-		if n.mode != likePattern {
+		if this.mode != likePattern {
 			w.likeEscape()
 		}
 	})
@@ -320,10 +320,10 @@ type fieldCmpNode struct {
 	op          string
 }
 
-func (n fieldCmpNode) render(w *writer) {
-	w.leaf(n.left, func(left string) {
-		w.leaf(n.right, func(right string) {
-			w.str(left + " " + n.op + " " + right)
+func (this fieldCmpNode) render(w *writer) {
+	w.leaf(this.left, func(left string) {
+		w.leaf(this.right, func(right string) {
+			w.str(left + " " + this.op + " " + right)
 		})
 	})
 }
@@ -350,12 +350,12 @@ func flatten(op string, kids, out []Predicate) []Predicate {
 	return out
 }
 
-func (n logicNode) render(w *writer) {
-	live := flatten(n.op, n.kids, nil)
+func (this logicNode) render(w *writer) {
+	live := flatten(this.op, this.kids, nil)
 	switch len(live) {
 	case 0:
 		// AND of nothing is true, OR of nothing is false.
-		if n.op == "AND" {
+		if this.op == "AND" {
 			w.str("1 = 1")
 		} else {
 			w.str("1 = 0")
@@ -368,7 +368,7 @@ func (n logicNode) render(w *writer) {
 	w.str("(")
 	for i, k := range live {
 		if i > 0 {
-			w.str(" " + n.op + " ")
+			w.str(" " + this.op + " ")
 		}
 		k.render(w)
 	}
@@ -377,20 +377,20 @@ func (n logicNode) render(w *writer) {
 
 type notNode struct{ inner Predicate }
 
-func (n notNode) render(w *writer) {
-	if n.inner == nil {
+func (this notNode) render(w *writer) {
+	if this.inner == nil {
 		w.str("1 = 0")
 		return
 	}
 	w.str("NOT (")
-	n.inner.render(w)
+	this.inner.render(w)
 	w.str(")")
 }
 
 type constNode bool
 
-func (n constNode) render(w *writer) {
-	if n {
+func (this constNode) render(w *writer) {
+	if this {
 		w.str("1 = 1")
 	} else {
 		w.str("1 = 0")
@@ -404,13 +404,13 @@ type rawNode struct {
 
 // render rewrites ? markers into the dialect's placeholders so raw fragments
 // stay portable between MySQL and PostgreSQL.
-func (n rawNode) render(w *writer) {
+func (this rawNode) render(w *writer) {
 	i := 0
 	for {
-		j := strings.IndexByte(n.sql[i:], '?')
+		j := strings.IndexByte(this.sql[i:], '?')
 		if j < 0 {
-			w.str(n.sql[i:])
-			if len(n.args) > 0 {
+			w.str(this.sql[i:])
+			if len(this.args) > 0 {
 				// The leftovers are not harmless: whoever wrote a native $1 by
 				// hand would get it renumbered against someone else's bind.
 				w.fail(&SchemaError{Model: w.m.Name, Reason: "crud.Raw: fewer ? markers than arguments"})
@@ -418,18 +418,18 @@ func (n rawNode) render(w *writer) {
 			return
 		}
 		j += i
-		w.str(n.sql[i:j])
-		if j+1 < len(n.sql) && n.sql[j+1] == '?' { // ?? escapes a literal ?
+		w.str(this.sql[i:j])
+		if j+1 < len(this.sql) && this.sql[j+1] == '?' { // ?? escapes a literal ?
 			w.str("?")
 			i = j + 2
 			continue
 		}
-		if len(n.args) == 0 {
+		if len(this.args) == 0 {
 			w.fail(&SchemaError{Model: w.m.Name, Reason: "crud.Raw: more ? markers than arguments"})
 			return
 		}
-		w.bind(n.args[0])
-		n.args = n.args[1:]
+		w.bind(this.args[0])
+		this.args = this.args[1:]
 		i = j + 1
 	}
 }
@@ -1075,8 +1075,8 @@ type tautologyBDD struct {
 // IsTautologyFor and fail closed for MayBeTautologyFor.
 const maxTautologyBDDNodes = 512
 
-func (b *tautologyBDD) build(m *Meta, p Predicate) int {
-	if b.exhausted {
+func (this *tautologyBDD) build(m *Meta, p Predicate) int {
+	if this.exhausted {
 		return bddFalse
 	}
 	switch n := p.(type) {
@@ -1086,106 +1086,106 @@ func (b *tautologyBDD) build(m *Meta, p Predicate) int {
 		}
 		return bddFalse
 	case notNode:
-		return b.negate(b.build(m, n.inner))
+		return this.negate(this.build(m, n.inner))
 	case logicNode:
 		result := bddTrue
 		if n.op == "OR" {
 			result = bddFalse
 		}
 		for _, kid := range flatten(n.op, n.kids, nil) {
-			result = b.combine(n.op, result, b.build(m, kid))
+			result = this.combine(n.op, result, this.build(m, kid))
 		}
 		return result
 	case cmpNode:
-		return b.comparison(m, n)
+		return this.comparison(m, n)
 	case nullNode:
-		base := b.variable(m, nullNode{field: n.field})
+		base := this.variable(m, nullNode{field: n.field})
 		if n.not {
-			return b.negate(base)
+			return this.negate(base)
 		}
 		return base
 	case inNode:
 		result := bddFalse
 		for _, value := range n.values {
-			result = b.combine("OR", result, b.comparison(m, cmpNode{field: n.field, op: "=", value: value}))
+			result = this.combine("OR", result, this.comparison(m, cmpNode{field: n.field, op: "=", value: value}))
 		}
 		if n.not {
-			return b.negate(result)
+			return this.negate(result)
 		}
 		return result
 	case betweenNode:
-		result := b.combine("AND",
-			b.comparison(m, cmpNode{field: n.field, op: ">=", value: n.low}),
-			b.comparison(m, cmpNode{field: n.field, op: "<=", value: n.hi}),
+		result := this.combine("AND",
+			this.comparison(m, cmpNode{field: n.field, op: ">=", value: n.low}),
+			this.comparison(m, cmpNode{field: n.field, op: "<=", value: n.hi}),
 		)
 		if n.not {
-			return b.negate(result)
+			return this.negate(result)
 		}
 		return result
 	case likeNode:
-		base := b.variable(m, likeNode{field: n.field, pattern: n.pattern, ignoreCase: n.ignoreCase, mode: n.mode})
+		base := this.variable(m, likeNode{field: n.field, pattern: n.pattern, ignoreCase: n.ignoreCase, mode: n.mode})
 		if n.not {
-			return b.negate(base)
+			return this.negate(base)
 		}
 		return base
 	default:
-		return b.variable(m, p)
+		return this.variable(m, p)
 	}
 }
 
-func (b *tautologyBDD) comparison(m *Meta, n cmpNode) int {
+func (this *tautologyBDD) comparison(m *Meta, n cmpNode) int {
 	base := n
 	switch n.op {
 	case "<>":
 		base.op = "="
-		return b.negate(b.variable(m, base))
+		return this.negate(this.variable(m, base))
 	case ">":
 		base.op = "<="
-		return b.negate(b.variable(m, base))
+		return this.negate(this.variable(m, base))
 	case ">=":
 		base.op = "<"
-		return b.negate(b.variable(m, base))
+		return this.negate(this.variable(m, base))
 	default:
-		return b.variable(m, base)
+		return this.variable(m, base)
 	}
 }
 
-func (b *tautologyBDD) variable(m *Meta, p Predicate) int {
-	for i, leaf := range b.leaves {
+func (this *tautologyBDD) variable(m *Meta, p Predicate) int {
+	for i, leaf := range this.leaves {
 		if samePredicate(m, leaf, p) {
-			return b.make(i, bddFalse, bddTrue)
+			return this.make(i, bddFalse, bddTrue)
 		}
 	}
-	b.leaves = append(b.leaves, p)
-	return b.make(len(b.leaves)-1, bddFalse, bddTrue)
+	this.leaves = append(this.leaves, p)
+	return this.make(len(this.leaves)-1, bddFalse, bddTrue)
 }
 
-func (b *tautologyBDD) make(variable, whenFalse, whenTrue int) int {
-	if b.exhausted {
+func (this *tautologyBDD) make(variable, whenFalse, whenTrue int) int {
+	if this.exhausted {
 		return bddFalse
 	}
 	if whenFalse == whenTrue {
 		return whenFalse
 	}
-	if b.unique == nil {
-		b.unique = make(map[bddKey]int)
+	if this.unique == nil {
+		this.unique = make(map[bddKey]int)
 	}
 	key := bddKey{variable, whenFalse, whenTrue}
-	if prior, ok := b.unique[key]; ok {
+	if prior, ok := this.unique[key]; ok {
 		return prior
 	}
-	if len(b.nodes) >= maxTautologyBDDNodes {
-		b.exhausted = true
+	if len(this.nodes) >= maxTautologyBDDNodes {
+		this.exhausted = true
 		return bddFalse
 	}
-	b.nodes = append(b.nodes, bddNode{variable, whenFalse, whenTrue})
-	id := len(b.nodes) - 1
-	b.unique[key] = id
+	this.nodes = append(this.nodes, bddNode{variable, whenFalse, whenTrue})
+	id := len(this.nodes) - 1
+	this.unique[key] = id
 	return id
 }
 
-func (b *tautologyBDD) negate(node int) int {
-	if b.exhausted {
+func (this *tautologyBDD) negate(node int) int {
+	if this.exhausted {
 		return bddFalse
 	}
 	if node == bddFalse {
@@ -1194,27 +1194,27 @@ func (b *tautologyBDD) negate(node int) int {
 	if node == bddTrue {
 		return bddFalse
 	}
-	if b.not == nil {
-		b.not = make(map[int]int)
+	if this.not == nil {
+		this.not = make(map[int]int)
 	}
-	if prior, ok := b.not[node]; ok {
+	if prior, ok := this.not[node]; ok {
 		return prior
 	}
-	n := b.nodes[node]
-	result := b.make(n.variable, b.negate(n.whenFalse), b.negate(n.whenTrue))
-	b.not[node] = result
+	n := this.nodes[node]
+	result := this.make(n.variable, this.negate(n.whenFalse), this.negate(n.whenTrue))
+	this.not[node] = result
 	return result
 }
 
-func (b *tautologyBDD) combine(op string, left, right int) int {
-	if b.exhausted {
+func (this *tautologyBDD) combine(op string, left, right int) int {
+	if this.exhausted {
 		return bddFalse
 	}
-	if b.apply == nil {
-		b.apply = make(map[bddApplyKey]int)
+	if this.apply == nil {
+		this.apply = make(map[bddApplyKey]int)
 	}
 	key := bddApplyKey{op, left, right}
-	if prior, ok := b.apply[key]; ok {
+	if prior, ok := this.apply[key]; ok {
 		return prior
 	}
 	if left < 2 && right < 2 {
@@ -1227,34 +1227,34 @@ func (b *tautologyBDD) combine(op string, left, right int) int {
 		}
 		return bddFalse
 	}
-	variable := b.topVariable(left, right)
-	lf, lt := b.branch(left, variable)
-	rf, rt := b.branch(right, variable)
-	result := b.make(variable, b.combine(op, lf, rf), b.combine(op, lt, rt))
-	b.apply[key] = result
+	variable := this.topVariable(left, right)
+	lf, lt := this.branch(left, variable)
+	rf, rt := this.branch(right, variable)
+	result := this.make(variable, this.combine(op, lf, rf), this.combine(op, lt, rt))
+	this.apply[key] = result
 	return result
 }
 
-func (b *tautologyBDD) topVariable(left, right int) int {
-	leftVariable, rightVariable := b.variableOf(left), b.variableOf(right)
+func (this *tautologyBDD) topVariable(left, right int) int {
+	leftVariable, rightVariable := this.variableOf(left), this.variableOf(right)
 	if leftVariable < rightVariable {
 		return leftVariable
 	}
 	return rightVariable
 }
 
-func (b *tautologyBDD) variableOf(node int) int {
+func (this *tautologyBDD) variableOf(node int) int {
 	if node < 2 {
-		return len(b.leaves)
+		return len(this.leaves)
 	}
-	return b.nodes[node].variable
+	return this.nodes[node].variable
 }
 
-func (b *tautologyBDD) branch(node, variable int) (whenFalse, whenTrue int) {
-	if node < 2 || b.nodes[node].variable != variable {
+func (this *tautologyBDD) branch(node, variable int) (whenFalse, whenTrue int) {
+	if node < 2 || this.nodes[node].variable != variable {
 		return node, node
 	}
-	n := b.nodes[node]
+	n := this.nodes[node]
 	return n.whenFalse, n.whenTrue
 }
 
@@ -1395,48 +1395,48 @@ func Desc(field string) Order { return Order{Field: field, Desc: true} }
 // WithNullsLast places NULLs at the end (PostgreSQL only; MySQL ignores it and
 // keeps its own order, which is NULLs first ascending and NULLs last
 // descending).
-func (o Order) WithNullsLast() Order { o.NullsLast, o.NullsSet = true, true; return o }
+func (this Order) WithNullsLast() Order { this.NullsLast, this.NullsSet = true, true; return this }
 
 // WithNullsFirst places NULLs at the start, with the same PostgreSQL-only
 // caveat as WithNullsLast.
-func (o Order) WithNullsFirst() Order { o.NullsLast, o.NullsSet = false, true; return o }
+func (this Order) WithNullsFirst() Order { this.NullsLast, this.NullsSet = false, true; return this }
 
 // sortExpr renders a sortable expression for a path. A relation hop becomes a
 // scalar subquery, which is the only shape that can appear in ORDER BY; sorting
 // through a to-many relation has no single value, so it is refused rather than
 // quietly picking one.
-func (w *writer) sortExpr(segs []string, cur scope) {
+func (this *writer) sortExpr(segs []string, cur scope) {
 	if len(segs) == 1 {
 		f := cur.meta.Field(segs[0])
 		if f == nil {
-			w.fail(&UnknownFieldError{Model: cur.meta.Name, Field: segs[0]})
-			w.str("NULL")
+			this.fail(&UnknownFieldError{Model: cur.meta.Name, Field: segs[0]})
+			this.str("NULL")
 			return
 		}
-		w.str(cur.qualify(w.d, f.Column))
+		this.str(cur.qualify(this.d, f.Column))
 		return
 	}
 	rel := cur.meta.Relation(segs[0])
 	if rel == nil {
-		w.fail(&UnknownFieldError{Model: cur.meta.Name, Field: segs[0]})
-		w.str("NULL")
+		this.fail(&UnknownFieldError{Model: cur.meta.Name, Field: segs[0]})
+		this.str("NULL")
 		return
 	}
 	if rel.Kind.ToMany() {
-		w.fail(&SchemaError{Model: cur.meta.Name, Field: rel.Name,
+		this.fail(&SchemaError{Model: cur.meta.Name, Field: rel.Name,
 			Reason: "cannot sort through a " + rel.Kind.String() + " relation"})
-		w.str("NULL")
+		this.str("NULL")
 		return
 	}
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
-		w.fail(err)
-		w.str("NULL")
+		this.fail(err)
+		this.str("NULL")
 		return
 	}
-	alias := w.nextAlias()
-	saved, savedPath := w.cur, w.path
-	defer func() { w.cur, w.path = saved, savedPath }()
+	alias := this.nextAlias()
+	saved, savedPath := this.cur, this.path
+	defer func() { this.cur, this.path = saved, savedPath }()
 
 	// The path has to be extended *before* the recursion, not after it. Setting
 	// it afterwards left a second hop resolving its own narrowing under a path
@@ -1444,41 +1444,41 @@ func (w *writer) sortExpr(segs []string, cur scope) {
 	// `Department` — so a narrowing declared by path silently did not apply to
 	// the inner subquery. Model-declared ones still did, which is what kept it
 	// invisible.
-	w.cur, w.path = scope{meta: target, alias: alias}, joinPath(savedPath, rel.Name)
+	this.cur, this.path = scope{meta: target, alias: alias}, joinPath(savedPath, rel.Name)
 
-	w.str("(SELECT ")
-	w.sortExpr(segs[1:], w.cur)
+	this.str("(SELECT ")
+	this.sortExpr(segs[1:], this.cur)
 	// cur, not w.cur: the correlation points back at the parent statement.
-	w.str(" FROM " + w.d.Quote(target.Table) + " AS " + alias +
-		" WHERE " + alias + "." + w.d.Quote(remote.Column) + " = " + cur.correlate(w.d, local.Column))
-	if w.rel.At(w.path, target) != nil {
-		w.str(" AND ")
-		w.hopScope()
+	this.str(" FROM " + this.d.Quote(target.Table) + " AS " + alias +
+		" WHERE " + alias + "." + this.d.Quote(remote.Column) + " = " + cur.correlate(this.d, local.Column))
+	if this.rel.At(this.path, target) != nil {
+		this.str(" AND ")
+		this.hopScope()
 	}
-	w.str(" LIMIT 1)")
+	this.str(" LIMIT 1)")
 }
 
-func (o Order) render(w *writer) {
+func (this Order) render(w *writer) {
 	// MySQL has no NULLS FIRST/LAST grammar. A boolean null key gives it the
 	// same order as PostgreSQL's clause instead of silently accepting a request
 	// and ordering it by the engine default.
-	if o.NullsSet && (w.d.Name() == "mysql" || w.d.Name() == "sqlite") {
-		w.sortExpr(strings.Split(o.Field, "."), w.current())
+	if this.NullsSet && (w.d.Name() == "mysql" || w.d.Name() == "sqlite") {
+		w.sortExpr(strings.Split(this.Field, "."), w.current())
 		w.str(" IS NULL")
-		if o.NullsLast {
+		if this.NullsLast {
 			w.str(" ASC, ")
 		} else {
 			w.str(" DESC, ")
 		}
 	}
-	w.sortExpr(strings.Split(o.Field, "."), w.current())
-	if o.Desc {
+	w.sortExpr(strings.Split(this.Field, "."), w.current())
+	if this.Desc {
 		w.str(" DESC")
 	} else {
 		w.str(" ASC")
 	}
-	if o.NullsSet && w.d.Name() == "postgres" {
-		if o.NullsLast {
+	if this.NullsSet && w.d.Name() == "postgres" {
+		if this.NullsLast {
 			w.str(" NULLS LAST")
 		} else {
 			w.str(" NULLS FIRST")

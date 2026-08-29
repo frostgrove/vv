@@ -25,37 +25,37 @@ type (
 	Option func(*options)
 
 	options struct {
-		opts        []ent.Option
+		options     []ent.Option
 		migrateOpts []schema.MigrateOption
 	}
 )
 
 // WithOptions forwards options to client creation.
-func WithOptions(opts ...ent.Option) Option {
+func WithOptions(optionList ...ent.Option) Option {
 	return func(o *options) {
-		o.opts = append(o.opts, opts...)
+		o.options = append(o.options, optionList...)
 	}
 }
 
 // WithMigrateOptions forwards options to auto migration.
-func WithMigrateOptions(opts ...schema.MigrateOption) Option {
+func WithMigrateOptions(optionList ...schema.MigrateOption) Option {
 	return func(o *options) {
-		o.migrateOpts = append(o.migrateOpts, opts...)
+		o.migrateOpts = append(o.migrateOpts, optionList...)
 	}
 }
 
-func newOptions(opts []Option) *options {
+func newOptions(optionList []Option) *options {
 	o := &options{}
-	for _, opt := range opts {
+	for _, opt := range optionList {
 		opt(o)
 	}
 	return o
 }
 
 // Open calls ent.Open and auto-run migration.
-func Open(t TestingT, driverName, dataSourceName string, opts ...Option) *ent.Client {
-	o := newOptions(opts)
-	c, err := ent.Open(driverName, dataSourceName, o.opts...)
+func Open(t TestingT, driverName, dataSourceName string, optionList ...Option) *ent.Client {
+	o := newOptions(optionList)
+	c, err := ent.Open(driverName, dataSourceName, o.options...)
 	if err != nil {
 		t.Error(err)
 		t.FailNow()
@@ -65,9 +65,9 @@ func Open(t TestingT, driverName, dataSourceName string, opts ...Option) *ent.Cl
 }
 
 // NewClient calls ent.NewClient and auto-run migration.
-func NewClient(t TestingT, opts ...Option) *ent.Client {
-	o := newOptions(opts)
-	c := ent.NewClient(o.opts...)
+func NewClient(t TestingT, optionList ...Option) *ent.Client {
+	o := newOptions(optionList)
+	c := ent.NewClient(o.options...)
 	migrateSchema(t, c, o)
 	return c
 }

@@ -39,7 +39,7 @@ type UpdatePlan struct {
 	Fields []planField
 }
 
-type planKey struct{ dto, model reflect.Type }
+type planKey struct{ dataTransferObject, model reflect.Type }
 
 var planCache sync.Map // planKey -> planResult
 
@@ -151,9 +151,9 @@ func collectPlanFields(p *UpdatePlan, t reflect.Type, prefix []int, seen []refle
 func modelElem(t reflect.Type) reflect.Type { return ElemType(t) }
 
 // read pulls a DTO field out of v, reporting whether it was provided.
-func (pf planField) read(v reflect.Value) (val any, defined bool) {
-	fv := v.FieldByIndex(pf.Index)
-	switch pf.Kind {
+func (this planField) read(v reflect.Value) (val any, defined bool) {
+	fv := v.FieldByIndex(this.Index)
+	switch this.Kind {
 	case planPtr:
 		if fv.IsNil() {
 			return nil, false
@@ -173,33 +173,33 @@ func (pf planField) read(v reflect.Value) (val any, defined bool) {
 	}
 }
 
-func (p *UpdatePlan) dtoValue(dto any) (reflect.Value, error) {
-	v := reflect.ValueOf(dto)
-	if !v.IsValid() || v.Type() != p.DTO {
+func (this *UpdatePlan) dtoValue(dataTransferObject any) (reflect.Value, error) {
+	v := reflect.ValueOf(dataTransferObject)
+	if !v.IsValid() || v.Type() != this.DTO {
 		got := "nil"
 		if v.IsValid() {
 			got = v.Type().String()
 		}
-		return reflect.Value{}, &SchemaError{Model: p.DTO.String(), Reason: "update called with " + got}
+		return reflect.Value{}, &SchemaError{Model: this.DTO.String(), Reason: "update called with " + got}
 	}
 	return v, nil
 }
 
 // Changes diffs the DTO against the loaded model and returns only the columns
 // that must be written. model must be a *M of the plan's schema.
-func (p *UpdatePlan) Changes(dto any, model any) ([]Change, error) {
-	v, err := p.dtoValue(dto)
+func (this *UpdatePlan) Changes(dataTransferObject any, model any) ([]Change, error) {
+	v, err := this.dtoValue(dataTransferObject)
 	if err != nil {
 		return nil, err
 	}
 	mv := reflect.ValueOf(model)
-	if !mv.IsValid() || mv.Kind() != reflect.Pointer || mv.Type().Elem() != p.Schema.Type {
-		return nil, &SchemaError{Model: p.Schema.Name, Reason: "Changes needs a pointer to the model"}
+	if !mv.IsValid() || mv.Kind() != reflect.Pointer || mv.Type().Elem() != this.Schema.Type {
+		return nil, &SchemaError{Model: this.Schema.Name, Reason: "Changes needs a pointer to the model"}
 	}
 	base := mv.UnsafePointer()
 
-	changes := make([]Change, 0, len(p.Fields))
-	for _, pf := range p.Fields {
+	changes := make([]Change, 0, len(this.Fields))
+	for _, pf := range this.Fields {
 		val, defined := pf.read(v)
 		if !defined {
 			continue
@@ -218,13 +218,13 @@ func (p *UpdatePlan) Changes(dto any, model any) ([]Change, error) {
 // undefined field is still never written, and a null Opt still writes NULL —
 // only the "this value is already there" shortcut is gone, so a filtered update
 // writes the columns it was given to every row the predicate matches.
-func (p *UpdatePlan) Writes(dto any) ([]Change, error) {
-	v, err := p.dtoValue(dto)
+func (this *UpdatePlan) Writes(dataTransferObject any) ([]Change, error) {
+	v, err := this.dtoValue(dataTransferObject)
 	if err != nil {
 		return nil, err
 	}
-	changes := make([]Change, 0, len(p.Fields))
-	for _, pf := range p.Fields {
+	changes := make([]Change, 0, len(this.Fields))
+	for _, pf := range this.Fields {
 		val, defined := pf.read(v)
 		if !defined {
 			continue
@@ -237,13 +237,13 @@ func (p *UpdatePlan) Writes(dto any) ([]Change, error) {
 // Defined lists the DTO fields that were provided, regardless of whether their
 // value differs from the stored row. A security decorator uses it to reject
 // attempts to touch immutable columns.
-func (p *UpdatePlan) Defined(dto any) ([]string, error) {
-	v, err := p.dtoValue(dto)
+func (this *UpdatePlan) Defined(dataTransferObject any) ([]string, error) {
+	v, err := this.dtoValue(dataTransferObject)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
-	for _, pf := range p.Fields {
+	for _, pf := range this.Fields {
 		if _, ok := pf.read(v); ok {
 			out = append(out, pf.Target.Name)
 		}
@@ -257,9 +257,9 @@ func (p *UpdatePlan) Defined(dto any) ([]string, error) {
 // runtime answers rather than a second resolution rule somebody keeps in step
 // by hand: the plan already resolved every DTO field to a model field, tags,
 // embedding and all.
-func (p *UpdatePlan) Covers() []*Field {
-	out := make([]*Field, 0, len(p.Fields))
-	for _, pf := range p.Fields {
+func (this *UpdatePlan) Covers() []*Field {
+	out := make([]*Field, 0, len(this.Fields))
+	for _, pf := range this.Fields {
 		out = append(out, pf.Target)
 	}
 	return out
@@ -267,21 +267,21 @@ func (p *UpdatePlan) Covers() []*Field {
 
 // Apply writes the changes into a model in place. The repository uses it on
 // dialects without RETURNING when no refresh round trip is needed.
-func (p *UpdatePlan) Apply(changes []Change, model any) {
+func (this *UpdatePlan) Apply(changes []Change, model any) {
 	mv := reflect.ValueOf(model)
 	base := mv.UnsafePointer()
 	for _, ch := range changes {
-		dst := reflect.NewAt(ch.Field.Type, unsafe.Add(base, ch.Field.Offset)).Elem()
-		setFieldValue(dst, ch.Field, ch.Value)
+		destination := reflect.NewAt(ch.Field.Type, unsafe.Add(base, ch.Field.Offset)).Elem()
+		setFieldValue(destination, ch.Field, ch.Value)
 	}
 }
 
-func setFieldValue(dst reflect.Value, f *Field, val any) {
+func setFieldValue(destination reflect.Value, f *Field, val any) {
 	if val == nil {
-		dst.SetZero()
+		destination.SetZero()
 		if f.Optional {
 			// Rebuild as an explicit null rather than undefined.
-			if s, ok := dst.Addr().Interface().(interface{ Scan(any) error }); ok {
+			if s, ok := destination.Addr().Interface().(interface{ Scan(any) error }); ok {
 				_ = s.Scan(nil)
 			}
 		}
@@ -290,15 +290,15 @@ func setFieldValue(dst reflect.Value, f *Field, val any) {
 	rv := reflect.ValueOf(val)
 	switch {
 	case f.Optional:
-		if s, ok := dst.Addr().Interface().(interface{ Scan(any) error }); ok {
+		if s, ok := destination.Addr().Interface().(interface{ Scan(any) error }); ok {
 			_ = s.Scan(val)
 		}
 	case f.Type.Kind() == reflect.Pointer:
 		p := reflect.New(f.Type.Elem())
 		p.Elem().Set(rv)
-		dst.Set(p)
+		destination.Set(p)
 	default:
-		dst.Set(rv)
+		destination.Set(rv)
 	}
 }
 
@@ -327,8 +327,8 @@ func valuesEqual(a, b any) bool {
 
 // DefinedFields reports which model fields an update DTO provides. It is the
 // reflection-free entry point for decorators that only hold a Meta.
-func DefinedFields(s *Schema, dto any) ([]string, error) {
-	t := reflect.TypeOf(dto)
+func DefinedFields(s *Schema, dataTransferObject any) ([]string, error) {
+	t := reflect.TypeOf(dataTransferObject)
 	if t == nil {
 		return nil, &SchemaError{Model: s.Name, Reason: "nil update DTO"}
 	}
@@ -338,14 +338,14 @@ func DefinedFields(s *Schema, dto any) ([]string, error) {
 		if r.err != nil {
 			return nil, r.err
 		}
-		return r.p.Defined(dto)
+		return r.p.Defined(dataTransferObject)
 	}
 	p, err := buildPlan(t, s)
 	planCache.Store(key, planResult{p, err})
 	if err != nil {
 		return nil, err
 	}
-	return p.Defined(dto)
+	return p.Defined(dataTransferObject)
 }
 
 // DefinedChanges is DefinedFields with the values as well as the names. It is
@@ -356,8 +356,8 @@ func DefinedFields(s *Schema, dto any) ([]string, error) {
 // It is Writes and not Changes: a decorator has no loaded row to diff against,
 // and the probe does not need one. The unchanged half of a composite key is
 // read from the stored row in SQL rather than carried here ([[D-010]]).
-func DefinedChanges(s *Schema, dto any) ([]Change, error) {
-	t := reflect.TypeOf(dto)
+func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error) {
+	t := reflect.TypeOf(dataTransferObject)
 	if t == nil {
 		return nil, &SchemaError{Model: s.Name, Reason: "nil update DTO"}
 	}
@@ -367,12 +367,12 @@ func DefinedChanges(s *Schema, dto any) ([]Change, error) {
 		if r.err != nil {
 			return nil, r.err
 		}
-		return r.p.Writes(dto)
+		return r.p.Writes(dataTransferObject)
 	}
 	p, err := buildPlan(t, s)
 	planCache.Store(key, planResult{p, err})
 	if err != nil {
 		return nil, err
 	}
-	return p.Writes(dto)
+	return p.Writes(dataTransferObject)
 }

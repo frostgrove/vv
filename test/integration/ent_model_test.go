@@ -105,19 +105,19 @@ func TestEntStructReadsThroughVV(t *testing.T) {
 		}
 	}
 
-	var req query.Request
+	var request query.Request
 	if err := json.Unmarshal([]byte(`{
 		"filter": {"active": true, "age": {"gte": 30}},
 		"sort":   ["-age"],
 		"page":   1, "limit": 10
-	}`), &req); err != nil {
+	}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(EntUsers.Meta(), unpagedOK)
+	options, err := request.Compile(EntUsers.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := users.Get(ctx, opts...)
+	page, err := users.Get(ctx, options...)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -160,10 +160,10 @@ func TestBeforeSaveCanRefuseTheRequest(t *testing.T) {
 // it decide per row.
 func TestBeforeUpdateSeesThePathIDAndItsMutationLands(t *testing.T) {
 	var seen int64
-	app, fake := mount(t, BeforeUpdate[Widget, int64, WidgetUpdate](func(c fiber.Ctx, id int64, dto *WidgetUpdate) error {
+	app, fake := mount(t, BeforeUpdate[Widget, int64, WidgetUpdate](func(c fiber.Ctx, id int64, dataTransferObject *WidgetUpdate) error {
 		seen = id
 		price := 999
-		dto.Price = &price
+		dataTransferObject.Price = &price
 		return nil
 	}))
 
@@ -172,12 +172,12 @@ func TestBeforeUpdateSeesThePathIDAndItsMutationLands(t *testing.T) {
 	if seen != 42 {
 		t.Fatalf("BeforeUpdate was given id %d, want the 42 from the URL", seen)
 	}
-	dto := fake.only(t, "Update").DTO
-	if dto.Price == nil || *dto.Price != 999 {
-		t.Fatalf("BeforeUpdate set price 999, the repository received %v", dto.Price)
+	dataTransferObject := fake.only(t, "Update").DTO
+	if dataTransferObject.Price == nil || *dataTransferObject.Price != 999 {
+		t.Fatalf("BeforeUpdate set price 999, the repository received %v", dataTransferObject.Price)
 	}
-	if dto.Name == nil || *dto.Name != "renamed" {
-		t.Fatalf("the hook clobbered the body: name = %v", dto.Name)
+	if dataTransferObject.Name == nil || *dataTransferObject.Name != "renamed" {
+		t.Fatalf("the hook clobbered the body: name = %v", dataTransferObject.Name)
 	}
 }
 
@@ -302,13 +302,13 @@ func TestMaxBulkCapsOneRequest(t *testing.T) {
 // The query config is an allow-list: what it names compiles, what it does not
 // name never becomes a repository call.
 func TestWithQueryBoundsWhatClientsMayAskFor(t *testing.T) {
-	cfg := WithQuery[Widget, int64, WidgetUpdate](&query.Config{
+	config := WithQuery[Widget, int64, WidgetUpdate](&query.Config{
 		Preloadable: []string{"Owner"},
 		Sortable:    []string{"Name"},
 	})
 
 	t.Run("what the config allows", func(t *testing.T) {
-		app, fake := mount(t, cfg)
+		app, fake := mount(t, config)
 		ok(t, app, http.MethodGet, "/widgets?preload=owner&sort=name", "", http.StatusOK)
 
 		o := fake.only(t, "Get").Opts
@@ -327,7 +327,7 @@ func TestWithQueryBoundsWhatClientsMayAskFor(t *testing.T) {
 		{"a sort it does not name", "/widgets?sort=price"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app, fake := mount(t, cfg)
+			app, fake := mount(t, config)
 			r := do(t, app, http.MethodGet, tc.target, "")
 			if r.status != http.StatusBadRequest {
 				t.Fatalf("%s answered %d, want 400: %s", tc.target, r.status, r.body)
@@ -452,7 +452,7 @@ func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
 // than ignored at run time: an API whose author believed it was bounded and is
 // not is the failure [[D-021]] says must happen at start-up.
 func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
-	svc := port.NewService[Widget, int64, WidgetUpdate](newFake())
+	service := port.NewService[Widget, int64, WidgetUpdate](newFake())
 
 	for _, tc := range []struct {
 		name string
@@ -471,7 +471,7 @@ func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 					t.Fatalf("the refusal does not name the option that has to be moved: %v", p)
 				}
 			}()
-			Serving[Widget, int64, WidgetUpdate](svc, tc.opt)
+			Serving[Widget, int64, WidgetUpdate](service, tc.opt)
 		})
 	}
 
@@ -555,21 +555,21 @@ func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
 // test, or without it when the header is empty.
 func localeRequest(t *testing.T, app *fiber.App, header string) response {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/widgets", bytes.NewReader([]byte(`{"name":"bolt"}`)))
-	req.Header.Set("Content-Type", "application/json")
+	request := httptest.NewRequest(http.MethodPost, "/widgets", bytes.NewReader([]byte(`{"name":"bolt"}`)))
+	request.Header.Set("Content-Type", "application/json")
 	if header != "" {
-		req.Header.Set("Accept-Language", header)
+		request.Header.Set("Accept-Language", header)
 	}
-	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	httpResponse, err := app.Test(request, fiber.TestConfig{Timeout: 0})
 	if err != nil {
 		t.Fatalf("the request did not reach the app: %v", err)
 	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
+	defer httpResponse.Body.Close()
+	raw, err := io.ReadAll(httpResponse.Body)
 	if err != nil {
 		t.Fatalf("reading the response: %v", err)
 	}
-	return response{status: res.StatusCode, body: raw, header: res.Header}
+	return response{status: httpResponse.StatusCode, body: raw, header: httpResponse.Header}
 }
 
 // An unconfigured bulk delete is capped too.

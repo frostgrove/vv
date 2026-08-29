@@ -14,14 +14,14 @@ type Core[M any, ID comparable] interface {
 
 	// GetByID returns one row or ErrNotFound. Options apply to that read, which
 	// is what makes crud.Preload and crud.Select work on a single-entity fetch.
-	GetByID(ctx context.Context, id ID, opts ...Option) (M, error)
+	GetByID(ctx context.Context, id ID, options ...Option) (M, error)
 	// Get returns a page of rows.
-	Get(ctx context.Context, opts ...Option) (PaginatedResponse[M], error)
+	Get(ctx context.Context, options ...Option) (PaginatedResponse[M], error)
 	// GetAll returns every matching row, unpaged unless options say otherwise.
-	GetAll(ctx context.Context, opts ...Option) ([]M, error)
+	GetAll(ctx context.Context, options ...Option) ([]M, error)
 	// First returns the first matching row or ErrNotFound. It accepts the same
 	// narrowing options as Get; paging controls are normalised to one row.
-	First(ctx context.Context, opts ...Option) (M, error)
+	First(ctx context.Context, options ...Option) (M, error)
 	// Save inserts when the primary key is unset and upserts otherwise. It
 	// returns the row the database stored — including generated and normalised
 	// values — and never changes m.
@@ -35,16 +35,16 @@ type Core[M any, ID comparable] interface {
 	// narrow both halves — the load and the UPDATE's own WHERE — which is how a
 	// decorator keeps a row that moved out of scope between them from being
 	// written anyway.
-	Update(ctx context.Context, id ID, dto any, opts ...Option) (M, error)
+	Update(ctx context.Context, id ID, dataTransferObject any, options ...Option) (M, error)
 	// UpdateAll writes the DTO's defined columns to every row the options match,
 	// in one statement, and reports how many rows the database says it touched.
 	// It is Update's filtered partner, the way DeleteAll is Delete's.
-	UpdateAll(ctx context.Context, dto any, opts ...Option) (int64, error)
+	UpdateAll(ctx context.Context, dataTransferObject any, options ...Option) (int64, error)
 
 	// Aggregate runs a grouped summary under the same narrowing as every other
 	// read. It is on the seam rather than beside it so a decorator cannot be
 	// bypassed by asking for a total instead of for rows.
-	Aggregate(ctx context.Context, opts ...Option) ([]AggregateRow, error)
+	Aggregate(ctx context.Context, options ...Option) ([]AggregateRow, error)
 
 	// SaveAll writes many rows in one statement and never changes its models. It
 	// is on the seam for the same reason Aggregate is: a decorator that checks
@@ -53,11 +53,11 @@ type Core[M any, ID comparable] interface {
 	// Delete removes rows by id and reports how many went away.
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	// DeleteAll removes everything matching the options.
-	DeleteAll(ctx context.Context, opts ...Option) (int64, error)
+	DeleteAll(ctx context.Context, options ...Option) (int64, error)
 	// Count counts matching rows.
-	Count(ctx context.Context, opts ...Option) (int64, error)
+	Count(ctx context.Context, options ...Option) (int64, error)
 	// Exists reports whether any row matches.
-	Exists(ctx context.Context, opts ...Option) (bool, error)
+	Exists(ctx context.Context, options ...Option) (bool, error)
 	// Tx runs fn in a transaction, joining one already present in ctx.
 	Tx(ctx context.Context, fn func(context.Context) error) error
 }
@@ -90,8 +90,8 @@ func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U] {
 // plain T field is always applied. Only fields whose value actually differs
 // from the stored row reach the UPDATE statement; when nothing differs the
 // loaded row is returned without a write.
-func (r *Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Option) (M, error) {
-	return r.Core.Update(ctx, id, dto, opts...)
+func (this *Repo[M, ID, U]) Update(ctx context.Context, id ID, dataTransferObject U, options ...Option) (M, error) {
+	return this.Core.Update(ctx, id, dataTransferObject, options...)
 }
 
 // UpdateAll applies a partial update DTO to every row the options match and
@@ -106,12 +106,12 @@ func (r *Repo[M, ID, U]) Update(ctx context.Context, id ID, dto U, opts ...Optio
 // The row count is the database's own, and the two engines count differently:
 // PostgreSQL reports the rows it matched, MySQL the rows it actually changed, so
 // writing a value a row already holds is counted by one and not by the other.
-func (r *Repo[M, ID, U]) UpdateAll(ctx context.Context, dto U, opts ...Option) (int64, error) {
-	return r.Core.UpdateAll(ctx, dto, opts...)
+func (this *Repo[M, ID, U]) UpdateAll(ctx context.Context, dataTransferObject U, options ...Option) (int64, error) {
+	return this.Core.UpdateAll(ctx, dataTransferObject, options...)
 }
 
 // Unwrap returns the decorated Core, e.g. to add another layer.
-func (r *Repo[M, ID, U]) Unwrap() Core[M, ID] { return r.Core }
+func (this *Repo[M, ID, U]) Unwrap() Core[M, ID] { return this.Core }
 
 // Decorate applies middlewares to an existing typed repo. The first middleware
 // ends up outermost, so it observes calls first.
@@ -136,4 +136,4 @@ type Base[M any, ID comparable] struct {
 }
 
 // Next returns the wrapped core.
-func (b Base[M, ID]) Next() Core[M, ID] { return b.Core }
+func (this Base[M, ID]) Next() Core[M, ID] { return this.Core }

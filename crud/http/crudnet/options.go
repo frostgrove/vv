@@ -52,18 +52,18 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
 
 // collect applies the options once, so the four constructors read the same
 // configuration.
-func collect[M any, ID comparable, U any](opts []Option[M, ID, U]) options[M, ID, U] {
+func collect[M any, ID comparable, U any](optionList []Option[M, ID, U]) options[M, ID, U] {
 	var o options[M, ID, U]
-	for _, fn := range opts {
+	for _, fn := range optionList {
 		fn(&o)
 	}
 	return o
 }
 
 // WithQuery bounds what clients may filter, sort, select and preload.
-func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U] {
+func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U] {
 	return func(o *options[M, ID, U]) {
-		o.Query, o.QueryVariants, o.QuerySelector = cfg, nil, nil
+		o.Query, o.QueryVariants, o.QuerySelector = config, nil, nil
 	}
 }
 

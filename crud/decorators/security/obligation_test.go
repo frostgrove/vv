@@ -143,8 +143,8 @@ func TestEveryVerbOnTheSeamIsGatedOrHasAWrittenReason(t *testing.T) {
 		}
 		t.Run(v.name, func(t *testing.T) {
 			rec := crudtest.New(crud.Postgres{})
-			repo := Docs.Bind(rec, security.Gate(policy))
-			err := v.call(context.Background(), repo)
+			repository := Docs.Bind(rec, security.Gate(policy))
+			err := v.call(context.Background(), repository)
 			if !errors.Is(err, denied) {
 				t.Fatalf("a policy that refuses everything let %s through: %v", v.name, err)
 			}
@@ -163,18 +163,18 @@ func TestEveryVerbOnTheSeamIsGatedOrHasAWrittenReason(t *testing.T) {
 // they really do pass through, so "gated: false" means something.
 func TestTheInheritedVerbsAreNotGated(t *testing.T) {
 	rec := crudtest.New(crud.Postgres{})
-	repo := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{
+	repository := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{
 		Authorize: func(context.Context, security.Action) error {
 			return errors.New("no")
 		},
 	}))
 
-	if m := repo.Meta(); m == nil || m.Table != "docs" {
+	if m := repository.Meta(); m == nil || m.Table != "docs" {
 		t.Fatalf("Meta was gated, or answered the wrong table: %+v", m)
 	}
 
 	ran := false
-	if err := repo.Tx(context.Background(), func(context.Context) error {
+	if err := repository.Tx(context.Background(), func(context.Context) error {
 		ran = true
 		return nil
 	}); err != nil {

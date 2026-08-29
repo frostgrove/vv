@@ -36,12 +36,12 @@ func ServiceName(name string) string {
 // registers vv.crud.v1.Article with the eight methods, or the three read ones
 // under [ReadOnly] — a method that is not registered answers Unimplemented,
 // which is gRPC's own answer and needs no arm here.
-func (h *HandlerFor[M, ID, U, In]) Register(s grpc.ServiceRegistrar, name string) {
+func (this *HandlerFor[M, ID, U, In]) Register(s grpc.ServiceRegistrar, name string) {
 	// The implementation is nil, and that is what makes a generic resource
 	// registrable at all: RegisterService checks the handler type only when it
 	// is given one, so the methods can be closures over this handler and there
 	// is no generated interface to satisfy.
-	s.RegisterService(h.Desc(name), nil)
+	s.RegisterService(this.Desc(name), nil)
 }
 
 // Desc is the service descriptor Register installs, for a registrar that is not
@@ -50,7 +50,7 @@ func (h *HandlerFor[M, ID, U, In]) Register(s grpc.ServiceRegistrar, name string
 // HandlerType is *any rather than a generated interface, so a registrar that
 // does check it against a non-nil implementation still passes: every type
 // implements the empty interface.
-func (h *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
+func (this *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
 	full := ServiceName(name)
 	desc := &grpc.ServiceDesc{
 		ServiceName: full,
@@ -64,15 +64,15 @@ func (h *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
 		})
 	}
 
-	add("List", h.List)
-	add("Count", h.Count)
-	add("Get", h.Get)
-	if !h.opt.ReadOnly {
-		add("Create", h.Create)
-		add("Update", h.Update)
-		add("Replace", h.Replace)
-		add("Delete", h.Delete)
-		add("BulkDelete", h.BulkDelete)
+	add("List", this.List)
+	add("Count", this.Count)
+	add("Get", this.Get)
+	if !this.opt.ReadOnly {
+		add("Create", this.Create)
+		add("Update", this.Update)
+		add("Replace", this.Replace)
+		add("Delete", this.Delete)
+		add("BulkDelete", this.BulkDelete)
 	}
 	return desc
 }
@@ -94,8 +94,8 @@ func unary(service, method string, fn unaryFunc) grpc.MethodHandler {
 			return fn(ctx, in)
 		}
 		info := &grpc.UnaryServerInfo{FullMethod: full}
-		return interceptor(ctx, in, info, func(ctx context.Context, req any) (any, error) {
-			return fn(ctx, req.(*structpb.Struct))
+		return interceptor(ctx, in, info, func(ctx context.Context, request any) (any, error) {
+			return fn(ctx, request.(*structpb.Struct))
 		})
 	}
 }

@@ -45,8 +45,8 @@ type Store interface {
 type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, error)
 
 // Lookup implements [Store].
-func (f StoreFunc) Lookup(ctx context.Context, key string) (auth.Principal, bool, error) {
-	return f(ctx, key)
+func (this StoreFunc) Lookup(ctx context.Context, key string) (auth.Principal, bool, error) {
+	return this(ctx, key)
 }
 
 // DefaultScheme is the auth-scheme this authenticator expects in an
@@ -79,12 +79,12 @@ func AnyScheme() Option {
 // New builds the authenticator. It panics on a nil store: a key authenticator
 // with nothing to look keys up in refuses every request, and that is a
 // misconfiguration a process should not start with ([[D-021]]).
-func New(s Store, opts ...Option) auth.Authenticator {
+func New(s Store, options ...Option) auth.Authenticator {
 	if s == nil {
 		panic("apikey: New needs a Store; without one every request is refused")
 	}
 	a := &authenticator{store: s, scheme: DefaultScheme}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(a)
 		}
@@ -93,14 +93,14 @@ func New(s Store, opts ...Option) auth.Authenticator {
 }
 
 // Authenticate implements [auth.Authenticator].
-func (a *authenticator) Authenticate(ctx context.Context, c auth.Credential) (auth.Principal, error) {
-	if a.scheme != "" && !c.Is(a.scheme) {
-		return nil, auth.Unauthenticatedf("credential is not %s", a.scheme)
+func (this *authenticator) Authenticate(ctx context.Context, c auth.Credential) (auth.Principal, error) {
+	if this.scheme != "" && !c.Is(this.scheme) {
+		return nil, auth.Unauthenticatedf("credential is not %s", this.scheme)
 	}
 	if c.Token == "" {
 		return nil, auth.Unauthenticated("no key presented")
 	}
-	p, ok, err := a.store.Lookup(ctx, c.Token)
+	p, ok, err := this.store.Lookup(ctx, c.Token)
 	if err != nil {
 		// Not a 401. The key may well be valid and nothing here can tell.
 		return nil, err

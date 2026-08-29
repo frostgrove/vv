@@ -41,8 +41,8 @@ const (
 // entrypoint rather than a library-shaped error return: the intended caller is
 // cmd/migrate/main.go, and failures must result in a non-zero process status
 // even when that minimal main does not contain error handling.
-func Execute(cfg *vvdb.Config) {
-	if err := execute(context.Background(), os.Args[1:], normalizeConfig(cfg), commandIO{
+func Execute(config *vvdb.Config) {
+	if err := execute(context.Background(), os.Args[1:], normalizeConfig(config), commandIO{
 		in: os.Stdin, out: os.Stdout, err: os.Stderr,
 	}); err != nil {
 		if strings.HasPrefix(err.Error(), "vvgoose:") {
@@ -59,11 +59,11 @@ type commandIO struct {
 	out, err io.Writer
 }
 
-func normalizeConfig(cfg *vvdb.Config) vvdb.Config {
-	if cfg == nil {
+func normalizeConfig(config *vvdb.Config) vvdb.Config {
+	if config == nil {
 		return vvdb.Config{}
 	}
-	normalized := *cfg
+	normalized := *config
 	if normalized.Migration.Path == "" {
 		normalized.Migration.Path = defaultMigrationPath
 	}
@@ -76,14 +76,14 @@ func normalizeConfig(cfg *vvdb.Config) vvdb.Config {
 	return normalized
 }
 
-func execute(ctx context.Context, args []string, cfg vvdb.Config, streams commandIO) error {
-	cfg = normalizeConfig(&cfg)
-	root := newRootCommand(cfg, streams)
+func execute(ctx context.Context, args []string, config vvdb.Config, streams commandIO) error {
+	config = normalizeConfig(&config)
+	root := newRootCommand(config, streams)
 	root.SetArgs(args)
 	return root.ExecuteContext(ctx)
 }
 
-func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
+func newRootCommand(config vvdb.Config, streams commandIO) *cobra.Command {
 	var ignoredConfigPath string
 	var noInteractive bool
 
@@ -95,7 +95,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !noInteractive && interactiveTerminal(streams) {
-				return runInteractive(cmd.Context(), cfg, streams)
+				return runInteractive(cmd.Context(), config, streams)
 			}
 			return cmd.Help()
 		},
@@ -125,7 +125,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 			if len(args) == 2 {
 				tables = append(tables, args[1])
 			}
-			path, err := createMigration(cmd.Context(), cfg, migrationOptions{
+			path, err := createMigration(cmd.Context(), config, migrationOptions{
 				Name:        args[0],
 				Tables:      tables,
 				Interactive: !noInteractive && interactiveTerminal(streams),
@@ -149,7 +149,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Short: "Create one CREATE TABLE migration per source model",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := createTableMigrations(cmd.Context(), cfg, args, createOptions{
+			paths, err := createTableMigrations(cmd.Context(), config, args, createOptions{
 				Empty:       tableEmpty,
 				Model:       explicitModel,
 				Interactive: !noInteractive && interactiveTerminal(streams),
@@ -174,7 +174,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Short: "Create or replace the init migration from every discovered model",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			path, err := createInitMigration(cfg, nil)
+			path, err := createInitMigration(config, nil)
 			if err != nil {
 				return err
 			}
@@ -188,7 +188,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Short: "Apply every pending migration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			results, err := runMigrate(cmd.Context(), cfg)
+			results, err := runMigrate(cmd.Context(), config)
 			if err != nil {
 				return err
 			}
@@ -203,7 +203,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Long:  "Roll all tracked migrations down, then apply them again. This uses each migration's Down section; it does not drop untracked tables.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			results, err := runFresh(cmd.Context(), cfg)
+			results, err := runFresh(cmd.Context(), config)
 			if err != nil {
 				return err
 			}
@@ -218,7 +218,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Long:  "Drop every application object, including Goose history, from the current database schema. No migrations are applied afterwards. This is destructive and intended for local development only.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runFlush(cmd.Context(), cfg); err != nil {
+			if err := runFlush(cmd.Context(), config); err != nil {
 				return err
 			}
 			fmt.Fprintln(streams.out, "database flushed")
@@ -231,7 +231,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 		Short: "Show applied and pending migrations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			statuses, err := runStatus(cmd.Context(), cfg)
+			statuses, err := runStatus(cmd.Context(), config)
 			if err != nil {
 				return err
 			}
@@ -253,7 +253,7 @@ func newRootCommand(cfg vvdb.Config, streams commandIO) *cobra.Command {
 					return fmt.Errorf("rollback count must be a positive integer, got %q", args[0])
 				}
 			}
-			results, err := runRollback(cmd.Context(), cfg, count)
+			results, err := runRollback(cmd.Context(), config, count)
 			if err != nil {
 				return err
 			}
@@ -279,7 +279,7 @@ const (
 	interactiveExit      interactiveCommand = "exit"
 )
 
-func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractive(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	// Exit is the safe default if the terminal disappears while the menu is
 	// waiting for input. A disconnected terminal must never start a database
 	// operation merely because the first option happened to be selected.
@@ -305,29 +305,29 @@ func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) err
 
 	switch selected {
 	case interactiveMigration:
-		return runInteractiveMigration(ctx, cfg, streams)
+		return runInteractiveMigration(ctx, config, streams)
 	case interactiveTable:
-		return runInteractiveTable(ctx, cfg, streams)
+		return runInteractiveTable(ctx, config, streams)
 	case interactiveInit:
-		return runInteractiveInit(ctx, cfg, streams)
+		return runInteractiveInit(ctx, config, streams)
 	case interactiveMigrate:
-		results, err := runMigrate(ctx, cfg)
+		results, err := runMigrate(ctx, config)
 		if err == nil {
 			printResults(streams.out, results)
 		}
 		return err
 	case interactiveStatus:
-		statuses, err := runStatus(ctx, cfg)
+		statuses, err := runStatus(ctx, config)
 		if err == nil {
 			printStatus(streams.out, statuses)
 		}
 		return err
 	case interactiveRollback:
-		return runInteractiveRollback(ctx, cfg, streams)
+		return runInteractiveRollback(ctx, config, streams)
 	case interactiveFresh:
-		return runInteractiveFresh(ctx, cfg, streams)
+		return runInteractiveFresh(ctx, config, streams)
 	case interactiveFlush:
-		return runInteractiveFlush(ctx, cfg, streams)
+		return runInteractiveFlush(ctx, config, streams)
 	case interactiveExit:
 		return nil
 	default:
@@ -335,7 +335,7 @@ func runInteractive(ctx context.Context, cfg vvdb.Config, streams commandIO) err
 	}
 }
 
-func runInteractiveMigration(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveMigration(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	var name string
 	var tables string
 	form := huh.NewForm(huh.NewGroup(
@@ -357,7 +357,7 @@ func runInteractiveMigration(ctx context.Context, cfg vvdb.Config, streams comma
 	if err := runForm(ctx, streams, form); err != nil {
 		return fmt.Errorf("vvgoose: migration form: %w", err)
 	}
-	path, err := createMigration(ctx, cfg, migrationOptions{
+	path, err := createMigration(ctx, config, migrationOptions{
 		Name: name, Tables: []string{tables}, Interactive: true, In: streams.in, Out: streams.out,
 	})
 	if err != nil {
@@ -367,7 +367,7 @@ func runInteractiveMigration(ctx context.Context, cfg vvdb.Config, streams comma
 	return nil
 }
 
-func runInteractiveTable(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveTable(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	var tables string
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewInput().
@@ -384,7 +384,7 @@ func runInteractiveTable(ctx context.Context, cfg vvdb.Config, streams commandIO
 	if err := runForm(ctx, streams, form); err != nil {
 		return fmt.Errorf("vvgoose: table form: %w", err)
 	}
-	paths, err := createTableMigrations(ctx, cfg, []string{tables}, createOptions{
+	paths, err := createTableMigrations(ctx, config, []string{tables}, createOptions{
 		Interactive: true, In: streams.in, Out: streams.out,
 	})
 	if err != nil {
@@ -396,7 +396,7 @@ func runInteractiveTable(ctx context.Context, cfg vvdb.Config, streams commandIO
 	return nil
 }
 
-func runInteractiveInit(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveInit(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
@@ -412,7 +412,7 @@ func runInteractiveInit(ctx context.Context, cfg vvdb.Config, streams commandIO)
 		fmt.Fprintln(streams.out, "cancelled")
 		return nil
 	}
-	path, err := createInitMigration(cfg, nil)
+	path, err := createInitMigration(config, nil)
 	if err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func runInteractiveInit(ctx context.Context, cfg vvdb.Config, streams commandIO)
 	return nil
 }
 
-func runInteractiveRollback(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveRollback(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	countText := "1"
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
@@ -451,14 +451,14 @@ func runInteractiveRollback(ctx context.Context, cfg vvdb.Config, streams comman
 	if err != nil || count < 1 {
 		return fmt.Errorf("vvgoose: rollback count must be a positive integer, got %q", countText)
 	}
-	results, err := runRollback(ctx, cfg, count)
+	results, err := runRollback(ctx, config, count)
 	if err == nil {
 		printResults(streams.out, results)
 	}
 	return err
 }
 
-func runInteractiveFresh(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveFresh(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
@@ -474,14 +474,14 @@ func runInteractiveFresh(ctx context.Context, cfg vvdb.Config, streams commandIO
 		fmt.Fprintln(streams.out, "cancelled")
 		return nil
 	}
-	results, err := runFresh(ctx, cfg)
+	results, err := runFresh(ctx, config)
 	if err == nil {
 		printResults(streams.out, results)
 	}
 	return err
 }
 
-func runInteractiveFlush(ctx context.Context, cfg vvdb.Config, streams commandIO) error {
+func runInteractiveFlush(ctx context.Context, config vvdb.Config, streams commandIO) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
@@ -497,7 +497,7 @@ func runInteractiveFlush(ctx context.Context, cfg vvdb.Config, streams commandIO
 		fmt.Fprintln(streams.out, "cancelled")
 		return nil
 	}
-	if err := runFlush(ctx, cfg); err != nil {
+	if err := runFlush(ctx, config); err != nil {
 		return err
 	}
 	fmt.Fprintln(streams.out, "database flushed")

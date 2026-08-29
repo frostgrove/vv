@@ -15,7 +15,7 @@ import (
 
 type stableDriverValue struct{ value int64 }
 
-func (v stableDriverValue) Value() (driver.Value, error) { return v.value, nil }
+func (this stableDriverValue) Value() (driver.Value, error) { return this.value, nil }
 
 type otherDriverValue struct{}
 
@@ -366,8 +366,8 @@ func TestFindOneAssertsUniquenessWhereFindFirstDoesNot(t *testing.T) {
 	// a second match was reported as a unique hit with err == nil.
 	t.Run("a caller's own paging cannot disarm the probe", func(t *testing.T) {
 		for _, tc := range []struct {
-			name string
-			opts []crud.Option
+			name    string
+			options []crud.Option
 		}{
 			{"a tighter limit", []crud.Option{crud.Limit(1)}},
 			{"no limit at all", []crud.Option{crud.Unpaged()}},
@@ -378,7 +378,7 @@ func TestFindOneAssertsUniquenessWhereFindFirstDoesNot(t *testing.T) {
 				rec := crudtest.Postgres().Push(twoMatches())
 
 				_, err := specs.Executor(Users.Bind(rec)).
-					FindOne(context.Background(), User_.Email.Eq("a@x"), tc.opts...)
+					FindOne(context.Background(), User_.Email.Eq("a@x"), tc.options...)
 
 				if !errors.Is(err, specs.ErrNotUnique) {
 					t.Fatalf("err = %v, want ErrNotUnique; the caller's paging disarmed "+
@@ -416,12 +416,12 @@ func TestFindOneAssertsUniquenessWhereFindFirstDoesNot(t *testing.T) {
 
 	t.Run("no match at all", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows())
-		repo := specs.Executor(Users.Bind(rec))
+		repository := specs.Executor(Users.Bind(rec))
 
-		if u, err := repo.FindOne(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
+		if u, err := repository.FindOne(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("findOne: err = %v (%+v), want ErrNotFound", err, u)
 		}
-		if u, err := repo.FindFirst(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
+		if u, err := repository.FindFirst(context.Background(), User_.Email.Eq("nobody")); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("findFirst: err = %v (%+v), want ErrNotFound", err, u)
 		}
 	})

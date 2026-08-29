@@ -11,12 +11,12 @@ import (
 // nothing to say about the path it was given.
 type rename struct{ from, to string }
 
-func (r rename) Resolve(p errs.Path) (errs.Path, bool) {
+func (this rename) Resolve(p errs.Path) (errs.Path, bool) {
 	out := make(errs.Path, len(p))
 	copy(out, p)
 	for i, s := range out {
-		if !s.IsIndex && s.Name == r.from {
-			out[i] = errs.Named(r.to)
+		if !s.IsIndex && s.Name == this.from {
+			out[i] = errs.Named(this.to)
 			return out, true
 		}
 	}

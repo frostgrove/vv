@@ -65,28 +65,28 @@ type Fault struct {
 // error — so what this method prints is what a client reads on a classified 409
 // today, phases before the rule that forbids naming anything internal comes into
 // force. The exported fields and [Fault.MarshalJSON] are the debug channel.
-func (f *Fault) Error() string {
+func (this *Fault) Error() string {
 	var b strings.Builder
 	b.WriteString("errs: ")
 	switch {
-	case f.Op != "" && f.Entity != "":
-		b.WriteString(f.Op)
+	case this.Op != "" && this.Entity != "":
+		b.WriteString(this.Op)
 		b.WriteByte(' ')
-		b.WriteString(f.Entity)
+		b.WriteString(this.Entity)
 		b.WriteString(": ")
-	case f.Op != "":
-		b.WriteString(f.Op)
+	case this.Op != "":
+		b.WriteString(this.Op)
 		b.WriteString(": ")
-	case f.Entity != "":
-		b.WriteString(f.Entity)
+	case this.Entity != "":
+		b.WriteString(this.Entity)
 		b.WriteString(": ")
 	}
-	b.WriteString(f.Kind.String())
-	if f.Code != "" {
+	b.WriteString(this.Kind.String())
+	if this.Code != "" {
 		b.WriteString(": ")
-		b.WriteString(string(f.Code))
+		b.WriteString(string(this.Code))
 	}
-	if n := len(f.Violations); n > 0 {
+	if n := len(this.Violations); n > 0 {
 		b.WriteString(" (")
 		b.WriteString(strconv.Itoa(n))
 		b.WriteString(" violation")
@@ -101,7 +101,7 @@ func (f *Fault) Error() string {
 // Unwrap returns every error this fault was built over, so errors.Is and
 // errors.As walk the tree. A fault that wraps nothing returns nil and matches
 // nothing — which is the half of [[D-038]] that actually pins it.
-func (f *Fault) Unwrap() []error { return f.wrapped }
+func (this *Fault) Unwrap() []error { return this.wrapped }
 
 // MarshalJSON emits the kind, the code, the violations and the partial marker,
 // and nothing else. [Detail], [Source], [Fault.Message] and the wrapped errors
@@ -111,16 +111,16 @@ func (f *Fault) Unwrap() []error { return f.wrapped }
 // [Violation.MarshalJSON]: a pointer receiver is bypassed for a value, a map
 // entry and a struct field, and the default marshal of a Fault succeeds — it
 // does not fail on the Driver error — so the leak would be silent.
-func (f Fault) MarshalJSON() ([]byte, error) {
+func (this Fault) MarshalJSON() ([]byte, error) {
 	var b strings.Builder
 	b.WriteString(`{"kind":`)
-	kind, err := f.Kind.MarshalJSON()
+	kind, err := this.Kind.MarshalJSON()
 	if err != nil {
 		return nil, err
 	}
 	b.Write(kind)
-	if f.Code != "" {
-		code, err := json.Marshal(string(f.Code))
+	if this.Code != "" {
+		code, err := json.Marshal(string(this.Code))
 		if err != nil {
 			return nil, err
 		}
@@ -128,20 +128,20 @@ func (f Fault) MarshalJSON() ([]byte, error) {
 		b.Write(code)
 	}
 	b.WriteString(`,"violations":`)
-	if len(f.Violations) == 0 {
+	if len(this.Violations) == 0 {
 		// A 404 and a bare 500 carry no violations, and json.Marshal of a nil
 		// slice is null. The envelope's field is an array a client iterates, so
 		// emitting null there breaks every such client at the one status they
 		// are least likely to have exercised.
 		b.WriteString("[]")
 	} else {
-		vs, err := json.Marshal(f.Violations)
+		vs, err := json.Marshal(this.Violations)
 		if err != nil {
 			return nil, err
 		}
 		b.Write(vs)
 	}
-	if f.Partial {
+	if this.Partial {
 		b.WriteString(`,"partial":true`)
 	}
 	b.WriteByte('}')
@@ -152,7 +152,7 @@ func (f Fault) MarshalJSON() ([]byte, error) {
 // fmt.Sprintf("%+v", *f) on a fault value prints the whole struct — Detail,
 // constraint name and driver error included — because a value does not satisfy
 // error and fmt falls through to the struct printer.
-func (f Fault) String() string { return f.Error() }
+func (this Fault) String() string { return this.Error() }
 
 // AsFault finds the fault in an error chain.
 func AsFault(err error) (*Fault, bool) {

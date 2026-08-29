@@ -15,9 +15,9 @@ import (
 // sqlx handles are *sql.DB and *sql.Tx underneath, so crudsql takes them as is.
 func TestSqlx(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		db   *sqlx.DB
-		d    crud.Dialect
+		name     string
+		database *sqlx.DB
+		d        crud.Dialect
 	}{
 		{"sqlx+postgres", sqlx.NewDb(pgDB, "pgx"), crud.Postgres{}},
 		{"sqlx+mysql", sqlx.NewDb(myDB, "mysql"), crud.MySQL{}},
@@ -26,7 +26,7 @@ func TestSqlx(t *testing.T) {
 			RunSuite(t, Target{
 				Name:   tc.name,
 				DB:     tc.name,
-				Source: crudsql.Open(tc.db.DB, tc.d),
+				Source: crudsql.Open(tc.database.DB, tc.d),
 			})
 		})
 	}
@@ -36,10 +36,10 @@ func TestSqlx(t *testing.T) {
 func TestSqlxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	db := sqlx.NewDb(pgDB, "pgx")
-	repo := Users.Bind(crudsql.Open(db.DB, crud.Postgres{}))
+	database := sqlx.NewDb(pgDB, "pgx")
+	repository := Users.Bind(crudsql.Open(database.DB, crud.Postgres{}))
 
-	tx, err := db.BeginTxx(ctx, nil)
+	tx, err := database.BeginTxx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestSqlxSharedTransaction(t *testing.T) {
 	// crudsql.From accepts the sqlx transaction directly.
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 	u := User{TenantID: 1, Email: "sqlx@x.io", Name: "Sqlx", Age: crud.Set(44)}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestSqlxSharedTransaction(t *testing.T) {
 		1, "by-sqlx@x.io", "BySqlx"); err != nil {
 		t.Fatal(err)
 	}
-	n, err := repo.Count(txCtx)
+	n, err := repository.Count(txCtx)
 	if err != nil {
 		t.Fatal(err)
 	}

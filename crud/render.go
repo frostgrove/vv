@@ -15,98 +15,98 @@ func NewSQL(d Dialect, m *Meta) *SQL {
 
 // Alias qualifies every column this statement renders with a table alias, and
 // declares that alias as the correlation target for nested paths.
-func (b *SQL) Alias(alias string) *SQL {
-	b.w.cur = scope{meta: b.w.m, alias: alias}
-	return b
+func (this *SQL) Alias(alias string) *SQL {
+	this.w.cur = scope{meta: this.w.m, alias: alias}
+	return this
 }
 
 // RelationScopes declares the narrowing that follows this statement into every
 // table a relation hop opens — the EXISTS a nested filter builds and the scalar
 // subquery a nested sort builds. Without it those subqueries read their tables
 // raw, whatever the statement's own WHERE says.
-func (b *SQL) RelationScopes(rs *RelationScopes) *SQL {
+func (this *SQL) RelationScopes(rs *RelationScopes) *SQL {
 	if !rs.Empty() {
-		b.w.rel = rs
+		this.w.rel = rs
 	}
-	return b
+	return this
 }
 
 // Raw appends literal SQL. Nothing is escaped or rewritten.
-func (b *SQL) Raw(s string) *SQL { b.w.str(s); return b }
+func (this *SQL) Raw(s string) *SQL { this.w.str(s); return this }
 
 // Ident appends a quoted identifier.
-func (b *SQL) Ident(name string) *SQL { b.w.str(b.w.d.Quote(name)); return b }
+func (this *SQL) Ident(name string) *SQL { this.w.str(this.w.d.Quote(name)); return this }
 
 // Table appends the quoted table name.
-func (b *SQL) Table() *SQL { return b.Ident(b.w.m.Table) }
+func (this *SQL) Table() *SQL { return this.Ident(this.w.m.Table) }
 
 // Column resolves a Go field name (or column name) and appends it quoted.
-func (b *SQL) Column(ref string) *SQL { b.w.column(ref); return b }
+func (this *SQL) Column(ref string) *SQL { this.w.column(ref); return this }
 
 // Columns appends a comma separated, quoted column list.
-func (b *SQL) Columns(fields []*Field) *SQL {
+func (this *SQL) Columns(fields []*Field) *SQL {
 	for i, f := range fields {
 		if i > 0 {
-			b.w.str(", ")
+			this.w.str(", ")
 		}
-		b.w.str(b.w.d.Quote(f.Column))
+		this.w.str(this.w.d.Quote(f.Column))
 	}
-	return b
+	return this
 }
 
 // Bind appends a placeholder and records the argument.
-func (b *SQL) Bind(v any) *SQL { b.w.bind(v); return b }
+func (this *SQL) Bind(v any) *SQL { this.w.bind(v); return this }
 
 // Binds appends `?, ?, ?` for a whole argument list.
-func (b *SQL) Binds(vs []any) *SQL {
+func (this *SQL) Binds(vs []any) *SQL {
 	for i, v := range vs {
 		if i > 0 {
-			b.w.str(", ")
+			this.w.str(", ")
 		}
-		b.w.bind(v)
+		this.w.bind(v)
 	}
-	return b
+	return this
 }
 
 // Where appends ` WHERE <p>` when p is non-nil.
-func (b *SQL) Where(p Predicate) *SQL {
+func (this *SQL) Where(p Predicate) *SQL {
 	if p == nil {
-		return b
+		return this
 	}
-	b.w.str(" WHERE ")
-	p.render(&b.w)
-	return b
+	this.w.str(" WHERE ")
+	p.render(&this.w)
+	return this
 }
 
 // Predicate appends a predicate without the WHERE keyword.
-func (b *SQL) Predicate(p Predicate) *SQL {
+func (this *SQL) Predicate(p Predicate) *SQL {
 	if p != nil {
-		p.render(&b.w)
+		p.render(&this.w)
 	}
-	return b
+	return this
 }
 
 // OrderBy appends ` ORDER BY ...` when there is anything to sort by.
-func (b *SQL) OrderBy(orders []Order) *SQL {
+func (this *SQL) OrderBy(orders []Order) *SQL {
 	if len(orders) == 0 {
-		return b
+		return this
 	}
-	b.w.str(" ORDER BY ")
+	this.w.str(" ORDER BY ")
 	for i, o := range orders {
 		if i > 0 {
-			b.w.str(", ")
+			this.w.str(", ")
 		}
-		o.render(&b.w)
+		o.render(&this.w)
 	}
-	return b
+	return this
 }
 
 // LimitOffset appends pagination. A limit of zero emits nothing but still
 // honours a non-zero offset.
-func (b *SQL) LimitOffset(limit, offset int) *SQL {
+func (this *SQL) LimitOffset(limit, offset int) *SQL {
 	if limit > 0 {
-		b.w.str(" LIMIT ")
-		b.w.str(itoa(limit))
+		this.w.str(" LIMIT ")
+		this.w.str(itoa(limit))
 	}
 	if offset > 0 {
 		if limit <= 0 {
@@ -115,32 +115,32 @@ func (b *SQL) LimitOffset(limit, offset int) *SQL {
 			// checking its name for "mysql" is what SQLite needs: it used to be
 			// handed `OFFSET 5` on its own and answer `near "5": syntax error`,
 			// reachable straight from the wire as {"unpaged":true,"offset":5}.
-			if d, ok := b.w.d.(OffsetLimiter); ok {
-				b.w.str(d.LimitAll())
+			if d, ok := this.w.d.(OffsetLimiter); ok {
+				this.w.str(d.LimitAll())
 			}
 		}
-		b.w.str(" OFFSET ")
-		b.w.str(itoa(offset))
+		this.w.str(" OFFSET ")
+		this.w.str(itoa(offset))
 	}
-	return b
+	return this
 }
 
 // Args returns the collected bind arguments.
-func (b *SQL) Args() []any { return b.w.args }
+func (this *SQL) Args() []any { return this.w.args }
 
 // Err reports the first field-resolution failure, if any.
-func (b *SQL) Err() error { return b.w.err }
+func (this *SQL) Err() error { return this.w.err }
 
 // String returns the assembled statement.
-func (b *SQL) String() string { return b.w.sb.String() }
+func (this *SQL) String() string { return this.w.sb.String() }
 
 // Done returns the statement, its arguments and any error in one go.
-func (b *SQL) Done() (string, []any, error) {
-	return b.w.sb.String(), b.w.args, b.w.err
+func (this *SQL) Done() (string, []any, error) {
+	return this.w.sb.String(), this.w.args, this.w.err
 }
 
 // Dialect exposes the dialect the statement is being built for.
-func (b *SQL) Dialect() Dialect { return b.w.d }
+func (this *SQL) Dialect() Dialect { return this.w.d }
 
 func itoa(n int) string {
 	if n == 0 {

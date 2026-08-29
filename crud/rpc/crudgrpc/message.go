@@ -104,7 +104,7 @@ func requiredSub(st *structpb.Struct, name string) (*structpb.Struct, error) {
 
 // queryOf reads a whole request document as the query DSL.
 func queryOf(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
-	req := &query.Request{}
+	request := &query.Request{}
 	switch lossyQueryNumber(st, meta) {
 	case lossyFilterInteger:
 		return nil, port.BadRequestAs(errs.CodeBadQuery, nil,
@@ -113,10 +113,10 @@ func queryOf(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
 		return nil, port.BadRequestAs(errs.CodeBadQuery, nil,
 			"page, limit, offset and preload.maxRows must be exact JSON integers")
 	}
-	if err := fromStruct(st, req); err != nil {
+	if err := fromStruct(st, request); err != nil {
 		return nil, err
 	}
-	return req, nil
+	return request, nil
 }
 
 // structpb stores every JSON number as float64. The loss matters for an

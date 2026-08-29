@@ -132,8 +132,8 @@ type ArticleService struct {
 var _ port.Service[Article, int64, ArticleUpdate] = (*ArticleService)(nil)
 
 // NewArticleService builds the service over a repository.
-func NewArticleService(repo port.Repository[Article, int64, ArticleUpdate], opts ...port.ServiceOption) *ArticleService {
-	return &ArticleService{DefaultService: port.NewService(repo, opts...)}
+func NewArticleService(repository port.Repository[Article, int64, ArticleUpdate], options ...port.ServiceOption) *ArticleService {
+	return &ArticleService{DefaultService: port.NewService(repository, options...)}
 }
 
 // MountArticle mounts the resource on a ServeMux under prefix, behind ArticleMapper.
@@ -141,8 +141,8 @@ func NewArticleService(repo port.Repository[Article, int64, ArticleUpdate], opts
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountArticle(mux *http.ServeMux, prefix string, svc port.Service[Article, int64, ArticleUpdate], opts ...crudnet.Option[Article, int64, ArticleUpdate]) {
-	crudnet.ServingFor(svc, ArticleMapper{}, opts...).Mount(mux, prefix)
+func MountArticle(mux *http.ServeMux, prefix string, service port.Service[Article, int64, ArticleUpdate], options ...crudnet.Option[Article, int64, ArticleUpdate]) {
+	crudnet.ServingFor(service, ArticleMapper{}, options...).Mount(mux, prefix)
 }
 
 // AuthorUpdate is the partial-update DTO for Author.
@@ -222,8 +222,8 @@ type AuthorService struct {
 var _ port.Service[Author, int64, AuthorUpdate] = (*AuthorService)(nil)
 
 // NewAuthorService builds the service over a repository.
-func NewAuthorService(repo port.Repository[Author, int64, AuthorUpdate], opts ...port.ServiceOption) *AuthorService {
-	return &AuthorService{DefaultService: port.NewService(repo, opts...)}
+func NewAuthorService(repository port.Repository[Author, int64, AuthorUpdate], options ...port.ServiceOption) *AuthorService {
+	return &AuthorService{DefaultService: port.NewService(repository, options...)}
 }
 
 // MountAuthor mounts the resource on a ServeMux under prefix, behind AuthorMapper.
@@ -231,8 +231,8 @@ func NewAuthorService(repo port.Repository[Author, int64, AuthorUpdate], opts ..
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountAuthor(mux *http.ServeMux, prefix string, svc port.Service[Author, int64, AuthorUpdate], opts ...crudnet.Option[Author, int64, AuthorUpdate]) {
-	crudnet.ServingFor(svc, AuthorMapper{}, opts...).Mount(mux, prefix)
+func MountAuthor(mux *http.ServeMux, prefix string, service port.Service[Author, int64, AuthorUpdate], options ...crudnet.Option[Author, int64, AuthorUpdate]) {
+	crudnet.ServingFor(service, AuthorMapper{}, options...).Mount(mux, prefix)
 }
 
 // CommentUpdate is the partial-update DTO for Comment.
@@ -320,8 +320,8 @@ type CommentService struct {
 var _ port.Service[Comment, int64, CommentUpdate] = (*CommentService)(nil)
 
 // NewCommentService builds the service over a repository.
-func NewCommentService(repo port.Repository[Comment, int64, CommentUpdate], opts ...port.ServiceOption) *CommentService {
-	return &CommentService{DefaultService: port.NewService(repo, opts...)}
+func NewCommentService(repository port.Repository[Comment, int64, CommentUpdate], options ...port.ServiceOption) *CommentService {
+	return &CommentService{DefaultService: port.NewService(repository, options...)}
 }
 
 // MountComment mounts the resource on a ServeMux under prefix, behind CommentMapper.
@@ -329,8 +329,8 @@ func NewCommentService(repo port.Repository[Comment, int64, CommentUpdate], opts
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountComment(mux *http.ServeMux, prefix string, svc port.Service[Comment, int64, CommentUpdate], opts ...crudnet.Option[Comment, int64, CommentUpdate]) {
-	crudnet.ServingFor(svc, CommentMapper{}, opts...).Mount(mux, prefix)
+func MountComment(mux *http.ServeMux, prefix string, service port.Service[Comment, int64, CommentUpdate], options ...crudnet.Option[Comment, int64, CommentUpdate]) {
+	crudnet.ServingFor(service, CommentMapper{}, options...).Mount(mux, prefix)
 }
 
 // TagUpdate is the partial-update DTO for Tag.
@@ -395,8 +395,8 @@ type TagService struct {
 var _ port.Service[Tag, int64, TagUpdate] = (*TagService)(nil)
 
 // NewTagService builds the service over a repository.
-func NewTagService(repo port.Repository[Tag, int64, TagUpdate], opts ...port.ServiceOption) *TagService {
-	return &TagService{DefaultService: port.NewService(repo, opts...)}
+func NewTagService(repository port.Repository[Tag, int64, TagUpdate], options ...port.ServiceOption) *TagService {
+	return &TagService{DefaultService: port.NewService(repository, options...)}
 }
 
 // MountTag mounts the resource on a ServeMux under prefix, behind TagMapper.
@@ -404,8 +404,8 @@ func NewTagService(repo port.Repository[Tag, int64, TagUpdate], opts ...port.Ser
 // It takes a service rather than a repository, so a hand-written one slots in
 // and the service-shaped options a Serving constructor refuses cannot be handed
 // to it by mistake ([[D-021]]).
-func MountTag(mux *http.ServeMux, prefix string, svc port.Service[Tag, int64, TagUpdate], opts ...crudnet.Option[Tag, int64, TagUpdate]) {
-	crudnet.ServingFor(svc, TagMapper{}, opts...).Mount(mux, prefix)
+func MountTag(mux *http.ServeMux, prefix string, service port.Service[Tag, int64, TagUpdate], options ...crudnet.Option[Tag, int64, TagUpdate]) {
+	crudnet.ServingFor(service, TagMapper{}, options...).Mount(mux, prefix)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

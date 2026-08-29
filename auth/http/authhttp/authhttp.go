@@ -37,11 +37,11 @@ var defaultRenderer = porthttp.NewRenderer()
 
 // RendererFor answers the renderer these options describe, keeping the shared
 // value for the ordinary case of no options at all.
-func RendererFor(opts []porthttp.RenderOption) porthttp.Renderer {
-	if len(opts) == 0 {
+func RendererFor(options []porthttp.RenderOption) porthttp.Renderer {
+	if len(options) == 0 {
 		return defaultRenderer
 	}
-	return porthttp.NewRenderer(opts...)
+	return porthttp.NewRenderer(options...)
 }
 
 // Locale is the rendering context a refusal is written in — the request's

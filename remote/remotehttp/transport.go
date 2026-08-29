@@ -36,9 +36,9 @@ import (
 // [porthttp.ParseEnvelope] reads what [porthttp.EnvelopeRenderer] wrote — one
 // copy of each, which is the whole of [[D-045]]'s rule read from the client
 // side.
-func Transport(baseURL string, opts ...TransportOption) remote.Transport {
+func Transport(baseURL string, options ...TransportOption) remote.Transport {
 	t := &transport{base: strings.TrimSuffix(baseURL, "/"), client: defaultClient()}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(t)
 		}
@@ -106,49 +106,49 @@ type transport struct {
 }
 
 // cap answers the byte limit this transport reads an answer to.
-func (t *transport) cap() int {
-	if t.maxResponse > 0 {
-		return t.maxResponse
+func (this *transport) cap() int {
+	if this.maxResponse > 0 {
+		return this.maxResponse
 	}
 	return MaxResponse
 }
 
 // Do implements remote.Transport.
-func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
+func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
 	if call == nil {
 		return nil, fmt.Errorf("remotehttp: call is nil")
 	}
-	method, path, body, err := t.route(call)
+	method, path, body, err := this.route(call)
 	if err != nil {
 		return nil, err
 	}
-	target := t.base + path
+	target := this.base + path
 
-	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("remotehttp: building the request for %s: %w", target, err)
 	}
-	req.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", "application/json")
 	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	if t.hook != nil {
-		if err := t.hook(req); err != nil {
+	if this.hook != nil {
+		if err := this.hook(request); err != nil {
 			return nil, err
 		}
 	}
 
-	resp, err := t.client.Do(req)
+	response, err := this.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("remotehttp: calling %s %s: %w", method, target, err)
 	}
-	defer resp.Body.Close()
+	defer response.Body.Close()
 
 	// One byte past the cap, so an answer of exactly MaxResponse is read rather
 	// than reported as over it: io.LimitReader cannot tell a full buffer from an
 	// exhausted reader, and the honest answer to the first is that it fits.
-	limit := t.cap()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	limit := this.cap()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("remotehttp: reading the answer from %s %s: %w", method, target, err)
 	}
@@ -156,15 +156,15 @@ func (t *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage,
 		return nil, fmt.Errorf("remotehttp: the answer to %s %s is larger than the %d bytes this client reads",
 			method, target, limit)
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return raw, nil
 	}
-	return nil, fault(call.Method, method+" "+target, resp.Status, resp.StatusCode, raw)
+	return nil, fault(call.Method, method+" "+target, response.Status, response.StatusCode, raw)
 }
 
 // route is the one place a call becomes a verb, a path and a body. The routes
 // are crudnet's Mount, and the three bindings register the same ones.
-func (t *transport) route(call *remote.Call) (method, path string, body []byte, err error) {
+func (this *transport) route(call *remote.Call) (method, path string, body []byte, err error) {
 	switch call.Method {
 	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
 		if call.ID == "" {
@@ -244,11 +244,11 @@ func requireMutationBody(method remote.Method, body json.RawMessage) error {
 // row cap, so sending the path alone could load more children than were asked
 // for, over a 200. This defensive check also protects callers that construct a
 // transport Call directly.
-func entityQuery(req *query.Request) (string, error) {
-	if req == nil {
+func entityQuery(request *query.Request) (string, error) {
+	if request == nil {
 		return "", nil
 	}
-	if !req.Filter.IsZero() || len(req.Terms) > 0 || req.Search != "" || len(req.SearchFields) > 0 {
+	if !request.Filter.IsZero() || len(request.Terms) > 0 || request.Search != "" || len(request.SearchFields) > 0 {
 		// Resource routes these document-shaped eligibility controls through
 		// List before it reaches this function. Call is exported, though, so a
 		// direct Transport user needs the same no-silent-drop guarantee.
@@ -258,11 +258,11 @@ func entityQuery(req *query.Request) (string, error) {
 		}
 	}
 	v := url.Values{}
-	if len(req.Select) > 0 {
-		v.Set("select", strings.Join(req.Select, ","))
+	if len(request.Select) > 0 {
+		v.Set("select", strings.Join(request.Select, ","))
 	}
-	paths := make([]string, 0, len(req.Preload))
-	for _, p := range req.Preload {
+	paths := make([]string, 0, len(request.Preload))
+	for _, p := range request.Preload {
 		if !p.Filter.IsZero() || len(p.Sort) > 0 || p.MaxRows > 0 {
 			return "", &remote.OptionError{
 				Option: "narrowed or capped preload on GetByID",

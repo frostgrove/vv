@@ -111,9 +111,9 @@ func uuSetup(t *testing.T) {
 	ctx := context.Background()
 	uuOnce.Do(func() {
 		for _, tg := range egEngines() {
-			for _, stmt := range uuSchema[tg.db] {
-				if _, err := tg.src.Exec(ctx, stmt); err != nil {
-					uuErr = errors.New(tg.db + ": " + err.Error())
+			for _, stmt := range uuSchema[tg.database] {
+				if _, err := tg.source.Exec(ctx, stmt); err != nil {
+					uuErr = errors.New(tg.database + ": " + err.Error())
 					return
 				}
 			}
@@ -124,18 +124,18 @@ func uuSetup(t *testing.T) {
 	}
 	for _, tg := range egEngines() {
 		for _, table := range []string{"uu_members", "uu_rooms"} {
-			if _, err := tg.src.Exec(ctx, "DELETE FROM "+tg.src.Dialect().Quote(table)); err != nil {
-				t.Fatalf("%s: wiping %s: %v", tg.db, table, err)
+			if _, err := tg.source.Exec(ctx, "DELETE FROM "+tg.source.Dialect().Quote(table)); err != nil {
+				t.Fatalf("%s: wiping %s: %v", tg.database, table, err)
 			}
 		}
 	}
 }
 
 // uuSeed writes one room with two members and returns their ids.
-func uuSeed(t *testing.T, src crud.Source) (uuid.UUID, []uuid.UUID) {
+func uuSeed(t *testing.T, source crud.Source) (uuid.UUID, []uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	rooms, members := Rooms.Bind(src), RoomMembers.Bind(src)
+	rooms, members := Rooms.Bind(source), RoomMembers.Bind(source)
 
 	name := "general"
 	room := Room{
@@ -167,8 +167,8 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			uuSetup(t)
-			roomID, memberIDs := uuSeed(t, tg.src)
-			rooms, members := Rooms.Bind(tg.src), RoomMembers.Bind(tg.src)
+			roomID, memberIDs := uuSeed(t, tg.source)
+			rooms, members := Rooms.Bind(tg.source), RoomMembers.Bind(tg.source)
 
 			t.Run("GetByID round trips the key", func(t *testing.T) {
 				got, err := rooms.GetByID(ctx, roomID)
@@ -295,19 +295,19 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			uuSetup(t)
-			roomID, memberIDs := uuSeed(t, tg.src)
-			members := RoomMembers.Bind(tg.src)
+			roomID, memberIDs := uuSeed(t, tg.source)
+			members := RoomMembers.Bind(tg.source)
 
-			var req query.Request
+			var request query.Request
 			body := `{"filter":{"roomId":"` + roomID.String() + `"},"sort":["role"],"limit":10}`
-			if err := json.Unmarshal([]byte(body), &req); err != nil {
+			if err := json.Unmarshal([]byte(body), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err := req.Compile(RoomMembers.Meta(), unpagedOK)
+			options, err := request.Compile(RoomMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatalf("compiling a uuid filter: %v", err)
 			}
-			page, err := members.Get(ctx, opts...)
+			page, err := members.Get(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -317,25 +317,25 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 
 			// An "in" list of UUID strings, which is the shape a bulk filter takes.
 			body = `{"filter":{"id":{"in":["` + memberIDs[0].String() + `","` + memberIDs[1].String() + `"]}}}`
-			req = query.Request{}
-			if err := json.Unmarshal([]byte(body), &req); err != nil {
+			request = query.Request{}
+			if err := json.Unmarshal([]byte(body), &request); err != nil {
 				t.Fatal(err)
 			}
-			opts, err = req.Compile(RoomMembers.Meta(), unpagedOK)
+			options, err = request.Compile(RoomMembers.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatalf("compiling a uuid in-list: %v", err)
 			}
-			if n, err := members.Count(ctx, opts...); err != nil || n != 2 {
+			if n, err := members.Count(ctx, options...); err != nil || n != 2 {
 				t.Fatalf("count = %d err = %v", n, err)
 			}
 
 			// A malformed one must be a query error naming the path, not a panic
 			// and not a silently-zero UUID that matches nothing.
-			req = query.Request{}
-			if err := json.Unmarshal([]byte(`{"filter":{"roomId":"not-a-uuid"}}`), &req); err != nil {
+			request = query.Request{}
+			if err := json.Unmarshal([]byte(`{"filter":{"roomId":"not-a-uuid"}}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := req.Compile(RoomMembers.Meta(), unpagedOK); err == nil {
+			if _, err := request.Compile(RoomMembers.Meta(), unpagedOK); err == nil {
 				t.Fatal("a malformed UUID compiled cleanly")
 			}
 		})
@@ -355,7 +355,7 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			uuSetup(t)
-			rooms := Rooms.Bind(tg.src)
+			rooms := Rooms.Bind(tg.source)
 
 			// No ID — exactly what ent's Default(uuid.NewV7) would have filled in.
 			blank := Room{Kind: RoomDirect, CreatedAt: time.Now().UTC()}
@@ -398,8 +398,8 @@ func TestANullableUUIDColumnRoundTrips(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			uuSetup(t)
-			_, ids := uuSeed(t, tg.src)
-			members := RoomMembers.Bind(tg.src)
+			_, ids := uuSeed(t, tg.source)
+			members := RoomMembers.Bind(tg.source)
 
 			// left_at starts NULL.
 			got, err := members.GetByID(ctx, ids[0])

@@ -180,12 +180,12 @@ func TestExecResultAndOneShotFailure(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 3, LastInsertID: 7, HasLastInsertID: true})
 
-	res, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "a")
+	response, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.RowsAffected != 3 || res.LastInsertID != 7 || !res.HasLastInsertID {
-		t.Fatalf("result = %+v, want the configured one", res)
+	if response.RowsAffected != 3 || response.LastInsertID != 7 || !response.HasLastInsertID {
+		t.Fatalf("result = %+v, want the configured one", response)
 	}
 
 	boom := errors.New("deadlock")
@@ -195,8 +195,8 @@ func TestExecResultAndOneShotFailure(t *testing.T) {
 	}
 	// One shot: the next write succeeds again, so a test can make exactly one
 	// statement fail in the middle of a sequence.
-	if res, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "c"); err != nil || res.RowsAffected != 3 {
-		t.Fatalf("Exec after the failure = (%+v, %v), want the configured result back", res, err)
+	if response, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "c"); err != nil || response.RowsAffected != 3 {
+		t.Fatalf("Exec after the failure = (%+v, %v), want the configured result back", response, err)
 	}
 	if len(rec.Statements()) != 3 {
 		t.Fatalf("recorded %d statements, want all three including the failed one", len(rec.Statements()))
@@ -506,4 +506,4 @@ type identifiedRecorder struct {
 	handle any
 }
 
-func (r identifiedRecorder) DataSource() any { return r.handle }
+func (this identifiedRecorder) DataSource() any { return this.handle }

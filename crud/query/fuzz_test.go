@@ -74,8 +74,8 @@ func FuzzCompileJSON(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, doc string) {
-		var req query.Request
-		if err := json.Unmarshal([]byte(doc), &req); err != nil {
+		var request query.Request
+		if err := json.Unmarshal([]byte(doc), &request); err != nil {
 			// Not a document at all. The transport answers 400 and Compile is
 			// never reached, so there is nothing here to say.
 			return
@@ -83,11 +83,11 @@ func FuzzCompileJSON(f *testing.F) {
 
 		// Invariants 1 and 2. A panic fails the test by itself; the assertion is
 		// that a refusal comes back empty-handed.
-		opts, err := req.Compile(Articles.Meta(), nil)
+		options, err := request.Compile(Articles.Meta(), nil)
 		if err != nil {
-			if len(opts) != 0 {
+			if len(options) != 0 {
 				t.Fatalf("a refusal came back with %d options, so a transport could log the error and run the good half:\n%s",
-					len(opts), doc)
+					len(options), doc)
 			}
 			return
 		}
@@ -96,7 +96,7 @@ func FuzzCompileJSON(f *testing.F) {
 		// show it — and a filter that compiled and will not render is the one
 		// shape that should be impossible, because Compile validated every name
 		// against the model before it built anything.
-		o := crud.Build(opts...)
+		o := crud.Build(options...)
 		sql, _, rerr := crud.NewSQL(crud.Postgres{}, Articles.Meta()).Predicate(o.Predicate()).Done()
 		if rerr != nil {
 			t.Fatalf("a compiled filter would not render (%v):\n%s", rerr, doc)
@@ -137,18 +137,18 @@ func FuzzCompileQueryString(f *testing.F) {
 		if err != nil {
 			return
 		}
-		req, err := query.ParseQuery(v)
+		request, err := query.ParseQuery(v)
 		if err != nil {
 			return
 		}
-		opts, err := req.Compile(Articles.Meta(), nil)
+		options, err := request.Compile(Articles.Meta(), nil)
 		if err != nil {
-			if len(opts) != 0 {
-				t.Fatalf("a refusal came back with %d options:\n%s", len(opts), raw)
+			if len(options) != 0 {
+				t.Fatalf("a refusal came back with %d options:\n%s", len(options), raw)
 			}
 			return
 		}
-		o := crud.Build(opts...)
+		o := crud.Build(options...)
 		sql, _, rerr := crud.NewSQL(crud.Postgres{}, Articles.Meta()).Predicate(o.Predicate()).Done()
 		if rerr != nil {
 			t.Fatalf("a compiled filter would not render (%v):\n%s", rerr, raw)

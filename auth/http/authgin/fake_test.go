@@ -52,7 +52,7 @@ type seen struct {
 	found     bool
 }
 
-func (s *seen) handle(c *gin.Context) {
-	s.ran = true
-	s.principal, s.found = auth.PrincipalFrom(c.Request.Context())
+func (this *seen) handle(c *gin.Context) {
+	this.ran = true
+	this.principal, this.found = auth.PrincipalFrom(c.Request.Context())
 }

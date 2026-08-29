@@ -17,32 +17,32 @@ type tracing struct {
 	seen  *int
 }
 
-func (t tracing) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
-	*t.seen++
-	return t.inner.Exec(ctx, q, args...)
+func (this tracing) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
+	*this.seen++
+	return this.inner.Exec(ctx, q, args...)
 }
 
-func (t tracing) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	*t.seen++
-	return t.inner.Query(ctx, q, args...)
+func (this tracing) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	*this.seen++
+	return this.inner.Query(ctx, q, args...)
 }
 
-func (t tracing) Dialect() crud.Dialect     { return t.inner.Dialect() }
-func (t tracing) UnwrapSource() crud.Source { return t.inner }
+func (this tracing) Dialect() crud.Dialect     { return this.inner.Dialect() }
+func (this tracing) UnwrapSource() crud.Source { return this.inner }
 
 // blind is the same wrapper with the one method left out — the shape an
 // application writes by accident, and the reason the helpers exist.
 type blind struct{ inner crud.Source }
 
-func (b blind) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
-	return b.inner.Exec(ctx, q, args...)
+func (this blind) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
+	return this.inner.Exec(ctx, q, args...)
 }
 
-func (b blind) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	return b.inner.Query(ctx, q, args...)
+func (this blind) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	return this.inner.Query(ctx, q, args...)
 }
 
-func (b blind) Dialect() crud.Dialect { return b.inner.Dialect() }
+func (this blind) Dialect() crud.Dialect { return this.inner.Dialect() }
 
 // A wrapper that says what it wraps keeps every behaviour the wrapped source
 // had, and a wrapper that does not keeps none of them.

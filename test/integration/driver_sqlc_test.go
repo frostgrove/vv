@@ -24,7 +24,7 @@ import (
 func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repo := Users.Bind(crudsql.Postgres(pgDB))
+	repository := Users.Bind(crudsql.Postgres(pgDB))
 
 	tx, err := pgDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	}
 
 	// vv reads what sqlc wrote.
-	got, err := repo.GetByID(txCtx, created.ID)
+	got, err := repository.GetByID(txCtx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 
 	// And sqlc reads what vv wrote.
 	u := User{TenantID: 1, Email: "vv@x.io", Name: "ByVV", Active: true}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	back, err := q.GetUser(ctx, u.ID)
@@ -79,7 +79,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.Count(ctx); err != nil || n != 2 {
+	if n, err := repository.Count(ctx); err != nil || n != 2 {
 		t.Fatalf("after commit count = %d err = %v", n, err)
 	}
 }
@@ -87,7 +87,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 func TestSqlcPgx(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repo := Users.Bind(crudpgx.Open(pgPool))
+	repository := Users.Bind(crudpgx.Open(pgPool))
 
 	tx, err := pgPool.Begin(ctx)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSqlcPgx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(txCtx, created.ID)
+	got, err := repository.GetByID(txCtx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestSqlcPgx(t *testing.T) {
 	}
 
 	u := User{TenantID: 2, Email: "vv-pgx@x.io", Name: "ByVV", Age: crud.Set(7)}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	back, err := q.GetUser(ctx, u.ID)
@@ -138,7 +138,7 @@ func TestSqlcPgx(t *testing.T) {
 func TestSqlcMySQL(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, myDB)
-	repo := Users.Bind(crudsql.MySQL(myDB))
+	repository := Users.Bind(crudsql.MySQL(myDB))
 
 	tx, err := myDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -149,18 +149,18 @@ func TestSqlcMySQL(t *testing.T) {
 	q := sqlcmysql.New(tx)
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 
-	res, err := q.CreateUser(ctx, sqlcmysql.CreateUserParams{
+	response, err := q.CreateUser(ctx, sqlcmysql.CreateUserParams{
 		TenantID: 3, Email: "sqlcmy@x.io", Name: "BySqlc",
 		Age: sql.NullInt32{Int32: 50, Valid: true}, Active: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := res.LastInsertId()
+	id, err := response.LastInsertId()
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(txCtx, id)
+	got, err := repository.GetByID(txCtx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestSqlcMySQL(t *testing.T) {
 	}
 
 	u := User{TenantID: 3, Email: "vv-my@x.io", Name: "ByVV", Active: true}
-	if err := repo.Save(txCtx, &u); err != nil {
+	if err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	back, err := q.GetUser(ctx, u.ID)

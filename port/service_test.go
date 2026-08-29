@@ -40,12 +40,12 @@ var widgetMeta = func() *crud.Meta {
 var forged = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
 type call struct {
-	method string
-	id     int64
-	ids    []int64
-	model  widget
-	dto    widgetUpdate
-	opts   *crud.Options
+	method             string
+	id                 int64
+	ids                []int64
+	model              widget
+	dataTransferObject widgetUpdate
+	options            *crud.Options
 }
 
 // fakeRepo records what the service asked for, so a test can assert the request
@@ -56,61 +56,61 @@ type fakeRepo struct {
 	err     error
 }
 
-func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
+func (this *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
-func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[widget], error) {
-	f.calls = append(f.calls, call{method: "Get", opts: crud.Build(opts...)})
-	return crud.PaginatedResponse[widget]{}, f.err
+func (this *fakeRepo) Get(_ context.Context, options ...crud.Option) (crud.PaginatedResponse[widget], error) {
+	this.calls = append(this.calls, call{method: "Get", options: crud.Build(options...)})
+	return crud.PaginatedResponse[widget]{}, this.err
 }
 
-func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]widget, error) {
-	f.calls = append(f.calls, call{method: "GetAll", opts: crud.Build(opts...)})
-	return nil, f.err
+func (this *fakeRepo) GetAll(_ context.Context, options ...crud.Option) ([]widget, error) {
+	this.calls = append(this.calls, call{method: "GetAll", options: crud.Build(options...)})
+	return nil, this.err
 }
 
-func (f *fakeRepo) GetByID(_ context.Context, id int64, opts ...crud.Option) (widget, error) {
-	f.calls = append(f.calls, call{method: "GetByID", id: id, opts: crud.Build(opts...)})
-	return widget{ID: id}, f.err
+func (this *fakeRepo) GetByID(_ context.Context, id int64, options ...crud.Option) (widget, error) {
+	this.calls = append(this.calls, call{method: "GetByID", id: id, options: crud.Build(options...)})
+	return widget{ID: id}, this.err
 }
 
-func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) {
-	f.calls = append(f.calls, call{method: "Count", opts: crud.Build(opts...)})
-	return 0, f.err
+func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, error) {
+	this.calls = append(this.calls, call{method: "Count", options: crud.Build(options...)})
+	return 0, this.err
 }
 
-func (f *fakeRepo) Save(_ context.Context, m *widget) (widget, error) {
-	f.calls = append(f.calls, call{method: "Save", model: *m})
-	return *m, f.err
+func (this *fakeRepo) Save(_ context.Context, m *widget) (widget, error) {
+	this.calls = append(this.calls, call{method: "Save", model: *m})
+	return *m, this.err
 }
 
-func (f *fakeRepo) Update(_ context.Context, id int64, dto widgetUpdate, _ ...crud.Option) (widget, error) {
-	f.calls = append(f.calls, call{method: "Update", id: id, dto: dto})
-	return widget{ID: id}, f.err
+func (this *fakeRepo) Update(_ context.Context, id int64, dataTransferObject widgetUpdate, _ ...crud.Option) (widget, error) {
+	this.calls = append(this.calls, call{method: "Update", id: id, dataTransferObject: dataTransferObject})
+	return widget{ID: id}, this.err
 }
 
-func (f *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
-	f.calls = append(f.calls, call{method: "Delete", ids: ids})
-	return f.deleted, f.err
+func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
+	this.calls = append(this.calls, call{method: "Delete", ids: ids})
+	return this.deleted, this.err
 }
 
-func (f *fakeRepo) methods() []string {
-	out := make([]string, len(f.calls))
-	for i, c := range f.calls {
+func (this *fakeRepo) methods() []string {
+	out := make([]string, len(this.calls))
+	for i, c := range this.calls {
 		out[i] = c.method
 	}
 	return out
 }
 
-func (f *fakeRepo) only(t *testing.T, method string) call {
+func (this *fakeRepo) only(t *testing.T, method string) call {
 	t.Helper()
 	var found []call
-	for _, c := range f.calls {
+	for _, c := range this.calls {
 		if c.method == method {
 			found = append(found, c)
 		}
 	}
 	if len(found) != 1 {
-		t.Fatalf("the service called %s %d times, expected once; it called %v", method, len(found), f.methods())
+		t.Fatalf("the service called %s %d times, expected once; it called %v", method, len(found), this.methods())
 	}
 	return found[0]
 }
@@ -122,7 +122,7 @@ type fakeService struct {
 	paths errs.Resolver
 }
 
-func (s *fakeService) Paths() errs.Resolver { return s.paths }
+func (this *fakeService) Paths() errs.Resolver { return this.paths }
 
 // mappingIn is a mapper that also declares its hop, which is the adapter's half
 // of the path chain.
@@ -141,9 +141,9 @@ type recordingHop struct {
 	ran    bool
 }
 
-func (h *recordingHop) Resolve(p errs.Path) (errs.Path, bool) {
-	h.ran = true
-	return append(errs.Path{h.prefix}, p...), true
+func (this *recordingHop) Resolve(p errs.Path) (errs.Path, bool) {
+	this.ran = true
+	return append(errs.Path{this.prefix}, p...), true
 }
 
 // ---------------------------------------------------------------------------
@@ -154,11 +154,11 @@ func (h *recordingHop) Resolve(p errs.Path) (errs.Path, bool) {
 // rather than as a passing test.
 func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	t.Run("create clears the server-owned fields before the hook", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
 		var seen widget
-		got, err := svc.Create(context.Background(), CreateCommand[widget]{
+		got, err := service.Create(context.Background(), CreateCommand[widget]{
 			Model: widget{ID: 999, Name: "bolt", CreatedAt: forged},
 			Before: func(m *widget) error {
 				seen = *m
@@ -175,7 +175,7 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
 		}
-		stored := repo.only(t, "Save").model
+		stored := repository.only(t, "Save").model
 		if stored.Price != 7 {
 			t.Fatalf("the repository stored %+v; what the hook wrote is what is saved", stored)
 		}
@@ -185,11 +185,11 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	})
 
 	t.Run("and the control: with the key space handed over, the hook sees the client's key", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo, AllowClientID())
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository, AllowClientID())
 
 		var seen widget
-		if _, err := svc.Create(context.Background(), CreateCommand[widget]{
+		if _, err := service.Create(context.Background(), CreateCommand[widget]{
 			Model:  widget{ID: 999, Name: "bolt", CreatedAt: forged},
 			Before: func(m *widget) error { seen = *m; return nil },
 		}); err != nil {
@@ -206,33 +206,33 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	})
 
 	t.Run("a hook that refuses stops the write", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 		boom := errors.New("no")
 
-		if _, err := svc.Create(context.Background(), CreateCommand[widget]{
+		if _, err := service.Create(context.Background(), CreateCommand[widget]{
 			Before: func(*widget) error { return boom },
 		}); !errors.Is(err, boom) {
 			t.Fatalf("a refused create answered %v, want the hook's own error", err)
 		}
-		if len(repo.calls) != 0 {
-			t.Fatalf("a refused create still reached the repository: %v", repo.methods())
+		if len(repository.calls) != 0 {
+			t.Fatalf("a refused create still reached the repository: %v", repository.methods())
 		}
 	})
 
 	t.Run("replace looks the row up first, then clears, then sets the key, then hooks", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
 		var seen widget
-		if _, err := svc.Replace(context.Background(), ReplaceCommand[int64, widget]{
+		if _, err := service.Replace(context.Background(), ReplaceCommand[int64, widget]{
 			ID:     42,
 			Model:  widget{ID: 999, Name: "replaced", CreatedAt: forged},
 			Before: func(m *widget) error { seen = *m; return nil },
 		}); err != nil {
 			t.Fatalf("replacing: %v", err)
 		}
-		if got := repo.methods(); !slices.Equal(got, []string{"GetByID", "Save"}) {
+		if got := repository.methods(); !slices.Equal(got, []string{"GetByID", "Save"}) {
 			t.Fatalf("replace made %v, want the existence probe and then the write", got)
 		}
 		if seen.ID != 42 {
@@ -244,30 +244,30 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	})
 
 	t.Run("a replace of a row that is not there never writes", func(t *testing.T) {
-		repo := &fakeRepo{err: crud.ErrNotFound}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{err: crud.ErrNotFound}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
-		if _, err := svc.Replace(context.Background(), ReplaceCommand[int64, widget]{ID: 999}); !errors.Is(err, crud.ErrNotFound) {
+		if _, err := service.Replace(context.Background(), ReplaceCommand[int64, widget]{ID: 999}); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("replacing a missing row answered %v, want ErrNotFound", err)
 		}
-		if slices.Contains(repo.methods(), "Save") {
-			t.Fatalf("a replace created a row at a key the client picked: %v", repo.methods())
+		if slices.Contains(repository.methods(), "Save") {
+			t.Fatalf("a replace created a row at a key the client picked: %v", repository.methods())
 		}
 	})
 
 	t.Run("the patch hook runs before the update", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
 		name := "from the hook"
-		if _, err := svc.Update(context.Background(), UpdateCommand[int64, widgetUpdate]{
+		if _, err := service.Update(context.Background(), UpdateCommand[int64, widgetUpdate]{
 			ID:     42,
 			Before: func(u *widgetUpdate) error { u.Name = &name; return nil },
 		}); err != nil {
 			t.Fatalf("updating: %v", err)
 		}
-		c := repo.only(t, "Update")
-		if c.id != 42 || c.dto.Name == nil || *c.dto.Name != name {
+		c := repository.only(t, "Update")
+		if c.id != 42 || c.dataTransferObject.Name == nil || *c.dataTransferObject.Name != name {
 			t.Fatalf("the repository was asked to update %+v; the hook's mutation did not land", c)
 		}
 	})
@@ -278,30 +278,30 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 // set.
 func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 	t.Run("one row", func(t *testing.T) {
-		repo := &fakeRepo{deleted: 0}
-		svc := NewService[widget, int64, widgetUpdate](repo)
-		if _, err := svc.Delete(context.Background(), DeleteCommand[int64]{ID: 7}); !errors.Is(err, crud.ErrNotFound) {
+		repository := &fakeRepo{deleted: 0}
+		service := NewService[widget, int64, widgetUpdate](repository)
+		if _, err := service.Delete(context.Background(), DeleteCommand[int64]{ID: 7}); !errors.Is(err, crud.ErrNotFound) {
 			t.Fatalf("deleting a row that was not there answered %v, want ErrNotFound", err)
 		}
 
 		// The control: a row that was there is not a miss, so the arm above is
 		// reading the count rather than always refusing.
-		repo = &fakeRepo{deleted: 1}
-		svc = NewService[widget, int64, widgetUpdate](repo)
-		if n, err := svc.Delete(context.Background(), DeleteCommand[int64]{ID: 7}); err != nil || n != 1 {
+		repository = &fakeRepo{deleted: 1}
+		service = NewService[widget, int64, widgetUpdate](repository)
+		if n, err := service.Delete(context.Background(), DeleteCommand[int64]{ID: 7}); err != nil || n != 1 {
 			t.Fatalf("deleting a row that was there answered %d, %v", n, err)
 		}
 	})
 
 	t.Run("a set", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
-		n, err := svc.DeleteMany(context.Background(), BulkDeleteCommand[int64]{})
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
+		n, err := service.DeleteMany(context.Background(), BulkDeleteCommand[int64]{})
 		if err != nil || n != 0 {
 			t.Fatalf("deleting an empty set answered %d, %v, want 0 and no error", n, err)
 		}
-		if len(repo.calls) != 0 {
-			t.Fatalf("an empty set reached the repository as %v", repo.methods())
+		if len(repository.calls) != 0 {
+			t.Fatalf("an empty set reached the repository as %v", repository.methods())
 		}
 	})
 }
@@ -313,14 +313,14 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	tenant := crud.Where(crud.Eq("Price", 1))
 
 	t.Run("count drops the paging", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
-		req := &query.Request{Page: 3, Limit: 10, Sort: query.Sorts{{Field: "Name"}}}
-		if _, err := svc.Count(context.Background(), CountCommand{Query: req, Options: []crud.Option{tenant}}); err != nil {
+		request := &query.Request{Page: 3, Limit: 10, Sort: query.Sorts{{Field: "Name"}}}
+		if _, err := service.Count(context.Background(), CountCommand{Query: request, Options: []crud.Option{tenant}}); err != nil {
 			t.Fatalf("counting: %v", err)
 		}
-		o := repo.only(t, "Count").opts
+		o := repository.only(t, "Count").options
 		if o.Limit != 0 || o.Offset != 0 || len(o.Sort) != 0 {
 			t.Fatalf("the count carried limit=%d offset=%d sort=%v; a page of a count is not a count", o.Limit, o.Offset, o.Sort)
 		}
@@ -330,24 +330,24 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	})
 
 	t.Run("a keyed read keeps its eligibility filter and drops paging", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
-		req := &query.Request{
+		request := &query.Request{
 			Page: 2, Limit: 5, After: "opaque", Unpaged: true, SkipTotal: true, Distinct: true,
 			Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}},
 		}
-		if _, err := svc.Get(context.Background(), GetCommand[int64]{ID: 42, Query: req}); err != nil {
+		if _, err := service.Get(context.Background(), GetCommand[int64]{ID: 42, Query: request}); err != nil {
 			t.Fatalf("reading: %v", err)
 		}
-		c := repo.only(t, "GetByID")
+		c := repository.only(t, "GetByID")
 		if c.id != 42 {
 			t.Fatalf("the repository was asked for id %d, want 42", c.id)
 		}
-		if c.opts.Predicate() == nil || c.opts.Limit != 0 || c.opts.After != "" || c.opts.Unpaged || c.opts.NoTotal || c.opts.Distinct {
-			t.Fatalf("a keyed read did not preserve only its eligibility filter: %+v", c.opts)
+		if c.options.Predicate() == nil || c.options.Limit != 0 || c.options.After != "" || c.options.Unpaged || c.options.NoTotal || c.options.Distinct {
+			t.Fatalf("a keyed read did not preserve only its eligibility filter: %+v", c.options)
 		}
-		sql, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(c.opts.Predicate()).Done()
+		sql, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(c.options.Predicate()).Done()
 		if err != nil {
 			t.Fatalf("the keyed-read filter does not resolve: %v", err)
 		}
@@ -357,14 +357,14 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	})
 
 	t.Run("a list keeps both, in that order", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
 
-		req := &query.Request{Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
-		if _, err := svc.List(context.Background(), ListCommand{Query: req, Options: []crud.Option{tenant}}); err != nil {
+		request := &query.Request{Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
+		if _, err := service.List(context.Background(), ListCommand{Query: request, Options: []crud.Option{tenant}}); err != nil {
 			t.Fatalf("listing: %v", err)
 		}
-		o := repo.only(t, "Get").opts
+		o := repository.only(t, "Get").options
 		sql, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(o.Predicate()).Done()
 		if err != nil {
 			t.Fatalf("the compiled filter does not resolve: %v", err)
@@ -378,12 +378,12 @@ func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	})
 
 	t.Run("no document at all is a plain read", func(t *testing.T) {
-		repo := &fakeRepo{}
-		svc := NewService[widget, int64, widgetUpdate](repo)
-		if _, err := svc.List(context.Background(), ListCommand{}); err != nil {
+		repository := &fakeRepo{}
+		service := NewService[widget, int64, widgetUpdate](repository)
+		if _, err := service.List(context.Background(), ListCommand{}); err != nil {
 			t.Fatalf("a command with no query document answered %v", err)
 		}
-		if o := repo.only(t, "Get").opts; o.Predicate() != nil {
+		if o := repository.only(t, "Get").options; o.Predicate() != nil {
 			t.Fatalf("a command with no query document compiled to a filter: %+v", o)
 		}
 	})
@@ -396,30 +396,30 @@ func TestReadNarrowingDoesNotMutateARequestReusedForAList(t *testing.T) {
 	}{
 		{
 			name: "Count",
-			read: func(svc *DefaultService[widget, int64, widgetUpdate], req *query.Request) error {
-				_, err := svc.Count(context.Background(), CountCommand{Query: req})
+			read: func(service *DefaultService[widget, int64, widgetUpdate], request *query.Request) error {
+				_, err := service.Count(context.Background(), CountCommand{Query: request})
 				return err
 			},
 		},
 		{
 			name: "Get",
-			read: func(svc *DefaultService[widget, int64, widgetUpdate], req *query.Request) error {
-				_, err := svc.Get(context.Background(), GetCommand[int64]{ID: 1, Query: req})
+			read: func(service *DefaultService[widget, int64, widgetUpdate], request *query.Request) error {
+				_, err := service.Get(context.Background(), GetCommand[int64]{ID: 1, Query: request})
 				return err
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := &fakeRepo{}
-			svc := NewService[widget, int64, widgetUpdate](repo, WithQuery(&query.Config{MaxLimit: 7}))
-			req := &query.Request{Limit: 99, Page: 3, Terms: []query.Term{{Path: "Name", Values: query.Strings{"bolt"}}}}
-			if err := tc.read(svc, req); err != nil {
+			repository := &fakeRepo{}
+			service := NewService[widget, int64, widgetUpdate](repository, WithQuery(&query.Config{MaxLimit: 7}))
+			request := &query.Request{Limit: 99, Page: 3, Terms: []query.Term{{Path: "Name", Values: query.Strings{"bolt"}}}}
+			if err := tc.read(service, request); err != nil {
 				t.Fatalf("read: %v", err)
 			}
-			if _, err := svc.List(context.Background(), ListCommand{Query: req}); err != nil {
+			if _, err := service.List(context.Background(), ListCommand{Query: request}); err != nil {
 				t.Fatalf("list: %v", err)
 			}
-			if got := repo.only(t, "Get").opts.Limit; got != 7 {
+			if got := repository.only(t, "Get").options.Limit; got != 7 {
 				t.Fatalf("list limit = %d, want the endpoint cap after reusing its request", got)
 			}
 		})
@@ -429,27 +429,27 @@ func TestReadNarrowingDoesNotMutateARequestReusedForAList(t *testing.T) {
 // A query config bounds what a client may ask for, and it is the service's
 // rather than the transport's — which is why Serving refuses the option.
 func TestWithQueryBoundsTheServiceAndNotTheTransport(t *testing.T) {
-	repo := &fakeRepo{}
-	cfg := &query.Config{Filterable: []string{"Name"}}
-	svc := NewService[widget, int64, widgetUpdate](repo, WithQuery(cfg))
+	repository := &fakeRepo{}
+	config := &query.Config{Filterable: []string{"Name"}}
+	service := NewService[widget, int64, widgetUpdate](repository, WithQuery(config))
 
-	req := &query.Request{Terms: []query.Term{{Path: "Price", Op: "eq", Values: query.Strings{"1"}}}}
-	if _, err := svc.List(context.Background(), ListCommand{Query: req}); err == nil {
+	request := &query.Request{Terms: []query.Term{{Path: "Price", Op: "eq", Values: query.Strings{"1"}}}}
+	if _, err := service.List(context.Background(), ListCommand{Query: request}); err == nil {
 		t.Fatal("a filter outside the allow-list was accepted")
 	}
 
 	// The control: the field that is on the list still works, so the refusal
 	// above is the allow-list and not a service that refuses everything.
-	req = &query.Request{Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
-	if _, err := svc.List(context.Background(), ListCommand{Query: req}); err != nil {
+	request = &query.Request{Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
+	if _, err := service.List(context.Background(), ListCommand{Query: request}); err != nil {
 		t.Fatalf("a filter on the allow-list was refused: %v", err)
 	}
 }
 
 func TestWithQueryForSelectsADeclaredVocabularyPerRequest(t *testing.T) {
 	type vocabularyKey struct{}
-	repo := &fakeRepo{}
-	svc := NewService[widget, int64, widgetUpdate](repo,
+	repository := &fakeRepo{}
+	service := NewService[widget, int64, widgetUpdate](repository,
 		WithQueryFor(
 			&query.Config{Filterable: []string{"Name"}},
 			map[string]*query.Config{"admin": {Filterable: []string{"Name", "Price"}}},
@@ -460,15 +460,15 @@ func TestWithQueryForSelectsADeclaredVocabularyPerRequest(t *testing.T) {
 		),
 	)
 	price := &query.Request{Terms: []query.Term{{Path: "Price", Values: query.Strings{"1"}}}}
-	if _, err := svc.List(context.Background(), ListCommand{Query: price}); err == nil {
+	if _, err := service.List(context.Background(), ListCommand{Query: price}); err == nil {
 		t.Fatal("the default vocabulary exposed the admin-only Price field")
 	}
 	adminCtx := context.WithValue(context.Background(), vocabularyKey{}, "admin")
-	if _, err := svc.List(adminCtx, ListCommand{Query: price}); err != nil {
+	if _, err := service.List(adminCtx, ListCommand{Query: price}); err != nil {
 		t.Fatalf("the declared admin vocabulary was refused: %v", err)
 	}
 	unknownCtx := context.WithValue(context.Background(), vocabularyKey{}, "unknown")
-	if _, err := svc.List(unknownCtx, ListCommand{Query: price}); err == nil {
+	if _, err := service.List(unknownCtx, ListCommand{Query: price}); err == nil {
 		t.Fatal("an undeclared vocabulary silently fell back to the permissive default")
 	} else if qerr, ok := err.(*query.Error); !ok || qerr.Path != "queryConfig" {
 		t.Fatalf("err = %v, want a query refusal naming queryConfig", err)

@@ -69,36 +69,36 @@ var (
 const cols = `"id", "author_id", "title", "body", "views", "published_at", "created_at"`
 
 // run compiles a JSON query document and returns the SQL the repository built.
-func run(t *testing.T, doc string, cfg *query.Config) (string, []any) {
+func run(t *testing.T, doc string, config *query.Config) (string, []any) {
 	t.Helper()
-	var req query.Request
-	if err := json.Unmarshal([]byte(doc), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(doc), &request); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	return runReq(t, &req, cfg)
+	return runReq(t, &request, config)
 }
 
-func runReq(t *testing.T, req *query.Request, cfg *query.Config) (string, []any) {
+func runReq(t *testing.T, request *query.Request, config *query.Config) (string, []any) {
 	t.Helper()
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(0)}))
-	opts, err := req.Compile(Articles.Meta(), cfg)
+	options, err := request.Compile(Articles.Meta(), config)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if _, err := Articles.Bind(rec).Get(context.Background(), opts...); err != nil {
+	if _, err := Articles.Bind(rec).Get(context.Background(), options...); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	st := rec.Statements()[0]
 	return crudtest.Normalize(st.SQL), st.Args
 }
 
-func mustFail(t *testing.T, doc string, cfg *query.Config, want string) {
+func mustFail(t *testing.T, doc string, config *query.Config, want string) {
 	t.Helper()
-	var req query.Request
-	if err := json.Unmarshal([]byte(doc), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(doc), &request); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	_, err := req.Compile(Articles.Meta(), cfg)
+	_, err := request.Compile(Articles.Meta(), config)
 	if err == nil {
 		t.Fatalf("expected a rejection mentioning %q", want)
 	}
@@ -234,14 +234,14 @@ func TestNestedSort(t *testing.T) {
 		t.Fatalf("sql = %s\nwant it to contain %s", sql, want)
 	}
 
-	var req query.Request
-	_ = json.Unmarshal([]byte(`{"sort":["comments.body"],"limit":5}`), &req)
-	opts, err := req.Compile(Articles.Meta(), nil)
+	var request query.Request
+	_ = json.Unmarshal([]byte(`{"sort":["comments.body"],"limit":5}`), &request)
+	options, err := request.Compile(Articles.Meta(), nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	if _, err := Articles.Bind(rec).Get(context.Background(), opts...); err == nil {
+	if _, err := Articles.Bind(rec).Get(context.Background(), options...); err == nil {
 		t.Fatal("sorting through a has_many should be refused")
 	} else if !strings.Contains(err.Error(), "has_many") {
 		t.Fatalf("err = %v", err)
@@ -284,11 +284,11 @@ func TestQueryStringForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := query.ParseQuery(v)
+	request, err := query.ParseQuery(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sql, args := runReq(t, req, nil)
+	sql, args := runReq(t, request, nil)
 
 	want := `("views" >= $1 AND EXISTS (SELECT 1 FROM "tags" AS rx1 JOIN "article_tags" AS rx2 ` +
 		`ON rx2."tag_id" = rx1."id" WHERE rx2."article_id" = "articles"."id" AND rx1."slug" IN ($2, $3)) ` +
@@ -346,11 +346,11 @@ func TestRejections(t *testing.T) {
 			`{"filter":{"createdAt":"never"}}`,
 			`{"filter":{"views":["a","b"]}}`,
 		} {
-			var req query.Request
-			if err := json.Unmarshal([]byte(doc), &req); err != nil {
+			var request query.Request
+			if err := json.Unmarshal([]byte(doc), &request); err != nil {
 				t.Fatal(err)
 			}
-			_, err := req.Compile(Articles.Meta(), nil)
+			_, err := request.Compile(Articles.Meta(), nil)
 			if err == nil {
 				t.Fatalf("%s compiled cleanly", doc)
 			}
@@ -367,9 +367,9 @@ func TestRejections(t *testing.T) {
 // difference between a typo you notice and a filter that quietly does nothing.
 func TestUnknownFieldNeverReachesTheDatabase(t *testing.T) {
 	rec := crudtest.Postgres()
-	var req query.Request
-	_ = json.Unmarshal([]byte(`{"filter":{"nope":1}}`), &req)
-	if _, err := req.Compile(Articles.Meta(), nil); err == nil {
+	var request query.Request
+	_ = json.Unmarshal([]byte(`{"filter":{"nope":1}}`), &request)
+	if _, err := request.Compile(Articles.Meta(), nil); err == nil {
 		t.Fatal("expected a rejection")
 	}
 	if len(rec.Statements()) != 0 {
@@ -378,20 +378,20 @@ func TestUnknownFieldNeverReachesTheDatabase(t *testing.T) {
 }
 
 func TestAllowLists(t *testing.T) {
-	cfg := &query.Config{
+	config := &query.Config{
 		Filterable:  []string{"Title", "Comments.*"},
 		Sortable:    []string{"Title"},
 		Preloadable: []string{"Author"},
 		MaxDepth:    3,
 	}
-	if _, _ = run(t, `{"filter":{"title":"a"}}`, cfg); true {
+	if _, _ = run(t, `{"filter":{"title":"a"}}`, config); true {
 	}
-	mustFail(t, `{"filter":{"views":1}}`, cfg, "not filterable")
-	mustFail(t, `{"sort":["views"]}`, cfg, "not sortable")
-	mustFail(t, `{"preload":["comments"]}`, cfg, "cannot be preloaded")
+	mustFail(t, `{"filter":{"views":1}}`, config, "not filterable")
+	mustFail(t, `{"sort":["views"]}`, config, "not sortable")
+	mustFail(t, `{"preload":["comments"]}`, config, "cannot be preloaded")
 
 	// The subtree wildcard lets nested paths through.
-	if sql, _ := run(t, `{"filter":{"comments.body":"x"}}`, cfg); !strings.Contains(sql, "comments") {
+	if sql, _ := run(t, `{"filter":{"comments.body":"x"}}`, config); !strings.Contains(sql, "comments") {
 		t.Fatalf("sql = %s", sql)
 	}
 }

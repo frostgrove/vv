@@ -25,12 +25,12 @@ import (
 type attr struct{ name string }
 
 // Name returns the model field this attribute points at.
-func (a attr) Name() string { return a.name }
+func (this attr) Name() string { return this.name }
 
 // Path returns the criteria path, for use with a Builder.
-func (a attr) Path() Path { return Path{Name: a.name} }
+func (this attr) Path() Path { return Path{Name: this.name} }
 
-func (a *attr) setName(s string) { a.name = s }
+func (this *attr) setName(s string) { this.name = s }
 
 type settable interface {
 	setName(string)
@@ -41,7 +41,7 @@ type settable interface {
 // nullability.
 type Attr[M any, T any] struct{ attr }
 
-func (a *Attr[M, T]) elemType() reflect.Type {
+func (this *Attr[M, T]) elemType() reflect.Type {
 	var z T
 	return reflect.TypeOf(&z).Elem()
 }
@@ -54,46 +54,46 @@ func Attribute[M any, T any](field string) Attr[M, T] {
 	return a
 }
 
-func (a Attr[M, T]) Eq(v T) Specification[M]  { return Lift[M](crud.Eq(a.name, v)) }
-func (a Attr[M, T]) Ne(v T) Specification[M]  { return Lift[M](crud.Ne(a.name, v)) }
-func (a Attr[M, T]) IsNull() Specification[M] { return Lift[M](crud.IsNull(a.name)) }
+func (this Attr[M, T]) Eq(v T) Specification[M]  { return Lift[M](crud.Eq(this.name, v)) }
+func (this Attr[M, T]) Ne(v T) Specification[M]  { return Lift[M](crud.Ne(this.name, v)) }
+func (this Attr[M, T]) IsNull() Specification[M] { return Lift[M](crud.IsNull(this.name)) }
 
 // EqPtr contributes an equality only when v is non-nil. It is the direct
 // spelling for a pointer field from a form or partial request.
-func (a Attr[M, T]) EqPtr(v *T) Specification[M] {
+func (this Attr[M, T]) EqPtr(v *T) Specification[M] {
 	if v == nil {
 		return nil
 	}
-	return a.Eq(*v)
+	return this.Eq(*v)
 }
 
 // EqOpt preserves all three states of crud.Opt: undefined contributes no
 // restriction, null asks for SQL NULL and a value asks for equality.
-func (a Attr[M, T]) EqOpt(v crud.Opt[T]) Specification[M] {
+func (this Attr[M, T]) EqOpt(v crud.Opt[T]) Specification[M] {
 	if !v.IsDefined() {
 		return nil
 	}
 	if v.IsNull() {
-		return a.IsNull()
+		return this.IsNull()
 	}
 	value, _ := v.Get()
-	return a.Eq(value)
+	return this.Eq(value)
 }
-func (a Attr[M, T]) NotNull() Specification[M] {
-	return Lift[M](crud.IsNotNull(a.name))
-}
-
-func (a Attr[M, T]) In(vs ...T) Specification[M] {
-	return Lift[M](crud.InAny(a.name, vs))
+func (this Attr[M, T]) NotNull() Specification[M] {
+	return Lift[M](crud.IsNotNull(this.name))
 }
 
-func (a Attr[M, T]) NotIn(vs ...T) Specification[M] {
-	return Lift[M](crud.NotInAny(a.name, vs))
+func (this Attr[M, T]) In(vs ...T) Specification[M] {
+	return Lift[M](crud.InAny(this.name, vs))
+}
+
+func (this Attr[M, T]) NotIn(vs ...T) Specification[M] {
+	return Lift[M](crud.NotInAny(this.name, vs))
 }
 
 // Asc and Desc build sort terms for the same attribute.
-func (a Attr[M, T]) Asc() crud.Order  { return crud.Asc(a.name) }
-func (a Attr[M, T]) Desc() crud.Order { return crud.Desc(a.name) }
+func (this Attr[M, T]) Asc() crud.Order  { return crud.Asc(this.name) }
+func (this Attr[M, T]) Desc() crud.Order { return crud.Desc(this.name) }
 
 // Ord is an attribute whose values are ordered, adding range comparisons.
 type Ord[M any, T cmp.Ordered] struct{ Attr[M, T] }
@@ -105,12 +105,12 @@ func Ordered[M any, T cmp.Ordered](field string) Ord[M, T] {
 	return o
 }
 
-func (a Ord[M, T]) Gt(v T) Specification[M]  { return Lift[M](crud.Gt(a.name, v)) }
-func (a Ord[M, T]) Gte(v T) Specification[M] { return Lift[M](crud.Gte(a.name, v)) }
-func (a Ord[M, T]) Lt(v T) Specification[M]  { return Lift[M](crud.Lt(a.name, v)) }
-func (a Ord[M, T]) Lte(v T) Specification[M] { return Lift[M](crud.Lte(a.name, v)) }
-func (a Ord[M, T]) Between(low, high T) Specification[M] {
-	return Lift[M](crud.Between(a.name, low, high))
+func (this Ord[M, T]) Gt(v T) Specification[M]  { return Lift[M](crud.Gt(this.name, v)) }
+func (this Ord[M, T]) Gte(v T) Specification[M] { return Lift[M](crud.Gte(this.name, v)) }
+func (this Ord[M, T]) Lt(v T) Specification[M]  { return Lift[M](crud.Lt(this.name, v)) }
+func (this Ord[M, T]) Lte(v T) Specification[M] { return Lift[M](crud.Lte(this.name, v)) }
+func (this Ord[M, T]) Between(low, high T) Specification[M] {
+	return Lift[M](crud.Between(this.name, low, high))
 }
 
 // Str is a text attribute, adding pattern matching.
@@ -123,24 +123,28 @@ func Text[M any](field string) Str[M] {
 	return s
 }
 
-func (a Str[M]) Like(pattern string) Specification[M] { return Lift[M](crud.Like(a.name, pattern)) }
-func (a Str[M]) NotLike(pattern string) Specification[M] {
-	return Lift[M](crud.NotLike(a.name, pattern))
+func (this Str[M]) Like(pattern string) Specification[M] {
+	return Lift[M](crud.Like(this.name, pattern))
 }
-func (a Str[M]) LikeIgnoreCase(pattern string) Specification[M] {
-	return Lift[M](crud.LikeIgnoreCase(a.name, pattern))
+func (this Str[M]) NotLike(pattern string) Specification[M] {
+	return Lift[M](crud.NotLike(this.name, pattern))
 }
-func (a Str[M]) Contains(s string) Specification[M] { return Lift[M](crud.Contains(a.name, s)) }
-func (a Str[M]) ContainsIgnoreCase(s string) Specification[M] {
-	return Lift[M](crud.ContainsIgnoreCase(a.name, s))
+func (this Str[M]) LikeIgnoreCase(pattern string) Specification[M] {
+	return Lift[M](crud.LikeIgnoreCase(this.name, pattern))
 }
-func (a Str[M]) StartsWith(s string) Specification[M] { return Lift[M](crud.StartsWith(a.name, s)) }
-func (a Str[M]) StartsWithIgnoreCase(s string) Specification[M] {
-	return Lift[M](crud.StartsWithIgnoreCase(a.name, s))
+func (this Str[M]) Contains(s string) Specification[M] { return Lift[M](crud.Contains(this.name, s)) }
+func (this Str[M]) ContainsIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.ContainsIgnoreCase(this.name, s))
 }
-func (a Str[M]) EndsWith(s string) Specification[M] { return Lift[M](crud.EndsWith(a.name, s)) }
-func (a Str[M]) EndsWithIgnoreCase(s string) Specification[M] {
-	return Lift[M](crud.EndsWithIgnoreCase(a.name, s))
+func (this Str[M]) StartsWith(s string) Specification[M] {
+	return Lift[M](crud.StartsWith(this.name, s))
+}
+func (this Str[M]) StartsWithIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.StartsWithIgnoreCase(this.name, s))
+}
+func (this Str[M]) EndsWith(s string) Specification[M] { return Lift[M](crud.EndsWith(this.name, s)) }
+func (this Str[M]) EndsWithIgnoreCase(s string) Specification[M] {
+	return Lift[M](crud.EndsWithIgnoreCase(this.name, s))
 }
 
 // Cmp is a shorthand for time.Time and other ordered-by-comparison types that
@@ -156,12 +160,12 @@ func Comparable[M any, T any](field string) Cmp[M, T] {
 	return c
 }
 
-func (a Cmp[M, T]) Gt(v T) Specification[M]  { return Lift[M](crud.Gt(a.name, v)) }
-func (a Cmp[M, T]) Gte(v T) Specification[M] { return Lift[M](crud.Gte(a.name, v)) }
-func (a Cmp[M, T]) Lt(v T) Specification[M]  { return Lift[M](crud.Lt(a.name, v)) }
-func (a Cmp[M, T]) Lte(v T) Specification[M] { return Lift[M](crud.Lte(a.name, v)) }
-func (a Cmp[M, T]) Between(low, high T) Specification[M] {
-	return Lift[M](crud.Between(a.name, low, high))
+func (this Cmp[M, T]) Gt(v T) Specification[M]  { return Lift[M](crud.Gt(this.name, v)) }
+func (this Cmp[M, T]) Gte(v T) Specification[M] { return Lift[M](crud.Gte(this.name, v)) }
+func (this Cmp[M, T]) Lt(v T) Specification[M]  { return Lift[M](crud.Lt(this.name, v)) }
+func (this Cmp[M, T]) Lte(v T) Specification[M] { return Lift[M](crud.Lte(this.name, v)) }
+func (this Cmp[M, T]) Between(low, high T) Specification[M] {
+	return Lift[M](crud.Between(this.name, low, high))
 }
 
 // ---------------------------------------------------------------------------
@@ -192,16 +196,16 @@ func (a Cmp[M, T]) Between(low, high T) Specification[M] {
 type Rel[M any, T any] struct{ path string }
 
 // Path returns the canonical relation path.
-func (r Rel[M, T]) Path() string { return r.path }
+func (this Rel[M, T]) Path() string { return this.path }
 
 // RelPath returns the same path under a name no column shadows.
-func (r Rel[M, T]) RelPath() string { return r.path }
+func (this Rel[M, T]) RelPath() string { return this.path }
 
-func (r Rel[M, T]) String() string { return r.path }
+func (this Rel[M, T]) String() string { return this.path }
 
-func (r *Rel[M, T]) setPath(s string) { r.path = s }
+func (this *Rel[M, T]) setPath(s string) { this.path = s }
 
-func (r *Rel[M, T]) targetType() reflect.Type {
+func (this *Rel[M, T]) targetType() reflect.Type {
 	var z T
 	return reflect.TypeOf(&z).Elem()
 }
@@ -210,7 +214,7 @@ func (r *Rel[M, T]) targetType() reflect.Type {
 // embedded: a group that embeds one promotes these methods, so the group
 // satisfies relSettable too, and without this the root metamodel reads its
 // first relation group as a misplaced handle.
-func (r *Rel[M, T]) relType() reflect.Type { return reflect.TypeOf(*r) }
+func (this *Rel[M, T]) relType() reflect.Type { return reflect.TypeOf(*this) }
 
 type relSettable interface {
 	setPath(string)

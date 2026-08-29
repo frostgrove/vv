@@ -294,15 +294,15 @@ func TestMySQLScopedSavesJoinAnOpaqueForeignExecutor(t *testing.T) {
 				crudtest.Rows(docRow(1, 7, "before")), // policy snapshot
 				crudtest.Rows(docRow(1, 7, "after")),  // post-write refresh
 			).ExecResult(crud.Result{RowsAffected: 1})
-			repo := Docs.Bind(source, security.Gate(tenantPolicy))
+			repository := Docs.Bind(source, security.Gate(tenantPolicy))
 			// A foreign transaction needs no marker beyond Executor. The context
 			// is the caller's statement that every repository query belongs to it.
 			foreignCtx := crud.WithExecutor(ctx, foreign)
 			if name == "Save" {
-				if _, err := repo.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
+				if _, err := repository.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := repo.SaveAll(foreignCtx, []*Doc{{ID: 1, TenantID: 7, Title: "after", Body: "body"}}); err != nil {
+			} else if err := repository.SaveAll(foreignCtx, []*Doc{{ID: 1, TenantID: 7, Title: "after", Body: "body"}}); err != nil {
 				t.Fatal(err)
 			}
 			if source.TxDepth() != 0 || len(source.Statements()) != 0 {
@@ -375,9 +375,9 @@ func TestScopedSaveCannotBypassAnInnerSecurityGate(t *testing.T) {
 		},
 	}
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(41, 7, "before")))
-	repo := Docs.Bind(rec, security.Gate(tenantPolicy), security.Gate(inner))
+	repository := Docs.Bind(rec, security.Gate(tenantPolicy), security.Gate(inner))
 	d := Doc{ID: 41, TenantID: 7, Title: "mine", Body: "body"}
-	if _, err := repo.Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.Save(ctx, &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want an inner-gate denial", err)
 	}
 	if wrote(rec, "UPDATE") || wrote(rec, "INSERT") {
@@ -452,9 +452,9 @@ func TestScopedMySQLSaveRefreshesTheModelAfterTheConditionalWrite(t *testing.T) 
 
 func TestUnscopedDeleteAllIsRefused(t *testing.T) {
 	rec := crudtest.Postgres()
-	repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
+	repository := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
 
-	if _, err := repo.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.DeleteAll(context.Background()); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 	if len(rec.Statements()) != 0 {
@@ -463,7 +463,7 @@ func TestUnscopedDeleteAllIsRefused(t *testing.T) {
 
 	// Narrowing it makes it acceptable.
 	rec.ExecResult(crud.Result{RowsAffected: 2})
-	if _, err := repo.DeleteAll(context.Background(), crud.Where(crud.Eq("Title", "junk"))); err != nil {
+	if _, err := repository.DeleteAll(context.Background(), crud.Where(crud.Eq("Title", "junk"))); err != nil {
 		t.Fatal(err)
 	}
 	// So does opting in explicitly.
@@ -478,20 +478,20 @@ func TestUnscopedDeleteAllIsRefused(t *testing.T) {
 
 func TestReadOnlyPolicy(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 1, "a")))
-	repo := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()))
+	repository := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()))
 
-	if _, err := repo.GetByID(context.Background(), 1); err != nil {
+	if _, err := repository.GetByID(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	d := Doc{Title: "nope"}
-	if _, err := repo.Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.Save(context.Background(), &d); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
-	if _, err := repo.Delete(context.Background(), 1); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.Delete(context.Background(), 1); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 	title := "nope"
-	if _, err := repo.Update(context.Background(), 1, DocUpdate{Title: &title}); !errors.Is(err, security.ErrForbidden) {
+	if _, err := repository.Update(context.Background(), 1, DocUpdate{Title: &title}); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 }
@@ -506,8 +506,8 @@ func TestPoliciesCombine(t *testing.T) {
 			},
 		},
 	)
-	repo := Docs.Bind(rec, security.Gate(policy))
-	if _, err := repo.GetAll(withTenant(context.Background(), 7)); err != nil {
+	repository := Docs.Bind(rec, security.Gate(policy))
+	if _, err := repository.GetAll(withTenant(context.Background(), 7)); err != nil {
 		t.Fatal(err)
 	}
 	if got := lastWhere(rec); got != `("tenant_id" = $1 AND "title" <> $2)` {
@@ -525,8 +525,8 @@ func TestGateComposesWithOtherMiddleware(t *testing.T) {
 			return tracer{Core: next, name: name, seen: &seen}
 		}
 	}
-	repo := Docs.Bind(rec, trace("outer"), security.Gate(tenantPolicy), trace("inner"))
-	if _, err := repo.GetAll(withTenant(context.Background(), 7)); err != nil {
+	repository := Docs.Bind(rec, trace("outer"), security.Gate(tenantPolicy), trace("inner"))
+	if _, err := repository.GetAll(withTenant(context.Background(), 7)); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 2 || seen[0] != "outer" || seen[1] != "inner" {
@@ -543,9 +543,9 @@ type tracer struct {
 	seen *[]string
 }
 
-func (t tracer) GetAll(ctx context.Context, opts ...crud.Option) ([]Doc, error) {
-	*t.seen = append(*t.seen, t.name)
-	return t.Core.GetAll(ctx, opts...)
+func (this tracer) GetAll(ctx context.Context, options ...crud.Option) ([]Doc, error) {
+	*this.seen = append(*this.seen, this.name)
+	return this.Core.GetAll(ctx, options...)
 }
 
 // A frozen field is frozen through every verb, whichever spelling declared it.
@@ -560,11 +560,11 @@ func TestAFrozenFieldIsFrozenByEitherSpellingAndThroughBothVerbs(t *testing.T) {
 	for _, spelling := range []string{"TenantID", "tenant_id"} {
 		t.Run(spelling, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "mine")))
-			repo := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64](spelling)))
+			repository := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64](spelling)))
 
 			// PATCH: a DTO that defines the frozen field is refused.
 			other := int64(9)
-			_, err := repo.Update(context.Background(), 1, DocUpdate{TenantID: &other})
+			_, err := repository.Update(context.Background(), 1, DocUpdate{TenantID: &other})
 			if !errors.Is(err, security.ErrForbidden) {
 				t.Fatalf("declared as %q, the field was writable through PATCH: %v", spelling, err)
 			}

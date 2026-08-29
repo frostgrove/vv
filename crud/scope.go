@@ -40,11 +40,11 @@ type RelationScopes struct {
 // consumer who stores the result of the first call and extends it on the second
 // would be writing into a value another in-flight request is reading. Copying
 // costs one map per declaration and makes the shape mean what it looks like.
-func (rs *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
+func (this *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 	if p == nil {
-		return rs
+		return this
 	}
-	out := rs.clone()
+	out := this.clone()
 	if out.paths == nil {
 		out.paths = map[string]Predicate{}
 	}
@@ -55,29 +55,29 @@ func (rs *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 // clone answers a shallow copy, or an empty value for a nil receiver. The
 // predicates themselves are immutable ([[D-003]]: the AST is closed), so the maps
 // are all there is to copy.
-func (rs *RelationScopes) clone() *RelationScopes {
+func (this *RelationScopes) clone() *RelationScopes {
 	out := &RelationScopes{}
-	if rs == nil {
+	if this == nil {
 		return out
 	}
-	if len(rs.paths) > 0 {
-		out.paths = make(map[string]Predicate, len(rs.paths))
-		maps.Copy(out.paths, rs.paths)
+	if len(this.paths) > 0 {
+		out.paths = make(map[string]Predicate, len(this.paths))
+		maps.Copy(out.paths, this.paths)
 	}
-	if len(rs.models) > 0 {
-		out.models = make(map[reflect.Type]Predicate, len(rs.models))
-		maps.Copy(out.models, rs.models)
+	if len(this.models) > 0 {
+		out.models = make(map[reflect.Type]Predicate, len(this.models))
+		maps.Copy(out.models, this.models)
 	}
 	return out
 }
 
 // ForModel narrows a model wherever a hop lands on it.
 // It copies, for the reason [AtPath] gives.
-func (rs *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes {
+func (this *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes {
 	if p == nil || t == nil {
-		return rs
+		return this
 	}
-	out := rs.clone()
+	out := this.clone()
 	if out.models == nil {
 		out.models = map[reflect.Type]Predicate{}
 	}
@@ -90,17 +90,17 @@ func (rs *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes 
 // further, while a model rule remains the invariant for every occurrence of
 // that model (including a repository's own soft-delete scope on a
 // self-relation).
-func (rs *RelationScopes) At(path string, target *Meta) Predicate {
-	if rs == nil || target == nil {
+func (this *RelationScopes) At(path string, target *Meta) Predicate {
+	if this == nil || target == nil {
 		return nil
 	}
-	return both(rs.paths[path], rs.models[target.Type])
+	return both(this.paths[path], this.models[target.Type])
 }
 
 // Empty reports whether anything is declared at all, so callers can skip the
 // bookkeeping entirely.
-func (rs *RelationScopes) Empty() bool {
-	return rs == nil || (len(rs.paths) == 0 && len(rs.models) == 0)
+func (this *RelationScopes) Empty() bool {
+	return this == nil || (len(this.paths) == 0 && len(this.models) == 0)
 }
 
 // Resolve validates a request-specific relation narrowing against root and
@@ -112,15 +112,15 @@ func (rs *RelationScopes) Empty() bool {
 // remain a non-empty declaration that never applies, and True would look like a
 // narrowing while it narrows nothing. Resolve is the boundary where the model
 // is available, so it refuses both shapes before a query reaches SQL.
-func (rs *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
-	if rs.Empty() {
-		return rs, nil
+func (this *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
+	if this.Empty() {
+		return this, nil
 	}
 	if root == nil {
 		return nil, &SchemaError{Reason: "relation scopes need a root model"}
 	}
 	out := &RelationScopes{}
-	for path, p := range rs.paths {
+	for path, p := range this.paths {
 		rel, canonical, err := root.RelationAt(path)
 		if err != nil {
 			return nil, err
@@ -134,7 +134,7 @@ func (rs *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
 		}
 		out = out.AtPath(canonical, p)
 	}
-	for typ, p := range rs.models {
+	for typ, p := range this.models {
 		schema, err := SchemaOfType(typ)
 		if err != nil {
 			return nil, err
@@ -194,15 +194,15 @@ func both(a, b Predicate) Predicate {
 // under re-roots the path declarations at prefix, for a statement whose own
 // FROM is already that far down the path. Model declarations are unaffected —
 // they were never relative to anything.
-func (rs *RelationScopes) under(prefix string) *RelationScopes {
-	if rs == nil {
+func (this *RelationScopes) under(prefix string) *RelationScopes {
+	if this == nil {
 		return nil
 	}
-	if len(rs.paths) == 0 {
-		return rs
+	if len(this.paths) == 0 {
+		return this
 	}
-	out := &RelationScopes{models: rs.models}
-	for path, p := range rs.paths {
+	out := &RelationScopes{models: this.models}
+	for path, p := range this.paths {
 		rest, ok := strings.CutPrefix(path, prefix+".")
 		if !ok {
 			continue

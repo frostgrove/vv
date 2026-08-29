@@ -89,4 +89,4 @@ func Custom(methods []string, keyfunc Keyfunc) KeySource {
 }
 
 // valid reports whether the source can be used at all.
-func (k KeySource) valid() bool { return k.keyfunc != nil && len(k.methods) > 0 }
+func (this KeySource) valid() bool { return this.keyfunc != nil && len(this.methods) > 0 }

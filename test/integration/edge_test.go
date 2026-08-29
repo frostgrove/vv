@@ -291,9 +291,9 @@ func egSetup(t *testing.T) {
 	ctx := context.Background()
 	egOnce.Do(func() {
 		for _, tg := range egEngines() {
-			for _, stmt := range egSchema[tg.db] {
-				if _, err := tg.src.Exec(ctx, stmt); err != nil {
-					egErr = fmt.Errorf("%s: %s: %w", tg.db, egFirstLine(stmt), err)
+			for _, stmt := range egSchema[tg.database] {
+				if _, err := tg.source.Exec(ctx, stmt); err != nil {
+					egErr = fmt.Errorf("%s: %s: %w", tg.database, egFirstLine(stmt), err)
 					return
 				}
 			}
@@ -303,16 +303,16 @@ func egSetup(t *testing.T) {
 		t.Fatalf("the eg tables were never built: %v", egErr)
 	}
 	for _, tg := range egEngines() {
-		egWipe(t, tg.src)
+		egWipe(t, tg.source)
 	}
 }
 
-func egWipe(t *testing.T, src crud.Source) {
+func egWipe(t *testing.T, source crud.Source) {
 	t.Helper()
 	ctx := context.Background()
 	for _, table := range egTables {
-		if _, err := src.Exec(ctx, "DELETE FROM "+src.Dialect().Quote(table)); err != nil {
-			t.Fatalf("%s: wiping %s: %v", src.Dialect().Name(), table, err)
+		if _, err := source.Exec(ctx, "DELETE FROM "+source.Dialect().Quote(table)); err != nil {
+			t.Fatalf("%s: wiping %s: %v", source.Dialect().Name(), table, err)
 		}
 	}
 }
@@ -327,9 +327,9 @@ func egFirstLine(s string) string {
 
 // egTarget is one database reached one way.
 type egTarget struct {
-	name string
-	db   string // "postgres" or "mysql"
-	src  crud.Source
+	name     string
+	database string // "postgres" or "mysql"
+	source   crud.Source
 	// classifies says whether this source was given an engine to classify
 	// against. The two ent entries are not: they are built on crudsql.From,
 	// which names no engine and therefore gets no classifier ([[D-046]]). A
@@ -401,58 +401,58 @@ type egSpy struct {
 	fired  map[string]bool
 }
 
-func egWatch(src crud.Source) *egSpy {
-	return &egSpy{ex: src, d: src.Dialect(), before: map[string]func(){}, fired: map[string]bool{}}
+func egWatch(source crud.Source) *egSpy {
+	return &egSpy{ex: source, d: source.Dialect(), before: map[string]func(){}, fired: map[string]bool{}}
 }
 
-func (s *egSpy) Dialect() crud.Dialect { return s.d }
+func (this *egSpy) Dialect() crud.Dialect { return this.d }
 
-func (s *egSpy) record(q string) {
-	s.mu.Lock()
-	s.seen = append(s.seen, q)
+func (this *egSpy) record(q string) {
+	this.mu.Lock()
+	this.seen = append(this.seen, q)
 	var hook func()
-	for key, fn := range s.before {
-		if !s.fired[key] && strings.Contains(q, key) {
-			s.fired[key] = true
+	for key, fn := range this.before {
+		if !this.fired[key] && strings.Contains(q, key) {
+			this.fired[key] = true
 			hook = fn
 			break
 		}
 	}
-	s.mu.Unlock()
+	this.mu.Unlock()
 	if hook != nil {
 		hook()
 	}
 }
 
-func (s *egSpy) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
-	s.record(q)
-	return s.ex.Exec(ctx, q, args...)
+func (this *egSpy) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
+	this.record(q)
+	return this.ex.Exec(ctx, q, args...)
 }
 
-func (s *egSpy) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
-	s.record(q)
-	return s.ex.Query(ctx, q, args...)
+func (this *egSpy) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	this.record(q)
+	return this.ex.Query(ctx, q, args...)
 }
 
 // beforeFirst arranges for fn to run immediately before the first statement
 // whose text contains key.
-func (s *egSpy) beforeFirst(key string, fn func()) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.before[key] = fn
+func (this *egSpy) beforeFirst(key string, fn func()) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.before[key] = fn
 }
 
 // statements returns everything recorded since the last forget.
-func (s *egSpy) statements() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.seen...)
+func (this *egSpy) statements() []string {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return append([]string(nil), this.seen...)
 }
 
 // matching narrows statements to the ones containing sub.
-func (s *egSpy) matching(sub string) []string {
+func (this *egSpy) matching(sub string) []string {
 	var out []string
-	for _, q := range s.statements() {
+	for _, q := range this.statements() {
 		if strings.Contains(q, sub) {
 			out = append(out, q)
 		}
@@ -460,10 +460,10 @@ func (s *egSpy) matching(sub string) []string {
 	return out
 }
 
-func (s *egSpy) forget() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.seen = nil
+func (this *egSpy) forget() {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.seen = nil
 }
 
 var _ crud.Source = (*egSpy)(nil)
@@ -471,10 +471,10 @@ var _ crud.Source = (*egSpy)(nil)
 // ---------------------------------------------------------------------------
 // helpers
 
-func egSeed(t *testing.T, repo *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
+func egSeed(t *testing.T, repository *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
 	t.Helper()
 	for _, r := range rows {
-		if err := repo.Save(context.Background(), &r); err != nil {
+		if err := repository.Save(context.Background(), &r); err != nil {
 			t.Fatalf("seeding %d: %v", r.ID, err)
 		}
 	}
@@ -495,14 +495,14 @@ func egNames(rows []EgRow) []string {
 func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 	ctx := context.Background()
 	for _, target := range []struct {
-		name string
-		db   *sql.DB
+		name     string
+		database *sql.DB
 	}{
 		{"mysql", myDB},
 		{"mariadb", mariaDB},
 	} {
 		t.Run(target.name, func(t *testing.T) {
-			conn, err := target.db.Conn(ctx)
+			conn, err := target.database.Conn(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -522,22 +522,22 @@ func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			src := crudsql.Source(conn, crud.MySQL{})
-			if _, err := src.Exec(ctx, "DELETE FROM `users`"); err != nil {
+			source := crudsql.Source(conn, crud.MySQL{})
+			if _, err := source.Exec(ctx, "DELETE FROM `users`"); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				if _, err := src.Exec(ctx, "DELETE FROM `users`"); err != nil {
+				if _, err := source.Exec(ctx, "DELETE FROM `users`"); err != nil {
 					t.Errorf("cleaning users: %v", err)
 				}
 			})
-			repo := Users.Bind(src)
+			repository := Users.Bind(source)
 			for _, user := range []User{
 				{TenantID: 1, Email: "match@x.io", Name: "100%_raw"},
 				{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
 				{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 			} {
-				if err := repo.Save(ctx, &user); err != nil {
+				if err := repository.Save(ctx, &user); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -553,7 +553,7 @@ func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 				{crud.StartsWithIgnoreCase("Name", "100%"), "100%_raw"},
 				{crud.EndsWithIgnoreCase("Name", "_RAW"), "100%_raw"},
 			} {
-				got, err := repo.GetAll(ctx, crud.Where(tc.pred))
+				got, err := repository.GetAll(ctx, crud.Where(tc.pred))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -583,8 +583,8 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 
 	for _, tg := range egTargets() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			s := egWatch(tg.src)
+			egWipe(t, tg.source)
+			s := egWatch(tg.source)
 			rows := EgRows.Bind(s)
 
 			t.Run("an empty table", func(t *testing.T) {
@@ -707,7 +707,7 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				}
 				// With a generated key there is nothing missing: every column is
 				// simply at its zero value, and that is a row.
-				autos := EgAutos.Bind(tg.src)
+				autos := EgAutos.Bind(tg.source)
 				var blank EgAuto
 				if err := autos.Save(ctx, &blank); err != nil {
 					t.Fatal(err)
@@ -769,8 +769,8 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 
 	for _, tg := range egTargets() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
 			t.Run("the largest key an int64 can hold", func(t *testing.T) {
 				big := EgRow{ID: math.MaxInt64, Tenant: 1, Name: "big"}
@@ -823,7 +823,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 			})
 
 			t.Run("LIKE metacharacters in a value are literal", func(t *testing.T) {
-				egWipe(t, tg.src)
+				egWipe(t, tg.source)
 				egSeed(t, rows,
 					EgRow{ID: 1, Tenant: 1, Name: "100%_raw"},
 					EgRow{ID: 2, Tenant: 1, Name: "1005xraw"},
@@ -853,7 +853,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 			})
 
 			t.Run("quotes, backslashes, an emoji and a long string", func(t *testing.T) {
-				egWipe(t, tg.src)
+				egWipe(t, tg.source)
 				egSeed(t, rows, EgRow{ID: 1, Tenant: 1, Name: awkward, Note: crud.Set(long)})
 
 				got, err := rows.GetByID(ctx, 1)
@@ -883,7 +883,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 			// it, so it reaches the database whether or not the caller meant it
 			// to — and year 1 is outside the range MySQL documents for DATETIME.
 			t.Run("the zero time", func(t *testing.T) {
-				autos := EgAutos.Bind(tg.src)
+				autos := EgAutos.Bind(tg.source)
 				z := EgAuto{Name: "zero", At: crud.Set(time.Time{})}
 				if err := autos.Save(ctx, &z); err != nil {
 					t.Fatalf("storing the zero time: %v", err)
@@ -919,11 +919,11 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 
 	for _, tg := range egBeginners() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 			egSeed(t, rows, EgRow{ID: 1, Tenant: 1, Name: "contended", Score: crud.Set(0)})
 
-			first, err := tg.src.(crud.Beginner).Begin(ctx)
+			first, err := tg.source.(crud.Beginner).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -944,7 +944,7 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 			// assertion that follows.
 			started := make(chan struct{})
 			go func() {
-				second, err := tg.src.(crud.Beginner).Begin(ctx)
+				second, err := tg.source.(crud.Beginner).Begin(ctx)
 				if err != nil {
 					close(started)
 					done <- err
@@ -1015,8 +1015,8 @@ func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			cons := EgConses.Bind(tg.src)
+			egWipe(t, tg.source)
+			cons := EgConses.Bind(tg.source)
 
 			var ids []int64
 			for _, slug := range []string{"a", "b", "c"} {
@@ -1084,10 +1084,10 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 				{"rolled back", func(tx crud.Tx) error { return tx.Rollback(ctx) }},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					egWipe(t, tg.src)
-					rows := EgRows.Bind(tg.src)
+					egWipe(t, tg.source)
+					rows := EgRows.Bind(tg.source)
 
-					tx, err := tg.src.(crud.Beginner).Begin(ctx)
+					tx, err := tg.source.(crud.Beginner).Begin(ctx)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -1132,10 +1132,10 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 
 	for _, tg := range egBeginners() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
-			err := crud.InTx(ctx, tg.src, func(ctx context.Context) error {
+			err := crud.InTx(ctx, tg.source, func(ctx context.Context) error {
 				outer := EgRow{ID: 1, Tenant: 1, Name: "outer"}
 				if err := rows.Save(ctx, &outer); err != nil {
 					return err
@@ -1190,10 +1190,10 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 
 	for _, tg := range egBeginners() {
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
-			rows := EgRows.Bind(tg.src)
+			egWipe(t, tg.source)
+			rows := EgRows.Bind(tg.source)
 
-			err := crud.InTx(ctx, tg.src, func(ctx context.Context) error {
+			err := crud.InTx(ctx, tg.source, func(ctx context.Context) error {
 				if err := rows.Save(ctx, &EgRow{ID: 1, Tenant: 1, Name: "outer"}); err != nil {
 					return err
 				}
@@ -1260,13 +1260,13 @@ func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
 	egSetup(t)
 
 	for _, tg := range egBeginners() {
-		if tg.db != "postgres" {
+		if tg.database != "postgres" {
 			continue
 		}
 		t.Run(tg.name, func(t *testing.T) {
-			egWipe(t, tg.src)
+			egWipe(t, tg.source)
 
-			tx, err := tg.src.(crud.Beginner).Begin(ctx)
+			tx, err := tg.source.(crud.Beginner).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1312,18 +1312,18 @@ func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
 func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
-	src := crudsql.Postgres(pgDB).WithTxOptions(&sql.TxOptions{Isolation: sql.LevelSerializable})
-	egWipe(t, src)
+	source := crudsql.Postgres(pgDB).WithTxOptions(&sql.TxOptions{Isolation: sql.LevelSerializable})
+	egWipe(t, source)
 
-	rows := EgRows.Bind(src)
+	rows := EgRows.Bind(source)
 	egSeed(t, rows, EgRow{ID: 1, Tenant: 1, Name: "a", Score: crud.Set(1)})
 
-	first, err := src.Begin(ctx)
+	first, err := source.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Rollback(ctx)
-	second, err := src.Begin(ctx)
+	second, err := source.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1373,8 +1373,8 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			t.Run("a parent with no children", func(t *testing.T) {
-				egWipe(t, tg.src)
-				parents := EgParents.Bind(tg.src)
+				egWipe(t, tg.source)
+				parents := EgParents.Bind(tg.source)
 				for _, p := range []EgParent{{ID: 1, Name: "lonely"}, {ID: 2, Name: "also lonely"}} {
 					if err := parents.Save(ctx, &p); err != nil {
 						t.Fatal(err)
@@ -1401,8 +1401,8 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 			})
 
 			t.Run("a child whose foreign key is NULL", func(t *testing.T) {
-				egWipe(t, tg.src)
-				parents, kids := EgParents.Bind(tg.src), EgKids.Bind(tg.src)
+				egWipe(t, tg.source)
+				parents, kids := EgParents.Bind(tg.source), EgKids.Bind(tg.source)
 				p := EgParent{ID: 1, Name: "p"}
 				if err := parents.Save(ctx, &p); err != nil {
 					t.Fatal(err)
@@ -1441,8 +1441,8 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 			})
 
 			t.Run("when every foreign key is NULL nothing is asked", func(t *testing.T) {
-				egWipe(t, tg.src)
-				s := egWatch(tg.src)
+				egWipe(t, tg.source)
+				s := egWatch(tg.source)
 				kids := EgKids.Bind(s)
 				for _, k := range []EgKid{
 					{ID: 1, ParentID: crud.Null[int64](), Name: "a"},
@@ -1467,8 +1467,8 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 			})
 
 			t.Run("a many_to_many past the batch boundary", func(t *testing.T) {
-				egWipe(t, tg.src)
-				s := egWatch(tg.src)
+				egWipe(t, tg.source)
+				s := egWatch(tg.source)
 				parents := EgParents.Bind(s)
 
 				// One mark shared by everybody, and one parent left out of the
@@ -1483,9 +1483,9 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 						links = append(links, []any{int64(i), int64(1)})
 					}
 				}
-				mxBulkInsert(t, tg.src, "eg_parents", []string{"id", "name"}, owners)
-				mxBulkInsert(t, tg.src, "eg_marks", []string{"id", "slug"}, [][]any{{int64(1), "shared"}})
-				mxBulkInsert(t, tg.src, "eg_parent_marks", []string{"parent_id", "mark_id"}, links)
+				mxBulkInsert(t, tg.source, "eg_parents", []string{"id", "name"}, owners)
+				mxBulkInsert(t, tg.source, "eg_marks", []string{"id", "slug"}, [][]any{{int64(1), "shared"}})
+				mxBulkInsert(t, tg.source, "eg_parent_marks", []string{"parent_id", "mark_id"}, links)
 				s.forget()
 
 				got, err := parents.GetAll(ctx, crud.Preload("Marks"), crud.OrderBy(crud.Asc("ID")))
@@ -1512,15 +1512,15 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 			})
 
 			t.Run("a preload path deeper than the budget", func(t *testing.T) {
-				egWipe(t, tg.src)
-				parents := EgParents.Bind(tg.src)
-				shallow := EgShallowParents.Bind(tg.src)
+				egWipe(t, tg.source)
+				parents := EgParents.Bind(tg.source)
+				shallow := EgShallowParents.Bind(tg.source)
 				p := EgParent{ID: 1, Name: "p"}
 				if err := parents.Save(ctx, &p); err != nil {
 					t.Fatal(err)
 				}
 				k := EgKid{ID: 1, ParentID: crud.Set(int64(1)), Name: "k"}
-				if err := EgKids.Bind(tg.src).Save(ctx, &k); err != nil {
+				if err := EgKids.Bind(tg.source).Save(ctx, &k); err != nil {
 					t.Fatal(err)
 				}
 

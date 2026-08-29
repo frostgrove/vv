@@ -74,32 +74,32 @@ func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 	}
 
 	open := func(database string) *sql.DB {
-		db, err := sql.Open("pgx", shardDSN(t, database))
+		database, err := sql.Open("pgx", shardDSN(t, database))
 		if err != nil {
 			t.Fatalf("opening %s: %v", database, err)
 		}
-		db.SetMaxOpenConns(4)
-		t.Cleanup(func() { _ = db.Close() })
+		database.SetMaxOpenConns(4)
+		t.Cleanup(func() { _ = database.Close() })
 		for _, stmt := range []string{
 			`CREATE TABLE IF NOT EXISTS shard_rows (id bigserial PRIMARY KEY, name text NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS shard_notes (id bigserial PRIMARY KEY, text text NOT NULL)`,
 			`DELETE FROM shard_rows`,
 			`DELETE FROM shard_notes`,
 		} {
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if _, err := database.ExecContext(ctx, stmt); err != nil {
 				t.Fatalf("%s: %s: %v", database, stmt, err)
 			}
 		}
-		return db
+		return database
 	}
 	return open("vv_shard_a"), open("vv_shard_b")
 }
 
 // names reads a shard directly, so the assertion never goes through the seam
 // under test.
-func names(t *testing.T, db *sql.DB) []string {
+func names(t *testing.T, database *sql.DB) []string {
 	t.Helper()
-	rows, err := db.QueryContext(context.Background(), "SELECT name FROM shard_rows ORDER BY name")
+	rows, err := database.QueryContext(context.Background(), "SELECT name FROM shard_rows ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}

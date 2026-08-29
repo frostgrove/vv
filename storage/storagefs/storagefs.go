@@ -148,45 +148,45 @@ func New(config *Config) (*Backend, error) {
 }
 
 // Close releases the root directory handle. It is safe to call more than once.
-func (b *Backend) Close() error {
-	if b == nil || b.root == nil {
+func (this *Backend) Close() error {
+	if this == nil || this.root == nil {
 		return nil
 	}
-	b.closeOnce.Do(func() { b.closeErr = b.root.Close() })
-	return b.closeErr
+	this.closeOnce.Do(func() { this.closeErr = this.root.Close() })
+	return this.closeErr
 }
 
-func (b *Backend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, opts storage.PutOptions) (storage.Info, error) {
+func (this *Backend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
 	if err := contextError(ctx); err != nil {
 		return storage.Info{}, storage.NewError("put", storage.KindCancelled, err)
 	}
-	mode, err := writeMode(opts.Mode)
+	mode, err := writeMode(options.Mode)
 	if err != nil {
 		return storage.Info{}, storage.NewError("put", storage.KindInvalid, err)
 	}
-	work, workName, err := b.newWorkFile(namespace)
+	work, workName, err := this.newWorkFile(namespace)
 	if err != nil {
 		return storage.Info{}, filesystemError("put", err)
 	}
 	defer func() {
-		_ = b.root.Remove(workName)
+		_ = this.root.Remove(workName)
 	}()
 
-	info, err := b.writePrivateFile(ctx, work, source, opts.Size, opts.ContentType, opts.Metadata, time.Time{})
+	info, err := this.writePrivateFile(ctx, work, source, options.Size, options.ContentType, options.Metadata, time.Time{})
 	if err != nil {
 		return storage.Info{}, operationError("put", err)
 	}
-	if _, err := b.place(ctx, workName, objectPath(namespace, key), mode); err != nil {
+	if _, err := this.place(ctx, workName, objectPath(namespace, key), mode); err != nil {
 		return storage.Info{}, operationError("put", err)
 	}
 	return info, nil
 }
 
-func (b *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, storage.Info{}, storage.NewError("open", storage.KindCancelled, err)
 	}
-	file, header, err := b.openPrivateFile(objectPath(namespace, key))
+	file, header, err := this.openPrivateFile(objectPath(namespace, key))
 	if err != nil {
 		return nil, storage.Info{}, filesystemError("open", err)
 	}
@@ -197,11 +197,11 @@ func (b *Backend) Open(ctx context.Context, namespace storage.Namespace, key sto
 	return &objectBody{ctx: ctx, file: file, remaining: header.Size}, header.info(), nil
 }
 
-func (b *Backend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
+func (this *Backend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
 	if err := contextError(ctx); err != nil {
 		return storage.Info{}, storage.NewError("head", storage.KindCancelled, err)
 	}
-	file, header, err := b.openPrivateFile(objectPath(namespace, key))
+	file, header, err := this.openPrivateFile(objectPath(namespace, key))
 	if err != nil {
 		return storage.Info{}, filesystemError("head", err)
 	}
@@ -211,31 +211,31 @@ func (b *Backend) Head(ctx context.Context, namespace storage.Namespace, key sto
 	return header.info(), nil
 }
 
-func (b *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
 	if err := contextError(ctx); err != nil {
 		return storage.NewError("delete", storage.KindCancelled, err)
 	}
 	name := objectPath(namespace, key)
 	removed := true
-	if err := b.root.Remove(name); err != nil {
+	if err := this.root.Remove(name); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return filesystemError("delete", err)
 		}
 		removed = false
 	}
-	if b.syncWrites && removed {
-		if err := b.syncDirectory(path.Dir(name)); err != nil {
+	if this.syncWrites && removed {
+		if err := this.syncDirectory(path.Dir(name)); err != nil {
 			return filesystemError("delete", err)
 		}
 	}
 	return nil
 }
 
-func (b *Backend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, opts storage.StageOptions) (storage.Staged, error) {
+func (this *Backend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
 	if err := contextError(ctx); err != nil {
 		return storage.Staged{}, storage.NewError("stage", storage.KindCancelled, err)
 	}
-	ttl := opts.ExpiresIn
+	ttl := options.ExpiresIn
 	if ttl == 0 {
 		ttl = storage.DefaultStageTTL
 	}
@@ -246,47 +246,47 @@ func (b *Backend) Stage(ctx context.Context, namespace storage.Namespace, source
 	if err != nil {
 		return storage.Staged{}, err
 	}
-	expiresAt := b.now().UTC().Add(ttl)
-	work, workName, err := b.newWorkFile(namespace)
+	expiresAt := this.now().UTC().Add(ttl)
+	work, workName, err := this.newWorkFile(namespace)
 	if err != nil {
 		return storage.Staged{}, filesystemError("stage", err)
 	}
 	defer func() {
-		_ = b.root.Remove(workName)
+		_ = this.root.Remove(workName)
 	}()
 
-	info, err := b.writePrivateFile(ctx, work, source, opts.Size, opts.ContentType, opts.Metadata, expiresAt)
+	info, err := this.writePrivateFile(ctx, work, source, options.Size, options.ContentType, options.Metadata, expiresAt)
 	if err != nil {
 		return storage.Staged{}, operationError("stage", err)
 	}
-	if _, err := b.place(ctx, workName, stagePath(namespace, id), storage.CreateOnly); err != nil {
+	if _, err := this.place(ctx, workName, stagePath(namespace, id), storage.CreateOnly); err != nil {
 		return storage.Staged{}, operationError("stage", err)
 	}
 	return storage.Staged{ID: id, Info: info, ExpiresAt: expiresAt}, nil
 }
 
-func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, opts storage.PromoteOptions) (result storage.Info, resultErr error) {
+func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, options storage.PromoteOptions) (result storage.Info, resultErr error) {
 	if err := contextError(ctx); err != nil {
 		return storage.Info{}, storage.NewError("promote", storage.KindCancelled, err)
 	}
-	mode, err := writeMode(opts.Mode)
+	mode, err := writeMode(options.Mode)
 	if err != nil {
 		return storage.Info{}, storage.NewError("promote", storage.KindInvalid, err)
 	}
-	claimedName, err := b.claimStage("promote", namespace, id)
+	claimedName, err := this.claimStage("promote", namespace, id)
 	if err != nil {
 		return storage.Info{}, err
 	}
 	releaseOnReturn := true
 	defer func() {
 		if releaseOnReturn {
-			if err := b.releaseClaim(namespace, id); err != nil {
+			if err := this.releaseClaim(namespace, id); err != nil {
 				result = storage.Info{}
 				resultErr = filesystemError("promote", err)
 			}
 		}
 	}()
-	file, header, err := b.openPrivateFile(claimedName)
+	file, header, err := this.openPrivateFile(claimedName)
 	if err != nil {
 		return storage.Info{}, filesystemError("promote", err)
 	}
@@ -297,8 +297,8 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	if header.ExpiresAt == 0 {
 		return storage.Info{}, storage.NewError("promote", storage.KindInternal, fmt.Errorf("private stage has no expiry"))
 	}
-	if !b.now().Before(time.Unix(0, header.ExpiresAt)) {
-		consumed, err := b.consumeClaim(namespace, id, b.root.Remove)
+	if !this.now().Before(time.Unix(0, header.ExpiresAt)) {
+		consumed, err := this.consumeClaim(namespace, id, this.root.Remove)
 		if consumed {
 			releaseOnReturn = false
 		}
@@ -307,13 +307,13 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 		}
 		return storage.Info{}, storage.NewError("promote", storage.KindExpired, fmt.Errorf("stage expired"))
 	}
-	placed, err := b.placeClaim(ctx, namespace, claimedName, objectPath(namespace, key), mode)
+	placed, err := this.placeClaim(ctx, namespace, claimedName, objectPath(namespace, key), mode)
 	if placed {
 		// Final identity is visible while both protecting links still exist.
 		// Consume stage before claim so a second promoter can never observe an
 		// unlocked live stage, including after a post-placement sync failure.
 		releaseOnReturn = false
-		if _, consumeErr := b.consumeClaim(namespace, id, b.removeClaimName); consumeErr != nil {
+		if _, consumeErr := this.consumeClaim(namespace, id, this.removeClaimName); consumeErr != nil {
 			return storage.Info{}, filesystemError("promote", consumeErr)
 		}
 	}
@@ -323,15 +323,15 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	return header.info(), nil
 }
 
-func (b *Backend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) error {
-	return b.abortWithRemove(ctx, namespace, id, b.root.Remove)
+func (this *Backend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) error {
+	return this.abortWithRemove(ctx, namespace, id, this.root.Remove)
 }
 
-func (b *Backend) abortWithRemove(ctx context.Context, namespace storage.Namespace, id storage.StageID, remove func(string) error) (resultErr error) {
+func (this *Backend) abortWithRemove(ctx context.Context, namespace storage.Namespace, id storage.StageID, remove func(string) error) (resultErr error) {
 	if err := contextError(ctx); err != nil {
 		return storage.NewError("abort", storage.KindCancelled, err)
 	}
-	claimedName, err := b.claimStage("abort", namespace, id)
+	claimedName, err := this.claimStage("abort", namespace, id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil
 	}
@@ -342,12 +342,12 @@ func (b *Backend) abortWithRemove(ctx context.Context, namespace storage.Namespa
 	releaseOnReturn := true
 	defer func() {
 		if releaseOnReturn {
-			if err := b.releaseClaim(namespace, id); err != nil {
+			if err := this.releaseClaim(namespace, id); err != nil {
 				resultErr = filesystemError("abort", err)
 			}
 		}
 	}()
-	consumed, err := b.consumeClaim(namespace, id, remove)
+	consumed, err := this.consumeClaim(namespace, id, remove)
 	if consumed {
 		releaseOnReturn = false
 	}
@@ -357,30 +357,30 @@ func (b *Backend) abortWithRemove(ctx context.Context, namespace storage.Namespa
 	return nil
 }
 
-func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespace, opts storage.CleanupOptions) (storage.CleanupResult, error) {
+func (this *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespace, options storage.CleanupOptions) (storage.CleanupResult, error) {
 	if err := contextError(ctx); err != nil {
 		return storage.CleanupResult{}, storage.NewError("cleanup", storage.KindCancelled, err)
 	}
-	limit := opts.Limit
+	limit := options.Limit
 	if limit <= 0 {
 		limit = storage.DefaultCleanupLimit
 	}
 	result := storage.CleanupResult{}
-	if err := b.cleanupExpiredStages(ctx, namespace, limit, &result); err != nil {
+	if err := this.cleanupExpiredStages(ctx, namespace, limit, &result); err != nil {
 		return result, err
 	}
 	if result.More {
 		return result, nil
 	}
-	if err := b.cleanupOrphanWork(ctx, namespace, limit, &result); err != nil {
+	if err := this.cleanupOrphanWork(ctx, namespace, limit, &result); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (b *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Namespace, limit int, result *storage.CleanupResult) error {
+func (this *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Namespace, limit int, result *storage.CleanupResult) error {
 	directory := stageDirectory(namespace)
-	dir, err := b.root.Open(directory)
+	dir, err := this.root.Open(directory)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -400,7 +400,7 @@ func (b *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Na
 				continue
 			}
 			name := path.Join(directory, entry.Name())
-			file, header, openErr := b.openPrivateFile(name)
+			file, header, openErr := this.openPrivateFile(name)
 			if openErr != nil {
 				if errors.Is(openErr, fs.ErrNotExist) {
 					continue
@@ -415,12 +415,12 @@ func (b *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Na
 			if closeErr := file.Close(); closeErr != nil {
 				return filesystemError("cleanup", closeErr)
 			}
-			if header.ExpiresAt == 0 || b.now().Before(time.Unix(0, header.ExpiresAt)) {
+			if header.ExpiresAt == 0 || this.now().Before(time.Unix(0, header.ExpiresAt)) {
 				continue
 			}
 			removed := false
 			for _, ownedName := range []string{stagePath(namespace, id), stageClaimPath(namespace, id)} {
-				if removeErr := b.root.Remove(ownedName); removeErr != nil {
+				if removeErr := this.root.Remove(ownedName); removeErr != nil {
 					if errors.Is(removeErr, fs.ErrNotExist) {
 						continue
 					}
@@ -433,7 +433,7 @@ func (b *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Na
 				dirty = true
 				if result.Removed == limit {
 					result.More = true
-					return b.finishCleanupDirectory(directory, dirty)
+					return this.finishCleanupDirectory(directory, dirty)
 				}
 			}
 		}
@@ -444,12 +444,12 @@ func (b *Backend) cleanupExpiredStages(ctx context.Context, namespace storage.Na
 			return filesystemError("cleanup", readErr)
 		}
 	}
-	return b.finishCleanupDirectory(directory, dirty)
+	return this.finishCleanupDirectory(directory, dirty)
 }
 
-func (b *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Namespace, limit int, result *storage.CleanupResult) error {
+func (this *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Namespace, limit int, result *storage.CleanupResult) error {
 	directory := path.Join(privateDirectory, "work", namespace.Value())
-	dir, err := b.root.Open(directory)
+	dir, err := this.root.Open(directory)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -458,7 +458,7 @@ func (b *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Names
 	}
 	defer dir.Close()
 	dirty := false
-	cutoff := b.now().Add(-orphanWorkTTL)
+	cutoff := this.now().Add(-orphanWorkTTL)
 	for {
 		if err := contextError(ctx); err != nil {
 			return storage.NewError("cleanup", storage.KindCancelled, err)
@@ -478,7 +478,7 @@ func (b *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Names
 			if info.ModTime().After(cutoff) {
 				continue
 			}
-			if removeErr := b.root.Remove(path.Join(directory, entry.Name())); removeErr != nil {
+			if removeErr := this.root.Remove(path.Join(directory, entry.Name())); removeErr != nil {
 				if errors.Is(removeErr, fs.ErrNotExist) {
 					continue
 				}
@@ -488,7 +488,7 @@ func (b *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Names
 			dirty = true
 			if result.Removed == limit {
 				result.More = true
-				return b.finishCleanupDirectory(directory, dirty)
+				return this.finishCleanupDirectory(directory, dirty)
 			}
 		}
 		if readErr == io.EOF {
@@ -498,30 +498,30 @@ func (b *Backend) cleanupOrphanWork(ctx context.Context, namespace storage.Names
 			return filesystemError("cleanup", readErr)
 		}
 	}
-	return b.finishCleanupDirectory(directory, dirty)
+	return this.finishCleanupDirectory(directory, dirty)
 }
 
-func (b *Backend) finishCleanupDirectory(directory string, dirty bool) error {
-	if b.syncWrites && dirty {
-		if err := b.syncDirectory(directory); err != nil {
+func (this *Backend) finishCleanupDirectory(directory string, dirty bool) error {
+	if this.syncWrites && dirty {
+		if err := this.syncDirectory(directory); err != nil {
 			return filesystemError("cleanup", err)
 		}
 	}
 	return nil
 }
 
-func (b *Backend) Capabilities() storage.Capabilities {
+func (this *Backend) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
 		CreateOnly:   true,
 		Replace:      true,
 		Staging:      true,
-		TemporaryURL: b != nil && b.baseURL != nil,
+		TemporaryURL: this != nil && this.baseURL != nil,
 	}
 }
 
-func (b *Backend) newWorkFile(namespace storage.Namespace) (*os.File, string, error) {
+func (this *Backend) newWorkFile(namespace storage.Namespace) (*os.File, string, error) {
 	directory := path.Join(privateDirectory, "work", namespace.Value())
-	if err := b.root.MkdirAll(directory, b.dirMode); err != nil {
+	if err := this.root.MkdirAll(directory, this.dirMode); err != nil {
 		return nil, "", err
 	}
 	for range 16 {
@@ -530,16 +530,16 @@ func (b *Backend) newWorkFile(namespace storage.Namespace) (*os.File, string, er
 			return nil, "", err
 		}
 		name := path.Join(directory, encodeCaseSafe(random[:])+".tmp")
-		file, err := b.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, b.fileMode)
+		file, err := this.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, this.fileMode)
 		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return nil, "", err
 		}
-		if err := file.Chmod(b.fileMode); err != nil {
+		if err := file.Chmod(this.fileMode); err != nil {
 			_ = file.Close()
-			_ = b.root.Remove(name)
+			_ = this.root.Remove(name)
 			return nil, "", err
 		}
 		return file, name, nil
@@ -547,9 +547,9 @@ func (b *Backend) newWorkFile(namespace storage.Namespace) (*os.File, string, er
 	return nil, "", fmt.Errorf("could not allocate a private work file")
 }
 
-func (b *Backend) newWorkLink(namespace storage.Namespace, sourceName string) (string, error) {
+func (this *Backend) newWorkLink(namespace storage.Namespace, sourceName string) (string, error) {
 	directory := path.Join(privateDirectory, "work", namespace.Value())
-	if err := b.root.MkdirAll(directory, b.dirMode); err != nil {
+	if err := this.root.MkdirAll(directory, this.dirMode); err != nil {
 		return "", err
 	}
 	for range 16 {
@@ -558,7 +558,7 @@ func (b *Backend) newWorkLink(namespace storage.Namespace, sourceName string) (s
 			return "", err
 		}
 		name := path.Join(directory, encodeCaseSafe(random[:])+".tmp")
-		err := b.root.Link(sourceName, name)
+		err := this.root.Link(sourceName, name)
 		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
@@ -579,22 +579,22 @@ func validWorkName(name string) bool {
 	return err == nil && len(decoded) == workRandomBytes && encodeCaseSafe(decoded) == raw
 }
 
-func (b *Backend) place(ctx context.Context, sourceName, destinationName string, mode storage.WriteMode) (bool, error) {
+func (this *Backend) place(ctx context.Context, sourceName, destinationName string, mode storage.WriteMode) (bool, error) {
 	if err := contextError(ctx); err != nil {
 		return false, storage.NewError("place", storage.KindCancelled, err)
 	}
-	if err := b.root.MkdirAll(path.Dir(destinationName), b.dirMode); err != nil {
+	if err := this.root.MkdirAll(path.Dir(destinationName), this.dirMode); err != nil {
 		return false, filesystemError("place", err)
 	}
 	var err error
 	switch mode {
 	case storage.CreateOnly:
-		err = b.root.Link(sourceName, destinationName)
+		err = this.root.Link(sourceName, destinationName)
 		if errors.Is(err, fs.ErrExist) {
 			return false, storage.NewError("place", storage.KindAlreadyExists, err)
 		}
 	case storage.Replace:
-		err = b.root.Rename(sourceName, destinationName)
+		err = this.root.Rename(sourceName, destinationName)
 	default:
 		return false, storage.NewError("place", storage.KindInvalid, fmt.Errorf("unknown write mode"))
 	}
@@ -604,18 +604,18 @@ func (b *Backend) place(ctx context.Context, sourceName, destinationName string,
 	if mode == storage.CreateOnly {
 		// The destination is already complete. Failure to unlink the private
 		// work/stage name cannot make that committed object false.
-		if b.placeRemove != nil {
-			_ = b.placeRemove(sourceName)
+		if this.placeRemove != nil {
+			_ = this.placeRemove(sourceName)
 		} else {
-			_ = b.root.Remove(sourceName)
+			_ = this.root.Remove(sourceName)
 		}
 	}
-	if b.syncWrites {
+	if this.syncWrites {
 		var syncErr error
-		if b.placeSync != nil {
-			syncErr = b.placeSync(path.Dir(destinationName))
+		if this.placeSync != nil {
+			syncErr = this.placeSync(path.Dir(destinationName))
 		} else {
-			syncErr = b.syncDirectory(path.Dir(destinationName))
+			syncErr = this.syncDirectory(path.Dir(destinationName))
 		}
 		if syncErr != nil {
 			return true, filesystemError("place", syncErr)
@@ -628,43 +628,43 @@ func (b *Backend) place(ctx context.Context, sourceName, destinationName string,
 // link of a staged upload. CreateOnly can link the claim directly. Replace
 // atomically renames a fresh private hard link, leaving stage and claim intact
 // until final visibility is known.
-func (b *Backend) placeClaim(ctx context.Context, namespace storage.Namespace, sourceName, destinationName string, mode storage.WriteMode) (bool, error) {
+func (this *Backend) placeClaim(ctx context.Context, namespace storage.Namespace, sourceName, destinationName string, mode storage.WriteMode) (bool, error) {
 	if err := contextError(ctx); err != nil {
 		return false, storage.NewError("place", storage.KindCancelled, err)
 	}
-	if err := b.root.MkdirAll(path.Dir(destinationName), b.dirMode); err != nil {
+	if err := this.root.MkdirAll(path.Dir(destinationName), this.dirMode); err != nil {
 		return false, filesystemError("place", err)
 	}
 
 	var err error
 	switch mode {
 	case storage.CreateOnly:
-		err = b.root.Link(sourceName, destinationName)
+		err = this.root.Link(sourceName, destinationName)
 		if errors.Is(err, fs.ErrExist) {
 			return false, storage.NewError("place", storage.KindAlreadyExists, err)
 		}
 	case storage.Replace:
-		workName, linkErr := b.newWorkLink(namespace, sourceName)
+		workName, linkErr := this.newWorkLink(namespace, sourceName)
 		if linkErr != nil {
 			return false, filesystemError("place", linkErr)
 		}
-		defer func() { _ = b.root.Remove(workName) }()
+		defer func() { _ = this.root.Remove(workName) }()
 		if err := contextError(ctx); err != nil {
 			return false, storage.NewError("place", storage.KindCancelled, err)
 		}
-		err = b.root.Rename(workName, destinationName)
+		err = this.root.Rename(workName, destinationName)
 	default:
 		return false, storage.NewError("place", storage.KindInvalid, fmt.Errorf("unknown write mode"))
 	}
 	if err != nil {
 		return false, filesystemError("place", err)
 	}
-	if b.syncWrites {
+	if this.syncWrites {
 		var syncErr error
-		if b.placeSync != nil {
-			syncErr = b.placeSync(path.Dir(destinationName))
+		if this.placeSync != nil {
+			syncErr = this.placeSync(path.Dir(destinationName))
 		} else {
-			syncErr = b.syncDirectory(path.Dir(destinationName))
+			syncErr = this.syncDirectory(path.Dir(destinationName))
 		}
 		if syncErr != nil {
 			return true, filesystemError("place", syncErr)
@@ -673,8 +673,8 @@ func (b *Backend) placeClaim(ctx context.Context, namespace storage.Namespace, s
 	return true, nil
 }
 
-func (b *Backend) syncDirectory(name string) error {
-	directory, err := b.root.Open(name)
+func (this *Backend) syncDirectory(name string) error {
+	directory, err := this.root.Open(name)
 	if err != nil {
 		return err
 	}
@@ -727,14 +727,14 @@ func stageIDFromName(name string) (storage.StageID, bool) {
 // present for the whole operation; deterministic failure removes only the
 // claim, while successful consumption removes stage before claim. These
 // monotonic states avoid an absent-name ABA window between concurrent retries.
-func (b *Backend) claimStage(operation string, namespace storage.Namespace, id storage.StageID) (string, error) {
+func (this *Backend) claimStage(operation string, namespace storage.Namespace, id storage.StageID) (string, error) {
 	stagedName := stagePath(namespace, id)
 	claimedName := stageClaimPath(namespace, id)
-	err := b.root.Link(stagedName, claimedName)
+	err := this.root.Link(stagedName, claimedName)
 	if err == nil {
-		if b.syncWrites {
-			if err := b.syncDirectory(stageDirectory(namespace)); err != nil {
-				if releaseErr := b.releaseClaim(namespace, id); releaseErr != nil {
+		if this.syncWrites {
+			if err := this.syncDirectory(stageDirectory(namespace)); err != nil {
+				if releaseErr := this.releaseClaim(namespace, id); releaseErr != nil {
 					return "", filesystemError(operation, releaseErr)
 				}
 				return "", filesystemError(operation, err)
@@ -748,7 +748,7 @@ func (b *Backend) claimStage(operation string, namespace storage.Namespace, id s
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", filesystemError(operation, err)
 	}
-	claimExists, stateErr := b.privateNameExists(claimedName)
+	claimExists, stateErr := this.privateNameExists(claimedName)
 	if stateErr != nil {
 		return "", filesystemError(operation, stateErr)
 	}
@@ -758,8 +758,8 @@ func (b *Backend) claimStage(operation string, namespace storage.Namespace, id s
 	return "", storage.NewError(operation, storage.KindNotFound, err)
 }
 
-func (b *Backend) privateNameExists(name string) (bool, error) {
-	_, err := b.root.Lstat(name)
+func (this *Backend) privateNameExists(name string) (bool, error) {
+	_, err := this.root.Lstat(name)
 	if err == nil {
 		return true, nil
 	}
@@ -789,21 +789,21 @@ func supportedOperatingSystem(goos string) bool {
 	}
 }
 
-func (b *Backend) removeClaimName(name string) error {
-	if b.claimRemove != nil {
-		return b.claimRemove(name)
+func (this *Backend) removeClaimName(name string) error {
+	if this.claimRemove != nil {
+		return this.claimRemove(name)
 	}
-	return b.root.Remove(name)
+	return this.root.Remove(name)
 }
 
-func (b *Backend) releaseClaim(namespace storage.Namespace, id storage.StageID) error {
+func (this *Backend) releaseClaim(namespace storage.Namespace, id storage.StageID) error {
 	claimedName := stageClaimPath(namespace, id)
-	err := b.removeClaimName(claimedName)
+	err := this.removeClaimName(claimedName)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if b.syncWrites && err == nil {
-		return b.syncDirectory(stageDirectory(namespace))
+	if this.syncWrites && err == nil {
+		return this.syncDirectory(stageDirectory(namespace))
 	}
 	return nil
 }
@@ -811,7 +811,7 @@ func (b *Backend) releaseClaim(namespace storage.Namespace, id storage.StageID) 
 // consumeClaim removes the public stage before its exclusive claim. Its bool
 // reports that the stage name is already absent; after that point releasing the
 // claim would risk making a committed stage identity reusable.
-func (b *Backend) consumeClaim(namespace storage.Namespace, id storage.StageID, remove func(string) error) (bool, error) {
+func (this *Backend) consumeClaim(namespace storage.Namespace, id storage.StageID, remove func(string) error) (bool, error) {
 	stagedName := stagePath(namespace, id)
 	claimedName := stageClaimPath(namespace, id)
 	if err := remove(stagedName); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -820,8 +820,8 @@ func (b *Backend) consumeClaim(namespace storage.Namespace, id storage.StageID, 
 	if err := remove(claimedName); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return true, err
 	}
-	if b.syncWrites {
-		if err := b.syncDirectory(stageDirectory(namespace)); err != nil {
+	if this.syncWrites {
+		if err := this.syncDirectory(stageDirectory(namespace)); err != nil {
 			return true, err
 		}
 	}
@@ -891,4 +891,4 @@ func operationError(operation string, err error) error {
 
 // Handler is declared here so users find filesystem construction and its link
 // endpoint on the same concrete backend. It is implemented in link.go.
-func (b *Backend) Handler() http.Handler { return b.linkHandler() }
+func (this *Backend) Handler() http.Handler { return this.linkHandler() }

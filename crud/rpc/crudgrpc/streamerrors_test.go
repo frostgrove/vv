@@ -61,10 +61,10 @@ func TestARefusedStreamIsClassifiedLikeARefusedCall(t *testing.T) {
 
 // codeOfStream runs one streaming call against a server built with opts and
 // answers the code the client saw.
-func codeOfStream(t *testing.T, h grpc.StreamHandler, opts ...grpc.ServerOption) codes.Code {
+func codeOfStream(t *testing.T, h grpc.StreamHandler, options ...grpc.ServerOption) codes.Code {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	srv := grpc.NewServer(opts...)
+	srv := grpc.NewServer(options...)
 	srv.RegisterService(&grpc.ServiceDesc{
 		ServiceName: "vv.test.Streamer",
 		HandlerType: (*any)(nil),

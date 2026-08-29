@@ -27,7 +27,7 @@ const (
 
 type kindError struct{ kind Kind }
 
-func (e kindError) Error() string { return string(e.kind) }
+func (this kindError) Error() string { return string(this.kind) }
 
 var (
 	ErrInvalid            = kindError{KindInvalid}
@@ -73,37 +73,37 @@ func validKind(kind Kind) bool {
 	}
 }
 
-func (e *Error) Error() string {
-	if e == nil {
+func (this *Error) Error() string {
+	if this == nil {
 		return "storage: internal"
 	}
-	if e.Operation == "" {
-		return "storage: " + string(e.Kind)
+	if this.Operation == "" {
+		return "storage: " + string(this.Kind)
 	}
-	return fmt.Sprintf("storage %s: %s", e.Operation, e.Kind)
+	return fmt.Sprintf("storage %s: %s", this.Operation, this.Kind)
 }
 
 // Format keeps the wrapped backend diagnostics out of every ordinary fmt verb,
 // including Go-syntax formatting with %#v.
-func (e *Error) Format(state fmt.State, _ rune) {
-	_, _ = fmt.Fprint(state, e.Error())
+func (this *Error) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, this.Error())
 }
 
-func (e *Error) Is(target error) bool {
-	if e == nil {
+func (this *Error) Is(target error) bool {
+	if this == nil {
 		return false
 	}
 	if k, ok := target.(kindError); ok {
-		return e.Kind == k.kind
+		return this.Kind == k.kind
 	}
-	return errors.Is(e.cause, target)
+	return errors.Is(this.cause, target)
 }
 
 // As exposes a specifically requested diagnostic cause without making it an
 // unconditional unwrap chain. This prevents a nested provider/source
 // storage.Error from also changing the outer portable Kind.
-func (e *Error) As(target any) bool {
-	return e != nil && e.cause != nil && errors.As(e.cause, target)
+func (this *Error) As(target any) bool {
+	return this != nil && this.cause != nil && errors.As(this.cause, target)
 }
 
 // KindOf returns the portable kind carried by err, or the empty kind when err

@@ -13,4 +13,4 @@ import "github.com/frostgrove/vv/crud/sqlfault"
 // package may not name a driver's error type — the module has no dependencies,
 // drivers included — so the shapes are reached by name and kind in
 // sqlfault.Extract, which is where a new driver's spelling is added.
-func (e Executor) conflict(err error) error { return sqlfault.Wrap(e.faults, err) }
+func (this Executor) conflict(err error) error { return sqlfault.Wrap(this.faults, err) }

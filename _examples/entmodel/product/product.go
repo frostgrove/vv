@@ -61,36 +61,36 @@ var (
 type OrderOption func(*sql.Selector)
 
 // ByID orders the results by the id field.
-func ByID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldID, opts...).ToFunc()
+func ByID(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldID, options...).ToFunc()
 }
 
 // BySku orders the results by the sku field.
-func BySku(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSku, opts...).ToFunc()
+func BySku(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSku, options...).ToFunc()
 }
 
 // ByName orders the results by the name field.
-func ByName(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldName, opts...).ToFunc()
+func ByName(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldName, options...).ToFunc()
 }
 
 // ByPrice orders the results by the price field.
-func ByPrice(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPrice, opts...).ToFunc()
+func ByPrice(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPrice, options...).ToFunc()
 }
 
 // ByStock orders the results by the stock field.
-func ByStock(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldStock, opts...).ToFunc()
+func ByStock(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStock, options...).ToFunc()
 }
 
 // ByActive orders the results by the active field.
-func ByActive(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldActive, opts...).ToFunc()
+func ByActive(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldActive, options...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.
-func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
+func ByCreatedAt(options ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCreatedAt, options...).ToFunc()
 }

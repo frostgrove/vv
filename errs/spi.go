@@ -58,8 +58,8 @@ func Chain(rs ...Resolver) Resolver {
 
 type chain []Resolver
 
-func (c chain) Resolve(p Path) (Path, bool) {
-	for _, r := range c {
+func (this chain) Resolve(p Path) (Path, bool) {
+	for _, r := range this {
 		if r == nil {
 			continue
 		}

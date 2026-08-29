@@ -28,15 +28,15 @@ func render(t *testing.T, p crud.Predicate) (string, []any) {
 // the way a repository does.
 func filterOf(t *testing.T, doc string) crud.Predicate {
 	t.Helper()
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"filter":`+doc+`}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"filter":`+doc+`}`), &request); err != nil {
 		t.Fatalf("decode filter %s: %v", doc, err)
 	}
-	opts, err := req.Compile(Articles.Meta(), nil)
+	options, err := request.Compile(Articles.Meta(), nil)
 	if err != nil {
 		t.Fatalf("compile filter %s: %v", doc, err)
 	}
-	return crud.Build(opts...).Predicate()
+	return crud.Build(options...).Predicate()
 }
 
 // A filter that goes out to another service and comes back has to ask the same

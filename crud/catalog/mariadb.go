@@ -74,14 +74,14 @@ FROM information_schema.CHECK_CONSTRAINTS
 WHERE CONSTRAINT_SCHEMA = DATABASE()
 ORDER BY TABLE_NAME, CONSTRAINT_NAME`
 
-func readMariaDB(ctx context.Context, src crud.Source) ([]Table, error) {
+func readMariaDB(ctx context.Context, source crud.Source) ([]Table, error) {
 	b := newBuilder()
 	for _, step := range []func() error{
-		func() error { return myReadColumns(ctx, src, b, mariaColumns, true) },
-		func() error { return myReadTableConstraints(ctx, src, b, mariaTableConstraints) },
-		func() error { return myReadStatistics(ctx, src, b, mariaStatistics, false) },
-		func() error { return myReadForeignKeys(ctx, src, b, mariaForeignKeys) },
-		func() error { return myReadChecks(ctx, src, b, mariaChecks) },
+		func() error { return myReadColumns(ctx, source, b, mariaColumns, true) },
+		func() error { return myReadTableConstraints(ctx, source, b, mariaTableConstraints) },
+		func() error { return myReadStatistics(ctx, source, b, mariaStatistics, false) },
+		func() error { return myReadForeignKeys(ctx, source, b, mariaForeignKeys) },
+		func() error { return myReadChecks(ctx, source, b, mariaChecks) },
 	} {
 		if err := step(); err != nil {
 			return nil, err

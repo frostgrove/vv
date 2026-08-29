@@ -14,13 +14,13 @@ import (
 //
 // Keys are visited in sorted order so the generated SQL is deterministic —
 // Go map iteration is not, and untestable SQL is not worth having.
-func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Predicate, error) {
+func (this *compiler) node(raw json.RawMessage, where string, depth int) (crud.Predicate, error) {
 	raw = trim(raw)
 	if len(raw) == 0 || isNull(raw) {
 		return nil, errf(where, "filter must be a non-empty object")
 	}
-	if depth > c.cfg.maxDepth() {
-		return nil, errf(where, "filter is nested deeper than the allowed %d levels", c.cfg.maxDepth())
+	if depth > this.config.maxDepth() {
+		return nil, errf(where, "filter is nested deeper than the allowed %d levels", this.config.maxDepth())
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -56,22 +56,22 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 		// combinator only when it does not resolve to a model field. That keeps
 		// old documents readable on ordinary models and gives the ambiguous
 		// models both operations (`$or`) and the field itself (`or`).
-		logical := !isFilterField(c, key)
+		logical := !isFilterField(this, key)
 		switch strings.ToLower(key) {
 		case "$and":
-			p, err := c.list(val, sub, depth+1, "AND")
+			p, err := this.list(val, sub, depth+1, "AND")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
 		case "$or":
-			p, err := c.list(val, sub, depth+1, "OR")
+			p, err := this.list(val, sub, depth+1, "OR")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
 		case "$not":
-			inner, err := c.node(val, sub, depth+1)
+			inner, err := this.node(val, sub, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -80,42 +80,42 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 			}
 		case "and":
 			if !logical {
-				p, err := c.condition(key, val, sub)
+				p, err := this.condition(key, val, sub)
 				if err != nil {
 					return nil, err
 				}
 				preds = appendPred(preds, p)
 				continue
 			}
-			p, err := c.list(val, sub, depth+1, "AND")
+			p, err := this.list(val, sub, depth+1, "AND")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
 		case "or":
 			if !logical {
-				p, err := c.condition(key, val, sub)
+				p, err := this.condition(key, val, sub)
 				if err != nil {
 					return nil, err
 				}
 				preds = appendPred(preds, p)
 				continue
 			}
-			p, err := c.list(val, sub, depth+1, "OR")
+			p, err := this.list(val, sub, depth+1, "OR")
 			if err != nil {
 				return nil, err
 			}
 			preds = appendPred(preds, p)
 		case "not":
 			if !logical {
-				p, err := c.condition(key, val, sub)
+				p, err := this.condition(key, val, sub)
 				if err != nil {
 					return nil, err
 				}
 				preds = appendPred(preds, p)
 				continue
 			}
-			inner, err := c.node(val, sub, depth+1)
+			inner, err := this.node(val, sub, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -123,7 +123,7 @@ func (c *compiler) node(raw json.RawMessage, where string, depth int) (crud.Pred
 				preds = append(preds, crud.Not(inner))
 			}
 		default:
-			p, err := c.condition(key, val, sub)
+			p, err := this.condition(key, val, sub)
 			if err != nil {
 				return nil, err
 			}
@@ -148,19 +148,19 @@ func isFilterField(c *compiler, key string) bool {
 	return err == nil
 }
 
-func appendPred(dst []crud.Predicate, p crud.Predicate) []crud.Predicate {
+func appendPred(destination []crud.Predicate, p crud.Predicate) []crud.Predicate {
 	if p == nil {
-		return dst
+		return destination
 	}
-	return append(dst, p)
+	return append(destination, p)
 }
 
 // list compiles the array form of and/or.
-func (c *compiler) list(raw json.RawMessage, where string, depth int, op string) (crud.Predicate, error) {
+func (this *compiler) list(raw json.RawMessage, where string, depth int, op string) (crud.Predicate, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
 		// A bare object is accepted too: {"or": {...}} is just that object.
-		p, oerr := c.node(raw, where, depth)
+		p, oerr := this.node(raw, where, depth)
 		if oerr != nil {
 			return nil, errf(where, "expected an array of filter objects, got %s", preview(raw))
 		}
@@ -168,7 +168,7 @@ func (c *compiler) list(raw json.RawMessage, where string, depth int, op string)
 	}
 	var preds []crud.Predicate
 	for i, item := range items {
-		p, err := c.node(item, where+"["+itoa(i)+"]", depth)
+		p, err := this.node(item, where+"["+itoa(i)+"]", depth)
 		if err != nil {
 			return nil, err
 		}
@@ -185,13 +185,13 @@ func (c *compiler) list(raw json.RawMessage, where string, depth int, op string)
 
 // condition compiles one field entry: either a shorthand value or an operator
 // object.
-func (c *compiler) condition(path string, raw json.RawMessage, where string) (crud.Predicate, error) {
-	f, canonical, err := c.path(path, where)
+func (this *compiler) condition(path string, raw json.RawMessage, where string) (crud.Predicate, error) {
+	f, canonical, err := this.path(path, where)
 	if err != nil {
 		return nil, err
 	}
-	if !allowed(c.cfg.filterable(), c.qualify(canonical)) {
-		return nil, errf(where, "%s is not filterable", c.qualify(canonical))
+	if !allowed(this.config.filterable(), this.qualify(canonical)) {
+		return nil, errf(where, "%s is not filterable", this.qualify(canonical))
 	}
 
 	raw = trim(raw)
@@ -201,22 +201,22 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 
 	switch raw[0] {
 	case '{':
-		return c.operators(canonical, f, raw, where)
+		return this.operators(canonical, f, raw, where)
 	case '[':
 		// {"status": ["draft","live"]} means IN.
-		if err := c.count(where); err != nil {
+		if err := this.count(where); err != nil {
 			return nil, err
 		}
 		vals, err := decodeList(raw, f)
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
-		if err := c.countValues(len(vals), where); err != nil {
+		if err := this.countValues(len(vals), where); err != nil {
 			return nil, err
 		}
 		return buildMulti(canonical, opIn, vals, where)
 	default:
-		if err := c.count(where); err != nil {
+		if err := this.count(where); err != nil {
 			return nil, err
 		}
 		if isNull(raw) {
@@ -226,7 +226,7 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
-		if err := c.countBinds(1, where); err != nil {
+		if err := this.countBinds(1, where); err != nil {
 			return nil, err
 		}
 		return crud.Eq(canonical, v), nil
@@ -234,7 +234,7 @@ func (c *compiler) condition(path string, raw json.RawMessage, where string) (cr
 }
 
 // operators compiles {"gte": 1, "lt": 10} into one ANDed condition.
-func (c *compiler) operators(field string, f *crud.Field, raw json.RawMessage, where string) (crud.Predicate, error) {
+func (this *compiler) operators(field string, f *crud.Field, raw json.RawMessage, where string) (crud.Predicate, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, errf(where, "expected an operator object, got %s", preview(raw))
@@ -250,10 +250,10 @@ func (c *compiler) operators(field string, f *crud.Field, raw json.RawMessage, w
 
 	var preds []crud.Predicate
 	for _, key := range keys {
-		if err := c.count(where); err != nil {
+		if err := this.count(where); err != nil {
 			return nil, err
 		}
-		p, err := c.operator(field, f, key, obj[key], where+"."+key)
+		p, err := this.operator(field, f, key, obj[key], where+"."+key)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +269,7 @@ func (c *compiler) operators(field string, f *crud.Field, raw json.RawMessage, w
 	}
 }
 
-func (c *compiler) operator(field string, f *crud.Field, op string, raw json.RawMessage, where string) (crud.Predicate, error) {
+func (this *compiler) operator(field string, f *crud.Field, op string, raw json.RawMessage, where string) (crud.Predicate, error) {
 	kind, ok := normalizeOp(op)
 	if !ok {
 		return nil, errf(where, "unknown operator %q", op)
@@ -302,7 +302,7 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return nil, errf(where, "%s expects a string", op)
 		}
-		if err := c.countBinds(1, where); err != nil {
+		if err := this.countBinds(1, where); err != nil {
 			return nil, err
 		}
 		return buildText(field, kind, s), nil
@@ -312,7 +312,7 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
-		if err := c.countValues(len(vals), where); err != nil {
+		if err := this.countValues(len(vals), where); err != nil {
 			return nil, err
 		}
 		return buildMulti(field, kind, vals, where)
@@ -328,7 +328,7 @@ func (c *compiler) operator(field string, f *crud.Field, op string, raw json.Raw
 		if err != nil {
 			return nil, errf(where, "%s", err)
 		}
-		if err := c.countBinds(1, where); err != nil {
+		if err := this.countBinds(1, where); err != nil {
 			return nil, err
 		}
 		return buildScalar(field, kind, v), nil

@@ -37,13 +37,13 @@ type keySet struct {
 	keys    atomic.Value // []map[string]any
 }
 
-func (k *keySet) set(keys ...map[string]any) { k.keys.Store(keys) }
+func (this *keySet) set(keys ...map[string]any) { this.keys.Store(keys) }
 
-func (k *keySet) serve(t *testing.T) string {
+func (this *keySet) serve(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		k.fetches.Add(1)
-		keys, _ := k.keys.Load().([]map[string]any)
+		this.fetches.Add(1)
+		keys, _ := this.keys.Load().([]map[string]any)
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
 	}))
 	t.Cleanup(srv.Close)

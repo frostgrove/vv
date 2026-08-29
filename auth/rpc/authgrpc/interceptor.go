@@ -45,17 +45,17 @@ func Skip(fullMethods ...string) Option {
 //
 // Chaining it twice authenticates once: [auth.Guard] hands back a context that
 // already carries a principal untouched.
-func Unary(g *auth.Guard, opts ...Option) grpc.UnaryServerInterceptor {
-	c := configure(g, "Unary", opts)
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if c.skips(methodOf(info)) {
-			return handler(ctx, req)
+func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
+	configuration := configure(guard, "Unary", options)
+	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if configuration.skips(methodOf(info)) {
+			return handler(ctx, request)
 		}
-		ctx, err := g.Authenticate(ctx, getterFor(ctx))
+		ctx, err := guard.Authenticate(ctx, getterFor(ctx))
 		if err != nil {
 			return nil, err
 		}
-		return handler(ctx, req)
+		return handler(ctx, request)
 	}
 }
 
@@ -64,38 +64,38 @@ func Unary(g *auth.Guard, opts ...Option) grpc.UnaryServerInterceptor {
 // Once, and only then. A credential that expires while the stream is open is
 // not noticed here — an interceptor runs before the first message and never
 // again — so a long-lived stream that must re-check does it in its own loop.
-func Stream(g *auth.Guard, opts ...Option) grpc.StreamServerInterceptor {
-	c := configure(g, "Stream", opts)
-	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if info != nil && c.skips(info.FullMethod) {
-			return handler(srv, ss)
+func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor {
+	configuration := configure(guard, "Stream", options)
+	return func(server any, serverStream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info != nil && configuration.skips(info.FullMethod) {
+			return handler(server, serverStream)
 		}
-		ctx, err := g.Authenticate(ss.Context(), getterFor(ss.Context()))
+		ctx, err := guard.Authenticate(serverStream.Context(), getterFor(serverStream.Context()))
 		if err != nil {
 			return err
 		}
-		return handler(srv, &authenticated{ServerStream: ss, ctx: ctx})
+		return handler(server, &authenticated{ServerStream: serverStream, ctx: ctx})
 	}
 }
 
-func configure(g *auth.Guard, who string, opts []Option) *config {
-	if g == nil {
-		panic("authgrpc: " + who + " needs a Guard; without one nothing is authenticated")
+func configure(guard *auth.Guard, interceptorName string, options []Option) *config {
+	if guard == nil {
+		panic("authgrpc: " + interceptorName + " needs a Guard; without one nothing is authenticated")
 	}
-	c := &config{}
-	for _, o := range opts {
-		if o != nil {
-			o(c)
+	configuration := &config{}
+	for _, option := range options {
+		if option != nil {
+			option(configuration)
 		}
 	}
-	return c
+	return configuration
 }
 
-func (c *config) skips(fullMethod string) bool {
-	if c.skip == nil {
+func (this *config) skips(fullMethod string) bool {
+	if this.skip == nil {
 		return false
 	}
-	_, ok := c.skip[fullMethod]
+	_, ok := this.skip[fullMethod]
 	return ok
 }
 
@@ -133,4 +133,4 @@ type authenticated struct {
 	ctx context.Context
 }
 
-func (s *authenticated) Context() context.Context { return s.ctx }
+func (this *authenticated) Context() context.Context { return this.ctx }

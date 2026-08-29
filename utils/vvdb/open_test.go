@@ -22,8 +22,8 @@ var pgxRecorder = &recorder{}
 
 func init() { sql.Register("pgx", pgxRecorder) }
 
-func (r *recorder) Open(name string) (driver.Conn, error) {
-	r.dsn = name
+func (this *recorder) Open(name string) (driver.Conn, error) {
+	this.dsn = name
 	return nil, io.EOF // nothing here ever runs a statement
 }
 
@@ -36,7 +36,7 @@ func register(t *testing.T, name string) *recorder {
 
 func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(&vvdb.Config{
+	database, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres,
 		Host:   "db.internal", User: "vv", Password: "s3cret", Name: "app",
 	})
@@ -44,11 +44,11 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	// sql.Open is lazy, so the driver is only asked once a connection is
 	// wanted. The error is the recorder's and is not the point.
-	_ = db.Ping()
+	_ = database.Ping()
 	u, err := url.Parse(pgxRecorder.dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 
 func TestOpenSizesThePool(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(&vvdb.Config{
+	database, err := vvdb.Open(&vvdb.Config{
 		Engine: vvdb.Postgres, Host: "h", Name: "app",
 		Pool: vvdb.Pool{MaxOpen: 7, MaxIdle: 3, MaxLifetime: time.Minute},
 	})
@@ -68,9 +68,9 @@ func TestOpenSizesThePool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
-	if got := db.Stats().MaxOpenConnections; got != 7 {
+	if got := database.Stats().MaxOpenConnections; got != 7 {
 		t.Errorf("the pool limit in the config never reached the handle: MaxOpenConnections is %d", got)
 	}
 }
@@ -80,29 +80,29 @@ func TestOpenSizesThePool(t *testing.T) {
 // open nothing.
 func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
 	pgxRecorder.dsn = ""
-	db, err := vvdb.Open(&vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})
+	database, err := vvdb.Open(&vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 
-	if got := db.Stats().MaxOpenConnections; got != 0 {
+	if got := database.Stats().MaxOpenConnections; got != 0 {
 		t.Errorf("database/sql spells \"unlimited\" 0, and nothing should have written a limit: got %d", got)
 	}
 }
 
 func TestPoolApplySizesAnApplicationOwnedHandle(t *testing.T) {
 	register(t, "vvdbtest-apply")
-	db, err := sql.Open("vvdbtest-apply", "")
+	database, err := sql.Open("vvdbtest-apply", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer database.Close()
 	pool := vvdb.Pool{MaxOpen: 9, MaxIdle: -1}
-	if err := pool.Apply(db); err != nil {
+	if err := pool.Apply(database); err != nil {
 		t.Fatal(err)
 	}
-	if got := db.Stats().MaxOpenConnections; got != 9 {
+	if got := database.Stats().MaxOpenConnections; got != 9 {
 		t.Fatalf("Pool.Apply did not size the application-owned handle: %d", got)
 	}
 	empty := vvdb.Pool{}
@@ -134,12 +134,12 @@ func TestAFailureToOpenDoesNotPrintThePassword(t *testing.T) {
 
 func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 	pgxRecorder.dsn = ""
-	cfg := vvdb.Config{
+	config := vvdb.Config{
 		Engine: vvdb.Postgres,
 		Host:   "primary.internal", User: "vv", Password: "s3cret", Name: "app",
 		Replica: &vvdb.Config{Host: "replica.internal"},
 	}
-	p, rep, err := vvdb.OpenReadWrite(&cfg)
+	p, rep, err := vvdb.OpenReadWrite(&config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +153,8 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 		t.Errorf("the replica should have been opened against its own host, got %q", pgxRecorder.dsn)
 	}
 
-	cfg.Replica = nil
-	p2, rep2, err := vvdb.OpenReadWrite(&cfg)
+	config.Replica = nil
+	p2, rep2, err := vvdb.OpenReadWrite(&config)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,26 +41,26 @@ func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name   string
-		cfg    vvdb.Config
+		config vvdb.Config
 		source func(*sql.DB) crud.Source
 	}{
-		{"postgres", vvdbConfig(t, vvdb.Postgres, "VV_PG_DSN", 55432), func(db *sql.DB) crud.Source { return crudsql.Postgres(db) }},
-		{"mysql", vvdbConfig(t, vvdb.MySQL, "VV_MYSQL_DSN", 53306), func(db *sql.DB) crud.Source { return crudsql.MySQL(db) }},
-		{"mariadb", vvdbConfig(t, vvdb.MariaDB, "VV_MARIADB_DSN", 53307), func(db *sql.DB) crud.Source { return crudsql.MariaDB(db) }},
+		{"postgres", vvdbConfig(t, vvdb.Postgres, "VV_PG_DSN", 55432), func(database *sql.DB) crud.Source { return crudsql.Postgres(database) }},
+		{"mysql", vvdbConfig(t, vvdb.MySQL, "VV_MYSQL_DSN", 53306), func(database *sql.DB) crud.Source { return crudsql.MySQL(database) }},
+		{"mariadb", vvdbConfig(t, vvdb.MariaDB, "VV_MARIADB_DSN", 53307), func(database *sql.DB) crud.Source { return crudsql.MariaDB(database) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := vvdb.Open(&tc.cfg)
+			database, err := vvdb.Open(&tc.config)
 			if err != nil {
 				t.Fatalf("opening %s from a config failed: %v", tc.name, err)
 			}
-			defer db.Close()
-			if err := db.PingContext(ctx); err != nil {
+			defer database.Close()
+			if err := database.PingContext(ctx); err != nil {
 				t.Fatalf("the %s server refused the string vvdb built: %v", tc.name, err)
 			}
 			// Through the adapter, because a handle that pings and cannot run a
 			// statement would still pass the line above.
 			var one int
-			rows, err := tc.source(db).Query(ctx, "SELECT 1")
+			rows, err := tc.source(database).Query(ctx, "SELECT 1")
 			if err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
@@ -71,7 +71,7 @@ func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 			if err := rows.Scan(&one); err != nil || one != 1 {
 				t.Fatalf("%s answered %d, %v", tc.name, one, err)
 			}
-			if got := db.Stats().MaxOpenConnections; got != 4 {
+			if got := database.Stats().MaxOpenConnections; got != 4 {
 				t.Errorf("the pool section did not reach the handle: MaxOpenConnections is %d", got)
 			}
 		})
@@ -86,12 +86,12 @@ func TestAWrongPasswordIsRefusedByTheServer(t *testing.T) {
 	}
 	c := vvdbConfig(t, vvdb.Postgres, "", 55432)
 	c.Password = "not-the-password"
-	db, err := vvdb.Open(&c)
+	database, err := vvdb.Open(&c)
 	if err != nil {
 		t.Fatalf("the string should build; it is the server that must refuse it: %v", err)
 	}
-	defer db.Close()
-	if err := db.PingContext(context.Background()); err == nil {
+	defer database.Close()
+	if err := database.PingContext(context.Background()); err == nil {
 		t.Fatal("the server accepted a wrong password, so this suite is not proving the password travels at all")
 	}
 }

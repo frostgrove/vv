@@ -103,7 +103,7 @@ func TestTheCallersDeadlineReachesTheRequest(t *testing.T) {
 }
 
 func TestADirectKeyedCallRefusesEligibilityControlsItCannotCarry(t *testing.T) {
-	for name, req := range map[string]*query.Request{
+	for name, request := range map[string]*query.Request{
 		"filter":        {Filter: query.RawFilter(`{"name":"bolt"}`)},
 		"terms":         {Terms: []query.Term{{}}},
 		"search":        {Search: "bolt"},
@@ -113,7 +113,7 @@ func TestADirectKeyedCallRefusesEligibilityControlsItCannotCarry(t *testing.T) {
 			_, err := Transport("http://example.invalid/widgets").Do(context.Background(), &remote.Call{
 				Method: remote.MethodGet,
 				ID:     "42",
-				Query:  req,
+				Query:  request,
 			})
 			var option *remote.OptionError
 			if !errors.As(err, &option) {

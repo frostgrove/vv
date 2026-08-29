@@ -70,16 +70,16 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	sqlDB, err := db.DB()
+	sqlDB, err := database.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := bootstrap(db); err != nil {
+	if err := bootstrap(database); err != nil {
 		log.Fatal(err)
 	}
 
@@ -87,10 +87,10 @@ func main() {
 	// libraries. No connection or transaction changes hands, so a caller free
 	// to reach in with crud.WithExecutor can put a gorm transaction and an
 	// vv call in the same one.
-	repo := specs.Executor(Products.Bind(crudsql.Postgres(sqlDB)))
+	repository := specs.Executor(Products.Bind(crudsql.Postgres(sqlDB)))
 
 	app := fiber.New()
-	app.Use("/products", crudfiber.New(repo,
+	app.Use("/products", crudfiber.New(repository,
 		crudfiber.WithQuery[Product, int64, ProductUpdate](&query.Config{
 			Filterable: []string{"Sku", "Name", "Price", "Stock", "Active", "CreatedAt"},
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
@@ -106,11 +106,11 @@ func main() {
 // that has not adopted vv. A real application would use its own
 // migration tool instead of AutoMigrate; the delete-then-seed keeps this
 // example idempotent since AutoMigrate never drops rows on its own.
-func bootstrap(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Product{}); err != nil {
+func bootstrap(database *gorm.DB) error {
+	if err := database.AutoMigrate(&Product{}); err != nil {
 		return err
 	}
-	if err := db.Exec("DELETE FROM gorm_fiber_products").Error; err != nil {
+	if err := database.Exec("DELETE FROM gorm_fiber_products").Error; err != nil {
 		return err
 	}
 	rows := []Product{
@@ -118,5 +118,5 @@ func bootstrap(db *gorm.DB) error {
 		{Sku: "NUT-1", Name: "hex nut", Price: 120, Active: true},
 		{Sku: "WSH-1", Name: "washer", Price: 35, Stock: crud.Set(900), Active: true},
 	}
-	return db.Create(&rows).Error
+	return database.Create(&rows).Error
 }

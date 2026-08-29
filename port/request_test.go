@@ -16,12 +16,12 @@ func TestNarrowingAnEntityOrCountAlsoClearsJSONCursorPresence(t *testing.T) {
 		{"entity", NarrowForEntity},
 	} {
 		t.Run(narrow.name, func(t *testing.T) {
-			var req query.Request
-			if err := json.Unmarshal([]byte(`{"after":"opaque"}`), &req); err != nil {
+			var request query.Request
+			if err := json.Unmarshal([]byte(`{"after":"opaque"}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			narrow.fn(&req)
-			if _, err := req.Compile(widgetMeta, nil); err != nil {
+			narrow.fn(&request)
+			if _, err := request.Compile(widgetMeta, nil); err != nil {
 				t.Fatalf("Compile() after %s narrowing = %v", narrow.name, err)
 			}
 		})

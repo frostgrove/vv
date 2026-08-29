@@ -14,9 +14,9 @@ import (
 type UserFunc func(context.Context, *ent.UserMutation) (ent.Value, error)
 
 // Mutate calls f(ctx, m).
-func (f UserFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+func (this UserFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
 	if mv, ok := m.(*ent.UserMutation); ok {
-		return f(ctx, mv)
+		return this(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserMutation", m)
 }
@@ -174,10 +174,10 @@ func NewChain(hooks ...ent.Hook) Chain {
 }
 
 // Hook chains the list of hooks and returns the final hook.
-func (c Chain) Hook() ent.Hook {
+func (this Chain) Hook() ent.Hook {
 	return func(mutator ent.Mutator) ent.Mutator {
-		for i := len(c.hooks) - 1; i >= 0; i-- {
-			mutator = c.hooks[i](mutator)
+		for i := len(this.hooks) - 1; i >= 0; i-- {
+			mutator = this.hooks[i](mutator)
 		}
 		return mutator
 	}
@@ -185,15 +185,15 @@ func (c Chain) Hook() ent.Hook {
 
 // Append extends a chain, adding the specified hook
 // as the last ones in the mutation flow.
-func (c Chain) Append(hooks ...ent.Hook) Chain {
-	newHooks := make([]ent.Hook, 0, len(c.hooks)+len(hooks))
-	newHooks = append(newHooks, c.hooks...)
+func (this Chain) Append(hooks ...ent.Hook) Chain {
+	newHooks := make([]ent.Hook, 0, len(this.hooks)+len(hooks))
+	newHooks = append(newHooks, this.hooks...)
 	newHooks = append(newHooks, hooks...)
 	return Chain{newHooks}
 }
 
 // Extend extends a chain, adding the specified chain
 // as the last ones in the mutation flow.
-func (c Chain) Extend(chain Chain) Chain {
-	return c.Append(chain.hooks...)
+func (this Chain) Extend(chain Chain) Chain {
+	return this.Append(chain.hooks...)
 }

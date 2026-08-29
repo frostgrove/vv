@@ -29,12 +29,12 @@ const HeaderAuthorization = "Authorization"
 // NewGuard builds the guard. It panics on a nil authenticator, because a guard
 // with nothing to authenticate against refuses every request and that is a
 // misconfiguration a process should not start with ([[D-021]]).
-func NewGuard(a Authenticator, opts ...Option) *Guard {
+func NewGuard(a Authenticator, options ...Option) *Guard {
 	if a == nil {
 		panic("auth: NewGuard needs an Authenticator; without one every request is refused")
 	}
 	g := &Guard{authn: a, header: HeaderAuthorization}
-	for _, o := range opts {
+	for _, o := range options {
 		if o != nil {
 			o(g)
 		}
@@ -87,20 +87,20 @@ func Optional() Option {
 // principal is handed back untouched rather than re-authenticated. Without
 // that, a guard mounted globally and again on a route group would parse the
 // token twice, and a JWKS-backed one would spend two lookups per request.
-func (g *Guard) Authenticate(ctx context.Context, get func(name string) string) (context.Context, error) {
+func (this *Guard) Authenticate(ctx context.Context, get func(name string) string) (context.Context, error) {
 	if _, already := PrincipalFrom(ctx); already {
 		return ctx, nil
 	}
 
-	cred, ok := g.credential(get)
+	cred, ok := this.credential(get)
 	if !ok {
-		if g.optional {
+		if this.optional {
 			return ctx, nil
 		}
 		return ctx, Unauthenticated("no credential presented")
 	}
 
-	p, err := g.authn.Authenticate(ctx, cred)
+	p, err := this.authn.Authenticate(ctx, cred)
 	if err != nil {
 		return ctx, err
 	}
@@ -113,12 +113,12 @@ func (g *Guard) Authenticate(ctx context.Context, get func(name string) string) 
 	return WithPrincipal(ctx, p), nil
 }
 
-func (g *Guard) credential(get func(name string) string) (Credential, bool) {
+func (this *Guard) credential(get func(name string) string) (Credential, bool) {
 	if get == nil {
 		return Credential{}, false
 	}
-	if g.lookup != nil {
-		return g.lookup(get)
+	if this.lookup != nil {
+		return this.lookup(get)
 	}
-	return ParseAuthorization(get(g.header))
+	return ParseAuthorization(get(this.header))
 }

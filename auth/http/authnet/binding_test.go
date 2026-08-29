@@ -30,11 +30,11 @@ import (
 // twice produces a body with two JSON documents in it.
 func TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware(t *testing.T) {
 	h := &seen{}
-	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
-	req.Header.Set("Authorization", "Bearer forged")
+	request := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	request.Header.Set("Authorization", "Bearer forged")
 	w := httptest.NewRecorder()
 
-	crudnet.Errors()(authnet.Middleware(auth.NewGuard(refuses()))(h)).ServeHTTP(w, req)
+	crudnet.Errors()(authnet.Middleware(auth.NewGuard(refuses()))(h)).ServeHTTP(w, request)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("the refusal answered %d under the error middleware, want 401", w.Code)

@@ -125,95 +125,95 @@ func newFake() *fakeRepo {
 		w.CreatedAt = savedAt
 		return nil
 	}
-	f.onUpdate = func(id int64, dto WidgetUpdate) (Widget, error) {
+	f.onUpdate = func(id int64, dataTransferObject WidgetUpdate) (Widget, error) {
 		w := f.one
 		w.ID = id
-		if dto.Name != nil {
-			w.Name = *dto.Name
+		if dataTransferObject.Name != nil {
+			w.Name = *dataTransferObject.Name
 		}
-		if dto.Price != nil {
-			w.Price = *dto.Price
+		if dataTransferObject.Price != nil {
+			w.Price = *dataTransferObject.Price
 		}
-		if dto.Note.IsDefined() {
-			w.Note = dto.Note
+		if dataTransferObject.Note.IsDefined() {
+			w.Note = dataTransferObject.Note
 		}
 		return w, nil
 	}
 	return f
 }
 
-func (f *fakeRepo) Meta() *crud.Meta { return widgetMeta }
+func (this *fakeRepo) Meta() *crud.Meta { return widgetMeta }
 
-func (f *fakeRepo) Get(_ context.Context, opts ...crud.Option) (crud.PaginatedResponse[Widget], error) {
-	f.calls = append(f.calls, recordedCall{Method: "Get", Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return crud.PaginatedResponse[Widget]{}, f.err
+func (this *fakeRepo) Get(_ context.Context, options ...crud.Option) (crud.PaginatedResponse[Widget], error) {
+	this.calls = append(this.calls, recordedCall{Method: "Get", Opts: crud.Build(options...)})
+	if this.err != nil {
+		return crud.PaginatedResponse[Widget]{}, this.err
 	}
-	return f.page, nil
+	return this.page, nil
 }
 
-func (f *fakeRepo) GetAll(_ context.Context, opts ...crud.Option) ([]Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "GetAll", Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return nil, f.err
+func (this *fakeRepo) GetAll(_ context.Context, options ...crud.Option) ([]Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "GetAll", Opts: crud.Build(options...)})
+	if this.err != nil {
+		return nil, this.err
 	}
-	return f.all, nil
+	return this.all, nil
 }
 
-func (f *fakeRepo) GetByID(_ context.Context, id int64, opts ...crud.Option) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "GetByID", ID: id, Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) GetByID(_ context.Context, id int64, options ...crud.Option) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "GetByID", ID: id, Opts: crud.Build(options...)})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
-	w := f.one
+	w := this.one
 	w.ID = id
 	return w, nil
 }
 
-func (f *fakeRepo) Count(_ context.Context, opts ...crud.Option) (int64, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Count", Opts: crud.Build(opts...)})
-	if f.err != nil {
-		return 0, f.err
+func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Count", Opts: crud.Build(options...)})
+	if this.err != nil {
+		return 0, this.err
 	}
-	return f.count, nil
+	return this.count, nil
 }
 
 // Save records the model as it arrived — before onSave touches it — because
 // what the handler handed over is exactly what the write tests are about.
-func (f *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Save", Model: *m})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Save", Model: *m})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
 	saved := *m
-	if err := f.onSave(&saved); err != nil {
+	if err := this.onSave(&saved); err != nil {
 		return Widget{}, err
 	}
 	return saved, nil
 }
 
-func (f *fakeRepo) Update(_ context.Context, id int64, dto WidgetUpdate, _ ...crud.Option) (Widget, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Update", ID: id, DTO: dto})
-	if f.err != nil {
-		return Widget{}, f.err
+func (this *fakeRepo) Update(_ context.Context, id int64, dataTransferObject WidgetUpdate, _ ...crud.Option) (Widget, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Update", ID: id, DTO: dataTransferObject})
+	if this.err != nil {
+		return Widget{}, this.err
 	}
-	return f.onUpdate(id, dto)
+	return this.onUpdate(id, dataTransferObject)
 }
 
-func (f *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
-	f.calls = append(f.calls, recordedCall{Method: "Delete", IDs: ids})
-	if f.err != nil {
-		return 0, f.err
+func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
+	this.calls = append(this.calls, recordedCall{Method: "Delete", IDs: ids})
+	if this.err != nil {
+		return 0, this.err
 	}
 	return int64(len(ids)), nil
 }
 
 // only returns the one call the handler made to method, failing when it made
 // none or several.
-func (f *fakeRepo) only(t *testing.T, method string) recordedCall {
+func (this *fakeRepo) only(t *testing.T, method string) recordedCall {
 	t.Helper()
 	var found []recordedCall
-	for _, c := range f.calls {
+	for _, c := range this.calls {
 		if c.Method == method {
 			found = append(found, c)
 		}
@@ -222,7 +222,7 @@ func (f *fakeRepo) only(t *testing.T, method string) recordedCall {
 	case 1:
 		return found[0]
 	case 0:
-		t.Fatalf("the handler never called %s; it called %v", method, f.methods())
+		t.Fatalf("the handler never called %s; it called %v", method, this.methods())
 	default:
 		t.Fatalf("the handler called %s %d times, expected once", method, len(found))
 	}
@@ -230,9 +230,9 @@ func (f *fakeRepo) only(t *testing.T, method string) recordedCall {
 }
 
 // methods lists the repository calls in the order they were made.
-func (f *fakeRepo) methods() []string {
-	out := make([]string, len(f.calls))
-	for i, c := range f.calls {
+func (this *fakeRepo) methods() []string {
+	out := make([]string, len(this.calls))
+	for i, c := range this.calls {
 		out[i] = c.Method
 	}
 	return out
@@ -243,11 +243,11 @@ func (f *fakeRepo) methods() []string {
 
 // mount builds a handler over a fresh fake and mounts it the way the package
 // documentation says to.
-func mount(t *testing.T, opts ...Option[Widget, int64, WidgetUpdate]) (*fiber.App, *fakeRepo) {
+func mount(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*fiber.App, *fakeRepo) {
 	t.Helper()
 	f := newFake()
 	app := fiber.New()
-	app.Use("/widgets", New[Widget, int64, WidgetUpdate](f, opts...).Routes())
+	app.Use("/widgets", New[Widget, int64, WidgetUpdate](f, options...).Routes())
 	return app, f
 }
 
@@ -260,10 +260,10 @@ type response struct {
 	header http.Header
 }
 
-func (r response) decode(t *testing.T, into any) {
+func (this response) decode(t *testing.T, into any) {
 	t.Helper()
-	if err := json.Unmarshal(r.body, into); err != nil {
-		t.Fatalf("the response body is not the JSON a client would parse: %v in %s", err, r.body)
+	if err := json.Unmarshal(this.body, into); err != nil {
+		t.Fatalf("the response body is not the JSON a client would parse: %v in %s", err, this.body)
 	}
 }
 
@@ -275,20 +275,20 @@ func do(t *testing.T, app *fiber.App, method, target, body string) response {
 	if body != "" {
 		rdr = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	request := httptest.NewRequest(method, target, rdr)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Content-Type", "application/json")
 	}
-	res, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	httpResponse, err := app.Test(request, fiber.TestConfig{Timeout: 0})
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
+	defer httpResponse.Body.Close()
+	raw, err := io.ReadAll(httpResponse.Body)
 	if err != nil {
 		t.Fatalf("%s %s: reading the response: %v", method, target, err)
 	}
-	return response{status: res.StatusCode, body: raw, header: res.Header}
+	return response{status: httpResponse.StatusCode, body: raw, header: httpResponse.Header}
 }
 
 // ok sends a request and insists it succeeded, so a test that is about what

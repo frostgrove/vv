@@ -34,9 +34,9 @@ type stubRenderer struct {
 	ctx context.Context
 }
 
-func (s *stubRenderer) Render(ctx context.Context, _ error) (int, http.Header, any) {
-	s.ctx = ctx
-	return s.status, s.header, s.body
+func (this *stubRenderer) Render(ctx context.Context, _ error) (int, http.Header, any) {
+	this.ctx = ctx
+	return this.status, this.header, this.body
 }
 
 // unencodable is a body the encoder refuses, and its refusal names the secret.
@@ -44,8 +44,8 @@ func (s *stubRenderer) Render(ctx context.Context, _ error) (int, http.Header, a
 // accident; what matters is what the client is told when they do.
 type unencodable struct{ reason string }
 
-func (u unencodable) MarshalJSON() ([]byte, error) {
-	return nil, fmt.Errorf("cannot encode the refusal for %s", u.reason)
+func (this unencodable) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("cannot encode the refusal for %s", this.reason)
 }
 
 // frenchOnly answers one sentence and only in French, so a body carrying it is

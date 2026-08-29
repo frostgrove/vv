@@ -55,14 +55,14 @@ func NewMessages(codes *Codes) *Messages {
 
 // Add declares one template. The empty locale is the default one, used when the
 // requested locale and its base language have nothing.
-func (m *Messages) Add(locale, key, template string) error {
-	if m.templates == nil {
-		m.templates = map[string]map[string]string{}
+func (this *Messages) Add(locale, key, template string) error {
+	if this.templates == nil {
+		this.templates = map[string]map[string]string{}
 	}
-	byKey := m.templates[locale]
+	byKey := this.templates[locale]
 	if byKey == nil {
 		byKey = map[string]string{}
-		m.templates[locale] = byKey
+		this.templates[locale] = byKey
 	}
 	if have, ok := byKey[key]; ok {
 		if have != template {
@@ -83,10 +83,10 @@ func (m *Messages) Add(locale, key, template string) error {
 //
 // The context is accepted and unused. It is in the signature for a catalogue
 // that reads from somewhere.
-func (m *Messages) Message(_ context.Context, v Violation, locale string) (string, bool) {
+func (this *Messages) Message(_ context.Context, v Violation, locale string) (string, bool) {
 	keys := ladder(v)
 	for _, loc := range locales(locale) {
-		byKey := m.templates[loc]
+		byKey := this.templates[loc]
 		if byKey == nil {
 			continue
 		}
@@ -100,7 +100,7 @@ func (m *Messages) Message(_ context.Context, v Violation, locale string) (strin
 			}
 		}
 	}
-	if tmpl, ok := m.codes.MessageFor(v.Code); ok {
+	if tmpl, ok := this.codes.MessageFor(v.Code); ok {
 		if s, ok := expand(tmpl, v.Params); ok {
 			return s, true
 		}

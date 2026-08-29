@@ -63,29 +63,29 @@ const DefaultMaxBulk = 1024
 // A method and not a defaulted field, so the four transports cannot disagree
 // about what an unset MaxBulk means — which is how they came to agree it meant
 // no cap at all.
-func (r *Rules) BulkCap() int {
-	if r == nil {
+func (this *Rules) BulkCap() int {
+	if this == nil {
 		return DefaultMaxBulk
 	}
-	if r.MaxBulk > 0 {
-		return r.MaxBulk
+	if this.MaxBulk > 0 {
+		return this.MaxBulk
 	}
 	return DefaultMaxBulk
 }
 
 // Service translates the rules that belong to the service rather than to the
 // transport into the options the default service takes.
-func (r *Rules) Service() []ServiceOption {
-	if r == nil {
+func (this *Rules) Service() []ServiceOption {
+	if this == nil {
 		return nil
 	}
 	var out []ServiceOption
-	if r.QuerySelector != nil || r.QueryVariants != nil {
-		out = append(out, WithQueryFor(r.Query, r.QueryVariants, r.QuerySelector))
-	} else if r.Query != nil {
-		out = append(out, WithQuery(r.Query))
+	if this.QuerySelector != nil || this.QueryVariants != nil {
+		out = append(out, WithQueryFor(this.Query, this.QueryVariants, this.QuerySelector))
+	} else if this.Query != nil {
+		out = append(out, WithQuery(this.Query))
 	}
-	if r.AllowClientID {
+	if this.AllowClientID {
 		out = append(out, AllowClientID())
 	}
 	return out
@@ -101,14 +101,14 @@ func (r *Rules) Service() []ServiceOption {
 //
 // who is the constructor's qualified name, so the message names the call site
 // in the caller's own vocabulary rather than this package's.
-func (r *Rules) RefuseServiceOptions(who string) {
-	if r == nil {
+func (this *Rules) RefuseServiceOptions(who string) {
+	if this == nil {
 		return
 	}
 	switch {
-	case r.Query != nil || r.QuerySelector != nil || r.QueryVariants != nil:
+	case this.Query != nil || this.QuerySelector != nil || this.QueryVariants != nil:
 		panic(who + ": WithQuery configures the service, which is already built — pass port.WithQuery to it instead")
-	case r.AllowClientID:
+	case this.AllowClientID:
 		panic(who + ": AllowClientID configures the service, which is already built — pass port.AllowClientID to it instead")
 	}
 }

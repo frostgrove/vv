@@ -62,16 +62,16 @@ type grpcClient struct {
 	service string
 }
 
-func (c *grpcClient) call(method string, in *structpb.Struct) (*structpb.Struct, *status.Status) {
-	c.t.Helper()
+func (this *grpcClient) call(method string, in *structpb.Struct) (*structpb.Struct, *status.Status) {
+	this.t.Helper()
 	out := &structpb.Struct{}
-	err := c.conn.Invoke(context.Background(), "/"+c.service+"/"+method, in, out)
+	err := this.conn.Invoke(context.Background(), "/"+this.service+"/"+method, in, out)
 	if err == nil {
 		return out, nil
 	}
 	st, ok := status.FromError(err)
 	if !ok {
-		c.t.Fatalf("%s answered an error with no status: %v", method, err)
+		this.t.Fatalf("%s answered an error with no status: %v", method, err)
 	}
 	return nil, st
 }
@@ -158,25 +158,25 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 				body []byte
 			)
 			for i, b := range bindings {
-				svc := newRecorder()
-				_, raw := b.serve(t, svc, tc.method, tc.target, tc.body)
+				service := newRecorder()
+				_, raw := b.serve(t, service, tc.method, tc.target, tc.body)
 				if i == 0 {
-					want, body = svc.got, raw
+					want, body = service.got, raw
 					continue
 				}
-				if !reflect.DeepEqual(svc.got, want) {
-					t.Fatalf("%s handed the service %+v and crudnet handed it %+v", b.name, svc.got, want)
+				if !reflect.DeepEqual(service.got, want) {
+					t.Fatalf("%s handed the service %+v and crudnet handed it %+v", b.name, service.got, want)
 				}
 			}
 
 			// And the fourth.
-			svc := newRecorder()
-			c := grpcServe(t, crudgrpc.Serving(svc).Desc(grpcResource))
+			service := newRecorder()
+			c := grpcServe(t, crudgrpc.Serving(service).Desc(grpcResource))
 			out, st := c.call(tc.grpc.method, grpcDoc(t, tc.grpc.request))
 			if st != nil {
 				t.Fatalf("crudgrpc answered %s: %s", st.Code(), st.Message())
 			}
-			if got, first := commandsOf(t, svc.got), commandsOf(t, want); got != first {
+			if got, first := commandsOf(t, service.got), commandsOf(t, want); got != first {
 				t.Fatalf("crudgrpc handed the service %s and the HTTP bindings handed it %s — one of them is re-deriving a rule the service owns",
 					got, first)
 			}
@@ -232,9 +232,9 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports(t *testing.T)
 	}
 	const body = `{"label":"bolt","price":250}`
 
-	svc := newRecorder()
-	svc.repo.err = fault()
-	c := grpcServe(t, crudgrpc.ServingFor(svc, WidgetMapper{}).Desc(grpcResource))
+	service := newRecorder()
+	service.repository.err = fault()
+	c := grpcServe(t, crudgrpc.ServingFor(service, WidgetMapper{}).Desc(grpcResource))
 	_, st := c.call("Create", grpcDoc(t, body))
 	if st == nil || st.Code() != codes.AlreadyExists {
 		t.Fatalf("crudgrpc answered %v for a duplicate key", st)
@@ -249,7 +249,7 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports(t *testing.T)
 	// name back. Without this the assertion above passes for a binding that
 	// never wired the hop at all.
 	plain := newRecorder()
-	plain.repo.err = fault()
+	plain.repository.err = fault()
 	c2 := grpcServe(t, crudgrpc.Serving(plain).Desc(grpcResource))
 	_, st2 := c2.call("Create", grpcDoc(t, `{"name":"bolt","price":250}`))
 	if st2 == nil {
@@ -288,12 +288,12 @@ func TestTheSameCodeIsSpelledTheSameOnBothTransports(t *testing.T) {
 	const body = `{"label":"bolt","price":250}`
 
 	http4 := newRecorder()
-	http4.repo.err = fault()
+	http4.repository.err = fault()
 	_, raw := bindings[0].mappedServe(t, http4, http.MethodPost, "/widgets", body)
 	envelopeCode := codeOf(t, raw)
 
 	grpcSvc := newRecorder()
-	grpcSvc.repo.err = fault()
+	grpcSvc.repository.err = fault()
 	c := grpcServe(t, crudgrpc.ServingFor(grpcSvc, WidgetMapper{}).Desc(grpcResource))
 	_, st := c.call("Create", grpcDoc(t, body))
 	if st == nil {
@@ -362,8 +362,8 @@ func TestARefusalIsTheSameClassOnBothTransports(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := newRecorder()
-			gotStatus, raw := bindings[0].serve(t, svc, http.MethodGet, tc.target, "")
+			service := newRecorder()
+			gotStatus, raw := bindings[0].serve(t, service, http.MethodGet, tc.target, "")
 			if gotStatus != tc.wantStatus {
 				t.Fatalf("the HTTP binding answered %d, want %d: %s", gotStatus, tc.wantStatus, raw)
 			}

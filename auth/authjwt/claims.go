@@ -40,13 +40,13 @@ type Claims struct {
 // claim stays an integer. Left as the float64 encoding/json would produce, a
 // tenant id read out of [Claims.Attr] compiles into a float in the WHERE
 // clause of every scoped query.
-func (c *Claims) UnmarshalJSON(b []byte) error {
+func (this *Claims) UnmarshalJSON(b []byte) error {
 	type plain Claims
 	var named plain
 	if err := json.Unmarshal(b, &named); err != nil {
 		return err
 	}
-	*c = Claims(named)
+	*this = Claims(named)
 
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.UseNumber()
@@ -54,9 +54,9 @@ func (c *Claims) UnmarshalJSON(b []byte) error {
 	if err := dec.Decode(&raw); err != nil {
 		return err
 	}
-	c.Extra = make(map[string]any, len(raw))
+	this.Extra = make(map[string]any, len(raw))
 	for k, v := range raw {
-		c.Extra[k] = narrow(v)
+		this.Extra[k] = narrow(v)
 	}
 	return nil
 }
@@ -95,11 +95,11 @@ func narrow(v any) any {
 }
 
 // Subject implements [auth.Principal].
-func (c Claims) Subject() string { return c.Sub }
+func (this Claims) Subject() string { return this.Sub }
 
 // In implements [auth.Principal].
-func (c Claims) In(r auth.Role) bool {
-	for _, has := range c.Roles {
+func (this Claims) In(r auth.Role) bool {
+	for _, has := range this.Roles {
 		if auth.Role(has) == r {
 			return true
 		}
@@ -108,13 +108,13 @@ func (c Claims) In(r auth.Role) bool {
 }
 
 // Has implements [auth.Principal], reading both spellings of a permission.
-func (c Claims) Has(p auth.Permission) bool {
-	for _, has := range c.Permissions {
+func (this Claims) Has(p auth.Permission) bool {
+	for _, has := range this.Permissions {
 		if auth.Permission(has) == p {
 			return true
 		}
 	}
-	for _, has := range auth.Scopes(c.Scope) {
+	for _, has := range auth.Scopes(this.Scope) {
 		if has == p {
 			return true
 		}
@@ -123,8 +123,8 @@ func (c Claims) Has(p auth.Permission) bool {
 }
 
 // Attr implements [auth.Principal] over the whole payload.
-func (c Claims) Attr(name string) (any, bool) {
-	v, ok := c.Extra[name]
+func (this Claims) Attr(name string) (any, bool) {
+	v, ok := this.Extra[name]
 	return v, ok
 }
 
@@ -134,21 +134,21 @@ func (c Claims) Attr(name string) (any, bool) {
 // and permissions are the thing an authorization rule should name. Expanding
 // once, here, is what keeps the same token from meaning two things in one
 // process ([[D-055]]).
-func (c Claims) Grant(m auth.RoleMap) auth.Claims {
-	roles := make([]auth.Role, 0, len(c.Roles))
-	for _, r := range c.Roles {
+func (this Claims) Grant(m auth.RoleMap) auth.Claims {
+	roles := make([]auth.Role, 0, len(this.Roles))
+	for _, r := range this.Roles {
 		roles = append(roles, auth.Role(r))
 	}
-	perms := make([]auth.Permission, 0, len(c.Permissions))
-	for _, p := range c.Permissions {
+	perms := make([]auth.Permission, 0, len(this.Permissions))
+	for _, p := range this.Permissions {
 		perms = append(perms, auth.Permission(p))
 	}
-	perms = append(perms, auth.Scopes(c.Scope)...)
+	perms = append(perms, auth.Scopes(this.Scope)...)
 
 	return auth.Claims{
-		Sub:         c.Sub,
+		Sub:         this.Sub,
 		Roles:       roles,
 		Permissions: perms,
-		Attrs:       c.Extra,
+		Attrs:       this.Extra,
 	}.Grant(m)
 }

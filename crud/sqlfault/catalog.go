@@ -29,11 +29,11 @@ func FromCatalog(cat catalog.Catalog) Columns { return catalogColumns{cat} }
 
 type catalogColumns struct{ cat catalog.Catalog }
 
-func (c catalogColumns) ConstraintColumns(table, constraint string) ([]string, bool) {
-	if c.cat == nil {
+func (this catalogColumns) ConstraintColumns(table, constraint string) ([]string, bool) {
+	if this.cat == nil {
 		return nil, false
 	}
-	con, ok := c.cat.Constraint(table, constraint)
+	con, ok := this.cat.Constraint(table, constraint)
 	if !ok || len(con.Columns) == 0 {
 		return nil, false
 	}
@@ -63,11 +63,11 @@ func (c catalogColumns) ConstraintColumns(table, constraint string) ([]string, b
 // third-party interface, and one empty entry would claim a column no schema has.
 // And what the driver said is never overwritten: the engine saw the statement
 // and this did not.
-func (c *Classifier) fill(s errs.Source) errs.Source {
-	if c.cols == nil || len(s.Columns) > 0 || s.Table == "" || s.Constraint == "" {
+func (this *Classifier) fill(s errs.Source) errs.Source {
+	if this.cols == nil || len(s.Columns) > 0 || s.Table == "" || s.Constraint == "" {
 		return s
 	}
-	if cols, ok := c.cols.ConstraintColumns(s.Table, s.Constraint); ok && len(cols) > 0 && !slices.Contains(cols, "") {
+	if cols, ok := this.cols.ConstraintColumns(s.Table, s.Constraint); ok && len(cols) > 0 && !slices.Contains(cols, "") {
 		s.Columns = cols
 	}
 	return s

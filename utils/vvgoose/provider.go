@@ -25,39 +25,39 @@ import (
 // separately keeps that ownership visible; Provider.Close would close the same
 // handle but obscures who created it.
 func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
-	cfg := normalizeConfig(&raw)
-	if err := cfg.Validate(); err != nil {
+	config := normalizeConfig(&raw)
+	if err := config.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("vvgoose: invalid database config: %w", err)
 	}
 
-	dialect, err := dialectFor(cfg.Engine)
+	dialect, err := dialectFor(config.Engine)
 	if err != nil {
 		return nil, nil, err
 	}
-	info, err := os.Stat(cfg.Migration.Path)
+	info, err := os.Stat(config.Migration.Path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("vvgoose: migration directory %q: %w", cfg.Migration.Path, err)
+		return nil, nil, fmt.Errorf("vvgoose: migration directory %q: %w", config.Migration.Path, err)
 	}
 	if !info.IsDir() {
-		return nil, nil, fmt.Errorf("vvgoose: migration path %q is not a directory", cfg.Migration.Path)
+		return nil, nil, fmt.Errorf("vvgoose: migration path %q is not a directory", config.Migration.Path)
 	}
 
-	primary, err := providerDatabaseConfig(cfg)
+	primary, err := providerDatabaseConfig(config)
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := vvdb.Open(&primary)
+	database, err := vvdb.Open(&primary)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vvgoose: open primary database: %w", err)
 	}
 
 	providerOptions := []goose.ProviderOption{
-		goose.WithTableName(cfg.Migration.Table),
+		goose.WithTableName(config.Migration.Table),
 		goose.WithDisableGlobalRegistry(true),
 	}
-	locker, err := providerLockerOption(cfg.Engine, cfg.Migration.Table)
+	locker, err := providerLockerOption(config.Engine, config.Migration.Table)
 	if err != nil {
-		return nil, nil, errors.Join(err, db.Close())
+		return nil, nil, errors.Join(err, database.Close())
 	}
 	if locker != nil {
 		providerOptions = append(providerOptions, locker)
@@ -65,21 +65,21 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 
 	provider, err := goose.NewProvider(
 		dialect,
-		db,
-		os.DirFS(cfg.Migration.Path),
+		database,
+		os.DirFS(config.Migration.Path),
 		providerOptions...,
 	)
 	if err != nil {
-		closeErr := db.Close()
+		closeErr := database.Close()
 		if closeErr != nil {
 			// Do not wrap ErrNoMigrations in this branch: callers intentionally
 			// turn that one condition into a no-op, but a failed close must remain
 			// observable instead of being swallowed with it.
-			return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %v; close database: %w", cfg.Migration.Path, err, closeErr)
+			return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %v; close database: %w", config.Migration.Path, err, closeErr)
 		}
-		return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %w", cfg.Migration.Path, err)
+		return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %w", config.Migration.Path, err)
 	}
-	return provider, db, nil
+	return provider, database, nil
 }
 
 // providerDatabaseConfig makes the connection suitable for Goose without
@@ -87,10 +87,10 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 // StatementBegin block as one string; go-sql-driver/mysql refuses that unless
 // multiStatements is enabled. Goose scans its history timestamp into time.Time,
 // so parseTime must also stay on even when a raw DSN disabled it.
-func providerDatabaseConfig(cfg vvdb.Config) (vvdb.Config, error) {
-	primary := cfg
+func providerDatabaseConfig(config vvdb.Config) (vvdb.Config, error) {
+	primary := config
 	primary.Replica = nil
-	if cfg.Engine != vvdb.MySQL && cfg.Engine != vvdb.MariaDB {
+	if config.Engine != vvdb.MySQL && config.Engine != vvdb.MariaDB {
 		return primary, nil
 	}
 
@@ -135,24 +135,24 @@ func providerLockerOption(engine vvdb.Engine, table string) (goose.ProviderOptio
 
 type mysqlSessionLocker struct{ name string }
 
-func (l mysqlSessionLocker) SessionLock(ctx context.Context, conn *sql.Conn) error {
+func (this mysqlSessionLocker) SessionLock(ctx context.Context, conn *sql.Conn) error {
 	var acquired sql.NullInt64
-	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 300)", l.name).Scan(&acquired); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 300)", this.name).Scan(&acquired); err != nil {
 		return fmt.Errorf("vvgoose: acquire MySQL migration lock: %w", err)
 	}
 	if !acquired.Valid || acquired.Int64 != 1 {
-		return fmt.Errorf("vvgoose: MySQL migration lock %q was not acquired", l.name)
+		return fmt.Errorf("vvgoose: MySQL migration lock %q was not acquired", this.name)
 	}
 	return nil
 }
 
-func (l mysqlSessionLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
+func (this mysqlSessionLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
 	var released sql.NullInt64
-	if err := conn.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", l.name).Scan(&released); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", this.name).Scan(&released); err != nil {
 		return fmt.Errorf("vvgoose: release MySQL migration lock: %w", err)
 	}
 	if !released.Valid || released.Int64 != 1 {
-		return fmt.Errorf("vvgoose: MySQL migration lock %q was not released", l.name)
+		return fmt.Errorf("vvgoose: MySQL migration lock %q was not released", this.name)
 	}
 	return nil
 }
@@ -172,15 +172,15 @@ func dialectFor(engine vvdb.Engine) (goose.Dialect, error) {
 	}
 }
 
-func runMigrate(ctx context.Context, cfg vvdb.Config) (results []*goose.MigrationResult, err error) {
-	provider, db, err := newProvider(cfg)
+func runMigrate(ctx context.Context, config vvdb.Config) (results []*goose.MigrationResult, err error) {
+	provider, database, err := newProvider(config)
 	if err != nil {
 		if errors.Is(err, goose.ErrNoMigrations) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer joinCloseError(db, &err)
+	defer joinCloseError(database, &err)
 
 	return provider.Up(ctx)
 }
@@ -188,15 +188,15 @@ func runMigrate(ctx context.Context, cfg vvdb.Config) (results []*goose.Migratio
 // runFresh rolls every known migration back and applies the complete set
 // again. This follows Goose reset semantics: it executes Down sections rather
 // than dropping arbitrary tables that are not owned by migrations.
-func runFresh(ctx context.Context, cfg vvdb.Config) (results []*goose.MigrationResult, err error) {
-	provider, db, err := newProvider(cfg)
+func runFresh(ctx context.Context, config vvdb.Config) (results []*goose.MigrationResult, err error) {
+	provider, database, err := newProvider(config)
 	if err != nil {
 		if errors.Is(err, goose.ErrNoMigrations) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer joinCloseError(db, &err)
+	defer joinCloseError(database, &err)
 
 	down, err := provider.DownTo(ctx, 0)
 	results = append(results, down...)
@@ -214,34 +214,34 @@ func runFresh(ctx context.Context, cfg vvdb.Config) (results []*goose.MigrationR
 // It intentionally does not run Up afterwards: the caller can inspect the
 // empty database, or run migrate explicitly.
 func runFlush(ctx context.Context, raw vvdb.Config) (err error) {
-	cfg := normalizeConfig(&raw)
-	if err := cfg.Validate(); err != nil {
+	config := normalizeConfig(&raw)
+	if err := config.Validate(); err != nil {
 		return fmt.Errorf("vvgoose: invalid database config: %w", err)
 	}
 
-	primary := cfg
+	primary := config
 	primary.Replica = nil
-	db, err := vvdb.Open(&primary)
+	database, err := vvdb.Open(&primary)
 	if err != nil {
 		return fmt.Errorf("vvgoose: open primary database: %w", err)
 	}
-	defer joinCloseError(db, &err)
+	defer joinCloseError(database, &err)
 
-	switch cfg.Engine {
+	switch config.Engine {
 	case vvdb.Postgres:
-		return flushPostgres(ctx, db)
+		return flushPostgres(ctx, database)
 	case vvdb.MySQL, vvdb.MariaDB:
-		return flushMySQL(ctx, db)
+		return flushMySQL(ctx, database)
 	case vvdb.SQLite:
-		return flushSQLite(ctx, db)
+		return flushSQLite(ctx, database)
 	default:
-		return fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, cfg.Engine)
+		return fmt.Errorf("vvgoose: %w: %q", vvdb.ErrEngine, config.Engine)
 	}
 }
 
-func flushPostgres(ctx context.Context, db *sql.DB) error {
+func flushPostgres(ctx context.Context, database *sql.DB) error {
 	var schema string
-	if err := db.QueryRowContext(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+	if err := database.QueryRowContext(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
 		return fmt.Errorf("vvgoose: find PostgreSQL schema to flush: %w", err)
 	}
 	if schema == "" || schema == "information_schema" || strings.HasPrefix(schema, "pg_") {
@@ -249,17 +249,17 @@ func flushPostgres(ctx context.Context, db *sql.DB) error {
 	}
 
 	quoted := quoteRuntimeIdentifier(vvdb.Postgres, schema)
-	if _, err := db.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
+	if _, err := database.ExecContext(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
 		return fmt.Errorf("vvgoose: drop PostgreSQL schema %q: %w", schema, err)
 	}
-	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
+	if _, err := database.ExecContext(ctx, "CREATE SCHEMA "+quoted); err != nil {
 		return fmt.Errorf("vvgoose: recreate PostgreSQL schema %q: %w", schema, err)
 	}
 	return nil
 }
 
-func flushMySQL(ctx context.Context, db *sql.DB) (err error) {
-	conn, err := db.Conn(ctx)
+func flushMySQL(ctx context.Context, database *sql.DB) (err error) {
+	conn, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("vvgoose: acquire MySQL flush connection: %w", err)
 	}
@@ -348,8 +348,8 @@ func dropMySQLObjects(ctx context.Context, conn *sql.Conn, objects []flushObject
 	return nil
 }
 
-func flushSQLite(ctx context.Context, db *sql.DB) (err error) {
-	conn, err := db.Conn(ctx)
+func flushSQLite(ctx context.Context, database *sql.DB) (err error) {
+	conn, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("vvgoose: acquire SQLite flush connection: %w", err)
 	}
@@ -414,32 +414,32 @@ func quoteRuntimeIdentifier(engine vvdb.Engine, name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-func runStatus(ctx context.Context, cfg vvdb.Config) (statuses []*goose.MigrationStatus, err error) {
-	provider, db, err := newProvider(cfg)
+func runStatus(ctx context.Context, config vvdb.Config) (statuses []*goose.MigrationStatus, err error) {
+	provider, database, err := newProvider(config)
 	if err != nil {
 		if errors.Is(err, goose.ErrNoMigrations) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer joinCloseError(db, &err)
+	defer joinCloseError(database, &err)
 
 	return provider.Status(ctx)
 }
 
-func runRollback(ctx context.Context, cfg vvdb.Config, count int) (results []*goose.MigrationResult, err error) {
+func runRollback(ctx context.Context, config vvdb.Config, count int) (results []*goose.MigrationResult, err error) {
 	if count < 1 {
 		return nil, fmt.Errorf("vvgoose: rollback count must be at least 1, got %d", count)
 	}
 
-	provider, db, err := newProvider(cfg)
+	provider, database, err := newProvider(config)
 	if err != nil {
 		if errors.Is(err, goose.ErrNoMigrations) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer joinCloseError(db, &err)
+	defer joinCloseError(database, &err)
 
 	for range count {
 		result, downErr := provider.Down(ctx)
@@ -456,6 +456,6 @@ func runRollback(ctx context.Context, cfg vvdb.Config, count int) (results []*go
 	return results, nil
 }
 
-func joinCloseError(db *sql.DB, target *error) {
-	*target = errors.Join(*target, db.Close())
+func joinCloseError(database *sql.DB, target *error) {
+	*target = errors.Join(*target, database.Close())
 }

@@ -40,20 +40,20 @@ import (
 //
 // Installing it twice authenticates once: [auth.Guard] hands back a context
 // that already carries a principal untouched.
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) fiber.Handler {
-	if g == nil {
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handler {
+	if guard == nil {
 		panic("authfiber: Middleware needs a Guard; without one nothing is authenticated")
 	}
-	rd := authhttp.RendererFor(opts)
-	return func(c fiber.Ctx) error {
-		// c.Get is variadic in Fiber v3, so it is adapted rather than passed:
+	renderer := authhttp.RendererFor(options)
+	return func(fiberContext fiber.Ctx) error {
+		// fiberContext.Get is variadic in Fiber v3, so it is adapted rather than passed:
 		// the Guard takes the one shape every transport can supply.
-		ctx, err := g.Authenticate(c.Context(), func(name string) string { return c.Get(name) })
+		ctx, err := guard.Authenticate(fiberContext.Context(), func(name string) string { return fiberContext.Get(name) })
 		if err != nil {
-			return refuse(c, rd, err)
+			return refuse(fiberContext, renderer, err)
 		}
-		c.SetContext(ctx)
-		return c.Next()
+		fiberContext.SetContext(ctx)
+		return fiberContext.Next()
 	}
 }
 

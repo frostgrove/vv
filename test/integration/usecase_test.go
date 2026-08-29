@@ -33,28 +33,28 @@ type promoteResult struct {
 }
 
 type teamUsecase struct {
-	db      *gorm.DB
-	members *crud.Repo[Member, uint, MemberUpdate]
-	cfg     *query.Config
+	database *gorm.DB
+	members  *crud.Repo[Member, uint, MemberUpdate]
+	config   *query.Config
 }
 
 // PromoteMembers is the whole pattern in one method.
-func (uc teamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *query.Request) (promoteResult, error) {
+func (this teamUsecase) PromoteMembers(ctx context.Context, teamID uint, request *query.Request) (promoteResult, error) {
 	// 1. The DSL is compiled and validated before anything opens.
-	opts, err := req.Compile(uc.members.Meta(), uc.cfg)
+	options, err := request.Compile(this.members.Meta(), this.config)
 	if err != nil {
 		return promoteResult{}, err
 	}
 
 	var out promoteResult
 	// 2. gorm owns the transaction.
-	err = uc.db.Transaction(func(tx *gorm.DB) error {
+	err = this.database.Transaction(func(tx *gorm.DB) error {
 		// 3. vv joins it — one line, and every repository call made with
 		//    txCtx now runs on this transaction.
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
 		// 4. The client's filter, narrowed by something it cannot override.
-		page, err := uc.members.Get(txCtx, append(opts, crud.Where(crud.Eq("TeamID", teamID)))...)
+		page, err := this.members.Get(txCtx, append(options, crud.Where(crud.Eq("TeamID", teamID)))...)
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ func (uc teamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *quer
 		// 6. Writes back through the repository, still the same transaction.
 		for _, m := range page.Items {
 			renamed := "Sr. " + m.Name
-			updated, err := uc.members.Update(txCtx, m.ID, MemberUpdate{Name: &renamed})
+			updated, err := this.members.Update(txCtx, m.ID, MemberUpdate{Name: &renamed})
 			if err != nil {
 				return err
 			}
@@ -86,15 +86,15 @@ func (uc teamUsecase) PromoteMembers(ctx context.Context, teamID uint, req *quer
 
 func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 	ctx := context.Background()
-	db := gormDB(t)
-	uc := teamUsecase{db: db, members: GormMembers.Bind(crudsql.Postgres(pgDB))}
+	database := gormDB(t)
+	uc := teamUsecase{database: database, members: GormMembers.Bind(crudsql.Postgres(pgDB))}
 
 	team := Team{Name: "core"}
-	if err := db.Create(&team).Error; err != nil {
+	if err := database.Create(&team).Error; err != nil {
 		t.Fatal(err)
 	}
 	young, senior := 22, 41
-	if err := db.Create(&[]*Member{
+	if err := database.Create(&[]*Member{
 		{TeamID: team.ID, Name: "Ann", Age: &senior},
 		{TeamID: team.ID, Name: "Bob", Age: &young},
 		{TeamID: team.ID, Name: "Cid", Age: &senior},
@@ -103,12 +103,12 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 	}
 
 	// Exactly what an HTTP client would post.
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"filter":{"age":{"gte":30}},"sort":["name"],"limit":50}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"filter":{"age":{"gte":30}},"sort":["name"],"limit":50}`), &request); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := uc.PromoteMembers(ctx, team.ID, &req)
+	got, err := uc.PromoteMembers(ctx, team.ID, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,14 +121,14 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 
 	// Both halves of the transaction landed.
 	var reloaded Team
-	if err := db.First(&reloaded, team.ID).Error; err != nil {
+	if err := database.First(&reloaded, team.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if reloaded.Name != "core (promoted)" {
 		t.Fatalf("team = %q", reloaded.Name)
 	}
 	var bob Member
-	if err := db.Where("name = ?", "Bob").First(&bob).Error; err != nil {
+	if err := database.Where("name = ?", "Bob").First(&bob).Error; err != nil {
 		t.Fatal(err)
 	}
 	if bob.Name != "Bob" {
@@ -139,19 +139,19 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 // A failure anywhere in the usecase takes the ORM's work and vv's with it.
 func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	ctx := context.Background()
-	db := gormDB(t)
+	database := gormDB(t)
 	members := GormMembers.Bind(crudsql.Postgres(pgDB))
 
 	team := Team{Name: "core"}
-	if err := db.Create(&team).Error; err != nil {
+	if err := database.Create(&team).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&Member{TeamID: team.ID, Name: "Ann"}).Error; err != nil {
+	if err := database.Create(&Member{TeamID: team.ID, Name: "Ann"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
 	boom := errors.New("policy check failed")
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 		if err := tx.Model(&Team{}).Where("id = ?", team.ID).Update("name", "renamed").Error; err != nil {
 			return err
@@ -170,7 +170,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	}
 
 	var reloaded Team
-	if err := db.First(&reloaded, team.ID).Error; err != nil {
+	if err := database.First(&reloaded, team.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if reloaded.Name != "core" {
@@ -187,7 +187,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 type userUsecase struct {
 	client *entpkg.Client
 	users  *crud.Repo[entpkg.User, int64, entstore.UserUpdate]
-	cfg    *query.Config
+	config *query.Config
 }
 
 type deactivateResult struct {
@@ -195,15 +195,15 @@ type deactivateResult struct {
 	Deactivated []string `json:"deactivated"`
 }
 
-func (uc userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req *query.Request) (deactivateResult, error) {
-	opts, err := req.Compile(uc.users.Meta(), uc.cfg)
+func (this userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, request *query.Request) (deactivateResult, error) {
+	options, err := request.Compile(this.users.Meta(), this.config)
 	if err != nil {
 		return deactivateResult{}, err
 	}
 
 	var out deactivateResult
 	// ent owns the transaction, so ent's hooks and privacy rules still run.
-	tx, err := uc.client.Tx(ctx)
+	tx, err := this.client.Tx(ctx)
 	if err != nil {
 		return deactivateResult{}, err
 	}
@@ -211,7 +211,7 @@ func (uc userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req *
 
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 
-	page, err := uc.users.Get(txCtx, append(opts, crud.Where(crud.Eq("TenantID", tenantID)))...)
+	page, err := this.users.Get(txCtx, append(options, crud.Where(crud.Eq("TenantID", tenantID)))...)
 	if err != nil {
 		return deactivateResult{}, err
 	}
@@ -232,7 +232,7 @@ func (uc userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req *
 	// …and a repository write, still the same transaction.
 	for _, id := range ids {
 		name := "deactivated"
-		if _, err := uc.users.Update(txCtx, id, entstore.UserUpdate{Name: &name}); err != nil {
+		if _, err := this.users.Update(txCtx, id, entstore.UserUpdate{Name: &name}); err != nil {
 			return deactivateResult{}, err
 		}
 	}
@@ -263,12 +263,12 @@ func TestEntUsecaseDSLInsideTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var req query.Request
-	if err := json.Unmarshal([]byte(`{"filter":{"age":{"gte":33}},"sort":["email"],"limit":50}`), &req); err != nil {
+	var request query.Request
+	if err := json.Unmarshal([]byte(`{"filter":{"age":{"gte":33}},"sort":["email"],"limit":50}`), &request); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := uc.DeactivateUsers(ctx, 1, &req)
+	got, err := uc.DeactivateUsers(ctx, 1, &request)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,10 +19,10 @@ type fieldError struct {
 	value     any
 }
 
-func (f fieldError) Namespace() string { return f.namespace }
-func (f fieldError) Tag() string       { return f.tag }
-func (f fieldError) Param() string     { return f.param }
-func (f fieldError) Value() any        { return f.value }
+func (this fieldError) Namespace() string { return this.namespace }
+func (this fieldError) Tag() string       { return this.tag }
+func (this fieldError) Param() string     { return this.param }
+func (this fieldError) Value() any        { return this.value }
 
 func TestTheMeasuredValidatorNamespacesBecomePaths(t *testing.T) {
 	// The three rows measured against v10.30.1 with the roadmap's own input DTO.

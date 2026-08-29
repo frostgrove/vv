@@ -14,8 +14,8 @@ const (
 	kindRestrict
 )
 
-func (k termKind) code() errs.Code {
-	switch k {
+func (this termKind) code() errs.Code {
+	switch this {
 	case kindForeignKey:
 		return errs.CodeForeignKey
 	case kindRestrict:
@@ -180,19 +180,19 @@ func anyEmpty(ss []string) bool {
 // Relevance is by written column: a constraint none of whose columns the write
 // touched cannot have been broken by it. What is left has to be bindable — every
 // key part either written, or readable from the stored row where there is one.
-func (f *full) planFor(req *Request) plan {
-	d := req.Source.Dialect()
-	p := plan{mode: modeFor(req), rows: req.Rows}
-	if len(p.rows) > f.cfg.maxRows {
-		p.rows = p.rows[:f.cfg.maxRows]
+func (this *full) planFor(request *Request) plan {
+	d := request.Source.Dialect()
+	p := plan{mode: modeFor(request), rows: request.Rows}
+	if len(p.rows) > this.config.maxRows {
+		p.rows = p.rows[:this.config.maxRows]
 		p.capped = true
 	}
 
-	for _, c := range f.cands {
-		if f.cfg.skip[c.name] {
+	for _, c := range this.cands {
+		if this.config.skip[c.name] {
 			continue
 		}
-		if req.Upsert && c.kind == kindUnique && f.swallowed(d, c) {
+		if request.Upsert && c.kind == kindUnique && this.swallowed(d, c) {
 			continue
 		}
 		if c.kind == kindRestrict && p.mode != modeUpdate {
@@ -200,7 +200,7 @@ func (f *full) planFor(req *Request) plan {
 			// is no old value for a child row to be pointing at.
 			continue
 		}
-		if len(p.cands) == f.cfg.maxConstraints {
+		if len(p.cands) == this.config.maxConstraints {
 			p.capped = true
 			break
 		}
@@ -210,7 +210,7 @@ func (f *full) planFor(req *Request) plan {
 			if p.mode == modeBulk {
 				idx = i
 			}
-			if t, ok := f.bind(c, row, p.mode, idx); ok {
+			if t, ok := this.bind(c, row, p.mode, idx); ok {
 				p.terms = append(p.terms, t)
 			}
 		}
@@ -221,11 +221,11 @@ func (f *full) planFor(req *Request) plan {
 	return p
 }
 
-func modeFor(req *Request) mode {
+func modeFor(request *Request) mode {
 	switch {
-	case req.Batch:
+	case request.Batch:
 		return modeBulk
-	case req.Stored:
+	case request.Stored:
 		return modeUpdate
 	default:
 		return modeInsert
@@ -235,7 +235,7 @@ func modeFor(req *Request) mode {
 // swallowed reports a unique key this write's own conflict clause absorbed, so
 // no violation may claim it. Which keys those are is the dialect's answer and
 // never a hard-coded rule ([[D-019]] difference 11).
-func (f *full) swallowed(d crud.Dialect, c candidate) bool {
+func (this *full) swallowed(d crud.Dialect, c candidate) bool {
 	if us, ok := d.(crud.UpsertScope); ok && us.UpsertSwallowsPrimaryKeyOnly() {
 		return c.pkOnly
 	}
@@ -245,7 +245,7 @@ func (f *full) swallowed(d crud.Dialect, c candidate) bool {
 
 // bind resolves one candidate's key parts against the payload, reporting false
 // when the candidate cannot be probed at all.
-func (f *full) bind(c candidate, row Row, m mode, idx int) (term, bool) {
+func (this *full) bind(c candidate, row Row, m mode, idx int) (term, bool) {
 	var zero term
 	touched := false
 	vals := make([]ref, 0, len(c.cols))

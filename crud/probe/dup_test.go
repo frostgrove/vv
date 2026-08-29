@@ -43,10 +43,10 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(flatAnswer(5, 3, [2]int{cEmail, 1}, [2]int{cOrgFK, 2}))
 	f := declared(t, fixture())
-	req := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)), row(distinct(2)))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)), row(distinct(2)))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -63,10 +63,10 @@ func TestOneBadRowInABatchAttributesToThatRowOnly(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(flatAnswer(5, 3, [2]int{cEmail, 2}))
 	f := declared(t, fixture())
-	req := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)), row(distinct(2)))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)), row(distinct(2)))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -79,10 +79,10 @@ func TestIntraPayloadDuplicatesAreFoundWithoutAStatement(t *testing.T) {
 	f := declared(t, fixture())
 	a, b := distinct(0), distinct(1)
 	b["email"] = a["email"] // the same address twice in one insert
-	req := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -98,10 +98,10 @@ func TestABatchWithNoDuplicateProducesNone(t *testing.T) {
 	rec := crudtest.Postgres()
 	rec.Push(flatAnswer(5, 2))
 	f := declared(t, fixture())
-	req := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(distinct(0)), row(distinct(1)))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -120,10 +120,10 @@ func TestANullKeyPartMakesARowUnkeyable(t *testing.T) {
 	a, b := nulled(distinct(0), "slug"), nulled(distinct(1), "slug")
 	b["email"] = a["email"]
 	b["tenant_id"] = a["tenant_id"]
-	req := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}
@@ -140,10 +140,10 @@ func TestACompositeKeyWithNoNullPartIsKeyed(t *testing.T) {
 	f := declared(t, fixture())
 	a, b := distinct(0), distinct(1)
 	b["slug"], b["tenant_id"] = a["slug"], a["tenant_id"]
-	req := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
-	req.Batch = true
+	request := request(conflict("", ""), rec, docMeta(t), row(a), row(b))
+	request.Batch = true
 
-	got, err := f.Enrich(ctx, req)
+	got, err := f.Enrich(ctx, request)
 	if err != nil {
 		t.Fatalf("the probe reported %v", err)
 	}

@@ -17,8 +17,8 @@ func CoerceID[ID comparable](raw string) (ID, error) { return port.CoerceID[ID](
 
 // NarrowForCount drops everything that means nothing to a COUNT. The service
 // applies it now; this is the compatibility hop over port.NarrowForCount.
-func NarrowForCount(req *query.Request) { port.NarrowForCount(req) }
+func NarrowForCount(request *query.Request) { port.NarrowForCount(request) }
 
 // NarrowForEntity keeps only the shaping options. The service applies it now;
 // this is the compatibility hop over port.NarrowForEntity.
-func NarrowForEntity(req *query.Request) { port.NarrowForEntity(req) }
+func NarrowForEntity(request *query.Request) { port.NarrowForEntity(request) }

@@ -13,16 +13,16 @@ import (
 type Option func(*settings)
 
 type settings struct {
-	byOp  map[string]probe.Handler
-	src   crud.Source
-	onErr func(op string, err error)
+	byOp   map[string]probe.Handler
+	source crud.Source
+	onErr  func(op string, err error)
 }
 
-func (s *settings) set(op string, h probe.Handler) {
-	if s.byOp == nil {
-		s.byOp = map[string]probe.Handler{}
+func (this *settings) set(op string, h probe.Handler) {
+	if this.byOp == nil {
+		this.byOp = map[string]probe.Handler{}
 	}
-	s.byOp[op] = h
+	this.byOp[op] = h
 }
 
 // WithProbe wires a handler onto every single-row write: Save, SaveOnly and
@@ -53,8 +53,8 @@ func WithProbeFor(op string, h probe.Handler) Option {
 // It is needed only where the decorator is not the innermost middleware. Where
 // it is — which is the documented order — the repository underneath is
 // crud.Sourced and answers for itself.
-func WithSource(src crud.Source) Option {
-	return func(s *settings) { s.src = src }
+func WithSource(source crud.Source) Option {
+	return func(s *settings) { s.source = source }
 }
 
 // WithProbeError hands probe failures somewhere. A probe that fails keeps the
@@ -77,12 +77,12 @@ type probeCfg struct {
 // It panics, like sqlrepo.Define and security.ScopeField before it: a probe over a
 // table the catalog does not know cannot start working later, and [[D-021]] puts
 // that failure at start-up rather than at the first collision.
-func (e *enricher[M, ID]) declare(next crud.Core[M, ID], s settings) {
+func (this *enricher[M, ID]) declare(next crud.Core[M, ID], s settings) {
 	if len(s.byOp) == 0 {
 		return
 	}
-	e.src = s.src
-	if e.src == nil {
+	this.source = s.source
+	if this.source == nil {
 		// crud.SourceOf and not a type assertion on the layer directly below.
 		// The assertion made the order decorators were listed in decide whether
 		// the probe worked: security.Gate between faults and the repository
@@ -90,37 +90,37 @@ func (e *enricher[M, ID]) declare(next crud.Core[M, ID], s settings) {
 		// its own method set — so a chain that was correct in every other
 		// respect refused at start-up for a reason about Go's type system
 		// rather than about the wiring. The walk asks the whole chain.
-		src, ok := crud.SourceOf(next)
+		source, ok := crud.SourceOf(next)
 		if !ok {
 			panic(fmt.Sprintf("faults: a probe is wired for %s but nothing in the chain underneath "+
 				"says which datasource it is bound to. A decorator between this one and the "+
 				"repository has to forward what it wraps with Next() — crud.Base does — or "+
-				"name the source with faults.WithSource", e.entity()))
+				"name the source with faults.WithSource", this.entity()))
 		}
-		e.src = src
+		this.source = source
 	}
-	e.probes = make(map[string]probeCfg, len(s.byOp))
+	this.probes = make(map[string]probeCfg, len(s.byOp))
 	for op, h := range s.byOp {
 		if d, ok := h.(probe.Declarer); ok {
-			bound, err := d.Declare(e.meta)
+			bound, err := d.Declare(this.meta)
 			if err != nil {
-				panic(fmt.Sprintf("faults: declaring the %s probe for %s: %v", op, e.entity(), err))
+				panic(fmt.Sprintf("faults: declaring the %s probe for %s: %v", op, this.entity(), err))
 			}
 			h = bound
 		}
-		cfg := probeCfg{h: h}
+		config := probeCfg{h: h}
 		if sp, ok := h.(probe.Savepointer); ok {
-			cfg.savepoints, cfg.budget = sp.Savepoints()
+			config.savepoints, config.budget = sp.Savepoints()
 		}
-		e.probes[op] = cfg
+		this.probes[op] = config
 	}
 }
 
-func (e *enricher[M, ID]) entity() string {
-	if e.meta == nil {
+func (this *enricher[M, ID]) entity() string {
+	if this.meta == nil {
 		return "an unnamed model"
 	}
-	return e.meta.Schema.Name
+	return this.meta.Schema.Name
 }
 
 // probed runs one write with the probe around it.
@@ -129,10 +129,10 @@ func (e *enricher[M, ID]) entity() string {
 // savepoint cannot be taken after the fact, and on an engine that poisons a
 // transaction there is nothing left to run the probe on. This is the only part
 // of the subsystem that touches the happy path, which is why it is opt-in.
-func (e *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, req *probe.Request, run func(context.Context) error) error {
+func (this *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, request *probe.Request, run func(context.Context) error) error {
 	if pc.savepoints {
-		sp, res := e.savepoint(ctx, pc.budget)
-		switch res {
+		sp, response := this.savepoint(ctx, pc.budget)
+		switch response {
 		case spTaken:
 			err := run(ctx)
 			if err == nil {
@@ -140,22 +140,22 @@ func (e *enricher[M, ID]) probed(ctx context.Context, op string, pc probeCfg, re
 				// subtransaction, and a PostgreSQL transaction holding more than
 				// 64 of them forces pg_subtrans lookups on every reader in the
 				// cluster.
-				return e.enrich(op, sp.Commit(ctx))
+				return this.enrich(op, sp.Commit(ctx))
 			}
 			if rbErr := sp.Rollback(ctx); rbErr == nil {
-				req.Recovered = true
+				request.Recovered = true
 			}
-			return e.enrichProbed(ctx, op, err, pc, req, false)
+			return this.enrichProbed(ctx, op, err, pc, request, false)
 		case spRefused:
 			// Past the budget. The write runs unwrapped, the probe will decline
 			// on an engine that poisons, and the answer says it is incomplete.
-			return e.enrichProbed(ctx, op, run(ctx), pc, req, true)
+			return this.enrichProbed(ctx, op, run(ctx), pc, request, true)
 		}
 	}
-	return e.enrichProbed(ctx, op, run(ctx), pc, req, false)
+	return this.enrichProbed(ctx, op, run(ctx), pc, request, false)
 }
 
-func (e *enricher[M, ID]) enrichProbed(ctx context.Context, op string, err error, pc probeCfg, req *probe.Request, capped bool) error {
+func (this *enricher[M, ID]) enrichProbed(ctx context.Context, op string, err error, pc probeCfg, request *probe.Request, capped bool) error {
 	if err == nil {
 		return nil
 	}
@@ -163,19 +163,19 @@ func (e *enricher[M, ID]) enrichProbed(ctx context.Context, op string, err error
 	if !ok {
 		return err // never invent a fault
 	}
-	req.Op, req.Fault, req.Meta, req.Source, req.Resolve = op, f, e.meta, e.src, e.resolvePath
-	out, perr := pc.h.Enrich(ctx, req)
+	request.Op, request.Fault, request.Meta, request.Source, request.Resolve = op, f, this.meta, this.source, this.resolvePath
+	out, perr := pc.h.Enrich(ctx, request)
 	if perr != nil {
 		capped = true
-		if e.onProbeErr != nil {
-			e.onProbeErr(op, perr)
+		if this.onProbeErr != nil {
+			this.onProbeErr(op, perr)
 		}
 	}
 	if out == nil {
 		// A handler that answered nil would have suppressed a truthful refusal.
 		out = f
 	}
-	return e.finish(op, out, capped)
+	return this.finish(op, out, capped)
 }
 
 type spResult uint8
@@ -198,19 +198,19 @@ const (
 // It never issues SAVEPOINT itself. crudsql's Tx.Begin already does, off a
 // counter it owns, and a hand-rolled name can collide with one the seam issued
 // ([[FL-009]]).
-func (e *enricher[M, ID]) savepoint(ctx context.Context, budget int) (crud.Tx, spResult) {
-	ex, inTx, owned := crud.OwnedExecutorFor(ctx, e.src)
+func (this *enricher[M, ID]) savepoint(ctx context.Context, budget int) (crud.Tx, spResult) {
+	ex, inTx, owned := crud.OwnedExecutorFor(ctx, this.source)
 	if !inTx || !owned {
 		return nil, spNotNeeded
 	}
-	if sr, ok := e.src.Dialect().(crud.StatementRollback); ok && sr.RollsBackStatementOnly() {
+	if sr, ok := this.source.Dialect().(crud.StatementRollback); ok && sr.RollsBackStatementOnly() {
 		return nil, spNotNeeded
 	}
 	b, ok := crud.BeginnerOf(ex)
 	if !ok {
 		return nil, spRefused
 	}
-	n, ok := crud.ClaimSavepoint(ctx, e.src)
+	n, ok := crud.ClaimSavepoint(ctx, this.source)
 	if !ok || n > int64(budget) {
 		return nil, spRefused
 	}
@@ -227,24 +227,24 @@ func (e *enricher[M, ID]) savepoint(ctx context.Context, budget int) (crud.Tx, s
 // constraints are even relevant. Values go through crud.ElemValue so a null
 // Opt arrives as nil rather than as an Opt that happens to be empty — the probe
 // keys and null-guards on it.
-func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) *probe.Request {
-	req := &probe.Request{Batch: batch}
-	if e.meta == nil || len(ms) == 0 {
-		return req
+func (this *enricher[M, ID]) insertRequest(batch bool, ms ...*M) *probe.Request {
+	request := &probe.Request{Batch: batch}
+	if this.meta == nil || len(ms) == 0 {
+		return request
 	}
 	for _, m := range ms {
 		if m == nil {
 			return &probe.Request{Batch: batch}
 		}
-		hasID, err := e.meta.HasID(m)
+		hasID, err := this.meta.HasID(m)
 		if err != nil {
 			return &probe.Request{Batch: batch}
 		}
-		fields := e.meta.InsertGen
+		fields := this.meta.InsertGen
 		if hasID {
-			fields = e.meta.Insert
+			fields = this.meta.Insert
 		}
-		vals, err := e.meta.Values(m, fields)
+		vals, err := this.meta.Values(m, fields)
 		if err != nil {
 			return &probe.Request{Batch: batch}
 		}
@@ -253,18 +253,18 @@ func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) *probe.Request {
 			row.Values[f.Column] = crud.ElemValue(vals[i])
 		}
 		if hasID {
-			id, err := e.meta.ID(m)
+			id, err := this.meta.ID(m)
 			if err != nil {
 				return &probe.Request{Batch: batch}
 			}
 			row.ID, row.HasID = crud.ElemValue(id), true
 			// A keyed Save is the upsert path ([[D-011]]), so the engine
 			// swallowed whatever its own conflict clause covers.
-			req.Upsert = true
+			request.Upsert = true
 		}
-		req.Rows = append(req.Rows, row)
+		request.Rows = append(request.Rows, row)
 	}
-	return req
+	return request
 }
 
 // updateRequest reads the columns an Update was about to write.
@@ -273,11 +273,11 @@ func (e *enricher[M, ID]) insertRequest(batch bool, ms ...*M) *probe.Request {
 // already matches the stored one, so the unchanged half of a composite key has
 // no value here at all. The probe reads that half out of the stored row in SQL
 // rather than being handed a copy that may already be stale.
-func (e *enricher[M, ID]) updateRequest(id ID, dto any) *probe.Request {
-	if e.meta == nil {
+func (this *enricher[M, ID]) updateRequest(id ID, dataTransferObject any) *probe.Request {
+	if this.meta == nil {
 		return &probe.Request{}
 	}
-	changes, err := crud.DefinedChanges(e.meta.Schema, dto)
+	changes, err := crud.DefinedChanges(this.meta.Schema, dataTransferObject)
 	if err != nil {
 		return &probe.Request{}
 	}

@@ -33,11 +33,11 @@ import (
 // Never t.Parallel() here: every test shares the same physical tables.
 
 type pbTarget struct {
-	name    string
-	db      string // which pbSchema built it
-	dialect string
-	src     crud.Source
-	cat     catalog.Catalog
+	name     string
+	database string // which pbSchema built it
+	dialect  string
+	source   crud.Source
+	cat      catalog.Catalog
 }
 
 var (
@@ -57,16 +57,16 @@ func pbEngines(t *testing.T) []pbTarget {
 	// error that caused it.
 	pbOnce.Do(func() {
 		for _, s := range []struct {
-			db  string
-			src crud.Source
+			database string
+			source   crud.Source
 		}{
 			{"postgres", crudsql.Postgres(pgDB)},
 			{"mysql", crudsql.MySQL(myDB)},
 			{"mysql", crudsql.MySQL(mariaDB)},
 		} {
-			for _, stmt := range pbSchema[s.db] {
-				if _, err := s.src.Exec(ctx, stmt); err != nil {
-					pbErr = fmt.Errorf("%s: %s: %w", s.db, catFirstLine(stmt), err)
+			for _, stmt := range pbSchema[s.database] {
+				if _, err := s.source.Exec(ctx, stmt); err != nil {
+					pbErr = fmt.Errorf("%s: %s: %w", s.database, catFirstLine(stmt), err)
 					return
 				}
 			}
@@ -77,11 +77,11 @@ func pbEngines(t *testing.T) []pbTarget {
 	}
 
 	out := []pbTarget{
-		{name: "postgres", db: "postgres", dialect: "postgres"},
-		{name: "pgx", db: "postgres", dialect: "postgres"},
-		{name: "mysql", db: "mysql", dialect: "mysql"},
-		{name: "mariadb", db: "mysql", dialect: "mariadb"},
-		{name: "sqlite", db: "sqlite", dialect: "sqlite"},
+		{name: "postgres", database: "postgres", dialect: "postgres"},
+		{name: "pgx", database: "postgres", dialect: "postgres"},
+		{name: "mysql", database: "mysql", dialect: "mysql"},
+		{name: "mariadb", database: "mysql", dialect: "mariadb"},
+		{name: "sqlite", database: "sqlite", dialect: "sqlite"},
 	}
 	sqliteDB := pbOpenSQLite(t)
 	for i := range out {
@@ -109,15 +109,15 @@ func pbEngines(t *testing.T) []pbTarget {
 		cls := sqlfault.New(tg.dialect, sqlfault.WithColumns(sqlfault.FromCatalog(cat)))
 		switch tg.name {
 		case "postgres":
-			tg.src = crudsql.Postgres(pgDB, crudsql.WithFaults(cls))
+			tg.source = crudsql.Postgres(pgDB, crudsql.WithFaults(cls))
 		case "pgx":
-			tg.src = crudpgx.Open(pgPool, crudpgx.WithFaults(cls))
+			tg.source = crudpgx.Open(pgPool, crudpgx.WithFaults(cls))
 		case "mysql":
-			tg.src = crudsql.MySQL(myDB, crudsql.WithFaults(cls))
+			tg.source = crudsql.MySQL(myDB, crudsql.WithFaults(cls))
 		case "mariadb":
-			tg.src = crudsql.MariaDB(mariaDB, crudsql.WithFaults(cls))
+			tg.source = crudsql.MariaDB(mariaDB, crudsql.WithFaults(cls))
 		case "sqlite":
-			tg.src = crudsql.SQLite(sqliteDB, crudsql.WithFaults(cls))
+			tg.source = crudsql.SQLite(sqliteDB, crudsql.WithFaults(cls))
 		}
 	}
 	return out
@@ -129,19 +129,19 @@ func pbEngines(t *testing.T) []pbTarget {
 // record that SQLite has no foreign keys.
 func pbOpenSQLite(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "probe.db")+
+	database, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "probe.db")+
 		"?_pragma=foreign_keys(1)&_pragma=busy_timeout(200)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = database.Close() })
+	database.SetMaxOpenConns(1)
 	for _, stmt := range pbSchema["sqlite"] {
-		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+		if _, err := database.ExecContext(context.Background(), stmt); err != nil {
 			t.Fatalf("sqlite: %s: %v", catFirstLine(stmt), err)
 		}
 	}
-	return db
+	return database
 }
 
 // pbSeed empties the fixture and refills it with the three rows every test
@@ -169,7 +169,7 @@ func pbSeed(t *testing.T, tg pbTarget) {
 			VALUES (1, 'bait@x.io', 'CODE3', NULL, 'BAIT-LABEL', 'ALT3', 1)`,
 		`INSERT INTO pb_note (id, doc_code) VALUES (1, 'CODE2')`,
 	} {
-		if _, err := tg.src.Exec(ctx, stmt); err != nil {
+		if _, err := tg.source.Exec(ctx, stmt); err != nil {
 			t.Fatalf("%s: seeding: %s: %v", tg.name, catFirstLine(stmt), err)
 		}
 	}
@@ -179,7 +179,7 @@ func pbSeed(t *testing.T, tg pbTarget) {
 // disagree about what it will be.
 func pbIDOf(t *testing.T, tg pbTarget, email string) int64 {
 	t.Helper()
-	rows, err := tg.src.Query(context.Background(),
+	rows, err := tg.source.Query(context.Background(),
 		"SELECT id FROM pb_doc WHERE email = "+pbLiteral(tg, email))
 	if err != nil {
 		t.Fatalf("%s: reading back an id: %v", tg.name, err)
@@ -208,10 +208,10 @@ func pbLiteral(_ pbTarget, s string) string {
 // silently refused every statement would leave most of this file green: the
 // driver's own violation would still be there and the assertions on it would
 // still hold.
-func pbRepo(t *testing.T, tg pbTarget, opts ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
+func pbRepo(t *testing.T, tg pbTarget, options ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
 	t.Helper()
-	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
-		faults.WithProbe(probe.Full(tg.cat, opts...)),
+	return PbDocs.Bind(tg.source, faults.Enrich[PbDoc, int64](
+		faults.WithProbe(probe.Full(tg.cat, options...)),
 		faults.WithProbeError(func(op string, err error) {
 			t.Errorf("%s: the %s probe failed: %v", tg.name, op, err)
 		})))
@@ -219,15 +219,15 @@ func pbRepo(t *testing.T, tg pbTarget, opts ...probe.Option) *crud.Repo[PbDoc, i
 
 // pbRepoQuiet is pbRepo without the assertion that the probe never fails. Only
 // the test that deliberately breaks the probe uses it.
-func pbRepoQuiet(tg pbTarget, opts ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
-	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
-		faults.WithProbe(probe.Full(tg.cat, opts...))))
+func pbRepoQuiet(tg pbTarget, options ...probe.Option) *crud.Repo[PbDoc, int64, PbDocUpdate] {
+	return PbDocs.Bind(tg.source, faults.Enrich[PbDoc, int64](
+		faults.WithProbe(probe.Full(tg.cat, options...))))
 }
 
 // pbPlain binds it with no probe at all — the "before" half of the positive
 // control.
 func pbPlain(tg pbTarget) *crud.Repo[PbDoc, int64, PbDocUpdate] {
-	return PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64]())
+	return PbDocs.Bind(tg.source, faults.Enrich[PbDoc, int64]())
 }
 
 // pbPairs renders a fault as the set of (code, path) pairs a client sees.
@@ -535,7 +535,7 @@ func TestAProbeThatErrorsKeepsTheConflict(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			if _, err := tg.src.Exec(ctx, `DROP TABLE pb_note`); err != nil {
+			if _, err := tg.source.Exec(ctx, `DROP TABLE pb_note`); err != nil {
 				t.Fatalf("%s: dropping the child table: %v", tg.name, err)
 			}
 			t.Cleanup(func() { pbRestoreNote(t, tg) })
@@ -566,9 +566,9 @@ func TestAProbeThatErrorsKeepsTheConflict(t *testing.T) {
 func pbRestoreNote(t *testing.T, tg pbTarget) {
 	t.Helper()
 	ctx := context.Background()
-	for _, stmt := range pbSchema[tg.db] {
+	for _, stmt := range pbSchema[tg.database] {
 		if strings.Contains(stmt, "CREATE TABLE pb_note") {
-			if _, err := tg.src.Exec(ctx, stmt); err != nil {
+			if _, err := tg.source.Exec(ctx, stmt); err != nil {
 				t.Fatalf("%s: restoring pb_note: %v", tg.name, err)
 			}
 			return
@@ -591,10 +591,10 @@ func TestTheOffendingValueReachesTheBodyOnlyWhenAsked(t *testing.T) {
 			engines++
 			pbSeed(t, tg)
 
-			body := func(opts ...probe.Option) string {
+			body := func(options ...probe.Option) string {
 				doc := PbDoc{TenantID: 1, Email: "one@x.io", Code: "CODE-NEW",
 					Alt: crud.Set("ALT-NEW"), Slug: crud.Null[string]()}
-				err := pbRepo(t, tg, opts...).Save(context.Background(), &doc)
+				err := pbRepo(t, tg, options...).Save(context.Background(), &doc)
 				_, _, out := render.Render(context.Background(), err)
 				b, jerr := json.Marshal(out)
 				if jerr != nil {
@@ -631,7 +631,7 @@ func TestTheTransactionMatrix(t *testing.T) {
 		// The engine that poisons its transaction is the one with a choice to
 		// make; the other two are the control that the degrade is about the
 		// engine and not about being in a transaction at all.
-		_, statementScoped := tg.src.Dialect().(crud.StatementRollback)
+		_, statementScoped := tg.source.Dialect().(crud.StatementRollback)
 
 		t.Run(tg.name+"/outside a transaction", func(t *testing.T) {
 			arms++
@@ -648,7 +648,7 @@ func TestTheTransactionMatrix(t *testing.T) {
 			pbSeed(t, tg)
 			id := pbIDOf(t, tg, "two@x.io")
 			var got []string
-			_ = crud.InTx(context.Background(), tg.src, func(ctx context.Context) error {
+			_ = crud.InTx(context.Background(), tg.source, func(ctx context.Context) error {
 				_, err := pbRepo(t, tg).Update(ctx, id, patch())
 				got = pbPairs(t, err)
 				return err
@@ -668,7 +668,7 @@ func TestTheTransactionMatrix(t *testing.T) {
 			pbSeed(t, tg)
 			id := pbIDOf(t, tg, "two@x.io")
 			var got []string
-			_ = crud.InTx(context.Background(), tg.src, func(ctx context.Context) error {
+			_ = crud.InTx(context.Background(), tg.source, func(ctx context.Context) error {
 				_, err := pbRepo(t, tg, probe.WithSavepoints()).Update(ctx, id, patch())
 				got = pbPairs(t, err)
 				return err
@@ -718,18 +718,18 @@ func pbForeignTx(t *testing.T, tg pbTarget) (context.Context, func()) {
 		return crud.WithExecutor(ctx, crudpgx.From(tx, crudpgx.WithFaults(cls))),
 			func() { _ = tx.Rollback(context.Background()) }
 	}
-	var db *sql.DB
+	var database *sql.DB
 	switch tg.name {
 	case "postgres":
-		db = pgDB
+		database = pgDB
 	case "mysql":
-		db = myDB
+		database = myDB
 	case "mariadb":
-		db = mariaDB
+		database = mariaDB
 	case "sqlite":
-		db = pbSQLiteHandle(t, tg)
+		database = pbSQLiteHandle(t, tg)
 	}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,15 +741,15 @@ func pbForeignTx(t *testing.T, tg pbTarget) (context.Context, func()) {
 // database is built per test and nothing else holds it.
 func pbSQLiteHandle(t *testing.T, tg pbTarget) *sql.DB {
 	t.Helper()
-	id, ok := tg.src.(crud.Identified)
+	id, ok := tg.source.(crud.Identified)
 	if !ok {
 		t.Fatal("the SQLite source cannot name its handle")
 	}
-	db, ok := id.DataSource().(*sql.DB)
+	database, ok := id.DataSource().(*sql.DB)
 	if !ok {
 		t.Fatalf("the SQLite source named a %T", id.DataSource())
 	}
-	return db
+	return database
 }
 
 // A bulk write attributes each violation to its row, and an intra-payload
@@ -760,7 +760,7 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 		t.Run(tg.name, func(t *testing.T) {
 			engines++
 			pbSeed(t, tg)
-			repo := PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
+			repository := PbDocs.Bind(tg.source, faults.Enrich[PbDoc, int64](
 				faults.WithProbeFor("SaveAll", probe.Full(tg.cat)),
 				faults.WithProbeError(func(op string, err error) {
 					t.Errorf("%s: the %s probe failed: %v", tg.name, op, err)
@@ -771,7 +771,7 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 				{TenantID: 1, Email: "one@x.io", Code: "N1", Alt: crud.Set("A1"), Slug: crud.Null[string]()},
 				{TenantID: 1, Email: "n2@x.io", Code: "N2", Alt: crud.Set("A2"), Slug: crud.Null[string]()},
 			}
-			err := repo.SaveAll(context.Background(), rows)
+			err := repository.SaveAll(context.Background(), rows)
 			got := pbSet(pbPairs(t, err))
 			if !got["unique@[1].Email"] {
 				t.Fatalf("the violation was not attributed to its row: %v", pbPairs(t, err))
@@ -789,7 +789,7 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 				{TenantID: 1, Email: "same@x.io", Code: "D0", Alt: crud.Set("B0"), Slug: crud.Null[string]()},
 				{TenantID: 1, Email: "same@x.io", Code: "D1", Alt: crud.Set("B1"), Slug: crud.Null[string]()},
 			}
-			err = repo.SaveAll(context.Background(), dup)
+			err = repository.SaveAll(context.Background(), dup)
 			got = pbSet(pbPairs(t, err))
 			if !got["unique@[0].Email"] || !got["unique@[1].Email"] {
 				t.Fatalf("only one half of an intra-payload duplicate was reported: %v", pbPairs(t, err))
@@ -818,11 +818,11 @@ func TestADeclarationAgainstACatalogWithoutTheTableRefusesToStart(t *testing.T) 
 						t.Fatal("a probe over a table the catalog does not know bound quietly")
 					}
 				}()
-				Unknown.Bind(tg.src, faults.Enrich[PbDoc, int64](
+				Unknown.Bind(tg.source, faults.Enrich[PbDoc, int64](
 					faults.WithProbe(probe.Full(tg.cat))))
 			}()
 			// The control: the table the catalog does know binds.
-			PbDocs.Bind(tg.src, faults.Enrich[PbDoc, int64](
+			PbDocs.Bind(tg.source, faults.Enrich[PbDoc, int64](
 				faults.WithProbe(probe.Full(tg.cat))))
 		})
 	}

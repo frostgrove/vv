@@ -38,71 +38,71 @@ type recordedCommand struct {
 // recorder is a Service that records what it was handed and then behaves like
 // the default one.
 type recorder struct {
-	inner *port.DefaultService[Widget, int64, WidgetUpdate]
-	repo  *fakeRepo
-	got   []recordedCommand
+	inner      *port.DefaultService[Widget, int64, WidgetUpdate]
+	repository *fakeRepo
+	got        []recordedCommand
 }
 
 func newRecorder() *recorder {
-	repo := newFake()
-	return &recorder{inner: port.NewService[Widget, int64, WidgetUpdate](repo), repo: repo}
+	repository := newFake()
+	return &recorder{inner: port.NewService[Widget, int64, WidgetUpdate](repository), repository: repository}
 }
 
-func snap(req *query.Request) query.Request {
-	if req == nil {
+func snap(request *query.Request) query.Request {
+	if request == nil {
 		return query.Request{}
 	}
-	return *req
+	return *request
 }
 
-func (s *recorder) Meta() *crud.Meta     { return s.inner.Meta() }
-func (s *recorder) Paths() errs.Resolver { return s.inner.Paths() }
-func (s *recorder) verbs() []string {
-	out := make([]string, len(s.got))
-	for i, c := range s.got {
+func (this *recorder) Meta() *crud.Meta     { return this.inner.Meta() }
+func (this *recorder) Paths() errs.Resolver { return this.inner.Paths() }
+func (this *recorder) verbs() []string {
+	out := make([]string, len(this.got))
+	for i, c := range this.got {
 		out[i] = c.Verb
 	}
 	return out
 }
 
-func (s *recorder) List(ctx context.Context, cmd port.ListCommand) (crud.PaginatedResponse[Widget], error) {
-	s.got = append(s.got, recordedCommand{Verb: "List", Query: snap(cmd.Query)})
-	return s.inner.List(ctx, cmd)
+func (this *recorder) List(ctx context.Context, cmd port.ListCommand) (crud.PaginatedResponse[Widget], error) {
+	this.got = append(this.got, recordedCommand{Verb: "List", Query: snap(cmd.Query)})
+	return this.inner.List(ctx, cmd)
 }
 
-func (s *recorder) Count(ctx context.Context, cmd port.CountCommand) (int64, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Count", Query: snap(cmd.Query)})
-	return s.inner.Count(ctx, cmd)
+func (this *recorder) Count(ctx context.Context, cmd port.CountCommand) (int64, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Count", Query: snap(cmd.Query)})
+	return this.inner.Count(ctx, cmd)
 }
 
-func (s *recorder) Get(ctx context.Context, cmd port.GetCommand[int64]) (Widget, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Get", Query: snap(cmd.Query), ID: cmd.ID})
-	return s.inner.Get(ctx, cmd)
+func (this *recorder) Get(ctx context.Context, cmd port.GetCommand[int64]) (Widget, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Get", Query: snap(cmd.Query), ID: cmd.ID})
+	return this.inner.Get(ctx, cmd)
 }
 
-func (s *recorder) Create(ctx context.Context, cmd port.CreateCommand[Widget]) (Widget, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Create", Model: cmd.Model, Hook: cmd.Before != nil})
-	return s.inner.Create(ctx, cmd)
+func (this *recorder) Create(ctx context.Context, cmd port.CreateCommand[Widget]) (Widget, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Create", Model: cmd.Model, Hook: cmd.Before != nil})
+	return this.inner.Create(ctx, cmd)
 }
 
-func (s *recorder) Update(ctx context.Context, cmd port.UpdateCommand[int64, WidgetUpdate]) (Widget, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Update", ID: cmd.ID, Patched: cmd.Patch.Name != nil, Hook: cmd.Before != nil})
-	return s.inner.Update(ctx, cmd)
+func (this *recorder) Update(ctx context.Context, cmd port.UpdateCommand[int64, WidgetUpdate]) (Widget, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Update", ID: cmd.ID, Patched: cmd.Patch.Name != nil, Hook: cmd.Before != nil})
+	return this.inner.Update(ctx, cmd)
 }
 
-func (s *recorder) Replace(ctx context.Context, cmd port.ReplaceCommand[int64, Widget]) (Widget, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Replace", ID: cmd.ID, Model: cmd.Model, Hook: cmd.Before != nil})
-	return s.inner.Replace(ctx, cmd)
+func (this *recorder) Replace(ctx context.Context, cmd port.ReplaceCommand[int64, Widget]) (Widget, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Replace", ID: cmd.ID, Model: cmd.Model, Hook: cmd.Before != nil})
+	return this.inner.Replace(ctx, cmd)
 }
 
-func (s *recorder) Delete(ctx context.Context, cmd port.DeleteCommand[int64]) (int64, error) {
-	s.got = append(s.got, recordedCommand{Verb: "Delete", ID: cmd.ID})
-	return s.inner.Delete(ctx, cmd)
+func (this *recorder) Delete(ctx context.Context, cmd port.DeleteCommand[int64]) (int64, error) {
+	this.got = append(this.got, recordedCommand{Verb: "Delete", ID: cmd.ID})
+	return this.inner.Delete(ctx, cmd)
 }
 
-func (s *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[int64]) (int64, error) {
-	s.got = append(s.got, recordedCommand{Verb: "DeleteMany", IDs: cmd.IDs})
-	return s.inner.DeleteMany(ctx, cmd)
+func (this *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand[int64]) (int64, error) {
+	this.got = append(this.got, recordedCommand{Verb: "DeleteMany", IDs: cmd.IDs})
+	return this.inner.DeleteMany(ctx, cmd)
 }
 
 // Every command port declares has a method, and each one hands over the command
@@ -122,10 +122,10 @@ func TestEveryCommandHasAMethod(t *testing.T) {
 		{"BulkDelete", `{"ids":["1","2","3"]}`, "DeleteMany"},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
-			svc := newRecorder()
-			c := serve(t, Serving[Widget, int64, WidgetUpdate](svc).Desc(resource))
+			service := newRecorder()
+			c := serve(t, Serving[Widget, int64, WidgetUpdate](service).Desc(resource))
 			c.ok(tc.method, doc(t, tc.request))
-			if got := svc.verbs(); len(got) != 1 || got[0] != tc.verb {
+			if got := service.verbs(); len(got) != 1 || got[0] != tc.verb {
 				t.Fatalf("%s made the commands %v, want one %s", tc.method, got, tc.verb)
 			}
 		})
@@ -134,8 +134,8 @@ func TestEveryCommandHasAMethod(t *testing.T) {
 	// The control: ReadOnly registers the three reads and nothing else, so a
 	// write is Unimplemented rather than silently accepted. Without it the
 	// eight above would pass for a binding that registers everything always.
-	svc := newRecorder()
-	ro := serve(t, Serving[Widget, int64, WidgetUpdate](svc, ReadOnly[Widget, int64, WidgetUpdate]()).Desc(resource))
+	service := newRecorder()
+	ro := serve(t, Serving[Widget, int64, WidgetUpdate](service, ReadOnly[Widget, int64, WidgetUpdate]()).Desc(resource))
 	ro.ok("List", doc(t, `{}`))
 	ro.ok("Count", doc(t, `{}`))
 	ro.ok("Get", doc(t, `{"id":"42"}`))
@@ -193,11 +193,11 @@ func TestAbsentNullAndValueSurviveTheStructRoundTrip(t *testing.T) {
 			if tc.patch != nil {
 				patch.Fields["note"] = tc.patch
 			}
-			req := &structpb.Struct{Fields: map[string]*structpb.Value{
+			request := &structpb.Struct{Fields: map[string]*structpb.Value{
 				"id":    structpb.NewStringValue("42"),
 				"patch": structpb.NewStructValue(patch),
 			}}
-			c.ok("Update", req)
+			c.ok("Update", request)
 			tc.want(t, f.only(t, "Update").DTO.Note)
 		})
 	}
@@ -229,7 +229,7 @@ func TestAnInt64KeyIsCarriedAsAString(t *testing.T) {
 	const big = int64(1)<<53 + 1 // the first int64 a double cannot spell
 
 	c, f := mount(t)
-	resp := c.ok("Get", &structpb.Struct{Fields: map[string]*structpb.Value{
+	response := c.ok("Get", &structpb.Struct{Fields: map[string]*structpb.Value{
 		"id": structpb.NewStringValue(fmt.Sprint(big)),
 	}})
 	if got := f.only(t, "GetByID").ID; got != big {
@@ -239,7 +239,7 @@ func TestAnInt64KeyIsCarriedAsAString(t *testing.T) {
 	// The control, and the reason the limit is written down: the same number
 	// inside the entity document *is* a double and does lose precision. If this
 	// ever stops being true the limit has been fixed and doc.go should say so.
-	inEntity := int64(resp.GetFields()["id"].GetNumberValue())
+	inEntity := int64(response.GetFields()["id"].GetNumberValue())
 	if inEntity == big {
 		t.Fatalf("the entity document carried %d exactly; doc.go still says a Struct number cannot", big)
 	}
@@ -323,9 +323,9 @@ func TestAKeyThatDoesNotParseIsAClientMistake(t *testing.T) {
 // Removing one row that is not there is a miss; removing an empty set is zero.
 // The names differ from the HTTP triplet's because the answers are gRPC codes.
 func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
-	svc := newRecorder()
-	svc.repo.err = crud.ErrNotFound
-	c := serve(t, Serving[Widget, int64, WidgetUpdate](svc).Desc(resource))
+	service := newRecorder()
+	service.repository.err = crud.ErrNotFound
+	c := serve(t, Serving[Widget, int64, WidgetUpdate](service).Desc(resource))
 	if st := c.fails("Delete", doc(t, `{"id":"42"}`)); st.Code() != codes.NotFound {
 		t.Fatalf("deleting a row that is not there answered %s", st.Code())
 	}
@@ -338,7 +338,7 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 			if got := out.GetFields()["deleted"].GetNumberValue(); got != 0 {
 				t.Fatalf("deleting an empty set answered %v deleted", got)
 			}
-			if calls := empty.repo.calls; len(calls) != 0 {
+			if calls := empty.repository.calls; len(calls) != 0 {
 				t.Fatalf("an empty set reached the repository as %v", calls)
 			}
 		})
@@ -348,16 +348,16 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 // Replace is not the way around AllowClientID: on a database-generated key it
 // replaces and never creates ([[D-012]]).
 func TestReplaceIsNotAWayAroundAllowClientID(t *testing.T) {
-	svc := newRecorder()
-	c := serve(t, Serving[Widget, int64, WidgetUpdate](svc).Desc(resource))
+	service := newRecorder()
+	c := serve(t, Serving[Widget, int64, WidgetUpdate](service).Desc(resource))
 	c.ok("Replace", doc(t, `{"id":"42","entity":{"id":999,"name":"replaced"}}`))
 
 	// The key came from the request and not from the document.
-	if got := svc.repo.only(t, "Save").Model.ID; got != 42 {
+	if got := service.repository.only(t, "Save").Model.ID; got != 42 {
 		t.Fatalf("the row was written at %d, want the key the request named", got)
 	}
 	// And the row had to be found first.
-	if methods := svc.repo.methods(); len(methods) != 2 || methods[0] != "GetByID" {
+	if methods := service.repository.methods(); len(methods) != 2 || methods[0] != "GetByID" {
 		t.Fatalf("the repository saw %v, want the existence check before the write", methods)
 	}
 
@@ -365,10 +365,10 @@ func TestReplaceIsNotAWayAroundAllowClientID(t *testing.T) {
 	// is about the guard rather than about a handler that always reads first.
 	open := newRecorder()
 	c2 := serve(t, ServingFor[Widget](
-		port.NewService[Widget, int64, WidgetUpdate](open.repo, port.AllowClientID()),
+		port.NewService[Widget, int64, WidgetUpdate](open.repository, port.AllowClientID()),
 		port.Identity[Widget]()).Desc(resource))
 	c2.ok("Replace", doc(t, `{"id":"42","entity":{"name":"replaced"}}`))
-	if methods := open.repo.methods(); len(methods) != 1 || methods[0] != "Save" {
+	if methods := open.repository.methods(); len(methods) != 1 || methods[0] != "Save" {
 		t.Fatalf("with AllowClientID the repository saw %v, want the write alone", methods)
 	}
 }
@@ -376,14 +376,14 @@ func TestReplaceIsNotAWayAroundAllowClientID(t *testing.T) {
 // A create cannot dictate the key or a generated column, and the clearing is
 // the service's rather than this binding's.
 func TestACreateIsClearedBelowTheBinding(t *testing.T) {
-	svc := newRecorder()
-	c := serve(t, Serving[Widget, int64, WidgetUpdate](svc).Desc(resource))
+	service := newRecorder()
+	c := serve(t, Serving[Widget, int64, WidgetUpdate](service).Desc(resource))
 	c.ok("Create", doc(t, `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`))
 
-	if got := svc.got[0].Model; got.ID != 999 || got.CreatedAt.IsZero() {
+	if got := service.got[0].Model; got.ID != 999 || got.CreatedAt.IsZero() {
 		t.Fatalf("the binding handed over %+v; clearing is the service's, and a binding that cleared first would hand over a zeroed model", got)
 	}
-	if got := svc.repo.only(t, "Save").Model; got.ID != 0 || !got.CreatedAt.IsZero() {
+	if got := service.repository.only(t, "Save").Model; got.ID != 0 || !got.CreatedAt.IsZero() {
 		t.Fatalf("the repository was asked to write %+v, want the key and the generated column cleared", got)
 	}
 }
@@ -502,7 +502,7 @@ func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 				if p == nil {
 					t.Fatalf("%s on Serving was accepted; a silently ignored bound is the failure this refusal exists for", tc.name)
 				}
-				if msg, _ := p.(string); !strings.Contains(msg, tc.want) || !strings.Contains(msg, "crudgrpc.Serving") {
+				if message, _ := p.(string); !strings.Contains(message, tc.want) || !strings.Contains(message, "crudgrpc.Serving") {
 					t.Fatalf("the panic is %v; it has to name the option and the constructor", p)
 				}
 			}()

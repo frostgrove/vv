@@ -20,20 +20,20 @@ import (
 // something may be the inner copy of this interceptor or the application's own
 // status; either way, overwriting it would be the interceptor deciding it knows
 // better than the method it wrapped.
-func Errors(opts ...RenderOption) grpc.UnaryServerInterceptor {
+func Errors(options ...RenderOption) grpc.UnaryServerInterceptor {
 	rd := Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = NewRenderer(options...)
 	}
-	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		resp, err := handler(ctx, req)
+	return func(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		response, err := handler(ctx, request)
 		if err == nil {
-			return resp, nil
+			return response, nil
 		}
 		if _, already := status.FromError(err); already {
-			return resp, err
+			return response, err
 		}
-		return resp, rd.Render(withRequestLocale(ctx), err).Err()
+		return response, rd.Render(withRequestLocale(ctx), err).Err()
 	}
 }
 
@@ -50,10 +50,10 @@ func Errors(opts ...RenderOption) grpc.UnaryServerInterceptor {
 // The same renderer and the same table as [Errors], for the reason [[D-045]]
 // gives: one classification, spelled once per protocol, never once per entry
 // point.
-func StreamErrors(opts ...RenderOption) grpc.StreamServerInterceptor {
+func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor {
 	rd := Renderer(defaultRenderer)
-	if len(opts) > 0 {
-		rd = NewRenderer(opts...)
+	if len(options) > 0 {
+		rd = NewRenderer(options...)
 	}
 	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		err := handler(srv, ss)

@@ -123,7 +123,7 @@ type readWrite struct {
 	replica Source
 }
 
-func (rw readWrite) ReadSource() Source { return rw.replica }
+func (this readWrite) ReadSource() Source { return this.replica }
 
 // UnwrapSource hands back the primary, so a walk that reaches a ReadWrite can
 // carry on through it.
@@ -132,7 +132,7 @@ func (rw readWrite) ReadSource() Source { return rw.replica }
 // layer that cannot say what it wraps, so a ReadWrite over an instrumented
 // primary answered for nothing underneath it. This type is itself a wrapper and
 // has to obey the rule it was written before ([[D-061]]).
-func (rw readWrite) UnwrapSource() Source { return rw.Source }
+func (this readWrite) UnwrapSource() Source { return this.Source }
 
 // DataSource forwards the primary's identity, so a scoped executor binding still
 // matches a repository bound through the pair.
@@ -141,8 +141,8 @@ func (rw readWrite) UnwrapSource() Source { return rw.Source }
 // may itself be wrapped — ReadWrite(tracing{db}, replica) is the ordinary shape
 // once an application instruments its statements — and an assertion answers nil
 // for it, which reads as "I cannot say" and silently unscopes every binding.
-func (rw readWrite) DataSource() any {
-	return identityOf(rw.Source)
+func (this readWrite) DataSource() any {
+	return identityOf(this.Source)
 }
 
 type readWriteTx struct {
@@ -218,8 +218,8 @@ const maxChainDepth = 64
 func SourceOf[M any, ID comparable](c Core[M, ID]) (Source, bool) {
 	for i := 0; c != nil && i < maxChainDepth; i++ {
 		if sd, ok := c.(Sourced); ok {
-			if src := sd.Source(); src != nil {
-				return src, true
+			if source := sd.Source(); source != nil {
+				return source, true
 			}
 		}
 		n, ok := c.(Nexter[M, ID])
@@ -237,17 +237,17 @@ func SourceOf[M any, ID comparable](c Core[M, ID]) (Source, bool) {
 // that makes permanently hidden rows visible. Security uses it only to refuse
 // an upsert that would otherwise overwrite a hidden row.
 type UnscopedExister[M any, ID comparable] interface {
-	ExistsUnscoped(ctx context.Context, opts ...Option) (bool, error)
+	ExistsUnscoped(ctx context.Context, options ...Option) (bool, error)
 }
 
 // ExistsUnscopedOf walks a decorator chain to its storage core and asks for the
 // optional physical-existence check. The final bool says whether the capability
 // was present; callers must fail closed when it is absent rather than treating
 // "cannot check" as "row does not exist".
-func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, opts ...Option) (bool, error, bool) {
+func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool) {
 	for i := 0; c != nil && i < maxChainDepth; i++ {
 		if x, ok := c.(UnscopedExister[M, ID]); ok {
-			found, err := x.ExistsUnscoped(ctx, opts...)
+			found, err := x.ExistsUnscoped(ctx, options...)
 			return found, err, true
 		}
 		n, ok := c.(Nexter[M, ID])
@@ -469,8 +469,8 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 // ExecutorFor returns the executor a repository bound to src should run on: the
 // innermost binding scoped to src's datasource, or failing that the innermost
 // unscoped one. src may be the Source itself or the raw handle.
-func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
-	e, found, _ := OwnedExecutorFor(ctx, src)
+func ExecutorFor(ctx context.Context, source any) (Executor, bool) {
+	e, found, _ := OwnedExecutorFor(ctx, source)
 	return e, found
 }
 
@@ -481,8 +481,8 @@ func ExecutorFor(ctx context.Context, src any) (Executor, bool) {
 // Ask this rather than ExecutorFrom. With a foreign transaction scoped to
 // another handle, ExecutorFrom says "in a transaction" while this repository's
 // write runs outside one.
-func OwnedExecutorFor(ctx context.Context, src any) (e Executor, found, owned bool) {
-	b := bindingFor(ctx, src)
+func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool) {
+	b := bindingFor(ctx, source)
 	if b == nil {
 		return nil, false, false
 	}
@@ -497,20 +497,20 @@ func OwnedExecutorFor(ctx context.Context, src any) (e Executor, found, owned bo
 // The budget lives with the transaction and the limit lives with the caller:
 // two repositories sharing one transaction share one count, and two
 // transactions do not.
-func ClaimSavepoint(ctx context.Context, src any) (int64, bool) {
-	b := bindingFor(ctx, src)
+func ClaimSavepoint(ctx context.Context, source any) (int64, bool) {
+	b := bindingFor(ctx, source)
 	if b == nil || !b.owned {
 		return 0, false
 	}
 	return b.saves.Add(1), true
 }
 
-func bindingFor(ctx context.Context, src any) *binding {
+func bindingFor(ctx context.Context, source any) *binding {
 	b, ok := ctx.Value(ctxKey{}).(*binding)
 	if !ok {
 		return nil
 	}
-	want := KeyOf(src)
+	want := KeyOf(source)
 	var fallback *binding
 	for ; b != nil; b = b.prev {
 		if b.ds == nil {
@@ -619,11 +619,11 @@ func SameDataSource(a, b any) bool {
 //	    if err := users.Save(ctx, &u); err != nil { return err }
 //	    return orders.Save(ctx, &o)
 //	})
-func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
-	if _, ok := ExecutorFor(ctx, src); ok {
+func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
+	if _, ok := ExecutorFor(ctx, source); ok {
 		return fn(ctx)
 	}
-	return inNewTx(ctx, src, fn)
+	return inNewTx(ctx, source, fn)
 }
 
 // InNewTx runs fn in a transaction newly opened from src even when ctx carries
@@ -632,12 +632,12 @@ func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (er
 // The transaction it opens is pushed inside that binding, so all repository
 // work for src in fn uses the new transaction. Prefer InTx when joining a
 // caller's executor is semantically sufficient.
-func InNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
-	return inNewTx(ctx, src, fn)
+func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
+	return inNewTx(ctx, source, fn)
 }
 
-func inNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error) {
-	b, ok := BeginnerOf(src)
+func inNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
+	b, ok := BeginnerOf(source)
 	if !ok {
 		return ErrNoTxSupport
 	}
@@ -651,7 +651,7 @@ func inNewTx(ctx context.Context, src Executor, fn func(context.Context) error) 
 			panic(p)
 		}
 	}()
-	if err := fn(push(ctx, ownScope(src), tx, true)); err != nil {
+	if err := fn(push(ctx, ownScope(source), tx, true)); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
 			return errJoin(err, rbErr)
 		}

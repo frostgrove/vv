@@ -65,8 +65,8 @@ type UnknownFieldError struct {
 	Field string
 }
 
-func (e *UnknownFieldError) Error() string {
-	return fmt.Sprintf("crud: unknown field %q on model %s", e.Field, e.Model)
+func (this *UnknownFieldError) Error() string {
+	return fmt.Sprintf("crud: unknown field %q on model %s", this.Field, this.Model)
 }
 
 // SchemaError reports a model or update-DTO declaration that cannot be used.
@@ -77,11 +77,11 @@ type SchemaError struct {
 	Reason string
 }
 
-func (e *SchemaError) Error() string {
-	if e.Field == "" {
-		return fmt.Sprintf("crud: %s: %s", e.Model, e.Reason)
+func (this *SchemaError) Error() string {
+	if this.Field == "" {
+		return fmt.Sprintf("crud: %s: %s", this.Model, this.Reason)
 	}
-	return fmt.Sprintf("crud: %s.%s: %s", e.Model, e.Field, e.Reason)
+	return fmt.Sprintf("crud: %s.%s: %s", this.Model, this.Field, this.Reason)
 }
 
 func errJoin(errs ...error) error { return errors.Join(errs...) }

@@ -143,11 +143,11 @@ func copyGoSources(t *testing.T, from, to string) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || e.Name() == "vv_gen.go" {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(from, e.Name()))
+		source, err := os.ReadFile(filepath.Join(from, e.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(to, e.Name()), src, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(to, e.Name()), source, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -166,11 +166,11 @@ func assertDirective(t *testing.T, pkg, want string) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(pkg, e.Name()))
+		source, err := os.ReadFile(filepath.Join(pkg, e.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, line := range strings.Split(string(src), "\n") {
+		for _, line := range strings.Split(string(source), "\n") {
 			if !strings.HasPrefix(line, "//go:generate") {
 				continue
 			}

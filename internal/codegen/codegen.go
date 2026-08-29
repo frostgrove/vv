@@ -43,8 +43,8 @@ type field struct {
 
 // tagDropped reports whether the model's own tags already keep this column out
 // of the update DTO — the half the runtime can see for itself.
-func (f field) tagDropped() bool {
-	return f.Skip || f.PK || f.Generated || f.Immutable || f.Version
+func (this field) tagDropped() bool {
+	return this.Skip || this.PK || this.Generated || this.Immutable || this.Version
 }
 
 type model struct {
@@ -53,8 +53,8 @@ type model struct {
 }
 
 // pk answers the primary key, which the adapter half needs to name the id type.
-func (m *model) pk() (field, bool) {
-	for _, f := range m.Fields {
+func (this *model) pk() (field, bool) {
+	for _, f := range this.Fields {
 		if f.PK {
 			return f, true
 		}
@@ -64,10 +64,10 @@ func (m *model) pk() (field, bool) {
 
 // excluded lists the columns the command line keeps out of the artefacts, in a
 // stable order — the output has to be byte-identical across runs ([[D-014]]).
-func (m *model) excluded() []string {
+func (this *model) excluded() []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, f := range m.Fields {
+	for _, f := range this.Fields {
 		if !f.Excluded || seen[f.Name] {
 			continue
 		}
@@ -115,56 +115,56 @@ type generator struct {
 	log io.Writer
 }
 
-func (g *generator) run(outPath string) error {
-	if err := g.load(outPath); err != nil {
+func (this *generator) run(outPath string) error {
+	if err := this.load(outPath); err != nil {
 		return err
 	}
-	if g.into != "" {
-		if g.modelImport == "" {
+	if this.into != "" {
+		if this.modelImport == "" {
 			return fmt.Errorf("-into needs -import so the generated file can name the model types")
 		}
-		if err := os.MkdirAll(g.into, 0o755); err != nil {
+		if err := os.MkdirAll(this.into, 0o755); err != nil {
 			return err
 		}
-		g.pkg = packageNameOf(g.into)
+		this.pkg = packageNameOf(this.into)
 	}
-	if len(g.order) == 0 {
-		return fmt.Errorf("no models found in %s; put exported model structs in model.go, *.model.go or *_model.go", g.dir)
+	if len(this.order) == 0 {
+		return fmt.Errorf("no models found in %s; put exported model structs in model.go, *.model.go or *_model.go", this.dir)
 	}
-	if g.withRepo && !g.withDTO {
+	if this.withRepo && !this.withDTO {
 		return fmt.Errorf("a generated repository needs its update DTO; drop -no-dto or add -no-repo")
 	}
-	if g.adapter && !g.withDTO {
+	if this.adapter && !this.withDTO {
 		// The mapper, the service and the wiring all name <Model>Update. Emitting
 		// them without it produces a file that does not compile, which is a worse
 		// answer than this one.
 		return fmt.Errorf("-adapter needs the update DTO; drop -no-dto")
 	}
-	src, err := g.render()
+	source, err := this.render()
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(outPath, src, 0o644); err != nil {
+	if err := os.WriteFile(outPath, source, 0o644); err != nil {
 		return err
 	}
-	if g.log != nil {
-		fmt.Fprintf(g.log, "vv: wrote %s (%d models)\n", outPath, len(g.order))
+	if this.log != nil {
+		fmt.Fprintf(this.log, "vv: wrote %s (%d models)\n", outPath, len(this.order))
 	}
 	return nil
 }
 
-func (g *generator) load(skip string) error {
+func (this *generator) load(skip string) error {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, g.dir, func(fi os.FileInfo) bool {
+	pkgs, err := parser.ParseDir(fset, this.dir, func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go") && filepath.Base(skip) != fi.Name()
 	}, parser.ParseComments)
 	if err != nil {
 		return err
 	}
-	g.models = map[string]*model{}
-	g.imports = map[string]string{}
-	g.structs = map[string]bool{}
-	g.embeds = map[string]*ast.StructType{}
+	this.models = map[string]*model{}
+	this.imports = map[string]string{}
+	this.structs = map[string]bool{}
+	this.embeds = map[string]*ast.StructType{}
 
 	// A first pass over the struct names, so a field whose type is another
 	// struct in this package can be recognised as a relation holder rather than
@@ -174,8 +174,8 @@ func (g *generator) load(skip string) error {
 			ast.Inspect(file, func(n ast.Node) bool {
 				if ts, ok := n.(*ast.TypeSpec); ok {
 					if st, isStruct := ts.Type.(*ast.StructType); isStruct {
-						g.structs[ts.Name.Name] = true
-						g.embeds[ts.Name.Name] = st
+						this.structs[ts.Name.Name] = true
+						this.embeds[ts.Name.Name] = st
 					}
 				}
 				return true
@@ -184,7 +184,7 @@ func (g *generator) load(skip string) error {
 	}
 
 	for name, pkg := range pkgs {
-		g.pkg = name
+		this.pkg = name
 		for fileName, file := range pkg.Files {
 			modelFile := preferredModelFile(filepath.Base(fileName))
 			for _, imp := range file.Imports {
@@ -193,7 +193,7 @@ func (g *generator) load(skip string) error {
 				if imp.Name != nil {
 					alias = imp.Name.Name
 				}
-				g.imports[alias] = path
+				this.imports[alias] = path
 			}
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
@@ -207,35 +207,35 @@ func (g *generator) load(skip string) error {
 				if !ts.Name.IsExported() {
 					return true
 				}
-				if g.only != nil && !g.only[ts.Name.Name] {
+				if this.only != nil && !this.only[ts.Name.Name] {
 					return true
 				}
-				m := g.parseModel(ts.Name.Name, st, modelFile)
+				m := this.parseModel(ts.Name.Name, st, modelFile)
 				if m != nil {
-					g.models[m.Name] = m
-					g.order = append(g.order, m.Name)
+					this.models[m.Name] = m
+					this.order = append(this.order, m.Name)
 				}
 				return true
 			})
 		}
 	}
-	sort.Strings(g.order)
+	sort.Strings(this.order)
 	return nil
 }
 
-func (g *generator) parseModel(name string, st *ast.StructType, force bool) *model {
+func (this *generator) parseModel(name string, st *ast.StructType, force bool) *model {
 	m := &model{Name: name}
 	// An explicitly named type is a model whether or not it carries tags — which
 	// is how a generated entity from another tool qualifies. Model files carry
 	// the same meaning without a tag: plain Go structs are vv models by
 	// convention, independently of their database driver or ORM.
-	tagged := force || (g.only != nil && g.only[name])
+	tagged := force || (this.only != nil && this.only[name])
 	for _, f := range st.Fields.List {
 		if len(f.Names) == 0 {
 			// Embedded: the runtime flattens it, so the generator has to as
 			// well or `gorm.Model` would silently take id and the timestamps
 			// out of the metamodel.
-			if fields, ok := g.embedded(exprString(f.Type)); ok {
+			if fields, ok := this.embedded(exprString(f.Type)); ok {
 				m.Fields = append(m.Fields, fields...)
 				tagged = tagged || len(fields) > 0
 			}
@@ -246,7 +246,7 @@ func (g *generator) parseModel(name string, st *ast.StructType, force bool) *mod
 			raw, _ := strconv.Unquote(f.Tag.Value)
 			tag = reflect.StructTag(raw)
 		}
-		db, hasDB := tag.Lookup("db")
+		database, hasDB := tag.Lookup("db")
 		rel, hasRel := tag.Lookup("rel")
 		if hasDB || hasRel {
 			tagged = true
@@ -255,27 +255,27 @@ func (g *generator) parseModel(name string, st *ast.StructType, force bool) *mod
 			if !ident.IsExported() {
 				continue
 			}
-			fl := field{Name: ident.Name, Type: exprString(f.Type), Tag: db, Rel: rel}
+			fl := field{Name: ident.Name, Type: exprString(f.Type), Tag: database, Rel: rel}
 			// A field whose type is another struct from this package is either a
 			// relation or somebody else's bookkeeping; it is never a column.
 			if !hasRel {
-				if base, _ := relElem(fl.Type); g.structs[base] {
+				if base, _ := relElem(fl.Type); this.structs[base] {
 					continue
 				}
 			}
 			if hasRel && rel != "-" {
 				// A relation is not a column, so dropping one leaves nothing for
 				// reflection to disagree about and nothing to declare.
-				if g.skip[ident.Name] {
+				if this.skip[ident.Name] {
 					continue
 				}
 				m.Fields = append(m.Fields, fl)
 				continue
 			}
-			if db == "-" || (hasRel && rel == "-") {
+			if database == "-" || (hasRel && rel == "-") {
 				fl.Skip = true
 			}
-			for _, opt := range strings.Split(db, ",")[1:] {
+			for _, opt := range strings.Split(database, ",")[1:] {
 				switch opt {
 				case "pk", "primarykey", "primary_key":
 					fl.PK = true
@@ -289,12 +289,12 @@ func (g *generator) parseModel(name string, st *ast.StructType, force bool) *mod
 					fl.Version = true
 				}
 			}
-			if strings.EqualFold(fl.Name, "id") && !fl.PK && db != "-" {
+			if strings.EqualFold(fl.Name, "id") && !fl.PK && database != "-" {
 				fl.PK = true
 			}
 			// After the tags, not before: whether the flag is the only reason
 			// the column leaves is a question the tags have to have answered.
-			g.exclude(&fl)
+			this.exclude(&fl)
 			m.Fields = append(m.Fields, fl)
 		}
 	}
@@ -309,8 +309,8 @@ func (g *generator) parseModel(name string, st *ast.StructType, force bool) *mod
 // the model with Skip set rather than being dropped: it is absent from the DTO
 // and the metamodel either way, and the name is still needed for the exclusion
 // list.
-func (g *generator) exclude(f *field) {
-	skipped, readonly := g.skip[f.Name], g.readonly[f.Name]
+func (this *generator) exclude(f *field) {
+	skipped, readonly := this.skip[f.Name], this.readonly[f.Name]
 	if !skipped && !readonly {
 		return
 	}
@@ -332,7 +332,7 @@ func exprString(e ast.Expr) string {
 // ---------------------------------------------------------------------------
 // classification
 
-func (f field) isRelation() bool { return f.Rel != "" && f.Rel != "-" }
+func (this field) isRelation() bool { return this.Rel != "" && this.Rel != "-" }
 
 // elem strips *T and either compatibility crud.Opt[T] or canonical
 // utils.Opt[T] down to T, reporting whether the column is nullable.
@@ -412,11 +412,11 @@ func lowerFirst(s string) string {
 }
 
 // qual renders a model type name as the output package must spell it.
-func (g *generator) qual(name string) string {
-	if g.modelAlias == "" {
+func (this *generator) qual(name string) string {
+	if this.modelAlias == "" {
 		return name
 	}
-	return g.modelAlias + "." + name
+	return this.modelAlias + "." + name
 }
 
 // packageNameOf reuses the package already declared in dir, falling back to its
@@ -471,18 +471,18 @@ var wellKnownEmbeds = map[string][]field{
 
 // embedded resolves the fields of an embedded struct: from this package when it
 // is declared here, from the table above otherwise.
-func (g *generator) embedded(typ string) ([]field, bool) {
+func (this *generator) embedded(typ string) ([]field, bool) {
 	typ = strings.TrimPrefix(strings.TrimSpace(typ), "*")
 	if fields, ok := wellKnownEmbeds[typ]; ok {
 		out := make([]field, 0, len(fields))
 		for _, f := range fields {
-			g.exclude(&f)
+			this.exclude(&f)
 			out = append(out, f)
 		}
 		return out, true
 	}
-	if st, ok := g.embeds[typ]; ok {
-		m := g.parseModel(typ, st, true)
+	if st, ok := this.embeds[typ]; ok {
+		m := this.parseModel(typ, st, true)
 		if m == nil {
 			return nil, false
 		}

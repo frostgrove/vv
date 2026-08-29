@@ -23,11 +23,11 @@ type MyClaims struct {
 	Scope   string `json:"scope"`
 }
 
-func parser[C any](t *testing.T, k authjwt.KeySource, opts ...authjwt.Option) *authjwt.Parser[C] {
+func parser[C any](t *testing.T, k authjwt.KeySource, options ...authjwt.Option) *authjwt.Parser[C] {
 	t.Helper()
 	return authjwt.New[C](k, append([]authjwt.Option{
 		authjwt.Issuer(issuer), authjwt.Audience(audience),
-	}, opts...)...)
+	}, options...)...)
 }
 
 // The control every refusal below depends on. Without it a parser that refused

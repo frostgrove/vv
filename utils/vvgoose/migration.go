@@ -38,11 +38,11 @@ type migrationOptions struct {
 // createTableMigration creates one conventional create_<table>_table
 // migration, inferring its columns from the matching source model.
 func createTableMigration(ctx context.Context, raw vvdb.Config, options createOptions) (string, error) {
-	cfg := normalizeConfig(&raw)
-	if err := cfg.Migration.Validate(); err != nil {
+	config := normalizeConfig(&raw)
+	if err := config.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
-	if _, err := dialectFor(cfg.Engine); err != nil {
+	if _, err := dialectFor(config.Engine); err != nil {
 		return "", err
 	}
 
@@ -57,7 +57,7 @@ func createTableMigration(ctx context.Context, raw vvdb.Config, options createOp
 	// into a destructive duplicate CREATE, so non-create names stay editable
 	// Goose skeletons.
 	if !options.Empty && createsTable(fileSlug) {
-		models, discoverErr := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
+		models, discoverErr := modelscan.Discover(&modelscan.Options{Roots: config.Migration.Models})
 		if discoverErr != nil {
 			return "", discoverErr
 		}
@@ -71,15 +71,15 @@ func createTableMigration(ctx context.Context, raw vvdb.Config, options createOp
 	if model != nil && model.Table != "" {
 		renderTable = model.Table
 	}
-	contents, err := renderMigration(cfg.Engine, renderTable, model)
+	contents, err := renderMigration(config.Engine, renderTable, model)
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
-		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	if err := os.MkdirAll(config.Migration.Path, 0o755); err != nil {
+		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", config.Migration.Path, err)
 	}
 
-	return writeNewMigration(cfg.Migration.Path, fileSlug, contents, options.Now)
+	return writeNewMigration(config.Migration.Path, fileSlug, contents, options.Now)
 }
 
 // createTableMigrations accepts a comma-separated table list and creates one
@@ -118,11 +118,11 @@ func createTableMigrations(ctx context.Context, raw vvdb.Config, tables []string
 // migration name, and puts all selected CREATE TABLE statements in this one
 // file.
 func createMigration(ctx context.Context, raw vvdb.Config, options migrationOptions) (string, error) {
-	cfg := normalizeConfig(&raw)
-	if err := cfg.Migration.Validate(); err != nil {
+	config := normalizeConfig(&raw)
+	if err := config.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
-	if _, err := dialectFor(cfg.Engine); err != nil {
+	if _, err := dialectFor(config.Engine); err != nil {
 		return "", err
 	}
 
@@ -138,7 +138,7 @@ func createMigration(ctx context.Context, raw vvdb.Config, options migrationOpti
 	if len(tables) == 0 {
 		contents = renderEmptyMigration(fileSlug)
 	} else {
-		models, err := selectedModels(ctx, cfg, tables, createOptions{
+		models, err := selectedModels(ctx, config, tables, createOptions{
 			Interactive: options.Interactive,
 			In:          options.In,
 			Out:         options.Out,
@@ -146,29 +146,29 @@ func createMigration(ctx context.Context, raw vvdb.Config, options migrationOpti
 		if err != nil {
 			return "", err
 		}
-		contents, err = renderModelsMigration(cfg.Engine, models)
+		contents, err = renderModelsMigration(config.Engine, models)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
-		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	if err := os.MkdirAll(config.Migration.Path, 0o755); err != nil {
+		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", config.Migration.Path, err)
 	}
-	return writeNewMigration(cfg.Migration.Path, fileSlug, contents, options.Now)
+	return writeNewMigration(config.Migration.Path, fileSlug, contents, options.Now)
 }
 
 // createInitMigration produces one baseline migration from all discovered
 // models. Its version is stable: rerunning init replaces the existing *_init
 // file instead of adding another competing baseline.
 func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) {
-	cfg := normalizeConfig(&raw)
-	if err := cfg.Migration.Validate(); err != nil {
+	config := normalizeConfig(&raw)
+	if err := config.Migration.Validate(); err != nil {
 		return "", fmt.Errorf("vvgoose: invalid migration config: %w", err)
 	}
-	if _, err := dialectFor(cfg.Engine); err != nil {
+	if _, err := dialectFor(config.Engine); err != nil {
 		return "", err
 	}
-	models, err := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
+	models, err := modelscan.Discover(&modelscan.Options{Roots: config.Migration.Models})
 	if err != nil {
 		return "", err
 	}
@@ -176,18 +176,18 @@ func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	contents, err := renderModelsMigration(cfg.Engine, models)
+	contents, err := renderModelsMigration(config.Engine, models)
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(cfg.Migration.Path, 0o755); err != nil {
-		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", cfg.Migration.Path, err)
+	if err := os.MkdirAll(config.Migration.Path, 0o755); err != nil {
+		return "", fmt.Errorf("vvgoose: create migration directory %q: %w", config.Migration.Path, err)
 	}
-	return writeInitMigration(cfg.Migration.Path, contents, now)
+	return writeInitMigration(config.Migration.Path, contents, now)
 }
 
-func selectedModels(ctx context.Context, cfg vvdb.Config, tables []string, options createOptions) ([]modelscan.Model, error) {
-	models, err := modelscan.Discover(&modelscan.Options{Roots: cfg.Migration.Models})
+func selectedModels(ctx context.Context, config vvdb.Config, tables []string, options createOptions) ([]modelscan.Model, error) {
+	models, err := modelscan.Discover(&modelscan.Options{Roots: config.Migration.Models})
 	if err != nil {
 		return nil, err
 	}

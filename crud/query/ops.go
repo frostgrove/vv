@@ -68,8 +68,8 @@ func normalizeOp(s string) (opKind, bool) {
 
 // textual reports whether the operator compares against a LIKE pattern rather
 // than a typed value, so the raw string is used instead of a coerced one.
-func (k opKind) textual() bool {
-	switch k {
+func (this opKind) textual() bool {
+	switch this {
 	case opLike, opNotLike, opILike, opContains, opStartsWith, opEndsWith, opIContains, opIStartsWith, opIEndsWith:
 		return true
 	}
@@ -77,8 +77,8 @@ func (k opKind) textual() bool {
 }
 
 // multi reports whether the operator takes a value list.
-func (k opKind) multi() bool {
-	switch k {
+func (this opKind) multi() bool {
+	switch this {
 	case opIn, opNotIn, opBetween:
 		return true
 	}
@@ -86,11 +86,11 @@ func (k opKind) multi() bool {
 }
 
 // unary reports whether the operator takes no value at all.
-func (k opKind) unary() bool { return k == opIsNull || k == opIsNotNull }
+func (this opKind) unary() bool { return this == opIsNull || this == opIsNotNull }
 
-func (k opKind) String() string {
+func (this opKind) String() string {
 	for name, kind := range opNames {
-		if kind == k && len(name) > 2 {
+		if kind == this && len(name) > 2 {
 			return name
 		}
 	}

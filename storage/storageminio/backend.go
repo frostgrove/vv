@@ -150,27 +150,27 @@ func validatePrefix(prefix string) error {
 	return nil
 }
 
-func (b *Backend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, opts storage.PutOptions) (storage.Info, error) {
-	object, err := b.objectName(namespace, key)
+func (this *Backend) Put(ctx context.Context, namespace storage.Namespace, key storage.Key, source io.Reader, options storage.PutOptions) (storage.Info, error) {
+	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.Info{}, storage.NewError("put", storage.KindInvalid, err)
 	}
-	if opts.Mode == storage.CreateOnly && opts.Size == nil {
-		return b.putUnknownCreateOnly(ctx, namespace, object, source, opts)
+	if options.Mode == storage.CreateOnly && options.Size == nil {
+		return this.putUnknownCreateOnly(ctx, namespace, object, source, options)
 	}
-	return b.put(ctx, "put", object, source, callerSource, opts.Mode, opts.Size, opts.ContentType, opts.Metadata, nil)
+	return this.put(ctx, "put", object, source, callerSource, options.Mode, options.Size, options.ContentType, options.Metadata, nil)
 }
 
-func (b *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage.Namespace, finalObject string, source io.Reader, opts storage.PutOptions) (storage.Info, error) {
+func (this *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage.Namespace, finalObject string, source io.Reader, options storage.PutOptions) (storage.Info, error) {
 	id, err := storage.NewStageID()
 	if err != nil {
 		return storage.Info{}, err
 	}
-	stageObject, err := b.stageName(namespace, id)
+	stageObject, err := this.stageName(namespace, id)
 	if err != nil {
 		return storage.Info{}, storage.NewError("put", storage.KindInvalid, err)
 	}
-	expiresAt := b.now().Add(storage.DefaultStageTTL)
+	expiresAt := this.now().Add(storage.DefaultStageTTL)
 	internal := map[string]string{
 		stageMarkerKey: stageMarkerValue,
 		stageExpiryKey: expiresAt.Format(time.RFC3339Nano),
@@ -179,17 +179,17 @@ func (b *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage.Na
 	// semantics from the user-facing contract. In particular, minio-go drops
 	// custom conditional headers when completing an unknown-size multipart
 	// upload, so advertising CreateOnly here would be false.
-	if _, err := b.put(ctx, "put", stageObject, source, callerSource, storage.Replace, nil, opts.ContentType, opts.Metadata, internal); err != nil {
-		_ = b.client.RemoveObject(ctx, b.bucket, stageObject, minio.RemoveObjectOptions{})
+	if _, err := this.put(ctx, "put", stageObject, source, callerSource, storage.Replace, nil, options.ContentType, options.Metadata, internal); err != nil {
+		_ = this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{})
 		return storage.Info{}, err
 	}
 	// The caller never receives this private StageID, so every later return path
 	// must attempt cleanup; an unsuccessful attempt remains bounded by its TTL.
 	defer func() {
-		_ = b.client.RemoveObject(ctx, b.bucket, stageObject, minio.RemoveObjectOptions{})
+		_ = this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{})
 	}()
 
-	body, objectInfo, _, err := b.core.GetObject(ctx, b.bucket, stageObject, minio.GetObjectOptions{})
+	body, objectInfo, _, err := this.core.GetObject(ctx, this.bucket, stageObject, minio.GetObjectOptions{})
 	if err != nil {
 		if body != nil {
 			_ = body.Close()
@@ -204,19 +204,19 @@ func (b *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage.Na
 		return storage.Info{}, storage.NewError("put", storage.KindInternal, errors.New("stage size is invalid"))
 	}
 	size := objectInfo.Size
-	info, err := b.put(ctx, "put", finalObject, body, backendBody, storage.CreateOnly, &size, objectInfo.ContentType, opts.Metadata, nil)
+	info, err := this.put(ctx, "put", finalObject, body, backendBody, storage.CreateOnly, &size, objectInfo.ContentType, options.Metadata, nil)
 	if err != nil {
 		return storage.Info{}, err
 	}
 	return info, nil
 }
 
-func (b *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
-	object, err := b.objectName(namespace, key)
+func (this *Backend) Open(ctx context.Context, namespace storage.Namespace, key storage.Key) (io.ReadCloser, storage.Info, error) {
+	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return nil, storage.Info{}, storage.NewError("open", storage.KindInvalid, err)
 	}
-	body, objectInfo, _, err := b.core.GetObject(ctx, b.bucket, object, minio.GetObjectOptions{})
+	body, objectInfo, _, err := this.core.GetObject(ctx, this.bucket, object, minio.GetObjectOptions{})
 	if err != nil {
 		if body != nil {
 			_ = body.Close()
@@ -234,12 +234,12 @@ func (b *Backend) Open(ctx context.Context, namespace storage.Namespace, key sto
 	return &openBody{body: body}, info, nil
 }
 
-func (b *Backend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
-	object, err := b.objectName(namespace, key)
+func (this *Backend) Head(ctx context.Context, namespace storage.Namespace, key storage.Key) (storage.Info, error) {
+	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.Info{}, storage.NewError("head", storage.KindInvalid, err)
 	}
-	objectInfo, err := b.client.StatObject(ctx, b.bucket, object, minio.StatObjectOptions{})
+	objectInfo, err := this.client.StatObject(ctx, this.bucket, object, minio.StatObjectOptions{})
 	if err != nil {
 		return storage.Info{}, mapError("head", err, 0, nil)
 	}
@@ -250,22 +250,22 @@ func (b *Backend) Head(ctx context.Context, namespace storage.Namespace, key sto
 	return info, nil
 }
 
-func (b *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
-	object, err := b.objectName(namespace, key)
+func (this *Backend) Delete(ctx context.Context, namespace storage.Namespace, key storage.Key) error {
+	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.NewError("delete", storage.KindInvalid, err)
 	}
-	err = b.client.RemoveObject(ctx, b.bucket, object, minio.RemoveObjectOptions{})
+	err = this.client.RemoveObject(ctx, this.bucket, object, minio.RemoveObjectOptions{})
 	return mapError("delete", err, 0, nil)
 }
 
-func (b *Backend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, opts storage.StageOptions) (storage.Staged, error) {
+func (this *Backend) Stage(ctx context.Context, namespace storage.Namespace, source io.Reader, options storage.StageOptions) (storage.Staged, error) {
 	id, err := storage.NewStageID()
 	if err != nil {
 		return storage.Staged{}, err
 	}
-	expiresAt := b.now().Add(opts.ExpiresIn).UTC()
-	object, err := b.stageName(namespace, id)
+	expiresAt := this.now().Add(options.ExpiresIn).UTC()
+	object, err := this.stageName(namespace, id)
 	if err != nil {
 		return storage.Staged{}, storage.NewError("stage", storage.KindInvalid, err)
 	}
@@ -273,23 +273,23 @@ func (b *Backend) Stage(ctx context.Context, namespace storage.Namespace, source
 		stageMarkerKey: stageMarkerValue,
 		stageExpiryKey: expiresAt.Format(time.RFC3339Nano),
 	}
-	info, err := b.put(ctx, "stage", object, source, callerSource, storage.Replace, opts.Size, opts.ContentType, opts.Metadata, internal)
+	info, err := this.put(ctx, "stage", object, source, callerSource, storage.Replace, options.Size, options.ContentType, options.Metadata, internal)
 	if err != nil {
 		return storage.Staged{}, err
 	}
 	return storage.Staged{ID: id, Info: info, ExpiresAt: expiresAt}, nil
 }
 
-func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, opts storage.PromoteOptions) (result storage.Info, resultErr error) {
-	stageObject, err := b.stageName(namespace, id)
+func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, id storage.StageID, key storage.Key, options storage.PromoteOptions) (result storage.Info, resultErr error) {
+	stageObject, err := this.stageName(namespace, id)
 	if err != nil {
 		return storage.Info{}, storage.NewError("promote", storage.KindInvalid, err)
 	}
-	finalObject, err := b.objectName(namespace, key)
+	finalObject, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.Info{}, storage.NewError("promote", storage.KindInvalid, err)
 	}
-	claim, err := b.acquireClaim(ctx, "promote", namespace, id)
+	claim, err := this.acquireClaim(ctx, "promote", namespace, id)
 	if err != nil {
 		return storage.Info{}, err
 	}
@@ -298,7 +298,7 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	committed := false
 	defer func() {
 		if release {
-			if _, err := b.releaseClaim(ctx, "promote", claim, releaseState); err != nil && !committed {
+			if _, err := this.releaseClaim(ctx, "promote", claim, releaseState); err != nil && !committed {
 				// A deterministic final failure is retryable only after its active
 				// generation was retired. Surface a transition failure instead of
 				// promising a retry that would immediately conflict.
@@ -308,7 +308,7 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 		}
 	}()
 
-	body, objectInfo, _, err := b.core.GetObject(ctx, b.bucket, stageObject, minio.GetObjectOptions{})
+	body, objectInfo, _, err := this.core.GetObject(ctx, this.bucket, stageObject, minio.GetObjectOptions{})
 	if err != nil {
 		if body != nil {
 			_ = body.Close()
@@ -331,7 +331,7 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	if !ok {
 		return storage.Info{}, storage.NewError("promote", storage.KindNotFound, errors.New("stage marker is absent"))
 	}
-	if !b.now().Before(expiresAt) {
+	if !this.now().Before(expiresAt) {
 		return storage.Info{}, storage.NewError("promote", storage.KindExpired, nil)
 	}
 	metadata, err := portableMetadata(objectInfo)
@@ -342,7 +342,7 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 		return storage.Info{}, storage.NewError("promote", storage.KindInternal, errors.New("stage size is invalid"))
 	}
 	size := objectInfo.Size
-	info, err := b.put(ctx, "promote", finalObject, body, backendBody, opts.Mode, &size, objectInfo.ContentType, metadata, nil)
+	info, err := this.put(ctx, "promote", finalObject, body, backendBody, options.Mode, &size, objectInfo.ContentType, metadata, nil)
 	if err != nil {
 		if uncertain(err) {
 			release = false
@@ -356,7 +356,7 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	// The final object is already committed. Staging cleanup is deliberately
 	// best effort because this interface has no state for "promoted, cleanup
 	// pending" and returning failure would invite an unsafe duplicate retry.
-	if err := b.client.RemoveObject(ctx, b.bucket, stageObject, minio.RemoveObjectOptions{}); err != nil && !isNotFound(err) {
+	if err := this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{}); err != nil && !isNotFound(err) {
 		// A committed final object plus a possibly live stage must retain the
 		// election claim; otherwise a retry could promote the same StageID to a
 		// second key.
@@ -367,12 +367,12 @@ func (b *Backend) Promote(ctx context.Context, namespace storage.Namespace, id s
 	return info, nil
 }
 
-func (b *Backend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) (resultErr error) {
-	object, err := b.stageName(namespace, id)
+func (this *Backend) Abort(ctx context.Context, namespace storage.Namespace, id storage.StageID) (resultErr error) {
+	object, err := this.stageName(namespace, id)
 	if err != nil {
 		return storage.NewError("abort", storage.KindInvalid, err)
 	}
-	claim, err := b.acquireClaim(ctx, "abort", namespace, id)
+	claim, err := this.acquireClaim(ctx, "abort", namespace, id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil
 	}
@@ -383,12 +383,12 @@ func (b *Backend) Abort(ctx context.Context, namespace storage.Namespace, id sto
 	release := true
 	defer func() {
 		if release {
-			if _, err := b.releaseClaim(ctx, "abort", claim, releaseState); err != nil {
+			if _, err := this.releaseClaim(ctx, "abort", claim, releaseState); err != nil {
 				resultErr = err
 			}
 		}
 	}()
-	_, statErr := b.client.StatObject(ctx, b.bucket, object, minio.StatObjectOptions{})
+	_, statErr := this.client.StatObject(ctx, this.bucket, object, minio.StatObjectOptions{})
 	if statErr != nil {
 		mapped := mapError("abort", statErr, 0, nil)
 		if errors.Is(mapped, storage.ErrNotFound) {
@@ -400,7 +400,7 @@ func (b *Backend) Abort(ctx context.Context, namespace storage.Namespace, id sto
 		}
 		return mapped
 	}
-	resultErr = mapError("abort", b.client.RemoveObject(ctx, b.bucket, object, minio.RemoveObjectOptions{}), 0, nil)
+	resultErr = mapError("abort", this.client.RemoveObject(ctx, this.bucket, object, minio.RemoveObjectOptions{}), 0, nil)
 	if resultErr == nil {
 		releaseState = claimStateTerminal
 	} else if errors.Is(resultErr, storage.ErrNotFound) {
@@ -412,13 +412,13 @@ func (b *Backend) Abort(ctx context.Context, namespace storage.Namespace, id sto
 	return resultErr
 }
 
-func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespace, opts storage.CleanupOptions) (storage.CleanupResult, error) {
-	prefix, err := b.stagePrefix(namespace)
+func (this *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespace, options storage.CleanupOptions) (storage.CleanupResult, error) {
+	prefix, err := this.stagePrefix(namespace)
 	if err != nil {
 		return storage.CleanupResult{}, storage.NewError("cleanup", storage.KindInvalid, err)
 	}
 	listCtx, cancel := context.WithCancel(ctx)
-	objects := b.client.ListObjects(listCtx, b.bucket, minio.ListObjectsOptions{
+	objects := this.client.ListObjects(listCtx, this.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: true,
 	})
@@ -438,7 +438,7 @@ func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespac
 		if !ok {
 			continue
 		}
-		objectInfo, err := b.client.StatObject(ctx, b.bucket, object.Key, minio.StatObjectOptions{})
+		objectInfo, err := this.client.StatObject(ctx, this.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
 			if isNotFound(err) {
 				continue
@@ -451,10 +451,10 @@ func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespac
 			// private prefix. Only an intact marker authorizes cleanup.
 			continue
 		}
-		if b.now().Before(expiresAt) {
+		if this.now().Before(expiresAt) {
 			continue
 		}
-		claim, err := b.acquireClaim(ctx, "cleanup", namespace, id)
+		claim, err := this.acquireClaim(ctx, "cleanup", namespace, id)
 		if errors.Is(err, storage.ErrConflict) || errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
@@ -464,17 +464,17 @@ func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespac
 		// Acquisition has a preflight check; this second Stat closes the window
 		// before deletion and prevents a stale claimant from acting on an absent
 		// stage after a terminal claim is reclaimed.
-		objectInfo, err = b.client.StatObject(ctx, b.bucket, object.Key, minio.StatObjectOptions{})
+		objectInfo, err = this.client.StatObject(ctx, this.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
 			mapped := mapError("cleanup", err, 0, nil)
 			if errors.Is(mapped, storage.ErrNotFound) {
-				deleted, releaseErr := b.releaseClaim(ctx, "cleanup", claim, claimStateTerminal)
+				deleted, releaseErr := this.releaseClaim(ctx, "cleanup", claim, claimStateTerminal)
 				if releaseErr != nil {
 					return result, releaseErr
 				}
 				if deleted {
 					result.Removed++
-					if result.Removed == opts.Limit {
+					if result.Removed == options.Limit {
 						result.More = true
 						return result, nil
 					}
@@ -484,28 +484,28 @@ func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespac
 			if uncertain(mapped) {
 				return result, mapped
 			}
-			if _, releaseErr := b.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
+			if _, releaseErr := this.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
 				return result, releaseErr
 			}
 			return result, mapped
 		}
 		expiresAt, ok, err = stageExpiry(objectInfo)
-		if err != nil || !ok || b.now().Before(expiresAt) {
-			if _, releaseErr := b.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
+		if err != nil || !ok || this.now().Before(expiresAt) {
+			if _, releaseErr := this.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
 				return result, releaseErr
 			}
 			continue
 		}
 
-		removeErr := mapError("cleanup", b.client.RemoveObject(ctx, b.bucket, object.Key, minio.RemoveObjectOptions{}), 0, nil)
+		removeErr := mapError("cleanup", this.client.RemoveObject(ctx, this.bucket, object.Key, minio.RemoveObjectOptions{}), 0, nil)
 		if errors.Is(removeErr, storage.ErrNotFound) {
-			deleted, releaseErr := b.releaseClaim(ctx, "cleanup", claim, claimStateTerminal)
+			deleted, releaseErr := this.releaseClaim(ctx, "cleanup", claim, claimStateTerminal)
 			if releaseErr != nil {
 				return result, releaseErr
 			}
 			if deleted {
 				result.Removed++
-				if result.Removed == opts.Limit {
+				if result.Removed == options.Limit {
 					result.More = true
 					return result, nil
 				}
@@ -514,37 +514,37 @@ func (b *Backend) CleanupExpired(ctx context.Context, namespace storage.Namespac
 		}
 		if removeErr != nil {
 			if !uncertain(removeErr) {
-				if _, releaseErr := b.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
+				if _, releaseErr := this.releaseClaim(ctx, "cleanup", claim, claimStateRetired); releaseErr != nil {
 					return result, releaseErr
 				}
 			}
 			return result, removeErr
 		}
-		if _, err := b.releaseClaim(ctx, "cleanup", claim, claimStateTerminal); err != nil {
+		if _, err := this.releaseClaim(ctx, "cleanup", claim, claimStateTerminal); err != nil {
 			return result, err
 		}
 		result.Removed++
-		if result.Removed == opts.Limit {
+		if result.Removed == options.Limit {
 			result.More = true
 			return result, nil
 		}
 	}
-	if err := b.cleanupExpiredClaims(ctx, namespace, opts.Limit, &result); err != nil {
+	if err := this.cleanupExpiredClaims(ctx, namespace, options.Limit, &result); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (b *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, opts storage.TemporaryURLOptions) (storage.Link, error) {
-	if opts.ExpiresIn < time.Second || opts.ExpiresIn > b.maxLinkTTL || opts.ExpiresIn%time.Second != 0 {
+func (this *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespace, key storage.Key, options storage.TemporaryURLOptions) (storage.Link, error) {
+	if options.ExpiresIn < time.Second || options.ExpiresIn > this.maxLinkTTL || options.ExpiresIn%time.Second != 0 {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInvalid, errors.New("link TTL exceeds backend policy"))
 	}
-	object, err := b.objectName(namespace, key)
+	object, err := this.objectName(namespace, key)
 	if err != nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInvalid, err)
 	}
-	issuedAt := b.now()
-	u, err := b.client.PresignedGetObject(ctx, b.bucket, object, opts.ExpiresIn, nil)
+	issuedAt := this.now()
+	u, err := this.client.PresignedGetObject(ctx, this.bucket, object, options.ExpiresIn, nil)
 	if err != nil {
 		return storage.Link{}, mapError("temporary URL", err, 0, nil)
 	}
@@ -553,14 +553,14 @@ func (b *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespace,
 	}
 	// SigV4 encodes the signing timestamp and expiration in whole seconds.
 	// Truncating is conservative and never reports a later expiry than the URL.
-	link, err := storage.NewLink(u.String(), issuedAt.Truncate(time.Second).Add(opts.ExpiresIn))
+	link, err := storage.NewLink(u.String(), issuedAt.Truncate(time.Second).Add(options.ExpiresIn))
 	if err != nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInternal, err)
 	}
 	return link, nil
 }
 
-func (b *Backend) Capabilities() storage.Capabilities {
+func (this *Backend) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
 		CreateOnly:   true,
 		Replace:      true,
@@ -569,7 +569,7 @@ func (b *Backend) Capabilities() storage.Capabilities {
 	}
 }
 
-func (b *Backend) put(ctx context.Context, operation, object string, source io.Reader, provenance readProvenance, mode storage.WriteMode, size *int64, contentType string, metadata storage.Metadata, internal map[string]string) (storage.Info, error) {
+func (this *Backend) put(ctx context.Context, operation, object string, source io.Reader, provenance readProvenance, mode storage.WriteMode, size *int64, contentType string, metadata storage.Metadata, internal map[string]string) (storage.Info, error) {
 	if ctx == nil {
 		return storage.Info{}, storage.NewError(operation, storage.KindInvalid, errors.New("context is nil"))
 	}
@@ -629,7 +629,7 @@ func (b *Backend) put(ctx context.Context, operation, object string, source io.R
 			}
 		}
 	}
-	upload, err := b.client.PutObject(ctx, b.bucket, object, uploadSource, objectSize, putOptions)
+	upload, err := this.client.PutObject(ctx, this.bucket, object, uploadSource, objectSize, putOptions)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return storage.Info{}, storage.NewError(operation, storage.KindCancelled, ctxErr)
@@ -645,7 +645,7 @@ func (b *Backend) put(ctx context.Context, operation, object string, source io.R
 	}
 	modifiedAt := upload.LastModified
 	if modifiedAt.IsZero() {
-		modifiedAt = b.now()
+		modifiedAt = this.now()
 	}
 	actualSize := upload.Size
 	if actualSize == 0 && size != nil {
@@ -680,46 +680,46 @@ type exactSizeReader struct {
 	byte      [1]byte
 }
 
-func (r *exactSizeReader) Read(p []byte) (int, error) {
-	if r.err != nil {
-		return 0, r.err
+func (this *exactSizeReader) Read(p []byte) (int, error) {
+	if this.err != nil {
+		return 0, this.err
 	}
-	if r.done {
+	if this.done {
 		return 0, io.EOF
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if r.remaining == 0 {
-		return r.verifyEmpty()
+	if this.remaining == 0 {
+		return this.verifyEmpty()
 	}
-	if r.remaining == 1 {
-		return r.readVerifiedFinalByte(p)
+	if this.remaining == 1 {
+		return this.readVerifiedFinalByte(p)
 	}
 
 	read := p
-	if int64(len(read)) >= r.remaining {
-		read = read[:r.remaining-1]
+	if int64(len(read)) >= this.remaining {
+		read = read[:this.remaining-1]
 	}
-	n, err := r.reader.Read(read)
-	r.remaining -= int64(n)
+	n, err := this.reader.Read(read)
+	this.remaining -= int64(n)
 	if errors.Is(err, io.EOF) {
-		r.err = errSizeMismatch
-		return n, r.err
+		this.err = errSizeMismatch
+		return n, this.err
 	}
 	return n, err
 }
 
-func (r *exactSizeReader) verifyEmpty() (int, error) {
+func (this *exactSizeReader) verifyEmpty() (int, error) {
 	zeroReads := 0
 	for {
-		n, err := r.reader.Read(r.byte[:])
+		n, err := this.reader.Read(this.byte[:])
 		switch {
 		case n > 0:
-			r.err = errSizeMismatch
-			return 0, r.err
+			this.err = errSizeMismatch
+			return 0, this.err
 		case errors.Is(err, io.EOF):
-			r.done = true
+			this.done = true
 			return 0, io.EOF
 		case err != nil:
 			return 0, err
@@ -732,76 +732,76 @@ func (r *exactSizeReader) verifyEmpty() (int, error) {
 	}
 }
 
-func (r *exactSizeReader) readVerifiedFinalByte(p []byte) (int, error) {
-	n, err := r.reader.Read(r.byte[:])
+func (this *exactSizeReader) readVerifiedFinalByte(p []byte) (int, error) {
+	n, err := this.reader.Read(this.byte[:])
 	if n == 0 {
 		if errors.Is(err, io.EOF) {
-			r.err = errSizeMismatch
-			return 0, r.err
+			this.err = errSizeMismatch
+			return 0, this.err
 		}
 		return 0, err
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
-	last := r.byte[0]
+	last := this.byte[0]
 	if !errors.Is(err, io.EOF) {
-		if _, err := r.verifyEmpty(); !errors.Is(err, io.EOF) {
+		if _, err := this.verifyEmpty(); !errors.Is(err, io.EOF) {
 			return 0, err
 		}
 	}
 	p[0] = last
-	r.remaining = 0
-	r.done = true
+	this.remaining = 0
+	this.done = true
 	return 1, nil
 }
 
-func (r *sourceReader) Read(p []byte) (int, error) {
-	if r.err != nil {
-		return 0, r.err
+func (this *sourceReader) Read(p []byte) (int, error) {
+	if this.err != nil {
+		return 0, this.err
 	}
-	n, err := r.reader.Read(p)
-	if r.ctx != nil {
-		if ctxErr := r.ctx.Err(); ctxErr != nil {
+	n, err := this.reader.Read(p)
+	if this.ctx != nil {
+		if ctxErr := this.ctx.Err(); ctxErr != nil {
 			return n, ctxErr
 		}
 	}
 	if n > 0 {
-		r.consecutiveNoProgress = 0
+		this.consecutiveNoProgress = 0
 	} else if err == nil && len(p) > 0 {
-		r.consecutiveNoProgress++
-		if r.consecutiveNoProgress >= maxConsecutiveNoProgressReads {
+		this.consecutiveNoProgress++
+		if this.consecutiveNoProgress >= maxConsecutiveNoProgressReads {
 			err = io.ErrNoProgress
 		}
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
-		r.err = err
+		this.err = err
 	}
 	return n, err
 }
 
-func (b *Backend) objectName(namespace storage.Namespace, key storage.Key) (string, error) {
-	return checkedJoin(b.prefix, namespace.Value(), key.Value())
+func (this *Backend) objectName(namespace storage.Namespace, key storage.Key) (string, error) {
+	return checkedJoin(this.prefix, namespace.Value(), key.Value())
 }
 
-func (b *Backend) stageName(namespace storage.Namespace, id storage.StageID) (string, error) {
-	return checkedJoin(b.prefix, stageDirectory, namespace.Value(), id.Value())
+func (this *Backend) stageName(namespace storage.Namespace, id storage.StageID) (string, error) {
+	return checkedJoin(this.prefix, stageDirectory, namespace.Value(), id.Value())
 }
 
-func (b *Backend) stagePrefix(namespace storage.Namespace) (string, error) {
-	name, err := checkedJoin(b.prefix, stageDirectory, namespace.Value())
+func (this *Backend) stagePrefix(namespace storage.Namespace) (string, error) {
+	name, err := checkedJoin(this.prefix, stageDirectory, namespace.Value())
 	if err != nil {
 		return "", err
 	}
 	return name + "/", nil
 }
 
-func (b *Backend) claimName(namespace storage.Namespace, id storage.StageID) (string, error) {
-	return checkedJoin(b.prefix, claimDirectory, namespace.Value(), id.Value())
+func (this *Backend) claimName(namespace storage.Namespace, id storage.StageID) (string, error) {
+	return checkedJoin(this.prefix, claimDirectory, namespace.Value(), id.Value())
 }
 
-func (b *Backend) claimPrefix(namespace storage.Namespace) (string, error) {
-	name, err := checkedJoin(b.prefix, claimDirectory, namespace.Value())
+func (this *Backend) claimPrefix(namespace storage.Namespace) (string, error) {
+	name, err := checkedJoin(this.prefix, claimDirectory, namespace.Value())
 	if err != nil {
 		return "", err
 	}
@@ -841,4 +841,4 @@ func stageIDFromName(prefix, name string) (storage.StageID, bool) {
 	return id, err == nil
 }
 
-func (b *Backend) now() time.Time { return b.clock().UTC() }
+func (this *Backend) now() time.Time { return this.clock().UTC() }

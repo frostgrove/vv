@@ -46,9 +46,9 @@ func Preload(paths ...string) Option {
 // PreloadWhere loads a relation narrowed by extra options. Pagination options
 // are refused here: a LIMIT on a batched preload would silently truncate some
 // parents' children and not others.
-func PreloadWhere(path string, opts ...Option) Option {
+func PreloadWhere(path string, options ...Option) Option {
 	return func(o *Options) {
-		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: opts})
+		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: options})
 	}
 }
 
@@ -57,9 +57,9 @@ func PreloadWhere(path string, opts ...Option) Option {
 // 101st Comment before it can make the nested Author query unbounded by the
 // parent relation. A cap is a refusal rather than pagination, so no parent is
 // handed a silently partial relation.
-func PreloadCap(path string, maxRows int, opts ...Option) Option {
+func PreloadCap(path string, maxRows int, options ...Option) Option {
 	return func(o *Options) {
-		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: opts, MaxRows: maxRows})
+		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: options, MaxRows: maxRows})
 	}
 }
 
@@ -68,20 +68,20 @@ func PreloadCap(path string, maxRows int, opts ...Option) Option {
 
 type preloadNode struct {
 	name     string
-	opts     []Option
+	options  []Option
 	children []*preloadNode
 	whole    bool // some spec asked for this relation unnarrowed
 	maxRows  int
 }
 
-func (n *preloadNode) child(name string) *preloadNode {
-	for _, c := range n.children {
+func (this *preloadNode) child(name string) *preloadNode {
+	for _, c := range this.children {
 		if c.name == name {
 			return c
 		}
 	}
 	c := &preloadNode{name: name}
-	n.children = append(n.children, c)
+	this.children = append(this.children, c)
 	return c
 }
 
@@ -112,13 +112,13 @@ func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 		// all of them and for a subset would receive only the subset, with a
 		// 200 and no way to tell. The wider ask wins.
 		if len(spec.Opts) == 0 {
-			cur.whole, cur.opts = true, nil
+			cur.whole, cur.options = true, nil
 			continue
 		}
 		if cur.whole {
 			continue
 		}
-		cur.opts = append(cur.opts, spec.Opts...)
+		cur.options = append(cur.options, spec.Opts...)
 	}
 	return root, nil
 }
@@ -177,14 +177,14 @@ type preloader struct {
 	scopes *RelationScopes
 }
 
-func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode, prefix string) error {
+func (this *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode, prefix string) error {
 	for _, node := range nodes {
 		rel := m.Relation(node.name)
 		if rel == nil {
 			return &UnknownFieldError{Model: m.Name, Field: node.name}
 		}
 		path := joinPath(prefix, rel.Name)
-		children, err := p.load(m, rel, parents, node.opts, node.maxRows, path)
+		children, err := this.load(m, rel, parents, node.options, node.maxRows, path)
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 		if err != nil {
 			return err
 		}
-		if err := p.level(target, children, node.children, path); err != nil {
+		if err := this.level(target, children, node.children, path); err != nil {
 			return err
 		}
 	}
@@ -205,12 +205,12 @@ func (p *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadNode
 // load fetches one relation for a whole set of parents and wires the results
 // into their fields, returning the loaded children so nested preloads can
 // continue from them.
-func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts []Option, maxRows int, path string) ([]reflect.Value, error) {
+func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, options []Option, maxRows int, path string) ([]reflect.Value, error) {
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
 		return nil, err
 	}
-	o := Build(opts...)
+	o := Build(options...)
 	if maxRows > 0 && (o.PreloadRows == 0 || maxRows < o.PreloadRows) {
 		o.PreloadRows = maxRows
 	}
@@ -235,7 +235,7 @@ func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts [
 		keys = append(keys, v)
 	}
 	if len(keys) == 0 {
-		p.assignEmpty(rel, parents)
+		this.assignEmpty(rel, parents)
 		return nil, nil
 	}
 
@@ -247,7 +247,7 @@ func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts [
 		if o.PreloadRows > 0 {
 			remaining = o.PreloadRows - total
 		}
-		rows, owners, err := p.fetch(target, rel, local, remote, chunk, o, path, remaining)
+		rows, owners, err := this.fetch(target, rel, local, remote, chunk, o, path, remaining)
 		if err != nil {
 			return nil, err
 		}
@@ -276,7 +276,7 @@ func (p *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opts [
 	return stored, nil
 }
 
-func (p *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
+func (this *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
 	for _, parent := range parents {
 		_, _ = assignRelation(rel, parent, nil)
 	}
@@ -284,7 +284,7 @@ func (p *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
 
 // fetch runs one batched SELECT and returns the scanned children together with
 // the parent key each one belongs to.
-func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string, remaining int) ([]reflect.Value, []any, error) {
+func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string, remaining int) ([]reflect.Value, []any, error) {
 	var (
 		b       *SQL
 		ownerAt = -1 // index of the owner-key column in the result, -1 = derive from the row
@@ -292,14 +292,14 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 	// The narrowing the parent's repository declared for this relation. It is
 	// ANDed in here, not left to the caller: a preload is a second statement
 	// against a second table, so the parent query's WHERE does nothing for it.
-	extra := p.scopes.At(path, target)
+	extra := this.scopes.At(path, target)
 	if sub := o.Predicate(); sub != nil {
 		extra = And(extra, sub)
 	}
 
 	if rel.Kind == ManyToMany {
 		// SELECT j.<owner>, t.<cols> FROM target t JOIN join j ON j.ref = t.pk
-		b = NewSQL(p.d, target).Alias("rxt").RelationScopes(p.scopes.under(path))
+		b = NewSQL(this.d, target).Alias("rxt").RelationScopes(this.scopes.under(path))
 		b.Raw("SELECT rxj.").Ident(rel.JoinLocal).Raw(", ")
 		for i, f := range target.Fields {
 			if i > 0 {
@@ -316,7 +316,7 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 		}
 		ownerAt = 0
 	} else {
-		b = NewSQL(p.d, target).RelationScopes(p.scopes.under(path))
+		b = NewSQL(this.d, target).RelationScopes(this.scopes.under(path))
 		b.Raw("SELECT ").Columns(target.Fields).Raw(" FROM ").Table().
 			Raw(" WHERE ").Ident(remote.Column).Raw(" IN (").Binds(keys).Raw(")")
 		if extra != nil {
@@ -346,7 +346,7 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := p.ex.Query(p.ctx, q, args...)
+	rows, err := this.ex.Query(this.ctx, q, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -395,7 +395,7 @@ func (p *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, key
 // to the children *where they now live*, which is what a nested preload has to
 // keep filling.
 func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) ([]reflect.Value, error) {
-	dst := rel.fieldValue(parent.UnsafePointer())
+	destination := rel.fieldValue(parent.UnsafePointer())
 
 	if rel.Kind.ToMany() {
 		ptrElem := rel.Type.Elem().Kind() == reflect.Pointer
@@ -407,19 +407,19 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 				slice = reflect.Append(slice, k.Elem())
 			}
 		}
-		dst.Set(slice)
+		destination.Set(slice)
 		if ptrElem {
 			return kids, nil
 		}
-		placed := make([]reflect.Value, dst.Len())
+		placed := make([]reflect.Value, destination.Len())
 		for i := range placed {
-			placed[i] = dst.Index(i).Addr()
+			placed[i] = destination.Index(i).Addr()
 		}
 		return placed, nil
 	}
 
 	if len(kids) == 0 {
-		dst.SetZero()
+		destination.SetZero()
 		return nil, nil
 	}
 	if rel.Type.Kind() == reflect.Pointer {
@@ -430,11 +430,11 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 		// below has always copied.
 		own := reflect.New(rel.Type.Elem())
 		own.Elem().Set(kids[0].Elem())
-		dst.Set(own)
+		destination.Set(own)
 		return []reflect.Value{own}, nil
 	}
-	dst.Set(kids[0].Elem())
-	return []reflect.Value{dst.Addr()}, nil
+	destination.Set(kids[0].Elem())
+	return []reflect.Value{destination.Addr()}, nil
 }
 
 // mapKey normalises a value so it can index a map, and — the part that earns

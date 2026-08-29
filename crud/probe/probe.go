@@ -20,7 +20,7 @@ import (
 //     point — and it is genuinely failure-prone, because it re-binds values from
 //     a statement that already failed.
 type Handler interface {
-	Enrich(ctx context.Context, req *Request) (*errs.Fault, error)
+	Enrich(ctx context.Context, request *Request) (*errs.Fault, error)
 }
 
 // Declarer is the optional interface a Handler implements to be bound to the
@@ -106,16 +106,16 @@ func Simple() Handler { return simple{} }
 
 type simple struct{}
 
-func (simple) Enrich(_ context.Context, req *Request) (*errs.Fault, error) {
-	if req == nil {
+func (simple) Enrich(_ context.Context, request *Request) (*errs.Fault, error) {
+	if request == nil {
 		return nil, nil
 	}
-	return req.Fault, nil
+	return request.Fault, nil
 }
 
 // Declare accepts every model. Simple reads no schema, so there is nothing it
 // could refuse over.
-func (s simple) Declare(*crud.Meta) (Handler, error) { return s, nil }
+func (this simple) Declare(*crud.Meta) (Handler, error) { return this, nil }
 
 var (
 	_ Handler  = simple{}

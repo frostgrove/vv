@@ -43,16 +43,16 @@ var (
 
 func gormDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := openGorm(t, gormPGDialector())
-	if err := db.AutoMigrate(&Team{}, &Member{}, &Label{}); err != nil {
+	database := openGorm(t, gormPGDialector())
+	if err := database.AutoMigrate(&Team{}, &Member{}, &Label{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"team_labels", "members", "labels", "teams"} {
-		if err := db.Exec("DELETE FROM " + table).Error; err != nil {
+		if err := database.Exec("DELETE FROM " + table).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	return db
+	return database
 }
 
 // A gorm model maps to exactly the columns gorm itself would use.
@@ -92,12 +92,12 @@ func TestGormModelIsAVVModel(t *testing.T) {
 // The mapping self-check every gorm project should copy: vv derives column
 // names from the Go field names, gorm's schema parser knows the real ones.
 func TestGormMappingMatchesGorm(t *testing.T) {
-	db := gormDB(t)
+	database := gormDB(t)
 	s, err := crud.SchemaOf[Member]()
 	if err != nil {
 		t.Fatal(err)
 	}
-	stmt := &gorm.Statement{DB: db}
+	stmt := &gorm.Statement{DB: database}
 	if err := stmt.Parse(&Member{}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,25 +114,25 @@ func TestGormMappingMatchesGorm(t *testing.T) {
 // gorm writes, vv reads — including the DSL, relations and preloads.
 func TestGormModelThroughVV(t *testing.T) {
 	ctx := context.Background()
-	db := gormDB(t)
-	src := crudsql.Postgres(pgDB)
+	database := gormDB(t)
+	source := crudsql.Postgres(pgDB)
 
-	teams := specs.Executor(GormTeams.Bind(src))
-	members := GormMembers.Bind(src)
+	teams := specs.Executor(GormTeams.Bind(source))
+	members := GormMembers.Bind(source)
 
 	// Everything below is written with gorm's own API.
 	go1 := Label{Slug: "go"}
 	rust := Label{Slug: "rust"}
-	if err := db.Create(&[]*Label{&go1, &rust}).Error; err != nil {
+	if err := database.Create(&[]*Label{&go1, &rust}).Error; err != nil {
 		t.Fatal(err)
 	}
 	core := Team{Name: "core", Labels: []Label{go1, rust}}
 	ops := Team{Name: "ops", Labels: []Label{rust}}
-	if err := db.Create(&[]*Team{&core, &ops}).Error; err != nil {
+	if err := database.Create(&[]*Team{&core, &ops}).Error; err != nil {
 		t.Fatal(err)
 	}
 	age := 31
-	if err := db.Create(&[]*Member{
+	if err := database.Create(&[]*Member{
 		{TeamID: core.ID, Name: "Ann", Age: &age},
 		{TeamID: core.ID, Name: "Bob"},
 		{TeamID: ops.ID, Name: "Cid"},
@@ -141,20 +141,20 @@ func TestGormModelThroughVV(t *testing.T) {
 	}
 
 	// …and read back through the DSL, walking the association gorm declared.
-	var req query.Request
+	var request query.Request
 	if err := json.Unmarshal([]byte(`{
 		"filter":  {"team.name": "core"},
 		"preload": ["team"],
 		"sort":    ["name"],
 		"unpaged": true
-	}`), &req); err != nil {
+	}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := req.Compile(GormMembers.Meta(), unpagedOK)
+	options, err := request.Compile(GormMembers.Meta(), unpagedOK)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := members.GetAll(ctx, opts...)
+	got, err := members.GetAll(ctx, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,21 +183,21 @@ func TestGormModelThroughVV(t *testing.T) {
 // The scope keeps gorm's tombstones out of every vv read.
 func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	ctx := context.Background()
-	db := gormDB(t)
+	database := gormDB(t)
 	members := GormMembers.Bind(crudsql.Postgres(pgDB))
 
 	team := Team{Name: "core"}
-	if err := db.Create(&team).Error; err != nil {
+	if err := database.Create(&team).Error; err != nil {
 		t.Fatal(err)
 	}
 	ann := Member{TeamID: team.ID, Name: "Ann"}
 	bob := Member{TeamID: team.ID, Name: "Bob"}
-	if err := db.Create(&[]*Member{&ann, &bob}).Error; err != nil {
+	if err := database.Create(&[]*Member{&ann, &bob}).Error; err != nil {
 		t.Fatal(err)
 	}
 
 	// gorm's soft delete: the row stays, deleted_at is set.
-	if err := db.Delete(&ann).Error; err != nil {
+	if err := database.Delete(&ann).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +217,7 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	}
 	// The row really is still there for gorm.
 	var raw int64
-	if err := db.Unscoped().Model(&Member{}).Count(&raw).Error; err != nil {
+	if err := database.Unscoped().Model(&Member{}).Count(&raw).Error; err != nil {
 		t.Fatal(err)
 	}
 	if raw != 2 {
@@ -228,15 +228,15 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 // One transaction, gorm's builder and vv's repository writing into it.
 func TestGormModelInsideGormTransaction(t *testing.T) {
 	ctx := context.Background()
-	db := gormDB(t)
+	database := gormDB(t)
 	members := GormMembers.Bind(crudsql.Postgres(pgDB))
 
 	team := Team{Name: "core"}
-	if err := db.Create(&team).Error; err != nil {
+	if err := database.Create(&team).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
 		m := Member{TeamID: team.ID, Name: "ByGorm"}
@@ -272,20 +272,20 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			teams := GormTeams.Bind(g.src)
+			teams := GormTeams.Bind(g.source)
 
 			goLbl, rust := Label{Slug: "go"}, Label{Slug: "rust"}
-			if err := g.db.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
+			if err := g.database.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
 				t.Fatal(err)
 			}
 			// core has a member over 30 and a "go" label; ops has neither.
 			core := Team{Name: "core", Labels: []Label{goLbl, rust}}
 			ops := Team{Name: "ops", Labels: []Label{rust}}
-			if err := g.db.Create(&[]*Team{&core, &ops}).Error; err != nil {
+			if err := g.database.Create(&[]*Team{&core, &ops}).Error; err != nil {
 				t.Fatal(err)
 			}
 			senior, junior := 31, 22
-			if err := g.db.Create(&[]*Member{
+			if err := g.database.Create(&[]*Member{
 				{TeamID: core.ID, Name: "Ann", Age: &senior},
 				{TeamID: core.ID, Name: "Bob", Age: &junior},
 				{TeamID: ops.ID, Name: "Cid", Age: &junior},
@@ -294,20 +294,20 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 			}
 
 			// The document from the guide, character for character.
-			var req query.Request
+			var request query.Request
 			if err := json.Unmarshal([]byte(`{
 				"filter":  {"labels.slug": {"in": ["go","rust"]}, "members.age": {"gte": 30}},
 				"preload": ["members.team", "labels"],
 				"sort":    ["-createdAt", "name"]
-			}`), &req); err != nil {
+			}`), &request); err != nil {
 				t.Fatal(err)
 			}
-			req.Unpaged = true
-			opts, err := req.Compile(GormTeams.Meta(), unpagedOK)
+			request.Unpaged = true
+			options, err := request.Compile(GormTeams.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := teams.GetAll(ctx, opts...)
+			got, err := teams.GetAll(ctx, options...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -355,12 +355,12 @@ func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			labels := GormLabels.Bind(g.src)
+			labels := GormLabels.Bind(g.source)
 
 			// gorm's own Create goes through the callback chain.
 			before := gormstore.LabelCreations.Load()
 			viaGorm := Label{}
-			if err := g.db.Create(&viaGorm).Error; err != nil {
+			if err := g.database.Create(&viaGorm).Error; err != nil {
 				t.Fatal(err)
 			}
 			if gormstore.LabelCreations.Load() != before+1 {

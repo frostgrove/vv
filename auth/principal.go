@@ -54,11 +54,11 @@ type Claims struct {
 }
 
 // Subject implements [Principal].
-func (c Claims) Subject() string { return c.Sub }
+func (this Claims) Subject() string { return this.Sub }
 
 // In implements [Principal].
-func (c Claims) In(r Role) bool {
-	for _, has := range c.Roles {
+func (this Claims) In(r Role) bool {
+	for _, has := range this.Roles {
 		if has == r {
 			return true
 		}
@@ -67,8 +67,8 @@ func (c Claims) In(r Role) bool {
 }
 
 // Has implements [Principal].
-func (c Claims) Has(p Permission) bool {
-	for _, has := range c.Permissions {
+func (this Claims) Has(p Permission) bool {
+	for _, has := range this.Permissions {
 		if has == p {
 			return true
 		}
@@ -77,8 +77,8 @@ func (c Claims) Has(p Permission) bool {
 }
 
 // Attr implements [Principal].
-func (c Claims) Attr(name string) (any, bool) {
-	v, ok := c.Attrs[name]
+func (this Claims) Attr(name string) (any, bool) {
+	v, ok := this.Attrs[name]
 	return v, ok
 }
 
@@ -89,12 +89,12 @@ func (c Claims) Attr(name string) (any, bool) {
 // answered Has by walking a role map would answer differently depending on
 // which map happened to be reachable at the call site, and the same token would
 // mean two things in one process.
-func (c Claims) Grant(m RoleMap) Claims {
-	if len(m) == 0 || len(c.Roles) == 0 {
-		return c
+func (this Claims) Grant(m RoleMap) Claims {
+	if len(m) == 0 || len(this.Roles) == 0 {
+		return this
 	}
-	out := c
-	out.Permissions = append(append([]Permission(nil), c.Permissions...), m.Expand(c.Roles...)...)
+	out := this
+	out.Permissions = append(append([]Permission(nil), this.Permissions...), m.Expand(this.Roles...)...)
 	out.Permissions = dedupe(out.Permissions)
 	return out
 }
@@ -105,13 +105,13 @@ func (c Claims) Grant(m RoleMap) Claims {
 type RoleMap map[Role][]Permission
 
 // Expand returns every permission the roles grant, without duplicates.
-func (m RoleMap) Expand(roles ...Role) []Permission {
-	if len(m) == 0 {
+func (this RoleMap) Expand(roles ...Role) []Permission {
+	if len(this) == 0 {
 		return nil
 	}
 	var out []Permission
 	for _, r := range roles {
-		out = append(out, m[r]...)
+		out = append(out, this[r]...)
 	}
 	return dedupe(out)
 }

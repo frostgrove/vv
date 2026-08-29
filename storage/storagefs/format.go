@@ -36,23 +36,23 @@ type privateHeader struct {
 	ExpiresAt   int64             `json:"expires_at,omitempty"`
 }
 
-func (h privateHeader) info() storage.Info {
+func (this privateHeader) info() storage.Info {
 	var metadata storage.Metadata
-	if len(h.Metadata) != 0 {
-		metadata = make(storage.Metadata, len(h.Metadata))
-		for key, value := range h.Metadata {
+	if len(this.Metadata) != 0 {
+		metadata = make(storage.Metadata, len(this.Metadata))
+		for key, value := range this.Metadata {
 			metadata[key] = value
 		}
 	}
 	return storage.Info{
-		Size:        h.Size,
-		ContentType: h.ContentType,
+		Size:        this.Size,
+		ContentType: this.ContentType,
 		Metadata:    metadata,
-		ModifiedAt:  time.Unix(0, h.ModifiedAt).UTC(),
+		ModifiedAt:  time.Unix(0, this.ModifiedAt).UTC(),
 	}
 }
 
-func (b *Backend) writePrivateFile(ctx context.Context, file *os.File, source io.Reader, expectedSize *int64, contentType string, metadata storage.Metadata, expiresAt time.Time) (storage.Info, error) {
+func (this *Backend) writePrivateFile(ctx context.Context, file *os.File, source io.Reader, expectedSize *int64, contentType string, metadata storage.Metadata, expiresAt time.Time) (storage.Info, error) {
 	closed := false
 	defer func() {
 		if !closed {
@@ -106,7 +106,7 @@ func (b *Backend) writePrivateFile(ctx context.Context, file *os.File, source io
 	if err := contextError(ctx); err != nil {
 		return storage.Info{}, storage.NewError("write", storage.KindCancelled, err)
 	}
-	modifiedAt := b.now().UTC()
+	modifiedAt := this.now().UTC()
 	header := privateHeader{
 		Version:     1,
 		Size:        written,
@@ -134,10 +134,10 @@ func (b *Backend) writePrivateFile(ctx context.Context, file *os.File, source io
 	if err := file.Truncate(privateHeaderSize + written); err != nil {
 		return storage.Info{}, filesystemError("write", err)
 	}
-	if err := file.Chmod(b.fileMode); err != nil {
+	if err := file.Chmod(this.fileMode); err != nil {
 		return storage.Info{}, filesystemError("write", err)
 	}
-	if b.syncWrites {
+	if this.syncWrites {
 		if err := file.Sync(); err != nil {
 			return storage.Info{}, filesystemError("write", err)
 		}
@@ -159,8 +159,8 @@ func encodePrivateHeader(header privateHeader) ([]byte, error) {
 	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
 }
 
-func (b *Backend) openPrivateFile(name string) (*os.File, privateHeader, error) {
-	file, err := b.root.Open(name)
+func (this *Backend) openPrivateFile(name string) (*os.File, privateHeader, error) {
+	file, err := this.root.Open(name)
 	if err != nil {
 		return nil, privateHeader{}, err
 	}
@@ -259,21 +259,21 @@ type contextSourceReader struct {
 	emptyReads int
 }
 
-func (r *contextSourceReader) Read(buffer []byte) (int, error) {
-	if err := contextError(r.ctx); err != nil {
+func (this *contextSourceReader) Read(buffer []byte) (int, error) {
+	if err := contextError(this.ctx); err != nil {
 		return 0, err
 	}
-	n, err := r.source.Read(buffer)
-	if contextErr := contextError(r.ctx); contextErr != nil {
+	n, err := this.source.Read(buffer)
+	if contextErr := contextError(this.ctx); contextErr != nil {
 		return n, contextErr
 	}
 	if n == 0 && err == nil && len(buffer) != 0 {
-		r.emptyReads++
-		if r.emptyReads >= maxConsecutiveEmptyReads {
+		this.emptyReads++
+		if this.emptyReads >= maxConsecutiveEmptyReads {
 			return 0, &sourceReadError{err: io.ErrNoProgress}
 		}
 	} else if n > 0 {
-		r.emptyReads = 0
+		this.emptyReads = 0
 	}
 	if err != nil && err != io.EOF {
 		return n, &sourceReadError{err: err}
@@ -283,8 +283,8 @@ func (r *contextSourceReader) Read(buffer []byte) (int, error) {
 
 type sourceReadError struct{ err error }
 
-func (e *sourceReadError) Error() string { return "storage source read failed" }
-func (e *sourceReadError) Unwrap() error { return e.err }
+func (this *sourceReadError) Error() string { return "storage source read failed" }
+func (this *sourceReadError) Unwrap() error { return this.err }
 
 type objectBody struct {
 	ctx       context.Context
@@ -292,19 +292,19 @@ type objectBody struct {
 	remaining int64
 }
 
-func (b *objectBody) Read(buffer []byte) (int, error) {
-	if err := contextError(b.ctx); err != nil {
+func (this *objectBody) Read(buffer []byte) (int, error) {
+	if err := contextError(this.ctx); err != nil {
 		return 0, storage.NewError("read", storage.KindCancelled, err)
 	}
-	if b.remaining == 0 {
+	if this.remaining == 0 {
 		return 0, io.EOF
 	}
-	if int64(len(buffer)) > b.remaining {
-		buffer = buffer[:b.remaining]
+	if int64(len(buffer)) > this.remaining {
+		buffer = buffer[:this.remaining]
 	}
-	n, err := b.file.Read(buffer)
-	b.remaining -= int64(n)
-	if err == io.EOF && b.remaining > 0 {
+	n, err := this.file.Read(buffer)
+	this.remaining -= int64(n)
+	if err == io.EOF && this.remaining > 0 {
 		return n, filesystemError("read", io.ErrUnexpectedEOF)
 	}
 	if err != nil && err != io.EOF {
@@ -313,8 +313,8 @@ func (b *objectBody) Read(buffer []byte) (int, error) {
 	return n, err
 }
 
-func (b *objectBody) Close() error {
-	return filesystemError("close", b.file.Close())
+func (this *objectBody) Close() error {
+	return filesystemError("close", this.file.Close())
 }
 
 func cloneMetadata(metadata storage.Metadata) map[string]string {

@@ -170,9 +170,9 @@ func TestMaxLimitCapsEvenTheDefaultLimit(t *testing.T) {
 	strict := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultLimit(50), sqlrepo.MaxLimit(10))
 
 	for _, tc := range []struct {
-		name string
-		opts []crud.Option
-		want string
+		name    string
+		options []crud.Option
+		want    string
 	}{
 		{"a request with no limit gets the default, clamped", nil, "LIMIT 10"},
 		{"a request under the cap is left alone", []crud.Option{crud.Limit(4)}, "LIMIT 4"},
@@ -180,7 +180,7 @@ func TestMaxLimitCapsEvenTheDefaultLimit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows())
-			if _, err := strict.Bind(rec).Get(context.Background(), tc.opts...); err != nil {
+			if _, err := strict.Bind(rec).Get(context.Background(), tc.options...); err != nil {
 				t.Fatal(err)
 			}
 			if got := mustSQL(t, rec, 0).SQL; !strings.Contains(got, tc.want) {
@@ -196,8 +196,8 @@ func TestANonPositiveDefaultLimitFallsBackToThePackageDefault(t *testing.T) {
 	for _, n := range []int{0, -5} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows())
-			repo := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultLimit(n)).Bind(rec)
-			if _, err := repo.Get(context.Background()); err != nil {
+			repository := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultLimit(n)).Bind(rec)
+			if _, err := repository.Get(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			want := "LIMIT " + strconv.Itoa(sqlrepo.DefaultPageSize)
@@ -214,9 +214,9 @@ func TestANonPositiveDefaultLimitFallsBackToThePackageDefault(t *testing.T) {
 // than handed to the database to reject.
 func TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	repo := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultSort(crud.Desc("Nope"))).Bind(rec)
+	repository := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultSort(crud.Desc("Nope"))).Bind(rec)
 
-	_, err := repo.Get(context.Background())
+	_, err := repository.Get(context.Background())
 
 	var uf *crud.UnknownFieldError
 	if !errors.As(err, &uf) {
@@ -262,9 +262,9 @@ func TestPreloadDepthCapsAPathAndZeroMeansUnset(t *testing.T) {
 
 	t.Run("one hop is allowed at a depth of one", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(authors(), books())
-		repo := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(1)).Bind(rec)
+		repository := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(1)).Bind(rec)
 
-		got, err := repo.GetAll(context.Background(), crud.Preload("Books"))
+		got, err := repository.GetAll(context.Background(), crud.Preload("Books"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,9 +275,9 @@ func TestPreloadDepthCapsAPathAndZeroMeansUnset(t *testing.T) {
 
 	t.Run("the second hop is refused at a depth of one", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(authors())
-		repo := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(1)).Bind(rec)
+		repository := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(1)).Bind(rec)
 
-		_, err := repo.GetAll(context.Background(), crud.Preload("Books.Pages"))
+		_, err := repository.GetAll(context.Background(), crud.Preload("Books.Pages"))
 		if err == nil {
 			t.Fatal("a two-segment path was accepted by a repository that allows one")
 		}
@@ -291,9 +291,9 @@ func TestPreloadDepthCapsAPathAndZeroMeansUnset(t *testing.T) {
 
 	t.Run("zero leaves the default depth in place", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(authors(), books(), pages())
-		repo := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(0)).Bind(rec)
+		repository := sqlrepo.Define[Author, int64, struct{}]("authors", sqlrepo.PreloadDepth(0)).Bind(rec)
 
-		got, err := repo.GetAll(context.Background(), crud.Preload("Books.Pages"))
+		got, err := repository.GetAll(context.Background(), crud.Preload("Books.Pages"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,22 +382,22 @@ func TestACallerFilterCannotWidenTheScope(t *testing.T) {
 // must retain both predicates — last-wins would turn adding a visibility guard
 // into removing the tenant guard it followed.
 func TestRepeatedScopesComposeByAND(t *testing.T) {
-	repo := sqlrepo.Define[User, int64, UserUpdate]("users",
+	repository := sqlrepo.Define[User, int64, UserUpdate]("users",
 		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
 		sqlrepo.Scope(crud.Eq("Age", 30)),
 	).Bind(crudtest.Postgres().Push(crudtest.Rows()))
 
-	if _, err := repo.GetAll(context.Background()); err != nil {
+	if _, err := repository.GetAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// Bind a fresh recorder to inspect the exact declaration-derived SQL: the
 	// first repository above proves the declaration remains normally callable.
 	rec := crudtest.Postgres().Push(crudtest.Rows())
-	repo = sqlrepo.Define[User, int64, UserUpdate]("users",
+	repository = sqlrepo.Define[User, int64, UserUpdate]("users",
 		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
 		sqlrepo.Scope(crud.Eq("Age", 30)),
 	).Bind(rec)
-	if _, err := repo.GetAll(context.Background()); err != nil {
+	if _, err := repository.GetAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	wantSQL(t, rec.Last().SQL,
