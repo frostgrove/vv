@@ -119,8 +119,10 @@ func TestEntSharedTransaction(t *testing.T) {
 
 	// vv writes, ent reads.
 	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", Active: true}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	back, err := tx.User.Query().Where(entuser.IDEQ(u.ID)).Only(ctx)
 	if err != nil {

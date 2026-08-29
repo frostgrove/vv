@@ -375,8 +375,10 @@ func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 			// the warning in the guide.
 			before = gormstore.LabelCreations.Load()
 			viaVV := Label{}
-			if _, err := labels.Save(ctx, &viaVV); err != nil {
+			if stored, err := labels.Save(ctx, &viaVV); err != nil {
 				t.Fatal(err)
+			} else {
+				viaVV = stored
 			}
 			if n := gormstore.LabelCreations.Load(); n != before {
 				t.Fatalf("the hook fired %d time(s) on an vv write; docs/gorm.md §16 says it does not", n-before)

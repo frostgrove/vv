@@ -660,8 +660,10 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 				if i%2 == 0 {
 					r.Score = crud.Set(7)
 				}
-				if _, err := rows.Save(ctx, &r); err != nil {
+				if stored, err := rows.Save(ctx, &r); err != nil {
 					t.Fatal(err)
+				} else {
+					r = stored
 				}
 			}
 			s.forget()
@@ -754,8 +756,10 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 			cons := EgConses.Bind(tg.source)
 
 			anchor := EgCons{Slug: "taken", Tag: crud.Set("t")}
-			if _, err := cons.Save(ctx, &anchor); err != nil {
+			if stored, err := cons.Save(ctx, &anchor); err != nil {
 				t.Fatal(err)
+			} else {
+				anchor = stored
 			}
 
 			for _, tc := range []struct {

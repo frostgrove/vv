@@ -46,8 +46,8 @@ type UserRepo = crud.Repo[ent.User, int64, UserUpdate]
 var UserRepository = sqlrepo.Define[ent.User, int64, UserUpdate]("")
 
 // NewUserRepository binds UserRepository to src.
-func NewUserRepository(source crud.Source) *UserRepo {
-	return UserRepository.Bind(source)
+func NewUserRepository(src crud.Source) *UserRepo {
+	return UserRepository.Bind(src)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

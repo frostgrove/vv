@@ -73,8 +73,10 @@ func TestGormSharedTransaction(t *testing.T) {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
 		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByVV", Active: true}
-		if _, err := repository.Save(txCtx, &u); err != nil {
+		if stored, err := repository.Save(txCtx, &u); err != nil {
 			return err
+		} else {
+			u = stored
 		}
 		// gorm sees the row vv wrote, in the same transaction.
 		var got GormUser

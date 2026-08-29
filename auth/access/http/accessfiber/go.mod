@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
-	github.com/frostgrove/vv v0.0.0-20260828080822-3c0a8bebc6f6 // indirect
+	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

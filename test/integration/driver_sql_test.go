@@ -56,8 +56,10 @@ func TestDatabaseSQLSharedTransaction(t *testing.T) {
 
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 	u := User{TenantID: 1, Email: "sql-tx@x.io", Name: "Joined"}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 
 	var name string

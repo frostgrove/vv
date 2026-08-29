@@ -408,8 +408,13 @@ func TestGetAllSwitchesToCursorsBeforeAnEndpointsOffsetBudget(t *testing.T) {
 	if len(all) != 3 || all[0].ID != 1 || all[1].ID != 2 || all[2].ID != 3 {
 		t.Fatalf("GetAll() = %+v, want every row behind MaxLimit(1)", all)
 	}
-	if got := len(rec.Statements()); got != 5 {
-		t.Fatalf("sql calls = %d, want first-page read/count, two cursor reads, and a terminal probe", got)
+	// Four and not five: the walk stops on the first cursor page that reports
+	// no next edge and no more rows, rather than spending a terminal probe to
+	// see an empty one. A page claiming no edge *and* more rows is a
+	// PartialResultError, so the saved round trip cannot hide a truncation —
+	// and the row assertion above is what proves nothing went missing.
+	if got := len(rec.Statements()); got != 4 {
+		t.Fatalf("sql calls = %d, want a first-page read and count, then two cursor reads", got)
 	}
 }
 

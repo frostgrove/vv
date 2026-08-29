@@ -40,8 +40,8 @@ type LabelRepo = crud.Repo[Label, uint, LabelUpdate]
 var LabelRepository = sqlrepo.Define[Label, uint, LabelUpdate]("")
 
 // NewLabelRepository binds LabelRepository to src.
-func NewLabelRepository(source crud.Source) *LabelRepo {
-	return LabelRepository.Bind(source)
+func NewLabelRepository(src crud.Source) *LabelRepo {
+	return LabelRepository.Bind(src)
 }
 
 // MemberUpdate is the partial-update DTO for Member.
@@ -87,8 +87,8 @@ type MemberRepo = crud.Repo[Member, uint, MemberUpdate]
 var MemberRepository = sqlrepo.Define[Member, uint, MemberUpdate]("")
 
 // NewMemberRepository binds MemberRepository to src.
-func NewMemberRepository(source crud.Source) *MemberRepo {
-	return MemberRepository.Bind(source)
+func NewMemberRepository(src crud.Source) *MemberRepo {
+	return MemberRepository.Bind(src)
 }
 
 // TeamUpdate is the partial-update DTO for Team.
@@ -143,8 +143,8 @@ type TeamRepo = crud.Repo[Team, uint, TeamUpdate]
 var TeamRepository = sqlrepo.Define[Team, uint, TeamUpdate]("")
 
 // NewTeamRepository binds TeamRepository to src.
-func NewTeamRepository(source crud.Source) *TeamRepo {
-	return TeamRepository.Bind(source)
+func NewTeamRepository(src crud.Source) *TeamRepo {
+	return TeamRepository.Bind(src)
 }
 
 // A writable column the update DTO does not name refuses to start, rather than

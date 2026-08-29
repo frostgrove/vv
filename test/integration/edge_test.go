@@ -474,8 +474,10 @@ var _ crud.Source = (*egSpy)(nil)
 func egSeed(t *testing.T, repository *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
 	t.Helper()
 	for _, r := range rows {
-		if _, err := repository.Save(context.Background(), &r); err != nil {
+		if stored, err := repository.Save(context.Background(), &r); err != nil {
 			t.Fatalf("seeding %d: %v", r.ID, err)
+		} else {
+			r = stored
 		}
 	}
 }
@@ -709,8 +711,10 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				// simply at its zero value, and that is a row.
 				autos := EgAutos.Bind(tg.source)
 				var blank EgAuto
-				if _, err := autos.Save(ctx, &blank); err != nil {
+				if stored, err := autos.Save(ctx, &blank); err != nil {
 					t.Fatal(err)
+				} else {
+					blank = stored
 				}
 				if blank.ID == 0 {
 					t.Fatal("the generated key was not read back for an otherwise empty model")
@@ -729,8 +733,10 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				// And the same column carrying a value: one column, both ways,
 				// which is what makes sql.Null[T] usable as a model field.
 				valued := EgAuto{Name: "tagged", Tag: sql.Null[string]{V: "beta", Valid: true}}
-				if _, err := autos.Save(ctx, &valued); err != nil {
+				if stored, err := autos.Save(ctx, &valued); err != nil {
 					t.Fatal(err)
+				} else {
+					valued = stored
 				}
 				got, err := autos.GetByID(ctx, valued.ID)
 				if err != nil {
@@ -885,8 +891,10 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 			t.Run("the zero time", func(t *testing.T) {
 				autos := EgAutos.Bind(tg.source)
 				z := EgAuto{Name: "zero", At: crud.Set(time.Time{})}
-				if _, err := autos.Save(ctx, &z); err != nil {
+				if stored, err := autos.Save(ctx, &z); err != nil {
 					t.Fatalf("storing the zero time: %v", err)
+				} else {
+					z = stored
 				}
 				back, err := autos.GetByID(ctx, z.ID)
 				if err != nil {
@@ -1021,8 +1029,10 @@ func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 			var ids []int64
 			for _, slug := range []string{"a", "b", "c"} {
 				row := EgCons{Slug: slug, Tag: crud.Set("t")}
-				if _, err := cons.Save(ctx, &row); err != nil {
+				if stored, err := cons.Save(ctx, &row); err != nil {
 					t.Fatal(err)
+				} else {
+					row = stored
 				}
 				ids = append(ids, row.ID)
 			}
@@ -1376,8 +1386,10 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				egWipe(t, tg.source)
 				parents := EgParents.Bind(tg.source)
 				for _, p := range []EgParent{{ID: 1, Name: "lonely"}, {ID: 2, Name: "also lonely"}} {
-					if _, err := parents.Save(ctx, &p); err != nil {
+					if stored, err := parents.Save(ctx, &p); err != nil {
 						t.Fatal(err)
+					} else {
+						p = stored
 					}
 				}
 

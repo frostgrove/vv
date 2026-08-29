@@ -58,8 +58,10 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 
 	// And sqlc reads what vv wrote.
 	u := User{TenantID: 1, Email: "vv@x.io", Name: "ByVV", Active: true}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	back, err := q.GetUser(ctx, u.ID)
 	if err != nil {
@@ -116,8 +118,10 @@ func TestSqlcPgx(t *testing.T) {
 	}
 
 	u := User{TenantID: 2, Email: "vv-pgx@x.io", Name: "ByVV", Age: crud.Set(7)}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	back, err := q.GetUser(ctx, u.ID)
 	if err != nil {
@@ -169,8 +173,10 @@ func TestSqlcMySQL(t *testing.T) {
 	}
 
 	u := User{TenantID: 3, Email: "vv-my@x.io", Name: "ByVV", Active: true}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	back, err := q.GetUser(ctx, u.ID)
 	if err != nil {

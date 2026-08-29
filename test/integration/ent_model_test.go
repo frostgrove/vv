@@ -143,8 +143,10 @@ func TestEntStructWritesThroughVV(t *testing.T) {
 	// ent's schema puts the created_at default in Go, not in the column, so a
 	// write that does not go through ent sets it itself.
 	u := ent.User{TenantID: 1, Email: "new@x.io", Name: "New", Active: true, CreatedAt: time.Now()}
-	if _, err := users.Save(ctx, &u); err != nil {
+	if stored, err := users.Save(ctx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	if u.ID == 0 {
 		t.Fatal("the generated key was not read back")
@@ -246,8 +248,10 @@ func TestEntsGoSideDefaultsDoNotApplyToVVWrites(t *testing.T) {
 
 	// vv writes the model, and the model says false.
 	byVV := ent.User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", CreatedAt: time.Now()}
-	if _, err := users.Save(ctx, &byVV); err != nil {
+	if stored, err := users.Save(ctx, &byVV); err != nil {
 		t.Fatal(err)
+	} else {
+		byVV = stored
 	}
 	if byVV.Active {
 		t.Fatal("an ent Go-side default reached an vv write")

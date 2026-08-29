@@ -29,8 +29,10 @@ func TestPgxSharedTransaction(t *testing.T) {
 	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
 
 	u := User{TenantID: 1, Email: "pgx-tx@x.io", Name: "Joined"}
-	if _, err := repository.Save(txCtx, &u); err != nil {
+	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
+	} else {
+		u = stored
 	}
 	// A raw pgx statement in the same transaction sees the row vv wrote.
 	var name string

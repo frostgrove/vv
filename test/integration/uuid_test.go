@@ -144,15 +144,19 @@ func uuSeed(t *testing.T, source crud.Source) (uuid.UUID, []uuid.UUID) {
 		Kind:      RoomGroup,
 		Name:      &name,
 	}
-	if _, err := rooms.Save(ctx, &room); err != nil {
+	if stored, err := rooms.Save(ctx, &room); err != nil {
 		t.Fatalf("saving a uuid-keyed row: %v", err)
+	} else {
+		room = stored
 	}
 
 	var ids []uuid.UUID
 	for _, role := range []string{"owner", "member"} {
 		m := RoomMember{ID: uuid.Must(uuid.NewV7()), RoomID: room.ID, Role: &role}
-		if _, err := members.Save(ctx, &m); err != nil {
+		if stored, err := members.Save(ctx, &m); err != nil {
 			t.Fatalf("saving a member: %v", err)
+		} else {
+			m = stored
 		}
 		ids = append(ids, m.ID)
 	}
