@@ -1,7 +1,7 @@
 # FL-023 — A sign-in becomes a session
 
 **Entry point:** `auth/access/access.runtime.go:New` and `auth/access/access.runtime.go:Mount`
-**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-033]] [[D-058]]
+**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-070]] [[D-072]] [[D-033]] [[D-058]]
 
 ## Wiring, once
 
@@ -112,12 +112,44 @@ band ([[D-070]]).
 5. **`core.close`** — on a replay the whole lineage goes, and the revocation list
    is written if one is configured.
 
+## Closing a session
+
+Five paths, one statement, and one announcement ([[D-072]]).
+
+1. **the callers** — `LogoutUseCase.Execute`, `LogoutAllUseCase.Execute`,
+   `LogoutAllUseCase.RevokeOne`, `ChangePasswordUseCase.Execute` and
+   `SetPasswordUseCase.Execute`. Each supplies its own predicate and nothing
+   else: "closed" is a shape — a timestamp and a reason — and two spellings of it
+   drift the first time a column arrives.
+2. **`Deps.revoke`** — `auth/access/usecase.logout-all.go` — reads the matching
+   rows (`id`, `subject_type`) and then writes them by id. The read is what a
+   sink is built from: an `UPDATE … WHERE` answers how many rows changed and
+   never which. The write keeps `revoked_at IS NULL`, so a row somebody else
+   closed in between drops out of the count.
+3. **`Deps.announce`** — `auth/access/access.revocation.go` — groups the closed
+   ids by subject type and hands each group to that subject's
+   `RevocationSink`. Nothing happens when no strategy declared one, which is
+   every opaque deployment.
+4. **after the commit, never inside it** — the two password use cases revoke
+   within `Store.Tx`; they collect there and announce once it returns. A
+   rollback after a sink was told leaves a deny-list refusing a live session,
+   and nothing takes an entry back out.
+5. **`core.SessionsRevoked`** — `auth/access/accessjwt/accessjwt.go` — writes
+   each id to the deny-list, holding it until `now + AccessTTL`. A failure here
+   is logged with the ids and does not fail the sign-out: the rows are committed
+   and the caller is already out.
+
+The registry itself is filled at **`Mount`** — `auth/access/access.runtime.go` —
+from `Issued.Revocations`, and is shared by pointer with every `Deps` the runtime
+builds, including the one behind `Runtime.SetPassword`.
+
 ## Files
 
 | File | What it decides |
 |---|---|
 | `auth/access/access.runtime.go` | the factory, the mount refusals, the guards |
-| `auth/access/access.strategy.go` | the strategy seam and the opaque implementation |
+| `auth/access/access.strategy.go` | the strategy seam, `RevocationSink`, and the opaque implementation |
+| `auth/access/access.revocation.go` | the sink registry, and the announcement every closing path makes |
 | `auth/access/access.subject.go` | `Subject`, `Registrar[P]` |
 | `auth/access/access.defaults.go` | the default role: the read a sign-up makes, and the `Seeder` writes that arrange it |
 | `auth/access/access.seed.go` | `Sync` — the start-up pass over what the code declared |

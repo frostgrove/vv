@@ -160,6 +160,26 @@ On create the body binds onto the model, then a database-generated key and every
 server-side timestamp. `PUT /:id` replaces and **never creates** where the
 database owns the key ([[D-012]]). `AllowClientID()` hands it over.
 
+## Routing — the router's own refusals
+
+| | |
+|---|---|
+| `Routing(engine, opts…)` | installs `NoRoute` and `NoMethod`, and turns `HandleMethodNotAllowed` on |
+
+A path nothing claimed and a verb a route does not have are answered by Gin
+itself, before any handler or middleware of this library runs: a bare 404 with no
+body, which a client that parses one shape for every failure has nothing to
+parse. Worse, an application that maps unknown errors to 500 turns "you asked for
+something that is not there" into "this service is broken", which a client
+retries.
+
+`Routing` renders both in the same envelope, with a code a client can branch on:
+`not_found` and `method_not_allowed`. `HandleMethodNotAllowed` is turned on
+because without it Gin answers a known path with an unknown verb as 404 — and the
+two are different statements to a client.
+
+Call it once, on the engine, after the routes are mounted.
+
 ## See also
 
 - [crudfiber](crudfiber.md) · [crudnet](crudnet.md) · [crudgrpc](crudgrpc.md) — the same API elsewhere

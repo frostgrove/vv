@@ -160,6 +160,27 @@ With the [error subsystem](errs.md) wired in, a 409 or a 422 also carries
 
 An unmounted verb on a mounted path answers **405**.
 
+## Routing — the mux's own 404, and the 405 it cannot reach
+
+| | |
+|---|---|
+| `Routing(mux, opts…)` | registers the catch-all pattern, rendering a 404 in the envelope |
+
+A path nothing claimed is answered by `http.ServeMux` itself, before any handler
+or middleware of this library runs, and what it writes is `404 page not found`
+as `text/plain` — so a client that parses one shape for every failure has nothing
+to parse. `Routing` installs the catch-all `/`, which is the only seam net/http
+gives.
+
+**A verb a path does not have is still the mux's own 405.** That refusal never
+reaches a handler: the mux matches the path, finds no method and answers by
+itself. `crudfiber` and `crudgin` both have a seam for it and this one does not
+([[FL-013]]).
+
+Call it once, on a mux that has no `/` of its own. Registering the same pattern
+twice is a panic from the standard library, and it is the right one: two
+catch-alls mean one of them never answers.
+
 ## See also
 
 - [crudfiber](crudfiber.md) · [crudgin](crudgin.md) · [crudgrpc](crudgrpc.md) — the same API elsewhere

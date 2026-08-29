@@ -70,6 +70,31 @@ breaking change, which is the same trick [[D-034]] landed on.
 
 New code should import [porthttp](porthttp.md) directly.
 
+## Table — a resource's ten routes, said once
+
+| | |
+|---|---|
+| `Table{Prefix, ReadOnly}` | where a resource is mounted, and whether the writes are there |
+| `Table.Routes()` | the same list `Register` walks: `Method`, `Path`, `Name`, `Need` |
+| `Table.Guarded(read, write, del)` | that list as `[]authhttp.Endpoint`, for the boot gate |
+| `Need` | `NeedRead`, `NeedWrite`, `NeedDelete` |
+| route names | `List`, `Get`, `Count`, `CountQuery`, `Query`, `Create`, `Update`, `Replace`, `Delete`, `BulkDelete` |
+
+```go
+crudhttp.Table{Prefix: "/roles"}.Guarded(PermRoleRead, PermRoleWrite, PermRoleDelete)
+crudhttp.Table{Prefix: "/permissions", ReadOnly: true}.Guarded(PermRoleRead, "", "")
+```
+
+Path parameters are spelled `:id`, which is Fiber's and Gin's spelling and the
+canonical one here; `crudnet` rewrites it, the way `accessnet` does.
+
+**The paths come from the table and the permissions come from you, and that split
+is the point.** A declaration written out by hand agrees with the router only
+until somebody adds a route; one derived from the router agrees with it always,
+including when both are wrong. What is worth stating twice is which permission
+guards which route — the paths are checked against the real routing table anyway
+([[D-073]]).
+
 ## See also
 
 - [porthttp](porthttp.md) — the status table, the envelope, the renderer

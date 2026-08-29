@@ -58,7 +58,7 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 		crudtest.Rows(roleRow(roleID, "client")),
 	)
 
-	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler))
+	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil)
 	role, err := dependencies.DefaultRole(context.Background(), testSubject)
 	if err != nil {
 		t.Fatalf("reading the default role: %v", err)
@@ -86,7 +86,7 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 // is a supported state, not a misconfiguration.
 func TestASubjectTypeWithNoDefaultRoleGrantsNothing(t *testing.T) {
 	recorder := crudtest.Postgres()
-	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler))
+	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil)
 
 	role, err := dependencies.DefaultRole(context.Background(), testSubject)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
 
 	resolved := &Role{ID: uuid.New(), Slug: "client"}
 	command := EnrollCommand{
@@ -273,7 +273,7 @@ func TestAResolvedRoleForAnotherSlugIsLookedUpAnyway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
 
 	wanted := uuid.New()
 	recorder.Push(crudtest.Rows(roleRow(wanted, "client")))

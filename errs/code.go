@@ -41,10 +41,15 @@ const (
 	// is KindConflict's twin of CodeInternal — without it an unclassified 409
 	// has no code to render, and a client that branches on error_code would
 	// read an empty one at the one status it is most likely to handle.
-	CodeConflict        Code = "conflict"
-	CodeNotFound        Code = "not_found"
-	CodeForbidden       Code = "forbidden"
-	CodeUnauthenticated Code = "unauthenticated"
+	CodeConflict  Code = "conflict"
+	CodeNotFound  Code = "not_found"
+	CodeForbidden Code = "forbidden"
+	// CodeMethodNotAllowed is a path that exists answered with a verb it does
+	// not have. Nothing below a transport can produce one — a router is the only
+	// thing that knows which verbs a path has — which is why it sits here rather
+	// than among the storage-shaped codes.
+	CodeMethodNotAllowed Code = "method_not_allowed"
+	CodeUnauthenticated  Code = "unauthenticated"
 
 	// infrastructure-shaped
 	CodeDeadlock             Code = "deadlock"
@@ -92,6 +97,15 @@ const (
 	// to send less, and 400 tells it to send something else. A code alone
 	// cannot carry that — transports map the kind and never the code.
 	KindTooLarge
+	// KindMethodNotAllowed is a router's refusal of a verb, and it is a kind for
+	// the same reason KindTooLarge is: the status is what the client acts on.
+	// 405 says "ask this path something else" and 404 says "this path is not
+	// here", and a client that retries the second one would retry forever.
+	//
+	// It is the only kind nothing below a transport can raise. A repository does
+	// not know which verbs a path has, so this arrives from a router and from
+	// nowhere else.
+	KindMethodNotAllowed
 )
 
 // String is total: an unrecognised kind renders as internal, so a value that
@@ -114,6 +128,8 @@ func (this Kind) String() string {
 		return "bad_request"
 	case KindTooLarge:
 		return "too_large"
+	case KindMethodNotAllowed:
+		return "method_not_allowed"
 	default:
 		return "internal"
 	}

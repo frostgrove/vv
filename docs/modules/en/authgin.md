@@ -90,6 +90,21 @@ is the ordinary way that happens.
 
 `Middleware(nil)` panics.
 
+## Reading the routing table for the gate
+
+| | |
+|---|---|
+| `Routes(engine)` | what this application actually serves, as `[]authhttp.Route` |
+| `Verify(engine, declared, opts…)` | that, compared against the declarations, in one call |
+
+It reads Gin's own table rather than a list kept alongside it: a declaration is
+only worth checking against a second statement arrived at independently.
+
+HEAD and OPTIONS are left out. Gin does not generate a HEAD the way Fiber does,
+so one that appears here was registered on purpose — and is skipped anyway,
+because the three bindings must not disagree about what a declaration has to
+cover ([[D-073]]).
+
 ## See also
 
 - [auth](auth.md) · [authhttp](authhttp.md) · [crudgin](crudgin.md)

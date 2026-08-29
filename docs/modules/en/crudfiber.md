@@ -166,6 +166,22 @@ On create the body binds onto the model, then a database-generated key and every
 server-side timestamp. `PUT /:id` replaces and **never creates** where the
 database owns the key ([[D-012]]). `AllowClientID()` hands it over.
 
+## The router's own refusals
+
+A path nothing claimed, a verb a route does not have and a body past the app's
+own limit arrive as `*fiber.Error`, before any handler runs. The sentinel table
+has no arm for one, so all of them used to fall through to 500 — and a 404
+rendered as a 500 reads as an outage, which a client retries.
+
+Both seams handle them now. `Errors()` and `ErrorHandler()` render a router's
+refusal in the same envelope, under the status Fiber already decided, with a code
+a client can branch on: `not_found`, `method_not_allowed`, `too_large`. A fault
+wins over a `*fiber.Error` it happens to wrap, because the fault is the
+application speaking and the wrapper is not.
+
+The router's own message is dropped. It is a sentence built out of the path the
+caller sent, and what a client acts on is the code and the status ([[D-044]]).
+
 ## See also
 
 - [crudgin](crudgin.md) · [crudnet](crudnet.md) · [crudgrpc](crudgrpc.md) — the same API elsewhere

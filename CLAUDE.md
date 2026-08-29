@@ -196,6 +196,12 @@ anything in `crud/query`.
   spells the rest in its own vocabulary because there is no 404 and no `PUT`
   here to name. A test that only makes sense for gRPC belongs in
   `crud/rpc/crudgrpc/`, and the difference it pins belongs in `[[FL-013]]` too.
+- **The boot access gate is in the auth triplet too.** `Routes` and `Verify` on
+  `authfiber` and `authgin` read the router's own table; `authnet` records what
+  was registered through its `Surface`, because an `http.ServeMux` cannot be
+  asked. The three carry the same test names for the gate itself, and what
+  net/http cannot see is parked in its `binding_test.go` with a control.
+  `[[D-073]]` is the rule and `[[FL-024]]` is the map.
 - **The auth middleware is a second triplet with the same rule.**
   `auth/http/authnet`, `auth/http/authgin` and `auth/http/authfiber` carry the
   same test names file for file, and `auth/rpc/authgrpc` carries the subset that
@@ -255,6 +261,7 @@ crud/                       core: contracts, metadata, relations, predicates, Op
 ├── decorators/security/    row-level scope, authorization, per-entity checks
 ├── decorators/faults/      the column -> model-field hop, and where the probe is wired in
 ├── adapter/crudsql/        database/sql — and therefore ent, gorm, sqlx, sqlc, bun
+│   └── crudsqlfx/          MODULE — the pool and the source, in uber/fx
 ├── adapter/crudpgx/        MODULE — pgx v5
 ├── catalog/                per-handle schema introspection, four dialects
 ├── probe/                  one extra statement finds every other violation the payload caused
@@ -268,7 +275,9 @@ crud/                       core: contracts, metadata, relations, predicates, Op
 auth/                       who the caller is: Principal, Role, Permission, Guard, the 401
 ├── apikey/                 an Authenticator over a shared secret — stdlib, so not a module
 ├── authjwt/                MODULE — JWT verification, generic over your claims
-├── http/authhttp/          the HTTP half of the auth middleware: the renderer, the refusal
+├── access/accessfx/        MODULE — the access context's graph, in uber/fx
+├── http/authhttp/          the HTTP half of the auth middleware: the renderer, the refusal;
+│                           and the boot access gate — the declaration and the comparison
 ├── http/authnet/           the net/http auth middleware — stdlib, so not a module
 ├── http/authgin/           MODULE — the Gin auth middleware
 ├── http/authfiber/         MODULE — the Fiber auth middleware
@@ -277,6 +286,10 @@ auth/                       who the caller is: Principal, Role, Permission, Guar
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
 └── porthttp/               the HTTP projection of the error contract: the status table, the
                             envelope, the Renderer seam — every subsystem's, not CRUD's
+
+app/                        the composition root: an ordered chain, and a seed command safe to run twice
+├── appfx/                  MODULE — the seeder group and the runner, in uber/fx
+└── http/appfiber/          MODULE — routes and middleware from an fx graph, and the boot gate
 
 remote/                     the consuming half: another service's resource, held as a port.Repository
 └── remotehttp/             the HTTP client transport: a remote.Call becomes a request
@@ -299,6 +312,12 @@ docs/                       modules, decisions, use cases, flows, usage guides, 
 test/                       MODULE (unpublished) — integration suite, ent/gorm fixtures
 _examples/                  MODULE (unpublished) — runnable examples, one per stack
 ```
+
+`app/` is where the container lives — and only there. [[D-037]] refuses the
+library a component graph of its own with a mechanism, not an intention, and
+[[D-074]] is what narrows that to allow a *binding* to one the consumer chose.
+`app` itself takes no container: `appfx` and `appfiber` are modules, so
+`go get github.com/frostgrove/vv` still resolves no third-party package.
 
 `utils/` is the one name in the tree chosen for what it is not: a subsystem. Its
 boundary is a single line — **nothing under `utils/` imports `crud/`, `auth/`,

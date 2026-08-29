@@ -35,6 +35,13 @@ complexity bought for nothing.
 keeps working until it expires. At five minutes that is what most products can
 live with; if it is not, see [revokeredis](revokeredis.md).
 
+That applies to a sign-out as much as to a replay, and it is the one thing to be
+sure of before choosing this strategy. `access` announces every session it
+closes through `Issued.Revocations` ([[D-072]]), which this module fills in only
+when `Spec.Revocation` is set — so with no list, `POST /auth/logout` writes the
+row, answers 200, and the token in the caller's hands stays good for the rest of
+its `AccessTTL`.
+
 ## Wiring
 
 ```go

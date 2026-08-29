@@ -93,6 +93,25 @@ composes with either.
 
 **Installing it twice authenticates once.** `Middleware(nil)` panics.
 
+## Reading the routing table for the gate
+
+| | |
+|---|---|
+| `Routes(app)` | what this application actually serves, as `[]authhttp.Route` |
+| `Verify(app, declared, opts…)` | that, compared against the declarations, in one call |
+
+It reads Fiber's own table rather than a list kept alongside it. That is the
+whole point: a declaration is only worth checking against a second statement
+arrived at independently, and a recorder wrapped around registration would agree
+with the declaration exactly when both were wrong.
+
+HEAD and OPTIONS are left out. Fiber registers a HEAD for every GET itself, once
+its start-up process has run, and the flag that marks one as generated is
+unexported — so from outside a generated HEAD and a hand-written one are the same
+value. A HEAD-only route therefore cannot be declared here, which is the same
+reason it cannot be mounted alone. OPTIONS is a CORS middleware's answer, not an
+endpoint ([[D-073]]).
+
 ## See also
 
 - [auth](auth.md) · [authhttp](authhttp.md) · [crudfiber](crudfiber.md)

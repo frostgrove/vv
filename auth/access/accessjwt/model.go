@@ -3,6 +3,7 @@ package accessjwt
 import (
 	"time"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/google/uuid"
 )
 
@@ -39,11 +40,17 @@ func (rotatingSession) TableName() string { return "sessions" }
 // rotatingUpdate is the partial-update DTO. Hand-written rather than generated
 // because this model exists only inside this module and nothing mounts CRUD
 // over it.
+//
+// The two nullable timestamps are crud.Opt and not `any`. A DTO field's type is
+// checked against the model's when the repository is bound, so `any` here is a
+// panic at start-up rather than a wrong statement later — which is the check
+// working, and is what the generated DTO for the core sessions model already
+// spells the same way.
 type rotatingUpdate struct {
 	TokenHash         *string
 	PreviousTokenHash *string
 	LastUsedAt        *time.Time
-	RotatedAt         any
-	RevokedAt         any
+	RotatedAt         crud.Opt[time.Time]
+	RevokedAt         crud.Opt[time.Time]
 	RevokedReason     *string
 }

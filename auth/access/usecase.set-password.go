@@ -58,7 +58,7 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 		return 0, err
 	}
 
-	var closed int64
+	var closed revoked
 	err = this.Store.Tx(ctx, func(txCtx context.Context) error {
 		existing, err := this.Store.Credentials.First(txCtx,
 			OfSubject(cmd.Subject),
@@ -90,5 +90,11 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 		closed = closedSessions
 		return err
 	})
-	return closed, err
+	if err != nil {
+		return 0, err
+	}
+	// After the transaction and never inside it — see the same call in
+	// ChangePasswordUseCase.
+	this.announce(ctx, closed)
+	return closed.count, nil
 }

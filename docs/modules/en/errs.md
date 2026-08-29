@@ -470,6 +470,21 @@ if verrs, ok := err.(validator.ValidationErrors); ok {
 `errs.SortViolations(vs)` puts a list in one stable order, so the fault and the
 rendered body agree and a response is byte-identical run to run.
 
+## The kind only a router can raise
+
+`KindMethodNotAllowed` and `CodeMethodNotAllowed` are a path that is served
+answered with a verb it does not have.
+
+It is a kind rather than a `KindBadRequest` code for the reason `KindTooLarge` is
+one: the status is the whole of what a client acts on. 405 says "ask this path
+something else" and 404 says "this path is not here", and a client that retried
+the second one would retry forever. Transports map the kind and never the code,
+so a code alone could not carry that.
+
+It is the only kind nothing below a transport can raise — a repository does not
+know which verbs a path has. `errs.MethodNotAllowed()` is its builder;
+`porthttp.Routed(status)` is what a binding calls with its router's own refusal.
+
 ## See also
 
 - [sqlerr](sqlerr.md) — a driver error becomes a `Code`

@@ -37,6 +37,8 @@ func KindForStatus(code int) errs.Kind {
 		return errs.KindBadRequest
 	case http.StatusRequestEntityTooLarge:
 		return errs.KindTooLarge
+	case http.StatusMethodNotAllowed:
+		return errs.KindMethodNotAllowed
 	default:
 		return errs.KindInternal
 	}

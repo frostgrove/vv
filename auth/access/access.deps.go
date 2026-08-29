@@ -26,6 +26,11 @@ type Deps struct {
 	Config Config
 	Log    *slog.Logger
 
+	// revocations is what a strategy registered to be told about a session it
+	// can no longer see closing. nil for a deployment where every strategy
+	// verifies by reading the row. See access.revocation.go.
+	revocations *revocationSinks
+
 	// now is a seam rather than a call to time.Now, because every expiry rule
 	// in here is otherwise untestable without sleeping.
 	now func() time.Time
@@ -33,14 +38,22 @@ type Deps struct {
 
 // newDeps builds the dependency bundle. [Runtime] is what calls it: an
 // application assembles a RuntimeSpec, never this.
-func newDeps(store *Store, grants *GrantsService, hasher Hasher, configuration Config, logger *slog.Logger) *Deps {
+func newDeps(
+	store *Store,
+	grants *GrantsService,
+	hasher Hasher,
+	configuration Config,
+	logger *slog.Logger,
+	revocations *revocationSinks,
+) *Deps {
 	return &Deps{
-		Store:  store,
-		Grants: grants,
-		Hasher: hasher,
-		Config: configuration,
-		Log:    logger,
-		now:    time.Now,
+		Store:       store,
+		Grants:      grants,
+		Hasher:      hasher,
+		Config:      configuration,
+		Log:         logger,
+		revocations: revocations,
+		now:         time.Now,
 	}
 }
 

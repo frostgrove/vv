@@ -118,6 +118,60 @@ emitted as `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT`.
 there rather than at the statement, and `Tx.Commit` classifies it — so the same
 violation is a 409 through both doors.
 
+## For and Wired — the engine switch and the error subsystem
+
+| | |
+|---|---|
+| `Engine` | `EnginePostgres`, `EngineMySQL`, `EngineMariaDB`, `EngineSQLite` — the four values `vvdb.Engine` uses |
+| `For(engine, db, opts…)` | binds a handle to the engine *named*, rather than to one of the four constructors chosen in source |
+| `Wired(ctx, engine, db, opts…)` | `For` with the classifier and the catalog in place |
+| `ErrEngine` | an engine that is empty or not one of the four |
+
+```go
+source, err := crudsql.Wired(ctx, crudsql.Engine(cfg.Db.Engine), db)
+```
+
+Three pieces have to be wired for a refused write to say what was wrong with it,
+and leaving any of them out is silent — which is why `Wired` is one call rather
+than three lines every application copies:
+
+1. **the classifier**, so a duplicate address is the code `unique` rather than a
+   driver sentence carrying the schema ([[D-044]]);
+2. **the catalog**, so the classifier can answer which columns that constraint
+   covers. PostgreSQL names the constraint and the table on a unique violation
+   and **no column at all** — without the catalog the violation arrives with no
+   field, and everything looks wired while the form has no input to mark;
+3. `faults.Enrich` on each repository, which turns the column into the model
+   field. That one is per-repository and stays yours.
+
+The schema is read at start-up rather than lazily: a lazy loader cannot fail at
+start-up, and a schema lookup that quietly returns nothing is how the field
+disappears again ([[D-041]]).
+
+The engine switch exists here so an application that gains SQLite for its tests
+does not gain a switch of its own that will disagree with this one about what
+`mariadb` means — MariaDB and MySQL share a driver, a dialect and a wire protocol
+and answer a failed CHECK with two different numbers ([[D-046]]).
+
+## crudsqlfx — the fx wiring
+
+```go
+import "github.com/frostgrove/vv/crud/adapter/crudsql/crudsqlfx"
+
+fx.Options(crudsqlfx.Module(&configuration.Db))
+```
+
+**Module** — it takes uber/fx, so a consumer who opens their own pool never
+resolves one ([[D-074]]).
+
+It provides a `*sql.DB` and a `crud.Source` over it, pings the pool at
+construction and closes it on shutdown. `sql.Open` validates a DSN and connects
+to nothing, so without the ping a wrong host, a wrong password and a database
+that is not running all look like a healthy start-up.
+
+It registers **no driver**. Which driver answers `sql.Open("pgx", …)` is yours
+and always was ([[D-057]]) — import it for its side effect beside this.
+
 ## See also
 
 - [crudpgx](crudpgx.md) — pgx v5, with `COPY` bulk insert

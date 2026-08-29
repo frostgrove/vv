@@ -52,6 +52,10 @@
                                             ▼
                                     security.Gate
    who is calling, established once at the door and read by every policy
+
+   app ──► appfx · appfiber ──► authhttp.Verify
+   what main() assembles, and the gate that refuses to start when the router
+   and the access declarations disagree
 ```
 
 ## Ядро — импортируется всегда
@@ -87,6 +91,7 @@
 | [accessnet](access.md) | `vv/auth/access/http/accessnet` | Роуты входа на `net/http`. Stdlib, поэтому едет внутри модуля access |
 | [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Модуль** — те же роуты на Gin |
 | [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Модуль** — те же роуты на Fiber v3 |
+| [accessfx](access.md) | `vv/auth/access/accessfx` | **Модуль** — граф контекста, собранный в uber/fx |
 
 `auth` намеренно **не** входит в манифест контрактов. Это пакет с двумя
 реализациями собственного интерфейса — нормальный случай, а не исключение
@@ -99,6 +104,7 @@
 | [storage](storage.md) | `vv/storage` | Потоковый object-store contract, staged UI uploads и временные download-ссылки |
 | [storagefs](storagefs.md) | `vv/storage/storagefs` | Безопасный stdlib filesystem backend и HMAC link handler |
 | [storageminio](storageminio.md) | `vv/storage/storageminio` | **Модуль** — MinIO SDK backend и штатный pre-signed GET |
+| [storageminiofx](storageminio.md) | `vv/storage/storageminio/storageminiofx` | **Модуль** — тот же backend, собранный в uber/fx, с проверкой бакета на старте |
 
 ## Запрос — один документ, четыре транспорта
 
@@ -142,7 +148,20 @@
 |---|---|---|
 | [crudsql](crudsql.md) | `vv/crud/adapter/crudsql` | `database/sql` — а значит и ent, gorm, sqlx, sqlc, bun, squirrel |
 | [crudpgx](crudpgx.md) | `vv/crud/adapter/crudpgx` | **Модуль** — pgx v5, с массовой вставкой через `COPY` |
+| [crudsqlfx](crudsql.md) | `vv/crud/adapter/crudsql/crudsqlfx` | **Модуль** — пул и source, собранные в uber/fx |
 | [crudtest](crudtest.md) | `vv/crud/crudtest` | Источник в памяти: юнит-тестируйте репозиторий вообще без базы данных |
+
+## Композиция — то, что собирает main()
+
+| Модуль | Импорт | Что это |
+|---|---|---|
+| [app](app.md) | `vv/app` | Упорядоченная цепочка вкладов и команда сидов, которую не страшно запустить дважды. Только stdlib и `port` |
+| [appfx](app.md) | `vv/app/appfx` | **Модуль** — группа сидеров и runner в графе uber/fx |
+| [appfiber](app.md) | `vv/app/http/appfiber` | **Модуль** — маршруты и middleware от модулей, которые не импортируют друг друга, смонтированные под одним префиксом, с гейтом доступа на старте |
+
+Собственного контейнера у библиотеки нет и не будет ([[D-037]]). Эти модули
+привязываются к тому, который выбрал потребитель: граф держит fx, а
+`go get github.com/frostgrove/vv` по-прежнему не резолвит ничего ([[D-074]]).
 
 ## Инструменты
 

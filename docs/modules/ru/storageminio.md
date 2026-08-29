@@ -143,3 +143,35 @@ completed claim objects.
 
 - [storage](storage.md) — общие операции, ошибки и lifecycle UI-upload
 - [storagefs](storagefs.md) — stdlib filesystem backend и HMAC link handler
+
+## storageminiofx — проводка через fx
+
+```go
+import "github.com/frostgrove/vv/storage/storageminio/storageminiofx"
+
+fx.Options(storageminiofx.Module(storageminiofx.Settings{
+    Endpoint:  cfg.Storage.Endpoint,
+    AccessKey: cfg.Storage.AccessKey,
+    SecretKey: cfg.Storage.SecretKey,
+    Bucket:    cfg.Storage.Bucket,
+}))
+```
+
+**Модуль** — тянет uber/fx, поэтому потребитель, который собирает backend руками,
+никогда его не резолвит ([[D-074]]).
+
+| | |
+|---|---|
+| `Settings` | endpoint, ключи, регион, TLS, бакет, префикс, TTL ссылки, `SkipEnsureBucket` |
+| `Module(settings)` | предоставляет `*minio.Client`, `*storageminio.Backend` и `storage.Backend` и создаёт бакет на старте |
+| `NewClient(settings)` / `NewBackend(settings, client)` | те же два конструктора, без fx |
+
+Он предоставляет `storage.Backend`, а не `Store`: Store привязан к одному
+namespace, а namespace принадлежит тому ограниченному контексту, которому
+принадлежат эти объекты. Ключи, бакет и соединение — инфраструктура; то, что в них
+лежит, — нет.
+
+Бакет создаётся, если его нет, — кроме случая, когда выставлен
+`SkipEnsureBucket`. Альтернатива — продолжить и узнать на первой загрузке —
+превращает недоделанный деплой в проваленную запись часом позже и с худшей
+ошибкой; заодно проверка доказывает endpoint и ключи.

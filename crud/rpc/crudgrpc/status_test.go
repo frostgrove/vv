@@ -77,6 +77,8 @@ func TestKindMapsToTheCodeItPromisesTo(t *testing.T) {
 		errs.KindValidation:   codes.InvalidArgument,
 		errs.KindBadRequest:   codes.InvalidArgument,
 		errs.KindTooLarge:     codes.ResourceExhausted,
+
+		errs.KindMethodNotAllowed: codes.Unimplemented,
 	}
 	for k, c := range want {
 		if got := CodeFor(k); got != c {
@@ -84,7 +86,7 @@ func TestKindMapsToTheCodeItPromisesTo(t *testing.T) {
 		}
 	}
 
-	// The control on the table's size. errs.Kind declares nine, and a tenth
+	// The control on the table's size. errs.Kind declares ten, and an eleventh
 	// added later would otherwise be silently mapped to Internal — a 500 for a
 	// class somebody meant a client to act on. Kind.String is total the same
 	// way, so a kind outside the table renders as "internal" and is how a new

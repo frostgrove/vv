@@ -39,6 +39,12 @@ type Runtime struct {
 	subjects  []*MountedSubject
 	declared  []ModuleGrants
 	directory []Directory
+
+	// revocations is what each subject's strategy asked to be told about a
+	// session closing. Shared by pointer with every Deps built below, so a
+	// subject mounted after a use case was assembled is still reachable from
+	// it — see access.revocation.go.
+	revocations *revocationSinks
 }
 
 // New builds the shared half.
@@ -58,12 +64,13 @@ func New(spec RuntimeSpec) (*Runtime, error) {
 		hasher = NewHasher()
 	}
 	return &Runtime{
-		store:    NewStore(spec.Source),
-		source:   spec.Source,
-		hasher:   hasher,
-		config:   spec.Config,
-		logger:   spec.Logger,
-		declared: []ModuleGrants{OwnGrants()},
+		store:       NewStore(spec.Source),
+		source:      spec.Source,
+		hasher:      hasher,
+		config:      spec.Config,
+		logger:      spec.Logger,
+		declared:    []ModuleGrants{OwnGrants()},
+		revocations: newRevocationSinks(),
 	}, nil
 }
 
@@ -93,7 +100,8 @@ func (this *Runtime) Seeder() *Seeder { return NewSeeder(this.store, this.logger
 // answers a use case whose directory lookup fails at run time, which is the one
 // mistake a lazy constructor here removes.
 func (this *Runtime) SetPassword() *SetPasswordUseCase {
-	return NewSetPassword(newDeps(this.store, this.grants, this.hasher, this.config, this.logger))
+	return NewSetPassword(newDeps(
+		this.store, this.grants, this.hasher, this.config, this.logger, this.revocations))
 }
 
 // Declare adds a module's permissions and system roles to what [Runtime.Sync]
@@ -251,7 +259,14 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 		return nil, nil, fmt.Errorf("access: building the strategy for subject %q: %w", spec.Type, err)
 	}
 
-	dependencies := newDeps(runtime.store, runtime.grants, runtime.hasher, runtime.config, runtime.logger)
+	// Registered before the use cases are assembled, and keyed by this subject:
+	// what closes a session has to reach the strategy that issued it, and a
+	// strategy that verifies without reading the row has no other way to find
+	// out. See [[D-072]].
+	runtime.revocations.register(spec.Type, built.Revocations)
+
+	dependencies := newDeps(
+		runtime.store, runtime.grants, runtime.hasher, runtime.config, runtime.logger, runtime.revocations)
 
 	var signUp *SignUpUseCase[P]
 	if spec.Registrar != nil {

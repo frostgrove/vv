@@ -2,7 +2,10 @@ go 1.26.6
 
 use (
 	.
+	./app/appfx
+	./app/http/appfiber
 	./auth/access
+	./auth/access/accessfx
 	./auth/access/accessjwt
 	./auth/access/accessjwt/revokeredis
 	./auth/access/http/accessfiber
@@ -12,10 +15,12 @@ use (
 	./auth/http/authgin
 	./auth/rpc/authgrpc
 	./crud/adapter/crudpgx
+	./crud/adapter/crudsql/crudsqlfx
 	./crud/http/crudfiber
 	./crud/http/crudgin
 	./crud/rpc/crudgrpc
 	./storage/storageminio
+	./storage/storageminio/storageminiofx
 	./test
 	./utils/vvcfg
 	./utils/vvdb/dbpgx

@@ -73,6 +73,11 @@ func worse(a, b errs.Kind) errs.Kind {
 // violation, and only the coarse answer is a single value. TooLarge is last and
 // therefore weakest: it is what happened only when nothing else did, and it
 // conceals nothing, so any other classification on the same fault outranks it.
+//
+// MethodNotAllowed sits below Forbidden because it discloses that the path is
+// served — anything that conceals more than that wins. In practice it never
+// competes: a router raises one before a handler runs, so there is nothing else
+// on the fault to outrank it.
 func rank(k errs.Kind) int {
 	switch k {
 	case errs.KindInternal:
@@ -83,16 +88,18 @@ func rank(k errs.Kind) int {
 		return 2
 	case errs.KindForbidden:
 		return 3
-	case errs.KindRetryable:
+	case errs.KindMethodNotAllowed:
 		return 4
-	case errs.KindConflict:
+	case errs.KindRetryable:
 		return 5
-	case errs.KindValidation:
+	case errs.KindConflict:
 		return 6
-	case errs.KindBadRequest:
+	case errs.KindValidation:
 		return 7
-	case errs.KindTooLarge:
+	case errs.KindBadRequest:
 		return 8
+	case errs.KindTooLarge:
+		return 9
 	default:
 		// A kind from outside the table cannot be given a 4xx it may not
 		// support, and errs.Kind.String makes the same choice.
@@ -208,6 +215,8 @@ func CodeForKind(k errs.Kind) errs.Code {
 		return errs.CodeUnauthenticated
 	case errs.KindForbidden:
 		return errs.CodeForbidden
+	case errs.KindMethodNotAllowed:
+		return errs.CodeMethodNotAllowed
 	case errs.KindRetryable:
 		return errs.CodeUnavailable
 	case errs.KindConflict:

@@ -3,6 +3,7 @@ package crudgin
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -96,5 +97,34 @@ func TestMountingAtTheRootDoesNotCollide(t *testing.T) {
 	want := []string{"Get", "Count", "GetByID"}
 	if got := fake.methods(); !slices.Equal(got, want) {
 		t.Fatalf("mounted at the root the engine answered with %v, want %v", got, want)
+	}
+}
+
+// A verb a route does not have is 405, and this binding is one of the two that
+// can say so.
+//
+// Gin answers one through NoMethod once HandleMethodNotAllowed is on, which
+// [Routing] turns on. crudnet has no seam for it — a ServeMux answers the 405
+// itself, past every handler — and [[FL-013]] carries that difference rather
+// than the triplet's test names disagreeing about it.
+func TestAVerbARouteDoesNotHaveIsA405(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.GET("/widgets", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	Routing(engine)
+
+	r := do(t, engine, http.MethodDelete, "/widgets", "")
+
+	if r.status != http.StatusMethodNotAllowed {
+		t.Fatalf("a verb the route does not have answered %d, want 405: %s", r.status, r.body)
+	}
+	if !strings.Contains(string(r.body), `"method_not_allowed"`) {
+		t.Fatalf("405 does not carry a code of its own, so a client cannot tell it from any other refusal: %s", r.body)
+	}
+
+	// The control. The very same path with the verb it does have is served, so
+	// the refusal above is about the method and not about the path.
+	if r := do(t, engine, http.MethodGet, "/widgets", ""); r.status != http.StatusOK {
+		t.Fatalf("the path itself answered %d, so the 405 above proves nothing", r.status)
 	}
 }

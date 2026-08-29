@@ -15,7 +15,7 @@ TIER0_SEALED=(errs)
 # A stdlib-only package may import the standard library and SHARED, and nothing
 # else of this repository.
 TIER0_STDLIB=(crud "${SHARED[@]}")
-SUBSYSTEMS=(crud auth port remote storage)
+SUBSYSTEMS=(crud auth port remote storage app)
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'

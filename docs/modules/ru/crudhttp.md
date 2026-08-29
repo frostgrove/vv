@@ -78,3 +78,27 @@ import "github.com/frostgrove/vv/crud/http/crudhttp"
 - [crudnet](crudnet.md) · [crudfiber](crudfiber.md) · [crudgin](crudgin.md) — оболочки поверх этого
 - [[FL-013]] запрос через другой биндинг · [[FL-015]] запрос через слой port
 - [[D-059]] HTTP-проекция принадлежит `port` · [[D-045]] общая половина транспортно-нейтральна
+
+## Table — десять маршрутов ресурса, сказанные один раз
+
+| | |
+|---|---|
+| `Table{Prefix, ReadOnly}` | где смонтирован ресурс и есть ли у него записи |
+| `Table.Routes()` | тот же список, который обходит `Register`: `Method`, `Path`, `Name`, `Need` |
+| `Table.Guarded(read, write, del)` | этот список как `[]authhttp.Endpoint` — для гейта на старте |
+| `Need` | `NeedRead`, `NeedWrite`, `NeedDelete` |
+| имена маршрутов | `List`, `Get`, `Count`, `CountQuery`, `Query`, `Create`, `Update`, `Replace`, `Delete`, `BulkDelete` |
+
+```go
+crudhttp.Table{Prefix: "/roles"}.Guarded(PermRoleRead, PermRoleWrite, PermRoleDelete)
+crudhttp.Table{Prefix: "/permissions", ReadOnly: true}.Guarded(PermRoleRead, "", "")
+```
+
+Параметры пути пишутся как `:id` — это написание Fiber и Gin и каноническое
+здесь; `crudnet` переписывает его так же, как это делает `accessnet`.
+
+**Пути берутся из таблицы, а права — от вас, и в этом разделении весь смысл.**
+Декларация, выписанная руками, совпадает с роутером ровно до того, как кто-то
+добавит маршрут; выведенная из роутера — совпадает всегда, в том числе когда
+обе неверны. Дважды стоит утверждать то, какое право охраняет какой маршрут: пути
+и так сверяются с реальной таблицей маршрутов ([[D-073]]).

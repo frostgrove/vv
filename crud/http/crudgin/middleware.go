@@ -58,3 +58,36 @@ func Errors(options ...crudhttp.RenderOption) gin.HandlerFunc {
 		write(rd, c, c.Errors.Last().Err)
 	}
 }
+
+// Routing renders Gin's own refusals in the same envelope as everything else.
+//
+// A path nothing claimed and a verb a route does not have are answered by the
+// router, before any handler or middleware of this library runs, so neither
+// reaches the error contract on its own: Gin writes a bare 404 with no body, and
+// a client that parses one shape for every failure gets nothing to parse. Worse,
+// an application that maps its own unknown errors to 500 turns "you asked for
+// something that is not there" into "this service is broken", which a client
+// retries.
+//
+// HandleMethodNotAllowed is turned on here, because without it Gin answers a
+// known path with an unknown verb as 404 — and the two are different statements
+// to a client.
+//
+// Call it once, on the engine, after the routes are mounted.
+func Routing(engine *gin.Engine, options ...crudhttp.RenderOption) {
+	rd := crudhttp.Renderer(defaultRenderer)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
+	}
+	refuse := func(status int) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			if c.Writer.Written() {
+				return
+			}
+			write(rd, c, crudhttp.Routed(status))
+		}
+	}
+	engine.HandleMethodNotAllowed = true
+	engine.NoRoute(refuse(http.StatusNotFound))
+	engine.NoMethod(refuse(http.StatusMethodNotAllowed))
+}

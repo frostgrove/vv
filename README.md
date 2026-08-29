@@ -26,8 +26,11 @@ crud/                       core: contracts, metadata, relations, predicates, Op
 └── http/crudnet/           a full CRUD API on net/http — stdlib only, so it costs nothing
 auth/                       who the caller is: Principal, Role, Permission, Guard, the 401
 ├── apikey/                 an Authenticator over a shared secret
-├── http/authhttp/          the HTTP half of the middleware: the renderer, the refusal
+├── http/authhttp/          the HTTP half of the middleware: the renderer, the refusal,
+│                           and the boot gate that refuses an undeclared route
 └── http/authnet/           the net/http auth middleware — stdlib only
+app/                        the composition root: an ordered chain of contributions,
+                            and a seed command that is safe to run twice — stdlib only
 port/                       the transport-neutral half: commands, Service, Mapper, the path chain
 └── porthttp/               the HTTP projection of the error contract: the status table,
                             the envelope, the Renderer seam — shared by every subsystem
@@ -43,15 +46,20 @@ utils/                      for your application, never for the library
 cmd/vv/                     generates the update DTO, the metamodel and — with -adapter — the resource
 
   ── separate modules, so you only download the one you use ──────────────────
+app/appfx/                  the seeder group and the runner, in uber/fx
+app/http/appfiber/          routes and middleware from an fx graph, with the boot gate
 crud/http/crudfiber/        a full CRUD API on Fiber v3
 crud/http/crudgin/          the same API on Gin
 crud/rpc/crudgrpc/          the same API on gRPC
 crud/adapter/crudpgx/       pgx v5
+crud/adapter/crudsql/crudsqlfx/  the pool and the source, in uber/fx
 auth/authjwt/               JWT verification, generic over your claims
 auth/http/authgin/          the Gin auth middleware
 auth/http/authfiber/        the Fiber auth middleware
 auth/rpc/authgrpc/          the gRPC auth interceptors
+auth/access/accessfx/       the access context's graph, in uber/fx
 storage/storageminio/       MinIO backend and native pre-signed GET
+storage/storageminio/storageminiofx/  the same backend, in uber/fx
 utils/vvdb/dbpgx/           the same config, a pgx pool
 utils/vvcfg/                a config struct, loaded and validated at start-up
 utils/vvgoose/              Goose migrations and SQL generation from Go models

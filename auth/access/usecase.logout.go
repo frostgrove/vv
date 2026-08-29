@@ -27,8 +27,13 @@ func (this *LogoutUseCase) Execute(ctx context.Context, cmd LogoutCommand) (int6
 	if cmd.SessionID == uuid.Nil {
 		return 0, nil
 	}
-	return this.revoke(ctx, ReasonSignedOut,
+	closed, err := this.revoke(ctx, ReasonSignedOut,
 		specs.As(Session_.ID.Eq(cmd.SessionID)),
 		specs.As(Session_.RevokedAt.IsNull()),
 	)
+	if err != nil {
+		return 0, err
+	}
+	this.announce(ctx, closed)
+	return closed.count, nil
 }

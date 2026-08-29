@@ -153,13 +153,48 @@ func (this *strategy) Build(dependencies access.StrategyDeps) (access.Issued, er
 
 	parser := authjwt.New[Claims](settings.Verify,
 		authjwt.Issuer(settings.Issuer),
+		// Said out loud rather than left to a default, which is what authjwt
+		// insists on. These tokens carry no aud because there is nothing to
+		// name: one issuer, one verifier, and the `sty` claim already refuses a
+		// token minted for another kind of caller. What makes it safe is that
+		// no *second* service trusts this issuer — a fact about the deployment
+		// and not about the token, and the day one appears this line is wrong
+		// and Claims needs an aud to narrow.
+		authjwt.AllowAnyAudience(),
 	)
 
-	return access.Issued{
+	issued := access.Issued{
 		Issuer:        core,
 		Refresher:     core,
 		Authenticator: &authenticator{core: core, parser: parser},
-	}, nil
+	}
+	// Only when there is a list to write to, and as an explicit branch rather
+	// than assigning core either way: a typed nil in that interface is not nil,
+	// and access would call a sink that dereferences nothing.
+	if settings.Revocation != nil {
+		issued.Revocations = core
+	}
+	return issued, nil
+}
+
+// SessionsRevoked implements access.RevocationSink.
+//
+// This is the other half of the deny-list, and without it the list only ever
+// held what the replay path put there: signing out closed the row, and the
+// signed token — which reads no row — kept working until it expired. See
+// [[D-072]].
+//
+// The deadline is computed here because this is where AccessTTL is known. No
+// token minted before now can be accepted after it, so holding the entry longer
+// is waste and holding it shorter is a hole.
+func (this *core) SessionsRevoked(ctx context.Context, sessions []uuid.UUID) error {
+	until := this.now().Add(this.spec.AccessTTL)
+	for _, session := range sessions {
+		if err := this.spec.Revocation.Revoke(ctx, session, until); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // core is what the issuer, the refresher and the verifier share.

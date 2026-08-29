@@ -141,6 +141,38 @@ pre-signed GET. Include wrong-ETag and read-quorum-failure conditional PUT
 cases. Verify the incomplete-multipart lifecycle rule as part of deployment
 checks; it must target incomplete uploads, not completed claim objects.
 
+## storageminiofx — the fx wiring
+
+```go
+import "github.com/frostgrove/vv/storage/storageminio/storageminiofx"
+
+fx.Options(storageminiofx.Module(storageminiofx.Settings{
+    Endpoint:  cfg.Storage.Endpoint,
+    AccessKey: cfg.Storage.AccessKey,
+    SecretKey: cfg.Storage.SecretKey,
+    Bucket:    cfg.Storage.Bucket,
+}))
+```
+
+**Module** — it takes uber/fx, so a consumer who constructs the backend by hand
+never resolves one ([[D-074]]).
+
+| | |
+|---|---|
+| `Settings` | endpoint, credentials, region, TLS, bucket, prefix, link TTL, `SkipEnsureBucket` |
+| `Module(settings)` | provides `*minio.Client`, `*storageminio.Backend` and `storage.Backend`, and makes the bucket exist at start-up |
+| `NewClient(settings)` / `NewBackend(settings, client)` | the same two constructors, without fx |
+
+It provides a `storage.Backend` and not a `Store`: a Store is scoped to one
+namespace, and a namespace belongs to whichever bounded context owns those
+objects. Credentials, the bucket and the connection are infrastructure; what is
+kept in them is not.
+
+The bucket is created if it is missing, unless `SkipEnsureBucket` is set. The
+alternative — carry on and find out on the first upload — turns a deployment that
+is not finished into a failed write an hour later with a worse error, and the
+check also proves the endpoint and the credentials.
+
 ## See also
 
 - [storage](storage.md) — common operations, errors and UI upload lifecycle

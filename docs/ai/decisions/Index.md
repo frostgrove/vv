@@ -124,6 +124,9 @@ and the next decision written before its code does should say so here.
 | [D-069](D-069-a-shared-stdlib-only-tier-sits-under-everything.md) | A first-party stdlib-only `SHARED` tier that `crud` and every contract package may import; supersedes D-016's stdlib half | accepted | core seam, process & tooling |
 | [D-070](D-070-the-default-role-is-a-row-not-a-setting.md) | What a sign-up grants is a row in `subject_default_roles`, resolved against `roles` when written; no config key, no `Registrar.Role` | accepted | auth, security, migrations |
 | [D-071](D-071-a-derived-path-map-refuses-what-it-cannot-read.md) | `port.Paths[M]` derives the inverse map from the model's wire tags; a column no named tag gives a key for is a start-up refusal, never a guess from the field name | accepted | errors, API design |
+| [D-072](D-072-closing-a-session-reaches-the-strategy-that-issued-it.md) | Every closing path goes through `Deps.revoke`, which reads before it writes so the issuing strategy can be named; a strategy that verifies without reading declares a `RevocationSink`, announced after the commit | accepted | auth, security |
+| [D-073](D-073-a-mounted-route-declares-its-access-or-start-up-fails.md) | Every mounted route names its permissions or the reason it is open, and the router is compared against those declarations at assembly; both directions of disagreement are a start-up failure | accepted | auth, security, transports |
+| [D-074](D-074-a-container-binding-is-a-satellite.md) | The library resolves no component by type; a dependency-injection container is bound to from a satellite whose only job is that binding (narrows D-037) | accepted | process & tooling, philosophy |
 
 ## By area
 
@@ -144,13 +147,16 @@ of one), D-026 (**open** — `Inspect` and caller paging), D-055 (where the
 principal a scope reads comes from, and why `security` imports `auth` and not
 the reverse).
 
-**Auth** — D-055 (the contract, the four satellites, why `auth` is not on the
+**Auth** — D-073 (what a route has to declare, why the check is at assembly and
+not per request, and why the declaration lives in `authhttp` rather than
+`porthttp`), D-055 (the contract, the four satellites, why `auth` is not on the
 manifest and why a `Principal` is an interface), D-056 (the 401's shape, why the
 reason lives in the wrapped error, and where 401 sits between 403 and 404),
 D-048 (the rule D-055 obeys rather than amends), D-035 (the `auth` row of the
 naming grid), D-051 (why an `auth*` binding does not require its `crud*`
 sibling), D-070 (the default role a sign-up grants is a row, which is the last
-hole in D-066).
+hole in D-066), D-072 (closing a session has to reach the strategy that issued
+it, because a verifier that reads no row cannot see a `revoked_at`).
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
@@ -174,6 +180,11 @@ code spelling and the empty-field violation), D-045 (what `crud/rpc/crudgrpc` is
 shell over, and the phase-9 measurement that adding it changed nothing shared),
 D-049 (why one `codes.Code` per kind and never per code), D-051 (why three
 requires are one decision).
+
+**Composition** — D-074 (why an fx binding is a satellite and what that does not
+license), D-037 (the container this library still does not hold, and the three
+steps by which one appears), D-051 (why `appfiber` requiring both fx and Fiber is
+one decision), D-021 (the boilerplate a consumer should not be writing).
 
 **Interop with an ORM** — D-017 (Go-side behaviour does not run), D-009 (how the
 transaction is shared), D-018 (`-types`, `-into`, `-import`).

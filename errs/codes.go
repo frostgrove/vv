@@ -88,6 +88,7 @@ func StandardCodes() *Codes {
 		{CodeTooLarge, KindTooLarge, "the request body is too large"},
 
 		{CodeNotFound, KindNotFound, "not found"},
+		{CodeMethodNotAllowed, KindMethodNotAllowed, "this path does not answer that method"},
 		{CodeForbidden, KindForbidden, "not allowed"},
 		{CodeUnauthenticated, KindUnauthorized, "authentication is required"},
 

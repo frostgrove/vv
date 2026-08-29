@@ -103,3 +103,31 @@ func (this *recorder) Write(b []byte) (int, error) {
 // Unwrap is what http.ResponseController uses to reach the real writer, so
 // flushing and hijacking still work through the wrapper.
 func (this *recorder) Unwrap() http.ResponseWriter { return this.ResponseWriter }
+
+// Routing renders the mux's own refusal in the same envelope as everything else.
+//
+// A path nothing claimed is answered by [http.ServeMux] itself, before any
+// handler or middleware of this library runs, and what it writes is
+// `404 page not found` as text/plain — so a client that parses one shape for
+// every failure gets nothing to parse.
+//
+// It is installed as the catch-all pattern, which is the only seam net/http
+// gives: a mux answers a request it has no better match for through `/`. That
+// also says what this binding cannot do, and the difference is not a choice.
+// **A verb a path does not have is still the mux's own 405**, because that
+// refusal never reaches a handler — the mux matches the path, finds no method
+// and answers by itself. crudfiber and crudgin both have a seam for it and this
+// one does not; [[FL-013]] carries the difference.
+//
+// Call it once, on a mux that has no `/` of its own. Registering the same
+// pattern twice is a panic from the standard library, and it is the right one:
+// two catch-alls mean one of them never answers.
+func Routing(mux *http.ServeMux, options ...crudhttp.RenderOption) {
+	rd := crudhttp.Renderer(defaultRenderer)
+	if len(options) > 0 {
+		rd = crudhttp.NewRenderer(options...)
+	}
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		render(rd, w, r, crudhttp.Routed(http.StatusNotFound))
+	}))
+}

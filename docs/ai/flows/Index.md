@@ -44,6 +44,7 @@ through it.
 | a token, an API key, a middleware, a JWKS key set, or how a caller is identified | [[FL-019]] |
 | a permission, a role, a claim-driven scope, or what an identified caller may do | [[FL-020]] |
 | a DSN, a config file, a pool size, a replica, or how the application reaches its database | [[FL-021]] |
+| a route group, an ordered middleware, an access declaration, the boot gate, or how a module reaches the router | [[FL-024]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -83,6 +84,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `utils/vvdb/dsn.go:DSN` / `utils/vvdb/open.go:Open` | [[UC-021]] |
 | [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Execute` | [[UC-022]] |
 | [FL-023](FL-023-a-sign-in-becomes-a-session.md) | A sign-in becomes a session | `auth/access/access.runtime.go` | [[UC-023]] |
+| [FL-024](FL-024-a-modules-routes-become-a-verified-api.md) | A module's routes become a verified API | `app/http/appfiber/appfiber.go:Mount` | — |
 
 ## By file — which flows touch this file
 
@@ -92,6 +94,20 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/adapter/crudpgx/crudpgx.go` | FL-009, FL-011, FL-014 |
 | `crud/adapter/crudsql/conflict.go` | FL-003, FL-011, FL-014 |
 | `crud/adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014 |
+| `app/doc.go` | FL-024 |
+| `app/ordered.go` | FL-024 |
+| `app/seed.go` | FL-024 |
+| `app/appfx/appfx.go` | FL-024 |
+| `app/http/appfiber/appfiber.go` | FL-024 |
+| `auth/http/authhttp/surface.go` | FL-024, FL-019 |
+| `auth/http/authfiber/surface.go` | FL-024 |
+| `auth/http/authgin/surface.go` | FL-024 |
+| `auth/http/authnet/surface.go` | FL-024 |
+| `auth/access/accessfx/accessfx.go` | FL-024, FL-023 |
+| `crud/http/crudhttp/table.go` | FL-024, FL-013 |
+| `crud/adapter/crudsql/wire.go` | FL-016, FL-014, FL-021 |
+| `crud/adapter/crudsql/crudsqlfx/crudsqlfx.go` | FL-021 |
+| `storage/storageminio/storageminiofx/storageminiofx.go` | FL-024 |
 | `auth/doc.go` | FL-019 |
 | `auth/principal.go` | FL-019, FL-020 |
 | `auth/context.go` | FL-019, FL-020 |
@@ -278,9 +294,14 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `auth/access/access.subject.go` | FL-023 |
 | `auth/access/access.endpoints.go` | FL-023 |
 | `auth/access/access.authenticator.go` | FL-023, FL-019 |
+| `auth/access/access.revocation.go` | FL-023 |
 | `auth/access/usecase.login.go` | FL-023 |
 | `auth/access/usecase.signup.go` | FL-023 |
 | `auth/access/usecase.enroll.go` | FL-023 |
+| `auth/access/usecase.logout.go` | FL-023 |
+| `auth/access/usecase.logout-all.go` | FL-023 |
+| `auth/access/usecase.change-password.go` | FL-023 |
+| `auth/access/usecase.set-password.go` | FL-023 |
 | `auth/access/access.defaults.go` | FL-023 |
 | `auth/access/access.seed.go` | FL-023 |
 | `auth/access/http/accesshttp/accesshttp.go` | FL-023 |

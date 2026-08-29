@@ -31,6 +31,36 @@ examples() {
 	(cd _examples && GOWORK=off "$GO" build ./... && GOWORK=off "$GO" vet ./... && GOWORK=off "$GO" test ./...)
 }
 
+# settle leaves one module in the state check-tidy reads it in.
+#
+# The pass in [tidy] resolves every sibling through a temporary replace, and a
+# replaced module is read from a directory — so `go mod tidy` needs no hash for
+# one and removes any it finds. Dropping those replaces afterwards leaves a
+# go.mod that requires its siblings by version and a go.sum that cannot verify
+# them: `make tidy` made the repository untidy, and `make check` then failed on
+# the module it had just finished tidying.
+#
+# That is the shape a build script must not have. The two commands disagreeing
+# reads as a stale module cache, which is where somebody looks first and where
+# the answer is not.
+#
+# So the module is tidied once more the way check-tidy will read it: the root
+# replaced locally — that is the one replace check-tidy adds itself — and every
+# other sibling resolved by version, which is what a released module does.
+#
+# A failure here is an answer rather than noise. It means this module imports a
+# package no published sibling carries yet, and the repository's answer to that
+# is a permanent `replace` in the module's own go.mod, of the kind
+# auth/access/http/accessfiber carries for the untagged access module.
+settle() {
+	local root status=0
+	root=$(realpath --relative-to=. "$REPO_ROOT")
+	GOWORK=off "$GO" mod edit -replace "$VV_MODULE=$root" || return 1
+	GOWORK=off "$GO" mod tidy || status=1
+	GOWORK=off "$GO" mod edit -dropreplace "$VV_MODULE" || status=1
+	return "$status"
+}
+
 tidy() {
 	local -a modules added
 	local module other dependency status
@@ -48,10 +78,23 @@ tidy() {
 				added+=("$dependency")
 				GOWORK=off "$GO" mod edit -replace "$dependency=$REPO_ROOT/${other#./}" || status=1
 			done
+			# First pass: every sibling read from the working tree, so a module
+			# whose sibling's go.mod changed this morning tidies against that one
+			# rather than against whatever was last published.
 			(( status == 0 )) && GOWORK=off "$GO" mod tidy || status=1
 			for dependency in "${added[@]}"; do
 				GOWORK=off "$GO" mod edit -dropreplace "$dependency" || status=1
 			done
+			# Second pass: the state check-tidy verifies. The three modules that
+			# are not satellites are tidied plainly, because that is how
+			# check-tidy reads them — the root cannot replace itself, and `test`
+			# and `_examples` carry their replaces permanently.
+			if (( status == 0 )); then
+				case $module in
+					. | ./test | ./_examples) GOWORK=off "$GO" mod tidy || status=1 ;;
+					*) settle || status=1 ;;
+				esac
+			fi
 			exit "$status"
 		)
 	done

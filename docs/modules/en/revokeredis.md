@@ -23,6 +23,13 @@ session and the revocation biting. At five minutes it usually is not. Adding
 this costs a lookup on **every** authenticated request, so it has to be faster
 than the session read a signed token was chosen to avoid.
 
+That window is what a sign-out lands in, not only a replay. `access` announces
+every closed session to the strategy ([[D-072]]), so with a list configured
+`POST /auth/logout`, `logout-all`, closing one session from the list and either
+password path all take effect on the next request; without one they take effect
+when the access token expires. Which of those a product can live with is the
+whole of the decision.
+
 **A deny-list in the database is not worth having.** It is that same session
 read back again with worse semantics: an allow-list that cannot be read refuses
 everybody, which is loud and safe, while a deny-list that cannot be read would

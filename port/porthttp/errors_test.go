@@ -216,6 +216,8 @@ func TestEveryKindHasAStatusAndTheTableIsTotal(t *testing.T) {
 		errs.KindValidation:   http.StatusUnprocessableEntity,
 		errs.KindBadRequest:   http.StatusBadRequest,
 		errs.KindTooLarge:     http.StatusRequestEntityTooLarge,
+
+		errs.KindMethodNotAllowed: http.StatusMethodNotAllowed,
 	}
 	for k, status := range want {
 		if got := StatusFor(k); got != status {

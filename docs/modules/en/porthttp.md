@@ -222,6 +222,28 @@ for the path fallback, not the read.
 are **not** here: they are about a CRUD request, so they are [port](port.md)'s,
 forwarded by [crudhttp](crudhttp.md).
 
+## Routed — a router's own refusal
+
+| | |
+|---|---|
+| `Routed(status)` | the fault a router's refusal renders as |
+
+A router answers before any handler runs, so its refusals never reach the error
+contract on their own: a path nothing claimed and a verb a route does not have
+arrive as whatever the framework's own error type is, and the sentinel table has
+no arm for either. Both then fall through to 500 — and a 404 rendered as a 500
+reads as an outage, which a client retries.
+
+`Routed` maps the status the router already decided onto a fault with the right
+kind and code: 404 → `not_found`, 405 → `method_not_allowed`, 413 → `too_large`,
+401 → `unauthenticated`, 403 → `forbidden`, any other 4xx → `bad_query`, anything
+else → `internal`. `StatusFor` carries the 405 arm that makes the round trip
+exact.
+
+The router's own message is deliberately dropped: it is a sentence built out of
+the path the caller sent, and what a client acts on is the code and the status
+([[D-044]]).
+
 ## See also
 
 - [port](port.md) — where the classification and the violation pipeline live

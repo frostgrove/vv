@@ -89,6 +89,11 @@ func CodeFor(k errs.Kind) codes.Code {
 		return codes.InvalidArgument
 	case errs.KindTooLarge:
 		return codes.ResourceExhausted
+	case errs.KindMethodNotAllowed:
+		// The nearest thing this transport has. A verb a path does not answer
+		// and a method a service does not implement are the same statement:
+		// the address is served, this operation on it is not.
+		return codes.Unimplemented
 	default:
 		return codes.Internal
 	}
@@ -125,6 +130,8 @@ func KindForCode(c codes.Code) errs.Kind {
 		return errs.KindBadRequest
 	case codes.ResourceExhausted:
 		return errs.KindTooLarge
+	case codes.Unimplemented:
+		return errs.KindMethodNotAllowed
 	default:
 		return errs.KindInternal
 	}

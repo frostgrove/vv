@@ -101,6 +101,17 @@ deactivating an account locks it, a demoted role bites on the next request. What
 it costs is one read per request. Reach for `accessjwt` when a verifier cannot
 reach the database — another service, another perimeter — and not before.
 
+**A strategy whose verifier reads no row is told when one closes.** That is
+`Issued.Revocations`, a `RevocationSink` the strategy declares and `Mount`
+registers against its subject. `OpaqueToken` declares none and needs none: the
+row its verifier reads on the next request is the row the sign-out wrote. A
+signed token checks a signature, so a `revoked_at` it never looks at changes
+nothing — without the sink, signing out closes the session everywhere except
+where the next request will look. Every path that closes a session announces
+through it, including the administrator's password reset behind
+`Runtime.SetPassword`, and the announcement happens after the transaction
+commits. See [[D-072]].
+
 **Verification is per subject, not per API.** Each mounted subject has its own
 guard, and the route group a request arrived on selects it before anything is
 parsed:
@@ -305,3 +316,43 @@ independent domains may both know an `ops@example.com` ([[D-067]]).
 `subject_type`/`subject_id` cannot be a foreign key, and the file says so:
 nothing at the database level removes a subject's grants when the subject goes.
 Deactivate rather than delete, and the directory answers for the rest.
+
+## accessfx — the fx wiring
+
+```go
+import "github.com/frostgrove/vv/auth/access/accessfx"
+
+fx.Options(
+    accessfx.Module(configuration.Access),
+    fx.Provide(
+        accessfx.AsSubject(mountUsers),
+        accessfx.AsGrants(whatUsersMayDo),
+    ),
+)
+```
+
+**Module** — it takes uber/fx, so a consumer who assembles the context by hand
+never resolves one ([[D-074]]).
+
+| | |
+|---|---|
+| `Module(config)` | the runtime, the resolver, the admin guard, the three services, the administrative password reset, and the start-up sync |
+| `AsSubject(ctor)` | a mounted subject joins the group |
+| `AsGrants(ctor)` | an `access.ModuleGrants` joins the group |
+| `Registered` | both groups, as an `fx.In` parameter object |
+
+**The ordering is what this exists to express.** Everything that must know about
+every subject — the resolver, the admin guard, the password reset — depends on
+`Registered`, so fx cannot build any of them until each contributor has run. A
+guard assembled before the last `Mount` would verify some credential formats and
+silently refuse the rest; a use case built early would panic on its first call,
+at a point where the wiring looks finished.
+
+No subject at all is a misconfiguration and not an empty deployment: every request
+would resolve to a principal with no profile, and every sign-in would refuse for a
+reason nobody can find. It is refused at wiring.
+
+It mounts **no routes** and names **no subject type** ([[D-066]]), and it provides
+no `port.Fields`: where `AuthBodyPaths` has to be registered depends on the
+transport, and a `port.Fields` in the graph would collide with the next module
+that wanted one of its own ([[D-043]]).

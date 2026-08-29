@@ -66,8 +66,46 @@ func StatusFor(k errs.Kind) int {
 		return http.StatusBadRequest
 	case errs.KindTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case errs.KindMethodNotAllowed:
+		return http.StatusMethodNotAllowed
 	default:
 		return http.StatusInternalServerError
+	}
+}
+
+// Routed is a router's own refusal, turned into a fault the renderer carries.
+//
+// A router answers before any handler runs, so its refusals never reach the
+// error contract on their own: a path nothing claimed and a verb a route does
+// not have arrive as whatever the framework's own error type is, and the
+// sentinel table has no arm for either. Both then fall through to 500 — and a
+// 404 rendered as a 500 reads as an outage. It is the difference between "you
+// asked for something that is not there" and "this service is broken", and a
+// client retries the second one.
+//
+// The router's own message is deliberately dropped. It is a sentence built out
+// of the path the caller sent, and what a client acts on is the code and the
+// status; the message it renders with is the vocabulary's, like every other
+// failure's ([[D-044]]).
+func Routed(status int) error {
+	switch status {
+	case http.StatusNotFound:
+		return errs.NotFound().Code(errs.CodeNotFound).Fault()
+	case http.StatusMethodNotAllowed:
+		return errs.MethodNotAllowed().Code(errs.CodeMethodNotAllowed).Fault()
+	case http.StatusRequestEntityTooLarge:
+		return errs.TooLarge().Code(errs.CodeTooLarge).Fault()
+	case http.StatusUnauthorized:
+		return errs.Unauthorized().Code(errs.CodeUnauthenticated).Fault()
+	case http.StatusForbidden:
+		return errs.Forbidden().Code(errs.CodeForbidden).Fault()
+	default:
+		// Every other 4xx is the caller's mistake with nothing finer known about
+		// it; a 5xx the router raised is this service's, and says nothing.
+		if status >= 400 && status < 500 {
+			return errs.BadRequest().Code(errs.CodeBadQuery).Fault()
+		}
+		return errs.Internal().Code(errs.CodeInternal).Fault()
 	}
 }
 

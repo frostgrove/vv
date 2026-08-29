@@ -6,6 +6,7 @@ import (
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
+	"github.com/google/uuid"
 )
 
 // A SessionIssuer turns "this caller is who they say they are" into whatever a
@@ -60,12 +61,37 @@ type SessionRefresher interface {
 	Refresh(ctx context.Context, credential string, agent Agent) (AuthResponse, error)
 }
 
+// A RevocationSink is told which sessions a closing call has just closed.
+//
+// A strategy that verifies a credential by reading its session row needs none:
+// the row it reads on the next request is the row the sign-out wrote, so
+// "closed" is already true. A strategy that verifies without reading — a signed
+// token — does, because nothing it checks per request has changed and the
+// credential stays valid until it expires.
+//
+// Without it a deny-list is written only by the strategy's own replay path, and
+// signing out closes the session everywhere except in the one place the next
+// request will look. See [[D-072]].
+//
+// nil is the ordinary case and costs an opaque deployment nothing.
+type RevocationSink interface {
+	// SessionsRevoked reports sessions that have just been closed.
+	//
+	// How long the fact has to be remembered is the implementation's own
+	// question — it is the one that knows how long a credential naming these
+	// sessions could still be accepted — so no deadline is passed in.
+	SessionsRevoked(ctx context.Context, sessions []uuid.UUID) error
+}
+
 // Issued is what a built strategy answers with.
 type Issued struct {
 	Issuer        SessionIssuer
 	Authenticator auth.Authenticator
 	// Refresher is optional. nil means this strategy does not rotate.
 	Refresher SessionRefresher
+	// Revocations is optional. nil means closing a session is fully expressed
+	// by the row, which is true of everything that verifies by reading it.
+	Revocations RevocationSink
 }
 
 // OpaqueToken is the strategy this module ships: 256 random bits, stored as a

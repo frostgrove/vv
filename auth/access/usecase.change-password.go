@@ -59,7 +59,7 @@ func (this *ChangePasswordUseCase) Execute(ctx context.Context, cmd ChangePasswo
 		return 0, err
 	}
 
-	var closed int64
+	var closed revoked
 	err = this.Store.Tx(ctx, func(txCtx context.Context) error {
 		if _, err := this.Store.Credentials.Update(txCtx, credential.ID, CredentialUpdate{
 			SecretHash: &hash,
@@ -80,5 +80,12 @@ func (this *ChangePasswordUseCase) Execute(ctx context.Context, cmd ChangePasswo
 		closed = closedSessions
 		return err
 	})
-	return closed, err
+	if err != nil {
+		return 0, err
+	}
+	// After the transaction and never inside it: a rollback would leave a
+	// deny-list refusing sessions that are still live, and nothing takes an
+	// entry back out.
+	this.announce(ctx, closed)
+	return closed.count, nil
 }

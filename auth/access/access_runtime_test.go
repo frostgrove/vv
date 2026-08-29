@@ -160,7 +160,7 @@ func TestEnrolmentRefusesBeforeItWritesAnything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
 	subject := SubjectRef{Type: testSubject, ID: uuid.New()}
 
 	cases := map[string]EnrollCommand{
@@ -184,7 +184,7 @@ func TestEnrolmentRefusesBeforeItWritesAnything(t *testing.T) {
 func TestAWeakPasswordNamesTheFieldAndCarriesTheMinimum(t *testing.T) {
 	runtime := testRuntime(t)
 	runtime.config = Config{Password: PasswordConfig{MinLength: 10}}
-	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger))
+	enrol := NewEnroll(newDeps(runtime.store, nil, runtime.hasher, runtime.config, runtime.logger, runtime.revocations))
 
 	err := enrol.Execute(context.Background(), EnrollCommand{
 		Subject:    SubjectRef{Type: testSubject, ID: uuid.New()},

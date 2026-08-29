@@ -3,6 +3,7 @@ package crudfiber
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -98,5 +99,33 @@ func TestTheStandaloneAppCarriesTheHandlersBodyCap(t *testing.T) {
 	plain := New[Widget, int64, WidgetUpdate](newFake())
 	if got := plain.Routes().Config().BodyLimit; got <= 1 {
 		t.Fatalf("an unconfigured app accepts %d bytes, which Fiber reads as no limit at all", got)
+	}
+}
+
+// A verb a route does not have is 405, and this binding is one of the two that
+// can say so.
+//
+// Fiber raises its own *fiber.Error before any handler runs, so the middleware
+// has something to render. crudnet has no seam for it — a ServeMux answers the
+// 405 itself, past every handler — and [[FL-013]] carries that difference rather
+// than the triplet's test names disagreeing about it.
+func TestAVerbARouteDoesNotHaveIsA405(t *testing.T) {
+	app := fiber.New()
+	app.Use(Errors())
+	app.Get("/widgets", func(c fiber.Ctx) error { return c.SendString("ok") })
+
+	r := do(t, app, http.MethodDelete, "/widgets", "")
+
+	if r.status != http.StatusMethodNotAllowed {
+		t.Fatalf("a verb the route does not have answered %d, want 405: %s", r.status, r.body)
+	}
+	if !strings.Contains(string(r.body), `"method_not_allowed"`) {
+		t.Fatalf("405 does not carry a code of its own, so a client cannot tell it from any other refusal: %s", r.body)
+	}
+
+	// The control. The very same path with the verb it does have is served, so
+	// the refusal above is about the method and not about the path.
+	if r := do(t, app, http.MethodGet, "/widgets", ""); r.status != http.StatusOK {
+		t.Fatalf("the path itself answered %d, so the 405 above proves nothing", r.status)
 	}
 }

@@ -41,6 +41,10 @@ long form of it.
                                             ▼
                                     security.Gate
    who is calling, established once at the door and read by every policy
+
+   app ──► appfx · appfiber ──► authhttp.Verify
+   what main() assembles, and the gate that refuses to start when the router
+   and the access declarations disagree
 ```
 
 ## Core — you always import these
@@ -76,6 +80,7 @@ long form of it.
 | [accessnet](access.md) | `vv/auth/access/http/accessnet` | The `net/http` sign-in routes. Stdlib, so it ships inside the access module |
 | [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Module** — the same routes on Gin |
 | [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Module** — the same routes on Fiber v3 |
+| [accessfx](access.md) | `vv/auth/access/accessfx` | **Module** — the context's graph, wired into uber/fx |
 
 `auth` is deliberately **not** on the contract manifest. It is a package with
 two implementations of its own interface, which is the normal case rather than
@@ -88,6 +93,7 @@ the exception ([[D-048]], [[D-055]]).
 | [storage](storage.md) | `vv/storage` | Streaming object-store contract, staged UI uploads and temporary download links |
 | [storagefs](storagefs.md) | `vv/storage/storagefs` | Secure stdlib filesystem backend plus an HMAC link handler |
 | [storageminio](storageminio.md) | `vv/storage/storageminio` | **Module** — MinIO SDK backend and native pre-signed GET |
+| [storageminiofx](storageminio.md) | `vv/storage/storageminio/storageminiofx` | **Module** — the same backend, wired into uber/fx, bucket checked at start-up |
 
 ## The request — one document, four transports
 
@@ -132,7 +138,20 @@ of the library ([[D-058]]).
 |---|---|---|
 | [crudsql](crudsql.md) | `vv/crud/adapter/crudsql` | `database/sql` — and therefore ent, gorm, sqlx, sqlc, bun, squirrel |
 | [crudpgx](crudpgx.md) | `vv/crud/adapter/crudpgx` | **Module** — pgx v5, with `COPY` bulk insert |
+| [crudsqlfx](crudsql.md) | `vv/crud/adapter/crudsql/crudsqlfx` | **Module** — the pool and the source, wired into uber/fx |
 | [crudtest](crudtest.md) | `vv/crud/crudtest` | An in-memory source: unit-test a repository with no database at all |
+
+## Composition — what main() assembles
+
+| Module | Import | What it is |
+|---|---|---|
+| [app](app.md) | `vv/app` | An ordered chain of contributions, and a seed command that is safe to run twice. Stdlib and `port` only |
+| [appfx](app.md) | `vv/app/appfx` | **Module** — the seeder group and the runner, in an uber/fx graph |
+| [appfiber](app.md) | `vv/app/http/appfiber` | **Module** — routes and middleware contributed by modules that do not import each other, mounted under one prefix, with the boot access gate |
+
+The library holds no container of its own and never will ([[D-037]]). These bind
+to the one the consumer chose: fx keeps the graph, and `go get
+github.com/frostgrove/vv` still resolves nothing ([[D-074]]).
 
 ## Tooling
 

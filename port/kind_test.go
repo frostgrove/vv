@@ -168,6 +168,8 @@ func TestEveryKindRendersACodeAndTheTableIsTotal(t *testing.T) {
 		errs.KindValidation:   errs.CodeCheck,
 		errs.KindBadRequest:   errs.CodeBadQuery,
 		errs.KindTooLarge:     errs.CodeTooLarge,
+
+		errs.KindMethodNotAllowed: errs.CodeMethodNotAllowed,
 	}
 	for k, code := range want {
 		if got := CodeForKind(k); got != code {

@@ -90,6 +90,7 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		{"BadRequest", errs.BadRequest(), errs.KindBadRequest},
 		{"Retryable", errs.Retryable(), errs.KindRetryable},
 		{"TooLarge", errs.TooLarge(), errs.KindTooLarge},
+		{"MethodNotAllowed", errs.MethodNotAllowed(), errs.KindMethodNotAllowed},
 		{"Internal", errs.Internal(), errs.KindInternal},
 	} {
 		if got := tc.b.Fault().Kind; got != tc.want {
@@ -109,11 +110,11 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		}
 		declared++
 	}
-	if declared != 9 {
-		t.Fatalf("errs declares %d kinds and this table has 9 rows — a constructor for the new one is owed", declared)
+	if declared != 10 {
+		t.Fatalf("errs declares %d kinds and this table has 10 rows — a constructor for the new one is owed", declared)
 	}
 
-	// The control: nine entry points that all built the same kind would pass
+	// The control: ten entry points that all built the same kind would pass
 	// any single assertion above. Internal is zero, so it is the one an
 	// unwritten field would look like.
 	if errs.Validation().Fault().Kind == errs.Internal().Fault().Kind {

@@ -140,3 +140,7 @@ func LocaleFrom(ctx context.Context) string { return porthttp.LocaleFrom(ctx) }
 // AcceptLanguage reads the language a request asked for out of an
 // Accept-Language header.
 func AcceptLanguage(header string) string { return porthttp.AcceptLanguage(header) }
+
+// Routed turns a router's own refusal into a fault the renderer carries. See
+// [porthttp.Routed].
+func Routed(status int) error { return porthttp.Routed(status) }

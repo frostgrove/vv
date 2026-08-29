@@ -93,6 +93,32 @@ looking exactly like one that does.
 `func(http.Handler) http.Handler`, so chi, gorilla/mux and httprouter take it
 directly.
 
+## Recording the surface for the gate
+
+| | |
+|---|---|
+| `Over(mux)` | a mux that remembers what was registered on it; `nil` gets a new one |
+| `Surface.Handle` / `HandleFunc` | register, and record |
+| `Surface.Mux()` | the mux, for handing to a server |
+| `Surface.Routes()` | what was registered, as `[]authhttp.Route` |
+| `Surface.Verify(declared, opts…)` | that, compared against the declarations |
+| `AnyMethod` | the method recorded for a pattern that names none |
+
+This is the one place the three HTTP bindings do not do the same thing, and the
+difference is not a choice. `authfiber` and `authgin` read the router's own
+table; an `http.ServeMux` cannot be asked what it holds, so the second statement
+has to be recorded as it is made.
+
+**What that costs:** a handler registered straight on the wrapped mux is
+invisible here. On net/http the gate catches a stale declaration and an endpoint
+added *through the Surface* without one, and cannot catch one that went around
+it. `Surface.Mux` exists for handing the finished mux to a server, not for
+registering more on it.
+
+A pattern with no verb answers every verb, which is a decision and not an
+omission — so it is declared as one, with `AnyMethod`, rather than silently
+matching the GET somebody had in mind ([[D-073]], [[FL-019]]).
+
 ## See also
 
 - [auth](auth.md) — the guard, the options, and everything transport-neutral

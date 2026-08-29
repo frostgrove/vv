@@ -1,11 +1,35 @@
 package crudfiber
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/frostgrove/vv/crud/http/crudhttp"
+	"github.com/frostgrove/vv/errs"
 	"github.com/frostgrove/vv/port"
 )
+
+// routed answers the fault a router's own refusal renders as, and nil for
+// anything else.
+//
+// Fiber raises a *fiber.Error before any handler runs — for a path nothing
+// claimed, a verb a route does not have, a body past the app's own limit — and
+// the sentinel table has no arm for one, so all of them would fall through to
+// 500. A 404 rendered as a 500 reads as an outage, and a client retries it.
+//
+// A fault wins over a *fiber.Error it happens to wrap: the fault is the
+// application speaking and the wrapper is not.
+func routed(err error) error {
+	if _, isFault := errs.AsFault(err); isFault {
+		return nil
+	}
+	var refusal *fiber.Error
+	if !errors.As(err, &refusal) {
+		return nil
+	}
+	return crudhttp.Routed(refusal.Code)
+}
 
 // Errors renders whatever a handler returned, for handlers this library did not
 // write.
@@ -44,6 +68,9 @@ func Errors(options ...crudhttp.RenderOption) fiber.Handler {
 		if len(c.Response().Body()) > 0 {
 			return nil
 		}
+		if refusal := routed(err); refusal != nil {
+			return render(rd, c, refusal)
+		}
 		return render(rd, c, err)
 	}
 }
@@ -62,6 +89,9 @@ func ErrorHandler(options ...crudhttp.RenderOption) fiber.ErrorHandler {
 	return func(c fiber.Ctx, err error) error {
 		if len(c.Response().Body()) > 0 {
 			return nil
+		}
+		if refusal := routed(err); refusal != nil {
+			return render(rd, c, refusal)
 		}
 		return render(rd, c, err)
 	}

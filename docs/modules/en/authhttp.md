@@ -58,6 +58,49 @@ package in its build ([[D-045]]).
 
 Nothing here knows what a credential is.
 
+## The boot access gate
+
+The other half of this package, and the one a consumer touches directly: every
+route mounted under a prefix says what reaching it requires, and start-up fails
+when the router and those declarations disagree.
+
+| | |
+|---|---|
+| `Endpoint` | one declaration: `Method`, `Path`, and either `Needs []auth.Permission` or `Why` |
+| `Public(method, path, why)` | anybody may call it, and here is the reason |
+| `Requires(method, path, perms…)` | the caller must hold **every** one of them |
+| `Authenticated(method, path, why)` | any signed-in caller — "me", "my sessions", "sign me out" |
+| `Endpoint.Declares()` | whether it says anything at all |
+| `Route` | one entry in a router's own table: `Method`, `Path` |
+| `Verify(declared, mounted, opts…)` | the comparison |
+| `UnderPrefix(prefix)` | declared paths are relative to it; a mounted route outside it is not part of the surface |
+| `ErrSurface` | what every disagreement wraps |
+
+```go
+if err := authfiber.Verify(app, declared, authhttp.UnderPrefix("/api/v1")); err != nil {
+    return err   // refuse to start
+}
+```
+
+The half that reads a real routing table is the binding's — [authfiber](authfiber.md),
+[authgin](authgin.md), [authnet](authnet.md) — because it is the only half that
+cannot be written once.
+
+### Why both directions are refused
+
+A route with no authorization check and a route that is deliberately public look
+identical from the inside. The gap is only visible from outside, by somebody who
+tries it. So the router is compared against a declaration — and a declaration
+whose route no longer exists is refused too, because one that outlives its
+handler is what makes the list look complete while it covers less every month.
+
+`Verify` reports every problem at once. A start-up failure that names one missing
+declaration, gets fixed, and then names the next one is three restarts to learn
+what one message could have said.
+
+A zero `Endpoint` is refused, which is what makes "I forgot" impossible to pass
+off as "no permissions needed" ([[D-073]]).
+
 ## See also
 
 - [auth](auth.md) — the transport-neutral half

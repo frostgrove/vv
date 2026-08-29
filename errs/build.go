@@ -55,6 +55,11 @@ func BadRequest() *Builder { return New(KindBadRequest) }
 // transport reads to. Nothing in it was parsed, so it carries no field.
 func TooLarge() *Builder { return New(KindTooLarge) }
 
+// MethodNotAllowed starts a 405-class fault: the path is served and the verb is
+// not. Only a router can raise one — nothing below a transport knows which verbs
+// a path has.
+func MethodNotAllowed() *Builder { return New(KindMethodNotAllowed) }
+
 // Retryable starts a fault nothing the caller sent is wrong about ([[D-040]]).
 func Retryable() *Builder { return New(KindRetryable) }
 

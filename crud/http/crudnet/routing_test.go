@@ -118,3 +118,13 @@ func TestMountingAtTheRootClaimsOnlyTheRootPath(t *testing.T) {
 		}
 	})
 }
+
+// This binding has no test for a 405, and the reason is not that the behaviour
+// differs.
+//
+// [http.ServeMux] answers a known path with an unknown verb by itself, before
+// any handler runs and past every middleware — there is no seam to render it
+// through, the way crudfiber's *fiber.Error and crudgin's NoMethod are. What a
+// client gets on net/http is the standard library's plain-text 405 and not this
+// library's envelope. crudnet.Routing says so in its own documentation, and
+// [[FL-013]] carries the difference.
