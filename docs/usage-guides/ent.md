@@ -755,6 +755,20 @@ body.
 What it buys at run time: an error body names **the key the client sent**,
 exactly, rather than the model's field name recognised out of the raw request.
 
+**Without the flag** there is no mapper and no `UserInput`: the entity *is* the
+wire shape, so the map is the entity's own `json` tags — and ent generates
+those. Derive it rather than typing it out ([[D-071]]):
+
+```go
+var UserPaths = port.Paths[ent.User]().Except("CreatedAt").MustBuild()
+// ID:id  Email:email  Name:name  Age:age  Active:active  TenantID:tenant_id
+```
+
+The keys are ent's own — `tenant_id`, not `tenantId` — which is the point: they
+are read off the struct rather than guessed from the Go field name. A field ent
+tagged `json:"-"`, and any you added without a tag, refuse at start-up and name
+themselves rather than being invented.
+
 > **The generated body has its own names.** `UserInput` derives its JSON names
 > from the Go field names — `TenantID` becomes `tenantID` — the same rule
 > `UserUpdate` already uses. It does **not** read the entity's own `json` tags.

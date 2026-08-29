@@ -123,6 +123,7 @@ and the next decision written before its code does should say so here.
 | [D-068](D-068-a-strategy-declares-issuing-and-verifying-together.md) | One strategy value produces both the issuer and the verifier; a guard is per subject and the verifier set is what was declared | accepted | auth, security, API design |
 | [D-069](D-069-a-shared-stdlib-only-tier-sits-under-everything.md) | A first-party stdlib-only `SHARED` tier that `crud` and every contract package may import; supersedes D-016's stdlib half | accepted | core seam, process & tooling |
 | [D-070](D-070-the-default-role-is-a-row-not-a-setting.md) | What a sign-up grants is a row in `subject_default_roles`, resolved against `roles` when written; no config key, no `Registrar.Role` | accepted | auth, security, migrations |
+| [D-071](D-071-a-derived-path-map-refuses-what-it-cannot-read.md) | `port.Paths[M]` derives the inverse map from the model's wire tags; a column no named tag gives a key for is a start-up refusal, never a guess from the field name | accepted | errors, API design |
 
 ## By area
 
@@ -182,7 +183,8 @@ error is classified, and why the class alone is not a gate), D-039 (message text
 is not an interface), D-040 (retryable is not a client error), D-044 (a body
 names nothing internal), D-047 (and neither does a fault's `Error()` text),
 D-038 (a fault is additive), D-043 (one hop per layer), D-050 (which of those
-hops may decline, and why only a generated one may),
+hops may decline, and why only a generated one may), D-071 (deriving that hop
+from the model's tags, and every gap in the derivation being a refusal),
 D-041 (the catalog, and which unique keys it can tell apart per engine),
 D-042 (the probe: what it may narrow, what it must never invent, the cap
 numbers, and the three answers §16 owed it), D-045 (why the

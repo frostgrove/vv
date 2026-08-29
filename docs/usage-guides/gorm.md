@@ -710,6 +710,34 @@ body.
 What it buys at run time: an error body names **the key the client sent**,
 exactly, rather than the model's field name recognised out of the raw request.
 
+**Without the flag** there is no mapper and no `MemberInput`: the model *is* the
+wire shape, and `port.Paths[Member]()` derives the map rather than asking you to
+type it out ([[D-071]]).
+
+A gorm model is the case where that feature earns its refusal. These structs
+carry `gorm` tags and no `json` ones, so the derivation has nothing to read and
+says so by name:
+
+```
+the inverse path map for Member cannot be derived from the model:
+no json tag names Age, ID, Name, TeamID — take the field name with OrFieldName,
+or name the key with Override
+```
+
+Both answers are right for different projects. If the model is decoded by field
+name, say so once:
+
+```go
+var MemberPaths = port.Paths[Member]().
+    OrFieldName().
+    Except("CreatedAt", "DeletedAt", "UpdatedAt").
+    MustBuild()
+```
+
+If it is not, add the `json` tags you actually serve and drop `OrFieldName`. What
+it will not do is pick one for you — a key guessed from the Go field name passes
+every check and is wrong only in a production error body.
+
 > **The generated body has its own names.** `MemberInput` derives its JSON names
 > from the Go field names — `TeamID` becomes `teamID` — the same rule
 > `MemberUpdate` already uses. It does **not** read the model's own `json` tags.

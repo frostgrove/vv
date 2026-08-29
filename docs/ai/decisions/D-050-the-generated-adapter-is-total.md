@@ -196,3 +196,8 @@ adapter's. One owner per hop.
 ## See also
 
 [[D-021]] [[D-043]] [[D-018]] [[D-014]] [[UC-014]] [[FL-010]] [[FL-015]]
+
+[[D-071]] — the other way to obtain the same map, for a resource mounted
+straight onto the model. It borrows the domain rule and the exactness refusal
+from here and must not be used on a generated resource, whose wire shape is the
+adapter's rather than the model's.

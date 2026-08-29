@@ -610,6 +610,8 @@ type GetCommand[ID comparable] struct{ ... }
 type ListCommand struct{ ... }
 type Mapper[In, M any] interface{ ... }
     func Identity[M any]() Mapper[M, M]
+type PathBuilder[M any] struct{ ... }
+    func Paths[M any]() *PathBuilder[M]
 type PathMap map[string]errs.Path
     func MustPathMap[M any](m PathMap, except ...string) PathMap
     func NewPathMap[M any](m PathMap, except ...string) (PathMap, error)

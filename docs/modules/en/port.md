@@ -170,6 +170,48 @@ one translates a violation to a key the client cannot find in its own body.
 the declared hops in order, which is what a binding wires ahead of its own
 fallback.
 
+### Deriving one instead of typing it
+
+For a resource mounted **straight onto the model** — no mapper, so the model *is*
+the wire shape — every entry above is the `json` tag transcribed, and
+transcription is where `sourceFileName` gets typed for a struct that says
+`sourceFilename`. `port.Paths[M]()` reads the tag instead ([[D-071]]).
+
+```go
+var ContractPaths = port.Paths[Contract]().
+    From("json", "form").                                        // preference, not a merge
+    Override(port.PathMap{"SourceHash": port.At(FieldFile)}).     // the one key that is not the tag's
+    MustBuild()
+```
+
+| Method | Does |
+|---|---|
+| `From(tags...)` | which struct tags to read, in order of preference. Default `json`; any tag name works, including your own |
+| `Override(m)` | replace what the tag says for the columns it names — and it is still checked |
+| `Except(names...)` | drop columns from the map *and* from the totality check |
+| `OrFieldName()` | map a column **no tag names** to its Go field name |
+| `Build()` / `MustBuild()` | derive, validate through `NewPathMap`, and answer or refuse |
+
+**Everything it cannot read is a refusal, not a guess.**
+
+| In the model | Answer |
+|---|---|
+| `json:"weight,omitempty"` | `weight` — options are cut off |
+| `json:",omitempty"` | `Weight` — the field name, because that is what `encoding/json` does |
+| no `json` tag at all | **refuses**, unless you called `OrFieldName()` |
+| `json:"-"` | **refuses**, and `OrFieldName()` does *not* cover it — use `Except` or `Override` |
+| an override naming no column, or a `generated` one | **refuses**, from `NewPathMap` unchanged |
+
+The last two are the point. A silent fallback to the Go field name would answer
+`SourceFilename` where the wire says `sourceFilename` — a map that looks
+complete, passes every check, and is wrong only in a production error body. And
+`json:"-"` is the author saying the column is not on the wire, which is a
+different statement from saying nothing about it.
+
+**Not for a generated resource.** `cmd/vv -adapter` gives its input a wire shape
+of its own (`lowerFirst(FieldName)`, not your tag), so that map is generated with
+the mapper it inverts ([[D-050]]).
+
 ## The violation pipeline
 
 ```go

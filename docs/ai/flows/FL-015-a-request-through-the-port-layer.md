@@ -123,6 +123,13 @@ declines rather than guessing ([[D-043]]).
    `crud/decorators/faults/faults.go:resolve` already leaves unset — or a column
    no request carries. Neither has a client key to name.
 
+   A resource mounted straight onto the model has no mapper, and its map is the
+   model's own `json` tags. `port/paths.go:Paths[M]` derives it rather than
+   asking somebody to transcribe them ([[D-071]]) — same type, same totality,
+   same decline rule, and a column no named tag gives a key for refuses at
+   start-up instead of being guessed from the Go field name. It is not for a
+   *generated* resource: that one's wire shape is the adapter's.
+
 4. **path → wire** — `port/violations.go:Violations`, which applies the chain and
    then the sort, the cap and the message ladder. Both renderers call it: the
    JSON array in the envelope is `port/porthttp/render.go`'s rendering of the
@@ -245,6 +252,7 @@ approximate rather than guessed.
 | `port/mapper.go` | `Mapper`, `Identity` |
 | `port/path.go` | `Fields` — the service hop and its pass-through rule — and `Hops` |
 | `port/pathmap.go` | `PathMap` and its decline rule, `At`, and the two start-up checks `NewPathMap`/`MustPathMap` and `CoversUpdate`/`MustCoverUpdate` ([[D-050]]) |
+| `port/paths.go` | `Paths`/`PathBuilder` — the same map derived from the model's wire tags instead of transcribed, and the refusal for every column it cannot read a key for ([[D-071]]) |
 | `port/repository.go` | `Repository` — what a service is built over ([[D-022]]) |
 | `port/model.go` | `Sanitize`, `ClearGenerated` |
 | `port/request.go` | `CoerceID`, `FormatID`, `NarrowForCount`, `NarrowForEntity` |
@@ -293,6 +301,13 @@ approximate rather than guessed.
   `TestRenderingDoesNotWriteThroughToTheFault` — `port/violations_test.go` — the
   pipeline itself, moved down with it at phase 9 and now measured once for every
   transport rather than once per renderer.
+- `TestADerivedMapIsTheOneSomebodyWouldHaveTyped`,
+  `TestAColumnNoTagNamesIsRefusedRatherThanGuessed`,
+  `TestAColumnTakenOffTheWireIsNotRescuedByTheFieldNameFallback` and
+  `TestOnlyAColumnLendsItsTagToAColumn` — `port/paths_test.go` — the derived
+  half of hop 3 ([[D-071]]): the map it produces, and the three things it
+  refuses rather than guesses. The first has its no-mechanical-transform control
+  built into the fixture; the second and third carry theirs beside them.
 - `TestALocaleSetByOneTransportIsReadByAnother` —
   `port/porthttp/locale_test.go` — one context key, read from both sides, with
   the control that an unset context reads empty.

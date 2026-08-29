@@ -196,6 +196,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `port/mapper.go` | FL-015 |
 | `port/path.go` | FL-011, FL-015 |
 | `port/pathmap.go` | FL-010, FL-011, FL-015 |
+| `port/paths.go` | FL-015 |
 | `port/repository.go` | FL-013, FL-015 |
 | `port/model.go` | FL-003, FL-015 |
 | `port/request.go` | FL-001, FL-002, FL-012, FL-013, FL-015, FL-018 |
