@@ -350,7 +350,7 @@ func TestAPayloadWithOneRealViolationYieldsExactlyOne(t *testing.T) {
 				doc.Label = crud.Set(bait)
 			}
 
-			err := pbRepo(t, tg).Save(context.Background(), &doc)
+			_, err := pbRepo(t, tg).Save(context.Background(), &doc)
 			got := pbPairs(t, err)
 			if len(got) != 1 || got[0] != "unique@Email" {
 				t.Fatalf("a payload with one real violation produced %v", got)
@@ -393,7 +393,7 @@ func TestTheSamePayloadWithARealMissingParentYieldsTwo(t *testing.T) {
 				doc.Label = crud.Set(bait)
 			}
 
-			err := pbRepo(t, tg).Save(context.Background(), &doc)
+			_, err := pbRepo(t, tg).Save(context.Background(), &doc)
 			got := pbPairs(t, err)
 			set := pbSet(got)
 			if !set["unique@Email"] || !set["foreign_key@OrgID"] {
@@ -464,7 +464,7 @@ func TestTheUnreproducibleKeyIsNeverProbedAndItsPlainTwinIs(t *testing.T) {
 				doc.Label = crud.Set(bait)
 			}
 
-			err := pbRepo(t, tg).Save(context.Background(), &doc)
+			_, err := pbRepo(t, tg).Save(context.Background(), &doc)
 			named := map[string]bool{}
 			for _, v := range pbFault(t, err).Violations {
 				named[v.Source.Constraint] = true
@@ -594,7 +594,7 @@ func TestTheOffendingValueReachesTheBodyOnlyWhenAsked(t *testing.T) {
 			body := func(options ...probe.Option) string {
 				doc := PbDoc{TenantID: 1, Email: "one@x.io", Code: "CODE-NEW",
 					Alt: crud.Set("ALT-NEW"), Slug: crud.Null[string]()}
-				err := pbRepo(t, tg, options...).Save(context.Background(), &doc)
+				_, err := pbRepo(t, tg, options...).Save(context.Background(), &doc)
 				_, _, out := render.Render(context.Background(), err)
 				b, jerr := json.Marshal(out)
 				if jerr != nil {

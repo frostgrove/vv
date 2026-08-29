@@ -82,6 +82,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-020](FL-020-a-principal-becomes-a-policy-decision.md) | A principal becomes a policy decision | `crud/decorators/security/principal.go:ScopeAttr` | [[UC-020]] [[UC-004]] |
 | [FL-021](FL-021-a-configuration-becomes-a-connection.md) | A configuration becomes a connection | `utils/vvdb/dsn.go:DSN` / `utils/vvdb/open.go:Open` | [[UC-021]] |
 | [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Execute` | [[UC-022]] |
+| [FL-023](FL-023-a-sign-in-becomes-a-session.md) | A sign-in becomes a session | `auth/access/access.runtime.go` | [[UC-023]] |
 
 ## By file — which flows touch this file
 
@@ -271,6 +272,17 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `utils/vvgoose/vvgoose.go` | FL-022 |
 | `utils/vvgoose/migration.go` | FL-022 |
 | `utils/vvgoose/sql.go` | FL-022 |
+| `auth/access/access.runtime.go` | FL-023 |
+| `auth/access/access.strategy.go` | FL-023 |
+| `auth/access/access.subject.go` | FL-023 |
+| `auth/access/access.endpoints.go` | FL-023 |
+| `auth/access/access.authenticator.go` | FL-023, FL-019 |
+| `auth/access/usecase.login.go` | FL-023 |
+| `auth/access/usecase.signup.go` | FL-023 |
+| `auth/access/usecase.enroll.go` | FL-023 |
+| `auth/access/http/accesshttp/accesshttp.go` | FL-023 |
+| `auth/access/accessjwt/rotation.go` | FL-023 |
+| `auth/access/accessjwt/accessjwt.go` | FL-023 |
 | `utils/vvgoose/provider.go` | FL-022 |
 | `utils/vvgoose/internal/modelscan/` | FL-022 |
 

@@ -1,0 +1,109 @@
+# FL-023 — A sign-in becomes a session
+
+**Entry point:** `auth/access/access.runtime.go:New` and `auth/access/access.runtime.go:Mount`
+**Implements:** [[UC-023]] · **Governed by:** [[D-066]] [[D-067]] [[D-068]] [[D-033]] [[D-058]]
+
+## Wiring, once
+
+1. **`New`** — `auth/access/access.runtime.go:48` — builds the shared half: the
+   `Store` over the consumer's `crud.Source`, the hasher (argon2id unless a test
+   hands in a cheap one), and this module's own `ModuleGrants`. It refuses a nil
+   source and a nil logger; the library never writes to a process-wide one
+   ([[D-062]]).
+2. **`Mount`** — `auth/access/access.runtime.go:161` — one call per kind of
+   caller. It refuses a duplicate subject type, a duplicate prefix and a
+   directory answering for another type, all three before anything is built.
+3. **`NewDirectories`** — `auth/access/access.directory.go:20` — re-indexed on
+   every mount, because the resolver needs every directory and the last one is
+   not registered until now.
+4. **`Strategy.Build`** — `auth/access/access.strategy.go:33` — one value
+   produces the issuer and the verifier together ([[D-068]]).
+   `opaqueStrategy.Build` narrows a `SessionAuthenticator` to this subject with
+   `For`; `accessjwt.strategy.Build` builds a parser scoped by issuer.
+5. **`newEndpoints`** — `auth/access/access.endpoints.go:38` — the seven
+   operations every subject has. The sign-up is not among them: it is returned
+   from `Mount` separately, carrying the consumer's payload type ([[D-066]]).
+
+## Signing in
+
+1. **the binding** — `auth/access/http/accessfiber/accessfiber.go:SignIn`,
+   `accessgin`, `accessnet` — decode, call, write, and nothing else.
+2. **`Endpoints.SignIn`** — `auth/access/access.endpoints.go` — supplies the
+   subject type and folds the identifier through `Subject.Identifier`. Both come
+   from the surface and never from the body: with an identifier unique per type
+   ([[D-067]]), a body-supplied type would sign a caller in to another domain.
+3. **`LoginUseCase.Execute`** — `auth/access/usecase.login.go` —
+   the credential lookup carries the subject type in its predicate. The password
+   is verified even when nothing was found, against `DummyHash`, so an unknown
+   identifier costs what a known one does.
+4. **`Directory.Active`** — checked *after* the password: checking first tells
+   somebody with a wrong password that the address is real and disabled.
+5. **`SessionIssuer.Issue`** — `auth/access/access.strategy.go:opaqueIssuer` or
+   `auth/access/accessjwt/accessjwt.go:Issue` — the only place a token of any
+   kind comes into existence.
+6. **`Directory.Touch`** — best effort, after the session exists. A directory
+   that cannot record a sign-in has not stopped one.
+
+## Registering
+
+1. **`RegisterHandler`** — one per binding, generic over the payload and nothing
+   else is.
+2. **`SignUpUseCase.Execute`** — `auth/access/usecase.signup.go` —
+   opens the transaction, calls `Registrar.Create`, then `EnrollUseCase` inside
+   it. `crud.InTx` joins rather than nests, so the account row and the credential
+   commit together.
+3. **the session, after the commit** — opening it inside would let a failure
+   with nothing to do with signing in roll it back.
+
+## Verifying a request
+
+1. **`MountedSubject.Guard`** — `auth/access/access.runtime.go:142` — per
+   subject, mounted on that subject's group. `Runtime.AdminGuard` is a chain over
+   the declared strategies, for routes under no prefix.
+2. **`SessionAuthenticator.Authenticate`** — `auth/access/access.authenticator.go`
+   — digest lookup, `Session.Live`, the subject-type check that `For` installed,
+   `Directory.Active`, then `GrantsService.For`. Roles and permissions come from
+   rows, never from the credential.
+3. **`touch`** — at most once per `TouchInterval`, and its failure is logged and
+   swallowed: a request that authenticated must not fail on a bookkeeping write.
+
+## Rotating
+
+1. **`Endpoints.Refresh`** — mounted only for a strategy that rotates.
+2. **`core.find`** — `auth/access/accessjwt/accessjwt.go` — the digest as the
+   current credential, then as the previous one.
+3. **`Classify`** — `auth/access/accessjwt/rotation.go:71` — pure, no database.
+   `Rotate`, `RotateAgain` inside the grace window, `Replay` after it, `Unusable`
+   otherwise.
+4. **`core.rotate`** — a compare-and-swap on the current digest. Two simultaneous
+   refreshes: exactly one matches, the other lands in the previous-digest branch
+   and is told apart there. A read-then-write would issue two lineages from one
+   session.
+5. **`core.close`** — on a replay the whole lineage goes, and the revocation list
+   is written if one is configured.
+
+## Files
+
+| File | What it decides |
+|---|---|
+| `auth/access/access.runtime.go` | the factory, the mount refusals, the guards |
+| `auth/access/access.strategy.go` | the strategy seam and the opaque implementation |
+| `auth/access/access.subject.go` | `Subject`, `Registrar[P]` |
+| `auth/access/access.endpoints.go` | the seven transport-neutral operations |
+| `auth/access/access.authenticator.go` | a session row becomes a principal |
+| `auth/access/usecase.*.go` | the use cases |
+| `auth/access/http/accesshttp/` | the route table and the endpoint names |
+| `auth/access/http/access{net,gin,fiber}/` | decode, call, write |
+| `auth/access/accessjwt/rotation.go` | `Classify`, the pure half of rotation |
+| `auth/access/accessjwt/accessjwt.go` | issuing, the CAS, the replay response |
+| `auth/access/accessjwt/revokeredis/` | the deny-list |
+
+## Tests that walk this flow
+
+- `auth/access/access_runtime_test.go` — the mount refusals and their control,
+  and that an enrolment refuses before it writes anything.
+- `auth/access/accessjwt/rotation_test.go` — every arm of `Classify`, including
+  the grace boundary on both sides.
+- `auth/access/http/access{net,gin,fiber}/*_test.go` — the triplet: the prefix,
+  the separately-mounted sign-up, and that every named endpoint reaches a
+  handler.

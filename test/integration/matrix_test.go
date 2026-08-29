@@ -93,7 +93,7 @@ func mxSeedUsers(t *testing.T) {
 		}
 		repository := Users.Bind(source)
 		for _, u := range mxUsers() {
-			if err := repository.Save(ctx, &u); err != nil {
+			if _, err := repository.Save(ctx, &u); err != nil {
 				t.Fatalf("%s: seeding %s: %v", source.Dialect().Name(), u.Email, err)
 			}
 		}
@@ -467,7 +467,7 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 			// The write path. ent puts the created_at default in Go rather than in
 			// the column, so a write that bypasses ent supplies it.
 			u := entpkg.User{TenantID: 1, Email: "new@x.io", Name: "New", Active: true, CreatedAt: time.Now()}
-			if err := users.Save(ctx, &u); err != nil {
+			if _, err := users.Save(ctx, &u); err != nil {
 				t.Fatal(err)
 			}
 			if u.ID == 0 {

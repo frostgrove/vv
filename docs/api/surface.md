@@ -23,7 +23,7 @@ type Credential struct{ ... }
     func Bearer(header string) (Credential, bool)
     func ParseAuthorization(header string) (Credential, bool)
 type Guard struct{ ... }
-    func NewGuard(a Authenticator, opts ...Option) *Guard
+    func NewGuard(a Authenticator, options ...Option) *Guard
 type Option func(*Guard)
     func Header(name string) Option
     func Lookup(fn func(get func(name string) string) (Credential, bool)) Option
@@ -40,7 +40,7 @@ type RoleMap map[Role][]Permission
 ## github.com/frostgrove/vv/auth/apikey
 ```go
 const DefaultScheme = "ApiKey"
-func New(s Store, opts ...Option) auth.Authenticator
+func New(s Store, options ...Option) auth.Authenticator
 type Option func(*authenticator)
     func AnyScheme() Option
     func Scheme(name string) Option
@@ -53,13 +53,13 @@ type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, erro
 ```go
 func Locale(r *http.Request) context.Context
 func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error)
-func RendererFor(opts []porthttp.RenderOption) porthttp.Renderer
+func RendererFor(options []porthttp.RenderOption) porthttp.Renderer
 ```
 
 ## github.com/frostgrove/vv/auth/http/authnet
 ```go
-func Handler(g *auth.Guard, next http.Handler, opts ...porthttp.RenderOption) http.Handler
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) func(http.Handler) http.Handler
+func Handler(guard *auth.Guard, next http.Handler, options ...porthttp.RenderOption) http.Handler
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.Handler) http.Handler
 ```
 
 ## github.com/frostgrove/vv/crud
@@ -69,15 +69,15 @@ const RelTagKey = "rel"
 const TagKey = "db"
 var ErrNotFound = errors.New("crud: not found") ...
 var NowFunc = time.Now
-func ClaimSavepoint(ctx context.Context, src any) (int64, bool)
-func DefinedFields(s *Schema, dto any) ([]string, error)
+func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
+func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
 func ElemType(t reflect.Type) reflect.Type
 func ElemValue(v any) any
 func EncodeCursor(fields []string, values []any) (string, error)
 func EqualValues(a, b any) bool
-func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, opts ...Option) (bool, error, bool)
-func InNewTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error)
-func InTx(ctx context.Context, src Executor, fn func(context.Context) error) (err error)
+func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool)
+func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
+func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
 func IsTautology(p Predicate) bool
 func IsTautologyFor(m *Meta, p Predicate) bool
 func IsTransaction(e Executor) bool
@@ -109,14 +109,14 @@ type Beginner interface{ ... }
     func BeginnerOf(v any) (Beginner, bool)
 type BulkInserter interface{ ... }
 type Change struct{ ... }
-    func DefinedChanges(s *Schema, dto any) ([]Change, error)
+    func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error)
 type Core[M any, ID comparable] interface{ ... }
     func Chain[M any, ID comparable](c Core[M, ID], mw ...Middleware[M, ID]) Core[M, ID]
 type Dialect interface{ ... }
 type Executor interface{ ... }
-    func ExecutorFor(ctx context.Context, src any) (Executor, bool)
+    func ExecutorFor(ctx context.Context, source any) (Executor, bool)
     func ExecutorFrom(ctx context.Context) (Executor, bool)
-    func OwnedExecutorFor(ctx context.Context, src any) (e Executor, found, owned bool)
+    func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool)
 type Field struct{ ... }
 type Identified interface{ ... }
 type LikeEscaper interface{ ... }
@@ -144,9 +144,9 @@ type Option func(*Options)
     func OrderBy(orders ...Order) Option
     func Page(n int) Option
     func Preload(paths ...string) Option
-    func PreloadCap(path string, maxRows int, opts ...Option) Option
+    func PreloadCap(path string, maxRows int, options ...Option) Option
     func PreloadRows(n int) Option
-    func PreloadWhere(path string, opts ...Option) Option
+    func PreloadWhere(path string, options ...Option) Option
     func PrimaryOnly() Option
     func Select(fields ...string) Option
     func SelectAll() Option
@@ -155,10 +155,10 @@ type Option func(*Options)
     func Unpaged() Option
     func Unsorted() Option
     func Where(p Predicate) Option
-    func With(src *Options) Option
+    func With(source *Options) Option
 type Optional = utils.Optional
 type Options struct{ ... }
-    func Build(opts ...Option) *Options
+    func Build(options ...Option) *Options
 type Order struct{ ... }
     func Asc(field string) Order
     func Desc(field string) Order
@@ -241,15 +241,15 @@ type UpsertScope interface{ ... }
 
 ## github.com/frostgrove/vv/crud/adapter/crudsql
 ```go
-func Source(q Queryer, d crud.Dialect, opts ...Option) crud.Source
+func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source
 type DB struct{ ... }
-    func MariaDB(db *sql.DB, opts ...Option) DB
-    func MySQL(db *sql.DB, opts ...Option) DB
-    func Open(db *sql.DB, d crud.Dialect, opts ...Option) DB
-    func Postgres(db *sql.DB, opts ...Option) DB
-    func SQLite(db *sql.DB, opts ...Option) DB
+    func MariaDB(database *sql.DB, options ...Option) DB
+    func MySQL(database *sql.DB, options ...Option) DB
+    func Open(database *sql.DB, d crud.Dialect, options ...Option) DB
+    func Postgres(database *sql.DB, options ...Option) DB
+    func SQLite(database *sql.DB, options ...Option) DB
 type Executor struct{ ... }
-    func From(q Queryer, opts ...Option) Executor
+    func From(q Queryer, options ...Option) Executor
 type Option func(*config)
     func WithFaults(c errs.Classifier) Option
 type Queryer interface{ ... }
@@ -260,7 +260,7 @@ type Tx struct{ ... }
 ```go
 var ErrUncomparableHandle = errors.New(...) ...
 type Catalog interface{ ... }
-    func Load(ctx context.Context, src crud.Source) (Catalog, error)
+    func Load(ctx context.Context, source crud.Source) (Catalog, error)
 type Column struct{ ... }
 type Constraint struct{ ... }
 type Kind uint8
@@ -286,12 +286,12 @@ type Statement struct{ ... }
 
 ## github.com/frostgrove/vv/crud/decorators/faults
 ```go
-func Enrich[M any, ID comparable](opts ...Option) crud.Middleware[M, ID]
+func Enrich[M any, ID comparable](options ...Option) crud.Middleware[M, ID]
 type Option func(*settings)
     func WithProbe(h probe.Handler) Option
     func WithProbeError(fn func(op string, err error)) Option
     func WithProbeFor(op string, h probe.Handler) Option
-    func WithSource(src crud.Source) Option
+    func WithSource(source crud.Source) Option
 ```
 
 ## github.com/frostgrove/vv/crud/decorators/security
@@ -371,8 +371,8 @@ func KindForStatus(code int) errs.Kind
 func KindOf(err error) errs.Kind
 func LocaleFrom(ctx context.Context) string
 func MalformedBody(err error) error
-func NarrowForCount(req *query.Request)
-func NarrowForEntity(req *query.Request)
+func NarrowForCount(request *query.Request)
+func NarrowForEntity(request *query.Request)
 func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
 func Status(err error) int
 func StatusFor(k errs.Kind) int
@@ -384,7 +384,7 @@ type Envelope = porthttp.Envelope
     func Internal() Envelope
     func ParseEnvelope(body []byte) (Envelope, bool)
 type EnvelopeRenderer = porthttp.EnvelopeRenderer
-    func NewRenderer(opts ...RenderOption) *EnvelopeRenderer
+    func NewRenderer(options ...RenderOption) *EnvelopeRenderer
 type Groups = porthttp.Groups
 type RenderOption = porthttp.RenderOption
     func WithCodes(c *errs.Codes) RenderOption
@@ -400,17 +400,17 @@ type Rules = port.Rules
 ## github.com/frostgrove/vv/crud/http/crudnet
 ```go
 func DefaultErrorHandler(w http.ResponseWriter, r *http.Request, err error)
-func Errors(opts ...crudhttp.RenderOption) func(http.Handler) http.Handler
+func Errors(options ...crudhttp.RenderOption) func(http.Handler) http.Handler
 func Status(err error) int
-func WithErrors(f HandlerFunc, opts ...crudhttp.RenderOption) http.Handler
+func WithErrors(f HandlerFunc, options ...crudhttp.RenderOption) http.Handler
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
 type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
-    func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
+    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
 type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
-    func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
+    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 type Mapper[In, M any] = port.Mapper[In, M]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
@@ -421,7 +421,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(http.ResponseWriter, *http.Request, error)) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
     func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*http.Request) ([]crud.Option, error)) Option[M, ID, U]
@@ -478,7 +478,7 @@ func Extract(err error) *sqlerr.Err
 func Integrity(err error) bool
 func Wrap(c errs.Classifier, err error) error
 type Classifier struct{ ... }
-    func New(engine string, opts ...Option) *Classifier
+    func New(engine string, options ...Option) *Classifier
 type Columns interface{ ... }
     func FromCatalog(cat catalog.Catalog) Columns
 type Extractor interface{ ... }
@@ -492,10 +492,10 @@ type Option func(*Classifier)
 ## github.com/frostgrove/vv/crud/sqlrepo
 ```go
 const DefaultPageSize = 20
-func New[M any, ID comparable, U any](src crud.Source, table string, opts ...Setting) *crud.Repo[M, ID, U]
+func New[M any, ID comparable, U any](source crud.Source, table string, options ...Setting) *crud.Repo[M, ID, U]
 type Blueprint[M any, ID comparable, U any] struct{ ... }
-    func Define[M any, ID comparable, U any](table string, opts ...Setting) *Blueprint[M, ID, U]
-    func TryDefine[M any, ID comparable, U any](table string, opts ...Setting) (*Blueprint[M, ID, U], error)
+    func Define[M any, ID comparable, U any](table string, options ...Setting) *Blueprint[M, ID, U]
+    func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*Blueprint[M, ID, U], error)
 type Setting func(*settings)
     func DefaultLimit(n int) Setting
     func DefaultSort(orders ...crud.Order) Setting
@@ -587,14 +587,14 @@ func FaultFrom(kind errs.Kind, code errs.Code, vs []errs.Violation, partial bool
 func FaultOf(err error) *errs.Fault
 func FirstLanguageTag(list string) string
 func FormatID[ID comparable](id ID) string
-func Hops[M any, ID comparable, U any, In any](svc Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver
+func Hops[M any, ID comparable, U any, In any](service Service[M, ID, U], mapper Mapper[In, M]) []errs.Resolver
 func KindOf(err error) errs.Kind
 func KindOfWith(err error, codes *errs.Codes) errs.Kind
 func LocaleFrom(ctx context.Context) string
 func Logger(ctx context.Context) *slog.Logger
 func MustCoverUpdate[M, U any](except ...string)
-func NarrowForCount(req *query.Request)
-func NarrowForEntity(req *query.Request)
+func NarrowForCount(request *query.Request)
+func NarrowForEntity(request *query.Request)
 func Sanitize[M any](meta *crud.Meta, m *M, allowClientID bool) error
 func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.Violation
 func WithLocale(ctx context.Context, locale string) context.Context
@@ -603,7 +603,7 @@ type BulkDeleteCommand[ID comparable] struct{ ... }
 type CountCommand struct{ ... }
 type CreateCommand[M any] struct{ ... }
 type DefaultService[M any, ID comparable, U any] struct{ ... }
-    func NewService[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...ServiceOption) *DefaultService[M, ID, U]
+    func NewService[M any, ID comparable, U any](repository Repository[M, ID, U], options ...ServiceOption) *DefaultService[M, ID, U]
 type DeleteCommand[ID comparable] struct{ ... }
 type Fields map[string]errs.Path
 type GetCommand[ID comparable] struct{ ... }
@@ -621,7 +621,7 @@ type Service[M any, ID comparable, U any] interface{ ... }
 type ServiceOption func(*serviceConfig)
     func AllowClientID() ServiceOption
     func WithPaths(r errs.Resolver) ServiceOption
-    func WithQuery(cfg *query.Config) ServiceOption
+    func WithQuery(config *query.Config) ServiceOption
     func WithQueryFor(defaultConfig *query.Config, variants map[string]*query.Config, ...) ServiceOption
 type UpdateCommand[ID comparable, U any] struct{ ... }
 type ViolationOptions struct{ ... }
@@ -657,7 +657,7 @@ type Envelope struct{ ... }
     func Internal() Envelope
     func ParseEnvelope(body []byte) (Envelope, bool)
 type EnvelopeRenderer struct{ ... }
-    func NewRenderer(opts ...RenderOption) *EnvelopeRenderer
+    func NewRenderer(options ...RenderOption) *EnvelopeRenderer
 type Groups struct{ ... }
 type RenderOption func(*EnvelopeRenderer)
     func WithCodes(c *errs.Codes) RenderOption
@@ -671,7 +671,7 @@ type Renderer interface{ ... }
 ## github.com/frostgrove/vv/remote
 ```go
 var ErrPartialResult = errors.New("remote: GetAll received a partial result")
-func ToRequest(opts ...crud.Option) (*query.Request, error)
+func ToRequest(options ...crud.Option) (*query.Request, error)
 func Truncate(s string, max int) string
 type Call struct{ ... }
 type Method string
@@ -689,7 +689,7 @@ type Transport interface{ ... }
 ```go
 const DefaultTimeout = 30 * time.Second
 const MaxResponse = 32 << 20
-func Transport(baseURL string, opts ...TransportOption) remote.Transport
+func Transport(baseURL string, options ...TransportOption) remote.Transport
 type TransportOption func(*transport)
     func WithClient(c *http.Client) TransportOption
     func WithMaxResponse(n int) TransportOption
@@ -767,8 +767,8 @@ func MustOpenReadWrite(c *Config) (primary, replica *sql.DB)
 func MySQLDSN(c *Config) (string, error)
 func Open(c *Config) (*sql.DB, error)
 func OpenReadWrite(c *Config) (primary, replica *sql.DB, err error)
-func PostgresDSN(cfg *Config) (string, error)
-func SQLiteDSN(cfg *Config) (string, error)
+func PostgresDSN(config *Config) (string, error)
+func SQLiteDSN(config *Config) (string, error)
 type Config struct{ ... }
 type Engine string
     const Postgres Engine = "postgres" ...
@@ -786,13 +786,245 @@ func Or[T any](args []string, name string, def T) (T, error)
 func Parse[T any](args []string, name string, def T) (T, error)
 ```
 
+## github.com/frostgrove/vv/auth/access
+```go
+const PermRoleRead auth.Permission = "role.read" ...
+const AttrSubjectID = "subject_id" ...
+const DefaultSessionTTL = 30 * 24 * time.Hour ...
+const CodeBadCredentials errs.Code = "bad_credentials" ...
+const ReasonSignedOut = "signed out" ...
+const CodeUnknownRole errs.Code = "unknown_role" ...
+const CodeSystemRole errs.Code = "system_role"
+const CodeUnknownSubjectType errs.Code = "unknown_subject_type"
+const MaxUserAgent = 256
+const ProviderPassword = "password"
+const RoleAdmin auth.Role = "admin"
+const TokenBytes = 32
+var RolePaths = port.MustPathMap[Role](port.PathMap{ ... }) ...
+var AuthBodyPaths = port.Fields{ ... }
+var CredentialRepository = sqlrepo.Define[Credential, uuid.UUID, CredentialUpdate]("")
+var Credential_ = specs.Metamodel[Credential, CredentialAttrs]()
+var ErrNoRefresh = errors.New("access: this subject's strategy does not rotate")
+var ErrSecretFormat = errors.New("access: unreadable password hash")
+var PermissionRepository = sqlrepo.Define[Permission, uuid.UUID, PermissionUpdate]("")
+var Permission_ = specs.Metamodel[Permission, PermissionAttrs]()
+var RolePermissionRepository = sqlrepo.Define[RolePermission, uuid.UUID, RolePermissionUpdate]("")
+var RolePermission_ = specs.Metamodel[RolePermission, RolePermissionAttrs]()
+var RoleRepository = sqlrepo.Define[Role, uuid.UUID, RoleUpdate]("")
+var Role_ = specs.Metamodel[Role, RoleAttrs]()
+var SessionRepository = sqlrepo.Define[Session, uuid.UUID, SessionUpdate]("")
+var Session_ = specs.Metamodel[Session, SessionAttrs]()
+var SubjectPermissionRepository = sqlrepo.Define[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]("")
+var SubjectPermission_ = specs.Metamodel[SubjectPermission, SubjectPermissionAttrs]()
+var SubjectRoleRepository = sqlrepo.Define[SubjectRole, uuid.UUID, SubjectRoleUpdate]("")
+var SubjectRole_ = specs.Metamodel[SubjectRole, SubjectRoleAttrs]()
+func BadSessionID(raw string) error
+func DummyHash() string
+func HashToken(token string) string
+func IsNotFound(err error) bool
+func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *SignUpUseCase[P], error)
+func NewGuard(authenticator *SessionAuthenticator) *auth.Guard
+func NewPermissionService(store *Store) *port.DefaultService[Permission, uuid.UUID, PermissionUpdate]
+func NewToken() (string, error)
+func OfSubject(ref SubjectRef) crud.Option
+func PermissionPolicy() security.Policy[Permission, uuid.UUID]
+func PermissionQuery() *query.Config
+func RolePolicy() security.Policy[Role, uuid.UUID]
+func RoleQuery() *query.Config
+func Slugify(input string) string
+func Sync(ctx context.Context, store *Store, declared []ModuleGrants, ...) error
+type Agent struct{ ... }
+type Argon2Hasher struct{ ... }
+    func NewHasher() *Argon2Hasher
+type AttachPermissionCommand struct{ ... }
+type AuthResponse struct{ ... }
+type ChangePasswordCommand struct{ ... }
+type ChangePasswordUseCase struct{ ... }
+    func NewChangePassword(dependencies *Deps) *ChangePasswordUseCase
+type ChangeSecretRequest struct{ ... }
+type Clock func() time.Time
+type Config struct{ ... }
+type Credential struct{ ... }
+type CredentialAttrs struct{ ... }
+type CredentialRepo = crud.Repo[Credential, uuid.UUID, CredentialUpdate]
+    func NewCredentialRepository(src crud.Source) *CredentialRepo
+type CredentialUpdate struct{ ... }
+type Deps struct{ ... }
+type Directories map[SubjectType]Directory
+    func MustDirectories(all ...Directory) Directories
+    func NewDirectories(all ...Directory) (Directories, error)
+type Directory interface{ ... }
+type DirectoryLookup interface{ ... }
+type Endpoints struct{ ... }
+type EnrollCommand struct{ ... }
+type EnrollUseCase struct{ ... }
+    func NewEnroll(dependencies *Deps) *EnrollUseCase
+type GrantPermissionCommand struct{ ... }
+type GrantRoleCommand struct{ ... }
+type GrantService struct{ ... }
+    func NewGrantService(store *Store) *GrantService
+type Grants interface{ ... }
+type GrantsDto struct{ ... }
+type GrantsService struct{ ... }
+    func NewGrants(store *Store, directories Directories) *GrantsService
+type Hasher interface{ ... }
+type Issued struct{ ... }
+type LoginCommand struct{ ... }
+type LoginUseCase struct{ ... }
+    func NewLogin(dependencies *Deps) *LoginUseCase
+type LogoutAllCommand struct{ ... }
+type LogoutAllUseCase struct{ ... }
+    func NewLogoutAll(dependencies *Deps) *LogoutAllUseCase
+type LogoutCommand struct{ ... }
+type LogoutResponse struct{ ... }
+type LogoutUseCase struct{ ... }
+    func NewLogout(dependencies *Deps) *LogoutUseCase
+type ModuleGrants struct{ ... }
+    func OwnGrants() ModuleGrants
+type MountedSubject struct{ ... }
+type OpenSessionCommand struct{ ... }
+type PasswordConfig struct{ ... }
+type Permission struct{ ... }
+type PermissionAttrs struct{ ... }
+type PermissionDef struct{ ... }
+type PermissionRepo = crud.Repo[Permission, uuid.UUID, PermissionUpdate]
+    func NewPermissionRepository(src crud.Source) *PermissionRepo
+type PermissionUpdate struct{ ... }
+type Principal struct{ ... }
+    func PrincipalFrom(ctx context.Context) (*Principal, bool)
+    func Require(ctx context.Context, permissions ...auth.Permission) (*Principal, error)
+    func RequirePrincipal(ctx context.Context) (*Principal, error)
+type PrincipalDto struct{ ... }
+    func NewPrincipalDto(principal *Principal) PrincipalDto
+type Profile struct{ ... }
+type RefreshRequest struct{ ... }
+type Registrar[P any] interface{ ... }
+type Role struct{ ... }
+type RoleAttrs struct{ ... }
+type RolePermission struct{ ... }
+type RolePermissionAttrs struct{ ... }
+type RolePermissionRepo = crud.Repo[RolePermission, uuid.UUID, RolePermissionUpdate]
+    func NewRolePermissionRepository(src crud.Source) *RolePermissionRepo
+type RolePermissionUpdate struct{ ... }
+type RolePermissionsAttrs struct{ ... }
+type RoleRepo = crud.Repo[Role, uuid.UUID, RoleUpdate]
+    func NewRoleRepository(src crud.Source) *RoleRepo
+type RoleService struct{ ... }
+    func NewRoleService(store *Store) *RoleService
+type RoleUpdate struct{ ... }
+type Runtime struct{ ... }
+    func New(spec RuntimeSpec) (*Runtime, error)
+type RuntimeSpec struct{ ... }
+type Session struct{ ... }
+type SessionAttrs struct{ ... }
+type SessionAuthenticator struct{ ... }
+    func NewAuthenticator(store *Store, grants *GrantsService, configuration Config, logger *slog.Logger) *SessionAuthenticator
+type SessionConfig struct{ ... }
+type SessionDto struct{ ... }
+    func NewSessionDto(session Session, current uuid.UUID) SessionDto
+type SessionIssuer interface{ ... }
+type SessionRefresher interface{ ... }
+type SessionRepo = crud.Repo[Session, uuid.UUID, SessionUpdate]
+    func NewSessionRepository(src crud.Source) *SessionRepo
+type SessionUpdate struct{ ... }
+type SetPasswordCommand struct{ ... }
+type SetPasswordUseCase struct{ ... }
+    func NewSetPassword(dependencies *Deps) *SetPasswordUseCase
+type SignInRequest struct{ ... }
+type SignUpUseCase[P any] struct{ ... }
+    func NewSignUp[P any](dependencies *Deps, subject Subject, issuer SessionIssuer, ...) *SignUpUseCase[P]
+type Store struct{ ... }
+    func NewStore(src crud.Source) *Store
+type Strategy interface{ ... }
+    func OpaqueToken() Strategy
+type StrategyDeps struct{ ... }
+type Subject struct{ ... }
+type SubjectPermission struct{ ... }
+type SubjectPermissionAttrs struct{ ... }
+type SubjectPermissionPermissionAttrs struct{ ... }
+type SubjectPermissionRepo = crud.Repo[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]
+    func NewSubjectPermissionRepository(src crud.Source) *SubjectPermissionRepo
+type SubjectPermissionUpdate struct{ ... }
+type SubjectRef struct{ ... }
+    func SubjectParam(rawType, rawID string, directories DirectoryLookup) (SubjectRef, error)
+type SubjectRole struct{ ... }
+type SubjectRoleAttrs struct{ ... }
+type SubjectRoleRepo = crud.Repo[SubjectRole, uuid.UUID, SubjectRoleUpdate]
+    func NewSubjectRoleRepository(src crud.Source) *SubjectRoleRepo
+type SubjectRoleRoleAttrs struct{ ... }
+type SubjectRoleUpdate struct{ ... }
+type SubjectSpec[P any] struct{ ... }
+type SubjectType string
+```
+
+## github.com/frostgrove/vv/auth/access/http/accesshttp
+```go
+const Register = "register" ...
+type Route struct{ ... }
+type Table struct{ ... }
+    func For(mounted *access.MountedSubject) Table
+```
+
+## github.com/frostgrove/vv/auth/access/http/accessnet
+```go
+type Handler struct{ ... }
+    func New(mounted *access.MountedSubject, options ...porthttp.RenderOption) *Handler
+type RefreshHandler struct{ ... }
+    func NewRefresh(mounted *access.MountedSubject, options ...porthttp.RenderOption) *RefreshHandler
+type RegisterHandler[P any] struct{ ... }
+    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P], ...) *RegisterHandler[P]
+```
+
+## github.com/frostgrove/vv/auth/access/accessjwt
+```go
+const DefaultAccessTTL = 5 * time.Minute ...
+func Strategy(spec Spec) access.Strategy
+type Claims struct{ ... }
+type Outcome int
+    const Rotate Outcome = iota ...
+    func Classify(presented Presented, now time.Time, grace time.Duration) Outcome
+type Presented struct{ ... }
+type RevocationList interface{ ... }
+type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis
+```go
+const DefaultPrefix = "access:revoked:"
+const MinimumTTL = time.Second
+type List struct{ ... }
+    func New(client redis.UniversalClient, options ...Option) (*List, error)
+type Option func(*List)
+    func Prefix(prefix string) Option
+```
+
+## github.com/frostgrove/vv/auth/access/http/accessfiber
+```go
+type Handler struct{ ... }
+    func New(mounted *access.MountedSubject) *Handler
+type RefreshHandler struct{ ... }
+    func NewRefresh(mounted *access.MountedSubject) *RefreshHandler
+type RegisterHandler[P any] struct{ ... }
+    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P]) *RegisterHandler[P]
+```
+
+## github.com/frostgrove/vv/auth/access/http/accessgin
+```go
+type Handler struct{ ... }
+    func New(mounted *access.MountedSubject) *Handler
+type RefreshHandler struct{ ... }
+    func NewRefresh(mounted *access.MountedSubject) *RefreshHandler
+type RegisterHandler[P any] struct{ ... }
+    func NewRegister[P any](mounted *access.MountedSubject, signUp *access.SignUpUseCase[P]) *RegisterHandler[P]
+```
+
 ## github.com/frostgrove/vv/auth/authjwt
 ```go
 const JWKSFetchTimeout = 10 * time.Second
 const JWKSMaxBody = 1 << 20
 const JWKSMinRefresh = time.Minute
 func Authenticator[C any](p *Parser[C], to func(ctx context.Context, c C) (auth.Principal, error)) auth.Authenticator
-func Standard(k KeySource, roles auth.RoleMap, opts ...Option) auth.Authenticator
+func Standard(k KeySource, roles auth.RoleMap, options ...Option) auth.Authenticator
 type Claims struct{ ... }
 type JWKSOption func(*jwks)
     func JWKSClient(c *http.Client) JWKSOption
@@ -802,7 +1034,7 @@ type KeySource struct{ ... }
     func ECDSA(pub *ecdsa.PublicKey) KeySource
     func EdDSA(pub ed25519.PublicKey) KeySource
     func HMAC(secret []byte) KeySource
-    func JWKS(rawURL string, opts ...JWKSOption) KeySource
+    func JWKS(rawURL string, options ...JWKSOption) KeySource
     func RSA(pub *rsa.PublicKey) KeySource
 type Keyfunc func(ctx context.Context, t *jwt.Token) (any, error)
 type Option func(*settings)
@@ -813,23 +1045,23 @@ type Option func(*settings)
     func Issuer(iss string) Option
     func Leeway(d time.Duration) Option
 type Parser[C any] struct{ ... }
-    func New[C any](k KeySource, opts ...Option) *Parser[C]
+    func New[C any](k KeySource, options ...Option) *Parser[C]
 ```
 
 ## github.com/frostgrove/vv/auth/http/authfiber
 ```go
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) fiber.Handler
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handler
 ```
 
 ## github.com/frostgrove/vv/auth/http/authgin
 ```go
-func Middleware(g *auth.Guard, opts ...porthttp.RenderOption) gin.HandlerFunc
+func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.HandlerFunc
 ```
 
 ## github.com/frostgrove/vv/auth/rpc/authgrpc
 ```go
-func Stream(g *auth.Guard, opts ...Option) grpc.StreamServerInterceptor
-func Unary(g *auth.Guard, opts ...Option) grpc.UnaryServerInterceptor
+func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor
+func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor
 type Option func(*config)
     func Skip(fullMethods ...string) Option
 ```
@@ -837,8 +1069,8 @@ type Option func(*config)
 ## github.com/frostgrove/vv/crud/adapter/crudpgx
 ```go
 type Executor struct{ ... }
-    func From(q Queryer, opts ...Option) Executor
-    func Open(q Queryer, opts ...Option) Executor
+    func From(q Queryer, options ...Option) Executor
+    func Open(q Queryer, options ...Option) Executor
 type Option func(*config)
     func WithFaults(c errs.Classifier) Option
 type Queryer interface{ ... }
@@ -848,17 +1080,17 @@ type Tx struct{ ... }
 ## github.com/frostgrove/vv/crud/http/crudfiber
 ```go
 func DefaultErrorHandler(c fiber.Ctx, err error) error
-func ErrorHandler(opts ...crudhttp.RenderOption) fiber.ErrorHandler
-func Errors(opts ...crudhttp.RenderOption) fiber.Handler
+func ErrorHandler(options ...crudhttp.RenderOption) fiber.ErrorHandler
+func Errors(options ...crudhttp.RenderOption) fiber.Handler
 func Status(err error) int
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
 type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
-    func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
+    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
 type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
-    func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
+    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
@@ -868,7 +1100,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(fiber.Ctx, error) error) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
     func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U]
@@ -881,16 +1113,16 @@ type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 ## github.com/frostgrove/vv/crud/http/crudgin
 ```go
 func DefaultErrorHandler(c *gin.Context, err error)
-func Errors(opts ...crudhttp.RenderOption) gin.HandlerFunc
+func Errors(options ...crudhttp.RenderOption) gin.HandlerFunc
 func Status(err error) int
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
 type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
-    func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
+    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
 type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
-    func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
+    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
@@ -900,7 +1132,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
     func WithErrorHandler[M any, ID comparable, U any](fn func(*gin.Context, error)) Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
     func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*gin.Context) ([]crud.Option, error)) Option[M, ID, U]
@@ -920,18 +1152,18 @@ const ServicePrefix = "vv.crud.v1."
 var LocaleKeys = []string{ ... }
 func Code(err error) codes.Code
 func CodeFor(k errs.Kind) codes.Code
-func Errors(opts ...RenderOption) grpc.UnaryServerInterceptor
+func Errors(options ...RenderOption) grpc.UnaryServerInterceptor
 func KindForCode(c codes.Code) errs.Kind
 func ServiceName(name string) string
-func StreamErrors(opts ...RenderOption) grpc.StreamServerInterceptor
-func Transport(conn grpc.ClientConnInterface, name string, opts ...TransportOption) remote.Transport
+func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor
+func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport
 func WithLocale(ctx context.Context, locale string) context.Context
 type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
-    func New[M any, ID comparable, U any](repo Repository[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
-    func Serving[M any, ID comparable, U any](svc Service[M, ID, U], opts ...Option[M, ID, U]) *Handler[M, ID, U]
+    func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
+    func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
 type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
-    func NewFor[In, M any, ID comparable, U any](repo Repository[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
-    func ServingFor[In, M any, ID comparable, U any](svc Service[M, ID, U], mapper Mapper[In, M], opts ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
+    func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
+    func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
 type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func AllowClientID[M any, ID comparable, U any]() Option[M, ID, U]
@@ -939,7 +1171,7 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func BeforeUpdate[M any, ID comparable, U any](fn func(context.Context, ID, *U) error) Option[M, ID, U]
     func MaxBulk[M any, ID comparable, U any](n int) Option[M, ID, U]
     func ReadOnly[M any, ID comparable, U any]() Option[M, ID, U]
-    func WithQuery[M any, ID comparable, U any](cfg *query.Config) Option[M, ID, U]
+    func WithQuery[M any, ID comparable, U any](config *query.Config) Option[M, ID, U]
     func WithQueryFor[M any, ID comparable, U any](defaultConfig *query.Config, variants map[string]*query.Config, ...) Option[M, ID, U]
     func WithRenderer[M any, ID comparable, U any](r Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(context.Context) ([]crud.Option, error)) Option[M, ID, U]
@@ -954,9 +1186,9 @@ type Renderer interface{ ... }
 type Repository[M any, ID comparable, U any] = port.Repository[M, ID, U]
 type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 type StatusRenderer struct{ ... }
-    func NewRenderer(opts ...RenderOption) *StatusRenderer
+    func NewRenderer(options ...RenderOption) *StatusRenderer
 type TransportOption func(*transport)
-    func WithCallOptions(opts ...grpc.CallOption) TransportOption
+    func WithCallOptions(options ...grpc.CallOption) TransportOption
     func WithVocabulary(c *errs.Codes) TransportOption
 ```
 
@@ -983,15 +1215,15 @@ type Validator interface{ ... }
 ## github.com/frostgrove/vv/utils/vvdb/dbpgx
 ```go
 func Apply(pc *pgxpool.Config, p *vvdb.Pool) error
-func Connect(ctx context.Context, c *vvdb.Config, opts ...Option) (*pgxpool.Pool, error)
-func ConnectReadWrite(ctx context.Context, c *vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool, err error)
-func MustConnect(ctx context.Context, c *vvdb.Config, opts ...Option) *pgxpool.Pool
-func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, opts ...Option) (primary, replica *pgxpool.Pool)
+func Connect(ctx context.Context, c *vvdb.Config, options ...Option) (*pgxpool.Pool, error)
+func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool, err error)
+func MustConnect(ctx context.Context, c *vvdb.Config, options ...Option) *pgxpool.Pool
+func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool)
 type Option func(*pgxpool.Config)
 ```
 
 ## github.com/frostgrove/vv/utils/vvgoose
 ```go
-func Execute(cfg *vvdb.Config)
+func Execute(config *vvdb.Config)
 ```
 

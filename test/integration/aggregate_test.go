@@ -29,7 +29,7 @@ func aggSeed(t *testing.T, tg egTarget) {
 		{ID: 5, Tenant: 2, Name: "e", Score: crud.Set(200)},
 	} {
 		row := r
-		if err := rows.Save(ctx, &row); err != nil {
+		if _, err := rows.Save(ctx, &row); err != nil {
 			t.Fatal(err)
 		}
 	}

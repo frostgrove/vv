@@ -56,7 +56,7 @@ func TestDatabaseSQLSharedTransaction(t *testing.T) {
 
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 	u := User{TenantID: 1, Email: "sql-tx@x.io", Name: "Joined"}
-	if err := repository.Save(txCtx, &u); err != nil {
+	if _, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestDatabaseSQLSavepoint(t *testing.T) {
 
 	err := crud.InTx(ctx, source, func(ctx context.Context) error {
 		keep := User{TenantID: 1, Email: "keep@x.io", Name: "keep"}
-		if err := repository.Save(ctx, &keep); err != nil {
+		if _, err := repository.Save(ctx, &keep); err != nil {
 			return err
 		}
 		ex, _ := crud.ExecutorFrom(ctx)
@@ -96,7 +96,7 @@ func TestDatabaseSQLSavepoint(t *testing.T) {
 			return err
 		}
 		drop := User{TenantID: 1, Email: "drop@x.io", Name: "drop"}
-		if err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
+		if _, err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)

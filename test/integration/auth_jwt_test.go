@@ -103,7 +103,7 @@ func authSeed(t *testing.T, source crud.Source) {
 		{ID: 2, Tenant: 1, Name: "t1-second"},
 		{ID: 3, Tenant: 2, Name: "t2-only"},
 	} {
-		if err := rows.Save(context.Background(), &r); err != nil {
+		if _, err := rows.Save(context.Background(), &r); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -159,7 +159,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 			t.Run("a create into another tenant is refused", func(t *testing.T) {
 				ctx := authenticate(t, authToken(t, "editor", 1, nil))
 				row := EgRow{ID: 99, Tenant: 2, Name: "smuggled"}
-				if err := gated.Save(ctx, &row); !errors.Is(err, crud.ErrForbidden) {
+				if _, err := gated.Save(ctx, &row); !errors.Is(err, crud.ErrForbidden) {
 					t.Fatalf("writing into another tenant answered %v, want a denial", err)
 				}
 				// And it really did not land.
@@ -171,7 +171,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 			t.Run("control: a create into the token's own tenant lands", func(t *testing.T) {
 				ctx := authenticate(t, authToken(t, "editor", 1, nil))
 				row := EgRow{ID: 98, Tenant: 1, Name: "mine"}
-				if err := gated.Save(ctx, &row); err != nil {
+				if _, err := gated.Save(ctx, &row); err != nil {
 					t.Fatalf("writing into the caller's own tenant was refused: %v", err)
 				}
 				if _, err := AuthRows.Bind(tg.source).GetByID(context.Background(), 98); err != nil {

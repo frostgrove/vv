@@ -375,7 +375,7 @@ func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 			// the warning in the guide.
 			before = gormstore.LabelCreations.Load()
 			viaVV := Label{}
-			if err := labels.Save(ctx, &viaVV); err != nil {
+			if _, err := labels.Save(ctx, &viaVV); err != nil {
 				t.Fatal(err)
 			}
 			if n := gormstore.LabelCreations.Load(); n != before {

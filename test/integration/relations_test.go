@@ -79,7 +79,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	ann = Author{Name: "Ann"}
 	bob = Author{Name: "Bob"}
 	for _, a := range []*Author{&ann, &bob} {
-		if err := b.authors.Save(ctx, a); err != nil {
+		if _, err := b.authors.Save(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,14 +89,14 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 	draft = Article{AuthorID: ann.ID, Title: "draft", Body: "wip", Views: 1}
 	traits = Article{AuthorID: bob.ID, Title: "rust traits", Body: "about traits", Views: 50, PublishedAt: crud.Set(now)}
 	for _, a := range []*Article{&generics, &draft, &traits} {
-		if err := b.articles.Save(ctx, a); err != nil {
+		if _, err := b.articles.Save(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	goTag, rustTag := Tag{Slug: "go"}, Tag{Slug: "rust"}
 	for _, tg := range []*Tag{&goTag, &rustTag} {
-		if err := b.tags.Save(ctx, tg); err != nil {
+		if _, err := b.tags.Save(ctx, tg); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -115,7 +115,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		{ArticleID: generics.ID, WordCount: 500},
 		{ArticleID: traits.ID, WordCount: 50},
 	} {
-		if err := b.stats.Save(ctx, st); err != nil {
+		if _, err := b.stats.Save(ctx, st); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,7 +125,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		{ArticleID: generics.ID, AuthorID: ann.ID, Body: "thanks", Approved: false},
 		{ArticleID: traits.ID, AuthorID: ann.ID, Body: "clear", Approved: true},
 	} {
-		if err := b.comments.Save(ctx, c); err != nil {
+		if _, err := b.comments.Save(ctx, c); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -319,7 +319,7 @@ func TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime(t *testing.T) {
 			_, _, generics, _, _ := seedBlog(t, b)
 
 			second := ArticleStats{ArticleID: generics.ID, WordCount: 999}
-			if err := b.stats.Save(ctx, &second); err != nil {
+			if _, err := b.stats.Save(ctx, &second); err != nil {
 				t.Fatal(err)
 			}
 			first, err := b.stats.GetAll(ctx, crud.Where(crud.Eq("ArticleID", generics.ID)),

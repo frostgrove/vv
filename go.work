@@ -2,6 +2,11 @@ go 1.26.6
 
 use (
 	.
+	./auth/access
+	./auth/access/accessjwt
+	./auth/access/accessjwt/revokeredis
+	./auth/access/http/accessfiber
+	./auth/access/http/accessgin
 	./auth/authjwt
 	./auth/http/authfiber
 	./auth/http/authgin

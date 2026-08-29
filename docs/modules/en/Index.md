@@ -70,6 +70,12 @@ long form of it.
 | [authgin](authgin.md) | `vv/auth/http/authgin` | **Module** — the Gin middleware |
 | [authfiber](authfiber.md) | `vv/auth/http/authfiber` | **Module** — the Fiber v3 middleware |
 | [authgrpc](authgrpc.md) | `vv/auth/rpc/authgrpc` | **Module** — the gRPC unary and stream interceptors |
+| [access](access.md) | `vv/auth/access` | **Module** — sessions, credentials, roles and permissions over seven tables, keyed by subject rather than by user |
+| [accessjwt](accessjwt.md) | `vv/auth/access/accessjwt` | **Module** — signed access tokens over a rotating refresh credential, with replay detection |
+| [revokeredis](revokeredis.md) | `vv/auth/access/accessjwt/revokeredis` | **Module** — a revocation list for it, in Redis |
+| [accessnet](access.md) | `vv/auth/access/http/accessnet` | The `net/http` sign-in routes. Stdlib, so it ships inside the access module |
+| [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Module** — the same routes on Gin |
+| [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Module** — the same routes on Fiber v3 |
 
 `auth` is deliberately **not** on the contract manifest. It is a package with
 two implementations of its own interface, which is the normal case rather than

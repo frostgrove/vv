@@ -98,7 +98,7 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 
 			for _, r := range []SdRow{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}, {ID: 3, Name: "c"}} {
 				row := r
-				if err := soft.Save(ctx, &row); err != nil {
+				if _, err := soft.Save(ctx, &row); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -147,7 +147,7 @@ func TestASoftDeleteAllHonoursTheFilter(t *testing.T) {
 
 			for _, r := range []SdRow{{ID: 1, Name: "keep"}, {ID: 2, Name: "drop"}, {ID: 3, Name: "drop"}} {
 				row := r
-				if err := soft.Save(ctx, &row); err != nil {
+				if _, err := soft.Save(ctx, &row); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -179,7 +179,7 @@ func TestDeletingATombstoneAgainChangesNothing(t *testing.T) {
 	soft := SoftRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
-	if err := soft.Save(ctx, &row); err != nil {
+	if _, err := soft.Save(ctx, &row); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := soft.Delete(ctx, 1); n != 1 {
@@ -201,7 +201,7 @@ func TestATombstonedRowCannotBeUpdated(t *testing.T) {
 	soft := SoftRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
-	if err := soft.Save(ctx, &row); err != nil {
+	if _, err := soft.Save(ctx, &row); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := soft.Delete(ctx, 1); err != nil {
@@ -223,7 +223,7 @@ func TestWithoutTheSettingADeleteStillRemovesTheRow(t *testing.T) {
 	raw := RawRows.Bind(tg.source)
 
 	row := SdRow{ID: 1, Name: "a"}
-	if err := raw.Save(ctx, &row); err != nil {
+	if _, err := raw.Save(ctx, &row); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := raw.Delete(ctx, 1); err != nil {

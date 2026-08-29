@@ -97,6 +97,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | Authorize by role and permission without a policy per endpoint | the application author protecting every resource | `security` | auth | covered |
 | [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | Configure a database once, in one file, for any engine | the application author | `vvdb` | utils | covered |
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | Generate and run database migrations from the application config | the application author | `vvgoose` | vvdb · vvcfg | covered |
+| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | Sign people in without writing an auth system | the application author | `access` | accessjwt · revokeredis · accessnet/gin/fiber | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -123,6 +124,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-020](modules/security/UC-020-authorize-without-a-policy-per-endpoint.md) | `security` | auth | [[FL-020]] [[FL-007]] [[FL-008]] [[FL-011]] |
 | [UC-021](modules/vvdb/UC-021-configure-a-database-once-in-one-file.md) | `vvdb` | utils | [[FL-021]] |
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | `vvgoose` | vvdb · vvcfg | [[FL-022]] |
+| [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | `access` | accessjwt · revokeredis · accessnet/gin/fiber | [[FL-023]] |
 
 ## Gaps
 

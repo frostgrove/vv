@@ -144,14 +144,14 @@ func uuSeed(t *testing.T, source crud.Source) (uuid.UUID, []uuid.UUID) {
 		Kind:      RoomGroup,
 		Name:      &name,
 	}
-	if err := rooms.Save(ctx, &room); err != nil {
+	if _, err := rooms.Save(ctx, &room); err != nil {
 		t.Fatalf("saving a uuid-keyed row: %v", err)
 	}
 
 	var ids []uuid.UUID
 	for _, role := range []string{"owner", "member"} {
 		m := RoomMember{ID: uuid.Must(uuid.NewV7()), RoomID: room.ID, Role: &role}
-		if err := members.Save(ctx, &m); err != nil {
+		if _, err := members.Save(ctx, &m); err != nil {
 			t.Fatalf("saving a member: %v", err)
 		}
 		ids = append(ids, m.ID)
@@ -359,7 +359,7 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 
 			// No ID — exactly what ent's Default(uuid.NewV7) would have filled in.
 			blank := Room{Kind: RoomDirect, CreatedAt: time.Now().UTC()}
-			if err := rooms.Save(ctx, &blank); !errors.Is(err, crud.ErrMissingID) {
+			if _, err := rooms.Save(ctx, &blank); !errors.Is(err, crud.ErrMissingID) {
 				t.Fatalf("err = %v, want ErrMissingID: an unset noauto key must be refused, "+
 					"not written as the zero UUID", err)
 			}
@@ -371,7 +371,7 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 			// The column is NOT NULL with no database default, so the database is
 			// the one that says no — which is the failure mode to know about.
 			zeroTime := Room{ID: uuid.Must(uuid.NewV7()), Kind: RoomDirect}
-			err := rooms.Save(ctx, &zeroTime)
+			_, err := rooms.Save(ctx, &zeroTime)
 			if err != nil {
 				t.Logf("the database refused a zero created_at: %v", err)
 				return

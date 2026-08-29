@@ -81,6 +81,12 @@
 | [authgin](authgin.md) | `vv/auth/http/authgin` | **Модуль** — middleware для Gin |
 | [authfiber](authfiber.md) | `vv/auth/http/authfiber` | **Модуль** — middleware для Fiber v3 |
 | [authgrpc](authgrpc.md) | `vv/auth/rpc/authgrpc` | **Модуль** — unary- и stream-интерсепторы gRPC |
+| [access](access.md) | `vv/auth/access` | **Модуль** — сессии, учётные данные, роли и права поверх семи таблиц, с ключом по субъекту, а не по пользователю |
+| [accessjwt](accessjwt.md) | `vv/auth/access/accessjwt` | **Модуль** — подписанные access-токены поверх ротируемого refresh, с детекцией реплея |
+| [revokeredis](revokeredis.md) | `vv/auth/access/accessjwt/revokeredis` | **Модуль** — список отзыва для него, в Redis |
+| [accessnet](access.md) | `vv/auth/access/http/accessnet` | Роуты входа на `net/http`. Stdlib, поэтому едет внутри модуля access |
+| [accessgin](access.md) | `vv/auth/access/http/accessgin` | **Модуль** — те же роуты на Gin |
+| [accessfiber](access.md) | `vv/auth/access/http/accessfiber` | **Модуль** — те же роуты на Fiber v3 |
 
 `auth` намеренно **не** входит в манифест контрактов. Это пакет с двумя
 реализациями собственного интерфейса — нормальный случай, а не исключение

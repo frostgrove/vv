@@ -67,7 +67,7 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 
 	t.Run("a write lands on the primary", func(t *testing.T) {
 		row := ShardRow{ID: 9, Name: "written"}
-		if err := repository.Save(ctx, &row); err != nil {
+		if _, err := repository.Save(ctx, &row); err != nil {
 			t.Fatal(err)
 		}
 		var name string
@@ -195,7 +195,7 @@ func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 
 	err := repository.Tx(ctx, func(ctx context.Context) error {
 		row := ShardRow{ID: 42, Name: "in-tx"}
-		if err := repository.Save(ctx, &row); err != nil {
+		if _, err := repository.Save(ctx, &row); err != nil {
 			return err
 		}
 		// Read-your-own-writes: the row exists only in this transaction, on the

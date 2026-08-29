@@ -72,7 +72,7 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				{ID: 1, Select: "from", FullName: "Ada Lovelace", Flag: true},
 				{ID: 2, Select: "where", FullName: "Bob Barker", Flag: false},
 			} {
-				if err := odd.Save(ctx, &o); err != nil {
+				if _, err := odd.Save(ctx, &o); err != nil {
 					t.Fatalf("INSERT into a table with awkward column names: %v", err)
 				}
 			}
@@ -113,7 +113,7 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 
 			// The conflict clause, which quotes the same columns a third time.
 			again := EgOdd{ID: 1, Select: "select", FullName: "Ada L.", Flag: false}
-			if err := odd.Save(ctx, &again); err != nil {
+			if _, err := odd.Save(ctx, &again); err != nil {
 				t.Fatalf("upsert over awkward column names: %v", err)
 			}
 			back, err := odd.GetByID(ctx, 1)
@@ -169,7 +169,7 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 			rows := EgRows.Bind(tg.source)
 
 			first := EgRow{ID: 1, Tenant: 7, Name: "before", Note: crud.Set("kept"), Score: crud.Set(1)}
-			if err := rows.Save(ctx, &first); err != nil {
+			if _, err := rows.Save(ctx, &first); err != nil {
 				t.Fatal(err)
 			}
 
@@ -177,7 +177,7 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 			// to NULL, a bool flipped — and the immutable column, which the
 			// conflict clause must leave out however it is spelled.
 			second := EgRow{ID: 1, Tenant: 999, Name: "after", Note: crud.Null[string](), Score: crud.Set(2), Flag: true}
-			if err := rows.Save(ctx, &second); err != nil {
+			if _, err := rows.Save(ctx, &second); err != nil {
 				t.Fatal(err)
 			}
 
@@ -212,12 +212,12 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 			rows := EgRows.Bind(tg.source)
 
 			row := EgRow{ID: 1, Tenant: 7, Name: "before"}
-			if err := rows.Save(ctx, &row); err != nil {
+			if _, err := rows.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 			row.Tenant = 999 // immutable: the conflict clause will not write it
 			row.Name = "after"
-			if err := rows.Save(ctx, &row); err != nil {
+			if _, err := rows.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 
@@ -291,7 +291,7 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 			egWipe(t, tg.source)
 			plain := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
-			if err := plain.Save(ctx, &row); err != nil {
+			if _, err := plain.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 
@@ -350,7 +350,7 @@ func TestAFilteredUpdateIsAlsoNoticedByTheLock(t *testing.T) {
 			egWipe(t, tg.source)
 			plain := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
-			if err := plain.Save(ctx, &row); err != nil {
+			if _, err := plain.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 
@@ -390,7 +390,7 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 			egWipe(t, tg.source)
 			vers := EgVers.Bind(tg.source)
 			row := EgVer{ID: 1, Name: "start"}
-			if err := vers.Save(ctx, &row); err != nil {
+			if _, err := vers.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := vers.Update(ctx, 1, EgVerUpdate{Name: ptr("second")}); err != nil {
@@ -399,7 +399,7 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 
 			// row is the copy from before the update: version 0, stale.
 			row.Name = "resaved"
-			if err := vers.Save(ctx, &row); err != nil {
+			if _, err := vers.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
 			if row.Version != 1 {
@@ -660,7 +660,7 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 				if i%2 == 0 {
 					r.Score = crud.Set(7)
 				}
-				if err := rows.Save(ctx, &r); err != nil {
+				if _, err := rows.Save(ctx, &r); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -754,7 +754,7 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 			cons := EgConses.Bind(tg.source)
 
 			anchor := EgCons{Slug: "taken", Tag: crud.Set("t")}
-			if err := cons.Save(ctx, &anchor); err != nil {
+			if _, err := cons.Save(ctx, &anchor); err != nil {
 				t.Fatal(err)
 			}
 
@@ -764,10 +764,14 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 				run  func() error
 			}{
 				{"a duplicate unique key", errs.CodeUnique, func() error {
-					return cons.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("other")})
+					_, err := cons.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("other")})
+
+					return err
 				}},
 				{"a foreign key that points nowhere", errs.CodeForeignKey, func() error {
-					return cons.Save(ctx, &EgCons{Slug: "free", Tag: crud.Set("t"), Parent: crud.Set(int64(987654))})
+					_, err := cons.Save(ctx, &EgCons{Slug: "free", Tag: crud.Set("t"), Parent: crud.Set(int64(987654))})
+
+					return err
 				}},
 				{"a NULL in a NOT NULL column", errs.CodeRequired, func() error {
 					_, err := cons.Update(ctx, anchor.ID, EgConsUpdate{Tag: crud.Null[string]()})

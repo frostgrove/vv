@@ -160,7 +160,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 		if _, err := members.GetAll(txCtx); err != nil {
 			return err
 		}
-		if err := members.Save(txCtx, &Member{TeamID: team.ID, Name: name}); err != nil {
+		if _, err := members.Save(txCtx, &Member{TeamID: team.ID, Name: name}); err != nil {
 			return err
 		}
 		return boom

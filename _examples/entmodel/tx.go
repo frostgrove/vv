@@ -54,13 +54,13 @@ type (
 )
 
 // Commit calls f(ctx, m).
-func (this CommitFunc) Commit(ctx context.Context, tx *Tx) error {
-	return this(ctx, tx)
+func (f CommitFunc) Commit(ctx context.Context, tx *Tx) error {
+	return f(ctx, tx)
 }
 
 // Commit commits the transaction.
-func (this *Tx) Commit() error {
-	txDriver := this.config.driver.(*txDriver)
+func (tx *Tx) Commit() error {
+	txDriver := tx.config.driver.(*txDriver)
 	var fn Committer = CommitFunc(func(context.Context, *Tx) error {
 		return txDriver.tx.Commit()
 	})
@@ -70,12 +70,12 @@ func (this *Tx) Commit() error {
 	for i := len(hooks) - 1; i >= 0; i-- {
 		fn = hooks[i](fn)
 	}
-	return fn.Commit(this.ctx, this)
+	return fn.Commit(tx.ctx, tx)
 }
 
 // OnCommit adds a hook to call on commit.
-func (this *Tx) OnCommit(f CommitHook) {
-	txDriver := this.config.driver.(*txDriver)
+func (tx *Tx) OnCommit(f CommitHook) {
+	txDriver := tx.config.driver.(*txDriver)
 	txDriver.mu.Lock()
 	txDriver.onCommit = append(txDriver.onCommit, f)
 	txDriver.mu.Unlock()
@@ -110,13 +110,13 @@ type (
 )
 
 // Rollback calls f(ctx, m).
-func (this RollbackFunc) Rollback(ctx context.Context, tx *Tx) error {
-	return this(ctx, tx)
+func (f RollbackFunc) Rollback(ctx context.Context, tx *Tx) error {
+	return f(ctx, tx)
 }
 
 // Rollback rollbacks the transaction.
-func (this *Tx) Rollback() error {
-	txDriver := this.config.driver.(*txDriver)
+func (tx *Tx) Rollback() error {
+	txDriver := tx.config.driver.(*txDriver)
 	var fn Rollbacker = RollbackFunc(func(context.Context, *Tx) error {
 		return txDriver.tx.Rollback()
 	})
@@ -126,28 +126,28 @@ func (this *Tx) Rollback() error {
 	for i := len(hooks) - 1; i >= 0; i-- {
 		fn = hooks[i](fn)
 	}
-	return fn.Rollback(this.ctx, this)
+	return fn.Rollback(tx.ctx, tx)
 }
 
 // OnRollback adds a hook to call on rollback.
-func (this *Tx) OnRollback(f RollbackHook) {
-	txDriver := this.config.driver.(*txDriver)
+func (tx *Tx) OnRollback(f RollbackHook) {
+	txDriver := tx.config.driver.(*txDriver)
 	txDriver.mu.Lock()
 	txDriver.onRollback = append(txDriver.onRollback, f)
 	txDriver.mu.Unlock()
 }
 
 // Client returns a Client that binds to current transaction.
-func (this *Tx) Client() *Client {
-	this.clientOnce.Do(func() {
-		this.client = &Client{config: this.config}
-		this.client.init()
+func (tx *Tx) Client() *Client {
+	tx.clientOnce.Do(func() {
+		tx.client = &Client{config: tx.config}
+		tx.client.init()
 	})
-	return this.client
+	return tx.client
 }
 
-func (this *Tx) init() {
-	this.Product = NewProductClient(this.config)
+func (tx *Tx) init() {
+	tx.Product = NewProductClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.
@@ -183,10 +183,10 @@ func newTx(ctx context.Context, drv dialect.Driver) (*txDriver, error) {
 
 // Tx returns the transaction wrapper (txDriver) to avoid Commit or Rollback calls
 // from the internal builders. Should be called only by the internal builders.
-func (this *txDriver) Tx(context.Context) (dialect.Tx, error) { return this, nil }
+func (tx *txDriver) Tx(context.Context) (dialect.Tx, error) { return tx, nil }
 
 // Dialect returns the dialect of the driver we started the transaction from.
-func (this *txDriver) Dialect() string { return this.drv.Dialect() }
+func (tx *txDriver) Dialect() string { return tx.drv.Dialect() }
 
 // Close is a nop close.
 func (*txDriver) Close() error { return nil }
@@ -200,21 +200,21 @@ func (*txDriver) Commit() error { return nil }
 func (*txDriver) Rollback() error { return nil }
 
 // Exec calls tx.Exec.
-func (this *txDriver) Exec(ctx context.Context, query string, args, v any) error {
-	return this.tx.Exec(ctx, query, args, v)
+func (tx *txDriver) Exec(ctx context.Context, query string, args, v any) error {
+	return tx.tx.Exec(ctx, query, args, v)
 }
 
 // Query calls tx.Query.
-func (this *txDriver) Query(ctx context.Context, query string, args, v any) error {
-	return this.tx.Query(ctx, query, args, v)
+func (tx *txDriver) Query(ctx context.Context, query string, args, v any) error {
+	return tx.tx.Query(ctx, query, args, v)
 }
 
 var _ dialect.Driver = (*txDriver)(nil)
 
 // ExecContext allows calling the underlying ExecContext method of the transaction if it is supported by it.
 // See, database/sql#Tx.ExecContext for more information.
-func (this *txDriver) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
-	ex, ok := this.tx.(interface {
+func (tx *txDriver) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
+	ex, ok := tx.tx.(interface {
 		ExecContext(context.Context, string, ...any) (stdsql.Result, error)
 	})
 	if !ok {
@@ -225,8 +225,8 @@ func (this *txDriver) ExecContext(ctx context.Context, query string, args ...any
 
 // QueryContext allows calling the underlying QueryContext method of the transaction if it is supported by it.
 // See, database/sql#Tx.QueryContext for more information.
-func (this *txDriver) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
-	q, ok := this.tx.(interface {
+func (tx *txDriver) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
+	q, ok := tx.tx.(interface {
 		QueryContext(context.Context, string, ...any) (*stdsql.Rows, error)
 	})
 	if !ok {

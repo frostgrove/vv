@@ -52,7 +52,7 @@ func gateSeed(t *testing.T, source crud.Source) {
 	parents, kids := EgParents.Bind(source), EgKids.Bind(source)
 
 	for _, p := range []EgParent{{ID: 1, Name: "t1"}, {ID: 2, Name: "t2"}} {
-		if err := parents.Save(ctx, &p); err != nil {
+		if _, err := parents.Save(ctx, &p); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,7 +61,7 @@ func gateSeed(t *testing.T, source crud.Source) {
 		{ID: 10, ParentID: crud.Set(int64(1)), Name: "t1"},
 		{ID: 11, ParentID: crud.Set(int64(1)), Name: "t2"},
 	} {
-		if err := kids.Save(ctx, &k); err != nil {
+		if _, err := kids.Save(ctx, &k); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -171,7 +171,7 @@ func TestABlueprintNarrowingAndAPolicyNarrowingBothApply(t *testing.T) {
 
 			// One more kid of t1's, tombstoned.
 			extra := EgKid{ID: 12, ParentID: crud.Set(int64(1)), Name: "TOMBSTONE"}
-			if err := EgKids.Bind(tg.source).Save(context.Background(), &extra); err != nil {
+			if _, err := EgKids.Bind(tg.source).Save(context.Background(), &extra); err != nil {
 				t.Fatal(err)
 			}
 

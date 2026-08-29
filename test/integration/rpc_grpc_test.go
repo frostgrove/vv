@@ -233,7 +233,7 @@ func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) 
 			walked++
 			egWipe(t, tg.source)
 			repository := EgConses.Bind(tg.source)
-			if err := repository.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("t")}); err != nil {
+			if _, err := repository.Save(ctx, &EgCons{Slug: "taken", Tag: crud.Set("t")}); err != nil {
 				t.Fatal(err)
 			}
 			c := grpcServeRepo(t, repository)

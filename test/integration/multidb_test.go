@@ -73,10 +73,10 @@ func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 		}
 	}
 
-	open := func(database string) *sql.DB {
-		database, err := sql.Open("pgx", shardDSN(t, database))
+	open := func(name string) *sql.DB {
+		database, err := sql.Open("pgx", shardDSN(t, name))
 		if err != nil {
-			t.Fatalf("opening %s: %v", database, err)
+			t.Fatalf("opening %s: %v", name, err)
 		}
 		database.SetMaxOpenConns(4)
 		t.Cleanup(func() { _ = database.Close() })
@@ -87,7 +87,7 @@ func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 			`DELETE FROM shard_notes`,
 		} {
 			if _, err := database.ExecContext(ctx, stmt); err != nil {
-				t.Fatalf("%s: %s: %v", database, stmt, err)
+				t.Fatalf("%s: %s: %v", name, stmt, err)
 			}
 		}
 		return database
@@ -146,12 +146,12 @@ func TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne(t *testing.
 	defer tx.Rollback()
 
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
-	if err := rowsA.Save(txCtx, &ShardRow{Name: "belongs-in-a"}); err != nil {
+	if _, err := rowsA.Save(txCtx, &ShardRow{Name: "belongs-in-a"}); err != nil {
 		t.Fatal(err)
 	}
 	// rowsB is bound to dbB and asked to write with a context carrying dbA's
 	// transaction. It obeys the context.
-	if err := rowsB.Save(txCtx, &ShardRow{Name: "meant-for-b"}); err != nil {
+	if _, err := rowsB.Save(txCtx, &ShardRow{Name: "meant-for-b"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -181,10 +181,10 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 	}
 
 	txCtx := crud.WithExecutorFor(ctx, dbA, crudsql.From(tx))
-	if err := rowsA.Save(txCtx, &ShardRow{Name: "in-the-transaction"}); err != nil {
+	if _, err := rowsA.Save(txCtx, &ShardRow{Name: "in-the-transaction"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := rowsB.Save(txCtx, &ShardRow{Name: "in-shard-b"}); err != nil {
+	if _, err := rowsB.Save(txCtx, &ShardRow{Name: "in-shard-b"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,10 +212,10 @@ func TestARepositoryTransactionDoesNotCaptureAnotherDatabase(t *testing.T) {
 
 	boom := errors.New("the usecase failed after both writes")
 	err := rowsA.Tx(ctx, func(ctx context.Context) error {
-		if err := rowsA.Save(ctx, &ShardRow{Name: "doomed"}); err != nil {
+		if _, err := rowsA.Save(ctx, &ShardRow{Name: "doomed"}); err != nil {
 			return err
 		}
-		if err := rowsB.Save(ctx, &ShardRow{Name: "survivor"}); err != nil {
+		if _, err := rowsB.Save(ctx, &ShardRow{Name: "survivor"}); err != nil {
 			return err
 		}
 		return boom
@@ -243,10 +243,10 @@ func TestTwoRepositoriesOnOneDatabaseStillShareOneTransaction(t *testing.T) {
 
 	boom := errors.New("rolled back")
 	err := rows.Tx(ctx, func(ctx context.Context) error {
-		if err := rows.Save(ctx, &ShardRow{Name: "r"}); err != nil {
+		if _, err := rows.Save(ctx, &ShardRow{Name: "r"}); err != nil {
 			return err
 		}
-		if err := notes.Save(ctx, &ShardNote{Text: "n"}); err != nil {
+		if _, err := notes.Save(ctx, &ShardNote{Text: "n"}); err != nil {
 			return err
 		}
 		// Both are visible from inside, which is only true if they share it.

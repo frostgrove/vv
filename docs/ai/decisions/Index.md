@@ -118,6 +118,9 @@ and the next decision written before its code does should say so here.
 | [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
 | [D-064](D-064-migration-generation-never-guesses-a-model.md) | Automatic migration generation uses only one uniquely best model; ambiguity is interactive or empty, never guessed | accepted | process & tooling, migrations |
 | [D-065](D-065-structs-have-reference-semantics-unless-they-are-values.md) | A struct crosses an application boundary by pointer unless copying is its documented value semantics | accepted | API design, process & tooling |
+| [D-066](D-066-access-owns-no-identity-and-no-route.md) | `access` names no subject type, no route and no identifier rule; the consumer creates the identity and normalises what it stores | accepted | auth, security, API design |
+| [D-067](D-067-an-identifier-is-unique-within-a-subject-type.md) | `credentials` is unique on (subject_type, provider, identifier); every lookup carries the type, and a sign-in without one is refused | accepted | auth, security |
+| [D-068](D-068-a-strategy-declares-issuing-and-verifying-together.md) | One strategy value produces both the issuer and the verifier; a guard is per subject and the verifier set is what was declared | accepted | auth, security, API design |
 
 ## By area
 

@@ -48,7 +48,7 @@ func TestSqlxSharedTransaction(t *testing.T) {
 	// crudsql.From accepts the sqlx transaction directly.
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
 	u := User{TenantID: 1, Email: "sqlx@x.io", Name: "Sqlx", Age: crud.Set(44)}
-	if err := repository.Save(txCtx, &u); err != nil {
+	if _, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 

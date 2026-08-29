@@ -30,7 +30,7 @@ func egSeedTree(t *testing.T, source crud.Source) {
 	parents, kids := EgParents.Bind(source), EgKids.Bind(source)
 
 	for _, p := range []EgParent{{ID: 1, Name: "live"}, {ID: 2, Name: "TOMBSTONE"}} {
-		if err := parents.Save(ctx, &p); err != nil {
+		if _, err := parents.Save(ctx, &p); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,7 +38,7 @@ func egSeedTree(t *testing.T, source crud.Source) {
 		{ID: 10, ParentID: crud.Set(int64(1)), Name: "visible"},
 		{ID: 11, ParentID: crud.Set(int64(1)), Name: "TOMBSTONE"},
 	} {
-		if err := kids.Save(ctx, &k); err != nil {
+		if _, err := kids.Save(ctx, &k); err != nil {
 			t.Fatal(err)
 		}
 	}

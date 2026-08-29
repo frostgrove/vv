@@ -25,7 +25,7 @@ func cursorSeed(t *testing.T, tg egTarget, names ...string) {
 	rows := EgRows.Bind(tg.source)
 	for i, n := range names {
 		row := EgRow{ID: int64(i + 1), Name: n, Tenant: 1}
-		if err := rows.Save(ctx, &row); err != nil {
+		if _, err := rows.Save(ctx, &row); err != nil {
 			t.Fatalf("seeding %s: %v", n, err)
 		}
 	}
@@ -70,7 +70,7 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 			}
 
 			// Somebody inserts a row that sorts above everything already read.
-			if err := rows.Save(ctx, &EgRow{ID: 99, Name: "a", Tenant: 1}); err != nil {
+			if _, err := rows.Save(ctx, &EgRow{ID: 99, Name: "a", Tenant: 1}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -201,7 +201,7 @@ func TestACursorFollowsEachColumnsOwnDirection(t *testing.T) {
 			} {
 				_ = i
 				row := r
-				if err := rows.Save(ctx, &row); err != nil {
+				if _, err := rows.Save(ctx, &row); err != nil {
 					t.Fatal(err)
 				}
 			}

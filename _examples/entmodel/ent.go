@@ -175,13 +175,13 @@ type ValidationError struct {
 }
 
 // Error implements the error interface.
-func (this *ValidationError) Error() string {
-	return this.err.Error()
+func (e *ValidationError) Error() string {
+	return e.err.Error()
 }
 
 // Unwrap implements the errors.Wrapper interface.
-func (this *ValidationError) Unwrap() error {
-	return this.err
+func (e *ValidationError) Unwrap() error {
+	return e.err
 }
 
 // IsValidationError returns a boolean indicating whether the error is a validation error.
@@ -199,8 +199,8 @@ type NotFoundError struct {
 }
 
 // Error implements the error interface.
-func (this *NotFoundError) Error() string {
-	return "entmodel: " + this.label + " not found"
+func (e *NotFoundError) Error() string {
+	return "entmodel: " + e.label + " not found"
 }
 
 // IsNotFound returns a boolean indicating whether the error is a not found error.
@@ -226,8 +226,8 @@ type NotSingularError struct {
 }
 
 // Error implements the error interface.
-func (this *NotSingularError) Error() string {
-	return "entmodel: " + this.label + " not singular"
+func (e *NotSingularError) Error() string {
+	return "entmodel: " + e.label + " not singular"
 }
 
 // IsNotSingular returns a boolean indicating whether the error is a not singular error.
@@ -245,8 +245,8 @@ type NotLoadedError struct {
 }
 
 // Error implements the error interface.
-func (this *NotLoadedError) Error() string {
-	return "entmodel: " + this.edge + " edge was not loaded"
+func (e *NotLoadedError) Error() string {
+	return "entmodel: " + e.edge + " edge was not loaded"
 }
 
 // IsNotLoaded returns a boolean indicating whether the error is a not loaded error.
@@ -262,18 +262,18 @@ func IsNotLoaded(err error) bool {
 // one or more of their constraints failed. For example, violation of edge or
 // field uniqueness.
 type ConstraintError struct {
-	message string
-	wrap    error
+	msg  string
+	wrap error
 }
 
 // Error implements the error interface.
-func (this ConstraintError) Error() string {
-	return "entmodel: constraint failed: " + this.message
+func (e ConstraintError) Error() string {
+	return "entmodel: constraint failed: " + e.msg
 }
 
 // Unwrap implements the errors.Wrapper interface.
-func (this *ConstraintError) Unwrap() error {
-	return this.wrap
+func (e *ConstraintError) Unwrap() error {
+	return e.wrap
 }
 
 // IsConstraintError returns a boolean indicating whether the error is a constraint failure.
@@ -294,27 +294,27 @@ type selector struct {
 }
 
 // ScanX is like Scan, but panics if an error occurs.
-func (this *selector) ScanX(ctx context.Context, v any) {
-	if err := this.scan(ctx, v); err != nil {
+func (s *selector) ScanX(ctx context.Context, v any) {
+	if err := s.scan(ctx, v); err != nil {
 		panic(err)
 	}
 }
 
 // Strings returns list of strings from a selector. It is only allowed when selecting one field.
-func (this *selector) Strings(ctx context.Context) ([]string, error) {
-	if len(*this.flds) > 1 {
+func (s *selector) Strings(ctx context.Context) ([]string, error) {
+	if len(*s.flds) > 1 {
 		return nil, errors.New("entmodel: Strings is not achievable when selecting more than 1 field")
 	}
 	var v []string
-	if err := this.scan(ctx, &v); err != nil {
+	if err := s.scan(ctx, &v); err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
 // StringsX is like Strings, but panics if an error occurs.
-func (this *selector) StringsX(ctx context.Context) []string {
-	v, err := this.Strings(ctx)
+func (s *selector) StringsX(ctx context.Context) []string {
+	v, err := s.Strings(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -322,16 +322,16 @@ func (this *selector) StringsX(ctx context.Context) []string {
 }
 
 // String returns a single string from a selector. It is only allowed when selecting one field.
-func (this *selector) String(ctx context.Context) (_ string, err error) {
+func (s *selector) String(ctx context.Context) (_ string, err error) {
 	var v []string
-	if v, err = this.Strings(ctx); err != nil {
+	if v, err = s.Strings(ctx); err != nil {
 		return
 	}
 	switch len(v) {
 	case 1:
 		return v[0], nil
 	case 0:
-		err = &NotFoundError{this.label}
+		err = &NotFoundError{s.label}
 	default:
 		err = fmt.Errorf("entmodel: Strings returned %d results when one was expected", len(v))
 	}
@@ -339,8 +339,8 @@ func (this *selector) String(ctx context.Context) (_ string, err error) {
 }
 
 // StringX is like String, but panics if an error occurs.
-func (this *selector) StringX(ctx context.Context) string {
-	v, err := this.String(ctx)
+func (s *selector) StringX(ctx context.Context) string {
+	v, err := s.String(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -348,20 +348,20 @@ func (this *selector) StringX(ctx context.Context) string {
 }
 
 // Ints returns list of ints from a selector. It is only allowed when selecting one field.
-func (this *selector) Ints(ctx context.Context) ([]int, error) {
-	if len(*this.flds) > 1 {
+func (s *selector) Ints(ctx context.Context) ([]int, error) {
+	if len(*s.flds) > 1 {
 		return nil, errors.New("entmodel: Ints is not achievable when selecting more than 1 field")
 	}
 	var v []int
-	if err := this.scan(ctx, &v); err != nil {
+	if err := s.scan(ctx, &v); err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
 // IntsX is like Ints, but panics if an error occurs.
-func (this *selector) IntsX(ctx context.Context) []int {
-	v, err := this.Ints(ctx)
+func (s *selector) IntsX(ctx context.Context) []int {
+	v, err := s.Ints(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -369,16 +369,16 @@ func (this *selector) IntsX(ctx context.Context) []int {
 }
 
 // Int returns a single int from a selector. It is only allowed when selecting one field.
-func (this *selector) Int(ctx context.Context) (_ int, err error) {
+func (s *selector) Int(ctx context.Context) (_ int, err error) {
 	var v []int
-	if v, err = this.Ints(ctx); err != nil {
+	if v, err = s.Ints(ctx); err != nil {
 		return
 	}
 	switch len(v) {
 	case 1:
 		return v[0], nil
 	case 0:
-		err = &NotFoundError{this.label}
+		err = &NotFoundError{s.label}
 	default:
 		err = fmt.Errorf("entmodel: Ints returned %d results when one was expected", len(v))
 	}
@@ -386,8 +386,8 @@ func (this *selector) Int(ctx context.Context) (_ int, err error) {
 }
 
 // IntX is like Int, but panics if an error occurs.
-func (this *selector) IntX(ctx context.Context) int {
-	v, err := this.Int(ctx)
+func (s *selector) IntX(ctx context.Context) int {
+	v, err := s.Int(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -395,20 +395,20 @@ func (this *selector) IntX(ctx context.Context) int {
 }
 
 // Float64s returns list of float64s from a selector. It is only allowed when selecting one field.
-func (this *selector) Float64s(ctx context.Context) ([]float64, error) {
-	if len(*this.flds) > 1 {
+func (s *selector) Float64s(ctx context.Context) ([]float64, error) {
+	if len(*s.flds) > 1 {
 		return nil, errors.New("entmodel: Float64s is not achievable when selecting more than 1 field")
 	}
 	var v []float64
-	if err := this.scan(ctx, &v); err != nil {
+	if err := s.scan(ctx, &v); err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
 // Float64sX is like Float64s, but panics if an error occurs.
-func (this *selector) Float64sX(ctx context.Context) []float64 {
-	v, err := this.Float64s(ctx)
+func (s *selector) Float64sX(ctx context.Context) []float64 {
+	v, err := s.Float64s(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -416,16 +416,16 @@ func (this *selector) Float64sX(ctx context.Context) []float64 {
 }
 
 // Float64 returns a single float64 from a selector. It is only allowed when selecting one field.
-func (this *selector) Float64(ctx context.Context) (_ float64, err error) {
+func (s *selector) Float64(ctx context.Context) (_ float64, err error) {
 	var v []float64
-	if v, err = this.Float64s(ctx); err != nil {
+	if v, err = s.Float64s(ctx); err != nil {
 		return
 	}
 	switch len(v) {
 	case 1:
 		return v[0], nil
 	case 0:
-		err = &NotFoundError{this.label}
+		err = &NotFoundError{s.label}
 	default:
 		err = fmt.Errorf("entmodel: Float64s returned %d results when one was expected", len(v))
 	}
@@ -433,8 +433,8 @@ func (this *selector) Float64(ctx context.Context) (_ float64, err error) {
 }
 
 // Float64X is like Float64, but panics if an error occurs.
-func (this *selector) Float64X(ctx context.Context) float64 {
-	v, err := this.Float64(ctx)
+func (s *selector) Float64X(ctx context.Context) float64 {
+	v, err := s.Float64(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -442,20 +442,20 @@ func (this *selector) Float64X(ctx context.Context) float64 {
 }
 
 // Bools returns list of bools from a selector. It is only allowed when selecting one field.
-func (this *selector) Bools(ctx context.Context) ([]bool, error) {
-	if len(*this.flds) > 1 {
+func (s *selector) Bools(ctx context.Context) ([]bool, error) {
+	if len(*s.flds) > 1 {
 		return nil, errors.New("entmodel: Bools is not achievable when selecting more than 1 field")
 	}
 	var v []bool
-	if err := this.scan(ctx, &v); err != nil {
+	if err := s.scan(ctx, &v); err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
 // BoolsX is like Bools, but panics if an error occurs.
-func (this *selector) BoolsX(ctx context.Context) []bool {
-	v, err := this.Bools(ctx)
+func (s *selector) BoolsX(ctx context.Context) []bool {
+	v, err := s.Bools(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -463,16 +463,16 @@ func (this *selector) BoolsX(ctx context.Context) []bool {
 }
 
 // Bool returns a single bool from a selector. It is only allowed when selecting one field.
-func (this *selector) Bool(ctx context.Context) (_ bool, err error) {
+func (s *selector) Bool(ctx context.Context) (_ bool, err error) {
 	var v []bool
-	if v, err = this.Bools(ctx); err != nil {
+	if v, err = s.Bools(ctx); err != nil {
 		return
 	}
 	switch len(v) {
 	case 1:
 		return v[0], nil
 	case 0:
-		err = &NotFoundError{this.label}
+		err = &NotFoundError{s.label}
 	default:
 		err = fmt.Errorf("entmodel: Bools returned %d results when one was expected", len(v))
 	}
@@ -480,8 +480,8 @@ func (this *selector) Bool(ctx context.Context) (_ bool, err error) {
 }
 
 // BoolX is like Bool, but panics if an error occurs.
-func (this *selector) BoolX(ctx context.Context) bool {
-	v, err := this.Bool(ctx)
+func (s *selector) BoolX(ctx context.Context) bool {
+	v, err := s.Bool(ctx)
 	if err != nil {
 		panic(err)
 	}

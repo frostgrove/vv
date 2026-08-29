@@ -73,7 +73,7 @@ func TestGormSharedTransaction(t *testing.T) {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 
 		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByVV", Active: true}
-		if err := repository.Save(txCtx, &u); err != nil {
+		if _, err := repository.Save(txCtx, &u); err != nil {
 			return err
 		}
 		// gorm sees the row vv wrote, in the same transaction.
@@ -121,7 +121,7 @@ func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	err := database.Transaction(func(tx *gorm.DB) error {
 		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
 		u := User{TenantID: 1, Email: "doomed@x.io", Name: "Doomed"}
-		if err := repository.Save(txCtx, &u); err != nil {
+		if _, err := repository.Save(txCtx, &u); err != nil {
 			return err
 		}
 		return boom

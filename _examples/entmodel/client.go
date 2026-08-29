@@ -29,15 +29,15 @@ type Client struct {
 }
 
 // NewClient creates a new client configured with the given options.
-func NewClient(options ...Option) *Client {
-	client := &Client{config: newConfig(options...)}
+func NewClient(opts ...Option) *Client {
+	client := &Client{config: newConfig(opts...)}
 	client.init()
 	return client
 }
 
-func (this *Client) init() {
-	this.Schema = migrate.NewSchema(this.driver)
-	this.Product = NewProductClient(this.config)
+func (c *Client) init() {
+	c.Schema = migrate.NewSchema(c.driver)
+	c.Product = NewProductClient(c.config)
 }
 
 type (
@@ -59,19 +59,19 @@ type (
 )
 
 // newConfig creates a new config for the client.
-func newConfig(options ...Option) config {
-	config := config{log: log.Println, hooks: &hooks{}, inters: &inters{}}
-	config.options(options...)
-	return config
+func newConfig(opts ...Option) config {
+	cfg := config{log: log.Println, hooks: &hooks{}, inters: &inters{}}
+	cfg.options(opts...)
+	return cfg
 }
 
 // options applies the options on the config object.
-func (this *config) options(options ...Option) {
-	for _, opt := range options {
-		opt(this)
+func (c *config) options(opts ...Option) {
+	for _, opt := range opts {
+		opt(c)
 	}
-	if this.debug {
-		this.driver = dialect.Debug(this.driver, this.log)
+	if c.debug {
+		c.driver = dialect.Debug(c.driver, c.log)
 	}
 }
 
@@ -117,40 +117,40 @@ var ErrTxStarted = errors.New("entmodel: cannot start a transaction within a tra
 
 // Tx returns a new transactional client. The provided context
 // is used until the transaction is committed or rolled back.
-func (this *Client) Tx(ctx context.Context) (*Tx, error) {
-	if _, ok := this.driver.(*txDriver); ok {
+func (c *Client) Tx(ctx context.Context) (*Tx, error) {
+	if _, ok := c.driver.(*txDriver); ok {
 		return nil, ErrTxStarted
 	}
-	tx, err := newTx(ctx, this.driver)
+	tx, err := newTx(ctx, c.driver)
 	if err != nil {
 		return nil, fmt.Errorf("entmodel: starting a transaction: %w", err)
 	}
-	config := this.config
-	config.driver = tx
+	cfg := c.config
+	cfg.driver = tx
 	return &Tx{
 		ctx:     ctx,
-		config:  config,
-		Product: NewProductClient(config),
+		config:  cfg,
+		Product: NewProductClient(cfg),
 	}, nil
 }
 
 // BeginTx returns a transactional client with specified options.
-func (this *Client) BeginTx(ctx context.Context, options *sql.TxOptions) (*Tx, error) {
-	if _, ok := this.driver.(*txDriver); ok {
+func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
+	if _, ok := c.driver.(*txDriver); ok {
 		return nil, errors.New("ent: cannot start a transaction within a transaction")
 	}
-	tx, err := this.driver.(interface {
+	tx, err := c.driver.(interface {
 		BeginTx(context.Context, *sql.TxOptions) (dialect.Tx, error)
-	}).BeginTx(ctx, options)
+	}).BeginTx(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ent: starting a transaction: %w", err)
 	}
-	config := this.config
-	config.driver = &txDriver{tx: tx, drv: this.driver}
+	cfg := c.config
+	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
 		ctx:     ctx,
-		config:  config,
-		Product: NewProductClient(config),
+		config:  cfg,
+		Product: NewProductClient(cfg),
 	}, nil
 }
 
@@ -160,39 +160,39 @@ func (this *Client) BeginTx(ctx context.Context, options *sql.TxOptions) (*Tx, e
 //		Product.
 //		Query().
 //		Count(ctx)
-func (this *Client) Debug() *Client {
-	if this.debug {
-		return this
+func (c *Client) Debug() *Client {
+	if c.debug {
+		return c
 	}
-	config := this.config
-	config.driver = dialect.Debug(this.driver, this.log)
-	client := &Client{config: config}
+	cfg := c.config
+	cfg.driver = dialect.Debug(c.driver, c.log)
+	client := &Client{config: cfg}
 	client.init()
 	return client
 }
 
 // Close closes the database connection and prevents new queries from starting.
-func (this *Client) Close() error {
-	return this.driver.Close()
+func (c *Client) Close() error {
+	return c.driver.Close()
 }
 
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
-func (this *Client) Use(hooks ...Hook) {
-	this.Product.Use(hooks...)
+func (c *Client) Use(hooks ...Hook) {
+	c.Product.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
-func (this *Client) Intercept(interceptors ...Interceptor) {
-	this.Product.Intercept(interceptors...)
+func (c *Client) Intercept(interceptors ...Interceptor) {
+	c.Product.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
-func (this *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
+func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
 	case *ProductMutation:
-		return this.Product.mutate(ctx, m)
+		return c.Product.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("entmodel: unknown mutation type %T", m)
 	}
@@ -210,96 +210,96 @@ func NewProductClient(c config) *ProductClient {
 
 // Use adds a list of mutation hooks to the hooks stack.
 // A call to `Use(f, g, h)` equals to `product.Hooks(f(g(h())))`.
-func (this *ProductClient) Use(hooks ...Hook) {
-	this.hooks.Product = append(this.hooks.Product, hooks...)
+func (c *ProductClient) Use(hooks ...Hook) {
+	c.hooks.Product = append(c.hooks.Product, hooks...)
 }
 
 // Intercept adds a list of query interceptors to the interceptors stack.
 // A call to `Intercept(f, g, h)` equals to `product.Intercept(f(g(h())))`.
-func (this *ProductClient) Intercept(interceptors ...Interceptor) {
-	this.inters.Product = append(this.inters.Product, interceptors...)
+func (c *ProductClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Product = append(c.inters.Product, interceptors...)
 }
 
 // Create returns a builder for creating a Product entity.
-func (this *ProductClient) Create() *ProductCreate {
-	mutation := newProductMutation(this.config, OpCreate)
-	return &ProductCreate{config: this.config, hooks: this.Hooks(), mutation: mutation}
+func (c *ProductClient) Create() *ProductCreate {
+	mutation := newProductMutation(c.config, OpCreate)
+	return &ProductCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // CreateBulk returns a builder for creating a bulk of Product entities.
-func (this *ProductClient) CreateBulk(builders ...*ProductCreate) *ProductCreateBulk {
-	return &ProductCreateBulk{config: this.config, builders: builders}
+func (c *ProductClient) CreateBulk(builders ...*ProductCreate) *ProductCreateBulk {
+	return &ProductCreateBulk{config: c.config, builders: builders}
 }
 
 // MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
 // a builder and applies setFunc on it.
-func (this *ProductClient) MapCreateBulk(slice any, setFunc func(*ProductCreate, int)) *ProductCreateBulk {
+func (c *ProductClient) MapCreateBulk(slice any, setFunc func(*ProductCreate, int)) *ProductCreateBulk {
 	rv := reflect.ValueOf(slice)
 	if rv.Kind() != reflect.Slice {
 		return &ProductCreateBulk{err: fmt.Errorf("calling to ProductClient.MapCreateBulk with wrong type %T, need slice", slice)}
 	}
 	builders := make([]*ProductCreate, rv.Len())
 	for i := 0; i < rv.Len(); i++ {
-		builders[i] = this.Create()
+		builders[i] = c.Create()
 		setFunc(builders[i], i)
 	}
-	return &ProductCreateBulk{config: this.config, builders: builders}
+	return &ProductCreateBulk{config: c.config, builders: builders}
 }
 
 // Update returns an update builder for Product.
-func (this *ProductClient) Update() *ProductUpdate {
-	mutation := newProductMutation(this.config, OpUpdate)
-	return &ProductUpdate{config: this.config, hooks: this.Hooks(), mutation: mutation}
+func (c *ProductClient) Update() *ProductUpdate {
+	mutation := newProductMutation(c.config, OpUpdate)
+	return &ProductUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (this *ProductClient) UpdateOne(_m *Product) *ProductUpdateOne {
-	mutation := newProductMutation(this.config, OpUpdateOne, withProduct(_m))
-	return &ProductUpdateOne{config: this.config, hooks: this.Hooks(), mutation: mutation}
+func (c *ProductClient) UpdateOne(_m *Product) *ProductUpdateOne {
+	mutation := newProductMutation(c.config, OpUpdateOne, withProduct(_m))
+	return &ProductUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOneID returns an update builder for the given id.
-func (this *ProductClient) UpdateOneID(id int64) *ProductUpdateOne {
-	mutation := newProductMutation(this.config, OpUpdateOne, withProductID(id))
-	return &ProductUpdateOne{config: this.config, hooks: this.Hooks(), mutation: mutation}
+func (c *ProductClient) UpdateOneID(id int64) *ProductUpdateOne {
+	mutation := newProductMutation(c.config, OpUpdateOne, withProductID(id))
+	return &ProductUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // Delete returns a delete builder for Product.
-func (this *ProductClient) Delete() *ProductDelete {
-	mutation := newProductMutation(this.config, OpDelete)
-	return &ProductDelete{config: this.config, hooks: this.Hooks(), mutation: mutation}
+func (c *ProductClient) Delete() *ProductDelete {
+	mutation := newProductMutation(c.config, OpDelete)
+	return &ProductDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (this *ProductClient) DeleteOne(_m *Product) *ProductDeleteOne {
-	return this.DeleteOneID(_m.ID)
+func (c *ProductClient) DeleteOne(_m *Product) *ProductDeleteOne {
+	return c.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
-func (this *ProductClient) DeleteOneID(id int64) *ProductDeleteOne {
-	builder := this.Delete().Where(product.ID(id))
+func (c *ProductClient) DeleteOneID(id int64) *ProductDeleteOne {
+	builder := c.Delete().Where(product.ID(id))
 	builder.mutation.id = &id
 	builder.mutation.op = OpDeleteOne
 	return &ProductDeleteOne{builder}
 }
 
 // Query returns a query builder for Product.
-func (this *ProductClient) Query() *ProductQuery {
+func (c *ProductClient) Query() *ProductQuery {
 	return &ProductQuery{
-		config: this.config,
+		config: c.config,
 		ctx:    &QueryContext{Type: TypeProduct},
-		inters: this.Interceptors(),
+		inters: c.Interceptors(),
 	}
 }
 
 // Get returns a Product entity by its id.
-func (this *ProductClient) Get(ctx context.Context, id int64) (*Product, error) {
-	return this.Query().Where(product.ID(id)).Only(ctx)
+func (c *ProductClient) Get(ctx context.Context, id int64) (*Product, error) {
+	return c.Query().Where(product.ID(id)).Only(ctx)
 }
 
 // GetX is like Get, but panics if an error occurs.
-func (this *ProductClient) GetX(ctx context.Context, id int64) *Product {
-	obj, err := this.Get(ctx, id)
+func (c *ProductClient) GetX(ctx context.Context, id int64) *Product {
+	obj, err := c.Get(ctx, id)
 	if err != nil {
 		panic(err)
 	}
@@ -307,25 +307,25 @@ func (this *ProductClient) GetX(ctx context.Context, id int64) *Product {
 }
 
 // Hooks returns the client hooks.
-func (this *ProductClient) Hooks() []Hook {
-	return this.hooks.Product
+func (c *ProductClient) Hooks() []Hook {
+	return c.hooks.Product
 }
 
 // Interceptors returns the client interceptors.
-func (this *ProductClient) Interceptors() []Interceptor {
-	return this.inters.Product
+func (c *ProductClient) Interceptors() []Interceptor {
+	return c.inters.Product
 }
 
-func (this *ProductClient) mutate(ctx context.Context, m *ProductMutation) (Value, error) {
+func (c *ProductClient) mutate(ctx context.Context, m *ProductMutation) (Value, error) {
 	switch m.Op() {
 	case OpCreate:
-		return (&ProductCreate{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
+		return (&ProductCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdate:
-		return (&ProductUpdate{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
+		return (&ProductUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdateOne:
-		return (&ProductUpdateOne{config: this.config, hooks: this.Hooks(), mutation: m}).Save(ctx)
+		return (&ProductUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpDelete, OpDeleteOne:
-		return (&ProductDelete{config: this.config, hooks: this.Hooks(), mutation: m}).Exec(ctx)
+		return (&ProductDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("entmodel: unknown Product mutation op: %q", m.Op())
 	}
@@ -343,8 +343,8 @@ type (
 
 // ExecContext allows calling the underlying ExecContext method of the driver if it is supported by it.
 // See, database/sql#DB.ExecContext for more information.
-func (this *config) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
-	ex, ok := this.driver.(interface {
+func (c *config) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
+	ex, ok := c.driver.(interface {
 		ExecContext(context.Context, string, ...any) (stdsql.Result, error)
 	})
 	if !ok {
@@ -355,8 +355,8 @@ func (this *config) ExecContext(ctx context.Context, query string, args ...any) 
 
 // QueryContext allows calling the underlying QueryContext method of the driver if it is supported by it.
 // See, database/sql#DB.QueryContext for more information.
-func (this *config) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
-	q, ok := this.driver.(interface {
+func (c *config) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
+	q, ok := c.driver.(interface {
 		QueryContext(context.Context, string, ...any) (*stdsql.Rows, error)
 	})
 	if !ok {

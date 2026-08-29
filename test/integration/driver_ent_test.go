@@ -119,7 +119,7 @@ func TestEntSharedTransaction(t *testing.T) {
 
 	// vv writes, ent reads.
 	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", Active: true}
-	if err := repository.Save(txCtx, &u); err != nil {
+	if _, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	back, err := tx.User.Query().Where(entuser.IDEQ(u.ID)).Only(ctx)
@@ -162,7 +162,7 @@ func TestEntRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := User{TenantID: 1, Email: "gone@x.io", Name: "Gone"}
-	if err := repository.Save(crud.WithExecutor(ctx, crudsql.From(tx)), &u); err != nil {
+	if _, err := repository.Save(crud.WithExecutor(ctx, crudsql.From(tx)), &u); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {
@@ -185,7 +185,7 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 	repository := Users.Bind(source)
 
 	err := crud.InTx(ctx, source, func(ctx context.Context) error {
-		if err := repository.Save(ctx, &User{TenantID: 1, Email: "ent-outer@x.io", Name: "outer"}); err != nil {
+		if _, err := repository.Save(ctx, &User{TenantID: 1, Email: "ent-outer@x.io", Name: "outer"}); err != nil {
 			return err
 		}
 		ex, _ := crud.ExecutorFrom(ctx)
@@ -200,7 +200,9 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 		// Joining, on the other hand, works: this is the second write in the
 		// same physical transaction.
 		return repository.Tx(ctx, func(ctx context.Context) error {
-			return repository.Save(ctx, &User{TenantID: 1, Email: "ent-inner@x.io", Name: "inner"})
+			_, err := repository.Save(ctx, &User{TenantID: 1, Email: "ent-inner@x.io", Name: "inner"})
+
+			return err
 		})
 	})
 	if err != nil {

@@ -474,7 +474,7 @@ var _ crud.Source = (*egSpy)(nil)
 func egSeed(t *testing.T, repository *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
 	t.Helper()
 	for _, r := range rows {
-		if err := repository.Save(context.Background(), &r); err != nil {
+		if _, err := repository.Save(context.Background(), &r); err != nil {
 			t.Fatalf("seeding %d: %v", r.ID, err)
 		}
 	}
@@ -537,7 +537,7 @@ func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 				{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
 				{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 			} {
-				if err := repository.Save(ctx, &user); err != nil {
+				if _, err := repository.Save(ctx, &user); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -702,14 +702,14 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 			t.Run("a model that is entirely zero", func(t *testing.T) {
 				// A key the caller is responsible for, left at zero, is a mistake
 				// worth naming rather than a row worth writing.
-				if err := rows.Save(ctx, &EgRow{}); !errors.Is(err, crud.ErrMissingID) {
+				if _, err := rows.Save(ctx, &EgRow{}); !errors.Is(err, crud.ErrMissingID) {
 					t.Fatalf("err = %v, want ErrMissingID", err)
 				}
 				// With a generated key there is nothing missing: every column is
 				// simply at its zero value, and that is a row.
 				autos := EgAutos.Bind(tg.source)
 				var blank EgAuto
-				if err := autos.Save(ctx, &blank); err != nil {
+				if _, err := autos.Save(ctx, &blank); err != nil {
 					t.Fatal(err)
 				}
 				if blank.ID == 0 {
@@ -729,7 +729,7 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				// And the same column carrying a value: one column, both ways,
 				// which is what makes sql.Null[T] usable as a model field.
 				valued := EgAuto{Name: "tagged", Tag: sql.Null[string]{V: "beta", Valid: true}}
-				if err := autos.Save(ctx, &valued); err != nil {
+				if _, err := autos.Save(ctx, &valued); err != nil {
 					t.Fatal(err)
 				}
 				got, err := autos.GetByID(ctx, valued.ID)
@@ -774,7 +774,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 
 			t.Run("the largest key an int64 can hold", func(t *testing.T) {
 				big := EgRow{ID: math.MaxInt64, Tenant: 1, Name: "big"}
-				if err := rows.Save(ctx, &big); err != nil {
+				if _, err := rows.Save(ctx, &big); err != nil {
 					t.Fatal(err)
 				}
 				got, err := rows.GetByID(ctx, math.MaxInt64)
@@ -885,7 +885,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 			t.Run("the zero time", func(t *testing.T) {
 				autos := EgAutos.Bind(tg.source)
 				z := EgAuto{Name: "zero", At: crud.Set(time.Time{})}
-				if err := autos.Save(ctx, &z); err != nil {
+				if _, err := autos.Save(ctx, &z); err != nil {
 					t.Fatalf("storing the zero time: %v", err)
 				}
 				back, err := autos.GetByID(ctx, z.ID)
@@ -1021,7 +1021,7 @@ func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 			var ids []int64
 			for _, slug := range []string{"a", "b", "c"} {
 				row := EgCons{Slug: slug, Tag: crud.Set("t")}
-				if err := cons.Save(ctx, &row); err != nil {
+				if _, err := cons.Save(ctx, &row); err != nil {
 					t.Fatal(err)
 				}
 				ids = append(ids, row.ID)
@@ -1093,7 +1093,7 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 					}
 					txCtx := crud.WithExecutor(ctx, tx)
 					inside := EgRow{ID: 1, Tenant: 1, Name: "inside"}
-					if err := rows.Save(txCtx, &inside); err != nil {
+					if _, err := rows.Save(txCtx, &inside); err != nil {
 						t.Fatal(err)
 					}
 					if err := tc.close(tx); err != nil {
@@ -1101,7 +1101,7 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 					}
 
 					after := EgRow{ID: 2, Tenant: 1, Name: "after"}
-					if err := rows.Save(txCtx, &after); err == nil {
+					if _, err := rows.Save(txCtx, &after); err == nil {
 						t.Fatal("a write on a finished transaction was accepted")
 					}
 					if _, err := rows.GetByID(txCtx, 1); err == nil {
@@ -1137,7 +1137,7 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 
 			err := crud.InTx(ctx, tg.source, func(ctx context.Context) error {
 				outer := EgRow{ID: 1, Tenant: 1, Name: "outer"}
-				if err := rows.Save(ctx, &outer); err != nil {
+				if _, err := rows.Save(ctx, &outer); err != nil {
 					return err
 				}
 				ex, _ := crud.ExecutorFrom(ctx)
@@ -1147,7 +1147,7 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 					return err
 				}
 				doomed := EgRow{ID: 2, Tenant: 1, Name: "doomed"}
-				if err := rows.Save(crud.WithExecutor(ctx, undone), &doomed); err != nil {
+				if _, err := rows.Save(crud.WithExecutor(ctx, undone), &doomed); err != nil {
 					return err
 				}
 				if err := undone.Rollback(ctx); err != nil {
@@ -1159,7 +1159,7 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 					return err
 				}
 				saved := EgRow{ID: 3, Tenant: 1, Name: "released"}
-				if err := rows.Save(crud.WithExecutor(ctx, kept), &saved); err != nil {
+				if _, err := rows.Save(crud.WithExecutor(ctx, kept), &saved); err != nil {
 					return err
 				}
 				return kept.Commit(ctx)
@@ -1194,7 +1194,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 			rows := EgRows.Bind(tg.source)
 
 			err := crud.InTx(ctx, tg.source, func(ctx context.Context) error {
-				if err := rows.Save(ctx, &EgRow{ID: 1, Tenant: 1, Name: "outer"}); err != nil {
+				if _, err := rows.Save(ctx, &EgRow{ID: 1, Tenant: 1, Name: "outer"}); err != nil {
 					return err
 				}
 				ex, _ := crud.ExecutorFrom(ctx)
@@ -1204,7 +1204,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 					return err
 				}
 				midCtx := crud.WithExecutor(ctx, middle)
-				if err := rows.Save(midCtx, &EgRow{ID: 2, Tenant: 1, Name: "middle"}); err != nil {
+				if _, err := rows.Save(midCtx, &EgRow{ID: 2, Tenant: 1, Name: "middle"}); err != nil {
 					return err
 				}
 
@@ -1212,7 +1212,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if err := rows.Save(crud.WithExecutor(ctx, inner), &EgRow{ID: 3, Tenant: 1, Name: "inner"}); err != nil {
+				if _, err := rows.Save(crud.WithExecutor(ctx, inner), &EgRow{ID: 3, Tenant: 1, Name: "inner"}); err != nil {
 					return err
 				}
 				// Only the innermost level goes away.
@@ -1221,7 +1221,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 				}
 				// The middle one is still usable afterwards, which is the part a
 				// savepoint that released the wrong name would break.
-				if err := rows.Save(midCtx, &EgRow{ID: 4, Tenant: 1, Name: "after the inner rollback"}); err != nil {
+				if _, err := rows.Save(midCtx, &EgRow{ID: 4, Tenant: 1, Name: "after the inner rollback"}); err != nil {
 					return err
 				}
 				return middle.Commit(ctx)
@@ -1376,7 +1376,7 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				egWipe(t, tg.source)
 				parents := EgParents.Bind(tg.source)
 				for _, p := range []EgParent{{ID: 1, Name: "lonely"}, {ID: 2, Name: "also lonely"}} {
-					if err := parents.Save(ctx, &p); err != nil {
+					if _, err := parents.Save(ctx, &p); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -1404,14 +1404,14 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				egWipe(t, tg.source)
 				parents, kids := EgParents.Bind(tg.source), EgKids.Bind(tg.source)
 				p := EgParent{ID: 1, Name: "p"}
-				if err := parents.Save(ctx, &p); err != nil {
+				if _, err := parents.Save(ctx, &p); err != nil {
 					t.Fatal(err)
 				}
 				for _, k := range []EgKid{
 					{ID: 1, ParentID: crud.Set(int64(1)), Name: "attached"},
 					{ID: 2, ParentID: crud.Null[int64](), Name: "orphan"},
 				} {
-					if err := kids.Save(ctx, &k); err != nil {
+					if _, err := kids.Save(ctx, &k); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -1448,7 +1448,7 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 					{ID: 1, ParentID: crud.Null[int64](), Name: "a"},
 					{ID: 2, ParentID: crud.Null[int64](), Name: "b"},
 				} {
-					if err := kids.Save(ctx, &k); err != nil {
+					if _, err := kids.Save(ctx, &k); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -1516,11 +1516,11 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				parents := EgParents.Bind(tg.source)
 				shallow := EgShallowParents.Bind(tg.source)
 				p := EgParent{ID: 1, Name: "p"}
-				if err := parents.Save(ctx, &p); err != nil {
+				if _, err := parents.Save(ctx, &p); err != nil {
 					t.Fatal(err)
 				}
 				k := EgKid{ID: 1, ParentID: crud.Set(int64(1)), Name: "k"}
-				if err := EgKids.Bind(tg.source).Save(ctx, &k); err != nil {
+				if _, err := EgKids.Bind(tg.source).Save(ctx, &k); err != nil {
 					t.Fatal(err)
 				}
 

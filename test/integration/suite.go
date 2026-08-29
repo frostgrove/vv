@@ -39,9 +39,11 @@ func RunSuite(t *testing.T, tg Target) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "ann@x.io", Name: "Ann", Age: crud.Set(31), Active: true}
 
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 		if u.ID == 0 {
 			t.Fatal("the generated key was not read back")
 		}
@@ -67,9 +69,11 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("NullableColumnRoundTrip", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "no-age@x.io", Name: "NoAge"}
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 		got, err := repository.GetByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -82,16 +86,20 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("SaveWithKeyUpserts", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "up@x.io", Name: "Before", Active: true}
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 		created := u.CreatedAt
 
 		u.Name = "After"
 		u.TenantID = 99 // immutable: must not be written on conflict
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err = repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 		got, err := repository.GetByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -120,9 +128,11 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateWritesOnlyWhatChanged", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "u@x.io", Name: "Ann", Age: crud.Set(31), Active: true}
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 
 		got, err := repository.Update(ctx, u.ID, UserUpdate{
 			Email: ptr("u@x.io"), // same value — no-op
@@ -145,9 +155,11 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateTellsUndefinedFromNull", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "n@x.io", Name: "N", Age: crud.Set(20)}
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 
 		// Undefined: age survives.
 		got, err := repository.Update(ctx, u.ID, UserUpdate{Name: ptr("N2")})
@@ -180,9 +192,11 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("UpdateWithNothingToDo", func(t *testing.T) {
 		tg.reset(t)
 		u := User{TenantID: 1, Email: "same@x.io", Name: "Same", Active: true}
-		if err := repository.Save(ctx, &u); err != nil {
+		saved, err := repository.Save(ctx, &u)
+		if err != nil {
 			t.Fatal(err)
 		}
+		u = saved
 		got, err := repository.Update(ctx, u.ID, UserUpdate{Name: ptr("Same"), Active: ptr(true)})
 		if err != nil {
 			t.Fatal(err)
@@ -596,9 +610,11 @@ func RunSuite(t *testing.T, tg Target) {
 			{TenantID: 1, Email: "t1-b@x.io", Name: "B", Active: true},
 			{TenantID: 2, Email: "t2-a@x.io", Name: "C", Active: true},
 		} {
-			if err := repository.Save(ctx, &u); err != nil {
+			saved, err := repository.Save(ctx, &u)
+			if err != nil {
 				t.Fatal(err)
 			}
+			u = saved
 		}
 		mine := withTenant(ctx, 1)
 		theirs := withTenant(ctx, 2)
@@ -633,12 +649,12 @@ func RunSuite(t *testing.T, tg Target) {
 
 		// Writing into another tenant is refused.
 		sneaky := User{TenantID: 2, Email: "sneak@x.io", Name: "S"}
-		if err := gated.Save(mine, &sneaky); !errors.Is(err, security.ErrForbidden) {
+		if _, err := gated.Save(mine, &sneaky); !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
 		}
 		// Writing into my own is fine.
 		ok := User{TenantID: 1, Email: "ok@x.io", Name: "OK"}
-		if err := gated.Save(mine, &ok); err != nil {
+		if _, err := gated.Save(mine, &ok); err != nil {
 			t.Fatal(err)
 		}
 		if n, err := gated.Count(mine); err != nil || n != 3 {
@@ -654,7 +670,7 @@ func RunSuite(t *testing.T, tg Target) {
 		err := repository.Tx(ctx, func(ctx context.Context) error {
 			for i := range 3 {
 				u := User{TenantID: 1, Email: fmt.Sprintf("tx-%d@x.io", i), Name: "tx"}
-				if err := repository.Save(ctx, &u); err != nil {
+				if _, err := repository.Save(ctx, &u); err != nil {
 					return err
 				}
 			}
@@ -673,7 +689,7 @@ func RunSuite(t *testing.T, tg Target) {
 		boom := errors.New("boom")
 		err := repository.Tx(ctx, func(ctx context.Context) error {
 			u := User{TenantID: 1, Email: "rollback@x.io", Name: "gone"}
-			if err := repository.Save(ctx, &u); err != nil {
+			if _, err := repository.Save(ctx, &u); err != nil {
 				return err
 			}
 			if n, err := repository.Count(ctx); err != nil || n != 1 {
@@ -696,7 +712,8 @@ func RunSuite(t *testing.T, tg Target) {
 			// rather than open a competing transaction.
 			return repository.Tx(ctx, func(ctx context.Context) error {
 				u := User{TenantID: 1, Email: "nested@x.io", Name: "n"}
-				return repository.Save(ctx, &u)
+				_, err := repository.Save(ctx, &u)
+				return err
 			})
 		})
 		if err != nil {
@@ -727,7 +744,7 @@ func seed(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], n int) [
 			Age:      crud.Set(20 + i),
 			Active:   true,
 		}
-		if err := repository.Save(ctx, &u); err != nil {
+		if _, err := repository.Save(ctx, &u); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 		out = append(out, u)

@@ -12,6 +12,7 @@ SUBSYSTEMS=(crud auth port remote storage)
 TRIPLETS=(
 	'crud/http/crudnet,crud/http/crudgin,crud/http/crudfiber'
 	'auth/http/authnet,auth/http/authgin,auth/http/authfiber'
+	'auth/access/http/accessnet,auth/access/http/accessgin,auth/access/http/accessfiber'
 )
 
 check_deps() {

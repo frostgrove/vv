@@ -71,7 +71,7 @@ func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 		{TenantID: 1, Email: "plain@x.io", Name: "plain"},
 		{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 	} {
-		if err := repository.Save(ctx, &user); err != nil {
+		if _, err := repository.Save(ctx, &user); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -133,7 +133,7 @@ func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 
 	err := crud.InTx(ctx, source, func(ctx context.Context) error {
 		keep := User{TenantID: 1, Email: "keep@x.io", Name: "keep"}
-		if err := repository.Save(ctx, &keep); err != nil {
+		if _, err := repository.Save(ctx, &keep); err != nil {
 			return err
 		}
 		ex, _ := crud.ExecutorFrom(ctx)
@@ -142,7 +142,7 @@ func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 			return err
 		}
 		drop := User{TenantID: 1, Email: "drop@x.io", Name: "drop"}
-		if err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
+		if _, err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)

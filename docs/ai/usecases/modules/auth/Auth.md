@@ -1,6 +1,7 @@
 # auth · authjwt · apikey — establish who is calling, once, so every rule further in can ask
 
 **Covers:** `github.com/frostgrove/vv/auth`, `github.com/frostgrove/vv/auth/authjwt`, `github.com/frostgrove/vv/auth/apikey`
+**Not covered by this sweep:** `github.com/frostgrove/vv/auth/access` and its satellites. That subtree is a working implementation of these contracts rather than one of them, and its own scenario is [[UC-023]]; nothing below has been re-run against it.
 **Sweep:** happy paths · edge cases · release readiness
 **Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established. The edge half adds a forgeable blank HMAC configuration, an accidental scheme waiver that can hand bearer tokens to a key store, ambiguous key-set identifiers resolved by array order, type-nil extensions that escape the promised start-up checks, and a removed JWKS key whose continuing acceptance has no declared lifetime.
 

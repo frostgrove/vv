@@ -29,7 +29,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
 
 	u := User{TenantID: 1, Email: "pgx-tx@x.io", Name: "Joined"}
-	if err := repository.Save(txCtx, &u); err != nil {
+	if _, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
 	}
 	// A raw pgx statement in the same transaction sees the row vv wrote.
@@ -74,7 +74,7 @@ func TestPgxNestedSavepoint(t *testing.T) {
 
 	err := crud.InTx(ctx, source, func(ctx context.Context) error {
 		outer := User{TenantID: 1, Email: "outer@x.io", Name: "outer"}
-		if err := repository.Save(ctx, &outer); err != nil {
+		if _, err := repository.Save(ctx, &outer); err != nil {
 			return err
 		}
 		inner, _ := crud.ExecutorFrom(ctx)
@@ -84,7 +84,7 @@ func TestPgxNestedSavepoint(t *testing.T) {
 		}
 		spCtx := crud.WithExecutor(ctx, sp)
 		doomed := User{TenantID: 1, Email: "doomed@x.io", Name: "doomed"}
-		if err := repository.Save(spCtx, &doomed); err != nil {
+		if _, err := repository.Save(spCtx, &doomed); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)
