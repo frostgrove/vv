@@ -53,8 +53,8 @@ func Example_partialUpdate() {
 	}
 	// Output:
 	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("author_id" = $1 AND "id" = $2) LIMIT 1
-	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("id" = $1 AND "author_id" = $2 AND "id" = $3 AND "author_id" = $4 AND "title" = $5 AND "body" = $6 AND "views" = $7 AND "published_at" = $8 AND "created_at" = $9) LIMIT 1
-	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE ("id" = $3 AND "author_id" = $4 AND "id" = $5 AND "author_id" = $6 AND "title" = $7 AND "body" = $8 AND "views" = $9 AND "published_at" = $10 AND "created_at" = $11) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
+	// SELECT "id", "author_id", "title", "body", "views", "published_at", "created_at" FROM "articles" WHERE ("author_id" = $1 AND "id" = $2 AND "author_id" = $3 AND "title" = $4 AND "body" = $5 AND "views" = $6 AND "published_at" IS NULL AND "created_at" = $7 AND "id" = $8) LIMIT 1
+	// UPDATE "articles" SET "title" = $1, "published_at" = $2 WHERE ("id" = $3 AND "author_id" = $4 AND "id" = $5 AND "author_id" = $6 AND "title" = $7 AND "body" = $8 AND "views" = $9 AND "published_at" IS NULL AND "created_at" = $10) RETURNING "id", "author_id", "title", "body", "views", "published_at", "created_at"
 }
 
 // Unpublishing writes NULL; leaving the field out would have written nothing.
