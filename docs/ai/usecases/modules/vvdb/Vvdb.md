@@ -548,7 +548,8 @@ want the driver wrapped so every query is a span.
 2. Reaching that far does not mean giving up the pool sizing the file describes.
 3. The pool section applied by hand means the same thing it means inside `Open`.
 4. A replica can have its own credential, because it usually has its own user.
-**Today:** 🟡 partial — (1) and (2) hold on pgx, (4) fails on pgx too, and `database/sql` has no seam at all
+**Today:** 🟡 partial — (1), (2) and (4) hold on pgx; `database/sql`
+still has no connector/apply seam, and (3) remains partial there
 **Evidence:** on pgx (1) and (2) are exactly what `Option` is for:
 `pc.BeforeConnect` (`.../pgx/v5@v5.10.0/pgxpool/pool.go:123-125`, honoured at
 `:236`) is reachable through `dbpgx.Connect(ctx, cfg, func(pc *pgxpool.Config) { … })`
@@ -564,21 +565,25 @@ the `pool:` section they still have in their file.
 sentence, not three: **`connect_timeout` is the only pool field applied through
 the string, so it is lost on every path where the string is not the one vvdb
 built** — which is also why H-VVDB-15 loses it beside a supplied `dsn:`.
-(4) fails on the transport that otherwise gets this right.
-`ConnectReadWrite` calls `Connect(ctx, c, opts...)` twice with the identical
-slice (`dbpgx.go:74` and `:82`), so a `BeforeConnect` minting an IAM token for
-the primary's user is applied unchanged to a replica that has its own read-only
-credential. The rung the module doc calls clean extends for one pool and stops
-at the pair.
+(4) now holds on pgx. `ConnectReadWrite` accepts only scoped
+`ReadWriteOption`s: `Common(...)` is copied to the two independently parsed
+configs first, then `Primary(...)` and `Replica(...)` are applied to their own
+side (`utils/vvdb/dbpgx/dbpgx.go`). This lets tracing stay common while IAM or
+role-changing hooks remain side-specific; a side-specific option deliberately
+wins when both touch the same field. The declaration constructors snapshot the
+caller's option slices, so later slice mutation cannot reconfigure either
+pool. `TestReadWriteOptionsKeepCredentialsOnTheirDeclaredSide` pins the
+separation and precedence, and
+`TestReadWriteOptionConstructorsSnapshotTheirSlices` pins ownership.
 **If not ready:** they re-implement four `SetMax…` calls from the config struct,
 which is a copy of `apply` with the same zero-means-default rule that has to be
 remembered rather than inherited. Exporting `func (p Pool) Apply(db *sql.DB) error`
 in `vvdb` and `func Apply(pc *pgxpool.Config, p vvdb.Pool) error` in `dbpgx`
 costs two renames and no dependency, and makes "the application opens the
 connection" ([[D-057]]) something the module supports rather than merely permits.
-(4) is a second `Option` slice on `ConnectReadWrite`, or a `ReplicaOption`
-wrapper; either way it is a signature the owner picks before the tag rather than
-after.
+The remaining work in this case is the `database/sql` connector/apply seam and
+the `connect_timeout` part of (3); the pgx read/write credential cliff is
+closed.
 
 ### H-VVDB-12 — One database per tenant, derived from one base configuration
 **Who:** the SaaS with a database per customer
@@ -1459,7 +1464,7 @@ above close rather than pave.
 | 27 | Absent `sslmode` means libpq's `prefer` on PostgreSQL and plaintext on MySQL, and no document says either; all three templates omit the field | sharp edge | "Show the auditor, from the config file alone, that production connects encrypted" is unanswerable, and by row 10 the answer is not in the file at all |
 | 28 | Migrations are unaddressed: the MySQL and MariaDB string is the driver's DSN, not a URL, and no document says which tools take it or how | sharp edge | The first thing a consumer does with the handle in week one, and the workaround is a second copy of the credentials that drifts |
 | 29 | A `dsn:` primary with a field-described `replica:` cannot work — the merged replica loses the name inside the URL — while `docs/modules/en/vvdb.md:128` says it inherits everything it does not restate | sharp edge | Neon and RDS hand out a URL per endpoint, so the combination is ordinary; the failure is loud but the document is wrong |
-| 30 | `dbpgx.ConnectReadWrite` applies one `opts` slice to both pools, so the replica gets the primary's `BeforeConnect` | sharp edge | A replica usually has its own read-only credential, and the transport this file rates as having no cliff acquires one the moment a replica appears |
+| 30 | **Closed:** `dbpgx.ConnectReadWrite` accepts scoped `ReadWriteOption`s; common hooks are copied and primary/replica hooks are isolated, ordered and snapshotted | resolved | Separate credentials are expressed as `Primary(...)` and `Replica(...)`; focused tests pin side isolation, common-first precedence and caller-slice ownership |
 | 31 | No `password_file:` and no credential seam on `database/sql` | sharp edge | The platform that forbids secrets in environment variables has to put the password back in Go, which is the regression this module exists to prevent |
 
 ## Contested
