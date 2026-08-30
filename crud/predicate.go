@@ -1418,13 +1418,12 @@ func Asc(field string) Order { return Order{Field: field} }
 // Desc sorts descending by a field.
 func Desc(field string) Order { return Order{Field: field, Desc: true} }
 
-// WithNullsLast places NULLs at the end (PostgreSQL only; MySQL ignores it and
-// keeps its own order, which is NULLs first ascending and NULLs last
-// descending).
+// WithNullsLast places NULLs at the end. Dialects with native NULLS LAST use
+// it; MySQL, MariaDB, and SQLite use a leading boolean null-key instead.
 func (this Order) WithNullsLast() Order { this.NullsLast, this.NullsSet = true, true; return this }
 
-// WithNullsFirst places NULLs at the start, with the same PostgreSQL-only
-// caveat as WithNullsLast.
+// WithNullsFirst places NULLs at the start, using the same native-or-portable
+// rendering strategy as WithNullsLast.
 func (this Order) WithNullsFirst() Order { this.NullsLast, this.NullsSet = false, true; return this }
 
 // sortExpr renders a sortable expression for a path. A relation hop becomes a

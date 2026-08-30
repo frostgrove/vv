@@ -488,15 +488,11 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 // ---------------------------------------------------------------------------
 // NULL ordering
 
-// Where a NULL sorts is the engine's decision, not vv's: PostgreSQL puts
-// NULLs last on ASC and first on DESC, MySQL does the opposite. crud.Order can
-// say which it wants — and that request is rendered for PostgreSQL only, because
-// MySQL has no NULLS LAST clause. So `Asc(f).WithNullsLast()` is honoured on one
-// engine and silently dropped on the other.
-//
-// Emulating it on MySQL is one expression (`ISNULL(col)` as a leading sort key)
-// and it belongs in Order.render in crud/predicate.go.
-func TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly(t *testing.T) {
+// With no hint, NULL placement remains the engine's ordinary ordering:
+// PostgreSQL puts NULLs last on ASC and first on DESC, MySQL does the opposite.
+// Once the caller asks, crud.Order makes that choice portable. PostgreSQL uses
+// its native clause; MySQL uses a leading `col IS NULL` sort key.
+func TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
 
@@ -511,9 +507,8 @@ func TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly(t *testing.T) 
 				EgRow{ID: 4, Tenant: 1, Name: "d", Score: crud.Set(1)},
 			)
 
-			// Where the two columns differ, so do the engines; the third case is
-			// the one that matters, because there the caller said what they
-			// wanted and only one engine listened.
+			// The first two rows are the no-hint control. Every explicit choice
+			// after them must agree across engines.
 			for _, tc := range []struct {
 				name            string
 				order           crud.Order
@@ -524,9 +519,13 @@ func TestWhereNULLsSortIsTheEnginesChoiceAndTheHintIsPostgresOnly(t *testing.T) 
 				{"descending", crud.Desc("Score"),
 					"<null> <null> 5 1", "5 1 <null> <null>"},
 				{"ascending, NULLs last requested", crud.Asc("Score").WithNullsLast(),
-					"1 5 <null> <null>", "<null> <null> 1 5"},
+					"1 5 <null> <null>", "1 5 <null> <null>"},
 				{"descending, NULLs last requested", crud.Desc("Score").WithNullsLast(),
 					"5 1 <null> <null>", "5 1 <null> <null>"},
+				{"ascending, NULLs first requested", crud.Asc("Score").WithNullsFirst(),
+					"<null> <null> 1 5", "<null> <null> 1 5"},
+				{"descending, NULLs first requested", crud.Desc("Score").WithNullsFirst(),
+					"<null> <null> 5 1", "<null> <null> 5 1"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					got, err := rows.GetAll(ctx, crud.OrderBy(tc.order), crud.Limit(10))

@@ -53,12 +53,11 @@ wrote them down; difference 9 was measured while building the catalog,
 difference 10 arrived with the classifier that reads it, and difference 11 with
 the probe.
 
-1. **`Order.WithNullsLast` / `WithNullsFirst` are PostgreSQL-only.** `NULLS LAST`
-   is not in MySQL's grammar. MySQL keeps its own rule — NULLs first ascending,
-   NULLs last descending — and the hint is dropped. Emulating it would need
-   `ORDER BY col IS NULL, col`, which changes the sort into an expression sort
-   and defeats an index; the caller who needs it can write that themselves. This
-   is the one named in both usage guides.
+1. **Default NULL placement is engine-owned; an explicit choice is portable.**
+   PostgreSQL and MySQL have opposite ascending defaults. `WithNullsLast` and
+   `WithNullsFirst` use PostgreSQL's native clause where available and a leading
+   `col IS NULL` key on MySQL/MariaDB/SQLite. That emulation can change index
+   use, but it never silently drops the caller's requested semantics.
 2. **`UpdateAll`'s row count.** PostgreSQL reports rows *matched*, MySQL rows
    *changed*. Writing a value a row already holds is counted by one and not by
    the other. This is the driver's number and there is nothing to normalise it
@@ -229,9 +228,9 @@ the probe.
 
 - Do not branch on `Dialect.Name()` in a repository or a builder. Add a method
   to `Dialect`, or an optional interface if not every dialect needs it.
-  `Order.render`'s `postgres` test for `NULLS LAST` is the remaining name check:
-  the behaviour is genuinely PostgreSQL-only rather than a capability another
-  dialect might grow. Literal `LIKE` escaping uses the optional `LikeEscaper`.
+  `Order.render`'s MySQL/SQLite test selects the portable boolean-key emulation
+  for engines without the native `NULLS FIRST/LAST` grammar. Literal `LIKE`
+  escaping uses the optional `LikeEscaper`.
 - Do not add a required method to `Dialect`. A dialect written outside this
   package must keep compiling; that is what `OffsetLimiter` demonstrates.
 - Do not skip the MySQL re-read to save a round trip. It has been tried; see
@@ -259,8 +258,8 @@ the probe.
 - `crud/dialect.go:SQLite.LockClause` — empty, with the reason.
 - `crud/render.go:SQL.LimitOffset` — asks the dialect rather than checking its
   name.
-- `crud/predicate.go:Order.render` — the one remaining name check, and the
-  `NULLS` clause it guards.
+- `crud/predicate.go:Order.render` — native `NULLS` grammar or the portable
+  boolean-key emulation.
 - `crud/predicate.go:LikeIgnoreCase` and the `…IgnoreCase` literal helpers —
   the portable spellings.
 - `crud/sqlrepo/repository.go:newRepository` — `returning` is empty when the
