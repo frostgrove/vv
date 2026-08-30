@@ -797,8 +797,16 @@ consumer starts writing code this library was supposed to have written.
 **Setup:** A PostgreSQL application keeps tenant tables outside `public` and calls `CopyFrom(ctx, "tenant_42.products", columns, rows)`.
 **What the consumer does:** They expect the normal PostgreSQL spelling to reach `tenant_42.products`, or a clear rejection that says the API accepts only one identifier component.
 **What must happen:** The COPY API accepts a schema and relation as distinct identifier parts, or rejects dotted input before contacting PostgreSQL.
-**Today:** ❌ wrong or unhandled
-**Evidence:** The public adapter accepts one `table string` (`crud/adapter/crudpgx/crudpgx.go:117-125`) and wraps that entire string as the single-element `pgx.Identifier{table}` before calling pgx (`:119-124`); it has no schema parameter or dotted-name validation. The integration COPY test uses only `"users"` (`test/integration/driver_pgx_test.go:110-124`), and no schema-qualified COPY test was found.
+**Today:** ✅ supported
+**Evidence:** `crudpgx.Executor.CopyFromTable` accepts a validated
+`crud.TableRef` and passes `Schema` and `Name` as separate exact
+`pgx.Identifier` components. Compatibility `CopyFrom(table string, ...)`
+accepts one component and rejects a dot before the wrapped pgx handle is called.
+`crud/adapter/crudpgx/copy_test.go` pins both the two-component hand-off and the
+no-call refusal; the live PostgreSQL
+`TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable` writes through both
+the qualified repository and COPY paths and proves the rejected dotted call
+changes no rows.
 **Blast radius:** confusing error
 
 ### E-ADAPTERS-11 — COPY is asked to import an empty feed

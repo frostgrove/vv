@@ -43,7 +43,7 @@ func (this scope) qualify(d Dialect, col string) string {
 // bare names would be ambiguous.
 func (this scope) correlate(d Dialect, col string) string {
 	if this.alias == "" {
-		return d.Quote(this.meta.Table) + "." + d.Quote(col)
+		return quoteTable(d, this.meta.TableReference()) + "." + d.Quote(col)
 	}
 	return this.alias + "." + d.Quote(col)
 }
@@ -112,11 +112,11 @@ func (this *writer) leaf(path string, emit func(col string)) {
 	for _, hop := range hops {
 		alias := this.nextAlias()
 		this.str("EXISTS (SELECT 1 FROM ")
-		this.str(this.d.Quote(hop.Target.Table))
+		this.str(quoteTable(this.d, hop.Target.TableReference()))
 		this.str(" AS " + alias)
 		if hop.Rel.Kind == ManyToMany {
 			j := this.nextAlias()
-			this.str(" JOIN " + this.d.Quote(hop.Rel.JoinTable) + " AS " + j +
+			this.str(" JOIN " + quoteTable(this.d, hop.Rel.JoinTableReference()) + " AS " + j +
 				" ON " + j + "." + this.d.Quote(hop.Rel.JoinRef) + " = " + alias + "." + this.d.Quote(hop.Remote.Column))
 			this.str(" WHERE " + j + "." + this.d.Quote(hop.Rel.JoinLocal) + " = " + cur.correlate(this.d, hop.Local.Column))
 		} else {
@@ -1476,7 +1476,7 @@ func (this *writer) sortExpr(segs []string, cur scope) {
 	this.str("(SELECT ")
 	this.sortExpr(segs[1:], this.cur)
 	// cur, not w.cur: the correlation points back at the parent statement.
-	this.str(" FROM " + this.d.Quote(target.Table) + " AS " + alias +
+	this.str(" FROM " + quoteTable(this.d, target.TableReference()) + " AS " + alias +
 		" WHERE " + alias + "." + this.d.Quote(remote.Column) + " = " + cur.correlate(this.d, local.Column))
 	if this.rel.At(this.path, target) != nil {
 		this.str(" AND ")

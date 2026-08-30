@@ -191,18 +191,26 @@ func (this *full) merge(request *Request, found []finding, partial bool) *errs.F
 
 // same finds the probe violation that describes what the driver reported.
 //
-// By constraint name where the driver named one, which is PostgreSQL. Where it
-// named none — MySQL, MariaDB and SQLite carry no constraint in their structured
-// error at all — by code, and only when exactly one probe violation carries that
-// code. With two, there is no way to tell which of them the engine stopped at,
-// and folding into the wrong one would move a path onto a field that is correct.
+// By constraint name where the driver named one, which is PostgreSQL. A named
+// constraint is only an identity inside its table, so any source components the
+// driver supplied must agree too. A qualified declaration additionally requires
+// both exact components: dropping a missing schema here would let a trigger's
+// same-named constraint on another table acquire this model's path.
+//
+// Where the driver named no constraint — MySQL, MariaDB and SQLite carry no
+// constraint in their structured error at all — matching is by code, and only
+// when exactly one compatible probe violation carries that code. That exact
+// probe result may fill an empty driver source, but never contradict a non-empty
+// schema or table the driver did supply. With two, there is no way to tell which
+// of them the engine stopped at, and folding into the wrong one would move a path
+// onto a field that is correct.
 func (this *full) same(dv *errs.Violation, mine []errs.Violation, keep []bool) (int, bool) {
 	if dv.Origin != errs.OriginState || dv.Code == "" {
 		return 0, false
 	}
 	if dv.Source.Constraint != "" {
 		for i, v := range mine {
-			if keep[i] && v.Source.Constraint == dv.Source.Constraint {
+			if keep[i] && v.Source.Constraint == dv.Source.Constraint && this.sameSource(dv.Source, v.Source, true) {
 				return i, true
 			}
 		}
@@ -213,16 +221,37 @@ func (this *full) same(dv *errs.Violation, mine []errs.Violation, keep []bool) (
 	}
 	found, n := 0, 0
 	for i, v := range mine {
-		if keep[i] && v.Code == dv.Code {
+		if keep[i] && v.Code == dv.Code && this.sameSource(dv.Source, v.Source, false) {
 			found, n = i, n+1
 		}
 	}
 	return found, n == 1
 }
 
+func (this *full) sameSource(driver, probed errs.Source, named bool) bool {
+	if driver.Schema != "" && driver.Schema != probed.Schema {
+		return false
+	}
+	if driver.Table != "" && driver.Table != probed.Table {
+		return false
+	}
+	// Constraint names are relation-local on PostgreSQL. For an explicitly
+	// qualified repository, a named driver violation without both components is
+	// therefore not enough identity to fold confidently. Code-only engines are
+	// handled above by the unique compatible probe result instead.
+	if named && this.meta != nil && this.meta.TableReference().Schema != "" {
+		return driver.Schema != "" && driver.Table != "" &&
+			driver.Schema == probed.Schema && driver.Table == probed.Table
+	}
+	return true
+}
+
 func fold(dv *errs.Violation, pv errs.Violation, codeOnly bool) {
 	if len(dv.Path) == 0 && !codeOnly {
 		dv.Path, dv.Approximate = pv.Path, pv.Approximate
+	}
+	if dv.Source.Schema == "" {
+		dv.Source.Schema = pv.Source.Schema
 	}
 	if dv.Source.Table == "" {
 		dv.Source.Table = pv.Source.Table

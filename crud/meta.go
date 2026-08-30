@@ -449,28 +449,97 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 	return nil
 }
 
-// Meta binds a schema to a table.
+// Meta binds a schema to a physical table.
 type Meta struct {
 	*Schema
-	Table     string
+	// Table is the conventional diagnostic spelling kept for compatibility.
+	// SQL and relation identity use the private structured reference, so callers
+	// cannot retarget validated metadata by mutating an exported field.
+	Table string
+
+	tableRef TableRef
+
 	relations *relationContext
 }
 
 // NewMeta binds M to a table. An empty name asks the model first, through
-// TableName(), then falls back to the snake_case plural of its type name.
+// TableName(), then falls back to the snake_case plural of its type name. The
+// string form accepts exactly one identifier component; use NewMetaInSchema or
+// NewMetaRef for a qualified table.
 func NewMeta[M any](table string) (*Meta, error) {
 	s, err := SchemaOf[M]()
 	if err != nil {
 		return nil, err
 	}
 	if table == "" {
-		table = TableNameOf(s.Type)
+		ref, err := TableRefOf(s.Type)
+		if err != nil {
+			return nil, tableRefSchemaError(s.Type, err)
+		}
+		return bindMeta(s, ref), nil
 	}
-	if table == "" {
-		return nil, &SchemaError{Model: s.Type.String(), Reason: "table name resolved to empty; TableName must return a name or an explicit table must be supplied"}
+	ref, err := NewTableRef(table)
+	if err != nil {
+		return nil, tableRefSchemaError(s.Type, err)
 	}
-	context := &relationContext{tables: map[reflect.Type]string{s.Type: table}}
-	return &Meta{Schema: s, Table: table, relations: context}, nil
+	return bindMeta(s, ref), nil
+}
+
+// NewMetaInSchema binds M to a qualified physical table. Schema is the first
+// identifier component: a PostgreSQL schema, MySQL database, or SQLite attached
+// database.
+func NewMetaInSchema[M any](schema, table string) (*Meta, error) {
+	ref, err := NewTableRefInSchema(schema, table)
+	if err != nil {
+		var zero M
+		return nil, tableRefSchemaError(reflect.TypeOf(&zero).Elem(), err)
+	}
+	return NewMetaRef[M](ref)
+}
+
+// NewMetaRef is the low-level structured form of NewMeta. It never interprets
+// dots inside a component.
+func NewMetaRef[M any](table TableRef) (*Meta, error) {
+	s, err := SchemaOf[M]()
+	if err != nil {
+		return nil, err
+	}
+	if err := table.Validate(); err != nil {
+		return nil, tableRefSchemaError(s.Type, err)
+	}
+	return bindMeta(s, table), nil
+}
+
+func bindMeta(s *Schema, table TableRef) *Meta {
+	context := &relationContext{tables: map[reflect.Type]TableRef{s.Type: table}}
+	return &Meta{Schema: s, Table: table.String(), tableRef: table, relations: context}
+}
+
+func tableRefSchemaError(model reflect.Type, err error) error {
+	reason := strings.TrimPrefix(err.Error(), "crud: ")
+	if strings.Contains(reason, "dotted string") {
+		reason += "; use sqlrepo.DefineInSchema or crud.NewMetaInSchema at a declarative boundary"
+	}
+	return &SchemaError{Model: model.String(), Reason: reason}
+}
+
+// TableReference returns the structured physical identity. The fallback keeps
+// manually-constructed legacy Meta values useful; metadata created by NewMeta
+// always has TableRef populated and validated.
+func (this *Meta) TableReference() TableRef {
+	if this == nil {
+		return TableRef{}
+	}
+	if this.tableRef.Name != "" || this.tableRef.Schema != "" {
+		return this.tableRef
+	}
+	return TableRef{Name: this.Table}
+}
+
+// QuotedTable renders the validated physical table for d. It is the safe seam
+// used by repository implementations that cache statement fragments.
+func (this *Meta) QuotedTable(d Dialect) string {
+	return quoteTable(d, this.TableReference())
 }
 
 func parseTag(tag string) (name string, options []string) {

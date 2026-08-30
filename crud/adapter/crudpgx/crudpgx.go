@@ -122,13 +122,28 @@ type rows struct {
 func (this rows) Err() error { return this.e.conflict(this.Rows.Err()) }
 
 // CopyFrom implements crud.BulkInserter when the underlying handle supports
-// COPY, which every pool, connection and transaction does.
+// COPY, which every pool, connection and transaction does. Its string accepts
+// one identifier component and refuses dots; use CopyFromTable for a qualified
+// PostgreSQL table.
 func (this Executor) CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
+	ref, err := crud.NewTableRef(table)
+	if err != nil {
+		return 0, err
+	}
+	return this.CopyFromTable(ctx, ref, columns, rows)
+}
+
+// CopyFromTable is the structured COPY path. pgx receives schema and table as
+// distinct identifier components and performs its own per-component quoting.
+func (this Executor) CopyFromTable(ctx context.Context, table crud.TableRef, columns []string, rows [][]any) (int64, error) {
+	if err := table.Validate(); err != nil {
+		return 0, err
+	}
 	c, ok := this.q.(copier)
 	if !ok {
 		return 0, crud.ErrNoTxSupport
 	}
-	return c.CopyFrom(ctx, pgx.Identifier{table}, columns, pgx.CopyFromRows(rows))
+	return c.CopyFrom(ctx, pgx.Identifier(table.Components()), columns, pgx.CopyFromRows(rows))
 }
 
 // Begin starts a transaction, or a savepoint when the handle already is one.

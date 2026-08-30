@@ -47,6 +47,26 @@ type Catalog interface {
 }
 ```
 
+Qualified names use the optional structured capability that `Load` always
+returns:
+
+```go
+qualified := cat.(catalog.QualifiedCatalog)
+events, ok := qualified.TableByRef(crud.TableRef{
+    Schema: "analytics",
+    Name:   "events",
+})
+key, ok := qualified.ConstraintByRef(
+    crud.TableRef{Schema: "analytics", Name: "events"}, "events_slug_key")
+```
+
+The components are looked up exactly; they are never joined into a dotted
+string or allowed to fall back to `Table("events")`. A third-party `Catalog`
+does not have to implement `QualifiedCatalog`, but `probe.Full` refuses a
+qualified repository with `probe.ErrQualifiedCatalog` when it does not. That is
+a declaration-time refusal rather than a probe against the wrong same-named
+table.
+
 `Constraint` takes the table **as well as** the name, because an index name is
 unique per table on MySQL rather than per schema — every InnoDB table's primary
 index is called `PRIMARY`, and MariaDB reports a duplicate key as
@@ -55,6 +75,19 @@ index is called `PRIMARY`, and MariaDB reports a duplicate key as
 `Dialect()` is **not** `crud.Dialect.Name()`, which answers `"mysql"` for MariaDB
 and so cannot tell the two apart. This is the one place in the tree where the
 engine is *measured* rather than declared.
+
+Loader scope is intentionally engine-specific:
+
+| Engine | Qualified lookup scope |
+|---|---|
+| PostgreSQL | every non-system schema on which the loading role has `USAGE`; `pg_table_is_visible` is recorded separately so legacy bare lookup still follows `search_path` |
+| MySQL / MariaDB | the current `DATABASE()` only; an exact qualifier for that database works, another database is a miss |
+| SQLite | `main` only; attached databases remain valid repository qualifiers, but this catalog does not introspect them |
+
+Consequently a qualified MySQL database other than `DATABASE()` or an attached
+SQLite database can be queried by `sqlrepo.DefineInSchema`, but wiring
+`probe.Full` for it is refused with `probe.ErrUnknownTable`. There is no bare
+fallback and no wrong constraint attribution.
 
 ---
 
@@ -149,6 +182,8 @@ if r, ok := cat.(catalog.Referrers); ok {
 No lookup on `Catalog` can express this — a constraint is recorded on the table
 that *declares* it. It is what a `restrict` probe needs, and a catalog that is
 not a `Referrers` simply produces no restrict terms.
+For an exact target, `QualifiedReferrers.ReferencedByRef(crud.TableRef{...})`
+keeps foreign keys to same-named tables in different schemas separate.
 
 ## What it is not
 

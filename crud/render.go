@@ -39,8 +39,19 @@ func (this *SQL) Raw(s string) *SQL { this.w.str(s); return this }
 // Ident appends a quoted identifier.
 func (this *SQL) Ident(name string) *SQL { this.w.str(this.w.d.Quote(name)); return this }
 
-// Table appends the quoted table name.
-func (this *SQL) Table() *SQL { return this.Ident(this.w.m.Table) }
+// TableRef appends a validated table reference, quoting each component on its
+// own. Unlike Ident, it understands the structured qualifier boundary.
+func (this *SQL) TableRef(table TableRef) *SQL {
+	if err := table.Validate(); err != nil {
+		this.w.fail(err)
+		return this
+	}
+	this.w.str(quoteTable(this.w.d, table))
+	return this
+}
+
+// Table appends the bound Meta's physical table reference.
+func (this *SQL) Table() *SQL { return this.TableRef(this.w.m.TableReference()) }
 
 // Column resolves a Go field name (or column name) and appends it quoted.
 func (this *SQL) Column(ref string) *SQL { this.w.column(ref); return this }

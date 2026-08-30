@@ -45,6 +45,28 @@ users := Users.Bind(crudpgx.Open(pool))
 `TryDefine`, если вместо паники нужна ошибка, и `sqlrepo.New`, чтобы пропустить
 blueprint и сразу получить привязанный репозиторий.
 
+### Таблица вне пространства имён по умолчанию
+
+Передавайте qualifier и таблицу двумя компонентами identifier:
+
+```go
+var Events = sqlrepo.DefineInSchema[Event, int64, EventUpdate](
+    "analytics", "events",
+)
+```
+
+Первый компонент означает схему в PostgreSQL, базу данных в MySQL/MariaDB и
+подключённую базу (`ATTACH`) в SQLite. vv цитирует компоненты отдельно:
+`"analytics"."events"` в PostgreSQL/SQLite и
+`` `analytics`.`events` `` в MySQL.
+
+`Define("analytics.events")` намеренно отклоняется при декларации. Строка с
+точкой неоднозначна: это может быть и квалификатор, и буквальная точка в имени
+цитируемой таблицы, поэтому vv ничего не угадывает и не разделяет молча.
+`TryDefineInSchema` — вариант с возвратом ошибки. Low-level metadata и адаптеры
+несут ту же identity как `crud.TableRef`; его компоненты точные и сами могут
+содержать точки.
+
 ---
 
 ## Поверхность
@@ -115,7 +137,8 @@ Bind-бюджет диалекта учитывается автоматичес
 
 ## Настройки
 
-Передаются в `Define`, `TryDefine` или `New` и применяются к каждому вызову.
+Передаются в `Define`, `TryDefine`, `DefineInSchema`, `TryDefineInSchema` или
+`New` и применяются к каждому вызову.
 
 | Настройка | Что делает |
 |---|---|
@@ -341,6 +364,10 @@ rollback, и `fn` не может откатиться самостоятель�
 - **Регистрация таблицы типизирована.** `RegisterTable` принимает struct-модель,
   а не `*Model`, scalar или interface. Конфликтующее либо уже опубликованное
   имя получает явный отказ ([[D-080]]).
+- **Qualified identity таблицы структурирована.** Строка с точкой в
+  `Define`/`TableName` — ошибка декларации. Используйте `DefineInSchema`; в
+  relation override это `schema=...,table=...`, а для many-to-many join — ещё
+  `joinSchema=...`.
 
 ## Колоночный `DEFAULT` не срабатывает
 

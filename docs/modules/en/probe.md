@@ -51,6 +51,13 @@ docs := Docs.Bind(db, faults.Enrich[Doc, int64](
 and finds nothing. That is the honest answer wherever a second statement is not
 free.
 
+For a repository declared with `DefineInSchema`, `Full` requires the catalog's
+optional `QualifiedCatalog` capability and looks up tables, foreign-key targets,
+and inbound references by exact schema and name. It never falls back to a bare
+same-named table. `catalog.Load` supplies this for all eligible PostgreSQL
+schemas, the current MySQL/MariaDB database, and SQLite `main`; see
+[catalog](catalog.md) for the deliberate loader boundary.
+
 ---
 
 ## Two rules a signature cannot carry
@@ -191,6 +198,7 @@ time**, so it refuses at declaration:
 | Error | Means |
 |---|---|
 | `ErrUnknownTable` | the catalog does not know this table |
+| `ErrQualifiedCatalog` | a qualified repository was given a catalog with only legacy bare lookup |
 | `ErrKeyDoesNotIdentify` | the primary-key column is not a row identity on its own |
 | `ErrUnknownConstraint` | a `Skip` names no constraint |
 

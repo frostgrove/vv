@@ -82,6 +82,20 @@ database. MySQL's own `information_schema.CHECK_CONSTRAINTS` makes the same poin
 from the other side: it has no `TABLE_NAME` column at all, so the loader has to
 join `TABLE_CONSTRAINTS` to learn which table a check belongs to.
 
+**Why a qualified lookup takes both identifier components.** The small
+`Catalog` interface keeps its historical bare-name methods for third-party
+implementations. `Load` additionally implements `QualifiedCatalog` and
+`QualifiedReferrers`, whose keys are `(schema, table)`. PostgreSQL introspection
+reads every non-system schema on which the role has `USAGE`; it stores
+`pg_table_is_visible` as separate lookup state so `Table("events")` still means
+what `search_path` means while `TableByRef(analytics.events)` can find a table
+outside it. Constraints and inbound foreign keys use the same full key.
+
+A qualified probe requires that optional capability and fails declaration when
+it is absent. `sqlfault` also refuses to fall back to its legacy columns SPI
+when a driver supplied `Source.Schema`. Both refusals prefer unknown metadata to
+an authoritative answer from a same-named table in another schema.
+
 **Why a build cannot be keyed on the bare name.** `Constraint` taking the table
 answers *which* table a name belongs to and does not make the pair an identity.
 One table can carry two objects of one name, because the namespaces are separate:
@@ -170,6 +184,8 @@ D-039 forbids.
   `information_schema` rows rather than a refusal — see *Owed by phase 7*.
 - Do not resolve a bare table name lazily per connection. The catalog resolves
   it once, on the connection it loaded from, and records the resolved schema.
+- Do not join or discard schema and table components for a qualified lookup.
+  Keep legacy bare lookup as a separate compatibility path.
 - Do not let it grow into a migration tool, a DDL model, or a Go-side
   re-implementation of the database's rules. Two implementations of one
   constraint disagree eventually, and the one in the database is the one that is
@@ -179,6 +195,8 @@ D-039 forbids.
 
 - `crud/catalog/doc.go` — the rules a signature cannot carry.
 - `crud/catalog/catalog.go` — `Catalog`, `Table`, `Column`, `Constraint`, `Kind`.
+- `crud/catalog/catalog.go` — `QualifiedCatalog` and `QualifiedReferrers`, the
+  exact structured lookup capabilities returned by `Load`.
 - `crud/catalog/errors.go` — `ErrUncomparableHandle`, `ErrUnknownDialect`,
   `ErrIntrospection`.
 - `crud/catalog/load.go` — `Load`, `backendFor`, `eachRow`, `builder`, `conBuildKey`,
@@ -261,6 +279,9 @@ D-039 forbids.
 - `TestAConstraintIsKeyedOnItsTableAsWellAsItsName` and
   `TestColumnsAndConstraintsKeepTheOrderTheEngineReported` in
   `crud/catalog/catalog_test.go`.
+- `TestQualifiedLookupsKeepSameNamedPostgresTablesAndForeignKeysSeparate` in
+  `crud/catalog/qualified_test.go` — duplicate bare names, exact constraints,
+  and both directions of foreign-key identity.
 - `TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot` and
   `TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot` in
   `test/integration/catalog_test.go` — the twin, live, on all four engines, for
@@ -293,6 +314,10 @@ D-039 forbids.
   merge.
 - `TestOneSetHoldsFourLiveDatabasesWithoutMergingThem` in
   `test/integration/catalog_test.go` — the identity rule against real handles.
+- `TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable` in
+  `test/integration/driver_pgx_test.go` — two PostgreSQL schemas with the same
+  table and constraint names but different columns, through catalog, sqlfault,
+  probe, repository SQL, and COPY.
 
 ### Paid by phase 7
 

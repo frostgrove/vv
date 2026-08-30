@@ -256,6 +256,15 @@ var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
 
 `Define` validates the tags, the ID type and the DTO **eagerly**, so a broken
 mapping panics at package initialisation rather than on the first request.
+Tables outside the default namespace keep their identifier components explicit:
+
+```go
+var Events = sqlrepo.DefineInSchema[Event, int64, EventUpdate]("analytics", "events")
+```
+
+That is a PostgreSQL schema, MySQL database, or SQLite attached database.
+`Define("analytics.events")` fails during declaration rather than guessing how
+to split the string; vv renders the structured form per component.
 
 Open the database — or hand vv one you already have. `vvdb` takes one struct
 with `yaml` and `env` tags and answers a handle for PostgreSQL, MySQL, MariaDB
@@ -872,9 +881,9 @@ type Article struct {
 
 | Tag | Foreign key | Overrides |
 | --- | --- | --- |
-| `belongs_to` | `<Field>ID` on this model | `fk=`, `ref=`, `table=` |
-| `has_one` / `has_many` | `<ThisModel>ID` on the target | `fk=`, `ref=`, `table=` |
-| `many_to_many` | the join table's two columns | `join=`, `joinFK=`, `joinRef=` |
+| `belongs_to` | `<Field>ID` on this model | `fk=`, `ref=`, `table=`, `schema=` |
+| `has_one` / `has_many` | `<ThisModel>ID` on the target | `fk=`, `ref=`, `table=`, `schema=` |
+| `many_to_many` | the join table's two columns | target `table=`/`schema=`; `join=`, `joinSchema=`, `joinFK=`, `joinRef=` |
 | `rel:""` | inferred from the Go type | |
 | `rel:"-"` | never a relation | |
 
@@ -1217,6 +1226,13 @@ users := Users.Bind(db, faults.Enrich[User, int64](
 ))
 ```
 
+For PostgreSQL, that one load indexes exact `(schema, table)` identities across
+every non-system schema the role may use, while bare lookups still follow
+`search_path`. MySQL/MariaDB catalog loading covers the current database and
+SQLite covers `main`; a repository may still use another database or attached
+database through `DefineInSchema`, but `probe.Full` refuses that unsupported
+catalog scope at bind time instead of falling back to a same-named table.
+
 `probe.Full` issues **one extra statement** — one boolean column per constraint
 the write could have broken — and reports every violation it finds beside the one
 the driver already reported. Three codes: `unique`, `foreign_key`, `restrict`,
@@ -1550,6 +1566,14 @@ underneath can do, so this is a door you open yourself:
 if bulk, ok := src.(crud.BulkInserter); ok {
     n, err := bulk.CopyFrom(ctx, "users", cols, rows)
 }
+```
+
+For a qualified PostgreSQL table, use the concrete structured path; the legacy
+string path refuses dots before pgx is called:
+
+```go
+n, err := src.CopyFromTable(ctx,
+    crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
 ```
 
 The call runs on the handle that executor holds and ignores any transaction in

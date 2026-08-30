@@ -1,5 +1,7 @@
 package catalog
 
+import "github.com/frostgrove/vv/crud"
+
 // Catalog is one database's schema, read once and answered from memory.
 //
 // Constraint takes the table as well as the name because an index name is unique
@@ -19,6 +21,19 @@ type Catalog interface {
 	Dialect() string
 }
 
+// QualifiedCatalog is the optional capability for looking up a table by its
+// already-separated schema and name. Load returns a catalog that implements
+// it. Keeping it separate from Catalog preserves the deliberately small seam
+// third-party catalogs implement, while consumers that must not guess at a
+// qualified name can fail at declaration when the capability is absent.
+//
+// A TableRef with no Schema has the same meaning as the corresponding legacy
+// bare-name lookup. Components are never joined and parsed again.
+type QualifiedCatalog interface {
+	TableByRef(table crud.TableRef) (*Table, bool)
+	ConstraintByRef(table crud.TableRef, name string) (*Constraint, bool)
+}
+
 // Referrers is the optional interface a Catalog implements to answer which
 // foreign keys point *at* a table — the inbound direction, which no lookup on
 // Catalog can express because a constraint is recorded on the table that
@@ -33,6 +48,13 @@ type Catalog interface {
 // every loading statement fixes with an ORDER BY ([[D-014]]).
 type Referrers interface {
 	ReferencedBy(table string) []*Constraint
+}
+
+// QualifiedReferrers is the structured counterpart to Referrers. Load returns
+// a catalog that implements it, so two schemas containing a table of the same
+// name cannot merge their inbound foreign keys.
+type QualifiedReferrers interface {
+	ReferencedByRef(table crud.TableRef) []*Constraint
 }
 
 // Kind is what the engine said a constraint is.
@@ -93,9 +115,8 @@ type Column struct {
 // Table is one table and everything read about it.
 type Table struct {
 	Name string
-	// Schema is where the name resolved on the connection the catalog loaded
-	// from — PostgreSQL's search_path, MySQL's current database, SQLite's
-	// "main". Resolved once, recorded, and never resolved again per connection.
+	// Schema is the table's exact PostgreSQL schema, MySQL database, or SQLite
+	// database name. It is identity, not a dotted prefix folded into Name.
 	Schema string
 	// Columns in the engine's own order, pinned by an explicit ORDER BY.
 	Columns []Column

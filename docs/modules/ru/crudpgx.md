@@ -62,6 +62,20 @@ if bulk, ok := src.(crud.BulkInserter); ok {
 }
 ```
 
+Compatibility-интерфейс принимает один компонент имени таблицы. Для таблицы
+в нестандартной схеме PostgreSQL сохраняйте компоненты структурированными:
+
+```go
+n, err := src.CopyFromTable(ctx,
+    crud.TableRef{Schema: "tenant_42", Name: "products"},
+    cols, rows,
+)
+```
+
+`CopyFrom(ctx, "tenant_42.products", ...)` отклоняется до вызова pgx: vv не
+угадывает разделитель и не передаёт всю строку как одно quoted relation name.
+`CopyFromTable` отдаёт pgx два точных компонента `pgx.Identifier`.
+
 Вызов идёт на том хэндле, который держит исполнитель, и игнорирует любую
 транзакцию в контексте ([[UC-008]]).
 

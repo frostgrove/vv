@@ -140,6 +140,14 @@ supply a schema without importing `catalog`, and **cannot** hand back a
 predicate, a definition or DDL text, none of which has any business near a
 renderer ([[D-044]]).
 
+If a driver supplies `Source.Schema`, the classifier asks the optional
+`QualifiedColumns.ConstraintColumnsIn(schema, table, constraint)` instead. It
+never discards the schema and calls the legacy method: identical table and
+constraint names may cover different columns in two schemas. `FromCatalog`
+implements the qualified SPI through `catalog.QualifiedCatalog`; a provider
+with only the legacy SPI leaves columns unknown rather than attributing the
+wrong field.
+
 ## See also
 
 - [sqlerr](sqlerr.md) — the four dialect tables underneath

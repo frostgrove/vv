@@ -62,6 +62,20 @@ if bulk, ok := src.(crud.BulkInserter); ok {
 }
 ```
 
+The compatibility interface accepts one table-name component. For a table in a
+non-default PostgreSQL schema, keep the components structured:
+
+```go
+n, err := src.CopyFromTable(ctx,
+    crud.TableRef{Schema: "tenant_42", Name: "products"},
+    cols, rows,
+)
+```
+
+`CopyFrom(ctx, "tenant_42.products", ...)` is rejected before pgx is called;
+it is never guessed or passed as one quoted relation name. `CopyFromTable`
+hands pgx the two exact `pgx.Identifier` components.
+
 The call runs on the handle that executor holds and ignores any transaction in
 the context ([[UC-008]]).
 

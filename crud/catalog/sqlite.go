@@ -93,7 +93,7 @@ ORDER BY m.name, f.id, f.seq`
 // handle key exists to prevent ([[D-041]]).
 const sqliteSchema = "main"
 
-func readSQLite(ctx context.Context, source crud.Source) ([]Table, error) {
+func readSQLite(ctx context.Context, source crud.Source) (*schemaRead, error) {
 	b := newBuilder()
 	b.schema = sqliteSchema
 
@@ -108,7 +108,9 @@ func readSQLite(ctx context.Context, source crud.Source) ([]Table, error) {
 		if err := rows.Scan(&table, &def); err != nil {
 			return err
 		}
-		b.table(sqliteSchema, table).t.Definition = def
+		tb := b.table(sqliteSchema, table)
+		b.markBare(sqliteSchema, table)
+		tb.t.Definition = def
 		return nil
 	})
 	if err != nil {

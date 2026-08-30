@@ -626,6 +626,105 @@ func TestANamedViolationFoldsOnlyIntoItsOwnConstraint(t *testing.T) {
 	}
 }
 
+func TestANamedQualifiedViolationRequiresTheExactSourceIdentity(t *testing.T) {
+	meta, err := crud.NewMetaInSchema[Doc]("tenant", "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &full{meta: meta}
+	probed := errs.Violation{
+		Code: errs.CodeUnique, Origin: errs.OriginState,
+		Path:   errs.Path{errs.Named("Email")},
+		Source: errs.Source{Schema: "tenant", Table: "docs", Constraint: "docs_email_uk", Columns: []string{"email"}},
+	}
+	mine, keep := []errs.Violation{probed}, []bool{true}
+
+	for _, tc := range []struct {
+		name          string
+		schema, table string
+		want          bool
+	}{
+		{"exact", "tenant", "docs", true},
+		{"missing schema", "", "docs", false},
+		{"other schema, same table and constraint", "shadow", "docs", false},
+		{"same schema, other table and constraint name", "tenant", "shadow_docs", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := errs.Violation{
+				Code: errs.CodeUnique, Origin: errs.OriginState,
+				Source: errs.Source{Schema: tc.schema, Table: tc.table, Constraint: "docs_email_uk"},
+			}
+			_, got := f.same(&driver, mine, keep)
+			if got != tc.want {
+				t.Fatalf("same = %v, want %v for driver source %+v", got, tc.want, driver.Source)
+			}
+		})
+	}
+
+	// Legacy unqualified metadata keeps accepting a PostgreSQL-shaped named
+	// violation whose schema was not available. That compatibility does not let a
+	// contradictory non-empty component through.
+	legacy := &full{meta: docMeta(t)}
+	missingSchema := errs.Violation{
+		Code: errs.CodeUnique, Origin: errs.OriginState,
+		Source: errs.Source{Table: "docs", Constraint: "docs_email_uk"},
+	}
+	if _, ok := legacy.same(&missingSchema, mine, keep); !ok {
+		t.Fatal("legacy unqualified named violation no longer folds without a schema")
+	}
+	wrongSchema := missingSchema
+	wrongSchema.Source.Schema = "shadow"
+	if _, ok := legacy.same(&wrongSchema, mine, keep); ok {
+		t.Fatal("legacy matching ignored a contradictory non-empty schema")
+	}
+}
+
+func TestAnUnambiguousCodeOnlyViolationMayAcquireAnExactQualifiedSource(t *testing.T) {
+	meta, err := crud.NewMetaInSchema[Doc]("tenant", "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &full{meta: meta}
+	probed := errs.Violation{
+		Code: errs.CodeUnique, Origin: errs.OriginState,
+		Source: errs.Source{Schema: "tenant", Table: "docs", Constraint: "docs_email_uk", Columns: []string{"email"}},
+	}
+	mine, keep := []errs.Violation{probed}, []bool{true}
+
+	driver := errs.Violation{Code: errs.CodeUnique, Origin: errs.OriginState}
+	if _, ok := f.same(&driver, mine, keep); !ok {
+		t.Fatal("one exact probe result did not match an empty code-only driver source")
+	}
+	driver.Source.Table = "shadow_docs"
+	if _, ok := f.same(&driver, mine, keep); ok {
+		t.Fatal("code-only matching overwrote a contradictory non-empty table")
+	}
+}
+
+func TestFoldPreservesTheExactProbeSchema(t *testing.T) {
+	driver := errs.Violation{Code: errs.CodeUnique, Origin: errs.OriginState}
+	probed := errs.Violation{
+		Code: errs.CodeUnique, Origin: errs.OriginState,
+		Path:   errs.Path{errs.Named("Email")},
+		Source: errs.Source{Schema: "tenant", Table: "docs", Constraint: "docs_email_uk", Columns: []string{"email"}},
+	}
+	fold(&driver, probed, false)
+	if driver.Source.Schema != "tenant" || driver.Source.Table != "docs" ||
+		driver.Source.Constraint != "docs_email_uk" || driver.Path.String() != "Email" {
+		t.Fatalf("folded violation lost exact source/path: %+v", driver)
+	}
+
+	// Folding may fill an absent component but never replace driver provenance.
+	driver = errs.Violation{
+		Code: errs.CodeUnique, Origin: errs.OriginState,
+		Source: errs.Source{Schema: "driver_schema"},
+	}
+	fold(&driver, probed, false)
+	if driver.Source.Schema != "driver_schema" {
+		t.Fatalf("fold overwrote the driver's schema with %q", driver.Source.Schema)
+	}
+}
+
 func TestTheAnswerIsSortedSoTheSameFailureRendersTheSameWay(t *testing.T) {
 	first := ""
 	for i := 0; i < 20; i++ {

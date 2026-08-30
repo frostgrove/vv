@@ -307,7 +307,7 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 			}
 			b.Raw("rxt.").Ident(f.Column)
 		}
-		b.Raw(" FROM ").Ident(target.Table).Raw(" AS rxt JOIN ").Ident(rel.JoinTable).Raw(" AS rxj ON rxj.").
+		b.Raw(" FROM ").TableRef(target.TableReference()).Raw(" AS rxt JOIN ").TableRef(rel.JoinTableReference()).Raw(" AS rxj ON rxj.").
 			Ident(rel.JoinRef).Raw(" = rxt.").Ident(remote.Column).
 			Raw(" WHERE rxj.").Ident(rel.JoinLocal).Raw(" IN (").Binds(keys).Raw(")")
 		if extra != nil {

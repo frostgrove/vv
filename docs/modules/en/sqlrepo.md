@@ -41,6 +41,27 @@ mapping panics at package initialisation rather than on the first request. Use
 `TryDefine` where you want the error instead of the panic, and `sqlrepo.New` to
 skip the blueprint and go straight to a bound repository.
 
+### A table outside the default namespace
+
+Keep the qualifier and table as two identifier components:
+
+```go
+var Events = sqlrepo.DefineInSchema[Event, int64, EventUpdate](
+    "analytics", "events",
+)
+```
+
+The first component means a schema on PostgreSQL, a database on MySQL/MariaDB,
+and an attached database on SQLite. vv quotes both components independently:
+`"analytics"."events"` on PostgreSQL/SQLite and
+`` `analytics`.`events` `` on MySQL.
+
+`Define("analytics.events")` is deliberately refused during declaration. A
+dotted string is ambiguous with a quoted table whose literal name contains a
+dot, so vv never guesses or silently splits it. `TryDefineInSchema` is the
+error-returning form. Low-level metadata and adapters carry the same identity as
+`crud.TableRef`; its components are exact and may themselves contain dots.
+
 ---
 
 ## The surface
@@ -109,7 +130,8 @@ neither diffs nor advances a version column.
 
 ## Settings
 
-Passed to `Define`, `TryDefine` or `New`, and applied to every call.
+Passed to `Define`, `TryDefine`, `DefineInSchema`, `TryDefineInSchema` or `New`,
+and applied to every call.
 
 | Setting | Does |
 |---|---|
@@ -325,6 +347,9 @@ the first chunk. A one-statement call opens nothing extra.
 - **Table registration is typed.** `RegisterTable` accepts a struct model, not
   `*Model`, a scalar, or an interface. A conflicting or already-published name
   fails loudly ([[D-080]]).
+- **Qualified table identity is structured.** A dotted `Define`/`TableName`
+  string is a declaration error. Use `DefineInSchema`; relation overrides use
+  `schema=...,table=...`, and many-to-many joins add `joinSchema=...`.
 
 ## A column `DEFAULT` does not fire
 

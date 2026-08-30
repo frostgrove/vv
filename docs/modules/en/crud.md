@@ -72,6 +72,10 @@ want for a computed field.
 
 `SchemaOf[M]()`, `MustSchemaOf[M]()` and `NewMeta[M](table)` build the metadata
 by hand if you need it; `sqlrepo.Define` does it for you and validates eagerly.
+For a qualified physical table use `NewMetaInSchema[M](schema, table)` or the
+low-level `NewMetaRef[M](crud.TableRef{Schema: schema, Name: table})`.
+`Meta.TableReference()` returns the immutable structured identity by value;
+`Meta.Table` remains its diagnostic compatibility spelling.
 
 ## `utils.Opt[T]` — three states, one type
 
@@ -183,9 +187,9 @@ type Article struct {
 
 | Tag | Foreign key | Overrides |
 |---|---|---|
-| `belongs_to` | `<Field>ID` on this model | `fk=`, `ref=`, `table=` |
-| `has_one` / `has_many` | `<ThisModel>ID` on the target | `fk=`, `ref=`, `table=` |
-| `many_to_many` | the join table's two columns | `join=`, `joinFK=`, `joinRef=` |
+| `belongs_to` | `<Field>ID` on this model | `fk=`, `ref=`, `table=`, `schema=` |
+| `has_one` / `has_many` | `<ThisModel>ID` on the target | `fk=`, `ref=`, `table=`, `schema=` |
+| `many_to_many` | the join table's two columns | target `table=`/`schema=`; `join=`, `joinSchema=`, `joinFK=`, `joinRef=` |
 | `rel:""` | inferred from the Go type | |
 | `rel:"-"` | never a relation | |
 
@@ -195,10 +199,12 @@ hand. Resolution is immutable: a second table for one model, or a different
 registration after a relation has already resolved the conventional name, is a
 start-up error rather than a registry update that existing relation metadata
 cannot observe. `TryRegisterTable` and `TryRegisterTableType` return that schema
-error for low-level assembly. Repeating the same registration is idempotent.
-When one model deliberately reaches the same Go type through a different table,
-declare `table=...` on that relation; its metadata then has no registry-order
-dependency ([[D-080]]).
+error for low-level assembly. The structured counterparts are
+`RegisterTableRef` / `TryRegisterTableRef`; repeating the same full reference is
+idempotent. When one model deliberately reaches the same Go type through a
+different table, declare `table=...` on that relation and add `schema=...` when
+qualified. A many-to-many join uses `joinSchema=...`. Dotted legacy strings are
+refused rather than split ([[D-080]]).
 
 **Preloading** is a batched second query per relation per level, never one per
 row ([[D-006]]). Paths sharing a prefix share a statement, keys are deduplicated,

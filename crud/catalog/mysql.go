@@ -94,7 +94,7 @@ JOIN information_schema.TABLE_CONSTRAINTS t
 WHERE c.CONSTRAINT_SCHEMA = DATABASE() AND t.CONSTRAINT_TYPE = 'CHECK'
 ORDER BY t.TABLE_NAME, c.CONSTRAINT_NAME`
 
-func readMySQL(ctx context.Context, source crud.Source) ([]Table, error) {
+func readMySQL(ctx context.Context, source crud.Source) (*schemaRead, error) {
 	b := newBuilder()
 	// Kinds before key parts: a STATISTICS row is shaped by what
 	// TABLE_CONSTRAINTS already said the index is.
@@ -139,6 +139,7 @@ func myReadColumns(ctx context.Context, source crud.Source, b *builder, stmt str
 		// trip for an answer already in hand.
 		b.schema = schema
 		tb := b.table(schema, table)
+		b.markBare(schema, table)
 		col := Column{
 			Name: name, Position: pos, Type: typ,
 			Nullable: nullable, MaxLength: maxLen, Generated: generated,

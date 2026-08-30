@@ -44,10 +44,9 @@ func newRepository[M any, ID comparable, U any](source crud.Source, bp *Blueprin
 		r.replica = replica
 	}
 	m, d := r.meta, r.d
-	q := d.Quote
 
 	cols := joinColumns(d, m.Fields)
-	table := q(m.Table)
+	table := m.QuotedTable(d)
 
 	r.selectFrom = "SELECT " + cols + " FROM " + table
 	r.countFrom = "SELECT count(*) FROM " + table

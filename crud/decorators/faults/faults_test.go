@@ -41,6 +41,15 @@ type AuditUpdate struct{ Title *string }
 
 var Audits = sqlrepo.Define[AuditEntry, int64, AuditUpdate]("audit_log")
 
+type QualifiedDoc struct {
+	ID    int64  `db:"id,pk,auto"`
+	Title string `db:"title"`
+}
+
+type QualifiedDocUpdate struct{ Title *string }
+
+var QualifiedDocs = sqlrepo.DefineInSchema[QualifiedDoc, int64, QualifiedDocUpdate]("Tenant", "Docs")
+
 // conflict is what the adapters hand this decorator: a classified fault with a
 // Source and no path at all.
 func conflict(table string, columns ...string) error {
@@ -125,6 +134,59 @@ func TestAColumnFromAnotherTableIsNotTranslated(t *testing.T) {
 	}
 	if got := other.Violations[0].Path.String(); got != "Title" {
 		t.Fatalf("the same column through its own repository became %q", got)
+	}
+}
+
+func TestAQualifiedFaultRequiresExactSchemaAndTableComponents(t *testing.T) {
+	makeConflict := func(schema, table string) error {
+		return errs.Conflict().Code(errs.CodeUnique).
+			General().Code(errs.CodeUnique).Origin(errs.OriginState).
+			Source(errs.Source{Schema: schema, Table: table, Constraint: "docs_title_key", Columns: []string{"title"}}).
+			Wrapping(crud.ErrConflict).Fault()
+	}
+	for _, tc := range []struct {
+		name, schema, table string
+		wantPath            string
+		wantApproximate     bool
+	}{
+		{"exact", "Tenant", "Docs", "Title", false},
+		{"missing schema", "", "Docs", "", true},
+		{"same schema letters, different quoted component", "tenant", "Docs", "", true},
+		{"same table letters, different quoted component", "Tenant", "docs", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := crudtest.Postgres()
+			failWith(rec, makeConflict(tc.schema, tc.table))
+			_, err := QualifiedDocs.Bind(rec, faults.Enrich[QualifiedDoc, int64]()).
+				Save(context.Background(), &QualifiedDoc{Title: "a"})
+			fault, ok := errs.AsFault(err)
+			if !ok {
+				t.Fatalf("not a fault: %v", err)
+			}
+			violation := fault.Violations[0]
+			if got := violation.Path.String(); got != tc.wantPath || violation.Approximate != tc.wantApproximate {
+				t.Fatalf("path/approximate = %q/%v, want %q/%v", got, violation.Approximate, tc.wantPath, tc.wantApproximate)
+			}
+		})
+	}
+}
+
+func TestAQualifiedFaultDoesNotTrustAPreResolvedPathWithoutExactSource(t *testing.T) {
+	err := errs.Conflict().Code(errs.CodeUnique).
+		Field("WrongField").Code(errs.CodeUnique).Origin(errs.OriginState).
+		Source(errs.Source{Table: "Docs", Constraint: "docs_title_key", Columns: []string{"title"}}).
+		Wrapping(crud.ErrConflict).Fault()
+	rec := crudtest.Postgres()
+	failWith(rec, err)
+	_, got := QualifiedDocs.Bind(rec, faults.Enrich[QualifiedDoc, int64]()).
+		Save(context.Background(), &QualifiedDoc{Title: "a"})
+	fault, ok := errs.AsFault(got)
+	if !ok {
+		t.Fatalf("not a fault: %v", got)
+	}
+	violation := fault.Violations[0]
+	if len(violation.Path) != 0 || !violation.Approximate {
+		t.Fatalf("unqualified pre-resolved path was trusted: %+v", violation)
 	}
 }
 

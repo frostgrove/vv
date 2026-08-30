@@ -46,7 +46,11 @@ func (this pgSchema) push(r *crudtest.Recorder, n int) *crudtest.Recorder {
 // The row shapes, spelled once. Each mirrors one SELECT list in postgres.go, so
 // a statement that gains a column breaks these rather than mis-scanning.
 func pgColumnRow(table, name string, pos int) []any {
-	return []any{"public", table, name, pos, "text", false, false, false, "", 0}
+	return pgColumnRowInSchema("public", table, name, pos, true)
+}
+
+func pgColumnRowInSchema(schema, table, name string, pos int, bare bool) []any {
+	return []any{schema, table, name, pos, "text", false, false, false, "", 0, bare}
 }
 
 func pgConstraintRow(table, name, contype string, ord int, col string) []any {

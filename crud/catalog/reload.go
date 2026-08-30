@@ -81,11 +81,11 @@ func (this *loaded) Reload(ctx context.Context, table, name string) error {
 	this.floor = now.Add(reloadFloor)
 	this.mu.Unlock()
 
-	tables, err := this.backend.read(ctx, this.source)
+	read, err := this.backend.read(ctx, this.source)
 	if err != nil {
 		return err
 	}
-	s := newSnapshot(tables)
+	s := newSnapshot(read)
 	this.snap.Store(s)
 
 	this.mu.Lock()

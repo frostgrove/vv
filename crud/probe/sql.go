@@ -130,7 +130,7 @@ func (this *full) renderForeignKey(b *crud.SQL, t term) {
 		r.render(b)
 		b.Raw(" IS NOT NULL AND ")
 	}
-	b.Raw("NOT EXISTS(SELECT 1 FROM ").Ident(t.cand.table).Raw(" AS " + aliasParent + " WHERE ")
+	b.Raw("NOT EXISTS(SELECT 1 FROM ").TableRef(t.cand.table).Raw(" AS " + aliasParent + " WHERE ")
 	for i, col := range t.cand.refCols {
 		if i > 0 {
 			b.Raw(" AND ")
@@ -154,7 +154,7 @@ func (this *full) renderRestrict(b *crud.SQL, t term) {
 		b.Raw(aliasCur + ".").Ident(col).Raw(" <> ")
 		t.vals[i].render(b)
 	}
-	b.Raw(") AND EXISTS(SELECT 1 FROM ").Ident(t.cand.table).Raw(" AS " + aliasChild + " WHERE ")
+	b.Raw(") AND EXISTS(SELECT 1 FROM ").TableRef(t.cand.table).Raw(" AS " + aliasChild + " WHERE ")
 	for i, col := range t.cand.refCols {
 		if i > 0 {
 			b.Raw(" AND ")

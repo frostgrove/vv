@@ -119,6 +119,8 @@ func MarshalPredicate(p Predicate) (json.RawMessage, error)
 func MayBeTautologyFor(m *Meta, p Predicate) bool
 func OptElem(t reflect.Type) reflect.Type
 func RegisterTable[M any](table string)
+func RegisterTableRef[M any](table TableRef)
+func RegisterTableRefType(t reflect.Type, table TableRef)
 func RegisterTableType(t reflect.Type, table string)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
 func SameDataSource(a, b any) bool
@@ -126,6 +128,8 @@ func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M
 func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
 func TableNameOf(t reflect.Type) string
 func TryRegisterTable[M any](table string) error
+func TryRegisterTableRef[M any](table TableRef) error
+func TryRegisterTableRefType(t reflect.Type, table TableRef) error
 func TryRegisterTableType(t reflect.Type, table string) error
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
@@ -158,6 +162,8 @@ type Identified interface{ ... }
 type LikeEscaper interface{ ... }
 type Meta struct{ ... }
     func NewMeta[M any](table string) (*Meta, error)
+    func NewMetaInSchema[M any](schema, table string) (*Meta, error)
+    func NewMetaRef[M any](table TableRef) (*Meta, error)
 type Middleware[M any, ID comparable] func(Core[M, ID]) Core[M, ID]
 type MySQL struct{ ... }
 type Nexter[M any, ID comparable] interface{ ... }
@@ -265,6 +271,11 @@ type Source interface{ ... }
 type SourceUnwrapper interface{ ... }
 type Sourced interface{ ... }
 type StatementRollback interface{ ... }
+type TableRef struct{ ... }
+    func NewTableRef(name string) (TableRef, error)
+    func NewTableRefInSchema(schema, name string) (TableRef, error)
+    func TableRefOf(t reflect.Type) (TableRef, error)
+type TableRefError struct{ ... }
 type Tabler interface{ ... }
 type Transactional interface{ ... }
 type Tx interface{ ... }
@@ -306,6 +317,8 @@ type Column struct{ ... }
 type Constraint struct{ ... }
 type Kind uint8
     const KindPrimaryKey Kind = iota + 1 ...
+type QualifiedCatalog interface{ ... }
+type QualifiedReferrers interface{ ... }
 type Referrers interface{ ... }
 type Reloader interface{ ... }
 type Set struct{ ... }
@@ -535,6 +548,7 @@ type Option func(*Classifier)
     func WithCodes(c *errs.Codes) Option
     func WithColumns(c Columns) Option
     func WithExtractor(x Extractor) Option
+type QualifiedColumns interface{ ... }
 ```
 
 ## github.com/frostgrove/vv/crud/sqlrepo
@@ -543,7 +557,9 @@ const DefaultPageSize = 20
 func New[M any, ID comparable, U any](source crud.Source, table string, options ...Setting) *crud.Repo[M, ID, U]
 type Blueprint[M any, ID comparable, U any] struct{ ... }
     func Define[M any, ID comparable, U any](table string, options ...Setting) *Blueprint[M, ID, U]
+    func DefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) *Blueprint[M, ID, U]
     func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*Blueprint[M, ID, U], error)
+    func TryDefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) (*Blueprint[M, ID, U], error)
 type Setting func(*settings)
     func DefaultLimit(n int) Setting
     func DefaultSort(orders ...crud.Order) Setting

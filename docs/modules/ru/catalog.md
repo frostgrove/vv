@@ -48,6 +48,25 @@ type Catalog interface {
 }
 ```
 
+Qualified-имена используют опциональную structured-возможность, которую
+результат `Load` реализует всегда:
+
+```go
+qualified := cat.(catalog.QualifiedCatalog)
+events, ok := qualified.TableByRef(crud.TableRef{
+    Schema: "analytics",
+    Name:   "events",
+})
+key, ok := qualified.ConstraintByRef(
+    crud.TableRef{Schema: "analytics", Name: "events"}, "events_slug_key")
+```
+
+Компоненты ищутся точно: они не склеиваются в dotted-строку и не откатываются к
+`Table("events")`. Сторонний `Catalog` не обязан реализовывать
+`QualifiedCatalog`, но `probe.Full` отклоняет qualified-репозиторий с
+`probe.ErrQualifiedCatalog`, если этой возможности нет. Это отказ при
+декларации, а не probe по одноимённой таблице из другой схемы.
+
 `Constraint` принимает таблицу **вместе с** именем, потому что в MySQL имя
 индекса уникально в пределах таблицы, а не в пределах схемы — первичный индекс
 любой таблицы InnoDB называется `PRIMARY`, а MariaDB сообщает о дублирующемся
@@ -56,6 +75,18 @@ type Catalog interface {
 `Dialect()` — это **не** `crud.Dialect.Name()`, который отвечает `"mysql"` и
 для MariaDB тоже и потому не может их различить. Это единственное место в
 дереве, где движок *измеряется*, а не декларируется.
+
+Область загрузки намеренно зависит от движка:
+
+| Движок | Область qualified-поиска |
+|---|---|
+| PostgreSQL | все несистемные схемы, на которые у роли загрузки есть `USAGE`; `pg_table_is_visible` хранится отдельно, поэтому legacy bare-поиск всё ещё следует `search_path` |
+| MySQL / MariaDB | только текущая `DATABASE()`; точный qualifier этой базы работает, другая база даёт miss |
+| SQLite | только `main`; attached-базы остаются допустимыми qualifier'ами репозитория, но каталог их не интроспектирует |
+
+Поэтому qualified-база MySQL вне `DATABASE()` или attached-база SQLite доступна
+через `sqlrepo.DefineInSchema`, но подключение `probe.Full` к ней отклоняется с
+`probe.ErrUnknownTable`. Нет ни bare fallback, ни неверной атрибуции constraint.
 
 ---
 
@@ -153,6 +184,9 @@ if r, ok := cat.(catalog.Referrers); ok {
 Ни один поиск в `Catalog` не может это выразить — ограничение записано на
 таблице, которая его *объявляет*. Это то, что нужно `restrict`-пробе, а
 каталог, не являющийся `Referrers`, просто не производит термов restrict.
+Для точной цели
+`QualifiedReferrers.ReferencedByRef(crud.TableRef{...})` не смешивает внешние
+ключи к одноимённым таблицам из разных схем.
 
 ## Чем он не является
 

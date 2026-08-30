@@ -17,6 +17,11 @@ var (
 	// grants reads zero rows rather than being refused, so Load succeeds and the
 	// catalog is empty — and the first declaration that names a table catches it.
 	ErrUnknownTable = errors.New("probe: the catalog does not know this table")
+	// ErrQualifiedCatalog reports a catalog implementation that only supports
+	// legacy bare-name lookup while the repository names a schema explicitly.
+	// Falling back to Table(ref.Name) here could bind a same-named table from
+	// search_path and produce confident, wrong validation.
+	ErrQualifiedCatalog = errors.New("probe: the catalog cannot look up qualified tables")
 	// ErrKeyDoesNotIdentify reports a model whose primary-key column is not a row
 	// identity on its own. The probe's exclude-my-own-row clause assumes one, and
 	// so does the repository's own WHERE pk = ?.
@@ -39,7 +44,18 @@ func (this *full) Declare(meta *crud.Meta) (Handler, error) {
 	if meta == nil || meta.PK == nil {
 		return nil, fmt.Errorf("%w: the model declares no primary key", ErrKeyDoesNotIdentify)
 	}
-	tbl, ok := this.cat.Table(meta.Table)
+	ref := meta.TableReference()
+	var tbl *catalog.Table
+	var ok bool
+	if ref.Schema == "" {
+		tbl, ok = this.cat.Table(ref.Name)
+	} else {
+		qualified, supported := this.cat.(catalog.QualifiedCatalog)
+		if !supported {
+			return nil, fmt.Errorf("%w: %s (dialect %s)", ErrQualifiedCatalog, ref.String(), this.cat.Dialect())
+		}
+		tbl, ok = qualified.TableByRef(ref)
+	}
 	if !ok {
 		return nil, fmt.Errorf("%w: %s (dialect %s). An empty catalog reads exactly like this: check that the "+
 			"connection may read the schema", ErrUnknownTable, meta.Table, this.cat.Dialect())
@@ -55,7 +71,7 @@ func (this *full) Declare(meta *crud.Meta) (Handler, error) {
 	}
 	g := *this
 	g.meta, g.tbl, g.pkCol = meta, tbl, meta.PK.Column
-	g.cands = candidatesFor(this.cat, tbl, meta.PK.Column)
+	g.cands = candidatesFor(this.cat, tbl, meta.PK.Column, ref.Schema != "")
 	return &g, nil
 }
 

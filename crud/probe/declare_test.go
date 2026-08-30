@@ -27,6 +27,76 @@ func TestADeclarationWhoseTableTheCatalogKnowsStarts(t *testing.T) {
 	}
 }
 
+func TestAQualifiedDeclarationRefusesACatalogThatCanOnlyGuessByBareName(t *testing.T) {
+	meta, err := crud.NewMetaInSchema[Doc]("analytics", "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Full(fixture()).(*full).Declare(meta)
+	if !errors.Is(err, ErrQualifiedCatalog) {
+		t.Fatalf("a qualified declaration over a bare-only catalog answered %v, want ErrQualifiedCatalog", err)
+	}
+}
+
+func TestAQualifiedDeclarationUsesOnlyItsSchemasTableAndForeignKeys(t *testing.T) {
+	pk := func(schema string) catalog.Constraint {
+		return catalog.Constraint{Name: "docs_pkey", Schema: schema, Table: "docs", Kind: catalog.KindPrimaryKey, Columns: []string{"id"}}
+	}
+	public := catalog.Table{
+		Schema: "public", Name: "docs", PrimaryKey: []string{"id"},
+		Constraints: []catalog.Constraint{
+			pk("public"),
+			{Name: "public_only", Schema: "public", Table: "docs", Kind: catalog.KindUnique, Columns: []string{"email"}},
+		},
+	}
+	analytics := catalog.Table{
+		Schema: "analytics", Name: "docs", PrimaryKey: []string{"id"},
+		Constraints: []catalog.Constraint{
+			pk("analytics"),
+			{Name: "analytics_email", Schema: "analytics", Table: "docs", Kind: catalog.KindUnique, Columns: []string{"email"}},
+			{Name: "analytics_org", Schema: "analytics", Table: "docs", Kind: catalog.KindForeignKey,
+				Columns: []string{"org_id"}, RefSchema: "analytics", RefTable: "orgs", RefColumns: []string{"id"}},
+		},
+	}
+	notes := catalog.Table{
+		Schema: "analytics", Name: "notes", PrimaryKey: []string{"id"},
+		Constraints: []catalog.Constraint{{
+			Name: "analytics_notes_doc", Schema: "analytics", Table: "notes", Kind: catalog.KindForeignKey,
+			Columns: []string{"doc_id"}, RefSchema: "analytics", RefTable: "docs", RefColumns: []string{"id"},
+			OnUpdate: "NO ACTION",
+		}},
+	}
+	cat := &qualifiedFakeCatalog{newFakeCatalog("postgres", public, analytics, notes)}
+	meta, err := crud.NewMetaInSchema[Doc]("analytics", "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := Full(cat).(*full).Declare(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := handler.(*full)
+	if got.tbl.Schema != "analytics" {
+		t.Fatalf("qualified declaration bound to %s.%s", got.tbl.Schema, got.tbl.Name)
+	}
+	byName := map[string]candidate{}
+	for _, cand := range got.cands {
+		byName[cand.name] = cand
+	}
+	if _, exists := byName["public_only"]; exists {
+		t.Fatal("the analytics declaration inherited public.docs constraints")
+	}
+	if cand, ok := byName["analytics_email"]; !ok || cand.table != (crud.TableRef{Schema: "analytics", Name: "docs"}) {
+		t.Fatalf("analytics unique candidate = %+v", cand)
+	}
+	if cand, ok := byName["analytics_org"]; !ok || cand.table != (crud.TableRef{Schema: "analytics", Name: "orgs"}) {
+		t.Fatalf("analytics parent candidate = %+v", cand)
+	}
+	if cand, ok := byName["analytics_notes_doc"]; !ok || cand.table != (crud.TableRef{Schema: "analytics", Name: "notes"}) {
+		t.Fatalf("analytics inbound candidate = %+v", cand)
+	}
+}
+
 func TestADeclarationOverAKeyThatDoesNotIdentifyARowRefusesToStart(t *testing.T) {
 	cat := fixture()
 	docs, _ := cat.Table("docs")

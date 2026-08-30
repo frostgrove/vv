@@ -140,14 +140,54 @@ func (this *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bo
 
 func (this *fakeCatalog) ReferencedBy(table string) []*catalog.Constraint { return this.refs[table] }
 
+// qualifiedFakeCatalog is opt-in so the tests can prove that a third-party
+// catalog implementing only the historical Catalog seam is refused for an
+// explicitly qualified repository rather than being guessed through.
+type qualifiedFakeCatalog struct{ *fakeCatalog }
+
+func (this *qualifiedFakeCatalog) TableByRef(ref crud.TableRef) (*catalog.Table, bool) {
+	if ref.Schema == "" {
+		return this.Table(ref.Name)
+	}
+	for i := range this.tables {
+		if this.tables[i].Schema == ref.Schema && this.tables[i].Name == ref.Name {
+			return &this.tables[i], true
+		}
+	}
+	return nil, false
+}
+
+func (this *qualifiedFakeCatalog) ConstraintByRef(ref crud.TableRef, name string) (*catalog.Constraint, bool) {
+	table, ok := this.TableByRef(ref)
+	if !ok {
+		return nil, false
+	}
+	return table.Constraint(name)
+}
+
+func (this *qualifiedFakeCatalog) ReferencedByRef(ref crud.TableRef) []*catalog.Constraint {
+	var out []*catalog.Constraint
+	for i := range this.tables {
+		for j := range this.tables[i].Constraints {
+			con := &this.tables[i].Constraints[j]
+			if con.Kind == catalog.KindForeignKey && con.RefSchema == ref.Schema && con.RefTable == ref.Name {
+				out = append(out, con)
+			}
+		}
+	}
+	return out
+}
+
 // newUnique is a plain single-column unique key, for a test that needs one more.
 func newUnique(name, column string) catalog.Constraint {
 	return catalog.Constraint{Name: name, Table: "docs", Kind: catalog.KindUnique, Columns: []string{column}}
 }
 
 var (
-	_ catalog.Catalog   = (*fakeCatalog)(nil)
-	_ catalog.Referrers = (*fakeCatalog)(nil)
+	_ catalog.Catalog            = (*fakeCatalog)(nil)
+	_ catalog.Referrers          = (*fakeCatalog)(nil)
+	_ catalog.QualifiedCatalog   = (*qualifiedFakeCatalog)(nil)
+	_ catalog.QualifiedReferrers = (*qualifiedFakeCatalog)(nil)
 )
 
 // declared builds a probe bound to the Doc model, failing the test rather than

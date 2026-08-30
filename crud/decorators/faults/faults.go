@@ -136,7 +136,23 @@ func (this *enricher[M, ID]) finish(op string, f *errs.Fault, partial bool) erro
 // table-independent, so it cannot tell two databases' `users` apart, and a
 // process holds several ([[UC-012]], [[D-043]]).
 func (this *enricher[M, ID]) resolve(v *errs.Violation) {
-	if len(v.Path) > 0 || this.meta == nil {
+	if this.meta == nil {
+		return
+	}
+	ref := this.meta.TableReference()
+	if ref.Schema != "" && v.Origin == errs.OriginState {
+		// A qualified physical identity is exact. Probe-produced paths arrive here
+		// already populated, so validate before trusting as well as before assigning:
+		// an empty schema is not permission to fall back to a same-named table.
+		hasAttribution := len(v.Path) > 0 || v.Source.Schema != "" || v.Source.Table != "" ||
+			len(v.Source.Columns) > 0 || v.Source.Constraint != ""
+		if hasAttribution && (v.Source.Schema != ref.Schema || v.Source.Table != ref.Name) {
+			v.Path = nil
+			v.Approximate = true
+			return
+		}
+	}
+	if len(v.Path) > 0 {
 		return // already translated by a layer closer to the driver
 	}
 	if v.Source.Table == "" || len(v.Source.Columns) == 0 {
@@ -157,10 +173,15 @@ func (this *enricher[M, ID]) resolvePath(table string, columns []string) (errs.P
 	if this.meta == nil {
 		return nil, false
 	}
-	// Folded rather than compared byte for byte: PostgreSQL lowercases an
-	// unquoted identifier, so a model declared `Users` and a driver reporting
-	// `users` are one table.
-	if !strings.EqualFold(table, this.meta.Table) {
+	ref := this.meta.TableReference()
+	// A structured declaration is rendered quoted and therefore exact: "Docs"
+	// and "docs" can coexist in one PostgreSQL schema. Preserve the historical
+	// folded comparison only for the legacy unqualified path.
+	match := table == ref.Name
+	if ref.Schema == "" {
+		match = strings.EqualFold(table, ref.Name)
+	}
+	if !match {
 		// The right column name on the wrong table. Two tables in one database
 		// have a `name`, and translating this one would name a field of a model
 		// that had nothing to do with the write.

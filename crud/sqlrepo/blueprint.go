@@ -177,6 +177,30 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 	if err != nil {
 		return nil, err
 	}
+	return tryDefine[M, ID, U](meta, options...)
+}
+
+// DefineInSchema declares a repository whose physical table has a separate
+// qualifier component. The qualifier is a PostgreSQL schema, MySQL database,
+// or SQLite attached database. Each component is quoted independently.
+func DefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) *Blueprint[M, ID, U] {
+	bp, err := TryDefineInSchema[M, ID, U](schema, table, options...)
+	if err != nil {
+		panic(err)
+	}
+	return bp
+}
+
+// TryDefineInSchema is DefineInSchema without the panic.
+func TryDefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) (*Blueprint[M, ID, U], error) {
+	meta, err := crud.NewMetaInSchema[M](schema, table)
+	if err != nil {
+		return nil, err
+	}
+	return tryDefine[M, ID, U](meta, options...)
+}
+
+func tryDefine[M any, ID comparable, U any](meta *crud.Meta, options ...Setting) (*Blueprint[M, ID, U], error) {
 	var id ID
 	if err := meta.CheckID(reflect.TypeOf(&id).Elem()); err != nil {
 		return nil, err
@@ -214,7 +238,7 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 	// An explicitly independent blueprint is an additional physical view and
 	// must not compete for the canonical relation-table meaning.
 	if !bp.set.independentTable {
-		if err := crud.TryRegisterTable[M](meta.Table); err != nil {
+		if err := crud.TryRegisterTableRef[M](meta.TableReference()); err != nil {
 			return nil, err
 		}
 	}

@@ -3,6 +3,7 @@ package sqlfault
 import (
 	"slices"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/catalog"
 	"github.com/frostgrove/vv/errs"
 )
@@ -20,6 +21,15 @@ type Columns interface {
 	ConstraintColumns(table, constraint string) ([]string, bool)
 }
 
+// QualifiedColumns is the optional schema-aware counterpart to Columns. A
+// classifier uses it whenever the driver supplied Source.Schema. It never
+// drops that schema and calls the legacy method: two schemas may contain the
+// same table and constraint names, and attaching the wrong fields is worse
+// than leaving them unknown.
+type QualifiedColumns interface {
+	ConstraintColumnsIn(schema, table, constraint string) ([]string, bool)
+}
+
 // FromCatalog wires a loaded catalog as the lookup.
 //
 // The catalog is held on the classifier value the caller declared, never in a
@@ -34,6 +44,22 @@ func (this catalogColumns) ConstraintColumns(table, constraint string) ([]string
 		return nil, false
 	}
 	con, ok := this.cat.Constraint(table, constraint)
+	return constraintColumns(con, ok)
+}
+
+func (this catalogColumns) ConstraintColumnsIn(schema, table, constraint string) ([]string, bool) {
+	if this.cat == nil {
+		return nil, false
+	}
+	qualified, ok := this.cat.(catalog.QualifiedCatalog)
+	if !ok {
+		return nil, false
+	}
+	con, ok := qualified.ConstraintByRef(crud.TableRef{Schema: schema, Name: table}, constraint)
+	return constraintColumns(con, ok)
+}
+
+func constraintColumns(con *catalog.Constraint, ok bool) ([]string, bool) {
 	if !ok || len(con.Columns) == 0 {
 		return nil, false
 	}
@@ -67,7 +93,18 @@ func (this *Classifier) fill(s errs.Source) errs.Source {
 	if this.cols == nil || len(s.Columns) > 0 || s.Table == "" || s.Constraint == "" {
 		return s
 	}
-	if cols, ok := this.cols.ConstraintColumns(s.Table, s.Constraint); ok && len(cols) > 0 && !slices.Contains(cols, "") {
+	var cols []string
+	var ok bool
+	if s.Schema != "" {
+		qualified, supported := this.cols.(QualifiedColumns)
+		if !supported {
+			return s
+		}
+		cols, ok = qualified.ConstraintColumnsIn(s.Schema, s.Table, s.Constraint)
+	} else {
+		cols, ok = this.cols.ConstraintColumns(s.Table, s.Constraint)
+	}
+	if ok && len(cols) > 0 && !slices.Contains(cols, "") {
 		s.Columns = cols
 	}
 	return s

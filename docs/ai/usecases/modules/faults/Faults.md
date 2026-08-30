@@ -520,18 +520,15 @@ reused rather than restated (`crud/catalog/set.go:46-80`). The suite covers a
 `crud/catalog/set_test.go:146`), two pairs over unidentified primaries *not*
 colliding (`:201`) and two goroutines racing to declare (`:91`), and
 `TestOneSetHoldsFourLiveDatabasesWithoutMergingThem` runs it against four live
-engines (`test/integration/catalog_test.go:986`). (2) holds because every
-PostgreSQL statement is scoped by `pg_table_is_visible`
-(`crud/catalog/postgres.go:38`, `:68`, `:106`) — the server's own answer to
-"what does this bare name mean here" — with the resolved schema recorded
-(`test/integration/catalog_test.go:691`). (3) An uncomparable handle is refused
-rather than stored (`crud/catalog/set.go:47-51`).
-**If not ready:** — with one boundary that is [[D-041]] working as decided and
-is written down nowhere a consumer looks. The catalog resolves **once**, on the
-connection it loaded from. A schema-per-tenant deployment that issues
-`SET search_path TO tenant_42` per request gets one tenant's constraint list for
-the life of the process. That is not a defect; nothing warns the person who
-wires it. The request-time twin of the same problem is H-FAULTS-09.
+engines (`test/integration/catalog_test.go`). (2) now has two explicit paths:
+PostgreSQL reads every non-system schema on which the role has `USAGE` and keys
+structured lookup by `(schema, table)`, while a separately recorded
+`pg_table_is_visible` bit keeps legacy bare lookup identical to `search_path`.
+Duplicate table/constraint names and qualified inbound foreign keys are pinned
+in `crud/catalog/qualified_test.go`; the catalog → sqlfault → probe path is live
+in `TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable`. (3) An
+uncomparable handle is refused rather than stored (`crud/catalog/set.go`).
+**If not ready:** —
 
 ### H-FAULTS-13 — What the catalog costs at boot
 **Who:** the platform engineer who owns the readiness probe
@@ -545,11 +542,12 @@ they want to know by how much and whether they can bound it.
 2. There is a bound on how long the read may take.
 3. The permission it needs is stated.
 **Today:** 🟡 partial
-**Evidence:** (1) is nameable and not narrowable. `Load` reads every table the
-connection can see: the PostgreSQL statements are scoped by `relkind IN ('r','p')`,
-`pg_table_is_visible` and a `pg_catalog`/`information_schema` exclusion and
-nothing else (`crud/catalog/postgres.go:36-40`). There is no table list, no
-schema list and no model-derived filter, and `Load`'s doc says so on purpose:
+**Evidence:** (1) is nameable and not narrowable. `Load` reads every table in a
+non-system PostgreSQL schema on which the loading role has `USAGE`; it filters
+`relkind IN ('r','p')`, system/toast/temp namespaces, and records
+`pg_table_is_visible` only for the separate legacy bare index
+(`crud/catalog/postgres.go`). There is no table list, no schema list and no
+model-derived filter, and `Load`'s doc says so on purpose:
 "It takes no options" (`crud/catalog/load.go:25`). Three statements per handle
 (columns, constraints, and the backend probe), all of it resident in memory for
 the process's life — "Everything after this call is memory" (`:14`).

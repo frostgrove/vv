@@ -77,6 +77,11 @@ type User struct {
 
 `SchemaOf[M]()`, `MustSchemaOf[M]()` и `NewMeta[M](table)` строят метаданные
 вручную, если это нужно; `sqlrepo.Define` делает это за вас и валидирует сразу.
+Для qualified физической таблицы используйте
+`NewMetaInSchema[M](schema, table)` либо low-level
+`NewMetaRef[M](crud.TableRef{Schema: schema, Name: table})`.
+`Meta.TableReference()` возвращает неизменяемую structured identity по значению;
+`Meta.Table` остаётся её диагностическим compatibility spelling.
 
 ## `utils.Opt[T]` — три состояния, один тип
 
@@ -190,9 +195,9 @@ type Article struct {
 
 | Тег | Внешний ключ | Переопределения |
 |---|---|---|
-| `belongs_to` | `<Field>ID` на этой модели | `fk=`, `ref=`, `table=` |
-| `has_one` / `has_many` | `<ThisModel>ID` на целевой модели | `fk=`, `ref=`, `table=` |
-| `many_to_many` | две колонки таблицы связи | `join=`, `joinFK=`, `joinRef=` |
+| `belongs_to` | `<Field>ID` на этой модели | `fk=`, `ref=`, `table=`, `schema=` |
+| `has_one` / `has_many` | `<ThisModel>ID` на целевой модели | `fk=`, `ref=`, `table=`, `schema=` |
+| `many_to_many` | две колонки таблицы связи | target `table=`/`schema=`; `join=`, `joinSchema=`, `joinFK=`, `joinRef=` |
 | `rel:""` | выводится из Go-типа | |
 | `rel:"-"` | никогда не связь | |
 
@@ -203,9 +208,11 @@ type Article struct {
 как relation уже выбрал convention, — это startup error, а не изменение регистра,
 которого уже не видят опубликованные metadata. `TryRegisterTable` и
 `TryRegisterTableType` возвращают этот schema error для low-level сборки;
-повтор той же регистрации идемпотентен. Если одна relation намеренно читает
-тот же Go-тип из другой таблицы, укажите `table=...` в её теге; так metadata не
-зависит от порядка регистрации ([[D-080]]).
+structured-варианты — `RegisterTableRef` / `TryRegisterTableRef`, а повтор той
+же полной ссылки идемпотентен. Если одна relation намеренно читает тот же Go-тип
+из другой таблицы, укажите `table=...` и, для qualified таблицы, `schema=...`.
+Join many-to-many использует `joinSchema=...`. Legacy-строки с точкой
+отклоняются, а не разделяются догадкой ([[D-080]]).
 
 **Preload** — это батчевый второй запрос на связь на уровень, никогда не
 запрос на строку ([[D-006]]). Пути с общим префиксом делят один запрос, ключи

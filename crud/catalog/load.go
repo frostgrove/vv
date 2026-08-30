@@ -11,8 +11,10 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Load reads src's whole schema and answers a Catalog over it. Everything after
-// this call is memory.
+// Load reads source's catalog scope and answers a Catalog over it. PostgreSQL
+// contributes every non-system schema the role may use; MySQL and MariaDB
+// contribute DATABASE(); SQLite contributes main. Everything after this call
+// is memory.
 //
 // It reads through crud.Source.Query and nothing else, because Exec and Query
 // are all the seam has. SQLite's PRAGMAs return rows, so they go through Query
@@ -31,12 +33,12 @@ func Load(ctx context.Context, source crud.Source) (Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	tables, err := b.read(ctx, source)
+	read, err := b.read(ctx, source)
 	if err != nil {
 		return nil, err
 	}
 	c := &loaded{source: source, backend: b, now: time.Now}
-	c.snap.Store(newSnapshot(tables))
+	c.snap.Store(newSnapshot(read))
 	return c, nil
 }
 
@@ -44,7 +46,7 @@ func Load(ctx context.Context, source crud.Source) (Catalog, error) {
 // the vocabulary errs.Detail.Dialect uses.
 type backend struct {
 	dialect string
-	read    func(ctx context.Context, source crud.Source) ([]Table, error)
+	read    func(ctx context.Context, source crud.Source) (*schemaRead, error)
 }
 
 // backendFor chooses the statements before any of them run.
@@ -133,6 +135,10 @@ func eachRow(ctx context.Context, source crud.Source, what, q string, args []any
 type builder struct {
 	tables []*tableBuild
 	byKey  map[tableKey]*tableBuild
+	// bare records lookup state outside the public Table value. Adding a private
+	// field to an exported struct would break external positional literals; and
+	// visibility is not schema metadata in the first place.
+	bare map[tableKey]bool
 	// schema is the one every table of this read belongs to, where the engine
 	// has exactly one — MySQL's DATABASE(), SQLite's "main". PostgreSQL leaves
 	// it empty: there a table carries the schema its own row reported.
@@ -182,7 +188,13 @@ func familyOf(k Kind) conFamily {
 	return famKey
 }
 
-func newBuilder() *builder { return &builder{byKey: map[tableKey]*tableBuild{}} }
+func newBuilder() *builder {
+	return &builder{byKey: map[tableKey]*tableBuild{}, bare: map[tableKey]bool{}}
+}
+
+func (this *builder) markBare(schema, name string) {
+	this.bare[tableKey{schema: schema, name: name}] = true
+}
 
 // table finds or starts a table. First sight fixes its position.
 func (this *builder) table(schema, name string) *tableBuild {
@@ -218,11 +230,18 @@ func (this *tableBuild) constraint(name string, kind Kind) *Constraint {
 	return c
 }
 
+// schemaRead is the public metadata plus the private resolution state from the
+// same introspection pass.
+type schemaRead struct {
+	tables []Table
+	bare   map[tableKey]bool
+}
+
 // finish flattens the build into the value Load stores. The primary key is
 // taken from the primary-key constraint where one was read and left alone where
 // a back-end filled it in itself — SQLite reports a rowid primary key through
 // its column pragma and through no index at all.
-func (this *builder) finish() []Table {
+func (this *builder) finish() *schemaRead {
 	out := make([]Table, 0, len(this.tables))
 	for _, tb := range this.tables {
 		tb.t.Constraints = make([]Constraint, len(tb.cons))
@@ -234,7 +253,7 @@ func (this *builder) finish() []Table {
 		}
 		out = append(out, tb.t)
 	}
-	return out
+	return &schemaRead{tables: out, bare: this.bare}
 }
 
 // ---------------------------------------------------------------------------
@@ -244,45 +263,74 @@ func (this *builder) finish() []Table {
 // reload was half done would see two schemas at once, which is worse than
 // seeing the old one.
 type snapshot struct {
-	tables []Table
-	byName map[string]int
-	byCons map[consKey]*Constraint
+	tables    []Table
+	byName    map[string]int
+	byRef     map[tableKey]int
+	byCons    map[consKey]*Constraint
+	byConsRef map[qualifiedConsKey]*Constraint
 	// refs is the inbound direction: which foreign keys point at a table. Built
 	// here rather than walked per lookup because the walk is over every table in
 	// the database and a lookup does no work ([[D-041]]).
-	refs map[string][]*Constraint
+	refs    map[string][]*Constraint
+	refsRef map[tableKey][]*Constraint
 }
 
 type consKey struct{ table, name string }
+type qualifiedConsKey struct {
+	table tableKey
+	name  string
+}
 
-func newSnapshot(tables []Table) *snapshot {
+func newSnapshot(read *schemaRead) *snapshot {
+	tables := read.tables
 	s := &snapshot{
-		tables: tables,
-		byName: make(map[string]int, len(tables)),
-		byCons: map[consKey]*Constraint{},
-		refs:   map[string][]*Constraint{},
+		tables:    tables,
+		byName:    make(map[string]int, len(tables)),
+		byRef:     make(map[tableKey]int, len(tables)),
+		byCons:    map[consKey]*Constraint{},
+		byConsRef: map[qualifiedConsKey]*Constraint{},
+		refs:      map[string][]*Constraint{},
+		refsRef:   map[tableKey][]*Constraint{},
 	}
 	for i := range tables {
-		// A bare name resolves to whatever this connection resolved it to. The
-		// first table of a name wins, which is the same table the connection's
-		// own search_path would have picked, because the read only asked for
-		// what was visible.
-		if _, seen := s.byName[tables[i].Name]; !seen {
+		key := tableKey{schema: tables[i].Schema, name: tables[i].Name}
+		if _, seen := s.byRef[key]; !seen {
+			s.byRef[key] = i
+		}
+		// PostgreSQL loads qualified tables outside search_path as well, but a
+		// legacy bare lookup must still mean exactly what the server would bind.
+		if read.bare[key] {
 			s.byName[tables[i].Name] = i
 		}
+	}
+	for i := range tables {
+		tableRef := tableKey{schema: tables[i].Schema, name: tables[i].Name}
 		for j := range tables[i].Constraints {
 			c := &tables[i].Constraints[j]
-			k := consKey{table: tables[i].Name, name: c.Name}
+			qk := qualifiedConsKey{table: tableRef, name: c.Name}
+			if _, seen := s.byConsRef[qk]; !seen {
+				s.byConsRef[qk] = c
+			}
 			// One name can be two objects on one table — a unique key and a
 			// foreign key on MySQL, a CHECK and a bare unique index on
 			// PostgreSQL — and this lookup answers one. The first wins, which
 			// is the order the engine listed them in and is the same on every
 			// run because every statement carries its ORDER BY ([[D-014]]).
-			if _, seen := s.byCons[k]; !seen {
-				s.byCons[k] = c
+			if bare, ok := s.byName[tables[i].Name]; ok && bare == i {
+				k := consKey{table: tables[i].Name, name: c.Name}
+				if _, seen := s.byCons[k]; !seen {
+					s.byCons[k] = c
+				}
 			}
 			if c.Kind == KindForeignKey && c.RefTable != "" {
-				s.refs[c.RefTable] = append(s.refs[c.RefTable], c)
+				ref := tableKey{schema: c.RefSchema, name: c.RefTable}
+				s.refsRef[ref] = append(s.refsRef[ref], c)
+				if bare, ok := s.byName[c.RefTable]; ok {
+					resolved := &s.tables[bare]
+					if resolved.Schema == c.RefSchema {
+						s.refs[c.RefTable] = append(s.refs[c.RefTable], c)
+					}
+				}
 			}
 		}
 	}
@@ -313,11 +361,38 @@ func (this *loaded) Table(name string) (*Table, bool) {
 	return &s.tables[i], true
 }
 
+// TableByRef performs an exact component lookup. A bare ref deliberately
+// delegates to Table, retaining the engine's own unqualified-name semantics.
+func (this *loaded) TableByRef(table crud.TableRef) (*Table, bool) {
+	if table.Validate() != nil {
+		return nil, false
+	}
+	if table.Schema == "" {
+		return this.Table(table.Name)
+	}
+	s := this.snap.Load()
+	i, ok := s.byRef[tableKey{schema: table.Schema, name: table.Name}]
+	if !ok {
+		return nil, false
+	}
+	return &s.tables[i], true
+}
+
 // ReferencedBy answers the inbound direction. A table nothing points at answers
 // nil rather than an empty slice, because the two mean the same thing to every
 // reader and one of them costs an allocation per lookup.
 func (this *loaded) ReferencedBy(table string) []*Constraint {
 	return this.snap.Load().refs[table]
+}
+
+func (this *loaded) ReferencedByRef(table crud.TableRef) []*Constraint {
+	if table.Validate() != nil {
+		return nil
+	}
+	if table.Schema == "" {
+		return this.ReferencedBy(table.Name)
+	}
+	return this.snap.Load().refsRef[tableKey{schema: table.Schema, name: table.Name}]
 }
 
 func (this *loaded) Constraint(table, name string) (*Constraint, bool) {
@@ -326,8 +401,24 @@ func (this *loaded) Constraint(table, name string) (*Constraint, bool) {
 	return con, ok
 }
 
+func (this *loaded) ConstraintByRef(table crud.TableRef, name string) (*Constraint, bool) {
+	if table.Validate() != nil {
+		return nil, false
+	}
+	if table.Schema == "" {
+		return this.Constraint(table.Name, name)
+	}
+	con, ok := this.snap.Load().byConsRef[qualifiedConsKey{
+		table: tableKey{schema: table.Schema, name: table.Name},
+		name:  name,
+	}]
+	return con, ok
+}
+
 var (
-	_ Catalog   = (*loaded)(nil)
-	_ Reloader  = (*loaded)(nil)
-	_ Referrers = (*loaded)(nil)
+	_ Catalog            = (*loaded)(nil)
+	_ Reloader           = (*loaded)(nil)
+	_ Referrers          = (*loaded)(nil)
+	_ QualifiedCatalog   = (*loaded)(nil)
+	_ QualifiedReferrers = (*loaded)(nil)
 )

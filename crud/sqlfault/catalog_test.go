@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/catalog"
 	"github.com/frostgrove/vv/errs"
 )
@@ -15,8 +16,14 @@ import (
 type fakeColumns struct {
 	cols   []string
 	asked  int
+	lastSc string
 	lastTb string
 	lastCn string
+}
+
+func (this *fakeColumns) ConstraintColumnsIn(schema, table, constraint string) ([]string, bool) {
+	this.lastSc = schema
+	return this.ConstraintColumns(table, constraint)
 }
 
 func (this *fakeColumns) ConstraintColumns(table, constraint string) ([]string, bool) {
@@ -48,6 +55,9 @@ func TestTheColumnsSPIFillsWhatTheDriverDidNotName(t *testing.T) {
 	}
 	if cat.lastTb != "users" || cat.lastCn != "users_email_key" {
 		t.Fatalf("the lookup was keyed on %q/%q, want the table and constraint the driver named", cat.lastTb, cat.lastCn)
+	}
+	if cat.lastSc != "public" {
+		t.Fatalf("the qualified lookup was keyed on schema %q, want public", cat.lastSc)
 	}
 
 	// The first control: the identical error with nothing wired leaves the list
@@ -145,6 +155,7 @@ func TestAViolationWithNoLookupKeyIsNotLookedUp(t *testing.T) {
 }
 
 var _ Columns = (*fakeColumns)(nil)
+var _ QualifiedColumns = (*fakeColumns)(nil)
 var _ errs.Classifier = New("postgres")
 
 // fakeCatalog is the smallest thing that satisfies catalog.Catalog, so the
@@ -163,6 +174,12 @@ func (this *fakeCatalog) Constraint(string, string) (*catalog.Constraint, bool) 
 		return nil, false
 	}
 	return this.con, true
+}
+
+func (this *fakeCatalog) TableByRef(crud.TableRef) (*catalog.Table, bool) { return nil, false }
+
+func (this *fakeCatalog) ConstraintByRef(crud.TableRef, string) (*catalog.Constraint, bool) {
+	return this.Constraint("", "")
 }
 
 // A unique index on an expression — CREATE UNIQUE INDEX ... ON users
@@ -225,4 +242,81 @@ func TestAColumnListWithANamelessEntryIsTreatedAsAMiss(t *testing.T) {
 	}
 }
 
-var _ catalog.Catalog = (*fakeCatalog)(nil)
+var (
+	_ catalog.Catalog          = (*fakeCatalog)(nil)
+	_ catalog.QualifiedCatalog = (*fakeCatalog)(nil)
+)
+
+type legacyOnlyColumns struct {
+	asked int
+	cols  []string
+}
+
+func (this *legacyOnlyColumns) ConstraintColumns(string, string) ([]string, bool) {
+	this.asked++
+	return this.cols, true
+}
+
+func TestAQualifiedDriverSourceNeverFallsBackToTheLegacyColumnsSPI(t *testing.T) {
+	cols := &legacyOnlyColumns{cols: []string{"wrong_schema_column"}}
+	f, ok := New("postgres", WithColumns(cols)).Classify(duplicateKey())
+	if !ok {
+		t.Fatal("no fault")
+	}
+	if cols.asked != 0 {
+		t.Fatalf("the bare lookup was called %d times for public.users", cols.asked)
+	}
+	if f.Violations[0].Source.Columns != nil {
+		t.Fatalf("a bare-only SPI attributed qualified columns %v", f.Violations[0].Source.Columns)
+	}
+}
+
+type sameNameCatalog struct {
+	constraints map[string]*catalog.Constraint
+}
+
+func (this *sameNameCatalog) Dialect() string { return "postgres" }
+func (this *sameNameCatalog) Table(string) (*catalog.Table, bool) {
+	return nil, false
+}
+func (this *sameNameCatalog) Constraint(table, constraint string) (*catalog.Constraint, bool) {
+	con, ok := this.constraints["public."+table+"."+constraint]
+	return con, ok
+}
+func (this *sameNameCatalog) TableByRef(crud.TableRef) (*catalog.Table, bool) {
+	return nil, false
+}
+func (this *sameNameCatalog) ConstraintByRef(ref crud.TableRef, constraint string) (*catalog.Constraint, bool) {
+	con, ok := this.constraints[ref.Schema+"."+ref.Name+"."+constraint]
+	return con, ok
+}
+
+func TestFromCatalogUsesTheDriverSchemaForSameNamedConstraints(t *testing.T) {
+	cat := &sameNameCatalog{constraints: map[string]*catalog.Constraint{
+		"public.users.users_email_key":    {Schema: "public", Table: "users", Name: "users_email_key", Columns: []string{"public_email"}},
+		"analytics.users.users_email_key": {Schema: "analytics", Table: "users", Name: "users_email_key", Columns: []string{"analytics_email"}},
+	}}
+	classifier := New("postgres", WithColumns(FromCatalog(cat)))
+	for _, tc := range []struct {
+		schema string
+		want   []string
+	}{
+		{schema: "public", want: []string{"public_email"}},
+		{schema: "analytics", want: []string{"analytics_email"}},
+		// The control: a missing exact schema must not fall through to the
+		// public constraint returned by the legacy lookup.
+		{schema: "missing", want: nil},
+	} {
+		t.Run(tc.schema, func(t *testing.T) {
+			driver := *duplicateKey()
+			driver.SchemaName = tc.schema
+			fault, ok := classifier.Classify(&driver)
+			if !ok {
+				t.Fatal("no fault")
+			}
+			if !slices.Equal(fault.Violations[0].Source.Columns, tc.want) {
+				t.Fatalf("columns = %v, want %v", fault.Violations[0].Source.Columns, tc.want)
+			}
+		})
+	}
+}

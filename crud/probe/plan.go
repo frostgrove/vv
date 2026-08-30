@@ -35,7 +35,7 @@ type candidate struct {
 	cols []string
 	// table is the table the term's subquery reads and refCols are its columns,
 	// parallel to cols. For a unique key both are this table's own.
-	table   string
+	table   crud.TableRef
 	refCols []string
 	// pkOnly marks the candidate an upsert's ON CONFLICT (pk) target swallows.
 	pkOnly bool
@@ -80,7 +80,7 @@ type plan struct {
 // candidatesFor reads the catalog once and keeps every constraint the probe
 // could reproduce. Everything it drops here it drops for a reason the catalog
 // can state; nothing is dropped because it looked awkward.
-func candidatesFor(cat catalog.Catalog, table *catalog.Table, pkCol string) []candidate {
+func candidatesFor(cat catalog.Catalog, table *catalog.Table, pkCol string, qualified bool) []candidate {
 	var out []candidate
 	for i := range table.Constraints {
 		c := &table.Constraints[i]
@@ -93,12 +93,18 @@ func candidatesFor(cat catalog.Catalog, table *catalog.Table, pkCol string) []ca
 				kind:    kindUnique,
 				name:    c.Name,
 				cols:    c.Columns,
-				table:   table.Name,
+				table:   crud.TableRef{Schema: table.Schema, Name: table.Name},
 				refCols: c.Columns,
 				pkOnly:  len(c.Columns) == 1 && c.Columns[0] == pkCol,
 			})
 		case catalog.KindForeignKey:
 			if !reproducible(c) || c.RefTable == "" || len(c.RefColumns) != len(c.Columns) {
+				continue
+			}
+			// A schema-aware catalog has to name the exact referenced table. A
+			// qualified repository must not turn missing identity metadata into
+			// an unqualified lookup against whichever search_path runs the probe.
+			if qualified && c.RefSchema == "" {
 				continue
 			}
 			// A shorthand REFERENCES parent records no parent column on SQLite,
@@ -110,28 +116,39 @@ func candidatesFor(cat catalog.Catalog, table *catalog.Table, pkCol string) []ca
 				kind:    kindForeignKey,
 				name:    c.Name,
 				cols:    c.Columns,
-				table:   c.RefTable,
+				table:   crud.TableRef{Schema: c.RefSchema, Name: c.RefTable},
 				refCols: c.RefColumns,
 			})
 		}
 	}
-	// The inbound direction, which no lookup on Catalog can express.
-	if r, ok := cat.(catalog.Referrers); ok {
-		for _, c := range r.ReferencedBy(table.Name) {
-			if !restricting(c) || !reproducible(c) {
-				continue
-			}
-			if len(c.RefColumns) != len(c.Columns) || anyEmpty(c.RefColumns) || anyEmpty(c.Columns) {
-				continue
-			}
-			out = append(out, candidate{
-				kind:    kindRestrict,
-				name:    c.Name,
-				cols:    c.RefColumns, // our columns, the ones a child points at
-				table:   c.Table,
-				refCols: c.Columns, // the child's own foreign-key columns
-			})
+	// The inbound direction, which no lookup on Catalog can express. An
+	// explicitly qualified declaration never falls back to a bare referrer
+	// lookup: that can merge a same-named target from another schema.
+	var inbound []*catalog.Constraint
+	if qualified {
+		if r, ok := cat.(catalog.QualifiedReferrers); ok {
+			inbound = r.ReferencedByRef(crud.TableRef{Schema: table.Schema, Name: table.Name})
 		}
+	} else if r, ok := cat.(catalog.Referrers); ok {
+		inbound = r.ReferencedBy(table.Name)
+	}
+	for _, c := range inbound {
+		if qualified && c.Schema == "" {
+			continue
+		}
+		if !restricting(c) || !reproducible(c) {
+			continue
+		}
+		if len(c.RefColumns) != len(c.Columns) || anyEmpty(c.RefColumns) || anyEmpty(c.Columns) {
+			continue
+		}
+		out = append(out, candidate{
+			kind:    kindRestrict,
+			name:    c.Name,
+			cols:    c.RefColumns, // our columns, the ones a child points at
+			table:   crud.TableRef{Schema: c.Schema, Name: c.Table},
+			refCols: c.Columns, // the child's own foreign-key columns
+		})
 	}
 	return out
 }

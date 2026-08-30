@@ -9,7 +9,22 @@ import (
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/adapter/crudpgx"
+	"github.com/frostgrove/vv/crud/catalog"
+	"github.com/frostgrove/vv/crud/decorators/faults"
+	"github.com/frostgrove/vv/crud/probe"
+	"github.com/frostgrove/vv/crud/sqlfault"
+	"github.com/frostgrove/vv/crud/sqlrepo"
+	"github.com/frostgrove/vv/errs"
 )
+
+type core028Event struct {
+	ID    int64  `db:"id,pk,auto"`
+	Label string `db:"label"`
+}
+
+type core028EventUpdate struct {
+	Label *string
+}
 
 func TestPgx(t *testing.T) {
 	RunSuite(t, Target{Name: "pgx", DB: "postgres", Source: crudpgx.Open(pgPool)})
@@ -127,5 +142,111 @@ func TestPgxBulkCopy(t *testing.T) {
 	}
 	if got, err := Users.Bind(source).Count(ctx); err != nil || got != 2 {
 		t.Fatalf("count = %d err = %v", got, err)
+	}
+}
+
+func TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable(t *testing.T) {
+	ctx := context.Background()
+	if _, err := pgPool.Exec(ctx, `DROP SCHEMA IF EXISTS core028 CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pgPool.Exec(ctx, `DROP SCHEMA IF EXISTS core028_shadow CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pgPool.Exec(ctx, `CREATE SCHEMA core028`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pgPool.Exec(ctx, `CREATE SCHEMA core028_shadow`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pgPool.Exec(context.Background(), `DROP SCHEMA IF EXISTS core028 CASCADE`)
+		_, _ = pgPool.Exec(context.Background(), `DROP SCHEMA IF EXISTS core028_shadow CASCADE`)
+	})
+	if _, err := pgPool.Exec(ctx, `CREATE TABLE core028.events (
+		id BIGSERIAL PRIMARY KEY,
+		label TEXT NOT NULL,
+		CONSTRAINT events_label_key UNIQUE (label)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	// The same bare table and constraint names in another schema cover a
+	// different column. A catalog keyed only on the two bare strings can make
+	// the core028 fault confidently point at shadow_code.
+	if _, err := pgPool.Exec(ctx, `CREATE TABLE core028_shadow.events (
+		id BIGSERIAL PRIMARY KEY,
+		label TEXT NOT NULL,
+		shadow_code TEXT NOT NULL,
+		CONSTRAINT events_label_key UNIQUE (shadow_code)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bp, err := sqlrepo.TryDefineInSchema[core028Event, int64, core028EventUpdate]("core028", "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := crudpgx.Open(pgPool)
+	cat, err := catalog.Load(ctx, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualified, ok := cat.(catalog.QualifiedCatalog)
+	if !ok {
+		t.Fatal("loaded catalog has no qualified lookup")
+	}
+	for _, schema := range []string{"core028", "core028_shadow"} {
+		table, ok := qualified.TableByRef(crud.TableRef{Schema: schema, Name: "events"})
+		if !ok || table.Schema != schema {
+			t.Fatalf("catalog lookup for %s.events = %+v", schema, table)
+		}
+	}
+	classifier := sqlfault.New("postgres", sqlfault.WithColumns(sqlfault.FromCatalog(cat)))
+	source := crudpgx.Open(pgPool, crudpgx.WithFaults(classifier))
+	repository := bp.Bind(source, faults.Enrich[core028Event, int64](
+		faults.WithProbe(probe.Full(cat)),
+		faults.WithProbeError(func(op string, err error) {
+			t.Errorf("qualified %s probe: %v", op, err)
+		})))
+	stored, err := repository.Save(ctx, &core028Event{Label: "repository"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repository.GetByID(ctx, stored.ID); err != nil || got.Label != "repository" {
+		t.Fatalf("qualified read = %+v, %v", got, err)
+	}
+	if _, err := repository.Save(ctx, &core028Event{Label: "repository"}); err == nil {
+		t.Fatal("qualified unique violation was accepted")
+	} else if fault, ok := errs.AsFault(err); !ok {
+		t.Fatalf("qualified unique violation was not classified: %v", err)
+	} else {
+		found := false
+		for _, violation := range fault.Violations {
+			if violation.Source.Schema == "core028" && violation.Source.Constraint == "events_label_key" {
+				found = true
+				if len(violation.Source.Columns) != 1 || violation.Source.Columns[0] != "label" || violation.Path.String() != "Label" {
+					t.Fatalf("qualified fault used the shadow constraint: %+v", violation)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("qualified fault has no core028.events_label_key violation: %+v", fault.Violations)
+		}
+	}
+
+	n, err := source.CopyFromTable(ctx, crud.TableRef{Schema: "core028", Name: "events"},
+		[]string{"label"}, [][]any{{"copy"}})
+	if err != nil || n != 1 {
+		t.Fatalf("qualified COPY = %d, %v", n, err)
+	}
+	if count, err := repository.Count(ctx); err != nil || count != 2 {
+		t.Fatalf("count after both paths = %d, %v", count, err)
+	}
+
+	if _, err := source.CopyFrom(ctx, "core028.events", []string{"label"}, [][]any{{"wrong"}}); err == nil {
+		t.Fatal("dotted string COPY was not refused")
+	}
+	if count, err := repository.Count(ctx); err != nil || count != 2 {
+		t.Fatalf("refused COPY changed rows: %d, %v", count, err)
 	}
 }

@@ -65,12 +65,13 @@ that has to still exist.
    `crud/sqlrepo/repository.go`'s idiom exactly — `defer rows.Close()`, loop, then
    `rows.Err()` — and wraps any failure in `ErrIntrospection`.
 
-6. **The schema is resolved once and recorded.** PostgreSQL scopes every
-   statement with `pg_table_is_visible`, which is the server's own answer to
-   "what does this bare name resolve to on this connection", and records the
-   `nspname` it resolved to on each table. MySQL and MariaDB use `DATABASE()`;
-   SQLite uses `main`. Resolving a bare name lazily per connection is what
-   [[D-041]] forbids.
+6. **The schema identity is read once and recorded.** PostgreSQL reads every
+   non-system schema on which the role has `USAGE`, so a structured repository
+   outside `search_path` exists in the catalog. Its column rows also carry
+   `pg_table_is_visible`, kept as private lookup state: legacy bare lookup still
+   means exactly what this connection's `search_path` means. MySQL and MariaDB
+   read the current `DATABASE()`; SQLite reads `main`. Other MySQL databases and
+   SQLite attached databases are honest qualified misses, never bare fallbacks.
 
 7. **The build** — `crud/catalog/load.go:133:builder`
    Rows arrive over several statements and are collected by `(schema, table)` and
@@ -82,19 +83,24 @@ that has to still exist.
    engine's and it is the same on every run ([[D-014]]) — which matters because a
    probe reads its results by column position ([[D-042]]).
 
-8. **The snapshot** — `crud/catalog/load.go:254:newSnapshot`
+8. **The snapshot** — `crud/catalog/load.go:newSnapshot`
    One whole schema, stored through an `atomic.Pointer`. Lookup maps are built
-   here; they feed no SQL and no output order, so they are maps. `byCons` is
-   first-wins per `(table, name)`, because two objects can share a name and the
-   lookup answers one.
+   here; they feed no SQL and no output order, so they are maps. Structured maps
+   key tables and constraints by `(schema, table)` and inbound foreign keys by
+   the exact referenced pair. Separate bare maps contain only the table the
+   engine marked visible. Each constraint lookup remains first-wins because two
+   objects can share one name even on one table.
 
-9. **A lookup** — `crud/catalog/load.go:299:loaded.Table` / `:308:loaded.Constraint`
+9. **A lookup** — `loaded.Table` / `loaded.Constraint` and the optional
+   `QualifiedCatalog.TableByRef` / `ConstraintByRef`
    No I/O, no `context`. `Constraint` takes the table as well as the name,
-   because every InnoDB table's primary index is called `PRIMARY`.
+   because every InnoDB table's primary index is called `PRIMARY`. The
+   structured methods never discard their schema. `QualifiedReferrers` applies
+   the same rule to the reverse foreign-key index.
 
 ## The reload path
 
-**`Referrers` is the second optional interface, and it is there for the same
+**`Referrers` and `QualifiedReferrers` are optional interfaces, and they are there for the same
 reason.** A constraint is recorded on the table that *declares* it, so no lookup
 on `Catalog` can answer "which foreign keys point at this table" — which is
 exactly what a `restrict` violation needs ([[FL-017]]). `crud/catalog/load.go`
@@ -102,6 +108,8 @@ builds the reverse index once, in `newSnapshot`, rather than walking every table
 per lookup, because a lookup does no work. `Catalog` itself does not carry it:
 the interface a consumer implements stays the small one, and a catalog written
 elsewhere that does not implement it simply produces no `restrict` terms.
+For an explicitly qualified declaration the legacy referrer lookup is not used;
+that would merge targets with the same bare name.
 
 `crud/catalog/reload.go:66:loaded.Reload` — an optional `Reloader`, not part of
 `Catalog`. A caller that met a constraint name the catalog has never heard of
@@ -221,9 +229,9 @@ test that sleeps.
 | File | Role |
 |---|---|
 | `crud/catalog/doc.go` | what a catalog is, nil-versus-empty, the two rules a signature cannot carry |
-| `crud/catalog/catalog.go` | `Catalog`, `Referrers`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
+| `crud/catalog/catalog.go` | `Catalog`, `QualifiedCatalog`, `Referrers`, `QualifiedReferrers`, `Table`, `Table.Column`, `Table.Constraint`, `Column`, `Constraint`, `Kind` and its constants |
 | `crud/catalog/errors.go` | `ErrUncomparableHandle`, `ErrUnknownDialect`, `ErrIntrospection` |
-| `crud/catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, `snapshot.refs`, `loaded`, `loaded.ReferencedBy` |
+| `crud/catalog/load.go` | `Load`, `backend`, `backendFor`, `isMariaDB`, `eachRow`, `builder`, `tableBuild`, `conBuildKey`, `conFamily`, `familyOf`, `snapshot`, `newSnapshot`, the bare and structured indexes, and `loaded` lookups |
 | `crud/catalog/set.go` | `Set`, `Set.Load`, `Set.For`, `findable` |
 | `crud/catalog/reload.go` | `Reloader`, `loaded.Reload`, `loaded.clock`, `negative`, `minBackoff`, `maxBackoff`, `reloadFloor` |
 | `crud/catalog/postgres.go` | `readPostgres`, `pgColumns`, `pgConstraints`, `pgUniqueIndexes`, `pgKind` |

@@ -74,7 +74,7 @@ FROM information_schema.CHECK_CONSTRAINTS
 WHERE CONSTRAINT_SCHEMA = DATABASE()
 ORDER BY TABLE_NAME, CONSTRAINT_NAME`
 
-func readMariaDB(ctx context.Context, source crud.Source) ([]Table, error) {
+func readMariaDB(ctx context.Context, source crud.Source) (*schemaRead, error) {
 	b := newBuilder()
 	for _, step := range []func() error{
 		func() error { return myReadColumns(ctx, source, b, mariaColumns, true) },

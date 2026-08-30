@@ -14,10 +14,10 @@ import (
 // pg_get_constraintdef hand all three back as the server's own text, so nothing
 // here parses anything.
 //
-// Every statement is scoped by pg_table_is_visible, which is the server's own
-// answer to "what does this bare name resolve to on this connection" — the
-// search_path, applied once, on the connection the catalog loaded from, with the
-// schema it resolved to recorded on every table ([[D-041]]).
+// Every statement reads all non-system schemas for which the connection has
+// USAGE. Qualified repositories have to remain discoverable outside
+// search_path. The columns read also records pg_table_is_visible separately,
+// preserving the server's exact answer for legacy bare-name lookups.
 
 const pgColumns = `
 SELECT n.nspname, c.relname, a.attname, a.attnum::int,
@@ -27,7 +27,8 @@ SELECT n.nspname, c.relname, a.attname, a.attnum::int,
        d.adbin IS NOT NULL,
        COALESCE(pg_get_expr(d.adbin, d.adrelid), ''),
        CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 4
-            THEN a.atttypmod - 4 ELSE 0 END
+            THEN a.atttypmod - 4 ELSE 0 END,
+       pg_table_is_visible(c.oid)
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -35,8 +36,10 @@ JOIN pg_type t ON t.oid = a.atttypid
 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 WHERE c.relkind IN ('r', 'p')
   AND a.attnum > 0 AND NOT a.attisdropped
-  AND pg_table_is_visible(c.oid)
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  AND n.nspname NOT LIKE 'pg_temp_%'
+  AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY n.nspname, c.relname, a.attnum`
 
 // One row per constraint key column. confkey is joined on the same ordinal as
@@ -65,8 +68,10 @@ LEFT JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS fk(attnum, ord) ON fk.o
 LEFT JOIN pg_attribute fa ON fa.attrelid = con.confrelid AND fa.attnum = fk.attnum
 WHERE con.contype IN ('p', 'u', 'f', 'c')
   AND tc.relkind IN ('r', 'p')
-  AND pg_table_is_visible(tc.oid)
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  AND n.nspname NOT LIKE 'pg_temp_%'
+  AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY n.nspname, tc.relname, con.conname, k.ord`
 
 // The unique indexes no constraint backs. A unique index whose indexrelid has a
@@ -103,25 +108,31 @@ LEFT JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
 WHERE i.indisunique AND i.indisvalid AND i.indislive
   AND k.ord <= i.indnkeyatts
   AND tc.relkind IN ('r', 'p')
-  AND pg_table_is_visible(tc.oid)
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  AND n.nspname NOT LIKE 'pg_temp_%'
+  AND has_schema_privilege(n.oid, 'USAGE')
   AND NOT EXISTS (SELECT 1 FROM pg_constraint con
                   WHERE con.conindid = i.indexrelid AND con.contype IN ('p', 'u', 'x'))
 ORDER BY n.nspname, tc.relname, ic.relname, k.ord`
 
-func readPostgres(ctx context.Context, source crud.Source) ([]Table, error) {
+func readPostgres(ctx context.Context, source crud.Source) (*schemaRead, error) {
 	b := newBuilder()
 
 	var (
 		schema, table, name, typ, def string
 		pos, maxLen                   int
 		notNull, generated, hasDef    bool
+		bare                          bool
 	)
 	err := eachRow(ctx, source, "columns", pgColumns, nil, func(rows crud.Rows) error {
-		if err := rows.Scan(&schema, &table, &name, &pos, &typ, &notNull, &generated, &hasDef, &def, &maxLen); err != nil {
+		if err := rows.Scan(&schema, &table, &name, &pos, &typ, &notNull, &generated, &hasDef, &def, &maxLen, &bare); err != nil {
 			return err
 		}
 		tb := b.table(schema, table)
+		if bare {
+			b.markBare(schema, table)
+		}
 		col := Column{
 			Name: name, Position: pos, Type: typ,
 			Nullable: !notNull, MaxLength: maxLen, Generated: generated,

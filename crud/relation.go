@@ -17,7 +17,8 @@ import (
 //	rel:""                               infer the kind from the Go type
 //	rel:"-"                              never a relation
 //
-// Overrides: `fk=Field`, `ref=Field`, `table=name`, `joinFK=col`, `joinRef=col`.
+// Overrides: `fk=Field`, `ref=Field`, `table=name`, `schema=name`,
+// `join=name`, `joinSchema=name`, `joinFK=col`, `joinRef=col`.
 //
 // A struct, pointer-to-struct or slice-of-struct field without a rel tag is
 // skipped entirely — it is neither a column nor a relation.
@@ -72,7 +73,8 @@ type Relation struct {
 	JoinLocal string // join-table column pointing back at the owner
 	JoinRef   string // join-table column pointing at the target
 
-	table string // explicit target table override
+	table     TableRef // explicit target table override
+	joinTable TableRef // structured form of JoinTable
 
 	// context is present only on the relation view returned by Meta.Relation.
 	// Schemas are process-global, but a Meta is one physical view of a schema:
@@ -108,6 +110,19 @@ type Relation struct {
 	defaultsErr error
 }
 
+// JoinTableReference returns the validated physical join-table identity. The
+// value is a copy; changing it or the legacy JoinTable diagnostic string cannot
+// retarget relation SQL after schema validation.
+func (this *Relation) JoinTableReference() TableRef {
+	if this == nil {
+		return TableRef{}
+	}
+	if this.joinTable.Name != "" || this.joinTable.Schema != "" {
+		return this.joinTable
+	}
+	return TableRef{Name: this.JoinTable}
+}
+
 // Target resolves (and caches) the metadata of the model on the other side.
 // Resolution is lazy so that models may reference each other in a cycle.
 func (this *Relation) Target() (*Meta, error) {
@@ -119,11 +134,11 @@ func (this *Relation) Target() (*Meta, error) {
 		}
 		table := this.table
 		targetContext := this.context
-		if table == "" && this.context != nil {
+		if table.Name == "" && this.context != nil {
 			table, _ = this.context.tableFor(this.Elem)
 		}
-		if table == "" {
-			table, err = relationTableNameOf(this.Elem)
+		if table.Name == "" {
+			table, err = relationTableRefOf(this.Elem)
 			if err != nil {
 				this.err = err
 				return
@@ -132,7 +147,7 @@ func (this *Relation) Target() (*Meta, error) {
 		if targetContext != nil {
 			targetContext = targetContext.withTable(this.Elem, table)
 		}
-		this.meta = &Meta{Schema: s, Table: table, relations: targetContext}
+		this.meta = &Meta{Schema: s, Table: table.String(), tableRef: table, relations: targetContext}
 	})
 	return this.meta, this.err
 }
@@ -176,10 +191,12 @@ func (this *Relation) fieldValue(base unsafe.Pointer) reflect.Value {
 
 type tableRegistration struct {
 	mu           sync.Mutex
-	table        string
+	table        TableRef
 	resolved     bool
+	resolvedErr  error
 	fallbackOnce sync.Once
-	fallback     string
+	fallback     TableRef
+	fallbackErr  error
 }
 
 var tableRegistry sync.Map // reflect.Type -> *tableRegistration
@@ -191,26 +208,26 @@ var tableRegistry sync.Map // reflect.Type -> *tableRegistration
 // self-relations remain on live_a. Relation views are cached per context so
 // their lazy metadata remains stable and race-free.
 type relationContext struct {
-	tables    map[reflect.Type]string
+	tables    map[reflect.Type]TableRef
 	relations sync.Map // *Relation schema declaration -> *Relation contextual view
 }
 
-func (this *relationContext) tableFor(t reflect.Type) (string, bool) {
+func (this *relationContext) tableFor(t reflect.Type) (TableRef, bool) {
 	if this == nil {
-		return "", false
+		return TableRef{}, false
 	}
 	table, ok := this.tables[t]
 	return table, ok
 }
 
-func (this *relationContext) withTable(t reflect.Type, table string) *relationContext {
+func (this *relationContext) withTable(t reflect.Type, table TableRef) *relationContext {
 	if this == nil {
 		return nil
 	}
 	if current, ok := this.tables[t]; ok && current == table {
 		return this
 	}
-	tables := make(map[reflect.Type]string, len(this.tables)+1)
+	tables := make(map[reflect.Type]TableRef, len(this.tables)+1)
 	for model, physicalTable := range this.tables {
 		tables[model] = physicalTable
 	}
@@ -235,6 +252,7 @@ func (this *relationContext) bind(declaration *Relation) *Relation {
 		JoinLocal:      declaration.JoinLocal,
 		JoinRef:        declaration.JoinRef,
 		table:          declaration.table,
+		joinTable:      declaration.joinTable,
 		context:        this,
 		declaredLocal:  declaration.declaredLocal,
 		declaredTarget: declaration.declaredTarget,
@@ -265,9 +283,29 @@ func TryRegisterTable[M any](table string) error {
 	return TryRegisterTableType(reflect.TypeOf(&zero).Elem(), table)
 }
 
+// RegisterTableRef is RegisterTable for a structured physical identifier.
+func RegisterTableRef[M any](table TableRef) {
+	if err := TryRegisterTableRef[M](table); err != nil {
+		panic(err)
+	}
+}
+
+// TryRegisterTableRef is RegisterTableRef without the panic.
+func TryRegisterTableRef[M any](table TableRef) error {
+	var zero M
+	return TryRegisterTableRefType(reflect.TypeOf(&zero).Elem(), table)
+}
+
 // RegisterTableType is RegisterTable for a reflect.Type.
 func RegisterTableType(t reflect.Type, table string) {
 	if err := TryRegisterTableType(t, table); err != nil {
+		panic(err)
+	}
+}
+
+// RegisterTableRefType is RegisterTableRef for a reflect.Type.
+func RegisterTableRefType(t reflect.Type, table TableRef) {
+	if err := TryRegisterTableRefType(t, table); err != nil {
 		panic(err)
 	}
 }
@@ -278,26 +316,40 @@ func RegisterTableType(t reflect.Type, table string) {
 // name is also refused: accepting it would leave the already-resolved relation
 // on a stale table while making the registry claim otherwise.
 func TryRegisterTableType(t reflect.Type, table string) error {
-	if t == nil {
-		return &SchemaError{Model: "<nil>", Reason: "cannot register a table for a nil type"}
+	if err := validateTableRegistrationType(t); err != nil {
+		return err
 	}
-	if t.Kind() != reflect.Struct {
-		return &SchemaError{Model: t.String(), Reason: "table registration model must be a struct"}
+	ref, err := NewTableRef(table)
+	if err != nil {
+		return tableRefSchemaError(t, err)
 	}
-	if table == "" {
-		return &SchemaError{Model: t.String(), Reason: "table name cannot be empty"}
+	return TryRegisterTableRefType(t, ref)
+}
+
+// TryRegisterTableRefType pins a structured model table without panicking.
+func TryRegisterTableRefType(t reflect.Type, table TableRef) error {
+	if err := validateTableRegistrationType(t); err != nil {
+		return err
 	}
+	if err := table.Validate(); err != nil {
+		return tableRefSchemaError(t, err)
+	}
+
 	entry := registrationFor(t)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	if entry.resolved {
-		if entry.table == table {
+		if entry.resolvedErr == nil && entry.table == table {
 			return nil
 		}
+		resolved := entry.table.String()
+		if entry.resolvedErr != nil {
+			resolved = "<invalid model table>"
+		}
 		return &SchemaError{Model: t.String(), Reason: fmt.Sprintf(
-			"table was already resolved as %q; refusing late registration %q", entry.table, table)}
+			"table was already resolved as %q; refusing late registration %q", resolved, table.String())}
 	}
-	if entry.table == "" {
+	if entry.table.Name == "" {
 		entry.table = table
 		return nil
 	}
@@ -305,7 +357,17 @@ func TryRegisterTableType(t reflect.Type, table string) error {
 		return nil
 	}
 	return &SchemaError{Model: t.String(), Reason: fmt.Sprintf(
-		"table is already registered as %q; refusing conflicting registration %q", entry.table, table)}
+		"table is already registered as %q; refusing conflicting registration %q", entry.table.String(), table.String())}
+}
+
+func validateTableRegistrationType(t reflect.Type) error {
+	if t == nil {
+		return &SchemaError{Model: "<nil>", Reason: "cannot register a table for a nil type"}
+	}
+	if t.Kind() != reflect.Struct {
+		return &SchemaError{Model: t.String(), Reason: "table registration model must be a struct"}
+	}
+	return nil
 }
 
 // Tabler lets a model name its own table.
@@ -318,41 +380,61 @@ var tablerType = reflect.TypeOf((*Tabler)(nil)).Elem()
 // Merely asking for the name does not publish relation metadata and therefore
 // does not freeze the fallback. Relation.Target performs that separate step.
 func TableNameOf(t reflect.Type) string {
-	if t == nil || t.Kind() != reflect.Struct {
+	ref, err := TableRefOf(t)
+	if err != nil {
 		return ""
+	}
+	return ref.String()
+}
+
+// TableRefOf reports the structured table of a model type: an explicit
+// registration first, then a one-component TableName result, then convention.
+// It is a read-only preview and does not publish relation metadata.
+func TableRefOf(t reflect.Type) (TableRef, error) {
+	if t == nil || t.Kind() != reflect.Struct {
+		return TableRef{}, &SchemaError{Model: fmt.Sprint(t), Reason: "table lookup model must be a struct"}
 	}
 	entry := registrationFor(t)
 	entry.mu.Lock()
-	if entry.table != "" {
+	if entry.table.Name != "" {
 		table := entry.table
 		entry.mu.Unlock()
-		return table
+		return table, nil
 	}
 	entry.mu.Unlock()
-	fallback := fallbackTableName(entry, t)
+	fallback, err := fallbackTableRef(entry, t)
 	// A registration that completed while user TableName code was running wins
 	// this read without turning the fallback lookup itself into publication.
 	entry.mu.Lock()
-	if entry.table != "" {
+	if entry.table.Name != "" {
 		fallback = entry.table
+		err = nil
 	}
 	entry.mu.Unlock()
-	return fallback
+	return fallback, err
 }
 
-func fallbackTableName(entry *tableRegistration, t reflect.Type) string {
-	entry.fallbackOnce.Do(func() { entry.fallback = defaultTableNameOf(t) })
-	return entry.fallback
+func fallbackTableRef(entry *tableRegistration, t reflect.Type) (TableRef, error) {
+	entry.fallbackOnce.Do(func() {
+		name := defaultTableNameOf(t)
+		if name == "" {
+			entry.fallbackErr = &TableRefError{Component: "name",
+				Reason: "table name resolved to empty; TableName must return a name or an explicit table must be supplied"}
+			return
+		}
+		entry.fallback, entry.fallbackErr = NewTableRef(name)
+	})
+	return entry.fallback, entry.fallbackErr
 }
 
-// relationTableNameOf resolves the one process-wide table a relation without
+// relationTableRefOf resolves the one process-wide table a relation without
 // an explicit `table=` tag may publish. Unlike TableNameOf, this freezes the
 // answer: Relation.Target caches the resulting Meta, so accepting a different
 // registration afterwards could never update every reader consistently.
-func relationTableNameOf(t reflect.Type) (string, error) {
+func relationTableRefOf(t reflect.Type) (TableRef, error) {
 	entry := registrationFor(t)
 	entry.mu.Lock()
-	if entry.table != "" {
+	if entry.table.Name != "" {
 		entry.resolved = true
 		table := entry.table
 		entry.mu.Unlock()
@@ -363,17 +445,20 @@ func relationTableNameOf(t reflect.Type) (string, error) {
 	// A model-owned TableName may be arbitrary consumer code. Do not run it
 	// under the registry lock, and do not run it at all when a registration has
 	// already won. A concurrent registration is checked again below.
-	fallback := fallbackTableName(entry, t)
+	fallback, fallbackErr := fallbackTableRef(entry, t)
 	entry.mu.Lock()
-	if entry.table == "" {
+	if entry.table.Name == "" {
+		if fallbackErr != nil {
+			entry.resolved = true
+			entry.resolvedErr = fallbackErr
+			entry.mu.Unlock()
+			return TableRef{}, tableRefSchemaError(t, fallbackErr)
+		}
 		entry.table = fallback
 	}
 	entry.resolved = true
 	table := entry.table
 	entry.mu.Unlock()
-	if table == "" {
-		return "", &SchemaError{Model: t.String(), Reason: "table name resolved to empty; TableName must return a name or the relation must declare table=..."}
-	}
 	return table, nil
 }
 
@@ -424,18 +509,24 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 		Type:   sf.Type,
 		Elem:   elem,
 	}
-	var fk, ref string
+	var fk, ref, tableName, tableSchema, joinName, joinSchema string
+	var tableSet, tableSchemaSet, joinSet, joinSchemaSet bool
 	for _, o := range options {
 		k, v, _ := strings.Cut(strings.TrimSpace(o), "=")
+		v = strings.TrimSpace(v)
 		switch k {
 		case "fk":
 			fk = v
 		case "ref":
 			ref = v
 		case "table":
-			r.table = v
+			tableName, tableSet = v, true
+		case "schema":
+			tableSchema, tableSchemaSet = v, true
 		case "join":
-			r.JoinTable = v
+			joinName, joinSet = v, true
+		case "joinSchema", "joinschema":
+			joinSchema, joinSchemaSet = v, true
 		case "joinFK", "joinfk":
 			r.JoinLocal = v
 		case "joinRef", "joinref":
@@ -444,6 +535,35 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 		default:
 			return nil, fail("unknown rel option " + k)
 		}
+	}
+	if tableSet || tableSchemaSet {
+		if !tableSet {
+			return nil, fail("schema= needs an explicit table= component")
+		}
+		var err error
+		if tableSchemaSet {
+			r.table, err = NewTableRefInSchema(tableSchema, tableName)
+		} else {
+			r.table, err = NewTableRef(tableName)
+		}
+		if err != nil {
+			return nil, fail(strings.TrimPrefix(err.Error(), "crud: "))
+		}
+	}
+	if joinSet || joinSchemaSet {
+		if !joinSet {
+			return nil, fail("joinSchema= needs an explicit join= component")
+		}
+		var err error
+		if joinSchemaSet {
+			r.joinTable, err = NewTableRefInSchema(joinSchema, joinName)
+		} else {
+			r.joinTable, err = NewTableRef(joinName)
+		}
+		if err != nil {
+			return nil, fail(strings.TrimPrefix(err.Error(), "crud: "))
+		}
+		r.JoinTable = r.joinTable.String()
 	}
 
 	switch kind {
@@ -654,10 +774,10 @@ func (this *Meta) ValidateRelationPath(path string) (string, error) {
 
 	// Mirror the immutable physical-table branch carried by Relation.Target,
 	// but keep it local to this validation. No contextual Relation is created or
-	// cached, and TableNameOf below is a read-only preview.
-	var tables map[reflect.Type]string
+	// cached, and TableRefOf below is a read-only preview.
+	var tables map[reflect.Type]TableRef
 	if this.relations != nil {
-		tables = make(map[reflect.Type]string, len(this.relations.tables))
+		tables = make(map[reflect.Type]TableRef, len(this.relations.tables))
 		for model, table := range this.relations.tables {
 			tables[model] = table
 		}
@@ -701,15 +821,15 @@ func (this *Meta) ValidateRelationPath(path string) (string, error) {
 		}
 
 		table := rel.table
-		if table == "" && tables != nil {
+		if table.Name == "" && tables != nil {
 			table = tables[rel.Elem]
 		}
-		if table == "" {
-			table = TableNameOf(rel.Elem)
-		}
-		if table == "" {
-			return "", &SchemaError{Model: rel.Elem.String(),
-				Reason: "table name resolved to empty; TableName must return a name or the relation must declare table=..."}
+		if table.Name == "" {
+			var err error
+			table, err = TableRefOf(rel.Elem)
+			if err != nil {
+				return "", tableRefSchemaError(rel.Elem, err)
+			}
 		}
 		if tables != nil {
 			tables[rel.Elem] = table

@@ -1175,28 +1175,30 @@ repository is safe to share, and per-principal narrowing is the gate's job.
 
 ### H-SQLREPO-27 — The table is not in the default schema
 **Who:** an engineer putting the analytics tables in their own PostgreSQL schema
-**Wants:** `sqlrepo.Define[Event, int64, EventUpdate]("analytics.events")`
+**Wants:** a declaration that reaches `analytics.events` without relying on the
+connection's default namespace
 **Story:** The events live in `analytics`, the application tables in `public`,
 and the connection's `search_path` is the default. They write the qualified name
 in the declaration because that is where a table name goes.
 **Must hold:**
 1. Either a qualified table name works, or it is refused at declaration time with the alternative named.
-**Today:** ❌ missing
-**Evidence:** Neither. The table name is rendered as **one** quoted identifier:
-`crud/render.go:41` is `Table() → Ident(m.Table)`, `Ident` calls `d.Quote`, and
-`crud/dialect.go:70-72` wraps the whole string in double quotes. So
-`"analytics.events"` is a table whose *name contains a dot*, and the first query
-fails with "relation does not exist". There is no `sqlrepo.Schema(...)` setting,
-nothing refuses the dot at `Define`, and `search_path` appears nowhere in
-`docs/modules/en/sqlrepo.md`. H-SQLREPO-12 hands a consumer a second database for
-events; the next thing that consumer does is put those events in their own
-schema.
-**If not ready:** Today the answer is to set `search_path` on the connection, and
-nothing says so. The cheapest fix is a refusal: a table name containing a `.` is
-rejected at `Define` with "set search_path on the connection, or name the schema
-with sqlrepo.Schema" — which is one check and turns a confusing driver error into
-an actionable one. A `Schema` setting is the larger version and touches every
-render site that calls `Table()`.
+**Today:** ✅ supported
+**Evidence:** `sqlrepo.DefineInSchema(schema, table)` and its error-returning
+twin build a validated `crud.TableRef`; every repository, predicate, relation,
+sort and preload render site quotes its components independently. The first
+component is PostgreSQL schema, MySQL/MariaDB database, or SQLite attached
+database. `Define("analytics.events")` fails during declaration and names
+`DefineInSchema` instead of guessing. Qualified canonical registrations,
+`IndependentTable`, explicit relation targets and many-to-many join tables carry
+the same immutable structured identity. Pinned by
+`crud/table_test.go`, `crud/qualified_relation_test.go`,
+`crud/sqlrepo/qualified_table_test.go`, the live PostgreSQL journey
+`TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable`, and live
+MySQL/MariaDB/SQLite qualifier coverage in
+`TestMySQLDatabaseQualifierAndSQLiteAttachedDatabaseAreLive`. The public path
+and cross-engine meaning are documented in `docs/modules/en/sqlrepo.md` and its
+Russian twin.
+**If not ready:** —
 
 ## The DX this should have
 
