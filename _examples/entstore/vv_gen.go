@@ -6,19 +6,21 @@ import (
 	entmodel "github.com/frostgrove/vv/_examples/entmodel"
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
+	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/port"
+	"github.com/frostgrove/vv/utils"
 	"time"
 )
 
 // ProductUpdate is the partial-update DTO for entmodel.Product.
-// A pointer field is optional; a crud.Opt field is optional and nullable,
+// A pointer field is optional; a utils.Opt field is optional and nullable,
 // so an absent key, an explicit null and a value stay three different things.
 type ProductUpdate struct {
-	Sku    *string       `json:"sku,omitempty"`
-	Name   *string       `json:"name,omitempty"`
-	Price  *int          `json:"price,omitempty"`
-	Stock  crud.Opt[int] `json:"stock,omitzero"`
-	Active *bool         `json:"active,omitempty"`
+	Sku    *string        `json:"sku,omitempty"`
+	Name   *string        `json:"name,omitempty"`
+	Price  *int           `json:"price,omitempty"`
+	Stock  utils.Opt[int] `json:"stock,omitzero"`
+	Active *bool          `json:"active,omitempty"`
 }
 
 // ProductAttrs is the generated metamodel shape for Product.
@@ -35,6 +37,18 @@ type ProductAttrs struct {
 // Product_ is the metamodel of Product: typed, path-aware field references.
 // It is validated against the model at package initialisation.
 var Product_ = specs.Metamodel[entmodel.Product, ProductAttrs]()
+
+// ProductRepo is the typed repository for entmodel.Product.
+type ProductRepo = crud.Repo[entmodel.Product, int64, ProductUpdate]
+
+// ProductRepository describes entmodel.Product independently of a database driver.
+// Bind it through NewProductRepository with the application's datasource.
+var ProductRepository = sqlrepo.Define[entmodel.Product, int64, ProductUpdate]("")
+
+// NewProductRepository binds ProductRepository to src.
+func NewProductRepository(src crud.Source) *ProductRepo {
+	return ProductRepository.Bind(src)
+}
 
 // A writable column the update DTO does not name refuses to start, rather than
 // becoming a column updates silently cannot reach ([[D-050]]). The generator
