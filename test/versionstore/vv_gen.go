@@ -55,7 +55,6 @@ func NewDocumentRepository(src crud.Source) *DocumentRepo {
 // under this resource's own wire names. DocumentUpdate is the PATCH shape; a
 // partial update has to tell absent from null and an entity body does not.
 type DocumentInput struct {
-	ID      int64  `json:"id"`
 	OwnerID int64  `json:"ownerID"`
 	Title   string `json:"title"`
 	Body    string `json:"body"`
@@ -70,7 +69,6 @@ type DocumentMapper struct{}
 // Model implements port.Mapper.
 func (DocumentMapper) Model(_ context.Context, in DocumentInput) (Document, error) {
 	out := Document{}
-	out.ID = in.ID
 	out.OwnerID = in.OwnerID
 	out.Title = in.Title
 	out.Body = in.Body
@@ -87,12 +85,11 @@ func (DocumentMapper) Resolve(p errs.Path) (errs.Path, bool) { return DocumentPa
 // initialisation, so a column it does not cover refuses to start rather than
 // answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var DocumentPaths = port.MustPathMap[Document](port.PathMap{
-	"ID":      port.At("id"),
 	"OwnerID": port.At("ownerID"),
 	"Title":   port.At("title"),
 	"Body":    port.At("body"),
 	"Origin":  port.At("origin"),
-}, "ArchivedAt")
+}, "ArchivedAt", "ID")
 
 // DocumentService is the service shell: the default orchestration, and somewhere to
 // override one method without writing the other eight.

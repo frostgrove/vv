@@ -47,8 +47,8 @@ func TestTheGeneratedWireShapesLeaveOutWhatTheClientDoesNotOwn(t *testing.T) {
 	}{
 		{field: "Title", wantInput: true, wantUpdate: true,
 			because: "an ordinary column is in both, or the assertions below measure an empty struct"},
-		{field: "ID", wantInput: true, wantUpdate: false,
-			because: "a key arrives in an entity body and is never patched"},
+		{field: "ID", wantInput: false, wantUpdate: false,
+			because: "an auto key is assigned by the database and belongs in neither client body"},
 		{field: "Origin", wantInput: true, wantUpdate: false,
 			because: "`immutable` is insert-only: settable on create, refused on update"},
 		{field: "Revision", wantInput: false, wantUpdate: false,
@@ -71,12 +71,12 @@ func TestTheGeneratedWireShapesLeaveOutWhatTheClientDoesNotOwn(t *testing.T) {
 // are asserted together: the key the mapper read a value out of is the key the
 // map answers for the column.
 func TestTheGeneratedMapperAndItsInverseAgree(t *testing.T) {
-	in := versionstore.DocumentInput{ID: 4, OwnerID: 9, Title: "notes", Body: "…", Origin: "import"}
+	in := versionstore.DocumentInput{OwnerID: 9, Title: "notes", Body: "…", Origin: "import"}
 	got, err := versionstore.DocumentMapper{}.Model(context.Background(), in)
 	if err != nil {
 		t.Fatalf("the mapper refused an ordinary input: %v", err)
 	}
-	want := versionstore.Document{ID: 4, OwnerID: 9, Title: "notes", Body: "…", Origin: "import"}
+	want := versionstore.Document{OwnerID: 9, Title: "notes", Body: "…", Origin: "import"}
 	if got != want {
 		t.Fatalf("the mapper produced %+v, want %+v", got, want)
 	}
