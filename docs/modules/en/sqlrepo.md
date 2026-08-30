@@ -121,6 +121,7 @@ Passed to `Define`, `TryDefine` or `New`, and applied to every call.
 | `RelationScope(path, pred)` | the same, on the far side of a relation |
 | `SoftDelete(field)` | rows are flagged rather than removed, and hidden from every read |
 | `UnstablePagination()` | drop the primary-key tiebreaker appended to every sort |
+| `IndependentTable()` | keep an additional physical table for the model local to this blueprint |
 
 `Scope` here is the **per-table** narrowing — it applies to everyone. The
 **per-principal** form is [security](security.md), which reads the context.
@@ -154,6 +155,35 @@ sqlrepo.RelationScope("Comments", crud.Eq("TenantID", 1))
 The path is resolved at declaration time, so a typo fails at start-up rather than
 leaking rows later. Where a blueprint scope and a security policy both declare a
 narrowing for the same path, **both apply**.
+
+### Canonical and independent tables
+
+The default remains declarative: `Define("users")` validates the entire
+blueprint and then publishes `users` as the one canonical relation target for
+`User`. `Define("")` asks `User.TableName()` and then the plural convention.
+An empty result from `TableName()` is a startup error, but its validation
+preview publishes nothing; an explicit non-empty registration or declaration
+can correct it and retry. Failed `TryDefine` calls reserve neither the root nor
+relation targets traversed before a later invalid scope, so a corrected
+declaration is not poisoned by the failed one. A table becomes immutable only
+after a successful canonical declaration or actual `Relation.Target`
+publication.
+
+`IndependentTable()` is the explicit low-level seam for an archive, projection,
+or catalog probe that deliberately reuses the Go model without replacing its
+canonical table:
+
+```go
+var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
+var ArchivedUsers = sqlrepo.Define[User, int64, UserUpdate](
+    "archived_users", sqlrepo.IndependentTable())
+```
+
+Self-relations on `ArchivedUsers`, including cycles that later return to
+`User`, stay on `archived_users`; they do not silently mix archive and live
+rows. Other model types still use their canonical declarations. Put
+`table=users` on a relation tag only when that particular edge is intentionally
+supposed to leave the local view ([[D-080]]).
 
 ### Typed, or by name — both spellings work
 
@@ -292,6 +322,9 @@ the first chunk. A one-statement call opens nothing extra.
   a typed schema refusal before the datasource. `SaveAll` and `Delete(ids...)`
   chunk because their operation stays equivalent; an arbitrary predicate does
   not ([[D-079]]).
+- **Table registration is typed.** `RegisterTable` accepts a struct model, not
+  `*Model`, a scalar, or an interface. A conflicting or already-published name
+  fails loudly ([[D-080]]).
 
 ## A column `DEFAULT` does not fire
 

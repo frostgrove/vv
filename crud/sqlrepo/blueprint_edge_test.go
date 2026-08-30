@@ -13,6 +13,18 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
+type core022CycleA struct {
+	ID  int64          `db:"id,pk,auto"`
+	BID int64          `db:"b_id"`
+	B   *core022CycleB `rel:"belongs_to,fk=BID"`
+}
+
+type core022CycleB struct {
+	ID  int64          `db:"id,pk,auto"`
+	AID int64          `db:"a_id"`
+	A   *core022CycleA `rel:"belongs_to,fk=AID"`
+}
+
 // ---------------------------------------------------------------------------
 // declarations
 
@@ -210,6 +222,145 @@ func TestAnIndependentBlueprintDoesNotCompeteForTheRelationTable(t *testing.T) {
 	}
 	if _, err := sqlrepo.TryDefine[Ledger, int64, struct{}]("another_default"); err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("ordinary conflicting blueprint = %v", err)
+	}
+}
+
+func TestIndependentTableKeepsSelfRelationsInItsOwnPhysicalView(t *testing.T) {
+	type Node struct {
+		ID       int64 `db:"id,pk,auto"`
+		ParentID int64 `db:"parent_id"`
+
+		Parent          *Node `rel:"belongs_to,fk=ParentID"`
+		CanonicalParent *Node `rel:"belongs_to,fk=ParentID,table=core022_nodes"`
+	}
+
+	if _, err := sqlrepo.TryDefine[Node, int64, struct{}]("core022_nodes"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := sqlrepo.TryDefine[Node, int64, struct{}]("core022_archived_nodes", sqlrepo.IndependentTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows())
+	repo := archive.Bind(rec)
+	if _, err := repo.GetAll(context.Background(), crud.Where(crud.Eq("Parent.ID", int64(7)))); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, mustSQL(t, rec, 0).SQL,
+		`SELECT "id", "parent_id" FROM "core022_archived_nodes" WHERE `+
+			`EXISTS (SELECT 1 FROM "core022_archived_nodes" AS rx1 `+
+			`WHERE rx1."id" = "core022_archived_nodes"."parent_id" AND rx1."id" = $1)`)
+
+	// `table=` remains the explicit low-level escape hatch for an edge that is
+	// intentionally supposed to leave the archive and reach the live table.
+	if _, err := repo.GetAll(context.Background(), crud.Where(crud.Eq("CanonicalParent.Parent.ID", int64(7)))); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, mustSQL(t, rec, 1).SQL,
+		`SELECT "id", "parent_id" FROM "core022_archived_nodes" WHERE `+
+			`EXISTS (SELECT 1 FROM "core022_nodes" AS rx1 `+
+			`WHERE rx1."id" = "core022_archived_nodes"."parent_id" AND `+
+			`EXISTS (SELECT 1 FROM "core022_nodes" AS rx2 `+
+			`WHERE rx2."id" = rx1."parent_id" AND rx2."id" = $1))`)
+}
+
+func TestIndependentTableKeepsACycleOnItsStartingPhysicalView(t *testing.T) {
+	if _, err := sqlrepo.TryDefine[core022CycleA, int64, struct{}]("core022_cycle_as"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlrepo.TryDefine[core022CycleB, int64, struct{}]("core022_cycle_bs"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := sqlrepo.TryDefine[core022CycleA, int64, struct{}]("core022_archived_cycle_as", sqlrepo.IndependentTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	if _, err := archive.Bind(rec).GetAll(context.Background(), crud.Where(crud.Eq("B.A.ID", int64(9)))); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT "id", "b_id" FROM "core022_archived_cycle_as" WHERE `+
+			`EXISTS (SELECT 1 FROM "core022_cycle_bs" AS rx1 `+
+			`WHERE rx1."id" = "core022_archived_cycle_as"."b_id" AND `+
+			`EXISTS (SELECT 1 FROM "core022_archived_cycle_as" AS rx2 `+
+			`WHERE rx2."id" = rx1."a_id" AND rx2."id" = $1))`)
+}
+
+func TestFailedTryDefineDoesNotPublishItsTable(t *testing.T) {
+	type Candidate struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+
+	if _, err := sqlrepo.TryDefine[Candidate, int64, struct{}]("core022_invalid_candidates",
+		sqlrepo.RelationScope("Missing", crud.Eq("ID", int64(1)))); err == nil {
+		t.Fatal("TryDefine accepted an unknown relation scope")
+	}
+	if _, err := sqlrepo.TryDefine[Candidate, int64, struct{}]("core022_candidates"); err != nil {
+		t.Fatalf("a failed declaration leaked its table registration: %v", err)
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[Candidate]()); got != "core022_candidates" {
+		t.Fatalf("published table = %q, want only the successful declaration", got)
+	}
+}
+
+func TestFailedTryDefineWithUnknownLocalFieldPublishesNeitherModel(t *testing.T) {
+	type Target struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type Owner struct {
+		ID     int64   `db:"id,pk,auto"`
+		Target *Target `rel:"belongs_to,fk=Missing"`
+	}
+
+	_, err := sqlrepo.TryDefine[Owner, int64, struct{}]("core022_invalid_local_owners",
+		sqlrepo.RelationScope("Target", crud.Eq("ID", int64(1))))
+	if err == nil || !strings.Contains(err.Error(), "relation references unknown field Missing") {
+		t.Fatalf("TryDefine error = %v, want the invalid local join field", err)
+	}
+	var schemaErr *crud.SchemaError
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("TryDefine error = %T, want *crud.SchemaError", err)
+	}
+
+	if err := crud.TryRegisterTable[Owner]("core022_corrected_local_owners"); err != nil {
+		t.Fatalf("failed declaration published its root table: %v", err)
+	}
+	if err := crud.TryRegisterTable[Target]("core022_corrected_local_targets"); err != nil {
+		t.Fatalf("failed relation validation published its target table: %v", err)
+	}
+}
+
+func TestLateRelationScopeFailurePublishesNeitherEarlierTargetNorRoot(t *testing.T) {
+	type Target struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type Owner struct {
+		ID       int64   `db:"id,pk,auto"`
+		TargetID int64   `db:"target_id"`
+		Target   *Target `rel:"belongs_to,fk=TargetID"`
+	}
+
+	_, err := sqlrepo.TryDefine[Owner, int64, struct{}]("core022_invalid_multiscope_owners",
+		sqlrepo.RelationScope("Target", crud.Eq("ID", int64(1))),
+		sqlrepo.RelationScope("Missing", crud.Eq("ID", int64(2))))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "Missing"`) {
+		t.Fatalf("TryDefine error = %v, want the later unknown relation scope", err)
+	}
+
+	if err := crud.TryRegisterTable[Target]("core022_multiscope_targets"); err != nil {
+		t.Fatalf("earlier valid scope published its target before the later failure: %v", err)
+	}
+	corrected, err := sqlrepo.TryDefine[Owner, int64, struct{}]("core022_multiscope_owners",
+		sqlrepo.RelationScope("Target", crud.Eq("ID", int64(1))))
+	if err != nil {
+		t.Fatalf("failed declaration published its root or poisoned its target: %v", err)
+	}
+	if corrected.Meta().Table != "core022_multiscope_owners" {
+		t.Fatalf("corrected root table = %q", corrected.Meta().Table)
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[Target]()); got != "core022_multiscope_targets" {
+		t.Fatalf("corrected target table = %q", got)
 	}
 }
 

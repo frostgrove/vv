@@ -452,7 +452,8 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 // Meta binds a schema to a table.
 type Meta struct {
 	*Schema
-	Table string
+	Table     string
+	relations *relationContext
 }
 
 // NewMeta binds M to a table. An empty name asks the model first, through
@@ -465,7 +466,11 @@ func NewMeta[M any](table string) (*Meta, error) {
 	if table == "" {
 		table = TableNameOf(s.Type)
 	}
-	return &Meta{Schema: s, Table: table}, nil
+	if table == "" {
+		return nil, &SchemaError{Model: s.Type.String(), Reason: "table name resolved to empty; TableName must return a name or an explicit table must be supplied"}
+	}
+	context := &relationContext{tables: map[reflect.Type]string{s.Type: table}}
+	return &Meta{Schema: s, Table: table, relations: context}, nil
 }
 
 func parseTag(tag string) (name string, options []string) {

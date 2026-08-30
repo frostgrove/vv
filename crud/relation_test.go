@@ -269,6 +269,9 @@ func TestSelfReferencingRelationResolves(t *testing.T) {
 	if target.Type != reflect.TypeFor[Person]() {
 		t.Fatalf("Manager targets %s, want Person itself", target.Type)
 	}
+	if target.Table != "persons" {
+		t.Fatalf("Manager targets table %q, want the root Meta's physical table persons", target.Table)
+	}
 	if again, _ := people.Relation("Manager").Target(); again != target {
 		t.Error("Target must cache: a second call handed back a different *Meta")
 	}
@@ -354,6 +357,18 @@ type Box struct {
 	ID int64 `db:"id,pk,auto"`
 }
 
+type NamelessTable struct {
+	ID int64 `db:"id,pk,auto"`
+}
+
+func (NamelessTable) TableName() string { return "" }
+
+type NamelessTableOwner struct {
+	ID              int64          `db:"id,pk,auto"`
+	NamelessTableID int64          `db:"nameless_table_id"`
+	Target          *NamelessTable `rel:"belongs_to,fk=NamelessTableID"`
+}
+
 func TestTableNameOf(t *testing.T) {
 	crud.RegisterTable[Registered]("pinned_elsewhere")
 
@@ -429,6 +444,39 @@ func TestConflictingTableRegistrationIsRefusedBeforeFirstUse(t *testing.T) {
 	}
 	if got := crud.TableNameOf(reflect.TypeFor[Archive]()); got != "archives_2025" {
 		t.Fatalf("winning table = %q", got)
+	}
+}
+
+func TestTableRegistrationAcceptsOnlyStructModelTypes(t *testing.T) {
+	type Row struct {
+		ID int64 `db:"id,pk"`
+	}
+
+	for _, typ := range []reflect.Type{
+		reflect.TypeFor[*Row](),
+		reflect.TypeFor[int](),
+		reflect.TypeFor[[]Row](),
+	} {
+		if err := crud.TryRegisterTableType(typ, "rows"); err == nil || !strings.Contains(err.Error(), "must be a struct") {
+			t.Errorf("TryRegisterTableType(%s) = %v, want a struct-model refusal", typ, err)
+		}
+	}
+	if err := crud.TryRegisterTable[*Row]("rows"); err == nil || !strings.Contains(err.Error(), "must be a struct") {
+		t.Fatalf("generic pointer registration = %v, want a struct-model refusal", err)
+	}
+}
+
+func TestAnEmptyModelTableNameFailsAndCannotBeRepairedAfterPublication(t *testing.T) {
+	if _, err := crud.NewMeta[NamelessTable](""); err == nil || !strings.Contains(err.Error(), "resolved to empty") {
+		t.Fatalf("NewMeta accepted an empty TableName: %v", err)
+	}
+
+	owner := metaOf[NamelessTableOwner](t, "nameless_table_owners")
+	if _, _, _, err := owner.Relation("Target").Resolve(); err == nil || !strings.Contains(err.Error(), "resolved to empty") {
+		t.Fatalf("relation accepted an empty target table: %v", err)
+	}
+	if err := crud.TryRegisterTable[NamelessTable]("repaired_late"); err == nil || !strings.Contains(err.Error(), "already resolved") {
+		t.Fatalf("late registration after the empty target was published = %v, want refusal", err)
 	}
 }
 

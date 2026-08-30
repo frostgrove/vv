@@ -143,8 +143,9 @@ func RelationScope(path string, p crud.Predicate) Setting {
 // applications should not need it: the first/default Blueprint remains the
 // declarative source for relation wiring. It is the explicit low-level seam for
 // projections, archive tables, catalog probes, and other additional blueprints
-// over the same Go model. Relations that intentionally reach such a table name
-// it with `table=...` in their rel tag.
+// over the same Go model. Self-relations and cycles that return to M stay on
+// this blueprint's table. An explicit `table=...` relation tag still overrides
+// that local choice for the exceptional edge that deliberately leaves it.
 func IndependentTable() Setting {
 	return func(s *settings) { s.independentTable = true }
 }
@@ -202,16 +203,20 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 	if err := bp.resolveSoftDelete(); err != nil {
 		return nil, err
 	}
-	// The ordinary declaration also teaches relations on other models which
-	// table this one lives in. An explicitly independent blueprint is an
-	// additional physical view and must not compete for that global meaning.
+	if err := bp.resolveRelationScopes(); err != nil {
+		return nil, err
+	}
+	// Publish only after every fallible declaration check has succeeded. A
+	// failed TryDefine must not reserve a process-wide name for either M or a
+	// relation target and make a corrected declaration fail merely because it
+	// ran second.
+	//
+	// An explicitly independent blueprint is an additional physical view and
+	// must not compete for the canonical relation-table meaning.
 	if !bp.set.independentTable {
 		if err := crud.TryRegisterTable[M](meta.Table); err != nil {
 			return nil, err
 		}
-	}
-	if err := bp.resolveRelationScopes(); err != nil {
-		return nil, err
 	}
 	return bp, nil
 }
@@ -248,7 +253,7 @@ func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
 // Scope, because there is only one possible answer to what those rows are.
 func (this *Blueprint[M, ID, U]) resolveRelationScopes() error {
 	for _, rs := range this.set.relScopes {
-		_, canonical, err := this.meta.RelationAt(rs.path)
+		canonical, err := this.meta.ValidateRelationPath(rs.path)
 		if err != nil {
 			return err
 		}

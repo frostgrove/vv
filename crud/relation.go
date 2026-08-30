@@ -73,9 +73,26 @@ type Relation struct {
 	JoinRef   string // join-table column pointing at the target
 
 	table string // explicit target table override
-	once  sync.Once
-	meta  *Meta
-	err   error
+
+	// context is present only on the relation view returned by Meta.Relation.
+	// Schemas are process-global, but a Meta is one physical view of a schema:
+	// an IndependentTable blueprint may bind Node to archived_nodes while the
+	// canonical Node repository binds it to nodes. Keeping that choice here
+	// makes a self edge, and a cycle that eventually returns to Node, stay in
+	// the physical view from which the traversal started.
+	context *relationContext
+
+	// declaredLocal/Target are the immutable tag-time values. LocalField and
+	// TargetField are filled lazily with primary-key defaults, so copying those
+	// public fields from a process-global Relation while it is first resolving
+	// would race. Contextual relation views are built from these declarations
+	// instead.
+	declaredLocal  string
+	declaredTarget string
+
+	once sync.Once
+	meta *Meta
+	err  error
 
 	// defaults guards the second lazy step. Target() resolves the far schema
 	// behind `once`; resolveDefaults then *writes* LocalField and TargetField,
@@ -101,10 +118,21 @@ func (this *Relation) Target() (*Meta, error) {
 			return
 		}
 		table := this.table
-		if table == "" {
-			table = relationTableNameOf(this.Elem)
+		targetContext := this.context
+		if table == "" && this.context != nil {
+			table, _ = this.context.tableFor(this.Elem)
 		}
-		this.meta = &Meta{Schema: s, Table: table}
+		if table == "" {
+			table, err = relationTableNameOf(this.Elem)
+			if err != nil {
+				this.err = err
+				return
+			}
+		}
+		if targetContext != nil {
+			targetContext = targetContext.withTable(this.Elem, table)
+		}
+		this.meta = &Meta{Schema: s, Table: table, relations: targetContext}
 	})
 	return this.meta, this.err
 }
@@ -156,6 +184,65 @@ type tableRegistration struct {
 
 var tableRegistry sync.Map // reflect.Type -> *tableRegistration
 
+// relationContext belongs to one traversal branch. It starts with the root
+// Meta's physical table and remembers the physical view chosen for every model
+// reached on that branch. That makes A(archive)->B->A return to A(archive),
+// while an explicit `table=live_a` edge starts a child branch whose later
+// self-relations remain on live_a. Relation views are cached per context so
+// their lazy metadata remains stable and race-free.
+type relationContext struct {
+	tables    map[reflect.Type]string
+	relations sync.Map // *Relation schema declaration -> *Relation contextual view
+}
+
+func (this *relationContext) tableFor(t reflect.Type) (string, bool) {
+	if this == nil {
+		return "", false
+	}
+	table, ok := this.tables[t]
+	return table, ok
+}
+
+func (this *relationContext) withTable(t reflect.Type, table string) *relationContext {
+	if this == nil {
+		return nil
+	}
+	if current, ok := this.tables[t]; ok && current == table {
+		return this
+	}
+	tables := make(map[reflect.Type]string, len(this.tables)+1)
+	for model, physicalTable := range this.tables {
+		tables[model] = physicalTable
+	}
+	tables[t] = table
+	return &relationContext{tables: tables}
+}
+
+func (this *relationContext) bind(declaration *Relation) *Relation {
+	if this == nil || declaration == nil {
+		return declaration
+	}
+	candidate := &Relation{
+		Name:           declaration.Name,
+		Kind:           declaration.Kind,
+		Owner:          declaration.Owner,
+		Offset:         declaration.Offset,
+		Type:           declaration.Type,
+		Elem:           declaration.Elem,
+		LocalField:     declaration.declaredLocal,
+		TargetField:    declaration.declaredTarget,
+		JoinTable:      declaration.JoinTable,
+		JoinLocal:      declaration.JoinLocal,
+		JoinRef:        declaration.JoinRef,
+		table:          declaration.table,
+		context:        this,
+		declaredLocal:  declaration.declaredLocal,
+		declaredTarget: declaration.declaredTarget,
+	}
+	actual, _ := this.relations.LoadOrStore(declaration, candidate)
+	return actual.(*Relation)
+}
+
 func registrationFor(t reflect.Type) *tableRegistration {
 	entry := new(tableRegistration)
 	actual, _ := tableRegistry.LoadOrStore(t, entry)
@@ -187,12 +274,15 @@ func RegisterTableType(t reflect.Type, table string) {
 
 // TryRegisterTableType pins a model table without panicking. A type may be
 // registered repeatedly with the same table, but never with two tables. Once
-// TableNameOf has supplied a name to relation metadata, a different late name
-// is also refused: accepting it would leave the already-resolved relation on a
-// stale table while making the registry claim otherwise.
+// Relation.Target has published a name to relation metadata, a different late
+// name is also refused: accepting it would leave the already-resolved relation
+// on a stale table while making the registry claim otherwise.
 func TryRegisterTableType(t reflect.Type, table string) error {
 	if t == nil {
 		return &SchemaError{Model: "<nil>", Reason: "cannot register a table for a nil type"}
+	}
+	if t.Kind() != reflect.Struct {
+		return &SchemaError{Model: t.String(), Reason: "table registration model must be a struct"}
 	}
 	if table == "" {
 		return &SchemaError{Model: t.String(), Reason: "table name cannot be empty"}
@@ -200,6 +290,13 @@ func TryRegisterTableType(t reflect.Type, table string) error {
 	entry := registrationFor(t)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
+	if entry.resolved {
+		if entry.table == table {
+			return nil
+		}
+		return &SchemaError{Model: t.String(), Reason: fmt.Sprintf(
+			"table was already resolved as %q; refusing late registration %q", entry.table, table)}
+	}
 	if entry.table == "" {
 		entry.table = table
 		return nil
@@ -207,11 +304,8 @@ func TryRegisterTableType(t reflect.Type, table string) error {
 	if entry.table == table {
 		return nil
 	}
-	reason := fmt.Sprintf("table is already registered as %q; refusing conflicting registration %q", entry.table, table)
-	if entry.resolved {
-		reason = fmt.Sprintf("table was already resolved as %q; refusing late registration %q", entry.table, table)
-	}
-	return &SchemaError{Model: t.String(), Reason: reason}
+	return &SchemaError{Model: t.String(), Reason: fmt.Sprintf(
+		"table is already registered as %q; refusing conflicting registration %q", entry.table, table)}
 }
 
 // Tabler lets a model name its own table.
@@ -224,6 +318,9 @@ var tablerType = reflect.TypeOf((*Tabler)(nil)).Elem()
 // Merely asking for the name does not publish relation metadata and therefore
 // does not freeze the fallback. Relation.Target performs that separate step.
 func TableNameOf(t reflect.Type) string {
+	if t == nil || t.Kind() != reflect.Struct {
+		return ""
+	}
 	entry := registrationFor(t)
 	entry.mu.Lock()
 	if entry.table != "" {
@@ -252,14 +349,14 @@ func fallbackTableName(entry *tableRegistration, t reflect.Type) string {
 // an explicit `table=` tag may publish. Unlike TableNameOf, this freezes the
 // answer: Relation.Target caches the resulting Meta, so accepting a different
 // registration afterwards could never update every reader consistently.
-func relationTableNameOf(t reflect.Type) string {
+func relationTableNameOf(t reflect.Type) (string, error) {
 	entry := registrationFor(t)
 	entry.mu.Lock()
 	if entry.table != "" {
 		entry.resolved = true
 		table := entry.table
 		entry.mu.Unlock()
-		return table
+		return table, nil
 	}
 	entry.mu.Unlock()
 
@@ -274,7 +371,10 @@ func relationTableNameOf(t reflect.Type) string {
 	entry.resolved = true
 	table := entry.table
 	entry.mu.Unlock()
-	return table
+	if table == "" {
+		return "", &SchemaError{Model: t.String(), Reason: "table name resolved to empty; TableName must return a name or the relation must declare table=..."}
+	}
+	return table, nil
 }
 
 func defaultTableNameOf(t reflect.Type) string {
@@ -404,6 +504,8 @@ func parseRelation(s *Schema, sf reflect.StructField, base uintptr, tag string) 
 			r.JoinRef = snake(elem.Name()) + "_id"
 		}
 	}
+	r.declaredLocal = r.LocalField
+	r.declaredTarget = r.TargetField
 	return r, nil
 }
 
@@ -453,6 +555,16 @@ type PathHop struct {
 	Target *Meta
 	Local  *Field // on the near side
 	Remote *Field // on the far side
+}
+
+// Relation resolves an edge in this Meta's physical-table context. Schema is
+// shared process-wide; the returned Relation is a stable per-Meta-context view
+// so alternate table blueprints cannot leak their choice into one another.
+func (this *Meta) Relation(ref string) *Relation {
+	if this == nil || this.Schema == nil {
+		return nil
+	}
+	return this.relations.bind(this.Schema.Relation(ref))
 }
 
 // WalkPath resolves a dotted path such as "Comments.Author.Name" against this
@@ -528,4 +640,86 @@ func (this *Meta) RelationAt(path string) (*Relation, string, error) {
 			Reason: "path names a column, not a relation"}
 	}
 	return hops[len(hops)-1].Rel, canonical, nil
+}
+
+// ValidateRelationPath validates a path that ends on a relation and returns its
+// canonical spelling without resolving or publishing relation metadata. It is
+// the declaration-time counterpart of RelationAt: callers can validate every
+// fallible option first and cross the table-publication boundary only after the
+// whole declaration succeeds.
+func (this *Meta) ValidateRelationPath(path string) (string, error) {
+	if this == nil || this.Schema == nil {
+		return "", &SchemaError{Reason: "relation path needs a root model"}
+	}
+
+	// Mirror the immutable physical-table branch carried by Relation.Target,
+	// but keep it local to this validation. No contextual Relation is created or
+	// cached, and TableNameOf below is a read-only preview.
+	var tables map[reflect.Type]string
+	if this.relations != nil {
+		tables = make(map[reflect.Type]string, len(this.relations.tables))
+		for model, table := range this.relations.tables {
+			tables[model] = table
+		}
+	}
+
+	segs := strings.Split(path, ".")
+	cur := this.Schema
+	names := make([]string, 0, len(segs))
+	for i, seg := range segs {
+		last := i == len(segs)-1
+		if last && cur.Field(seg) != nil {
+			return "", &SchemaError{Model: this.Name, Field: path,
+				Reason: "path names a column, not a relation"}
+		}
+
+		rel := cur.Relation(seg)
+		if rel == nil {
+			return "", &UnknownFieldError{Model: cur.Name, Field: path}
+		}
+
+		localName := rel.declaredLocal
+		if localName == "" {
+			localName = rel.Owner.PK.Name
+		}
+		if rel.Owner.Field(localName) == nil {
+			return "", &SchemaError{Model: rel.Owner.Name, Field: rel.Name,
+				Reason: "relation references unknown field " + localName}
+		}
+
+		target, err := schemaOfType(rel.Elem)
+		if err != nil {
+			return "", err
+		}
+		remoteName := rel.declaredTarget
+		if remoteName == "" {
+			remoteName = target.PK.Name
+		}
+		if target.Field(remoteName) == nil {
+			return "", &SchemaError{Model: target.Name, Field: rel.Name,
+				Reason: "relation references unknown field " + remoteName + " on " + target.Name}
+		}
+
+		table := rel.table
+		if table == "" && tables != nil {
+			table = tables[rel.Elem]
+		}
+		if table == "" {
+			table = TableNameOf(rel.Elem)
+		}
+		if table == "" {
+			return "", &SchemaError{Model: rel.Elem.String(),
+				Reason: "table name resolved to empty; TableName must return a name or the relation must declare table=..."}
+		}
+		if tables != nil {
+			tables[rel.Elem] = table
+		}
+
+		names = append(names, rel.Name)
+		if last {
+			return strings.Join(names, "."), nil
+		}
+		cur = target
+	}
+	return "", &UnknownFieldError{Model: this.Name, Field: path}
 }
