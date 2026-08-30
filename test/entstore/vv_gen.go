@@ -7,7 +7,7 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/port"
-	"github.com/frostgrove/vv/test/ent"
+	ent "github.com/frostgrove/vv/test/ent"
 	"github.com/frostgrove/vv/utils"
 	"time"
 )

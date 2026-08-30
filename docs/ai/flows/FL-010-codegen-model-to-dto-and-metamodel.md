@@ -3,21 +3,27 @@
 **Entry point:** `cmd/vv/main.go:main` → `internal/codegen.Run`
 **Implements:** [[UC-014]] [[UC-010]] [[UC-007]] · **Governed by:** [[D-018]] [[D-002]] [[D-014]] [[D-050]]
 
-`vv` reads Go source, not compiled types. It never imports the package it
-generates for, which is what lets it run on `ent`'s output directory and on a
-package that does not compile yet.
+`vv` keeps the AST as its source of declarations and never executes or imports
+the package it generates for. It also builds a best-effort `go/types` view from
+module export data. Resolved fields therefore use the same structural and
+interface classification as runtime reflection, while an unrelated incomplete
+function body does not prevent generation.
 
 ## The path
 
 1. **`main`** — `cmd/vv/main.go:55`
    Flags into a `generator`. `-into` moves the output; the output path is
    `filepath.Join(into or dir, out)`. When `-import` is present, the package
-   declaration in `-dir` — not the import path's basename — becomes the model
-   qualifier. Thus a path ending in `/v2` with `package models` is emitted as an
-   explicit `models ".../v2"` import.
+   declaration in `-dir` — not the import path's basename — is the preferred
+   model qualifier. Thus a path ending in `/v2` with `package models` normally
+   becomes `models ".../v2"`; a reserved/colliding name receives a readable
+   path-derived alias.
 
 2. **`generator.run`** — `internal/codegen/codegen.go:149`
-   `load`, then the `-into` rules: it requires `-import`, because the generated
+   The target is first constrained to one basename inside `-dir`/`-into` and an
+   existing file must carry the generated header; authored files, symlinks and
+   traversal are refused before they can be excluded from parsing. Then `load`
+   and the `-into` rules: it requires `-import`, because the generated
    file has to name the model types (`internal/codegen/codegen.go:155`); the directory is created;
    `packageNameOf` (`internal/codegen/codegen.go:412`) reuses the package clause already declared
    there rather than inventing one. No models found → an error, not an empty
@@ -34,27 +40,44 @@ package that does not compile yet.
    - Between the passes, `prepareImports` records each file's qualifier → path
      mapping. Unaliased versioned paths are resolved through `go list` when the
      basename is not the qualifier used by the file. Paths are sorted and
-     receive stable collision-safe output aliases; two source files may both
-     call different packages `common`, while the one generated file cannot.
+     receive readable path-derived output aliases; two source files may both
+     call different packages `common`, while the one generated file uses
+     `alphaCommon` and `betaCommon`, never numeric suffixes. Dot imports are
+     refused, and aliases that Go would reject against an authored or generated
+     package declaration are reported before output is written.
+   - `prepareTypes` type-checks declarations with function bodies ignored. Its
+     module-aware importer reads `go list -deps -export` data through one cache,
+     preserving package identity for `Valuer`, `Scanner` and text interfaces.
+     Type errors unrelated to a field being generated are tolerated; an
+     anonymous field that remains unresolved is handled fail-loud in pass two.
    - **Pass two** runs `parseModel` on every struct that `-types` allows and
      rewrites type qualifiers through that declaration file's mapping.
    - `sort.Strings(g.order)` — map iteration is not ordered, and the output has
      to be byte-identical across runs.
 
 4. **`generator.parseModel`** — `internal/codegen/codegen.go:242`
-   A struct becomes a model if it carries `db` or `rel` tags, **or** if it was
-   named explicitly in `-types`. That second door is what makes a generated
-   entity from another tool qualify.
+   A struct becomes a model if it carries `db` or `rel` tags, lives exported in
+   `model.go`, `*.model.go` or `*_model.go`, **or** was named explicitly in
+   `-types`. The last door is what makes a generated entity from another tool
+   qualify.
    Per field:
-   - anonymous → `g.embedded` (below), and the flattened fields are spliced in.
-   - unexported → dropped.
+   - a completely untagged anonymous non-scalar value struct → `flattenType`
+     (below), and the flattened fields are spliced in;
+   - an anonymous scalar or explicitly tagged anonymous field → the ordinary
+     column/relation path, so the tag is never discarded by flattening;
+   - unexported and untagged → dropped; an explicit `db` mapping is refused,
+     because reflection cannot read it;
    - named in `-skip` → kept with `Skip` set, so it is absent from every
      declaration and its name still reaches the exclusion list (step 7).
    - named in `-readonly` → `Immutable`, so it stays filterable and sortable but
      leaves both wire shapes.
    - **no `rel` tag and a base type that is a struct in this package → dropped**
      (`internal/codegen/codegen.go:278-282`). Neither a column nor an edge.
-   - `rel` tag other than `-` → kept as a relation field.
+   - any present struct-shaped `rel` tag other than `-`, including `rel:""` →
+     kept as a relation field; empty retains runtime kind inference and local
+     aliases retain the canonical target model;
+   - a non-struct with non-`-` `rel` → refused; scalar `rel:"-"` remains a
+     column, matching runtime order;
    - otherwise a column: `db` options `pk auto immutable generated version` are
      read, and a field called `ID` is treated as the key even without `pk`
      (`internal/codegen/codegen.go:302`). `version` (spelled `version` or `lock`) is the optimistic
@@ -63,18 +86,26 @@ package that does not compile yet.
      produced a package that panicked at `Define` time. That is what happens when
      two features land in one change and neither knows about the other.
 
-5. **Embedded-struct flattening** — `generator.embedded`, `internal/codegen/codegen.go`
-   Two sources. `wellKnownEmbeds` (`internal/codegen/codegen.go:438`) hard-codes `gorm.Model`, whose
-   fields live in another package the generator cannot read. Otherwise the
-   embedded type must be a struct declared in this package, and `parseModel`
-   runs on it recursively. The runtime flattens embedded structs
-   (`crud/meta.go:343`), so the generator has to as well — without it
-   `gorm.Model` would silently take `ID` and the timestamps out of the
-   metamodel. An unknown anonymous type is a generation error naming the model
-   and type; `db:"-"` is the explicit opt-out. An embedded pointer is likewise
-   refused because runtime metadata refuses it. Problems are collected and
-   sorted so a package with several bad embeds receives one deterministic
-   diagnostic rather than a map-order-dependent first failure.
+5. **Anonymous-field classification and flattening** — `sourceTypes` and
+   `generator.flattenType`, `internal/codegen/types.go`
+   The rule is shared with `crud.collectFields`: flatten only an anonymous
+   value struct with no `db` tag, no `rel` tag, and no scalar semantics.
+   `time.Time`, driver `Valuer`/`Scanner` and text marshal/unmarshal method-set
+   shapes follow runtime's exact receiver asymmetry, including scalar pointers. An explicit
+   relation belongs to the anonymous field; it is not flattened first.
+
+   `go/types` follows local aliases and instantiated generic bases and reads
+   exported dependency struct fields and tags, so resolvable external mixins
+   flatten without a registry. `gorm.Model` retains its audited semantic
+   override. An untagged pointer to a non-scalar struct is refused, as it is by
+   runtime metadata. An unresolved anonymous type, or an exported embedded
+   column whose private named type or anonymous structural member identity
+   cannot be reproduced from the generated package, is a generation error.
+   `db:"-"` is the explicit whole-field opt-out and is
+   honoured before type resolution. Problems are collected and sorted so a
+   package with several bad fields gets one deterministic diagnostic. After
+   flattening, effective Go field names and database columns are checked for
+   duplicates before rendering, mirroring runtime Schema refusal.
 
 6. **Nullability → `*T` or `Opt[T]`** — `dtoType`, `internal/codegen/codegen.go:379`, over `elem`,
    `internal/codegen/codegen.go:329`
@@ -155,9 +186,9 @@ package that does not compile yet.
     Five artefacts per model, in this order:
     | artefact | shape |
     |---|---|
-    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock, not an auto-generated primary key and not on the exclusion list — under `lowerFirst` JSON names; an assigned key remains |
-    | `<Model>Mapper` | `Model(ctx, in) (M, error)`, a field-for-field assignment, plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
-    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "ID", "CreatedAt")` — the inverse, plus declared exclusions and the omitted auto key |
+    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock, not a primary key explicitly tagged `auto` and not on the exclusion list — under `lowerFirst` JSON names; an assigned key remains |
+    | `<Model>Mapper` | `Model(ctx, in) (M, error)`, field-for-field assignments on a zero model value (which also reach promoted fields from flattened mixins), plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
+    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "ID", "CreatedAt")` — the inverse, plus declared exclusions and an omitted explicitly `auto` key |
     | `<Model>Service` | a struct embedding `*port.DefaultService[M, ID, U]`, with `var _ port.Service[…]` beside it so an override that changes a signature is a build failure |
     | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `port.Rules.RefuseServiceOptions` |
     The id type comes from the primary key's `Type` as written, through
@@ -165,6 +196,11 @@ package that does not compile yet.
     than a file that does not compile. The name is `Mount<Model>` singular:
     pluralising in a generator is a guess, and `MountCategorys` is what guessing
     looks like.
+
+    Only an explicitly parsed `auto` key is currently omitted. Runtime also
+    infers integer primary keys as auto unless `noauto` is present; codegen does
+    not yet mirror that inference/opt-out, so a conventional unannotated integer
+    `ID` remains an open parity gap rather than a closed guarantee here.
 
 11. **The coverage assertion** — `internal/codegen/adapter.go:renderCoverage`,
     whenever the DTO half runs
@@ -179,13 +215,23 @@ package that does not compile yet.
     scan of the rendered text: the text is what the flags produced, so reading
     it back to decide would be one derivation checking itself.
     `-import` is added with the parsed model package name when the output lands
-    elsewhere. `extraImports`
-    (`internal/codegen/render.go:75`) walks every column type for a `pkg.Type` prefix and pulls
-    the matching path out of the import map collected in `load` — a `uuid.UUID`
-    or `decimal.Decimal` column would otherwise dangle. Every such import is
-    emitted with its explicit assigned alias. Imports are sorted, then
-    `format.Source` runs; a formatting failure is reported with the offending
-    source attached.
+    elsewhere. `extraImports` parses the complete rendered body and walks every
+    surviving package selector, including selectors nested in composite and
+    generic types. Parser-resolved local selectors such as the adapter's
+    `out.ID` are excluded. Imports are merged by path, so a model type and
+    generated support code cannot emit the same package twice. Every
+    non-canonical import carries its explicit assigned alias. Imports are
+    sorted, then `format.Source` runs. `validateDeclarations` and
+    `validateRenderedImports` check source/destination file import aliases,
+    authored package declarations, generated declarations and the actual final
+    import block in both forbidden directions. A formatting or namespace
+    failure is reported before any output write.
+
+13. **`writeGenerated` — owned atomic replacement**
+    The candidate is written beside the target, chmodded, synced and closed,
+    target ownership is revalidated, and an atomic rename replaces only a
+    generated regular file. The destination directory is synced afterwards;
+    failed writes remove the temporary candidate.
 
 ## Where the decisions bite
 
@@ -193,9 +239,11 @@ package that does not compile yet.
   what `collectPlanFields` refuses. Add a tag option that the plan rejects, and
   the generator has to learn it in the same change or `Define` panics on
   generated code.
-- **Database-owned identity is not a request field.** `inputFields` drops an
-  auto primary key and `inputExclusions` states that omission to the runtime
-  path-map check. A non-auto primary key stays in both the input and map.
+- **Explicitly database-owned identity is not a request field.** `inputFields`
+  drops a key carrying the parsed `auto` option and `inputExclusions` states
+  that omission to the runtime path-map check. Runtime's implicit integer-PK
+  default and `noauto` opt-out are not yet mirrored by codegen; a genuinely
+  non-auto assigned key stays in both the input and map.
 - **The domain is derived twice, on purpose.** The generator reads the model's
   *source text*; `port.CoversUpdate` and `port.NewPathMap` read the *compiled
   struct* through `crud.Schema`. That duplication is the whole point: a check
@@ -215,11 +263,12 @@ package that does not compile yet.
   imports, `emitted` guarding duplicates. `TestOutputIsByteIdenticalAcrossRuns`
   and the `TestTheGeneratedStoresAreUpToDate` /
   `TestGeneratedFileIsUpToDate` checks in the tree depend on it.
-- **The generator reads source, not compiled model types.** `exprString` renders
-  the type as written, while `prepareImports` rewrites package qualifiers using
-  the import declarations and, only for an unaliased path whose basename is not
-  used, the Go tool's declared package name. Dot-imported and genuinely
-  unimported type names remain outside the supported boundary.
+- **The AST remains authoritative; type information classifies it.** Resolved
+  fields are rendered with `types.TypeString`; the syntactic fallback rewrites
+  every selector in one AST pass so `crud → alpha → beta` mappings cannot
+  cascade. `prepareImports` also resolves declared package names for unaliased
+  version paths. Dot imports are refused because their unqualified identifiers
+  cannot be reproduced safely in one generated file.
 - **`-into` + `-import` are a pair.** Writing `UserUpdate` into ent's own
   package would collide with ent's update builder, and `ent generate` owns that
   directory.
@@ -232,9 +281,12 @@ package that does not compile yet.
 | no tagged models, and no `-types` | `run` (`internal/codegen/codegen.go:163`) | `no tagged models found in <dir>` |
 | `-into` without `-import` | `run` (`internal/codegen/codegen.go:155`) | `-into needs -import …` |
 | generated source does not parse | `render` (`internal/codegen/render.go:65`) | the error plus the full generated text |
-| a column type from an unimported package | not caught | the output does not compile |
-| an embedded type from an unknown package | `load`, after `parseModel` records the unresolved embed | generation fails naming the model/type and the local/flatten/`db:"-"` remedies |
+| an unresolved anonymous type | `load`, after `parseModel` records the unresolved field | generation fails naming the model/type and the resolve/flatten/`db:"-"` remedies |
+| an exported embedded column has a private named type or an anonymous structural type with a foreign unexported member | `flattenType` | generation fails before emitting a type the output package cannot reproduce |
 | an embedded pointer struct | `parseModel` | generation fails before runtime metadata can refuse the generated package |
+| flattening produces duplicate effective Go fields or database columns | `validateEffectiveFields` | generation fails deterministically before a duplicate-field Go file is written |
+| a source/destination import alias collides with an authored or generated package declaration, or a rendered import collides in the reverse direction | `validateDeclarations` / `validateRenderedImports` | generation fails before writing and names the alias/path; `-into` inspects both declarations and file imports in its output package |
+| two relation paths or models derive the same generated declaration | `validateDeclarations` | generation fails naming the colliding generated declaration and both owners |
 | metamodel field that no longer maps | `specs.Metamodel` at package init | panic at start-up in the consumer's package |
 | a relation handle declaring the wrong target model | `bindRel` at package init | panic naming the path, the model it reaches and the one declared |
 | a relation handle in the root attribute group | `bindRel` at package init | panic saying the root model is not a relation |
@@ -250,7 +302,8 @@ package that does not compile yet.
 | File | Role |
 |---|---|
 | `cmd/vv/main.go` | the flags, and nothing else — it fills a `codegen.Options` and calls `Run` |
-| `internal/codegen/codegen.go` | `Options`, `Run`, the two-pass load, `parseModel`, `embedded`, `elem`, `dtoType`, `attrType`, `qual` |
+| `internal/codegen/codegen.go` | `Options`, `Run`, the two-pass load, import/declaration validation, `parseModel`, `elem`, `dtoType`, `attrType`, `qual` |
+| `internal/codegen/types.go` | module-aware export-data importer, scalar/relation classification, alias/generic flattening and inaccessible-type refusal |
 | `internal/codegen/render.go` | `render`, `used`, `renderDTO`, `renderMetamodel`, `renderAttrs`, `extraImports` |
 | `internal/codegen/adapter.go` | `inputFields`, `renderAdapter`, `renderCoverage`, `quoteList` — the `-adapter` half, kept separate so the DTO half stays readable |
 | `port/pathmap.go` | `PathMap`, `At`, `NewPathMap`/`MustPathMap`, `CoversUpdate`/`MustCoverUpdate` — what the generated file calls at package initialisation |
@@ -282,16 +335,34 @@ package that does not compile yet.
   `TestEmbeddedPointerIsRefusedLikeRuntimeMetadata` /
   `TestUnknownExternalEmbedCanBeExplicitlyExcluded` —
   `internal/codegen/codegen_test.go`.
+- `TestAnonymousTypeClassificationMatchesRuntimeAndGeneratedPackageCompiles` /
+  `TestFlattenedFieldAndColumnCollisionsFailBeforeRendering` /
+  `TestExternalEmbedWithAnInaccessibleColumnTypeFailsAtGeneration` — resolved
+  aliases (including relation targets), empty relation tags, generic/external
+  bases, scalar receiver asymmetry, structural accessibility and the fail-loud boundary.
 - `TestIntoAnotherPackageQualifiesTheModelTypes` — `internal/codegen/codegen_test.go` — `qual` and the import block.
 - `TestIntoUsesTheDeclaredPackageNameForAVersionedImportPath` /
   `TestVersionedColumnImportReadsTheDeclaredPackageName` — the model package
   and a column package whose paths end in `/v2`.
 - `TestRenamedSourceImportKeepsItsAliasInGeneratedCode` /
-  `TestImportAliasCollisionsAcrossSourceFilesAreMadeStable` — explicit aliases
-  and two source-file-local aliases sharing one generated import block.
+  `TestImportAliasCollisionsAcrossSourceFilesAreMadeStable` /
+  `TestReadableCollisionAliasesCompile` — explicit aliases, readable path
+  names, transitive selectors and two source-file-local aliases sharing one
+  generated import block.
+- `TestSourceImportAliasCollidingWithGeneratedDeclarationIsRefused` /
+  `TestIntoDestinationImportAliasCollidingWithGeneratedDeclarationIsRefused` /
+  `TestIntoGeneratedImportAliasCollidingWithDestinationDeclarationIsRefused` /
+  `TestAuthoredDeclarationCollidingWithGeneratedDeclarationIsRefused` /
+  `TestConcatenatedRelationDeclarationCollisionIsRefused` — declarations that
+  no import-block rewrite can make legal are refused before write.
 - `TestIntoAnExistingPackageKeepsItsName` — `internal/codegen/codegen_test.go` — `packageNameOf`.
 - `TestIntoWithoutImportIsRefused` — `internal/codegen/codegen_test.go`.
-- `TestAPackageWithNothingToGenerateIsAnError` — `internal/codegen/codegen_test.go`.
+- `TestOutputNameCannotEscapeItsControlledDirectory` /
+  `TestAuthoredOutputIsNeverOverwritten` /
+  `TestSymlinkOutputIsRefusedWithoutFollowingIt` /
+  `TestGeneratedOutputIsAtomicallyReplaceable` — target ownership and atomic
+  persistence through the public `Run` seam.
+- `TestAPackageWithoutModelFilesIsAnError` — `internal/codegen/codegen_test.go`.
 - `TestGeneratingOnlyOneHalf` — `internal/codegen/codegen_test.go` — `-no-dto` / `-no-meta`.
 - `TestOutputIsByteIdenticalAcrossRuns` — `internal/codegen/codegen_test.go`.
 - `TestGeneratedCodeCompilesAndValidates` — `internal/codegen/codegen_test.go` — the end-to-end guarantee.

@@ -103,15 +103,15 @@ type ArticleMapper struct{}
 
 // Model implements port.Mapper.
 func (ArticleMapper) Model(_ context.Context, in ArticleInput) (Article, error) {
-	return Article{
-		AuthorID:    in.AuthorID,
-		Title:       in.Title,
-		Body:        in.Body,
-		Views:       in.Views,
-		Rating:      in.Rating,
-		PublishedAt: in.PublishedAt,
-		TenantID:    in.TenantID,
-	}, nil
+	out := Article{}
+	out.AuthorID = in.AuthorID
+	out.Title = in.Title
+	out.Body = in.Body
+	out.Views = in.Views
+	out.Rating = in.Rating
+	out.PublishedAt = in.PublishedAt
+	out.TenantID = in.TenantID
+	return out, nil
 }
 
 // Resolve implements errs.Resolver, which is what puts this hop ahead of
@@ -214,9 +214,9 @@ type AuthorMapper struct{}
 
 // Model implements port.Mapper.
 func (AuthorMapper) Model(_ context.Context, in AuthorInput) (Author, error) {
-	return Author{
-		Name: in.Name,
-	}, nil
+	out := Author{}
+	out.Name = in.Name
+	return out, nil
 }
 
 // Resolve implements errs.Resolver, which is what puts this hop ahead of
@@ -315,12 +315,12 @@ type CommentMapper struct{}
 
 // Model implements port.Mapper.
 func (CommentMapper) Model(_ context.Context, in CommentInput) (Comment, error) {
-	return Comment{
-		ArticleID: in.ArticleID,
-		AuthorID:  in.AuthorID,
-		Body:      in.Body,
-		Approved:  in.Approved,
-	}, nil
+	out := Comment{}
+	out.ArticleID = in.ArticleID
+	out.AuthorID = in.AuthorID
+	out.Body = in.Body
+	out.Approved = in.Approved
+	return out, nil
 }
 
 // Resolve implements errs.Resolver, which is what puts this hop ahead of
@@ -405,9 +405,9 @@ type TagMapper struct{}
 
 // Model implements port.Mapper.
 func (TagMapper) Model(_ context.Context, in TagInput) (Tag, error) {
-	return Tag{
-		Slug: in.Slug,
-	}, nil
+	out := Tag{}
+	out.Slug = in.Slug
+	return out, nil
 }
 
 // Resolve implements errs.Resolver, which is what puts this hop ahead of

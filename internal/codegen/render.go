@@ -54,58 +54,97 @@ func (this *generator) render() ([]byte, error) {
 	var out bytes.Buffer
 	fmt.Fprintf(&out, "%s\n\npackage %s\n\n", generatedHeader, this.pkg)
 
-	var imports []string
+	type generatedImport struct {
+		alias string
+		path  string
+		bare  bool
+	}
+	byPath := map[string]generatedImport{}
+	addImport := func(alias, path string, bare bool) error {
+		if path == "" {
+			return fmt.Errorf("generated import %s has an empty path", alias)
+		}
+		if previous, exists := byPath[path]; exists {
+			if previous.alias != alias {
+				return fmt.Errorf("generated import %q needs incompatible aliases %q and %q", path, previous.alias, alias)
+			}
+			return nil
+		}
+		byPath[path] = generatedImport{alias: alias, path: path, bare: bare}
+		return nil
+	}
 	if u.context {
-		imports = append(imports, `"context"`)
+		if err := addImport("context", "context", true); err != nil {
+			return nil, err
+		}
 	}
 	if u.http {
-		imports = append(imports, `"net/http"`)
+		if err := addImport("http", "net/http", true); err != nil {
+			return nil, err
+		}
 	}
 	if u.time {
-		imports = append(imports, `"time"`)
+		if err := addImport("time", "time", true); err != nil {
+			return nil, err
+		}
 	}
 	if u.crud {
-		imports = append(imports, fmt.Sprintf("%q", this.crudPkg))
+		if err := addImport("crud", this.crudPkg, this.crudPkg == DefaultCrudPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.utils {
 		pkg := this.utilsPkg
 		if pkg == "" {
 			pkg = DefaultUtilsPkg
 		}
-		imports = append(imports, fmt.Sprintf("%q", pkg))
+		if err := addImport("utils", pkg, pkg == DefaultUtilsPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.errs {
-		imports = append(imports, fmt.Sprintf("%q", this.errsPkg))
+		if err := addImport("errs", this.errsPkg, this.errsPkg == DefaultErrsPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.net {
-		imports = append(imports, fmt.Sprintf("%q", this.netPkg))
+		if err := addImport("crudnet", this.netPkg, this.netPkg == DefaultNetPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.port {
-		imports = append(imports, fmt.Sprintf("%q", this.portPkg))
+		if err := addImport("port", this.portPkg, this.portPkg == DefaultPortPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.specs {
-		imports = append(imports, fmt.Sprintf("%q", this.specsPkg))
+		if err := addImport("specs", this.specsPkg, this.specsPkg == DefaultSpecsPkg); err != nil {
+			return nil, err
+		}
 	}
 	if u.sqlrepo {
-		imports = append(imports, `"github.com/frostgrove/vv/crud/sqlrepo"`)
+		if err := addImport("sqlrepo", "github.com/frostgrove/vv/crud/sqlrepo", true); err != nil {
+			return nil, err
+		}
 	}
 	if this.modelImport != "" {
-		imports = append(imports, fmt.Sprintf("%s %q", this.modelAlias, this.modelImport))
+		if err := addImport(this.modelAlias, this.modelImport, false); err != nil {
+			return nil, err
+		}
 	}
 	// Anything else the model types reference has to come along too.
 	for alias, path := range this.extraImports(body.String()) {
-		if alias == "time" {
-			continue
+		if err := addImport(alias, path, false); err != nil {
+			return nil, err
 		}
-		if (u.crud && alias == "crud" && path == this.crudPkg) ||
-			(u.utils && alias == "utils" && path == cmpOrString(this.utilsPkg, DefaultUtilsPkg)) ||
-			(u.specs && alias == "specs" && path == this.specsPkg) ||
-			(u.port && alias == "port" && path == this.portPkg) ||
-			(u.errs && alias == "errs" && path == this.errsPkg) ||
-			(u.net && alias == "crudnet" && path == this.netPkg) {
-			continue
+	}
+	imports := make([]string, 0, len(byPath))
+	for _, item := range byPath {
+		if item.bare {
+			imports = append(imports, fmt.Sprintf("%q", item.path))
+		} else {
+			imports = append(imports, fmt.Sprintf("%s %q", item.alias, item.path))
 		}
-		imports = append(imports, fmt.Sprintf("%s %q", alias, path))
 	}
 	if len(imports) > 0 {
 		sort.Strings(imports)
@@ -167,13 +206,6 @@ func (this *generator) renderRepository(m *model) (string, used, error) {
 	return b.String(), used{crud: true, sqlrepo: true}, nil
 }
 
-func cmpOrString(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
 // extraImports finds selectors that survived into the rendered declarations.
 // Looking at the body rather than the source field's first token matters twice:
 // wrappers such as crud.Opt are transformed away, while composite/generic types
@@ -191,6 +223,14 @@ func (this *generator) extraImports(body string) map[string]string {
 		}
 		pkg, ok := selector.X.(*ast.Ident)
 		if !ok {
+			return true
+		}
+		// parser object resolution links variables, parameters, fields and other
+		// declarations to their identifiers. A package qualifier has no object in
+		// this import-less synthetic file. This distinction matters for generated
+		// adapter locals such as out.ID: a source import once called `out` must not
+		// be resurrected merely because that local selector survived rendering.
+		if pkg.Obj != nil {
 			return true
 		}
 		if path, known := this.imports[pkg.Name]; known {
@@ -289,8 +329,13 @@ func (this *generator) renderAttrs(b *strings.Builder, root, on *model, suffix s
 			if level+1 >= this.depth {
 				continue
 			}
-			target, slice := relElem(f.Type)
-			_ = slice
+			target := f.RelTarget
+			if target == "" {
+				target, _ = relElem(f.Type)
+				if this.modelAlias != "" {
+					target = strings.TrimPrefix(target, this.modelAlias+".")
+				}
+			}
 			tm, ok := this.models[target]
 			if !ok {
 				continue // the related model lives in another package

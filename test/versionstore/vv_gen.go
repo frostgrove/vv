@@ -69,13 +69,13 @@ type DocumentMapper struct{}
 
 // Model implements port.Mapper.
 func (DocumentMapper) Model(_ context.Context, in DocumentInput) (Document, error) {
-	return Document{
-		ID:      in.ID,
-		OwnerID: in.OwnerID,
-		Title:   in.Title,
-		Body:    in.Body,
-		Origin:  in.Origin,
-	}, nil
+	out := Document{}
+	out.ID = in.ID
+	out.OwnerID = in.OwnerID
+	out.Title = in.Title
+	out.Body = in.Body
+	out.Origin = in.Origin
+	return out, nil
 }
 
 // Resolve implements errs.Resolver, which is what puts this hop ahead of

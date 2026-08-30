@@ -93,11 +93,14 @@ func (this *generator) renderAdapter(m *model) (string, used, error) {
 
 	fmt.Fprintf(&b, "// Model implements port.Mapper.\n")
 	fmt.Fprintf(&b, "func (%sMapper) Model(_ context.Context, in %sInput) (%s, error) {\n", m.Name, m.Name, model)
-	fmt.Fprintf(&b, "\treturn %s{\n", model)
+	fmt.Fprintf(&b, "\tout := %s{}\n", model)
 	for _, f := range fields {
-		fmt.Fprintf(&b, "\t\t%s: in.%s,\n", f.Name, f.Name)
+		// Assignment, unlike a keyed composite literal, also reaches a field
+		// promoted from a flattened anonymous mixin. Runtime metadata sees that
+		// promoted field as a column, so the generated mapper must be able to set it.
+		fmt.Fprintf(&b, "\tout.%s = in.%s\n", f.Name, f.Name)
 	}
-	b.WriteString("\t}, nil\n}\n\n")
+	b.WriteString("\treturn out, nil\n}\n\n")
 
 	fmt.Fprintf(&b, "// Resolve implements errs.Resolver, which is what puts this hop ahead of\n")
 	fmt.Fprintf(&b, "// the raw-body fallback: a declared mapping always beats a guess.\n")

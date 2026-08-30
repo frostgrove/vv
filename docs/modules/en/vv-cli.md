@@ -104,13 +104,30 @@ naming the column ([[UC-014]]).
 
 ## Embedded model bases
 
-A value-embedded struct declared in the model package is flattened exactly as
-runtime metadata flattens it. `gorm.Model` is the one audited foreign embed with
-a built-in declaration. Any other unresolved anonymous type is refused during
-generation, naming the model and type, instead of producing an incomplete DTO
-that panics only when the application starts. Move the base into the model
-package, flatten its fields, or explicitly exclude the whole embed with
-`db:"-"`. Embedded pointers are refused too, matching runtime metadata.
+A completely untagged, value-embedded, non-scalar struct is flattened exactly
+as runtime metadata flattens it. The generator resolves local aliases,
+instantiated generic bases and exported dependency data, so an ordinary shared
+base package needs no registration. `gorm.Model` keeps its audited built-in
+semantics. Anonymous scalar structs follow runtime's exact method-set rule:
+`time.Time`, driver `Valuer`/`Scanner` shapes and text marshal/unmarshal shapes,
+including scalar pointers, stay one column.
+
+An explicit `db` or `rel` tag belongs to the anonymous field itself and prevents
+flattening. A struct-shaped `rel` field follows the normal relation rules;
+`rel:""` preserves tag presence and asks runtime to infer the kind, including
+through local type aliases, while `rel:"-"` suppresses that relation. A scalar
+with a non-`-` `rel` tag is refused; scalar `rel:"-"` remains a column.
+`db:"-"` excludes the whole anonymous
+field and is the low-level escape hatch. An untagged pointer to a non-scalar
+struct is refused, matching runtime metadata.
+
+If Go type information cannot resolve an anonymous type, or an exported base
+column has a private named type or a structural type with a foreign unexported
+field/method identity the generated package cannot reproduce, generation fails
+before writing and names the model and type. Resolve the dependency, flatten
+the fields, or explicitly exclude the whole embed with `db:"-"`.
+If flattening would create duplicate effective Go field names or database
+columns, generation likewise refuses before rendering.
 
 The exclusion is deliberately explicit and is the low-level escape hatch: it
 means those embedded fields are not database columns. It is not a way to retain
@@ -124,7 +141,7 @@ the base's columns without teaching the generator their types.
 |---|---|---|
 | `-dir` | `.` | the package directory to read |
 | `-out` | `vv_gen.go` | the output file name |
-| `-types` | every tagged struct | comma-separated model names |
+| `-types` | tagged structs and exported structs in model files | comma-separated model names |
 | `-depth` | `2` | how far to expand relation paths into the metamodel |
 | `-skip` | — | field names to leave out entirely, like `db:"-"` |
 | `-readonly` | — | field names kept out of the DTO but still filterable and sortable, like `db:",immutable"` |
@@ -139,11 +156,26 @@ the base's columns without teaching the generator their types.
 | `-specs` | the specs package | import path override |
 | `-crud` | the crud package | import path override |
 
+Without `-types`, exported structs in `model.go`, `*.model.go` and `*_model.go`
+are models by convention; elsewhere a `db`/`rel` tag opts a struct in.
+
 `-import` is a path, not a requested Go identifier. The generator reads the
-package declaration in `-dir`, so `-import example.com/acme/models/v2` with
-`package models` produces `models.User`, not `v2.User`. Renamed column imports
-are preserved, and aliases that collide across source files receive stable
-suffixes in the single generated import block.
+package declaration in `-dir` as the preferred alias, so
+`-import example.com/acme/models/v2` with `package models` normally produces
+`models.User`, not `v2.User`; a reserved/colliding name receives a readable
+path-derived alias. Renamed column imports
+are preserved. Collisions receive deterministic path-derived names:
+`/alpha/common` and `/beta/common` become `alphaCommon` and `betaCommon`, with
+no numeric collision fallback. Composite and generic types bring every
+selector import with them,
+and one path is emitted once even when generated support code uses it too. Dot
+imports are refused. When output stays in the model package, if a source import
+itself is called `ProductUpdate` while generation will declare `ProductUpdate`,
+rename that source import; Go rejects the collision across files and the
+generator reports it before writing. With `-into`, package declarations and
+file import aliases already in the destination are checked in both directions.
+Only imports that survive into the final rendered file participate, so a local
+adapter selector such as `out.ID` cannot resurrect an unused source import.
 
 ## `-adapter`: the rest of the resource
 
@@ -158,11 +190,12 @@ type ArticleService struct{ *port.DefaultService[Article, int64, ArticleUpdate] 
 func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
 ```
 
-An auto-generated primary key is deliberately absent from `ArticleInput` and
+A primary key explicitly marked `auto` is deliberately absent from `ArticleInput` and
 `ArticlePaths`: the database owns it and the create path would clear it. An
 assigned UUID, slug, or other non-auto key remains in both, because that key is
 client-owned. The generated `MustPathMap` exclusion records the difference and
-keeps its start-up coverage check exact.
+keeps its start-up coverage check exact. Codegen does not yet mirror runtime's
+implicit integer-key default or `noauto`; tag the database-owned key explicitly.
 
 **`ArticlePaths` is why the flag exists.** It maps a model field back to the key
 the client sent, so an error body names `authorID` rather than `AuthorID` — and

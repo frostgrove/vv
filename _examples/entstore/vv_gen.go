@@ -3,7 +3,7 @@
 package entstore
 
 import (
-	"github.com/frostgrove/vv/_examples/entmodel"
+	entmodel "github.com/frostgrove/vv/_examples/entmodel"
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/port"

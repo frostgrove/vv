@@ -13,6 +13,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type field struct {
@@ -29,6 +31,8 @@ type field struct {
 	Type      string // the type expression, as written
 	Tag       string // db tag value
 	Rel       string // rel tag value, "" when absent
+	HasRel    bool   // rel tag presence; rel:"" requests runtime inference
+	RelTarget string // canonical local model name after aliases/pointers/slices
 	Skip      bool
 	PK        bool
 	Auto      bool
@@ -107,11 +111,11 @@ type generator struct {
 	structs    map[string]bool            // struct types declared in this package
 	embeds     map[string]*ast.StructType // …and their declarations, for embedding
 	embedFiles map[string]*ast.File       // declaration file, so nested field imports keep their meaning
-	// embedProblems are declaration failures collected while walking models.
+	// mirrorProblems are declaration failures collected while walking models.
 	// The parser visits package files through maps, so they are kept as a set and
 	// sorted before returning: the same broken package must produce the same
 	// diagnostic on every machine.
-	embedProblems map[string]bool
+	mirrorProblems map[string]bool
 
 	// Set when the output lands in a different package from the models.
 	into        string
@@ -119,11 +123,14 @@ type generator struct {
 	modelAlias  string
 	// imports collected from the source files, so generated field types keep
 	// resolving (time.Time, uuid.UUID, …).
-	imports     map[string]string               // generated package alias -> import path
-	fileImports map[*ast.File]map[string]string // source qualifier -> generated alias
-	pathAliases map[string]string               // import path -> generated package alias
-	usedAliases map[string]bool                 // every identifier unavailable to an import
-	types       *sourceTypes                    // best-effort go/types view of the parsed package
+	imports       map[string]string               // generated package alias -> import path
+	fileImports   map[*ast.File]map[string]string // source qualifier -> generated alias
+	sourceImports []sourceImport                  // source aliases, checked against emitted declarations
+	declaredNames map[string]bool                 // authored package-scope declarations
+	pathAliases   map[string]string               // import path -> generated package alias
+	aliasPaths    map[string]string               // generated package alias -> import path
+	usedAliases   map[string]bool                 // every identifier unavailable to an import
+	types         *sourceTypes                    // best-effort go/types view of the parsed package
 
 	// Where the "wrote …" line goes. Nil is silent, which is what a test wants;
 	// swapping os.Stdout to get that made every test share global state.
@@ -161,8 +168,14 @@ func (this *generator) run(outPath string) error {
 		// answer than this one.
 		return fmt.Errorf("-adapter needs the update DTO; drop -no-dto")
 	}
+	if err := this.validateDeclarations(outPath); err != nil {
+		return err
+	}
 	source, err := this.render()
 	if err != nil {
+		return err
+	}
+	if err := this.validateRenderedImports(outPath, source); err != nil {
 		return err
 	}
 	if err := writeGenerated(outPath, source); err != nil {
@@ -272,9 +285,12 @@ func (this *generator) load(skip string) error {
 	this.structs = map[string]bool{}
 	this.embeds = map[string]*ast.StructType{}
 	this.embedFiles = map[string]*ast.File{}
-	this.embedProblems = map[string]bool{}
+	this.mirrorProblems = map[string]bool{}
 	this.fileImports = map[*ast.File]map[string]string{}
+	this.sourceImports = nil
+	this.declaredNames = map[string]bool{}
 	this.pathAliases = map[string]string{}
+	this.aliasPaths = map[string]string{}
 
 	// A first pass over the struct names, so a field whose type is another
 	// struct in this package can be recognised as a relation holder rather than
@@ -338,13 +354,13 @@ func (this *generator) load(skip string) error {
 			})
 		}
 	}
-	if len(this.embedProblems) > 0 {
-		problems := make([]string, 0, len(this.embedProblems))
-		for problem := range this.embedProblems {
+	if len(this.mirrorProblems) > 0 {
+		problems := make([]string, 0, len(this.mirrorProblems))
+		for problem := range this.mirrorProblems {
 			problems = append(problems, problem)
 		}
 		sort.Strings(problems)
-		return fmt.Errorf("codegen: embedded fields cannot be mirrored safely:\n- %s", strings.Join(problems, "\n- "))
+		return fmt.Errorf("codegen: model fields cannot be mirrored safely:\n- %s", strings.Join(problems, "\n- "))
 	}
 	sort.Strings(this.order)
 	return nil
@@ -352,6 +368,7 @@ func (this *generator) load(skip string) error {
 
 type sourceImport struct {
 	file      *ast.File
+	fileName  string
 	qualifier string
 	path      string
 }
@@ -359,7 +376,7 @@ type sourceImport struct {
 // prepareImports gives every imported path one output-file alias and records
 // how each source file's own qualifier maps onto it. Two Go files may legally
 // use the same qualifier for different packages; one generated file cannot, so
-// collisions receive stable numeric suffixes and field type expressions are
+// collisions receive stable path-derived names and field type expressions are
 // rewritten per declaration file.
 func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 	packageNames := make([]string, 0, len(pkgs))
@@ -379,8 +396,27 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 	}
 	this.usedAliases = used
 	this.reserveGeneratedAndPackageNames(pkgs, used)
+	for _, fixed := range []struct{ alias, path string }{
+		{"crud", this.crudPkg}, {"utils", this.utilsPkg}, {"specs", this.specsPkg},
+		{"port", this.portPkg}, {"errs", this.errsPkg}, {"crudnet", this.netPkg},
+		{"context", "context"}, {"http", "net/http"}, {"time", "time"},
+		{"sqlrepo", "github.com/frostgrove/vv/crud/sqlrepo"}, {"gorm", "gorm.io/gorm"},
+	} {
+		if fixed.path == "" || this.aliasPaths[fixed.alias] != "" || this.pathAliases[fixed.path] != "" {
+			continue
+		}
+		this.aliasPaths[fixed.alias] = fixed.path
+		this.pathAliases[fixed.path] = fixed.alias
+	}
 	if this.modelImport != "" {
-		this.modelAlias = allocateReadableImportAlias(inputPackage, this.modelImport, used, false)
+		// When models themselves live in one of the generated support packages,
+		// one path must still have one alias. Reusing it is both legal Go and the
+		// only way the import block can be deduplicated without changing selectors.
+		this.modelAlias = this.pathAliases[this.modelImport]
+		if this.modelAlias == "" {
+			this.modelAlias = allocateReadableImportAlias(inputPackage, this.modelImport, used, false)
+			this.aliasPaths[this.modelAlias] = this.modelImport
+		}
 	}
 
 	var records []sourceImport
@@ -411,18 +447,20 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 					}
 				} else {
 					qualifier = filepath.Base(path)
-					// Most paths and package declarations agree. A version suffix
-					// such as /v2 does not; when the basename is not used in this
-					// file, ask the Go tool for the declared package name.
-					if !prefixes[qualifier] {
-						declared := this.importPackageName(path)
-						if declared == "" {
-							return fmt.Errorf("codegen: import %q in %s does not use basename %q and its declared package name could not be resolved; make the import alias explicit", path, fileName, qualifier)
-						}
+					// Package declarations, not path basenames, own unaliased import
+					// names. Resolve them authoritatively when possible. The syntax
+					// fallback keeps temporarily unavailable dependencies generatable,
+					// but only when the basename is an unresolved package selector and
+					// not a package declaration from a different source file.
+					if path == "C" {
+						qualifier = "C"
+					} else if declared := this.importPackageName(path); declared != "" {
 						qualifier = declared
+					} else if !prefixes[qualifier] || this.declaredNames[qualifier] {
+						return fmt.Errorf("codegen: import %q in %s cannot safely use unresolved basename %q; make the import alias explicit or make its declared package resolvable", path, fileName, qualifier)
 					}
 				}
-				records = append(records, sourceImport{file: file, qualifier: qualifier, path: path})
+				records = append(records, sourceImport{file: file, fileName: fileName, qualifier: qualifier, path: path})
 				preferred[path] = append(preferred[path], qualifier)
 			}
 		}
@@ -446,11 +484,15 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 		names := preferred[path]
 		sort.Strings(names)
 		alias := this.sharedImportAlias(path)
+		if owner := this.aliasPaths[alias]; alias != "" && owner != "" && owner != path {
+			alias = ""
+		}
 		if alias == "" {
 			alias = allocateReadableImportAlias(names[0], path, used, preferredCounts[names[0]] > 1)
 		}
 		pathAlias[path] = alias
 		this.pathAliases[path] = alias
+		this.aliasPaths[alias] = path
 		this.imports[alias] = path
 	}
 	for _, record := range records {
@@ -461,6 +503,7 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 		}
 		aliases[record.qualifier] = pathAlias[record.path]
 	}
+	this.sourceImports = append(this.sourceImports, records...)
 	return nil
 }
 
@@ -475,23 +518,29 @@ func (this *generator) reserveGeneratedAndPackageNames(pkgs map[string]*ast.Pack
 			for _, decl := range file.Decls {
 				switch d := decl.(type) {
 				case *ast.FuncDecl:
-					used[d.Name.Name] = true
+					if d.Recv == nil {
+						used[d.Name.Name] = true
+						this.declaredNames[d.Name.Name] = true
+					}
 				case *ast.GenDecl:
 					for _, spec := range d.Specs {
 						switch s := spec.(type) {
 						case *ast.TypeSpec:
 							used[s.Name.Name] = true
+							this.declaredNames[s.Name.Name] = true
 							for _, name := range []string{
 								s.Name.Name + "Update", s.Name.Name + "Attrs", s.Name.Name + "Repo",
 								s.Name.Name + "Repository", "New" + s.Name.Name + "Repository",
 								s.Name.Name + "Input", s.Name.Name + "Mapper", s.Name.Name + "Paths",
-								s.Name.Name + "Service", "Mount" + s.Name.Name, s.Name.Name + "_",
+								s.Name.Name + "Service", "New" + s.Name.Name + "Service",
+								"Mount" + s.Name.Name, s.Name.Name + "_",
 							} {
 								used[name] = true
 							}
 						case *ast.ValueSpec:
 							for _, name := range s.Names {
 								used[name.Name] = true
+								this.declaredNames[name.Name] = true
 							}
 						}
 					}
@@ -499,18 +548,396 @@ func (this *generator) reserveGeneratedAndPackageNames(pkgs map[string]*ast.Pack
 			}
 		}
 	}
+	this.reserveRelationAttrNames(used)
+}
+
+// reserveRelationAttrNames covers the declarations renderAttrs derives from a
+// relation path (ArticleCommentsAuthorAttrs, for example). Imports are planned
+// before model parsing and type checking, so this deliberately over-approximates
+// local struct-shaped fields. Reserving an unused identifier only lengthens an
+// import alias; missing a real one would produce uncompilable generated Go.
+func (this *generator) reserveRelationAttrNames(used map[string]bool) {
+	if this.depth <= 1 {
+		return
+	}
+	type edge struct{ name, target string }
+	edges := map[string][]edge{}
+	for owner, structure := range this.embeds {
+		for _, item := range structure.Fields.List {
+			base, _ := relElem(exprString(item.Type))
+			base = strings.TrimPrefix(base, "*")
+			if !this.structs[base] {
+				continue
+			}
+			if len(item.Names) == 0 {
+				if name := embeddedSyntaxName(item.Type); name != "" {
+					edges[owner] = append(edges[owner], edge{name: name, target: base})
+				}
+				continue
+			}
+			for _, name := range item.Names {
+				if name.IsExported() {
+					edges[owner] = append(edges[owner], edge{name: name.Name, target: base})
+				}
+			}
+		}
+		sort.Slice(edges[owner], func(i, j int) bool {
+			if edges[owner][i].name != edges[owner][j].name {
+				return edges[owner][i].name < edges[owner][j].name
+			}
+			return edges[owner][i].target < edges[owner][j].target
+		})
+	}
+
+	var walk func(root, on, suffix string, level int, path map[string]bool)
+	walk = func(root, on, suffix string, level int, path map[string]bool) {
+		if level+1 >= this.depth {
+			return
+		}
+		for _, relation := range edges[on] {
+			if path[relation.target] {
+				continue
+			}
+			nextSuffix := suffix + relation.name
+			used[root+nextSuffix+"Attrs"] = true
+			path[relation.target] = true
+			walk(root, relation.target, nextSuffix, level+1, path)
+			delete(path, relation.target)
+		}
+	}
+	for root := range this.embeds {
+		walk(root, root, "", 0, map[string]bool{root: true})
+	}
+}
+
+// validateDeclarations catches collisions an output-only alias rewrite cannot
+// solve. That includes two generated names with different owners, an authored
+// package declaration, and a source import called ProductUpdate when another
+// file declares ProductUpdate. Refuse every case before writing.
+func (this *generator) validateDeclarations(outPath string) error {
+	emitted := map[string]string{}
+	add := func(declaration, owner string) error {
+		if previous := emitted[declaration]; previous != "" {
+			return fmt.Errorf("codegen: generated declaration %s for %s collides with the declaration for %s", declaration, owner, previous)
+		}
+		emitted[declaration] = owner
+		return nil
+	}
+	for _, name := range this.order {
+		model := this.models[name]
+		if this.withDTO {
+			if err := add(model.Name+"Update", "model "+model.Name+" update DTO"); err != nil {
+				return err
+			}
+		}
+		if this.withMeta {
+			if err := add(model.Name+"Attrs", "model "+model.Name+" metamodel"); err != nil {
+				return err
+			}
+			if err := add(model.Name+"_", "model "+model.Name+" metamodel value"); err != nil {
+				return err
+			}
+			if err := this.collectRelationAttrNames(emitted, model, model, "", 0, map[string]bool{model.Name: true}, nil); err != nil {
+				return err
+			}
+		}
+		if this.withRepo {
+			for _, declaration := range []string{model.Name + "Repo", model.Name + "Repository", "New" + model.Name + "Repository"} {
+				if err := add(declaration, "model "+model.Name+" repository"); err != nil {
+					return err
+				}
+			}
+		}
+		if this.adapter {
+			for _, declaration := range []string{
+				model.Name + "Input", model.Name + "Mapper", model.Name + "Paths",
+				model.Name + "Service", "New" + model.Name + "Service",
+			} {
+				if err := add(declaration, "model "+model.Name+" adapter"); err != nil {
+					return err
+				}
+			}
+			if this.binding == "net" {
+				if err := add("Mount"+model.Name, "model "+model.Name+" net binding"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	authored := this.declaredNames
+	if this.into != "" {
+		var err error
+		authored, err = packageDeclarationNames(this.into, this.pkg, filepath.Base(outPath))
+		if err != nil {
+			return err
+		}
+		imports, err := this.packageImportAliases(this.into, this.pkg, filepath.Base(outPath))
+		if err != nil {
+			return err
+		}
+		for _, imported := range imports {
+			if emitted[imported.qualifier] != "" {
+				return fmt.Errorf("codegen: import alias %q for %q in %s conflicts with generated declaration %s; rename the destination import", imported.qualifier, imported.path, imported.fileName, imported.qualifier)
+			}
+		}
+	}
+	emittedNames := make([]string, 0, len(emitted))
+	for declaration := range emitted {
+		emittedNames = append(emittedNames, declaration)
+	}
+	sort.Strings(emittedNames)
+	for _, declaration := range emittedNames {
+		if authored[declaration] {
+			return fmt.Errorf("codegen: package declaration %s conflicts with generated declaration %s; rename the authored declaration or select a different generated artefact", declaration, declaration)
+		}
+	}
+	// Source imports live in the model package and cannot collide with output
+	// declarations only when the output stays there. With -into they are in
+	// separate file blocks in separate packages.
+	if this.into != "" {
+		return nil
+	}
+	sort.Slice(this.sourceImports, func(i, j int) bool {
+		if this.sourceImports[i].fileName != this.sourceImports[j].fileName {
+			return this.sourceImports[i].fileName < this.sourceImports[j].fileName
+		}
+		if this.sourceImports[i].qualifier != this.sourceImports[j].qualifier {
+			return this.sourceImports[i].qualifier < this.sourceImports[j].qualifier
+		}
+		return this.sourceImports[i].path < this.sourceImports[j].path
+	})
+	for _, imported := range this.sourceImports {
+		reason := ""
+		switch {
+		case emitted[imported.qualifier] != "":
+			reason = "generated declaration"
+		case authored[imported.qualifier]:
+			reason = "package declaration"
+		}
+		if reason != "" {
+			return fmt.Errorf("codegen: import alias %q for %q in %s conflicts with %s %s; rename the source import", imported.qualifier, imported.path, imported.fileName, reason, imported.qualifier)
+		}
+	}
+	return nil
+}
+
+// validateRenderedImports checks the other direction of Go's package namespace
+// rule: an import name in the new file may not match a package declaration in
+// any other file. It runs on the final rendered import block, so unused source
+// imports and generated features that were not selected cannot cause a false
+// refusal.
+func (this *generator) validateRenderedImports(outPath string, source []byte) error {
+	authored := this.declaredNames
+	if this.into != "" {
+		var err error
+		authored, err = packageDeclarationNames(this.into, this.pkg, filepath.Base(outPath))
+		if err != nil {
+			return err
+		}
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), outPath, source, 0)
+	if err != nil {
+		return fmt.Errorf("codegen: inspect rendered imports: %w", err)
+	}
+	generated := map[string]bool{}
+	for _, declaration := range file.Decls {
+		switch item := declaration.(type) {
+		case *ast.FuncDecl:
+			if item.Recv == nil {
+				generated[item.Name.Name] = true
+			}
+		case *ast.GenDecl:
+			if item.Tok == token.IMPORT {
+				continue
+			}
+			for _, raw := range item.Specs {
+				switch spec := raw.(type) {
+				case *ast.TypeSpec:
+					generated[spec.Name.Name] = true
+				case *ast.ValueSpec:
+					for _, name := range spec.Names {
+						generated[name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return fmt.Errorf("codegen: inspect rendered import: %w", err)
+		}
+		alias := filepath.Base(path)
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		switch {
+		case generated[alias]:
+			return fmt.Errorf("codegen: generated import alias %q for %q conflicts with generated declaration %s; rename the source package alias or select generated artefacts that do not need this import", alias, path, alias)
+		case authored[alias]:
+			return fmt.Errorf("codegen: generated import alias %q for %q conflicts with package declaration %s; rename the declaration or select generated artefacts that do not need this import", alias, path, alias)
+		}
+	}
+	return nil
+}
+
+// packageImportAliases collects the file-scoped import names in an existing
+// destination package. Go rejects those names when a different file adds a
+// package declaration with the same identifier, so -into must inspect both
+// halves of the namespace before it writes.
+func (this *generator) packageImportAliases(dir, packageName, skip string) ([]sourceImport, error) {
+	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != skip
+	}, 0)
+	if err != nil {
+		return nil, fmt.Errorf("codegen: inspect output package imports: %w", err)
+	}
+	parsed := packages[packageName]
+	if parsed == nil {
+		return nil, nil
+	}
+	declarations, err := packageDeclarationNames(dir, packageName, skip)
+	if err != nil {
+		return nil, err
+	}
+	fileNames := make([]string, 0, len(parsed.Files))
+	for fileName := range parsed.Files {
+		fileNames = append(fileNames, fileName)
+	}
+	sort.Strings(fileNames)
+	var out []sourceImport
+	for _, fileName := range fileNames {
+		file := parsed.Files[fileName]
+		prefixes := selectorPrefixes(file)
+		for _, spec := range file.Imports {
+			path, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return nil, fmt.Errorf("codegen: import in %s: %w", fileName, err)
+			}
+			qualifier := ""
+			if spec.Name != nil {
+				qualifier = spec.Name.Name
+				switch qualifier {
+				case "_":
+					continue
+				case ".":
+					return nil, fmt.Errorf("codegen: dot import %q in destination file %s cannot be checked safely against generated declarations; use an explicit import alias", path, fileName)
+				}
+			} else {
+				qualifier = filepath.Base(path)
+				if path == "C" {
+					qualifier = "C"
+				} else if declared := this.importPackageNameAt(dir, path); declared != "" {
+					qualifier = declared
+				} else if !prefixes[qualifier] || declarations[qualifier] {
+					return nil, fmt.Errorf("codegen: import %q in destination file %s cannot safely use unresolved basename %q; make the import alias explicit or make its declared package resolvable", path, fileName, qualifier)
+				}
+			}
+			out = append(out, sourceImport{file: file, fileName: fileName, qualifier: qualifier, path: path})
+		}
+	}
+	return out, nil
+}
+
+func packageDeclarationNames(dir, packageName, skip string) (map[string]bool, error) {
+	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != skip
+	}, 0)
+	if err != nil {
+		return nil, fmt.Errorf("codegen: inspect output package declarations: %w", err)
+	}
+	out := map[string]bool{}
+	parsed := packages[packageName]
+	if parsed == nil {
+		return out, nil
+	}
+	for _, file := range parsed.Files {
+		for _, declaration := range file.Decls {
+			switch item := declaration.(type) {
+			case *ast.FuncDecl:
+				if item.Recv == nil {
+					out[item.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, raw := range item.Specs {
+					switch spec := raw.(type) {
+					case *ast.TypeSpec:
+						out[spec.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, name := range spec.Names {
+							out[name.Name] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func (this *generator) collectRelationAttrNames(out map[string]string, root, on *model, suffix string, level int, path map[string]bool, names []string) error {
+	for _, item := range on.Fields {
+		if !item.isRelation() || level+1 >= this.depth {
+			continue
+		}
+		target := item.RelTarget
+		if target == "" {
+			target, _ = relElem(item.Type)
+			if this.modelAlias != "" {
+				target = strings.TrimPrefix(target, this.modelAlias+".")
+			}
+		}
+		related := this.models[target]
+		if related == nil || path[target] {
+			continue
+		}
+		nextSuffix := suffix + item.Name
+		nextNames := append(append([]string(nil), names...), item.Name)
+		declaration := root.Name + nextSuffix + "Attrs"
+		owner := "model " + root.Name + " relation " + strings.Join(nextNames, ".")
+		if previous := out[declaration]; previous != "" {
+			return fmt.Errorf("codegen: generated declaration %s for %s collides with the declaration for %s", declaration, owner, previous)
+		}
+		out[declaration] = owner
+		path[target] = true
+		if err := this.collectRelationAttrNames(out, root, related, nextSuffix, level+1, path, nextNames); err != nil {
+			return err
+		}
+		delete(path, target)
+	}
+	return nil
 }
 
 func (this *generator) sharedImportAlias(path string) string {
+	switch {
+	case path != "" && path == this.crudPkg:
+		return "crud"
+	case path != "" && path == this.utilsPkg:
+		return "utils"
+	case path != "" && path == this.specsPkg:
+		return "specs"
+	case path != "" && path == this.portPkg:
+		return "port"
+	case path != "" && path == this.errsPkg:
+		return "errs"
+	case path != "" && path == this.netPkg:
+		return "crudnet"
+	}
 	switch path {
+	case "context":
+		return "context"
+	case "net/http":
+		return "http"
 	case "time":
 		return "time"
-	case "github.com/frostgrove/vv/crud":
+	case DefaultCrudPkg:
 		return "crud"
 	case DefaultUtilsPkg:
 		return "utils"
-	case "github.com/frostgrove/vv/crud/decorators/specs":
+	case DefaultSpecsPkg:
 		return "specs"
+	case "github.com/frostgrove/vv/crud/sqlrepo":
+		return "sqlrepo"
 	case "gorm.io/gorm":
 		return "gorm"
 	}
@@ -518,8 +945,8 @@ func (this *generator) sharedImportAlias(path string) string {
 }
 
 // allocateReadableImportAlias keeps collision handling visible to a human.
-// Numeric suffixes such as crud2 and crud22 say only that a collision happened;
-// alpha, alphaCommon and betaCommon say which package each selector names.
+// Numeric suffixes say only that a collision happened; alpha, alphaCommon and
+// betaCommon say which package each selector names.
 func allocateReadableImportAlias(preferred, path string, used map[string]bool, forcePath bool) string {
 	preferred = strings.TrimSpace(preferred)
 	if !forcePath && usableImportAlias(preferred, used) {
@@ -635,7 +1062,7 @@ func selectorPrefixes(file *ast.File) map[string]bool {
 		if !ok {
 			return true
 		}
-		if ident, ok := selector.X.(*ast.Ident); ok {
+		if ident, ok := selector.X.(*ast.Ident); ok && ident.Obj == nil {
 			out[ident.Name] = true
 		}
 		return true
@@ -644,22 +1071,37 @@ func selectorPrefixes(file *ast.File) map[string]bool {
 }
 
 func (this *generator) importPackageName(path string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "list", "-mod=readonly", "-json", "-find", path)
-	cmd.Dir = this.dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
+	return this.importPackageNameAt(this.dir, path)
+}
+
+func (this *generator) importPackageNameAt(dir, path string) string {
+	directories := []string{dir}
+	if working, err := os.Getwd(); err == nil && working != "" && working != dir {
+		directories = append(directories, working)
 	}
-	var listed struct{ Name string }
-	if json.Unmarshal(out, &listed) != nil {
-		return ""
+	for _, working := range directories {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, "go", "list", "-mod=readonly", "-json", "-find", path)
+		cmd.Dir = working
+		out, err := cmd.Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		var listed struct{ Name string }
+		if json.Unmarshal(out, &listed) == nil && listed.Name != "" {
+			return listed.Name
+		}
 	}
-	return listed.Name
+	return ""
 }
 
 func (this *generator) typeString(expr ast.Expr, file *ast.File) string {
+	if typ := this.goType(expr); typ != nil {
+		if rendered := this.renderedType(typ); rendered != "" {
+			return rendered
+		}
+	}
 	aliases := this.fileImports[file]
 	if len(aliases) == 0 {
 		return exprString(expr)
@@ -695,7 +1137,7 @@ func (this *generator) typeString(expr ast.Expr, file *ast.File) string {
 
 func (this *generator) parseModel(name string, st *ast.StructType, force bool, file *ast.File) *model {
 	m := &model{Name: name}
-	var embedProblems []string
+	var mirrorProblems []string
 	// An explicitly named type is a model whether or not it carries tags — which
 	// is how a generated entity from another tool qualifies. Model files carry
 	// the same meaning without a tag: plain Go structs are vv models by
@@ -710,30 +1152,63 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			}
 			database, hasDB := tag.Lookup("db")
 			relation, hasRel := tag.Lookup("rel")
-			if (hasDB && database == "-") || (hasRel && relation == "-") {
+			if hasDB && database == "-" {
 				continue
 			}
 			typ := strings.TrimSpace(this.typeString(f.Type, file))
-			if strings.HasPrefix(typ, "*") {
-				embedProblems = append(embedProblems, fmt.Sprintf(
-					"model %s embeds pointer %s; runtime metadata refuses embedded pointer structs, so embed a value or tag it db:\"-\"", name, typ))
+			resolved := this.goType(f.Type)
+			if resolved != nil {
+				// Runtime flattens only a completely untagged, non-scalar struct.
+				// A relation or db declaration belongs to the anonymous field
+				// itself and follows the ordinary field path below.
+				if !hasDB && !hasRel && this.flattenableStruct(resolved) {
+					if isPointerSource(resolved) {
+						mirrorProblems = append(mirrorProblems, fmt.Sprintf(
+							"model %s embeds pointer %s; runtime metadata refuses embedded pointer structs, so embed a value or tag it db:\"-\"", name, typ))
+						continue
+					}
+					fields, problems := this.flattenType(name, typ, resolved, map[types.Type]bool{})
+					m.Fields = append(m.Fields, fields...)
+					mirrorProblems = append(mirrorProblems, problems...)
+					tagged = tagged || len(fields) > 0
+					continue
+				}
+				fieldName := this.anonymousName(f)
+				if fieldName == "" {
+					mirrorProblems = append(mirrorProblems, fmt.Sprintf("model %s has an anonymous %s whose field name cannot be resolved", name, typ))
+					continue
+				}
+				if !ast.IsExported(fieldName) {
+					if hasDB {
+						mirrorProblems = append(mirrorProblems, fmt.Sprintf(
+							"model %s maps unexported anonymous field %s; rename it or tag it db:\"-\"", name, fieldName))
+					}
+					continue
+				}
+				if problem := this.appendResolvedField(&m.Fields, name, fieldName, typ, resolved, database, hasDB, relation, hasRel); problem != "" {
+					mirrorProblems = append(mirrorProblems, problem)
+				}
+				tagged = tagged || hasDB || hasRel
 				continue
 			}
-			if hasDB || hasRel {
-				embedProblems = append(embedProblems, fmt.Sprintf(
-					"model %s tags anonymous %s; runtime does not flatten tagged embeds and codegen cannot infer a safe column/relation shape", name, typ))
-				continue
+
+			// An incomplete package may leave a type unresolved. Preserve the
+			// audited/local syntactic cases, but never guess whether an unknown
+			// anonymous value is a scalar column or a struct to flatten.
+			if !hasDB && !hasRel {
+				if strings.HasPrefix(typ, "*") {
+					mirrorProblems = append(mirrorProblems, fmt.Sprintf(
+						"model %s embeds pointer %s; runtime metadata refuses embedded pointer structs, so embed a value or tag it db:\"-\"", name, typ))
+					continue
+				}
+				if fields, ok := this.embedded(typ); ok {
+					m.Fields = append(m.Fields, fields...)
+					tagged = tagged || len(fields) > 0
+					continue
+				}
 			}
-			// Embedded: the runtime flattens it, so the generator has to as
-			// well or `gorm.Model` would silently take id and the timestamps
-			// out of the metamodel.
-			if fields, ok := this.embedded(typ); ok {
-				m.Fields = append(m.Fields, fields...)
-				tagged = tagged || len(fields) > 0
-			} else {
-				embedProblems = append(embedProblems, fmt.Sprintf(
-					"model %s embeds unresolved type %s; flatten it into this package, tag it db:\"-\", or add an audited well-known embed", name, typ))
-			}
+			mirrorProblems = append(mirrorProblems, fmt.Sprintf(
+				"model %s embeds unresolved type %s; resolve its package so vv can classify it, or tag it db:\"-\"", name, typ))
 			continue
 		}
 		var tag reflect.StructTag
@@ -748,9 +1223,25 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 		}
 		for _, ident := range f.Names {
 			if !ident.IsExported() {
+				if hasDB && database != "-" {
+					mirrorProblems = append(mirrorProblems, fmt.Sprintf(
+						"model %s maps unexported field %s; rename it or tag it db:\"-\"", name, ident.Name))
+				}
 				continue
 			}
-			fl := field{Name: ident.Name, Type: this.typeString(f.Type, file), Tag: database, Rel: rel}
+			rendered := this.typeString(f.Type, file)
+			if resolved := this.goType(f.Type); resolved != nil {
+				if problem := this.appendResolvedField(&m.Fields, name, ident.Name, rendered, resolved, database, hasDB, rel, hasRel); problem != "" {
+					mirrorProblems = append(mirrorProblems, problem)
+				}
+				continue
+			}
+			fl := field{Name: ident.Name, Type: rendered, Tag: database, Rel: rel, HasRel: hasRel}
+			if hasDB && database == "-" {
+				// db:"-" wins before relation parsing at runtime, including when a
+				// rel tag is present on the same field.
+				continue
+			}
 			// A field whose type is another struct from this package is either a
 			// relation or somebody else's bookkeeping; it is never a column.
 			if !hasRel {
@@ -770,23 +1261,9 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			if database == "-" || (hasRel && rel == "-") {
 				fl.Skip = true
 			}
-			for _, opt := range strings.Split(database, ",")[1:] {
-				switch opt {
-				case "pk", "primarykey", "primary_key":
-					fl.PK = true
-				case "auto", "identity", "serial", "autoincrement":
-					fl.Auto = true
-				case "immutable", "readonly", "insertonly", "insert_only":
-					fl.Immutable = true
-				case "generated", "computed":
-					fl.Generated = true
-				case "version", "lock":
-					fl.Version = true
-				}
-			}
-			if strings.EqualFold(fl.Name, "id") && !fl.PK && database != "-" {
-				fl.PK = true
-			}
+			parsed := this.columnField(fl.Name, fl.Type, database, hasDB)
+			parsed.Rel, parsed.HasRel, parsed.Skip = fl.Rel, fl.HasRel, fl.Skip
+			fl = parsed
 			// After the tags, not before: whether the flag is the only reason
 			// the column leaves is a question the tags have to have answered.
 			this.exclude(&fl)
@@ -796,10 +1273,66 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 	if !tagged {
 		return nil
 	}
-	for _, problem := range embedProblems {
-		this.embedProblems[problem] = true
+	mirrorProblems = append(mirrorProblems, validateEffectiveFields(m)...)
+	for _, problem := range mirrorProblems {
+		this.mirrorProblems[problem] = true
 	}
 	return m
+}
+
+// validateEffectiveFields catches collisions introduced by flattening before
+// render emits duplicate Go fields. Runtime metadata separately refuses exact
+// column/relation duplicates; codegen must also reject a column and relation
+// that share one effective Go name because one generated struct cannot spell
+// both even though reflection keeps those namespaces separately.
+func validateEffectiveFields(m *model) []string {
+	names := map[string]bool{}
+	columns := map[string]bool{}
+	var problems []string
+	for _, item := range m.Fields {
+		if item.Tag == "-" {
+			continue
+		}
+		if names[item.Name] {
+			problems = append(problems, fmt.Sprintf("model %s has duplicate effective field name %s after embedding/flattening", m.Name, item.Name))
+		} else {
+			names[item.Name] = true
+		}
+		if item.isRelation() {
+			continue
+		}
+		column := strings.Split(item.Tag, ",")[0]
+		if column == "" {
+			column = codegenSnake(item.Name)
+		}
+		if columns[column] {
+			problems = append(problems, fmt.Sprintf("model %s has duplicate effective database column %s after embedding/flattening", m.Name, column))
+		} else {
+			columns[column] = true
+		}
+	}
+	return problems
+}
+
+// codegenSnake mirrors crud.snake. Keeping the column collision check at
+// generation time avoids writing an artefact that runtime SchemaOf must reject.
+func codegenSnake(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	runes := []rune(s)
+	for index, current := range runes {
+		if unicode.IsUpper(current) {
+			previousLower := index > 0 && (unicode.IsLower(runes[index-1]) || unicode.IsDigit(runes[index-1]))
+			nextLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+			if index > 0 && (previousLower || nextLower) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(current))
+			continue
+		}
+		b.WriteRune(current)
+	}
+	return b.String()
 }
 
 // exclude applies -skip and -readonly, and records when a flag is the only
@@ -830,7 +1363,7 @@ func exprString(e ast.Expr) string {
 // ---------------------------------------------------------------------------
 // classification
 
-func (this field) isRelation() bool { return this.Rel != "" && this.Rel != "-" }
+func (this field) isRelation() bool { return this.HasRel && this.Rel != "-" }
 
 // elem strips *T and either compatibility crud.Opt[T] or canonical
 // utils.Opt[T] down to T, reporting whether the column is nullable.
@@ -1029,6 +1562,8 @@ type Options struct {
 
 // The packages the adapter half names. See Options.
 const (
+	DefaultCrudPkg  = "github.com/frostgrove/vv/crud"
+	DefaultSpecsPkg = "github.com/frostgrove/vv/crud/decorators/specs"
 	DefaultPortPkg  = "github.com/frostgrove/vv/port"
 	DefaultErrsPkg  = "github.com/frostgrove/vv/errs"
 	DefaultNetPkg   = "github.com/frostgrove/vv/crud/http/crudnet"
@@ -1092,8 +1627,8 @@ func Run(o *Options) error {
 		withRepo: !o.NoRepo,
 		adapter:  o.Adapter,
 		binding:  binding,
-		specsPkg: o.SpecsPkg,
-		crudPkg:  o.CrudPkg,
+		specsPkg: cmpOr(o.SpecsPkg, DefaultSpecsPkg),
+		crudPkg:  cmpOr(o.CrudPkg, DefaultCrudPkg),
 		utilsPkg: cmpOr(o.UtilsPkg, DefaultUtilsPkg),
 		portPkg:  cmpOr(o.PortPkg, DefaultPortPkg),
 		errsPkg:  cmpOr(o.ErrsPkg, DefaultErrsPkg),

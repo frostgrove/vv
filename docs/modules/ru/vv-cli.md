@@ -108,13 +108,29 @@ func init() {
 
 ## Embedded base-модели
 
-Value-embedded структура из пакета модели разворачивается так же, как
-её разворачивают runtime metadata. `gorm.Model` — единственный аудированный
-внешний embed со встроенным описанием. Любой другой неразрешённый anonymous-тип
-отклоняется уже при генерации с именем модели и типа, а не превращается в
-неполный DTO и startup panic. Перенесите base в пакет модели, разверните его
-поля или явно исключите embed целиком тегом `db:"-"`. Embedded pointers тоже
-отклоняются — так же, как в runtime metadata.
+Полностью нетегированная value-embedded non-scalar структура разворачивается
+точно так же, как в runtime metadata. Генератор разрешает local aliases,
+инстанцированные generic base-типы и экспортные данные зависимостей, поэтому
+обычному shared base-пакету регистрация не нужна. Для `gorm.Model` сохраняется
+аудированная встроенная семантика. Anonymous scalar-структуры следуют точному
+runtime method-set правилу: `time.Time`, driver-формы `Valuer`/`Scanner` и
+text marshal/unmarshal-формы, включая scalar pointers, остаются одной колонкой.
+
+Явный тег `db` или `rel` относится к самому anonymous-полю и запрещает
+flattening. Struct-shaped поле с `rel` проходит обычные правила relation;
+`rel:""` сохраняет присутствие тега и просит runtime вывести kind, в том числе
+через local type aliases, а `rel:"-"` подавляет relation. Scalar с `rel`, кроме
+`-`, отклоняется; scalar `rel:"-"` остаётся колонкой. `db:"-"` исключает
+anonymous-поле целиком и остаётся low-level escape hatch. Нетегированный
+pointer на non-scalar структуру отклоняется так же, как в runtime metadata.
+
+Если Go type information не может разрешить anonymous-тип либо экспортная
+колонка base имеет приватный named-тип или structural-тип с foreign unexported
+field/method identity, который generated package не может воспроизвести,
+генерация отказывает до записи и называет модель и тип. Разрешите dependency,
+разверните поля или явно исключите embed целиком тегом `db:"-"`.
+Если flattening создаёт duplicate effective Go field names или database
+columns, генерация также отказывает до render.
 
 Явное исключение — это low-level escape hatch: оно означает, что поля embed не
 являются database-колонками. Оно не сохраняет колонки base, типы которых
@@ -128,7 +144,7 @@ Value-embedded структура из пакета модели развора�
 |---|---|---|
 | `-dir` | `.` | директория пакета для чтения |
 | `-out` | `vv_gen.go` | имя выходного файла |
-| `-types` | все структуры с тегами | имена моделей через запятую |
+| `-types` | tagged-структуры и exported-структуры в model-файлах | имена моделей через запятую |
 | `-depth` | `2` | насколько далеко разворачивать пути отношений в метамодели |
 | `-skip` | — | имена полей, полностью исключаемые, как `db:"-"` |
 | `-readonly` | — | имена полей, не попадающих в DTO, но всё ещё доступных для фильтрации и сортировки, как `db:",immutable"` |
@@ -143,11 +159,26 @@ Value-embedded структура из пакета модели развора�
 | `-specs` | пакет specs | переопределение пути импорта |
 | `-crud` | пакет crud | переопределение пути импорта |
 
+Без `-types` exported-структуры в `model.go`, `*.model.go` и `*_model.go`
+считаются моделями по соглашению; в остальных файлах структуру включает тег
+`db`/`rel`.
+
 `-import` — это путь, а не желаемый Go-идентификатор. Генератор читает
-package declaration в `-dir`, поэтому `-import example.com/acme/models/v2`
-с `package models` даёт `models.User`, а не `v2.User`. Renamed-импорты
-типов колонок сохраняются, а коллизии alias между source-файлами
-получают стабильные суффиксы в едином generated import block.
+package declaration в `-dir` как preferred alias, поэтому
+`-import example.com/acme/models/v2` с `package models` обычно даёт
+`models.User`, а не `v2.User`; reserved/colliding имя получает читаемый
+path-derived alias. Renamed-импорты
+типов колонок сохраняются. Коллизии получают детерминированные path-derived
+имена: `/alpha/common` и `/beta/common` превращаются в `alphaCommon` и
+`betaCommon`, без numeric collision fallback. Composite и generic типы
+переносят все selector imports, а один путь выводится один раз, даже если его использует и
+generated support code. Dot imports отклоняются. Если output остаётся в model
+package, source import сам назван `ProductUpdate`, а генератор должен объявить
+`ProductUpdate`, source import нужно переименовать: Go отклоняет такую
+межфайловую коллизию, и генератор сообщает о ней до записи. При `-into`
+package declarations и file import aliases в destination проверяются в обе
+стороны. Участвуют только imports, сохранившиеся в final rendered file, поэтому
+локальный selector вроде `out.ID` не возвращает неиспользуемый source import.
 
 ## `-adapter`: остальная часть ресурса
 
@@ -162,11 +193,12 @@ type ArticleService struct{ *port.DefaultService[Article, int64, ArticleUpdate] 
 func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
 ```
 
-Автоматически генерируемый первичный ключ намеренно отсутствует в
+Первичный ключ, явно помеченный `auto`, намеренно отсутствует в
 `ArticleInput` и `ArticlePaths`: им владеет база, а create-путь всё равно его
 очищает. Назначаемый клиентом UUID, slug или другой non-auto ключ остаётся в
 обоих. Сгенерированное исключение `MustPathMap` явно фиксирует различие и
-сохраняет точной стартовую проверку покрытия.
+сохраняет точной стартовую проверку покрытия. Codegen пока не зеркалит runtime
+implicit integer-key default и `noauto`; database-owned ключ нужно пометить явно.
 
 **`ArticlePaths` — вот ради чего существует этот флаг.** Он отображает поле
 модели обратно на ключ, отправленный клиентом, поэтому тело ошибки называет

@@ -2,7 +2,11 @@
 
 **Covers:** `github.com/frostgrove/vv/cmd/vv`, `github.com/frostgrove/vv/internal/codegen`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the auto-key and external-embed blockers are closed; the remaining edge sweep includes destructive output paths, build-tag-blind parsing, silently omitted named types, colliding relation artefact names, and no no-write check that detects a stale checked-in artefact in ordinary CI.
+**Verdict:** not ready — external embeds, import ownership, relation-name
+collisions and destructive output are closed. Explicit `auto` keys are closed,
+but runtime's implicit integer-PK/`noauto` rule is not yet mirrored. The
+remaining sweep includes build-tag-blind parsing, silently omitted requested
+types/flags, metamodel operator selection and no public read-only `-check` mode.
 
 ## What a consumer is actually trying to do
 
@@ -57,22 +61,18 @@ the type that appeared, and move on.
    whatever is newest on the machine.
 5. It runs where the build runs: a vendored tree, or a build container with
    module downloads switched off.
-**Today:** 🟡 partial
-**Evidence:** 1, 2 and 4 hold. `cmd/vv/main.go:65-79` — every flag has a default;
-`-dir .`, `-out vv_gen.go`, and the no-flag directive is the one in the command's
-own package doc (`cmd/vv/main.go:4`). The nearest thing to it in the tree carries
-a single flag (`_examples/example/blog/model.go:10`).
-`internal/codegen/render.go:42` writes the `DO NOT EDIT` header.
-`TestGeneratedCodeCompilesAndValidates` (`internal/codegen/codegen_test.go:645`)
-builds the output in a throwaway module and runs its `init`, which is the only
-way to know the start-up checks agree. Guarantee 4 is free rather than designed:
-the command lives in the root module the consumer already requires, so `go run`
-resolves the version in their own `go.mod`.
-3 holds in practice and nothing enforces it. `codegen.go:142` is
-`os.WriteFile(outPath, src, 0o644)` with no read of the target first; the only
-special handling of the out path is `codegen.go:153-155`, which excludes it from
-the *parse*. So `-out helpers.go` in a package whose models live elsewhere skips
-`helpers.go` as input and then destroys it as output, with no diagnostic.
+**Today:** 🟡 partial; guarantees 1–4 hold and 5 remains open.
+**Evidence:** defaults and the no-flag directive live in `cmd/vv`; model files
+also opt exported structs in by convention. Generated output carries the
+`DO NOT EDIT` header and the compile/init smoke proves the declarations agree
+with runtime metadata. `containedOutputPath`, `validateGeneratedTarget` and
+`writeGenerated` refuse traversal, authored targets and symlinks, then sync a
+temporary sibling and atomically rename it. The public-`Run` tests
+`TestOutputNameCannotEscapeItsControlledDirectory`,
+`TestAuthoredOutputIsNeverOverwritten`,
+`TestSymlinkOutputIsRefusedWithoutFollowingIt` and
+`TestGeneratedOutputIsAtomicallyReplaceable` pin those guarantees. The command
+lives in the consumer's dependency graph, so `go run` resolves their version.
 5 fails. `go mod vendor` copies what is needed to build and test the main
 module's packages, and nothing imports `cmd/vv`, so a vendored consumer cannot
 run the generator at all. `go.mod` declares `go 1.26`, so the `tool` directive
@@ -83,8 +83,7 @@ this; neither it nor vendoring is mentioned anywhere —
 import of `cmd/vv` to a `tools.go`, or runs the generator on a developer machine
 only — which is the shape that ends with a checked-in file nobody can reproduce
 in CI. Closing it is two sentences in both guides and a `tool` line in the
-module doc. The `-out` hole is a cheap guard: refuse a target whose first line is
-not the generated header.
+module doc; output ownership itself is closed.
 
 ### H-CODEGEN-02 — Tuesday's change to the model
 **Who:** the same developer, six weeks later
@@ -143,8 +142,8 @@ A consumer *can* copy either verbatim; neither imports `internal/codegen`
 (`test/codegen/codegen_test.go:127` is
 `exec.Command("go", "run", "github.com/frostgrove/vv/cmd/vv", …)`). What is
 missing is a mode that writes nothing — `cmd/vv/main.go:63-79` has no `-check`,
-`-diff` or `-n`, and `codegen.go:142` writes unconditionally — which matters on a
-read-only checkout and nowhere else.
+`-diff` or `-n`, and public `Run` always commits its atomically rendered
+candidate — which matters on a read-only checkout and nowhere else.
 **If not ready:** The consumer writes the git-diff line themselves and finds it by
 knowing the Go idiom rather than by reading anything here. Worth saying plainly
 wherever it lands: regenerate-and-diff measures the generator against itself. It
@@ -178,38 +177,29 @@ model of its own precisely because nothing else in the tree had one:
 `test/versionstore/model.go:32`, with
 `TestAVersionedModelGeneratesAResourceThatStarts` and
 `TestTheVersionColumnIsLeftOutOfTheDTO` (`codegen_test.go:772`, `:814`).
-4 does not hold, and the file that would say so does not exist.
-`adapter.go:22-31` excludes Skip, relations, Generated, Version and Excluded —
-and **not** `PK`, and **not** `Immutable`. So
-`_examples/example/blog/vv_gen.go:76` and `:83` put `ID` and `TenantID` in
-`ArticleInput`, and `:94`/`:101` copy both straight into the model.
-For `immutable` that is deliberate — insert-only means settable on create — and
-`test/versionstore/versionstore_test.go:38` pins it in words ("`immutable` is
-insert-only: settable on create, refused on update"). Nothing else says it. The
-`db:",immutable"` tag and the `-readonly` flag diverge exactly here: the tag
-keeps the column out of the patch body only, the flag sets `Excluded` and keeps
-it out of both (`codegen.go:301-312`, `adapter.go:25`), and neither this file,
-`docs/modules/en/vv-cli.md` nor either guide says so.
+4 now holds for explicitly auto keys. `inputFields` excludes generated and
+version columns, flags marked `Excluded`, and `f.PK && f.Auto`; the mapper leaves
+each omitted field at its zero value and `inputExclusions` gives the same set to
+`MustPathMap`. `immutable` deliberately remains insert-only and therefore
+settable on create, while `-readonly` is server-owned and leaves both wire
+shapes. The generated-ID integration control verifies that the mapper does not
+copy a request key.
 The escape has a trap in it. `-readonly TenantID` takes the column out of both
 bodies, so the generated mapper leaves the model field zero — and the documented
 multi-tenant policy `security.ScopeField` does not stamp it, it *compares* it
 (`crud/decorators/security/policies.go:86-100`). Zero against the context tenant
 is a mismatch, so the consumer who follows both pieces of advice denies every
 create with "row belongs to a different TenantID".
-For the primary key it is not deliberate at all. `field.Auto` is parsed and never
-read — `grep -rn Auto internal/codegen/` returns the declaration
-(`codegen.go:29`), the tag switch (`:272`) and the gorm table (`:452`) — so the
-generator knows the key is database-filled and does not use the fact.
-`POST /articles {"id": 99}` is a key the generated resource accepts.
+One parity gap remains: runtime infers an integer PK/`ID` as auto unless
+`noauto` is present, while `columnField` records only explicit `auto` and does
+not parse `noauto`. A conventional integer `ID` without the option can therefore
+still appear in the generated input.
 **If not ready:** For the tenant, they leave it in the create body and wire
 `security.Gate` with `ScopeField`, which refuses a mismatched tenant in Go
 because an INSERT has no WHERE clause to narrow. That works and nothing writes it
-down. For the key there is no answer at all: `-skip ID` and `-readonly ID`
-produce a package that compiles and panics at start-up (see
-[H-CODEGEN-09](#h-codegen-09--the-whole-resource-for-an-internal-admin-api)).
-Closing it: `inputFields` drops `f.PK && f.Auto`, and the generated
-`port.MustPathMap` carries the key's name in the `except` list it already
-accepts — a non-auto key, the client-chosen UUID, stays.
+down. For the key, explicitly add `auto` until codegen mirrors runtime's
+implicit integer-PK/`noauto` rule. A non-auto client-chosen UUID or slug remains
+in the input by design.
 
 ### H-CODEGEN-05 — Filtering through a relation
 **Who:** whoever builds the internal back office
@@ -272,16 +262,23 @@ of their own.
    can see a flag.
 **Today:** ✅ ready for all five guarantees. `prepareImports` records imports
 per source file, reads the declared name when an unaliased version path does not
-match the qualifier, assigns stable collision-safe aliases after sorting paths,
-and rewrites field types through the declaring file's map. The model qualifier
-comes directly from the parsed package clause in `-dir`. Generated imports are
-explicitly aliased, so `/v2`, renamed imports, and the same local alias used for
-different paths in two files all compile deterministically.
+match the qualifier, assigns readable path-derived aliases after sorting paths,
+and rewrites every selector through the declaring file's map in one pass. The
+model qualifier prefers the parsed package clause in `-dir` and falls back to a
+readable path-derived alias when that identifier is reserved.
+Generated imports are deduplicated by path, so `/v2`, renamed imports,
+composite/generic types, transitive flattened-field types, and the same local
+alias used for different paths in two files all compile deterministically.
+`/alpha/common` and `/beta/common` become `alphaCommon` and `betaCommon`, with
+no numeric collision fallback. Dot imports and source/destination aliases that
+collide with a package declaration are refused before write because Go cannot
+represent them. Final rendered imports are checked against generated and
+authored declarations in both directions.
 `TestIntoUsesTheDeclaredPackageNameForAVersionedImportPath`,
 `TestVersionedColumnImportReadsTheDeclaredPackageName`,
 `TestRenamedSourceImportKeepsItsAliasInGeneratedCode`, and
-`TestImportAliasCollisionsAcrossSourceFilesAreMadeStable` pin the formerly
-missing guarantee alongside the existing ent/gorm controls.
+`TestReadableCollisionAliasesCompile` pin the formerly missing guarantee
+alongside the existing ent/gorm controls.
 
 ### H-CODEGEN-07 — A model with a money column, a UUID key and a status enum
 **Who:** anybody past the tutorial
@@ -295,24 +292,10 @@ above a threshold, status in a set, slug containing a term.
    money column, ordering on a named string type.
 3. When it cannot, the consumer is told rather than left to discover it at the
    call site.
-**Today:** 🟡 partial
-**Evidence:** Guarantee 1 is conditional on how the model spells its imports, and
-the condition is narrow and sharp: it holds unless the import path's **last
-segment is not the package's name**. `codegen.go:186` derives the alias with
-`filepath.Base(path)`; `render.go:114-130` looks a column's prefix up under that
-alias; `render.go:69-78` emits paths and throws the alias away. So a model
-importing `github.com/gofrs/uuid/v5` unaliased is filed under `v5`, the prefix
-`uuid.` never matches, and the import is missing from a file that references it;
-one importing it as `uid` gets the path emitted under the wrong name. The same
-loop appends without a seen-set, so one path reached through two aliases is
-written twice. `gorm.io/gorm` happens to satisfy the condition, which is why the
-existing third-party coverage passes and hides the rest of it:
-`test/gormstore/vv_gen.go:9` imports `gorm.io/gorm` and `:25`, `:48`, `:57`,
-`:81`, `:93`, `:102` declare `specs.Attr[…, gorm.DeletedAt]`, and
-`TestGormModelIsFlattenedFromTheWellKnownTable` (`codegen_test.go:385`) asserts
-the import string explicitly. No test in the tree generates for an import whose
-last segment differs from its package name.
-Guarantee 2 fails quietly. `codegen.go:354-374` chooses the attribute from the
+**Today:** 🟡 partial. Guarantee 1 is closed: declared package names, renamed
+imports, composite/generic selectors, cross-file collisions and deduplication
+are covered by compile tests. Guarantee 2 still fails quietly.
+`codegen.go` chooses the attribute from the
 type's *spelling* against a fixed list of builtin names, so `decimal.Decimal` and
 `type Status string` both get `specs.Attr` — equality, membership, sorting, and
 no `Gte`, `Between`, `Like` or `Contains`. Guarantee 3: nothing is printed.
@@ -328,10 +311,8 @@ declared `specs.Str[Article]` against a `Status` column panics at package
 initialisation. Pattern operators on a named string type need `Str` to gain a
 type parameter — a breaking change to an exported generic that is in the surface
 baseline at `docs/api/surface.md:329`.
-**If not ready:** For the imports, the consumer adds an explicit alias to their
-own model file and hopes `goimports` does not drop it again; the real fix is in
-the emit loop (H-CODEGEN-06). For the lost operators they fall back to the string
-API, `crud.Gte("Price", v)`, which works and gives up exactly the compile-time
+**If not ready:** For the lost operators they fall back to the string API,
+`crud.Gte("Price", v)`, which works and gives up exactly the compile-time
 checking the metamodel exists for.
 
 ### H-CODEGEN-08 — A model that embeds a shared base struct
@@ -346,15 +327,22 @@ and the package will not start.
    columns.
 2. When the generator cannot read an embedded type, it says so at generate time.
 3. If neither, the start-up refusal names a fix that works.
-**Today:** ✅ closed fail-loud. Local value embeds and the audited `gorm.Model`
-table are flattened. Every other unresolved anonymous type is refused during
-generation with the model/type and three honest remedies: make the base local,
-flatten it, or explicitly remove the whole embed with `db:"-"`. Pointer embeds
-are refused in the same pass, matching runtime metadata. Problems are sorted for
-deterministic diagnostics. `TestUnknownExternalEmbeddedStructIsRefusedDuringGeneration`,
-`TestEmbeddedPointerIsRefusedLikeRuntimeMetadata`, and
-`TestUnknownExternalEmbedCanBeExplicitlyExcluded` pin the refusal and its
-escape hatch; the existing local and gorm controls remain.
+**Today:** ✅ closed with automatic classification. `go/types` follows local
+aliases and instantiated generics and reads exported dependency fields and
+tags, so a resolvable shared value base is flattened without registration.
+`time.Time`, driver `Valuer`/`Scanner` and text marshal/unmarshal method sets
+follow runtime's exact receiver rules, including scalar pointers. An explicit
+`db` or `rel` tag belongs to the anonymous field and prevents accidental
+flattening; `rel:""` keeps inference and local aliases expand through their
+canonical target. Unresolved nested shapes, non-scalar embedded pointers,
+private named column types and foreign unexported structural members are
+refused before write. Duplicate effective Go fields/database columns introduced
+by flattening are also refused before render; `db:"-"` is the explicit escape. The generated
+adapter assigns promoted fields rather than using an illegal keyed literal.
+`TestAnonymousTypeClassificationMatchesRuntimeAndGeneratedPackageCompiles`,
+`TestExternalEmbedWithAnInaccessibleColumnTypeFailsAtGeneration`, and
+`TestReadableCollisionAliasesCompile` pin classification, refusal and compiled
+output; the local and gorm controls remain.
 
 ### H-CODEGEN-09 — The whole resource, for an internal admin API
 **Who:** the author of a back-office service with fourteen tables and no appetite
@@ -502,18 +490,12 @@ approve.
 3. A diff can be attributed: this changed because the model changed, not because
    the tool did.
 **Today:** 🟡 partial
-**Evidence:** 2 holds (`render.go:42`). 1 holds for everything anybody has run
-into: `codegen.go:213` sorts the models, `render.go:80` sorts the imports,
-`codegen.go:67-79` sorts the exclusion list, and
-`TestOutputIsByteIdenticalAcrossRuns` (`codegen_test.go:555`) runs eight times
-over both halves and asserts the model order. It has one counterexample the test
-cannot see: `g.imports` is keyed by package *name* and filled while ranging
-`pkg.Files`, which is a map (`codegen.go:183-191`), so two files in the model
-package importing `github.com/foo/uuid` and `github.com/bar/uuid` make
-`g.imports["uuid"]` last-writer-wins in map order. `sort.Strings` at
-`render.go:80` sorts the survivor and cannot recover the other. Narrow, and it
-shares a root cause with the alias hole in H-CODEGEN-07.
-3 does not hold: `render.go:42` writes no version, so an upgrade that changes the
+**Evidence:** 1 and 2 hold. Models, paths, imports and exclusions are sorted;
+imports are owned by path with per-file qualifier maps rather than a
+last-writer-wins package-name key. `TestOutputIsByteIdenticalAcrossRuns` and
+`TestReadableCollisionAliasesCompile` cover repeated output, same-basename
+packages and transitive imports. 3 does not hold: the generated header writes no
+version, so an upgrade that changes the
 template produces a diff on every generated file in the repository with nothing
 in the file saying why.
 **If not ready:** The reviewer reads the library's changelog, or guesses. A
@@ -558,8 +540,9 @@ grammar of its own. It is also a lookup in front of a switch that already
 dispatches on the type spelling (`codegen.go:362-373`), which is why it is one
 flag and not a feature.
 
-Three things are missing from that line on purpose. The auto primary key leaving
-the create body is a **default**, not a flag — `field.Auto` is already parsed.
+Three things are missing from that line on purpose. An explicitly auto primary
+key leaves the create body by **default**, not by another flag. Mirroring
+runtime's implicit integer-PK/`noauto` rule remains implementation work.
 Server-owned-on-create is already `-readonly`; what it needs is a sentence saying
 so, and a second saying that the model field is then yours to stamp. And the CI
 answer stays what it is:
@@ -612,18 +595,18 @@ compile-time checking is quietly gone.
   a directive that is currently green, and it will fail some existing directive
   somewhere — that is the point of it.
 - [[D-050]] — every generated artefact stays total, and one naming rule serves
-  both bodies. Dropping the auto key from the create body is a change *inside*
+  both bodies. Dropping an explicitly auto key from the create body is a change *inside*
   that rule, not around it: `MustPathMap` already takes an `except` list and the
   generator already emits one, so both directions stay checked. And the decision's
   own line — two derivations that share a source are one derivation — is what
   bounds `-check`.
 - [[D-033]] — a generated file in this library may not import a satellite module,
   so generated Gin and Fiber wiring stays out however often it is asked for.
-- [[D-021]] — the magic stays concentrated. Local embeds and the audited
-  `gorm.Model` declaration work without configuration. An unknown external
-  shape is refused while the generator still reads source rather than trying to
-  type-check a package whose generated half may be stale; `db:"-"` is the
-  explicit low-level opt-out.
+- [[D-021]] — the magic stays concentrated. Local and resolvable external value
+  embeds, aliases, instantiated generics and the audited `gorm.Model` semantics
+  work without configuration. Best-effort type checking ignores function bodies
+  and never executes the possibly stale target package; anything still unsafe
+  is refused, with `db:"-"` as the explicit low-level opt-out.
 - **The exported-surface baseline**, `docs/api/surface.md`. `-attr` needs no
   change to it: `Ord`, `Cmp` and `Attr` already exist. Pattern operators on a
   named string type do — `Str[M any]` (`:329`) would have to become
@@ -643,22 +626,22 @@ compile-time checking is quietly gone.
 | A CI answer that writes nothing | `go generate ./... && git diff --exit-code`. Works, needs a writable checkout and a toolchain, documented in neither guide | small |
 | Per-model exceptions | Bare field names matched across the package, or a second directive with `-types` — which forces a `-types` list onto the first one too | small in flags, large in what the second directive costs |
 | A column type the generator cannot classify | Nothing: the plain attribute, no message, `crud.Gte("Price", v)` as the fallback. Flag surface goes 14 → 15 to fix it | small in lines, large in what the metamodel was for |
-| A model whose column type comes from a versioned or renamed import | The generated file may not compile, and today's fix is an alias in a file the consumer may not own | large |
+| A model whose column type comes from a versioned or renamed import | Declared names and aliases are preserved, every selector is imported, and adversarial generated packages compile | none |
 | A column the server owns, on a create | In the create body and mapped through. `-readonly` takes it out of both bodies and leaves the model field zero, which denies every create behind the documented tenant policy | large |
-| A model embedding a base struct from another package | Generation refuses immediately with the model/type and working local/flatten/`db:"-"` remedies; `gorm.Model` remains automatic | explicit migration when it is not the audited built-in |
+| A model embedding a base struct from another package | Resolvable value bases flatten automatically; unsafe/unresolved shapes refuse before write with `db:"-"` as the explicit escape | none for ordinary exported bases |
 | Overriding one method of a generated resource | Works, in a second file in the same package, and nothing says so | small |
 | Your own wire names on a public API | Do not generate the adapter; hand-write the body, the mapper and the map, keeping the start-up check | large, and argued for |
 | A diff a reviewer can attribute | Deterministic and stable, with no version marker | small |
 
 **Overall:** For the case it was built for — your own package, your own builtin
 types, one directive — this is as short as it can be, and the start-up refusal is
-the part most libraries leave out. Three of the twelve rows are large, and none of
-them is a flag away. Two are about what the generator can only recognise by
-*spelling*: a package name it never verified, a type name it matches against a
-fixed list. The third is `-adapter`, where the short path is not wordy but wrong —
-the create body carries the key and the columns the server owns, the one flag that
-removes them removes them too far, and a shape the runtime handles fine cannot be
-generated for at all. Customising never means abandoning the short path; the
+the part most libraries leave out. Package identity, anonymous scalar semantics,
+shared-base flattening and import ownership are now resolved rather than guessed.
+The remaining type-shape gap is metamodel operator selection, which still
+matches a fixed spelling. The other large gap is `-adapter`: a conventionally
+implicit integer auto key still appears unless tagged explicitly, while
+server-owned create columns still need an application stamping decision.
+Customising never means abandoning the short path; the
 problem before the tag is not ceremony, it is that the default output of
 `-adapter` is not what H-CODEGEN-04's consumer thinks they asked for.
 
@@ -666,17 +649,17 @@ problem before the tag is not ceremony, it is that the default output of
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | With `-adapter`, the create body carries the auto primary key and maps it into the model; `POST {"id": 99}` is accepted, and both `-skip ID` and `-readonly ID` produce a package that compiles and panics at start-up | blocker | `field.Auto` is parsed and never read, so the generator knows the key is database-filled and hands it to the client anyway, and the consumer has no way out that is not a crash |
-| 2 | **Closed:** an unresolved external embed and an embedded pointer now refuse generation with the model/type and working remedies; local value embeds and `gorm.Model` remain flattened | — | No incomplete DTO/metamodel is written |
+| 1 | Runtime infers integer PK/`ID` as auto unless `noauto` is present, but codegen only recognises explicit `auto` and does not parse `noauto` | blocker | Explicit auto keys now leave Input/Paths and the mapper keeps zero; the conventional default can still be advertised to a client, so runtime/codegen parity is incomplete |
+| 2 | **Closed:** resolvable external value embeds, aliases, generics and scalar anonymous types mirror runtime; unresolved/private-name/pointer cases refuse before write | — | Generated DTO/metamodel/adapter packages compile and no incomplete artefact is written |
 | 3 | Nothing says the create body carries `immutable` columns; `-readonly` is the only way out and leaves the model field zero, which denies every create behind the documented `security.ScopeField` policy | serious | A consumer who reads the multi-tenant guidance, tags the column and generates the adapter ships either a client-settable tenant or an endpoint that refuses every create |
-| 4 | **Closed:** model aliases come from the parsed package clause; column imports preserve/resolve their qualifier and cross-file collisions receive stable suffixes | — | Versioned, renamed and colliding imports have generation tests |
+| 4 | **Closed:** model aliases prefer the parsed package clause; all selectors preserve/resolve imports, collisions use readable path-derived aliases, namespace conflicts fail before write, and paths deduplicate | — | Versioned, renamed, composite, generic, transitive, destination-namespace and colliding imports have compile/refusal tests |
 | 5 | The metamodel attribute is chosen from the type's spelling, so a named type or a foreign one silently loses its range and text operators | serious | A price range or a status ordering on a real product's model has no typed spelling, and the consumer finds out at the call site with nothing explaining why |
-| 6 | Nothing in the tree runs `codegen.Run` or `codegen.Options` — every test builds a `*generator` literal and calls `g.run` | serious | The whole flags-to-generator translation is unproven: the `-binding` refusal, the `-types` split, the `modelAlias` derivation, the package defaults and the `-into`/`-out` join, which is where two of the findings above live |
+| 6 | **Partially closed:** public `Run` covers recursive generation, defaults and output containment/ownership/atomic replacement; not every incompatible flag combination has a command-level test | sharp edge | The destructive seam is pinned, while some CLI translation branches still rely on focused internal tests |
 | 7 | Four silences: the depth cut, a relation whose target is in another package, the cycle cut, and any `-types`, `-skip` or `-readonly` name that matched nothing | serious | Every one ends as a compile error about a field that was never generated, or as a flag that did nothing, and the only output on success is how many models were written |
 | 8 | `-adapter` is all-or-nothing for a directory: one keyless struct refuses the run for every other model in the package | sharp edge | A join table or a lookup row is ordinary, and the workaround converts the package from directive-driven to a hand-maintained `-types` list on both directives |
 | 9 | `-skip` and `-readonly` match bare field names across every model in the package | sharp edge | The flags exist for foreign packages, and foreign packages are exactly where twenty entities share a field name |
-| 10 | No mode that asks whether the checked-in artefacts are current without writing them, no CI recipe in either guide, and no `tool`-directive or vendoring story | sharp edge | The module's remit is keeping artefacts from drifting; a vendored or hermetic build cannot run the generator at all, since nothing imports `cmd/vv` |
-| 11 | No version marker in the generated header, and `g.imports` is last-writer-wins across files in map order | sharp edge | An upgrade that changes the template diffs every generated file with nothing saying why, and two imports sharing a last path segment are a counterexample to "same input, same bytes" |
+| 10 | Repository tests regenerate checked-in blog/ent/gorm/version outputs in temporary trees, but there is no public `-check` mode, CI recipe in either guide, or `tool`/vendoring story | sharp edge | Framework CI is protected; consumers still lack a supported read-only command and hermetic setup guidance |
+| 11 | No version marker in the generated header; the former last-writer-wins import map is closed by per-file mappings and sorted path ownership | sharp edge | An upgrade that changes the template still diffs every generated file with nothing saying why |
 
 [[UC-014]] is this module's only use case and still reads **covered**, with the
 attribute-spelling problem recorded as "one smaller thing, still open". Blockers
@@ -688,11 +671,6 @@ documents should not disagree quietly.
 
 ## Contested
 
-- **"No test in the tree has ever generated for a model with a third-party field
-  type."** Withdrawn — it was false. `test/gormstore/vv_gen.go:9` has imported
-  `gorm.io/gorm` all along. The narrower claim is what stands, and it is sharper:
-  no test generates for an import whose last path segment differs from its
-  package name, which is precisely why `gorm.io/gorm` passes and hides the rest.
 - **Classification keyed on the type, not on `Model.Field`.** One reviewer asked
   for `-attr Team.Price=cmp` to match the qualified `-readonly`. Kept the
   type-keyed form: a type is what `attrType` already switches on, one entry then
@@ -716,18 +694,22 @@ documents should not disagree quietly.
 **Setup:** A developer copies a directive into a package and writes `-out helpers.go`, unaware that `helpers.go` already holds handwritten code.
 **What the consumer does:** They expect the generator to stop before it destroys a file it did not create.
 **What must happen:** An existing output must begin with this generator's header before it may be replaced; any other existing file must be refused with the target path and the flag that selected it.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `internal/codegen/codegen.go:116-148` renders and calls `os.WriteFile` without inspecting the target. `load` excludes any input whose basename matches the output at `:151-155`, so `helpers.go` is skipped as a model source immediately before it is overwritten. The generator tests create only disposable output files (`internal/codegen/codegen_test.go:15-52`); no test protects an authored target.
-**Blast radius:** data loss
+**Today:** ✅ closed fail-loud. `validateGeneratedTarget` runs before `load`
+excludes the target and again immediately before rename. Only a regular file
+whose first line is the generated header may be replaced;
+`TestAuthoredOutputIsNeverOverwritten` pins the no-write outcome.
+**Blast radius:** none
 
 ### E-CODEGEN-02 — The output path leaves the package
 **Shape:** adversarial input | misuse
 **Setup:** A typo or copied shell variable supplies `-out ../main.go`, `-out sub/../../main.go`, or a symlink whose target is outside the package the directive is meant to generate for.
 **What the consumer does:** They expect `-out` to name one generated file inside `-dir` or `-into`, not to be an unconstrained write capability.
 **What must happen:** The command must reject a path that escapes the resolved output directory and refuse to follow an existing symlink; intentional cross-package output belongs to the explicit `-into` seam.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `internal/codegen/codegen.go:559-563` joins `Out` to the selected directory and passes the cleaned result straight to `g.run`; a later absolute-looking component does not itself discard that directory, so that is not this failure. Parent traversal still escapes it, and `g.run` writes the result directly (`:138-143`), following an existing symlink. There is no lexical containment or symlink check, and no output-path test outside the temporary package (`internal/codegen/codegen_test.go:15-52`).
-**Blast radius:** data loss
+**Today:** ✅ closed fail-loud. `Run` accepts only a basename for `-out`,
+`containedOutputPath` verifies containment, and target validation refuses
+symlinks without following them. `TestOutputNameCannotEscapeItsControlledDirectory`
+and `TestSymlinkOutputIsRefusedWithoutFollowingIt` pin both boundaries.
+**Blast radius:** none
 
 ### E-CODEGEN-03 — Two invocations target the same generated file
 **Shape:** concurrency | misuse
@@ -743,9 +725,11 @@ documents should not disagree quietly.
 **Setup:** A generator process is killed, the disk fills, or a filesystem error occurs after the old generated file has been opened for replacement.
 **What the consumer does:** They expect the last complete generated file to remain, or no new file at all; they do not expect a truncated Go file to be committed or to break every build.
 **What must happen:** Rendered bytes must be written to a temporary file in the destination directory, synced, and atomically renamed over a confirmed generated target.
-**Today:** ❓ unverified
-**Evidence:** the only persistence operation is `os.WriteFile(outPath, src, 0o644)` at `internal/codegen/codegen.go:138-143`; there is no temporary-file or rename path. No test exercises a failing or interrupted write (`internal/codegen/codegen_test.go:15-52`). The exact filesystem failure outcome is therefore not established here.
-**Blast radius:** data loss
+**Today:** ✅ closed for atomic replacement. `writeGenerated` creates a sibling
+temporary file, sets its mode, writes/syncs/closes it, revalidates ownership,
+renames atomically and syncs the directory; failure removes the candidate.
+`TestGeneratedOutputIsAtomicallyReplaceable` pins replacement through `Run`.
+**Blast radius:** none
 
 ### E-CODEGEN-05 — The model exists only under a build tag
 **Shape:** seam | degenerate declaration
@@ -779,18 +763,24 @@ documents should not disagree quietly.
 **Setup:** A package already declares `ArticleUpdate`, `ArticleAttrs`, or `Article_` for a hand-written compatibility layer, then adds the ordinary generator directive.
 **What the consumer does:** They expect generation to fail with the colliding declaration and a remediation, before leaving the package with duplicate symbols.
 **What must happen:** The generator must collect existing package-level names excluding its own previous output and refuse collisions for every declaration it will emit.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `load` records structs and imports but no package-level declaration names (`internal/codegen/codegen.go:159-212`); `renderDTO` and `renderMetamodel` emit fixed `ModelUpdate`, `ModelAttrs`, and `Model_` spellings at `internal/codegen/render.go:139-163` and `:170-181`. No collision test exists (`internal/codegen/codegen_test.go:15-52`).
-**Blast radius:** confusing error
+**Today:** ✅ closed fail-loud.
+**Evidence:** `reserveGeneratedAndPackageNames` records authored names and every
+generated family; `validateDeclarations` compares the actual selected
+artefacts before render/write. `TestAuthoredDeclarationCollidingWithGeneratedDeclarationIsRefused`
+pins the refusal and diagnostic.
+**Blast radius:** none
 
 ### E-CODEGEN-09 — Two relation chains concatenate to the same generated type name
 **Shape:** degenerate declaration | scale
 **Setup:** A model has relation chains such as `A → BC` and `AB → C`; both are valid typed paths but their concatenated suffix is `ABC`.
 **What the consumer does:** They expect each relation path to get its own typed group, however similarly the field names concatenate.
 **What must happen:** Generated relation-group names must be injective (for example by separators or path encoding), and a collision must be rejected rather than causing one branch to reuse or suppress another's group.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `renderAttrs` creates the type name by concatenating `root.Name + suffix + "Attrs"` at `internal/codegen/render.go:186-191` and appends child field names without a separator at `:238-244`; the `emitted` map then returns early on the duplicate at `:187-190`. Relation tests cover depth and cycles (`internal/codegen/codegen_test.go:220-350`), not two distinct chains with the same concatenated suffix.
-**Blast radius:** silent wrong answer
+**Today:** ✅ closed fail-loud.
+**Evidence:** declaration validation derives the same relation names and tracks
+their owning model/path before rendering. A second owner is an error naming the
+declaration and both paths; `TestConcatenatedRelationDeclarationCollisionIsRefused`
+pins the case.
+**Blast radius:** none
 
 ### E-CODEGEN-10 — Relation depth is zero, negative, or accidentally enormous
 **Shape:** boundary | scale
@@ -807,7 +797,9 @@ documents should not disagree quietly.
 **What the consumer does:** They expect a declaration-time refusal rather than generated adapter code that refers to a type it omitted.
 **What must happen:** The command must reject this incompatible flag combination with the corrective flag choice and write nothing.
 **Today:** 🟡 partial
-**Evidence:** `internal/codegen/codegen.go:129-137` refuses the combination before `render` and `os.WriteFile`; command flags set the two values at `cmd/vv/main.go:75-82`. The test suite checks independently generated halves (`internal/codegen/codegen_test.go:530-550`) but has no `-adapter -no-dto` command or `Run` test.
+**Evidence:** `generator.run` refuses the combination before render or atomic
+write; command flags set the two values in `cmd/vv`. The test suite checks
+independently generated halves but has no `-adapter -no-dto` command-level test.
 **Blast radius:** none
 
 ### E-CODEGEN-12 — The requested output has no model to generate
@@ -816,7 +808,10 @@ documents should not disagree quietly.
 **What the consumer does:** They expect an error and no empty generated file that makes a directory look configured when it is not.
 **What must happen:** The command must refuse before writing and identify the directory or explicit requested type set that produced no models.
 **Today:** 🟡 partial
-**Evidence:** `internal/codegen/codegen.go:129-131` rejects an empty `g.order` before render/write. `TestAPackageWithNothingToGenerateIsAnError` pins an untagged empty package (`internal/codegen/codegen_test.go:514-528`), but does not cover the `-types`-after-rename form or require the error to name requested types.
+**Evidence:** `generator.run` rejects an empty model order before render/write.
+`TestAPackageWithoutModelFilesIsAnError` pins an untagged empty package, but
+does not cover the `-types`-after-rename form or require the error to name
+requested types.
 **Blast radius:** none
 
 ### E-CODEGEN-13 — A checked-in artefact is stale but the ordinary build consumes it
@@ -825,36 +820,37 @@ documents should not disagree quietly.
 **What the consumer does:** They need CI to answer whether the committed artefact equals a fresh generation, without modifying the checkout that CI is trying to validate.
 **What must happen:** `-check` regenerates the candidate without writing the target and fails on a content difference; the documented workflow runs it for every directive. It complements [[D-050]]'s run-time totality check, which cannot prove a generator-version or metamodel-shape change is current.
 **Today:** ❌ wrong or unhandled
-**Evidence:** `cmd/vv/main.go:63-85` exposes no `-check` flag, and every `codegen.Run` invocation reaches `g.run`, whose persistence path is `os.WriteFile` (`internal/codegen/codegen.go:518-563`, `:138-143`). `TestOutputIsByteIdenticalAcrossRuns` compares fresh temporary outputs (`internal/codegen/codegen_test.go:555-596`); no repository artefact-versus-regeneration check or no-write command test exists.
+**Evidence:** `cmd/vv` exposes no `-check` flag and `Run` is a write operation.
+The framework itself is protected: `TestGeneratedFileIsUpToDate` and
+`TestTheGeneratedStoresAreUpToDate` regenerate blog/ent/gorm/version outputs in
+temporary trees and compare bytes, without a database. What is missing is a
+public no-write command and documented consumer workflow.
 **Blast radius:** silent wrong answer
 
 ## Edge verdict
 
-The release-stopping edge is destructive generation: an authored output, a
-parent-traversing output path, or a symlink target is overwritten without a
-generated-header, containment, or symlink check, and the single direct write has
-no atomic replacement guarantee. A later absolute-looking `-out` component is
-not itself an escape through `filepath.Join`; the real path risks are traversal
-and symlinks. The
-generator also reads syntax rather than the active Go build, so build tags can
+Destructive generation is closed: output is contained, authored/symlink targets
+are refused, ownership is rechecked and replacement is atomic. The generator
+still reads syntax rather than the active Go build, so build tags can
 turn a successful generation into an artefact for a package that the target build
-does not contain. Less visibly, a mixed `-types` list, per-model exclusion, and
-relation-name collision all omit or mis-shape generated artefacts while still
-leaving a plausible-looking file. A stale checked-in artefact has no no-write
-detection workflow: [[D-050]] catches one class of model/DTO divergence at
-start-up, not whether the committed generator output is current. The incompatible
+does not contain. Less visibly, a mixed `-types` list and per-model exclusion
+can omit or mis-shape generated artefacts while still leaving a plausible-looking
+file; relation and import-namespace declaration collisions now refuse before
+render/write. Framework CI has temporary regeneration checks for every committed
+corpus, but consumers have no public no-write command: [[D-050]] catches one
+class of model/DTO divergence at start-up, not generator-version drift. The incompatible
 adapter/DTO combination and the truly empty package do refuse before writing;
 their command-level coverage is still missing.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `-out` overwrites any authored file and can escape through `..` or an existing symlink; no generated-header, containment, or symlink guard exists (`internal/codegen/codegen.go:116-155`, `:559-563`) | blocker | A one-character directive typo can replace model or application source outside the intended generated target. The output is version-controlled source, so recovery is not guaranteed before the next build or commit. |
+| 1 | **Closed:** output accepts one contained basename, authored/symlink targets refuse, and generated targets replace atomically | — | Four public-`Run` safety tests pin containment, ownership, symlink and replacement behavior |
 | 2 | Build-tagged files are parsed as though every target were active, and the generated package is selected while ranging parsed packages (`internal/codegen/codegen.go:151-155`, `:181-212`) | serious | A successful generation can refer to a platform- or feature-specific model unavailable in the build that compiles the artefact, with no diagnosis at the directive. |
 | 3 | A mixed valid/invalid `-types` list and a qualified or ambiguous `-skip`/`-readonly` name silently omit or alter a model (`internal/codegen/codegen.go:201-208`, `:301-311`, `:549-553`) | serious | The generated file looks complete while the model a consumer meant to protect has no DTO, metamodel, or coverage assertion, or a different model's wire shape changed instead. |
-| 4 | Distinct relation paths can collapse onto one concatenated generated attribute-group name (`internal/codegen/render.go:186-191`, `:238-244`) | serious | A typed navigation path silently reuses or loses another path, undermining the guarantee that generated metamodels reflect the model graph. |
-| 5 | Replacement uses one non-atomic `os.WriteFile` with no recoverable temporary output (`internal/codegen/codegen.go:138-143`) | sharp edge | A kill or write failure can leave the only generated file truncated; the exact failure path is untested, so this is a release risk rather than a claimed observed outcome. |
-| 6 | No `-check` mode compares a checked-in artefact with fresh output without writing it (`cmd/vv/main.go:63-85`; `internal/codegen/codegen.go:138-143`) | serious | A normal build can consume yesterday’s generated API and CI has no supported, read-only way to make the drift visible before it ships. |
+| 4 | **Closed:** distinct relation paths that derive one concatenated attribute-group name are refused before rendering, naming both owners | — | `TestConcatenatedRelationDeclarationCollisionIsRefused` prevents silent reuse |
+| 5 | **Closed:** temporary sibling write, fsync, ownership recheck, atomic rename and directory fsync replace generated output | — | A failed candidate is removed; an authored target appearing before commit still wins |
+| 6 | No public `-check` mode compares a consumer's checked-in artefact with fresh output without writing it | serious | Framework corpora have no-write temporary regeneration tests, but consumers lack a supported read-only CLI workflow |
 
 ## Edge DX constraints
 

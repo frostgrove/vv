@@ -8,7 +8,7 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 	"github.com/frostgrove/vv/port"
 	"github.com/frostgrove/vv/utils"
-	"github.com/google/uuid"
+	uuid "github.com/google/uuid"
 	"time"
 )
 
