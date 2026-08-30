@@ -43,6 +43,7 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
 | `*crud.SchemaError` | `crud/errors.go:52` | declaration-time and render-time refusals |
 | `port.ErrBadRequest` | `port/sentinel.go` | `BadRequest` / `BadRequestf` / `BadRequestAs` — malformed body, unparseable id, more ids than `port.Rules.BulkCap()` allows. One sentinel for every binding and every transport, so a 400 raised by one is recognised by the shared classification ([[D-045]]). `porthttp.ErrBadRequest` is the same variable, not a copy |
 | `crud.ErrNoTxSupport` | `crud/errors.go:13` | `crud.InTx` on a handle that cannot begin — **not classified**, so 500 |
+| `crud.ErrExecutorScope` / `*crud.ExecutorScopeError` | `crud/errors.go` | an unsafe or invalid source/executor association ([[D-082]]) — **not classified**, so 500 |
 | `crud.ErrReadOnly` | `crud/errors.go:22` | nothing in the tree; it exists for a decorator that wants to say "read-only" rather than "forbidden" — **not classified**, so 500 |
 
 ## The path
@@ -179,9 +180,9 @@ one line of code and it is the whole of the layering — a kind is not HTTP, and
   `crud.ErrForbidden`/`ErrNotFound`/`ErrConflict` and gets the right status
   without importing anything from `http/`. `security` wraps `crud.ErrForbidden`
   for exactly this reason.
-- **`ErrReadOnly` and `ErrNoTxSupport` are unclassified on purpose.** Neither is
-  reachable from a well-formed request through the mounted routes; both would be
-  a programming error, and 500 is the honest answer.
+- **`ErrReadOnly`, `ErrNoTxSupport` and `ErrExecutorScope` are unclassified on
+  purpose.** None is reachable from correctly wired mounted routes; each is a
+  programming or integration error, and 500 is the honest answer.
 
 ## Traps
 

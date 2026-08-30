@@ -62,6 +62,55 @@ func duplicateKey() error {
 	}
 }
 
+func TestSourceBoundExecutorInheritsItsClassifier(t *testing.T) {
+	custom := sqlfault.New("postgres")
+	source := Open(fake{}, WithFaults(custom))
+	ctx := source.BindExecutor(context.Background(), fake{})
+
+	bound, ok := crud.ExecutorFor(ctx, source)
+	if !ok {
+		t.Fatal("the adapter helper did not bind its source")
+	}
+	executor, ok := bound.(Executor)
+	if !ok {
+		t.Fatalf("bound executor is %T, want crudpgx.Executor", bound)
+	}
+	if executor.faults != custom {
+		t.Fatalf("joined executor inherited %#v, want the receiver's classifier %#v", executor.faults, custom)
+	}
+}
+
+func TestEveryBindingPathRefusesATypedNilInnerPgxHandle(t *testing.T) {
+	var q *fake
+	source := Open(fake{})
+
+	if _, err := crud.NewSession(source, From(q)); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("NewSession returned %v, want ErrExecutorScope", err)
+	}
+
+	contexts := map[string]context.Context{
+		"adapter helper":       source.BindExecutor(context.Background(), q),
+		"deprecated inference": crud.WithExecutor(context.Background(), From(q)),
+		"low-level scoped":     crud.WithExecutorFor(context.Background(), source, From(q)),
+		"explicit unsafe":      crud.WithUnsafeExecutor(context.Background(), From(q)),
+	}
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			executor, ok := crud.ExecutorFor(ctx, source)
+			if !ok {
+				t.Fatal("typed-nil declaration was silently ignored")
+			}
+			if _, err := executor.Exec(ctx, "must not dereference the typed-nil handle"); !errors.Is(err, crud.ErrExecutorScope) {
+				t.Fatalf("Exec returned %v, want ErrExecutorScope", err)
+			}
+			var scoped *crud.ExecutorScopeError
+			if _, err := executor.Exec(ctx, "still no driver call"); !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeMissingExecutor {
+				t.Fatalf("scope error = %#v, want missing_executor", scoped)
+			}
+		})
+	}
+}
+
 func TestADuplicateKeyIsAConflictWhicheverWayPgxReportsIt(t *testing.T) {
 	ctx := context.Background()
 

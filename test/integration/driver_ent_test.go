@@ -45,9 +45,9 @@ func (this entSource) Begin(ctx context.Context) (crud.Tx, error) {
 
 // entTx deliberately has no Begin: ent owns the transaction, and the *sql.Tx
 // that a SAVEPOINT would have to be issued on is behind it. So an ent-backed
-// source is not a crud.Beginner at the second level, a nested Begin answers
-// crud.ErrNoTxSupport, and docs/ent.md §8 says so next to the twenty lines it
-// tells a reader to write.
+// transaction is not a crud.Beginner at the second level. It can be joined via
+// the canonical source, but cannot itself be used as one; D-082 refuses that
+// spelling before a callback can run.
 type entTx struct {
 	crudsql.Executor
 	tx *ent.Tx
@@ -87,7 +87,8 @@ func TestEntSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
@@ -95,7 +96,7 @@ func TestEntSharedTransaction(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	// ent writes an entity.
 	byEnt, err := tx.User.Create().
@@ -157,14 +158,15 @@ func TestEntRollback(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u := User{TenantID: 1, Email: "gone@x.io", Name: "Gone"}
-	if _, err := repository.Save(crud.WithExecutor(ctx, crudsql.From(tx)), &u); err != nil {
+	if _, err := repository.Save(source.BindExecutor(ctx, tx), &u); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {
@@ -194,10 +196,16 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 		if _, ok := ex.(crud.Beginner); ok {
 			t.Error("an ent transaction now offers Begin; this test should be asserting savepoint semantics instead of their absence")
 		}
-		// Which is what crud.InTx reports if somebody asks for a transaction of
-		// its own rather than joining.
-		if err := crud.InTx(context.Background(), ex, func(context.Context) error { return nil }); !errors.Is(err, crud.ErrNoTxSupport) {
-			t.Errorf("err = %v, want ErrNoTxSupport", err)
+		// Asking the transaction itself to act as a canonical source is now a
+		// typed wiring refusal. It cannot recover the pool repositories name.
+		called := false
+		err := crud.InTx(context.Background(), ex, func(context.Context) error {
+			called = true
+			return nil
+		})
+		var scoped *crud.ExecutorScopeError
+		if !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeTransactionSource || called {
+			t.Errorf("err = %v called=%v, want transaction_source before callback", err, called)
 		}
 		// Joining, on the other hand, works: this is the second write in the
 		// same physical transaction.

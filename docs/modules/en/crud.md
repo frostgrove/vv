@@ -33,7 +33,7 @@ implement an adapter. Three-state values and small generic helpers live in
 | **Pagination** | `PaginatedResponse[T]`, offset paging and cursor paging over the sort tuple |
 | **Relations** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — inferred, overridable |
 | **The executor seam** | `Exec` and `Query`. That is the whole abstraction boundary |
-| **Transactions** | `InTx`, `WithExecutor`, `WithExecutorFor` — join anyone's transaction |
+| **Transactions** | `InTx`, `BindExecutor`, `Session` — join a foreign transaction without guessing its database |
 | **Dialects** | `Postgres`, `MySQL` (MariaDB too), `SQLite` |
 | **Sentinels** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
 
@@ -282,7 +282,7 @@ the value comes back under, so that one stays a string.
 ## The executor seam
 
 Two methods. That is the entire abstraction boundary, and it is why any foreign
-transaction can be pushed into a context.
+transaction can be bound to a source.
 
 ```go
 type Executor interface {
@@ -298,18 +298,19 @@ type Source interface {
 
 Scanning stays with the mapper, dialect stays with the repository.
 
-**Joining someone else's transaction** is one function:
+**Joining someone else's transaction** is one source-bound declaration:
 
 ```go
-ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+ctx = crud.BindExecutor(ctx, source, crudsql.From(tx))
 ```
 
-Every repository call made with that context runs on that executor. The capture
-is unconditional and has to be — the transaction ent or gorm hands over has no
-relationship to the source a repository holds, so there is nothing to check it
-against ([[D-009]]).
+Repositories over `source` run on the transaction; repositories on another
+database keep their own datasource. `source` supplies the pool identity that a
+foreign transaction cannot recover ([[D-082]]). `crud.NewSession` checks the
+association eagerly and returns a reusable `crud.Session`; `MustSession` is the
+declarative start-up form.
 
-**With more than one database, say which one you mean:**
+The low-level equivalent accepts a raw identity:
 
 ```go
 ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
@@ -318,11 +319,15 @@ users.Save(ctx, &u)    // bound to mainDB      — runs in tx
 events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
 ```
 
-With the plain form that second call would have gone to `mainDB`, inside the
-transaction, and reported success ([[UC-012]]).
+`WithExecutor(ctx, e)` is deprecated and strict: when `e` names a transaction
+instead of the pool, repository calls fail with inspectable
+`ErrExecutorScope` before touching a datasource. The legacy unconditional
+capture exists only as `WithUnsafeExecutor`; its name is the cross-database
+opt-out.
 
 `crud.InTx(ctx, src, fn)` opens one transaction for several repositories, and
-joins one already in the context rather than nesting inside it.
+joins one already in the context rather than nesting inside it. A source that
+cannot expose a stable `Identified` identity is refused before `Begin`.
 
 **Optional interfaces** an adapter may implement, each looked up rather than
 required so a third-party adapter keeps compiling without them: `Beginner`
@@ -352,7 +357,7 @@ cost something, and only two of the three say so:
 | Lost | What happens |
 |---|---|
 | `Beginner` | every `Tx` is `ErrNoTxSupport` — loud |
-| `Identified` | the catalog keyed on the handle stops matching, and refuses at start-up ([[D-041]]) — loud |
+| `Identified` | `Session`/`InTx` return `ErrExecutorScope`, and the catalog refuses at start-up ([[D-041]], [[D-082]]) — loud |
 | `ReadSourcer` | **every read goes to the primary, silently.** The replica sits idle and nothing connects that to the day the wrapper was added |
 
 `UnwrapSource` is all three at once: `crud.BeginnerOf`, `crud.ReadSourceOf` and
@@ -381,7 +386,7 @@ Compare with `errors.Is`, never by string ([[D-015]]).
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
-crud.ErrNoTxSupport
+crud.ErrNoTxSupport    crud.ErrExecutorScope
 ```
 
 Every one of them survives being wrapped in an `errs.Fault`, so a caller who

@@ -38,7 +38,7 @@ SQL здесь никто не выполняет — этим занимает�
 | **Пагинация** | `PaginatedResponse[T]`, постраничная пагинация по offset и по курсору поверх кортежа сортировки |
 | **Связи** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — выводятся автоматически, переопределяемы |
 | **Шов исполнителя** | `Exec` и `Query`. Это вся граница абстракции |
-| **Транзакции** | `InTx`, `WithExecutor`, `WithExecutorFor` — подключение к чужой транзакции |
+| **Транзакции** | `InTx`, `BindExecutor`, `Session` — подключение к чужой транзакции без угадывания БД |
 | **Диалекты** | `Postgres`, `MySQL` (и MariaDB), `SQLite` |
 | **Сигнальные ошибки** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
 
@@ -294,7 +294,7 @@ rows, err := orders.Aggregate(ctx,
 ## Шов исполнителя
 
 Два метода. Это вся граница абстракции, и именно поэтому любую чужую
-транзакцию можно протолкнуть через контекст.
+транзакцию можно связать с источником.
 
 ```go
 type Executor interface {
@@ -310,18 +310,19 @@ type Source interface {
 
 Сканирование остаётся за маппером, диалект — за репозиторием.
 
-**Подключение к чужой транзакции** — это одна функция:
+**Подключение к чужой транзакции** — одна source-bound декларация:
 
 ```go
-ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+ctx = crud.BindExecutor(ctx, source, crudsql.From(tx))
 ```
 
-Каждый вызов репозитория с этим контекстом выполняется на этом исполнителе.
-Захват безусловен, и иначе быть не может — транзакция, которую отдают ent
-или gorm, никак не связана с источником, который держит репозиторий, так что
-проверять её не с чем ([[D-009]]).
+Репозитории над `source` выполняются в транзакции, а репозитории другой БД
+остаются на своём datasource. `source` даёт identity пула, который невозможно
+восстановить из чужой транзакции ([[D-082]]). `crud.NewSession` проверяет связь
+сразу и возвращает переиспользуемый `crud.Session`; `MustSession` — вариант для
+декларативной проводки при старте.
 
-**С более чем одной базой данных укажите, какую именно вы имеете в виду:**
+Низкоуровневый эквивалент принимает raw identity:
 
 ```go
 ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
@@ -330,12 +331,15 @@ users.Save(ctx, &u)    // привязан к mainDB      — выполняет
 events.Save(ctx, &e)   // привязан к analyticsDB — выполняется на analyticsDB
 ```
 
-С обычной формой второй вызов ушёл бы в `mainDB`, внутри транзакции, и
-отчитался бы об успехе ([[UC-012]]).
+`WithExecutor(ctx, e)` deprecated и работает строго: если `e` называет хендл
+транзакции, а не pool, вызов репозитория возвращает inspectable
+`ErrExecutorScope` до обращения к datasource. Старый безусловный захват остался
+только как `WithUnsafeExecutor`; это явный cross-database opt-out.
 
 `crud.InTx(ctx, src, fn)` открывает одну транзакцию для нескольких
 репозиториев и подключается к уже имеющейся в контексте, а не вкладывается
-внутрь неё.
+внутрь неё. Source без стабильного identity через `Identified` отклоняется до
+`Begin`.
 
 **Опциональные интерфейсы**, которые может реализовать адаптер: они ищутся, а
 не требуются, чтобы сторонний адаптер компилировался и без них: `Beginner`
@@ -365,7 +369,7 @@ func (t tracing) UnwrapSource() crud.Source { return t.inner }
 | Что потеряно | Что происходит |
 |---|---|
 | `Beginner` | любой `Tx` — это `ErrNoTxSupport`; громко |
-| `Identified` | каталог, ключуемый по хендлу, перестаёт совпадать и отказывает на старте ([[D-041]]); громко |
+| `Identified` | `Session`/`InTx` возвращают `ErrExecutorScope`, а каталог отказывает на старте ([[D-041]], [[D-082]]); громко |
 | `ReadSourcer` | **все чтения молча уходят на primary.** Реплика простаивает, и ничто не связывает это с днём, когда добавили обёртку |
 
 `UnwrapSource` закрывает все три сразу: `crud.BeginnerOf`, `crud.ReadSourceOf` и
@@ -394,7 +398,7 @@ db := crud.ReadWrite(primary, replica)
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
-crud.ErrNoTxSupport
+crud.ErrNoTxSupport    crud.ErrExecutorScope
 ```
 
 Каждая из них переживает обёртывание в `errs.Fault`, поэтому вызывающий код,

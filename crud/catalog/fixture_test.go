@@ -78,8 +78,6 @@ func recorder(s pgSchema, n int) *crudtest.Recorder {
 }
 
 // identified is a Source that names a handle, the way crudsql.Executor does.
-// The recorder itself deliberately does not — see
-// TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam.
 type identified struct {
 	*crudtest.Recorder
 	handle any
@@ -101,12 +99,27 @@ func (this gated) Query(ctx context.Context, q string, args ...any) (crud.Rows, 
 	return this.identified.Query(ctx, q, args...)
 }
 
+// anonymous deliberately forwards only Source. Recorder identifies itself so
+// its transactions can be scoped safely; tests for third-party sources that do
+// not implement Identified need an explicit capability-erasing wrapper.
+type anonymous struct{ recorder *crudtest.Recorder }
+
+func (this anonymous) Exec(ctx context.Context, q string, args ...any) (crud.Result, error) {
+	return this.recorder.Exec(ctx, q, args...)
+}
+
+func (this anonymous) Query(ctx context.Context, q string, args ...any) (crud.Rows, error) {
+	return this.recorder.Query(ctx, q, args...)
+}
+
+func (this anonymous) Dialect() crud.Dialect { return this.recorder.Dialect() }
+
 // awkward is a Source that cannot name a database and cannot be compared
 // either. reflect.Type calls its outer shape comparable — a pointer and an
 // interface — but reflect.Value.Comparable sees the slice inside that interface
 // and lets SameDataSource refuse it before == can panic.
 type awkward struct {
-	*crudtest.Recorder
+	anonymous
 	payload any
 }
 
@@ -119,6 +132,7 @@ type namedDialect struct {
 func (this namedDialect) Name() string { return this.name }
 
 var (
+	_ crud.Source     = anonymous{}
 	_ crud.Source     = awkward{}
 	_ crud.Source     = identified{}
 	_ crud.Source     = gated{}

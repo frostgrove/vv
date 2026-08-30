@@ -270,11 +270,11 @@ sharp edges that need a decision.
     reads as absent and the write is treated as a fresh create. Silently, through
     the ordinary create endpoint.
 
-18. **[UC-012] Two ways of writing a scoped binding do nothing, silently.**
-    Naming a transaction rather than the database keys the binding on the
-    transaction handle, which no repository matches, so the write goes to the
-    pool outside the transaction and reports success. Naming nothing at all
-    degrades to capturing everything. Both look correct at the call site.
+18. ~~**[UC-012] Two ways of writing a scoped binding do nothing, silently.**~~
+    **Closed by [[D-082]].** `BindExecutor` associates the canonical source and
+    executor; transaction-as-source and strict inferred mismatches return typed
+    `ErrExecutorScope` before a datasource call. Unconditional capture remains
+    only as the explicitly named `WithUnsafeExecutor` waiver.
 
 19. **[UC-002] Query-string and JSON doors disagree in four places** — an
     unparsable `isNull` value flipping to `IS NOT NULL`, a scalar term dropping

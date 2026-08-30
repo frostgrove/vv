@@ -69,7 +69,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-006](FL-006-preload-becomes-batched-second-queries.md) | A preload becomes batched second queries | `crud/preload.go:RunPreloads` | [[UC-006]] [[UC-004]] |
 | [FL-007](FL-007-a-read-through-the-security-gate.md) | A read through the security gate | `crud/decorators/security/security.go:gate.GetByID` | [[UC-004]] [[UC-016]] |
 | [FL-008](FL-008-a-write-through-the-security-gate.md) | A write through the security gate | `crud/decorators/security/security.go:gate.Save` | [[UC-004]] [[UC-008]] |
-| [FL-009](FL-009-transactions-joining-opening-which-database.md) | Transactions: joining, opening, and which database | `crud/executor.go:InTx` | [[UC-005]] [[UC-012]] |
+| [FL-009](FL-009-transactions-joining-opening-which-database.md) | Transactions: joining, opening, and which database | `crud/executor.go:BindExecutor` / `:InTx` | [[UC-005]] [[UC-012]] |
 | [FL-010](FL-010-codegen-model-to-dto-and-metamodel.md) | Codegen: a model becomes a DTO and a metamodel | `internal/codegen.Run` | [[UC-014]] [[UC-010]] [[UC-007]] |
 | [FL-011](FL-011-an-error-becomes-an-http-status.md) | An error becomes an HTTP status | `port/porthttp/errors.go:Status` | [[UC-015]] |
 | [FL-012](FL-012-a-wire-value-becomes-a-go-value.md) | A wire value becomes a Go value | `crud/query/coerce.go:decodeValue` / `:coerceString` | [[UC-002]] [[UC-006]] |
@@ -143,7 +143,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/catalog/mariadb.go` | FL-016 |
 | `crud/catalog/sqlite.go` | FL-016 |
 | `crud/access.go` | FL-001, FL-003, FL-004, FL-006, FL-008 |
-| `crud/crudtest/recorder.go` | FL-016 |
+| `crud/crudtest/recorder.go` | FL-009, FL-016 |
 | `crud/dialect.go` | FL-002, FL-003, FL-009, FL-017 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
 | `crud/executor.go` | FL-002, FL-009, FL-016, FL-017 |

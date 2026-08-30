@@ -563,68 +563,32 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// The recorder does not name a database, and that is the answer to §16's open
-// question rather than an oversight. crud.KeyOf takes a source that cannot
-// identify itself at face value, so a recorder already keys as itself: two
-// recorders are two catalogs and one recorder is one, which is the whole of the
-// unit-test seam a catalog needs.
-//
-// Giving it a DataSource() would change something else entirely. crud.InTx binds
-// the transaction it opens to the source's own datasource when the source is
-// Identified, so every existing test that wraps a recorder in InTx would go from
-// an unscoped binding — which every repository joins — to one only repositories
-// over that recorder join. Nothing in the tree fails today if that changed,
-// which is exactly why it is pinned here.
-func TestTheRecorderStaysUnidentified(t *testing.T) {
+// One recorder is one datasource. This gives its transactions a safe scope and
+// keeps independent recorders from adopting each other's work by accident.
+func TestTheRecorderNamesItselfAsItsDatasource(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres()
 	other := crudtest.Postgres()
 
-	if _, ok := any(rec).(crud.Identified); ok {
-		t.Fatal("the recorder names a datasource now — read D-041 before keeping that, because crud.InTx over a recorder stops binding unscoped")
+	if _, ok := any(rec).(crud.Identified); !ok {
+		t.Fatal("the recorder cannot safely scope a transaction")
 	}
 	if crud.KeyOf(rec) != any(rec) {
 		t.Errorf("crud.KeyOf answered %v for a recorder, want the recorder itself", crud.KeyOf(rec))
 	}
 
-	var joined bool
+	var sameJoined, otherJoined bool
 	if err := crud.InTx(ctx, rec, func(ctx context.Context) error {
-		_, joined = crud.ExecutorFor(ctx, other)
+		_, sameJoined = crud.ExecutorFor(ctx, rec)
+		_, otherJoined = crud.ExecutorFor(ctx, other)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !joined {
-		t.Error("a transaction opened over a recorder was not joined by a repository bound elsewhere — the binding stopped being unscoped")
+	if !sameJoined {
+		t.Error("the recorder that opened a transaction did not join it")
 	}
-
-	// The control, and it is what shows the difference the added method would
-	// make: the same double with a DataSource() binds scoped, and the sibling
-	// above no longer joins.
-	named := identifiedRecorder{Recorder: crudtest.Postgres(), handle: new(int)}
-	if _, ok := any(named).(crud.Identified); !ok {
-		t.Fatal("the identified double does not implement crud.Identified, so this control asserts nothing")
-	}
-	if crud.KeyOf(named) != any(named.handle) {
-		t.Errorf("crud.KeyOf answered %v for an identified source, want its handle", crud.KeyOf(named))
-	}
-
-	joined = false
-	if err := crud.InTx(ctx, named, func(ctx context.Context) error {
-		_, joined = crud.ExecutorFor(ctx, other)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if joined {
-		t.Error("a transaction opened over an identified source was joined by a repository bound elsewhere — then the two cases are the same and this test proves nothing")
+	if otherJoined {
+		t.Error("an independent recorder adopted another recorder's transaction")
 	}
 }
-
-// identifiedRecorder is the recorder with the one method it does not have.
-type identifiedRecorder struct {
-	*crudtest.Recorder
-	handle any
-}
-
-func (this identifiedRecorder) DataSource() any { return this.handle }

@@ -245,7 +245,7 @@ For (4), classification is reachable in memory. `sqlfault.New(engine)` and `sqlf
 3. A commit is observable.
 4. A rollback after an error is observable.
 **Today:** 🟡 partial — (1) and (2) hold and are properly pinned; (3) and (4) do not hold at all.
-**Evidence:** (1) is covered twice over a recorder, and the round-one draft was wrong to call it unproven. `TestTransactionJoinsAnAmbientExecutor` (`crud/sqlrepo/repository_test.go:561-580`) binds to one recorder, puts a second in the context with `crud.WithExecutor`, and asserts `rec.TxDepth() != 0` fails plus `len(outer.Statements()) != 1 || len(rec.Statements()) != 0`. `TestTheRecorderStaysUnidentified` (`crud/crudtest/recorder_test.go:457-500`) drives `crud.InTx` over a recorder, asserts a repository bound to a *different* recorder joined it, and carries `identifiedRecorder` (`:503-509`) as the control that fails if the two cases ever stop differing — the shape [[D-020]] asks for. (2) is `TestBeginRecordsIntoTheSameRecorder` (`recorder_test.go:372`) and `TestRecorderDrivesInTx` (`:400`). **(3) and (4) are unreachable.** `Commit` and `Rollback` set fields on an unexported `tx` (`recorder.go:169-176`) and nothing anywhere reads either; the tree's own proxy is `TestTransactionRollsBackOnError` (`repository_test.go:582-597`), which asserts the error came back and `TxDepth() == 1` and would pass identically for a transaction left open. That is a shipped guarantee the code cannot satisfy: [[UC-011]] guarantee 11 promises "a test asserts the begin, the statements and the commit in one place". Separately `TxDepth` counts begins and never decrements (`recorder.go:128-133`, `:162-167`), so two *sequential* transactions read as depth 2 — which matches UC-011's own wording ("the number of transactions opened is readable") and contradicts the module doc's "how deep the transaction nesting went" (`docs/modules/en/crudtest.md:74`). The doc is the outlier; that turns a design question into a one-line correction with the contract on its side.
+**Evidence:** (1) is covered twice over a recorder. `TestTransactionJoinsAnAmbientExecutor` binds a checked session from the repository recorder to a second executor and proves no nested begin. `TestTheRecorderNamesItselfAsItsDatasource` drives `crud.InTx` over one recorder and proves that recorder joins while a different recorder does not — the safe scope [[D-082]] requires. (2) is `TestBeginRecordsIntoTheSameRecorder` and `TestRecorderDrivesInTx`. **(3) and (4) are unreachable.** `Commit` and `Rollback` set fields on an unexported `tx` and nothing reads either; the tree's own proxy only asserts the operation error and begin count, so it would pass for a transaction left open. Separately `TxDepth` counts begins and never decrements, which matches UC-011's "number of transactions opened" and contradicts the module doc's older "nesting depth" wording.
 **If not ready:** the consumer asserts the error and that no statement follows it. Closing (3) and (4) is new bookkeeping, not a read of existing state: `Begin` returns a `&tx{Recorder: r}` that is never stored, and the `Recorder` struct holds statements, queue, exec, execErr and txDepth and nothing else (`recorder.go:52-61`). Recording `BEGIN`/`COMMIT` as statements would also close it and would change `len(rec.Statements())` for every transactional test in this repository and in every consumer's — which is the argument for an accessor instead.
 
 ### H-CRUDTEST-15 — A preload is a second statement, and it must stay one
@@ -613,11 +613,10 @@ H-CRUDTEST-18.
 
 ### What it must not break
 
-- **[[D-041]]** forbids giving the recorder a `DataSource()`, and the reason is
-  not tidiness: it silently rescopes `crud.InTx` in every test that wraps a
-  recorder. Nothing proposed here adds one, and `TestTheRecorderStaysUnidentified`
-  (`recorder_test.go:457`) is the guard that would catch it — with its control at
-  `:503`.
+- **[[D-041]] and [[D-082]]** require the recorder's `DataSource()` to remain its
+  own pointer. That preserves its catalog key and keeps an owned transaction
+  scoped to one recorder. `TestTheRecorderNamesItselfAsItsDatasource` is the
+  guard.
 - **[[D-048]] and `scripts/checks.sh:TIER0`** — `crud/crudtest` may import `crud`,
   `crud/query`, `errs`, `errs/sqlerr`, `port`, `port/porthttp` and the standard
   library, and nothing else. `RepoLike` is legal because `port` is on the

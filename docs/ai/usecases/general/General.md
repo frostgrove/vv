@@ -392,9 +392,15 @@ enumeration rather than a cross-page snapshot.
 2. A transaction the existing code opened can be joined, so both halves see each other's uncommitted writes and roll back together.
 3. Where a process talks to two databases, a joined transaction does not capture the wrong one.
 4. The ORM's own builders keep working beside it.
-**Today:** 🟡 partial — 1, 2 and 4 hold and are `[[UC-005]]`/`[[UC-010]]`'s to prove; 3 has two silent failures
-**Evidence:** `[[D-057]]` and `[[D-009]]`; `test/integration/multidb_test.go:135` asserts the unscoped form really does adopt the wrong repository — the control that makes `:171` mean something — and `test/integration/usecase_test.go:87` and `:246` walk the DSL-inside-an-ORM-transaction pattern from both usage guides. **Guarantee 3's cost is stated for one shape and silent for two others.** `[[UC-012]]`'s blind spot 2: naming a *transaction* rather than the database in a scoped binding keys it on the transaction handle, which no repository bound to the pool matches — the binding is ignored, the write lands on the pool outside the transaction, and it reports success. Naming nothing degrades to the unscoped form. Neither is tested, neither is documented, and both look exactly like the correct call at the call site. Blind spot 1: only `database/sql` on PostgreSQL is proven end to end for the transaction half.
-**If not ready:** n/a for the documented shape; the two undocumented ones are a doc line and a refusal at `WithExecutorFor`. The cost that *is* stated: the ORM's Go-side hooks and defaults do not run on writes this library issues (`[[D-017]]`), pinned by `TestEntsGoSideDefaultsDoNotApplyToVVWrites`.
+**Today:** ✅ ready
+**Evidence:** `[[D-057]]`, `[[D-082]]`, [[UC-005]] and [[UC-012]]. The usage-guide
+path binds the canonical source and foreign executor in one call. Live
+database/sql and pgx rollback tests refuse both source-less and
+transaction-as-source mistakes before touching the pool; the two-database test
+keeps another repository on its own source. The unsafe legacy capture remains a
+separate control through `WithUnsafeExecutor`. ORM-side hooks still do not run
+for statements this library issues ([[D-017]]).
+**If not ready:** —
 
 ### H-GENERAL-28 — Upgrading eleven modules at once
 **Who:** the person who runs `go get -u ./...` on a Friday

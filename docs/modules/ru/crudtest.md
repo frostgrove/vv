@@ -95,9 +95,10 @@ if got := crudtest.Normalize(rec.Last().SQL); got != want {
 
 ## Идентичность
 
-Recorder идентифицирует себя под `crud.KeyOf`, поэтому `crud.WithExecutorFor`
-и `catalog.Set` обращаются с ним так же, как с настоящим источником данных. У
-него нет метода `DataSource()`, и он ему не нужен ([[D-041]]).
+Recorder реализует `crud.Identified` и возвращает себя. Поэтому `crud.Session`,
+`crud.WithExecutorFor` и `catalog.Set` считают один recorder одним источником,
+а открытая им транзакция не может утечь во второй recorder ([[D-041]],
+[[D-082]]).
 
 ## Чего он не скажет
 

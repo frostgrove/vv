@@ -46,21 +46,13 @@ name a database. The sentence describing "a source that cannot name its database
 gets no catalog" was describing `ownScope`, which is a different rule for a
 different question ([[D-009]]).
 
-**Why the crudtest recorder does not grow a `DataSource()`.** §16 of
-`ROADMAP-errors.md` left that open, because it was read as the difference between
-the probe having a unit-test seam and being integration-only. Under the rule
-above it is not: `crud.KeyOf` gives a `*crudtest.Recorder` a perfectly good key —
-itself, a non-nil comparable pointer — so two recorders are two catalogs and one
-recorder is one. The seam is already there.
-
-Adding the method would change something else entirely. `crud.InTx` binds the
-transaction it opens to the source's own datasource **when the source is
-`Identified`**, so every existing test that wraps a recorder in `InTx` would go
-from an unscoped binding, which every repository joins, to a scoped one only
-repositories over that recorder join. Two dozen test files across `crud`,
-`query`, `crud/sqlrepo`, `crud/decorators` and `_examples` bind a recorder.
-Nothing in the tree fails today if that changed, which is exactly why it is
-pinned by a test rather than left to judgement. **Answered: no.**
+**Why the crudtest recorder identifies itself.** `crud.KeyOf` already gave a
+`*crudtest.Recorder` the useful catalog key — itself — before it implemented
+`DataSource`. [[D-082]] changed the transaction half of the rule: an owned
+transaction now requires a declared canonical identity and never binds
+unscoped. Returning the same pointer therefore preserves the catalog key while
+making one recorder one safe transaction scope. Two recorders no longer adopt
+each other's transactions by default. **Answered: yes, with itself as identity.**
 
 **Why not a `map[any]`.** `SameDataSource` avoids one deliberately: *"a
 datasource handle is a pointer in practice, but nothing in the contract says it
@@ -247,9 +239,9 @@ D-039 forbids.
   `crud/catalog/set_test.go` — the exact difference between `crud.KeyOf` and the
   interface test, asserted from both sides.
 - `TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam` in
-  `crud/catalog/set_test.go` and `TestTheRecorderStaysUnidentified` in
-  `crud/crudtest/recorder_test.go` — the §16 answer, pinned where a revert would
-  land.
+  `crud/catalog/set_test.go` and `TestTheRecorderNamesItselfAsItsDatasource` in
+  `crud/crudtest/recorder_test.go` — the catalog key and safe transaction scope,
+  pinned where a revert would land.
 - `TestAnUncomparableHandleIsRefusedRatherThanPanicking` and its control
   `TestAComparableHandleIsAcceptedAndFoundAgain` in `crud/catalog/set_test.go` — both
   shapes of uncomparable, including the one `reflect.Type` calls comparable but

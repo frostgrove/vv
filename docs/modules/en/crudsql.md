@@ -35,36 +35,46 @@ guess rather than answering "mysql" for a MariaDB server ([[D-046]]).
 
 ## Joining someone else's transaction
 
-The interop point is exactly one function:
+The shortest interop path is a method on the canonical source:
 
 ```go
-ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+db := crudsql.Postgres(sqlDB)
+ctx = db.BindExecutor(ctx, tx)
 ```
 
-Every repository call made with that context runs on that executor. A new
-framework means finding where it hides its transaction and wrapping it — three
-lines.
+Repositories built from `db` run on `tx`; repositories on another database do
+not. A new framework means finding where it hides its transaction handle. The
+joined executor inherits `db`'s declared engine classifier. The general form is
+`crud.BindExecutor(ctx, db, crudsql.From(tx))` for callers who want to construct
+that executor themselves.
 
 | Stack | How |
 |---|---|
 | `*sql.DB` / `*sql.Tx` / `*sql.Conn` | `crudsql.Postgres(db)` · `crudsql.From(tx)` |
-| sqlx | `crudsql.From(sqlxTx)` — it is a `*sql.Tx` underneath |
+| sqlx | `crudsql.From(sqlxTx)` — its promoted `Commit`/`Rollback` lifecycle is recognised as transactional |
 | gorm | `crudsql.From(tx.Statement.ConnPool)` inside `db.Transaction` |
 | ent (`--feature sql/execquery`) | `crudsql.From(entTx)` — `*ent.Tx` has `ExecContext`/`QueryContext` |
 | sqlc (database/sql) | `crudsql.From(tx)`; the same `*sql.Tx` goes to `sqlc.New(tx)` |
 | bun, squirrel, dbr, … | `crudsql.From(tx)` |
 
+`*sql.Tx` and wrappers that retain `Commit() error` plus `Rollback() error` are
+recognised as transactions. This includes sqlx, ent and Gorm's prepared
+transaction handle; `*sql.DB` and `*sql.Conn` do not expose that lifecycle and
+remain non-transactional. For an opaque wrapper that deliberately hides it, pass
+`crudsql.WithTransaction()` to `From` or `BindExecutor` explicitly.
+
 ```go
 err := gormDB.Transaction(func(tx *gorm.DB) error {
-    ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+    ctx := db.BindExecutor(ctx, tx.Statement.ConnPool)
     return users.SaveOnly(ctx, &u)
 })
 ```
 
-**With more than one database, say which one you mean** — `crud.WithExecutorFor(ctx, mainDB, e)`.
-The plain form captures every repository, which is the interop seam working as
-designed and also how a write lands in the wrong database and reports success
-([[UC-012]]).
+The source is mandatory on the safe path because a `*sql.Tx` cannot reveal its
+`*sql.DB`. The old `crud.WithExecutor` spelling now fails with
+`crud.ErrExecutorScope` instead of falling back to the pool. The low-level form
+is `crud.WithExecutorFor(ctx, mainDB, e)`; unconditional legacy routing requires
+the explicit `crud.WithUnsafeExecutor` opt-out ([[D-082]], [[UC-012]]).
 
 ## Anything that is not a `*sql.DB`
 
@@ -88,10 +98,11 @@ build repositories directly on it.
 
 ```go
 cls := sqlfault.New("postgres")
-ctx = crud.WithExecutor(ctx, crudsql.From(tx, crudsql.WithFaults(cls)))
+ctx = db.BindExecutor(ctx, tx, crudsql.WithFaults(cls))
 ```
 
-That is the same `errs.Classifier` the named constructors take. With the
+The named constructors already carry the same classifier automatically; the
+option above is an explicit override. With the
 [catalog](catalog.md) wired into it, violations also carry the columns the driver
 did not name:
 

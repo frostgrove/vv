@@ -92,9 +92,10 @@ one, or that a nested call joined rather than nested.
 
 ## Identity
 
-A recorder keys as itself under `crud.KeyOf`, so `crud.WithExecutorFor` and
-`catalog.Set` treat it the way they treat a real datasource. It grows no
-`DataSource()` method, and does not need one ([[D-041]]).
+A recorder implements `crud.Identified` and returns itself. `crud.Session`,
+`crud.WithExecutorFor` and `catalog.Set` therefore treat one recorder as one
+datasource; an owned transaction cannot leak into a second recorder ([[D-041]],
+[[D-082]]).
 
 ## What it will not tell you
 

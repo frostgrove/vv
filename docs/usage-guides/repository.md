@@ -539,7 +539,8 @@ err := products.Tx(ctx, func(txCtx context.Context) error {
 
 `txCtx` обязателен: именно в нём находится transaction executor. Если
 транзакцию уже начал GORM, ent или код на `database/sql`, передайте её vv через
-`crud.WithExecutor`/`crud.WithExecutorFor`; детали и примеры драйверов — в
+`crud.BindExecutor` или adapter helper `source.BindExecutor`; low-level форма —
+`crud.WithExecutorFor`; детали и примеры драйверов — в
 [crud](../modules/ru/crud.md#шов-исполнителя).
 
 Эта же transaction-семантика используется внутренними чанками `SaveAll` и

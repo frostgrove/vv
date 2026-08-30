@@ -715,7 +715,7 @@ func pbForeignTx(t *testing.T, tg pbTarget) (context.Context, func()) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return crud.WithExecutor(ctx, crudpgx.From(tx, crudpgx.WithFaults(cls))),
+		return crud.BindExecutor(ctx, tg.source, crudpgx.From(tx, crudpgx.WithFaults(cls))),
 			func() { _ = tx.Rollback(context.Background()) }
 	}
 	var database *sql.DB
@@ -733,7 +733,7 @@ func pbForeignTx(t *testing.T, tg pbTarget) (context.Context, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return crud.WithExecutor(ctx, crudsql.From(tx, crudsql.WithFaults(cls))),
+	return crud.BindExecutor(ctx, tg.source, crudsql.From(tx, crudsql.WithFaults(cls))),
 		func() { _ = tx.Rollback() }
 }
 

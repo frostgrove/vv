@@ -46,7 +46,8 @@ func TestDatabaseSQLMySQLRowAlias(t *testing.T) {
 func TestDatabaseSQLSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	tx, err := pgDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -54,7 +55,7 @@ func TestDatabaseSQLSharedTransaction(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 	u := User{TenantID: 1, Email: "sql-tx@x.io", Name: "Joined"}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
@@ -98,7 +99,7 @@ func TestDatabaseSQLSavepoint(t *testing.T) {
 			return err
 		}
 		drop := User{TenantID: 1, Email: "drop@x.io", Name: "drop"}
-		if _, err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
+		if _, err := repository.Save(crud.BindExecutor(ctx, source, sp), &drop); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)

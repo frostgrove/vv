@@ -25,7 +25,7 @@ what it prevented. Give it the next free number, never reuse one, and mark a
 replaced decision `superseded by D-0NN` rather than deleting it.
 
 **Mark it `open`** when the tension is real and unresolved. An open decision
-still says what not to do while it is open — see D-024 through D-027.
+still says what not to do while it is open — see D-024 through D-026.
 
 **Mark it `in force from phase N`** when the rule is settled but the code it
 governs is not written yet. A bare `accepted` reads as *the tree obeys this*, and
@@ -61,7 +61,7 @@ and the next decision written before its code does should say so here.
 | [D-006](D-006-preload-is-a-batched-second-query.md) | One statement per relation per level; a preload refuses pagination | accepted | querying |
 | [D-007](D-007-narrowing-crosses-a-relation-only-when-declared.md) | A scope covers its own `FROM`; the far side of a relation is narrowed only where declared | accepted | security |
 | [D-008](D-008-out-of-scope-is-404-not-403.md) | A row hidden by a scope is `ErrNotFound`, never a denial | accepted | security |
-| [D-009](D-009-context-executor-capture-is-unconditional.md) | `WithExecutor` reaches every repository; only `WithExecutorFor` restricts it | accepted | transactions & datasources |
+| [D-009](D-009-context-executor-capture-is-unconditional.md) | `WithExecutor` reaches every repository; only `WithExecutorFor` restricts it | **superseded by D-082** | transactions & datasources |
 | [D-010](D-010-update-is-load-diff-write.md) | `Update` writes only what changed, and locks only inside a transaction | accepted | writes |
 | [D-011](D-011-save-is-jpa-shaped.md) | No key inserts, a key upserts, an unset `noauto` key is `ErrMissingID` | accepted | writes |
 | [D-012](D-012-put-replaces-never-creates.md) | `PUT /:id` on a database-generated key 404s for an id that names no row | accepted | HTTP |
@@ -79,7 +79,7 @@ and the next decision written before its code does should say so here.
 | [D-024](D-024-distinct-and-the-forced-primary-key.md) | A `DISTINCT` query produces a valid statement or a readable refusal — never a 500, never a silent no-op | **open** | querying |
 | [D-025](D-025-mapkey-collapses-non-comparable-keys.md) | Both ends of a relation agree on a key, and two different keys never collide | **open** | relations |
 | [D-026](D-026-deleteall-fetches-victims-with-caller-options.md) | Every row a gated filtered write touches was shown to `Inspect` first | **open** | security |
-| [D-027](D-027-intx-cross-database-capture-is-documented-not-enforced.md) | A repository never runs on a database it was not bound to, unless the application said so | **open** | transactions & datasources |
+| [D-027](D-027-intx-cross-database-capture-is-documented-not-enforced.md) | A repository never runs on a database it was not bound to, unless the application said so | **superseded by D-082** | transactions & datasources |
 | [D-028](D-028-a-cursor-is-the-sort-tuple.md) | A cursor may only be used with the sort it was made for, and only when that sort ends in the primary key | accepted | querying |
 | [D-029](D-029-aggregates-live-on-the-seam.md) | A summary read carries every narrowing a row read carries, and no client can compose one | accepted | querying, security |
 | [D-030](D-030-a-new-verb-on-the-seam-is-a-decorator-obligation.md) | Every method added to `crud.Core` is overridden by the gate or has a written reason not to be | accepted | core seam, security |
@@ -134,6 +134,7 @@ and the next decision written before its code does should say so here.
 | [D-079](D-079-bind-budgets-are-statement-wide.md) | Every statement respects its dialect bind budget, and chunks of one logical write are atomic | accepted | writes, querying, transactions |
 | [D-080](D-080-a-relation-table-name-is-immutable-after-resolution.md) | A relation target's table name is immutable after resolution; an independent blueprint does not publish one | accepted | relations, declarations |
 | [D-081](D-081-database-secrets-are-values-and-typed-tls-is-verified.md) | Database secrets render redacted, and an omitted typed-server TLS mode means verified TLS | accepted | configuration, security |
+| [D-082](D-082-source-bound-sessions-are-the-safe-default.md) | A safe executor binding names its canonical source; unconditional adoption is explicitly unsafe | accepted | transactions & datasources |
 
 ## By area
 
@@ -177,12 +178,11 @@ non-empty subject promised by `Standard`.
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
 
-**Transactions & datasources** — D-009 (unconditional capture, opt-in scoping,
-the two identity rules `crud.KeyOf` and `ownScope`, and — since phase 7 — which
-transactions vv opened and the savepoint budget on them), D-019 (dialect
+**Transactions & datasources** — D-082 (source-bound sessions by default,
+strict legacy inference and the explicit unsafe escape hatch), D-019 (dialect
 differences), D-077 (bounded detached rollback), D-079 (atomic write chunks),
-D-027 (**open** — cross-database capture), D-041 (what else keys on that
-identity), D-042 (why the ownership flag exists at all).
+D-041 (what else keys on datasource identity), D-042 (why the ownership flag
+exists at all). D-009 and D-027 retain the superseded argument.
 
 **HTTP** — D-063 (the body cap, and why all three bindings share one number),
 D-062 (where the library's own log lines go), D-012 (PUT), D-022 (interface, not
@@ -271,8 +271,3 @@ application), D-023 (guides lead with the result), D-020 (what a test is for).
   `DELETE` and `UPDATE` are unlimited. A caller-supplied `Limit(10)` means
   `Inspect` sees ten rows and the statement touches all of them. No test covers
   it.
-- **[D-027](D-027-intx-cross-database-capture-is-documented-not-enforced.md) —
-  cross-database capture.** An unscoped `crud.WithExecutor` is adopted by every
-  repository, including ones bound to another database. `WithExecutorFor` is the
-  documented answer and is not enforced. Enforcing it needs a `Source` identity
-  that would refuse the foreign executors the whole interop seam depends on.

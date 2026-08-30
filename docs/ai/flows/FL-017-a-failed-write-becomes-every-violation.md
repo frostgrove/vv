@@ -144,8 +144,9 @@ name. A foreign transaction is never given a savepoint: an ent or gorm
 transaction has its own savepoint stack, and `ROLLBACK TO SAVEPOINT` in the
 middle of somebody else's unit of work can discard work its owner has not
 finished with. Telling the two apart is what `crud.OwnedExecutorFor` is for —
-before phase 7 the seam could not answer it, because `crud.InTx` and
-`crud.WithExecutorFor` pushed the same binding ([[FL-009]]).
+before phase 7 the seam could not answer it, because `crud.InTx` and a foreign
+executor binding pushed the same ownership shape. `Session` now supplies the
+safe foreign binding without changing that ownership rule ([[FL-009]]).
 
 The probe never issues `SAVEPOINT` itself. `crudsql.Tx.Begin` already does, off a
 counter it owns, and a hand-rolled name can collide with one the seam issued.

@@ -37,7 +37,8 @@ func TestSqlxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	database := sqlx.NewDb(pgDB, "pgx")
-	repository := Users.Bind(crudsql.Open(database.DB, crud.Postgres{}))
+	source := crudsql.Open(database.DB, crud.Postgres{})
+	repository := Users.Bind(source)
 
 	tx, err := database.BeginTxx(ctx, nil)
 	if err != nil {
@@ -46,7 +47,7 @@ func TestSqlxSharedTransaction(t *testing.T) {
 	defer tx.Rollback()
 
 	// crudsql.From accepts the sqlx transaction directly.
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 	u := User{TenantID: 1, Email: "sqlx@x.io", Name: "Sqlx", Age: crud.Set(44)}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)

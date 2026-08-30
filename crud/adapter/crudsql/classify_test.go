@@ -1,6 +1,8 @@
 package crudsql
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -8,6 +10,96 @@ import (
 	"github.com/frostgrove/vv/crud/sqlfault"
 	"github.com/frostgrove/vv/errs"
 )
+
+type opaqueQueryer struct{}
+
+func (opaqueQueryer) ExecContext(context.Context, string, ...any) (sql.Result, error) {
+	return nil, nil
+}
+
+func (opaqueQueryer) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
+	return nil, nil
+}
+
+type lifecycleTransaction struct{ opaqueQueryer }
+
+func (lifecycleTransaction) Commit() error   { return nil }
+func (lifecycleTransaction) Rollback() error { return nil }
+
+func TestTransactionRecognitionCoversWrappersWithoutMistakingPoolsOrConnections(t *testing.T) {
+	for name, q := range map[string]Queryer{
+		"database pool":        &sql.DB{},
+		"dedicated connection": &sql.Conn{},
+		"opaque executor":      opaqueQueryer{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if From(q).InTransaction() {
+				t.Fatalf("%T was mistaken for a transaction", q)
+			}
+		})
+	}
+
+	for name, executor := range map[string]Executor{
+		"database/sql transaction": From(&sql.Tx{}),
+		"structural wrapper":       From(lifecycleTransaction{}),
+		"explicit opaque marker":   From(opaqueQueryer{}, WithTransaction()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !executor.InTransaction() {
+				t.Fatalf("%s was not recognised as a transaction", name)
+			}
+		})
+	}
+}
+
+func TestEveryBindingPathRefusesATypedNilInnerSQLHandle(t *testing.T) {
+	var tx *sql.Tx
+	source := Postgres(&sql.DB{})
+
+	if _, err := crud.NewSession(source, From(tx)); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("NewSession returned %v, want ErrExecutorScope", err)
+	}
+
+	contexts := map[string]context.Context{
+		"adapter helper":       source.BindExecutor(context.Background(), tx),
+		"deprecated inference": crud.WithExecutor(context.Background(), From(tx)),
+		"low-level scoped":     crud.WithExecutorFor(context.Background(), source, From(tx)),
+		"explicit unsafe":      crud.WithUnsafeExecutor(context.Background(), From(tx)),
+	}
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			executor, ok := crud.ExecutorFor(ctx, source)
+			if !ok {
+				t.Fatal("typed-nil declaration was silently ignored")
+			}
+			if _, err := executor.Exec(ctx, "must not dereference the typed-nil transaction"); !errors.Is(err, crud.ErrExecutorScope) {
+				t.Fatalf("Exec returned %v, want ErrExecutorScope", err)
+			}
+			var scoped *crud.ExecutorScopeError
+			if _, err := executor.Exec(ctx, "still no driver call"); !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeMissingExecutor {
+				t.Fatalf("scope error = %#v, want missing_executor", scoped)
+			}
+		})
+	}
+}
+
+func TestSourceBoundExecutorInheritsTheDeclaredEngine(t *testing.T) {
+	source := Postgres(&sql.DB{})
+	ctx := source.BindExecutor(context.Background(), &sql.DB{})
+
+	bound, ok := crud.ExecutorFor(ctx, source)
+	if !ok {
+		t.Fatal("the adapter helper did not bind its source")
+	}
+	executor, ok := bound.(Executor)
+	if !ok {
+		t.Fatalf("bound executor is %T, want crudsql.Executor", bound)
+	}
+	named, ok := executor.faults.(interface{ Engine() string })
+	if !ok || named.Engine() != "postgres" {
+		t.Fatalf("joined executor inherited %#v, want the source's postgres classifier", executor.faults)
+	}
+}
 
 // The degradation [[D-046]]'s last forbid buys, made visible.
 //

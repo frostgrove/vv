@@ -286,7 +286,7 @@ test that sleeps.
   `TestForeignKeysCarryTheirActionsInTheOrderTheEngineReportsThem`,
   `TestEachEngineReportsWhatTheProbeWillNeed`,
   `TestOneSetHoldsFourLiveDatabasesWithoutMergingThem`.
-- `crud/crudtest/recorder_test.go` — `TestTheRecorderStaysUnidentified`,
+- `crud/crudtest/recorder_test.go` — `TestTheRecorderNamesItselfAsItsDatasource`,
   `TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem`.
 
 ## See also

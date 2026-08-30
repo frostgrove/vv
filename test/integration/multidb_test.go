@@ -127,12 +127,9 @@ func equal(a, b []string) bool {
 	return true
 }
 
-// crud.WithExecutor is unconditional by design — it is how an ent or gorm
-// transaction adopts a repository, and such an executor has no relationship to
-// the source a repository holds. The cost of that design is here, pinned so it
-// stays a decision rather than a surprise: name the wrong context and a
-// repository writes into a database it was never bound to, successfully.
-func TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne(t *testing.T) {
+// The legacy source-less spelling cannot prove which pool a foreign transaction
+// belongs to. It fails before either repository can touch a datasource.
+func TestWithExecutorRefusesToAdoptARepositoryOnTheWrongDatabase(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
 
@@ -146,20 +143,50 @@ func TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne(t *testing.
 	defer tx.Rollback()
 
 	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	if _, err := rowsA.Save(txCtx, &ShardRow{Name: "belongs-in-a"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("same-database repository returned %v, want ErrExecutorScope until its canonical source is named", err)
+	}
+	if _, err := rowsB.Save(txCtx, &ShardRow{Name: "meant-for-b"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("wrong-database repository returned %v, want ErrExecutorScope", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := names(t, dbA); len(got) != 0 {
+		t.Fatalf("shard a holds %v after the refused binding", got)
+	}
+	if got := names(t, dbB); len(got) != 0 {
+		t.Fatalf("shard b holds %v after the refused binding", got)
+	}
+}
+
+// Unconditional adoption remains available for applications whose adapter
+// genuinely cannot name a source. Its spelling makes the cross-database risk
+// explicit and preserves the old behaviour exactly.
+func TestWithUnsafeExecutorKeepsTheLegacyCrossDatabaseOptOut(t *testing.T) {
+	ctx := context.Background()
+	dbA, dbB := openShards(t)
+	rowsA := ShardRows.Bind(crudsql.Postgres(dbA))
+	rowsB := ShardRows.Bind(crudsql.Postgres(dbB))
+
+	tx, err := dbA.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txCtx := crud.WithUnsafeExecutor(ctx, crudsql.From(tx))
 	if _, err := rowsA.Save(txCtx, &ShardRow{Name: "belongs-in-a"}); err != nil {
 		t.Fatal(err)
 	}
-	// rowsB is bound to dbB and asked to write with a context carrying dbA's
-	// transaction. It obeys the context.
-	if _, err := rowsB.Save(txCtx, &ShardRow{Name: "meant-for-b"}); err != nil {
+	if _, err := rowsB.Save(txCtx, &ShardRow{Name: "explicitly-unsafe"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := names(t, dbA); !equal(got, []string{"belongs-in-a", "meant-for-b"}) {
-		t.Fatalf("shard a holds %v — the unscoped seam is meant to capture both", got)
+	if got := names(t, dbA); !equal(got, []string{"belongs-in-a", "explicitly-unsafe"}) {
+		t.Fatalf("shard a holds %v, want both explicitly adopted writes", got)
 	}
 	if got := names(t, dbB); len(got) != 0 {
 		t.Fatalf("shard b holds %v, want nothing", got)
@@ -172,7 +199,8 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
 
-	rowsA := ShardRows.Bind(crudsql.Postgres(dbA))
+	sourceA := crudsql.Postgres(dbA)
+	rowsA := ShardRows.Bind(sourceA)
 	rowsB := ShardRows.Bind(crudsql.Postgres(dbB))
 
 	tx, err := dbA.BeginTx(ctx, nil)
@@ -180,7 +208,7 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	txCtx := crud.WithExecutorFor(ctx, dbA, crudsql.From(tx))
+	txCtx := sourceA.BindExecutor(ctx, tx)
 	if _, err := rowsA.Save(txCtx, &ShardRow{Name: "in-the-transaction"}); err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +226,45 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 	}
 	if got := names(t, dbB); !equal(got, []string{"in-shard-b"}) {
 		t.Fatalf("shard b holds %v: its write was captured by another database's transaction", got)
+	}
+}
+
+// Naming the transaction as its own datasource used to miss the repository's
+// pool and write outside the transaction. Recognised transaction handles now
+// fail loudly instead.
+func TestWithExecutorForTransactionIdentityCannotEscapeRollback(t *testing.T) {
+	ctx := context.Background()
+	dbA, _ := openShards(t)
+	rows := ShardRows.Bind(crudsql.Postgres(dbA))
+	tx, err := dbA.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txCtx := crud.WithExecutorFor(ctx, tx, crudsql.From(tx))
+	if _, err := rows.Save(txCtx, &ShardRow{Name: "must-not-escape"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("Save returned %v, want ErrExecutorScope", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(t, dbA); len(got) != 0 {
+		t.Fatalf("shard a holds %v: the mismatched binding fell back to the pool", got)
+	}
+
+	tx, err = dbA.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txSource := crudsql.Source(tx, crud.Postgres{})
+	txCtx = crud.BindExecutor(ctx, txSource, crudsql.From(tx))
+	if _, err := rows.Save(txCtx, &ShardRow{Name: "must-not-escape-session"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("BindExecutor with a transaction source returned %v, want ErrExecutorScope", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(t, dbA); len(got) != 0 {
+		t.Fatalf("shard a holds %v: BindExecutor accepted a transaction as canonical source", got)
 	}
 }
 

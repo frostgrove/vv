@@ -951,7 +951,7 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer first.Rollback(ctx)
-			firstCtx := crud.WithExecutor(ctx, first)
+			firstCtx := crud.BindExecutor(ctx, tg.source, first)
 			if _, err := rows.GetByID(firstCtx, 1, crud.ForUpdate()); err != nil {
 				t.Fatal(err)
 			}
@@ -973,7 +973,7 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 					done <- err
 					return
 				}
-				secondCtx := crud.WithExecutor(ctx, second)
+				secondCtx := crud.BindExecutor(ctx, tg.source, second)
 				close(started)
 				got, err := rows.GetByID(secondCtx, 1, crud.ForUpdate())
 				if err != nil {
@@ -1116,7 +1116,7 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					txCtx := crud.WithExecutor(ctx, tx)
+					txCtx := crud.BindExecutor(ctx, tg.source, tx)
 					inside := EgRow{ID: 1, Tenant: 1, Name: "inside"}
 					if _, err := rows.Save(txCtx, &inside); err != nil {
 						t.Fatal(err)
@@ -1172,7 +1172,7 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 					return err
 				}
 				doomed := EgRow{ID: 2, Tenant: 1, Name: "doomed"}
-				if _, err := rows.Save(crud.WithExecutor(ctx, undone), &doomed); err != nil {
+				if _, err := rows.Save(crud.BindExecutor(ctx, tg.source, undone), &doomed); err != nil {
 					return err
 				}
 				if err := undone.Rollback(ctx); err != nil {
@@ -1184,7 +1184,7 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 					return err
 				}
 				saved := EgRow{ID: 3, Tenant: 1, Name: "released"}
-				if _, err := rows.Save(crud.WithExecutor(ctx, kept), &saved); err != nil {
+				if _, err := rows.Save(crud.BindExecutor(ctx, tg.source, kept), &saved); err != nil {
 					return err
 				}
 				return kept.Commit(ctx)
@@ -1228,7 +1228,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				midCtx := crud.WithExecutor(ctx, middle)
+				midCtx := crud.BindExecutor(ctx, tg.source, middle)
 				if _, err := rows.Save(midCtx, &EgRow{ID: 2, Tenant: 1, Name: "middle"}); err != nil {
 					return err
 				}
@@ -1237,7 +1237,7 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if _, err := rows.Save(crud.WithExecutor(ctx, inner), &EgRow{ID: 3, Tenant: 1, Name: "inner"}); err != nil {
+				if _, err := rows.Save(crud.BindExecutor(midCtx, tg.source, inner), &EgRow{ID: 3, Tenant: 1, Name: "inner"}); err != nil {
 					return err
 				}
 				// Only the innermost level goes away.
@@ -1357,11 +1357,11 @@ func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 	// Both read the same row, then both write it: under serializable exactly one
 	// of them may commit, and PostgreSQL detects it at commit time.
 	for _, tx := range []crud.Tx{first, second} {
-		if _, err := rows.GetAll(crud.WithExecutor(ctx, tx), crud.Where(crud.Eq("Tenant", int64(1)))); err != nil {
+		if _, err := rows.GetAll(crud.BindExecutor(ctx, source, tx), crud.Where(crud.Eq("Tenant", int64(1)))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := rows.UpdateAll(crud.WithExecutor(ctx, first),
+	if _, err := rows.UpdateAll(crud.BindExecutor(ctx, source, first),
 		EgRowUpdate{Name: ptr("first")}, crud.Where(crud.Eq("ID", int64(1)))); err != nil {
 		t.Fatal(err)
 	}
@@ -1369,7 +1369,7 @@ func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = rows.UpdateAll(crud.WithExecutor(ctx, second),
+	_, err = rows.UpdateAll(crud.BindExecutor(ctx, source, second),
 		EgRowUpdate{Name: ptr("second")}, crud.Where(crud.Eq("ID", int64(1))))
 	if err == nil {
 		err = second.Commit(ctx)

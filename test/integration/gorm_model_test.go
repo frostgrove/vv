@@ -184,7 +184,8 @@ func TestGormModelThroughVV(t *testing.T) {
 func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
-	members := GormMembers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	members := GormMembers.Bind(source)
 
 	team := Team{Name: "core"}
 	if err := database.Create(&team).Error; err != nil {
@@ -229,7 +230,8 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 func TestGormModelInsideGormTransaction(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
-	members := GormMembers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	members := GormMembers.Bind(source)
 
 	team := Team{Name: "core"}
 	if err := database.Create(&team).Error; err != nil {
@@ -237,7 +239,7 @@ func TestGormModelInsideGormTransaction(t *testing.T) {
 	}
 
 	err := database.Transaction(func(tx *gorm.DB) error {
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := source.BindExecutor(ctx, tx.Statement.ConnPool)
 
 		m := Member{TeamID: team.ID, Name: "ByGorm"}
 		if err := tx.Create(&m).Error; err != nil {

@@ -11,6 +11,11 @@ var (
 	// ErrNoTxSupport is returned when a transaction is requested from an
 	// executor that cannot start one (e.g. a foreign *sql.Tx handed to us).
 	ErrNoTxSupport = errors.New("crud: executor cannot begin transactions")
+	// ErrExecutorScope marks an executor binding that cannot be proved to belong
+	// to the repository's datasource. It is returned before the repository can
+	// fall back to its pool, so a transaction hand-off can never appear to work
+	// while its writes actually survive the caller's rollback.
+	ErrExecutorScope = errors.New("crud: executor scope does not match repository source")
 	// ErrSchemaNotReady marks a statement against a table the configured
 	// database does not have. It is an operational failure, not a missing row:
 	// apply the application's pending migrations or verify the database and
@@ -57,6 +62,36 @@ var (
 	// and the caller's answer is to read the row again and reapply.
 	ErrStaleVersion = fmt.Errorf("crud: the row was changed by someone else: %w", ErrConflict)
 )
+
+// ExecutorScopeReason is the machine-readable reason an executor binding was
+// refused. The values describe the declaration, never the datasource value;
+// database handles must not leak through an operational error.
+type ExecutorScopeReason string
+
+const (
+	ExecutorScopeMismatch          ExecutorScopeReason = "mismatch"
+	ExecutorScopeMissingSource     ExecutorScopeReason = "missing_source"
+	ExecutorScopeInvalidSource     ExecutorScopeReason = "invalid_source"
+	ExecutorScopeTransactionSource ExecutorScopeReason = "transaction_source"
+	ExecutorScopeMissingExecutor   ExecutorScopeReason = "missing_executor"
+	ExecutorScopeInvalidSession    ExecutorScopeReason = "invalid_session"
+)
+
+// ExecutorScopeError reports why a safe executor binding was refused. It wraps
+// [ErrExecutorScope], so callers may use errors.Is for policy and errors.As when
+// diagnostics need the reason.
+type ExecutorScopeError struct {
+	Reason ExecutorScopeReason
+}
+
+func (this *ExecutorScopeError) Error() string {
+	if this == nil || this.Reason == "" {
+		return ErrExecutorScope.Error()
+	}
+	return fmt.Sprintf("%s: %s", ErrExecutorScope, this.Reason)
+}
+
+func (this *ExecutorScopeError) Unwrap() error { return ErrExecutorScope }
 
 // UnknownFieldError is returned when a predicate or sort references a field
 // that the model does not declare.

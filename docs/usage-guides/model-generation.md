@@ -112,8 +112,9 @@ products := product.NewProductRepository(crudsql.Postgres(sqlDB))
 ```
 
 There is one pool in the last example. In a GORM-owned transaction, put
-`crudsql.From(tx.Statement.ConnPool)` into the context with
-`crud.WithExecutor`; vv calls then join that transaction.
+`tx.Statement.ConnPool` into the context with
+`source.BindExecutor(ctx, tx.Statement.ConnPool)`; vv calls then join that
+transaction without losing the pool identity.
 
 ## Exceptions stay explicit
 

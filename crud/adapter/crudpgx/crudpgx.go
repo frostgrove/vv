@@ -10,7 +10,7 @@
 //
 //	// join a transaction pgx (or sqlc-on-pgx) owns
 //	tx, _ := pool.Begin(ctx)
-//	ctx = crud.WithExecutor(ctx, crudpgx.From(tx))
+//	ctx = src.BindExecutor(ctx, tx)
 package crudpgx
 
 import (
@@ -64,7 +64,11 @@ func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = 
 // here and derived from nothing. The typed extractor is wired in because this
 // module may name *pgconn.PgError.
 func faults(options []Option) errs.Classifier {
-	o := config{faults: sqlfault.New("postgres", sqlfault.WithExtractor(sqlfault.ExtractorFunc(extract)))}
+	return configuredFaults(sqlfault.New("postgres", sqlfault.WithExtractor(sqlfault.ExtractorFunc(extract))), options)
+}
+
+func configuredFaults(def errs.Classifier, options []Option) errs.Classifier {
+	o := config{faults: def}
 	for _, fn := range options {
 		if fn != nil {
 			fn(&o)
@@ -83,6 +87,15 @@ func (this Executor) Unwrap() Queryer { return this.q }
 // crud.WithExecutorFor matches on — the *pgxpool.Pool for a source built by
 // Open.
 func (this Executor) DataSource() any { return this.q }
+
+// BindExecutor derives a context in which repositories over this source use q.
+// The receiver supplies the canonical pool identity, while q may be a pgx
+// transaction owned by pgx, sqlc or another framework. The executor inherits
+// the source's classifier; options may override it for an exceptional handle.
+func (this Executor) BindExecutor(ctx context.Context, q Queryer, options ...Option) context.Context {
+	executor := Executor{q: q, faults: configuredFaults(this.faults, options)}
+	return crud.BindExecutor(ctx, this, executor)
+}
 
 // InTransaction reports whether this wrapper holds pgx's transaction handle.
 // Pools and connections can Begin but are not themselves transactional.

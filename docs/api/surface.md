@@ -100,6 +100,7 @@ const RelTagKey = "rel"
 const TagKey = "db"
 var ErrNotFound = errors.New("crud: not found") ...
 var NowFunc = time.Now
+func BindExecutor(ctx context.Context, source Source, e Executor) context.Context
 func BindLimit(d Dialect) int
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
 func CursorFieldSupported(f *Field) bool
@@ -109,6 +110,7 @@ func ElemValue(v any) any
 func EncodeCursor(fields []string, values []any) (string, error)
 func EqualValues(a, b any) bool
 func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, options ...Option) (bool, error, bool)
+func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error
 func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
 func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
 func IsTautology(p Predicate) bool
@@ -133,6 +135,7 @@ func TryRegisterTableRefType(t reflect.Type, table TableRef) error
 func TryRegisterTableType(t reflect.Type, table string) error
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
+func WithUnsafeExecutor(ctx context.Context, e Executor) context.Context
 type AggregateRow struct{ ... }
 type AggregateSpec struct{ ... }
 type Aggregation struct{ ... }
@@ -157,6 +160,9 @@ type Executor interface{ ... }
     func ExecutorFor(ctx context.Context, source any) (Executor, bool)
     func ExecutorFrom(ctx context.Context) (Executor, bool)
     func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool)
+type ExecutorScopeError struct{ ... }
+type ExecutorScopeReason string
+    const ExecutorScopeMismatch ExecutorScopeReason = "mismatch" ...
 type Field struct{ ... }
 type Identified interface{ ... }
 type LikeEscaper interface{ ... }
@@ -264,6 +270,9 @@ type SchemaError struct{ ... }
 type ScopedSave[M any] struct{ ... }
 type ScopedSaveOnlyer[M any, ID comparable] interface{ ... }
 type ScopedSaver[M any, ID comparable] interface{ ... }
+type Session struct{ ... }
+    func MustSession(source Source, e Executor) Session
+    func NewSession(source Source, e Executor) (Session, error)
 type Source interface{ ... }
     func ReadSourceOf(v any) (Source, bool)
     func ReadWrite(primary, replica Source) Source
@@ -304,6 +313,7 @@ type Executor struct{ ... }
     func From(q Queryer, options ...Option) Executor
 type Option func(*config)
     func WithFaults(c errs.Classifier) Option
+    func WithTransaction() Option
 type Queryer interface{ ... }
 type Tx struct{ ... }
 ```

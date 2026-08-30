@@ -94,7 +94,8 @@ func TestEntStructReadsThroughVV(t *testing.T) {
 	truncate(t, pgDB)
 
 	client := entClient(pgDB, dialect.Postgres)
-	users := EntUsers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	users := EntUsers.Bind(source)
 
 	// Written by ent, read by vv.
 	for i, name := range []string{"Ann", "Bob", "Cid"} {
@@ -138,7 +139,8 @@ func TestEntStructWritesThroughVV(t *testing.T) {
 	truncate(t, pgDB)
 
 	client := entClient(pgDB, dialect.Postgres)
-	users := EntUsers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	users := EntUsers.Bind(source)
 
 	// ent's schema puts the created_at default in Go, not in the column, so a
 	// write that does not go through ent sets it itself.
@@ -189,13 +191,14 @@ func TestEntStructInsideEntTransaction(t *testing.T) {
 	truncate(t, pgDB)
 
 	client := entClient(pgDB, dialect.Postgres)
-	users := EntUsers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	users := EntUsers.Bind(source)
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	byEnt, err := tx.User.Create().
 		SetTenantID(1).SetEmail("ent@x.io").SetName("ByEnt").SetActive(true).Save(ctx)

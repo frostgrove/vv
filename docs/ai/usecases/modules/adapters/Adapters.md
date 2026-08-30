@@ -214,13 +214,39 @@ API and nothing anywhere says why.
 4. A transaction vv opens is scoped the same way, with nothing written by the consumer.
 5. Getting the scoping wrong is loud.
 6. The answer is the same on both adapters.
-**Today:** 🟡 partial — 1, 2 and 4 proven on `crudsql`/PostgreSQL; 3 holds only for the exact value passed in; 5 fails; 6 unmeasured
-**Evidence:** `crud.WithExecutorFor` at `crud/executor.go:335-337` keys on `crud.KeyOf(ds)`, and both adapters implement `Identified` by handing back the raw handle — `crudsql.go:86`, `crudpgx.go:85` — so two independently built sources over one pool are one database. Proven with two live databases: `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` (`test/integration/multidb_test.go:171`) and `TestARepositoryTransactionDoesNotCaptureAnotherDatabase` (`:206`), with `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` at `:135` as the control that keeps them honest. Every source in those tests is `crudsql.Postgres` — `rg -n "crudpgx" test/integration/multidb_test.go` returns nothing — and `docs/ai/usecases/Index.md:241-246` records exactly that: "Scoped bindings with pgx, and any combination across two engines, are untested."
+**Today:** ✅ supported by source-bound sessions ([[D-082]])
+**Evidence:** `crudsql.DB.BindExecutor` and `crudpgx.Executor.BindExecutor` put
+the canonical source and foreign executor into one call. `crud.BindExecutor`
+and reusable `crud.Session` are the driver-neutral form. A binding applies only
+to repositories whose walked physical identity matches; another database keeps
+its own source. `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` and
+`TestARepositoryTransactionDoesNotCaptureAnotherDatabase` prove that split on
+two live databases, while `TestPgxSharedTransaction` proves the pgx adapter
+receiver. Wrapper and `ReadWrite` identity are pinned by
+`TestAWrappedPrimaryIsStillTheDatabaseItNames`.
 
-Point 3 holds for the value passed to the constructor and not for the value the consumer holds. On every ORM stack the thing in hand is a `*gorm.DB`, a `*sqlx.DB` or an `*ent.Client` while the constructor was given the `*sql.DB` underneath — `_examples/sqlx-pgx-gin/main.go:83` binds `crudsql.Postgres(db.DB)`. `crud.WithExecutorFor(ctx, sqlxDB, e)` compiles, reads correctly, and matches nothing: `crud.SameDataSource` (`crud/executor.go:477-490`) answers false on a type mismatch rather than complaining. The same shape arrives through the wrapper `docs/modules/en/crudsql.md:44-46` invites — a consumer `Source` wrapper that omits `UnwrapSource` ends the walk in `identityOf` (`crud/executor.go:448-459`, `:230-246`), `KeyOf` falls back to the wrapper value, and every scoped binding over that handle stops matching. An uncomparable wrapper is refused outright by `catalog.Set.Load` with `ErrUncomparableHandle` (`crud/catalog/set.go:46-50`), which is the loud half; the executor half is silent.
+The two former silent spellings now fail before a datasource:
+`WithExecutor(ctx, From(tx))` is strict, and
+`WithExecutorFor(ctx, tx, From(tx))` cannot fall back to a pool. Live
+database/sql and pgx rollback regressions prove both. Passing a transaction
+source to `BindExecutor`, including the natural
+`crudpgx.From(tx).BindExecutor(ctx, tx)` receiver spelling, returns the typed
+`transaction_source` reason. Unconditional legacy adoption remains available
+only through `WithUnsafeExecutor`, with a live two-database control.
 
-Point 5 fails, and the adapter is what creates the failure: `Executor.DataSource()` returns `e.q`, so for `crudsql.From(tx)` the identity is the `*sql.Tx`. A consumer who writes `crud.WithExecutorFor(ctx, tx, ...)` — naming the transaction rather than the database — gets a binding no repository bound to the pool matches. It is ignored, the write goes to the pool outside the transaction, and it reports success. `docs/ai/usecases/Index.md:262-266` files it as needing a decision. The adapter residue on point 6: `crud.ReadWrite` over two `crudpgx.Executor` values is not only untested, it silently removes `CopyFrom` — see H-ADAPTERS-11 point 1.
-**If not ready:** The plain `WithExecutor` captures everything, on purpose ([[D-009]]), and the failure it produces is a write in the wrong database reporting success ([[D-027]], still open). The mis-keyed scoped binding produces the same shape one level in, and so does the ORM-handle spelling, which is the one a consumer is far more likely to write. All three are closed by making the join a method on the value that already knows which database it is; see the DX section, which also names what that costs against D-009. The replica half of multi-handle routing is H-CRUD-14's and H-SQLREPO-11's, and neither `crud.ReadWrite` nor `Options.Primary` is adapter code.
+The database/sql executor recognises a foreign transaction through the
+`Commit() error`/`Rollback() error` lifecycle preserved by `*sql.Tx`, sqlx,
+`*ent.Tx` and Gorm's prepared wrapper. Standard pools and `*sql.Conn` do not
+match; an opaque wrapper has the explicit `crudsql.WithTransaction()` marker.
+Live tests force both `Delete` and `SaveAll` across multiple statements and prove
+that Ent, sqlx and prepared Gorm roll all chunks back with their owner.
+
+The association between a canonical source and a foreign transaction is still
+a declaration: neither database/sql nor pgx exposes a transaction's parent
+pool, so `mainSource.BindExecutor(ctx, eventsTx)` cannot be disproved. That is an
+explicit false declaration, not an ambient fallback. The low-level
+`WithExecutorFor` form likewise trusts arbitrary non-transaction handles; the
+short adapter method is the safe default.
 
 ### H-ADAPTERS-13 — MySQL today, MariaDB next quarter, SQLite in the unit tests
 **Who:** an engineer at a company that runs MySQL and is evaluating MariaDB, whose test suite must not need Docker
@@ -390,15 +416,15 @@ n, err := crudpgx.CopyUnchecked(ctx, pgxSrc, Products.Meta(), products) // []*Pr
 
 ### Why this shape
 
-**`Join` returns a context, not an executor.** Today the join is
+**The source-bound helper returns a context, not an executor.** The old join was
 `crud.WithExecutor(ctx, crudsql.From(tx, crudsql.WithFaults(sqlfault.New("postgres"))))`
-— one line and four concepts, one of which the consumer has to know to respell as
-`WithExecutorFor` the day a second database appears. `Join` is a method on the one
+— one line and four concepts, one of which the consumer had to know to respell as
+`WithExecutorFor` the day a second database appeared. `BindExecutor` is a method on the one
 value that knows both which engine it is and which database it is, so it can be
-`WithExecutorFor(ctx, d.db, From(q, WithFaults(d.faults)))` underneath. That is
+source-bound underneath. That is
 one line and one concept, it closes H-ADAPTERS-10, and it makes two of
 H-ADAPTERS-12's three silent failures unreachable through the recommended call.
-The name is `Join` and not `Adopt` because [[UC-010]] is already "adopt an
+The final name is `BindExecutor`, not `Adopt`, because [[UC-010]] is already "adopt an
 existing ORM model", cited by name at `docs/modules/en/crudsql.md:126`, while both
 module docs already head this section "Joining someone else's transaction"
 (`crudsql.md:36`, `crudpgx.md:41`). The faults sweep calls the same proposal

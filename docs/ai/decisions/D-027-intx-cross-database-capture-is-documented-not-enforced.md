@@ -1,7 +1,10 @@
 # D-027 — `crud.InTx` cross-database capture is documented, not enforced
 
-**Status:** open
+**Status:** superseded by [[D-082]]
 **Invariant:** A repository must never run a statement on a database other than the one it was bound to — unless the application said so with `crud.WithExecutor`.
+
+The body below records the former gap. D-082 settled it with source-bound
+sessions, a strict compatibility path and a separately named unsafe escape.
 
 ## The decision — and the gap it leaves
 
@@ -101,17 +104,15 @@ While this is open, do not:
 - `docs/usage-guides/ent.md` §5 and `docs/usage-guides/gorm.md` §5 — the
   "be deliberate about this if you talk to a second database" note.
 
-## Proven by
+## Supersession proofs
 
-The gap itself is tested — as *current behaviour*, not as a bug — which is the
-right way to hold an open question:
-
-- `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` in
-  `test/integration/multidb_test.go` — two real databases; the test name states
-  the problem. If the fallback is ever changed, this is the test that changes
-  with it.
-- `TestAnUnscopedExecutorReachesEverySource` in `crud/executor_test.go` — the
-  unit-level statement of the same thing.
+- `TestWithExecutorRefusesToAdoptARepositoryOnTheWrongDatabase` and
+  `TestWithUnsafeExecutorKeepsTheLegacyCrossDatabaseOptOut` in
+  `test/integration/multidb_test.go` pin the safe default and its explicit
+  two-database control.
+- `TestWithExecutorRefusesAnInferredScopeMismatch` and
+  `TestWithUnsafeExecutorReachesEverySource` in `crud/executor_test.go` pin the
+  same distinction without a driver.
 - `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` and
   `TestARepositoryTransactionDoesNotCaptureAnotherDatabase` in
   `test/integration/multidb_test.go` — the workaround works.

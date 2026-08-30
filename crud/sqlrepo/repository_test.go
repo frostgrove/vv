@@ -60,6 +60,20 @@ func userRow(id int64, email, name string, age any, tenant int64) []any {
 	return []any{id, email, name, age, tenant, now}
 }
 
+func TestARepositoryCannotHideAnOlderExecutorDeclarationFailure(t *testing.T) {
+	rec := crudtest.Postgres()
+	ctx := (crud.Session{}).Bind(context.Background())
+	ctx = crud.BindExecutor(ctx, rec, rec)
+
+	err := Docs.Bind(rec).SaveOnly(ctx, &Doc{ID: "one", Title: "must not run"})
+	if !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("SaveOnly returned %v, want ErrExecutorScope", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("the poisoned context reached the datasource: %v", rec.SQL())
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 func mustSQL(t *testing.T, rec *crudtest.Recorder, i int) crudtest.Statement {
@@ -759,7 +773,7 @@ func TestTransactionJoinsAnAmbientExecutor(t *testing.T) {
 	users := Users.Bind(rec)
 
 	outer := crudtest.Postgres().Push(crudtest.Rows(userRow(2, "b", "B", 2, 1)))
-	ctx := crud.WithExecutor(context.Background(), outer)
+	ctx := crud.BindExecutor(context.Background(), rec, outer)
 
 	if err := users.Tx(ctx, func(ctx context.Context) error {
 		_, err := users.GetByID(ctx, 1)

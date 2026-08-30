@@ -1,7 +1,10 @@
 # D-009 — The context executor is captured unconditionally; naming a database is opt-in
 
-**Status:** accepted
+**Status:** superseded by [[D-082]]
 **Invariant:** `crud.WithExecutor` must be honoured by every repository the context reaches, whatever datasource that repository was bound to; only `crud.WithExecutorFor` may restrict it.
+
+The body below is retained as the historical decision and describes the API
+before D-082. Current behaviour and current proofs live in D-082.
 
 ## The decision
 
@@ -132,24 +135,25 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 - `crud/sqlrepo/repository.go:repository.Source` — three lines, and the whole of
   `crud.Sourced`.
 
-## Proven by
+## Supersession proofs
 
-- `TestAnUnscopedExecutorReachesEverySource` in `crud/executor_test.go`.
-- `TestAScopedExecutorReachesOnlyItsOwnDatabase` in `crud/executor_test.go`.
-- `TestAScopedBindingDoesNotHideTheUnscopedOneUnderIt` in
-  `crud/executor_test.go` — the chain, not a replace.
+- `TestWithUnsafeExecutorReachesEverySource` in `crud/executor_test.go` retains
+  the old behaviour only behind the explicit escape hatch.
+- `TestASessionReachesOnlyItsOwnDatabase` and
+  `TestASessionDoesNotHideTheUnsafeExecutorUnderIt` in
+  `crud/executor_test.go` pin the new safe default and binding chain.
 - `TestInTxScopesTheTransactionItOpens` and
-  `TestInTxLeavesAnUnidentifiedSourceUnscoped` in `crud/executor_test.go` — the
-  two halves of the `ownScope` decision.
+  `TestInTxRefusesAnUnidentifiedSourceBeforeBegin` in `crud/executor_test.go`
+  pin both sides of the new `ownScope` refusal.
 - `TestInTxJoinsRatherThanNests` and
   `TestInTxDoesNotJoinAnotherDatabasesTransaction` in `crud/executor_test.go`.
 - `TestTheHandleAndASourceOverItNameTheSameDatabase` in `crud/executor_test.go`.
 - `TestAnUncomparableDataSourceDoesNotPanic` and
   `TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic` in
   `crud/executor_test.go`.
-- `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` in
-  `test/integration/multidb_test.go` — two real databases; this is the test that
-  makes the trade concrete rather than theoretical.
+- `TestWithUnsafeExecutorKeepsTheLegacyCrossDatabaseOptOut` in
+  `test/integration/multidb_test.go` retains the old two-database behaviour as
+  an explicit control.
 - `TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase` and
   `TestARepositoryTransactionDoesNotCaptureAnotherDatabase` in
   `test/integration/multidb_test.go`.

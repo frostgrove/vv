@@ -34,6 +34,7 @@ type promoteResult struct {
 
 type teamUsecase struct {
 	database *gorm.DB
+	source   crud.Source
 	members  *crud.Repo[Member, uint, MemberUpdate]
 	config   *query.Config
 }
@@ -51,7 +52,7 @@ func (this teamUsecase) PromoteMembers(ctx context.Context, teamID uint, request
 	err = this.database.Transaction(func(tx *gorm.DB) error {
 		// 3. vv joins it — one line, and every repository call made with
 		//    txCtx now runs on this transaction.
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := crud.BindExecutor(ctx, this.source, crudsql.From(tx.Statement.ConnPool))
 
 		// 4. The client's filter, narrowed by something it cannot override.
 		page, err := this.members.Get(txCtx, append(options, crud.Where(crud.Eq("TeamID", teamID)))...)
@@ -87,7 +88,8 @@ func (this teamUsecase) PromoteMembers(ctx context.Context, teamID uint, request
 func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
-	uc := teamUsecase{database: database, members: GormMembers.Bind(crudsql.Postgres(pgDB))}
+	source := crudsql.Postgres(pgDB)
+	uc := teamUsecase{database: database, source: source, members: GormMembers.Bind(source)}
 
 	team := Team{Name: "core"}
 	if err := database.Create(&team).Error; err != nil {
@@ -140,7 +142,8 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
-	members := GormMembers.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	members := GormMembers.Bind(source)
 
 	team := Team{Name: "core"}
 	if err := database.Create(&team).Error; err != nil {
@@ -152,7 +155,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 
 	boom := errors.New("policy check failed")
 	err := database.Transaction(func(tx *gorm.DB) error {
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := source.BindExecutor(ctx, tx.Statement.ConnPool)
 		if err := tx.Model(&Team{}).Where("id = ?", team.ID).Update("name", "renamed").Error; err != nil {
 			return err
 		}
@@ -186,6 +189,7 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 
 type userUsecase struct {
 	client *entpkg.Client
+	source crud.Source
 	users  *crud.Repo[entpkg.User, int64, entstore.UserUpdate]
 	config *query.Config
 }
@@ -209,7 +213,7 @@ func (this userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req
 	}
 	defer tx.Rollback()
 
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := crud.BindExecutor(ctx, this.source, crudsql.From(tx))
 
 	page, err := this.users.Get(txCtx, append(options, crud.Where(crud.Eq("TenantID", tenantID)))...)
 	if err != nil {
@@ -248,7 +252,8 @@ func TestEntUsecaseDSLInsideTransaction(t *testing.T) {
 	truncate(t, pgDB)
 
 	client := entClient(pgDB, dialect.Postgres)
-	uc := userUsecase{client: client, users: EntUsers.Bind(crudsql.Postgres(pgDB))}
+	source := crudsql.Postgres(pgDB)
+	uc := userUsecase{client: client, source: source, users: EntUsers.Bind(source)}
 
 	for i, name := range []string{"Ann", "Bob", "Cid"} {
 		if _, err := client.User.Create().

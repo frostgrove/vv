@@ -2,6 +2,7 @@ package crud_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/frostgrove/vv/crud"
@@ -166,6 +167,13 @@ func TestAWrappedPrimaryIsStillTheDatabaseItNames(t *testing.T) {
 	if _, ok := crud.ExecutorFor(ctx, rw); !ok {
 		t.Fatal("a scoped executor no longer reaches a repository bound through an instrumented pair")
 	}
+	session := crud.BindExecutor(context.Background(), rw, fakeExec{name: "session"})
+	if e, ok := crud.ExecutorFor(session, primary); !ok || e.(fakeExec).name != "session" {
+		t.Fatalf("a session declared through the wrapped ReadWrite resolved to %v, found=%v", e, ok)
+	}
+	if _, ok := crud.ExecutorFor(session, replica); ok {
+		t.Fatal("a session declared for the wrapped primary captured its replica")
+	}
 
 	// The control: a binding scoped to the *other* database must still not match,
 	// or the walk has become "yes to anything" and D-027's whole point is gone.
@@ -203,5 +211,25 @@ func TestATransactionOnAWrappedSourceIsScopedToItsDatabase(t *testing.T) {
 	}
 	if !reached {
 		t.Fatal("the closure never ran")
+	}
+}
+
+func TestASessionRecognisesATransactionHiddenBySourceWrappers(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "transaction"}}
+	txSource := transactionalSource{fakeTx: tx}
+	var seen int
+	wrapped := tracing{inner: txSource, seen: &seen}
+
+	for name, source := range map[string]crud.Source{
+		"instrumented": wrapped,
+		"read-write":   crud.ReadWrite(wrapped, srcOn(dbB, "replica")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := crud.NewSession(source, tx)
+			var scoped *crud.ExecutorScopeError
+			if !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeTransactionSource {
+				t.Fatalf("NewSession returned %v, want transaction_source", err)
+			}
+		})
 	}
 }

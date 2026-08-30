@@ -25,6 +25,7 @@ because they carry the field and the reason.
 | `*crud.UnknownFieldError` | a field path that does not resolve | 400 |
 | `*crud.SchemaError` | a declaration or a statement that cannot be built | 400 |
 | `crud.ErrNoTxSupport` | `InTx` on an executor that cannot begin | 500 |
+| `crud.ErrExecutorScope` / `*crud.ExecutorScopeError` | a source/executor association that cannot be proved safe ([[D-082]]) | 500 |
 | `crud.ErrReadOnly` | nothing in the tree — see below | 500 |
 | anything else | a driver error, a bug | 500, empty body |
 
@@ -113,6 +114,8 @@ for statuses below 500.
   into `security.ReadOnly` — that would turn a 403 into a 500.
 - Do not map `ErrNoTxSupport` to a 4xx. The caller asked for a transaction from
   something that cannot give one; that is a wiring bug, not a request problem.
+- Do not map `ErrExecutorScope` to a 4xx. It is a typed, inspectable wiring
+  failure; its reason is diagnostic and must not become client policy.
 - Do not re-derive the table in another transport binding. There is one switch
   and every binding calls it ([[D-045]]); two copies drift the day a sentinel is
   added, and nothing fails when they do.

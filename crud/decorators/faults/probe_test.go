@@ -73,6 +73,7 @@ func newStub(fail error, cells ...any) *stub {
 }
 
 func (this *stub) Dialect() crud.Dialect { return this.d }
+func (this *stub) DataSource() any       { return this }
 
 // The probe's own statement, told from the write's. A bulk probe leads with the
 // row index rather than with the first term, so a prefix test misses it.
@@ -385,7 +386,7 @@ func TestAForeignTransactionIsNeverGivenASavepoint(t *testing.T) {
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
 		faults.WithProbe(probe.Full(docsCatalog(), probe.WithSavepoints()))))
 
-	ctx := crud.WithExecutor(context.Background(), source)
+	ctx := crud.BindExecutor(context.Background(), source, source)
 	if err := repository.SaveOnly(ctx, &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail")
 	}

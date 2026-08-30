@@ -298,9 +298,9 @@ func TestMySQLScopedSavesJoinAnOpaqueForeignExecutor(t *testing.T) {
 				crudtest.Rows(docRow(1, 7, "after")),  // post-write refresh
 			).ExecResult(crud.Result{RowsAffected: 1})
 			repository := Docs.Bind(source, security.Gate(tenantPolicy))
-			// A foreign transaction needs no marker beyond Executor. The context
-			// is the caller's statement that every repository query belongs to it.
-			foreignCtx := crud.WithExecutor(ctx, foreign)
+			// The repository source supplies identity; the foreign executor needs
+			// only the statement methods.
+			foreignCtx := crud.BindExecutor(ctx, source, foreign)
 			if name == "Save" {
 				if _, err := repository.Save(foreignCtx, &Doc{ID: 1, TenantID: 7, Title: "after", Body: "body"}); err != nil {
 					t.Fatal(err)

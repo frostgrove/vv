@@ -35,13 +35,14 @@ func TestPgx(t *testing.T) {
 func TestPgxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repository := Users.Bind(crudpgx.Open(pgPool))
+	source := crudpgx.Open(pgPool)
+	repository := Users.Bind(source)
 
 	tx, err := pgPool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	u := User{TenantID: 1, Email: "pgx-tx@x.io", Name: "Joined"}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
@@ -81,6 +82,43 @@ func TestPgxSharedTransaction(t *testing.T) {
 	}
 }
 
+func TestPgxTransactionIdentityCannotEscapeRollback(t *testing.T) {
+	ctx := context.Background()
+	truncate(t, pgDB)
+	repository := Users.Bind(crudpgx.Open(pgPool))
+	tx, err := pgPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txCtx := crud.WithExecutorFor(ctx, tx, crudpgx.From(tx))
+	if _, err := repository.Save(txCtx, &User{TenantID: 1, Email: "scope-miss@x.io", Name: "must-not-escape"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("Save returned %v, want ErrExecutorScope", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repository.Count(ctx); err != nil || n != 0 {
+		t.Fatalf("count = %d err = %v: the mismatched binding fell back to the pool", n, err)
+	}
+
+	tx, err = pgPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txSource := crudpgx.From(tx)
+	txCtx = txSource.BindExecutor(ctx, tx)
+	if _, err := repository.Save(txCtx, &User{TenantID: 1, Email: "session-scope-miss@x.io", Name: "must-not-escape"}); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("BindExecutor with a transaction source returned %v, want ErrExecutorScope", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repository.Count(ctx); err != nil || n != 0 {
+		t.Fatalf("count = %d err = %v: BindExecutor accepted a transaction as canonical source", n, err)
+	}
+}
+
 // pgx gives nested Begin savepoint semantics, so an inner failure can be undone
 // without losing the outer transaction.
 func TestPgxNestedSavepoint(t *testing.T) {
@@ -99,7 +137,7 @@ func TestPgxNestedSavepoint(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		spCtx := crud.WithExecutor(ctx, sp)
+		spCtx := crud.BindExecutor(ctx, source, sp)
 		doomed := User{TenantID: 1, Email: "doomed@x.io", Name: "doomed"}
 		if _, err := repository.Save(spCtx, &doomed); err != nil {
 			return err

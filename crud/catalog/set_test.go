@@ -202,8 +202,8 @@ func TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide(t *testing.T) {
 	ctx := context.Background()
 	recA, recB := recorder(oneTable(), 2), recorder(oneTable(), 2)
 	replica := crudtest.Postgres()
-	pairA := crud.ReadWrite(recA, replica)
-	pairB := crud.ReadWrite(recB, replica)
+	pairA := crud.ReadWrite(anonymous{recorder: recA}, replica)
+	pairB := crud.ReadWrite(anonymous{recorder: recB}, replica)
 
 	for i, pair := range []crud.Source{pairA, pairB} {
 		id, ok := pair.(crud.Identified)
@@ -244,9 +244,9 @@ func TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide(t *testing.T) {
 	}
 }
 
-// §16's open question, answered where the catalog can see it: the recorder needs
-// no DataSource(). crud.KeyOf takes a source that cannot name its database at
-// face value, so a recorder keys as itself and two recorders are two catalogs.
+// The recorder identifies itself after D-082 so its transaction can be scoped
+// safely. That still makes one recorder one catalog and two recorders two
+// catalogs; the catalog seam and transaction seam now agree on the identity.
 //
 // Self-controlling in both directions, and the pass count is what makes that
 // true. A Set that refused every unidentified source fails the first half; one
@@ -256,8 +256,12 @@ func TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam(t *testing.T) {
 	ctx := context.Background()
 	recA, recB := recorder(oneTable(), 2), recorder(oneTable(), 1)
 
-	if _, ok := any(recA).(crud.Identified); ok {
-		t.Fatal("the recorder now names a datasource — that changes what crud.InTx does over it, and D-041 says why the answer was no")
+	identified, ok := any(recA).(crud.Identified)
+	if !ok || identified.DataSource() != recA {
+		t.Fatal("the recorder does not identify itself, so catalog and transaction scoping can drift")
+	}
+	if crud.KeyOf(recA) != recA {
+		t.Fatalf("crud.KeyOf answered %v, want the recorder itself", crud.KeyOf(recA))
 	}
 
 	var set Set
@@ -301,7 +305,7 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 		// though the interface contains a slice. SameDataSource inspects the value
 		// recursively and refuses it without evaluating a panicking ==.
 		{"a source whose own type only looks comparable", func(r *crudtest.Recorder) crud.Source {
-			return awkward{Recorder: r, payload: weird}
+			return awkward{anonymous: anonymous{recorder: r}, payload: weird}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

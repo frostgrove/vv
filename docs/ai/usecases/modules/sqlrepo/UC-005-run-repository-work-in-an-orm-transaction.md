@@ -14,9 +14,10 @@ call — and either way a rollback has to take everything.
 
 ## What must hold
 
-1. Handing a foreign transaction to the repository is one call that derives a new
-   context. Every repository call made with that context runs on that
-   transaction; no repository opens a connection of its own while it is in force.
+1. Handing a foreign transaction to the repository is one call that associates
+   it with the canonical source and derives a new context. Every repository call
+   over that source runs on the transaction; a repository on another database is
+   neither captured nor blocked.
 2. The only thing asked of the foreign object is that it can execute a statement
    and return rows. Anything an ORM, a query builder or a driver exposes with
    that shape can be handed over, without the library knowing what it is.
@@ -59,12 +60,15 @@ call — and either way a rollback has to take everything.
     the context or one transaction is opened for the batch. Every chunk is
     validated before the first runs; a later failure never commits an earlier
     chunk on its own.
+15. A source-less or transaction-as-source binding that cannot match the pool is
+    a typed `crud.ErrExecutorScope` before any datasource call. It never falls
+    back to the pool and falsely appears to survive rollback successfully.
 
 ## Out of scope
 
-- **Which database the transaction belongs to.** In a process with one database
-  this never comes up; in a process with two it is the whole problem, and it is
-  UC-012.
+- **How independently committed databases become atomic.** The binding names
+  which source one transaction belongs to; cross-database atomicity remains out
+  of scope and the routing guarantees are UC-012.
 - **Handing an vv-owned transaction back to the ORM.** The context flows
   inward. The adapters expose the underlying handle, but joining in that
   direction is the author's plumbing.
@@ -88,7 +92,7 @@ call — and either way a rollback has to take everything.
 ## Status
 **covered, with three named gaps.**
 
-Sharing a transaction with a foreign owner is proven for `database/sql`, pgx,
+Source-bound sharing with a foreign owner is proven for `database/sql`, pgx,
 sqlx, gorm, ent and sqlc (on both `database/sql` and pgx, and on MySQL) — each
 with the cross-visibility assertion in both directions. Rollback taking both
 halves is proven for gorm, ent and pgx, including a case where the ORM's write

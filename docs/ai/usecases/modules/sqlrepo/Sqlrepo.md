@@ -541,8 +541,8 @@ transaction.
 **Evidence:** 1, 3, 4 and 7 hold and are executed. `crud/executor.go:503` joins
 when the context already carries an executor for this source,
 `crud/sqlrepo/repository.go:137` delegates to it, `:712-715` adds `FOR UPDATE`
-only when a transaction is present. Handing one over is `crud.WithExecutor`, one
-line (`crud/executor.go:316`), proven across `database/sql`, pgx, sqlx, gorm, ent
+only when a transaction is present. Handing one over is `crud.BindExecutor`, one
+source-bound line ([[D-082]]), proven across `database/sql`, pgx, sqlx, gorm, ent
 and sqlc by [[UC-005]]. Point 7 is `exec()` at `repository.go:95-101`: three lines
 that ask `crud.ExecutorFor(ctx, r.src)` and leave somebody else's database alone —
 the rest of that mechanism is `crud/executor.go`'s and is H-SQLREPO-12.
@@ -605,15 +605,11 @@ the event, and neither write may land on the wrong server.
 2. Everything else about the scoped binding — naming a handle, naming a source over it, a `Tx` scoping itself — is `crud/executor.go`'s. *(Pointer only; the `crud` sweep owns it.)*
 **Today:** ✅ ready at this layer
 **Evidence:** Point 1 is `crud/sqlrepo/repository.go:95-101` and is the entire
-`sqlrepo`-visible surface of this. [[UC-012]] covers the rest with tests against
-two real PostgreSQL databases, and [[D-027]] records that the unscoped capture is
-deliberate.
-**If not ready:** n/a here. The failure a consumer meets on this path is
-[[UC-012]]'s blind spot 2 and open tension 18 — naming a *transaction* rather
-than the database keys the binding on a handle no repository matches, so the
-write goes to the pool outside the transaction and reports success. That is
-`crud/executor.go:335`'s to fix, is a release blocker in the `crud` sweep, and is
-carried here as a cross-reference only.
+`sqlrepo`-visible surface of this. [[UC-012]] and [[D-082]] cover the rest with
+live database/sql and pgx tests: safe sessions leave another database alone,
+strict mismatches fail before the source, and unconditional capture exists only
+through `WithUnsafeExecutor`.
+**If not ready:** n/a here.
 
 ### H-SQLREPO-13 — `DELETE /users/42`
 **Who:** an engineer wiring the delete endpoint, and the author of a bulk cleanup screen
@@ -1575,7 +1571,7 @@ them.
 | 25 | `Count` and `Exists` are replica-eligible with nothing said (`repository.go:584`, `:595`) | sharp edge | Right for a badge count, wrong for the `Exists`-before-create this sweep tells consumers to write today. [[D-032]]'s rule one layer out, where it is the caller's to apply |
 | 26 | The module reference's remedy for "a column DEFAULT does not fire" names `BeforeSave`, which does not exist at this layer (`docs/modules/en/sqlrepo.md:283`) | sharp edge | A service method or background job has no such seam; the only one is a `crud.Middleware`. A reference that names a hook a consumer cannot reach is worse than one that says nothing |
 | 27 | `settings.replica` (`blueprint.go:33`) is declared and never read | sharp edge | Nothing at run time, but the next agent reads a settings field as a setting that exists |
-| — | No isolation level on `Tx`; `WithExecutorFor` keyed on a transaction matches no repository | cross-reference | Both are owned by `crud` + `crud/adapter/crudsql` (`crud/executor.go:52`, `:335`; `crudsql.go:173`) and belong in that sweep's blocker table. Listed here without a number so the same two defects are not counted twice across two documents |
+| — | No per-call isolation level on `Tx`; transaction-keyed executor binding | cross-reference | Isolation remains an adapter/source option. The binding defect is closed by [[D-082]]: transaction-as-source and strict inferred mismatches return `ErrExecutorScope` before datasource use |
 
 ## Contested
 

@@ -74,6 +74,11 @@ func MySQL() *Recorder    { return New(crud.MySQL{}) }
 
 func (this *Recorder) Dialect() crud.Dialect { return this.D }
 
+// DataSource makes one recorder one canonical datasource. Transactions opened
+// by it stay available to repositories bound to that recorder without becoming
+// an unscoped executor that unrelated test repositories may adopt.
+func (this *Recorder) DataSource() any { return this }
+
 // Push queues result sets, consumed by successive Query calls in order.
 func (this *Recorder) Push(results ...Result) *Recorder {
 	this.mu.Lock()

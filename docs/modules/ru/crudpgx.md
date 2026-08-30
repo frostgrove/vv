@@ -41,14 +41,21 @@ type Queryer interface {
 ## Подключение к чужой транзакции
 
 ```go
+src := crudpgx.Open(pool)
 err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-    ctx := crud.WithExecutor(ctx, crudpgx.From(tx))
+    ctx := src.BindExecutor(ctx, tx)
     return users.SaveOnly(ctx, &u)
 })
 ```
 
+Связанный executor наследует классификатор `src`, включая каталог или
+пользовательский словарь. `crudpgx.WithFaults(...)` переопределяет его явно.
+
 С sqlc на pgx это вся интеграция целиком: `pgx.Tx` удовлетворяет и `DBTX` из
 sqlc, и `Queryer` из vv одновременно, так что одна транзакция кормит обоих.
+Общая форма — `crud.BindExecutor(ctx, src, crudpgx.From(tx))`; если назвать
+source-ом сам `tx`, framework вернёт `crud.ErrExecutorScope`, а не уйдёт в pool
+вне rollback ([[D-082]]).
 
 ## Массовая вставка через COPY
 

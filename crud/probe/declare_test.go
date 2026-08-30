@@ -232,7 +232,7 @@ func TestTheTransactionMatrixDecidesWhetherTheProbeRunsAtAll(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "foreign":
-				run(crud.WithExecutor(ctx, rec))
+				run(crud.BindExecutor(ctx, rec, rec))
 			}
 		})
 	}

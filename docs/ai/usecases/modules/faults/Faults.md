@@ -727,8 +727,8 @@ vv-owned transaction, the savepoint was already rolled back to and nothing rolls
 back again (`crud/decorators/faults/probe.go:144-147`), so a caller who meant to
 catch the conflict and carry on in the same transaction finds it poisoned. And
 the wiring for this case is the worst in the subsystem: both guides push a second
-executor into the context —
-`crud.WithExecutor(ctx, crudsql.From(tx, crudsql.WithFaults(sqlfault.New("postgres"))))`
+executor into the context — `source.BindExecutor(ctx, tx,
+crudsql.WithFaults(sqlfault.New("postgres")))`
 (`docs/usage-guides/ent.md:1325-1328`) — which needs the same catalog-backed
 classifier as the main handle or writes inside the ORM's transaction lose their
 columns, and nothing hands it one.

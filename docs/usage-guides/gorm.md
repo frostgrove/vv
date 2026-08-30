@@ -268,6 +268,7 @@ repository with the compiled DSL *inside that same transaction*, and commits.
 ```go
 type teamUsecase struct {
     db      *gorm.DB
+    src     crudsql.DB
     members *crud.Repo[Member, uint, store.MemberUpdate]
     cfg     *query.Config
 }
@@ -288,7 +289,7 @@ func (uc teamUsecase) PromoteMembers(
     err = uc.db.Transaction(func(tx *gorm.DB) error {
         // 3. vv joins it. One line — every repository call made with txCtx
         //    from here on runs on this transaction.
-        txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+        txCtx := uc.src.BindExecutor(ctx, tx.Statement.ConnPool)
 
         // 4. The client's filter, narrowed by something it cannot override.
         page, err := uc.members.Get(txCtx, append(opts, crud.Where(crud.Eq("TeamID", teamID)))...)
@@ -365,16 +366,17 @@ into a `status.Error` is passed through untouched.
 
 Three things worth noticing:
 
-- **`crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))` is the whole
+- **`uc.src.BindExecutor(ctx, tx.Statement.ConnPool)` is the whole
   integration.** Inside `db.Transaction`, gorm swaps `Statement.ConnPool` for
-  the live `*sql.Tx`, which is exactly what `crudsql.From` wants. vv never
-  opens a connection of its own when the context carries one. Anything gorm
-  writes, vv sees; anything vv writes, gorm sees; a returned error
-  rolls back both. It captures *every* repository the context reaches, which is
-  what makes the seam work — and what you have to be deliberate about if this
-  process also talks to a second database. Then say which one:
-  `crud.WithExecutorFor(ctx, db, crudsql.From(tx.Statement.ConnPool))`, and
-  repositories bound elsewhere carry on using their own.
+  the live `*sql.Tx`, or for `PrepareStmt` a `*gorm.PreparedStmtTX` retaining the
+  same `Commit`/`Rollback` lifecycle. Both are recognised as transactional, so
+  bind-budget chunks remain under Gorm's rollback. The source supplies the pool
+  identity that the transaction cannot reveal. Anything gorm writes, vv sees;
+  anything vv writes, gorm sees; a returned error rolls back both. Repositories
+  bound elsewhere carry on using their own datasource. The deprecated
+  source-less `crud.WithExecutor` fails
+  with `crud.ErrExecutorScope` instead of guessing; only
+  `crud.WithUnsafeExecutor` adopts every repository ([[D-082]]).
 - **The client's DSL and your own predicate compose.** `crud.Where` **ANDs** —
   it never replaces — so `crud.Where(crud.Eq("TeamID", teamID))` cannot be
   widened by anything the client sent.
@@ -457,7 +459,7 @@ src := crudsql.Postgres(sqlDB)   // or crudsql.MySQL(sqlDB)
 Same connection pool, same settings, same metrics. That is the entire wiring.
 
 For transactions, prefer letting gorm own them — `db.Transaction(...)` plus the
-one `crud.WithExecutor` line from [§5](#5-the-real-shape-dsl-inside-a-transaction).
+one `src.BindExecutor` line from [§5](#5-the-real-shape-dsl-inside-a-transaction).
 `repo.Tx(...)` also works and opens a plain `database/sql` transaction; gorm
 hooks do not run inside it, because gorm is not the one issuing the statements.
 
@@ -1268,7 +1270,8 @@ classification stops at the status otherwise.
 different things.** Where vv knows which engine it is talking to it turns a
 refused statement into a code — `unique`, `foreign_key`, `required`, `check` —
 and the 409 body then carries the code and nothing the driver said. Where it
-does not, the 409 carries the driver's own sentence, constraint name included.
+does not, the status remains 409 but the response stays sanitised and carries
+neither the driver's sentence nor a guessed field-level code.
 Which one you get is decided by how the datasource was built:
 
 ```go
@@ -1288,15 +1291,16 @@ crudsql.Source(handle, dialect)       // does not
 refuses to guess rather than answering "mysql" for a MariaDB server. The status
 never depends on this; only the code does.
 
-**Wiring the classification into a joined transaction.** The shared-transaction
-pattern above uses ``crudsql.From(tx.Statement.ConnPool)``, which names no engine — so a write inside it is a
-409 without a code while the same write outside it carries one. Say which engine
-it is:
+**Classification follows a source-bound joined transaction.** `src` already
+contains the engine declaration and any loaded catalog, and its helper carries
+that classifier onto the foreign handle automatically:
 
 ```go
-txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool,
-    crudsql.WithFaults(sqlfault.New("postgres"))))
+txCtx := src.BindExecutor(ctx, tx.Statement.ConnPool)
 ```
+
+Pass `crudsql.WithFaults(...)` to `BindExecutor` only to override the source's
+classifier for an exceptional handle.
 
 The same option takes a loaded catalog, which fills in the columns a violation
 does not name — PostgreSQL reports a composite unique violation with the
@@ -1389,7 +1393,7 @@ probe.Full(cat, probe.WithSavepoints())
 
 MySQL, MariaDB and SQLite roll back the failed statement alone and need none of
 this. And a transaction **your** code opened and handed over with
-`crud.WithExecutor` never gets a savepoint, whatever the option says: an ORM
+`BindExecutor` never gets a savepoint, whatever the option says: an ORM
 transaction has its own savepoint stack, and rolling back to one of ours in the
 middle of it can discard work you have not finished with. There the answer is one
 violation on PostgreSQL, whichever way it is wired.

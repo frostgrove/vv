@@ -513,9 +513,10 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 // mxTeamUsecase is the usecase from usecase_test.go with its one Postgres-ism —
 // `||`, which MySQL reads as a logical OR — lifted into a parameter. Everything
 // that makes it a usecase (compile the DSL, let the ORM own the transaction,
-// join it with crud.WithExecutor) is the same code on both engines.
+// join it with crud.BindExecutor) is the same code on both engines.
 type mxTeamUsecase struct {
 	database *gorm.DB
+	source   crud.Source
 	members  *crud.Repo[Member, uint, MemberUpdate]
 	promote  string
 }
@@ -528,7 +529,7 @@ func (this mxTeamUsecase) PromoteMembers(ctx context.Context, teamID uint, reque
 
 	var out promoteResult
 	err = this.database.Transaction(func(tx *gorm.DB) error {
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := crud.BindExecutor(ctx, this.source, crudsql.From(tx.Statement.ConnPool))
 
 		page, err := this.members.Get(txCtx, append(options, crud.Where(crud.Eq("TeamID", teamID)))...)
 		if err != nil {
@@ -560,7 +561,7 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
-			uc := mxTeamUsecase{database: g.database, members: GormMembers.Bind(g.source), promote: g.promote}
+			uc := mxTeamUsecase{database: g.database, source: g.source, members: GormMembers.Bind(g.source), promote: g.promote}
 
 			team := Team{Name: "core"}
 			if err := g.database.Create(&team).Error; err != nil {
@@ -611,7 +612,8 @@ func TestEntUsecaseDSLInsideTransactionOnMySQL(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, myDB)
 	client := entClient(myDB, dialect.MySQL)
-	uc := userUsecase{client: client, users: EntUsers.Bind(crudsql.MySQL(myDB))}
+	source := crudsql.MySQL(myDB)
+	uc := userUsecase{client: client, source: source, users: EntUsers.Bind(source)}
 
 	for i, name := range []string{"Ann", "Bob", "Cid"} {
 		if _, err := client.User.Create().

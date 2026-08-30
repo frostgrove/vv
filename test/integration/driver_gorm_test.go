@@ -67,10 +67,11 @@ func TestGormSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	database := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	err := database.Transaction(func(tx *gorm.DB) error {
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := source.BindExecutor(ctx, tx.Statement.ConnPool)
 
 		u := User{TenantID: 1, Email: "gorm@x.io", Name: "ByVV", Active: true}
 		if stored, err := repository.Save(txCtx, &u); err != nil {
@@ -117,11 +118,12 @@ func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	database := openGorm(t, gormpg.New(gormpg.Config{Conn: pgDB}))
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	boom := errNotNil("rollback please")
 	err := database.Transaction(func(tx *gorm.DB) error {
-		txCtx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+		txCtx := source.BindExecutor(ctx, tx.Statement.ConnPool)
 		u := User{TenantID: 1, Email: "doomed@x.io", Name: "Doomed"}
 		if _, err := repository.Save(txCtx, &u); err != nil {
 			return err

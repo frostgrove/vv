@@ -10,15 +10,16 @@
 //	sqlc (database/sql output)         crudsql.From(tx)
 //	bun, squirrel, dbr, ...            crudsql.From(tx)
 //
-// To share a transaction with the framework that owns it, wrap the framework's
-// transaction handle and push it into the context:
+// To share a transaction with the framework that owns it, bind that handle to
+// the source the repositories were built from:
 //
-//	ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+//	ctx = source.BindExecutor(ctx, tx)
 package crudsql
 
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 
@@ -41,14 +42,18 @@ type Queryer interface {
 // pointer, so an Executor stays comparable — crud.KeyOf and catalog.Set both
 // key on the value.
 type Executor struct {
-	q      Queryer
-	faults errs.Classifier
+	q           Queryer
+	faults      errs.Classifier
+	transaction bool
 }
 
 // An Option wires one part of an executor.
 type Option func(*config)
 
-type config struct{ faults errs.Classifier }
+type config struct {
+	faults      errs.Classifier
+	transaction bool
+}
 
 // WithFaults hands an executor a classifier. It is how a handle this package
 // cannot name an engine for — a joined ent, gorm or sqlx transaction — gets one
@@ -57,14 +62,27 @@ type config struct{ faults errs.Classifier }
 //	crudsql.From(tx, crudsql.WithFaults(sqlfault.New("postgres")))
 func WithFaults(c errs.Classifier) Option { return func(o *config) { o.faults = c } }
 
-func classifier(def errs.Classifier, options []Option) errs.Classifier {
+// WithTransaction marks an opaque foreign Queryer as a live transaction. The
+// common database/sql shapes do not need it: *sql.Tx and wrappers such as
+// *sqlx.Tx, *ent.Tx and gorm's prepared transaction expose Commit/Rollback and
+// are recognised structurally. Use this only for a transaction wrapper that
+// deliberately hides its lifecycle; marking a pool would make atomic code trust
+// a boundary that does not exist.
+func WithTransaction() Option { return func(o *config) { o.transaction = true } }
+
+func configure(def errs.Classifier, options []Option) config {
 	o := config{faults: def}
 	for _, fn := range options {
 		if fn != nil {
 			fn(&o)
 		}
 	}
-	return o.faults
+	return o
+}
+
+func executor(q Queryer, def errs.Classifier, options []Option) Executor {
+	o := configure(def, options)
+	return Executor{q: q, faults: o.faults, transaction: o.transaction}
 }
 
 // From wraps a foreign handle — most often somebody else's transaction.
@@ -73,7 +91,7 @@ func classifier(def errs.Classifier, options []Option) errs.Classifier {
 // sentinel and no code. Deriving the engine from the dialect is what [[D-046]]
 // forbids, because crud.MySQL is MariaDB too. Pass WithFaults to say which.
 func From(q Queryer, options ...Option) Executor {
-	return Executor{q: q, faults: classifier(nil, options)}
+	return executor(q, nil, options)
 }
 
 // Unwrap returns the wrapped handle.
@@ -85,13 +103,38 @@ func (this Executor) Unwrap() Queryer { return this.q }
 // wrapped.
 func (this Executor) DataSource() any { return this.q }
 
-// InTransaction reports whether this wrapper holds database/sql's concrete
-// transaction handle. A *sql.DB and a *sql.Conn both satisfy Queryer too, but
-// neither provides the atomic boundary a multi-statement repository operation
-// needs.
+// InTransaction reports whether this wrapper holds a database/sql transaction
+// or a foreign wrapper retaining its Commit/Rollback lifecycle. A *sql.DB and a
+// *sql.Conn both satisfy Queryer too, but neither provides the atomic boundary a
+// multi-statement repository operation needs.
 func (this Executor) InTransaction() bool {
-	_, ok := this.q.(*sql.Tx)
+	if nilQueryer(this.q) {
+		return false
+	}
+	if this.transaction {
+		return true
+	}
+	// database/sql intentionally has no transaction marker interface. The
+	// lifecycle pair is the stable common denominator retained by *sql.Tx and
+	// wrappers around it; pools and *sql.Conn expose neither method.
+	_, ok := this.q.(interface {
+		Commit() error
+		Rollback() error
+	})
 	return ok
+}
+
+func nilQueryer(q Queryer) bool {
+	if q == nil {
+		return true
+	}
+	v := reflect.ValueOf(q)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func (this Executor) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
@@ -139,7 +182,7 @@ func (this source) Dialect() crud.Dialect { return this.d }
 //
 // It names no engine either, for the same reason From does not.
 func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source {
-	return source{Executor{q: q, faults: classifier(nil, options)}, d}
+	return source{executor(q, nil, options), d}
 }
 
 // DB is a full crud.Source over a *sql.DB: executes, knows its dialect and can
@@ -159,7 +202,7 @@ type DB struct {
 // crud.MySQL targets MySQL and MariaDB both — so Open cannot name an engine and
 // gets no classifier. The four constructors below each name theirs.
 func Open(database *sql.DB, d crud.Dialect, options ...Option) DB {
-	return DB{Executor{q: database, faults: classifier(nil, options)}, database, d, nil}
+	return DB{executor(database, nil, options), database, d, nil}
 }
 
 // The four engine shorthands. Each writes its engine string here, as a literal,
@@ -180,13 +223,23 @@ func SQLite(database *sql.DB, options ...Option) DB {
 }
 
 func engine(database *sql.DB, d crud.Dialect, name string, options []Option) DB {
-	return DB{Executor{q: database, faults: classifier(sqlfault.New(name), options)}, database, d, nil}
+	return DB{executor(database, sqlfault.New(name), options), database, d, nil}
 }
 
 func (this DB) Dialect() crud.Dialect { return this.d }
 
 // DB returns the underlying handle.
 func (this DB) DB() *sql.DB { return this.database }
+
+// BindExecutor derives a context in which repositories over this database use
+// q. The DB supplies the canonical pool identity; q may be a *sql.Tx or a
+// transaction handle from gorm, ent, sqlx, sqlc or another database/sql-based
+// framework. The executor inherits the source's engine classifier; options may
+// override it for an exceptional handle.
+func (this DB) BindExecutor(ctx context.Context, q Queryer, options ...Option) context.Context {
+	bound := executor(q, this.faults, options)
+	return crud.BindExecutor(ctx, this, bound)
+}
 
 // WithTxOptions returns a copy that starts transactions with a snapshot of the
 // given options. Keeping the caller's pointer would let a later mutation change

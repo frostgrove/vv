@@ -276,6 +276,7 @@ repository with the compiled DSL *inside that same transaction*, and commits.
 ```go
 type userUsecase struct {
     client *ent.Client
+    src    crud.Source
     users  *crud.Repo[ent.User, int64, store.UserUpdate]
     cfg    *query.Config
 }
@@ -300,7 +301,7 @@ func (uc userUsecase) DeactivateUsers(
 
     // 3. vv joins it. One line — every repository call made with txCtx
     //    from here on runs on this transaction.
-    txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+    txCtx := crud.BindExecutor(ctx, uc.src, crudsql.From(tx))
 
     // 4. The client's filter, narrowed by something it cannot override.
     page, err := uc.users.Get(txCtx, append(opts, crud.Where(crud.Eq("TenantID", tenantID)))...)
@@ -382,14 +383,16 @@ into a `status.Error` is passed through untouched.
 
 Three things worth noticing:
 
-- **`crud.WithExecutor` is the whole integration.** vv never opens a
-  connection of its own when the context carries one. Anything ent writes,
-  vv sees; anything vv writes, ent sees; a rollback takes both.
-  It captures *every* repository the context reaches, which is what makes the
-  seam work — and what you have to be deliberate about if this process also
-  talks to a second database. Then say which one:
-  `crud.WithExecutorFor(ctx, db, crudsql.From(tx))`, and repositories bound
-  elsewhere carry on using their own.
+- **`crud.BindExecutor(ctx, uc.src, crudsql.From(tx))` is the whole
+  integration.** The source supplies the pool identity an ent transaction
+  cannot reveal. Anything ent writes, vv sees; anything vv writes, ent sees; a
+  rollback takes both. Repositories bound elsewhere keep their own datasource.
+  Ent's transaction retains the standard `Commit`/`Rollback` lifecycle, so
+  multi-statement bind-budget chunks join it too instead of opening a pool
+  transaction; the live suite rolls back chunked `Delete` and `SaveAll` together.
+  The deprecated source-less `crud.WithExecutor` fails with
+  `crud.ErrExecutorScope` instead of guessing; only `crud.WithUnsafeExecutor`
+  adopts every repository ([[D-082]]).
 - **The client's DSL and your own predicate compose.** `crud.Where` **ANDs** —
   it never replaces — so `crud.Where(crud.Eq("TenantID", tenantID))` cannot be
   widened by anything the client sent.
@@ -490,7 +493,7 @@ src := crudsql.Postgres(db)   // or crudsql.MySQL(db)
 ```
 
 Everything in Part I works. The only thing you give up is `repo.Tx(...)` opening
-an *ent* transaction — you can still join one with `crud.WithExecutor`, which is
+an *ent* transaction — you can still join one with `crud.BindExecutor`, which is
 the pattern from [§5](#5-the-real-shape-dsl-inside-a-transaction) anyway.
 
 **Better** — an ent-backed source, so `repo.Tx` opens a real `ent.Tx`: one
@@ -1318,7 +1321,8 @@ classification stops at the status otherwise.
 different things.** Where vv knows which engine it is talking to it turns a
 refused statement into a code — `unique`, `foreign_key`, `required`, `check` —
 and the 409 body then carries the code and nothing the driver said. Where it
-does not, the 409 carries the driver's own sentence, constraint name included.
+does not, the status remains 409 but the response stays sanitised and carries
+neither the driver's sentence nor a guessed field-level code.
 Which one you get is decided by how the datasource was built:
 
 ```go
@@ -1338,15 +1342,16 @@ crudsql.Source(handle, dialect)       // does not
 refuses to guess rather than answering "mysql" for a MariaDB server. The status
 never depends on this; only the code does.
 
-**Wiring the classification into a joined transaction.** The shared-transaction
-pattern above uses ``crudsql.From(tx)``, which names no engine — so a write inside it is a
-409 without a code while the same write outside it carries one. Say which engine
-it is:
+**Classification follows a source-bound joined transaction.** `src` already
+contains the engine declaration and any loaded catalog, and its helper carries
+that classifier onto the foreign handle automatically:
 
 ```go
-txCtx := crud.WithExecutor(ctx, crudsql.From(tx,
-    crudsql.WithFaults(sqlfault.New("postgres"))))
+txCtx := src.BindExecutor(ctx, tx)
 ```
+
+Pass `crudsql.WithFaults(...)` to `BindExecutor` only to override the source's
+classifier for an exceptional handle.
 
 The same option takes a loaded catalog, which fills in the columns a violation
 does not name — PostgreSQL reports a composite unique violation with the
@@ -1439,7 +1444,7 @@ probe.Full(cat, probe.WithSavepoints())
 
 MySQL, MariaDB and SQLite roll back the failed statement alone and need none of
 this. And a transaction **your** code opened and handed over with
-`crud.WithExecutor` never gets a savepoint, whatever the option says: an ORM
+`BindExecutor` never gets a savepoint, whatever the option says: an ORM
 transaction has its own savepoint stack, and rolling back to one of ours in the
 middle of it can discard work you have not finished with. There the answer is one
 violation on PostgreSQL, whichever way it is wired.

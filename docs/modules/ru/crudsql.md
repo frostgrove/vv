@@ -35,37 +35,47 @@ MariaDB тоже, а они отвечают на неудавшийся `CHECK`
 
 ## Присоединение к чужой транзакции
 
-Точка интеграции — ровно одна функция:
+Короткий путь интеграции — метод канонического source:
 
 ```go
-ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+db := crudsql.Postgres(sqlDB)
+ctx = db.BindExecutor(ctx, tx)
 ```
 
-Каждый вызов репозитория с этим контекстом выполняется на этом исполнителе.
-Новый фреймворк — это поиск, где он прячет свою транзакцию, и обёртка вокруг
-неё — три строки.
+Репозитории, построенные над `db`, выполняются на `tx`; репозитории другой БД
+не затрагиваются. Для нового фреймворка нужно лишь найти хендл транзакции.
+Связанный executor автоматически наследует объявленный в `db` классификатор
+движка. Общая форма — `crud.BindExecutor(ctx, db, crudsql.From(tx))` для тех, кто
+хочет собрать executor вручную.
 
 | Стек | Как |
 |---|---|
 | `*sql.DB` / `*sql.Tx` / `*sql.Conn` | `crudsql.Postgres(db)` · `crudsql.From(tx)` |
-| sqlx | `crudsql.From(sqlxTx)` — под капотом это `*sql.Tx` |
+| sqlx | `crudsql.From(sqlxTx)` — wrapper сохраняет `Commit`/`Rollback` и распознаётся как транзакция |
 | gorm | `crudsql.From(tx.Statement.ConnPool)` внутри `db.Transaction` |
 | ent (`--feature sql/execquery`) | `crudsql.From(entTx)` — у `*ent.Tx` есть `ExecContext`/`QueryContext` |
 | sqlc (database/sql) | `crudsql.From(tx)`; тот же `*sql.Tx` идёт в `sqlc.New(tx)` |
 | bun, squirrel, dbr, … | `crudsql.From(tx)` |
 
+`*sql.Tx` и wrapper-ы, сохраняющие `Commit() error` вместе с
+`Rollback() error`, распознаются как транзакции. Это покрывает sqlx, ent и
+prepared transaction Gorm; у `*sql.DB` и `*sql.Conn` такого lifecycle нет, и они
+не считаются транзакциями. Для opaque wrapper, который намеренно скрывает оба
+метода, передайте явный `crudsql.WithTransaction()` в `From` или
+`BindExecutor`.
+
 ```go
 err := gormDB.Transaction(func(tx *gorm.DB) error {
-    ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+    ctx := db.BindExecutor(ctx, tx.Statement.ConnPool)
     return users.SaveOnly(ctx, &u)
 })
 ```
 
-**С несколькими базами данных указывайте, какую именно имеете в виду** —
-`crud.WithExecutorFor(ctx, mainDB, e)`. Обычная форма захватывает каждый
-репозиторий — это и есть точка интеграции, работающая как задумано, и это же
-способ, которым запись попадает не в ту базу данных и рапортует об успехе
-([[UC-012]]).
+Source обязателен на безопасном пути, потому что `*sql.Tx` не умеет вернуть свой
+`*sql.DB`. Старое написание `crud.WithExecutor` теперь возвращает
+`crud.ErrExecutorScope`, а не откатывается к pool. Низкоуровневая форма —
+`crud.WithExecutorFor(ctx, mainDB, e)`; безусловная legacy-маршрутизация требует
+явного opt-out `crud.WithUnsafeExecutor` ([[D-082]], [[UC-012]]).
 
 ## Всё, что не является `*sql.DB`
 
@@ -89,10 +99,11 @@ type Queryer interface {
 
 ```go
 cls := sqlfault.New("postgres")
-ctx = crud.WithExecutor(ctx, crudsql.From(tx, crudsql.WithFaults(cls)))
+ctx = db.BindExecutor(ctx, tx, crudsql.WithFaults(cls))
 ```
 
-Это тот же `errs.Classifier`, что принимают именованные конструкторы. С
+Именованные конструкторы уже переносят этот классификатор автоматически;
+option выше — явное переопределение. С
 подключённым [каталогом](catalog.md) нарушения несут с собой и колонки,
 которые не назвал драйвер:
 

@@ -5,7 +5,7 @@
 // It has zero dependencies outside the standard library — deliberately. Only
 // two things ever cross the abstraction boundary: "run this statement" and
 // "give me rows". Scanning stays with the mapper, dialect stays with the
-// repository. That is why any foreign transaction can be pushed into a context:
+// repository. That is why any foreign transaction can be bound to its source:
 // all vv asks of it is Exec and Query.
 package crud
 
@@ -56,18 +56,22 @@ type Transactional interface {
 	InTransaction() bool
 }
 
-// IsTransaction reports whether e is known to be a live transaction. Unknown
-// executors answer false so callers that require atomicity can start their own
-// transaction rather than trusting a pool supplied through WithExecutor.
+// IsTransaction reports whether e is known to be a live transaction, following
+// SourceUnwrapper through declared source wrappers. Unknown executors answer
+// false so callers that require atomicity can start their own transaction rather
+// than trusting a pool supplied through BindExecutor.
 func IsTransaction(e Executor) bool {
-	if e == nil {
+	if isNilValue(e) {
 		return false
 	}
-	if _, ok := e.(Tx); ok {
-		return true
-	}
-	t, ok := e.(Transactional)
-	return ok && t.InTransaction()
+	_, ok := unwrapSource(e, func(v any) bool {
+		if _, tx := v.(Tx); tx {
+			return true
+		}
+		t, transactional := v.(Transactional)
+		return transactional && t.InTransaction()
+	})
+	return ok
 }
 
 // Beginner is implemented by executors that can start their own transaction.
@@ -165,10 +169,11 @@ type BulkInserter interface {
 // Identified is the optional interface a Source implements to name the physical
 // database it speaks to — the *sql.DB, the *pgxpool.Pool, whatever the adapter
 // holds. Two sources that answer with the same handle are the same database, and
-// that is the only question WithExecutorFor needs answered.
+// that is the identity a Session carries.
 //
-// A Source that does not implement it is simply never matched by a scoped
-// binding, so it keeps the plain WithExecutor behaviour.
+// A Source that does not implement it can still execute statements, but a safe
+// session or transaction cannot be opened from it: guessing would either miss
+// the transaction or capture another database.
 type Identified interface {
 	DataSource() any
 }
@@ -382,7 +387,7 @@ type SourceUnwrapper interface {
 // unwrapSource walks a Source wrapper chain, yielding each layer including the
 // first, so a caller can ask each one whether it implements what it needs.
 func unwrapSource(v any, want func(any) bool) (any, bool) {
-	for i := 0; v != nil && i < maxChainDepth; i++ {
+	for i := 0; !isNilValue(v) && i < maxChainDepth; i++ {
 		if want(v) {
 			return v, true
 		}
@@ -391,7 +396,7 @@ func unwrapSource(v any, want func(any) bool) (any, bool) {
 			return nil, false
 		}
 		inner := u.UnwrapSource()
-		if inner == nil {
+		if isNilValue(inner) {
 			return nil, false
 		}
 		v = inner
@@ -430,14 +435,15 @@ func ReadSourceOf(v any) (Source, bool) {
 type ctxKey struct{}
 
 // binding is one executor pushed into a context. ds is the datasource it belongs
-// to, or nil for "whoever asks". They chain rather than replace so an inner
-// scoped binding cannot hide an outer unscoped one from a different repository.
+// to. Only WithUnsafeExecutor may leave it nil and mean "whoever asks". They
+// chain rather than replace so a session for one database does not affect a
+// repository on another one.
 //
 // owned says vv opened this transaction. Nothing in the seam needed the
 // answer until something wanted to take a savepoint inside it: issuing
 // ROLLBACK TO SAVEPOINT in the middle of somebody else's unit of work can
-// discard work its owner has not finished with, and WithExecutor and InTx are
-// otherwise indistinguishable from the inside.
+// discard work its owner has not finished with, and a bound Session and InTx
+// are otherwise indistinguishable from the inside.
 //
 // saves counts the savepoints claimed against this transaction. It counts up
 // and never down, which is the shape of the limit rather than an oversight:
@@ -446,32 +452,121 @@ type ctxKey struct{}
 // not give the entry back. The overflow is not a round trip — it forces
 // pg_subtrans lookups on every reader in the cluster.
 type binding struct {
+	ds     any
+	e      Executor
+	prev   *binding
+	owned  bool
+	strict bool
+	err    error
+	saves  atomic.Int64
+}
+
+func push(ctx context.Context, ds any, e Executor, owned, strict bool) context.Context {
+	prev, _ := ctx.Value(ctxKey{}).(*binding)
+	return context.WithValue(ctx, ctxKey{}, &binding{ds: ds, e: e, prev: prev, owned: owned, strict: strict})
+}
+
+func pushFailure(ctx context.Context, err error) context.Context {
+	prev, _ := ctx.Value(ctxKey{}).(*binding)
+	return context.WithValue(ctx, ctxKey{}, &binding{prev: prev, strict: true, err: err})
+}
+
+// Session is a checked association between a repository datasource and a
+// foreign executor. It is reusable across contexts; binding it never affects a
+// repository on another datasource.
+type Session struct {
 	ds    any
 	e     Executor
-	prev  *binding
-	owned bool
-	saves atomic.Int64
+	ready bool
 }
 
-func push(ctx context.Context, ds any, e Executor, owned bool) context.Context {
-	prev, _ := ctx.Value(ctxKey{}).(*binding)
-	return context.WithValue(ctx, ctxKey{}, &binding{ds: ds, e: e, prev: prev, owned: owned})
+// NewSession associates source's canonical identity with e. source is the
+// datasource used to bind repositories, not the transaction handle. A source
+// without an Identified declaration and a stable comparable identity is
+// refused before it can become a context value.
+func NewSession(source Source, e Executor) (Session, error) {
+	if isNilValue(source) {
+		return Session{}, scopeError(ExecutorScopeMissingSource)
+	}
+	if err := validateExecutor(e); err != nil {
+		return Session{}, err
+	}
+	if IsTransaction(source) {
+		return Session{}, scopeError(ExecutorScopeTransactionSource)
+	}
+	ds := identityOf(source)
+	if isNilValue(ds) {
+		return Session{}, scopeError(ExecutorScopeMissingSource)
+	}
+	if !comparableIdentity(ds) {
+		return Session{}, scopeError(ExecutorScopeInvalidSource)
+	}
+	return Session{ds: ds, e: e, ready: true}, nil
 }
 
-// WithExecutor pushes a foreign executor (usually somebody else's transaction)
-// into the context. Every repository call made with that context runs on it,
-// whatever datasource that repository was bound to. This is the single interop
-// point of the whole library, and it is deliberately unconditional: the executor
-// an ent or gorm transaction hands over has no relationship to the source a
-// repository holds, so no check could pass.
+// MustSession is the declarative counterpart of NewSession for wiring that is
+// constructed once. An invalid declaration is a start-up error, not a request
+// that may escape its transaction.
+func MustSession(source Source, e Executor) Session {
+	session, err := NewSession(source, e)
+	if err != nil {
+		panic(err)
+	}
+	return session
+}
+
+// Bind derives a context that routes repositories on this session's datasource
+// to its executor. The zero value fails closed on first executor resolution.
+func (this Session) Bind(ctx context.Context) context.Context {
+	if !this.ready || !comparableIdentity(this.ds) || isNilValue(this.e) {
+		return pushFailure(ctx, scopeError(ExecutorScopeInvalidSession))
+	}
+	return push(ctx, this.ds, this.e, false, false)
+}
+
+// BindExecutor is the short foreign-transaction path. source supplies the
+// canonical datasource identity and e supplies only execution; a repository on
+// another database ignores the binding and carries on using its own source.
+// Invalid declarations fail through ErrExecutorScope before any datasource is
+// used. Use NewSession when declaration errors must be handled eagerly.
+func BindExecutor(ctx context.Context, source Source, e Executor) context.Context {
+	session, err := NewSession(source, e)
+	if err != nil {
+		return pushFailure(ctx, err)
+	}
+	return session.Bind(ctx)
+}
+
+// WithExecutor infers a scope from e. It is retained for source-compatible
+// upgrades, but a foreign transaction normally identifies its transaction
+// handle rather than the pool a repository was bound to. That mismatch now
+// fails with ErrExecutorScope instead of silently running on the pool.
 //
-// When a process talks to more than one database, name the one you mean with
-// WithExecutorFor instead.
+// Deprecated: use BindExecutor with the repository's canonical Source. Use
+// WithUnsafeExecutor only when unconditional cross-datasource capture is the
+// explicit intent.
 func WithExecutor(ctx context.Context, e Executor) context.Context {
-	return push(ctx, nil, e, false)
+	if err := validateExecutor(e); err != nil {
+		return pushFailure(ctx, err)
+	}
+	ds := KeyOf(e)
+	if !comparableIdentity(ds) {
+		return pushFailure(ctx, scopeError(ExecutorScopeInvalidSource))
+	}
+	return push(ctx, ds, e, false, true)
 }
 
-// WithExecutorFor is WithExecutor scoped to one database. Only repositories
+// WithUnsafeExecutor pushes an executor without a datasource identity. Every
+// repository reached by the returned context runs on it, including repositories
+// bound to another database. This is the legacy unconditional behaviour.
+func WithUnsafeExecutor(ctx context.Context, e Executor) context.Context {
+	if err := validateExecutor(e); err != nil {
+		return pushFailure(ctx, err)
+	}
+	return push(ctx, nil, e, false, false)
+}
+
+// WithExecutorFor is the low-level explicit form scoped to one database. Only repositories
 // bound to ds run on e; a repository bound to anything else ignores it and keeps
 // using its own datasource.
 //
@@ -484,10 +579,23 @@ func WithExecutor(ctx context.Context, e Executor) context.Context {
 //	users.Save(ctx, &u)    // bound to mainDB      — runs in tx
 //	events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
 //
-// With a plain WithExecutor that second call would have gone to mainDB, inside
-// the transaction, and reported success.
+// Prefer BindExecutor when a Source is available: it makes the canonical side
+// of the association explicit. Passing the transaction itself as ds is refused
+// loudly for recognised database/sql and pgx transactions; it cannot identify
+// the pool the repository was bound to.
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context {
-	return push(ctx, KeyOf(ds), e, false)
+	if isNilValue(ds) {
+		return pushFailure(ctx, scopeError(ExecutorScopeMissingSource))
+	}
+	if err := validateExecutor(e); err != nil {
+		return pushFailure(ctx, err)
+	}
+	key := KeyOf(ds)
+	if !comparableIdentity(key) {
+		return pushFailure(ctx, scopeError(ExecutorScopeInvalidSource))
+	}
+	strict := IsTransaction(e) && SameDataSource(key, KeyOf(e))
+	return push(ctx, key, e, false, strict)
 }
 
 // ExecutorFrom returns the innermost executor bound to ctx, scoped or not. It
@@ -498,12 +606,22 @@ func ExecutorFrom(ctx context.Context) (Executor, bool) {
 	if !ok {
 		return nil, false
 	}
+	// A declaration failure poisons every context derived from it. Returning the
+	// newer executor before walking an older error would let another binding hide
+	// invalid wiring and touch a datasource through the descendant context.
+	for current := b; current != nil; current = current.prev {
+		if current.err != nil {
+			return failedExecutor{err: current.err}, true
+		}
+	}
 	return b.e, true
 }
 
 // ExecutorFor returns the executor a repository bound to src should run on: the
-// innermost binding scoped to src's datasource, or failing that the innermost
-// unscoped one. src may be the Source itself or the raw handle.
+// innermost binding scoped to src's datasource, or, only when the caller used
+// WithUnsafeExecutor, the innermost unconditional one. A strict legacy binding
+// that cannot match returns a failing executor rather than falling back to src.
+// src may be the Source itself or the raw handle.
 func ExecutorFor(ctx context.Context, source any) (Executor, bool) {
 	e, found, _ := OwnedExecutorFor(ctx, source)
 	return e, found
@@ -517,7 +635,10 @@ func ExecutorFor(ctx context.Context, source any) (Executor, bool) {
 // another handle, ExecutorFrom says "in a transaction" while this repository's
 // write runs outside one.
 func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned bool) {
-	b := bindingFor(ctx, source)
+	b, err := bindingFor(ctx, source)
+	if err != nil {
+		return failedExecutor{err: err}, true, false
+	}
 	if b == nil {
 		return nil, false, false
 	}
@@ -533,21 +654,28 @@ func OwnedExecutorFor(ctx context.Context, source any) (e Executor, found, owned
 // two repositories sharing one transaction share one count, and two
 // transactions do not.
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool) {
-	b := bindingFor(ctx, source)
+	b, err := bindingFor(ctx, source)
+	if err != nil {
+		return 0, false
+	}
 	if b == nil || !b.owned {
 		return 0, false
 	}
 	return b.saves.Add(1), true
 }
 
-func bindingFor(ctx context.Context, source any) *binding {
+func bindingFor(ctx context.Context, source any) (*binding, error) {
 	b, ok := ctx.Value(ctxKey{}).(*binding)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	want := KeyOf(source)
+	var matched *binding
 	var fallback *binding
 	for ; b != nil; b = b.prev {
+		if b.err != nil {
+			return nil, b.err
+		}
 		if b.ds == nil {
 			if fallback == nil {
 				fallback = b
@@ -555,10 +683,73 @@ func bindingFor(ctx context.Context, source any) *binding {
 			continue
 		}
 		if SameDataSource(b.ds, want) {
-			return b
+			if matched == nil {
+				matched = b
+			}
+			// Keep walking: an older failed declaration or strict mismatch must
+			// remain visible in every context derived from it.
+			continue
+		}
+		if b.strict {
+			return nil, scopeError(ExecutorScopeMismatch)
 		}
 	}
-	return fallback
+	if matched != nil {
+		return matched, nil
+	}
+	return fallback, nil
+}
+
+type failedExecutor struct{ err error }
+
+func (this failedExecutor) Exec(context.Context, string, ...any) (Result, error) {
+	return Result{}, this.err
+}
+
+func (this failedExecutor) Query(context.Context, string, ...any) (Rows, error) {
+	return nil, this.err
+}
+
+func executorFailure(e Executor) error {
+	if failed, ok := e.(failedExecutor); ok {
+		return failed.err
+	}
+	return nil
+}
+
+func scopeError(reason ExecutorScopeReason) error {
+	return &ExecutorScopeError{Reason: reason}
+}
+
+// validateExecutor catches both a nil Executor interface and the adapter shape
+// that otherwise hides a typed-nil handle inside a non-nil Executor value. Safe
+// and unsafe routing differ in datasource scope, not in whether calling Exec may
+// panic before reaching a driver.
+func validateExecutor(e Executor) error {
+	if isNilValue(e) {
+		return scopeError(ExecutorScopeMissingExecutor)
+	}
+	if declaresIdentity(e) && isNilValue(identityOf(e)) {
+		return scopeError(ExecutorScopeMissingExecutor)
+	}
+	return nil
+}
+
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+func comparableIdentity(v any) bool {
+	return !isNilValue(v) && reflect.ValueOf(v).Comparable()
 }
 
 // KeyOf reduces a Source or a raw handle to the value that identifies the
@@ -572,12 +763,11 @@ func KeyOf(v any) any {
 	return v
 }
 
-// ownScope is KeyOf for a transaction vv opens itself, where nobody named
-// anything. A source that cannot say which database it is gets an unscoped
-// binding — the old, unconditional join — because the alternative is worse:
-// scoping it to itself would quietly stop a sibling repository from joining a
-// transaction it used to join, and a write landing outside the transaction is
-// no better than one landing in the wrong database.
+// ownScope names the physical datasource for a transaction vv opens itself,
+// where nobody supplied an explicit association. An unidentified source is
+// refused before Begin: treating its wrapper value as physical identity could
+// make sibling repositories miss the transaction, while leaving it unscoped
+// could capture another database.
 //
 // It walks wrappers, and it has to. InTx resolves the Beginner with [BeginnerOf],
 // which walks — so a wrapped source opens its transaction — and this decides
@@ -587,9 +777,6 @@ func KeyOf(v any) any {
 // [[D-027]]'s territory reached by accident, through the wrapper [[D-062]]
 // recommends, with nothing said. Before the walk existed the same wrapper was
 // refused at InTx with ErrNoTxSupport, which was wrong but loud.
-//
-// A wrapped source is not an unidentified one, so this does not bend [[D-009]]:
-// nil still means the chain really cannot name a database.
 func ownScope(v any) any {
 	return identityOf(v)
 }
@@ -610,6 +797,14 @@ func identityOf(v any) any {
 		return nil
 	}
 	return found.(Identified).DataSource()
+}
+
+func declaresIdentity(v any) bool {
+	_, ok := unwrapSource(v, func(x any) bool {
+		_, identified := x.(Identified)
+		return identified
+	})
+	return ok
 }
 
 var (
@@ -642,10 +837,9 @@ func SameDataSource(a, b any) bool {
 // src would run on, fn simply joins it — no nested transaction is started and
 // the outer owner keeps control of commit and rollback.
 //
-// The transaction it opens is bound to src's own datasource when src is
-// Identified, so it reaches every repository over that database and no others.
-// A source that cannot name its database binds unscoped, which is what an
-// adapter written outside this repository gets: the old, unconditional join.
+// The transaction it opens is bound to src's canonical datasource identity, so
+// it reaches every repository over that database and no others. A source that
+// cannot name a stable identity is refused with ErrExecutorScope before Begin.
 //
 // Use this to span several repositories with one transaction:
 //
@@ -654,7 +848,10 @@ func SameDataSource(a, b any) bool {
 //	    return orders.Save(ctx, &o)
 //	})
 func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
-	if _, ok := ExecutorFor(ctx, source); ok {
+	if executor, ok := ExecutorFor(ctx, source); ok {
+		if err := executorFailure(executor); err != nil {
+			return err
+		}
 		return fn(ctx)
 	}
 	return inNewTx(ctx, source, fn)
@@ -671,21 +868,46 @@ func InNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 }
 
 // InAtomic joins an ambient executor only when it is known to be a live
-// transaction. A bare executor may be a pool installed with WithExecutor; it
+// transaction. A bare executor may be a pool installed with BindExecutor; it
 // is suitable for one statement but cannot make a multi-statement operation
 // atomic. In that case InAtomic opens a new transaction from source (or returns
 // ErrNoTxSupport before fn runs).
 func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error {
-	if executor, ok := ExecutorFor(ctx, source); ok && IsTransaction(executor) {
-		return fn(ctx)
+	if executor, ok := ExecutorFor(ctx, source); ok {
+		if err := executorFailure(executor); err != nil {
+			return err
+		}
+		if IsTransaction(executor) {
+			return fn(ctx)
+		}
 	}
 	return inNewTx(ctx, source, fn)
 }
 
 func inNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
+	// InNewTx deliberately ignores a valid ambient executor because its contract
+	// is to open a fresh boundary. An invalid declaration is different: opening
+	// a matching inner transaction would hide the scope error and make broken
+	// wiring appear to work. Resolve only to preserve that failure; healthy
+	// bindings remain intentionally unused below.
+	if executor, ok := ExecutorFor(ctx, source); ok {
+		if err := executorFailure(executor); err != nil {
+			return err
+		}
+	}
+	if IsTransaction(source) {
+		return scopeError(ExecutorScopeTransactionSource)
+	}
 	b, ok := BeginnerOf(source)
 	if !ok {
 		return ErrNoTxSupport
+	}
+	ds := ownScope(source)
+	if isNilValue(ds) {
+		return scopeError(ExecutorScopeMissingSource)
+	}
+	if !comparableIdentity(ds) {
+		return scopeError(ExecutorScopeInvalidSource)
 	}
 	tx, err := b.Begin(ctx)
 	if err != nil {
@@ -697,7 +919,7 @@ func inNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 			panic(p)
 		}
 	}()
-	if err := fn(push(ctx, ownScope(source), tx, true)); err != nil {
+	if err := fn(push(ctx, ds, tx, true, false)); err != nil {
 		if rbErr := rollback(tx, ctx); rbErr != nil {
 			return errJoin(err, rbErr)
 		}

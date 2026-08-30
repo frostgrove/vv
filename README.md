@@ -7,8 +7,8 @@ connection or your transaction.
 
 Only two things ever cross the abstraction boundary: **run this statement** and
 **give me rows**. Scanning stays with the mapper, dialect stays with the
-repository. That is why any foreign transaction can be pushed into a context —
-all vv asks of it is `Exec` and `Query`.
+repository. That is why any foreign transaction can be bound to its canonical
+source — all vv asks of it is `Exec` and `Query`.
 
 ```
 crud/                       core: contracts, metadata, relations, predicates, Opt, pagination — stdlib only
@@ -1469,7 +1469,7 @@ One adapter covers everything that speaks `database/sql`:
 | --- | --- |
 | `*sql.DB` / `*sql.Tx` / `*sql.Conn` | `crudsql.Postgres(db)` / `MySQL` / `MariaDB` / `SQLite`, or `crudsql.Open(db, crud.Postgres{})`; `crudsql.From(tx)` |
 | pgx v5 (`*pgxpool.Pool`, `*pgx.Conn`, `pgx.Tx`) | `crudpgx.Open(pool)`, `crudpgx.From(tx)` |
-| sqlx | `crudsql.From(sqlxTx)` — it is a `*sql.Tx` underneath |
+| sqlx | `crudsql.From(sqlxTx)` — its promoted `Commit`/`Rollback` lifecycle is recognised as transactional |
 | gorm | `crudsql.From(tx.Statement.ConnPool)` inside `db.Transaction` |
 | ent (`--feature sql/execquery`) | `crudsql.From(entTx)` — `*ent.Tx` has `ExecContext`/`QueryContext` |
 | sqlc (database/sql) | `crudsql.From(tx)`; the same `*sql.Tx` goes to `sqlc.New(tx)` |
@@ -1486,34 +1486,47 @@ guess rather than answering "mysql" for a MariaDB server. Pass
 `crudsql.WithFaults(sqlfault.New("postgres"))` — or `"mysql"`, `"mariadb"`,
 `"sqlite"` — to say which engine a joined transaction is talking to.
 
-The interop point is exactly one function:
+The default interop point is one source-bound call:
 
 ```go
-ctx = crud.WithExecutor(ctx, crudsql.From(tx))
+ctx = source.BindExecutor(ctx, tx)
 ```
 
-Every repository call made with that context runs on that executor. A new
-framework means finding where it hides its transaction and wrapping it — three
-lines.
+Every repository over `source`'s physical database uses that executor. A
+repository on another database keeps its own source. A new framework means
+finding where it hides its transaction and handing that handle to the source.
+On `crudsql.DB` the joined executor also inherits the engine classifier declared
+by `Postgres`, `MySQL`, `MariaDB` or `SQLite`.
 
-That capture is unconditional, and it has to be: the transaction ent or gorm
-hands over has no relationship to the source a repository holds, so there is
-nothing to check it against. **When a process talks to more than one database,
-say which one you mean:**
+`crudsql` recognises both `*sql.Tx` and ordinary database/sql wrappers that keep
+the transaction lifecycle (`Commit() error` plus `Rollback() error`): this covers
+sqlx, ent and Gorm's prepared transaction wrapper without importing those
+frameworks. Pools and `*sql.Conn` expose neither method and are not mistaken for
+transactions. An opaque wrapper that intentionally hides both methods can opt in
+with `crudsql.WithTransaction()` at the binding call.
+
+The source is the fact a transaction cannot recover for itself: `database/sql`
+and pgx do not expose a transaction's parent pool. The core spelling makes the
+association equally explicit:
 
 ```go
-ctx = crud.WithExecutorFor(ctx, mainDB, crudsql.From(tx))
+ctx = crud.BindExecutor(ctx, source, crudsql.From(tx))
 
 users.Save(ctx, &u)    // bound to mainDB      — runs in tx
 events.Save(ctx, &e)   // bound to analyticsDB — runs on analyticsDB
 ```
 
-With the plain form that second call would have gone to `mainDB`, inside the
-transaction, and reported success. `WithExecutorFor` matches on the datasource
-handle, so naming `mainDB` and naming any `crud.Source` over it are the same
-statement. A repository whose source cannot identify itself — a third-party
-adapter that does not implement `crud.Identified` — is never matched by a scoped
-binding and keeps the plain behaviour.
+`crud.NewSession(source, executor)` is the checked reusable form and
+`crud.WithExecutorFor(ctx, mainDB, executor)` is the low-level handle form.
+`WithExecutor` remains deprecated for source compatibility, but is strict: when
+it cannot match a repository it returns `ErrExecutorScope` before any datasource
+call instead of falling back to the pool. The legacy unconditional capture is
+available only as the deliberately named `WithUnsafeExecutor`.
+
+A session source must expose a stable `crud.Identified` identity. Pass the pool
+source, not `crudsql.Source(tx, ...)` or `crudpgx.From(tx)`: a transaction is an
+executor, not the canonical identity repositories were bound to, and the safe
+API refuses it before any datasource call.
 
 `Tx` and `InTx` scope the transactions they open the same way, so this holds
 without you writing anything:
@@ -1545,7 +1558,7 @@ err = crud.InTx(ctx, db, func(ctx context.Context) error {
 
 // somebody else owns it
 err = gormDB.Transaction(func(tx *gorm.DB) error {
-    ctx := crud.WithExecutor(ctx, crudsql.From(tx.Statement.ConnPool))
+    ctx := source.BindExecutor(ctx, tx.Statement.ConnPool)
     return users.Save(ctx, &u)
 })
 ```
@@ -1696,11 +1709,10 @@ Adding a driver means adding a `Target`, never a test.
   write path.
 - **`Tx` joins, it does not nest.** Documented above; use `Begin` for a
   savepoint when you need isolation.
-- **`crud.WithExecutor` captures every repository, not just the ones on that
-  database.** That is the interop seam working as designed — but across two
-  databases it means a write can land in the wrong one and report success. Use
-  `crud.WithExecutorFor(ctx, db, e)`, which is matched against the repository's
-  own datasource.
+- **`crud.WithExecutor` is deprecated and strict.** It cannot infer a pool from
+  a foreign transaction, so a mismatch is `crud.ErrExecutorScope`, never a pool
+  fallback. Use `source.BindExecutor(ctx, tx)`; only
+  `crud.WithUnsafeExecutor` opts into cross-database capture.
 - **`Update` is load-then-write.** Inside a transaction the load locks; outside
   one, two concurrent updates can interleave. Tag an integer column `version`
   and the second one is refused with `crud.ErrStaleVersion` instead.

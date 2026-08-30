@@ -24,7 +24,8 @@ import (
 func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repository := Users.Bind(crudsql.Postgres(pgDB))
+	source := crudsql.Postgres(pgDB)
+	repository := Users.Bind(source)
 
 	tx, err := pgDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -34,7 +35,7 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 
 	// One *sql.Tx, handed to both.
 	q := sqlcgen.New(tx)
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	created, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
 		TenantID: 1, Email: "sqlc@x.io", Name: "BySqlc",
@@ -89,7 +90,8 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 func TestSqlcPgx(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	repository := Users.Bind(crudpgx.Open(pgPool))
+	source := crudpgx.Open(pgPool)
+	repository := Users.Bind(source)
 
 	tx, err := pgPool.Begin(ctx)
 	if err != nil {
@@ -100,7 +102,7 @@ func TestSqlcPgx(t *testing.T) {
 	// pgx.Tx satisfies sqlc's DBTX and vv's Queryer at the same time, so
 	// the exact same object goes into both.
 	q := sqlcpgx.New(tx)
-	txCtx := crud.WithExecutor(ctx, crudpgx.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	created, err := q.CreateUser(ctx, sqlcpgx.CreateUserParams{
 		TenantID: 2, Email: "sqlcpgx@x.io", Name: "BySqlc",
@@ -142,7 +144,8 @@ func TestSqlcPgx(t *testing.T) {
 func TestSqlcMySQL(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, myDB)
-	repository := Users.Bind(crudsql.MySQL(myDB))
+	source := crudsql.MySQL(myDB)
+	repository := Users.Bind(source)
 
 	tx, err := myDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,7 +154,7 @@ func TestSqlcMySQL(t *testing.T) {
 	defer tx.Rollback()
 
 	q := sqlcmysql.New(tx)
-	txCtx := crud.WithExecutor(ctx, crudsql.From(tx))
+	txCtx := source.BindExecutor(ctx, tx)
 
 	response, err := q.CreateUser(ctx, sqlcmysql.CreateUserParams{
 		TenantID: 3, Email: "sqlcmy@x.io", Name: "BySqlc",

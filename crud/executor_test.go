@@ -48,6 +48,44 @@ type fakeTx struct {
 	rollbackValue    any
 }
 
+type countedExecutor struct{ calls int }
+
+func (this *countedExecutor) Exec(context.Context, string, ...any) (crud.Result, error) {
+	this.calls++
+	return crud.Result{}, nil
+}
+
+func (this *countedExecutor) Query(context.Context, string, ...any) (crud.Rows, error) {
+	this.calls++
+	return nil, nil
+}
+
+type countedBeginnerSource struct {
+	named
+	begins int
+	calls  int
+	tx     *fakeTx
+}
+
+func (this *countedBeginnerSource) Exec(context.Context, string, ...any) (crud.Result, error) {
+	this.calls++
+	return crud.Result{}, nil
+}
+
+func (this *countedBeginnerSource) Query(context.Context, string, ...any) (crud.Rows, error) {
+	this.calls++
+	return nil, nil
+}
+
+func (this *countedBeginnerSource) Begin(context.Context) (crud.Tx, error) {
+	this.begins++
+	return this.tx, nil
+}
+
+type transactionalSource struct{ *fakeTx }
+
+func (this transactionalSource) DataSource() any { return this.fakeTx }
+
 func (this *fakeTx) Commit(context.Context) error { this.committed = true; return nil }
 func (this *fakeTx) Rollback(ctx context.Context) error {
 	this.rolledBack = true
@@ -66,26 +104,48 @@ var (
 
 func srcOn(ds any, name string) named { return named{fakeExec{name: name, ds: ds}} }
 
-// An unscoped executor is what an ent or gorm transaction pushes in, and it has
-// to keep reaching every repository — that is the interop seam.
-func TestAnUnscopedExecutorReachesEverySource(t *testing.T) {
+func assertScopeFailure(t *testing.T, ctx context.Context, source any, reason crud.ExecutorScopeReason) {
+	t.Helper()
+	e, ok := crud.ExecutorFor(ctx, source)
+	if !ok {
+		t.Fatal("the invalid binding was silently ignored")
+	}
+	_, err := e.Exec(ctx, "must not reach a datasource")
+	if !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("executor returned %v, want ErrExecutorScope", err)
+	}
+	var scoped *crud.ExecutorScopeError
+	if !errors.As(err, &scoped) || scoped.Reason != reason {
+		t.Fatalf("scope error = %#v, want reason %q", scoped, reason)
+	}
+}
+
+// The source-less spelling can infer a pool identity, but a transaction names
+// the transaction handle rather than the pool. That must fail before a
+// repository can fall back to its own source.
+func TestWithExecutorRefusesAnInferredScopeMismatch(t *testing.T) {
 	ctx := crud.WithExecutor(context.Background(), fakeExec{name: "foreign"})
+	assertScopeFailure(t, ctx, srcOn(dbA, "a"), crud.ExecutorScopeMismatch)
+}
+
+// Cross-datasource capture still exists for integrations that genuinely need
+// it, but the danger is part of the function name.
+func TestWithUnsafeExecutorReachesEverySource(t *testing.T) {
+	ctx := crud.WithUnsafeExecutor(context.Background(), fakeExec{name: "foreign"})
 
 	for _, source := range []any{srcOn(dbA, "a"), srcOn(dbB, "b"), fakeExec{name: "anonymous"}} {
 		e, ok := crud.ExecutorFor(ctx, source)
-		if !ok {
-			t.Fatalf("%v found no executor", source)
-		}
-		if e.(fakeExec).name != "foreign" {
-			t.Fatalf("%v ran on %q", source, e.(fakeExec).name)
+		if !ok || e.(fakeExec).name != "foreign" {
+			t.Fatalf("%v did not adopt the explicitly unsafe executor: %v %v", source, e, ok)
 		}
 	}
 }
 
-// The whole point of the scoped form: a repository on another database must not
-// be dragged into a transaction that has nothing to do with it.
-func TestAScopedExecutorReachesOnlyItsOwnDatabase(t *testing.T) {
-	ctx := crud.WithExecutorFor(context.Background(), dbA, fakeExec{name: "tx-of-a"})
+// A session binds a canonical Source once. Repositories on the same database
+// join it and repositories elsewhere are not blocked or captured.
+func TestASessionReachesOnlyItsOwnDatabase(t *testing.T) {
+	source := srcOn(dbA, "declaration")
+	ctx := crud.BindExecutor(context.Background(), source, fakeExec{name: "tx-of-a"})
 
 	e, ok := crud.ExecutorFor(ctx, srcOn(dbA, "a"))
 	if !ok || e.(fakeExec).name != "tx-of-a" {
@@ -96,6 +156,178 @@ func TestAScopedExecutorReachesOnlyItsOwnDatabase(t *testing.T) {
 	}
 	if _, ok := crud.ExecutorFor(ctx, fakeExec{name: "anonymous"}); ok {
 		t.Fatal("a source that cannot name its database matched a scoped binding")
+	}
+}
+
+func TestASessionCanBeCheckedOnceAndReused(t *testing.T) {
+	source := srcOn(dbA, "declaration")
+	session, err := crud.NewSession(source, fakeExec{name: "tx"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ctx := session.Bind(context.Background())
+		if e, ok := crud.ExecutorFor(ctx, srcOn(dbA, "repository")); !ok || e.(fakeExec).name != "tx" {
+			t.Fatalf("reused session resolved to %v, found=%v", e, ok)
+		}
+	}
+}
+
+func TestANaturalTransactionIdentityIsRefusedInsteadOfMissingSilently(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "foreign"}}
+	ctx := crud.WithExecutorFor(context.Background(), tx, tx)
+
+	assertScopeFailure(t, ctx, srcOn(dbA, "repository"), crud.ExecutorScopeMismatch)
+	called := false
+	err := crud.InTx(ctx, beginnerSource{named: srcOn(dbA, "repository"), tx: &fakeTx{}}, func(context.Context) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("InTx returned %v, want ErrExecutorScope", err)
+	}
+	if called {
+		t.Fatal("InTx ran the callback after the transaction binding mismatched")
+	}
+}
+
+func TestAStrictInnerMismatchCannotFallThroughToAnOuterSession(t *testing.T) {
+	source := srcOn(dbA, "repository")
+	ctx := crud.BindExecutor(context.Background(), source, fakeExec{name: "outer"})
+	ctx = crud.WithExecutor(ctx, &fakeTx{fakeExec: fakeExec{name: "unscoped-inner"}})
+
+	assertScopeFailure(t, ctx, source, crud.ExecutorScopeMismatch)
+}
+
+func TestAnOlderFailureCannotBeHiddenByANewerMatchingSession(t *testing.T) {
+	source := srcOn(dbA, "repository")
+	bound := &countedExecutor{}
+	ctx := (crud.Session{}).Bind(context.Background())
+	ctx = crud.BindExecutor(ctx, source, bound)
+
+	assertScopeFailure(t, ctx, source, crud.ExecutorScopeInvalidSession)
+	if bound.calls != 0 {
+		t.Fatalf("the newer executor was called %d times through a poisoned context", bound.calls)
+	}
+	if executor, ok := crud.ExecutorFrom(ctx); !ok {
+		t.Fatal("ExecutorFrom lost the declaration failure")
+	} else if _, err := executor.Exec(ctx, "must remain poisoned"); !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("ExecutorFrom returned a healthy executor over an older failure: %v", err)
+	}
+}
+
+func TestAnOlderStrictMismatchCannotBeHiddenByANewerMatchingSession(t *testing.T) {
+	source := srcOn(dbA, "repository")
+	bound := &countedExecutor{}
+	ctx := crud.WithExecutor(context.Background(), fakeExec{name: "ambiguous outer"})
+	ctx = crud.BindExecutor(ctx, source, bound)
+
+	assertScopeFailure(t, ctx, source, crud.ExecutorScopeMismatch)
+	if bound.calls != 0 {
+		t.Fatalf("the newer executor was called %d times over an older strict mismatch", bound.calls)
+	}
+}
+
+func TestTransactionHelpersCannotHideAnOlderBindingFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context, crud.Executor, func(context.Context) error) error
+	}{
+		{"InTx", crud.InTx},
+		{"InAtomic", crud.InAtomic},
+		{"InNewTx", crud.InNewTx},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, outer := range []struct {
+				name string
+				ctx  func() context.Context
+			}{
+				{"failed declaration", func() context.Context {
+					return (crud.Session{}).Bind(context.Background())
+				}},
+				{"strict mismatch", func() context.Context {
+					return crud.WithExecutor(context.Background(), fakeExec{name: "ambiguous outer"})
+				}},
+			} {
+				t.Run(outer.name, func(t *testing.T) {
+					source := &countedBeginnerSource{
+						named: srcOn(dbA, "repository"),
+						tx:    &fakeTx{fakeExec: fakeExec{name: "must-not-open"}},
+					}
+					bound := &countedExecutor{}
+					ctx := crud.BindExecutor(outer.ctx(), source, bound)
+					called := false
+
+					err := tc.run(ctx, source, func(context.Context) error {
+						called = true
+						return nil
+					})
+					if !errors.Is(err, crud.ErrExecutorScope) {
+						t.Fatalf("%s returned %v, want ErrExecutorScope", tc.name, err)
+					}
+					if called || source.begins != 0 || source.calls != 0 || bound.calls != 0 {
+						t.Fatalf("%s hid the failure: callback=%v begins=%d source calls=%d bound calls=%d",
+							tc.name, called, source.begins, source.calls, bound.calls)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestTheZeroSessionFailsClosed(t *testing.T) {
+	ctx := (crud.Session{}).Bind(context.Background())
+	assertScopeFailure(t, ctx, srcOn(dbA, "repository"), crud.ExecutorScopeInvalidSession)
+}
+
+func TestASessionRejectsTypedNilDeclarations(t *testing.T) {
+	var source *named
+	var executor *fakeTx
+	missingHandle := named{fakeExec: fakeExec{name: "wrapped-nil", ds: (*int)(nil)}}
+
+	for name, err := range map[string]error{
+		"source": func() error {
+			_, err := crud.NewSession(source, fakeExec{name: "executor"})
+			return err
+		}(),
+		"executor": func() error {
+			_, err := crud.NewSession(srcOn(dbA, "source"), executor)
+			return err
+		}(),
+		"executor handle": func() error {
+			_, err := crud.NewSession(srcOn(dbA, "source"), missingHandle)
+			return err
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !errors.Is(err, crud.ErrExecutorScope) {
+				t.Fatalf("NewSession returned %v, want ErrExecutorScope", err)
+			}
+		})
+	}
+}
+
+func TestASessionRefusesATransactionUsedAsTheCanonicalSource(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "foreign"}}
+	source := transactionalSource{fakeTx: tx}
+	if _, err := crud.NewSession(source, tx); err == nil {
+		t.Fatal("NewSession accepted a transaction as the canonical source")
+	} else {
+		var scoped *crud.ExecutorScopeError
+		if !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeTransactionSource {
+			t.Fatalf("NewSession returned %v, want transaction_source", err)
+		}
+	}
+
+	ctx := crud.BindExecutor(context.Background(), source, tx)
+	assertScopeFailure(t, ctx, srcOn(dbA, "pool-repository"), crud.ExecutorScopeTransactionSource)
+	called := false
+	err := crud.InTx(context.Background(), source, func(context.Context) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, crud.ErrExecutorScope) || called {
+		t.Fatalf("InTx returned %v and called=%v, want a refusal before the callback", err, called)
 	}
 }
 
@@ -111,11 +343,11 @@ func TestTheHandleAndASourceOverItNameTheSameDatabase(t *testing.T) {
 	}
 }
 
-// Bindings stack rather than replace, so a scoped one cannot hide an unscoped
-// one from a repository it was never meant to affect.
-func TestAScopedBindingDoesNotHideTheUnscopedOneUnderIt(t *testing.T) {
-	ctx := crud.WithExecutor(context.Background(), fakeExec{name: "outer"})
-	ctx = crud.WithExecutorFor(ctx, dbA, fakeExec{name: "inner-a"})
+// Bindings stack rather than replace, so a safe session cannot hide an explicit
+// unsafe fallback underneath it.
+func TestASessionDoesNotHideTheUnsafeExecutorUnderIt(t *testing.T) {
+	ctx := crud.WithUnsafeExecutor(context.Background(), fakeExec{name: "outer"})
+	ctx = crud.BindExecutor(ctx, srcOn(dbA, "declaration"), fakeExec{name: "inner-a"})
 
 	if e, _ := crud.ExecutorFor(ctx, srcOn(dbA, "a")); e.(fakeExec).name != "inner-a" {
 		t.Fatalf("the more specific binding lost: %q", e.(fakeExec).name)
@@ -143,12 +375,8 @@ func TestAnUncomparableDataSourceDoesNotPanic(t *testing.T) {
 	weird := []int{1, 2, 3} // slices panic on ==
 	ctx := crud.WithExecutorFor(context.Background(), weird, fakeExec{name: "tx"})
 
-	if _, ok := crud.ExecutorFor(ctx, srcOn(weird, "same-slice")); ok {
-		t.Fatal("two uncomparable identities were treated as one database")
-	}
-	if _, ok := crud.ExecutorFor(ctx, srcOn(dbA, "a")); ok {
-		t.Fatal("an uncomparable binding matched an unrelated source")
-	}
+	assertScopeFailure(t, ctx, srcOn(weird, "same-slice"), crud.ExecutorScopeInvalidSource)
+	assertScopeFailure(t, ctx, srcOn(dbA, "a"), crud.ExecutorScopeInvalidSource)
 }
 
 // A comparable outer type is not sufficient: comparing an interface field
@@ -164,9 +392,7 @@ func TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic(t *testing.T) {
 	}
 
 	ctx := crud.WithExecutorFor(context.Background(), left, fakeExec{name: "tx"})
-	if _, ok := crud.ExecutorFor(ctx, srcOn(right, "right")); ok {
-		t.Fatal("a binding comparison that cannot be performed matched")
-	}
+	assertScopeFailure(t, ctx, srcOn(right, "right"), crud.ExecutorScopeInvalidSource)
 }
 
 // A transaction vv opens itself is scoped to the source that opened it, so
@@ -192,25 +418,47 @@ func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 	}
 }
 
-// A source that cannot name its database keeps the old behaviour exactly: the
-// transaction it opens is unscoped and everyone joins it. Refusing to join is
-// no safer than joining the wrong one — a write outside the transaction is just
-// as silent, so third-party adapters are left as they were.
-func TestInTxLeavesAnUnidentifiedSourceUnscoped(t *testing.T) {
+// A source that cannot name a physical datasource cannot safely share a
+// transaction: an unscoped binding may capture another database, while wrapper
+// identity may make a sibling miss it. Refuse before Begin and before fn.
+func TestInTxRefusesAnUnidentifiedSourceBeforeBegin(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "anonymous-tx"}}
 	source := struct {
 		fakeExec
 		beginner
 	}{fakeExec{name: "anonymous"}, beginner{tx}}
 
-	err := crud.InTx(context.Background(), source, func(ctx context.Context) error {
-		if e, ok := crud.ExecutorFor(ctx, srcOn(dbB, "b")); !ok || e.(*fakeTx) != tx {
-			t.Error("an unidentified source did not bind unscoped")
-		}
+	called := false
+	err := crud.InTx(context.Background(), source, func(context.Context) error {
+		called = true
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("InTx returned %v, want ErrExecutorScope", err)
+	}
+	if called {
+		t.Fatal("InTx ran fn for an unidentified source")
+	}
+	if tx.committed || tx.rolledBack {
+		t.Fatal("InTx began a transaction before validating source identity")
+	}
+}
+
+func TestInNewTxDoesNotHideAnInvalidAmbientBinding(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "must-not-open"}}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	ctx := crud.WithExecutor(context.Background(), &fakeTx{fakeExec: fakeExec{name: "ambiguous"}})
+
+	called := false
+	err := crud.InNewTx(ctx, source, func(context.Context) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, crud.ErrExecutorScope) {
+		t.Fatalf("InNewTx returned %v, want ErrExecutorScope", err)
+	}
+	if called || tx.committed || tx.rolledBack {
+		t.Fatalf("InNewTx hid the invalid binding: called=%v committed=%v rolledBack=%v", called, tx.committed, tx.rolledBack)
 	}
 }
 
@@ -374,8 +622,8 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	}
 
 	// The control, and the whole reason for the flag: an ent or gorm transaction
-	// pushed in with WithExecutor is found and is not ours.
-	foreign := crud.WithExecutor(context.Background(), tx)
+	// bound as a session is found and is not ours.
+	foreign := crud.BindExecutor(context.Background(), source, tx)
 	if _, found, owned := crud.OwnedExecutorFor(foreign, source); !found || owned {
 		t.Fatalf("a foreign transaction reports found=%v owned=%v", found, owned)
 	}
@@ -435,7 +683,7 @@ func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
 	if _, ok := crud.ClaimSavepoint(context.Background(), source); ok {
 		t.Error("a savepoint was claimed with no transaction in sight")
 	}
-	foreign := crud.WithExecutor(context.Background(), fakeExec{name: "ent"})
+	foreign := crud.BindExecutor(context.Background(), source, fakeExec{name: "ent"})
 	if _, ok := crud.ClaimSavepoint(foreign, source); ok {
 		t.Error("a savepoint was claimed inside a transaction vv does not own")
 	}
@@ -449,4 +697,17 @@ func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestARejectedScopeCannotBeConsumedAsASavepointMiss(t *testing.T) {
+	source := srcOn(dbA, "a")
+	ctx := crud.WithExecutor(context.Background(), &fakeTx{fakeExec: fakeExec{name: "ambiguous"}})
+
+	if _, ok := crud.ClaimSavepoint(ctx, source); ok {
+		t.Fatal("ClaimSavepoint accepted an executor whose scope was rejected")
+	}
+	// ClaimSavepoint's boolean cannot carry an error. It must leave the failed
+	// binding intact so the repository's next executor resolution reports the
+	// original typed failure instead of falling through to its datasource.
+	assertScopeFailure(t, ctx, source, crud.ExecutorScopeMismatch)
 }

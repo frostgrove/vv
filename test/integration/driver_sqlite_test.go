@@ -142,7 +142,7 @@ func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 			return err
 		}
 		drop := User{TenantID: 1, Email: "drop@x.io", Name: "drop"}
-		if _, err := repository.Save(crud.WithExecutor(ctx, sp), &drop); err != nil {
+		if _, err := repository.Save(crud.BindExecutor(ctx, source, sp), &drop); err != nil {
 			return err
 		}
 		return sp.Rollback(ctx)
