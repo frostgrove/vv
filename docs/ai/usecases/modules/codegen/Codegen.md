@@ -3,10 +3,10 @@
 **Covers:** `github.com/frostgrove/vv/cmd/vv`, `github.com/frostgrove/vv/internal/codegen`
 **Sweep:** happy paths · edge cases · release readiness
 **Verdict:** not ready — external embeds, import ownership, relation-name
-collisions and destructive output are closed. Explicit `auto` keys are closed,
-but runtime's implicit integer-PK/`noauto` rule is not yet mirrored. The
-remaining sweep includes build-tag-blind parsing, silently omitted requested
-types/flags, metamodel operator selection and no public read-only `-check` mode.
+collisions, destructive output and runtime/codegen primary-key ownership parity
+are closed. The remaining sweep includes build-tag-blind parsing, silently
+omitted requested types/flags, metamodel operator selection and no public
+read-only `-check` mode.
 
 ## What a consumer is actually trying to do
 
@@ -177,29 +177,29 @@ model of its own precisely because nothing else in the tree had one:
 `test/versionstore/model.go:32`, with
 `TestAVersionedModelGeneratesAResourceThatStarts` and
 `TestTheVersionColumnIsLeftOutOfTheDTO` (`codegen_test.go:772`, `:814`).
-4 now holds for explicitly auto keys. `inputFields` excludes generated and
-version columns, flags marked `Excluded`, and `f.PK && f.Auto`; the mapper leaves
-each omitted field at its zero value and `inputExclusions` gives the same set to
+4 now holds for database-owned keys. `resolvePrimaryKey` makes the same
+model-wide choice as runtime after flattening: explicit `pk`, otherwise exact
+field `ID`, exact column `ID`, then exact column `id`; a selected integral key defaults to
+`auto` unless `noauto` opts out. `inputFields` excludes generated and version
+columns, flags marked `Excluded`, and `f.PK && f.Auto`; the mapper leaves each
+omitted field at its zero value and `inputExclusions` gives the same set to
 `MustPathMap`. `immutable` deliberately remains insert-only and therefore
 settable on create, while `-readonly` is server-owned and leaves both wire
-shapes. The generated-ID integration control verifies that the mapper does not
-copy a request key.
+shapes. Generated-package controls cover explicit/conventional/named integral
+keys, both `noauto` paths, assigned string/UUID keys and explicit-key precedence.
+An ID-only model is the zero-field control: it generates an empty
+Input/mapper/map whose explicit key exclusion still passes runtime totality.
 The escape has a trap in it. `-readonly TenantID` takes the column out of both
 bodies, so the generated mapper leaves the model field zero — and the documented
 multi-tenant policy `security.ScopeField` does not stamp it, it *compares* it
 (`crud/decorators/security/policies.go:86-100`). Zero against the context tenant
 is a mismatch, so the consumer who follows both pieces of advice denies every
 create with "row belongs to a different TenantID".
-One parity gap remains: runtime infers an integer PK/`ID` as auto unless
-`noauto` is present, while `columnField` records only explicit `auto` and does
-not parse `noauto`. A conventional integer `ID` without the option can therefore
-still appear in the generated input.
 **If not ready:** For the tenant, they leave it in the create body and wire
 `security.Gate` with `ScopeField`, which refuses a mismatched tenant in Go
 because an INSERT has no WHERE clause to narrow. That works and nothing writes it
-down. For the key, explicitly add `auto` until codegen mirrors runtime's
-implicit integer-PK/`noauto` rule. A non-auto client-chosen UUID or slug remains
-in the input by design.
+down. A `noauto` integral key and a client-chosen UUID or slug remain in the
+input by design.
 
 ### H-CODEGEN-05 — Filtering through a relation
 **Who:** whoever builds the internal back office
@@ -540,10 +540,10 @@ grammar of its own. It is also a lookup in front of a switch that already
 dispatches on the type spelling (`codegen.go:362-373`), which is why it is one
 flag and not a feature.
 
-Three things are missing from that line on purpose. An explicitly auto primary
-key leaves the create body by **default**, not by another flag. Mirroring
-runtime's implicit integer-PK/`noauto` rule remains implementation work.
-Server-owned-on-create is already `-readonly`; what it needs is a sentence saying
+Three things are missing from that line on purpose. A database-owned primary
+key leaves the create body by **default**, not by another flag: integral keys
+follow the runtime auto convention and `noauto` is the explicit low-level
+opt-out. Server-owned-on-create is already `-readonly`; what it needs is a sentence saying
 so, and a second saying that the model field is then yours to stamp. And the CI
 answer stays what it is:
 
@@ -595,7 +595,7 @@ compile-time checking is quietly gone.
   a directive that is currently green, and it will fail some existing directive
   somewhere — that is the point of it.
 - [[D-050]] — every generated artefact stays total, and one naming rule serves
-  both bodies. Dropping an explicitly auto key from the create body is a change *inside*
+  both bodies. Dropping a resolved database-owned key from the create body is a change *inside*
   that rule, not around it: `MustPathMap` already takes an `except` list and the
   generator already emits one, so both directions stay checked. And the decision's
   own line — two derivations that share a source are one derivation — is what
@@ -638,9 +638,9 @@ types, one directive — this is as short as it can be, and the start-up refusal
 the part most libraries leave out. Package identity, anonymous scalar semantics,
 shared-base flattening and import ownership are now resolved rather than guessed.
 The remaining type-shape gap is metamodel operator selection, which still
-matches a fixed spelling. The other large gap is `-adapter`: a conventionally
-implicit integer auto key still appears unless tagged explicitly, while
-server-owned create columns still need an application stamping decision.
+matches a fixed spelling. The other large `-adapter` gap is that server-owned
+create columns still need an application stamping decision; primary-key
+ownership now mirrors runtime convention with `noauto` as the explicit escape.
 Customising never means abandoning the short path; the
 problem before the tag is not ceremony, it is that the default output of
 `-adapter` is not what H-CODEGEN-04's consumer thinks they asked for.
@@ -649,7 +649,7 @@ problem before the tag is not ceremony, it is that the default output of
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | Runtime infers integer PK/`ID` as auto unless `noauto` is present, but codegen only recognises explicit `auto` and does not parse `noauto` | blocker | Explicit auto keys now leave Input/Paths and the mapper keeps zero; the conventional default can still be advertised to a client, so runtime/codegen parity is incomplete |
+| 1 | **Closed:** codegen resolves explicit `pk`, exact `ID` field/column and exact `id` column like runtime; selected integral keys default auto and `noauto` preserves assigned ownership | — | Input, mapper, Paths and runtime totality now agree for implicit/named integer, explicit auto, assigned integer, string and UUID keys; ambiguous explicit keys fail deterministically |
 | 2 | **Closed:** resolvable external value embeds, aliases, generics and scalar anonymous types mirror runtime; unresolved/private-name/pointer cases refuse before write | — | Generated DTO/metamodel/adapter packages compile and no incomplete artefact is written |
 | 3 | Nothing says the create body carries `immutable` columns; `-readonly` is the only way out and leaves the model field zero, which denies every create behind the documented `security.ScopeField` policy | serious | A consumer who reads the multi-tenant guidance, tags the column and generates the adapter ships either a client-settable tenant or an endpoint that refuses every create |
 | 4 | **Closed:** model aliases prefer the parsed package clause; all selectors preserve/resolve imports, collisions use readable path-derived aliases, namespace conflicts fail before write, and paths deduplicate | — | Versioned, renamed, composite, generic, transitive, destination-namespace and colliding imports have compile/refusal tests |

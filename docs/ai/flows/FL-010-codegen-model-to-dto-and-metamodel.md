@@ -78,13 +78,18 @@ function body does not prevent generation.
      aliases retain the canonical target model;
    - a non-struct with non-`-` `rel` → refused; scalar `rel:"-"` remains a
      column, matching runtime order;
-   - otherwise a column: `db` options `pk auto immutable generated version` are
-     read, and a field called `ID` is treated as the key even without `pk`
-     (`internal/codegen/codegen.go:302`). `version` (spelled `version` or `lock`) is the optimistic
+   - otherwise a column: `db` options `pk auto noauto immutable generated
+     version` are read. `version` (spelled `version` or `lock`) is the optimistic
      lock — the same option `crud/meta.go` reads. The generator has to know it
      because `crud.PlanFor` *refuses* a DTO that names that column: emitting it
      produced a package that panicked at `Define` time. That is what happens when
      two features land in one change and neither knows about the other.
+   - after every flattened field is known, `resolvePrimaryKey` makes the same
+     model-wide choice as runtime metadata: one explicit `pk` wins; otherwise
+     the exact `ID` field, exact `ID` column, then exact `id` column wins. A selected integral
+     key defaults to `auto` unless `noauto` opts out. Resolving after flattening
+     prevents an ordinary `ID` column from stealing a differently named explicit
+     string/UUID key and makes multiple explicit keys a deterministic error.
 
 5. **Anonymous-field classification and flattening** — `sourceTypes` and
    `generator.flattenType`, `internal/codegen/types.go`
@@ -186,9 +191,9 @@ function body does not prevent generation.
     Five artefacts per model, in this order:
     | artefact | shape |
     |---|---|
-    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock, not a primary key explicitly tagged `auto` and not on the exclusion list — under `lowerFirst` JSON names; an assigned key remains |
+    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock, not a database-owned primary key and not on the exclusion list — under `lowerFirst` JSON names; an assigned string/UUID key or integral `noauto` key remains |
     | `<Model>Mapper` | `Model(ctx, in) (M, error)`, field-for-field assignments on a zero model value (which also reach promoted fields from flattened mixins), plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
-    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "ID", "CreatedAt")` — the inverse, plus declared exclusions and an omitted explicitly `auto` key |
+    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "ID", "CreatedAt")` — the inverse, plus declared exclusions and the omitted database-owned key |
     | `<Model>Service` | a struct embedding `*port.DefaultService[M, ID, U]`, with `var _ port.Service[…]` beside it so an override that changes a signature is a build failure |
     | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `port.Rules.RefuseServiceOptions` |
     The id type comes from the primary key's `Type` as written, through
@@ -197,10 +202,13 @@ function body does not prevent generation.
     pluralising in a generator is a guess, and `MountCategorys` is what guessing
     looks like.
 
-    Only an explicitly parsed `auto` key is currently omitted. Runtime also
-    infers integer primary keys as auto unless `noauto` is present; codegen does
-    not yet mirror that inference/opt-out, so a conventional unannotated integer
-    `ID` remains an open parity gap rather than a closed guarantee here.
+    Key ownership is the result of step 4, not a second adapter heuristic.
+    Explicit `auto` is database-owned; an integral explicit/conventional key is
+    also auto by default; `noauto` keeps that integral key client-owned. Thus the
+    input, mapper and inverse map consume the same resolved field set, while the
+    generated exclusion tells runtime totality why a database-owned key is absent.
+    If that set is empty, the generator emits `Input struct{}`, a zero-value
+    mapper and `PathMap{}` with exclusions; zero fields is still a total mapping.
 
 11. **The coverage assertion** — `internal/codegen/adapter.go:renderCoverage`,
     whenever the DTO half runs
@@ -239,11 +247,12 @@ function body does not prevent generation.
   what `collectPlanFields` refuses. Add a tag option that the plan rejects, and
   the generator has to learn it in the same change or `Define` panics on
   generated code.
-- **Explicitly database-owned identity is not a request field.** `inputFields`
-  drops a key carrying the parsed `auto` option and `inputExclusions` states
-  that omission to the runtime path-map check. Runtime's implicit integer-PK
-  default and `noauto` opt-out are not yet mirrored by codegen; a genuinely
-  non-auto assigned key stays in both the input and map.
+- **Database-owned identity is not a request field.** `resolvePrimaryKey`
+  mirrors runtime's explicit-key / exact-`ID` field-or-column / exact-`id` selection and its
+  integral-auto default; `inputFields` drops the resolved auto key and
+  `inputExclusions` states that omission to the runtime path-map check. A
+  `noauto` integral key or genuinely assigned string/UUID key stays in the
+  input, mapper and map.
 - **The domain is derived twice, on purpose.** The generator reads the model's
   *source text*; `port.CoversUpdate` and `port.NewPathMap` read the *compiled
   struct* through `crud.Schema`. That duplication is the whole point: a check

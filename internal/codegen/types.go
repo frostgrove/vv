@@ -517,7 +517,7 @@ func (this *generator) appendResolvedField(out *[]field, modelName, name, render
 	if inaccessible := this.inaccessibleTypeName(typ, map[types.Type]bool{}); inaccessible != "" {
 		return fmt.Sprintf("model %s field %s has type %s, whose name %s is not accessible from generated code", modelName, name, rendered, inaccessible)
 	}
-	item := this.columnField(name, rendered, database, hasDB)
+	item := this.columnField(name, rendered, typ, database)
 	item.Rel, item.HasRel = relation, hasRel
 	this.exclude(&item)
 	*out = append(*out, item)
@@ -662,14 +662,16 @@ func (this *generator) inaccessibleTuple(tuple *types.Tuple, seen map[types.Type
 	return ""
 }
 
-func (this *generator) columnField(name, rendered, database string, hasDB bool) field {
-	item := field{Name: name, Type: rendered, Tag: database}
+func (this *generator) columnField(name, rendered string, typ types.Type, database string) field {
+	item := field{Name: name, Type: rendered, Tag: database, Integral: integralSourceType(typ, rendered)}
 	for _, option := range strings.Split(database, ",")[1:] {
 		switch option {
 		case "pk", "primarykey", "primary_key":
-			item.PK = true
+			item.ExplicitPK = true
 		case "auto", "identity", "serial", "autoincrement":
 			item.Auto = true
+		case "noauto":
+			item.NoAuto = true
 		case "immutable", "readonly", "insertonly", "insert_only":
 			item.Immutable = true
 		case "generated", "computed":
@@ -678,8 +680,22 @@ func (this *generator) columnField(name, rendered, database string, hasDB bool) 
 			item.Version = true
 		}
 	}
-	if strings.EqualFold(name, "id") && !item.PK && (!hasDB || database != "-") {
-		item.PK = true
-	}
 	return item
+}
+
+// integralSourceType follows the source type rather than its rendered spelling
+// whenever go/types is available. That preserves the runtime convention for
+// named integer keys while deliberately excluding uintptr, which reflection
+// also does not treat as an auto key.
+func integralSourceType(typ types.Type, rendered string) bool {
+	if typ != nil {
+		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
+		return ok && basic.Kind() != types.Uintptr && basic.Info()&types.IsInteger != 0
+	}
+	switch strings.TrimSpace(rendered) {
+	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune":
+		return true
+	default:
+		return false
+	}
 }

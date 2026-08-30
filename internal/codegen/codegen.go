@@ -35,7 +35,17 @@ type field struct {
 	RelTarget string // canonical local model name after aliases/pointers/slices
 	Skip      bool
 	PK        bool
-	Auto      bool
+	// ExplicitPK distinguishes a tagged key from the runtime's ID/id
+	// convention. Key selection is a model-wide decision: an explicit key wins
+	// even when another ordinary column happens to be called ID.
+	ExplicitPK bool
+	Auto       bool
+	// NoAuto is the explicit escape hatch from the integer-key convention.
+	// Runtime metadata retains the same bit until it has selected the model's
+	// key, so codegen must not collapse it into Auto=false while parsing one
+	// field at a time.
+	NoAuto    bool
+	Integral  bool
 	Immutable bool
 	Generated bool
 	// Version is the optimistic lock. The repository advances it, so it is not
@@ -1261,7 +1271,7 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			if database == "-" || (hasRel && rel == "-") {
 				fl.Skip = true
 			}
-			parsed := this.columnField(fl.Name, fl.Type, database, hasDB)
+			parsed := this.columnField(fl.Name, fl.Type, nil, database)
 			parsed.Rel, parsed.HasRel, parsed.Skip = fl.Rel, fl.HasRel, fl.Skip
 			fl = parsed
 			// After the tags, not before: whether the flag is the only reason
@@ -1273,11 +1283,100 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 	if !tagged {
 		return nil
 	}
+	mirrorProblems = append(mirrorProblems, resolvePrimaryKey(m)...)
 	mirrorProblems = append(mirrorProblems, validateEffectiveFields(m)...)
 	for _, problem := range mirrorProblems {
 		this.mirrorProblems[problem] = true
 	}
 	return m
+}
+
+// resolvePrimaryKey mirrors crud.buildSchema after all flattened fields are
+// known. A tagged key wins. Otherwise runtime's Field("ID") lookup means an
+// exact Go field named ID, then an exact database column named ID; its final
+// fallback is the exact database column id. Integral keys are database-generated
+// by convention unless noauto opted out; non-integral keys remain client-owned.
+//
+// Doing this per model rather than in columnField matters for a model that has
+// both an ordinary ID column and a differently named explicit key. Runtime does
+// not let the convention steal that declaration, and generated input must not
+// either.
+func resolvePrimaryKey(m *model) []string {
+	if m == nil {
+		return nil
+	}
+	var explicit []int
+	for index := range m.Fields {
+		if m.Fields[index].ExplicitPK && primaryKeyColumn(m.Fields[index]) {
+			explicit = append(explicit, index)
+		}
+		// PK is resolved below in one pass. ExplicitPK remains the source-level
+		// declaration bit, so clearing the derived result does not lose it.
+		m.Fields[index].PK = false
+	}
+	if len(explicit) > 1 {
+		names := make([]string, 0, len(explicit))
+		for _, index := range explicit {
+			names = append(names, m.Fields[index].Name)
+		}
+		sort.Strings(names)
+		return []string{fmt.Sprintf("model %s has multiple primary keys %s; composite primary keys are not supported", m.Name, strings.Join(names, ", "))}
+	}
+
+	chosen := -1
+	if len(explicit) == 1 {
+		chosen = explicit[0]
+	} else {
+		for index := range m.Fields {
+			if primaryKeyColumn(m.Fields[index]) && m.Fields[index].Name == "ID" {
+				chosen = index
+				break
+			}
+		}
+		if chosen < 0 {
+			for index := range m.Fields {
+				if !primaryKeyColumn(m.Fields[index]) {
+					continue
+				}
+				if effectiveColumn(m.Fields[index]) == "ID" {
+					chosen = index
+					break
+				}
+			}
+		}
+		if chosen < 0 {
+			for index := range m.Fields {
+				if primaryKeyColumn(m.Fields[index]) && effectiveColumn(m.Fields[index]) == "id" {
+					chosen = index
+					break
+				}
+			}
+		}
+	}
+	if chosen < 0 {
+		return nil
+	}
+	key := &m.Fields[chosen]
+	key.PK = true
+	if key.Integral && !key.Auto && !key.NoAuto {
+		key.Auto = true
+	}
+	return nil
+}
+
+// primaryKeyColumn excludes declarations runtime metadata does not put in its
+// column index. A command-line -skip still leaves the model column present at
+// runtime and therefore remains eligible; db:"-" and relations do not.
+func primaryKeyColumn(item field) bool {
+	return item.Tag != "-" && !item.isRelation()
+}
+
+func effectiveColumn(item field) string {
+	column := strings.TrimSpace(strings.Split(item.Tag, ",")[0])
+	if column == "" {
+		return codegenSnake(item.Name)
+	}
+	return column
 }
 
 // validateEffectiveFields catches collisions introduced by flattening before
@@ -1301,10 +1400,7 @@ func validateEffectiveFields(m *model) []string {
 		if item.isRelation() {
 			continue
 		}
-		column := strings.Split(item.Tag, ",")[0]
-		if column == "" {
-			column = codegenSnake(item.Name)
-		}
+		column := effectiveColumn(item)
 		if columns[column] {
 			problems = append(problems, fmt.Sprintf("model %s has duplicate effective database column %s after embedding/flattening", m.Name, column))
 		} else {
@@ -1493,7 +1589,7 @@ func names(csv string) map[string]bool {
 // only the generated file can say which, so it declares them.
 var wellKnownEmbeds = map[string][]field{
 	"gorm.Model": {
-		{Name: "ID", Type: "uint", PK: true, Auto: true},
+		{Name: "ID", Type: "uint", Integral: true},
 		{Name: "CreatedAt", Type: "time.Time", Immutable: true, Excluded: true},
 		{Name: "UpdatedAt", Type: "time.Time", Immutable: true, Excluded: true},
 		{Name: "DeletedAt", Type: "gorm.DeletedAt", Immutable: true, Excluded: true},

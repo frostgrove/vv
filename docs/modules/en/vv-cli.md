@@ -190,12 +190,14 @@ type ArticleService struct{ *port.DefaultService[Article, int64, ArticleUpdate] 
 func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
 ```
 
-A primary key explicitly marked `auto` is deliberately absent from `ArticleInput` and
-`ArticlePaths`: the database owns it and the create path would clear it. An
-assigned UUID, slug, or other non-auto key remains in both, because that key is
-client-owned. The generated `MustPathMap` exclusion records the difference and
-keeps its start-up coverage check exact. Codegen does not yet mirror runtime's
-implicit integer-key default or `noauto`; tag the database-owned key explicitly.
+An integral primary key — whether tagged `pk` or selected through runtime's
+`ID` lookup (field or column), then its `id` column fallback — is database-owned
+by default and is deliberately absent from `ArticleInput` and `ArticlePaths`.
+Add `noauto` when an integral key is assigned by the caller. An assigned UUID,
+slug, or other non-integral key remains in both.
+Explicit `auto` remains available for non-integral database-generated primary
+keys. The generated `MustPathMap` exclusion records the same decision and keeps
+its start-up coverage check exact.
 
 **`ArticlePaths` is why the flag exists.** It maps a model field back to the key
 the client sent, so an error body names `authorID` rather than `AuthorID` — and

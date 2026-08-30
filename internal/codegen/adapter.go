@@ -19,7 +19,9 @@ import (
 //
 // It is the same set port.NewPathMap validates against — Schema.Insert less the
 // version column and the declared exclusions — derived the other way round. The
-// two agreeing is what the start-up check measures.
+// two agreeing is what the start-up check measures. The set may be empty: a
+// database-owned-only model still has a valid `{}` entity body, zero-value
+// mapper and empty-but-total inverse map.
 func inputFields(m *model) []field {
 	var out []field
 	for _, f := range m.Fields {
@@ -58,9 +60,6 @@ func (this *generator) renderAdapter(m *model) (string, used, error) {
 	}
 	id, _ := elem(pk.Type)
 	fields := inputFields(m)
-	if len(fields) == 0 {
-		return "", used{}, fmt.Errorf("-adapter found no column a client can send on %s", m.Name)
-	}
 
 	var b strings.Builder
 	u := used{port: true, errs: true, context: true}
