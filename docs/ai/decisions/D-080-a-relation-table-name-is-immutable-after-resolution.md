@@ -14,7 +14,9 @@ has to agree:
 
 `TableNameOf` is a read-only preview: merely asking for the conventional or
 model-owned name does not publish relation metadata. An untagged
-`Relation.Target`, or a successful ordinary `Define`, publishes the answer.
+`Relation.Target` publishes the canonical answer only when its immutable branch
+context has not already fixed a blueprint-local table for that target type; a
+successful ordinary `Define` publishes its root answer explicitly.
 Registering the same name again is idempotent. Registering a different name
 before publication is a conflict and after publication is a late-declaration
 `SchemaError`. `RegisterTable` and `Define` turn it into a start-up panic;
@@ -81,12 +83,15 @@ publication plus an immutable, root-local relation context.
 - `crud/relation_test.go:TestAnEmptyModelTableNameFailsAndCannotBeRepairedAfterPublication`
 - `crud/relation_test.go:TestTableRegistrationAcceptsOnlyStructModelTypes`
 - `crud/relation_test.go:TestExplicitRelationTableDoesNotDependOnRegistryOrder`
+- `crud/relation_test.go:TestConcurrentRegistrationAndRelationPublicationHaveOneLinearOutcome`
+- `crud/relation_test.go:TestValidateRelationPathMatchesRuntimeRelationResolution`
 - `crud/sqlrepo/blueprint_edge_test.go:TestTryDefineReturnsALateTableConflictInsteadOfPanicking`
 - `crud/sqlrepo/blueprint_edge_test.go:TestFailedTryDefineDoesNotPublishItsTable`
 - `crud/sqlrepo/blueprint_edge_test.go:TestFailedTryDefineWithUnknownLocalFieldPublishesNeitherModel`
 - `crud/sqlrepo/blueprint_edge_test.go:TestLateRelationScopeFailurePublishesNeitherEarlierTargetNorRoot`
 - `crud/sqlrepo/blueprint_edge_test.go:TestIndependentTableKeepsSelfRelationsInItsOwnPhysicalView`
 - `crud/sqlrepo/blueprint_edge_test.go:TestIndependentTableKeepsACycleOnItsStartingPhysicalView`
+- `crud/sqlrepo/blueprint_edge_test.go:TestConcurrentIndependentRelationViewsAreStableAndBranchLocal`
 
 ## See also
 

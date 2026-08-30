@@ -798,21 +798,20 @@ paginated; it is loaded for every parent at once"), because a `LIMIT` on a
 batched preload truncates some parents' children and not others. That reasoning
 is right. The consumer's fix is a second query against the child repository, and
 nothing tells them.
-The one ordering trap, which is neither of the above: a `RelationScope` resolves
-its target's table through `Relation.Target`, which caches `TableNameOf(r.Elem)`
-inside its `Once` (`crud/relation.go:95-109`), and the target's explicit table
-name is registered by that model's own `Define` (`blueprint.go:182`,
-`crud.RegisterTable`). Two package-level `Define`s in the wrong order and the
-scope points at `comments` while the table is `blog_comments`, surfacing at the
-first query rather than at start-up. The workaround is a `TableName()` method on
-the model (`crud/relation.go:161`), and nothing tells the author to write one.
+The former declaration-order trap is closed. `RelationScope` now validates its
+canonical path through `Meta.ValidateRelationPath`, which previews target table
+names without calling the caching/publishing `Relation.Target`. `TryDefine`
+publishes the root only after every scope is valid and publishes no target, so a
+target blueprint declared later in package initialisation can still register
+`blog_comments`; the first actual traversal then caches that published answer.
+After an actual traversal, a conflicting late declaration fails explicitly
+rather than leaving old and new relations on different tables ([[D-080]]).
 **If not ready:** For point 6, either say plainly in the module reference that a
 relation's narrowing is the *owner's* declaration and a target's own `SoftDelete`
 does not travel, or teach the preloader to consult the table registry the way
 `Relation.Target` already does. For point 7, one paragraph: a to-many preload is
 unbounded, and the answer to "the article with its most recent ten comments" is a
-second query. The ordering trap wants either a `Tabler` recommendation in the
-module reference or a resolution pass at `Bind` rather than at `Define`.
+second query.
 
 ### H-SQLREPO-17 — The binary shipped before the migration
 **Who:** whoever is on call the evening the deploy order got swapped
@@ -890,7 +889,9 @@ be written at all — unless the consumer calls `Define` and `Bind` per request,
 which they should not: `Bind` is cheap (`blueprint.go:246-249` allocates and
 issues nothing) but `Define` mutates a process-global table registry
 (`crud.RegisterTable[M]`, `blueprint.go:182` → `crud/relation.go:152`, a
-`sync.Map`), which is the same shared state behind H-SQLREPO-16's ordering trap.
+`sync.Map`). That registry now rejects conflicting and late canonical choices
+([[D-080]]), which closes declaration-order drift but also makes especially
+clear why choosing a table through per-request `Define` is invalid.
 Per-request narrowing was always the gate's job. `Scope` is per-table and
 per-everyone.
 **The gate closes less of this than a reader expects.** `security.Gate` guards

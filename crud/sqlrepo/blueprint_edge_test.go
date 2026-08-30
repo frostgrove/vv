@@ -287,6 +287,97 @@ func TestIndependentTableKeepsACycleOnItsStartingPhysicalView(t *testing.T) {
 			`WHERE rx2."id" = rx1."a_id" AND rx2."id" = $1))`)
 }
 
+func TestConcurrentIndependentRelationViewsAreStableAndBranchLocal(t *testing.T) {
+	type Node struct {
+		ID       int64 `db:"id,pk,auto"`
+		ParentID int64 `db:"parent_id"`
+		Parent   *Node `rel:"belongs_to,fk=ParentID"`
+	}
+
+	canonical, err := sqlrepo.TryDefine[Node, int64, struct{}]("core022_pointer_nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveA, err := sqlrepo.TryDefine[Node, int64, struct{}]("core022_pointer_nodes_a", sqlrepo.IndependentTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveB, err := sqlrepo.TryDefine[Node, int64, struct{}]("core022_pointer_nodes_b", sqlrepo.IndependentTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	branches := []struct {
+		name, table string
+		meta        *crud.Meta
+	}{
+		{name: "canonical", table: "core022_pointer_nodes", meta: canonical.Meta()},
+		{name: "archive a", table: "core022_pointer_nodes_a", meta: archiveA.Meta()},
+		{name: "archive b", table: "core022_pointer_nodes_b", meta: archiveB.Meta()},
+	}
+	type observation struct {
+		branch int
+		rel    *crud.Relation
+		target *crud.Meta
+		local  *crud.Field
+		remote *crud.Field
+		err    error
+	}
+	const readers = 32
+	start := make(chan struct{})
+	results := make(chan observation, len(branches)*readers)
+	for branchIndex, branch := range branches {
+		branchIndex, meta := branchIndex, branch.meta
+		for range readers {
+			go func() {
+				<-start
+				relation := meta.Relation("Parent")
+				target, local, remote, err := relation.Resolve()
+				results <- observation{branch: branchIndex, rel: relation, target: target, local: local, remote: remote, err: err}
+			}()
+		}
+	}
+	close(start)
+
+	byBranch := make([][]observation, len(branches))
+	for range len(branches) * readers {
+		got := <-results
+		byBranch[got.branch] = append(byBranch[got.branch], got)
+	}
+	for branchIndex, branch := range branches {
+		first := byBranch[branchIndex][0]
+		if first.err != nil {
+			t.Fatalf("%s first resolution: %v", branch.name, first.err)
+		}
+		if first.target.Table != branch.table {
+			t.Fatalf("%s target table = %q, want %q", branch.name, first.target.Table, branch.table)
+		}
+		if first.local.Name != "ParentID" || first.remote.Name != "ID" {
+			t.Fatalf("%s joins %s -> %s, want ParentID -> ID", branch.name, first.local.Name, first.remote.Name)
+		}
+		for reader, got := range byBranch[branchIndex] {
+			if got.err != nil {
+				t.Fatalf("%s reader %d: %v", branch.name, reader, got.err)
+			}
+			if got.rel != first.rel || got.target != first.target || got.local != first.local || got.remote != first.remote {
+				t.Fatalf("%s reader %d saw unstable pointers: rel %p/%p target %p/%p local %p/%p remote %p/%p",
+					branch.name, reader, got.rel, first.rel, got.target, first.target,
+					got.local, first.local, got.remote, first.remote)
+			}
+		}
+		if again := branch.meta.Relation("Parent"); again != first.rel {
+			t.Fatalf("%s cached relation = %p, want %p", branch.name, again, first.rel)
+		}
+	}
+	for left := range branches {
+		for right := left + 1; right < len(branches); right++ {
+			if byBranch[left][0].rel == byBranch[right][0].rel || byBranch[left][0].target == byBranch[right][0].target {
+				t.Fatalf("%s and %s shared a contextual relation/target pointer", branches[left].name, branches[right].name)
+			}
+		}
+	}
+}
+
 func TestFailedTryDefineDoesNotPublishItsTable(t *testing.T) {
 	type Candidate struct {
 		ID int64 `db:"id,pk,auto"`

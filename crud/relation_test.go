@@ -1,6 +1,7 @@
 package crud_test
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -369,6 +370,16 @@ type NamelessTableOwner struct {
 	Target          *NamelessTable `rel:"belongs_to,fk=NamelessTableID"`
 }
 
+type core022ConcurrentTarget struct {
+	ID int64 `db:"id,pk,auto"`
+}
+
+type core022ConcurrentOwner struct {
+	ID       int64                    `db:"id,pk,auto"`
+	TargetID int64                    `db:"target_id"`
+	Target   *core022ConcurrentTarget `rel:"belongs_to,fk=TargetID"`
+}
+
 func TestTableNameOf(t *testing.T) {
 	crud.RegisterTable[Registered]("pinned_elsewhere")
 
@@ -484,14 +495,82 @@ func TestLookingUpAConventionalTableDoesNotPublishRelationMetadata(t *testing.T)
 	type Ledger struct {
 		ID int64 `db:"id,pk,auto"`
 	}
-	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "ledgers" {
-		t.Fatalf("conventional table = %q", got)
+	// A previous package-level -count iteration has already completed the proof
+	// and left the intentionally process-lifetime registry populated. Accept that
+	// settled state so the regression remains repeatable without adding a
+	// production-only reset seam.
+	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "ledgers" && got != "accounting_ledgers" {
+		t.Fatalf("table before idempotent registration = %q", got)
 	}
 	if err := crud.TryRegisterTable[Ledger]("accounting_ledgers"); err != nil {
 		t.Fatalf("a read-only name lookup froze relation metadata: %v", err)
 	}
 	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "accounting_ledgers" {
 		t.Fatalf("registered table = %q", got)
+	}
+}
+
+func TestConcurrentRegistrationAndRelationPublicationHaveOneLinearOutcome(t *testing.T) {
+	owner := metaOf[core022ConcurrentOwner](t, "core022_concurrent_owners")
+	relation := owner.Relation("Target")
+	if relation == nil {
+		t.Fatal("the concurrent fixture has no Target relation")
+	}
+
+	type targetResult struct {
+		meta *crud.Meta
+		err  error
+	}
+	const readers = 32
+	start := make(chan struct{})
+	targets := make(chan targetResult, readers)
+	registered := make(chan error, 1)
+	for range readers {
+		go func() {
+			<-start
+			meta, err := relation.Target()
+			targets <- targetResult{meta: meta, err: err}
+		}()
+	}
+	go func() {
+		<-start
+		registered <- crud.TryRegisterTable[core022ConcurrentTarget]("core022_registered_targets")
+	}()
+	close(start)
+
+	registrationErr := <-registered
+	results := make([]targetResult, readers)
+	for i := range results {
+		results[i] = <-targets
+		if results[i].err != nil {
+			t.Fatalf("Target reader %d failed: %v", i, results[i].err)
+		}
+		if results[i].meta == nil {
+			t.Fatalf("Target reader %d returned no metadata", i)
+		}
+		if i > 0 && results[i].meta != results[0].meta {
+			t.Fatalf("Target reader %d got %p, reader 0 got %p", i, results[i].meta, results[0].meta)
+		}
+	}
+
+	want := "core022_registered_targets"
+	if registrationErr != nil {
+		// Relation.Target won the registry lock and published the conventional
+		// fallback. The competing declaration must lose rather than leave the
+		// registry and the cached Meta naming different tables.
+		want = "core022_concurrent_targets"
+		if !strings.Contains(registrationErr.Error(), "already resolved") {
+			t.Fatalf("losing registration = %v, want an already-resolved refusal", registrationErr)
+		}
+	}
+	if got := results[0].meta.Table; got != want {
+		t.Fatalf("cached relation table = %q, linear winner says %q (registration error %v)", got, want, registrationErr)
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[core022ConcurrentTarget]()); got != want {
+		t.Fatalf("registry table = %q while cached relation table = %q", got, results[0].meta.Table)
+	}
+	if again, err := relation.Target(); err != nil || again != results[0].meta {
+		t.Fatalf("cached Target after the race = %p, %v; want %p", again, err, results[0].meta)
 	}
 }
 
@@ -626,6 +705,112 @@ func TestFieldAtAndRelationAt(t *testing.T) {
 	}
 	if _, _, err := m.RelationAt("Title"); err == nil {
 		t.Error("RelationAt must refuse a column — there is nothing to preload")
+	}
+}
+
+func TestValidateRelationPathMatchesRuntimeRelationResolution(t *testing.T) {
+	type pathParityTarget struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type badLocalOwner struct {
+		ID     int64             `db:"id,pk,auto"`
+		Target *pathParityTarget `rel:"belongs_to,fk=Missing"`
+	}
+	type badRemoteOwner struct {
+		ID       int64             `db:"id,pk,auto"`
+		TargetID int64             `db:"target_id"`
+		Target   *pathParityTarget `rel:"belongs_to,fk=TargetID,ref=Missing"`
+	}
+	type previewTarget struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type previewOwner struct {
+		ID       int64          `db:"id,pk,auto"`
+		TargetID int64          `db:"target_id"`
+		Target   *previewTarget `rel:"belongs_to,fk=TargetID"`
+	}
+
+	blog := articleMeta(t)
+	badLocal := metaOf[badLocalOwner](t, "path_parity_bad_local_owners")
+	badRemote := metaOf[badRemoteOwner](t, "path_parity_bad_remote_owners")
+	preview := metaOf[previewOwner](t, "path_parity_preview_owners")
+	tests := []struct {
+		name, path, canonical, targetTable string
+		meta                               *crud.Meta
+		beforeRuntime                      func(*testing.T)
+	}{
+		{name: "valid relation", meta: blog, path: "Comments", canonical: "Comments"},
+		{name: "canonical nested relation", meta: blog, path: "comments.author", canonical: "Comments.Author"},
+		{
+			name: "validation preview does not publish the target", meta: preview, path: "Target", canonical: "Target",
+			targetTable: "path_parity_registered_targets",
+			beforeRuntime: func(t *testing.T) {
+				t.Helper()
+				if err := crud.TryRegisterTable[previewTarget]("path_parity_registered_targets"); err != nil {
+					t.Fatalf("ValidateRelationPath published its preview before registration: %v", err)
+				}
+			},
+		},
+		{name: "unknown segment", meta: blog, path: "Comments.Nope"},
+		{name: "unknown local join field", meta: badLocal, path: "Target"},
+		{name: "unknown remote join field", meta: badRemote, path: "Target"},
+		{name: "path ends on a column", meta: blog, path: "Comments.Body"},
+	}
+
+	errorClass := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		var unknown *crud.UnknownFieldError
+		if errors.As(err, &unknown) {
+			return "unknown"
+		}
+		var schema *crud.SchemaError
+		if errors.As(err, &schema) {
+			return "schema"
+		}
+		return reflect.TypeOf(err).String()
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			previewCanonical, previewErr := test.meta.ValidateRelationPath(test.path)
+			if previewErr == nil && test.beforeRuntime != nil {
+				test.beforeRuntime(t)
+			}
+			relation, runtimeCanonical, runtimeErr := test.meta.RelationAt(test.path)
+
+			if (previewErr == nil) != (runtimeErr == nil) {
+				t.Fatalf("ValidateRelationPath = (%q, %v), RelationAt = (%q, %v)",
+					previewCanonical, previewErr, runtimeCanonical, runtimeErr)
+			}
+			if previewErr != nil {
+				if got, want := errorClass(previewErr), errorClass(runtimeErr); got != want {
+					t.Fatalf("error classes differ: preview %s (%v), runtime %s (%v)", got, previewErr, want, runtimeErr)
+				}
+				if previewErr.Error() != runtimeErr.Error() {
+					t.Fatalf("errors differ:\npreview: %v\nruntime: %v", previewErr, runtimeErr)
+				}
+				if previewCanonical != "" || runtimeCanonical != "" {
+					t.Fatalf("failed resolution returned canonical paths %q / %q", previewCanonical, runtimeCanonical)
+				}
+				return
+			}
+
+			if previewCanonical != test.canonical || runtimeCanonical != test.canonical {
+				t.Fatalf("canonical paths = %q / %q, want %q", previewCanonical, runtimeCanonical, test.canonical)
+			}
+			if relation == nil {
+				t.Fatal("RelationAt returned no relation for a valid relation path")
+			}
+			target, _, _, err := relation.Resolve()
+			if err != nil {
+				t.Fatalf("RelationAt returned a relation that does not resolve: %v", err)
+			}
+			if test.targetTable != "" && target.Table != test.targetTable {
+				t.Fatalf("resolved target table = %q, want registration %q made after validation", target.Table, test.targetTable)
+			}
+		})
 	}
 }
 
