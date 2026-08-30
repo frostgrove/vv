@@ -66,7 +66,16 @@ db:
     table: goose_db_version
   replica:
     host: replica.internal  # inherits everything it does not restate
+    sslmode: verify-full    # do not inherit the local plaintext waiver
 ```
+
+For a typed PostgreSQL, MySQL or MariaDB configuration, an omitted `sslmode`
+means verified TLS: `verify-full` on PostgreSQL and `tls=true` on the MySQL
+family. Local plaintext is still available, but only as the visible
+`sslmode: disable` choice shown above. `allow` and `prefer` are explicit
+compatibility modes that permit fallback; neither is selected by omission. A
+complete raw `dsn:` remains the low-level escape hatch and owns its own TLS
+policy.
 
 The tags are `yaml` and `env`, so [vvcfg](vvcfg.md) loads it with no glue:
 
@@ -113,6 +122,8 @@ read replica. Its environment names are `DB_MIGRATION_PATH`,
 | | |
 |---|---|
 | `DSN(cfg)` | the string for the engine the config names |
+| `RedactedDSN(cfg)` | the same target for logs/support; credentials, query values and fragments are omitted |
+| `RedactError(operation, err)` | preserve a parser/driver cause for `errors.Is/As` without displaying its untrusted text |
 | `PostgresDSN` `MySQLDSN` `MariaDBDSN` `SQLiteDSN` | the same fully validated declaration, when the caller already knows the engine |
 | `Open(cfg)` / `MustOpen(cfg)` | one `*sql.DB` with the pool applied; they refuse a declared replica |
 | `OpenReadWrite(cfg)` / `MustOpenReadWrite(cfg)` | primary and replica; the second is nil when none is declared |
@@ -121,6 +132,23 @@ read replica. Its environment names are `DB_MIGRATION_PATH`,
 | `DriverName(cfg)` | the `database/sql` driver name `Open` will use |
 | `cfg.Validate()` | refuse a configuration that cannot mean what it says |
 | `cfg.ReadReplica()` | the replica as it will be opened, inheritance applied |
+
+`Password` and raw `DSN` are `vvdb.Secret` values. String conversion at the
+connector boundary remains explicit (`string(cfg.Password)`), while `fmt`'s
+value-rendering verbs, JSON, YAML, TOML and `slog` see `[REDACTED]`. (`%p` still
+requires a pointer-like operand; `%w` is valid only in `fmt.Errorf` with an
+error operand, as in the standard `fmt` contract.) Every `Params` value is redacted too:
+an open-ended driver option cannot be proven non-secret from its key name.
+This protection follows the value when it is embedded in an
+application-owned config; it does not depend on a special logger setup.
+Errors returned by a third-party DSN parser or `sql.Open` are displayed through
+a fixed redacted boundary as well; `errors.Is` and `errors.As` still reach the
+original cause for programmatic handling.
+When a raw DSN's structural credential/target grammar cannot be recognized
+safely for its declared engine, `RedactedDSN` returns only `[REDACTED]` rather
+than guessing where credentials end. It drops all query values; the driver
+still validates their semantics when opening. Typed Unix-socket and relative
+SQLite targets keep their diagnostic path.
 
 ## The driver is your import
 
@@ -138,6 +166,27 @@ have its own ambient configuration or passfile semantics. An application
 intentionally using lib/pq — including through a local driver alias — uses a
 complete raw `dsn:`. On mattn's SQLite set `driver: sqlite3`.
 
+pgx reads the following connection environment: `PGHOST`, `PGPORT`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPASSFILE`, `PGSERVICE`,
+`PGSERVICEFILE`, `PGSSLMODE`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT`,
+`PGSSLPASSWORD`, `PGSSLSNI`, `PGSSLNEGOTIATION`, `PGOPTIONS`, `PGAPPNAME`,
+`PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGTZ` and, on newer pgx lines,
+`PGMINPROTOCOLVERSION`, `PGMAXPROTOCOLVERSION`, `PGCHANNELBINDING` and
+`PGREQUIREAUTH`. Typed vvdb configuration does not inherit those settings.
+It writes host, port, database, user, password, TLS mode, timeout and safe empty
+passfile/certificate/runtime values into the URI; `~/.pgpass` therefore cannot
+replace the declared password either. PostgreSQL rejects an empty TimeZone
+startup value, so a non-empty `PGTZ` is refused unless `params.timezone` states
+the intended non-empty value. The four version-specific variables are refused
+when non-empty unless the matching `params` key is explicit. This preserves
+pgx's own defaults without emitting unknown startup parameters to an older
+supported pgx; an application using a compatible newer pgx can opt into those
+settings through `params`. `PGSERVICE` and `PGSSLNEGOTIATION` are refused
+because they introduce a second configuration document or driver-only grammar;
+without the refused `PGSERVICE`, `PGSERVICEFILE` alone selects no service. A
+complete raw `dsn:` is the explicit escape hatch and its author owns any ambient
+behavior it intentionally leaves available.
+
 ## What it refuses, and why each one
 
 | | |
@@ -146,8 +195,12 @@ complete raw `dsn:`. On mattn's SQLite set `driver: sqlite3`.
 | `dsn` set beside `host`, `name`, … | two sources of truth, one of them silently ignored |
 | `dsn` set beside `pool.connect_timeout` | a raw string owns its timeout; applying the pool timeout only in some adapters would split behaviour |
 | PostgreSQL `PGSERVICE` or `PGSSLNEGOTIATION` beside typed fields | they are a second connection document; use the intentional raw `dsn` escape hatch instead |
+| PostgreSQL `PGTZ` without a non-empty explicit `params.timezone` | an empty TimeZone cannot safely mask the process value because PostgreSQL rejects it; state the intended zone or remove the ambient setting |
+| version-specific PostgreSQL protocol/auth `PG*` without its matching explicit `params` key | an ambient setting must not alter the document, while emitting its unknown key would break an older pgx; unset it, opt in through `params` on a compatible pgx, or own it in a complete raw DSN |
 | typed PostgreSQL with any `driver` other than `pgx` | an alias can hide lib/pq and reintroduce ambient configuration; use pgx or own a complete raw DSN |
-| `sslmode: verify-ca` on MySQL | the driver needs a registered `tls.Config`; downgrading to `skip-verify` would claim a verification nobody performs |
+| `params.sslmode`, `params.tls` or MySQL `allowFallbackToPlaintext` | they would override or weaken the typed TLS policy; use the named field or a whole raw DSN |
+| `sslmode: verify-ca` on MySQL | the driver needs a registered `tls.Config`; register it and use a complete raw DSN naming `tls=<name>` rather than claiming a typed mode the driver cannot express |
+| a Unix socket without `sslmode: disable` | a socket has no hostname for verified TLS; the plaintext waiver must be explicit rather than silently defeating verification |
 | a `:` in a MySQL user name | the driver splits user from password at the **first** colon |
 | `path` on a server engine, `host` on SQLite | the field belongs to another engine and would be dropped |
 
@@ -167,7 +220,9 @@ characters:
   cosmetic. Written out plainly, `loc=Europe/Moscow` moves where the driver
   thinks the database name ends, and it reads `Moscow` as the database.
 - **Sockets** — a `host` beginning with `/` becomes `?host=…` for PostgreSQL and
-  `unix(…)` for MySQL. It is not a host in either syntax.
+  `unix(…)` for MySQL. It is not a host in either syntax and therefore cannot
+  satisfy hostname verification; typed socket configs must state
+  `sslmode: disable` explicitly.
 
 `parseTime=true` is written for the MySQL family unless `params` says otherwise.
 It is the one default here that changes what the database returns, and without

@@ -270,20 +270,19 @@ db:
   user: vv
   password: vv
   name: app
+  sslmode: disable                   # explicit local-only plaintext waiver
   pool: { max_open: 20 }
-  replica: { host: replica.internal }   # inherits everything it does not restate
 ```
 
 ```go
-primary, replica := vvdb.MustOpenReadWrite(&cfg.DB) // database/sql, pools sized
-src := crudsql.Postgres(primary)
-if replica != nil {
-    src = crud.ReadWrite(src, crudsql.Postgres(replica))
-}
+sqlDB := vvdb.MustOpen(&cfg.DB) // database/sql, pool sized
+src := crudsql.Postgres(sqlDB)
 ```
 
-For pgx, use `dbpgx.MustConnectReadWrite(ctx, &cfg.DB)` instead. These are
-alternative driver families for the same configuration.
+For pgx, use `pool := dbpgx.MustConnect(ctx, &cfg.DB)` instead. These are
+alternative driver families for the same configuration. A read replica is an
+optional deployment choice documented below; the quick start neither creates
+one nor requires primary/replica plumbing.
 
 Bind it to a datasource:
 
@@ -504,8 +503,21 @@ there and the batch is exact.
 
 ### Replicas
 
+Declare one only when the deployment actually has a read replica:
+
+```yaml
+db:
+  replica:
+    host: replica.internal
+    sslmode: verify-full
+```
+
 ```go
-src := crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica))
+primary, replica := vvdb.MustOpenReadWrite(&cfg.DB)
+src := crudsql.Postgres(primary)
+if replica != nil {
+    src = crud.ReadWrite(src, crudsql.Postgres(replica))
+}
 users := Users.Bind(src)
 ```
 
@@ -515,6 +527,9 @@ transaction, and a read that decides a write never leaves the primary — the lo
 half of an `Update`, and every check the security gate makes. What is left is
 yours: write, then read in a separate call before the replica catches up, and the
 row is missing. Wrap the pair in a transaction, or read with `crud.PrimaryOnly()`.
+Without a `replica:` block the pair helper returns `nil` as its second handle;
+the ordinary `MustOpen` path stays single-database. Conversely, `MustOpen`
+refuses a declared replica so it cannot be silently ignored.
 
 ### Optimistic locking
 

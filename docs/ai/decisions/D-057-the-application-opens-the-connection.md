@@ -73,6 +73,16 @@ side. Reusing one undifferentiated option list could otherwise put a replica
 identity on the writable pool. The declarations snapshot their caller-owned
 slices and common options run before side-specific ones.
 
+**Silence about TLS is secure, and secrets remain values rather than display
+text.** Typed server configurations resolve an empty `sslmode` to verified TLS;
+`disable` is the explicit local/plaintext choice, while `allow`/`prefer` are
+explicit fallback compatibility modes. `Password` and raw `DSN` use
+`Secret`, while all open-ended `Params` values are redacted by their display
+interfaces. The connector still receives the original values, while text from
+a driver or parser that rejected them is hidden behind a cause-preserving
+`RedactError`. This is
+[[D-081]]; it changes safety defaults without making `vvdb` own the connection.
+
 ## The name
 
 `vvdb` carries the project as a prefix, which [[D-035]]'s "What it forbids"
@@ -105,9 +115,12 @@ is exactly what `utils/` is allowed to hold.
   that removes the caller's line. That line is the decision.
 - Do not call `vvdb` from anywhere inside the repository path, a decorator, an
   adapter or a binding. Nothing in vv opens a connection.
-- Do not let an engine, a driver name or an `sslmode` be guessed. The set is
-  closed and an unknown value is refused ([[D-013]]).
-- Do not put the DSN in an error message. It carries the password.
+- Do not guess an engine or driver name, and do not inherit the driver's
+  ambient TLS default. The closed `sslmode` vocabulary has one documented
+  default — verified TLS — and an unknown value is refused ([[D-013]],
+  [[D-081]]).
+- Do not put the DSN or an untrusted DSN-parser message in displayed error text.
+  They can carry credentials; use a cause-preserving redacted boundary.
 - Do not pass credentials, IAM providers, or role-changing hooks through
   `dbpgx.Common`; declare the pool identity with `Primary` or `Replica`.
 - Do not grow `vvdb` a dependency. `database/sql` is the standard library and
@@ -162,4 +175,4 @@ beside it.
 
 ## See also
 
-[[D-033]] [[D-035]] [[D-021]] [[D-013]] [[D-032]] [[D-051]] [[D-058]]
+[[D-033]] [[D-035]] [[D-021]] [[D-013]] [[D-032]] [[D-051]] [[D-058]] [[D-081]]

@@ -191,7 +191,7 @@ func TestMigrationConfigurationDoesNotConflictWithAnOpaqueDSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration metadata is outside the connection string and must not conflict with dsn: %v", err)
 	}
-	if got != config.DSN {
+	if got != string(config.DSN) {
 		t.Fatalf("DSN() = %q, want opaque string unchanged", got)
 	}
 }
@@ -219,7 +219,7 @@ func TestAReplicaGivenAWholeDSNInheritsTheHandlePolicyNotConnectionFacts(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != config.Replica.DSN {
+	if got != string(config.Replica.DSN) {
 		t.Errorf("the replica string should be used as given, got %s", got)
 	}
 }

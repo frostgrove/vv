@@ -2,7 +2,13 @@
 
 **Covers:** `github.com/frostgrove/vv/utils/vvdb`, `github.com/frostgrove/vv/utils/vvdb/dbpgx`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — three guarantees the shipped documents make are false (`dbpgx.Connect` "dials"; `Config.Validate` "is called by DSN and by Open"; `replica:` works with `MustOpen`, which is the pairing the README itself prints), and the edge pass adds a second silent `params` override that can replace a PostgreSQL Unix-socket target, plus replica declarations that either create a second pool on the primary or discard a nested topology. A DSN beside named connection fields is refused in deterministic field order, but the public case needs a focused control. A redacting password-field type and `Open` calling `Validate` remain breaking changes whose window closes at the tag; an ordinary `ReadReplica` result can alias the primary `Params` map, while SQLite, cancellation and pgx pool-boundary outcomes remain unverified where only external implementation reading exists.
+**Verdict:** not ready — the original sweep still contains unresolved connection-lifecycle and portability cases, while its secret-rendering and typed-TLS blockers are now closed by [[D-081]]. The detailed cases and blocker table below distinguish resolved rows from remaining work; they, rather than the historical source line numbers, are the current status.
+
+> **Provenance during remediation:** the long-form narrative and unmarked
+> present-tense findings were captured against the pre-remediation baseline.
+> Only cases and table rows explicitly marked `✅`, `Closed` or `resolved` have
+> been revalidated against the current worktree; every other row remains a
+> work queue item until its feature batch receives the same code-and-review pass.
 
 ## What a consumer is actually trying to do
 
@@ -329,40 +335,20 @@ it. They set the mode in the config, point at the bundle, and restart.
 3. Nothing else in the file can quietly weaken what the mode states.
 4. Pointing at a CA bundle is possible without leaving the configuration file.
 5. The refusal message tells the operator what to do instead, and following it works.
-**Today:** 🟡 partial — and (3) is the one that undoes the rest
-**Evidence:** (1) and (2) hold and are the reason `tlsParam`
-(`utils/vvdb/dsn.go:201-226`) exists — `verify-ca` on MySQL is `ErrUnsupported`
-rather than `skip-verify`, pinned by
-`TestWhatAnEngineCannotExpressIsRefusedRatherThanDowngraded`
-(`utils/vvdb/dsn_test.go:219`), with the translations pinned by
-`TestSSLModeIsSpelledOnceAndTranslated` (`:195`).
-(3) does **not** hold, and it is the same downgrade `tlsParam` exists to refuse,
-through the escape hatch the same case recommends. `for k, v := range c.Params { q.Set(k, v) }`
-runs *after* the TLS parameter is written on both syntaxes
-(`utils/vvdb/dsn.go:81-83` and `:146-148`), so `params: { sslmode: disable }`
-beats `sslmode: verify-full` on PostgreSQL, and `params: { tls: skip-verify }`
-beats it on MySQL. Nothing refuses the contradiction; `config.go:66-68` states
-the precedence as a general rule, and the only test that pins the override is
-about `parseTime` (`utils/vvdb/dsn_test.go:132-147`), which is not a security
-knob. A configuration that claims verification nobody performs is the exact
-failure the refusal in (2) is built for, one field away.
-(4) holds on PostgreSQL — `params: { sslrootcert: /etc/ssl/rds.pem }` is in
-pgx's `notRuntimeParams` and is read as TLS configuration
-(`.../pgx/v5@v5.10.0/pgconn/config.go:399-423`) — and does not hold on the MySQL
-family, where a custom CA needs `mysql.RegisterTLSConfig` in Go and then
-`params: { tls: <name> }`. (5) is half true: the message names the escape route
-(`utils/vvdb/dsn.go:224`) but not that `sslmode` must be **cleared** first,
-because `validateFields` refuses `verify-ca` before the `params` override is
-ever read. An operator who follows the sentence literally, keeping
-`sslmode: verify-ca` and adding `params.tls`, still cannot start.
-**If not ready:** on MySQL they call `RegisterTLSConfig` in `main` and use
-`params.tls`, which is the documented answer and works once the mode is removed.
-Fixing the message costs one clause. (3) is a short refusal list: a `params` key
-that names TLS — `sslmode`, `sslrootcert` on a config that stated none, `tls` —
-either wins openly or is refused beside a stated `sslmode`, and today it wins in
-silence. On an environment-only deployment neither route is reachable at all,
-because `params` has no `env` tag — that is H-VVDB-02's first failure, not a
-second one.
+**Today:** 🟡 partial — (1), (2), (3) and (5) hold; (4) is portable only on PostgreSQL
+**Evidence:** `tlsParam` refuses MySQL `verify-ca` rather than silently mapping
+it to `skip-verify`, and `Config.validateParams` reserves PostgreSQL `sslmode`
+and MySQL/MariaDB `tls` plus `allowFallbackToPlaintext` even when the typed mode
+is empty. Therefore `Params` cannot weaken the verified default or a stated mode;
+`TestParamsCannotOverrideTypedConnectionSettings` pins both families.
+PostgreSQL can still name a provider CA through `params.sslrootcert`. The MySQL
+driver requires `mysql.RegisterTLSConfig`, which is executable Go state rather
+than a portable file value; the refusal now gives the coherent low-level route:
+register the config and use a complete raw `Config.DSN` naming `tls=<name>`.
+**If not ready:** a future typed certificate field needs a portable ownership
+and reload contract before it can replace that raw-DSN escape hatch. Until
+then, the framework refuses to pretend that one file alone registered a MySQL
+`tls.Config`.
 
 ### H-VVDB-07 — pgx behind a connection pooler, with tracing on
 **Who:** a team on PgBouncer with OpenTelemetry already wired
@@ -506,35 +492,18 @@ support asks somebody to paste the connection string the pod built.
 2. That covers every field carrying one: `password`, the whole `dsn`, and any `params` key holding a secret.
 3. The string the module builds can be shown to somebody without showing them the password inside it.
 4. What is revealed is still useful: host, port, database, engine.
-**Today:** ❌ missing
-**Evidence:** `grep -rn "func (c Config) String\|LogValue\|MarshalJSON\|GoString"
-utils/` returns nothing, and `Password` is a plain field
-(`utils/vvdb/config.go:58`). (`docs/api/surface.md:685` is not evidence either
-way: it collapses the type to `type Config struct{ ... }` and elides every
-method, `Validate` and `ReadReplica` included.) The module is careful in the one
-place it thought of: the DSN is kept out of error text
-(`utils/vvdb/open.go:29-33`, `dbpgx.go:41-45`), pinned by
-`TestAFailureToOpenDoesNotPrintThePassword` (`utils/vvdb/open_test.go:90`), and
-[[D-057]] forbids it in as many words. A `%+v` in the consumer's `main` undoes all
-of it, and that is the most ordinary line in Go. (3) has the same shape one step
-out: `vvdb.DSN` returns the password inside the string, and the DSN is what a
-consumer pastes when support asks which server the pod reached — the module
-already knows this, which is why it keeps the DSN out of its own errors.
-**If not ready:** the consumer remembers, every time, in every service. A
-`String` alone does not close this — `encoding/json` does not consult
-`fmt.Stringer`, so `json.Marshal(cfg)` and a slog `JSONHandler` still ship the
-password. The shape that travels is a `type Secret string` on `Password` (and on
-`DSN`) carrying `String`, `GoString`, `MarshalJSON` and `LogValue() slog.Value`,
-so the redaction survives being copied into a consumer's own struct, plus a
-`vvdb.RedactedDSN(c)` for (3). `Params` is `map[string]string` and a type cannot
-reach inside it, so (2) either narrows to the two fields or `Params` becomes its
-own named type with the same methods. `log/slog` and `encoding/json` are standard
-library, so [[D-036]] is untouched. **This is a breaking change to an exported
-field type and the window closes at the tag**: every consumer writing
-`cfg.DB.Password = os.Getenv("PW")` becomes `vvdb.Secret(...)`. Whichever shape
-wins, the control belongs beside `TestAFailureToOpenDoesNotPrintThePassword`:
-marshal the struct to JSON, grep the bytes for the password; build the redacted
-DSN for a password of `s3cret`, grep the string for it.
+**Today:** ✅ holds
+**Evidence:** `Config.Password` and `Config.DSN` are `Secret`; their `fmt`, JSON,
+YAML/TOML text and `slog` projections return `[REDACTED]` while an explicit string
+conversion still gives the connector its value (`utils/vvdb/secret.go`). The
+named `Params` type redacts every display value because its open driver
+vocabulary cannot prove which keys are public. `RedactedDSN` keeps the engine
+target useful while removing userinfo and
+secret query values. `TestSecretsStayOutOfOrdinaryRendering` drives `%v`, `%+v`,
+`%#v`, JSON and a slog JSON handler; the vvcfg control proves YAML/env input
+still loads and JSON/YAML/TOML output stays redacted; the two engine-shaped
+`RedactedDSN` controls grep sentinel credentials out. [[D-081]] owns the
+breaking value-type and safe-rendering contract.
 
 ### H-VVDB-11 — Expiring credentials and an instrumented driver, on a handle somebody else opened
 **Who:** anyone on RDS IAM authentication, Vault-issued credentials, or `otelsql`
@@ -856,33 +825,25 @@ three different ways.
 1. Which settings the driver reads from the process environment, underneath whatever string this module builds, is written down where the config is documented.
 2. A setting the config states is not silently replaced by one the environment supplies.
 3. A password the file states either reaches the server or is refused — it is never replaced by one from a file on disk nobody named.
-**Today:** ❌ missing — no document in this repository mentions any of it
-**Evidence:** `pgconn.ParseConfigWithOptions` merges three maps in order —
-defaults, then `parseEnvSettings()`, then the connection string
-(`.../pgx/v5@v5.10.0/pgconn/config.go:323-345`, `mergeSettings` at `:569-577`) —
-and `parseEnvSettings` reads twenty-four variables including `PGHOST`, `PGPORT`,
-`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE`, `PGSSLROOTCERT`, `PGOPTIONS`,
-`PGAPPNAME`, `PGSERVICE` and `PGPASSFILE` (`:579-615`). The string wins where it
-names a key, which is what saves (2) for every field vvdb writes — and vvdb
-writes `sslmode` only when the config states one (`utils/vvdb/dsn.go:75-77`), so
-`PGSSLMODE` decides TLS for every config that leaves the field out, which is the
-config all three shipped snippets print. (3) is worse: when `Password` is empty
-pgx reads `~/.pgpass` and takes whatever matches host, port, database and user
-(`:486-494`) — so H-VVDB-03's dropped password (a `password` with no `user`) is
-not merely lost, it is *replaced*, and the process connects successfully as
-somebody else. lib/pq and libpq behave the same way, so this is not a pgx
-peculiarity. `grep -rn 'PGHOST\|pgpass\|PGSERVICE' docs/ utils/` finds no prose
-at all — its only hits are `github.com/jackc/pgpassfile` in
-`utils/vvdb/dbpgx/go.mod:13` and `go.sum`, so the passfile reader is a declared
-dependency of this repository and is named in no sentence of it.
-**If not ready:** the consumer finds it by diffing two environments. There is no
-code fix that is this module's — the driver's behaviour is the driver's — and
-that makes documentation the whole answer: one short section in
-`docs/modules/en/vvdb.md` and its Russian twin naming the variables that outrank
-an unstated field, saying that `.pgpass` fills an empty password, and saying that
-a config which states a field is the config that is safe. A module whose
-signature refusal is `ErrConflict: two sources of truth` cannot leave the third
-one unmentioned.
+**Today:** ✅ holds
+**Evidence:** typed PostgreSQL is pgx-only and `PostgresDSN` renders every
+portable connection fact and relevant empty default into the URI: host, port,
+database, user, password, verified `sslmode`, timeouts, passfile, certificate
+paths and safe empty runtime settings. pgx therefore cannot fill those from
+`PG*` or `~/.pgpass`. An empty TimeZone is not safe — PostgreSQL rejects it — so
+ambient `PGTZ` is refused unless a non-empty `Params.timezone` owns the value.
+`PGSERVICE` and `PGSSLNEGOTIATION` are refused as second-document or driver-only
+grammar. The protocol/authentication environment added in newer pgx releases
+is also refused unless the matching `Params` key is explicit;
+unconditionally emitting those keys would turn them into invalid PostgreSQL
+startup parameters on the older pgx line declared by `dbpgx`. Real parser
+tests prove both the portable empty defaults and the explicit newer-key opt-in.
+The unit gate then reruns `dbpgx` outside `go.work`, resolves the unreleased root
+from this tree, asserts that module selection is exactly pgx `v5.7.6`, and
+proves no version-specific key becomes a runtime parameter there. Both
+module-language docs enumerate pgx's environment vocabulary and distinguish
+these typed guarantees from a complete raw DSN, whose author owns any
+intentional ambient behavior.
 
 ### H-VVDB-20 — Nobody set `sslmode`, and the auditor asks
 **Who:** the engineer answering "prove production connects encrypted", from the config file alone
@@ -894,25 +855,16 @@ encrypted. The engineer opens the config the platform deployed. There is no
 1. An absent TLS setting has a stated meaning, per engine, in the same document as the field.
 2. A configuration that is silent about TLS is distinguishable from one that chose plaintext.
 3. The template a consumer copies is one that answers the question.
-**Today:** ❌ missing
-**Evidence:** absent `sslmode` on PostgreSQL is libpq's `prefer` — encrypt if
-the server offers it, plaintext if it does not, verify nothing — and pgx says so
-in as many words (`.../pgx/v5@v5.10.0/pgconn/config.go:786-788`, "Match libpq
-default behavior"). Absent on MySQL means `tlsParam` returns `""`
-(`utils/vvdb/dsn.go:202-204`), the `tls` parameter is never written, and the
-connection is plaintext. Two engines, two different silences, and neither is
-written down: `docs/modules/en/vvdb.md:45` lists `sslmode` with its six values
-and says nothing about leaving it out. All three templates a consumer copies —
-`README.md:171-179`, `docs/usage-guides/ent.md:776-783`,
-`docs/usage-guides/gorm.md:712-720` — print a `db:` block with no `sslmode`. And
-by H-VVDB-19, an unstated field is the one `PGSSLMODE` can take over, so the
-answer to the auditor's question is not in the file at all.
-**If not ready:** the engineer reads libpq's documentation and hopes the driver
-matches it. The fix is two sentences in both module docs and an `sslmode:` line
-in all three templates — `disable` for the local ones, which is at least a stated
-choice. A stronger version is to require `sslmode` for a server engine, which
-makes the silence impossible; that is a config-format change and belongs to the
-owner, and it is the only version that survives `PGSSLMODE`.
+**Today:** ✅ holds
+**Evidence:** the typed builders own the empty-mode meaning instead of
+delegating it to a driver: PostgreSQL writes `sslmode=verify-full`; MySQL and
+MariaDB write `tls=true`. Plaintext is the explicit `sslmode: disable` waiver,
+including on loopback, and raw `dsn:` remains the whole low-level escape hatch.
+`TestTypedServerConnectionsUseVerifiedTLSByDefault` pins both families and the
+explicit local waiver; the real pgx parser control proves ambient
+`PGSSLMODE=disable` cannot replace the typed default. Both language module docs
+state the rule beside the field, and local examples name `disable` rather than
+depending on silence. [[D-081]] records the safe default.
 
 ### H-VVDB-21 — The application that follows the documentation validates nothing
 **Who:** the engineer who wired the config exactly the way the module doc shows
@@ -1392,8 +1344,8 @@ owns, or another module.
 | A declared `replica:` produces a second handle | `MustOpen` ignores it in silence — and `README.md:179` prints that YAML two lines above `MustOpen` | small · this module + doc-only |
 | A password with punctuation survives | Exactly that on PostgreSQL and MySQL, proven by the real parsers. Nothing proves SQLite, and a password with no `user` is dropped in silence — and `.pgpass` may then supply a different one | small · this module |
 | The file is the description | It is not. Twenty-four `PG*` variables and `~/.pgpass` sit underneath every string, and no document mentions any of them | small · doc-only |
-| A stated TLS mode cannot be weakened elsewhere in the file | `params: { sslmode: disable }` beats `sslmode: verify-full`, unrefused, on both syntaxes | small · this module |
-| Silence about TLS has a stated meaning | It has two — libpq's `prefer` and MySQL's plaintext — and neither is written down; all three templates are silent | small · doc-only, or config format for the strong version |
+| A stated TLS mode cannot be weakened elsewhere in the file | Closed: TLS keys in `Params` conflict with the typed field/default on both syntaxes | none |
+| Silence about TLS has a stated meaning | Closed: typed server declarations choose verified TLS; plaintext is an explicit `disable`, raw DSN is the escape hatch | none |
 | The pool section reaches the handle | It does — and `max_open` alone still leaves two idle connections, `max_idle: -1` becomes 2 (or pgx's 0), and nothing refuses an idle floor above the open ceiling | small · this module + doc-only |
 | The same `pool:` block means the same thing on both openers | It does not: `max_idle` is a ceiling on `database/sql` and a floor pgx dials up to at boot. Tested and deliberate; unsaid where a consumer edits YAML | small · doc-only, or a rename the owner owns |
 | A connection does not outlive its server | `max_lifetime` unset means forever, and all three templates leave it unset | small · doc-only |
@@ -1405,7 +1357,7 @@ owns, or another module.
 | Reach a connector or an instrumented driver | No seam at all. `vvdb.DSN` + `sql.Open` + a hand-copied `apply` — three statements where the short path has one | large · this module |
 | Mint a credential per connection | Works on pgx through `Option`; nothing on `database/sql`; and on pgx the replica gets the primary's hook | large · this module (a signature the owner picks) |
 | A credential from a mounted file | Nothing. `password_file` does not exist and neither does a `Password` seam | large · config format, owner |
-| Logging the config safely | Nothing. Remember, in every service, forever — and `String` alone would not cover `json.Marshal`; `params` needs its own type | small · this module, breaking change |
+| Logging the config safely | Closed: `Secret`, redacted `Params` and `RedactedDSN` cover ordinary formatters and support output | none |
 | Naming the engine once | Named twice: the file and `crudsql.<Engine>(db)`. MySQL against MariaDB runs perfectly and misclassifies two faults | large · `crud/adapter/crudsql`, and a challenge |
 | The schema the service lives in | An undocumented `params` key with no `env` name, which decides what the whole catalog can see | small · doc-only + one tag; a `schema:` field is the owner's |
 | `params` documented as a thing rather than an example | One example key in one line of one doc, while four cases route their answer through it | small · doc-only |
@@ -1439,12 +1391,12 @@ above close rather than pave.
 | 2 | `Open` and `MustOpen` silently ignore a declared `replica:`; `README.md:179` prints that exact YAML and `:183-184` calls `MustOpen`/`MustConnect` on it | blocker | No second handle, no error, no log line: the reads the consumer moved keep hitting the primary. The largest happy-path hole here, and this repository's front page teaches it |
 | 3 | `Config.Validate` is called by **nothing** in the package, while its own godoc (`config.go:138-141`) says "it is called by [DSN] and by [Open], so a caller who forgets it still cannot get a wrong connection" | blocker | The same defect class as row 1, shipped in the library's godoc. What the consumer's path genuinely skips is the replica engine cross-check (`config.go:153-158`) — `known(engine)` and `validateFields` are reached through `DSN` |
 | 4 | On the loading path both module docs show, nothing validates anything: `vvcfg` asserts `Validator` on the top-level struct, a method on a named field is not promoted, and no document writes the forwarder | blocker | Every refusal this module advertises is off on the documented wiring. Shared with the `utils/vvcfg` sweep (`Utils.md`, row 6) — one fix, two tables |
-| 5 | `Config` renders its password: no `String`, `LogValue`, `GoString` or `MarshalJSON`, so `%+v` or `json.Marshal` in a consumer's `main` ships the credential to the log aggregator; `vvdb.DSN` returns it inside the string too | blocker | The module holds the secret and already refuses to print it in errors ([[D-057]]); the struct undoes that in the most ordinary line in Go. `type Secret string` is a breaking change to an exported field, so the window closes at the tag |
-| 6 | `params` overrides the TLS parameter after it is written: `params: { sslmode: disable }` beats `sslmode: verify-full`, and `params: { tls: skip-verify }` beats it on MySQL | serious | Breaks UC-021.5 ("never quietly dropped and never downgraded to something weaker") through the escape hatch the refusal itself recommends. A configuration that claims verification nobody performs |
+| 5 | **Closed:** `Password` and raw `DSN` are `Secret`, all displayed `Params` values redact, and `RedactedDSN` preserves a support-useful target | resolved | Sentinel tests cover `fmt`, JSON, YAML, TOML, `slog`, copied secret values and both server DSN shapes |
+| 6 | **Closed:** TLS keys and MySQL plaintext fallback in `Params` are reserved and cannot override either a stated mode or the verified empty-mode default | resolved | Conflict tests plus the real MySQL parser prove no `tls` override or plaintext retry reaches the driver |
 | 7 | Because of row 3, a replica declaring another engine opens and is then addressed in the primary's dialect; the check and its test exist and the consumer's path does not run them | serious | Breaks UC-021.7 ("every refusal happens at start-up"). `config_test.go:89` passes; `OpenReadWrite` never reaches the code it covers |
 | 8 | A replica that states any pool field loses the primary's whole pool section (`config.go:273-275`) | serious | Breaks UC-021.9 ("inherits everything it does not restate"); silently drops `connect_timeout` and `max_lifetime` on the replica, and no test covers it |
 | 9 | `host` is optional for a server engine and becomes `localhost` (`dsn.go:70-72`, `:121-123`); only `name` is required | serious | With the sibling sweep's row 8 (`DB_HOST=` blanks the file), a Helm template that renders empty produces a pod that boots and connects to itself. The "connection that succeeds and is wrong" this module opens on |
-| 10 | The driver's own environment is a third source of truth no document names: twenty-four `PG*` variables merge underneath the string, and `~/.pgpass` fills an empty password | serious | `PGSSLMODE` decides TLS for every config that omits `sslmode` — which is all three shipped templates — and `.pgpass` turns row 19's dropped password into a successful connection as somebody else |
+| 10 | **Closed:** typed pgx URIs render portable owned/empty defaults, fail loud on undeclared version-specific ambient policy, and document the raw-DSN boundary | resolved | Real pgx controls prove ambient values cannot fill typed facts; an isolated `GOWORK=off` unit gate asserts pgx `v5.7.6` is selected and receives no version-specific server runtime parameter |
 | 11 | The engine is named twice — in the file and in `crudsql.<Engine>(db)` — and nothing cross-checks them; `crudsql.MySQL` against MariaDB connects, runs, and misclassifies a failed CHECK and a bad column value | serious | Breaks UC-021.1 one line past this module's boundary. **Fix site: `crud/adapter/crudsql`** — this row cannot be closed from `utils/vvdb`, and it challenges the reasoning beside its four constructors |
 | 12 | `docs/ai/usecases/Index.md:92` marks UC-021 "covered" and lists no vvdb gap, while rows 1–11 above each contradict a numbered "What must hold" | serious | An index that does not name a gap is trusted and stops the next agent looking. **Shared with the `utils/vvcfg` sweep** (`Utils.md`, row 6), so it is one Index row and should be edited once |
 | 13 | Nothing validates the `pool:` section: `max_idle` above `max_open` is accepted (clamped on `database/sql`; on pgx a health check retries a top-up it can never reach, once a minute, forever), and `max_idle: -1` — a real setting — becomes 2 on one transport and pgx's 0 on the other | sharp edge | Every other field is refused by name at start-up; this one silently does the opposite of what the operator wrote. Must land *after* row 3, or it ships inert |
@@ -1461,7 +1413,7 @@ above close rather than pave.
 | 24 | Nothing in this repository loads a `db:` block into a `vvdb.Config`: no YAML anywhere in `_examples`, no test in `vvdb`, `vvcfg` or `test/` | sharp edge | The module's headline is *one configuration file becomes the handle*, and the loading half of that sentence has never been executed |
 | 25 | `params` is documented by one example key, while it is the answer to a CA bundle, a `search_path`, `multiStatements` and SQLite's pragmas — and a non-empty `params` is the one part of the file that does not survive changing `engine:` | sharp edge | UC-021.1's guarantee has an unstated exception, and four separate gaps share one undocumented mechanism |
 | 26 | No `schema:` field; the `params: { search_path: … }` route is undocumented | sharp edge | On a shared cluster the connection this module opens decides what `crud/catalog` can resolve ([[D-041]]); getting it wrong reads as a migration problem for a day |
-| 27 | Absent `sslmode` means libpq's `prefer` on PostgreSQL and plaintext on MySQL, and no document says either; all three templates omit the field | sharp edge | "Show the auditor, from the config file alone, that production connects encrypted" is unanswerable, and by row 10 the answer is not in the file at all |
+| 27 | **Closed:** absent `sslmode` on typed server declarations means verified TLS; plaintext is explicit `disable` | resolved | PostgreSQL writes `verify-full`, MySQL/MariaDB write `tls=true`; docs and parser-backed tests pin the rule |
 | 28 | Migrations are unaddressed: the MySQL and MariaDB string is the driver's DSN, not a URL, and no document says which tools take it or how | sharp edge | The first thing a consumer does with the handle in week one, and the workaround is a second copy of the credentials that drifts |
 | 29 | A `dsn:` primary with a field-described `replica:` cannot work — the merged replica loses the name inside the URL — while `docs/modules/en/vvdb.md:128` says it inherits everything it does not restate | sharp edge | Neon and RDS hand out a URL per endpoint, so the combination is ordinary; the failure is loud but the document is wrong |
 | 30 | **Closed:** `dbpgx.ConnectReadWrite` accepts scoped `ReadWriteOption`s; common hooks are copied and primary/replica hooks are isolated, ordered and snapshotted | resolved | Separate credentials are expressed as `Primary(...)` and `Replica(...)`; focused tests pin side isolation, common-first precedence and caller-slice ownership |

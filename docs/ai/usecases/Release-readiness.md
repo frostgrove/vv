@@ -98,6 +98,27 @@ Credentials, IAM providers and role-changing hooks must instead use
 prevents one option list from silently assigning the replica identity to the
 writable pool.
 
+## Migration note — `vvdb` secrets and typed TLS default
+
+`vvdb.Config.Password` and `vvdb.Config.DSN` are now `vvdb.Secret`. Untyped
+literals and YAML/environment loading keep working; assigning a runtime string
+is deliberately explicit:
+
+```go
+cfg.DB.Password = vvdb.Secret(os.Getenv("DB_PASSWORD"))
+```
+
+The conversion marks the connector boundary. Value-rendering `fmt` verbs, JSON,
+YAML, TOML and `slog` are redacted, as are all open-ended `Params` values; use
+`vvdb.RedactedDSN` for support output. It omits every query value and fragment,
+and driver/parser failures now cross a cause-preserving redacted error boundary.
+
+An empty `sslmode` in a typed PostgreSQL/MySQL/MariaDB declaration now means
+verified TLS. Development configurations that intentionally use plaintext must
+state `sslmode: disable`; typed Unix-socket configs must state it too because a
+socket has no hostname to verify. A raw `dsn:` remains the explicit low-level
+escape hatch and keeps its own TLS behavior.
+
 ## Migration note — sealed `auth.Option` and guard re-entry
 
 `auth.Option` is now an opaque construction declaration instead of

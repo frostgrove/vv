@@ -72,7 +72,7 @@ var Products = sqlrepo.Define[Product, int64, ProductUpdate]("gorm_mysql_product
 // and loc is the one parameter this example wants on top of it.
 var database = vvdb.Config{
 	Engine: vvdb.MySQL, Host: "localhost", Port: 53306,
-	User: "vv", Password: "vv", Name: "vv",
+	User: "vv", Password: "vv", Name: "vv", SSLMode: "disable",
 	Params: map[string]string{"loc": "UTC"},
 }
 

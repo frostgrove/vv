@@ -29,6 +29,7 @@ db:
   engine: postgres
   host: localhost
   name: app
+  sslmode: disable          # local development only
   migration:
     path: ./migrations
     models: [./src]

@@ -22,16 +22,16 @@ import (
 func vvdbConfig(t *testing.T, engine vvdb.Engine, envVar string, port int) vvdb.Config {
 	t.Helper()
 	if dsn := os.Getenv(envVar); dsn != "" {
-		return vvdb.Config{Engine: engine, DSN: dsn}
+		return vvdb.Config{Engine: engine, DSN: vvdb.Secret(dsn)}
 	}
 	c := vvdb.Config{
 		Engine: engine, Host: "127.0.0.1", Port: port,
 		User: "vv", Password: "vv", Name: "vv",
 		Pool: vvdb.Pool{MaxOpen: 4, ConnectTimeout: 5 * time.Second},
 	}
-	if engine == vvdb.Postgres {
-		c.SSLMode = "disable"
-	}
+	// The local compose services intentionally do not provision certificates.
+	// Plaintext is therefore an explicit test-fixture waiver for every engine.
+	c.SSLMode = "disable"
 	return c
 }
 

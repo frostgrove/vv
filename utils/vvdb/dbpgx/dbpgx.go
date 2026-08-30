@@ -103,7 +103,7 @@ func connect(ctx context.Context, c *vvdb.Config, options ...Option) (*pgxpool.P
 	pc, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		// The string is not in the message: it carries the password.
-		return nil, fmt.Errorf("dbpgx: the connection string vvdb built was refused by pgx: %w", err)
+		return nil, vvdb.RedactError("dbpgx: pgx rejected the connection configuration", err)
 	}
 	if err := Apply(pc, &c.Pool); err != nil {
 		return nil, err

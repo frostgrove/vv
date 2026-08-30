@@ -39,6 +39,7 @@ db:
   user: app
   password: secret
   name: app
+  sslmode: disable          # local development only
   migration:
     path: ./migrations
     models:

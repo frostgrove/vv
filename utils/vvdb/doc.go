@@ -30,6 +30,17 @@
 //   - utils/vvdb/dbpgx does the same for a *pgxpool.Pool, which is not database/sql
 //     and therefore is a module.
 //
+// # Security defaults and display
+//
+// Typed server configurations use verified TLS when SSLMode is empty. Local
+// plaintext uses explicit "disable"; allow/prefer are explicit fallback
+// choices, and a raw DSN remains the whole
+// low-level escape hatch. Password and DSN are [Secret] values, and every
+// [Params] value is redacted by ordinary value formatters. [RedactedDSN]
+// keeps the resolved target but omits every query value, and [RedactError]
+// safely carries a third-party parser cause ([[D-081]]). Unix sockets cannot
+// perform hostname verification and therefore require an explicit "disable".
+//
 // # What it refuses
 //
 // An engine it does not know, a DSN set beside the fields that DSN would

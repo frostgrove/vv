@@ -54,6 +54,12 @@ that has to still exist.
    MySQL family gets `tls=false|preferred|skip-verify|true`. `verify-ca` has no
    MySQL spelling and is `ErrUnsupported` rather than a downgrade to
    `skip-verify`, which would claim a verification nobody performs.
+   Empty is not an ambient driver default: it resolves to verified TLS
+   (`verify-full` / `tls=true`). Local plaintext is explicit `disable`; the
+   compatibility modes `allow`/`prefer` explicitly permit fallback and are
+   never defaults. A Unix socket has no hostname to verify,
+   so its typed configuration must state that waiver rather than silently
+   defeating the default.
 
 7. **`seconds`** — `utils/vvdb/dsn.go:seconds`
    `connect_timeout` is whole seconds and `0` there means no timeout at all, so
@@ -78,6 +84,14 @@ that has to still exist.
     so a side-specific option has final say. Credential and IAM hooks belong
     to a side; a common credential hook is an explicit and dangerous choice.
 
+11. **Display boundary** — `utils/vvdb/secret.go`
+    `Password` and a raw `DSN` are `Secret`; `Params` redacts every value.
+    Value-rendering `fmt` verbs, JSON, YAML, TOML and `slog` therefore cannot turn a
+    boot diagnostic into a credential leak. `RedactedDSN` renders the useful
+    host/database target without credentials, query values or a fragment.
+    `RedactError` hides untrusted parser/driver text while retaining its cause
+    for `errors.Is/As`.
+
 ## Where the escaping actually lives
 
 The two engines mangle different characters, and this is the part a string
@@ -93,7 +107,8 @@ comparison cannot check on its own.
   `/` in the whole string, so an unescaped `loc=Europe/Moscow` makes it read
   `Moscow` as the database and fail on everything before it.
 - **Sockets** — a `host` starting with `/` is not a host in either syntax:
-  PostgreSQL takes it as `?host=…`, MySQL as `unix(…)`.
+  PostgreSQL takes it as `?host=…`, MySQL as `unix(…)`. Since neither has a
+  hostname to verify, the configuration must say `sslmode: disable`.
 
 `parseTime=true` is written for the MySQL family unless `params` overrides it.
 It is the one default here that changes what the database returns, and it is a
@@ -105,6 +120,8 @@ column rather than the missing parameter.
 | File | What it holds |
 |---|---|
 | `utils/vvdb/config.go` | `Config`, `Pool`, `Engine`, the sentinels, `Validate`, `ReadReplica`, `DriverName` |
+| `utils/vvdb/secret.go` | `Secret`, redacted `Params`, and `RedactedDSN` |
+| `utils/vvdb/redacted_error.go` | cause-preserving display boundary for driver/parser failures |
 | `utils/vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
 | `utils/vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
 | `utils/vvdb/doc.go` | the boundary: who opens the connection |
@@ -125,6 +142,8 @@ column rather than the missing parameter.
 | `utils/vvdb/open_test.go:TestOpenSizesThePool` | the pool section reaches the handle |
 | `utils/vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
 | `utils/vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
+| `utils/vvdb/secret_test.go` | formatter/logger redaction, support-safe DSN and verified-TLS default |
+| `utils/vvcfg/vvcfg_test.go:TestVVDBSecretsLoadNormallyAndRenderRedacted` | YAML/env input remains usable while JSON/YAML/TOML output is redacted |
 | `utils/vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
 | `utils/vvdb/dbpgx/readwrite_options_test.go` | common hooks reach both configurations while credentials stay on their declared side; caller slices are snapshotted |
 | `test/dsn/dsn_test.go` | **the real parsers read back what was written** — pgx and go-sql-driver, which `vvdb` cannot import |
@@ -146,4 +165,6 @@ password does not fail until the first statement. `dbpgx.Connect` differs here
 and is the exception rather than the rule.
 
 **The DSN carries the password.** Neither `Open` nor `Connect` puts the string
-in an error, and the tests keep it that way.
+or third-party parser text in a displayed error. The safe wrapper still unwraps
+to the original cause. Log `RedactedDSN`, not `DSN`; `Secret` also protects a
+whole config that is logged by accident.

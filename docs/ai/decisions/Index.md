@@ -129,7 +129,11 @@ and the next decision written before its code does should say so here.
 | [D-074](D-074-a-container-binding-is-a-satellite.md) | The library resolves no component by type; a dependency-injection container is bound to from a satellite whose only job is that binding (narrows D-037) | accepted | process & tooling, philosophy |
 | [D-075](D-075-where-a-credential-goes-is-the-requests-choice-except-on-rotation.md) | A request names one of three deliveries and gets it or a refusal; silence takes the most closed one, and a rotation answers through the channel the credential arrived on | accepted | auth, transports |
 | [D-076](D-076-a-guard-is-idempotent-only-with-itself.md) | One guard instance authenticates once per request; every different guard runs, and invalid credential-source declarations fail at construction | accepted | auth, security, API design |
+| [D-077](D-077-rollback-outlives-the-request-with-a-bound.md) | Rollback ignores request cancellation but keeps a finite cleanup deadline | accepted | transactions & datasources |
 | [D-078](D-078-jwt-trust-is-exact-bounded-and-distinguishes-outage.md) | HMAC names one strong algorithm, JWKS trust and stale-on-error are bounded, provider failure is not a credential refusal, and Standard principals have subjects | accepted | auth, security, resilience |
+| [D-079](D-079-bind-budgets-are-statement-wide.md) | Every statement respects its dialect bind budget, and chunks of one logical write are atomic | accepted | writes, querying, transactions |
+| [D-080](D-080-a-relation-table-name-is-immutable-after-resolution.md) | A relation target's table name is immutable after resolution; an independent blueprint does not publish one | accepted | relations, declarations |
+| [D-081](D-081-database-secrets-are-values-and-typed-tls-is-verified.md) | Database secrets render redacted, and an omitted typed-server TLS mode means verified TLS | accepted | configuration, security |
 
 ## By area
 
@@ -142,7 +146,8 @@ interfaces that survive it).
 **Querying** — D-060 (what a request may name, and how much it may ask for),
 D-028 (cursor pagination), D-003 (closed AST, `Raw`), D-004 (`Where` ANDs),
 D-005 (`EXISTS`, not a join), D-006 (batched preload), D-013 (unknown field is a
-rejection), D-014 (deterministic SQL), D-024 (**open** — `DISTINCT`).
+rejection), D-014 (deterministic SQL), D-079 (statement-wide bind budgets and
+atomic chunks), D-024 (**open** — `DISTINCT`).
 
 **Security** — D-007 (narrowing across relations), D-008 (404, not 403),
 D-004 (why a scope cannot be peeled off), D-003 (why a caller cannot compose out
@@ -175,8 +180,9 @@ JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
 **Transactions & datasources** — D-009 (unconditional capture, opt-in scoping,
 the two identity rules `crud.KeyOf` and `ownScope`, and — since phase 7 — which
 transactions vv opened and the savepoint budget on them), D-019 (dialect
-differences), D-027 (**open** — cross-database capture), D-041 (what else keys
-on that identity), D-042 (why the ownership flag exists at all).
+differences), D-077 (bounded detached rollback), D-079 (atomic write chunks),
+D-027 (**open** — cross-database capture), D-041 (what else keys on that
+identity), D-042 (why the ownership flag exists at all).
 
 **HTTP** — D-063 (the body cap, and why all three bindings share one number),
 D-062 (where the library's own log lines go), D-012 (PUT), D-022 (interface, not
@@ -223,6 +229,7 @@ runs inside a transaction at all, and how much a folded violation is known to
 mean).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
+D-080 (immutable relation table resolution and independent blueprints),
 D-025 (**open** — key normalisation).
 
 **Process & tooling** — D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
@@ -231,7 +238,8 @@ still binds), D-018 (generated artefacts, and every flag's reason), D-050 (why a
 generated one is held to a standard a hand-written one is not, and what the
 generator has to declare because reflection cannot see a flag), D-020 (tests are
 the specification), D-057 (who opens the connection, and the one case where a
-package may carry the project as a prefix), D-058 (the layout axis, why
+package may carry the project as a prefix), D-081 (redacted database secrets
+and verified typed TLS), D-058 (the layout axis, why
 `repo/basic` became `crud/sqlrepo`, and the one line that keeps `utils/` from
 collecting the repository).
 

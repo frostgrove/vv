@@ -42,7 +42,8 @@ func open(c *Config) (*sql.DB, error) {
 	database, err := sql.Open(name, dsn)
 	if err != nil {
 		// The DSN is deliberately not in the message: it carries the password.
-		return nil, fmt.Errorf("vvdb: opening %s with driver %q: %w", c.Engine, name, err)
+		return nil, fmt.Errorf("vvdb: opening %s with driver %q: %w", c.Engine, name,
+			RedactError("driver rejected the connection configuration", err))
 	}
 	c.Pool.apply(database)
 	return database, nil

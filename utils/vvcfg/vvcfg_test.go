@@ -1,14 +1,19 @@
 package vvcfg
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/frostgrove/vv/utils/vvdb"
+	"gopkg.in/yaml.v3"
 )
 
 type conf struct {
@@ -29,6 +34,12 @@ func (this *databaseConf) Validate() error { return this.DB.Validate() }
 type twoDatabaseConf struct {
 	DB        vvdb.Config `yaml:"db"`
 	Analytics vvdb.Config `yaml:"analytics" env-prefix:"ANALYTICS_"`
+}
+
+type actionableEnvironment struct{}
+
+func (*actionableEnvironment) ApplyEnvironment() error {
+	return errors.New("set REQUIRED_SERVICE_ENDPOINT")
 }
 
 func (this *twoDatabaseConf) Validate() error {
@@ -134,6 +145,86 @@ func TestVVDBParamsAreAnOrdinaryEnvironmentBackedField(t *testing.T) {
 	}
 	if got.Params["application_name"] != "orders,worker" || got.Params["statement_timeout"] != "5s" {
 		t.Fatalf("params = %#v, want environment map values", got.Params)
+	}
+}
+
+func TestVVDBSecretsLoadNormallyAndRenderRedacted(t *testing.T) {
+	const yamlPassword = "sentinel-yaml-password"
+	const envPassword = "sentinel-env-password"
+	const paramsToken = "sentinel-params-token"
+	t.Setenv("DB_PASSWORD", envPassword)
+	p := write(t, "engine: postgres\nhost: db.internal\nuser: orders\npassword: "+yamlPassword+"\nname: orders\nparams:\n  session_token: "+paramsToken+"\n")
+	got, err := Load[vvdb.Config](p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Password) != envPassword {
+		t.Fatalf("password did not survive file/environment decoding")
+	}
+	dsn, err := vvdb.DSN(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dsn, envPassword) {
+		t.Fatal("redacted display methods changed the credential used by the connector")
+	}
+
+	jsonView, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yamlView, err := yaml.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tomlView bytes.Buffer
+	if err := toml.NewEncoder(&tomlView).Encode(got); err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range [][]byte{jsonView, yamlView, tomlView.Bytes()} {
+		if strings.Contains(string(view), yamlPassword) || strings.Contains(string(view), envPassword) || strings.Contains(string(view), paramsToken) {
+			t.Fatalf("serialized config exposed its password: %s", view)
+		}
+	}
+}
+
+func TestSecretDecodingAcrossSupportedFileFormatsAndNestedPrefixes(t *testing.T) {
+	type leaf struct {
+		Password vvdb.Secret `yaml:"password" json:"password" toml:"password" env:"PASSWORD"`
+		DSN      vvdb.Secret `yaml:"dsn" json:"dsn" toml:"dsn" env:"DSN"`
+	}
+	type config struct {
+		Password vvdb.Secret `yaml:"password" json:"password" toml:"password" env:"PASSWORD"`
+		DSN      vvdb.Secret `yaml:"dsn" json:"dsn" toml:"dsn" env:"DSN"`
+		Replica  leaf        `yaml:"replica" json:"replica" toml:"replica" env-prefix:"REPLICA_"`
+	}
+
+	const primaryPassword = "sentinel-primary-password"
+	const primaryDSN = "sentinel-primary-dsn"
+	const replicaPassword = "sentinel-replica-password"
+	const replicaDSN = "sentinel-replica-dsn"
+	files := map[string]string{
+		"yaml": "password: " + primaryPassword + "\ndsn: " + primaryDSN + "\nreplica:\n  password: " + replicaPassword + "\n  dsn: " + replicaDSN + "\n",
+		"json": `{"password":"` + primaryPassword + `","dsn":"` + primaryDSN + `","replica":{"password":"` + replicaPassword + `","dsn":"` + replicaDSN + `"}}`,
+		"toml": "password = \"" + primaryPassword + "\"\ndsn = \"" + primaryDSN + "\"\n[replica]\npassword = \"" + replicaPassword + "\"\ndsn = \"" + replicaDSN + "\"\n",
+		"env":  "PASSWORD=" + primaryPassword + "\nDSN=" + primaryDSN + "\nREPLICA_PASSWORD=" + replicaPassword + "\nREPLICA_DSN=" + replicaDSN + "\n",
+	}
+	for extension, body := range files {
+		t.Run(extension, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config."+extension)
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load[config](path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got.Password) != primaryPassword || string(got.DSN) != primaryDSN ||
+				string(got.Replica.Password) != replicaPassword || string(got.Replica.DSN) != replicaDSN {
+				t.Fatalf("decoded secrets = primary(%q,%q) replica(%q,%q)",
+					string(got.Password), string(got.DSN), string(got.Replica.Password), string(got.Replica.DSN))
+			}
+		})
 	}
 }
 
@@ -258,6 +349,39 @@ func TestMustLoadUsesEnvironmentWhenDefaultPathIsDisabled(t *testing.T) {
 func TestLoadNeedsPath(t *testing.T) {
 	if _, err := Load[conf](""); !errors.Is(err, ErrNoPath) {
 		t.Fatalf("Load(\"\") should refuse rather than stat the empty path: %v", err)
+	}
+}
+
+func TestMalformedDotenvDoesNotExposeASecretInTheError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.env")
+	if err := os.WriteFile(path, []byte("DB_PASSWORD=\"sentinel-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type config struct {
+		Password string `env:"DB_PASSWORD"`
+	}
+	_, err := Load[config](path)
+	if err == nil {
+		t.Fatal("unterminated dotenv value unexpectedly parsed")
+	}
+	if strings.Contains(err.Error(), "sentinel-password") {
+		t.Fatalf("dotenv parser error exposed a secret: %v", err)
+	}
+	if cause := errors.Unwrap(err); cause == nil || !errors.Is(err, cause) {
+		t.Fatal("safe decoder error stopped errors.Is from reaching the parser cause")
+	}
+	for _, view := range []string{fmt.Sprintf("%v", err), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err), fmt.Sprintf("%d", err)} {
+		if strings.Contains(view, "sentinel-password") {
+			t.Fatalf("formatted dotenv parser error exposed a secret: %s", view)
+		}
+	}
+}
+
+func TestTypedEnvironmentHookErrorsStayActionable(t *testing.T) {
+	path := write(t, "{}\n")
+	_, err := Load[actionableEnvironment](path)
+	if err == nil || !strings.Contains(err.Error(), "REQUIRED_SERVICE_ENDPOINT") {
+		t.Fatalf("typed environment error lost its actionable detail: %v", err)
 	}
 }
 

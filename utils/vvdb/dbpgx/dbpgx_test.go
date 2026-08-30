@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,6 +85,35 @@ func TestConnectRefusesBeforeItDials(t *testing.T) {
 	c.Name = ""
 	if _, err := dbpgx.Connect(context.Background(), c); !errors.Is(err, vvdb.ErrMissing) {
 		t.Fatalf("a configuration that cannot be built must not reach the network; got %v", err)
+	}
+}
+
+func TestConnectDoesNotExposePgxParserInput(t *testing.T) {
+	_, err := dbpgx.Connect(context.Background(), &vvdb.Config{
+		Engine: vvdb.Postgres,
+		DSN:    "postgres://user:sentinel-password@db.internal/app?connect_timeout=sentinel-query",
+	})
+	if err == nil {
+		t.Fatal("malformed pgx DSN unexpectedly parsed")
+	}
+	if strings.Contains(err.Error(), "sentinel") {
+		t.Fatalf("dbpgx exposed pgx parser input: %v", err)
+	}
+}
+
+func TestTypedDefaultsDoNotBecomeUnknownStartupParametersInPgx(t *testing.T) {
+	dsn, err := vvdb.PostgresDSN(unreachable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"min_protocol_version", "max_protocol_version", "channel_binding", "require_auth"} {
+		if _, leaked := parsed.ConnConfig.RuntimeParams[key]; leaked {
+			t.Fatalf("version-specific default %q was forwarded to PostgreSQL by pgx", key)
+		}
 	}
 }
 

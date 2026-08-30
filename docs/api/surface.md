@@ -820,6 +820,8 @@ func MySQLDSN(c *Config) (string, error)
 func Open(c *Config) (*sql.DB, error)
 func OpenReadWrite(c *Config) (primary, replica *sql.DB, err error)
 func PostgresDSN(config *Config) (string, error)
+func RedactedDSN(c *Config) (string, error)
+func RedactError(operation string, cause error) error
 func SQLiteDSN(config *Config) (string, error)
 type Config struct{ ... }
 type Engine string
@@ -827,6 +829,7 @@ type Engine string
 type Migration struct{ ... }
 type Params map[string]string
 type Pool struct{ ... }
+type Secret string
 type SQLitePragmas []string
 ```
 
@@ -1374,4 +1377,3 @@ type ReadWriteOption func(*readWriteOptions)
 ```go
 func Execute(config *vvdb.Config)
 ```
-

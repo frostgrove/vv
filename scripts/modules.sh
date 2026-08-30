@@ -14,8 +14,31 @@ run_workspace() {
 	done < <(workspace_modules)
 }
 
+# The workspace selects the highest pgx version required by any member. That is
+# useful for ordinary integration, but it cannot prove that dbpgx still works
+# with the lower version its own go.mod promises to consumers. Test that module
+# once more outside go.work while resolving the unreleased root from this tree.
+unit_dbpgx_declared_version() {
+	(
+		cd "$REPO_ROOT/utils/vvdb/dbpgx"
+		local root selected
+		root=$(realpath --relative-to=. "$REPO_ROOT")
+		cleanup() { GOWORK=off "$GO" mod edit -dropreplace "$VV_MODULE"; }
+		trap cleanup EXIT
+		GOWORK=off "$GO" mod edit -replace "$VV_MODULE=$root"
+		selected=$(GOWORK=off "$GO" list -m -f '{{.Version}}' github.com/jackc/pgx/v5)
+		[[ $selected == v5.7.6 ]] || {
+			echo "dbpgx compatibility gate selected pgx $selected, want v5.7.6" >&2
+			return 1
+		}
+		echo "==> ./utils/vvdb/dbpgx (GOWORK=off, pgx $selected)"
+		GOWORK=off "$GO" test -race ./...
+	)
+}
+
 unit() {
 	run_workspace test -race ./...
+	unit_dbpgx_declared_version
 	echo '==> ./_examples'
 	(cd _examples && GOWORK=off "$GO" test -race ./...)
 }

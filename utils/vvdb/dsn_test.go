@@ -29,12 +29,12 @@ func TestEachEngineIsBuiltInItsOwnSyntax(t *testing.T) {
 		{
 			name:   "mysql is not a uri",
 			config: base(vvdb.MySQL),
-			want:   "vv:s3cret@tcp(db.internal:6000)/app?parseTime=true",
+			want:   "vv:s3cret@tcp(db.internal:6000)/app?parseTime=true&tls=true",
 		},
 		{
 			name:   "mariadb is spelled like mysql",
 			config: base(vvdb.MariaDB),
-			want:   "vv:s3cret@tcp(db.internal:6000)/app?parseTime=true",
+			want:   "vv:s3cret@tcp(db.internal:6000)/app?parseTime=true&tls=true",
 		},
 		{
 			name:   "sqlite is a file",
@@ -52,7 +52,7 @@ func TestEachEngineIsBuiltInItsOwnSyntax(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if u.Scheme != "postgres" || u.Host != "db.internal:6000" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("sslmode") != "prefer" || u.Query().Get("passfile") != "" || u.Query().Get("connect_timeout") != "0" {
+				if u.Scheme != "postgres" || u.Host != "db.internal:6000" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("sslmode") != "verify-full" || u.Query().Get("passfile") != "" || u.Query().Get("connect_timeout") != "0" {
 					t.Errorf("the postgres URI does not carry its explicit typed defaults: %s", got)
 				}
 				return
@@ -162,6 +162,7 @@ func TestParseTimeIsOnUnlessTheConfigTurnsItOff(t *testing.T) {
 func TestAUnixSocketIsNotAHost(t *testing.T) {
 	pg := base(vvdb.Postgres)
 	pg.Host = "/var/run/postgresql"
+	pg.SSLMode = "disable"
 	got, err := vvdb.PostgresDSN(&pg)
 	if err != nil {
 		t.Fatal(err)
@@ -172,10 +173,21 @@ func TestAUnixSocketIsNotAHost(t *testing.T) {
 
 	my := base(vvdb.MySQL)
 	my.Host = "/tmp/mysql.sock"
+	my.SSLMode = "disable"
 	if got, err = vvdb.MySQLDSN(&my); err != nil {
 		t.Fatal(err)
 	} else if !strings.Contains(got, "unix(/tmp/mysql.sock)") {
 		t.Errorf("mysql spells a socket unix(...), not tcp(...): %s", got)
+	}
+}
+
+func TestAUnixSocketRequiresAnExplicitPlaintextWaiver(t *testing.T) {
+	for _, engine := range []vvdb.Engine{vvdb.Postgres, vvdb.MySQL, vvdb.MariaDB} {
+		config := base(engine)
+		config.Host = "/tmp/database.sock"
+		if _, err := vvdb.DSN(&config); !errors.Is(err, vvdb.ErrUnsupported) || !strings.Contains(err.Error(), "sslmode to disable") {
+			t.Fatalf("%s socket without an explicit waiver = %v, want a named refusal", engine, err)
+		}
 	}
 }
 
@@ -257,6 +269,56 @@ func TestADSNIsUsedAsGivenAndRefusesToShareTheJob(t *testing.T) {
 	_, err = vvdb.DSN(&vvdb.Config{Engine: vvdb.Postgres, DSN: raw, Pool: vvdb.Pool{ConnectTimeout: time.Second}})
 	if !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "pool.connect_timeout") {
 		t.Fatalf("a raw DSN and a pool timeout pick different sources in different adapters; got %v", err)
+	}
+}
+
+func TestTypedPostgresRefusesAmbientConnectionDocumentsAndRawDSNOwnsThem(t *testing.T) {
+	const raw = "postgres://vv:secret@db.internal:5432/app?sslmode=require"
+	for _, environment := range []string{"PGSERVICE", "PGSSLNEGOTIATION"} {
+		t.Run(environment, func(t *testing.T) {
+			t.Setenv(environment, "ambient-policy")
+			config := base(vvdb.Postgres)
+			if _, err := vvdb.PostgresDSN(&config); !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "Config.DSN") {
+				t.Fatalf("typed config beside %s = %v, want an actionable raw-DSN refusal", environment, err)
+			}
+			got, err := vvdb.PostgresDSN(&vvdb.Config{Engine: vvdb.Postgres, DSN: raw})
+			if err != nil {
+				t.Fatalf("raw DSN should own the intentional %s policy: %v", environment, err)
+			}
+			if got != raw {
+				t.Fatalf("raw DSN changed under %s: %q", environment, got)
+			}
+		})
+	}
+}
+
+func TestPgxAmbientRuntimePolicyNeedsAMatchingExplicitParam(t *testing.T) {
+	for _, setting := range []struct{ environment, parameter, explicit string }{
+		{"PGTZ", "timezone", "UTC"},
+		{"PGMINPROTOCOLVERSION", "min_protocol_version", "3.0"},
+		{"PGMAXPROTOCOLVERSION", "max_protocol_version", "3.0"},
+		{"PGCHANNELBINDING", "channel_binding", "prefer"},
+		{"PGREQUIREAUTH", "require_auth", ""},
+	} {
+		t.Run(setting.environment, func(t *testing.T) {
+			t.Setenv(setting.environment, "ambient-policy")
+			config := base(vvdb.Postgres)
+			if _, err := vvdb.PostgresDSN(&config); !errors.Is(err, vvdb.ErrConflict) || !strings.Contains(err.Error(), "params."+setting.parameter) {
+				t.Fatalf("typed config beside %s = %v, want its explicit parameter named", setting.environment, err)
+			}
+			config.Params = vvdb.Params{setting.parameter: setting.explicit}
+			if _, err := vvdb.PostgresDSN(&config); err != nil {
+				t.Fatalf("explicit params.%s did not own %s: %v", setting.parameter, setting.environment, err)
+			}
+		})
+	}
+}
+
+func TestAnExplicitPostgresTimezoneCannotBeEmpty(t *testing.T) {
+	config := base(vvdb.Postgres)
+	config.Params = vvdb.Params{"timezone": ""}
+	if _, err := vvdb.PostgresDSN(&config); !errors.Is(err, vvdb.ErrMissing) || !strings.Contains(err.Error(), "params.timezone") {
+		t.Fatalf("empty startup timezone = %v, want a named pre-dial refusal", err)
 	}
 }
 
@@ -367,6 +429,7 @@ func TestParamsCannotOverrideTypedConnectionSettings(t *testing.T) {
 		{"postgres socket host", func() vvdb.Config {
 			c := base(vvdb.Postgres)
 			c.Host = "/var/run/postgresql"
+			c.SSLMode = "disable"
 			c.Params = map[string]string{"host": "other.internal"}
 			return c
 		}()},
@@ -374,6 +437,16 @@ func TestParamsCannotOverrideTypedConnectionSettings(t *testing.T) {
 			c := base(vvdb.MySQL)
 			c.SSLMode = "require"
 			c.Params = map[string]string{"tls": "skip-verify"}
+			return c
+		}()},
+		{"mysql default TLS", func() vvdb.Config {
+			c := base(vvdb.MySQL)
+			c.Params = map[string]string{"tls": "false"}
+			return c
+		}()},
+		{"mysql plaintext fallback", func() vvdb.Config {
+			c := base(vvdb.MySQL)
+			c.Params = map[string]string{"allowFallbackToPlaintext": "true"}
 			return c
 		}()},
 	} {

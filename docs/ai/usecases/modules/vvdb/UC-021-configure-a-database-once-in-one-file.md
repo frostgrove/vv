@@ -47,6 +47,11 @@ ends, a timeout rounded down to zero that means "wait forever" rather than
     did not create.
 11. None of this is required. A service that already builds its own handle
     passes it to an adapter exactly as before.
+12. A typed server declaration that says nothing about TLS uses verified TLS;
+    plaintext is an explicit waiver, not a driver-specific accident.
+13. Printing or serializing the configuration cannot reveal its password, raw
+    DSN or open-ended parameter values; a separate redacted target remains
+    useful for diagnostics.
 
 ## Status
 
@@ -56,4 +61,5 @@ and rejects a raw DSN beside field-form facts. PostgreSQL typed configuration is
 pgx-only; another driver is an explicit raw-DSN decision. Replica inheritance,
 pool validation, escaping, and the deliberately finite SQLite pragma vocabulary
 are all tested on their public paths. `Pool.MaxIdle` is documented as
-transport-native where pgx cannot give database/sql semantics.
+transport-native where pgx cannot give database/sql semantics. `Secret`,
+redacted `Params`, `RedactedDSN`, and the verified-TLS default are [[D-081]].

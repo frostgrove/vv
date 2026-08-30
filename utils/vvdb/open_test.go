@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,14 @@ import (
 // test what it builds without taking either as a dependency.
 type recorder struct{ dsn string }
 
+type rejectingDriver struct{ err error }
+
+func (this rejectingDriver) Open(string) (driver.Conn, error) { return nil, this.err }
+
+// OpenConnector is called synchronously by sql.Open. A plain Driver.Open is
+// lazy and would exercise Ping rather than Open's error boundary.
+func (this rejectingDriver) OpenConnector(string) (driver.Connector, error) { return nil, this.err }
+
 var pgxRecorder = &recorder{}
 
 func init() { sql.Register("pgx", pgxRecorder) }
@@ -27,11 +37,14 @@ func (this *recorder) Open(name string) (driver.Conn, error) {
 	return nil, io.EOF // nothing here ever runs a statement
 }
 
-func register(t *testing.T, name string) *recorder {
+var registeredDriverID atomic.Uint64
+
+func register(t *testing.T, prefix string) (*recorder, string) {
 	t.Helper()
 	r := &recorder{}
+	name := fmt.Sprintf("%s-%d", prefix, registeredDriverID.Add(1))
 	sql.Register(name, r)
-	return r
+	return r, name
 }
 
 func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
@@ -53,7 +66,7 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Scheme != "postgres" || u.Host != "db.internal:5432" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("password") != "s3cret" || u.Query().Get("sslmode") != "prefer" {
+	if u.Scheme != "postgres" || u.Host != "db.internal:5432" || u.Path != "/app" || u.User.Username() != "vv" || u.Query().Get("password") != "s3cret" || u.Query().Get("sslmode") != "verify-full" {
 		t.Errorf("the driver was handed an incomplete typed PostgreSQL URI %q", pgxRecorder.dsn)
 	}
 }
@@ -92,8 +105,8 @@ func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
 }
 
 func TestPoolApplySizesAnApplicationOwnedHandle(t *testing.T) {
-	register(t, "vvdbtest-apply")
-	database, err := sql.Open("vvdbtest-apply", "")
+	_, driverName := register(t, "vvdbtest-apply")
+	database, err := sql.Open(driverName, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +145,25 @@ func TestAFailureToOpenDoesNotPrintThePassword(t *testing.T) {
 	}
 }
 
+func TestOpenRedactsAThirdPartyDriverErrorButKeepsItsIdentity(t *testing.T) {
+	cause := errors.New("sentinel-driver-detail")
+	name := fmt.Sprintf("vvdbtest-reject-%d", registeredDriverID.Add(1))
+	sql.Register(name, rejectingDriver{err: cause})
+	_, err := vvdb.Open(&vvdb.Config{
+		Engine: vvdb.Postgres, Driver: name,
+		DSN: "postgres://vv:sentinel-password@db.internal/app",
+	})
+	if err == nil {
+		t.Fatal("rejecting driver unexpectedly opened")
+	}
+	if strings.Contains(err.Error(), "sentinel") {
+		t.Fatalf("Open exposed a third-party error or credential: %v", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("Open's safe wrapper stopped errors.Is from reaching the driver cause: %T %v; unwrap=%T", err, err, errors.Unwrap(err))
+	}
+}
+
 func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 	pgxRecorder.dsn = ""
 	config := vvdb.Config{
@@ -165,9 +197,9 @@ func TestOpenReadWriteOpensBothOrNeither(t *testing.T) {
 }
 
 func TestSingleHandleOpenRefusesToIgnoreADeclaredReplica(t *testing.T) {
-	register(t, "vvdbtest-replica-refusal")
+	_, driverName := register(t, "vvdbtest-replica-refusal")
 	_, err := vvdb.Open(&vvdb.Config{
-		Engine: vvdb.Postgres, Driver: "vvdbtest-replica-refusal", Host: "primary", Name: "app",
+		Engine: vvdb.Postgres, Driver: driverName, Host: "primary", Name: "app",
 		Replica: &vvdb.Config{Host: "replica"},
 	})
 

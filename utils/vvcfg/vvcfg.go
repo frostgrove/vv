@@ -14,6 +14,7 @@ package vvcfg
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,6 +25,25 @@ import (
 
 // ErrNoPath reports that a file load was requested without a path.
 var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or set CONFIG_PATH")
+
+type redactedDecodeError struct {
+	operation string
+	cause     error
+}
+
+func (this *redactedDecodeError) Error() string    { return this.operation + ": details redacted" }
+func (this *redactedDecodeError) Unwrap() error    { return this.cause }
+func (this *redactedDecodeError) GoString() string { return this.Error() }
+func (this *redactedDecodeError) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, this.Error())
+}
+
+// hideDecodeCause keeps syntax and scalar-decoder errors inspectable through
+// errors.Is/errors.As without printing the raw configuration value they may
+// quote. Dotenv, in particular, includes an unterminated quoted value verbatim.
+func hideDecodeCause(operation string, cause error) error {
+	return &redactedDecodeError{operation: operation, cause: cause}
+}
 
 // DefaultCfgPath is the file MustLoad reads when no path, --config-path, or
 // CONFIG_PATH is supplied. Set it before application start-up to choose a
@@ -80,9 +100,12 @@ func Load[T any](path string) (*T, error) {
 	}
 	var config T
 	if err := cleanenv.ReadConfig(path, &config); err != nil {
-		return nil, fmt.Errorf("vvcfg: reading %s: %w", path, err)
+		return nil, hideDecodeCause("vvcfg: reading "+path, err)
 	}
 	if err := applyEnvironment(reflect.ValueOf(&config), ""); err != nil {
+		// EnvironmentApplier is application/framework-owned typed logic, not a
+		// third-party scalar decoder. Its errors name actionable fields and
+		// variables and must remain visible (implementations must not echo values).
 		return nil, fmt.Errorf("vvcfg: reading environment for %s: %w", path, err)
 	}
 	if v, ok := any(&config).(Validator); ok {
@@ -100,7 +123,7 @@ func Load[T any](path string) (*T, error) {
 func loadEnvironment[T any]() (*T, error) {
 	var config T
 	if err := cleanenv.ReadEnv(&config); err != nil {
-		return nil, fmt.Errorf("vvcfg: reading environment: %w", err)
+		return nil, hideDecodeCause("vvcfg: reading environment", err)
 	}
 	if err := applyEnvironment(reflect.ValueOf(&config), ""); err != nil {
 		return nil, fmt.Errorf("vvcfg: reading environment: %w", err)

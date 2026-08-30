@@ -54,6 +54,14 @@ type Validator interface{ Validate() error }
 
 `Load` calls it after decoding and returns what it returns.
 
+File/environment decoder errors are a display-safe boundary: some parsers
+quote the raw value that failed (an unterminated `.env` password is one real
+case), so `Load` returns fixed text instead of echoing that diagnostic. The
+original cause is still reachable through `errors.Is` and `errors.As`.
+Errors from a typed `EnvironmentApplier` remain visible because they are
+application-owned, actionable validation; implementations must name the field
+or variable, never echo its value.
+
 **A configuration that is wrong should stop the process at start-up**, not
 surface as a confusing failure once traffic arrives ([[D-021]]). That is the same
 rule `sqlrepo.Define` follows for a broken model mapping and `probe.Full` follows

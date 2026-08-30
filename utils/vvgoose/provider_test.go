@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/utils/vvdb"
@@ -272,15 +273,16 @@ func TestRuntimeCommandsRefuseAMissingMigrationDirectory(t *testing.T) {
 func TestProviderEnablesMySQLMultiStatementsWithoutMutatingTheApplicationConfig(t *testing.T) {
 	t.Parallel()
 	structured := vvdb.Config{
-		Engine: vvdb.MySQL,
-		Host:   "localhost",
-		User:   "app",
-		Name:   "app",
-		Params: vvdb.Params{"multiStatements": "false"},
+		Engine:   vvdb.MySQL,
+		Host:     "localhost",
+		User:     "app",
+		Password: "secret",
+		Name:     "app",
+		Params:   vvdb.Params{"multiStatements": "false", "custom": "preserved"},
 	}
 	raw := vvdb.Config{
 		Engine: vvdb.MySQL,
-		DSN:    "app:secret@tcp(localhost:3306)/app?multiStatements=false",
+		DSN:    "app:secret@tcp(localhost:3306)/app?multiStatements=false&parseTime=false&tls=skip-verify&custom=preserved",
 	}
 	for name, config := range map[string]vvdb.Config{"structured": structured, "raw dsn": raw} {
 		t.Run(name, func(t *testing.T) {
@@ -296,13 +298,31 @@ func TestProviderEnablesMySQLMultiStatementsWithoutMutatingTheApplicationConfig(
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !parsed.MultiStatements {
-				t.Fatalf("provider DSN = %q, multiStatements is disabled", dsn)
+			if !parsed.MultiStatements || !parsed.ParseTime {
+				t.Fatalf("provider DSN = %q, required migration parser flags are disabled", dsn)
+			}
+			if parsed.Passwd != "secret" || parsed.Params["custom"] != "preserved" {
+				t.Fatalf("provider rewrote unrelated DSN state: password=%q params=%#v", parsed.Passwd, parsed.Params)
+			}
+			if parsed.TLS == nil {
+				t.Fatalf("provider dropped the declared/default TLS policy: %#v", parsed)
 			}
 		})
 	}
-	if structured.Params["multiStatements"] != "false" || raw.DSN != "app:secret@tcp(localhost:3306)/app?multiStatements=false" {
+	if structured.Params["multiStatements"] != "false" || structured.Params["custom"] != "preserved" ||
+		raw.DSN != "app:secret@tcp(localhost:3306)/app?multiStatements=false&parseTime=false&tls=skip-verify&custom=preserved" {
 		t.Fatal("provider preparation mutated the application's database config")
+	}
+}
+
+func TestProviderDoesNotExposeMySQLParserInput(t *testing.T) {
+	const raw = "app:sentinel-password@tcp(localhost:3306)/app?multiStatements=sentinel-query"
+	_, err := providerDatabaseConfig(vvdb.Config{Engine: vvdb.MySQL, DSN: raw})
+	if err == nil {
+		t.Fatal("malformed MySQL DSN unexpectedly parsed")
+	}
+	if strings.Contains(err.Error(), "sentinel") {
+		t.Fatalf("provider exposed MySQL parser input: %v", err)
 	}
 }
 

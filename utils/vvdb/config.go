@@ -58,11 +58,14 @@ type Config struct {
 	Host     string `yaml:"host" env:"DB_HOST"`
 	Port     int    `yaml:"port" env:"DB_PORT"`
 	User     string `yaml:"user" env:"DB_USER"`
-	Password string `yaml:"password" env:"DB_PASSWORD"`
+	Password Secret `yaml:"password" env:"DB_PASSWORD"`
 	Name     string `yaml:"name" env:"DB_NAME"`
 
 	// SSLMode is spelled in PostgreSQL's vocabulary — disable, require,
-	// verify-ca, verify-full — and translated for the others. See [TLSMode].
+	// verify-ca, verify-full — and translated for the others. Empty selects
+	// verified TLS (verify-full for PostgreSQL, true for MySQL/MariaDB). Local
+	// plaintext uses explicit disable; allow/prefer are explicit compatibility
+	// choices that permit fallback and are never selected by an empty field.
 	SSLMode string `yaml:"sslmode" env:"DB_SSLMODE"`
 	// Path is the file SQLite opens, and is meaningless anywhere else.
 	Path string `yaml:"path" env:"DB_PATH"`
@@ -94,7 +97,7 @@ type Config struct {
 	// used exactly as given. It refuses to work half way — set it and leave
 	// every field it would override empty, or [Config.Validate] fails and
 	// names both.
-	DSN string `yaml:"dsn" env:"DB_DSN"`
+	DSN Secret `yaml:"dsn" env:"DB_DSN"`
 }
 
 // Migration describes the application-owned migration layout. It lives in
@@ -485,6 +488,9 @@ func (this *Config) validateFields() error {
 	if strings.HasPrefix(this.Host, "[") && strings.HasSuffix(this.Host, "]") {
 		return fmt.Errorf("%w: host %q is an already-bracketed IPv6 literal; use the bare address", ErrUnsupported, this.Host)
 	}
+	if strings.HasPrefix(this.Host, "/") && this.SSLMode != "disable" {
+		return fmt.Errorf("%w: a unix socket cannot perform hostname-verified TLS; set sslmode to disable explicitly", ErrUnsupported)
+	}
 	if this.Password != "" && this.User == "" {
 		return fmt.Errorf("%w: password is set without user, so a driver could authenticate as the process user instead", ErrConflict)
 	}
@@ -517,6 +523,9 @@ func (this *Config) validateParams() error {
 		}
 	}
 	if this.Engine == Postgres {
+		if timezone, declared := this.Params["timezone"]; declared && strings.TrimSpace(timezone) == "" {
+			return fmt.Errorf("%w: params.timezone must be non-empty when declared", ErrMissing)
+		}
 		for _, key := range []string{"service", "servicefile"} {
 			if _, ok := this.Params[key]; ok {
 				return fmt.Errorf("%w: params.%s makes a second configuration document; use Config.DSN when a libpq service is intentional", ErrUnsupported, key)
@@ -542,9 +551,13 @@ func (this *Config) validateParams() error {
 		reserved["sslmode"] = "sslmode"
 		reserved["connect_timeout"] = "pool.connect_timeout"
 	case MySQL, MariaDB:
-		if this.SSLMode != "" {
-			reserved["tls"] = "sslmode"
-		}
+		// Empty SSLMode is still a typed setting: it means verified TLS.
+		// Params must not be able to replace that default after validation.
+		reserved["tls"] = "sslmode"
+		// go-sql-driver treats this flag as ssl-mode=PREFERRED: it retries a
+		// TLS failure in plaintext. That contradicts every typed TLS policy,
+		// including the verified empty-mode default.
+		reserved["allowFallbackToPlaintext"] = "sslmode"
 		if this.Pool.ConnectTimeout != 0 {
 			reserved["timeout"] = "pool.connect_timeout"
 		}
@@ -779,13 +792,16 @@ func (this *Config) ApplyEnvironmentPrefix(prefix string) error {
 		return err
 	}
 	stringField("DB_REPLICA_USER", &r.User)
-	stringField("DB_REPLICA_PASSWORD", &r.Password)
+	if value, ok := os.LookupEnv(prefix + "DB_REPLICA_PASSWORD"); ok {
+		r.Password = Secret(value)
+		found = true
+	}
 	stringField("DB_REPLICA_NAME", &r.Name)
 	stringField("DB_REPLICA_SSLMODE", &r.SSLMode)
 	stringField("DB_REPLICA_PATH", &r.Path)
 	if value, set := os.LookupEnv(prefix + "DB_REPLICA_DSN"); set {
 		r.clearFieldsBesideDSN()
-		r.DSN = value
+		r.DSN = Secret(value)
 		found = true
 	}
 	if value, ok := os.LookupEnv(prefix + "DB_REPLICA_PARAMS"); ok {

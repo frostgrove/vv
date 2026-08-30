@@ -63,13 +63,41 @@ func PostgresDSN(config *Config) (string, error) {
 	if os.Getenv("PGSSLNEGOTIATION") != "" {
 		// sslnegotiation is pgx-specific, so emitting an empty query key would
 		// make the database/sql lib/pq driver reject an otherwise portable URI.
-		return "", fmt.Errorf("%w: PGSSLNEGOTIATION is set; put the intended driver setting in Config.Params", ErrConflict)
+		return "", fmt.Errorf("%w: PGSSLNEGOTIATION is set; use Config.DSN when that driver-specific negotiation mode is intentional", ErrConflict)
+	}
+	// PostgreSQL rejects an empty TimeZone startup parameter, so unlike the
+	// harmless empty application_name/options values it cannot be rendered to
+	// mask PGTZ. Require an explicit, non-empty Params value when the process
+	// carries that ambient policy.
+	if os.Getenv("PGTZ") != "" {
+		if timezone, declared := c.Params["timezone"]; !declared || strings.TrimSpace(timezone) == "" {
+			return "", fmt.Errorf("%w: PGTZ is set; unset it, declare a non-empty params.timezone, or use a complete Config.DSN that owns the setting", ErrConflict)
+		}
+	}
+	// These variables were added after the oldest pgx line supported by the
+	// satellite dbpgx module. Writing their keys unconditionally would make an
+	// older parser forward them as PostgreSQL startup parameters, which the
+	// server rejects. Refuse ambient policy unless the application explicitly
+	// opts into the matching Params key (and therefore owns its pgx version).
+	for _, setting := range []struct{ environment, parameter string }{
+		{"PGMINPROTOCOLVERSION", "min_protocol_version"},
+		{"PGMAXPROTOCOLVERSION", "max_protocol_version"},
+		{"PGCHANNELBINDING", "channel_binding"},
+		{"PGREQUIREAUTH", "require_auth"},
+	} {
+		if os.Getenv(setting.environment) == "" {
+			continue
+		}
+		if _, declared := c.Params[setting.parameter]; !declared {
+			return "", fmt.Errorf("%w: %s is set; unset it, declare params.%s with a compatible pgx version, or use a complete Config.DSN that owns the setting",
+				ErrConflict, setting.environment, setting.parameter)
+		}
 	}
 
 	u := url.URL{Scheme: "postgres", Path: "/" + c.Name}
 	switch {
 	case c.User != "" && c.Password != "":
-		u.User = url.UserPassword(c.User, c.Password)
+		u.User = url.UserPassword(c.User, string(c.Password))
 	case c.User != "":
 		u.User = url.User(c.User)
 	}
@@ -80,11 +108,11 @@ func PostgresDSN(config *Config) (string, error) {
 	// including empty credentials and the ordinary defaults, so the named config
 	// rather than a shell or ~/.pgpass decides the connection.
 	q.Set("user", c.User)
-	q.Set("password", c.Password)
+	q.Set("password", string(c.Password))
 	q.Set("dbname", c.Name)
 	sslmode := c.SSLMode
 	if sslmode == "" {
-		sslmode = "prefer"
+		sslmode = "verify-full"
 	}
 	q.Set("sslmode", sslmode)
 	q.Set("connect_timeout", "0")
@@ -96,7 +124,6 @@ func PostgresDSN(config *Config) (string, error) {
 	q.Set("sslsni", "")
 	q.Set("target_session_attrs", "any")
 	q.Set("application_name", "")
-	q.Set("timezone", "")
 	q.Set("options", "")
 	host, port := c.Host, c.Port
 	if port == 0 {
@@ -147,7 +174,7 @@ func mysqlish(config *Config, e Engine) (string, error) {
 			// Not escaped, and it does not need to be: the driver takes the
 			// last '@' before the last '/', and both of those are ours.
 			b.WriteByte(':')
-			b.WriteString(c.Password)
+			b.WriteString(string(c.Password))
 		}
 		b.WriteByte('@')
 	}
@@ -250,7 +277,7 @@ func prepare(c *Config, e Engine) (Config, string, error) {
 		return prepared, "", err
 	}
 	if prepared.DSN != "" {
-		return prepared, prepared.DSN, nil
+		return prepared, string(prepared.DSN), nil
 	}
 	return prepared, "", nil
 }
@@ -265,7 +292,7 @@ func prepare(c *Config, e Engine) (Config, string, error) {
 // the configuration claims is verified.
 func tlsParam(e Engine, mode string) (string, error) {
 	if mode == "" {
-		return "", nil
+		mode = "verify-full"
 	}
 	switch mode {
 	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
@@ -286,7 +313,7 @@ func tlsParam(e Engine, mode string) (string, error) {
 	case "verify-full":
 		return "true", nil
 	}
-	return "", fmt.Errorf("%w: %s cannot express sslmode verify-ca — register a tls.Config with mysql.RegisterTLSConfig and name it in params.tls",
+	return "", fmt.Errorf("%w: %s cannot express sslmode verify-ca in typed fields — register a tls.Config with mysql.RegisterTLSConfig and use a raw Config.DSN that names it as tls=<name>",
 		ErrUnsupported, e)
 }
 

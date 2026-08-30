@@ -763,6 +763,7 @@ db:
   user: vv
   password: vv
   name: app
+  sslmode: disable          # local development only
   pool: { max_open: 20 }
 ```
 

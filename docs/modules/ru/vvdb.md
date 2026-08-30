@@ -66,7 +66,15 @@ db:
     table: goose_db_version
   replica:
     host: replica.internal  # наследует всё, что не назвала заново
+    sslmode: verify-full    # не наследовать локальный plaintext waiver
 ```
+
+Для typed-конфигурации PostgreSQL, MySQL или MariaDB отсутствие `sslmode`
+означает проверяемый TLS: `verify-full` для PostgreSQL и `tls=true` для
+семейства MySQL. Локальный plaintext задаётся видимым `sslmode: disable`,
+показанным выше. `allow` и `prefer` — явные compatibility modes, разрешающие
+fallback; отсутствие поля их никогда не выбирает. Полный raw `dsn:` остаётся
+низкоуровневым escape hatch и сам владеет своей TLS-политикой.
 
 Теги — `yaml` и `env`, так что [vvcfg](vvcfg.md) загружает её без клея:
 
@@ -112,6 +120,8 @@ field-описание из YAML; `Config`, собранный в Go, по-пр�
 | | |
 |---|---|
 | `DSN(cfg)` | строка для того движка, который назван в конфигурации |
+| `RedactedDSN(cfg)` | та же цель для логов/support; credentials, query values и fragment не выводятся |
+| `RedactError(operation, err)` | сохранить cause parser/driver для `errors.Is/As`, не показывая его недоверенный текст |
 | `PostgresDSN` `MySQLDSN` `MariaDBDSN` `SQLiteDSN` | та же полностью проверенная декларация, когда вызывающий уже знает движок |
 | `Open(cfg)` / `MustOpen(cfg)` | один `*sql.DB` с применённым пулом; при объявленной replica отказывают |
 | `OpenReadWrite(cfg)` / `MustOpenReadWrite(cfg)` | primary и реплика; вторая — nil, если реплика не объявлена |
@@ -120,6 +130,23 @@ field-описание из YAML; `Config`, собранный в Go, по-пр�
 | `DriverName(cfg)` | имя драйвера `database/sql`, с которым будет открывать `Open` |
 | `cfg.Validate()` | отказать конфигурации, которая не может значить то, что говорит |
 | `cfg.ReadReplica()` | реплика в том виде, в каком она будет открыта, с наследованием |
+
+`Password` и raw `DSN` имеют тип `vvdb.Secret`. На границе connector реальное
+значение по-прежнему доступно только явным преобразованием
+`string(cfg.Password)`, а value-rendering verbs `fmt`, JSON, YAML, TOML и `slog`
+видят `[REDACTED]`. (`%p` по контракту стандартного `fmt` требует pointer-like
+operand, а `%w` допустим только в `fmt.Errorf` с error operand.)
+Все значения `Params` также редактируются: по имени открытого driver option
+нельзя доказать, что значение не является секретом. Защита следует за значением при
+встраивании в конфигурацию приложения и не зависит от специальной настройки
+логгера. Ошибки стороннего DSN parser или `sql.Open` также проходят через
+фиксированную redacted-границу; исходный cause остаётся доступен через
+`errors.Is` и `errors.As`.
+Если structural grammar credentials/target в raw DSN нельзя безопасно
+распознать для объявленного движка, `RedactedDSN` возвращает только
+`[REDACTED]`, а не угадывает границу credentials. Все query values удаляются;
+их semantic validity проверяет драйвер при открытии. Typed target Unix socket и
+относительный SQLite path при этом сохраняются для диагностики.
 
 ## Драйвер — это ваш импорт
 
@@ -137,6 +164,29 @@ import _ "github.com/go-sql-driver/mysql"   // регистрирует "mysql"
 использующее lib/pq — в том числе через локальный alias драйвера, — задаёт
 полный raw `dsn:`. Для SQLite от mattn — `driver: sqlite3`.
 
+pgx читает следующее connection-environment: `PGHOST`, `PGPORT`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPASSFILE`, `PGSERVICE`,
+`PGSERVICEFILE`, `PGSSLMODE`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT`,
+`PGSSLPASSWORD`, `PGSSLSNI`, `PGSSLNEGOTIATION`, `PGOPTIONS`, `PGAPPNAME`,
+`PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGTZ`, а в новых линейках
+pgx ещё `PGMINPROTOCOLVERSION`, `PGMAXPROTOCOLVERSION`,
+`PGCHANNELBINDING` и `PGREQUIREAUTH`. Typed-конфигурация vvdb эти значения
+не наследует. Она записывает в URI host, port, database, user,
+password, TLS mode, timeout и безопасные пустые
+passfile/certificate/runtime values; `~/.pgpass` тоже не может
+заменить объявленный password. PostgreSQL отклоняет пустой
+TimeZone startup value, поэтому непустой `PGTZ` отклоняется без
+явно заданного непустого `params.timezone`. Четыре version-specific
+переменные отклоняются, если они непусты и matching key не объявлен
+явно в `params`. Так сохраняются собственные defaults pgx без отправки
+неизвестных startup parameters старому поддерживаемому pgx;
+приложение на совместимом новом pgx может явно включить их через
+`params`. `PGSERVICE` и `PGSSLNEGOTIATION` отклоняются как второй
+configuration document или driver-only grammar; без отклонённого
+`PGSERVICE` один `PGSERVICEFILE` не выбирает service. Полный raw `dsn:` —
+явный escape hatch; его автор сам владеет ambient-поведением, которое
+намеренно оставил доступным.
+
 ## От чего отказывается и почему в каждом случае
 
 | | |
@@ -145,8 +195,12 @@ import _ "github.com/go-sql-driver/mysql"   // регистрирует "mysql"
 | `dsn` рядом с `host`, `name`, … | два источника истины, один из них молча игнорируется |
 | `dsn` рядом с `pool.connect_timeout` | raw-строка владеет своим timeout; иначе разные adapter-ы применяли бы разные значения |
 | PostgreSQL `PGSERVICE` или `PGSSLNEGOTIATION` рядом с typed-полями | это второй документ подключения; при намеренном использовании нужен явный raw `dsn` |
+| PostgreSQL `PGTZ` без непустого явного `params.timezone` | пустой TimeZone не может безопасно перекрыть process value: PostgreSQL его отклоняет; укажите intended zone либо удалите ambient setting |
+| version-specific protocol/auth `PG*` PostgreSQL без matching явного key в `params` | ambient setting не должен менять документ, а безусловная запись неизвестного key сломала бы старый pgx; уберите переменную, явно включите её через `params` на совместимом pgx либо владейте ей в полном raw DSN |
 | typed PostgreSQL с любым `driver`, кроме `pgx` | alias способен скрыть lib/pq и вернуть ambient-конфигурацию; используйте pgx либо полный raw DSN |
-| `sslmode: verify-ca` на MySQL | драйверу нужен зарегистрированный `tls.Config`; молчаливый откат к `skip-verify` заявлял бы проверку, которой никто не делает |
+| `params.sslmode`, `params.tls` или MySQL `allowFallbackToPlaintext` | они переопределили бы или ослабили typed TLS policy; используйте named field либо полный raw DSN |
+| `sslmode: verify-ca` на MySQL | драйверу нужен зарегистрированный `tls.Config`; зарегистрируйте его и используйте полный raw DSN с `tls=<name>`, не заявляя typed mode, который драйвер не выражает |
+| Unix socket без `sslmode: disable` | у socket нет hostname для verified TLS; plaintext waiver должен быть явным, а не молча отключать проверку |
 | `:` в имени пользователя MySQL | драйвер делит пользователя и пароль по **первому** двоеточию |
 | `path` у серверного движка, `host` у SQLite | поле принадлежит другому движку и было бы отброшено |
 
@@ -165,7 +219,9 @@ import _ "github.com/go-sql-driver/mysql"   // регистрирует "mysql"
   косметика. Написанный как есть, `loc=Europe/Moscow` сдвигает то место, где
   драйвер считает конец имени базы, и он читает базу как `Moscow`.
 - **Сокеты** — `host`, начинающийся с `/`, становится `?host=…` для PostgreSQL
-  и `unix(…)` для MySQL. Хостом он не является ни в одном из двух синтаксисов.
+  и `unix(…)` для MySQL. Хостом он не является ни в одном из двух синтаксисов,
+  поэтому hostname verification выполнить невозможно; typed-конфиг socket
+  обязан явно указать `sslmode: disable`.
 
 `parseTime=true` пишется для семейства MySQL, если `params` не говорит иного.
 Это единственное умолчание здесь, которое меняет то, что возвращает база: без

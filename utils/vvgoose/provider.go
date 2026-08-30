@@ -95,13 +95,13 @@ func providerDatabaseConfig(config vvdb.Config) (vvdb.Config, error) {
 	}
 
 	if primary.DSN != "" {
-		parsed, err := mysql.ParseDSN(primary.DSN)
+		parsed, err := mysql.ParseDSN(string(primary.DSN))
 		if err != nil {
-			return vvdb.Config{}, fmt.Errorf("vvgoose: parse MySQL DSN: %w", err)
+			return vvdb.Config{}, vvdb.RedactError("vvgoose: mysql driver rejected the migration DSN", err)
 		}
 		parsed.MultiStatements = true
 		parsed.ParseTime = true
-		primary.DSN = parsed.FormatDSN()
+		primary.DSN = vvdb.Secret(parsed.FormatDSN())
 		return primary, nil
 	}
 
