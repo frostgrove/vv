@@ -399,6 +399,80 @@ func TestStaticPanicsAtDeclarationWhenClaimsCannotBeSnapshotted(t *testing.T) {
 	})
 }
 
+func TestTryStaticRejectsCustomPrincipalItCannotSnapshot(t *testing.T) {
+	const secretKey = "credential-that-must-not-enter-an-error"
+	principal := &mutableCustomPrincipal{
+		subject:     "batch",
+		permissions: map[auth.Permission]bool{"article:read": true},
+	}
+
+	store, err := apikey.TryStatic(map[string]auth.Principal{secretKey: principal})
+	if store != nil {
+		t.Fatal("TryStatic returned a store retaining a custom Principal it cannot snapshot")
+	}
+	if !errors.Is(err, apikey.ErrUnsupportedStaticPrincipal) {
+		t.Fatalf("TryStatic answered %v, want ErrUnsupportedStaticPrincipal", err)
+	}
+	if strings.Contains(err.Error(), secretKey) {
+		t.Fatal("the custom-principal configuration error disclosed an API key")
+	}
+
+	// This is the mutation that the old implementation published through every
+	// lookup. Refusing the declaration is what keeps it outside the fixed store.
+	principal.subject = "rewritten-after-construction"
+	principal.permissions["article:delete"] = true
+}
+
+func TestStaticPanicsForCustomPrincipalItCannotSnapshot(t *testing.T) {
+	defer func() {
+		panicked, ok := recover().(error)
+		if !ok || !errors.Is(panicked, apikey.ErrUnsupportedStaticPrincipal) {
+			t.Fatalf("Static panic was %v, want ErrUnsupportedStaticPrincipal", panicked)
+		}
+	}()
+	apikey.Static(map[string]auth.Principal{
+		"k-1": &mutableCustomPrincipal{subject: "batch"},
+	})
+}
+
+func TestStoreFuncIsTheExplicitSeamForACustomPrincipal(t *testing.T) {
+	principal := &mutableCustomPrincipal{
+		subject:     "batch",
+		permissions: map[auth.Permission]bool{"article:read": true},
+	}
+	store := apikey.StoreFunc(func(context.Context, string) (auth.Principal, bool, error) {
+		return principal, true, nil
+	})
+	authenticator := apikey.New(store)
+
+	got, err := authenticator.Authenticate(t.Context(), cred("k-1"))
+	if err != nil {
+		t.Fatalf("the explicit StoreFunc seam refused its custom Principal: %v", err)
+	}
+	if got != auth.Principal(principal) || got.Subject() != "batch" || !got.Has("article:read") {
+		t.Fatalf("StoreFunc returned the wrong custom Principal: %#v", got)
+	}
+}
+
+type mutableCustomPrincipal struct {
+	subject     string
+	roles       map[auth.Role]bool
+	permissions map[auth.Permission]bool
+	attributes  map[string]any
+}
+
+func (this *mutableCustomPrincipal) Subject() string { return this.subject }
+func (this *mutableCustomPrincipal) In(role auth.Role) bool {
+	return this.roles[role]
+}
+func (this *mutableCustomPrincipal) Has(permission auth.Permission) bool {
+	return this.permissions[permission]
+}
+func (this *mutableCustomPrincipal) Attr(name string) (any, bool) {
+	value, found := this.attributes[name]
+	return value, found
+}
+
 type exportedAttribute struct {
 	Bytes  []byte
 	Labels map[string]string
@@ -408,11 +482,28 @@ type hiddenMutableAttribute struct {
 	values []string
 }
 
-func TestAStaticTypedNilPrincipalIsNotAKnownIdentity(t *testing.T) {
-	var principal *nilPrincipal
-	static := apikey.Static(map[string]auth.Principal{"k-1": principal})
-	if got, ok, err := static.Lookup(t.Context(), "k-1"); err != nil || ok || got != nil {
-		t.Fatalf("a key mapped to a typed-nil identity answered %v, %v, %v", got, ok, err)
+func TestTryStaticRejectsNilLikePrincipalsAtDeclaration(t *testing.T) {
+	const secretKey = "typed-nil-key-that-must-not-enter-an-error"
+	var typedNil *nilPrincipal
+	for _, tc := range []struct {
+		name      string
+		principal auth.Principal
+	}{
+		{name: "literal nil", principal: nil},
+		{name: "typed nil", principal: typedNil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := apikey.TryStatic(map[string]auth.Principal{secretKey: tc.principal})
+			if store != nil {
+				t.Fatal("TryStatic retained a key whose declaration has no usable Principal")
+			}
+			if !errors.Is(err, apikey.ErrUnsupportedStaticPrincipal) {
+				t.Fatalf("TryStatic answered %v, want ErrUnsupportedStaticPrincipal", err)
+			}
+			if strings.Contains(err.Error(), secretKey) {
+				t.Fatal("the nil-like-principal configuration error disclosed an API key")
+			}
+		})
 	}
 }
 

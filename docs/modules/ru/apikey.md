@@ -109,9 +109,16 @@ apikey.New(apikey.StoreFunc(func(ctx context.Context, key string) (auth.Principa
 `big.Int` и пользовательская структура со скрытым slice отклоняются: shallow
 copy разделяла бы изменяемую память. Декларативный `Static` паникует на той же
 ошибке старта. Храните opaque/time-like значения в immutable scalar форме либо
-обрабатывайте ошибку `TryStatic`. Произвольный `Principal` нельзя перечислить
-через его interface; пользовательская реализация для обоих конструкторов должна
-быть immutable и concurrency-safe.
+обрабатывайте ошибку `TryStatic`.
+
+`Static` и `TryStatic` принимают только value- или pointer-форму `auth.Claims`.
+Произвольный `Principal` даёт методы-запросы, но не состояние, из которого можно
+сделать честный snapshot, поэтому `TryStatic` возвращает
+`ErrUnsupportedStaticPrincipal`, а `Static` ломает старт. Custom principal
+остаётся доступен через низкоуровневый `Store`/`StoreFunc`, где его lifetime и
+concurrency явно принадлежат реализации хранилища. Literal- или typed-nil
+principal здесь является такой же ошибкой конфигурации, а не молча сохранённым
+ключом, который никогда не сможет аутентифицировать.
 
 ## Схема
 

@@ -110,9 +110,16 @@ pointers, unsafe map keys and structs with unexported state. `bytes.Buffer`,
 `big.Int` and a custom struct hiding a slice are refused: shallow-copying them
 would share mutable storage. Declarative `Static` panics on that same start-up
 error. Store time-like or otherwise opaque values in an immutable scalar form,
-or use `TryStatic` and handle the configuration error. A custom `Principal`
-cannot be enumerated through its interface and must itself be immutable and
-concurrency-safe when placed in either constructor.
+or use `TryStatic` and handle the configuration error.
+
+`Static` and `TryStatic` accept only value or pointer forms of `auth.Claims`.
+An arbitrary `Principal` exposes queries, not the state needed to make a sound
+snapshot, so `TryStatic` returns `ErrUnsupportedStaticPrincipal` and `Static`
+fails at start-up. Custom principals remain available through the lower-level
+`Store`/`StoreFunc` seam, where their lifetime and concurrency are explicitly
+owned by that implementation. A literal or typed-nil principal is the same
+configuration error here; it is not silently retained as a key that can never
+authenticate.
 
 ## The scheme
 

@@ -82,7 +82,10 @@ channels, unsafe pointers, unsafe map keys and structs with unexported state:
 `bytes.Buffer` and `big.Int` cannot be shallow-copied soundly. `Static` is the
 declarative fail-fast wrapper and panics on that construction error. Custom
 Principal implementations have no enumeration surface from which to make a
-copy, so one placed in Static must itself be immutable and concurrency-safe.
+copy, so `TryStatic` refuses them and `Static` fails fast. Their deliberately
+caller-owned lifetime remains available through `Store`/`StoreFunc`. Literal
+and typed-nil entries are refused at the same composition boundary rather than
+becoming declared keys that can only answer unknown.
 
 These are construction errors under [[D-021]], not request-time refusals. A
 deployment typo must not look like a caller presenting a bad credential.
@@ -148,6 +151,9 @@ environment setting as that option defeats the reason it has a name.
   slices with either its declaration or another request.
 - Do not shallow-copy an attribute type merely because reflection cannot set
   its unexported fields. Refuse it through `TryStatic`; `Static` fails fast.
+- Do not retain a custom `Principal` in `Static`: its query-only interface
+  cannot be snapshotted. Refuse it with `ErrUnsupportedStaticPrincipal`; custom
+  identity lifetimes belong behind the explicit `Store`/`StoreFunc` seam.
 - Do not accept a zero-value Guard in a transport constructor or defer its nil
   authenticator panic until a request.
 - Do not assign implicit strength to A -> B -> A. Mount cumulative guards once,
@@ -203,6 +209,15 @@ environment setting as that option defeats the reason it has a name.
 - `TestTryStaticRejectsMutableStateItCannotCopySoundly` covers `bytes.Buffer`,
   `big.Int` and a custom hidden-state struct; the exported-struct and cyclic
   controls prove supported values still arrive fresh per request.
+  `TestTryStaticCopiesSupportedCyclesForEveryLookup` pins
+  pointer-to-struct-to-pointer, pointer-to-interface-to-pointer and
+  slice-to-interface-to-slice graphs across two independent lookups.
+- `TestTryStaticRejectsCustomPrincipalItCannotSnapshot` and
+  `TestStaticPanicsForCustomPrincipalItCannotSnapshot` keep a mutable custom
+  implementation out of the safe fixed store; the `StoreFunc` control keeps
+  the lower-level extension seam available.
+- `TestTryStaticRejectsNilLikePrincipalsAtDeclaration` proves literal and typed
+  nil entries fail before a store exists and never disclose their API key.
 - gRPC stream tests mirror consecutive idempotence, distinct A -> B principals,
   and both ambiguous A -> B -> A assurance directions.
 

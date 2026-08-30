@@ -878,9 +878,13 @@ retain their concrete type without sharing.
 `TestTryStaticRejectsMutableStateItCannotCopySoundly` carries all three refused
 types, while `TestTryStaticCopiesSupportedStructAttributesForEveryRequest` and
 the cyclic-container control prove fresh supported values. A custom Principal
-cannot be enumerated through the four-method interface and must itself be
-immutable and concurrency-safe; the contract says so rather than claiming an
-impossible generic copy ([[D-076]]).
+cannot be enumerated through the four-method interface, so the safe fixed-store
+constructors refuse it with `ErrUnsupportedStaticPrincipal`; a deployment that
+owns a dynamic implementation uses the explicit `Store`/`StoreFunc` seam.
+`TestTryStaticRejectsCustomPrincipalItCannotSnapshot` pins that boundary without
+putting the API key in the configuration error; the nil-like declaration test
+does the same for literal and typed nil rather than creating an unusable key
+([[D-076]]).
 **Blast radius:** silent wrong answer
 
 ### E-AUTH-06 — The HMAC secret is empty

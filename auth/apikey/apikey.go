@@ -42,6 +42,10 @@ import (
 // travels on unchanged, so it renders as the 500 it is. Collapsing the second
 // into the first would answer "your key is wrong" to every caller during an
 // outage, and the callers would rotate their keys.
+//
+// Custom [auth.Principal] implementations belong behind Store (or [StoreFunc]),
+// where the implementation explicitly owns their snapshot and concurrency
+// semantics. [Static] deliberately accepts only the built-in [auth.Claims].
 type Store interface {
 	Lookup(ctx context.Context, key string) (auth.Principal, bool, error)
 }
@@ -63,6 +67,13 @@ const DefaultScheme = "ApiKey"
 // configuration error the application wants to return; [Static] panics on it
 // as a declarative start-up failure.
 var ErrUnsupportedStaticAttribute = errors.New("apikey: Static cannot safely snapshot a Claims attribute")
+
+// ErrUnsupportedStaticPrincipal reports a nil-like or custom [auth.Principal]
+// passed to [Static] or [TryStatic]. Principal exposes queries rather than an
+// enumerable value, so these constructors cannot make a fixed snapshot of an
+// arbitrary implementation without retaining caller-owned state. Use [Store]
+// or [StoreFunc] when principal construction is deliberately dynamic.
+var ErrUnsupportedStaticPrincipal = errors.New("apikey: Static can safely snapshot only auth.Claims principals")
 
 type authenticator struct {
 	store  Store
@@ -168,9 +179,11 @@ func (this *authenticator) Authenticate(ctx context.Context, c auth.Credential) 
 // state (bytes.Buffer and big.Int are examples), a function, channel or unsafe
 // pointer is refused: shallow-copying one would make "fixed" a lie.
 //
-// A custom Principal has no enumeration API from which a copy could be made;
-// custom implementations supplied here must therefore be immutable and safe
-// for concurrent calls.
+// A custom Principal has no enumeration API from which a copy could be made,
+// so the safe declarative constructor refuses it. A deployment that owns the
+// custom principal's lifetime uses the explicit lower-level [Store] or
+// [StoreFunc] seam instead. A nil-like entry is also a declaration error, not a
+// fixed key whose only possible result is unknown.
 func Static(keys map[string]auth.Principal) Store {
 	store, err := TryStatic(keys)
 	if err != nil {
@@ -220,7 +233,7 @@ func TryStatic(keys map[string]auth.Principal) (Store, error) {
 // purpose implementation Static can soundly snapshot.
 func freezePrincipal(p auth.Principal) (func() (auth.Principal, error), error) {
 	if nilvalue.Is(p) {
-		return nil, nil
+		return nil, ErrUnsupportedStaticPrincipal
 	}
 	switch claims := p.(type) {
 	case auth.Claims:
@@ -242,7 +255,7 @@ func freezePrincipal(p auth.Principal) (func() (auth.Principal, error), error) {
 			return &fresh, nil
 		}, nil
 	default:
-		return func() (auth.Principal, error) { return p, nil }, nil
+		return nil, ErrUnsupportedStaticPrincipal
 	}
 }
 
