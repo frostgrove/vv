@@ -551,7 +551,10 @@ func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 				{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
 				{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 			} {
-				if _, err := repository.Save(ctx, &user); err != nil {
+				// The pinned *sql.Conn intentionally cannot open a nested
+				// transaction. This test needs only seed INSERTs; SaveOnly keeps the
+				// session mode and reaches the LIKE assertions below.
+				if err := repository.SaveOnly(ctx, &user); err != nil {
 					t.Fatal(err)
 				}
 			}
