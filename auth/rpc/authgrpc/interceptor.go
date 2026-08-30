@@ -52,7 +52,7 @@ func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
 		if configuration.skips(methodOf(info)) {
 			return handler(ctx, request)
 		}
-		ctx, err := guard.Authenticate(ctx, getterFor(ctx))
+		ctx, err := guard.AuthenticateValues(ctx, valuesFor(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -73,7 +73,7 @@ func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor {
 		if info != nil && configuration.skips(info.FullMethod) {
 			return handler(server, serverStream)
 		}
-		ctx, err := guard.Authenticate(serverStream.Context(), getterFor(serverStream.Context()))
+		ctx, err := guard.AuthenticateValues(serverStream.Context(), valuesFor(serverStream.Context()))
 		if err != nil {
 			return err
 		}
@@ -109,22 +109,19 @@ func methodOf(info *grpc.UnaryServerInfo) string {
 	return info.FullMethod
 }
 
-// getterFor adapts incoming metadata to the shape auth.Guard takes.
+// valuesFor adapts incoming metadata to the list-aware shape auth.Guard takes.
 //
 // metadata.MD.Get lowercases the key it is given and the transport lowercased
 // the keys on the way in, so "Authorization" finds what a client sent as
 // "authorization" — the same case-insensitivity an http.Header has, reached a
 // different way.
-func getterFor(ctx context.Context) func(string) string {
+func valuesFor(ctx context.Context) func(string) []string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return func(string) string { return "" }
+		return func(string) []string { return nil }
 	}
-	return func(name string) string {
-		if vs := md.Get(name); len(vs) > 0 {
-			return vs[0]
-		}
-		return ""
+	return func(name string) []string {
+		return md.Get(name)
 	}
 }
 

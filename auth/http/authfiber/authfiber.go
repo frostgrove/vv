@@ -23,6 +23,8 @@
 package authfiber
 
 import (
+	"bytes"
+
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/frostgrove/vv/auth"
@@ -47,15 +49,31 @@ func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handl
 	}
 	renderer := authhttp.RendererFor(options)
 	return func(fiberContext fiber.Ctx) error {
-		// fiberContext.Get is variadic in Fiber v3, so it is adapted rather than passed:
-		// the Guard takes the one shape every transport can supply.
-		ctx, err := guard.Authenticate(fiberContext.Context(), func(name string) string { return fiberContext.Get(name) })
+		ctx, err := guard.AuthenticateValues(
+			fiberContext.Context(),
+			func(name string) []string { return headerValues(fiberContext, name) },
+		)
 		if err != nil {
 			return refuse(fiberContext, renderer, err)
 		}
 		fiberContext.SetContext(ctx)
 		return fiberContext.Next()
 	}
+}
+
+func headerValues(c fiber.Ctx, name string) []string {
+	var values []string
+	needle := []byte(name)
+	// Ctx.Get exposes a first-wins view, while Header.PeekAll becomes
+	// case-sensitive when DisableHeaderNormalizing is enabled. Iterate every
+	// raw occurrence and perform HTTP's case-insensitive field-name comparison
+	// here, preserving repeated values under the same or different spellings.
+	for key, value := range c.Request().Header.All() {
+		if bytes.EqualFold(key, needle) {
+			values = append(values, string(value))
+		}
+	}
+	return values
 }
 
 // refuse writes the 401 through Fiber's own writer. It is the four lines

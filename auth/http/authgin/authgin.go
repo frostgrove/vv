@@ -45,7 +45,10 @@ func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.Handler
 	}
 	renderer := authhttp.RendererFor(options)
 	return func(ginContext *gin.Context) {
-		ctx, err := guard.Authenticate(ginContext.Request.Context(), ginContext.GetHeader)
+		ctx, err := guard.AuthenticateValues(
+			ginContext.Request.Context(),
+			ginContext.Request.Header.Values,
+		)
 		if err != nil {
 			_ = ginContext.Error(err)
 			authhttp.Refuse(ginContext.Writer, ginContext.Request, renderer, err)

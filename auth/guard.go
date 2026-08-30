@@ -14,10 +14,11 @@ import (
 // each carry their own copy of the same five decisions, and the copies would
 // disagree the first time one of them was fixed.
 //
-// A binding supplies the one thing it alone knows — how to read a header — and
-// gets back the context the rest of the chain should see:
+// A binding supplies the one thing it alone knows — how to read every raw
+// value of a header — and gets back the context the rest of the chain should
+// see:
 //
-//	ctx, err := g.Authenticate(r.Context(), r.Header.Get)
+//	ctx, err := g.AuthenticateValues(r.Context(), r.Header.Values)
 type Guard struct {
 	authn    Authenticator
 	header   string
@@ -134,11 +135,14 @@ func Optional() Option {
 	return guardOption(func(cfg *guardConfig) { cfg.optional = true })
 }
 
-// Authenticate answers the context the rest of the chain should see.
+// Authenticate answers the context the rest of the chain should see for a
+// legacy or deliberately single-value header getter.
 //
 // get reads a request header by name and answers "" for one that is not there;
 // http.Header.Get, gin.Context.GetHeader and fiber.Ctx.Get all have that shape
-// already.
+// already. Official transport bindings use [Guard.AuthenticateValues] instead,
+// because a single-value getter cannot distinguish one credential from two
+// identical credentials.
 //
 // Installing the same guard consecutively renders one decision: its latest
 // context marker makes the second installation a no-op. A different guard
@@ -146,6 +150,38 @@ func Optional() Option {
 // fails closed; without an assurance order it is impossible to know whether
 // retaining the second principal is a step-up or a downgrade ([[D-076]]).
 func (this *Guard) Authenticate(ctx context.Context, get func(name string) string) (context.Context, error) {
+	return this.authenticate(ctx, func(name string) []string {
+		if get == nil {
+			return nil
+		}
+		value := get(name)
+		if value == "" {
+			return nil
+		}
+		return []string{value}
+	})
+}
+
+// AuthenticateValues authenticates from every raw value attached to a header
+// or metadata key. A credential field is singular. More than one value is
+// refused before an authenticator runs, including two byte-for-byte identical
+// values: equality does not make it safe to guess which occurrence a proxy
+// used. No values still means anonymous when [Optional] was declared.
+//
+// A custom [Lookup] remains list-safe. Its familiar single-value getter is
+// backed by this method and records an ambiguity for every header the lookup
+// actually reads.
+func (this *Guard) AuthenticateValues(
+	ctx context.Context,
+	values func(name string) []string,
+) (context.Context, error) {
+	return this.authenticate(ctx, values)
+}
+
+func (this *Guard) authenticate(
+	ctx context.Context,
+	values func(name string) []string,
+) (context.Context, error) {
 	if err := this.Validate(); err != nil {
 		return ctx, internal(err)
 	}
@@ -159,7 +195,10 @@ func (this *Guard) Authenticate(ctx context.Context, get func(name string) strin
 		))
 	}
 
-	cred, ok := this.credential(get)
+	cred, ok, err := this.credential(values)
+	if err != nil {
+		return ctx, err
+	}
 	if !ok {
 		if this.optional {
 			return ctx, nil
@@ -180,14 +219,45 @@ func (this *Guard) Authenticate(ctx context.Context, get func(name string) strin
 	return markAuthenticated(WithPrincipal(ctx, p), this), nil
 }
 
-func (this *Guard) credential(get func(name string) string) (Credential, bool) {
-	if get == nil {
-		return Credential{}, false
+func (this *Guard) credential(values func(name string) []string) (Credential, bool, error) {
+	if values == nil {
+		return Credential{}, false, nil
 	}
-	if this.lookup != nil {
-		return this.lookup(get)
+	if this.lookup == nil {
+		raw := values(this.header)
+		if len(raw) > 1 {
+			return Credential{}, false, invalidCredentialCardinality(len(raw))
+		}
+		if len(raw) == 0 {
+			return Credential{}, false, nil
+		}
+		credential, ok := ParseAuthorization(raw[0])
+		return credential, ok, nil
 	}
-	return ParseAuthorization(get(this.header))
+
+	// Lookup predates list-aware transport bindings and deliberately exposes a
+	// single-value getter. Preserve that small API while remembering whether it
+	// tried to read an ambiguous field. Returning "" prevents a lookup from
+	// authenticating whichever duplicate happened to be first.
+	cardinality := 0
+	get := func(name string) string {
+		raw := values(name)
+		if len(raw) > 1 {
+			if len(raw) > cardinality {
+				cardinality = len(raw)
+			}
+			return ""
+		}
+		if len(raw) == 1 {
+			return raw[0]
+		}
+		return ""
+	}
+	credential, ok := this.lookup(get)
+	if cardinality > 1 {
+		return Credential{}, false, invalidCredentialCardinality(cardinality)
+	}
+	return credential, ok, nil
 }
 
 type guardMark struct {

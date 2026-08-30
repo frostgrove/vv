@@ -16,6 +16,16 @@ import (
 // a package make check-tiers seals, for a sentinel that package never returns.
 var ErrUnauthenticated = errors.New("auth: authentication is required")
 
+// ErrCredentialCardinality reports a credential source that supplied more
+// than one value for the same header or metadata key. Authentication fields
+// are singular: choosing one value would let a proxy and the application
+// authenticate different credentials.
+//
+// The transport-neutral guard wraps this sentinel in the same unauthorized
+// fault as every other credential refusal. HTTP and gRPC bindings remain
+// responsible for rendering that fault in their own protocol.
+var ErrCredentialCardinality = errors.New("auth: credential source must contain at most one value")
+
 // ErrGuardNotReady reports a Guard value that was not built by [NewGuard], or
 // whose construction state was otherwise lost. Transport constructors call
 // [Guard.Validate] so this is a boot-time wiring failure rather than a panic on
@@ -53,6 +63,16 @@ func Unauthenticated(reason string) error {
 // needs one. The formatted text is still never rendered.
 func Unauthenticatedf(format string, args ...any) error {
 	return Unauthenticated(fmt.Sprintf(format, args...))
+}
+
+func invalidCredentialCardinality(count int) error {
+	return errs.Unauthorized().
+		Code(errs.CodeUnauthenticated).
+		Wrapping(
+			ErrUnauthenticated,
+			fmt.Errorf("%w: credential source contained %d values", ErrCredentialCardinality, count),
+		).
+		Fault()
 }
 
 func internal(cause error) error {

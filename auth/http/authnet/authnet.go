@@ -47,7 +47,7 @@ func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.H
 	renderer := authhttp.RendererFor(options)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, err := guard.Authenticate(r.Context(), r.Header.Get)
+			ctx, err := guard.AuthenticateValues(r.Context(), r.Header.Values)
 			if err != nil {
 				authhttp.Refuse(w, r, renderer, err)
 				return
