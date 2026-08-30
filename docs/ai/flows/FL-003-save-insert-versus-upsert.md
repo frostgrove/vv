@@ -73,25 +73,28 @@ primary key holds a value.
    When `meta.Update` is empty the clause degrades — Postgres to `DO NOTHING`,
    MySQL to a no-op `pk = pk` assignment — so the statement stays valid.
 
-6. **`repository.insert`** — `crud/sqlrepo/repository.go:462`
+6. **`saveReturning` / `saveWithoutReturning`** — `crud/sqlrepo/repository.go`
    `meta.Values` (`crud/access.go:31`) reads the bind arguments by field offset.
    Then the dialect fork:
-   - **RETURNING** (`repository.go:469`): `Query(stmt + returning)` and `scanOne`
-     straight back into `m`. If no row came back — `ON CONFLICT DO NOTHING`
-     matched an existing row — fall through to `refresh`.
-   - **No RETURNING** (`repository.go:485`): `Exec`, then, when the key was
-     database-generated and the driver reported one, `meta.SetID(m,
-     res.LastInsertID)`. `SetID` (`crud/access.go:64`) converts between integer
-     widths, so a driver's `int64` lands in an `int32` or `uint` key.
+   - **RETURNING**: `Query(stmt + returning)` and `scanOne` into a separate zero
+     `saved` value. The caller's command model is never mutated. If no row came
+     back, `saveReturning` reports `ErrNotFound`.
+   - **No RETURNING** (`saveWithoutReturning`): `Exec`, then retain either the
+     assigned model key or the driver's `LastInsertID` as the predicate for the
+     read-back. The driver value is deliberately not written into a model with
+     `Schema.SetID`: MySQL reports generated keys as `int64` even for unsigned
+     columns, while `SetID` correctly refuses signed-to-unsigned assignment.
 
-7. **The read-back** — `repository.go:500` → `repository.refresh` (`:506`)
+7. **The read-back** — `saveWithoutReturning` → `refreshByID`
    On a dialect without RETURNING this is unconditional. Skipping it when the
    model declares no `generated` column saved a round trip and cost correctness:
    the conflict clause leaves out every immutable column, so the caller was left
    holding values the database had refused, and a handler serialised a different
-   document on MySQL than on PostgreSQL. `refresh` reads by primary key through
-   the repository's relation scopes and returns `ErrNotFound` if the row is not
-   there.
+   document on MySQL than on PostgreSQL. `refreshByID` reads by the retained
+   primary key through the repository's relation scopes and scans the complete
+   row into a zero result. The ordinary database scanner therefore assigns an
+   unsigned generated key using driver semantics without weakening `SetID`.
+   It returns `ErrNotFound` if the row is not there.
 
 ## SaveAll and the bind boundary
 
@@ -141,7 +144,7 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 | `noauto` key left at zero | `Save` (`repository.go:454`) | 400 `ErrMissingID` |
 | PUT to an unused id with a generated key | `DefaultService.Replace`'s probe (`port/service.go`) | 404 |
 | duplicate key / FK / NOT NULL / CHECK | the adapters' `Executor.conflict` → `sqlfault.Wrap` ([[FL-014]]) | 409. The code is the fault's — `unique`, `foreign_key` — where the source named its engine, and the coarse `conflict` where it did not. The driver's own sentence reaches neither body ([[D-044]]) |
-| `ON CONFLICT DO NOTHING` matched an existing row | `insert` (`repository.go:482`) | 200/201 with the *stored* row |
+| `ON CONFLICT DO NOTHING` matched an existing row and RETURNING produced none | `saveReturning` | 404 `ErrNotFound`; the legacy full-row upsert contract is tracked by AUDIT `FW-CORE-030` before release |
 | the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
 | gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |
 
@@ -166,6 +169,9 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 - `TestSaveInsertsWithGeneratedKeyOnPostgres` — `crud/sqlrepo/repository_test.go` — the `insertGen` + RETURNING path.
 - `TestSaveUpsertsWhenKeyIsSet` — `crud/sqlrepo/repository_test.go` — the `insertFull` + conflict path.
 - `TestSaveOnMySQLUsesLastInsertID` — `crud/sqlrepo/repository_test.go` — the `LastInsertId` readback.
+- `TestSaveOnMySQLLetsTheScannerAssignAnUnsignedGeneratedID` — the same path
+  with MySQL's signed `LastInsertId` and an unsigned model key; the key remains
+  a query value until the row scanner assigns the stored representation.
 - `TestSaveOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — pins the unconditional refresh.
 - `TestSaveRequiresAssignedKeyWhenNotGenerated` — `crud/sqlrepo/repository_test.go` — `ErrMissingID`.
 - `TestSaveNeverWindsTheVersionBack` — `crud/sqlrepo/version_test.go` — the version stays out of the conflict clause.

@@ -1132,26 +1132,27 @@ func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M
 
 	// Start from a zero model rather than a copy of m: custom scanner fields or
 	// pointer fields in a shallow copy could otherwise still mutate the command
-	// object while the refresh scans into the result.
+	// object while the refresh scans into the result. The refresh key stays
+	// separate from that model. MySQL exposes every generated key as int64 even
+	// when the declared column is uint; asking Schema.SetID to bridge those
+	// numeric families would weaken its checked-assignment contract merely to
+	// build the SELECT that immediately scans the real stored type.
 	var saved M
+	var refreshID any
 	if generatedPK {
 		if !response.HasLastInsertID {
 			return zero, &crud.SchemaError{Model: this.meta.Name, Field: this.meta.PK.Name,
 				Reason: "dialect did not return the generated primary key"}
 		}
-		if err := this.meta.SetID(&saved, response.LastInsertID); err != nil {
-			return zero, err
-		}
+		refreshID = response.LastInsertID
 	} else {
 		id, err := this.meta.ID(m)
 		if err != nil {
 			return zero, err
 		}
-		if err := this.meta.SetID(&saved, id); err != nil {
-			return zero, err
-		}
+		refreshID = id
 	}
-	if err := this.refresh(ctx, &saved, nil, this.bp.relScopes); err != nil {
+	if err := this.refreshByID(ctx, &saved, refreshID, nil, this.bp.relScopes); err != nil {
 		return zero, err
 	}
 	return saved, nil
@@ -1165,6 +1166,14 @@ func (this *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud
 	if err != nil {
 		return err
 	}
+	return this.refreshByID(ctx, m, id, within, rs)
+}
+
+// refreshByID keeps a driver-returned identity as a query value until the row
+// scanner assigns the database's representation to the model. It is the narrow
+// boundary needed by generated uint keys on LastInsertId dialects; ordinary
+// refresh callers continue to derive the typed identity through refresh.
+func (this *repository[M, ID, U]) refreshByID(ctx context.Context, m *M, id any, within crud.Predicate, rs *crud.RelationScopes) error {
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(rs).Raw(this.selectFrom).
 		Where(crud.And(crud.Eq(this.meta.PK.Name, id), within)).Raw(" LIMIT 1")
 	q, args, err := b.Done()

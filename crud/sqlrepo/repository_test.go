@@ -37,9 +37,21 @@ type DocUpdate struct {
 	Title *string
 }
 
+// MySQL's LastInsertId is int64 even when the schema's generated key is
+// unsigned. The row scanner, not Schema.SetID, owns that driver conversion.
+type UnsignedUser struct {
+	ID   uint   `db:"id,pk,auto"`
+	Name string `db:"name"`
+}
+
+type UnsignedUserUpdate struct {
+	Name *string
+}
+
 var (
-	Users = sqlrepo.Define[User, int64, UserUpdate]("users")
-	Docs  = sqlrepo.Define[Doc, string, DocUpdate]("docs")
+	Users         = sqlrepo.Define[User, int64, UserUpdate]("users")
+	Docs          = sqlrepo.Define[Doc, string, DocUpdate]("docs")
+	UnsignedUsers = sqlrepo.Define[UnsignedUser, uint, UnsignedUserUpdate]("unsigned_users")
 )
 
 var now = time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
@@ -327,6 +339,26 @@ func TestSaveOnMySQLUsesLastInsertID(t *testing.T) {
 	}
 	if u.ID != 0 {
 		t.Fatalf("Save mutated its argument: %+v", u)
+	}
+}
+
+func TestSaveOnMySQLLetsTheScannerAssignAnUnsignedGeneratedID(t *testing.T) {
+	rec := crudtest.MySQL().
+		ExecResult(crud.Result{RowsAffected: 1, LastInsertID: 77, HasLastInsertID: true}).
+		Push(crudtest.Rows([]any{int64(77), "New"}))
+
+	command := UnsignedUser{Name: "New"}
+	saved, err := UnsignedUsers.Bind(rec).Save(context.Background(), &command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID != 77 || command.ID != 0 {
+		t.Fatalf("saved=%+v command=%+v; generated key was not scanned or the command was mutated", saved, command)
+	}
+	wantSQL(t, mustSQL(t, rec, 1).SQL,
+		"SELECT `id`, `name` FROM `unsigned_users` WHERE `id` = ? LIMIT 1")
+	if got := mustSQL(t, rec, 1).Args; len(got) != 1 || got[0] != int64(77) {
+		t.Fatalf("refresh args = %#v, want the driver's int64 generated key", got)
 	}
 }
 

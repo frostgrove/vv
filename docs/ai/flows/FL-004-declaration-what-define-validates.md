@@ -71,11 +71,13 @@ value of this flow.
 
 6. **`Schema.CheckID`** — `crud/access.go:109`
    The repository's `ID` type parameter against the key's Go type, allowing
-   `Opt[T]` and `*T` wrappers. A generated numeric key returned by a driver is
-   assigned through `Schema.SetID`: only representable conversions within the
-   signed or unsigned integer family are accepted. Overflow, signed/unsigned
-   reinterpretation and Go's integer-to-string conversion are declaration
-   errors rather than silently changed keys.
+   `Opt[T]` and `*T` wrappers. `Schema.SetID` is the checked programmatic
+   assignment boundary: only representable conversions within the signed or
+   unsigned integer family are accepted. Overflow, signed/unsigned
+   reinterpretation and Go's integer-to-string conversion are errors rather
+   than silently changed keys. A LastInsertId dialect does not use this method
+   to bridge driver and model numeric families: it refreshes by the driver key
+   and lets the database scanner assign the stored row.
 
 7. **`crud.PlanFor[U]`** — `crud/update.go:54` → `collectPlanFields`
    (`crud/update.go:78`)
@@ -150,7 +152,7 @@ value of this flow.
 | `rel` tag on a non-struct type | `collectFields` (`meta.go:386`) | panic at start-up |
 | a version column that cannot be a lock | `checkVersion` (`meta.go:315`) | panic at start-up |
 | `ID` type parameter ≠ key type | `CheckID` (`access.go:109`) | panic at start-up |
-| driver-generated key overflows or changes numeric family | `SetID` (`access.go`) | `SchemaError`; the model key is unchanged |
+| programmatic `SetID` input overflows or changes numeric family | `SetID` (`access.go`) | `SchemaError`; the model key is unchanged |
 | DTO field naming the PK / a generated / immutable / version column | `collectPlanFields` (`update.go:113`) | panic at start-up |
 | DTO field of the wrong type | `collectPlanFields` (`update.go:136`) | panic at start-up |
 | `RelationScope` on a path that does not exist | `resolveRelationScopes` (`blueprint.go:166`) | panic at start-up |
@@ -204,6 +206,9 @@ value of this flow.
   `crud/access_test.go` — overflow, signed-to-unsigned and integer-to-string
   conversions are refused, with representable same-family conversion as the
   control.
+- `TestSaveOnMySQLLetsTheScannerAssignAnUnsignedGeneratedID` —
+  `crud/sqlrepo/repository_test.go` — a driver's signed `LastInsertId` remains a
+  refresh predicate and the row scanner assigns the unsigned stored key.
 
 ## See also
 
