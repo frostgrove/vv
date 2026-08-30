@@ -51,6 +51,9 @@ very serialization guards they carry.
   exit policy.
 - Generated bindings preserve a `type` alias to the value type, while their
   factories return `*Alias`, so consumers write `*ProductRepo`, never `**`.
+- When a constructor accepts a pointer to a value-semantic configuration record
+  and retains it beyond the call, it snapshots the value. A caller-owned mutable
+  pointer must not become live configuration or a race with runtime work.
 
 ## Where it lives
 
@@ -60,5 +63,7 @@ very serialization guards they carry.
   operation contexts.
 - `utils/vvdb`, `utils/vvdb/dbpgx`, `storage`, `storagefs`, `storageminio`,
   `internal/codegen` and `utils/vvgoose` — configuration and constructors.
+- `crud/adapter/crudsql.DB.WithTxOptions` — `sql.TxOptions` is copied at the
+  construction boundary.
 - `errs`, `crud/predicate.go`, `crud/page.go` and `port/command.go` — the
   intentional value-semantic exceptions.

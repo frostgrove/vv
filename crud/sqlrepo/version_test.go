@@ -112,6 +112,32 @@ func TestAVanishedRowIsStillNotFoundRatherThanStale(t *testing.T) {
 	}
 }
 
+// The existence probe decides whether a failed optimistic write is retryable.
+// A lagging replica is allowed to disagree, but it is not allowed to make that
+// decision: the same miss must still be classified from the primary.
+func TestAStaleMissIsClassifiedOnThePrimary(t *testing.T) {
+	primary := crudtest.Postgres().Push(
+		crudtest.Rows(noteRow(1, "old", 3)), // mutation read
+		crudtest.Rows(),                     // UPDATE matched nothing
+		crudtest.Rows([]any{int64(1)}),      // primary says the row still exists
+	)
+	replica := crudtest.Postgres().Push(
+		crudtest.Rows(), // a lagging/de-synchronised replica would say not found
+	)
+
+	repository := Notes.Bind(crud.ReadWrite(primary, replica))
+	_, err := repository.Update(context.Background(), 1, NoteUpdate{Title: ptr("new")})
+	if !errors.Is(err, crud.ErrStaleVersion) {
+		t.Fatalf("err = %v, want ErrStaleVersion from the primary's row", err)
+	}
+	if n := len(primary.Statements()); n != 3 {
+		t.Fatalf("primary statements = %d, want load+update+existence probe: %v", n, primary.SQL())
+	}
+	if n := len(replica.Statements()); n != 0 {
+		t.Fatalf("replica decided stale-vs-not-found with %d statements: %v", n, replica.SQL())
+	}
+}
+
 // An update that changes nothing writes nothing — and therefore does not move
 // the version either. Advancing it would invalidate everybody else's copy of a
 // row that never changed.

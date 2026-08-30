@@ -1,7 +1,7 @@
 # FL-003 — Save: insert versus upsert
 
 **Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command)
-**Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]]
+**Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]] [[D-079]]
 
 One method, two statements, and a fork decided entirely by whether the model's
 primary key holds a value.
@@ -93,6 +93,25 @@ primary key holds a value.
    the repository's relation scopes and returns `ErrNotFound` if the row is not
    there.
 
+## SaveAll and the bind boundary
+
+`repository.SaveAll` keeps the same key fork but is write-only. It validates the
+whole batch first, chooses `Meta.Insert` plus the upsert tail for assigned keys
+or `Meta.InsertGen` with no tail for generated keys, and passes that fixed row
+width to `saveAllPlan`.
+
+`saveAllPlan` divides `crud.BindLimit(dialect)` by the row width and renders
+contiguous chunks in caller order. Every model value and every statement is
+resolved before execution. A row wider than the whole dialect budget is a typed
+schema refusal before a transaction or statement exists. A generated-key batch
+stays write-only across chunks: no `RETURNING`, no inferred sequence arithmetic,
+and no caller model mutation.
+
+One chunk executes directly. Several go through `executePrepared`, which joins
+an executor already bound to this datasource or opens one transaction through
+`crud.InTx`; a later error rolls back the earlier chunks. A source that can do
+neither is refused before the first statement ([[D-079]], [[FL-009]]).
+
 ## Where the decisions bite
 
 - **`HasID` is the whole fork.** Not a flag, not a method on the model — the
@@ -106,6 +125,9 @@ primary key holds a value.
 - **Immutable and version columns stay out of the conflict clause.** That is
   what `immutable` means. The compensating read-back is what keeps the returned
   model honest, so the two changes travel together.
+- **A batch boundary never changes the Save fork.** Assigned and generated keys
+  still cannot mix. Bind-budget chunks preserve order and statement shape, and
+  all chunks share one atomic boundary ([[D-079]]).
 - **A generated key is never client-chosen unless someone opted in.** Two
   independent guards, `Sanitize` on POST and the existence probe on PUT, because
   PUT bypasses the first. Both are in the service, so a fourth binding gets them
@@ -134,6 +156,7 @@ primary key holds a value.
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
 | `crud/dialect.go` | `Upsert`, `SupportsReturning` |
+| `crud/dialect.go`, `crud/render.go` | the statement-wide bind ceiling and its typed preflight ([[D-079]]) |
 | `crud/errors.go` | `ErrMissingID`, `ErrConflict` |
 | `crud/adapter/crudsql/conflict.go`, `crud/adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
 | `crud/decorators/security/security.go` | the gated variant |
@@ -148,6 +171,14 @@ primary key holds a value.
 - `TestSaveNeverWindsTheVersionBack` — `crud/sqlrepo/version_test.go` — the version stays out of the conflict clause.
 - `TestDialectUpsert` — `crud/dialect_test.go` — the clause each dialect renders.
 - `TestUpsertClauseCarriesItsOwnLeadingSpace` — `crud/dialect_test.go` — concatenation contract with `insertFull`.
+- `TestSaveAllChunksAtTheDialectBudgetAndKeepsInputOrder`,
+  `TestGeneratedKeySaveAllKeepsItsWriteOnlySemanticsAcrossChunks`, and
+  `TestSaveAllRollsEveryChunkBackWhenALaterChunkFails` —
+  `crud/sqlrepo/bind_budget_test.go` — deterministic chunking, the generated-key
+  fork and the atomic failure path.
+- `TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine` —
+  `test/integration/saveall_test.go` — a failure in the second budget chunk
+  leaves no row behind on every live adapter.
 Each `crud/http/crudfiber/` test below has an identical twin in `crud/http/crudgin/` and
 `crud/http/crudnet/`.
 

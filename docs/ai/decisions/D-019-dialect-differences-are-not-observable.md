@@ -15,6 +15,12 @@ that replaced — SQLite needed the same treatment and was handed a bare
 `OFFSET 5`, which it answers with `near "5": syntax error`, reachable straight
 from the wire as `{"unpaged":true,"offset":5}`.
 
+`crud.BindBudget` follows the same compatibility rule. It declares the complete
+statement's parameter ceiling without adding a required `Dialect` method;
+external dialects receive the conservative portable default. Oversized
+predicates are refused before the driver, while batch writes are split inside
+one transaction ([[D-079]]).
+
 ## Why
 
 The alternative is a caller who has to know. That is fine for one application on
@@ -244,6 +250,8 @@ the probe.
 - `crud/dialect.go:UpsertScope` / `:StatementRollback` — difference 11's two
   halves as optional interfaces rather than name checks, each with a narrowing
   default for a dialect that implements neither.
+- `crud/dialect.go:BindBudget` / `:BindLimit` — the optional statement-parameter
+  ceiling and the conservative default for an external dialect ([[D-079]]).
 - `crud/dialect.go:LikeEscaper` — a dialect-specific literal `LIKE` escape
   expression, including MySQL/MariaDB's mode-independent `X'5C'` spelling.
 - `crud/dialect.go:Postgres`, `crud/dialect.go:MySQL`, `crud/dialect.go:SQLite`.
@@ -283,6 +291,8 @@ the probe.
 - `TestLiteralLikeEscapingDefaultsForAnExternalDialect` in
   `crud/dialect_test.go` — a dialect without an optional LIKE capability keeps
   the portable `ESCAPE '\\'` spelling.
+- `TestBindLimitsAreDialectOwnedAndExternalDialectsStayPortable` in
+  `crud/dialect_test.go` — built-in ceilings and the external-dialect fallback.
 - `TestSQLiteLiteralLikeHelpers` and
   `TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes` in
   `test/integration/` — literal pattern helpers preserve `%`, `_` and `\\`,

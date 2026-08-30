@@ -1,7 +1,7 @@
 # FL-008 — A write through the security gate
 
 **Entry point:** `crud/decorators/security/security.go:gate.Save` / `:gate.Update` / `:gate.Delete` / `:gate.DeleteAll` / `:gate.UpdateAll`
-**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]]
+**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-079]]
 
 Reads have one shape. Writes have five, and each one has a different reason it
 cannot simply AND a predicate into a statement.
@@ -85,7 +85,10 @@ cannot simply AND a predicate into a statement.
 **`gate.Delete`** — `security.go:535`
 There is a fast path: with no scope and no `Inspect` it forwards to
 `Core.Delete(ids…)`, which still ANDs the *blueprint's* scope
-(`crud/sqlrepo/repository.go:720`).
+(`crud/sqlrepo/repository.go:Delete`). If the id set crosses the dialect bind
+budget, that storage path repeats the blueprint and relation scopes in every
+chunk and executes the chunks in one transaction; a chunk boundary never
+widens what the repository hides ([[D-079]], [[FL-009]]).
 Otherwise it builds `within = And(scope, InAny(pk, ids))`, optionally scans the
 victims and inspects them, and then calls **`Core.DeleteAll(Where(within))`**,
 not `Core.Delete`. That is the whole trick: `Core.Delete` takes ids and no
@@ -107,6 +110,9 @@ scope are simply not matched, so the reported count is honest.
 - **Delete is re-expressed as DeleteAll.** Anything that "simplifies" it back to
   `Core.Delete(ids…)` drops the policy scope from the statement while keeping the
   check in front of it — a row hidden from reads becomes deletable by id.
+- **Storage chunking repeats the declaration-time scope.** The gate's direct
+  fast path may become several statements only at a dialect bind boundary; the
+  repository preflights all of them and shares one transaction ([[D-079]]).
 
 ## Failure modes
 
@@ -147,6 +153,9 @@ scope are simply not matched, so the reported count is honest.
 - `TestAnUpdateOfARowThatLeftTheScopeIsNotFound` — `crud/decorators/security/gate_edge_test.go`.
 - `TestUpdateIsScopedAndFreezesTheScopeField` — `crud/decorators/security/security_test.go`.
 - `TestDeleteIsScoped` — `crud/decorators/security/security_test.go` — Delete re-expressed as DeleteAll.
+- `TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds` —
+  `crud/sqlrepo/bind_budget_test.go` — declaration scope, tombstone and ids all
+  share the budget, and every chunk keeps them.
 - `TestUnscopedDeleteAllIsRefused` — `crud/decorators/security/security_test.go`.
 - `TestUpdateAllIsScopedInTheStatementItself` — `crud/decorators/security/updateall_test.go`.
 - `TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt` — `crud/decorators/security/updateall_test.go`.

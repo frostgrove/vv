@@ -30,13 +30,12 @@ that has to still exist.
    distinction is the whole reason this keys on `KeyOf` and not on what
    `Identified` answers.
 
-2. **The refusal** — `crud/catalog/set.go:95:findable`
-   `crud.SameDataSource(k, k)`, guarded by a `recover`. A key that cannot be
+2. **The refusal** — `crud/catalog/set.go:findable`
+   `crud.SameDataSource(k, k)`. A key that cannot be
    compared could be stored and never found again, so it is refused with
-   `ErrUncomparableHandle` **before any statement runs**. The guard is there
-   because `reflect.Type.Comparable` answers about the static type: a struct
-   holding an interface is comparable and `==` on it panics once that interface
-   holds a slice.
+   `ErrUncomparableHandle` **before any statement runs**. `SameDataSource` uses
+   `reflect.Value.Comparable`, which sees the dynamic slice inside an interface
+   field and returns false without evaluating a panicking `==`.
 
 3. **The scan** — `crud/catalog/set.go:54`
    A slice compared with `crud.SameDataSource`, never a `map[any]` ([[D-041]]).
@@ -176,9 +175,10 @@ test that sleeps.
   appears only in `STATISTICS`; that is a PostgreSQL fact. `STATISTICS` is read
   for the key columns, their order, `SUB_PART` and `EXPRESSION`, which exist
   nowhere else.
-- **`crud.SameDataSource` can still panic**, on a statically comparable type
-  holding an uncomparable value. `crud/catalog/set.go:findable` is what makes the
-  refusal a refusal.
+- **Static comparability is insufficient.** A struct can be statically
+  comparable while an interface field contains a slice. `crud.SameDataSource`
+  checks the values recursively before comparing, and `findable` reuses that
+  exact rule instead of spelling a second one.
 - **One name on one table can be two objects.** An index name and a foreign-key
   name live in different namespaces on MySQL and MariaDB, so `UNIQUE KEY k (a)`
   beside `CONSTRAINT k FOREIGN KEY (a)` is legal; a constraint name and an index
@@ -205,7 +205,7 @@ test that sleeps.
 
 | What goes wrong | Where it is caught | What the caller sees |
 |---|---|---|
-| a datasource identity that cannot be compared | `findable` (`crud/catalog/set.go:95`), before the scan | `Set.Load` fails with `ErrUncomparableHandle`. No statement sent, and no panic — which is the whole point of the `recover` |
+| a datasource identity that cannot be compared | `findable` (`crud/catalog/set.go`), before the scan | `Set.Load` fails with `ErrUncomparableHandle`. No statement is sent, and `SameDataSource` does not attempt a panicking comparison |
 | a source with no dialect, or a dialect no back-end serves | `backendFor` (`crud/catalog/load.go:58`) | `Load` fails with `ErrUnknownDialect`, before the first statement |
 | `SELECT VERSION()` refused, so MySQL and MariaDB cannot be told apart | `isMariaDB` (`crud/catalog/load.go:85`) through `eachRow` | `Load` fails with `ErrIntrospection` rather than guessing an engine and sending a statement that cannot run |
 | an introspection statement refused — no `information_schema` grant, a proxy in the way | `eachRow` (`crud/catalog/load.go:109`), on `Query`, on a scan and on `rows.Err` alike | `Load` fails at start-up wrapping the driver's error. Never a half-catalog, and never an empty one, which reads as "this database has no constraint problems" ([[D-021]]) |

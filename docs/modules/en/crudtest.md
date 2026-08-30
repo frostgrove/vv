@@ -43,8 +43,11 @@ rec.Push(crudtest.Rows(
 ))
 ```
 
-Values are assigned to scan destinations **positionally**, converting where Go
-allows and honouring `sql.Scanner`. Queue as many results as the call will make —
+Values are assigned to scan destinations **positionally**, using the same
+checked conversions as `database/sql.Rows.Scan` and honouring `sql.Scanner`.
+That means overflow and signed/unsigned mistakes are refused and an integer
+scanned into a string becomes decimal text, never a Go rune conversion. Queue
+as many results as the call will make —
 a paginated read is two statements, and a preload is one more per relation.
 
 | | |

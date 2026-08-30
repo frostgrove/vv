@@ -79,8 +79,9 @@ refuses those for a reason that applies here unchanged: two libraries declaring
 `go.work` joining twelve modules makes an `init()` in the wrong one invisible.
 
 **Because the transport-neutral half is `auth.Guard` rather than four copies.**
-Whether an optional guard accepts a forged token, whether a second install
-re-verifies, which header is read — those are five decisions, and four bindings
+Whether an optional guard accepts a forged token, whether the same guard instance
+re-verifies, whether a different one runs ([[D-076]]), which header is read —
+those are decisions, and four bindings
 each holding their own copy is four chances to fix one and not the others.
 `Guard.Authenticate` takes a `func(name string) string`, which `http.Header.Get`,
 `gin.Context.GetHeader`, `fiber.Ctx.Get` and gRPC metadata can all supply, so the
@@ -165,6 +166,8 @@ Tests:
   control subtest that lets a qualifying caller through, so the refusal is not
   a repository that refuses everything.
 - `TestASecondGuardDoesNotAuthenticateAgain` — `auth/guard_test.go`.
+- `TestADifferentGuardAuthenticatesAgain` — `auth/guard_test.go`, the boundary
+  [[D-076]] adds to that idempotence rule.
 - `TestAnOptionalGuardStillRefusesABadCredential` — `auth/guard_test.go`, and
   its transport twin `TestAnOptionalGuardLetsAnAnonymousRequestThrough` in each
   binding's `middleware_test.go`.
@@ -173,4 +176,4 @@ Tests:
 
 ## See also
 
-[[D-048]] [[D-035]] [[D-045]] [[D-051]] [[D-021]] [[D-056]] [[UC-004]]
+[[D-048]] [[D-035]] [[D-045]] [[D-051]] [[D-021]] [[D-056]] [[D-076]] [[UC-004]]

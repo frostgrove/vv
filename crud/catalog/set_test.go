@@ -297,9 +297,9 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 			return identified{Recorder: r, handle: weird}
 		}},
 		// The source names no database, so it *is* the key — and its type is a
-		// pointer beside an interface, which reflect calls comparable right up
-		// until == reaches the slice inside. This is the case reflect cannot
-		// see and the one that panics.
+		// pointer beside an interface, which reflect.Type calls comparable even
+		// though the interface contains a slice. SameDataSource inspects the value
+		// recursively and refuses it without evaluating a panicking ==.
 		{"a source whose own type only looks comparable", func(r *crudtest.Recorder) crud.Source {
 			return awkward{Recorder: r, payload: weird}
 		}},

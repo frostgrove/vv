@@ -67,12 +67,12 @@ datasource handle is a pointer in practice, but nothing in the contract says it
 must be"*, and an uncomparable map key panics at run time. Catalogs live in a
 slice compared with that function.
 
-The refusal needs one thing `SameDataSource` does not give on its own, and it was
-found by breaking the test rather than by reading the code. `reflect.Type.Comparable`
-answers about the *static* type: a struct holding an interface is comparable, and
-`==` on it panics once that interface turns out to hold a slice. So the
-comparability probe is the comparison itself, guarded by a `recover` — a refusal
-is what this decision asks for, and a panic at declaration is not.
+The refusal is the identity comparison against itself. `reflect.Type.Comparable`
+would be insufficient: a struct holding an interface is statically comparable,
+while `==` still panics when that interface contains a slice. `SameDataSource`
+therefore asks `reflect.Value.Comparable` about the complete dynamic value before
+comparing. `findable` reuses that exact rule, so an unusable key is refused at
+declaration without a separate reflection rule or a recovery path.
 
 **Why `Constraint` takes the table.** An index name is unique per table on MySQL,
 not per schema — every InnoDB table's primary index is called `PRIMARY`. The
@@ -183,8 +183,8 @@ D-039 forbids.
   `ErrIntrospection`.
 - `crud/catalog/load.go` — `Load`, `backendFor`, `eachRow`, `builder`, `conBuildKey`,
   `conFamily`, `snapshot`.
-- `crud/catalog/set.go` — `Set`, `Set.Load`, `Set.For`, `findable` (the guarded
-  comparability probe).
+- `crud/catalog/set.go` — `Set`, `Set.Load`, `Set.For`, `findable` (the
+  value-aware comparability probe).
 - `crud/catalog/reload.go` — `Reloader`, `loaded.Reload`, the negative cache and the
   per-handle floor.
 - `crud/catalog/postgres.go`, `crud/catalog/mysql.go`, `crud/catalog/mariadb.go`,
@@ -234,7 +234,8 @@ D-039 forbids.
   land.
 - `TestAnUncomparableHandleIsRefusedRatherThanPanicking` and its control
   `TestAComparableHandleIsAcceptedAndFoundAgain` in `crud/catalog/set_test.go` — both
-  shapes of uncomparable, including the one `reflect` calls comparable.
+  shapes of uncomparable, including the one `reflect.Type` calls comparable but
+  `reflect.Value` correctly refuses.
 - `TestAnUnknownDialectIsRefusedBeforeAnyStatement`,
   `TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog` — both the
   refusal `Query` reports and the one `Rows.Err` reports, which is pgx's shape —

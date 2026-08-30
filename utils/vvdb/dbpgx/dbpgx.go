@@ -27,6 +27,48 @@ import (
 // engines — a tracer, an AfterConnect hook, a custom type map.
 type Option func(*pgxpool.Config)
 
+// ReadWriteOption assigns pgx options to the common, primary-only or
+// replica-only configuration phase of ConnectReadWrite. Credentials and IAM
+// hooks must be side-specific; tracing and type registration are ordinarily
+// Common.
+type ReadWriteOption func(*readWriteOptions)
+
+type readWriteOptions struct {
+	common  []Option
+	primary []Option
+	replica []Option
+}
+
+// Common applies options to both independently parsed pool configurations.
+func Common(options ...Option) ReadWriteOption {
+	copyOf := append([]Option(nil), options...)
+	return func(o *readWriteOptions) { o.common = append(o.common, copyOf...) }
+}
+
+// Primary applies options only to the writable pool.
+func Primary(options ...Option) ReadWriteOption {
+	copyOf := append([]Option(nil), options...)
+	return func(o *readWriteOptions) { o.primary = append(o.primary, copyOf...) }
+}
+
+// Replica applies options only to the read replica pool.
+func Replica(options ...Option) ReadWriteOption {
+	copyOf := append([]Option(nil), options...)
+	return func(o *readWriteOptions) { o.replica = append(o.replica, copyOf...) }
+}
+
+func splitReadWriteOptions(options ...ReadWriteOption) (primary, replica []Option) {
+	var o readWriteOptions
+	for _, option := range options {
+		if option != nil {
+			option(&o)
+		}
+	}
+	primary = append(append([]Option(nil), o.common...), o.primary...)
+	replica = append(append([]Option(nil), o.common...), o.replica...)
+	return primary, replica
+}
+
 // Connect builds the connection string, applies the pool settings and verifies
 // that the pool can reach the server. pgxpool.NewWithConfig is lazy, so the
 // explicit Ping is what makes Connect live up to its name instead of returning
@@ -96,7 +138,7 @@ func MustConnect(ctx context.Context, c *vvdb.Config, options ...Option) *pgxpoo
 // ConnectReadWrite opens the primary and, when the config declares one, the
 // replica. The second result is nil when it does not; the pair is what
 // crud.ReadWrite takes.
-func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool, err error) {
+func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool, err error) {
 	if c == nil {
 		return nil, nil, fmt.Errorf("%w: config", vvdb.ErrMissing)
 	}
@@ -105,7 +147,8 @@ func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (p
 	}
 	primaryCfg := *c
 	primaryCfg.Replica = nil
-	primary, err = connect(ctx, &primaryCfg, options...)
+	primaryOptions, replicaOptions := splitReadWriteOptions(options...)
+	primary, err = connect(ctx, &primaryCfg, primaryOptions...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -113,7 +156,7 @@ func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (p
 	if !ok {
 		return primary, nil, nil
 	}
-	replica, err = connect(ctx, r, options...)
+	replica, err = connect(ctx, r, replicaOptions...)
 	if err != nil {
 		primary.Close()
 		return nil, nil, fmt.Errorf("replica: %w", err)
@@ -122,7 +165,7 @@ func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (p
 }
 
 // MustConnectReadWrite is ConnectReadWrite for a main function.
-func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool) {
+func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool) {
 	primary, replica, err := ConnectReadWrite(ctx, c, options...)
 	if err != nil {
 		panic(err)

@@ -16,8 +16,9 @@ Three rules, in order:
 2. A read marked `crud.PrimaryOnly()` stays on the primary.
 3. Everything else may go to the replica.
 
-`PrimaryOnly` is set by the repository for the load half of an `Update`, and by
-the security gate for every check it makes.
+`PrimaryOnly` is set by the repository for both decision reads of an `Update`:
+the load used for its diff and the existence probe that classifies an
+optimistic-lock miss. The security gate also sets it for every check it makes.
 
 ## Why
 
@@ -31,6 +32,11 @@ out of `ExecutorFor` already winning — the routing did not have to invent it.
 **The load half of an `Update`.** `Update` reads, diffs and writes. Served stale,
 it diffs against a row as it *was* and writes the difference. `TestUpdateDiffsAgainstThePrimary`
 is that exact shape.
+
+**The stale-vs-not-found probe.** After a versioned UPDATE matches nothing,
+`missedRow` asks whether the narrowed row still exists. A replica may lag in
+either direction; letting it answer changes a retryable 409 into a terminal 404
+or the reverse.
 
 **Every check the gate makes.** Authorising against a lagging row authorises
 against a row that has moved. A row transferred out of a tenant a moment ago
@@ -60,7 +66,8 @@ refused would lie to a caller asking whether transactions work.
 - `crud/executor.go:ReadWrite` / `crud/executor.go:ReadSourcer`
 - `crud/options.go:PrimaryOnly`
 - `crud/sqlrepo/repository.go:read` — the three rules.
-- `crud/sqlrepo/repository.go:Update` — `PrimaryOnly` on the load.
+- `crud/sqlrepo/repository.go:mutationRead` — the full row used for a diff is on the primary.
+- `crud/sqlrepo/repository.go:missedRow` — stale-vs-not-found is decided on the primary.
 - `crud/decorators/security/security.go` — `PrimaryOnly` on every check.
 
 ## Proven by
@@ -69,6 +76,7 @@ refused would lie to a caller asking whether transactions work.
   two databases holding *different* rows, so which rows come back names the
   datasource that answered.
 - `TestUpdateDiffsAgainstThePrimary` in the same file.
+- `TestAStaleMissIsClassifiedOnThePrimary` in `crud/sqlrepo/version_test.go`.
 - `TestAReadInsideATransactionIgnoresTheReplica` in the same file.
 
 - `TestTheGatesAuthorisationLoadTakesThePrimary` in

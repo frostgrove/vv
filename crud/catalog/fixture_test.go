@@ -98,8 +98,9 @@ func (this gated) Query(ctx context.Context, q string, args ...any) (crud.Rows, 
 }
 
 // awkward is a Source that cannot name a database and cannot be compared
-// either. Its type is comparable as far as reflect is concerned — a pointer and
-// an interface — and == on it panics once that interface holds a slice.
+// either. reflect.Type calls its outer shape comparable — a pointer and an
+// interface — but reflect.Value.Comparable sees the slice inside that interface
+// and lets SameDataSource refuse it before == can panic.
 type awkward struct {
 	*crudtest.Recorder
 	payload any

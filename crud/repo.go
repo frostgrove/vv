@@ -46,11 +46,13 @@ type Core[M any, ID comparable] interface {
 	// bypassed by asking for a total instead of for rows.
 	Aggregate(ctx context.Context, options ...Option) ([]AggregateRow, error)
 
-	// SaveAll writes many rows in one statement and never changes its models. It
-	// is on the seam for the same reason Aggregate is: a decorator that checks
-	// writes has to see this one.
+	// SaveAll writes many rows in the fewest statements the dialect's bind budget
+	// permits and never changes its models. Multiple statements are one atomic
+	// transaction. It is on the seam for the same reason Aggregate is: a
+	// decorator that checks writes has to see this one.
 	SaveAll(ctx context.Context, models []*M) error
-	// Delete removes rows by id and reports how many went away.
+	// Delete removes rows by id and reports how many went away. An id set larger
+	// than one statement's bind budget is split into one atomic transaction.
 	Delete(ctx context.Context, ids ...ID) (int64, error)
 	// DeleteAll removes everything matching the options.
 	DeleteAll(ctx context.Context, options ...Option) (int64, error)

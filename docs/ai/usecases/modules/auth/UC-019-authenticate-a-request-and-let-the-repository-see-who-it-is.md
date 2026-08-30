@@ -39,8 +39,10 @@ request.
 7. An endpoint may be declared optional, meaning a request with no credential
    proceeds with no identity. A *bad* credential is still refused there: a token
    that does not verify never silently becomes anonymous.
-8. Authentication happens once per request however many times the rule is
-   installed. Mounting it globally and again on a group costs one verification.
+8. One guard instance authenticates once per request however many times that
+   instance is installed. Mounting it globally and again on a group costs one
+   verification; mounting a different guard performs that guard's own check and
+   cannot inherit the first guard's result.
 9. The claims type is the author's. A parser can be pointed at their own struct,
    and nothing of this library's appears in it.
 10. Turning claims into an identity is a separate, explicit step. An author who
@@ -88,7 +90,8 @@ request.
 Every guarantee is pinned. Guarantees 3, 4, 5, 7 and 8 are carried file-for-file
 by the three HTTP bindings and in the gRPC vocabulary by the fourth, so a
 divergence between transports fails a test rather than being discovered in
-production. Guarantee 5 carries a control case that asserts the leak *is* there
+production. Guarantee 8 has both controls: the same guard verifies once and two
+different guards each verify. Guarantee 5 carries a control case that asserts the leak *is* there
 when the reason is put where it would obviously go, so the positive assertion
 cannot quietly stop meaning anything. Guarantee 13 has a test that isolates it
 from the underlying library's own key typing, because the first version of that
@@ -106,3 +109,7 @@ expect.
 **Guarantee 6's reason is not reachable with `errors.Unwrap`.** A fault unwraps
 to a slice, which the single-error form does not walk. `errors.As` down to the
 fault and then `Unwrap` is the way in.
+
+The idempotence marker is deliberately not the principal. A principal proves
+that some guard authenticated the request; only the marker for one concrete
+guard proves that guard did so ([[D-076]]).

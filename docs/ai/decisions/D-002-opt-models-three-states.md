@@ -12,6 +12,12 @@ missing from a PATCH body decodes to the right state with no extra bookkeeping.
 A `*T` is still used — but only for a *non-nullable* column, where two states
 are the whole story.
 
+The same distinction holds when an `Opt` is deliberately used as an equality
+operand: `Set(v)` compares with `v`, `Null()` renders `IS NULL`/`IS NOT NULL`,
+and `Undefined()` is refused with `SchemaError`. Treating undefined as NULL
+would turn “the caller supplied no predicate” into a real predicate with a
+different answer.
+
 ## Why
 
 A PATCH body has three intents for a nullable column and a pointer expresses
@@ -41,19 +47,25 @@ undefined fields on the way back out.
   `undefined` — it is a converter from the two-state convention.
 - Do not make `Scan` able to produce `undefined`. A row that came back from the
   database is by definition defined; a NULL column is `null`.
+- Do not bind an `Opt` struct as a predicate value. Equality unwraps the set
+  value, gives null its SQL spelling and refuses undefined before a statement
+  is sent.
 - The `optional` interface has unexported methods on purpose
-  (`crud/opt.go:optional`). Nothing outside `crud` can impersonate an `Opt`, so
+  (`utils/optional.go:optional`). Nothing outside `utils` can impersonate an `Opt`, so
   `isOptType` cannot be fooled.
 
 ## Where it lives
 
-- `crud/opt.go:optState` — the three constants.
-- `crud/opt.go:Opt` — the type; `Set`, `Null`, `Undefined`, `FromPtr`.
-- `crud/opt.go:Opt.UnmarshalJSON` — an explicit `null` becomes `null`, any other
+- `utils/optional.go:optState` — the three constants.
+- `utils/optional.go:Opt` — the type; `Set`, `Null`, `Undefined`, `FromPtr`.
+- `utils/optional.go:Opt.UnmarshalJSON` — an explicit `null` becomes `null`, any other
   token becomes `set`; absence never reaches the method.
-- `crud/opt.go:Opt.IsZero` — pairs with `json:",omitzero"`.
-- `crud/opt.go:optional` — the non-generic view the reflective update planner
-  reads without knowing `T`.
+- `utils/optional.go:Opt.IsZero` — pairs with `json:",omitzero"`.
+- `utils/optional.go:optional` and `Inspect` — the non-generic view framework
+  packages read without knowing `T`.
+- `crud/predicate.go:Eq` / `Ne` — the three predicate outcomes.
+- `crud/opt.go` — compatibility aliases for application code that already
+  imports `crud`.
 - `crud/meta.go:Field.comparableOf` — `undefined` and `null` both normalise to
   Go `nil` for diffing.
 - `crud/update.go:planField.read` — where the DTO's three states turn into
@@ -72,6 +84,7 @@ undefined fields on the way back out.
 - `TestUpdateCarriesAnExplicitNullThrough` in `crud/http/crudfiber/handler_test.go`.
 - `TestOnlyOmitzeroDropsAnUndefinedFieldOnMarshal` in `crud/opt_edge_test.go`.
 - `TestFromPtrOfAZeroValueIsAValueNotAnAbsence` in `crud/opt_edge_test.go`.
+- `TestEqualityUnderstandsAllThreeOptStates` in `crud/predicate_test.go`.
 - `TestGeneratedDTOTypesFollowNullability` in `_examples/example/blog/blog_test.go` — would
   catch the generator emitting `*T` for a nullable column.
 

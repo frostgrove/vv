@@ -16,8 +16,10 @@ value of this flow.
 2. **`crud.NewMeta[M](table)`** — `crud/meta.go:449`
    An empty table name becomes `pluralise(snake(TypeName))` (`meta.go:564`,
    `meta.go:545`). The schema itself comes from `SchemaOf[M]`
-   (`crud/meta.go:191`), which caches per `reflect.Type` — including the error,
-   so a broken model does not get re-reflected on every call.
+   (`crud/meta.go:191`), which installs one per-type future before reflection.
+   Concurrent first callers wait for that winner and receive the same `*Schema`
+   (or the same error), so a broken model is not rebuilt and relation metadata
+   never forks into two identities.
 
 3. **`buildSchema` → `collectFields`** — `crud/meta.go:228`, `crud/meta.go:336`
    One pass over the struct fields. Per field, in order:
@@ -69,7 +71,11 @@ value of this flow.
 
 6. **`Schema.CheckID`** — `crud/access.go:109`
    The repository's `ID` type parameter against the key's Go type, allowing
-   `Opt[T]` and `*T` wrappers.
+   `Opt[T]` and `*T` wrappers. A generated numeric key returned by a driver is
+   assigned through `Schema.SetID`: only representable conversions within the
+   signed or unsigned integer family are accepted. Overflow, signed/unsigned
+   reinterpretation and Go's integer-to-string conversion are declaration
+   errors rather than silently changed keys.
 
 7. **`crud.PlanFor[U]`** — `crud/update.go:54` → `collectPlanFields`
    (`crud/update.go:78`)
@@ -80,13 +86,18 @@ value of this flow.
    type check: `Opt[T]`, `*T` and `T` must all reduce to the model field's
    element type. The plan is cached by `(dtoType, modelType)`.
 
-8. **`crud.RegisterTable[M]`** — `crud/relation.go:139`, called from
-   `blueprint.go:147`
+8. **`crud.TryRegisterTable[M]`** — `crud/relation.go`, called from
+   `blueprint.go:TryDefine`
    This is the line that teaches *other* models which table this one lives in.
-   `TableNameOf` (`relation.go:154`) consults the registry first, then a
+   `TableNameOf` consults the registry first, then a
    `TableName()` method, then the snake-case plural. Declaring the repository is
-   normally enough for a relation on another model to resolve correctly — and if
-   a relation resolves before the blueprint runs, it caches the guessed name.
+   normally enough for a relation on another model to resolve correctly. A
+   relation freezes the winning name in its metadata. A later different name,
+   or two different registrations before resolution, is therefore a
+   `SchemaError`: it cannot pretend to update metadata already handed to
+   repositories. `Define` panics with it; `TryDefine` returns it. Repeating the
+   same registration is allowed, and an explicit relation `table=...` bypasses
+   the global choice ([[D-080]]).
 
 9. **Settings, then `resolveRelationScopes`** — `blueprint.go:148`,
    `blueprint.go:164`
@@ -139,9 +150,11 @@ value of this flow.
 | `rel` tag on a non-struct type | `collectFields` (`meta.go:386`) | panic at start-up |
 | a version column that cannot be a lock | `checkVersion` (`meta.go:315`) | panic at start-up |
 | `ID` type parameter ≠ key type | `CheckID` (`access.go:109`) | panic at start-up |
+| driver-generated key overflows or changes numeric family | `SetID` (`access.go`) | `SchemaError`; the model key is unchanged |
 | DTO field naming the PK / a generated / immutable / version column | `collectPlanFields` (`update.go:113`) | panic at start-up |
 | DTO field of the wrong type | `collectPlanFields` (`update.go:136`) | panic at start-up |
 | `RelationScope` on a path that does not exist | `resolveRelationScopes` (`blueprint.go:166`) | panic at start-up |
+| conflicting table registration, or a different table after relation resolution | `TryRegisterTable` (`relation.go`) | `SchemaError`; `Define` panics and `TryDefine` returns it |
 | relation pointing at a missing field | first `Resolve()` | 400 (`SchemaError`) on the request that uses it |
 | `DefaultSort` on an unknown column | `SQL.Done` | 400 (`UnknownFieldError`), no statement sent |
 
@@ -151,7 +164,7 @@ value of this flow.
 |---|---|
 | `crud/sqlrepo/blueprint.go` | `Define`, `TryDefine`, `Setting`s, `resolveRelationScopes`, `Bind` |
 | `crud/meta.go` | `SchemaOf`, `buildSchema`, `collectFields`, `checkVersion`, tag vocabulary |
-| `crud/relation.go` | `parseRelation`, `relCandidate`, `Target`, `resolveDefaults`, `RegisterTable`, `TableNameOf` |
+| `crud/relation.go` | `parseRelation`, `relCandidate`, `Target`, `resolveDefaults`, the `RegisterTable`/`TryRegisterTable` pair, `TableNameOf` |
 | `crud/update.go` | `PlanFor`, `collectPlanFields` |
 | `crud/access.go` | `CheckID` |
 | `crud/scope.go` | `AtPath`, `ForModel` |
@@ -176,9 +189,21 @@ value of this flow.
 - `TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent` — `crud/sqlrepo/blueprint_edge_test.go` — the one setting `Define` does not check.
 - `TestAnEmptyTableNameBecomesThePluralOfTheModel` — `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestTableNameOf` / `TestRelationTargetUsesTheTablerName` — `crud/relation_test.go`.
+- `TestLateAndConflictingTableRegistrationsAreRefused` /
+  `TestExplicitRelationTableDoesNotDependOnRegistryOrder` —
+  `crud/relation_test.go`.
+- `TestTryDefineReturnsALateTableConflictInsteadOfPanicking` —
+  `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestRegisterTableTypeRedirectsARelationsTarget` — `crud/decorate_test.go`.
 - `TestAnAmbiguousAliasResolvesToNothing` — `crud/schema_edge_test.go`.
 - `TestSchemaOfIsCachedByType` — `crud/schema_edge_test.go`.
+- `TestConcurrentFirstSchemaUseReturnsOneSchema` —
+  `crud/meta_cache_test.go` — concurrent first use has one build result and one
+  pointer identity.
+- `TestSetIDRefusesLossyOrCrossFamilyConversions` —
+  `crud/access_test.go` — overflow, signed-to-unsigned and integer-to-string
+  conversions are refused, with representable same-family conversion as the
+  control.
 
 ## See also
 

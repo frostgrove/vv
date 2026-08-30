@@ -38,11 +38,12 @@ import (
 // request. crudfiber.Errors and crudfiber.ErrorHandler both leave an
 // already-written response alone, so this composes with either.
 //
-// Installing it twice authenticates once: [auth.Guard] hands back a context
-// that already carries a principal untouched.
+// Consecutive installs with the same [auth.Guard] authenticate once. A
+// different guard performs its own check; A -> B -> A fails closed because no
+// assurance order is inferred ([[D-076]]).
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handler {
-	if guard == nil {
-		panic("authfiber: Middleware needs a Guard; without one nothing is authenticated")
+	if err := guard.Validate(); err != nil {
+		panic("authfiber: Middleware needs a ready Guard: " + err.Error())
 	}
 	renderer := authhttp.RendererFor(options)
 	return func(fiberContext fiber.Ctx) error {

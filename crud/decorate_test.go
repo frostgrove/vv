@@ -48,7 +48,7 @@ func (this refusingRepo) Delete(context.Context, ...int64) (int64, error) {
 	return 0, crud.ErrForbidden
 }
 
-var decArticles = sqlrepo.Define[Article, int64, struct{}]("dec_articles")
+var decArticles = sqlrepo.Define[Article, int64, struct{}]("articles")
 
 // An overridden method runs instead of the wrapped one; every method that was
 // not overridden still reaches the repository, which is the entire point of

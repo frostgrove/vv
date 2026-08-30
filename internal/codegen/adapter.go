@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -22,11 +23,31 @@ import (
 func inputFields(m *model) []field {
 	var out []field
 	for _, f := range m.Fields {
-		if f.Skip || f.isRelation() || f.Generated || f.Version || f.Excluded {
+		if f.Skip || f.isRelation() || f.Generated || f.Version || f.Excluded || (f.PK && f.Auto) {
 			continue
 		}
 		out = append(out, f)
 	}
+	return out
+}
+
+// inputExclusions are columns reflection still sees in Schema.Insert but this
+// generated wire body deliberately does not carry. Command-line exclusions are
+// joined by an auto-generated key: a client-owned assigned key remains part of
+// the body, while an identity/serial key belongs to the database and the path.
+func inputExclusions(m *model) []string {
+	out := append([]string(nil), m.excluded()...)
+	seen := make(map[string]bool, len(out)+1)
+	for _, name := range out {
+		seen[name] = true
+	}
+	for _, f := range m.Fields {
+		if f.PK && f.Auto && !seen[f.Name] {
+			out = append(out, f.Name)
+			seen[f.Name] = true
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -91,7 +112,7 @@ func (this *generator) renderAdapter(m *model) (string, used, error) {
 	for _, f := range fields {
 		fmt.Fprintf(&b, "\t%q: port.At(%q),\n", f.Name, lowerFirst(f.Name))
 	}
-	if ex := m.excluded(); len(ex) > 0 {
+	if ex := inputExclusions(m); len(ex) > 0 {
 		fmt.Fprintf(&b, "}, %s)\n\n", quoteList(ex))
 	} else {
 		b.WriteString("})\n\n")

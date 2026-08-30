@@ -62,7 +62,10 @@ func (this *Schema) HasID(model any) (bool, error) {
 }
 
 // SetID writes a primary key value, converting between integer widths so a
-// driver's int64 LastInsertId lands in an int32 or uint field.
+// driver's int64 LastInsertId lands in an int32 field. Conversions stay within
+// the signed or unsigned integer family and are checked for overflow; Go's
+// broader ConvertibleTo relation also includes lossy signed-to-unsigned and
+// integer-to-string conversions that are not database key semantics.
 func (this *Schema) SetID(model any, v any) error {
 	base, err := this.modelBase(model)
 	if err != nil {
@@ -75,12 +78,32 @@ func (this *Schema) SetID(model any, v any) error {
 		destination.SetZero()
 	case rv.Type() == destination.Type():
 		destination.Set(rv)
-	case rv.Type().ConvertibleTo(destination.Type()):
-		destination.Set(rv.Convert(destination.Type()))
+	case isSignedInt(rv.Kind()) && isSignedInt(destination.Kind()):
+		if destination.OverflowInt(rv.Int()) {
+			return this.idAssignmentError(rv.Type(), "value overflows "+destination.Type().String())
+		}
+		destination.SetInt(rv.Int())
+	case isUnsignedInt(rv.Kind()) && isUnsignedInt(destination.Kind()):
+		if destination.OverflowUint(rv.Uint()) {
+			return this.idAssignmentError(rv.Type(), "value overflows "+destination.Type().String())
+		}
+		destination.SetUint(rv.Uint())
 	default:
-		return &SchemaError{Model: this.Name, Field: this.PK.Name, Reason: "cannot assign " + rv.Type().String() + " to the primary key"}
+		return this.idAssignmentError(rv.Type(), "cannot assign it to the primary key")
 	}
 	return nil
+}
+
+func (this *Schema) idAssignmentError(source reflect.Type, reason string) error {
+	return &SchemaError{Model: this.Name, Field: this.PK.Name, Reason: "cannot assign " + source.String() + ": " + reason}
+}
+
+func isSignedInt(kind reflect.Kind) bool {
+	return kind >= reflect.Int && kind <= reflect.Int64
+}
+
+func isUnsignedInt(kind reflect.Kind) bool {
+	return kind >= reflect.Uint && kind <= reflect.Uintptr
 }
 
 // ElemValue unwraps an Opt or a pointer, yielding nil for null and the bare

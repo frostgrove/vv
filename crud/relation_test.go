@@ -298,6 +298,40 @@ func TestStructFieldsWithoutARelTagAreIgnored(t *testing.T) {
 	}
 }
 
+// A relation tag on an anonymous field describes that field; it is not a tag
+// on the columns promoted from the embedded struct. In particular, silently
+// flattening here would discard an explicit relation declaration and usually
+// collide with the owner's own ID.
+func TestAnonymousRelationTagsPreventFlattening(t *testing.T) {
+	type WithEmbeddedAuthor struct {
+		ID       int64 `db:"id,pk"`
+		AuthorID int64 `db:"author_id"`
+		Author   `rel:"belongs_to"`
+	}
+	m, err := crud.NewMeta[WithEmbeddedAuthor]("with_embedded_authors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Relation("Author") == nil {
+		t.Fatal("the explicit relation on an anonymous field was flattened away")
+	}
+	if m.Field("Name") != nil {
+		t.Fatal("the relation target's columns leaked into the owner")
+	}
+
+	type WithoutEmbeddedAuthor struct {
+		ID     int64 `db:"id,pk"`
+		Author `rel:"-"`
+	}
+	s, err := crud.SchemaOf[WithoutEmbeddedAuthor]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Relations) != 0 || s.Field("Author") != nil || s.Field("Name") != nil {
+		t.Fatalf(`rel:"-" anonymous field leaked into schema: columns=%v relations=%d`, s.Columns(), len(s.Relations))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // table names
 
@@ -339,6 +373,99 @@ func TestTableNameOf(t *testing.T) {
 				t.Fatalf("TableNameOf(%s) = %q, want %q", tc.typ, got, tc.want)
 			}
 		})
+	}
+}
+
+// A relation caches its target metadata. Changing the registry after that
+// point used to report success while the relation kept querying the old table.
+// A declaration that cannot affect already-published metadata must be refused.
+func TestLateAndConflictingTableRegistrationsAreRefused(t *testing.T) {
+	type Ledger struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type Entry struct {
+		ID       int64   `db:"id,pk,auto"`
+		LedgerID int64   `db:"ledger_id"`
+		Ledger   *Ledger `rel:"belongs_to"`
+	}
+
+	target, _, _, err := metaOf[Entry](t, "entries").Relation("Ledger").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Table != "ledgers" {
+		t.Fatalf("initial target table = %q, want the convention", target.Table)
+	}
+	err = crud.TryRegisterTable[Ledger]("accounting_ledgers")
+	if err == nil || !strings.Contains(err.Error(), "already resolved") {
+		t.Fatalf("late registration error = %v, want an already-resolved refusal", err)
+	}
+	if again, _, _, resolveErr := metaOf[Entry](t, "entries").Relation("Ledger").Resolve(); resolveErr != nil || again.Table != "ledgers" {
+		t.Fatalf("late refusal changed relation target to %q (err %v)", again.Table, resolveErr)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatal("RegisterTable accepted the same impossible late declaration")
+		} else if _, ok := recovered.(error); !ok {
+			t.Fatalf("RegisterTable panicked with %T, want an inspectable error", recovered)
+		}
+	}()
+	crud.RegisterTable[Ledger]("accounting_ledgers")
+}
+
+func TestConflictingTableRegistrationIsRefusedBeforeFirstUse(t *testing.T) {
+	type Archive struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	if err := crud.TryRegisterTable[Archive]("archives_2025"); err != nil {
+		t.Fatal(err)
+	}
+	if err := crud.TryRegisterTable[Archive]("archives_2026"); err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("conflicting registration error = %v", err)
+	}
+	if err := crud.TryRegisterTable[Archive]("archives_2025"); err != nil {
+		t.Fatalf("idempotent registration failed: %v", err)
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[Archive]()); got != "archives_2025" {
+		t.Fatalf("winning table = %q", got)
+	}
+}
+
+func TestLookingUpAConventionalTableDoesNotPublishRelationMetadata(t *testing.T) {
+	type Ledger struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "ledgers" {
+		t.Fatalf("conventional table = %q", got)
+	}
+	if err := crud.TryRegisterTable[Ledger]("accounting_ledgers"); err != nil {
+		t.Fatalf("a read-only name lookup froze relation metadata: %v", err)
+	}
+	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "accounting_ledgers" {
+		t.Fatalf("registered table = %q", got)
+	}
+}
+
+func TestExplicitRelationTableDoesNotDependOnRegistryOrder(t *testing.T) {
+	type Ledger struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type Entry struct {
+		ID       int64   `db:"id,pk,auto"`
+		LedgerID int64   `db:"ledger_id"`
+		Ledger   *Ledger `rel:"belongs_to,fk=LedgerID,table=ledger_projection"`
+	}
+
+	if err := crud.TryRegisterTable[Ledger]("accounting_ledgers"); err != nil {
+		t.Fatal(err)
+	}
+	target, _, _, err := metaOf[Entry](t, "entries").Relation("Ledger").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Table != "ledger_projection" {
+		t.Fatalf("explicit relation table = %q", target.Table)
 	}
 }
 

@@ -16,6 +16,18 @@ import (
 // a package make check-tiers seals, for a sentinel that package never returns.
 var ErrUnauthenticated = errors.New("auth: authentication is required")
 
+// ErrGuardNotReady reports a Guard value that was not built by [NewGuard], or
+// whose construction state was otherwise lost. Transport constructors call
+// [Guard.Validate] so this is a boot-time wiring failure rather than a panic on
+// the first request.
+var ErrGuardNotReady = errors.New("auth: guard is not ready")
+
+// ErrAmbiguousGuardOrder reports A -> B -> A after both A and B authenticated.
+// Without an explicit assurance ordering auth cannot know whether B is a
+// step-up over A or a downgrade from it, so silently retaining either principal
+// would make one of those arrangements unsafe.
+var ErrAmbiguousGuardOrder = errors.New("auth: ambiguous guard order")
+
 // Unauthenticated builds the 401.
 //
 // The reason goes into the wrapped error and nowhere else. Fault.Message is not
@@ -41,4 +53,8 @@ func Unauthenticated(reason string) error {
 // needs one. The formatted text is still never rendered.
 func Unauthenticatedf(format string, args ...any) error {
 	return Unauthenticated(fmt.Sprintf(format, args...))
+}
+
+func internal(cause error) error {
+	return errs.Internal().Wrapping(cause).Fault()
 }

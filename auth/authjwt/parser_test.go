@@ -1,10 +1,12 @@
 package authjwt_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,65 @@ func TestAValidTokenParsesIntoTheCallersOwnType(t *testing.T) {
 	}
 	if got.Scope != "article:read article:write" {
 		t.Fatalf("scope decoded as %q", got.Scope)
+	}
+}
+
+func TestHMACRefusesShortSecretsAtDeclaration(t *testing.T) {
+	for _, size := range []int{0, 1, 16, 31} {
+		t.Run(fmt.Sprintf("HS256 with %d bytes", size), func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("HMAC accepted a %d-byte secret; HS256 needs at least 32", size)
+				}
+			}()
+			authjwt.HMAC(bytes.Repeat([]byte{'k'}, size))
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		make func([]byte) authjwt.KeySource
+		min  int
+	}{
+		{"HS256", authjwt.HMAC256, 32},
+		{"HS384", authjwt.HMAC384, 48},
+		{"HS512", authjwt.HMAC512, 64},
+	} {
+		t.Run(tc.name+" exact boundary", func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("the minimum %s secret was refused: %v", tc.name, recovered)
+				}
+			}()
+			tc.make(bytes.Repeat([]byte{'k'}, tc.min))
+		})
+		t.Run(tc.name+" one byte short", func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s accepted a %d-byte secret", tc.name, tc.min-1)
+				}
+			}()
+			tc.make(bytes.Repeat([]byte{'k'}, tc.min-1))
+		})
+	}
+}
+
+func TestEachHMACConstructorPinsOneAlgorithm(t *testing.T) {
+	key := bytes.Repeat([]byte{'k'}, 64)
+	hs384 := sign(t, jwt.SigningMethodHS384, key, claims())
+	hs512 := sign(t, jwt.SigningMethodHS512, key, claims())
+
+	if _, err := parser[MyClaims](t, authjwt.HMAC(key)).Parse(t.Context(), hs384); err == nil {
+		t.Fatal("the default HS256 source accepted an HS384 token chosen by its alg header")
+	}
+	if _, err := parser[MyClaims](t, authjwt.HMAC384(key)).Parse(t.Context(), hs384); err != nil {
+		t.Fatalf("the explicit HS384 source refused an HS384 token: %v", err)
+	}
+	if _, err := parser[MyClaims](t, authjwt.HMAC384(key)).Parse(t.Context(), hs512); err == nil {
+		t.Fatal("an HS384 source accepted an HS512 token chosen by its alg header")
+	}
+	if _, err := parser[MyClaims](t, authjwt.HMAC512(key)).Parse(t.Context(), hs512); err != nil {
+		t.Fatalf("the explicit HS512 source refused an HS512 token: %v", err)
 	}
 }
 

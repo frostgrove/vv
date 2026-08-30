@@ -1,7 +1,7 @@
 # FL-005 — A relation filter becomes a correlated EXISTS
 
 **Entry point:** `crud/predicate.go:writer.leaf`
-**Implements:** [[UC-006]] [[UC-004]] · **Governed by:** [[D-005]] [[D-007]] [[D-003]]
+**Implements:** [[UC-006]] [[UC-004]] · **Governed by:** [[D-005]] [[D-007]] [[D-003]] [[D-079]]
 
 `{"comments.author.name": {"contains": "an"}}` reaches SQL as nested `EXISTS`
 subqueries, never as a JOIN. That choice is the reason `COUNT` and `LIMIT` stay
@@ -91,6 +91,15 @@ honest on a to-many filter.
    relation". There is no single value to sort by, and picking one quietly is
    worse than a 400 the client can read.
 
+9. **The complete bind preflight** — `crud/render.go:SQL.Err`
+   Every leaf contributes to the writer's one argument slice, including values
+   introduced by a relation scope inside a hop. `SQL.Done` compares that final
+   count with `crud.BindLimit(dialect)`. A direct `In` / `InAny` that makes the
+   statement too large returns a `*crud.SchemaError` before `Query` or `Exec`.
+   Splitting it into several `IN` clauses in the same SQL would keep the same
+   parameter count, so the renderer refuses and points the caller to a smaller
+   predicate, a temporary table or an explicit bulk path ([[D-079]]).
+
 ## Where the decisions bite
 
 - **`EXISTS`, not `JOIN`.** A `has_many` join returns one row per child, so the
@@ -107,6 +116,9 @@ honest on a to-many filter.
 - **`WalkPath` is the single source of truth for paths.** The SQL writer, the
   preloader and the wire DSL all go through it. Two resolvers would drift, and
   the drift would be an allow-list that guards one route and not the other.
+- **The bind budget is statement-wide.** Neither one list nor one scope owns the
+  budget. All predicates share it, and a direct predicate is never split into
+  several independently observed reads ([[D-079]]).
 
 ## Traps
 
@@ -139,6 +151,7 @@ honest on a to-many filter.
 | sort through a `has_many` / `many_to_many` | `sortExpr` (`predicate.go:549`) | 400 (`SchemaError`) |
 | `DISTINCT` plus a sort through a relation | `repository.distinctSort` (`crud/sqlrepo/repository.go:343`) | 400 — the subquery can never be in the select list |
 | `crud.Raw` with mismatched `?` markers | `rawNode.render` (`predicate.go:361`) | 400 (`SchemaError`) — never a renumbered bind |
+| statement has more bind values than the dialect accepts | `SQL.Done` | 400 (`SchemaError`) before the datasource |
 
 ## Files
 
@@ -147,7 +160,8 @@ honest on a to-many filter.
 | `crud/predicate.go` | `writer`, `leaf`, `hopScope`, `sortExpr`, every node type |
 | `crud/relation.go` | `WalkPath`, `PathHop`, `Relation.Resolve`, join-table columns |
 | `crud/scope.go` | `RelationScopes.At` — path declaration wins over model |
-| `crud/render.go` | `SQL.RelationScopes`, `Where`, `OrderBy`, `Done` |
+| `crud/render.go` | `SQL.RelationScopes`, `Where`, `OrderBy`, `Err`, `Done`; the final bind preflight |
+| `crud/dialect.go` | `BindBudget`, `BindLimit`, built-in ceilings and the external default |
 | `crud/query/filter.go` | where the canonical path and the operator become a node |
 | `crud/sqlrepo/repository.go` | attaches the repository's scopes to every statement |
 
@@ -168,6 +182,9 @@ honest on a to-many filter.
 - `TestToManyFilterDoesNotDuplicateOrInflateCount` — `test/integration/relations_test.go` — the reason for `EXISTS`.
 - `TestNestedFiltersAgainstDatabases` / `TestNestedSortAgainstDatabases` — `test/integration/relations_test.go`.
 - `TestDistinctRefusesASortThroughARelation` — `crud/sqlrepo/paging_edge_test.go`.
+- `TestStatementBindBudgetIsCheckedBeforeExecution` — `crud/render_test.go`.
+- `TestDirectInOverTheDialectBudgetFailsBeforeTheDatabase` —
+  `crud/sqlrepo/bind_budget_test.go` — the repository call and its no-statement control.
 
 ## See also
 

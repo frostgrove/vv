@@ -807,7 +807,8 @@ func TestABulkWriteAttributesEachViolationToItsRow(t *testing.T) {
 // every table but not this one are the same value, and the first declaration
 // that names a table is what catches either.
 func TestADeclarationAgainstACatalogWithoutTheTableRefusesToStart(t *testing.T) {
-	Unknown := sqlrepo.Define[PbDoc, int64, PbDocUpdate]("pb_doc_that_is_not_there")
+	Unknown := sqlrepo.Define[PbDoc, int64, PbDocUpdate]("pb_doc_that_is_not_there",
+		sqlrepo.IndependentTable())
 	engines := 0
 	for _, tg := range pbEngines(t) {
 		t.Run(tg.name, func(t *testing.T) {

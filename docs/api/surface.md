@@ -19,6 +19,8 @@ type Seeding struct{ ... }
 ```go
 const HeaderAuthorization = "Authorization"
 const SchemeBearer = "Bearer"
+var ErrAmbiguousGuardOrder = errors.New("auth: ambiguous guard order")
+var ErrGuardNotReady = errors.New("auth: guard is not ready")
 var ErrUnauthenticated = errors.New("auth: authentication is required")
 func HasAll(p Principal, ps ...Permission) bool
 func HasAny(p Principal, ps ...Permission) bool
@@ -35,7 +37,7 @@ type Credential struct{ ... }
     func ParseAuthorization(header string) (Credential, bool)
 type Guard struct{ ... }
     func NewGuard(a Authenticator, options ...Option) *Guard
-type Option func(*Guard)
+type Option interface{ ... }
     func Header(name string) Option
     func Lookup(fn func(get func(name string) string) (Credential, bool)) Option
     func Optional() Option
@@ -51,12 +53,15 @@ type RoleMap map[Role][]Permission
 ## github.com/frostgrove/vv/auth/apikey
 ```go
 const DefaultScheme = "ApiKey"
+var ErrUnsupportedStaticAttribute = errors.New("apikey: Static cannot safely snapshot a Claims attribute")
+func Header(name string) auth.Option
 func New(s Store, options ...Option) auth.Authenticator
 type Option func(*authenticator)
     func AnyScheme() Option
     func Scheme(name string) Option
 type Store interface{ ... }
     func Static(keys map[string]auth.Principal) Store
+    func TryStatic(keys map[string]auth.Principal) (Store, error)
 type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, error)
 ```
 
@@ -89,11 +94,14 @@ type Surface struct{ ... }
 ## github.com/frostgrove/vv/crud
 ```go
 const DefaultPreloadDepth = 5
+const PortableBindLimit = 999
 const RelTagKey = "rel"
 const TagKey = "db"
 var ErrNotFound = errors.New("crud: not found") ...
 var NowFunc = time.Now
+func BindLimit(d Dialect) int
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
+func CursorFieldSupported(f *Field) bool
 func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
 func ElemType(t reflect.Type) reflect.Type
 func ElemValue(v any) any
@@ -116,6 +124,8 @@ func SameDataSource(a, b any) bool
 func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
 func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
 func TableNameOf(t reflect.Type) string
+func TryRegisterTable[M any](table string) error
+func TryRegisterTableType(t reflect.Type, table string) error
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
 type AggregateRow struct{ ... }
@@ -131,6 +141,7 @@ type Aggregation struct{ ... }
 type Base[M any, ID comparable] struct{ ... }
 type Beginner interface{ ... }
     func BeginnerOf(v any) (Beginner, bool)
+type BindBudget interface{ ... }
 type BulkInserter interface{ ... }
 type Change struct{ ... }
     func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error)
@@ -535,6 +546,7 @@ type Blueprint[M any, ID comparable, U any] struct{ ... }
 type Setting func(*settings)
     func DefaultLimit(n int) Setting
     func DefaultSort(orders ...crud.Order) Setting
+    func IndependentTable() Setting
     func MaxLimit(n int) Setting
     func PreloadDepth(n int) Setting
     func RelationScope(path string, p crud.Predicate) Setting
@@ -1122,19 +1134,31 @@ type RegisterHandler[P any] struct{ ... }
 ## github.com/frostgrove/vv/auth/authjwt
 ```go
 const JWKSFetchTimeout = 10 * time.Second
+const JWKSFreshness = 5 * time.Minute
 const JWKSMaxBody = 1 << 20
 const JWKSMinRefresh = time.Minute
+var ErrKeySourceUnavailable = errors.New("authjwt: verification key source unavailable")
 func Authenticator[C any](p *Parser[C], to func(ctx context.Context, c C) (auth.Principal, error)) auth.Authenticator
 func Standard(k KeySource, roles auth.RoleMap, options ...Option) auth.Authenticator
 type Claims struct{ ... }
+type JWKSDegraded struct{ ... }
+type JWKSDegradedObserver func(context.Context, JWKSDegraded)
 type JWKSOption func(*jwks)
     func JWKSClient(c *http.Client) JWKSOption
+    func JWKSClock(now func() time.Time) JWKSOption
     func JWKSMinRefreshEvery(d time.Duration) JWKSOption
+    func JWKSServeStaleFor(d time.Duration, observe JWKSDegradedObserver) JWKSOption
+    func JWKSStaleAfter(d time.Duration) JWKSOption
+    func UnsafeJWKSNoFreshness() JWKSOption
+    func UnsafeJWKSNoMinRefresh() JWKSOption
 type KeySource struct{ ... }
     func Custom(methods []string, keyfunc Keyfunc) KeySource
     func ECDSA(pub *ecdsa.PublicKey) KeySource
     func EdDSA(pub ed25519.PublicKey) KeySource
     func HMAC(secret []byte) KeySource
+    func HMAC256(secret []byte) KeySource
+    func HMAC384(secret []byte) KeySource
+    func HMAC512(secret []byte) KeySource
     func JWKS(rawURL string, options ...JWKSOption) KeySource
     func RSA(pub *rsa.PublicKey) KeySource
 type Keyfunc func(ctx context.Context, t *jwt.Token) (any, error)
@@ -1336,10 +1360,14 @@ type Validator interface{ ... }
 ```go
 func Apply(pc *pgxpool.Config, p *vvdb.Pool) error
 func Connect(ctx context.Context, c *vvdb.Config, options ...Option) (*pgxpool.Pool, error)
-func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool, err error)
+func ConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool, err error)
 func MustConnect(ctx context.Context, c *vvdb.Config, options ...Option) *pgxpool.Pool
-func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...Option) (primary, replica *pgxpool.Pool)
+func MustConnectReadWrite(ctx context.Context, c *vvdb.Config, options ...ReadWriteOption) (primary, replica *pgxpool.Pool)
 type Option func(*pgxpool.Config)
+type ReadWriteOption func(*readWriteOptions)
+    func Common(options ...Option) ReadWriteOption
+    func Primary(options ...Option) ReadWriteOption
+    func Replica(options ...Option) ReadWriteOption
 ```
 
 ## github.com/frostgrove/vv/utils/vvgoose

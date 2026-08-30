@@ -63,11 +63,10 @@ code on upgrade rather than on the day someone adds a second database.
 **Why identity is compared by shape, not by `==` directly.**
 `SameDataSource` checks the types match and are comparable before comparing. A
 datasource handle is a pointer in practice, but nothing in the contract says it
-must be, and `==` on an uncomparable dynamic type panics. It answers about the
-static type, which is as far as it can see: a struct holding an interface is
-comparable and `==` on it still panics when that interface holds a slice. A
-caller that must not panic guards the comparison — `crud/catalog/set.go:findable`
-does, and [[D-041]] says why.
+must be, and `==` on an uncomparable dynamic type panics. The check is on each
+`reflect.Value`, not only its static type, so it also catches a struct whose
+interface field contains a slice. Callers such as
+`crud/catalog/set.go:findable` reuse this value-aware rule directly ([[D-041]]).
 
 **Why `KeyOf` takes an unidentified value at face value.** If a caller names
 something that cannot identify itself, the caller said it, so it is the key.
@@ -125,8 +124,8 @@ key. It never answers nil, which is what makes it safe to key a catalog on
   rules, and the comment that records why they differ. `KeyOf` is exported and
   `ownScope` is not: phase 6's `catalog` keys on the first and has no business
   with the second.
-- `crud/executor.go:SameDataSource` — never panics on an uncomparable handle,
-  as far as its static type goes.
+- `crud/executor.go:SameDataSource` — checks each complete dynamic value before
+  comparing, including values hidden in interface fields.
 - `crud/executor.go:InTx` — join-or-open.
 - `crud/sqlrepo/repository.go:repository.exec` — every statement in the SQL
   repository goes through it.
@@ -145,7 +144,9 @@ key. It never answers nil, which is what makes it safe to key a catalog on
 - `TestInTxJoinsRatherThanNests` and
   `TestInTxDoesNotJoinAnotherDatabasesTransaction` in `crud/executor_test.go`.
 - `TestTheHandleAndASourceOverItNameTheSameDatabase` in `crud/executor_test.go`.
-- `TestAnUncomparableDataSourceDoesNotPanic` in `crud/executor_test.go`.
+- `TestAnUncomparableDataSourceDoesNotPanic` and
+  `TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic` in
+  `crud/executor_test.go`.
 - `TestAnUnscopedExecutorAdoptsEveryRepositoryIncludingTheWrongOne` in
   `test/integration/multidb_test.go` — two real databases; this is the test that
   makes the trade concrete rather than theoretical.

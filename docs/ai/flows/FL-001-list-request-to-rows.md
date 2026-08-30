@@ -94,7 +94,9 @@ filter that works on `GET /articles?f=…` has to mean the same thing on
 8. **The COUNT decision** — `crud/sqlrepo/repository.go:152-168`
    This is the part worth holding in your head. Four cases:
    - `SkipTotal` **and** a limit: no COUNT at all. The SELECT fetches `limit+1`
-     rows, the extra one is dropped, and `HasNext` is true if it was there.
+     rows, the extra one is dropped, and `HasNext` is true if it was there. At
+     `math.MaxInt` the probe saturates instead of wrapping negative and silently
+     dropping `LIMIT`; no Go slice can contain the unrepresentable extra row.
      `Total` is the page length and `TotalPages` is 0.
    - `Unpaged`: `total = offset + len(items)`.
    - offset 0 and a short page: the first page is the whole answer, so
@@ -223,6 +225,9 @@ and `crud/http/crudnet/handler_test.go`.
 - `TestGetSkipsCountOnShortFirstPage` — `crud/sqlrepo/repository_test.go` — the no-COUNT case.
 - `TestSkipTotalProbesOneExtraRow` — `crud/sqlrepo/repository_test.go` — the `limit+1` probe.
 - `TestSkipTotalReportsWhatWasFetchedAndNotTheOffset` — `crud/sqlrepo/paging_edge_test.go` — pins the fabricated-total regression.
+- `TestSkipTotalDoesNotOverflowTheLargestLimit` —
+  `crud/sqlrepo/paging_edge_test.go` — the `limit+1` probe saturates and the
+  statement keeps its limit.
 - `TestMaxLimitSurvivesEveryWayAPageCanBeAskedFor` — `crud/sqlrepo/paging_edge_test.go`.
 - `TestUnstablePaginationDropsTheTiebreaker` — `crud/sqlrepo/paging_edge_test.go`.
 - `TestAPageNumberThatWouldOverflowAsksForAPagePastTheEnd` — `crud/sqlrepo/paging_edge_test.go`.

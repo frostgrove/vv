@@ -35,8 +35,12 @@ differs by dialect.
 4. **`repository.Update`** — `crud/sqlrepo/repository.go:531`
    The whole write lives here. In order:
 
-5. **The load** — `repository.go:544-556`
-   Options are `Where(PK = id)` + the caller's + `Limit(1)` + `Unsorted()`. Then:
+5. **The mutation read** — `repository.mutationRead`
+   This is deliberately not a replay of the caller's response shape. It keeps
+   only the caller predicates and relation narrowings, adds `PK = id`, forces a
+   full projection, the primary datasource, no sort, and a one-row limit.
+   Projection, cursor/paging, aggregation and preloads are discarded: none may
+   change the model used for a diff or omit its version. Then:
    ```go
    if _, inTx := crud.ExecutorFor(ctx, r.src); inTx {
        loadOpts = append(loadOpts, crud.ForUpdate())
@@ -47,8 +51,9 @@ differs by dialect.
    transaction. Outside one, `SELECT … FOR UPDATE` would take a lock and drop it
    before the UPDATE, which is worse than useless. `LockClause` is the dialect's
    (`crud/dialect.go:23`); SQLite renders nothing, because it has no row locks.
-   The load goes through `GetAll`, so the repository's own `Scope` and any
-   caller predicate narrow it. No row → `ErrNotFound`.
+   The load goes through the same `find` compiler as an ordinary read, so the
+   repository's own `Scope`, any caller predicate, and security relation scopes
+   still narrow it. No row → `ErrNotFound`.
 
 6. **`UpdatePlan.Changes`** — `crud/update.go:188`
    The diff. Each DTO field is read through `planField.read`
@@ -102,7 +107,7 @@ differs by dialect.
 
 11. **`repository.missedRow`** — `repository.go:650`
     Explains a statement that matched nothing. Without a version: `ErrNotFound`.
-    With one: `Exists` under the same narrowing decides between `ErrNotFound`
+    With one: `Exists` on the primary under the same narrowing decides between `ErrNotFound`
     (the row is gone; stop) and `ErrStaleVersion` (the row moved on; read it
     again and reapply). `ErrStaleVersion` wraps `ErrConflict`, so a transport
     answers 409 without knowing versions exist (`crud/errors.go:36`).
@@ -119,6 +124,10 @@ differs by dialect.
   from touching columns a trigger or another writer owns. `UpdateAll` is the
   deliberate exception — no single row to diff against, so it uses
   `UpdatePlan.Writes` (`crud/update.go:219`) instead.
+- **A response shape cannot become a mutation shape.** `mutationRead` keeps the
+  predicates and relation scopes because they are security boundaries, while
+  projection, preloads, cursor/paging and aggregation are response concerns.
+  It always reads the complete row from the primary.
 - **The narrowing is in the WHERE, not only in the load.** Both halves, always.
   This is the invariant a decorator relies on; `gate.Update` passes its scope as
   an option precisely because `repository.Update` puts options into the
@@ -170,12 +179,15 @@ Both below have an identical twin in `crud/http/crudgin/handler_test.go` and
 - `TestUpdateCarriesAnExplicitNullThrough` — `crud/http/crudfiber/handler_test.go` — `null` is not absence.
 - `TestUpdateWritesOnlyChangedFields` — `crud/sqlrepo/repository_test.go` — the diff.
 - `TestUpdateWithNothingToDoSkipsTheWrite` — `crud/sqlrepo/repository_test.go` — no statement at all.
+- `TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing` — response options
+  cannot corrupt the diff, while the caller narrowing remains in the SQL.
 - `TestUpdateDistinguishesUndefinedFromNull` — `crud/sqlrepo/repository_test.go` — the three states in SQL.
 - `TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack` — `crud/sqlrepo/repository_test.go` — the MySQL re-read.
 - `TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect` — `crud/sqlrepo/repository_test.go` — pins the fabricated-model regression.
 - `TestUpdateChecksTheVersionItReadAndAdvancesIt` — `crud/sqlrepo/version_test.go` — both halves of the lock.
 - `TestAnUpdateAgainstARowSomebodyElseChangedIsRefused` — `crud/sqlrepo/version_test.go`.
 - `TestAVanishedRowIsStillNotFoundRatherThanStale` — `crud/sqlrepo/version_test.go` — `missedRow`'s two answers.
+- `TestAStaleMissIsClassifiedOnThePrimary` — replica lag cannot change 409 into 404.
 - `TestAnUpdateWithNothingToDoLeavesTheVersionAlone` — `crud/sqlrepo/version_test.go`.
 - `TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound` — `crud/sqlrepo/blueprint_edge_test.go`.
 - `TestAConcurrentWriteIsRefusedRatherThanLost` — `test/integration/dialect_edge_test.go` — against real engines.

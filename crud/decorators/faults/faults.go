@@ -276,6 +276,18 @@ func (this *enricher[M, ID]) SaveScopedOnly(ctx context.Context, m *M, save *cru
 	return this.enrich("SaveOnly", err)
 }
 
+// DeleteScoped preserves security's narrowed, chunkable delete capability.
+// The actual driver error is still enriched as a Delete fault; no speculative
+// probe is run because it would not be the conditional statement approved by
+// the policy.
+func (this *enricher[M, ID]) DeleteScoped(ctx context.Context, deletion *crud.ScopedDelete[ID]) (int64, error) {
+	n, err, ok := crud.DeleteScopedOf(this.Core, ctx, deletion)
+	if !ok {
+		return 0, &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot perform a scoped Delete atomically"}
+	}
+	return n, this.enrich("Delete", err)
+}
+
 func (this *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {
 	pc, ok := this.probes["SaveAll"]
 	if !ok {

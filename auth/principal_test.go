@@ -100,8 +100,15 @@ func TestTheQuantifiersDisagreeAboutTheEmptyCase(t *testing.T) {
 	}
 
 	t.Run("a nil principal satisfies nothing", func(t *testing.T) {
-		if auth.HasAll(nil, "a") || auth.HasAny(nil, "a") || auth.InAny(nil, "r") {
+		if auth.HasAll(nil) || auth.HasAll(nil, "a") || auth.HasAny(nil, "a") || auth.InAny(nil, "r") {
 			t.Fatal("a nil principal was granted something")
+		}
+	})
+
+	t.Run("a typed-nil principal satisfies nothing without calling it", func(t *testing.T) {
+		var principal *typedNilPrincipal
+		if auth.HasAll(principal) || auth.HasAll(principal, "a") || auth.HasAny(principal, "a") || auth.InAny(principal, "r") {
+			t.Fatal("a typed-nil principal was granted something")
 		}
 	})
 

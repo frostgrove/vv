@@ -65,6 +65,14 @@ it would override must be empty. Accepting both and preferring one is the shape
 of failure this library refuses everywhere else: a configuration with two
 sources of truth, one of them silently losing ([[D-013]], [[D-053]]).
 
+**A read/write pair makes option ownership explicit.** A bare pgx `Option` is
+accepted by the single-pool helper. `ConnectReadWrite` instead accepts
+`Common`, `Primary`, and `Replica` declarations. A tracer may deliberately be
+common; a credential, IAM token provider, or role-changing hook belongs to one
+side. Reusing one undifferentiated option list could otherwise put a replica
+identity on the writable pool. The declarations snapshot their caller-owned
+slices and common options run before side-specific ones.
+
 ## The name
 
 `vvdb` carries the project as a prefix, which [[D-035]]'s "What it forbids"
@@ -100,6 +108,8 @@ is exactly what `utils/` is allowed to hold.
 - Do not let an engine, a driver name or an `sslmode` be guessed. The set is
   closed and an unknown value is refused ([[D-013]]).
 - Do not put the DSN in an error message. It carries the password.
+- Do not pass credentials, IAM providers, or role-changing hooks through
+  `dbpgx.Common`; declare the pool identity with `Primary` or `Replica`.
 - Do not grow `vvdb` a dependency. `database/sql` is the standard library and
   the driver is the consumer's blank import; anything else is a module, and
   `utils/vvdb/dbpgx` is the first of them ([[D-033]], [[D-051]]).

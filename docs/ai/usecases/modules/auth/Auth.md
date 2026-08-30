@@ -3,7 +3,7 @@
 **Covers:** `github.com/frostgrove/vv/auth`, `github.com/frostgrove/vv/auth/authjwt`, `github.com/frostgrove/vv/auth/apikey`
 **Not covered by this sweep:** `github.com/frostgrove/vv/auth/access` and its satellites. That subtree is a working implementation of these contracts rather than one of them, and its own scenario is [[UC-023]]; nothing below has been re-run against it.
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the contracts are right and the refusals are right, but the documented first-day wiring for one of the two shipped authenticators refuses every client, a security-shaped default lets a stricter guard do nothing, a provider outage renders to every cold process as "your credentials are bad", and the second service a consumer adds cannot forward the identity the first one established. The edge half adds a forgeable blank HMAC configuration, an accidental scheme waiver that can hand bearer tokens to a key store, ambiguous key-set identifiers resolved by array order, type-nil extensions that escape the promised start-up checks, and a removed JWKS key whose continuing acceptance has no declared lifetime.
+**Verdict:** not ready — several happy-path/DX gaps below still need their own work, including credential forwarding. The corrected security seams now re-run stricter guards, distinguish provider outage, bound JWKS retirement, provide boot-time JWKS warming, validate and snapshot static key declarations, refuse nil-like extensions and identities, and snapshot both live Guard configuration and fixed API-key Claims.
 
 ## What a consumer is actually trying to do
 
@@ -133,18 +133,25 @@ provider in CI.
 5. A machine principal can name a tenant, so the flagship row filter applies to it.
 6. A busy endpoint does not become one database round trip per request for identity alone.
 
-**Today:** 🟡 partial — 1 and 2 are the best-decided thing in this subsystem; 3 fails on first deploy and the documented escape hatch does not rescue it; 4 is half done; 5 and 6 have nothing.
+**Today:** 🟡 partial — 1, 2 and 3 hold; 4 is half done; 5 and 6 have nothing.
 **Evidence:** The three-result `Store` is the seam and it is right: `auth/apikey/apikey.go:40`, the outage pass-through at `:104-107`, pinned by `TestAStoreFailureIsNotARefusal` (`auth/apikey/apikey_test.go:83`). Revocation needs no cache to bust because there is no cache: `Lookup` is the only path to a principal (`:103`).
 
-For 3: `auth.Header` changes only *which* header is read; the value still goes through `ParseAuthorization`, which refuses a header with no space (`auth/credential.go:56-61`, called from `auth/guard.go:123`). So `X-Api-Key: k-batch-1` is "no credential presented" (`auth/guard.go:100`) and only `X-Api-Key: ApiKey k-batch-1` works. **`AnyScheme()` does not rescue it either** — `Guard.credential` runs before any authenticator is consulted, so `auth/apikey/apikey.go:97`, the check `AnyScheme` disarms, is never reached. Both module pages show the failing wiring (`docs/modules/en/apikey.md:33`, `docs/modules/en/auth.md:151`); `auth.md` shows the working `Lookup` nineteen lines later (`:170`) without saying that the option above it does not work, and `apikey.md` states the `ApiKey <token>` requirement sixty lines later under a heading a consumer copying a snippet never reaches (`:96-99`). The only test of `Header` sends `X-Auth: Bearer t` (`auth/guard_test.go:89`), so the bare value is untested — and the three `apikey` scheme subtests build an `auth.Credential` by hand (`auth/apikey/apikey_test.go:57-79`) and never touch a `Guard`, which is why the interaction is invisible to both packages' tests.
-
-**And `apikey` has never been run end to end by this repository:** `grep -rn apikey test/ _examples/` is empty. No integration test, no runnable example. One of the two shipped `Authenticator`s exists only in its own package test.
+For 3: `apikey.Header("X-Api-Key")` is the dedicated bare-value option. It uses
+`auth.Lookup` to synthesise `Credential{Scheme: DefaultScheme, Token: key}` and
+therefore makes `X-Api-Key: k-batch-1` work without changing `auth.Header`'s
+scheme-shaped grammar (`auth/apikey/apikey.go:84-104`).
+`TestHeaderReadsABareKeyWithoutChangingTheAuthorizationAPI`
+(`auth/apikey/apikey_test.go`) walks the complete Guard → authenticator → store
+path. Its control proves the helper replaced Authorization rather than passing
+vacuously, and a third arm proves `Authorization: ApiKey k-batch-1` still works.
+The English and Russian module pages now use the bare helper in their canonical
+wiring and state the distinction next to it ([[D-076]]).
 
 For 4, the hashing half is documented well, in a code block, with the constant-time requirement attached (`docs/modules/en/apikey.md:64-82`). The generation half — `crypto/rand` plus an encoding — is nowhere. For 5, both shipped examples of a hand-built machine principal set `Sub` and `Permissions` and no `Attrs` (`docs/modules/en/apikey.md:29-33`, `docs/modules/en/auth.md:54-59`), and the flagship policy is `ScopeAttr("TenantID", "tenant")` — so a partner key copied from the page authenticates and is then denied on every request by `attrOf` ("the caller carries no tenant claim", `crud/decorators/security/principal.go:183`), with the reason dropped on the wire. Nothing found for 6.
 
 **Obligation rather than guarantee:** constant-time comparison. `apikey.Static` compares every entry with `crypto/subtle` and explains why (`auth/apikey/apikey.go:114-125`, `:140`), but the case's own story is a database, where the timing property belongs entirely to the consumer's SQL. The package states the requirement — index by the hash of the presented key, because the hash is what travels (`auth/apikey/apikey.go:20-22`) — and cannot enforce it for a `Store` somebody else writes. It is documented as a requirement and should stay described that way, not counted as something the library keeps.
 
-**If not ready:** for 3 they find it in a debugger and replace the option with a four-line `auth.Lookup` — the shape `auth/guard_test.go:106` already uses. The documentation fix is free today and it is two edits, not one: put `ApiKey <token>` into the wiring snippet at `apikey.md:33`, and change the scheme example `Scheme("X-Key")` (`apikey.md:103`) to a scheme-shaped name, because a header-looking name one section after `auth.Header("X-Api-Key")` reads as confirmation that schemes and headers are the same thing. The code fix belongs in `apikey`, not in `auth`: `apikey.Header(name string) auth.Option` returns the `Lookup` that synthesises `Credential{Scheme: DefaultScheme, Token: get(name)}`, so there is one string to get right instead of two that must agree across packages. For 4, five lines of `crypto/rand` and base64 appended to the section that already shows the hash. For 5, one line in the `Static` example giving the partner an `Attrs` map. For 6 they write a caching `Store` wrapper, and that is the sharp edge: **any cache of hits trades guarantee 2 away, and the trade is the whole design.** A cached hit is served without consulting the store, so a deleted row keeps working until the entry expires — caching *misses* cannot do that, it only delays recognising a key that was just issued. So `apikey.Cache(store, ttl)` has to state the number it costs ("revocation now takes up to `ttl`") and offer the invalidation call for the Tuesday afternoon, and it must key on the hash and never on the presented key, or the wrapper is a plaintext key store in process memory and undoes the discipline `Store` exists to enforce.
+**If not ready:** For 4, five lines of `crypto/rand` and base64 appended to the section that already shows the hash. For 5, one line in the `Static` example giving the partner an `Attrs` map. For 6 they write a caching `Store` wrapper, and that is the sharp edge: **any cache of hits trades guarantee 2 away, and the trade is the whole design.** A cached hit is served without consulting the store, so a deleted row keeps working until the entry expires — caching *misses* cannot do that, it only delays recognising a key that was just issued. So `apikey.Cache(store, ttl)` has to state the number it costs ("revocation now takes up to `ttl`") and offer the invalidation call for the Tuesday afternoon, and it must key on the hash and never on the presented key, or the wrapper is a plaintext key store in process memory and undoes the discipline `Store` exists to enforce.
 
 ### H-AUTH-06 — One endpoint, a user's JWT and a service's key
 **Who:** the author of an API called both by a browser app and by their own batch fleet
@@ -168,11 +175,31 @@ For 4, the hashing half is documented well, in a code block, with the constant-t
 3. A key the provider has withdrawn stops being accepted within a maximum age the deployment sets, measured from the last successful fetch, without a restart.
 4. While the provider is unreachable, a caller holding a good token is not told its credentials are bad.
 
-**Today:** 🟡 partial — 1 and 2 are done carefully; 3 and 4 are not done.
-**Evidence:** 1: `auth/authjwt/jwks.go:128-141`, pinned by `TestARotatedKidIsPickedUp` (`auth/authjwt/jwks_test.go:84`). 2: the rate limit reads the last *attempt* rather than the last success, and a concurrent burst shares one in-flight fetch — `auth/authjwt/jwks.go:181-201`, pinned by `TestUnknownKidsDoNotBecomeOneFetchEach` (`:109`), `TestAFailingProviderIsStillOnlyFetchedOnce` (`:180`) and `TestAConcurrentBurstOfMissesIsOneFetch` (`:215`), with `TestALeaderThatDisconnectsDoesNotFailTheWaiters` (`:270`) for the case that made the fetch carry its own context. 3: `s.fetched` is written at `auth/authjwt/jwks.go:222` and read nowhere in the package, so a cached set has no maximum age and is only ever replaced when a token names a kid it does not hold. 4: a fetch failure returns from the keyfunc, is folded into the parse error, and leaves `auth/authjwt/parser.go:169` as `auth.Unauthenticated` — a 401. `TestAKeySetThatCannotBeReachedIsARefusalAndNotAPanic` (`auth/authjwt/jwks_test.go:148`) reads like the test that pins this and asserts only `err != nil`, so the classification is free to change without breaking anything.
-**One shape that is decided rather than broken:** an issuer that mints tokens with no `kid` works only against a key set holding exactly one key (`auth/authjwt/jwks.go:143-145`), because anything else would be this package choosing which key to trust. That is right, it is documented (`docs/modules/en/authjwt.md:129`), and it is worth knowing that the failure it produces is the same reasonless 401 as everything else here — so a deployment that meets it after a provider adds a second key has no signal at all. It belongs in the same paragraph as `JWKSMaxAge`'s.
-**How far 4 actually reaches, because it decides the ranking:** a warm process answers a known kid from the map before any network call (`auth/authjwt/jwks.go:131-133`), so an ordinary provider outage is invisible to callers holding tokens signed by a key the cache already holds. The 401 storm needs a cold cache: a deploy or a restart during the outage, an autoscaler adding a replica, or a rotation that introduces a kid nobody holds. Every deployment has one of those during a twenty-minute outage. Note the interaction with 3 — today's missing maximum age is exactly what makes a warm process survive, so the two fixes pull against each other and must be designed together.
-**If not ready:** for 3, the practical rescue is that ordinary traffic on the *new* key triggers a refetch that replaces the whole map, so a rotate-then-revoke is usually repaired within seconds by the first legitimate token; a withdrawal with no new key introduced is not repaired until the process restarts. An option reading the field that is already there closes it, and the field is already correctly separated from `attempted` (`auth/authjwt/jwks.go:117-121`), which makes it a two-line change rather than a redesign. **Spell it `JWKSStaleAfter(d)`, not `JWKSMaxAge`:** the consts in this package are bare nouns (`JWKSMinRefresh`, `JWKSFetchTimeout`, `JWKSMaxBody`) and the options carry a verb, so `JWKSMaxAge` would read as a const and sit in autocomplete beside `JWKSMinRefreshEvery` as a second spelling of the same axis. Its composition has to be one sentence in the doc comment: a set older than the stale-after is refetched on the next token even when the kid is known, and the min-refresh limit still bounds the request rate. It must also say what it does when the age lapses and the provider is unreachable — serving stale keys through a failed refresh is what keeps 4 from getting worse — and an unset value must keep today's behaviour, or the tag changes what every existing deployment does. For 4 the parser has to tell a key-source failure from a verification failure and pass the former through unclassified, the way `apikey.Store`'s third result already does one package away.
+**Today:** ✅ handled.
+**Evidence:** 1 remains pinned by `TestARotatedKidIsPickedUp`. 2 reads the last
+attempt, shares one in-flight fetch, and preserves a failed attempt's typed
+result for rate-limited callers; `TestUnknownKidsDoNotBecomeOneFetchEach`,
+`TestAFailingProviderIsStillOnlyFetchedOnce` and
+`TestAConcurrentBurstOfMissesIsOneFetch` pin the three branches. The failed
+singleflight also returns one typed cause to every concurrent waiter, and
+separate recorded-state bits keep both the success age and failed-attempt limit
+correct when a deterministic clock starts at `time.Time{}`. 3 is now the
+safe default: `JWKSFreshness` bounds cache age at five minutes,
+`JWKSStaleAfter` changes it, and a hit at the boundary refreshes the whole map;
+`TestARetiredCachedKidStopsVerifyingAtTheFreshnessBoundary` uses a fake clock
+and mutable server to prove the removed key fails while its replacement works.
+4 is split from credential failure by `ErrKeySourceUnavailable`, pinned cold by
+`TestAKeySetThatCannotBeReachedIsUnavailableAndNotARefusal` and warm by
+`TestAStaleCacheDoesNotHideAnOutageByDefault`. The optional availability policy
+is finite and observable: `JWKSServeStaleFor` requires a typed degraded observer,
+and `TestStaleOnErrorIsBoundedAndSignalsTheDegradedDecision` proves stale works
+inside the window and unavailable wins at its exact end. Detached provider
+timeouts and transport failures have the same stale semantics, while an
+initiator or waiter cancelling only stops its own wait and receives its exact
+context error. [[D-078]] binds the whole policy.
+**One shape that remains deliberate:** a token with no `kid` matches only a set
+holding exactly one key; anything else would choose a trust anchor on the
+caller's behalf. Provider entries themselves always need non-empty, unique ids.
 
 ### H-AUTH-08 — Accept two issuers for a month, and two audiences during a rename
 **Who:** the author moving off a legacy in-house issuer, with a month of overlap
@@ -216,14 +243,23 @@ For 4, the hashing half is documented well, in a code block, with the constant-t
 ### H-AUTH-11 — Find out at boot that the auth configuration is wrong
 **Who:** whoever is watching the deploy
 **Wants:** a misconfigured key-set URL, issuer or audience to fail the deploy rather than the traffic.
-**Story:** They ship a JWKS URL with a doubled letter. The process starts, the readiness probe passes, and every request is 401 forever.
+**Story:** They ship a JWKS URL with a doubled letter. The process starts, the readiness probe passes, and the first request discovers the provider failure.
 **Must hold:**
 1. A configuration that cannot possibly authenticate anybody does not start.
 2. There is some point before the first request at which a consumer can find out.
 
-**Today:** ❌ missing
-**Evidence:** The three misconfigurations that make a parser *over-trust* do fail at construction, loudly and by name (`auth/authjwt/parser.go:101-116`, pinned by `TestAParserThatWouldOverTrustRefusesToStart` at `parser_test.go:167`), and `JWKS` panics on an empty URL for exactly this reason and says so (`auth/authjwt/jwks.go:41-47`). The mirror case has nothing: a URL with a typo, a blocked egress rule, a wrong issuer string or a wrong audience is discovered at the first request, as the same reasonless 401 a forged token gets, at every replica, forever. There is no `Warm`, no health seam, and the first request after each deploy parks behind a fetch bounded at ten seconds with concurrent waiters behind it (`auth/authjwt/jwks.go:80`, `:183-192`).
-**If not ready:** nothing a consumer can write reaches inside the key source, so they discover it from the 401 rate. The closing shape is **`Parser.Warm(ctx) error`, called before `ListenAndServe`, and not a `JWKS(url, Warm())` option.** `JWKS` returns a bare `KeySource` with no error result, so a `Warm()` inside it has no caller-supplied context, no caller-chosen timeout and exactly one failure channel — panic — which turns a twenty-minute provider outage into a fleet that panics on start-up during a rolling deploy, blocker 2 moved from the request path to the boot path. Returning an error is what lets the caller decide, and the method must distinguish "the URL is wrong, or the set carries no usable key" from "the provider did not answer": the first fails the deploy, the second logs and starts. Both spellings need a `KeySource` field on `Parser` either way, because `KeySource` holds an opaque keyfunc and no warm method — the cost is honest, not free. [[D-021]] is the argument — "validated eagerly and fails at build or start-up rather than at request time" — and it is currently applied only to the misconfigurations that over-trust. A deploy that fails is cheaper than a 401 storm nobody can diagnose, and this is the one item on the list that removes an incident class rather than making it easier to read.
+**Today:** ✅ handled for configuration the parser can validate.
+**Evidence:** The declarations that make a parser over-trust fail at
+construction, and `JWKS` panics on an empty URL. `Parser.Warm(ctx)` is the
+explicit pre-traffic seam: for JWKS it performs the same bounded singleflight
+fetch and document/key validation as `Parse`, returning
+`ErrKeySourceUnavailable`; for already validated static sources it is a no-op.
+`TestWarmFetchesAndValidatesJWKSBeforeTraffic` pins healthy, invalid-document,
+static and caller-cancellation controls and asserts that `Warm` followed by
+`Parse` costs one fetch. A non-empty but semantically wrong issuer or audience
+cannot be inferred from a bare JWKS document; a deployment that needs that
+external assertion checks discovery/configuration separately rather than
+manufacturing a token in the parser.
 
 ### H-AUTH-12 — A public route, and a stricter check on `/admin`
 **Who:** anyone with a health check and an admin area
@@ -234,9 +270,28 @@ For 4, the hashing half is documented well, in a code block, with the constant-t
 2. A second guard mounted inside the first verifies what it was built to verify, or says it cannot.
 3. Mounting one guard globally and again on a group costs one verification.
 
-**Today:** ❌ missing for 2 — and it fails silently. 1 holds for a well-formed credential and not for a malformed one. 3 holds.
-**Evidence:** For 1: `auth/guard.go:96-100`, pinned by `TestAnOptionalGuardStillRefusesABadCredential` (`auth/guard_test.go:59`), which sends a well-formed `Bearer forged`. A header with no space is not a credential at all (`auth/credential.go:56-61`), so on an optional route `Authorization: eyJhbGci…` without the `Bearer ` prefix — common from SPAs and old clients — takes the anonymous branch and sees the public view, which is the downgrade `auth/guard.go:64-70` says `Optional` prevents. For 3: `auth/guard.go:91`, pinned by `TestASecondGuardDoesNotAuthenticateAgain` (`auth/guard_test.go:68`) and by `TestADoubleInstallAuthenticatesOnce` in all four transports (`auth/http/authnet/middleware_test.go:107`, `auth/http/authgin/middleware_test.go:117`, `auth/http/authfiber/middleware_test.go:122`, `auth/rpc/authgrpc/interceptor_test.go:119`). For 2: that is the *same line*. The check reads whether a principal is present, not which guard produced it, so the inner guard's authenticator, header, lookup and options are never consulted, and the outer guard's ordinary token passes every admin route. All five idempotence tests install the *same* `g` twice — including the Gin and Fiber ones, which are the group-mounting story this case is about — and nothing in the tree covers two different guards. There is no way out from outside either: `auth.WithPrincipal(ctx, nil)` returns the context unchanged (`auth/context.go:22-27`), so a principal cannot be cleared first. `docs/modules/en/auth.md:182` states the idempotence as a feature with no qualification, and [[UC-019]] guarantee 8 says the same.
-**If not ready:** the only correct wiring today is not to mount the outer guard on that subtree, which Gin and Fiber groups allow and a global `Use` or a wrapped mux does not, or to call the second authenticator by hand and skip the guard. **The fix should be the default, not an option.** An opt-in `auth.Reauthenticate()` leaves the silence in place for everybody who does not know to type it, and silence is what makes this security-shaped. Key the check on *which* guard produced the principal — a per-guard marker stored beside the principal, or a second context key holding the set of guards that have run — so a second mount of the *same* guard still costs one verification (guarantee 3 and all five tests unchanged) and a second *different* guard always runs. No call site changes. It is a behaviour change, so it has to land before the tag; the authhttp sweep reaches the same conclusion for the same defect, and the opt-in framing this file carried in round 1 was the disagreement, not the severity. **One defect, carried in both sweeps because the story is the bindings' and the fix is `auth.Guard`'s — count it once.** For guarantee 1, the malformed-credential arm needs a decision rather than a patch: refusing a schemeless header on an optional route means `ParseAuthorization` distinguishing "absent" from "present and unusable", which is a third result it does not have.
+**Today:** 🟡 partial — 2 and 3 hold. 1 holds for a well-formed credential and not for a malformed one.
+**Evidence:** For 1: `Guard.Authenticate` still distinguishes absent from a
+well-formed credential that its authenticator refuses, while
+`ParseAuthorization` cannot distinguish an absent header from a present bare
+token. `TestAnOptionalGuardStillRefusesABadCredential` pins the well-formed arm.
+
+For 2 and 3, a successful guard adds its concrete `*Guard` and the principal
+state it installed to an immutable marker chain. A consecutive repeat of the
+latest instance is skipped; another instance reaches its own authenticator.
+Re-entering A after B refuses with `ErrAmbiguousGuardOrder`: auth cannot infer
+whether B was a step-up or a downgrade, so it retains neither answer silently.
+`TestASecondGuardDoesNotAuthenticateAgain` and
+`TestADifferentGuardAuthenticatesAgain` are the A -> A and A -> B controls;
+`TestAReenteredGuardAfterAnotherIdentityBoundaryFailsClosed` pins both
+`ordinary -> step-up -> ordinary` and `strict -> weak -> strict`. Unary and the
+three HTTP bindings carry A -> A/A -> B; dedicated Stream tests carry all three
+states on gRPC's replaced-context path ([[D-076]], [[UC-019]] guarantee 8).
+
+**If not ready:** For guarantee 1, the malformed-credential arm still needs a
+decision rather than a patch: refusing a schemeless header on an optional route
+means `ParseAuthorization` distinguishing "absent" from "present and unusable",
+which is a third result it does not have.
 
 ### H-AUTH-13 — Sign out everywhere, before the tokens expire
 **Who:** the author implementing a "sign out of all devices" button, or responding to a compromised account
@@ -370,8 +425,15 @@ The return shape: `(T, bool)` collapses "absent" into "wrong type", and that is 
 1. The three static asymmetric sources are as reachable as `JWKS` — the PEM-to-key hop is shown, or shipped.
 2. A key parsed the wrong way fails at start-up, not at the first request.
 
-**Today:** 🟡 partial — the sources are right and the hop is missing.
-**Evidence:** `RSA`, `ECDSA` and `EdDSA` (`auth/authjwt/key.go:54`, `:65`, `:73`) each pin their methods, which is the whole point of the type, and the module page lists them in a table (`docs/modules/en/authjwt.md:61-68`). No snippet anywhere shows how to get a `*rsa.PublicKey` from a PEM: `grep -rn "ParsePKIX\|pem.Decode" --include="*.go" .` is empty across the whole repository, and so is `_examples/`. Three of the five exported `KeySource` constructors are covered by no runnable wiring. For 2, `New` panics on a `KeySource` that carries no key (`auth/authjwt/parser.go:102`), which catches a nil source and not a key parsed from the wrong PEM block.
+**Today:** 🟡 partial — declaration validation is complete and the PEM hop is missing.
+**Evidence:** `RSA`, `ECDSA` and `EdDSA` each pin their methods, reject nil,
+malformed and weak material at declaration, and deep-copy mutable coordinates,
+moduli or bytes. `TestStaticAsymmetricKeysAreValidatedAtDeclaration` and
+`TestStaticAsymmetricKeysAreSnapshottedAtDeclaration` pin both properties; JWKS
+reuses RSA's 2048-bit modulus and sane-exponent validation. The module page
+lists the constructors, but no snippet anywhere shows how to get a
+`*rsa.PublicKey` from a PEM: `grep -rn "ParsePKIX\|pem.Decode" --include="*.go"
+.` is empty across the whole repository and `_examples/`.
 **If not ready:** the consumer writes `pem.Decode` plus `x509.ParsePKIXPublicKey` plus a type assertion, and has to know not to reach for `ParseCertificate` when the file is a certificate rather than a bare key — a first-hour mistake whose symptom is the same reasonless 401 everything else here produces. Four lines in `docs/modules/en/authjwt.md` under the key-source table closes it and costs nothing. A shipped `authjwt.RSAFromPEM([]byte) KeySource` that panics on a PEM it cannot parse is the [[D-021]]-shaped version and is additive; it is worth deciding now only because after a tag the two spellings both exist forever.
 
 ### H-AUTH-23 — Turn authentication on for a service that already has traffic
@@ -395,7 +457,17 @@ The return shape: `(T, bool)` collapses "absent" into "wrong type", and that is 
 2. Nothing per-request is stored on any of them.
 
 **Today:** ✅ ready — and stated nowhere.
-**Evidence:** `Guard`'s fields are set by options at construction and only read afterwards (`auth/guard.go:46-77`, `:90-114`). `Parser[C]` holds the key source and a fixed option slice, and `keyfuncFor` closes the request context over per call rather than storing it, with the comment saying that is why (`auth/authjwt/parser.go:179-186`). The JWKS source holds a mutex over the key map, the timestamps and the in-flight channel (`auth/authjwt/jwks.go:113-125`), and the shared-fetch design is pinned by `TestAConcurrentBurstOfMissesIsOneFetch` (`auth/authjwt/jwks_test.go:215`). `apikey`'s authenticator is a struct set at `New` and read after (`auth/apikey/apikey.go:82-112`). Both suites run under `-race`.
+**Evidence:** `Guard`'s fields are set by options at construction and only read
+afterwards. `Parser[C]` holds the key source and a fixed option slice, while
+`keyfuncFor` closes a request context over one call rather than storing it. The
+JWKS source locks its key map, explicit fetched/attempted states and in-flight
+record. The fetch runs as detached bounded singleflight work; every initiator
+and waiter selects independently on its context. `TestAConcurrentBurstOfMissesIsOneFetch`,
+`TestAConcurrentFailedRefreshSharesOneErrorAndOneFetch`,
+`TestALeaderThatDisconnectsDoesNotFailTheWaiters` and
+`TestAWaiterCanCancelWithoutStoppingTheSharedFetch` pin the shared-state and
+lifetime branches under `-race`. `apikey`'s authenticator is a construction
+snapshot read after `New`.
 **If not ready:** n/a. The gap is documentation of a property that already holds: no module page says any of this, and the alternative a cautious consumer reaches for — a mutex around the guard, or a parser built per request — costs a JWKS fetch per request and is not obviously wrong from outside. One line in each of the three module pages.
 
 ## The DX this should have
@@ -560,9 +632,9 @@ of them.
   lands, that Out of scope line has to name `Reject` alongside the mapper in the
   same change.
 - **[[D-021]]** — construction panics on the misconfigurations that over-trust,
-  and that stays. `JWKSStaleAfter` must not become a fourth panic, an unset value
-  must keep today's behaviour, and its default must not be short enough to
-  recreate the fetch storm `JWKSMinRefresh` exists to prevent. `HMACAny()` with
+  and that stays. [[D-078]] deliberately extends it: non-positive
+  `JWKSStaleAfter` is refused, the unset value takes a finite safe default, and
+  that default remains longer than `JWKSMinRefresh`. `HMACAny()` with
   no secrets *must* panic, because `KeySource.valid()` would let it through
   (H-AUTH-09). H-AUTH-11 asks D-021 to be applied to the mirror case — a
   configuration that refuses everybody — which is an extension of the decision,
@@ -590,10 +662,10 @@ of them.
 | An identity the service already has | Implement four methods — and expand roles yourself, correctly, unaided | small · unenforceable |
 | Refusals indistinguishable to a client | Free, and control-cased | none |
 | One credential kind or several at one route | `Chain` + `Lookup`, ~6 lines, and outages survive the wiring order | none |
-| An API key in the header the fleet already sends | The documented `auth.Header("X-Api-Key")` refuses every such client, and `AnyScheme()` cannot rescue it; a 4-line `Lookup` is the working spelling | small — after a 401 storm |
+| An API key in the header the fleet already sends | `apikey.Header("X-Api-Key")`; the module pages use it | none |
 | A machine caller in a tenanted service | Both documented examples build a principal with no `Attrs`, which the flagship policy then denies on every request | small — one line of docs |
 | A fabricated caller for tests and jobs | One literal, one call | none |
-| A real credential in an end-to-end test | `apikey.Static` would do it and nobody here ever has | small, unproven |
+| A real credential in an end-to-end test | One package test walks Guard → API-key authenticator → static store, with an Authorization control | none in code · small in runnable examples |
 | A token for a test of the JWT path | `golang-jwt` in your test module, ~20 lines | small, and foreclosed by documentation |
 | A hook that refuses a verified token | Only off `Standard`'s path: 5 lines and 5 names become 11 and 11 | small |
 | Roles loaded from my own database | The mapper, which is right — and nothing says it runs per request or what caching it costs | none in code · small in docs |
@@ -603,15 +675,15 @@ of them.
 | Two audiences during a rename | A `Chain`; `Audience("a","b")` means both-of, and the one-word reach stops checking entirely | small · sharp |
 | A static public key from a PEM | `pem.Decode` + `x509.ParsePKIXPublicKey` yourself, shown nowhere in the tree | small |
 | Clock skew tolerated | One line that exists, is well documented, and is in no canonical snippet | none in code · small in docs |
-| A stricter guard on a subtree | No answer. The inner guard is silently skipped and the principal cannot be cleared | large |
+| A stricter guard on a subtree | Mount ordinary A then stricter B once each: B always runs and its principal reaches the handler. Only adjacent A -> A is idempotent; ambiguous A -> B -> A fails closed because guards declare no assurance order | none for A -> B · small composition constraint for re-entry |
 | A credential in a cookie | `authhttp.Cookie(name)`, documented on the authhttp page | none |
 | A credential in a query string | No reach from any binding | large |
 | Forwarding the identity to the next service | Your own context key and your own middleware, ~20 lines, in the one place this library said you would not need one | large |
 | One guard on HTTP and gRPC at once | Works, is pinned file for file, and is the best thing here | none |
 | Building it once and sharing it | Safe, and said nowhere | none in code · small in docs |
-| A revoked JWKS key stops being accepted | Only as a side effect of traffic on a *new* key; no maximum age | large |
-| A provider outage that looks like an outage | Warm processes survive; every cold one answers 401 to everybody | large |
-| Knowing a deploy's auth config is wrong | Nothing until the first request, then a reasonless 401 forever | large |
+| A revoked JWKS key stops being accepted | Five-minute safe default, configurable; exact fake-clock boundary is pinned | none |
+| A provider outage that looks like an outage | Typed unavailable; bounded stale-on-error is explicit and observable | none |
+| Knowing a deploy's JWKS cannot work | `Parser.Warm(ctx)` before readiness; typed provider failure and one shared fetch | none |
 | Turning auth on without an incident | No shadow mode, and no recipe for the one you can build | large |
 | Knowing why a 401 happened | Recoverable in four lines nobody has written for you; reported nowhere | large |
 | A permission vocabulary that stays one vocabulary | Nothing links policies to role maps, and two role maps merge by overwriting | large, and it grows |
@@ -620,34 +692,29 @@ of them.
 401, the algorithm pinned to the key, roles expanded once, the three-result key
 store, an outage beating a refusal whatever the wiring order, one guard driving
 four transports. Every one of those is decided deliberately and pinned by a test
-that would fail if somebody undid it. What is not right is the first hour and the
-second service. The documented API-key wiring refuses every ordinary client, and
-its own escape hatch cannot reach the check that would waive it; `Standard`
-against a provider that spells roles anywhere but `roles` produces a principal
+that would fail if somebody undid it. What is not right is the rest of the first
+hour and the second service. The dedicated API-key header now matches the
+ordinary client, and a stricter nested guard runs without an opt-in ([[D-076]]);
+`Standard` against a provider that spells roles anywhere but `roles` still produces a principal
 full of OAuth scopes and a 403 on everything. Past the first hour the pattern is
 consistent: `Standard` has no seam, so the first real requirement drops you to
 the long form, and five of the cases above arrive at that same cliff from
 different directions. Then the second service arrives and the identity this
-library established cannot leave the process. And the module has very little to
-say once the system is unhealthy: an outage at the provider, a key withdrawn, a
-typo in the audience, a drifted clock, a kid-less token against a two-key set —
-five different incidents, one identical silent 401, and no supported way to tell
-them apart.
+library established cannot leave the process. Provider health now has its own
+typed channel, withdrawn keys have a finite lifetime, and `Parser.Warm`
+validates remote trust before readiness ([[D-078]]). Audience typos need
+external configuration/discovery validation; clock drift and a kid-less token
+against a two-key set retain their stated operational rules.
 
 ## Release blockers found here
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | A second guard mounted inside another never runs: the presence check is on the principal, not on which guard produced it (`auth/guard.go:91`), and a principal cannot be cleared (`auth/context.go:22`) | blocker | Silent and security-shaped — a step-up guard on `/admin` verifies nothing and both spellings compile. All five idempotence tests install the same guard twice. The fix is a per-guard marker rather than an opt-in flag, because an opt-in leaves the silence for everyone who does not know to type it — so it is a **behaviour change and must land pre-tag**. **Same defect as the authhttp sweep's blocker 1, and now the same timing; count it once.** |
-| 2 | An unreachable or failing JWKS endpoint renders as 401, not as a server fault (`auth/authjwt/parser.go:169`) | blocker | It is the confusion `apikey.Store`'s three results exist to prevent, one package away. A warm process survives; every cold one — a deploy, a restart, an added replica, a rotation — tells every client its credentials are bad while the 5xx rate stays flat. Changes a status code, so **decide it before the tag.** |
-| 3 | `auth.Header("X-Api-Key")` refuses every client that sends a bare key, `AnyScheme()` cannot rescue it because `ParseAuthorization` runs first (`auth/credential.go:56-61` from `auth/guard.go:123`), and `apikey` is exercised nowhere outside its own package test | serious | The documented setup for one of the two shipped authenticators does not work against an ordinary API-key client, the page's own escape hatch does not reach, and nothing in `test/` or `_examples/` would have caught it. Documentation half is free today; `apikey.Header` is additive. |
 | 4 | `authjwt.Claims` reads roles from `roles` only and takes the OAuth `scope` string as permissions verbatim (`auth/authjwt/claims.go:24`, `:142-146`), and nothing says so at the call site | serious | A Keycloak or Cognito token yields a principal holding `openid profile email` — permissions that look real, match no policy, and 403 every request with no reason anywhere, on day one. `scp` is a third permission spelling nothing reads. |
 | 5 | No supported way to forward the caller's credential to the next service: `Guard.Authenticate` drops it and `auth.WithCredential`/`CredentialFrom` do not exist | serious | Every two-service consumer invents a second context key and a second middleware — the thing this library's opening promises they will not need. The remote sweep already writes `auth.CredentialFrom` into its ideal call site. A second answer to "where does identity live" is free only before the tag, and it needs a yes or no against [[D-055]]. |
-| 6 | A JWKS key set has no maximum age: `jwks.fetched` is written at `auth/authjwt/jwks.go:222` and read nowhere | serious | A withdrawn signing key keeps verifying until some other token names an unknown kid; withdraw one without introducing one and the process trusts it until it restarts. `JWKSStaleAfter` is a two-line change; its default and its stale-on-failure behaviour must be decided with blocker 2, since the two pull against each other. |
-| 7 | Nothing tells a consumer before the first request that the auth configuration cannot work (`auth/authjwt/jwks.go:41-47` panics only on an empty URL) | serious | A typo in the key-set URL, a blocked egress rule or a wrong issuer is a reasonless 401 on every request at every replica, forever. The fix is `Parser.Warm(ctx) error` and **not** a `Warm()` option inside `JWKS`, which can only panic and would turn a provider outage into a fleet that fails to boot. |
-| 8 | Three tests that read as pins and assert almost nothing: `TestAKeySetThatCannotBeReachedIsARefusalAndNotAPanic` (`auth/authjwt/jwks_test.go:148`) and `TestAMapperMayRefuseATokenThatVerified` (`auth/authjwt/claims_test.go:122`) assert only `err != nil`; the `Chain` refusal subtest (`auth/credential_test.go:81`) asserts the sentinel and nothing about disclosure | serious | Each names a classification it does not check, and blocker 2's behaviour is one of them — a reviewer asking whether the choice is deliberate is told yes by a name and nothing by the assertion. `auth/apikey/apikey_test.go:83` is the standard. |
+| 8 | Two tests that read as pins and assert almost nothing: `TestAMapperMayRefuseATokenThatVerified` asserts only `err != nil`; the `Chain` refusal subtest asserts the sentinel and nothing about disclosure | serious | The former does not distinguish 401 from 500 and the latter does not inspect disclosure. The JWKS outage test now asserts both typed unavailable and the absence of `auth.ErrUnauthenticated` ([[D-078]]). |
 | 9 | No exported way to recover a refusal's reason, and nothing reports it (`auth/errors.go:33`; `errs.Fault.Error()` is classification only) | serious | [[UC-019]] guarantee 6 promises recoverable and delivers it; nothing promises reported. Auth's half is `auth.Reason(err)` **and** `auth.Refuse(cause error)` — the string-only version breaks `errors.Is` for the consumer's own refusals. The log line is the authhttp sweep's blocker 4 — one incident, two halves, count it once. |
-| 10 | [[UC-019]] and `docs/ai/usecases/Index.md:90` say "covered — every guarantee is pinned", and two are not: guarantee 8 is defeated for a second, different guard (blocker 1) and guarantee 11's only pin asserts `err != nil` (blocker 8) | serious | A tag freezes the artefact the next agent trusts instead of re-deriving. The use case and the Index row are what is wrong here, not the code, and both need the same change: the Status paragraph naming guarantees 8 and 11, and the Index status flipped. |
+| 10 | [[UC-019]] and `docs/ai/usecases/Index.md:90` say "covered — every guarantee is pinned", but guarantee 11's only pin asserts `err != nil` (blocker 8) | serious | Guarantee 8 now has same-guard and different-guard parity tests ([[D-076]]). Guarantee 11 still needs a classification assertion, so the blanket status remains too broad. |
 | 11 | A nested or namespaced claim has no convenience form and the hand-written extractor carries a fail-closed obligation written nowhere (`crud/decorators/security/principal.go:169-186`) | sharp edge | The route exists — a `security.ScopeField` closure — and is in no document, so the version a consumer writes reintroduces `WHERE tenant_id = 0`. `ScopeAttrPath` is the fix and it belongs in `security`, not on `Attr`. The request-time panic on a type mismatch is the security sweep's blocker 5 — count that half once. |
 | 12 | `authjwt.HMAC` takes one secret, `Issuer` one issuer, and `Audience` means all-of | sharp edge | The only one-line answers to "two issuers this month" and "two audiences this month" are `AllowAnyIssuer()` and `AllowAnyAudience()`, which stop checking. `AnyIssuerOf` also has to widen the start-up check at `parser.go:111`; the `HMAC` half wants `HMACAny` rather than a variadic, because a variadic breaks the function value and a zero-argument call passes `valid()`. Nothing warns that two issuers can mint the same subject. |
 | 13 | A credential in a query string is unreachable from any binding | sharp edge | Event streams cannot set headers. **The cookie half is closed**: `authhttp.Cookie` is built, falls back to the Authorization header, and is what a browser holding both credentials in cookies authenticates through ([[D-075]]). The query half is a decision and must be taken before the tag, because widening `Guard.Authenticate` breaks a documented call and a namespaced key does not. |
@@ -656,11 +723,10 @@ them apart.
 | 16 | Three of the five `KeySource` constructors have no PEM hop and no runnable wiring: `grep -rn "ParsePKIX\|pem.Decode"` over the tree is empty | sharp edge | An internal issuer publishing one public key is an ordinary deployment, and the four lines it needs are shown nowhere; reaching for `ParseCertificate` instead produces the same reasonless 401 as everything else here. |
 | 17 | [[FL-019]]'s line numbers have drifted through `parser.go`, `claims.go`, `credential.go` and `authhttp.go` | sharp edge | A flow doc's one job is to say where something is. Step 5 → `credential.go:55` (`:56`); step 7 → `credential.go:36` (`:37`); step 8 → `parser.go:137` (`:161`) and `parser.go:110` for the method pinning (`:127`); step 9 → `parser.go:171` (`:195`); step 10 → `claims.go:121` (`:137`); step 14 → `authhttp.go:66` (`:67`). |
 
-**Timing.** Five of these are not free after a tag. Blocker 1 is a default
-change, not an option — an opt-in preserves the silence, so it is pre-tag or it
-is v2. Blocker 2 changes a rendered status code. Blocker 5 adds a second context
-key to `auth`, and a later one is a second answer to the same question. Blocker
-6's default changes what existing deployments do. Blocker 13's query shape either
+**Timing.** The JWKS status, freshness, detached fetch and readiness changes
+landed before the tag under [[D-078]]. Blocker 5 adds a second context key to
+`auth`, and a later one
+is a second answer to the same question. Blocker 13's query shape either
 preserves or breaks the documented
 `guard.Authenticate(r.Context(), r.Header.Get)` call. Blocker 12's `HMACAny` is
 free only in the second-constructor spelling; the variadic is not. Everything
@@ -727,8 +793,14 @@ failures today.
 **Setup:** An application implements `auth.Principal` on `*caller` and its lookup-miss branch returns `(*caller)(nil), nil`.
 **What the consumer does:** They mount that authenticator behind `auth.NewGuard`, expecting the miss to be a refusal rather than an authenticated request.
 **What must happen:** A principal with no concrete value is rejected before it reaches the context or a policy; an extension bug must not become a request-time panic or an apparent identity.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Guard.Authenticate` rejects only an interface equal to nil (`auth/guard.go:103-113`); `WithPrincipal` and `PrincipalFrom` make the same interface-nil checks (`auth/context.go:22-35`). A typed nil stored in an interface is not equal to nil, so it is carried and reported present. `TestAnAuthenticatorThatAnswersNothingIsARefusal` covers only an untyped `nil, nil` (`auth/guard_test.go:119-130`), and `TestANilPrincipalIsNotStored` likewise passes a literal nil (`auth/context_test.go:48-53`); no typed-nil case was found.
+**Today:** ✅ handled
+**Evidence:** Guard, Chain, context placement/retrieval, API-key lookup and the
+`HasAll`/`HasAny`/`InAny` quantifiers share the interface-aware predicate in
+`internal/nilvalue`. A typed-nil Principal is a refusal or absence before any
+method is called. `TestAnAuthenticatorThatAnswersNothingIsARefusal`,
+`TestANilPrincipalIsNotStored`, the typed-nil quantifier control, and the
+nil-like Chain-success arms all carry a concrete typed-nil pointer rather than a
+literal nil ([[D-076]]).
 **Blast radius:** crash
 
 ### E-AUTH-02 — A typed-nil authenticator or API-key store starts the process
@@ -736,8 +808,19 @@ failures today.
 **Setup:** A tired author passes a nil `*myAuthenticator` as `auth.Authenticator`, or a nil `*myStore` as `apikey.Store`, after a failed constructor branch.
 **What the consumer does:** They rely on the documented nil guard to make the deployment fail where it is wired.
 **What must happen:** Both declarations refuse loudly at construction, regardless of whether nil is carried directly or through an interface.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `NewGuard` tests only `a == nil` before retaining the interface (`auth/guard.go:32-42`), and `apikey.New` does the equivalent for its `Store` (`auth/apikey/apikey.go:79-92`). Both later invoke the stored interface on the request path (`auth/guard.go:103`, `auth/apikey/apikey.go:103`). The start-up tests pass literal nil only (`auth/guard_test.go:132-139`, `auth/apikey/apikey_test.go:108-115`); no typed-nil configuration test was found.
+**Today:** ✅ handled
+**Evidence:** `NewGuard` and `apikey.New` reject nil-like dynamic values before
+retaining their extension interfaces (`auth/guard.go`,
+`auth/apikey/apikey.go`). `TestANilAuthenticatorRefusesToStart` and
+`TestANilStoreRefusesToStart` each carry literal nil, a typed-nil pointer and a
+typed-nil function; valid constructors elsewhere are their controls. Guard
+options are opaque build declarations applied to a private draft, then copied
+into the published guard. `TestNewGuardDoesNotPublishTheOptionDraft` mutates a
+retained internal draft concurrently with requests and proves it cannot rewrite
+the live security policy. `Guard.Validate` is called by all four transport
+constructors, so nil and `new(auth.Guard)` fail while the graph is assembled;
+direct Authenticate returns `ErrGuardNotReady` instead of panicking on the first
+request ([[D-076]]). `Lookup` remains the low-level source escape hatch.
 **Blast radius:** crash
 
 ### E-AUTH-03 — Pointer: credential cardinality is a transport decision
@@ -748,8 +831,12 @@ failures today.
 **Setup:** A scheme string comes from configuration and is blank because an environment variable was omitted.
 **What the consumer does:** They expect a bad scheme declaration to stop the process, retaining the default `ApiKey` restriction unless they explicitly chose the named waiver.
 **What must happen:** An empty replacement scheme is rejected at construction; only `AnyScheme()` may waive the scheme check.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Scheme` stores its argument unchanged (`auth/apikey/apikey.go:64-67`), while an empty stored scheme means accept every credential (`auth/apikey/apikey.go:56-59`, `auth/apikey/apikey.go:95-103`) — exactly `AnyScheme`'s implementation (`auth/apikey/apikey.go:69-77`). The package documentation calls `AnyScheme()` an opt-in because it can hand expired JWTs to a key store that logs misses (`docs/modules/en/apikey.md:98-104`), but `TestTheSchemeIsCheckedUnlessItIsWaived` tests the named waiver and a non-empty replacement only (`auth/apikey/apikey_test.go:57-79`).
+**Today:** ✅ handled
+**Evidence:** `Scheme` rejects empty and whitespace-only names while the
+authenticator is built; only `AnyScheme` writes the internal empty waiver
+(`auth/apikey/apikey.go`). `TestTheSchemeIsCheckedUnlessItIsWaived` carries the
+default refusal, the explicit waiver, a valid replacement and both invalid
+declarations ([[D-076]]).
 **Blast radius:** data leak
 
 ### E-AUTH-05 — A `Static` API key's claims change after start-up
@@ -757,8 +844,24 @@ failures today.
 **Setup:** A small service wires `apikey.Static` with an `auth.Claims` principal whose `Attrs` map is later reused or updated by its configuration reload path.
 **What the consumer does:** They rely on the documented fixed-at-start-up store and mutate the input only after it has been handed to the authenticator.
 **What must happen:** Later mutations cannot alter the subject, permissions, or attributes an issued key authenticates as; concurrent mutation must not race request authentication.
-**Today:** 🟡 partial
-**Evidence:** `Static` copies the outer key map but retains each `auth.Principal` interface unchanged (`auth/apikey/apikey.go:124-149`). `auth.Claims.Attr` reads its map directly (`auth/principal.go:49-57`, `auth/principal.go:79-83`), and `authjwt.Claims.Grant` also passes its `Extra` map into the neutral principal (`auth/authjwt/claims.go:137-153`). `TestStaticCopiesTheMapItWasGiven` proves only that deleting the outer map entry does not revoke the key (`auth/apikey/apikey_test.go:98-106`); no test mutates a principal or its attributes after `Static` returns.
+**Today:** ✅ handled for the built-in fixed identity
+**Evidence:** `Static` freezes value and pointer forms of `auth.Claims`, copying
+roles, permissions and supported attribute containers at declaration time,
+then materialises another deep copy for every lookup. `TryStatic` returns
+`ErrUnsupportedStaticAttribute` for state reflection cannot copy soundly;
+declarative `Static` panics on the same configuration error. In particular it
+does not shallow-copy `bytes.Buffer`, `big.Int`, or a custom struct with hidden
+mutable fields. A request can mutate a supported value it received without
+changing the store or another request. The deterministic mutation proof is
+`TestStaticSnapshotsClaimsAndReturnsAPerRequestCopy`; the concurrent control is
+`TestStaticClaimsAreIndependentAcrossConcurrentRequests`, and pointer Claims
+retain their concrete type without sharing.
+`TestTryStaticRejectsMutableStateItCannotCopySoundly` carries all three refused
+types, while `TestTryStaticCopiesSupportedStructAttributesForEveryRequest` and
+the cyclic-container control prove fresh supported values. A custom Principal
+cannot be enumerated through the four-method interface and must itself be
+immutable and concurrency-safe; the contract says so rather than claiming an
+impossible generic copy ([[D-076]]).
 **Blast radius:** silent wrong answer
 
 ### E-AUTH-06 — The HMAC secret is empty
@@ -766,9 +869,13 @@ failures today.
 **Setup:** A deployment reads its HMAC secret from an unset or empty environment variable.
 **What the consumer does:** They expect the parser construction to refuse a secret with no entropy rather than start as an authenticator every attacker can reproduce.
 **What must happen:** `authjwt.HMAC` rejects an empty secret at construction.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `HMAC` copies and returns any slice, including a zero-length one (`auth/authjwt/key.go:44-50`), and `KeySource.valid` checks only that a key function and methods exist (`auth/authjwt/key.go:91-92`); `New` therefore starts it (`auth/authjwt/parser.go:101-104`). The dependency then computes HMAC directly with the provided `[]byte` and has no non-empty-key check (`github.com/golang-jwt/jwt/v5@v5.3.1/hmac.go:58-80`). No empty-secret test was found in `auth`.
-**Blast radius:** data leak
+**Today:** ✅ handled
+**Evidence:** `HMAC` is exact HS256 and rejects fewer than 32 bytes at declaration;
+the explicit HS384 and HS512 constructors require 48 and 64. The 0/1/16/31/32
+boundaries and all three algorithm minima are pinned by
+`TestHMACRefusesShortSecretsAtDeclaration`; exact algorithm selection is pinned
+by `TestEachHMACConstructorPinsOneAlgorithm` ([[D-078]]).
+**Blast radius:** none
 
 ### E-AUTH-07 — `Audience("")` passes the start-up check but authenticates nobody
 **Shape:** degenerate declaration
@@ -784,36 +891,52 @@ failures today.
 **Setup:** An internal issuer's PEM cannot be parsed, and the application passes the resulting nil RSA/ECDSA key or empty Ed25519 key to the corresponding constructor.
 **What the consumer does:** They expect the authentication configuration to fail where the key is wired, not only after traffic reaches it.
 **What must happen:** Every static-key constructor validates usable key material before `New` can build a parser.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `RSA`, `ECDSA`, and `EdDSA` capture their supplied key unchanged while always supplying methods and a non-nil key function (`auth/authjwt/key.go:52-77`); `KeySource.valid` cannot inspect the captured material (`auth/authjwt/key.go:91-92`). `New` thus accepts all three (`auth/authjwt/parser.go:101-104`). The construction test exercises only `Custom(nil, nil)` (`auth/authjwt/parser_test.go:167-203`); no nil static-key case was found.
-**Blast radius:** confusing error
+**Today:** ✅ handled
+**Evidence:** `RSA`, `ECDSA`, and `EdDSA` validate at declaration and panic on
+nil or malformed material. RSA also enforces a 2048-bit minimum and sane odd
+exponent, ECDSA normalises to a supported curve and checks the point, and
+Ed25519 requires exactly 32 bytes. All three deep-copy caller-owned mutable
+material. `TestStaticAsymmetricKeysAreValidatedAtDeclaration` pins the invalid
+matrix and `TestStaticAsymmetricKeysAreSnapshottedAtDeclaration` mutates every
+original key after construction while the parser continues verifying the
+pre-mutation token ([[D-078]]).
+**Blast radius:** none
 
 ### E-AUTH-09 — A signed JWT has permissions but no subject
 **Shape:** boundary · seam
 **Setup:** An issuer emits a correctly signed, unexpired token with roles or permissions but omits `sub`.
 **What the consumer does:** They use `authjwt.Standard` and expect every authenticated principal to have the stable caller identifier the auth contract promises.
 **What must happen:** The bridge refuses the token, or makes an explicit no-subject waiver the consumer must name; it must not authenticate an identity whose audit and ownership key is empty.
-**Today:** ❌ wrong or unhandled
-**Evidence:** The parser configures issuer, audience, expiry, and algorithms but never `jwt.WithSubject` (`auth/authjwt/parser.go:127-146`); golang-jwt validates a missing subject only when a subject is required (`github.com/golang-jwt/jwt/v5@v5.3.1/validator.go:292-309`). The ready-made claims return `Sub` unchanged (`auth/authjwt/claims.go:97-99`), and `Standard` returns those claims as a principal (`auth/authjwt/authenticator.go:50-54`). `Principal.Subject` is documented as the stable audit and `ScopeSubject` identifier (`auth/principal.go:22-26`). `security.ScopeSubject` later refuses an empty subject (`crud/decorators/security/principal.go:189-200`), but permission policies do not provide that backstop. No missing-subject test was found.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** `Standard` refuses missing, empty and whitespace-only `sub` before
+granting a principal. `TestStandardRefusesATokenWithoutASubject` pins all three
+and carries the control: `New[C]` plus an explicit `Authenticator` mapper may
+derive a stable subject from another claim ([[D-078]]).
+**Blast radius:** none
 
 ### E-AUTH-10 — A JWKS contains the same `kid` twice
 **Shape:** adversarial input
 **Setup:** A provider publishes two usable keys with one key identifier, whether through a broken rotation job or a compromised key-set response.
 **What the consumer does:** They expect the ambiguous key set to be refused; the verifier must not choose a trust anchor by document order.
 **What must happen:** Fetching detects duplicate usable `kid` values and rejects the set without replacing a known-good cache.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `fetch` reduces the response into a map with unconditional assignment (`auth/authjwt/jwks.go:257-275`), so the last duplicate overwrites the first; `cached` then returns that one key by `kid` (`auth/authjwt/jwks.go:146-160`). The JWKS tests cover rotation, unusable entries, unavailable servers, and unknown kids (`auth/authjwt/jwks_test.go:64-234`), but no duplicate-`kid` case was found.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** Fetch validates every entry's non-empty, unique id before filtering
+or rendering any key, and installs nothing on an ambiguous response.
+`TestAnEmptyOrDuplicateKidRefusesTheWholeKeySet` carries both negative cases and
+the one-key control ([[D-078]]).
+**Blast radius:** none
 
 ### E-AUTH-11 — The JWKS refresh interval is zero or negative
 **Shape:** degenerate declaration · adversarial input
 **Setup:** A duration parsed from configuration is zero or negative, then an attacker sends sequential tokens with unknown `kid` values.
 **What the consumer does:** They expect the advertised anti-refetch limit to remain safe, or the invalid duration to fail at construction.
 **What must happen:** `JWKSMinRefreshEvery` rejects non-positive durations (or preserves a safe minimum); unknown kids must not turn into one outbound fetch per request.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `JWKSMinRefreshEvery` assigns the duration without validation (`auth/authjwt/jwks.go:105-108`). The limiter skips a refresh only when `time.Since(s.attempted) < s.minRefresh` (`auth/authjwt/jwks.go:181-201`), which is false for zero or negative intervals, so sequential misses each initiate a fetch. Tests prove the default limit and concurrent coalescing (`auth/authjwt/jwks_test.go:107-122`, `auth/authjwt/jwks_test.go:209-234`) but do not exercise zero or negative configuration.
-**Blast radius:** confusing error
+**Today:** ✅ handled
+**Evidence:** `JWKSMinRefreshEvery` panics on zero and negative values.
+`UnsafeJWKSNoMinRefresh` is the explicit waiver; the control in
+`TestANonPositiveMinRefreshRefusesToStart` proves it permits two fetches for two
+sequential misses, so the negative arm cannot pass vacuously ([[D-078]]).
+**Blast radius:** none
 
 ### E-AUTH-12 — A thousand static API keys are configured
 **Shape:** scale
@@ -829,8 +952,14 @@ failures today.
 **Setup:** A custom member in `auth.Chain` returns `(nil, nil)` for a credential it could not resolve, while a later authenticator could authenticate that credential.
 **What the consumer does:** They expect the chain to treat "no caller" as a refusal and continue, consistent with the guard's contract.
 **What must happen:** A nil principal with no error is not a successful authentication and cannot prevent a later authenticator from running.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `Chain` returns immediately whenever `e == nil`, without inspecting `p` (`auth/credential.go:96-125`); only `Guard.Authenticate` translates a bare nil principal into `Unauthenticated` (`auth/guard.go:103-113`). The chain test covers real principals, refusals, empty chains, and literal nil members (`auth/credential_test.go:63-100`), not a `(nil, nil)` member.
+**Today:** ✅ handled
+**Evidence:** `Chain` snapshots and normalises its variadic input at
+construction, skipping literal and typed-nil authenticators. A member returning
+`(nil-like Principal, nil)` records a refusal and lets the next alternative run;
+if none supplies an identity the result is `ErrUnauthenticated`. The typed-nil
+member/success arms in `TestChainAnswersTheFirstAuthenticatorThatSucceeds` pin
+both branches, while `TestChainSnapshotsTheVariadicSlice` mutates the caller's
+input concurrently and proves a published chain observes only its snapshot.
 **Blast radius:** confusing error
 
 ### E-AUTH-14 — A one-character-short API key is presented
@@ -847,28 +976,48 @@ failures today.
 **Setup:** A provider removes compromised key `k1` from its JWKS while unexpired `k1` tokens remain in circulation. No client presents a new, unknown `kid` to force a refresh.
 **What the consumer does:** They need an explicit policy: either a known key remains accepted until token expiry, or the cache has a stated maximum age after which the provider is consulted. Revocation cannot depend on unrelated traffic or a process restart.
 **What must happen:** The public API documents and enforces one acceptance/revocation lifetime, including what happens when refresh fails. A removed key must not remain trusted indefinitely by accident.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `auth/authjwt/jwks.go:127-141` returns a cached known `kid` without calling `refresh`; `auth/authjwt/jwks.go:162-228` refreshes only after a cache miss, and records `fetched` without any reader. `auth/authjwt/jwks_test.go:82-105` proves retirement only after a new unknown `k2` forces a refresh; no test removes a still-cached `k1` without that trigger.
-**Blast radius:** data leak
+**Today:** ✅ handled
+**Evidence:** A hit at the five-minute default `JWKSFreshness` refreshes the
+whole set; `JWKSStaleAfter` changes the bound and only the explicitly unsafe
+waiver removes it. `TestARetiredCachedKidStopsVerifyingAtTheFreshnessBoundary`
+proves with a fake clock that the old key works before the boundary, fails after
+the provider removes it, and the replacement works ([[D-078]]).
+**Blast radius:** none
 
 ## Edge verdict
 
-The worst edge is an empty HMAC secret: the parser starts and accepts signatures that anybody can create, so this is not merely a bad 401 configuration. The module also leaves several declarations that should fail at start-up to fail on traffic — empty audience, nil static public key, zero refresh interval, and interface-typed nil dependencies — while its advertised fixed API-key identities remain mutable by reference. JWKS has careful concurrency and unknown-key rate-limit coverage under valid configuration, but it silently resolves a duplicate key identifier by response order and has no declared lifetime for a key the provider withdrew. Repeated credentials are an Authhttp transport seam, not a competing core verdict. The prefix-key boundary is properly closed and pinned, but the extension and misconfiguration boundaries need construction-time validation before this is release-ready.
+HMAC and JWKS now close their security-shaped edges: HMAC has exact algorithms
+and declaration-time strength floors; JWKS rejects ambiguous ids, retains its
+unknown-kid request bound under outage, refreshes cached hits on a finite clock,
+and keeps provider failure out of 401 ([[D-078]]). Guard/Chain/context/API-key
+seams now share nil-like semantics, Guard configuration and Chain input are
+construction snapshots, and fixed built-in API-key identities do not share
+mutable Claims state ([[D-076]]). Static asymmetric keys now share declaration
+validation and snapshot semantics; empty audiences remain the declaration edge
+here. Repeated credentials are an Authhttp transport seam, not a competing core
+verdict.
 
 ## Release blockers found here (edge)
 
-| # | What | Severity | Why it blocks |
-|---|---|---|---|
-| 1 | `authjwt.HMAC(nil)` / `authjwt.HMAC([]byte{})` starts a parser that verifies with a public, empty secret (`auth/authjwt/key.go:44-50`) | blocker | A forgotten secret is an authentication bypass, not an outage: an attacker can mint a valid HMAC token and reach any permission-based policy. |
-| 2 | `apikey.Scheme("")` is an accidental `AnyScheme()` (`auth/apikey/apikey.go:56-77`) | serious | A configuration typo can feed bearer JWTs into the API-key store, precisely the credential-disclosure path the explicit waiver exists to avoid. |
-| 3 | A duplicate usable JWKS `kid` is resolved by last-write-wins (`auth/authjwt/jwks.go:257-275`) | serious | A malformed or compromised provider response changes the trust anchor by JSON array order rather than failing closed. |
-| 4 | `JWKSMinRefreshEvery(0)` removes the unknown-`kid` outbound-request bound (`auth/authjwt/jwks.go:105-108`, `auth/authjwt/jwks.go:181-201`) | serious | One forged, sequentially distinct `kid` per request can make the service repeatedly call its identity provider. |
-| 5 | Typed-nil principals and extension dependencies evade the literal-nil start-up checks (`auth/context.go:22-35`, `auth/guard.go:32-42`) | serious | A routine Go interface mistake becomes an apparent authenticated identity or request-time crash instead of a deploy-time error. |
-| 6 | A known JWKS key is accepted from cache until an unrelated unknown `kid` forces a refresh; `fetched` has no maximum-age reader (`auth/authjwt/jwks.go:127-141,162-228`) | serious | Withdrawing a compromised signing key does not give an operator a predictable revocation time. A process can continue accepting its tokens until restart or unrelated key traffic. |
+None remain from the typed-nil/immutability follow-up. The typed-nil Principal
+that previously appeared authenticated is now refused consistently, and its
+regressions exercise Guard, Chain, context, API key and policy-quantifier
+boundaries ([[D-076]]). Other not-ready cases above retain their own status.
 
 ## Edge DX constraints
 
-The round-2 DX conclusion is accepted with these boundaries. Empty HMAC material, audience elements, and JWKS refresh intervals need one **construction-time policy** — each current constructor must reject its invalid value before `authjwt.New` creates a parser — but no shared validator API exists today. `auth.WithCredential` and `auth.CredentialFrom` are likewise proposals, not current APIs: [[D-055]] must first decide whether an in-flight credential may live beside the principal, then define explicit opt-in placement and lifetime for every transport and remote forwarding. **Until that D-055 amendment is accepted and recorded, Remote must not present `CredentialFrom`, request-hook credential forwarding, or its forwarding example as usable.** The H-AUTH-19 proposal, the DX call-site line, and release-blocker row 5 are all conditional on that amendment; today a Remote hook must use a consumer-owned context value or not forward the credential. `authhttp.Cookie` remains an HTTP-only proposal in `authhttp`, never `auth`. Any refusal observation remains on the [[D-062]] `port.Logger(ctx)` boundary; a process logger or callback option would violate it.
+The round-2 DX conclusion is accepted with these boundaries. HMAC and static
+asymmetric material plus JWKS refresh intervals now have construction-time
+policies; empty audience elements still do not. `auth.WithCredential` and
+`auth.CredentialFrom` are
+likewise proposals, not current APIs: [[D-055]] must first decide whether an
+in-flight credential may live beside the principal, then define explicit opt-in
+placement and lifetime for every transport and remote forwarding. Until that
+amendment, a Remote hook must use a consumer-owned context value or not forward
+the credential. `authhttp.Cookie` remains HTTP-only. Refusal logging remains on
+the [[D-062]] `port.Logger(ctx)` boundary. `JWKSDegradedObserver` is not a
+refusal logger: it is the mandatory typed signal paired with an application
+decision to keep using stale trust material for a finite window ([[D-078]]).
 
 ## Contested
 

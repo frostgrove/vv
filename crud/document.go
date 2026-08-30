@@ -131,6 +131,10 @@ const everyRow = "{}"
 // the nodes, in predicate.go's order
 
 func (this cmpNode) document(w *docWriter) {
+	if this.undefined {
+		w.failWith(&SchemaError{Model: "predicate", Field: this.field, Reason: "an undefined Opt is not a comparison value"})
+		return
+	}
 	op, ok := docOps[this.op]
 	if !ok {
 		w.fail("crud", "no wire operator for "+this.op)

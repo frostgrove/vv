@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/adapter/crudsql`, `github.com/frostgrove/vv/crud/adapter/crudpgx`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. A `WithTxOptions` copy also aliases mutable caller state; pgx-only COPY cannot represent a schema-qualified destination as callers naturally spell one; and no repository transaction test follows a typed driver refusal through rollback and back to the caller.
+**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. Pgx-only COPY cannot represent a schema-qualified destination as callers naturally spell one; and no repository transaction test follows a typed driver refusal through rollback and back to the caller.
 
 ## What a consumer is actually trying to do
 
@@ -148,7 +148,7 @@ API and nothing anywhere says why.
 5. Whatever the answer is, it is the same on both adapters, because the engine is the same engine.
 6. A nested `Begin` on a handle somebody else's transaction gave us behaves the same on both adapters.
 **Today:** ❌ for 1, 🟡 for 2 and 3, ✅ for 4, ❌ for 5 and 6
-**Evidence:** Point 1 fails on both adapters, but not equally, and round 1 of this file over-stated the `database/sql` half. Isolation there is a property of the source: `crudsql.DB.WithTxOptions` at `crud/adapter/crudsql/crudsql.go:174` returns a copy and `Begin` at `:177` reads `d.TxOptions`. The copy keeps the same `*sql.DB` in `Executor.q`, so `DataSource()` (`:86`) answers the same handle, `crud.InTx` binds on `ownScope(src)` → `identityOf` → that handle (`crud/executor.go:521`, `:439-441`, `:448-459`), and `bindingFor` matches every repository already bound to the pool (`:388-399`). So the real cost on `database/sql` is one extra source value used as the `InTx` argument — not a second `Bind` per repository — and **nothing proves it**: no test joins across two source values over one handle. On pgx there is nothing to ask with: `Executor.Begin` at `crud/adapter/crudpgx/crudpgx.go:128-141` asserts `Begin(ctx) (pgx.Tx, error)` and calls it, `pgx.TxOptions` appears nowhere in the package, and the exported surface is `Open`, `From`, `WithFaults`, `Queryer`, `Executor`, `Tx` and `Option` (`docs/api/surface.md:747-756`). Point 2 splits the same way: `WithTxOptions` takes a whole `*sql.TxOptions`, `ReadOnly` included, so it can be asked for on `crudsql` and not on pgx. Point 3 is unmeasured for read-only — nothing in the tree sets `ReadOnly: true`, and the only `sql.TxOptions` under `test/integration` is `edge_test.go:1238`, which sets `Isolation` alone. That matters because of what that test's own comment says at `:1231-1233`: "asking for one that the driver then drops looks exactly like asking for one that works" — the same argument that made the isolation test observe a consequence leaves read-only unobserved. Point 4 holds on both: `TestPgxNestedSavepoint` (`driver_pgx_test.go:69`), `TestDatabaseSQLSavepoint` (`driver_sql_test.go:82`), `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` (`driver_sqlite_test.go:87`). Point 6 diverges and nothing collects it: `crudpgx.From(tx)` is a `crud.Beginner` (`crudpgx.go:128`, asserted at `:166`), so a nested `Begin` on a joined pgx transaction opens a savepoint, while `crudsql.From(tx)` returns a bare `Executor` and the assertion block at `crudsql.go:245-253` claims `Beginner` for `DB` and `*Tx` only — so the same call answers `crud.ErrNoTxSupport`. An importer ported from pgx to `database/sql` loses per-row savepoints at run time.
+**Evidence:** Point 1 fails on both adapters, but not equally, and round 1 of this file over-stated the `database/sql` half. Isolation there is a property of the source: `crudsql.DB.WithTxOptions` returns a copy with a private snapshot, and `Begin` reads that snapshot. The copy keeps the same `*sql.DB` in `Executor.q`, so `DataSource()` answers the same handle, `crud.InTx` binds on `ownScope(src)` → `identityOf` → that handle, and `bindingFor` matches every repository already bound to the pool. So the real cost on `database/sql` is one extra source value used as the `InTx` argument — not a second `Bind` per repository — and **nothing proves it**: no test joins across two source values over one handle. On pgx there is nothing to ask with: `Executor.Begin` at `crud/adapter/crudpgx/crudpgx.go:128-141` asserts `Begin(ctx) (pgx.Tx, error)` and calls it, `pgx.TxOptions` appears nowhere in the package, and the exported surface is `Open`, `From`, `WithFaults`, `Queryer`, `Executor`, `Tx` and `Option` (`docs/api/surface.md:747-756`). Point 2 splits the same way: `WithTxOptions` takes a whole `*sql.TxOptions`, `ReadOnly` included, so it can be asked for on `crudsql` and not on pgx. Point 3 is unmeasured for read-only — nothing in the tree sets `ReadOnly: true`, and the only `sql.TxOptions` under `test/integration` is `edge_test.go:1238`, which sets `Isolation` alone. That matters because of what that test's own comment says at `:1231-1233`: "asking for one that the driver then drops looks exactly like asking for one that works" — the same argument that made the isolation test observe a consequence leaves read-only unobserved. Point 4 holds on both: `TestPgxNestedSavepoint` (`driver_pgx_test.go:69`), `TestDatabaseSQLSavepoint` (`driver_sql_test.go:82`), `TestSQLiteSavepointRollsBackWithoutLosingTheTransaction` (`driver_sqlite_test.go:87`). Point 6 diverges and nothing collects it: `crudpgx.From(tx)` is a `crud.Beginner` (`crudpgx.go:128`, asserted at `:166`), so a nested `Begin` on a joined pgx transaction opens a savepoint, while `crudsql.From(tx)` returns a bare `Executor` and the assertion block at `crudsql.go:245-253` claims `Beginner` for `DB` and `*Tx` only — so the same call answers `crud.ErrNoTxSupport`. An importer ported from pgx to `database/sql` loses per-row savepoints at run time.
 **If not ready:** On `database/sql`: `serial := crudsql.Postgres(sqlDB).WithTxOptions(&sql.TxOptions{Isolation: sql.LevelSerializable})`, kept beside the ordinary source and passed to `crud.InTx` for that one flow. One value, one line, and no test says it joins. On pgx: `pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})`, `crudpgx.From(tx)`, push it into the context, own the commit and the rollback by hand — six lines and a `defer` replacing one. Process-wide, a PostgreSQL consumer can set `default_transaction_isolation` in the DSN or in `pgxpool.Config.ConnConfig.RuntimeParams` and it reaches every `repo.Tx`, because the adapter reads no pool configuration — **except behind a connection pooler in transaction-pooling mode**, where startup parameters and session state are the first thing PgBouncer takes away, which is the deployment `docs/ai/usecases/modules/vvdb/Vvdb.md:267` already treats as first-class. Whichever route is taken, the retry question is still open and is H-ADAPTERS-18's.
 
 ### H-ADAPTERS-08 — Test the repository code against a real database
@@ -492,9 +492,9 @@ comment where the call site can see it.
 
 **`Introspect` returns the concrete `DB`, and the error is a named sentinel.**
 The faults sweep specifies the signature
-(`Faults.md:1131`) and the reason: `DB` carries `Begin` and the exported
-`TxOptions` field, and narrowing to `crud.Source` would make the short path a
-one-way door. That is also what makes `sqlSrc.Join(...)` legal in the block
+(`Faults.md:1131`) and the reason: `DB` carries `Begin` and the
+`WithTxOptions` configuration method, and narrowing to `crud.Source` would make
+the short path a one-way door. That is also what makes `sqlSrc.Join(...)` legal in the block
 above. The addition this file asks for is on the error arm: "fail here" is the
 right default and the wrong *only* option, because a managed role restricted from
 `information_schema` then cannot boot the service at all for a feature that fills
@@ -743,9 +743,9 @@ consumer starts writing code this library was supposed to have written.
 **Setup:** Two source values are derived from one `*sql.TxOptions`, then configuration code changes its `Isolation` or `ReadOnly` field while requests begin transactions.
 **What the consumer does:** They rely on `WithTxOptions` returning an independent source whose transaction policy cannot change behind its back or race with `Begin`.
 **What must happen:** The option value is copied at configuration time, or the API makes shared mutable configuration explicit and safe.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `WithTxOptions` copies the `DB` value but stores the caller's `*sql.TxOptions` pointer verbatim (`crud/adapter/crudsql/crudsql.go:138-144`, `:173-174`), and `Begin` passes that same pointer to `BeginTx` (`:176-185`). `TestWithTxOptionsReachesTheDriver` (`test/integration/edge_test.go:1231-1239`) uses a fresh literal and tests only the configured isolation; no mutation, aliasing or concurrent-begin test was found.
-**Blast radius:** silent wrong answer
+**Today:** ✅ handled
+**Evidence:** `DB.WithTxOptions` copies the pointed-to `sql.TxOptions` value into a private snapshot; `Begin` reads only that snapshot. `TestTransactionOptionsAreSnapshotted` mutates the caller's struct after construction and proves both the configured source and a subsequently derived source remain independent; `TestNilTransactionOptionsSelectTheDriverDefault` pins nil as the driver default (`crud/adapter/crudsql/options_test.go`). The exported `DB.TxOptions` escape hatch was removed; the migration is direct field assignment → `db = db.WithTxOptions(options)`.
+**Blast radius:** none
 
 ### E-ADAPTERS-05 — A cancelled commit context means different things on the two adapters
 **Shape:** seam
@@ -830,10 +830,7 @@ consumer starts writing code this library was supposed to have written.
 
 ## Edge verdict
 
-The riskiest fresh behaviour is configuration that remains mutable after the
-adapter appears assembled: a shared `*sql.TxOptions` can change isolation or
-read-only policy for later transactions without changing the source value. The
-adapters also defer nil dependency and dialect mistakes to request-time crashes,
+The adapters defer nil dependency and dialect mistakes to request-time crashes,
 and `crudsql` deliberately has no way to retain a close-time cursor error. The
 pgx-only COPY entry point is careful to use pgx identifiers, but its one-string
 shape cannot express the schema-qualified table a PostgreSQL deployment normally
@@ -846,8 +843,7 @@ do not pin the consumer contract.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `WithTxOptions` advertises a copied source but preserves the caller's mutable `*sql.TxOptions` pointer, so a later mutation can silently change isolation or `ReadOnly` for live transactions. | serious | A reservation flow can run at a weaker isolation than the source value a reviewer approved; concurrent mutation additionally makes the policy race-dependent. |
-| 2 | `crudsql.rows.Close` drops its only error, after repository paths have already decided to return success from the preceding `Rows.Err` check. | serious | A database-side failure at the cursor boundary can be reported as a successful read, with no error contract left for the caller to inspect. |
+| 1 | `crudsql.rows.Close` drops its only error, after repository paths have already decided to return success from the preceding `Rows.Err` check. | serious | A database-side failure at the cursor boundary can be reported as a successful read, with no error contract left for the caller to inspect. |
 
 ## Edge DX constraints
 

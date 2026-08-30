@@ -186,36 +186,37 @@ func (this *Schema) Columns() []string {
 	return cols
 }
 
-var schemaCache sync.Map // reflect.Type -> *Schema (or error)
+var schemaCache sync.Map // reflect.Type -> *schemaFuture
 
 type schemaResult struct {
 	s   *Schema
 	err error
 }
 
+type schemaFuture struct {
+	done chan struct{}
+	schemaResult
+}
+
 // SchemaOf reflects over M once and caches the result.
 func SchemaOf[M any]() (*Schema, error) {
 	var zero M
 	t := reflect.TypeOf(&zero).Elem()
-	if v, ok := schemaCache.Load(t); ok {
-		r := v.(schemaResult)
-		return r.s, r.err
-	}
-	s, err := buildSchema(t)
-	schemaCache.Store(t, schemaResult{s, err})
-	return s, err
+	return schemaOfType(t)
 }
 
 // schemaOfType is SchemaOf for a reflect.Type; relations resolve their target
 // through it, lazily, so two models may reference each other.
 func schemaOfType(t reflect.Type) (*Schema, error) {
-	if v, ok := schemaCache.Load(t); ok {
-		r := v.(schemaResult)
-		return r.s, r.err
+	candidate := &schemaFuture{done: make(chan struct{})}
+	value, loaded := schemaCache.LoadOrStore(t, candidate)
+	future := value.(*schemaFuture)
+	if !loaded {
+		future.s, future.err = buildSchema(t)
+		close(future.done)
 	}
-	s, err := buildSchema(t)
-	schemaCache.Store(t, schemaResult{s, err})
-	return s, err
+	<-future.done
+	return future.s, future.err
 }
 
 // SchemaOfType exposes schema resolution for a reflect.Type.
@@ -343,10 +344,15 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 	for i := range t.NumField() {
 		sf := t.Field(i)
 		tag, hasTag := sf.Tag.Lookup(TagKey)
+		relTag, hasRel := sf.Tag.Lookup(RelTagKey)
 		if tag == "-" {
 			continue
 		}
-		if sf.Anonymous && !hasTag && deref(sf.Type).Kind() == reflect.Struct && !isOptType(sf.Type) && !isScalarStruct(sf.Type) {
+		// An explicit relation declaration belongs to the anonymous field itself,
+		// exactly as it does on a named field. Flattening it used to discard the
+		// declaration and expose the embedded struct's columns instead. Only a
+		// completely untagged non-scalar struct is a mixin to flatten.
+		if sf.Anonymous && !hasTag && !hasRel && deref(sf.Type).Kind() == reflect.Struct && !isOptType(sf.Type) && !isScalarStruct(sf.Type) {
 			if sf.Type.Kind() == reflect.Pointer {
 				return &SchemaError{Model: s.Type.String(), Field: sf.Name, Reason: "embedded pointer structs are not supported"}
 			}
@@ -373,7 +379,6 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 
 		// A relation is anything tagged `rel`, and any struct-shaped field is a
 		// relation candidate: mapping one as a column is never what was meant.
-		relTag, hasRel := sf.Tag.Lookup(RelTagKey)
 		if _, _, candidate := relCandidate(sf.Type); candidate {
 			if !hasRel || relTag == "-" {
 				continue // neither a column nor an edge

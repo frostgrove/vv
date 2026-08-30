@@ -74,6 +74,19 @@ func TestAnUnauthenticatedRequestIs401AndTheHandlerNeverRuns(t *testing.T) {
 	})
 }
 
+func TestAKeyProviderOutageIsInfrastructureAndTheHandlerNeverRuns(t *testing.T) {
+	h, w := serve(t, auth.NewGuard(unavailable()), "Bearer valid-looking")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("a key-provider outage answered %d, want 500 rather than 401", w.Code)
+	}
+	if h.ran {
+		t.Fatal("the handler ran when verification trust was unavailable")
+	}
+	if body := w.Body.String(); strings.Contains(body, "unauthenticated") || strings.Contains(body, "key source") {
+		t.Fatalf("the infrastructure response exposed or misclassified the outage: %s", body)
+	}
+}
+
 func TestTheRefusalBodyIsTheSharedEnvelopeAndNamesNoReason(t *testing.T) {
 	_, w := serve(t, auth.NewGuard(refuses()), "Bearer forged")
 	body := w.Body.String()
@@ -135,11 +148,43 @@ func TestADoubleInstallAuthenticatesOnce(t *testing.T) {
 	}
 }
 
+func TestDifferentGuardsAuthenticateIndependently(t *testing.T) {
+	firstCalls, secondCalls := 0, 0
+	first := auth.NewGuard(counting(&firstCalls))
+	second := auth.NewGuard(counting(&secondCalls))
+	h := &seen{}
+
+	r := gin.New()
+	r.Use(authgin.Middleware(first), authgin.Middleware(second))
+	r.GET("/articles", h.handle)
+
+	request := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	request.Header.Set("Authorization", "Bearer t")
+	r.ServeHTTP(httptest.NewRecorder(), request)
+
+	if !h.found {
+		t.Fatal("composed guards lost the principal")
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("composed guards authenticated %d and %d times, want once each", firstCalls, secondCalls)
+	}
+}
+
 func TestANilGuardRefusesToStart(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("Middleware accepted a nil guard, so nothing is authenticated and every request looks fine")
-		}
-	}()
-	authgin.Middleware(nil)
+	for _, tc := range []struct {
+		name  string
+		guard *auth.Guard
+	}{
+		{"nil", nil},
+		{"zero", new(auth.Guard)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("Middleware accepted a Guard with no authenticator")
+				}
+			}()
+			authgin.Middleware(tc.guard)
+		})
+	}
 }

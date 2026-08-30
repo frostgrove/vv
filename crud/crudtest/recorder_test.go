@@ -5,7 +5,11 @@ package crudtest_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
+	"reflect"
 	"testing"
 	"time"
 
@@ -257,9 +261,9 @@ func TestScanFillsAModelThroughTheSchema(t *testing.T) {
 	}
 }
 
-// Test authors write row literals by hand, so the recorder converts anything
-// Go would convert rather than insisting on the exact column type.
-func TestScanConvertsWhatGoWouldConvert(t *testing.T) {
+// Test authors write row literals by hand, so the recorder accepts the safe
+// convenience conversions database/sql itself accepts.
+func TestScanUsesDatabaseSQLConversions(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{1, []byte("spanner"), 3, []byte("handy")}))
 
@@ -286,6 +290,123 @@ func TestScanConvertsWhatGoWouldConvert(t *testing.T) {
 	}
 	if v, _ := note.Get(); v != "handy" {
 		t.Fatalf("note = %v, want the bytes decoded through sql.Scanner", note)
+	}
+}
+
+type scanConnector struct{ value driver.Value }
+
+func (c scanConnector) Connect(context.Context) (driver.Conn, error) {
+	return &scanConn{value: c.value}, nil
+}
+func (c scanConnector) Driver() driver.Driver { return scanDriver{} }
+
+type scanDriver struct{}
+
+func (scanDriver) Open(string) (driver.Conn, error) { return nil, errors.New("use connector") }
+
+type scanConn struct{ value driver.Value }
+
+func (*scanConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not supported") }
+func (*scanConn) Close() error                        { return nil }
+func (*scanConn) Begin() (driver.Tx, error)           { return nil, errors.New("not supported") }
+func (c *scanConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &scanRows{value: c.value}, nil
+}
+
+type scanRows struct {
+	value driver.Value
+	done  bool
+}
+
+func (*scanRows) Columns() []string { return []string{"value"} }
+func (*scanRows) Close() error      { return nil }
+func (r *scanRows) Next(values []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	values[0] = r.value
+	return nil
+}
+
+// The recorder is useful only when a green unit test means the same scan would
+// be green in production. These cases are intentionally compared with
+// database/sql itself instead of duplicating expectations in prose.
+func TestRecorderScanMatchesDatabaseSQL(t *testing.T) {
+	type label string
+	now := time.Date(2026, 8, 30, 9, 10, 11, 12, time.UTC)
+	cases := []struct {
+		name   string
+		source driver.Value
+		dest   func() any
+	}{
+		{"integer to decimal string, not a rune", int64(65), func() any { return new(string) }},
+		{"overflow is refused", int64(300), func() any { return new(int8) }},
+		{"negative signed to unsigned is refused", int64(-1), func() any { return new(uint64) }},
+		{"text to integer", "42", func() any { return new(int32) }},
+		{"fraction to integer is refused", float64(1.5), func() any { return new(int64) }},
+		{"bytes to string", []byte("hello"), func() any { return new(string) }},
+		{"boolean to string", true, func() any { return new(string) }},
+		{"time to RFC3339 string", now, func() any { return new(string) }},
+		{"NULL to scalar is refused", nil, func() any { return new(int64) }},
+		{"NULL to pointer is accepted", nil, func() any { return new(*int64) }},
+		{"same-kind named value", "named", func() any { return new(label) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			standardDest := tc.dest()
+			db := sql.OpenDB(scanConnector{value: tc.source})
+			standardRows, err := db.QueryContext(context.Background(), "SELECT value")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !standardRows.Next() {
+				t.Fatal("database/sql returned no control row")
+			}
+			standardErr := standardRows.Scan(standardDest)
+			standardRows.Close()
+			db.Close()
+
+			recorderDest := tc.dest()
+			rec := crudtest.Postgres().Push(crudtest.Rows([]any{tc.source}))
+			recorderRows, err := rec.Query(context.Background(), "SELECT value")
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorderRows.Next()
+			recorderErr := recorderRows.Scan(recorderDest)
+			recorderRows.Close()
+
+			if (recorderErr != nil) != (standardErr != nil) {
+				t.Fatalf("recorder err = %v; database/sql err = %v", recorderErr, standardErr)
+			}
+			if standardErr == nil {
+				standardValue := reflect.ValueOf(standardDest).Elem().Interface()
+				recorderValue := reflect.ValueOf(recorderDest).Elem().Interface()
+				if !reflect.DeepEqual(recorderValue, standardValue) {
+					t.Fatalf("recorder value = %#v; database/sql value = %#v", recorderValue, standardValue)
+				}
+			}
+		})
+	}
+}
+
+type panicScanner struct{}
+
+func (*panicScanner) Scan(any) error { panic("typed-nil scanner invoked") }
+
+func TestScanRefusesATypedNilScannerBeforeInvokingIt(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows([]any{"value"}))
+	rows, err := rec.Query(context.Background(), "SELECT value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	rows.Next()
+	var destination *panicScanner
+	if err := rows.Scan(destination); err == nil {
+		t.Fatal("typed-nil scanner was accepted")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -147,17 +148,43 @@ func New[C any](k KeySource, options ...Option) *Parser[C] {
 	return &Parser[C]{key: k, options: po}
 }
 
+// Warm validates that the parser's key source is ready before traffic is
+// served. Static sources have already been validated and snapshotted by their
+// constructors, so Warm is a no-op for them. A JWKS source performs the same
+// bounded, singleflight fetch and document validation Parse would otherwise do
+// lazily, and reports [ErrKeySourceUnavailable] when readiness cannot be
+// established.
+//
+// The caller's cancellation is returned unchanged. It only stops this caller
+// waiting; a remote fetch already shared with another caller keeps running
+// under its own [JWKSFetchTimeout] bound.
+func (this *Parser[C]) Warm(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if this.key.warm == nil {
+		return nil
+	}
+	return this.key.warm(ctx)
+}
+
 // Parse verifies the token and answers the claims.
 //
-// Every failure is one answer. A bad signature, an expired token, a wrong
-// audience and a malformed header are indistinguishable to the caller, and the
-// reason travels in the wrapped error where nothing renders it ([[D-056]]).
-// Reporting which check failed tells whoever is probing exactly what to change
-// next.
+// Every credential failure is one answer. A bad signature, an expired token, a
+// wrong audience and a malformed header are indistinguishable to the caller,
+// and the reason travels in the wrapped error where nothing renders it
+// ([[D-056]]). Reporting which check failed tells whoever is probing exactly
+// what to change next.
 //
-// The context is taken but not consulted here. It is what a [KeySource] built
-// by [JWKS] uses to fetch and to time out, and taking it on every parser keeps
-// the signature the same whichever key source is wired.
+// A typed [ErrKeySourceUnavailable] is not a credential failure. It travels
+// unchanged so an identity-provider outage remains an infrastructure answer
+// rather than telling callers to replace credentials that may be valid
+// ([[D-078]]).
+//
+// The context is what a [KeySource] built by [JWKS] uses while waiting for a
+// fetch. Its own cancellation is preserved rather than classified as either a
+// bad credential or a provider outage; taking it on every parser keeps the
+// signature the same whichever key source is wired.
 func (this *Parser[C]) Parse(ctx context.Context, token string) (C, error) {
 	var zero C
 	if token == "" {
@@ -166,6 +193,17 @@ func (this *Parser[C]) Parse(ctx context.Context, token string) (C, error) {
 
 	claims := jwt.MapClaims{}
 	if _, err := jwt.ParseWithClaims(token, claims, this.keyfuncFor(ctx), this.options...); err != nil {
+		if errors.Is(err, ErrKeySourceUnavailable) {
+			return zero, err
+		}
+		if ctx != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+				return zero, ctxErr
+			}
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return zero, err
+		}
 		return zero, auth.Unauthenticatedf("token rejected: %v", err)
 	}
 

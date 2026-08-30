@@ -46,9 +46,12 @@ func TestAnAbsentPrincipalFailsClosed(t *testing.T) {
 }
 
 func TestANilPrincipalIsNotStored(t *testing.T) {
-	ctx := auth.WithPrincipal(t.Context(), nil)
-	if _, ok := auth.PrincipalFrom(ctx); ok {
-		t.Fatal("a nil principal was stored, so PrincipalFrom answers (nil, true) and every caller dereferences nothing")
+	var pointer *typedNilPrincipal
+	for _, principal := range []auth.Principal{nil, pointer} {
+		ctx := auth.WithPrincipal(t.Context(), principal)
+		if _, ok := auth.PrincipalFrom(ctx); ok {
+			t.Fatal("a nil-like principal was stored, so PrincipalFrom reports an identity every caller can panic on")
+		}
 	}
 }
 
@@ -58,3 +61,10 @@ func TestANilContextIsNotAPanic(t *testing.T) {
 		t.Fatal("a nil context reported a principal")
 	}
 }
+
+type typedNilPrincipal struct{}
+
+func (*typedNilPrincipal) Subject() string          { panic("typed-nil principal was called") }
+func (*typedNilPrincipal) In(auth.Role) bool        { panic("typed-nil principal was called") }
+func (*typedNilPrincipal) Has(auth.Permission) bool { panic("typed-nil principal was called") }
+func (*typedNilPrincipal) Attr(string) (any, bool)  { panic("typed-nil principal was called") }

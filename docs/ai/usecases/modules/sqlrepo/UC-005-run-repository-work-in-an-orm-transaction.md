@@ -54,6 +54,11 @@ call — and either way a rollback has to take everything.
 13. The query document is compiled and validated before any transaction exists,
     so a client's typo fails the request rather than opening and rolling back a
     transaction.
+14. When one logical batch has to become several statements to stay inside the
+    database's parameter limit, all statements join the transaction already in
+    the context or one transaction is opened for the batch. Every chunk is
+    validated before the first runs; a later failure never commits an earlier
+    chunk on its own.
 
 ## Out of scope
 
@@ -77,7 +82,7 @@ call — and either way a rollback has to take everything.
 ## Covered by
 | Flow | What it contributes |
 |---|---|
-| [[FL-009]] | pushing a foreign executor into the context, opening one, joining one already there, and savepoints |
+| [[FL-009]] | pushing a foreign executor into the context, opening one, joining one already there, savepoints, and the atomic boundary around bind-budget chunks |
 | [[FL-002]] | the row lock the load takes when a transaction is present |
 
 ## Status
@@ -91,6 +96,12 @@ and the repository's write are on different tables. Commit, rollback and the
 join-rather-than-nest rule run against every driver target in the conformance
 suite. Savepoints, the stale-transaction refusal and `ErrNoTxSupport` all have
 tests.
+
+Guarantee 14 is pinned without a database at the executor seam: both chunked
+write verbs roll back an owned transaction after a later-statement error, a
+bound executor is joined without a nested begin, and a source without
+transaction support runs no statement. The statement plans themselves are
+fully rendered before this path begins ([[D-079]]).
 
 The gaps, in the order they are likely to bite:
 

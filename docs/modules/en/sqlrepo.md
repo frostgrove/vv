@@ -82,6 +82,13 @@ driver's bulk-copy path is never reached for, because it takes its own handle
 and would step outside a transaction the caller opened. pgx's `COPY` is there
 as `crud.BulkInserter`, for an application that asks for it directly.
 
+The dialect's bind budget is automatic. A fitting batch stays one statement. A
+larger one is split on row boundaries, in caller order, after every model and
+statement has passed preflight. All chunks join one transaction, so an error in
+the last chunk cannot leave the first committed. Generated-key batches remain
+write-only: `SaveAll` neither adds `RETURNING` nor mutates the models
+([[D-079]]).
+
 ### Update is load, diff, write
 
 `Update` loads the row, diffs the DTO against it and writes only what changed
@@ -260,6 +267,11 @@ back independently. `crud.InTx(ctx, db, fn)` does the same for several
 repositories at once. For genuine nesting, `Begin` gives a savepoint — natively
 on pgx, via `SAVEPOINT` on `database/sql` ([[FL-009]]).
 
+`SaveAll` and `Delete(ids...)` use that same rule when a bind budget requires
+several statements. They join an ambient transaction or open one; a datasource
+that cannot provide either atomic boundary returns `crud.ErrNoTxSupport` before
+the first chunk. A one-statement call opens nothing extra.
+
 ## Sharp edges
 
 - **Rows affected diverge.** MySQL reports 0 for an `UPDATE` that changed
@@ -275,6 +287,11 @@ on pgx, via `SAVEPOINT` on `database/sql` ([[FL-009]]).
 - **An unknown field is a rejection**, never a dropped clause ([[D-013]]).
 - **The SQL is deterministic** — same options, same statement, byte for byte
   ([[D-014]]). That is what makes it testable with [crudtest](crudtest.md).
+- **Bind limits are preflighted.** `In` / `InAny` and every other direct Go
+  predicate share one statement-wide dialect budget. An oversized statement is
+  a typed schema refusal before the datasource. `SaveAll` and `Delete(ids...)`
+  chunk because their operation stays equivalent; an arbitrary predicate does
+  not ([[D-079]]).
 
 ## A column `DEFAULT` does not fire
 

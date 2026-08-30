@@ -25,8 +25,8 @@ repo := Products.Bind(crudpgx.Open(pool))
 |---|---|
 | `Connect(ctx, cfg, opts…)` | собрать строку, настроить пул, подключиться |
 | `MustConnect(ctx, cfg, opts…)` | то же самое с паникой — для `main` |
-| `ConnectReadWrite(ctx, cfg, opts…)` | primary и реплика; вторая — nil, если реплика не объявлена |
-| `MustConnectReadWrite(ctx, cfg, opts…)` | та же пара с паникой — для `main` |
+| `ConnectReadWrite(ctx, cfg, rwOpts…)` | primary и реплика с явно разделёнными опциями; вторая — nil, если реплика не объявлена |
+| `MustConnectReadWrite(ctx, cfg, rwOpts…)` | та же пара с паникой — для `main` |
 | `Apply(pc, pool)` | применить переносимые настройки пула к принадлежащему приложению `pgxpool.Config` |
 
 `pgxpool.NewWithConfig` ленив. Перед возвратом `Connect` вызывает `Ping`, поэтому
@@ -45,6 +45,23 @@ pool := dbpgx.MustConnect(ctx, cfg.DB, func(pc *pgxpool.Config) {
 `Option` выполняется после того, как применены поля vvdb. Это аварийный люк для
 того, что одна переносимая конфигурация не может описать для четырёх движков, —
 трассировщик, хук `AfterConnect`, свой map типов.
+
+Парные helpers намеренно не принимают голый `Option`. Укажите,
+к обеим ли сторонам относится хук:
+
+```go
+primary, replica := dbpgx.MustConnectReadWrite(ctx, &cfg.DB,
+    dbpgx.Common(tracing),
+    dbpgx.Primary(writerIAM),
+    dbpgx.Replica(readerIAM),
+)
+```
+
+Общие опции выполняются первыми, затем опции конкретной стороны.
+Трассировка и регистрация типов обычно общие. Credentials, IAM token
+providers и хуки, меняющие роль, должны быть разделены: общий хук
+может выдать writable-пулу identity реплики. Конструкторы снимают копию
+среза опций, поэтому его последующая мутация не перенастроит пулы.
 
 ## Во что ложится секция pool
 

@@ -76,6 +76,19 @@ func TestAnUnauthenticatedCallIsRefusedAndTheMethodNeverRuns(t *testing.T) {
 	})
 }
 
+func TestAKeyProviderOutageRemainsTypedAndTheMethodNeverRuns(t *testing.T) {
+	h, err := call(t, auth.NewGuard(unavailable()), incoming("authorization", "Bearer valid-looking"))
+	if !errors.Is(err, errKeyProviderUnavailable) {
+		t.Fatalf("a key-provider outage became %v", err)
+	}
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("a key-provider outage became a credential refusal: %v", err)
+	}
+	if h.ran {
+		t.Fatal("the method ran when verification trust was unavailable")
+	}
+}
+
 // There is no status table in this package: the refusal is an error, and the
 // kind it already carries is what crudgrpc.Errors turns into a status. This is
 // the gRPC spelling of the HTTP bindings' "the refusal body is the shared
@@ -136,6 +149,30 @@ func TestADoubleInstallAuthenticatesOnce(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("the credential was verified %d times; chaining the interceptor pays twice", n)
+	}
+}
+
+func TestDifferentGuardsAuthenticateIndependently(t *testing.T) {
+	firstCalls, secondCalls := 0, 0
+	first := auth.NewGuard(counting(&firstCalls))
+	second := auth.NewGuard(counting(&secondCalls))
+	h := &seen{}
+	ctx := incoming("authorization", "Bearer t")
+
+	inner := authgrpc.Unary(second)
+	outer := authgrpc.Unary(first)
+	_, err := outer(ctx, nil, info(articleCreate), func(ctx context.Context, request any) (any, error) {
+		return inner(ctx, request, info(articleCreate), h.handle)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !h.found {
+		t.Fatal("composed guards lost the principal")
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("composed guards authenticated %d and %d times, want once each", firstCalls, secondCalls)
 	}
 }
 
@@ -208,6 +245,117 @@ func TestAStreamIsAuthenticatedWhenItOpens(t *testing.T) {
 	})
 }
 
+func TestADoubleStreamInstallAuthenticatesOnce(t *testing.T) {
+	calls := 0
+	guard := auth.NewGuard(counting(&calls))
+	found := false
+	err := streamChain(authgrpc.Stream(guard), authgrpc.Stream(guard))(
+		nil,
+		&fakeStream{ctx: incoming("authorization", "Bearer t")},
+		&grpc.StreamServerInfo{FullMethod: articleCreate},
+		func(_ any, stream grpc.ServerStream) error {
+			_, found = auth.PrincipalFrom(stream.Context())
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("a double stream install lost the principal")
+	}
+	if calls != 1 {
+		t.Fatalf("the stream credential was verified %d times, want once", calls)
+	}
+}
+
+func TestDifferentStreamGuardsAuthenticateIndependently(t *testing.T) {
+	firstCalls, secondCalls := 0, 0
+	first := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+		firstCalls++
+		return auth.Claims{Sub: "ordinary"}, nil
+	}))
+	second := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+		secondCalls++
+		return auth.Claims{Sub: "step-up"}, nil
+	}))
+	var subject string
+	err := streamChain(authgrpc.Stream(first), authgrpc.Stream(second))(
+		nil,
+		&fakeStream{ctx: incoming("authorization", "Bearer t")},
+		&grpc.StreamServerInfo{FullMethod: articleCreate},
+		func(_ any, stream grpc.ServerStream) error {
+			principal, ok := auth.PrincipalFrom(stream.Context())
+			if !ok {
+				return errors.New("stream handler saw no principal")
+			}
+			subject = principal.Subject()
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("stream guards authenticated %d and %d times, want once each", firstCalls, secondCalls)
+	}
+	if subject != "step-up" {
+		t.Fatalf("the stream handler saw %q, want the last verified principal", subject)
+	}
+}
+
+func TestAReenteredStreamGuardFailsClosedWithoutGuessingAssurance(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		firstSubject, secondSubject string
+	}{
+		{"ordinary -> step-up -> ordinary", "ordinary", "step-up"},
+		{"strict -> weak -> strict", "strict", "weak"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstCalls, middleCalls := 0, 0
+			first := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				firstCalls++
+				return auth.Claims{Sub: tc.firstSubject}, nil
+			}))
+			middle := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				middleCalls++
+				return auth.Claims{Sub: tc.secondSubject}, nil
+			}))
+			ran := false
+			err := streamChain(authgrpc.Stream(first), authgrpc.Stream(middle), authgrpc.Stream(first))(
+				nil,
+				&fakeStream{ctx: incoming("authorization", "Bearer t")},
+				&grpc.StreamServerInfo{FullMethod: articleCreate},
+				func(any, grpc.ServerStream) error { ran = true; return nil },
+			)
+			if !errors.Is(err, auth.ErrAmbiguousGuardOrder) {
+				t.Fatalf("ambiguous stream guard order answered %v", err)
+			}
+			if ran {
+				t.Fatal("the stream handler ran after ambiguous identity ordering")
+			}
+			if firstCalls != 1 || middleCalls != 1 {
+				t.Fatalf("ambiguous stream re-entry called authenticators %d and %d times", firstCalls, middleCalls)
+			}
+		})
+	}
+}
+
+func streamChain(interceptors ...grpc.StreamServerInterceptor) grpc.StreamServerInterceptor {
+	return func(server any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		chained := handler
+		for i := len(interceptors) - 1; i >= 0; i-- {
+			interceptor := interceptors[i]
+			next := chained
+			chained = func(server any, stream grpc.ServerStream) error {
+				return interceptor(server, stream, info, next)
+			}
+		}
+		return chained(server, stream)
+	}
+}
+
 type fakeStream struct {
 	grpc.ServerStream
 	ctx context.Context
@@ -217,19 +365,27 @@ func (this *fakeStream) Context() context.Context { return this.ctx }
 
 func TestANilGuardRefusesToStart(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		make func()
+		name  string
+		guard *auth.Guard
 	}{
-		{"Unary", func() { authgrpc.Unary(nil) }},
-		{"Stream", func() { authgrpc.Stream(nil) }},
+		{"nil", nil},
+		{"zero", new(auth.Guard)},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				if recover() == nil {
-					t.Fatal("the interceptor was built with no guard, so nothing is authenticated and every call looks fine")
-				}
-			}()
-			tc.make()
-		})
+		for _, constructor := range []struct {
+			name string
+			make func(*auth.Guard)
+		}{
+			{"Unary", func(guard *auth.Guard) { authgrpc.Unary(guard) }},
+			{"Stream", func(guard *auth.Guard) { authgrpc.Stream(guard) }},
+		} {
+			t.Run(constructor.name+"/"+tc.name, func(t *testing.T) {
+				defer func() {
+					if recover() == nil {
+						t.Fatal("the interceptor was built with a Guard that has no authenticator")
+					}
+				}()
+				constructor.make(tc.guard)
+			})
+		}
 	}
 }

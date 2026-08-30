@@ -2,6 +2,8 @@ package authjwt_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -116,6 +118,44 @@ func TestStandardIsTheTwoCallsInOne(t *testing.T) {
 	}
 	if !p.Has("article:read") {
 		t.Fatal("Standard did not expand the role map")
+	}
+}
+
+func TestStandardRefusesATokenWithoutASubject(t *testing.T) {
+	for _, subject := range []any{nil, "", "   "} {
+		t.Run(fmt.Sprintf("sub=%q", subject), func(t *testing.T) {
+			c := claims()
+			if subject == nil {
+				delete(c, "sub")
+			} else {
+				c["sub"] = subject
+			}
+			c["permissions"] = []string{"article:read"}
+
+			authn := authjwt.Standard(authjwt.HMAC(secret), nil,
+				authjwt.Issuer(issuer), authjwt.Audience(audience))
+			_, err := authn.Authenticate(t.Context(), auth.Credential{Token: signHS(t, c)})
+			if !errors.Is(err, auth.ErrUnauthenticated) {
+				t.Fatalf("Standard answered %v for a permission-bearing token with no subject, want auth.ErrUnauthenticated", err)
+			}
+		})
+	}
+
+	// The control and the escape hatch: the generic parser still accepts the
+	// issuer's shape, and an explicit mapper may derive the stable subject from
+	// another claim instead of silently creating a subjectless principal.
+	c := claims()
+	delete(c, "sub")
+	p := parser[authjwt.Claims](t, authjwt.HMAC(secret))
+	authn := authjwt.Authenticator(p, func(_ context.Context, c authjwt.Claims) (auth.Principal, error) {
+		return auth.Claims{Sub: "issuer:" + c.Issuer}, nil
+	})
+	principal, err := authn.Authenticate(t.Context(), auth.Credential{Token: signHS(t, c)})
+	if err != nil {
+		t.Fatalf("an explicit mapper could not derive a subject for a token without sub: %v", err)
+	}
+	if principal.Subject() != "issuer:"+issuer {
+		t.Fatalf("the mapper-derived subject is %q", principal.Subject())
 	}
 }
 

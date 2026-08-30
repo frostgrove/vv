@@ -329,3 +329,21 @@ func TestValidateRefusesTheThreeShapesThatReachedTheDriver(t *testing.T) {
 		}
 	})
 }
+
+func TestAggregateSortNamesOnlyGroupedModelColumns(t *testing.T) {
+	m := articleMeta(t)
+	spec := crud.AggregateSpec{
+		GroupBy:      []string{"AuthorID"},
+		Aggregations: []crud.Aggregation{crud.CountAll("n")},
+	}
+
+	if err := spec.ValidateSort(m, []crud.Order{crud.Desc("AuthorID")}); err != nil {
+		t.Fatalf("group sort refused: %v", err)
+	}
+	if err := spec.ValidateSort(m, []crud.Order{crud.Desc("Views")}); !schemaErr(err) {
+		t.Fatalf("ungrouped sort err = %T %v, want SchemaError", err, err)
+	}
+	if err := spec.ValidateSort(m, []crud.Order{crud.Desc("missing")}); !unknownName(err) {
+		t.Fatalf("unknown sort err = %T %v, want UnknownFieldError", err, err)
+	}
+}

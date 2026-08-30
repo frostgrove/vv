@@ -2,6 +2,7 @@ package authnet_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/frostgrove/vv/auth"
@@ -13,6 +14,8 @@ import (
 // thing on every transport ([[FL-013]]).
 
 const badToken = "signature does not verify"
+
+var errKeyProviderUnavailable = errors.New("verification key source unavailable")
 
 var editor = auth.Claims{
 	Sub:         "u-1",
@@ -31,6 +34,12 @@ func accepts() auth.Authenticator {
 func refuses() auth.Authenticator {
 	return auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
 		return nil, auth.Unauthenticated(badToken)
+	})
+}
+
+func unavailable() auth.Authenticator {
+	return auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+		return nil, errKeyProviderUnavailable
 	})
 }
 

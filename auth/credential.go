@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/frostgrove/vv/internal/nilvalue"
 )
 
 // A Credential is what the caller presented: an authentication scheme and the
@@ -94,15 +96,28 @@ func Bearer(header string) (Credential, bool) {
 // to whoever watches the 5xx rate. The wiring order is not something a consumer
 // should have to get right to keep an outage visible.
 func Chain(as ...Authenticator) Authenticator {
+	// Snapshot and normalise before the chain is published. A caller may reuse
+	// or mutate the variadic slice after this call; request authentication must
+	// not observe that storage. Nil-like optional entries are all treated like a
+	// literal nil rather than surviving until their method is invoked.
+	authenticators := make([]Authenticator, 0, len(as))
+	for _, a := range as {
+		if !nilvalue.Is(a) {
+			authenticators = append(authenticators, a)
+		}
+	}
 	return AuthenticatorFunc(func(ctx context.Context, c Credential) (Principal, error) {
 		var refusal, infra error
-		for _, a := range as {
-			if a == nil {
-				continue
-			}
+		for _, a := range authenticators {
 			p, e := a.Authenticate(ctx, c)
 			if e == nil {
-				return p, nil
+				if !nilvalue.Is(p) {
+					return p, nil
+				}
+				// Success without an identity is a refusal by contract, but a
+				// later alternative still gets its turn.
+				refusal = Unauthenticated("authenticator returned no principal")
+				continue
 			}
 			if errors.Is(e, ErrUnauthenticated) {
 				refusal = e

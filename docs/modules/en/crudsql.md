@@ -109,6 +109,13 @@ db := crudsql.Postgres(sqlDB).WithTxOptions(&sql.TxOptions{
 })
 ```
 
+`WithTxOptions` snapshots the value. Mutating the struct passed to it later does
+not reconfigure the source or race with a concurrent `Begin`.
+
+**Migration:** the previously exported `DB.TxOptions` field was removed because
+it exposed shared mutable configuration. Replace direct field assignment with
+`db = db.WithTxOptions(options)`. Passing nil restores the driver default.
+
 `DB.Begin` opens one; `Begin` on the resulting `crud.Tx` gives a **savepoint**,
 emitted as `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT`.
 

@@ -2,6 +2,7 @@ package authjwt
 
 import (
 	"context"
+	"strings"
 
 	"github.com/frostgrove/vv/auth"
 )
@@ -46,10 +47,16 @@ func Authenticator[C any](p *Parser[C], to func(ctx context.Context, c C) (auth.
 //	)
 //
 // A nil role map is fine and means the token's permissions are taken as they
-// come.
+// come. Standard refuses an empty subject: the ready-made identity is used for
+// ownership scopes and audit records, so permissions alone are not an identity.
+// A deployment with another subject rule uses [Authenticator] and states that
+// mapping explicitly.
 func Standard(k KeySource, roles auth.RoleMap, options ...Option) auth.Authenticator {
 	p := New[Claims](k, options...)
 	return Authenticator(p, func(_ context.Context, c Claims) (auth.Principal, error) {
+		if strings.TrimSpace(c.Sub) == "" {
+			return nil, auth.Unauthenticated("token has no subject")
+		}
 		return c.Grant(roles), nil
 	})
 }

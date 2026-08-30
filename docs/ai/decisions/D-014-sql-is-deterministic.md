@@ -14,6 +14,12 @@ is a slice in declaration order.
 The generator does the same for its own output (`generator.load` sorts model
 names, `internal/codegen/render.go` sorts imports).
 
+Bind-budget chunking extends the invariant from one statement to a statement
+sequence. `SaveAll` and `Delete(ids...)` take contiguous slices in caller order;
+the dialect limit and fixed row/scope width alone decide each boundary. The same
+input therefore produces the same ordered SQL and argument groups before any of
+them execute ([[D-079]]).
+
 ## Why
 
 Go randomises map iteration on purpose. Without the sort, the same JSON document
@@ -53,6 +59,8 @@ same way every time.
   order the writer walks the tree.
 - Do not add a map to `Options`. `RelationScopes` holds maps, but they are
   consulted by key lookup (`RelationScopes.At`), never iterated into output.
+- Do not distribute a chunked write by map iteration, driver feedback or any
+  other runtime order. Chunk boundaries are computed before execution.
 
 ## Where it lives
 
@@ -66,6 +74,8 @@ same way every time.
 - `crud/predicate.go:writer.nextAlias` — aliases are numbered by walk order.
 - `internal/codegen/codegen.go:generator.load` — `sort.Strings(g.order)`.
 - `internal/codegen/render.go:generator.render` — sorts the import block.
+- `crud/sqlrepo/repository.go:saveAllPlan` / `:deletePlan` — contiguous,
+  pre-rendered bind-budget chunks.
 
 ## Proven by
 
@@ -83,7 +93,10 @@ same way every time.
   `TestTheGeneratedStoresAreUpToDate` in `test/codegen/codegen_test.go` —
   these only work because the generator is deterministic; a nondeterministic one
   would make them flap.
+- `TestSaveAllChunksAtTheDialectBudgetAndKeepsInputOrder` and
+  `TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds` in
+  `crud/sqlrepo/bind_budget_test.go` — statement boundaries and argument order.
 
 ## See also
 
-[[D-013]] [[D-018]] [[D-020]]
+[[D-013]] [[D-018]] [[D-020]] [[D-079]]

@@ -20,7 +20,7 @@ import (
 // it wraps ends that walk. An interface embedded in a struct promotes only its
 // own method set, so the erasure is silent and compiles.
 
-var walkArticles = sqlrepo.Define[Article, int64, struct{}]("walk_articles")
+var walkArticles = sqlrepo.Define[Article, int64, struct{}]("articles")
 
 // auditing is the shape the documentation describes: embed Base, override
 // nothing or one method, forward the rest.

@@ -36,11 +36,12 @@ import (
 // The error is also filed with c.Error, so Gin's own logging middleware sees
 // the cause the body deliberately does not carry.
 //
-// Installing it twice authenticates once: [auth.Guard] hands back a context
-// that already carries a principal untouched.
+// Consecutive installs with the same [auth.Guard] authenticate once. A
+// different guard performs its own check; A -> B -> A fails closed because no
+// assurance order is inferred ([[D-076]]).
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.HandlerFunc {
-	if guard == nil {
-		panic("authgin: Middleware needs a Guard; without one nothing is authenticated")
+	if err := guard.Validate(); err != nil {
+		panic("authgin: Middleware needs a ready Guard: " + err.Error())
 	}
 	renderer := authhttp.RendererFor(options)
 	return func(ginContext *gin.Context) {

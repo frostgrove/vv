@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostgrove/vv/_examples/example/blog"
 	"github.com/frostgrove/vv/crud"
@@ -131,7 +132,7 @@ func TestGeneratedDTOTypesFollowNullability(t *testing.T) {
 
 func articleRow() []any {
 	// id, author_id, title, body, views, rating, published_at, tenant_id, created_at
-	return []any{int64(1), int64(7), "old", "body", 3, 4.5, nil, int64(1), nil}
+	return []any{int64(1), int64(7), "old", "body", 3, 4.5, nil, int64(1), time.Time{}}
 }
 
 // generateDirective is the line model.go carries, checked verbatim: change it

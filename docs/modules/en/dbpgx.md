@@ -25,8 +25,8 @@ repo := Products.Bind(crudpgx.Open(pool))
 |---|---|
 | `Connect(ctx, cfg, opts…)` | build the string, size the pool, dial |
 | `MustConnect(ctx, cfg, opts…)` | the same, panicking — for `main` |
-| `ConnectReadWrite(ctx, cfg, opts…)` | primary and replica; the second is nil when none is declared |
-| `MustConnectReadWrite(ctx, cfg, opts…)` | the same pair, panicking — for `main` |
+| `ConnectReadWrite(ctx, cfg, rwOpts…)` | primary and replica with explicitly scoped options; the second is nil when none is declared |
+| `MustConnectReadWrite(ctx, cfg, rwOpts…)` | the same pair, panicking — for `main` |
 | `Apply(pc, pool)` | apply portable pool sizing to a `pgxpool.Config` the application owns |
 
 `pgxpool.NewWithConfig` is lazy. `Connect` calls `Ping` before returning, so a
@@ -45,6 +45,23 @@ pool := dbpgx.MustConnect(ctx, cfg.DB, func(pc *pgxpool.Config) {
 An `Option` runs after vvdb's fields have been applied. It is the escape hatch
 for what one portable configuration cannot describe for four engines — a
 tracer, an `AfterConnect` hook, a custom type map.
+
+The read/write helpers deliberately do not accept a bare `Option`. Declare
+whether each hook is common or belongs to one side:
+
+```go
+primary, replica := dbpgx.MustConnectReadWrite(ctx, &cfg.DB,
+    dbpgx.Common(tracing),
+    dbpgx.Primary(writerIAM),
+    dbpgx.Replica(readerIAM),
+)
+```
+
+Common options run first and side-specific options run afterwards. Tracing and
+type registration are usually common. Credentials, IAM token providers and
+role-changing hooks must never be common: sharing them can grant the replica's
+identity to the writable pool. The constructors snapshot their option slices;
+mutating the caller's slice after declaration cannot reconfigure either pool.
 
 ## What the pool section maps onto
 

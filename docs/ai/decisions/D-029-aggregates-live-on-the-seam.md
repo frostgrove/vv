@@ -12,6 +12,12 @@ to it unchanged. The function set is closed — `COUNT`, `SUM`, `AVG`, `MIN`,
 `MAX` — and every field name is resolved against the model before anything is
 rendered.
 
+An aggregate with no explicit paging option returns every group. A summary is
+not silently turned into a page by the repository's ordinary default page size.
+If the caller explicitly supplies `Limit`, `Page`, `Offset`, or `Unpaged`, the
+declared `MaxLimit` still applies. An ordinary `Order` may name only a grouping
+column; ordering by an ungrouped model column is refused before SQL.
+
 `security.gate` **overrides** it. That is the load-bearing part: the gate embeds
 `crud.Core`, so an `Aggregate` it did not spell out would fall straight through
 to the plain repository and summarise every row in the table.
@@ -54,12 +60,21 @@ returns `SUM` over a `DECIMAL` as text, and a `COUNT` may arrive as `int64` or
 `[]byte`. `AggregateRow.Int` / `.Float` absorb that so a caller does not write a
 type switch per driver.
 
+**Why unpaged by default.** `Aggregate` returns a slice, not a page envelope.
+Applying the ordinary default of twenty groups produced a complete-looking but
+wrong dashboard with no `HasNext` or total to reveal the cut. Grouping remains
+application-declared and is not exposed through the public query language, so
+returning the complete summary is the honest default. An explicit finite limit
+still expresses a top-N/result cap, and `MaxLimit` remains authoritative.
+
 ## What it forbids
 
 - Do not add a decorator that embeds `crud.Core` without deciding what
   `Aggregate` does. Inheriting it is a decision, and usually the wrong one.
 - Do not widen `aggFuncs` with anything the three dialects spell differently.
 - Do not render an aggregate over a name that was not resolved against the model.
+- Do not sort a grouped statement by a model column outside its `GROUP BY`.
+- Do not apply the list default page size to an aggregate that did not request paging.
 - Do not expose `Aggregate` through `query.Request` without an allow-list at
   least as strict as `Filterable`, and a reason for the change written here.
 
@@ -67,6 +82,7 @@ type switch per driver.
 
 - `crud/aggregate.go:Aggregation` — one summary column.
 - `crud/aggregate.go:AggregateSpec.Validate` — the resolution and the closed set.
+- `crud/aggregate.go:AggregateSpec.ValidateSort` — grouped-column sort validation.
 - `crud/aggregate.go:AggregateSpec.Render` — the projection.
 - `crud/aggregate.go:AggregateRow` — the result, with the driver-shape accessors.
 - `crud/repo.go:Core` — the seam.
@@ -107,6 +123,9 @@ type switch per driver.
   answered "absent", on one driver, for one column type, with nothing to see.
 - `TestAnAbsentAggregateAndOneThatIsZeroAreDifferentAnswers` — what the
   `(T, bool)` signature is for.
+- `TestAggregateSortNamesOnlyGroupedModelColumns` and
+  `TestAggregateIsUnpagedByDefaultAndExplicitPagingKeepsTheCap` pin the
+  pre-SQL refusal and the no-hidden-page contract.
 
 ## See also
 

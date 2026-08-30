@@ -118,8 +118,10 @@ would silently fail closed on one protocol only.
 point: a policy that read an absent principal as "no narrowing" would widen
 every query on the one request where the middleware was not mounted.
 
-A nil principal is dropped rather than stored, so `PrincipalFrom` never answers
-`(nil, true)`.
+A nil-like principal, including an interface holding a typed-nil pointer, is
+dropped rather than stored, so `PrincipalFrom` never answers an apparent
+identity whose first method call panics. The permission/role quantifiers use the
+same rule.
 
 ## Authenticators
 
@@ -141,6 +143,9 @@ authn := auth.Chain(jwtAuthn, apiKeyAuthn)
 
 The refusal when none succeeds says nothing about how many were tried. Reporting
 "3 of 3 refused" would be a list of the schemes a deployment accepts.
+The member slice is copied when the chain is built; nil-like members are
+skipped, and a member returning `(nil-like principal, nil)` lets the next
+alternative try rather than winning without an identity.
 
 ## The guard
 
@@ -148,19 +153,33 @@ Everything a middleware does that is not framework-shaped:
 
 ```go
 guard := auth.NewGuard(authn,
-	auth.Header("X-Api-Key"),
 	auth.Optional(),
 )
 
 ctx, err := guard.Authenticate(r.Context(), r.Header.Get)
 ```
 
-Both options change a default: without them the credential is read from
-`Authorization`, and a request that presents none is refused.
+The option changes one default: without it a request that presents no credential
+is refused. Credentials are read from `Authorization` by default.
+
+Options are opaque construction declarations. `NewGuard` applies them to a
+private draft and publishes a copy, so retaining or reusing an option cannot
+mutate a live guard. `Lookup` below is the low-level escape hatch when the
+ready-made declarations do not describe the credential source.
+
+`guard.Validate()` is the ready seam used by every transport constructor. Nil
+and `new(auth.Guard)` fail while the server graph is built; a direct low-level
+`Authenticate` call returns `ErrGuardNotReady` instead of panicking on traffic.
 
 `Authenticate` takes a `func(name string) string`. `http.Header.Get`,
 `gin.Context.GetHeader`, `fiber.Ctx.Get` and gRPC metadata can all supply one,
 which is what lets the four transports share every decision above them.
+
+`auth.Header("X-Auth")` moves that same parser to another header; the value is
+still scheme-shaped, for example `X-Auth: Bearer token`. For a bare
+`X-Api-Key: secret`, use [`apikey.Header`](apikey.md) instead. Blank header names
+and nil lookups fail when `NewGuard` builds the guard, as do nil and typed-nil
+authenticators.
 
 `auth.Lookup` replaces the whole rule when a header is not where your credential
 is:
@@ -179,9 +198,13 @@ a 401 whether or not the endpoint is optional: treating it as anonymous would
 mean a stale session silently sees the public view instead of a prompt to sign
 in again.
 
-**A second guard does not authenticate again.** A context that already carries a
-principal is handed back untouched, so mounting one globally and again on a
-group costs one verification.
+**A consecutive repeat of the same guard does not authenticate again.** Its
+concrete instance and principal state are marked in the context, so A -> A costs
+one verification. A different guard performs its own check, so A -> B runs both
+and the handler sees B. A -> B -> A is refused with
+`ErrAmbiguousGuardOrder`: the framework cannot guess whether B was a step-up or
+a downgrade. Mount cumulative checks once each; use one `auth.Chain` for
+alternative credential kinds ([[D-076]]).
 
 ## The 401
 
@@ -226,5 +249,5 @@ about a repository — so a middleware never compiles the predicate AST in.
 - [authjwt](authjwt.md) · [apikey](apikey.md) — the two providers
 - [authnet](authnet.md) · [authgin](authgin.md) · [authfiber](authfiber.md) · [authgrpc](authgrpc.md) — the four transports
 - [security](security.md) — what a principal is allowed to do
-- [[D-055]] the contract and its placement · [[D-056]] the 401's shape
+- [[D-055]] the contract and its placement · [[D-056]] the 401's shape · [[D-076]] guard identity and construction
 - [[UC-019]] authenticate a request · [[FL-019]] where it happens

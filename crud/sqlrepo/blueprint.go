@@ -38,6 +38,9 @@ type settings struct {
 	preloadDepth int
 	scope        crud.Predicate
 	relScopes    []relScope
+	// independentTable says this blueprint is an alternate physical view of M,
+	// not the canonical target of untagged relations to M.
+	independentTable bool
 }
 
 // relScope is a RelationScope declaration, kept as written until Define can
@@ -135,6 +138,17 @@ func RelationScope(path string, p crud.Predicate) Setting {
 	return func(s *settings) { s.relScopes = append(s.relScopes, relScope{path, p}) }
 }
 
+// IndependentTable keeps this blueprint's table local to the blueprint rather
+// than registering it as the process-wide target of relations to M. Ordinary
+// applications should not need it: the first/default Blueprint remains the
+// declarative source for relation wiring. It is the explicit low-level seam for
+// projections, archive tables, catalog probes, and other additional blueprints
+// over the same Go model. Relations that intentionally reach such a table name
+// it with `table=...` in their rel tag.
+func IndependentTable() Setting {
+	return func(s *settings) { s.independentTable = true }
+}
+
 // Blueprint is a validated, datasource-independent repository declaration.
 // Bind it to as many sources as you like — the reflection work happens once.
 type Blueprint[M any, ID comparable, U any] struct {
@@ -179,9 +193,6 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 			preloadDepth: crud.DefaultPreloadDepth,
 		},
 	}
-	// Declaring the repository is also what teaches relations on other models
-	// which table this one lives in.
-	crud.RegisterTable[M](meta.Table)
 	for _, o := range options {
 		o(&bp.set)
 	}
@@ -190,6 +201,14 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 	}
 	if err := bp.resolveSoftDelete(); err != nil {
 		return nil, err
+	}
+	// The ordinary declaration also teaches relations on other models which
+	// table this one lives in. An explicitly independent blueprint is an
+	// additional physical view and must not compete for that global meaning.
+	if !bp.set.independentTable {
+		if err := crud.TryRegisterTable[M](meta.Table); err != nil {
+			return nil, err
+		}
 	}
 	if err := bp.resolveRelationScopes(); err != nil {
 		return nil, err

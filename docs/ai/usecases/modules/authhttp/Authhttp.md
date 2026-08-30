@@ -2,7 +2,10 @@
 
 **Covers:** `github.com/frostgrove/vv/auth/http/authhttp`, `github.com/frostgrove/vv/auth/http/authnet`, `github.com/frostgrove/vv/auth/http/authgin`, `github.com/frostgrove/vv/auth/http/authfiber`, `github.com/frostgrove/vv/auth/rpc/authgrpc`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the happy-path second-guard bypass and frozen HTTP mount remain blockers; the edge sweep adds silent first-value selection for duplicated gRPC **and HTTP** credentials, an unresolved multi-source credential contract, Fiber refusal drift, and declarations that do not fail until a live request.
+**Verdict:** not ready — frozen HTTP mounts, repeated-credential selection,
+multi-source credential shape and Fiber refusal drift remain. The guard boundary
+itself now validates at transport construction, executes distinct guards, and
+fails closed on assurance-ambiguous A -> B -> A composition.
 
 This file is the binding half. What a credential is, how a token is parsed, and
 what options `auth.Guard` should grow belong to the sibling sweep at
@@ -77,8 +80,8 @@ worse than no door.
 2. A request with no credential never reaches a handler.
 3. A middleware built with nothing to authenticate against does not start.
 4. The identity reaches the *repository*, not only the handler — on every transport.
-**Today:** 🟡 partial — 1, 2 and 3 hold; 4 is proven in two halves that never meet
-**Evidence:** `auth/http/authgin/authgin.go:41-56`, `auth/http/authnet/authnet.go:43-58`, `auth/http/authfiber/authfiber.go:43-58`, `auth/rpc/authgrpc/interceptor.go:48-59`. The context is written back where a repository will see it — `c.Request.Context()` in and `c.Request = c.Request.WithContext(ctx)` out on Gin (`authgin.go:47`, `:54`), `c.SetContext` and not `Locals` on Fiber (`authfiber.go:55`), a replacing `ServerStream` on gRPC (`interceptor.go:128-136`). gRPC's getter is case-folded metadata, so the guard's default `Authorization` finds what a client sent as `authorization` (`interceptor.go:109-126`, `TestTheMetadataKeyIsFoundWhateverItsCase`). `TestANilGuardRefusesToStart` pins 3 in all four. For 4: every binding's `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` stops at a fake handler, and the one test that reaches a live database — `test/integration/auth_jwt_test.go:57-72` — calls `Guard.Authenticate` directly with a synthetic getter and never touches a binding. No test on any transport walks request → middleware → handler → repository → SQL.
+**Today:** 🟡 partial — 1, 2 and 3 hold, including zero-value validation; 4 is proven in two halves that never meet
+**Evidence:** `auth/http/authgin/authgin.go:41-56`, `auth/http/authnet/authnet.go:43-58`, `auth/http/authfiber/authfiber.go:43-58`, `auth/rpc/authgrpc/interceptor.go:48-59`. The context is written back where a repository will see it — `c.Request.Context()` in and `c.Request = c.Request.WithContext(ctx)` out on Gin (`authgin.go:47`, `:54`), `c.SetContext` and not `Locals` on Fiber (`authfiber.go:55`), a replacing `ServerStream` on gRPC (`interceptor.go:128-136`). gRPC's getter is case-folded metadata, so the guard's default `Authorization` finds what a client sent as `authorization` (`interceptor.go:109-126`, `TestTheMetadataKeyIsFoundWhateverItsCase`). Every constructor calls `Guard.Validate`; `TestANilGuardRefusesToStart` carries nil and `new(auth.Guard)` through net/http, Gin, Fiber, Unary and Stream. Direct low-level Authenticate returns an internal fault wrapping `ErrGuardNotReady`, not a request-time panic. For 4: every binding's `TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal` stops at a fake handler, and the one test that reaches a live database — `test/integration/auth_jwt_test.go:57-72` — calls `Guard.Authenticate` directly with a synthetic getter and never touches a binding. No test on any transport walks request → middleware → handler → repository → SQL.
 **If not ready:** nothing to write; the join is structural and almost certainly sound. But it is the module's whole purpose and it rests on construction, on a security-shaped guarantee, so it should be closed by one integration test that mounts a binding in front of a CRUD handler over a gated repository. Round 1 said `authnet` was the only place that costs no new dependency; that is true for a *satellite unit* test and wrong for the integration module, which already carries `crudgin`, `crudfiber` and `crudgrpc` as requirements and `authgin`, `authfiber` and `authgrpc` as `replace` lines (`test/go.mod:97-99`, `:118-122`). All four are free there — and Fiber is the one to write, because Fiber is where `SetContext` versus `Locals` is a live trap.
 
 ### H-AUTHHTTP-02 — The browser sends a preflight before it sends anything
@@ -115,8 +118,19 @@ worse than no door.
 1. An optional guard globally with a required guard on a subtree refuses an anonymous request to that subtree.
 2. A required guard globally with an optional subtree inside it is possible.
 3. Accepting two kinds of credential on one mount has one documented answer, and the composition a consumer reaches for is either it or ruled out by name.
-**Today:** ❌ missing for 2 and 3; 1 holds by an undocumented accident
-**Evidence:** 1 works because an optional guard that finds no credential returns the context *unchanged* (`auth/guard.go:97-99`) rather than storing an anonymous principal, so the presence check at `guard.go:91` does not trip and the inner required guard runs. Nothing states that, and it is the load-bearing fact of the arrangement: an "anonymous principal" would have been the obvious implementation and would have made every inner guard a no-op. 2 is impossible: the outer guard has already written the refusal (`authnet.go:52`, `authgin.go:50`, `authfiber.go:53`) and the inner middleware never runs. For 3, the answer is one guard with `auth.Lookup` plus `auth.Chain` — `Auth.md` H-AUTH-06 scores it ✅ and the two-credential example is in `auth.Lookup`'s own doc comment (`auth/guard.go:54-59`). Two stacked guards is not that answer and no page says so. It half-works and the half that fails is silent: an optional API-key guard outside a JWT guard passes a browser request through and the inner guard authenticates it, but a *bad* API key is refused at the outer guard whatever `Optional()` says (`auth/guard.go:66-70`), and a request carrying neither credential passes the door and is refused by the repository instead — a different status source, a different body, and no line anywhere connecting the two.
+**Today:** ❌ missing for 2 and 3; 1 holds deliberately and is pinned
+**Evidence:** 1 works in both forms. An optional outer guard with no credential
+returns the context unchanged, so the required inner guard runs. If the outer
+guard did authenticate, the inner guard still runs because idempotence is keyed
+to the concrete guard instance rather than to the presence of any principal
+([[D-076]]). `TestDifferentGuardsAuthenticateIndependently` pins this through
+all four transports, with `TestADoubleInstallAuthenticatesOnce` as the same-guard
+control. 2 is impossible: the outer guard has already written the refusal
+(`authnet.go`, `authgin.go`, `authfiber.go`) and the inner middleware never runs.
+For 3, the answer is one guard with `auth.Lookup` plus `auth.Chain` — `Auth.md`
+H-AUTH-06 scores it ✅ and the two-credential example is in `auth.Lookup`'s own
+doc comment. Two stacked guards are cumulative checks, not alternative
+credentials, and the binding module pages now say when a different guard runs.
 **If not ready:** for 2, the shape is per-framework and structural — group the optional subtree outside the global mount rather than inside it, which under a global `Use` or a wrapped mux means not mounting globally at all. That is worth a paragraph in the usage guides, because the reader who reaches for `Optional()` on a group has already mounted globally and the option will silently do nothing. For 3 it is one sentence on each binding's page: two kinds of credential are one guard with a `Lookup` and a `Chain`, never two mounts.
 
 ### H-AUTHHTTP-05 — A stricter check on the admin subtree
@@ -126,9 +140,18 @@ worse than no door.
 **Must hold:**
 1. A second guard mounted inside the first actually verifies what it was built to verify.
 2. If it cannot, that is loud rather than silent.
-**Today:** ❌ missing — and it fails silently
-**Evidence:** `auth/guard.go:91`: `if _, already := PrincipalFrom(ctx); already { return ctx, nil }`. The check is on the *presence of a principal*, not on which guard produced it, so the inner guard's authenticator, header, lookup and options are never consulted. Every binding inherits it. Every test of it installs the same guard twice — `TestASecondGuardDoesNotAuthenticateAgain` (`auth/guard_test.go:68`) and `TestADoubleInstallAuthenticatesOnce` in all four bindings (`authnet/middleware_test.go:107`, `authgin:117`, `authfiber:122`, `authgrpc/interceptor_test.go:119`). Nothing anywhere installs two *different* guards. There is no way out from the outside either: `auth.WithPrincipal(ctx, nil)` returns the context unchanged (`auth/context.go:22-27`), so a principal cannot be cleared before the inner guard runs. `docs/modules/en/auth.md:182` states the idempotence as a feature with no qualification, and so does [[UC-019]] guarantee 8. **Same defect as `Auth.md` H-AUTH-12; one blocker, listed in both because the story is the bindings' and the fix is `auth.Guard`'s.**
-**If not ready:** the only correct wiring today is to keep the outer guard off that subtree — possible with Gin and Fiber groups, impossible under a global `Use` or a wrapped mux — or to call the second authenticator by hand and skip the guard entirely. Two things have to be decided together. The option: `auth.Reauthenticate()` on the guard, so all four transports get it at once — that half is additive and could land in a patch. The default is not, and this file and `Auth.md` disagree about it (see Contested). The presence check exists to stop a JWKS-backed guard paying twice for *the same guard* mounted twice, which is identity, not equality — so "re-authenticate when the inner guard is not the outer one" keeps the cost saving and closes the hole, with `auth.TrustExistingPrincipal()` as the opt-out on the outer guard. That default has a price and it should be stated rather than discovered: the rule is the same `*Guard` *value*, not the same configuration, so an application that builds one guard per package through a `newGuard()` helper and nests two mounts starts paying two verifications per request, and the symptom is latency rather than an error. The trade is worth it because an opt-in flag alone does not close the hole: the consumer who is bitten is by definition the one who does not know the failure exists, and the severity here is entirely the silence.
+**Today:** ✅ handled
+**Evidence:** A successful guard records its exact `*Guard` and the principal
+state it installed in an immutable request-context marker chain. A consecutive
+repeat is idempotent; a different guard authenticates and replaces the
+principal only after it succeeds. An older A reached after B returns an internal
+fault wrapping `ErrAmbiguousGuardOrder`: the framework cannot know whether B is
+a step-up or a downgrade. The intended admin arrangement A -> B runs both
+checks and ends at B. Both `ordinary -> step-up -> ordinary` and inverse
+`strict -> weak -> strict` fail before the handler. Core tests pin both
+directions. Unary and all HTTP bindings pin A -> A/A -> B; Stream additionally
+pins idempotence, final principal and both re-entry directions on its replaced
+context path ([[D-076]], [[UC-019]] guarantee 8).
 
 ### H-AUTHHTTP-06 — Make the 401 look like every other error this API returns
 **Who:** a team with a published error contract and a client that branches on a machine code
@@ -495,8 +518,9 @@ The asymmetry only holds before the tag.
   not session *management*. Confirm it or tighten the line, because the next
   reader will ask.
 - `docs/ai/usecases/Index.md:90` records UC-019 as `covered`, and its own Status
-  says every guarantee is pinned. If 6 is unreachable on two transports and 8 is
-  pinned only in its narrow reading, that row is stale and moves with them.
+  says every guarantee is pinned. Guarantee 8 now has both the same-instance and
+  different-instance transport proofs ([[D-076]]); guarantee 6's reporting seam
+  remains the disputed half.
 
 ## DX verdict
 | What the ideal asks for | Today | Distance |
@@ -505,9 +529,9 @@ The asymmetry only holds before the tag.
 | A live API moved behind the door without a flag day | No monitor-only mode. `Optional()` refuses a bad credential at the door and an anonymous one at the repository, so it is not one. The only dry run is a second deployment with the middleware unmounted | large |
 | A browser client that works on the first afternoon | The preflight is 401'd; the fix is one line of middleware ordering and appears in no document | small once known · large while unknown |
 | Exempt a named route under a global mount | One option on gRPC; on HTTP, per-route mounting or a group — which costs nothing to write and fails open on the route you forget | small in lines · large in what it risks |
-| Public, optional, required and stricter in one service | One combination works undocumented, one is impossible, one is blocker 1's hole | large |
+| Public, optional, required and stricter in one service | A stricter nested guard now runs; making a required global mount optional on an inner subtree remains structurally impossible | medium |
 | Two credential kinds on one mount | One guard with `Lookup` + `Chain` works and is `Auth.md`'s ✅. Two stacked guards is what consumers reach for, half-works, and is ruled out by no page | small in lines · large in guessability |
-| A stricter guard on a subtree | No answer. The inner guard is silently skipped and the principal cannot be cleared | large |
+| A stricter guard on a subtree | Mount ordinary A then stricter B once each: B always runs. Only adjacent A -> A is idempotent; ambiguous A -> B -> A fails closed because transports cannot infer assurance order | none for A -> B · small composition constraint for re-entry |
 | Require a permission on a hand-written route | Four lines against `auth.Require` plus your own 403, per framework, shown nowhere. No `RequirePermission` middleware exists and no page says that is deliberate | medium — and it is a decision, not a patch |
 | The refusal in my error vocabulary | Codes and messages already reach it through the render options. A wholesale `Renderer` cannot be passed, though `crudhttp.Renderer` is an alias of the one `Refuse` takes. Workaround: ~12 hand-written lines over exported `Guard.Authenticate` and `authhttp.Refuse` — **on `net/http` and Gin only**, because Fiber's refusal helper is unexported | medium — and pre-tag, unless a second constructor is added |
 | `WWW-Authenticate` for a conformance suite | Deliberately absent, argued and control-cased in `authhttp`, mentioned on none of the three binding pages a consumer reads. Stated recourse is a wrapper nobody has written | small, with a documented recipe |
@@ -541,7 +565,6 @@ exception above; existing forbidden imports do not make it current behaviour.
 ## Release blockers found here
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | A second guard mounted inside another never runs — the presence check is on the principal, not on which guard produced it, so a stricter step-up guard on a subtree is silently the outer guard (`auth/guard.go:91`) | blocker | Silent, security-shaped, and unworkaroundable under a global mount; the principal cannot even be cleared (`auth/context.go:22`). No test installs two different guards. **Same defect as `Auth.md` blocker 1; count it once.** The *option* is additive; the *default* is not, and the two documents disagree about whether it can wait — see Contested. |
 | 2 | The three HTTP bindings' mount takes `...porthttp.RenderOption`, which no exemption list and no `Renderer` can pass through (`surface.md:61-62`, `:731`, `:736`); `authgrpc` is already on `Option func(*config)` (`:743-744`) | blocker | **One API decision, two consequences: blockers 5 and 11 both need this door.** Blockers 6, 10 and 12 do not — 10's option is on the guard and 12's fix is one line inside `Refuse`. Changing the four entry points breaks every call site passing render options — and `authnet.Handler`'s trailing variadic cannot be fixed by wrapping. Adding `New(guard, opts ...Option)` beside the frozen `Middleware` breaks nothing and costs one name per binding. Decide before the tag or the choice is a v2. |
 | 3 | A CORS preflight is refused by a globally mounted door, and nothing in the repository mentions `OPTIONS`, CORS or preflight | serious | The browser reports a CORS failure that names the wrong subsystem, on day one, for every SPA-backed API. The fix is one line of middleware ordering and it is written nowhere. It is also not fixable by an exemption, which constrains blocker 5. |
 | 4 | The refusal reason reaches no log on any transport: dropped on `net/http` and Fiber, filed with `c.Error` on Gin for whoever happens to read it, and on gRPC visible only inside `crudgrpc.Errors` (`authnet.go:52`, `authfiber.go:53`, `crudgrpc/interceptor.go:36`) | serious | A misconfigured rollout produces a reasonless 401 storm with nothing on the server side to diagnose it. [[UC-019]] guarantee 6 claims this is pinned; it is not. `Auth.md` blocker 9 owns the `auth.Reason` half — one incident, two halves, count it once. |
@@ -628,8 +651,13 @@ exception above; existing forbidden imports do not make it current behaviour.
 **Setup:** A feature-flag branch passes `auth.Lookup(nil)`, or a configuration value becomes `auth.Header("")`; the same guard is optional on a public-and-personalized route.
 **What the consumer does:** They expect an invalid credential-source declaration to stop the process before it serves a request.
 **What must happen:** `NewGuard` must reject an empty header name and a nil lookup callback. A nil lookup must never silently reinstate `Authorization`, and an empty header must not turn an optional guard into an anonymous pass-through.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `auth/guard.go:32-42` validates only the authenticator; `Header` and `Lookup` assign their arguments unchanged at `:45-62`; `credential` falls back to `get(g.header)` whenever `lookup` is nil at `:116-123`. `auth/guard_test.go:89-117` covers only valid `Header` and `Lookup` declarations.
+**Today:** ✅ handled
+**Evidence:** `Header` rejects empty/whitespace names and `Lookup` rejects nil
+while `NewGuard` applies their opaque declarations to a private draft. The
+finished guard is sealed ready; every transport constructor calls
+`Guard.Validate`. `TestAnEmptyCredentialSourceRefusesToStart`, the retained
+draft race control, and each binding's nil/zero Guard cases pin declaration
+failure before traffic ([[D-076]]).
 **Blast radius:** silent wrong answer
 
 ### E-AUTHHTTP-04 — An earlier middleware has already put a principal in the context
@@ -637,8 +665,13 @@ exception above; existing forbidden imports do not make it current behaviour.
 **Setup:** A legacy identity shim, or a test helper accidentally left in a production chain, calls exported `auth.WithPrincipal` before a guard that is meant to verify the request.
 **What the consumer does:** They expect the guard to verify its own trust boundary, not to treat an arbitrary principal stored by another middleware as proof that this request passed the door.
 **What must happen:** Reuse must be limited to an explicitly trusted result of the same authentication boundary, or a consumer must opt in to trusting a pre-existing principal; an unscoped context value cannot silently satisfy a stricter guard.
-**Today:** ❌ wrong or unhandled
-**Evidence:** `auth/context.go:22-27` exports the writer of the shared principal value, and `auth/guard.go:90-93` returns success before consulting the guard whenever that value is present. `auth/guard_test.go:68-87` tests two installations of the same guard only; no test installs an independent guard or a caller-supplied principal. This is the edge form of happy-path blocker 1.
+**Today:** ✅ handled
+**Evidence:** A principal without this guard's private marker is not evidence
+that the guard ran, so a value installed by legacy middleware cannot bypass it.
+`TestADifferentGuardAuthenticatesAgain` and the four transport parity tests pin
+that boundary. Only a consecutive repeat whose marker still owns the current
+principal state is idempotent; replacing the principal after a marker or
+re-entering it after another guard is `ErrAmbiguousGuardOrder` ([[D-076]]).
 **Blast radius:** data leak
 
 ### E-AUTHHTTP-05 — The gRPC exemption list contains a typo

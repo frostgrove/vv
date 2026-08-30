@@ -11,8 +11,10 @@ package that does not compile yet.
 
 1. **`main`** — `cmd/vv/main.go:55`
    Flags into a `generator`. `-into` moves the output; the output path is
-   `filepath.Join(into or dir, out)`. `-import`'s base name becomes `modelAlias`,
-   which is how model types get qualified when they are written somewhere else.
+   `filepath.Join(into or dir, out)`. When `-import` is present, the package
+   declaration in `-dir` — not the import path's basename — becomes the model
+   qualifier. Thus a path ending in `/v2` with `package models` is emitted as an
+   explicit `models ".../v2"` import.
 
 2. **`generator.run`** — `internal/codegen/codegen.go:149`
    `load`, then the `-into` rules: it requires `-import`, because the generated
@@ -29,9 +31,13 @@ package that does not compile yet.
      for one reason: a field whose type is another struct in this package has to
      be recognised as a relation holder rather than mistaken for a column. It is
      what keeps ent's `Edges UserEdges` out of the metamodel.
-   - **Pass two** (`internal/codegen/codegen.go:206-237`) collects each file's imports (alias →
-     path, honouring a named import) and runs `parseModel` on every struct that
-     `-types` allows.
+   - Between the passes, `prepareImports` records each file's qualifier → path
+     mapping. Unaliased versioned paths are resolved through `go list` when the
+     basename is not the qualifier used by the file. Paths are sorted and
+     receive stable collision-safe output aliases; two source files may both
+     call different packages `common`, while the one generated file cannot.
+   - **Pass two** runs `parseModel` on every struct that `-types` allows and
+     rewrites type qualifiers through that declaration file's mapping.
    - `sort.Strings(g.order)` — map iteration is not ordered, and the output has
      to be byte-identical across runs.
 
@@ -57,14 +63,18 @@ package that does not compile yet.
      produced a package that panicked at `Define` time. That is what happens when
      two features land in one change and neither knows about the other.
 
-5. **Embedded-struct flattening** — `generator.embedded`, `internal/codegen/codegen.go:449`
+5. **Embedded-struct flattening** — `generator.embedded`, `internal/codegen/codegen.go`
    Two sources. `wellKnownEmbeds` (`internal/codegen/codegen.go:438`) hard-codes `gorm.Model`, whose
    fields live in another package the generator cannot read. Otherwise the
    embedded type must be a struct declared in this package, and `parseModel`
    runs on it recursively. The runtime flattens embedded structs
    (`crud/meta.go:343`), so the generator has to as well — without it
    `gorm.Model` would silently take `ID` and the timestamps out of the
-   metamodel. An embedded type from an unknown package is skipped in silence.
+   metamodel. An unknown anonymous type is a generation error naming the model
+   and type; `db:"-"` is the explicit opt-out. An embedded pointer is likewise
+   refused because runtime metadata refuses it. Problems are collected and
+   sorted so a package with several bad embeds receives one deterministic
+   diagnostic rather than a map-order-dependent first failure.
 
 6. **Nullability → `*T` or `Opt[T]`** — `dtoType`, `internal/codegen/codegen.go:379`, over `elem`,
    `internal/codegen/codegen.go:329`
@@ -145,9 +155,9 @@ package that does not compile yet.
     Five artefacts per model, in this order:
     | artefact | shape |
     |---|---|
-    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock and not on the exclusion list — under `lowerFirst` JSON names |
+    | `<Model>Input` | the entity body: `inputFields` — every column that is not a relation, not `generated`, not the lock, not an auto-generated primary key and not on the exclusion list — under `lowerFirst` JSON names; an assigned key remains |
     | `<Model>Mapper` | `Model(ctx, in) (M, error)`, a field-for-field assignment, plus `Resolve` delegating to the map, so it satisfies `port.Mapper` **and** `errs.Resolver` |
-    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "CreatedAt")` — the inverse, plus the exclusions |
+    | `<Model>Paths` | `port.MustPathMap[M](port.PathMap{…}, "ID", "CreatedAt")` — the inverse, plus declared exclusions and the omitted auto key |
     | `<Model>Service` | a struct embedding `*port.DefaultService[M, ID, U]`, with `var _ port.Service[…]` beside it so an override that changes a signature is a build failure |
     | `Mount<Model>` | `crudnet.ServingFor(svc, <Model>Mapper{}, opts...).Mount(mux, prefix)` — it takes a built service, so it uses `ServingFor` and cannot trip `port.Rules.RefuseServiceOptions` |
     The id type comes from the primary key's `Type` as written, through
@@ -168,10 +178,12 @@ package that does not compile yet.
     `crudnet`, `port` and `specs` packages. A flag per package rather than a
     scan of the rendered text: the text is what the flags produced, so reading
     it back to decide would be one derivation checking itself.
-    `-import` is added when the output lands elsewhere. `extraImports`
+    `-import` is added with the parsed model package name when the output lands
+    elsewhere. `extraImports`
     (`internal/codegen/render.go:75`) walks every column type for a `pkg.Type` prefix and pulls
     the matching path out of the import map collected in `load` — a `uuid.UUID`
-    or `decimal.Decimal` column would otherwise dangle. Imports are sorted, then
+    or `decimal.Decimal` column would otherwise dangle. Every such import is
+    emitted with its explicit assigned alias. Imports are sorted, then
     `format.Source` runs; a formatting failure is reported with the offending
     source attached.
 
@@ -181,6 +193,9 @@ package that does not compile yet.
   what `collectPlanFields` refuses. Add a tag option that the plan rejects, and
   the generator has to learn it in the same change or `Define` panics on
   generated code.
+- **Database-owned identity is not a request field.** `inputFields` drops an
+  auto primary key and `inputExclusions` states that omission to the runtime
+  path-map check. A non-auto primary key stays in both the input and map.
 - **The domain is derived twice, on purpose.** The generator reads the model's
   *source text*; `port.CoversUpdate` and `port.NewPathMap` read the *compiled
   struct* through `crud.Schema`. That duplication is the whole point: a check
@@ -200,10 +215,11 @@ package that does not compile yet.
   imports, `emitted` guarding duplicates. `TestOutputIsByteIdenticalAcrossRuns`
   and the `TestTheGeneratedStoresAreUpToDate` /
   `TestGeneratedFileIsUpToDate` checks in the tree depend on it.
-- **The generator reads text, not types.** `exprString` (`internal/codegen/codegen.go:314`) renders
-  the type as written. A type alias, a dot-import or a type from a package the
-  file does not import will be reproduced literally and fail to compile in the
-  output. That is the boundary of this tool.
+- **The generator reads source, not compiled model types.** `exprString` renders
+  the type as written, while `prepareImports` rewrites package qualifiers using
+  the import declarations and, only for an unaliased path whose basename is not
+  used, the Go tool's declared package name. Dot-imported and genuinely
+  unimported type names remain outside the supported boundary.
 - **`-into` + `-import` are a pair.** Writing `UserUpdate` into ent's own
   package would collide with ent's update builder, and `ent generate` owns that
   directory.
@@ -217,7 +233,8 @@ package that does not compile yet.
 | `-into` without `-import` | `run` (`internal/codegen/codegen.go:155`) | `-into needs -import …` |
 | generated source does not parse | `render` (`internal/codegen/render.go:65`) | the error plus the full generated text |
 | a column type from an unimported package | not caught | the output does not compile |
-| an embedded type from an unknown package | `embedded` returns false | the field is silently absent from DTO and metamodel |
+| an embedded type from an unknown package | `load`, after `parseModel` records the unresolved embed | generation fails naming the model/type and the local/flatten/`db:"-"` remedies |
+| an embedded pointer struct | `parseModel` | generation fails before runtime metadata can refuse the generated package |
 | metamodel field that no longer maps | `specs.Metamodel` at package init | panic at start-up in the consumer's package |
 | a relation handle declaring the wrong target model | `bindRel` at package init | panic naming the path, the model it reaches and the one declared |
 | a relation handle in the root attribute group | `bindRel` at package init | panic saying the root model is not a relation |
@@ -261,7 +278,17 @@ package that does not compile yet.
 - `TestDepthBoundsHowFarRelationsExpand` — `internal/codegen/codegen_test.go`.
 - `TestEmbeddedStructsAreFlattened` — `internal/codegen/codegen_test.go`.
 - `TestGormModelIsFlattenedFromTheWellKnownTable` — `internal/codegen/codegen_test.go`.
+- `TestUnknownExternalEmbeddedStructIsRefusedDuringGeneration` /
+  `TestEmbeddedPointerIsRefusedLikeRuntimeMetadata` /
+  `TestUnknownExternalEmbedCanBeExplicitlyExcluded` —
+  `internal/codegen/codegen_test.go`.
 - `TestIntoAnotherPackageQualifiesTheModelTypes` — `internal/codegen/codegen_test.go` — `qual` and the import block.
+- `TestIntoUsesTheDeclaredPackageNameForAVersionedImportPath` /
+  `TestVersionedColumnImportReadsTheDeclaredPackageName` — the model package
+  and a column package whose paths end in `/v2`.
+- `TestRenamedSourceImportKeepsItsAliasInGeneratedCode` /
+  `TestImportAliasCollisionsAcrossSourceFilesAreMadeStable` — explicit aliases
+  and two source-file-local aliases sharing one generated import block.
 - `TestIntoAnExistingPackageKeepsItsName` — `internal/codegen/codegen_test.go` — `packageNameOf`.
 - `TestIntoWithoutImportIsRefused` — `internal/codegen/codegen_test.go`.
 - `TestAPackageWithNothingToGenerateIsAnError` — `internal/codegen/codegen_test.go`.

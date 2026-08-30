@@ -1,7 +1,7 @@
 # FL-009 — Transactions: joining, opening, and which database
 
 **Entry point:** `crud/executor.go:InTx` and `crud/executor.go:ExecutorFor`
-**Implements:** [[UC-005]] [[UC-012]] · **Governed by:** [[D-009]] [[D-016]] [[D-017]] [[D-046]]
+**Implements:** [[UC-005]] [[UC-012]] · **Governed by:** [[D-009]] [[D-016]] [[D-017]] [[D-046]] [[D-077]] [[D-079]]
 
 vv never owns a transaction it did not open, and it will not open one if
 somebody else already did. The whole mechanism is a linked list of bindings in
@@ -55,7 +55,8 @@ my database would accept?*
    b, ok := BeginnerOf(src); if !ok { return ErrNoTxSupport }   // through wrappers
    tx, _ := b.Begin(ctx)
    // panic  -> Rollback, re-panic
-   // error  -> Rollback (errors.Join if the rollback also fails)
+   // error  -> bounded Rollback detached from request cancellation
+   //           (errors.Join if the rollback also fails)
    // else   -> Commit
    fn(push(ctx, ownScope(src), tx))
    ```
@@ -74,6 +75,26 @@ my database would accept?*
 8. **`repository.Tx`** — `crud/sqlrepo/repository.go:128` — `crud.InTx(ctx,
    r.src, fn)`. `crud.Core.Tx` is on the interface, so a decorator can wrap it.
 
+## Atomic statement chunks
+
+`repository.executePrepared` is the transaction consumer for a logical write
+that exceeded its dialect's bind budget. `saveAllPlan` and `deletePlan` render
+every chunk first. One chunk executes directly because its statement is already
+atomic; two or more call `crud.InTx` once around the complete ordered plan.
+
+That choice inherits the rules above rather than creating a second transaction
+protocol: an executor already bound to this datasource is joined and its outer
+owner decides rollback, while an unbound source opens, commits or rolls back
+here. A source without `Begin` returns `ErrNoTxSupport` before any chunk runs.
+An execution error from a later chunk rolls back every earlier chunk when vv
+owns the transaction ([[D-079]]).
+
+`TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine` and
+`TestDeleteChunksRemoveTheWholeIDSetAgainstEveryEngine` in
+`test/integration/saveall_test.go` exercise those boundaries through every live
+adapter; the recorder-backed rollback and ambient-join controls live in
+`crud/sqlrepo/bind_budget_test.go`.
+
 ## Savepoints
 
 - **`crudsql`** — `crud/adapter/crudsql/crudsql.go:208`
@@ -82,6 +103,9 @@ my database would accept?*
   (`crudsql.go:216`) whose `Commit` is `RELEASE SAVEPOINT` and whose `Rollback`
   is `ROLLBACK TO SAVEPOINT`. `savepoint.Begin` delegates back to the parent
   `Tx`, so the counter is shared and names never collide.
+- **Transaction options are snapshots.** `DB.WithTxOptions` copies the
+  `sql.TxOptions` value instead of retaining the caller's pointer. A later
+  config mutation therefore cannot change or race with `Begin`.
 - **Both ends of the seam classify**, and for two different reasons.
   `Tx.Commit` passes the driver's error through `Executor.conflict` because a
   `DEFERRABLE INITIALLY DEFERRED` constraint is checked at the top-level `COMMIT`
@@ -201,6 +225,9 @@ transaction, and reports success.
 - **Only `Exec` and `Query` cross the boundary** (`crud/executor.go:Executor`). That is
   the reason any foreign transaction can be pushed into a context at all —
   scanning stays with the mapper and dialect stays with the repository.
+- **A chunked write uses `InTx`, not `InNewTx`.** A caller's transaction is the
+  intended atomic boundary and must not be shadowed by an independently
+  committed nested one. All statements are preflighted before either path.
 - **`ForUpdate` is only requested inside a transaction.** `repository.Update`
   asks `ExecutorFor` before adding the lock ([[FL-002]]); outside one the lock
   would be taken and dropped before the write.
@@ -216,12 +243,15 @@ transaction, and reports success.
 | a source that is not `Identified` under `WithExecutorFor` | `KeyOf` takes the value at face value | matched only if the caller passes the same value |
 | a `Source` wrapped for instrumentation that does not implement `SourceUnwrapper` | nothing catches it, and there is nothing to catch — the wrapper really has none of those methods | `Tx` is `ErrNoTxSupport`, the catalog refuses at start-up, and — silently — every read goes to the primary. Implement `UnwrapSource()` ([[D-061]]) |
 | a wrapped source under `InTx`, before `ownScope` walked | `ownScope` asserted where `BeginnerOf` walked | the transaction opened and bound **unscoped**: every repository in the process adopted it, including ones on another database. Closed — `identityOf` is now the one walk all three identity sites share ([[D-061]]) |
-| uncomparable datasource identity | `SameDataSource` (`executor.go:SameDataSource`) | no match, no panic — as far as the *static* type goes; a struct holding an interface is comparable and `==` on it still panics, which is why `crud/catalog/set.go:findable` guards its own probe ([[FL-016]]) |
+| uncomparable datasource identity | `SameDataSource` (`executor.go:SameDataSource`) | no match, no panic — including a comparable outer struct whose interface field holds an uncomparable dynamic value |
+| request canceled before rollback | `rollback` detaches cancellation and adds its own deadline | rollback still runs; its failure joins the operation error ([[D-077]]) |
 | a finished transaction still in the context | the driver | the driver's error, surfaced as-is |
 | a deferred constraint fires at `COMMIT` rather than at the statement | the adapter's `Commit` → `Executor.conflict` → `sqlfault.Wrap` | `ErrConflict` → 409, with the code where the source named its engine ([[FL-011]], [[FL-014]]) |
 | a write inside a transaction opened by `From` or `Open` | nothing classifies the engine — by design | 409 with the coarse `conflict` code and nothing finer; the driver's message reaches no body either way ([[D-044]]). Pass `crudsql.WithFaults` ([[FL-014]]) |
 | a probe wanting a savepoint inside a **foreign** transaction | `OwnedExecutorFor` reports `owned == false` | no savepoint is taken, and on an engine that poisons its transaction the answer is one violation ([[FL-017]]) |
 | a probe wanting a savepoint past the budget | `ClaimSavepoint` | no savepoint, and the fault is marked incomplete rather than silently short ([[D-042]]) |
+| a later bind-budget chunk fails | `executePrepared` returns from the `InTx` block | every earlier chunk rolls back when vv owns the transaction; an ambient owner receives the error and retains commit control |
+| a multi-chunk write on a source without transaction support | `InTx` before its callback | `ErrNoTxSupport`, no statement issued |
 
 ## Files
 
@@ -230,6 +260,7 @@ transaction, and reports success.
 | `crud/executor.go` | `Executor`, `Tx`, `Beginner`, `Source`, `Identified`, `Sourced`, `Nexter`, `SourceUnwrapper`, `SourceOf`, `BeginnerOf`, `ReadSourceOf`, `maxChainDepth`, the binding stack with its `owned` flag and savepoint counter, `WithExecutor(For)`, `ExecutorFor`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `InTx`, `ownScope`. `KeyOf` and `SameDataSource` are exported since phase 6 and `ownScope` is not: `catalog` keys on the first two and has no business with the third ([[FL-016]]) |
 | `crud/decorators/faults/probe.go` | `enricher.savepoint` — the only caller of `ClaimSavepoint`, and the four conditions a savepoint needs ([[FL-017]]) |
 | `crud/sqlrepo/repository.go` | `exec` — every statement's executor choice; `Tx` |
+| `crud/sqlrepo/repository.go` | `executePrepared`, `saveAllPlan`, `deletePlan` — preflighted bind-budget chunks share this transaction path ([[D-079]]) |
 | `crud/adapter/crudsql/crudsql.go` | `From`, `Open`, `Source`, `Postgres`/`MySQL`/`MariaDB`/`SQLite`, `WithFaults`, `DB.Begin`, `Tx.Begin` savepoints, `DataSource`; `Tx.Commit` and `savepoint.Commit` classify, and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
 | `crud/adapter/crudpgx/crudpgx.go` | `From`, `Open`, `WithFaults`, `Begin`, `DataSource`, `CopyFrom`; `Tx.Commit` classifies and `Begin` propagates the classifier ([[FL-011]], [[FL-014]]) |
 | `crud/dialect.go` | `LockClause` per dialect |
@@ -242,6 +273,15 @@ transaction, and reports success.
 - `TestTheHandleAndASourceOverItNameTheSameDatabase` — `crud/executor_test.go` — `KeyOf`.
 - `TestAScopedBindingDoesNotHideTheUnscopedOneUnderIt` — `crud/executor_test.go` — the chain walk.
 - `TestAnUncomparableDataSourceDoesNotPanic` — `crud/executor_test.go`.
+- `TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic` —
+  `crud/executor_test.go` — the comparable-outer/uncomparable-inner shape that
+  `reflect.Type.Comparable` misses.
+- `TestRollbackOutlivesTheCanceledRequestButRemainsBounded` —
+  `crud/executor_test.go` — cancellation is detached and the cleanup deadline
+  is finite ([[D-077]]).
+- `TestTransactionOptionsAreSnapshotted` —
+  `crud/adapter/crudsql/options_test.go` — mutating the caller's options after
+  construction does not change the source.
 - `TestInTxScopesTheTransactionItOpens` — `crud/executor_test.go` — `ownScope`.
 - `TestInTxLeavesAnUnidentifiedSourceUnscoped` — `crud/executor_test.go` — the other half.
 - `TestTheRecorderStaysUnidentified` — `crud/crudtest/recorder_test.go` — the recorder binds unscoped, and the control shows what giving it a `DataSource()` would change ([[D-041]]).
@@ -274,6 +314,12 @@ transaction, and reports success.
 - `TestAFinishedTransactionInTheContextIsNotIgnored` — `test/integration/edge_test.go`.
 - `TestADeferredConstraintArrivesFromTheCommitAndNotTheStatement` — `test/integration/corpus_test.go` — the commit path through both PostgreSQL adapters, with the immediate foreign key in the same run as its control. It walks top-level beginners only, so the savepoint door is not what it exercises.
 - `TestANestedCommitOnAPoisonedTransactionCarriesItsCode` — `test/integration/edge_test.go` — the savepoint door, on the one thing that does reach it: `25P02` from a `RELEASE` after a refused statement, through `crudsql` and `crudpgx` both, with a healthy nested commit as the control. Reverting `savepoint.Commit` to `return err` reddens the `crudsql` leg alone, which is the parity claim measured.
+- `TestSaveAllRollsEveryChunkBackWhenALaterChunkFails`,
+  `TestDeleteRollsEveryChunkBackWhenALaterChunkFails`,
+  `TestChunkedSaveAllJoinsAnAmbientTransaction`, and
+  `TestChunkedWriteWithoutTransactionSupportRunsNoStatement` —
+  `crud/sqlrepo/bind_budget_test.go` — owned rollback, ambient join and the
+  fail-before-write control for a source without `Begin`.
 
 ## See also
 

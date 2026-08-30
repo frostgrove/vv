@@ -51,6 +51,26 @@ func TestDialectSyntax(t *testing.T) {
 	}
 }
 
+func TestBindLimitsAreDialectOwnedAndExternalDialectsStayPortable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    crud.Dialect
+		want int
+	}{
+		{"postgres", crud.Postgres{}, 65_535},
+		{"mysql", crud.MySQL{}, 65_535},
+		{"sqlite", crud.SQLite{}, crud.PortableBindLimit},
+		{"external dialect", other{}, crud.PortableBindLimit},
+		{"invalid external declaration", invalidBudgetDialect{}, crud.PortableBindLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crud.BindLimit(tc.d); got != tc.want {
+				t.Fatalf("BindLimit = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLiteralLikeEscapingDefaultsForAnExternalDialect(t *testing.T) {
 	checkRender(t, other{}, articleMeta(t), crud.Contains("Title", "50%_\\"),
 		"title LIKE ? ESCAPE '\\'", []any{"%50\\%\\_\\\\%"})
@@ -171,3 +191,7 @@ func (other) Quote(ident string) string      { return ident }
 func (other) Upsert(string, []string) string { return "" }
 func (other) SupportsReturning() bool        { return false }
 func (other) LockClause() string             { return "" }
+
+type invalidBudgetDialect struct{ other }
+
+func (invalidBudgetDialect) MaxBindValues() int { return 0 }

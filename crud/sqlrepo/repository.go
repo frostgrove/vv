@@ -2,6 +2,8 @@ package sqlrepo
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -26,6 +28,11 @@ type repository[M any, ID comparable, U any] struct {
 	insertGen  string // INSERT with a database-generated primary key
 	insertFull string // INSERT with every insertable column
 	upsertTail string // conflict clause for insertFull
+}
+
+type preparedWrite struct {
+	query string
+	args  []any
 }
 
 func newRepository[M any, ID comparable, U any](source crud.Source, bp *Blueprint[M, ID, U]) *repository[M, ID, U] {
@@ -138,6 +145,39 @@ func (this *repository[M, ID, U]) Tx(ctx context.Context, fn func(context.Contex
 	return crud.InTx(ctx, this.source, fn)
 }
 
+// executePrepared runs a preflighted write plan. One statement is atomic on
+// its own. More than one joins the caller's transaction when present and opens
+// one otherwise, so a later refusal cannot leave earlier chunks committed.
+func (this *repository[M, ID, U]) executePrepared(ctx context.Context, plan []preparedWrite) (int64, error) {
+	if len(plan) == 0 {
+		return 0, nil
+	}
+	var affected int64
+	run := func(tx context.Context) error {
+		for _, statement := range plan {
+			response, err := this.exec(tx).Exec(tx, statement.query, statement.args...)
+			if err != nil {
+				return err
+			}
+			if response.RowsAffected > 0 && affected > math.MaxInt64-response.RowsAffected {
+				return &crud.SchemaError{Model: this.meta.Name, Reason: "rows-affected total exceeds int64"}
+			}
+			affected += response.RowsAffected
+		}
+		return nil
+	}
+	if len(plan) == 1 {
+		if err := run(ctx); err != nil {
+			return 0, err
+		}
+		return affected, nil
+	}
+	if err := crud.InAtomic(ctx, this.source, run); err != nil {
+		return 0, err
+	}
+	return affected, nil
+}
+
 // ---------------------------------------------------------------------------
 // reads
 
@@ -171,7 +211,7 @@ func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Optio
 	// Without a COUNT we still want an honest HasNext, so we fetch one row past
 	// the page and throw it away.
 	probe := limit
-	if o.NoTotal && limit > 0 {
+	if o.NoTotal && limit > 0 && limit < math.MaxInt {
 		probe = limit + 1
 	}
 	items, sort, err := this.find(ctx, o, probe, offset)
@@ -248,6 +288,9 @@ func (this *repository[M, ID, U]) setCursors(response *crud.PaginatedResponse[M]
 		f := this.meta.Field(s.Field)
 		if f == nil {
 			return // a sort through a relation has no value on the row itself
+		}
+		if !crud.CursorFieldSupported(f) {
+			return // do not issue a token CursorPredicate must refuse
 		}
 		fields[i], names[i] = f, f.Name
 		unique = unique || f.PK
@@ -1047,6 +1090,11 @@ func (this *repository[M, ID, U]) saveStatement(m *M) (string, []any, bool, erro
 	if err != nil {
 		return "", nil, false, err
 	}
+	if limit := crud.BindLimit(this.d); len(args) > limit {
+		return "", nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+			"Save needs %d bound values, but dialect %q permits at most %d; use a narrower persistence model or a driver bulk capability",
+			len(args), this.d.Name(), limit)}
+	}
 	return stmt, args, generatedPK, nil
 }
 
@@ -1148,21 +1196,10 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 	o := crud.Build(options...)
 	within := this.scoped(o)
 
-	// Inside somebody's transaction we can lock the row we are about to diff
-	// against; outside of one, locking would be pointless.
-	loadOpts := append([]crud.Option{byID}, options...)
-	loadOpts = append(loadOpts, crud.Limit(1), crud.Unsorted(), crud.PrimaryOnly())
-	if _, inTx := crud.ExecutorFor(ctx, this.source); inTx {
-		loadOpts = append(loadOpts, crud.ForUpdate())
-	}
-	found, err := this.GetAll(ctx, loadOpts...)
+	cur, err := this.mutationRead(ctx, byID, o)
 	if err != nil {
 		return zero, err
 	}
-	if len(found) == 0 {
-		return zero, crud.ErrNotFound
-	}
-	cur := found[0]
 
 	changes, err := this.bp.plan.Changes(dataTransferObject, &cur)
 	if err != nil {
@@ -1238,6 +1275,38 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 	return cur, nil
 }
 
+// mutationRead builds the deliberately small read shape that may decide a
+// write. A caller's predicate and relation narrowings are security boundaries,
+// so they survive. Projection, ordering, cursors, pagination, aggregation and
+// preloads describe a response and must not influence the row used for a diff.
+// In particular, diffing a projected zero value can turn a no-op into a write
+// (or the reverse), and omitting a version column manufactures a stale miss.
+func (this *repository[M, ID, U]) mutationRead(ctx context.Context, byID crud.Option, o *crud.Options) (M, error) {
+	var zero M
+	read := &crud.Options{
+		Filter:      append([]crud.Predicate(nil), o.Filter...),
+		RelScopes:   o.RelScopes,
+		Primary:     true,
+		ForUpdate:   o.ForUpdate,
+		NoSort:      true,
+		NoTotal:     true,
+		PreloadRows: 0,
+	}
+	read.Apply(byID, crud.SelectAll())
+	if _, inTx := crud.ExecutorFor(ctx, this.source); inTx {
+		read.ForUpdate = true
+	}
+
+	found, _, err := this.find(ctx, read, 1, 0)
+	if err != nil {
+		return zero, err
+	}
+	if len(found) == 0 {
+		return zero, crud.ErrNotFound
+	}
+	return found[0], nil
+}
+
 // versionCheck returns the predicate that pins the row to the version it was
 // read at, or nil for a model with no version column.
 func (this *repository[M, ID, U]) versionCheck(cur *M) (crud.Predicate, error) {
@@ -1260,7 +1329,10 @@ func (this *repository[M, ID, U]) missedRow(ctx context.Context, id ID, within c
 	if !versioned {
 		return crud.ErrNotFound
 	}
-	still, err := this.Exists(ctx, crud.Where(crud.And(crud.Eq(this.meta.PK.Name, id), within)))
+	still, err := this.Exists(ctx,
+		crud.Where(crud.And(crud.Eq(this.meta.PK.Name, id), within)),
+		crud.PrimaryOnly(),
+	)
 	if err != nil {
 		return err
 	}
@@ -1316,30 +1388,125 @@ func (this *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64,
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	// The scope belongs in here too. Without it a row the repository refuses to
-	// show is still deletable by id — GET /:id answers 404 and DELETE /:id
-	// answers 200 for the same row.
-	var byID crud.Predicate
-	if len(ids) == 1 {
-		byID = crud.Eq(this.meta.PK.Name, ids[0])
-	} else {
-		byID = crud.InAny(this.meta.PK.Name, ids)
+	plan, err := this.deletePlan(ids, nil, nil, nil)
+	if err != nil {
+		return 0, err
 	}
-	where := crud.And(this.bp.set.scope, byID)
+	return this.executePrepared(ctx, plan)
+}
+
+// DeleteScoped is the storage half of security.Gate.Delete. Policy has already
+// resolved and inspected; this method keeps that narrowing beside the SQL bind
+// budget, permanent repository scope, soft-delete clock and transaction, so no
+// layer has to guess how many ids fit a physical statement.
+func (this *repository[M, ID, U]) DeleteScoped(ctx context.Context, deletion *crud.ScopedDelete[ID]) (int64, error) {
+	if deletion == nil {
+		return 0, crud.ErrBadRequest
+	}
+	if len(deletion.IDs) == 0 {
+		return 0, nil
+	}
+	plan, err := this.deletePlan(deletion.IDs, deletion.Scope, deletion.RelationScopes, deletion.Snapshots)
+	if err != nil {
+		return 0, err
+	}
+	return this.executePrepared(ctx, plan)
+}
+
+// deletePlan keeps the permanent scope in every chunk and charges its values
+// before deciding how many ids fit. A relation scope may itself add binds while
+// the root predicate crosses a relation, so counting only the ids would still
+// let the final statement cross the server limit.
+func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, relationScopes *crud.RelationScopes, snapshots map[ID]crud.Predicate) ([]preparedWrite, error) {
+	relationScopes = crud.MergeRelationScopes(this.bp.relScopes, relationScopes)
+	fixedPredicate := crud.And(this.bp.set.scope, scope)
+	_, fixed, err := crud.NewSQL(this.d, this.meta).RelationScopes(relationScopes).
+		Predicate(fixedPredicate).Done()
+	if err != nil {
+		return nil, err
+	}
+	overhead := len(fixed)
+	var deletedAt any
 	if this.bp.softDelete != nil {
-		return this.stamp(ctx, where, this.bp.relScopes)
+		deletedAt = crud.NowFunc()
+		overhead++
 	}
-	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.bp.relScopes).Raw(this.deleteFrom).
-		Where(where)
-	q, args, err := b.Done()
-	if err != nil {
-		return 0, err
+	limit := crud.BindLimit(this.d)
+	if overhead >= limit {
+		return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+			"Delete needs one id bind in addition to %d scope/write binds, but dialect %q permits at most %d; reduce the repository scope or use a temporary table",
+			overhead, this.d.Name(), limit)}
 	}
-	response, err := this.exec(ctx).Exec(ctx, q, args...)
-	if err != nil {
-		return 0, err
+	available := limit - overhead
+	type item struct {
+		id       ID
+		snapshot crud.Predicate
+		binds    int
 	}
-	return response.RowsAffected, nil
+	items := make([]item, 0, len(ids))
+	for _, id := range ids {
+		entry := item{id: id, binds: 1}
+		if snapshots != nil {
+			var ok bool
+			entry.snapshot, ok = snapshots[id]
+			if !ok || entry.snapshot == nil {
+				continue // no inspected row means there is nothing authorised to delete.
+			}
+			_, args, err := crud.NewSQL(this.d, this.meta).Predicate(entry.snapshot).Done()
+			if err != nil {
+				return nil, err
+			}
+			entry.binds += len(args)
+		}
+		if entry.binds > available {
+			return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+				"one inspected Delete row needs %d id/snapshot binds in addition to %d scope/write binds, but dialect %q permits at most %d; narrow the persisted model or inspection snapshot",
+				entry.binds, overhead, this.d.Name(), limit)}
+		}
+		items = append(items, entry)
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	plan := make([]preparedWrite, 0, (len(items)-1)/max(1, available)+1)
+	for start := 0; start < len(items); {
+		end, used := start, 0
+		for end < len(items) && used+items[end].binds <= available {
+			used += items[end].binds
+			end++
+		}
+		chunkIDs := make([]ID, 0, end-start)
+		chunkSnapshots := make([]crud.Predicate, 0, end-start)
+		for _, entry := range items[start:end] {
+			chunkIDs = append(chunkIDs, entry.id)
+			if snapshots != nil {
+				chunkSnapshots = append(chunkSnapshots, entry.snapshot)
+			}
+		}
+		byID := crud.InAny(this.meta.PK.Name, chunkIDs)
+		if len(chunkIDs) == 1 {
+			byID = crud.Eq(this.meta.PK.Name, chunkIDs[0])
+		}
+		where := crud.And(fixedPredicate, byID)
+		if snapshots != nil {
+			where = crud.And(where, crud.Or(chunkSnapshots...))
+		}
+		b := crud.NewSQL(this.d, this.meta).RelationScopes(relationScopes)
+		if this.bp.softDelete != nil {
+			f := this.bp.softDelete
+			b.Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(deletedAt)
+		} else {
+			b.Raw(this.deleteFrom)
+		}
+		q, args, err := b.Where(where).Done()
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, preparedWrite{query: q, args: args})
+		start = end
+	}
+	return plan, nil
 }
 
 func (this *repository[M, ID, U]) DeleteAll(ctx context.Context, options ...crud.Option) (int64, error) {
@@ -1472,6 +1639,11 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 	if err := o.Agg.Validate(this.meta); err != nil {
 		return nil, err
 	}
+	if !o.NoSort {
+		if err := o.Agg.ValidateSort(this.meta, o.Sort); err != nil {
+			return nil, err
+		}
+	}
 
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o)).Raw("SELECT ")
 	o.Agg.Render(b)
@@ -1490,9 +1662,12 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 	if len(o.Sort) > 0 && !o.NoSort {
 		b.OrderBy(o.Sort)
 	}
-	limit, offset, _ := o.Resolved(this.bp.set.defaultLimit, this.bp.set.maxLimit)
-	if o.Unpaged {
-		limit, offset = 0, 0
+	// A summary is not implicitly a page. With no explicit paging control every
+	// group is returned; otherwise the ordinary repository cap still applies.
+	// In particular Unpaged may not erase MaxLimit on this verb.
+	limit, offset := 0, 0
+	if o.Page != 0 || o.Limit != 0 || o.Offset != 0 || o.Unpaged {
+		limit, offset, _ = o.Resolved(this.bp.set.defaultLimit, this.bp.set.maxLimit)
 	}
 	b.LimitOffset(limit, offset)
 
@@ -1551,13 +1726,12 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 	return out, rows.Err()
 }
 
-// SaveAll writes many rows in one statement.
+// SaveAll writes many rows in the fewest statements the dialect permits.
 //
 // It is Save's batched partner and it keeps Save's fork: every row must agree
 // about whether the database generates the key, because the two forms are two
 // different statements. A mixed batch is refused rather than split, so the call
-// stays one round trip or none — silently becoming two would make the cost
-// invisible, which is the only reason to reach for this over a loop.
+// cannot silently change an assigned-key upsert into a generated-key insert.
 //
 // It is deliberately write-only, like SaveOnly: callers that need individual
 // stored rows can call Save for each command and keep the results explicitly.
@@ -1594,32 +1768,56 @@ func (this *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) erro
 		fields, tail = this.meta.InsertGen, ""
 	}
 
-	b := crud.NewSQL(this.d, this.meta).Raw("INSERT INTO ").Table().Raw(" (")
-	for i, f := range fields {
-		if i > 0 {
-			b.Raw(", ")
-		}
-		b.Ident(f.Column)
-	}
-	b.Raw(") VALUES ")
-	for i, m := range models {
-		if i > 0 {
-			b.Raw(", ")
-		}
-		vals, err := this.meta.Values(m, fields)
-		if err != nil {
-			return err
-		}
-		b.Raw("(").Binds(vals).Raw(")")
-	}
-	b.Raw(tail)
-
-	q, args, err := b.Done()
+	plan, err := this.saveAllPlan(models, fields, tail)
 	if err != nil {
 		return err
 	}
-	if _, err := this.exec(ctx).Exec(ctx, q, args...); err != nil {
-		return err
+	_, err = this.executePrepared(ctx, plan)
+	return err
+}
+
+// saveAllPlan performs every model read and renders every statement before the
+// first one runs. A bad value in a later chunk is therefore a preflight error,
+// not a partially persisted batch.
+func (this *repository[M, ID, U]) saveAllPlan(models []*M, fields []*crud.Field, tail string) ([]preparedWrite, error) {
+	limit := crud.BindLimit(this.d)
+	width := len(fields)
+	perStatement := len(models)
+	if width > 0 {
+		perStatement = limit / width
+		if perStatement == 0 {
+			return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+				"one SaveAll row needs %d bound values, but dialect %q permits at most %d; use SaveOnly with a narrower model or a driver bulk API",
+				width, this.d.Name(), limit)}
+		}
 	}
-	return nil
+	chunks := (len(models)-1)/perStatement + 1
+	plan := make([]preparedWrite, 0, chunks)
+	for start := 0; start < len(models); start += perStatement {
+		end := min(start+perStatement, len(models))
+		b := crud.NewSQL(this.d, this.meta).Raw("INSERT INTO ").Table().Raw(" (")
+		for i, f := range fields {
+			if i > 0 {
+				b.Raw(", ")
+			}
+			b.Ident(f.Column)
+		}
+		b.Raw(") VALUES ")
+		for i, m := range models[start:end] {
+			if i > 0 {
+				b.Raw(", ")
+			}
+			values, err := this.meta.Values(m, fields)
+			if err != nil {
+				return nil, err
+			}
+			b.Raw("(").Binds(values).Raw(")")
+		}
+		q, args, err := b.Raw(tail).Done()
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, preparedWrite{query: q, args: args})
+	}
+	return plan, nil
 }

@@ -23,6 +23,35 @@ type Dialect interface {
 	LockClause() string
 }
 
+// BindBudget is implemented by a dialect that knows how many bound values one
+// statement may carry. It is optional so dialects outside this module keep
+// compiling. A dialect without it receives the conservative portable limit
+// returned by BindLimit.
+//
+// The limit is about the complete statement, not one IN list or one VALUES
+// row. SQL.Done enforces it after every part of the statement has contributed
+// its arguments.
+type BindBudget interface {
+	MaxBindValues() int
+}
+
+// PortableBindLimit is the conservative statement budget used for an external
+// dialect that does not declare one. It is accepted by every SQLite build vv
+// supports and leaves an unknown dialect on the safe side of its server limit.
+const PortableBindLimit = 999
+
+// BindLimit returns the maximum number of bound values one statement may
+// carry. A non-positive declaration is treated like an absent declaration;
+// invalid configuration must narrow rather than disable the preflight.
+func BindLimit(d Dialect) int {
+	if budget, ok := d.(BindBudget); ok {
+		if limit := budget.MaxBindValues(); limit > 0 {
+			return limit
+		}
+	}
+	return PortableBindLimit
+}
+
 // OffsetLimiter is implemented by dialects whose grammar has no OFFSET without
 // a LIMIT in front of it. MySQL and SQLite both need one and spell "no limit"
 // differently; PostgreSQL needs nothing, so it does not implement this and a
@@ -81,6 +110,9 @@ func (Postgres) Quote(ident string) string {
 }
 func (Postgres) SupportsReturning() bool { return true }
 
+// MaxBindValues is PostgreSQL's protocol-wide parameter count.
+func (Postgres) MaxBindValues() int { return 65_535 }
+
 // UpsertSwallowsPrimaryKeyOnly reports what ON CONFLICT (pk) DO UPDATE covers:
 // the named target and nothing else. A second unique key still refuses.
 func (Postgres) UpsertSwallowsPrimaryKeyOnly() bool { return true }
@@ -122,6 +154,7 @@ func (MySQL) Placeholder(int) string   { return "?" }
 func (MySQL) SupportsReturning() bool  { return false }
 func (MySQL) LockClause() string       { return " FOR UPDATE" }
 func (MySQL) LikeEscapeClause() string { return ` ESCAPE X'5C'` }
+func (MySQL) MaxBindValues() int       { return 65_535 }
 func (MySQL) Quote(ident string) string {
 	return "`" + strings.ReplaceAll(ident, "`", "``") + "`"
 }
@@ -172,6 +205,11 @@ func (SQLite) Name() string            { return "sqlite" }
 func (SQLite) Placeholder(int) string  { return "?" }
 func (SQLite) SupportsReturning() bool { return true }
 
+// MaxBindValues deliberately keeps SQLite at the portable historical default.
+// The library cannot see whether a consumer rebuilt SQLite with a lower
+// SQLITE_MAX_VARIABLE_NUMBER, while every supported build accepts 999.
+func (SQLite) MaxBindValues() int { return PortableBindLimit }
+
 // LockClause is empty because SQLite has no row locks: a write transaction
 // locks the database. crud.ForUpdate() therefore renders nothing here, and the
 // serialisation a caller wanted comes from the transaction instead.
@@ -197,6 +235,9 @@ var (
 	_ Dialect           = Postgres{}
 	_ Dialect           = MySQL{}
 	_ Dialect           = SQLite{}
+	_ BindBudget        = Postgres{}
+	_ BindBudget        = MySQL{}
+	_ BindBudget        = SQLite{}
 	_ UpsertScope       = Postgres{}
 	_ UpsertScope       = SQLite{}
 	_ StatementRollback = MySQL{}

@@ -1,5 +1,7 @@
 package crud
 
+import "fmt"
+
 // SQL assembles a statement against a dialect and a bound model. It is the
 // exported seam that repository implementations build on: predicates resolve
 // field references through the schema, bind markers are numbered per dialect,
@@ -128,15 +130,32 @@ func (this *SQL) LimitOffset(limit, offset int) *SQL {
 // Args returns the collected bind arguments.
 func (this *SQL) Args() []any { return this.w.args }
 
-// Err reports the first field-resolution failure, if any.
-func (this *SQL) Err() error { return this.w.err }
+// Err reports the first field-resolution failure or a statement that exceeds
+// its dialect's bind budget. The latter is checked here, after every predicate,
+// scope and SET value has contributed to the same statement-wide count.
+func (this *SQL) Err() error {
+	if this.w.err != nil {
+		return this.w.err
+	}
+	limit := BindLimit(this.w.d)
+	if len(this.w.args) <= limit {
+		return nil
+	}
+	model := "statement"
+	if this.w.m != nil && this.w.m.Name != "" {
+		model = this.w.m.Name
+	}
+	return &SchemaError{Model: model, Reason: fmt.Sprintf(
+		"statement needs %d bound values, but dialect %q permits at most %d; reduce the predicate or use a temporary table or bulk API",
+		len(this.w.args), this.w.d.Name(), limit)}
+}
 
 // String returns the assembled statement.
 func (this *SQL) String() string { return this.w.sb.String() }
 
 // Done returns the statement, its arguments and any error in one go.
 func (this *SQL) Done() (string, []any, error) {
-	return this.w.sb.String(), this.w.args, this.w.err
+	return this.w.sb.String(), this.w.args, this.Err()
 }
 
 // Dialect exposes the dialect the statement is being built for.

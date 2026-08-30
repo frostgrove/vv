@@ -1,6 +1,7 @@
 package crud
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -101,7 +102,7 @@ func (this *Relation) Target() (*Meta, error) {
 		}
 		table := this.table
 		if table == "" {
-			table = TableNameOf(this.Elem)
+			table = relationTableNameOf(this.Elem)
 		}
 		this.meta = &Meta{Schema: s, Table: table}
 	})
@@ -145,29 +146,138 @@ func (this *Relation) fieldValue(base unsafe.Pointer) reflect.Value {
 // ---------------------------------------------------------------------------
 // table names
 
-var tableRegistry sync.Map // reflect.Type -> string
+type tableRegistration struct {
+	mu           sync.Mutex
+	table        string
+	resolved     bool
+	fallbackOnce sync.Once
+	fallback     string
+}
+
+var tableRegistry sync.Map // reflect.Type -> *tableRegistration
+
+func registrationFor(t reflect.Type) *tableRegistration {
+	entry := new(tableRegistration)
+	actual, _ := tableRegistry.LoadOrStore(t, entry)
+	return actual.(*tableRegistration)
+}
 
 // RegisterTable pins the table name of a model type. sqlrepo.Define calls it, so
-// declaring a repository is usually enough for relations to resolve.
+// declaring a repository is usually enough for relations to resolve. It panics
+// on a conflicting or late declaration; use TryRegisterTable when declaration
+// errors belong to a larger start-up validation result.
 func RegisterTable[M any](table string) {
+	if err := TryRegisterTable[M](table); err != nil {
+		panic(err)
+	}
+}
+
+// TryRegisterTable is RegisterTable without the panic.
+func TryRegisterTable[M any](table string) error {
 	var zero M
-	tableRegistry.Store(reflect.TypeOf(&zero).Elem(), table)
+	return TryRegisterTableType(reflect.TypeOf(&zero).Elem(), table)
 }
 
 // RegisterTableType is RegisterTable for a reflect.Type.
-func RegisterTableType(t reflect.Type, table string) { tableRegistry.Store(t, table) }
+func RegisterTableType(t reflect.Type, table string) {
+	if err := TryRegisterTableType(t, table); err != nil {
+		panic(err)
+	}
+}
+
+// TryRegisterTableType pins a model table without panicking. A type may be
+// registered repeatedly with the same table, but never with two tables. Once
+// TableNameOf has supplied a name to relation metadata, a different late name
+// is also refused: accepting it would leave the already-resolved relation on a
+// stale table while making the registry claim otherwise.
+func TryRegisterTableType(t reflect.Type, table string) error {
+	if t == nil {
+		return &SchemaError{Model: "<nil>", Reason: "cannot register a table for a nil type"}
+	}
+	if table == "" {
+		return &SchemaError{Model: t.String(), Reason: "table name cannot be empty"}
+	}
+	entry := registrationFor(t)
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.table == "" {
+		entry.table = table
+		return nil
+	}
+	if entry.table == table {
+		return nil
+	}
+	reason := fmt.Sprintf("table is already registered as %q; refusing conflicting registration %q", entry.table, table)
+	if entry.resolved {
+		reason = fmt.Sprintf("table was already resolved as %q; refusing late registration %q", entry.table, table)
+	}
+	return &SchemaError{Model: t.String(), Reason: reason}
+}
 
 // Tabler lets a model name its own table.
 type Tabler interface{ TableName() string }
 
 var tablerType = reflect.TypeOf((*Tabler)(nil)).Elem()
 
-// TableNameOf resolves the table of a model type: an explicit registration
+// TableNameOf reports the table of a model type: an explicit registration
 // first, then a TableName method, then the snake_case plural of the type name.
+// Merely asking for the name does not publish relation metadata and therefore
+// does not freeze the fallback. Relation.Target performs that separate step.
 func TableNameOf(t reflect.Type) string {
-	if v, ok := tableRegistry.Load(t); ok {
-		return v.(string)
+	entry := registrationFor(t)
+	entry.mu.Lock()
+	if entry.table != "" {
+		table := entry.table
+		entry.mu.Unlock()
+		return table
 	}
+	entry.mu.Unlock()
+	fallback := fallbackTableName(entry, t)
+	// A registration that completed while user TableName code was running wins
+	// this read without turning the fallback lookup itself into publication.
+	entry.mu.Lock()
+	if entry.table != "" {
+		fallback = entry.table
+	}
+	entry.mu.Unlock()
+	return fallback
+}
+
+func fallbackTableName(entry *tableRegistration, t reflect.Type) string {
+	entry.fallbackOnce.Do(func() { entry.fallback = defaultTableNameOf(t) })
+	return entry.fallback
+}
+
+// relationTableNameOf resolves the one process-wide table a relation without
+// an explicit `table=` tag may publish. Unlike TableNameOf, this freezes the
+// answer: Relation.Target caches the resulting Meta, so accepting a different
+// registration afterwards could never update every reader consistently.
+func relationTableNameOf(t reflect.Type) string {
+	entry := registrationFor(t)
+	entry.mu.Lock()
+	if entry.table != "" {
+		entry.resolved = true
+		table := entry.table
+		entry.mu.Unlock()
+		return table
+	}
+	entry.mu.Unlock()
+
+	// A model-owned TableName may be arbitrary consumer code. Do not run it
+	// under the registry lock, and do not run it at all when a registration has
+	// already won. A concurrent registration is checked again below.
+	fallback := fallbackTableName(entry, t)
+	entry.mu.Lock()
+	if entry.table == "" {
+		entry.table = fallback
+	}
+	entry.resolved = true
+	table := entry.table
+	entry.mu.Unlock()
+	return table
+}
+
+func defaultTableNameOf(t reflect.Type) string {
 	if t.Implements(tablerType) {
 		return reflect.New(t).Elem().Interface().(Tabler).TableName()
 	}

@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/frostgrove/vv/auth"
@@ -97,4 +98,76 @@ func TestChainAnswersTheFirstAuthenticatorThatSucceeds(t *testing.T) {
 			t.Fatalf("a nil member broke the chain: %v", err)
 		}
 	})
+
+	t.Run("a typed-nil member is skipped rather than called", func(t *testing.T) {
+		var nilAuthenticator *typedNilAuthenticator
+		p, err := auth.Chain(nilAuthenticator, yes("u-1")).Authenticate(t.Context(), auth.Credential{})
+		if err != nil || p.Subject() != "u-1" {
+			t.Fatalf("a typed-nil member broke the chain: %v %v", p, err)
+		}
+	})
+
+	t.Run("a nil-like success lets a real alternative try", func(t *testing.T) {
+		var nilPrincipal *typedNilPrincipal
+		empty := auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+			return nilPrincipal, nil
+		})
+		p, err := auth.Chain(empty, yes("u-2")).Authenticate(t.Context(), auth.Credential{})
+		if err != nil || p.Subject() != "u-2" {
+			t.Fatalf("a typed-nil principal terminated the chain as success: %v %v", p, err)
+		}
+	})
+
+	t.Run("only nil-like successes are one refusal", func(t *testing.T) {
+		var nilPrincipal *typedNilPrincipal
+		empty := auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+			return nilPrincipal, nil
+		})
+		if _, err := auth.Chain(empty).Authenticate(t.Context(), auth.Credential{}); !errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatalf("a chain of nil-like successes answered %v, want a refusal", err)
+		}
+	})
+}
+
+func TestChainSnapshotsTheVariadicSlice(t *testing.T) {
+	members := []auth.Authenticator{yes("frozen")}
+	chain := auth.Chain(members...)
+
+	// The immediate mutation is the deterministic contract; the concurrent
+	// mutations below are its race-detector control.
+	members[0] = yes("replacement")
+	p, err := chain.Authenticate(t.Context(), auth.Credential{})
+	if err != nil || p.Subject() != "frozen" {
+		t.Fatalf("the chain retained the caller's slice: %v %v", p, err)
+	}
+
+	ctx := t.Context()
+	start := make(chan struct{})
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 1000; i++ {
+			members[0] = yes("mutating")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 1000; i++ {
+			got, callErr := chain.Authenticate(ctx, auth.Credential{})
+			if callErr != nil || got.Subject() != "frozen" {
+				errCh <- errors.New("published chain observed caller-owned slice mutation")
+				return
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
+	close(errCh)
+	if callErr := <-errCh; callErr != nil {
+		t.Fatal(callErr)
+	}
 }

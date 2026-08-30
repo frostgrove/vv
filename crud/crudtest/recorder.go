@@ -5,12 +5,16 @@
 package crudtest
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/frostgrove/vv/crud"
 )
@@ -25,7 +29,8 @@ type Statement struct {
 func (this Statement) String() string { return fmt.Sprintf("%s %v", this.SQL, this.Args) }
 
 // Result is a canned query response. Values are assigned to scan destinations
-// positionally, converting where Go allows and honouring sql.Scanner.
+// positionally, using database/sql-compatible conversions and honouring
+// sql.Scanner.
 //
 // Err and RowsErr are two different failures because the drivers this doubles
 // for report one failure in two places. Err is Query itself refusing, which is
@@ -207,12 +212,12 @@ func (this *rows) Scan(dest ...any) error {
 }
 
 func assign(destination, source any) error {
-	if s, ok := destination.(sql.Scanner); ok {
-		return s.Scan(source)
-	}
 	dv := reflect.ValueOf(destination)
 	if dv.Kind() != reflect.Pointer || dv.IsNil() {
 		return fmt.Errorf("destination %T is not a non-nil pointer", destination)
+	}
+	if s, ok := destination.(sql.Scanner); ok {
+		return s.Scan(source)
 	}
 	return setValue(dv.Elem(), source)
 }
@@ -220,8 +225,13 @@ func assign(destination, source any) error {
 // setValue writes src into dst, allocating through a pointer column on the way.
 func setValue(destination reflect.Value, source any) error {
 	if source == nil {
-		destination.SetZero()
-		return nil
+		switch destination.Kind() {
+		case reflect.Pointer, reflect.Interface, reflect.Slice:
+			destination.SetZero()
+			return nil
+		default:
+			return fmt.Errorf("converting NULL to %s is unsupported", destination.Kind())
+		}
 	}
 	if destination.Kind() == reflect.Pointer {
 		p := reflect.New(destination.Type().Elem())
@@ -232,15 +242,166 @@ func setValue(destination reflect.Value, source any) error {
 		return nil
 	}
 	sv := reflect.ValueOf(source)
-	switch {
-	case sv.Type().AssignableTo(destination.Type()):
-		destination.Set(sv)
-	case sv.Type().ConvertibleTo(destination.Type()):
-		destination.Set(sv.Convert(destination.Type()))
-	default:
-		return fmt.Errorf("cannot assign %T to %s", source, destination.Type())
+	if destination.Type() == reflect.TypeFor[any]() {
+		if b, ok := source.([]byte); ok {
+			destination.Set(reflect.ValueOf(bytes.Clone(b)))
+		} else {
+			destination.Set(sv)
+		}
+		return nil
 	}
-	return nil
+	if tm, ok := source.(time.Time); ok {
+		formatted := tm.Format(time.RFC3339Nano)
+		switch destination.Type() {
+		case reflect.TypeFor[string]():
+			destination.SetString(formatted)
+			return nil
+		case reflect.TypeFor[[]byte](), reflect.TypeFor[sql.RawBytes]():
+			destination.SetBytes([]byte(formatted))
+			return nil
+		}
+	}
+	if sv.Type().AssignableTo(destination.Type()) {
+		if b, ok := source.([]byte); ok {
+			destination.Set(reflect.ValueOf(bytes.Clone(b)))
+		} else {
+			destination.Set(sv)
+		}
+		return nil
+	}
+	// database/sql permits conversion between named and unnamed values of the
+	// same kind, but not arbitrary Go conversions such as int -> string (rune).
+	if destination.Kind() == sv.Kind() && sv.Type().ConvertibleTo(destination.Type()) {
+		destination.Set(sv.Convert(destination.Type()))
+		return nil
+	}
+
+	if destination.Type() == reflect.TypeFor[[]byte]() {
+		if b, ok := scanBytes(sv); ok {
+			destination.SetBytes(b)
+			return nil
+		}
+	}
+	if destination.Type() == reflect.TypeFor[sql.RawBytes]() {
+		if b, ok := scanBytes(sv); ok {
+			destination.SetBytes(b)
+			return nil
+		}
+	}
+	if destination.Type() == reflect.TypeFor[time.Time]() {
+		if tm, ok := source.(time.Time); ok {
+			destination.Set(reflect.ValueOf(tm))
+			return nil
+		}
+	}
+
+	switch destination.Kind() {
+	case reflect.Bool:
+		v, err := driver.Bool.ConvertValue(source)
+		if err != nil {
+			return err
+		}
+		destination.SetBool(v.(bool))
+		return nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		s := scanString(source)
+		n, err := strconv.ParseInt(s, 10, destination.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("converting driver value %T (%q) to %s: %w", source, s, destination.Kind(), err)
+		}
+		destination.SetInt(n)
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		s := scanString(source)
+		n, err := strconv.ParseUint(s, 10, destination.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("converting driver value %T (%q) to %s: %w", source, s, destination.Kind(), err)
+		}
+		destination.SetUint(n)
+		return nil
+	case reflect.Float32, reflect.Float64:
+		s := scanString(source)
+		n, err := strconv.ParseFloat(s, destination.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("converting driver value %T (%q) to %s: %w", source, s, destination.Kind(), err)
+		}
+		destination.SetFloat(n)
+		return nil
+	case reflect.String:
+		switch v := source.(type) {
+		case string:
+			destination.SetString(v)
+			return nil
+		case []byte:
+			destination.SetString(string(v))
+			return nil
+		default:
+			// The built-in string destination is the database/sql convenience
+			// case that formats numeric and boolean driver values. Named string
+			// types intentionally accept only text, matching database/sql.
+			if destination.Type() == reflect.TypeFor[string]() && scanScalar(sv.Kind()) {
+				destination.SetString(scanString(source))
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("unsupported Scan, storing driver value type %T into type %s", source, destination.Type())
+}
+
+func scanScalar(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+func scanString(source any) string {
+	switch v := source.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	}
+	rv := reflect.ValueOf(source)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10)
+	case reflect.Float32:
+		return strconv.FormatFloat(rv.Float(), 'g', -1, 32)
+	case reflect.Float64:
+		return strconv.FormatFloat(rv.Float(), 'g', -1, 64)
+	case reflect.Bool:
+		return strconv.FormatBool(rv.Bool())
+	}
+	return fmt.Sprint(source)
+}
+
+func scanBytes(source reflect.Value) ([]byte, bool) {
+	switch source.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.AppendInt(nil, source.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.AppendUint(nil, source.Uint(), 10), true
+	case reflect.Float32:
+		return strconv.AppendFloat(nil, source.Float(), 'g', -1, 32), true
+	case reflect.Float64:
+		return strconv.AppendFloat(nil, source.Float(), 'g', -1, 64), true
+	case reflect.Bool:
+		return strconv.AppendBool(nil, source.Bool()), true
+	case reflect.String:
+		return []byte(source.String()), true
+	case reflect.Slice:
+		if source.Type().Elem().Kind() == reflect.Uint8 {
+			return bytes.Clone(source.Bytes()), true
+		}
+	}
+	return nil, false
 }
 
 // Normalize collapses runs of whitespace so tests can compare statements

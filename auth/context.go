@@ -1,10 +1,18 @@
 package auth
 
-import "context"
+import (
+	"context"
+
+	"github.com/frostgrove/vv/internal/nilvalue"
+)
 
 type ctxKey int
 
 const principalKey ctxKey = iota
+
+type principalState struct {
+	principal Principal
+}
 
 // WithPrincipal carries the authenticated caller down the chain. The context is
 // the only channel that reaches the security gate: a transport hook can reject
@@ -20,10 +28,10 @@ const principalKey ctxKey = iota
 // [PrincipalFrom] answer (nil, true), and every caller that branched on the
 // second result would then dereference nothing.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	if p == nil {
+	if nilvalue.Is(p) {
 		return ctx
 	}
-	return context.WithValue(ctx, principalKey, p)
+	return context.WithValue(ctx, principalKey, &principalState{principal: p})
 }
 
 // PrincipalFrom answers the authenticated caller, if there is one.
@@ -31,8 +39,19 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	if ctx == nil {
 		return nil, false
 	}
-	p, ok := ctx.Value(principalKey).(Principal)
-	return p, ok && p != nil
+	state, ok := ctx.Value(principalKey).(*principalState)
+	if !ok || state == nil || nilvalue.Is(state.principal) {
+		return nil, false
+	}
+	return state.principal, true
+}
+
+func principalStateFrom(ctx context.Context) *principalState {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(principalKey).(*principalState)
+	return state
 }
 
 // Require is [PrincipalFrom] for the callers that have no answer without one.

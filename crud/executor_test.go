@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/frostgrove/vv/crud"
 )
@@ -37,12 +38,26 @@ func (this beginnerSource) Begin(context.Context) (crud.Tx, error) { return this
 
 type fakeTx struct {
 	fakeExec
-	committed  bool
-	rolledBack bool
+	committed        bool
+	rolledBack       bool
+	rollbackErr      error
+	rollbackCtxErr   error
+	rollbackDeadline time.Time
+	rollbackBounded  bool
+	rollbackValueKey any
+	rollbackValue    any
 }
 
-func (this *fakeTx) Commit(context.Context) error   { this.committed = true; return nil }
-func (this *fakeTx) Rollback(context.Context) error { this.rolledBack = true; return nil }
+func (this *fakeTx) Commit(context.Context) error { this.committed = true; return nil }
+func (this *fakeTx) Rollback(ctx context.Context) error {
+	this.rolledBack = true
+	this.rollbackCtxErr = ctx.Err()
+	this.rollbackDeadline, this.rollbackBounded = ctx.Deadline()
+	if this.rollbackValueKey != nil {
+		this.rollbackValue = ctx.Value(this.rollbackValueKey)
+	}
+	return this.rollbackErr
+}
 
 var (
 	dbA = new(int) // two handles that are only ever compared by identity
@@ -136,6 +151,24 @@ func TestAnUncomparableDataSourceDoesNotPanic(t *testing.T) {
 	}
 }
 
+// A comparable outer type is not sufficient: comparing an interface field
+// whose dynamic value is a slice still panics. Datasource identity is fed by
+// adapters, so one unusual implementation must not take the process down.
+func TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic(t *testing.T) {
+	type identity struct{ Value any }
+	left := identity{Value: []int{1}}
+	right := identity{Value: []int{1}}
+
+	if crud.SameDataSource(left, right) {
+		t.Fatal("two identities containing slices were treated as the same database")
+	}
+
+	ctx := crud.WithExecutorFor(context.Background(), left, fakeExec{name: "tx"})
+	if _, ok := crud.ExecutorFor(ctx, srcOn(right, "right")); ok {
+		t.Fatal("a binding comparison that cannot be performed matched")
+	}
+}
+
 // A transaction vv opens itself is scoped to the source that opened it, so
 // it reaches siblings on the same database and nothing else.
 func TestInTxScopesTheTransactionItOpens(t *testing.T) {
@@ -222,6 +255,97 @@ func TestInTxWithoutABeginnerIsRefused(t *testing.T) {
 	})
 	if !errors.Is(err, crud.ErrNoTxSupport) {
 		t.Fatalf("err = %v, want ErrNoTxSupport", err)
+	}
+}
+
+func TestRollbackOutlivesTheCanceledRequestButRemainsBounded(t *testing.T) {
+	tx := &fakeTx{fakeExec: fakeExec{name: "tx"}}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	request, cancel := context.WithCancel(context.Background())
+	want := errors.New("operation failed")
+
+	err := crud.InTx(request, source, func(context.Context) error {
+		cancel()
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("InTx returned %v, want the operation failure", err)
+	}
+	if !tx.rolledBack {
+		t.Fatal("the failed transaction was not rolled back")
+	}
+	if err := tx.rollbackCtxErr; err != nil {
+		t.Fatalf("rollback inherited the canceled request: %v", err)
+	}
+	remaining := time.Until(tx.rollbackDeadline)
+	if !tx.rollbackBounded || remaining <= 0 || remaining > 5*time.Second {
+		t.Fatalf("rollback context has deadline %v, bounded=%v; want a live deadline within five seconds", tx.rollbackDeadline, tx.rollbackBounded)
+	}
+}
+
+func TestRollbackKeepsTheOperationAndCleanupErrorsInspectable(t *testing.T) {
+	operationErr := errors.New("operation failed")
+	rollbackErr := errors.New("rollback failed")
+	tx := &fakeTx{fakeExec: fakeExec{name: "tx"}, rollbackErr: rollbackErr}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+
+	err := crud.InTx(context.Background(), source, func(context.Context) error {
+		return operationErr
+	})
+	if !errors.Is(err, operationErr) {
+		t.Fatalf("InTx returned %v; errors.Is(operationErr) = false", err)
+	}
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("InTx returned %v; errors.Is(rollbackErr) = false", err)
+	}
+}
+
+func TestPanicRollsBackWithADetachedBoundedContextAndRepanics(t *testing.T) {
+	want := errors.New("panic from transaction")
+	tx := &fakeTx{fakeExec: fakeExec{name: "tx"}}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	request, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		if got := recover(); got != want {
+			t.Fatalf("recovered %v, want the original panic %v", got, want)
+		}
+		if !tx.rolledBack {
+			t.Fatal("the panicking transaction was not rolled back")
+		}
+		if err := tx.rollbackCtxErr; err != nil {
+			t.Fatalf("panic rollback inherited the canceled request: %v", err)
+		}
+		remaining := time.Until(tx.rollbackDeadline)
+		if !tx.rollbackBounded || remaining <= 0 || remaining > 5*time.Second {
+			t.Fatalf("panic rollback context has deadline %v, bounded=%v; want a live deadline within five seconds", tx.rollbackDeadline, tx.rollbackBounded)
+		}
+	}()
+
+	_ = crud.InTx(request, source, func(context.Context) error {
+		cancel()
+		panic(want)
+	})
+	t.Fatal("InTx swallowed the callback panic")
+}
+
+func TestRollbackPreservesRequestContextValues(t *testing.T) {
+	type contextKey struct{}
+	key := contextKey{}
+	want := new(int)
+	tx := &fakeTx{fakeExec: fakeExec{name: "tx"}, rollbackValueKey: key}
+	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
+	request, cancel := context.WithCancel(context.WithValue(context.Background(), key, want))
+
+	err := crud.InTx(request, source, func(context.Context) error {
+		cancel()
+		return errors.New("operation failed")
+	})
+	if err == nil {
+		t.Fatal("InTx discarded the operation failure")
+	}
+	if tx.rollbackValue != want {
+		t.Fatalf("rollback context value = %v, want %v", tx.rollbackValue, want)
 	}
 }
 

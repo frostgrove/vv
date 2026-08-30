@@ -102,6 +102,22 @@ naming the column ([[UC-014]]).
 
 ---
 
+## Embedded model bases
+
+A value-embedded struct declared in the model package is flattened exactly as
+runtime metadata flattens it. `gorm.Model` is the one audited foreign embed with
+a built-in declaration. Any other unresolved anonymous type is refused during
+generation, naming the model and type, instead of producing an incomplete DTO
+that panics only when the application starts. Move the base into the model
+package, flatten its fields, or explicitly exclude the whole embed with
+`db:"-"`. Embedded pointers are refused too, matching runtime metadata.
+
+The exclusion is deliberately explicit and is the low-level escape hatch: it
+means those embedded fields are not database columns. It is not a way to retain
+the base's columns without teaching the generator their types.
+
+---
+
 ## Flags
 
 | Flag | Default | Does |
@@ -123,6 +139,12 @@ naming the column ([[UC-014]]).
 | `-specs` | the specs package | import path override |
 | `-crud` | the crud package | import path override |
 
+`-import` is a path, not a requested Go identifier. The generator reads the
+package declaration in `-dir`, so `-import example.com/acme/models/v2` with
+`package models` produces `models.User`, not `v2.User`. Renamed column imports
+are preserved, and aliases that collide across source files receive stable
+suffixes in the single generated import block.
+
 ## `-adapter`: the rest of the resource
 
 Off by default, because turning it on rewrites the wire shape of every resource
@@ -135,6 +157,12 @@ var  ArticlePaths = port.MustPathMap[Article](port.PathMap{ … })
 type ArticleService struct{ *port.DefaultService[Article, int64, ArticleUpdate] }
 func MountArticle(mux *http.ServeMux, prefix string, svc, opts ...)
 ```
+
+An auto-generated primary key is deliberately absent from `ArticleInput` and
+`ArticlePaths`: the database owns it and the create path would clear it. An
+assigned UUID, slug, or other non-auto key remains in both, because that key is
+client-owned. The generated `MustPathMap` exclusion records the difference and
+keeps its start-up coverage check exact.
 
 **`ArticlePaths` is why the flag exists.** It maps a model field back to the key
 the client sent, so an error body names `authorID` rather than `AuthorID` — and

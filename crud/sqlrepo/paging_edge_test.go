@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -131,6 +132,20 @@ func TestSkipTotalReportsWhatWasFetchedAndNotTheOffset(t *testing.T) {
 	})
 }
 
+func TestSkipTotalDoesNotOverflowTheLargestLimit(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	page, err := Users.Bind(rec).Get(context.Background(), crud.SkipTotal(), crud.Limit(math.MaxInt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.Last().SQL; !strings.Contains(got, "LIMIT "+strconv.Itoa(math.MaxInt)) {
+		t.Fatalf("the limit+1 probe overflowed or disappeared: %s", got)
+	}
+	if page.HasNext {
+		t.Fatal("an empty result reported another page")
+	}
+}
+
 // A cursor is a link, not merely a serialised edge of the current result: it
 // must only be present when the page on that side actually exists. Otherwise a
 // one-page result advertises two requests that can only return an empty list.
@@ -186,6 +201,27 @@ func TestCursorsOnlyAdvertiseExistingNeighbours(t *testing.T) {
 				t.Fatalf("prevCursor = %q, want present: %v", got.PrevCursor, tc.wantPrev)
 			}
 		})
+	}
+}
+
+func TestANullableSortNeverAdvertisesACursorItsNextRequestWouldRefuse(t *testing.T) {
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows(
+			userRow(1, "a@b.c", "Ann", 30, 7),
+			userRow(2, "b@b.c", "Bea", 31, 7),
+		),
+		crudtest.Rows([]any{int64(3)}),
+	)
+	page, err := Users.Bind(rec).Get(context.Background(),
+		crud.OrderBy(crud.Asc("Age")), crud.Limit(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.HasNext {
+		t.Fatal("control failed: the page needs a next neighbour")
+	}
+	if page.NextCursor != "" || page.PrevCursor != "" {
+		t.Fatalf("nullable sort advertised cursors next=%q prev=%q", page.NextCursor, page.PrevCursor)
 	}
 }
 

@@ -108,6 +108,12 @@ a shared service they would be the same one.
 mid-stream is not noticed — an interceptor runs before the first message and
 never again. A long-lived stream that must re-check does it in its own loop.
 
+**Guard composition is the same for Unary and Stream.** Consecutive A -> A
+authenticates once; A -> B runs both and exposes B's principal. A -> B -> A is
+refused because the interceptor cannot infer whether B is a step-up or a
+downgrade. Both constructors call `Guard.Validate`, so nil and
+`new(auth.Guard)` panic before the server starts ([[D-076]]).
+
 **The peer's TLS certificate is not read.** mTLS is a different authentication
 and its principal comes from `credentials.AuthInfo`; write it as an
 `auth.Authenticator` and pass it to the same guard.

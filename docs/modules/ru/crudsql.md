@@ -110,6 +110,14 @@ db := crudsql.Postgres(sqlDB).WithTxOptions(&sql.TxOptions{
 })
 ```
 
+`WithTxOptions` сохраняет копию значения. Последующее изменение переданной
+структуры не перенастраивает source и не гоняется с параллельным `Begin`.
+
+**Миграция:** ранее экспортированное поле `DB.TxOptions` удалено, потому что оно
+оставляло общую изменяемую конфигурацию. Прямое присваивание заменяется на
+`db = db.WithTxOptions(options)`. `nil` возвращает настройки драйвера по
+умолчанию.
+
 `DB.Begin` открывает транзакцию; `Begin` на получившемся `crud.Tx` даёт
 **savepoint**, выраженный как `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` /
 `RELEASE SAVEPOINT`.

@@ -1,6 +1,7 @@
 package crud_test
 
 import (
+	"math"
 	"reflect"
 	"testing"
 
@@ -146,6 +147,50 @@ func TestSetIDConvertsBetweenIntegerWidths(t *testing.T) {
 	if err := s.SetID(&r, "not-a-number"); err == nil {
 		t.Fatal("assigning a string to an int32 key must be refused, not silently dropped")
 	}
+}
+
+func TestSetIDRefusesLossyOrCrossFamilyConversions(t *testing.T) {
+	t.Run("a wider signed value may not wrap", func(t *testing.T) {
+		s := robotSchema(t)
+		r := Robot{ID: 7}
+		if err := s.SetID(&r, int64(math.MaxInt32)+1); err == nil {
+			t.Fatal("an overflowing int64 was narrowed into int32")
+		}
+		if r.ID != 7 {
+			t.Fatalf("a refused assignment changed the key to %d", r.ID)
+		}
+	})
+
+	t.Run("signed and unsigned keys do not silently mix", func(t *testing.T) {
+		type unsignedKey struct {
+			ID uint32 `db:"id,pk,auto"`
+		}
+		s, err := crud.SchemaOf[unsignedKey]()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var model unsignedKey
+		if err := s.SetID(&model, int64(9)); err == nil {
+			t.Fatal("a signed driver value was silently reinterpreted as an unsigned key")
+		}
+		if err := s.SetID(&model, uint64(9)); err != nil {
+			t.Fatalf("a representable unsigned value was refused: %v", err)
+		}
+	})
+
+	t.Run("Go's integer to string conversion is not a key conversion", func(t *testing.T) {
+		type stringKey struct {
+			ID string `db:"id,pk"`
+		}
+		s, err := crud.SchemaOf[stringKey]()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var model stringKey
+		if err := s.SetID(&model, int64('A')); err == nil {
+			t.Fatal("an integer became a one-rune string key")
+		}
+	})
 }
 
 // Every accessor takes a *M of this very model; anything else is a programming

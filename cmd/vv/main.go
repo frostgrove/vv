@@ -43,6 +43,8 @@
 // The inverse is what makes an error body name the key the client sent rather
 // than the model's field name, and it is generated rather than written because
 // a hand-written one is wrong the first time somebody renames a key.
+// An auto-generated primary key is not part of <Model>Input; an assigned,
+// client-owned primary key remains in both the input and inverse map.
 //
 // Whether or not -adapter is on, the generated file asserts at package
 // initialisation that the update DTO covers every writable column. Add a column

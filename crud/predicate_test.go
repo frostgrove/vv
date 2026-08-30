@@ -98,6 +98,30 @@ func TestPredicateConstructors(t *testing.T) {
 	}
 }
 
+func TestEqualityUnderstandsAllThreeOptStates(t *testing.T) {
+	m := articleMeta(t)
+	checkRender(t, crud.Postgres{}, m, crud.Eq("Title", crud.Set("Go")), `"title" = $1`, []any{"Go"})
+	checkRender(t, crud.Postgres{}, m, crud.Eq("Title", crud.Null[string]()), `"title" IS NULL`, nil)
+	checkRender(t, crud.Postgres{}, m, crud.Ne("Title", crud.Null[string]()), `"title" IS NOT NULL`, nil)
+
+	for _, predicate := range []crud.Predicate{
+		crud.Eq("Title", crud.Undefined[string]()),
+		crud.Ne("Title", crud.Undefined[string]()),
+	} {
+		_, args, err := crud.NewSQL(crud.Postgres{}, m).Predicate(predicate).Done()
+		if !errors.As(err, new(*crud.SchemaError)) {
+			t.Fatalf("an undefined Opt produced %v, want a SchemaError", err)
+		}
+		if len(args) != 0 {
+			t.Fatalf("an undefined Opt reached the bind list: %#v", args)
+		}
+	}
+
+	if _, err := crud.MarshalPredicate(crud.Eq("Title", crud.Undefined[string]())); !errors.As(err, new(*crud.SchemaError)) {
+		t.Fatalf("an undefined Opt reached the remote filter document: %v", err)
+	}
+}
+
 // The same tree renders against whichever dialect the statement is being built
 // for; nothing above the writer knows about placeholders or quoting.
 func TestPredicatesFollowTheDialect(t *testing.T) {

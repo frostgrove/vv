@@ -142,6 +142,10 @@ crud.IsNull  crud.IsNotNull  crud.EqField
 crud.And  crud.Or  crud.Not  crud.True  crud.False  crud.Raw
 ```
 
+`Eq` and `Ne` understand `utils.Opt`: set compares with the stored value, null
+uses `IS NULL`/`IS NOT NULL`, and undefined is a schema error rather than a
+silent `= NULL`.
+
 `Like`, `NotLike` and `LikeIgnoreCase` accept an SQL pattern verbatim, for code
 that intentionally owns `%` and `_`. `Contains`, `StartsWith` and `EndsWith`
 accept ordinary text: they quote backslash, `%` and `_`, add the wildcard, and
@@ -187,7 +191,14 @@ type Article struct {
 
 Target tables resolve from `sqlrepo.Define`'s registration, then a `TableName()`
 method, then the snake_case plural. `RegisterTable[M](table)` registers one by
-hand.
+hand. Resolution is immutable: a second table for one model, or a different
+registration after a relation has already resolved the conventional name, is a
+start-up error rather than a registry update that existing relation metadata
+cannot observe. `TryRegisterTable` and `TryRegisterTableType` return that schema
+error for low-level assembly. Repeating the same registration is idempotent.
+When one model deliberately reaches the same Go type through a different table,
+declare `table=...` on that relation; its metadata then has no registry-order
+dependency ([[D-080]]).
 
 **Preloading** is a batched second query per relation per level, never one per
 row ([[D-006]]). Paths sharing a prefix share a statement, keys are deduplicated,
@@ -237,6 +248,10 @@ next, _ := users.Get(ctx, crud.Limit(20), crud.After(page.NextCursor))
 past the page, and reports `Total` as the size of what came back — because
 nothing counted the rest.
 
+Cursor links are issued only for a unique, non-nullable sort. Pointer,
+`utils.Opt` and `database/sql.Null` sort columns can still use offset pages, but
+do not advertise a cursor that SQL's three-valued NULL comparisons cannot walk.
+
 ## Aggregates
 
 ```go
@@ -248,6 +263,11 @@ rows, err := orders.Aggregate(ctx,
 
 `CountAll`, `CountOf`, `CountDistinct`, `Sum`, `Avg`, `Min`, `Max`. They run
 under the same narrowing as a read, so a security scope applies ([[D-029]]).
+
+A summary is unpaged by default: no repository default silently drops groups.
+An explicit `Limit`, `Page`, `Offset`, or `Unpaged` still honours the
+repository's `MaxLimit`. Ordinary `OrderBy` may name grouping columns only;
+other model columns are rejected before a statement is sent.
 
 The field names take the metamodel too — `crud.GroupBy(Order_.Status.Name())`,
 `crud.Sum("total", Order_.Amount.Name())`. The aggregate's own name is the key
@@ -376,9 +396,17 @@ over.
 to `AS new` (MySQL 8.0.19+). `ForUpdate()` renders nothing on SQLite, which locks
 the database rather than the row.
 
+The statement parameter ceiling is a dialect capability too. `BindLimit(d)`
+reads the optional `BindBudget`: PostgreSQL and MySQL declare 65,535, SQLite
+declares 999, and an external dialect that does not implement the capability
+gets the conservative 999 default. `SQL.Done` counts the complete argument
+list, so sibling predicates and relation scopes consume the same budget as an
+`In` list. Oversize is a typed `SchemaError` before the datasource, not a driver
+failure ([[D-079]]).
+
 ## See also
 
 - [sqlrepo](sqlrepo.md) — the repository that turns all of this into SQL
 - [crudtest](crudtest.md) — assert on the SQL without a database
 - [[FL-001]] a list request to rows · [[FL-012]] a wire value to a Go value
-- [[D-001]] the two-parameter seam · [[D-003]] the closed AST · [[D-016]] stdlib only
+- [[D-001]] the two-parameter seam · [[D-003]] the closed AST · [[D-016]] stdlib only · [[D-079]] bind budgets

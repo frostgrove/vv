@@ -58,6 +58,11 @@ rows, and a total that does not exist.
 18. All of the above is reachable from the wire and from Go with the same
     meaning. A relation path in a query document and a relation path in a Go
     predicate compile to the same thing.
+19. A predicate written directly in Go cannot hand the driver a statement past
+    its dialect's parameter ceiling. The complete statement is refused as a
+    typed schema error before the datasource sees it, including when one `IN`
+    list is individually small but scopes and sibling predicates consume the
+    rest of the budget.
 
 ## Out of scope
 
@@ -99,3 +104,8 @@ engine-dependent behaviour.
 The honest limit is guarantee 18: the wire and Go paths converge on one
 representation by construction, and both are heavily tested, but no test asserts
 that a given question expressed both ways produces the identical statement.
+
+Guarantee 19 is proven with a deliberately tiny external dialect and a control
+that the recording datasource sees no statement. A large Go `IN` is refused
+rather than rewritten into several reads, because several reads can observe
+different database snapshots and cannot stand in for one predicate ([[D-079]]).

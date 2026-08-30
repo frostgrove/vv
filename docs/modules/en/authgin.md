@@ -85,10 +85,14 @@ A refusal is written here and `c.Abort()` stops the chain. The error is also
 filed with `c.Error`, so Gin's own logging middleware sees the cause the body
 deliberately does not carry.
 
-**Installing it twice authenticates once** — on the engine and again on a group
-is the ordinary way that happens.
+**A consecutive double install with the same guard authenticates once** — on
+the engine and again on a group is the ordinary way that happens. A different
+guard on the group performs its own check. A -> B -> A is refused because no
+assurance order can be inferred; mount cumulative checks once each and use one
+`auth.Chain` for alternatives ([[D-076]]).
 
-`Middleware(nil)` panics.
+`Middleware` validates at construction; nil and `new(auth.Guard)` panic before
+traffic.
 
 ## Reading the routing table for the gate
 

@@ -1,10 +1,14 @@
 package crud
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
+
+	"github.com/frostgrove/vv/utils"
 )
 
 // A cursor is the position of one row in a sorted result: the values of the
@@ -91,6 +95,37 @@ func (this *cursorPayload) value(i int, t reflect.Type) (any, error) {
 	return destination.Elem().Interface(), nil
 }
 
+// CursorFieldSupported reports whether the field's Go shape can represent SQL
+// NULL. Cursor comparisons need a total order, while portable SQL comparisons
+// with NULL are three-valued. The repository uses the same check before it
+// advertises a cursor, so it never emits a token its next request must refuse.
+func CursorFieldSupported(f *Field) bool {
+	return f != nil && !cursorNullableType(f.Type)
+}
+
+func cursorNullableType(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer || utils.IsOptType(t) {
+		return true
+	}
+	// The standard library's generic and legacy nullable values all use this
+	// package/name shape. They implement Scanner/Valuer, but those interfaces
+	// alone are not enough: non-nullable decimals and UUIDs commonly implement
+	// the same pair.
+	if t.PkgPath() == reflect.TypeFor[sql.NullString]().PkgPath() && strings.HasPrefix(t.Name(), "Null") {
+		return true
+	}
+	// Wrappers such as gorm.DeletedAt embed a standard nullable value.
+	if t.Kind() == reflect.Struct {
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.Anonymous && cursorNullableType(field.Type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CursorPredicate turns a cursor into the row-comparison that selects what comes
 // after it — or before it, when back is set.
 //
@@ -121,7 +156,7 @@ func CursorPredicate(m *Meta, sort []Order, cursor string, back bool) (Predicate
 		// A NULL never compares equal or greater, so a page boundary on a
 		// nullable column silently drops every row that has one. Refusing is the
 		// honest answer; sort by something total, or add the key first.
-		if f.Optional || f.Type.Kind() == reflect.Pointer {
+		if !CursorFieldSupported(f) {
 			return nil, &SchemaError{Model: m.Name, Field: o.Field,
 				Reason: "a cursor cannot page by a nullable column"}
 		}

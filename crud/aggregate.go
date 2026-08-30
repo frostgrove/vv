@@ -151,6 +151,32 @@ func (this AggregateSpec) Validate(m *Meta) error {
 	return nil
 }
 
+// ValidateSort refuses an ORDER BY the grouped statement cannot legally name.
+// Model columns are available to an aggregate result only when they are part of
+// GROUP BY. Aggregate aliases live in a separate namespace and are deliberately
+// not accepted by the ordinary Order type.
+func (this AggregateSpec) ValidateSort(m *Meta, orders []Order) error {
+	grouped := make(map[*Field]struct{}, len(this.GroupBy))
+	for _, name := range this.GroupBy {
+		f, _, err := m.FieldAt(name)
+		if err != nil {
+			return err
+		}
+		grouped[f] = struct{}{}
+	}
+	for _, order := range orders {
+		f, _, err := m.FieldAt(order.Field)
+		if err != nil {
+			return err
+		}
+		if _, ok := grouped[f]; !ok {
+			return &SchemaError{Model: m.Name, Field: order.Field,
+				Reason: "an aggregate can order by a model column only when that column is grouped"}
+		}
+	}
+	return nil
+}
+
 // aggFuncs is closed on purpose. The name is rendered into the statement, so an
 // open set would be a second Raw with none of Raw's visibility.
 var aggFuncs = map[string]bool{"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true}

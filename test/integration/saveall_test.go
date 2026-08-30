@@ -11,10 +11,36 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/security"
 )
 
+type integrationBindBudget struct {
+	crud.Dialect
+	limit int
+}
+
+func (this integrationBindBudget) MaxBindValues() int { return this.limit }
+
+type integrationBudgetSource struct {
+	crud.Source
+	d crud.Dialect
+}
+
+func withBindBudget(source crud.Source, limit int) integrationBudgetSource {
+	return integrationBudgetSource{Source: source, d: integrationBindBudget{Dialect: source.Dialect(), limit: limit}}
+}
+
+func (this integrationBudgetSource) Dialect() crud.Dialect { return this.d }
+func (this integrationBudgetSource) DataSource() any       { return crud.KeyOf(this.Source) }
+func (this integrationBudgetSource) Begin(ctx context.Context) (crud.Tx, error) {
+	beginner, ok := crud.BeginnerOf(this.Source)
+	if !ok {
+		return nil, crud.ErrNoTxSupport
+	}
+	return beginner.Begin(ctx)
+}
+
 // SaveAll exists to turn N round trips into one. These are about it still being
-// the same write: the keys come back where the dialect can say, the batch is one
-// statement, and nothing that guards Save is skipped because the rows arrived
-// together.
+// the same write: its command objects remain untouched, stored rows can be read
+// back explicitly, the batch is one statement, and nothing that guards Save is
+// skipped because the rows arrived together.
 
 func TestSaveAllWritesTheWholeBatch(t *testing.T) {
 	ctx := context.Background()
@@ -47,7 +73,66 @@ func TestSaveAllWritesTheWholeBatch(t *testing.T) {
 	}
 }
 
-// The batch is one statement, not a loop wearing a batch's name. Proved through
+func TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine(t *testing.T) {
+	ctx := context.Background()
+	egSetup(t)
+
+	for _, tg := range egEngines() {
+		t.Run(tg.name, func(t *testing.T) {
+			egWipe(t, tg.source)
+			// Three generated-key columns means a six-bind budget puts two rows
+			// in the first chunk and the duplicate in the second one.
+			rows := EgConses.Bind(withBindBudget(tg.source, 6))
+			err := rows.SaveAll(ctx, []*EgCons{
+				{Slug: "first", Tag: crud.Set("ok")},
+				{Slug: "second", Tag: crud.Set("ok")},
+				{Slug: "first", Tag: crud.Set("duplicate")},
+			})
+			if err == nil {
+				t.Fatal("the duplicate in the second chunk was accepted")
+			}
+			if n, countErr := EgConses.Bind(tg.source).Count(ctx); countErr != nil || n != 0 {
+				t.Fatalf("count after failed chunks = %d, err = %v; first chunk survived rollback", n, countErr)
+			}
+		})
+	}
+}
+
+func TestDeleteChunksRemoveTheWholeIDSetAgainstEveryEngine(t *testing.T) {
+	ctx := context.Background()
+	egSetup(t)
+
+	for _, tg := range egEngines() {
+		t.Run(tg.name, func(t *testing.T) {
+			egWipe(t, tg.source)
+			plain := EgRows.Bind(tg.source)
+			batch := make([]*EgRow, 5)
+			ids := make([]int64, 5)
+			for i := range batch {
+				ids[i] = int64(i + 1)
+				batch[i] = &EgRow{ID: ids[i], Name: "row"}
+			}
+			if err := plain.SaveAll(ctx, batch); err != nil {
+				t.Fatal(err)
+			}
+
+			rows := EgRows.Bind(withBindBudget(tg.source, 2))
+			n, err := rows.Delete(ctx, ids...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != 5 {
+				t.Fatalf("deleted = %d, want 5", n)
+			}
+			if left, countErr := plain.Count(ctx); countErr != nil || left != 0 {
+				t.Fatalf("count after chunked delete = %d, err = %v", left, countErr)
+			}
+		})
+	}
+}
+
+// A batch that fits the dialect budget is one statement, not a loop wearing a
+// batch's name. Larger batches chunk only at that hard boundary. Proved through
 // the recorder rather than by timing.
 func TestSaveAllIsOneStatement(t *testing.T) {
 	ctx := context.Background()
@@ -86,9 +171,10 @@ func TestSaveAllRefusesAMixedBatch(t *testing.T) {
 	}
 }
 
-// Where the dialect has RETURNING the generated keys come back, in the order the
-// rows were handed in.
-func TestSaveAllReadsGeneratedKeysBackWhereItCan(t *testing.T) {
+// SaveAll is the write-only batch primitive on every dialect. A caller that
+// needs database-owned values reads the stored rows explicitly rather than
+// observing dialect-dependent mutation of command objects.
+func TestSaveAllLeavesGeneratedKeysOnItsInputsUntouched(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
 
@@ -104,24 +190,22 @@ func TestSaveAllReadsGeneratedKeysBackWhereItCan(t *testing.T) {
 			if n, _ := rows.Count(ctx); n != 3 {
 				t.Fatalf("count = %d, want 3", n)
 			}
-			if !tg.source.Dialect().SupportsReturning() {
-				// MySQL reports one LastInsertId for the statement and only
-				// guarantees the rest are contiguous under some settings, so the
-				// library does not guess. Documented, and pinned here so the
-				// silence is deliberate.
-				if batch[0].ID != 0 {
-					t.Fatalf("id = %d: this dialect cannot report batch keys, so it should not have", batch[0].ID)
-				}
-				return
-			}
 			for i, m := range batch {
-				if m.ID == 0 {
-					t.Fatalf("row %d came back with no key", i)
+				if m.ID != 0 {
+					t.Fatalf("input row %d id = %d: SaveAll mutated a write-only command", i, m.ID)
 				}
 			}
-			if batch[0].ID >= batch[1].ID || batch[1].ID >= batch[2].ID {
-				t.Fatalf("keys %d %d %d are not in the order the rows were handed in",
-					batch[0].ID, batch[1].ID, batch[2].ID)
+			stored, err := rows.GetAll(ctx, crud.OrderBy(crud.Asc("ID")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stored) != 3 {
+				t.Fatalf("stored rows = %d, want 3", len(stored))
+			}
+			for i, want := range []string{"first", "second", "third"} {
+				if stored[i].ID == 0 || stored[i].Name != want {
+					t.Fatalf("stored row %d = %#v, want generated id and name %q", i, stored[i], want)
+				}
 			}
 		})
 	}

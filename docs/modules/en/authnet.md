@@ -81,10 +81,13 @@ A refusal is written here and the next handler never runs. It renders through
 the same envelope as every other failure, so a client sees one error shape
 whether the request was refused at the door or by the repository.
 
-**Installing it twice authenticates once.** A context that already carries a
-principal is handed back untouched.
+**A consecutive double install with the same guard authenticates once.** A
+different guard performs its own check. A -> B -> A is refused because this
+binding cannot infer whether B is stronger or weaker; mount cumulative checks
+once each, and use one `auth.Chain` for alternatives ([[D-076]]).
 
-`Middleware(nil)` panics. A middleware with no guard authenticates nothing while
+`Middleware` calls `Guard.Validate`; nil and `new(auth.Guard)` panic while the
+graph is built. A middleware with no ready guard authenticates nothing while
 looking exactly like one that does.
 
 ## Not the only router

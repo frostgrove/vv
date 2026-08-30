@@ -405,6 +405,71 @@ func TestUpdateWithNothingToDoSkipsTheWrite(t *testing.T) {
 	}
 }
 
+// Options that shape a response must not shape the internal row used to decide
+// a mutation. The filter remains a security boundary; everything else below is
+// intentionally hostile to a one-row, full-model diff.
+func TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)))
+
+	got, err := Users.Bind(rec).Update(context.Background(), 1,
+		UserUpdate{Name: ptr("Ann")},
+		crud.Where(crud.Eq("TenantID", 7)),
+		crud.Select("Name"),
+		crud.OrderBy(crud.Desc("Email")),
+		crud.After("not-a-cursor"),
+		crud.Page(99),
+		crud.Limit(99),
+		crud.Offset(99),
+		crud.Preload("DoesNotExist"),
+		crud.Distinct(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "a@b.c" || got.Name != "Ann" {
+		t.Fatalf("mutation read returned a partial row: %+v", got)
+	}
+	if n := len(rec.Statements()); n != 1 {
+		t.Fatalf("%d statements, want the full load and a no-op diff: %v", n, rec.SQL())
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users" `+
+			`WHERE ("tenant_id" = $1 AND "id" = $2) LIMIT 1`)
+}
+
+func TestMutationReadPreservesExplicitAndTransactionalLocks(t *testing.T) {
+	assertLocked := func(t *testing.T, run func(*crudtest.Recorder, *crud.Repo[User, int64, UserUpdate]) error) {
+		t.Helper()
+		rec := crudtest.Postgres().Push(crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)))
+		users := Users.Bind(rec)
+		if err := run(rec, users); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(rec.Statements()); n != 1 {
+			t.Fatalf("%d statements, want one mutation read: %v", n, rec.SQL())
+		}
+		if sql := rec.Last().SQL; !strings.HasSuffix(sql, " LIMIT 1 FOR UPDATE") {
+			t.Fatalf("mutation read lost its row lock: %s", sql)
+		}
+	}
+
+	t.Run("explicit lock", func(t *testing.T) {
+		assertLocked(t, func(_ *crudtest.Recorder, users *crud.Repo[User, int64, UserUpdate]) error {
+			_, err := users.Update(context.Background(), 1, UserUpdate{Name: ptr("Ann")}, crud.ForUpdate())
+			return err
+		})
+	})
+
+	t.Run("transaction lock", func(t *testing.T) {
+		assertLocked(t, func(_ *crudtest.Recorder, users *crud.Repo[User, int64, UserUpdate]) error {
+			return users.Tx(context.Background(), func(ctx context.Context) error {
+				_, err := users.Update(ctx, 1, UserUpdate{Name: ptr("Ann")})
+				return err
+			})
+		})
+	})
+}
+
 func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
 	// Undefined: age is left alone.
 	rec := crudtest.Postgres().Push(
@@ -549,6 +614,61 @@ func TestDeleteAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSQL(t, rec.Last().SQL, `DELETE FROM "users"`)
+}
+
+func TestAggregateIsUnpagedByDefaultAndExplicitPagingKeepsTheCap(t *testing.T) {
+	rows := crudtest.Rows([]any{int64(7), int64(3)})
+
+	t.Run("default summary has no hidden page", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(rows)
+		got, err := Users.Bind(rec).Aggregate(context.Background(),
+			crud.GroupBy("TenantID"), crud.Aggregate(crud.CountAll("n")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("rows = %d", len(got))
+		}
+		wantSQL(t, rec.Last().SQL,
+			`SELECT "tenant_id", COUNT(*) FROM "users" GROUP BY "tenant_id"`)
+	})
+
+	t.Run("an explicit page is capped", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(rows)
+		bounded := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.MaxLimit(5)).Bind(rec)
+		if _, err := bounded.Aggregate(context.Background(),
+			crud.GroupBy("TenantID"), crud.Aggregate(crud.CountAll("n")), crud.Limit(99)); err != nil {
+			t.Fatal(err)
+		}
+		wantSQL(t, rec.Last().SQL,
+			`SELECT "tenant_id", COUNT(*) FROM "users" GROUP BY "tenant_id" LIMIT 5`)
+	})
+
+	t.Run("Unpaged cannot remove a declared cap", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(rows)
+		bounded := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.MaxLimit(5)).Bind(rec)
+		if _, err := bounded.Aggregate(context.Background(),
+			crud.GroupBy("TenantID"), crud.Aggregate(crud.CountAll("n")), crud.Unpaged()); err != nil {
+			t.Fatal(err)
+		}
+		wantSQL(t, rec.Last().SQL,
+			`SELECT "tenant_id", COUNT(*) FROM "users" GROUP BY "tenant_id" LIMIT 5`)
+	})
+}
+
+func TestAggregateRefusesAnUngroupedSortBeforeQuery(t *testing.T) {
+	rec := crudtest.Postgres()
+	_, err := Users.Bind(rec).Aggregate(context.Background(),
+		crud.GroupBy("TenantID"),
+		crud.Aggregate(crud.CountAll("n")),
+		crud.OrderBy(crud.Desc("Email")),
+	)
+	if err == nil {
+		t.Fatal("ungrouped aggregate sort reached the database")
+	}
+	if n := len(rec.Statements()); n != 0 {
+		t.Fatalf("refused aggregate issued %d statements: %v", n, rec.SQL())
+	}
 }
 
 func TestCountAndExists(t *testing.T) {

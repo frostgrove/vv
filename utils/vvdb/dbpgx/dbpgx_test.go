@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,17 +89,17 @@ func TestConnectRefusesBeforeItDials(t *testing.T) {
 
 func TestConnectPingsRatherThanReturningALazyPool(t *testing.T) {
 	boom := errors.New("stop before dialing")
-	called := false
+	var called atomic.Bool
 	_, err := dbpgx.Connect(context.Background(), unreachable(), func(pc *pgxpool.Config) {
 		pc.BeforeConnect = func(context.Context, *pgx.ConnConfig) error {
-			called = true
+			called.Store(true)
 			return boom
 		}
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("Connect() = %v, want the connection attempt error", err)
 	}
-	if !called {
+	if !called.Load() {
 		t.Fatal("Connect returned a lazy pool without attempting a connection")
 	}
 }

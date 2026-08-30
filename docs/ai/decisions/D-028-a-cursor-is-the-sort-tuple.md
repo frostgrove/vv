@@ -27,6 +27,11 @@ Two refusals, both at query time:
 - the field names in the token must equal the resolved sort, in order;
 - the resolved sort must contain the primary key.
 
+A third capability rule is checked on both sides: a sort containing a nullable
+Go field (`*T`, `utils.Opt[T]`, `database/sql.Null[T]`/legacy Null types, or a
+wrapper embedding one) neither emits a cursor nor accepts a manually assembled
+one. Offset paging over that sort remains available.
+
 A cursor also skips the `COUNT`: `Total` is the length of the page and
 `TotalPages` is zero.
 
@@ -50,10 +55,11 @@ reason ([[D-014]] neighbours this: stable pagination). `sqlrepo.UnstablePaginati
 removes the tiebreaker, and with it the ability to page by cursor — that is the
 trade, stated rather than worked around.
 
-**Why nullable columns are refused.** `NULL > 'x'` is unknown, not false, so a
-boundary on a nullable column silently drops every row that has one. Sorting by
-something total is the answer; guessing `NULLS FIRST` semantics into the
-comparison would make the page depend on the engine.
+**Why nullable columns are refused before issuance.** `NULL > 'x'` is unknown,
+not false, so a boundary on a nullable column silently drops every row that has
+one. Sorting by something total is the answer; guessing `NULLS FIRST` semantics
+into the comparison would make the page depend on the engine. Most importantly,
+the server never hands out a token its next request must reject.
 
 **Why the expansion rather than `(a, b) > (va, vb)`.** Row values say the same
 thing in one line, but only when every column sorts the same direction, and MySQL
@@ -70,6 +76,8 @@ would invite it to render one.
   including order. Reinterpreting is worse than refusing.
 - Do not emit a cursor from a sort that has no primary key in it. Handing one out
   is handing out a bug.
+- Do not emit a cursor for a nullable sort. Refusing only when that token comes
+  back makes an apparently valid pagination link self-invalidating.
 - Do not add the cursor's comparison before the sort is final — `DISTINCT`
   rewrites the sort, and the comparison has to match the `ORDER BY` that runs.
 - Do not combine a cursor with an offset. `Get` zeroes the offset when a cursor is
@@ -83,6 +91,7 @@ would invite it to render one.
 - `crud/cursor.go:EncodeCursor` — the token.
 - `crud/cursor.go:decodeCursor` — the sort check.
 - `crud/cursor.go:CursorPredicate` — the expansion, and the nullable refusal.
+- `crud/cursor.go:CursorFieldSupported` — the shared issue/consume capability check.
 - `crud/cursor.go:cursorStep` — one column, in its own direction.
 - `crud/options.go:After` / `crud/options.go:Before` — the options, and the
   implied `NoTotal`.
@@ -106,6 +115,9 @@ would invite it to render one.
 - `TestACursorIsRefusedUnderADifferentSort` in `test/integration/cursor_test.go`.
 - `TestACursorWalkOverTheWireDSL` in `test/integration/cursor_test.go` — both
   doors, and `totalPages` reported as zero.
+- `TestCursorCapabilityRefusesEveryKnownNullableShape` and
+  `TestANullableSortNeverAdvertisesACursorItsNextRequestWouldRefuse` — nullable
+  tokens are refused before they can become links.
 
 ## See also
 

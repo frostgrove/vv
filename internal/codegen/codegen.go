@@ -5,6 +5,9 @@ package codegen
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -12,11 +15,13 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type field struct {
@@ -95,12 +100,18 @@ type generator struct {
 	errsPkg  string
 	netPkg   string
 
-	models   map[string]*model
-	order    []string
-	skip     map[string]bool
-	readonly map[string]bool
-	structs  map[string]bool            // struct types declared in this package
-	embeds   map[string]*ast.StructType // …and their declarations, for embedding
+	models     map[string]*model
+	order      []string
+	skip       map[string]bool
+	readonly   map[string]bool
+	structs    map[string]bool            // struct types declared in this package
+	embeds     map[string]*ast.StructType // …and their declarations, for embedding
+	embedFiles map[string]*ast.File       // declaration file, so nested field imports keep their meaning
+	// embedProblems are declaration failures collected while walking models.
+	// The parser visits package files through maps, so they are kept as a set and
+	// sorted before returning: the same broken package must produce the same
+	// diagnostic on every machine.
+	embedProblems map[string]bool
 
 	// Set when the output lands in a different package from the models.
 	into        string
@@ -108,7 +119,11 @@ type generator struct {
 	modelAlias  string
 	// imports collected from the source files, so generated field types keep
 	// resolving (time.Time, uuid.UUID, …).
-	imports map[string]string // package name -> import path
+	imports     map[string]string               // generated package alias -> import path
+	fileImports map[*ast.File]map[string]string // source qualifier -> generated alias
+	pathAliases map[string]string               // import path -> generated package alias
+	usedAliases map[string]bool                 // every identifier unavailable to an import
+	types       *sourceTypes                    // best-effort go/types view of the parsed package
 
 	// Where the "wrote …" line goes. Nil is silent, which is what a test wants;
 	// swapping os.Stdout to get that made every test share global state.
@@ -116,6 +131,12 @@ type generator struct {
 }
 
 func (this *generator) run(outPath string) error {
+	// Check ownership before excluding the basename from the source parse. An
+	// authored target must not disappear from the input immediately before the
+	// generator refuses to overwrite it.
+	if err := validateGeneratedTarget(outPath); err != nil {
+		return err
+	}
 	if err := this.load(outPath); err != nil {
 		return err
 	}
@@ -144,11 +165,96 @@ func (this *generator) run(outPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(outPath, source, 0o644); err != nil {
+	if err := writeGenerated(outPath, source); err != nil {
 		return err
 	}
 	if this.log != nil {
 		fmt.Fprintf(this.log, "vv: wrote %s (%d models)\n", outPath, len(this.order))
+	}
+	return nil
+}
+
+func validateGeneratedTarget(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("codegen: inspect output %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("codegen: refusing symlink output %s", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("codegen: output %s is not a regular generated file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("codegen: inspect output %s: %w", path, err)
+	}
+	prefix := make([]byte, len(generatedHeader)+1)
+	_, readErr := io.ReadFull(f, prefix)
+	closeErr := f.Close()
+	if readErr != nil || string(prefix) != generatedHeader+"\n" {
+		return fmt.Errorf("codegen: refusing to overwrite authored file %s; choose another -out or remove it explicitly", path)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("codegen: inspect output %s: %w", path, closeErr)
+	}
+	return nil
+}
+
+func writeGenerated(path string, source []byte) (err error) {
+	if err := validateGeneratedTarget(path); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("codegen: create temporary output beside %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("codegen: set output mode: %w", err)
+	}
+	if _, err := tmp.Write(source); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("codegen: write temporary output: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("codegen: sync temporary output: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("codegen: close temporary output: %w", err)
+	}
+	// Close the validation/write race. Rename replaces a symlink rather than
+	// following it, but an authored regular file appearing here must still win.
+	if err := validateGeneratedTarget(path); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("codegen: atomically replace %s: %w", path, err)
+	}
+	committed = true
+	directory, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("codegen: open output directory for sync: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return fmt.Errorf("codegen: sync output directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("codegen: close output directory: %w", closeErr)
 	}
 	return nil
 }
@@ -165,6 +271,10 @@ func (this *generator) load(skip string) error {
 	this.imports = map[string]string{}
 	this.structs = map[string]bool{}
 	this.embeds = map[string]*ast.StructType{}
+	this.embedFiles = map[string]*ast.File{}
+	this.embedProblems = map[string]bool{}
+	this.fileImports = map[*ast.File]map[string]string{}
+	this.pathAliases = map[string]string{}
 
 	// A first pass over the struct names, so a field whose type is another
 	// struct in this package can be recognised as a relation holder rather than
@@ -176,25 +286,34 @@ func (this *generator) load(skip string) error {
 					if st, isStruct := ts.Type.(*ast.StructType); isStruct {
 						this.structs[ts.Name.Name] = true
 						this.embeds[ts.Name.Name] = st
+						this.embedFiles[ts.Name.Name] = file
 					}
 				}
 				return true
 			})
 		}
 	}
+	if err := this.prepareImports(pkgs); err != nil {
+		return err
+	}
+	this.prepareTypes(fset, pkgs)
 
-	for name, pkg := range pkgs {
+	packageNames := make([]string, 0, len(pkgs))
+	for name := range pkgs {
+		packageNames = append(packageNames, name)
+	}
+	sort.Strings(packageNames)
+	for _, name := range packageNames {
+		pkg := pkgs[name]
 		this.pkg = name
-		for fileName, file := range pkg.Files {
+		fileNames := make([]string, 0, len(pkg.Files))
+		for fileName := range pkg.Files {
+			fileNames = append(fileNames, fileName)
+		}
+		sort.Strings(fileNames)
+		for _, fileName := range fileNames {
+			file := pkg.Files[fileName]
 			modelFile := preferredModelFile(filepath.Base(fileName))
-			for _, imp := range file.Imports {
-				path, _ := strconv.Unquote(imp.Path.Value)
-				alias := filepath.Base(path)
-				if imp.Name != nil {
-					alias = imp.Name.Name
-				}
-				this.imports[alias] = path
-			}
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
 				if !ok {
@@ -210,7 +329,7 @@ func (this *generator) load(skip string) error {
 				if this.only != nil && !this.only[ts.Name.Name] {
 					return true
 				}
-				m := this.parseModel(ts.Name.Name, st, modelFile)
+				m := this.parseModel(ts.Name.Name, st, modelFile, file)
 				if m != nil {
 					this.models[m.Name] = m
 					this.order = append(this.order, m.Name)
@@ -219,12 +338,364 @@ func (this *generator) load(skip string) error {
 			})
 		}
 	}
+	if len(this.embedProblems) > 0 {
+		problems := make([]string, 0, len(this.embedProblems))
+		for problem := range this.embedProblems {
+			problems = append(problems, problem)
+		}
+		sort.Strings(problems)
+		return fmt.Errorf("codegen: embedded fields cannot be mirrored safely:\n- %s", strings.Join(problems, "\n- "))
+	}
 	sort.Strings(this.order)
 	return nil
 }
 
-func (this *generator) parseModel(name string, st *ast.StructType, force bool) *model {
+type sourceImport struct {
+	file      *ast.File
+	qualifier string
+	path      string
+}
+
+// prepareImports gives every imported path one output-file alias and records
+// how each source file's own qualifier maps onto it. Two Go files may legally
+// use the same qualifier for different packages; one generated file cannot, so
+// collisions receive stable numeric suffixes and field type expressions are
+// rewritten per declaration file.
+func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
+	packageNames := make([]string, 0, len(pkgs))
+	for name := range pkgs {
+		packageNames = append(packageNames, name)
+	}
+	sort.Strings(packageNames)
+	if len(packageNames) == 0 {
+		return fmt.Errorf("codegen: no package declaration in %s", this.dir)
+	}
+	inputPackage := packageNames[0]
+
+	used := map[string]bool{
+		"context": true, "http": true, "time": true,
+		"crud": true, "utils": true, "specs": true, "sqlrepo": true,
+		"port": true, "errs": true, "crudnet": true, "gorm": true,
+	}
+	this.usedAliases = used
+	this.reserveGeneratedAndPackageNames(pkgs, used)
+	if this.modelImport != "" {
+		this.modelAlias = allocateReadableImportAlias(inputPackage, this.modelImport, used, false)
+	}
+
+	var records []sourceImport
+	preferred := map[string][]string{}
+	for _, packageName := range packageNames {
+		pkg := pkgs[packageName]
+		files := make([]string, 0, len(pkg.Files))
+		for fileName := range pkg.Files {
+			files = append(files, fileName)
+		}
+		sort.Strings(files)
+		for _, fileName := range files {
+			file := pkg.Files[fileName]
+			prefixes := selectorPrefixes(file)
+			for _, imp := range file.Imports {
+				path, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					return fmt.Errorf("codegen: import in %s: %w", fileName, err)
+				}
+				qualifier := ""
+				if imp.Name != nil {
+					qualifier = imp.Name.Name
+					if qualifier == "_" {
+						continue
+					}
+					if qualifier == "." {
+						return fmt.Errorf("codegen: dot import %q in %s cannot be reproduced safely in one generated file; use an explicit import alias", path, fileName)
+					}
+				} else {
+					qualifier = filepath.Base(path)
+					// Most paths and package declarations agree. A version suffix
+					// such as /v2 does not; when the basename is not used in this
+					// file, ask the Go tool for the declared package name.
+					if !prefixes[qualifier] {
+						declared := this.importPackageName(path)
+						if declared == "" {
+							return fmt.Errorf("codegen: import %q in %s does not use basename %q and its declared package name could not be resolved; make the import alias explicit", path, fileName, qualifier)
+						}
+						qualifier = declared
+					}
+				}
+				records = append(records, sourceImport{file: file, qualifier: qualifier, path: path})
+				preferred[path] = append(preferred[path], qualifier)
+			}
+		}
+	}
+
+	paths := make([]string, 0, len(preferred))
+	for path := range preferred {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	preferredCounts := make(map[string]int, len(paths))
+	for _, path := range paths {
+		names := preferred[path]
+		sort.Strings(names)
+		if len(names) > 0 {
+			preferredCounts[names[0]]++
+		}
+	}
+	pathAlias := make(map[string]string, len(paths))
+	for _, path := range paths {
+		names := preferred[path]
+		sort.Strings(names)
+		alias := this.sharedImportAlias(path)
+		if alias == "" {
+			alias = allocateReadableImportAlias(names[0], path, used, preferredCounts[names[0]] > 1)
+		}
+		pathAlias[path] = alias
+		this.pathAliases[path] = alias
+		this.imports[alias] = path
+	}
+	for _, record := range records {
+		aliases := this.fileImports[record.file]
+		if aliases == nil {
+			aliases = map[string]string{}
+			this.fileImports[record.file] = aliases
+		}
+		aliases[record.qualifier] = pathAlias[record.path]
+	}
+	return nil
+}
+
+// reserveGeneratedAndPackageNames keeps an imported package from being given
+// an alias that is already meaningful at package scope or that this run will
+// emit. Source files may legally call an import UserUpdate because imports are
+// file-scoped; the generated file may not use that alias and declare the
+// UserUpdate DTO in the same file.
+func (this *generator) reserveGeneratedAndPackageNames(pkgs map[string]*ast.Package, used map[string]bool) {
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				switch d := decl.(type) {
+				case *ast.FuncDecl:
+					used[d.Name.Name] = true
+				case *ast.GenDecl:
+					for _, spec := range d.Specs {
+						switch s := spec.(type) {
+						case *ast.TypeSpec:
+							used[s.Name.Name] = true
+							for _, name := range []string{
+								s.Name.Name + "Update", s.Name.Name + "Attrs", s.Name.Name + "Repo",
+								s.Name.Name + "Repository", "New" + s.Name.Name + "Repository",
+								s.Name.Name + "Input", s.Name.Name + "Mapper", s.Name.Name + "Paths",
+								s.Name.Name + "Service", "Mount" + s.Name.Name, s.Name.Name + "_",
+							} {
+								used[name] = true
+							}
+						case *ast.ValueSpec:
+							for _, name := range s.Names {
+								used[name.Name] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func (this *generator) sharedImportAlias(path string) string {
+	switch path {
+	case "time":
+		return "time"
+	case "github.com/frostgrove/vv/crud":
+		return "crud"
+	case DefaultUtilsPkg:
+		return "utils"
+	case "github.com/frostgrove/vv/crud/decorators/specs":
+		return "specs"
+	case "gorm.io/gorm":
+		return "gorm"
+	}
+	return ""
+}
+
+// allocateReadableImportAlias keeps collision handling visible to a human.
+// Numeric suffixes such as crud2 and crud22 say only that a collision happened;
+// alpha, alphaCommon and betaCommon say which package each selector names.
+func allocateReadableImportAlias(preferred, path string, used map[string]bool, forcePath bool) string {
+	preferred = strings.TrimSpace(preferred)
+	if !forcePath && usableImportAlias(preferred, used) {
+		used[preferred] = true
+		return preferred
+	}
+	candidates := pathImportAliases(path)
+	start := 0
+	if forcePath && len(candidates) > 1 {
+		// Two packages both called common are clearer as alphaCommon and
+		// betaCommon than as common and betaCommon: neither gets privileged by
+		// path sort order.
+		start = 1
+	}
+	for _, candidate := range candidates[start:] {
+		if usableImportAlias(candidate, used) {
+			used[candidate] = true
+			return candidate
+		}
+	}
+	base := "pkg"
+	if len(candidates) > 0 {
+		base = candidates[len(candidates)-1]
+	}
+	for candidate := "imported" + upperFirst(base); ; candidate = "imported" + upperFirst(candidate) {
+		if usableImportAlias(candidate, used) {
+			used[candidate] = true
+			return candidate
+		}
+	}
+}
+
+func usableImportAlias(alias string, used map[string]bool) bool {
+	return alias != "" && alias != "_" && alias != "." && !token.Lookup(alias).IsKeyword() && !used[alias]
+}
+
+func pathImportAliases(path string) []string {
+	raw := strings.Split(strings.Trim(path, "/"), "/")
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		if len(part) > 1 && part[0] == 'v' {
+			if _, err := strconv.Atoi(part[1:]); err == nil {
+				continue
+			}
+		}
+		if clean := importAliasPart(part); clean != "" {
+			parts = append(parts, clean)
+		}
+	}
+	if len(parts) == 0 {
+		return []string{"pkg"}
+	}
+	out := make([]string, 0, len(parts))
+	for width := 1; width <= len(parts); width++ {
+		start := len(parts) - width
+		var b strings.Builder
+		b.WriteString(parts[start])
+		for _, part := range parts[start+1:] {
+			b.WriteString(upperFirst(part))
+		}
+		candidate := b.String()
+		if len(out) == 0 || out[len(out)-1] != candidate {
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+func importAliasPart(part string) string {
+	var b strings.Builder
+	upper := false
+	for _, r := range part {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			if b.Len() == 0 {
+				if r >= 'A' && r <= 'Z' {
+					r += 'a' - 'A'
+				}
+				b.WriteRune(r)
+			} else if upper && r >= 'a' && r <= 'z' {
+				b.WriteRune(r - ('a' - 'A'))
+			} else {
+				b.WriteRune(r)
+			}
+			upper = false
+		case r >= '0' && r <= '9':
+			if b.Len() == 0 {
+				b.WriteByte('p')
+			}
+			b.WriteRune(r)
+			upper = false
+		default:
+			upper = b.Len() > 0
+		}
+	}
+	return b.String()
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-('a'-'A')) + s[1:]
+	}
+	return s
+}
+
+func selectorPrefixes(file *ast.File) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if ident, ok := selector.X.(*ast.Ident); ok {
+			out[ident.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+func (this *generator) importPackageName(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "list", "-mod=readonly", "-json", "-find", path)
+	cmd.Dir = this.dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	var listed struct{ Name string }
+	if json.Unmarshal(out, &listed) != nil {
+		return ""
+	}
+	return listed.Name
+}
+
+func (this *generator) typeString(expr ast.Expr, file *ast.File) string {
+	aliases := this.fileImports[file]
+	if len(aliases) == 0 {
+		return exprString(expr)
+	}
+	type edit struct {
+		ident *ast.Ident
+		name  string
+	}
+	var edits []edit
+	ast.Inspect(expr, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		alias, known := aliases[ident.Name]
+		if !known || alias == ident.Name {
+			return true
+		}
+		edits = append(edits, edit{ident: ident, name: ident.Name})
+		ident.Name = alias
+		return true
+	})
+	typ := exprString(expr)
+	for i := len(edits) - 1; i >= 0; i-- {
+		edits[i].ident.Name = edits[i].name
+	}
+	return typ
+}
+
+func (this *generator) parseModel(name string, st *ast.StructType, force bool, file *ast.File) *model {
 	m := &model{Name: name}
+	var embedProblems []string
 	// An explicitly named type is a model whether or not it carries tags — which
 	// is how a generated entity from another tool qualifies. Model files carry
 	// the same meaning without a tag: plain Go structs are vv models by
@@ -232,12 +703,36 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool) *
 	tagged := force || (this.only != nil && this.only[name])
 	for _, f := range st.Fields.List {
 		if len(f.Names) == 0 {
+			var tag reflect.StructTag
+			if f.Tag != nil {
+				raw, _ := strconv.Unquote(f.Tag.Value)
+				tag = reflect.StructTag(raw)
+			}
+			database, hasDB := tag.Lookup("db")
+			relation, hasRel := tag.Lookup("rel")
+			if (hasDB && database == "-") || (hasRel && relation == "-") {
+				continue
+			}
+			typ := strings.TrimSpace(this.typeString(f.Type, file))
+			if strings.HasPrefix(typ, "*") {
+				embedProblems = append(embedProblems, fmt.Sprintf(
+					"model %s embeds pointer %s; runtime metadata refuses embedded pointer structs, so embed a value or tag it db:\"-\"", name, typ))
+				continue
+			}
+			if hasDB || hasRel {
+				embedProblems = append(embedProblems, fmt.Sprintf(
+					"model %s tags anonymous %s; runtime does not flatten tagged embeds and codegen cannot infer a safe column/relation shape", name, typ))
+				continue
+			}
 			// Embedded: the runtime flattens it, so the generator has to as
 			// well or `gorm.Model` would silently take id and the timestamps
 			// out of the metamodel.
-			if fields, ok := this.embedded(exprString(f.Type)); ok {
+			if fields, ok := this.embedded(typ); ok {
 				m.Fields = append(m.Fields, fields...)
 				tagged = tagged || len(fields) > 0
+			} else {
+				embedProblems = append(embedProblems, fmt.Sprintf(
+					"model %s embeds unresolved type %s; flatten it into this package, tag it db:\"-\", or add an audited well-known embed", name, typ))
 			}
 			continue
 		}
@@ -255,7 +750,7 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool) *
 			if !ident.IsExported() {
 				continue
 			}
-			fl := field{Name: ident.Name, Type: exprString(f.Type), Tag: database, Rel: rel}
+			fl := field{Name: ident.Name, Type: this.typeString(f.Type, file), Tag: database, Rel: rel}
 			// A field whose type is another struct from this package is either a
 			// relation or somebody else's bookkeeping; it is never a column.
 			if !hasRel {
@@ -300,6 +795,9 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool) *
 	}
 	if !tagged {
 		return nil
+	}
+	for _, problem := range embedProblems {
+		this.embedProblems[problem] = true
 	}
 	return m
 }
@@ -482,7 +980,7 @@ func (this *generator) embedded(typ string) ([]field, bool) {
 		return out, true
 	}
 	if st, ok := this.embeds[typ]; ok {
-		m := this.parseModel(typ, st, true)
+		m := this.parseModel(typ, st, true, this.embedFiles[typ])
 		if m == nil {
 			return nil, false
 		}
@@ -543,6 +1041,13 @@ func Run(o *Options) error {
 	if o == nil {
 		return fmt.Errorf("codegen: options are nil")
 	}
+	outName := o.Out
+	if outName == "" {
+		outName = "vv_gen.go"
+	}
+	if filepath.IsAbs(outName) || filepath.Base(outName) != outName || outName == "." || outName == ".." {
+		return fmt.Errorf("codegen: -out must be a file name without directories, got %q; use -into to select the output directory", outName)
+	}
 	if o.Recursive {
 		if o.Into != "" || o.Import != "" {
 			return fmt.Errorf("-recursive writes beside each model package and cannot be combined with -into or -import")
@@ -554,6 +1059,7 @@ func Run(o *Options) error {
 		for _, dir := range dirs {
 			one := *o
 			one.Dir = dir
+			one.Out = outName
 			one.Recursive = false
 			if err := Run(&one); err != nil {
 				// A model file may carry only package-private helpers. It is not a
@@ -604,14 +1110,34 @@ func Run(o *Options) error {
 		}
 	}
 	g.modelImport = o.Import
-	if g.modelImport != "" {
-		g.modelAlias = filepath.Base(g.modelImport)
-	}
 	outDir := o.Dir
 	if o.Into != "" {
 		outDir = o.Into
 	}
-	return g.run(filepath.Join(outDir, o.Out))
+	outPath, err := containedOutputPath(outDir, outName)
+	if err != nil {
+		return err
+	}
+	return g.run(outPath)
+}
+
+func containedOutputPath(dir, name string) (string, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("codegen: resolve output directory %s: %w", dir, err)
+	}
+	target, err := filepath.Abs(filepath.Join(root, name))
+	if err != nil {
+		return "", fmt.Errorf("codegen: resolve output path: %w", err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", fmt.Errorf("codegen: verify output containment: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("codegen: output %s escapes controlled directory %s", target, root)
+	}
+	return target, nil
 }
 
 // modelDirs finds packages that opted into generation by placing a model in a

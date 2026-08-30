@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — three Crud-owned things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. The stale full-model `Save`/`Replace` route is Sqlrepo's canonical blocker (E-SQLREPO-14), with Crud retaining only the [[D-011]] seam implication. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, reusable-option isolation without a control, and an unpinned transaction-cleanup path; query-door and preload-budget edges point to their owning sweeps.
+**Verdict:** not ready — three Crud-owned things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. The stale full-model `Save`/`Replace` route is Sqlrepo's canonical blocker (E-SQLREPO-14), with Crud retaining only the [[D-011]] seam implication. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, and reusable-option isolation without a control; query-door and preload-budget edges point to their owning sweeps.
 
 ## What a consumer is actually trying to do
 
@@ -494,11 +494,10 @@ Both verbs route through `read()` (`:583`, `:594`), so on a `ReadWrite` source t
 2. The metadata every repository over a model shares is safe to build concurrently, including the first time.
 3. Declaration order does not change behaviour — a repository declared in a later `init` or in `main` is not a different repository from one declared first.
 
-**Today:** ❓ unverified on (1) and (2), 🟡 on (3) — and nothing anywhere claims any of them
+**Today:** ✅ closed. Bound repositories and their cached schemas are race-tested; concurrent first schema use returns one pointer; table resolution is immutable and order conflicts fail at declaration instead of changing only half the process ([[D-080]]).
 **Evidence:** The shape is process-global by construction: `schemaCache` (`crud/meta.go:187`), `planCache` (`crud/update.go:42`) and `tableRegistry` (`crud/relation.go:148`) are package-level `sync.Map`s, and each `*Relation` holds two `sync.Once`s (`crud/relation.go:75`, `:89`) — two, because `resolveDefaults` calls `Target`, which enters the first, and one `Once` would deadlock. The repository's own history says this is exactly where a race lives and is not found by running: `CLAUDE.md` records `Relation.resolveDefaults` writing to a shared `*Relation` outside its `Once`, found by reading. `grep -rn "concurrent\|goroutine" docs/modules/en/crud.md` returns nothing — the consumer reference makes no statement at all, and a consumer who has to ask this question today has no way to answer it short of reading `crud/relation.go`.
 
-(3) fails in one specific and silent way. `Relation.Target` resolves the target's table inside its `Once` and caches the `*Meta` forever, reading the registry through `TableNameOf` at that instant (`crud/relation.go:95-108`, `:167-178`). `Define` is what writes that registry (`crud/sqlrepo/blueprint.go:181`). So a repository declared *later* — in `main()`, in a constructor, in a package initialised after the first request — that names a table other than `pluralise(snake(Name))` loses: the relation already froze the guess, `RegisterTable` at that point does nothing, and the preload reads the wrong table name with no error. `docs/modules/en/crud.md:170-173` states the resolution order and not that it is one-shot.
-**If not ready:** For (1) and (2), nothing — the answer is probably yes and the point is that it is unclaimed. It is checkable from outside in about twenty lines: two goroutines, first use of a model, `-race`, in `crud` where no database is needed. That test plus one sentence in the reference closes it, and until then every consumer either assumes or guesses. For (3) the honest fix is for `RegisterTable` to refuse — or complain — once the type's relations have resolved, since a registration nobody can act on is never intentional.
+(3) used to fail in one specific and silent way. `Relation.Target` caches the target `*Meta`; a later `RegisterTable` could update the registry but not that metadata. The registry now records resolution. A different late registration, and two conflicting early registrations, return a `SchemaError`; the declarative `RegisterTable`/`Define` path panics at start-up, while `TryRegisterTable`/`TryDefine` preserve the low-level error-returning path. An explicit relation `table=...` is independent of registry order. The controls live in `crud/relation_test.go` and `crud/sqlrepo/blueprint_edge_test.go`.
 
 ### H-CRUD-23 — A settings blob and a tags array
 **Who:** the engineer adopting a table that already has a `jsonb` column and a `text[]`
@@ -1028,10 +1027,10 @@ this file does not restate either audit.
 **Shape:** partial failure
 **Setup:** The context is cancelled after the transaction begins and the callback returns that cancellation error.
 **What the consumer does:** They use `InTx` around work subject to an HTTP deadline and rely on the helper to finish the transaction lifecycle.
-**What must happen:** The original failure is returned and the transaction is cleaned up predictably even when the request context is no longer usable.
-**Today:** ❓ unverified
-**Evidence:** `crud/executor.go:503-527` passes the original context to `Begin`, `Rollback` and `Commit`, and joins a rollback error with the callback error. No cancellation, rollback-failure or commit-failure test was found under `crud/`.
-**Blast radius:** confusing error
+**What must happen:** The original failure stays inspectable and rollback is attempted with a live, bounded context even when the request context is no longer usable. A rollback failure must remain inspectable beside the operation failure; a panic must still roll back and then propagate unchanged. The bound is enforceable by context-aware adapters, not by an underlying API that accepts no rollback context.
+**Today:** ✅ handled
+**Evidence:** `crud/executor.go:inNewTx` sends both the returned-error and panic exits through `rollback`, which derives a five-second context with `context.WithoutCancel`: cancellation and the caller's deadline are removed, while context values survive ([[D-077]]). `TestRollbackOutlivesTheCanceledRequestButRemainsBounded`, `TestRollbackKeepsTheOperationAndCleanupErrorsInspectable`, `TestPanicRollsBackWithADetachedBoundedContextAndRepanics`, and `TestRollbackPreservesRequestContextValues` in `crud/executor_test.go` pin the cancellation, `errors.Is` on both failures, panic, and value contracts. `crudpgx` can honour the cleanup deadline; `database/sql.Tx.Rollback` accepts no context, so `crudsql` retains that API's native semantics.
+**Blast radius:** none
 
 ### E-CRUD-13 — A reusable option list cannot leak one request into another
 **Shape:** composition · concurrency
@@ -1049,10 +1048,10 @@ predicate writer accepts every value and leaves the first useful limit to the
 driver. Core reflection, self-relations, and cyclic decorators have focused
 controls; query-door paging/cursor composition and preload depth are pointers to
 their owning sweeps. The first-use metadata cache does not make one schema
-identity atomic, an `Option` slice has no cross-request isolation control, and
-the transaction-cleanup claim has no cancellation or rollback-failure proof.
-These make lazy initialisation and operational failure less predictable than the
-short call site suggests.
+identity atomic, and an `Option` slice has no cross-request isolation control.
+These make lazy initialisation and composition less predictable than the short
+call site suggests. Transaction rollback after cancellation is now explicitly
+detached, bounded for context-aware adapters, and covered on error and panic.
 
 ## Release blockers found here (edge)
 | # | What | Severity | Why it blocks |

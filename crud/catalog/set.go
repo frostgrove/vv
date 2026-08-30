@@ -83,21 +83,10 @@ func (this *Set) Load(ctx context.Context, source crud.Source) (Catalog, error) 
 //
 // The test is the lookup itself rather than a reflect call of our own, because a
 // second spelling of the rule can disagree with the one that does the finding.
-// And it is guarded, because reflect.Type.Comparable answers about the *static*
-// type: a struct holding an interface is statically comparable and panics on ==
-// when that interface turns out to hold a slice, which crud.SameDataSource
-// cannot see and does not claim to. A refusal is what [[D-041]] asks for here; a
-// panic at declaration is not.
-//
-// Only the incoming key needs the guard. Comparing two interfaces of different
-// dynamic types answers false rather than panicking, so once k has compared
-// against itself the scan over stored keys cannot panic either.
-func findable(k any) (ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
+// SameDataSource uses reflect.Value.Comparable, so it checks dynamic values held
+// in interface fields as well as the outer static type and returns false instead
+// of panicking when either value cannot be compared.
+func findable(k any) bool {
 	return crud.SameDataSource(k, k)
 }
 

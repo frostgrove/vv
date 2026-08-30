@@ -91,7 +91,11 @@ A refusal is written here rather than returned, for
 `crudfiber.ErrorHandler` both leave an already-written response alone, so this
 composes with either.
 
-**Installing it twice authenticates once.** `Middleware(nil)` panics.
+**A consecutive double install with the same guard authenticates once.** A
+different guard performs its own check. A -> B -> A is refused because no
+assurance order can be inferred; mount cumulative checks once each and use one
+`auth.Chain` for alternatives ([[D-076]]). `Middleware` validates at
+construction; nil and `new(auth.Guard)` panic before traffic.
 
 ## Reading the routing table for the gate
 

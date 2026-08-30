@@ -1130,11 +1130,11 @@ users := Users.Bind(src, faults.Enrich[User, int64](faults.WithProbe(probe.Full(
 The signature is
 `func Introspect(ctx context.Context, db DB, opts ...sqlfault.Option) (DB, catalog.Catalog, error)`,
 with `crudpgx.DB` for the pgx twin. It returns `DB` and not `crud.Source`,
-because `DB` carries `Begin` and the exported `TxOptions` field
-(`crud/adapter/crudsql/crudsql.go:138-144`) and narrowing to the interface would
-make the short path a one-way door. The value returned is a copy, so `TxOptions`
-must be set on it — `WithTxOptions` already returns a copy for the same reason
-(`:174`) — and the doc comment has to say so. Identity survives either way:
+because `DB` carries `Begin` and the `WithTxOptions` configuration method, and
+narrowing to the interface would make the short path a one-way door. The value
+returned is a copy, so transaction options must be applied to that returned
+value with `WithTxOptions`; the options themselves are snapshotted and the old
+exported `DB.TxOptions` field no longer exists. Identity survives either way:
 `DataSource()` still answers the same `*sql.DB`, so `crud.WithExecutorFor` and
 `catalog.Set` both still see one database.
 

@@ -12,17 +12,8 @@ import (
 // as a raw string in the test that reads it.
 func tags(s string) string { return strings.ReplaceAll(s, "@", "`") }
 
-// gen runs the generator over a scratch package built from the given sources
-// and returns the file it wrote.
-func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, source := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(tags(source)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	g := &generator{
+func testGenerator(dir string) *generator {
+	return &generator{
 		dir:      dir,
 		depth:    2,
 		withDTO:  true,
@@ -36,6 +27,19 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		netPkg:   DefaultNetPkg,
 		binding:  "net",
 	}
+}
+
+// gen runs the generator over a scratch package built from the given sources
+// and returns the file it wrote.
+func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(tags(source)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := testGenerator(dir)
 	if tweak != nil {
 		tweak(g)
 	}
@@ -52,6 +56,117 @@ func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func genError(t *testing.T, source string) error {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte(tags(source)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return testGenerator(dir).run(filepath.Join(dir, "vv_gen.go"))
+}
+
+func writeSafetyModel(t *testing.T, dir string) {
+	t.Helper()
+	source := tags(`package safe
+
+type Product struct {
+	ID   int64  @db:"id,pk"@
+	Name string @db:"name"@
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func safetyOptions(dir, out string) *Options {
+	return &Options{Dir: dir, Out: out, WithDTO: true, NoRepo: true, Binding: "none"}
+}
+
+func TestOutputNameCannotEscapeItsControlledDirectory(t *testing.T) {
+	dir := t.TempDir()
+	writeSafetyModel(t, dir)
+	victim := filepath.Join(filepath.Dir(dir), "authored-victim.go")
+	if err := os.WriteFile(victim, []byte("authored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []string{"../authored-victim.go", victim, "nested/vv_gen.go"} {
+		if err := Run(safetyOptions(dir, out)); err == nil || !strings.Contains(err.Error(), "-out") {
+			t.Fatalf("Run with -out %q = %v, want a basename refusal", out, err)
+		}
+	}
+	b, err := os.ReadFile(victim)
+	if err != nil || string(b) != "authored\n" {
+		t.Fatalf("victim after refused output = %q, %v", b, err)
+	}
+}
+
+func TestAuthoredOutputIsNeverOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	writeSafetyModel(t, dir)
+	target := filepath.Join(dir, "manual.go")
+	want := "package safe\n\nconst HandWritten = true\n"
+	if err := os.WriteFile(target, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Run(safetyOptions(dir, "manual.go"))
+	if err == nil || !strings.Contains(err.Error(), "authored file") {
+		t.Fatalf("Run error = %v, want authored-file refusal", err)
+	}
+	b, readErr := os.ReadFile(target)
+	if readErr != nil || string(b) != want {
+		t.Fatalf("authored target changed to %q (err %v)", b, readErr)
+	}
+}
+
+func TestSymlinkOutputIsRefusedWithoutFollowingIt(t *testing.T) {
+	dir := t.TempDir()
+	writeSafetyModel(t, dir)
+	victim := filepath.Join(t.TempDir(), "victim.go")
+	if err := os.WriteFile(victim, []byte("do not replace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, "vv_gen.go")); err != nil {
+		t.Fatal(err)
+	}
+	err := Run(safetyOptions(dir, "vv_gen.go"))
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Run error = %v, want symlink refusal", err)
+	}
+	b, readErr := os.ReadFile(victim)
+	if readErr != nil || string(b) != "do not replace\n" {
+		t.Fatalf("symlink victim changed to %q (err %v)", b, readErr)
+	}
+}
+
+func TestGeneratedOutputIsAtomicallyReplaceable(t *testing.T) {
+	dir := t.TempDir()
+	writeSafetyModel(t, dir)
+	target := filepath.Join(dir, "vv_gen.go")
+	if err := os.WriteFile(target, []byte(generatedHeader+"\n\npackage safe\n\nconst Old = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(safetyOptions(dir, "")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(b), generatedHeader+"\n") || strings.Contains(string(b), "const Old") {
+		t.Fatalf("generated target was not replaced completely:\n%s", b)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".vv_gen.go.tmp-") {
+			t.Fatalf("temporary output leaked after commit: %s", entry.Name())
+		}
+	}
 }
 
 // decl returns the generated declaration that starts with header, through its
@@ -420,10 +535,10 @@ type Product struct {
 func TestGormModelIsFlattenedFromTheWellKnownTable(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": `package gormstore
 
-import "gorm.io/gorm"
+import orm "gorm.io/gorm"
 
 type Team struct {
-	gorm.Model
+	orm.Model
 	Name string @gorm:"size:120"@
 }
 `}, func(g *generator) { g.readonly = names("UpdatedAt,DeletedAt") })
@@ -439,7 +554,7 @@ type Team struct {
 		t.Fatalf("the metamodel is\n%s\nwant\n%s", got, want)
 	}
 	// gorm's own package has to be imported, or the DeletedAt attribute dangles.
-	if !strings.Contains(out, `"gorm.io/gorm"`) {
+	if !strings.Contains(out, `gorm "gorm.io/gorm"`) {
 		t.Fatalf("the generated file does not import gorm:\n%s", out)
 	}
 	// Nothing gorm manages is writable through the DTO.
@@ -448,6 +563,58 @@ type Team struct {
 		if declares(dataTransferObject, f) {
 			t.Fatalf("%s is writable, and gorm owns it:\n%s", f, dataTransferObject)
 		}
+	}
+}
+
+func TestUnknownExternalEmbeddedStructIsRefusedDuringGeneration(t *testing.T) {
+	err := genError(t, `package store
+
+import "example.com/audit"
+
+type Product struct {
+	audit.Fields
+	Name string @db:"name"@
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "Product embeds unresolved type audit.Fields") {
+		t.Fatalf("generation error = %v, want the external embed and model named", err)
+	}
+	if !strings.Contains(err.Error(), `tag it db:"-"`) {
+		t.Fatalf("generation error gives no explicit opt-out: %v", err)
+	}
+}
+
+func TestEmbeddedPointerIsRefusedLikeRuntimeMetadata(t *testing.T) {
+	err := genError(t, `package store
+
+type Base struct {
+	ID int64 @db:"id,pk"@
+}
+
+type Product struct {
+	*Base
+	Name string @db:"name"@
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "Product embeds pointer *Base") {
+		t.Fatalf("generation error = %v, want the embedded pointer named", err)
+	}
+}
+
+func TestUnknownExternalEmbedCanBeExplicitlyExcluded(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": `package store
+
+import "example.com/audit"
+
+type Product struct {
+	audit.Fields @db:"-"@
+	ID   int64  @db:"id,pk"@
+	Name string @db:"name"@
+}
+`}, nil)
+	attrs := decl(t, out, "type ProductAttrs struct {")
+	if declares(attrs, "Fields") || !declares(attrs, "Name") {
+		t.Fatalf("explicitly excluded embed leaked or hid ordinary columns:\n%s", attrs)
 	}
 }
 
@@ -510,6 +677,255 @@ func TestIntoAnotherPackageQualifiesTheModelTypes(t *testing.T) {
 	// Only the named type is a model; the others in the file are not.
 	if strings.Contains(out, "PostAttrs") {
 		t.Fatalf("a type nobody asked for was generated:\n%s", out)
+	}
+}
+
+func TestIntoUsesTheDeclaredPackageNameForAVersionedImportPath(t *testing.T) {
+	out := gen(t, map[string]string{"user.go": strings.Replace(entModel, "package ent", "package models", 1)}, func(g *generator) {
+		g.only = map[string]bool{"User": true}
+		g.into = filepath.Join(t.TempDir(), "store")
+		g.modelImport = "example.com/app/models/v2"
+	})
+	if !strings.Contains(out, `models "example.com/app/models/v2"`) {
+		t.Fatalf("versioned model import does not use its declared package name:\n%s", out)
+	}
+	if !strings.Contains(out, "specs.Metamodel[models.User, UserAttrs]()") {
+		t.Fatalf("model types are qualified with the path basename instead of the package declaration:\n%s", out)
+	}
+}
+
+func TestRenamedSourceImportKeepsItsAliasInGeneratedCode(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": `package store
+
+import money "example.com/acme/decimal"
+
+type Product struct {
+	ID    int64        @db:"id,pk"@
+	Price money.Amount @db:"price"@
+}
+`}, nil)
+	if !strings.Contains(out, `money "example.com/acme/decimal"`) {
+		t.Fatalf("renamed import lost its source alias:\n%s", out)
+	}
+	if !strings.Contains(out, "Price *money.Amount") {
+		t.Fatalf("column type lost its renamed package qualifier:\n%s", out)
+	}
+}
+
+func TestVersionedColumnImportReadsTheDeclaredPackageName(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "shared")
+	store := filepath.Join(root, "store")
+	for _, dir := range []string{shared, store} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(root, "go.mod"): `module example.com/app
+
+go 1.26
+
+require example.com/shared/v2 v2.0.0
+replace example.com/shared/v2 => ./shared
+`,
+		filepath.Join(shared, "go.mod"):   "module example.com/shared/v2\n\ngo 1.26\n",
+		filepath.Join(shared, "money.go"): "package models\n\ntype Money int64\n",
+		filepath.Join(store, "model.go"): tags(`package store
+
+import "example.com/shared/v2"
+
+type Product struct {
+	ID    int64        @db:"id,pk"@
+	Price models.Money @db:"price"@
+}
+`),
+	}
+	for path, contents := range files {
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outPath := filepath.Join(store, "vv_gen.go")
+	if err := testGenerator(store).run(outPath); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(b)
+	if !strings.Contains(out, `models "example.com/shared/v2"`) || !strings.Contains(out, "Price *models.Money") {
+		t.Fatalf("versioned column import used v2 instead of declared package models:\n%s", out)
+	}
+}
+
+func TestImportAliasCollisionsAcrossSourceFilesAreMadeStable(t *testing.T) {
+	out := gen(t, map[string]string{
+		"alpha.model.go": `package store
+
+import common "example.com/alpha/common"
+
+type Alpha struct {
+	ID    int64        @db:"id,pk"@
+	Value common.Value @db:"value"@
+}
+`,
+		"beta.model.go": `package store
+
+import common "example.com/beta/common"
+
+type Beta struct {
+	ID    int64        @db:"id,pk"@
+	Value common.Value @db:"value"@
+}
+`,
+	}, nil)
+	for _, want := range []string{
+		`common "example.com/alpha/common"`,
+		`common2 "example.com/beta/common"`,
+		"Value *common.Value",
+		"Value *common2.Value",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("generated collision-safe imports/types lack %q:\n%s", want, out)
+		}
+	}
+	again := gen(t, map[string]string{
+		"beta.model.go": `package store
+import common "example.com/beta/common"
+type Beta struct { ID int64 @db:"id,pk"@; Value common.Value @db:"value"@ }
+`,
+		"alpha.model.go": `package store
+import common "example.com/alpha/common"
+type Alpha struct { ID int64 @db:"id,pk"@; Value common.Value @db:"value"@ }
+`,
+	}, nil)
+	if out != again {
+		t.Fatal("alias assignment depends on source-file/map iteration order")
+	}
+}
+
+func TestImportAliasRewriteIsSinglePass(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": `package store
+
+import (
+	crud "example.com/alpha"
+	crud2 "example.com/beta"
+)
+
+type Product struct {
+	ID    int64       @db:"id,pk"@
+	Alpha crud.Value  @db:"alpha"@
+	Beta  crud2.Value @db:"beta"@
+}
+`}, nil)
+	for _, want := range []string{
+		`crud2 "example.com/alpha"`,
+		`crud22 "example.com/beta"`,
+		"Alpha *crud2.Value",
+		"Beta  *crud22.Value",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("single-pass alias rewrite lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestImportAliasNeverCollidesWithAGeneratedDeclaration(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": `package store
+
+import ProductUpdate "example.com/value"
+
+type Product struct {
+	ID    int64               @db:"id,pk"@
+	Value ProductUpdate.Value @db:"value"@
+}
+`}, nil)
+	if !strings.Contains(out, `ProductUpdate2 "example.com/value"`) ||
+		!strings.Contains(out, "Value *ProductUpdate2.Value") {
+		t.Fatalf("import alias collides with generated ProductUpdate:\n%s", out)
+	}
+}
+
+func TestDotImportIsRefusedInsteadOfProducingAnUnqualifiedType(t *testing.T) {
+	err := genError(t, `package store
+
+import . "example.com/value"
+
+type Product struct {
+	ID    int64 @db:"id,pk"@
+	Value UUID  @db:"value"@
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "dot import") || !strings.Contains(err.Error(), "explicit import alias") {
+		t.Fatalf("dot-import error = %v", err)
+	}
+}
+
+func TestCompositeAndGenericColumnImportsCompile(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store")
+	for _, path := range []string{store, filepath.Join(dir, "money"), filepath.Join(dir, "box")} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(tags(content)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(dir, "go.mod"), "module genimports\n\ngo 1.26\n\nrequire github.com/frostgrove/vv v0.0.0\n\nreplace github.com/frostgrove/vv => "+root+"\n")
+	write(filepath.Join(dir, "money", "money.go"), "package money\n\ntype Amount int64\n")
+	write(filepath.Join(dir, "box", "box.go"), "package box\n\ntype Box[T any] []T\n")
+	write(filepath.Join(store, "model.go"), `package store
+
+import (
+	"genimports/box"
+	"genimports/money"
+)
+
+type Ledger struct {
+	ID      int64                   @db:"id,pk"@
+	Items   []money.Amount          @db:"items"@
+	Lookup  map[string]money.Amount @db:"lookup"@
+	Pair    [2]money.Amount         @db:"pair"@
+	Wrapped box.Box[money.Amount]   @db:"wrapped"@
+}
+`)
+	if err := testGenerator(store).run(filepath.Join(store, "vv_gen.go")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "test", "./store")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off")
+	if response, err := cmd.CombinedOutput(); err != nil {
+		generated, _ := os.ReadFile(filepath.Join(store, "vv_gen.go"))
+		t.Fatalf("generated composite types do not compile: %v\n%s\n--- generated ---\n%s", err, response, generated)
+	}
+}
+
+func TestGormPackageNameCannotStealTheWellKnownGormAlias(t *testing.T) {
+	out := gen(t, map[string]string{"model.go": `package gorm
+
+import orm "gorm.io/gorm"
+
+type Team struct {
+	orm.Model
+	Name string @db:"name"@
+}
+`}, func(g *generator) {
+		g.into = filepath.Join(t.TempDir(), "store")
+		g.modelImport = "example.com/models"
+	})
+	if !strings.Contains(out, `gorm "gorm.io/gorm"`) || !strings.Contains(out, `gorm2 "example.com/models"`) {
+		t.Fatalf("model and well-known gorm imports collide:\n%s", out)
 	}
 }
 
@@ -802,10 +1218,13 @@ func TestTheGeneratedMapCoversEveryWritableColumn(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
 	block := decl(t, out, "var DocPaths = port.MustPathMap[Doc](port.PathMap{")
 
-	for _, want := range []string{`"ID"`, `"Title"`, `"Body"`} {
+	for _, want := range []string{`"Title"`, `"Body"`} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("the map has no entry for %s:\n%s", want, block)
 		}
+	}
+	if strings.Contains(block, `"ID":`) {
+		t.Fatalf("an auto-generated key has a request path although the body cannot carry it:\n%s", block)
 	}
 	// The control: a column the database fills is deliberately outside the
 	// domain, so a generator that emitted every column fails here rather than
@@ -816,8 +1235,27 @@ func TestTheGeneratedMapCoversEveryWritableColumn(t *testing.T) {
 	// And the input body agrees with the map, which is what the start-up check
 	// measures the two halves against.
 	input := decl(t, out, "type DocInput struct {")
-	if !declares(input, "Title") || declares(input, "CreatedAt") {
+	if !declares(input, "Title") || declares(input, "ID") || declares(input, "CreatedAt") {
 		t.Fatalf("the entity body and the map disagree:\n%s", input)
+	}
+	if !strings.Contains(out, `}, "ID")`) {
+		t.Fatalf("the generated path-map declaration does not state why the auto key is absent:\n%s", out)
+	}
+}
+
+func TestAnAssignedPrimaryKeyRemainsInTheGeneratedInput(t *testing.T) {
+	source := `package m
+
+type Document struct {
+	Key   string @db:"key,pk"@
+	Title string @db:"title"@
+}
+`
+	out := gen(t, map[string]string{"model.go": source}, withAdapter)
+	input := decl(t, out, "type DocumentInput struct {")
+	paths := decl(t, out, "var DocumentPaths = port.MustPathMap[Document](port.PathMap{")
+	if !declares(input, "Key") || !strings.Contains(paths, `"Key"`) {
+		t.Fatalf("client-owned key disappeared from input or path map:\n%s", out)
 	}
 }
 
@@ -831,7 +1269,7 @@ func TestTheGeneratedAssertionNamesTheReadonlyExclusions(t *testing.T) {
 	if !strings.Contains(out, `port.MustCoverUpdate[Doc, DocUpdate]("Body")`) {
 		t.Fatalf("the coverage assertion does not declare the -readonly column:\n%s", out)
 	}
-	if !strings.Contains(out, `}, "Body")`) {
+	if !strings.Contains(out, `}, "Body", "ID")`) {
 		t.Fatalf("the inverse map does not declare the -readonly column:\n%s", out)
 	}
 	// The control: with no flag the list is empty, so this is not a generator

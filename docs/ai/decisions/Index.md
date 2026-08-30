@@ -128,6 +128,8 @@ and the next decision written before its code does should say so here.
 | [D-073](D-073-a-mounted-route-declares-its-access-or-start-up-fails.md) | Every mounted route names its permissions or the reason it is open, and the router is compared against those declarations at assembly; both directions of disagreement are a start-up failure | accepted | auth, security, transports |
 | [D-074](D-074-a-container-binding-is-a-satellite.md) | The library resolves no component by type; a dependency-injection container is bound to from a satellite whose only job is that binding (narrows D-037) | accepted | process & tooling, philosophy |
 | [D-075](D-075-where-a-credential-goes-is-the-requests-choice-except-on-rotation.md) | A request names one of three deliveries and gets it or a refusal; silence takes the most closed one, and a rotation answers through the channel the credential arrived on | accepted | auth, transports |
+| [D-076](D-076-a-guard-is-idempotent-only-with-itself.md) | One guard instance authenticates once per request; every different guard runs, and invalid credential-source declarations fail at construction | accepted | auth, security, API design |
+| [D-078](D-078-jwt-trust-is-exact-bounded-and-distinguishes-outage.md) | HMAC names one strong algorithm, JWKS trust and stale-on-error are bounded, provider failure is not a credential refusal, and Standard principals have subjects | accepted | auth, security, resilience |
 
 ## By area
 
@@ -146,7 +148,8 @@ rejection), D-014 (deterministic SQL), D-024 (**open** — `DISTINCT`).
 D-004 (why a scope cannot be peeled off), D-003 (why a caller cannot compose out
 of one), D-026 (**open** — `Inspect` and caller paging), D-055 (where the
 principal a scope reads comes from, and why `security` imports `auth` and not
-the reverse).
+the reverse), D-076 (why a principal from one guard is not evidence that a
+different guard ran).
 
 **Auth** — D-073 (what a route has to declare, why the check is at assembly and
 not per request, and why the declaration lives in `authhttp` rather than
@@ -159,7 +162,12 @@ sibling), D-070 (the default role a sign-up grants is a row, which is the last
 hole in D-066), D-072 (closing a session has to reach the strategy that issued
 it, because a verifier that reads no row cannot see a `revoked_at`), D-075 (where
 a session's two credentials go is the request's to say, what silence takes, and
-the one case — rotation — where the caller is deliberately given no say).
+the one case — rotation — where the caller is deliberately given no say), D-076
+(why idempotence is per guard instance, how a bare API-key header is declared,
+and which invalid auth declarations fail while the graph is built).
+The JWT-provider boundary is D-078: exact HMAC algorithms and key lengths,
+finite JWKS freshness, typed outage handling, unambiguous key sets and the
+non-empty subject promised by `Standard`.
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
 JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).

@@ -43,8 +43,9 @@ func Skip(fullMethods ...string) Option {
 // UNAUTHENTICATED, so chaining the two is the whole wiring. Returning also means
 // the method never runs.
 //
-// Chaining it twice authenticates once: [auth.Guard] hands back a context that
-// already carries a principal untouched.
+// Consecutive interceptors with the same [auth.Guard] authenticate once. A
+// different guard performs its own check; A -> B -> A fails closed because no
+// assurance order is inferred ([[D-076]]).
 func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
 	configuration := configure(guard, "Unary", options)
 	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -64,6 +65,8 @@ func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
 // Once, and only then. A credential that expires while the stream is open is
 // not noticed here — an interceptor runs before the first message and never
 // again — so a long-lived stream that must re-check does it in its own loop.
+// Guard composition has the same adjacent-idempotence and ambiguous-reentry
+// rules as [Unary].
 func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor {
 	configuration := configure(guard, "Stream", options)
 	return func(server any, serverStream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
@@ -79,8 +82,8 @@ func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor {
 }
 
 func configure(guard *auth.Guard, interceptorName string, options []Option) *config {
-	if guard == nil {
-		panic("authgrpc: " + interceptorName + " needs a Guard; without one nothing is authenticated")
+	if err := guard.Validate(); err != nil {
+		panic("authgrpc: " + interceptorName + " needs a ready Guard: " + err.Error())
 	}
 	configuration := &config{}
 	for _, option := range options {

@@ -1,20 +1,28 @@
 # FL-019 — A token becomes a principal
 
 **Entry point:** `auth/http/authnet/authnet.go:Middleware`, `auth/http/authgin/authgin.go:Middleware`, `auth/http/authfiber/authfiber.go:Middleware` and `auth/rpc/authgrpc/interceptor.go:Unary`
-**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-045]] [[D-021]] [[D-044]] [[D-075]]
+**Implements:** [[UC-019]] · **Governed by:** [[D-055]] [[D-056]] [[D-076]] [[D-045]] [[D-021]] [[D-044]] [[D-075]] [[D-078]]
 
 ## The path
 
 1. **`Middleware`** — `auth/http/authnet/authnet.go:43` — the binding's only
    framework-shaped decision: which handler type it is and where the context
-   comes from. It resolves a renderer once, at construction, and panics on a nil
-   guard.
+   comes from. It resolves a renderer once and calls `Guard.Validate` at
+   construction. Nil and zero-value guards fail here, before a request can call
+   a nil authenticator. Gin, Fiber, Unary and Stream do the same.
 2. **`Guard.Authenticate`** — `auth/guard.go:90` — everything that is not
    framework-shaped. It is handed a `func(name string) string`, which is all
-   four transports have in common.
-3. **the idempotence check** — `auth/guard.go:91` — a context that already
-   carries a principal is returned untouched. A guard mounted globally and again
-   on a group verifies once.
+   four transports have in common. The Guard reached here is a finished copy of
+   a private construction draft: `auth.Option` is opaque and cannot be retained
+   as a post-publication `*Guard` mutator. `Lookup` is still the low-level source
+   hook ([[D-076]]).
+3. **the per-guard idempotence check** — `auth/guard.go:authenticationMark` —
+   the context carries an immutable chain of concrete guards and the principal
+   state each installed. A consecutive repeat of the latest guard verifies
+   once; a different guard reaches its authenticator. Re-entering A after B, or
+   replacing the principal after A's marker, is `ErrAmbiguousGuardOrder` as an
+   internal fault. Auth does not guess whether B is stronger or weaker
+   ([[D-076]]).
 4. **`Guard.credential`** — `auth/guard.go:116` — the configured `Lookup`, or
    `ParseAuthorization` over the configured header. `Lookup` *replaces* the
    header rather than adding to it, which is why the one lookup this library
@@ -34,27 +42,44 @@
    passes through unchanged and carries no principal.
 7. **`Authenticator.Authenticate`** — `auth/credential.go:36` — the provider.
    `auth/apikey/apikey.go:96` for a shared secret;
-   `auth/authjwt/authenticator.go:22` for a JWT.
-8. **`Parser.Parse`** — `auth/authjwt/parser.go:137` — verification. The methods
+   `auth/authjwt/authenticator.go:22` for a JWT. `auth.Chain` has already copied
+   its caller's variadic slice and discarded nil-like members. A member that
+   answers `(nil-like Principal, nil)` is a refusal and the next member runs.
+8. **`Parser.Parse`** — `auth/authjwt/parser.go:167` — verification. The methods
    come from the `KeySource` and never from the token
-   (`auth/authjwt/parser.go:110`), `exp` is required unless waived, and every
-   failure collapses to one `Unauthenticated`.
-9. **`decode`** — `auth/authjwt/parser.go:171` — the verified claim map becomes
+   (`auth/authjwt/parser.go:128`); for JWKS, `jwks.key` additionally requires the
+   exact method cached beside the selected key. EC derives it from `crv`,
+   Ed25519 derives `EdDSA`, and RSA requires the provider's `alg`. A present
+   malformed `kid` is refused rather than treated as omission. `exp` is required
+   unless waived, and every credential failure collapses to one
+   `Unauthenticated`. A JWKS provider or document failure carries
+   `ErrKeySourceUnavailable` through instead: no credential verdict was possible
+   ([[D-078]]).
+9. **`decode`** — `auth/authjwt/parser.go:204` — the verified claim map becomes
    the caller's own struct, through `json.Decoder.UseNumber` so an integer claim
    stays an integer.
 10. **the mapper** — the caller's `func(context.Context, C) (auth.Principal,
     error)`, or `Claims.Grant` under `authjwt.Standard`
-    (`auth/authjwt/claims.go:121`), which folds the role map in once.
+    (`auth/authjwt/authenticator.go:54`), which first refuses an empty subject
+    and then folds the role map in once. A custom mapper is the explicit path
+    for an issuer that derives identity from another claim.
 11. **a bad credential, even when optional** — `auth/guard.go:103` — the
     provider's error is returned whether or not the guard is optional. A forged
-    token never becomes anonymous.
+    token never becomes anonymous. A nil-like Principal with no error is also a
+    refusal; it cannot mark the guard successful.
 12. **`auth.WithPrincipal`** — `auth/context.go:22` — the one context key in the
-    tree that carries an identity.
-13. **the binding writes the context back** — `r.WithContext(ctx)`,
+    tree that carries an identity. It and `PrincipalFrom` use the shared
+    interface-aware nil predicate, so a typed-nil pointer is absent rather than
+    an apparent principal waiting to panic in a policy.
+13. **`markAuthenticated`** — `auth/guard.go` — adds this guard to a new marker
+    node after authentication succeeds and binds the marker to the principal
+    state just installed. It never mutates a shared map. Earlier marks exist to
+    detect and refuse ambiguous re-entry, not to infer assurance ordering.
+14. **the binding writes the context back** — `r.WithContext(ctx)`,
     `c.Request = c.Request.WithContext(ctx)`, `c.SetContext(ctx)`, or the
     replaced `grpc.ServerStream`. This is the step with a wrong answer that
     compiles; see the table below.
-14. **`authhttp.Refuse`** — `auth/http/authhttp/authhttp.go:66` — on the refusing
+15. **`authhttp.Refuse`** — `auth/http/authhttp/authhttp.go:66` — on the refusing
     path, the status, the headers and the envelope, written here rather than
     deferred.
 
@@ -100,14 +125,22 @@ does differently is the `SetContext` row above, which every binding's copy of
 
 - [[D-055]] — the principal only ever travels in the context, and `auth`
   imports nothing below `errs`.
+- [[D-076]] — a marker proves only that its exact guard ran; a different guard
+  re-authenticates, bare API-key headers are explicit, and invalid sources fail
+  while the graph is built.
 - [[D-056]] — the refusal is a fault wrapping a sentinel, and its reason is in
   the wrapped error because `port.Violations` renders `Fault.Message`.
 - [[D-045]] — `Guard` takes a header-getter rather than a request, which is what
   lets the gRPC interceptor share every decision above step 13.
-- [[D-021]] — a nil guard, a nil authenticator, a key source that verifies
-  nothing and an unconfigured issuer or audience all panic at construction.
+- [[D-021]] — a nil or typed-nil authenticator/store, an empty header or scheme,
+  a nil lookup, a key source that verifies nothing and an unconfigured issuer or
+  audience all panic at construction.
 - [[D-044]] — no body names anything internal; `authjwt` does not echo the
   caller's own `kid` back at them.
+- [[D-078]] — HMAC pins one algorithm and minimum key size; JWKS trust,
+  per-key methods, stale-on-error and outbound refresh are bounded; strict
+  Ed25519/RSA declarations fail before traffic; provider failure is not 401;
+  the ready-made principal has a subject.
 
 ## Failure modes
 
@@ -116,13 +149,39 @@ does differently is the `SetContext` row above, which every binding's copy of
   repository refuses instead.
 - **A credential that does not verify.** The same 401, the same body, whether it
   was forged, expired, for another audience, or names an unknown key.
-- **A key set that cannot be reached.** `authjwt.JWKS` returns an error and the
-  call is refused. It is not distinguished from a bad token, deliberately.
+- **A key set that cannot be reached or parsed.** `authjwt.JWKS` returns
+  `ErrKeySourceUnavailable`, which remains an infrastructure failure rather
+  than becoming 401. A cached set inside an explicit `JWKSServeStaleFor` window
+  may be used while its typed degraded descriptor is delivered outside the
+  completed singleflight; observer re-entry, blocking and panic do not park
+  requests. The stale bound restores the unavailable answer.
+- **A key the provider withdrew.** A hit at `JWKSFreshness` lazily refreshes the
+  whole set. After a successful refresh the removed `kid` is the same silent
+  401 as any other unknown key.
+- **An empty or duplicate key id.** The fetched document is rejected as a
+  provider failure and never partially installed.
+- **A JWK method/operation mismatch or weak point/modulus.** That entry is not
+  installed. If nothing usable remains, readiness and parsing report provider
+  unavailability; a token selecting another method for an installed key is the
+  same silent 401 as a bad signature.
+- **A present malformed token key id.** Empty, non-string and structured `kid`
+  values are silent 401s even if the set has one key; only actual omission uses
+  the sole-key rule.
 - **A key store that cannot be reached.** `apikey.Store`'s third result travels
   unchanged, so an outage renders as the 500 it is rather than telling every
   caller their key is wrong.
 - **A mapper that refuses.** A token that verified but names something the
   application will not accept is a 401 with the same silent body.
+- **An extension answers a nil-like identity.** Guard and Chain turn it into an
+  authentication refusal; context helpers and the principal quantifiers also
+  treat it as absent, without invoking its methods.
+- **A Guard re-enters after another successful Guard.** The handler does not
+  run; the internal fault wraps `ErrAmbiguousGuardOrder`, not
+  `ErrUnauthenticated`. A -> B mounted once is cumulative; alternative
+  credentials belong in one `Chain`.
+- **A transport receives nil or `new(auth.Guard)`.** Its constructor panics on
+  `Validate`; direct low-level Authenticate fails with `ErrGuardNotReady`
+  rather than panicking on traffic.
 - **A claims struct the payload does not fit.** A 401, not a 500: the token is
   not one this service can read.
 
@@ -130,10 +189,11 @@ does differently is the `SetContext` row above, which every binding's copy of
 
 | File | Role |
 |---|---|
-| `auth/guard.go` | the transport-neutral half: lookup, optional, idempotence |
-| `auth/credential.go` | `Credential`, `Authenticator`, `ParseAuthorization`, `Bearer`, `Chain` |
-| `auth/context.go` | the context key, `WithPrincipal`, `PrincipalFrom`, `Require` |
-| `auth/principal.go` | `Principal`, `Role`, `Permission`, `Claims`, `RoleMap` |
+| `auth/guard.go` | lookup, optional, ready validation, adjacent idempotence and ambiguous re-entry refusal |
+| `auth/credential.go` | `Credential`, `Authenticator`, `ParseAuthorization`, `Bearer`, snapshotted `Chain` |
+| `auth/context.go` | the context key and nil-like-safe `WithPrincipal`, `PrincipalFrom`, `Require` |
+| `auth/principal.go` | `Principal`, nil-like-safe quantifiers, `Role`, `Permission`, `Claims`, `RoleMap` |
+| `internal/nilvalue/nilvalue.go` | the shared typed-nil predicate used by auth seams |
 | `auth/errors.go` | `ErrUnauthenticated`, `Unauthenticated` |
 | `auth/apikey/apikey.go` | the shared-secret authenticator and its `Store` |
 | `auth/authjwt/parser.go` | verification and the decode into C |
@@ -167,6 +227,9 @@ does differently is the `SetContext` row above, which every binding's copy of
   subtest that a bad credential is still refused. That subtest is what makes the
   option safe rather than a hole.
 - `TestADoubleInstallAuthenticatesOnce` — all four.
+- `TestDifferentGuardsAuthenticateIndependently` — all three HTTP bindings and
+  gRPC. It is the control on the idempotence optimisation: a principal from one
+  guard cannot bypass a second guard.
 - `TestARefusalCarriesEveryHeaderTheRendererAskedFor`,
   `TestARefusalWithNoBodyIsTheStatusAndNothingElse`,
   `TestARefusalThatWillNotEncodeIs500AndSaysNothing`,
@@ -178,9 +241,30 @@ does differently is the `SetContext` row above, which every binding's copy of
   body the encoder refuses.
 - `TestAnOptionalGuardStillRefusesABadCredential` — `auth/guard_test.go`.
 - `TestASecondGuardDoesNotAuthenticateAgain` — `auth/guard_test.go`.
+- `TestADifferentGuardAuthenticatesAgain` — `auth/guard_test.go`; the final
+  A -> B control is paired with
+  `TestAReenteredGuardAfterAnotherIdentityBoundaryFailsClosed`, which pins both
+  possible assurance readings of A -> B -> A.
 - `TestHeaderAndLookupReplaceWhereTheCredentialComesFrom` —
   `auth/guard_test.go`, with the control subtest asserting the default header is
   then *not* read, so the option is doing the work.
+- `TestAnEmptyCredentialSourceRefusesToStart` — `auth/guard_test.go`.
+- `TestNewGuardDoesNotPublishTheOptionDraft` — `auth/guard_internal_test.go`;
+  the retained draft is mutated concurrently with authentication.
+- `TestChainSnapshotsTheVariadicSlice` and the typed-nil member/principal arms
+  in `auth/credential_test.go`.
+- `TestANilPrincipalIsNotStored` and the typed-nil quantifier controls in
+  `auth/context_test.go` and `auth/principal_test.go`.
+- `TestStaticSnapshotsClaimsAndReturnsAPerRequestCopy`,
+  `TestStaticClaimsAreIndependentAcrossConcurrentRequests`, and
+  `TestStaticDoesNotRetainTheMutableClaimsDeclaration` in
+  `auth/apikey/apikey_test.go`.
+- `TestGuardValidateRejectsNilAndZeroValuesBeforeARequest` and each transport's
+  nil/zero constructor cases.
+- `TestADoubleStreamInstallAuthenticatesOnce`,
+  `TestDifferentStreamGuardsAuthenticateIndependently`, and
+  `TestAReenteredStreamGuardFailsClosedWithoutGuessingAssurance` cover the gRPC
+  Stream context-replacement path separately from Unary.
 - `TestOnlyTheMethodsTheKeyDeclaresAreAccepted` —
   `auth/authjwt/parser_test.go`. The one that isolates the method pinning from
   golang-jwt's own key typing: PS256 and RS256 share a key type, so only the
@@ -188,6 +272,9 @@ does differently is the `SetContext` row above, which every binding's copy of
   `jwt.WithValidMethods` and watching it fail.
 - `TestAnUnsignedTokenIsRefused`, `TestAnRSAParserRefusesAnHMACTokenSignedWithItsPublicKey`,
   `TestAnHMACParserRefusesAnRSAToken` — same file, the forgery families.
+- `TestLowOrderEd25519TrustWouldAcceptAUniversalJWTForgery` —
+  `auth/authjwt/key_test.go`, proving the identity-point signature before the
+  safe constructor rejects its trust key.
 - `TestARotatedKidIsPickedUp` and `TestUnknownKidsDoNotBecomeOneFetchEach` —
   `auth/authjwt/jwks_test.go`. The second is verified by removing the rate limit
   and watching twenty tokens cost twenty fetches.
@@ -199,7 +286,28 @@ does differently is the `SetContext` row above, which every binding's copy of
   it recorded an attempt. Removing the two guards makes them report twenty and
   twenty-four fetches respectively.
 - `TestASymmetricKeyInAKeySetIsNotUsable` — same file.
+- `TestHMACRefusesShortSecretsAtDeclaration` and
+  `TestEachHMACConstructorPinsOneAlgorithm` — `auth/authjwt/parser_test.go`.
+- `TestARetiredCachedKidStopsVerifyingAtTheFreshnessBoundary`,
+  `TestAStaleCacheDoesNotHideAnOutageByDefault` and
+  `TestStaleOnErrorIsBoundedAndSignalsTheDegradedDecision` —
+  `auth/authjwt/jwks_test.go`, with a fake clock and server.
+- `TestAKeySetThatCannotBeReachedIsUnavailableAndNotARefusal`,
+  `TestAnEmptyOrDuplicateKidRefusesTheWholeKeySet` and
+  `TestANonPositiveMinRefreshRefusesToStart` — same file.
+- `TestJWKSMethodsAndOperationsBelongToEachKey`,
+  `TestJWKSRejectsLowOrderEd25519AndMalformedTokenKids`,
+  `TestDegradedObserverCannotHoldOrReenterTheSingleflight` and
+  `TestWarmRefusesAStaleCacheWhileParseMayUseItsExplicitWindow` — same file.
+- Each transport's key-provider-outage test — 500 rather than 401 on the HTTP
+  triplet, and the original typed error from gRPC, with no handler invocation.
+- `TestStandardRefusesATokenWithoutASubject` —
+  `auth/authjwt/claims_test.go`, including the explicit custom-mapper control.
 - `TestAStoreFailureIsNotARefusal` — `auth/apikey/apikey_test.go`.
+- `TestHeaderReadsABareKeyWithoutChangingTheAuthorizationAPI`,
+  `TestANilStoreRefusesToStart`, `TestAnEmptyBareHeaderRefusesToStart` and the
+  empty-scheme arms of `TestTheSchemeIsCheckedUnlessItIsWaived` —
+  `auth/apikey/apikey_test.go`.
 - `TestSkipLeavesTheNamedMethodAlone` — `auth/rpc/authgrpc/interceptor_test.go`, with
   the control that every unnamed method is still authenticated.
 - `TestARefusalIsNotRenderedTwiceUnderTheErrorMiddleware` —

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/frostgrove/vv/utils"
 )
 
 // Predicate is a node of the WHERE tree. The AST is closed on purpose — the
@@ -177,12 +179,18 @@ func (this *writer) likeEscape() {
 // nodes
 
 type cmpNode struct {
-	field string
-	op    string
-	value any
+	field     string
+	op        string
+	value     any
+	undefined bool
 }
 
 func (this cmpNode) render(w *writer) {
+	if this.undefined {
+		w.fail(&SchemaError{Model: w.current().meta.Name, Field: this.field, Reason: "an undefined Opt is not a comparison value"})
+		w.str("1 = 0")
+		return
+	}
 	w.leaf(this.field, func(col string) {
 		w.str(col)
 		w.str(" " + this.op + " ")
@@ -441,24 +449,42 @@ func (this rawNode) render(w *writer) {
 
 // Eq renders `field = ?`, or `field IS NULL` when value is nil.
 func Eq(field string, value any) Predicate {
+	if stored, defined, null, ok := utils.Inspect(value); ok {
+		if !defined {
+			return cmpNode{field: field, op: "=", undefined: true}
+		}
+		if null {
+			return nullNode{field: field}
+		}
+		value = stored
+	}
 	if isNil(value) {
 		return nullNode{field: field}
 	}
-	return cmpNode{field, "=", value}
+	return cmpNode{field: field, op: "=", value: value}
 }
 
 // Ne renders `field <> ?`, or `field IS NOT NULL` when value is nil.
 func Ne(field string, value any) Predicate {
+	if stored, defined, null, ok := utils.Inspect(value); ok {
+		if !defined {
+			return cmpNode{field: field, op: "<>", undefined: true}
+		}
+		if null {
+			return nullNode{field: field, not: true}
+		}
+		value = stored
+	}
 	if isNil(value) {
 		return nullNode{field: field, not: true}
 	}
-	return cmpNode{field, "<>", value}
+	return cmpNode{field: field, op: "<>", value: value}
 }
 
-func Gt(field string, value any) Predicate  { return cmpNode{field, ">", value} }
-func Gte(field string, value any) Predicate { return cmpNode{field, ">=", value} }
-func Lt(field string, value any) Predicate  { return cmpNode{field, "<", value} }
-func Lte(field string, value any) Predicate { return cmpNode{field, "<=", value} }
+func Gt(field string, value any) Predicate  { return cmpNode{field: field, op: ">", value: value} }
+func Gte(field string, value any) Predicate { return cmpNode{field: field, op: ">=", value: value} }
+func Lt(field string, value any) Predicate  { return cmpNode{field: field, op: "<", value: value} }
+func Lte(field string, value any) Predicate { return cmpNode{field: field, op: "<=", value: value} }
 
 func IsNull(field string) Predicate    { return nullNode{field: field} }
 func IsNotNull(field string) Predicate { return nullNode{field: field, not: true} }

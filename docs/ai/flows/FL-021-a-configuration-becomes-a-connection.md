@@ -72,7 +72,11 @@ that has to still exist.
 10. **`dbpgx.Connect`** — `utils/vvdb/dbpgx/dbpgx.go:Connect`
     The same first three steps, then `pgxpool.ParseConfig`, then the pool
     section onto pgx's names and the caller's `Option`s. Unlike `sql.Open` this
-    dials, so an absent server fails here.
+    dials, so an absent server fails here. The pair helper accepts only
+    `ReadWriteOption`: `Common` is copied to both configurations, while
+    `Primary` and `Replica` remain on their declared side. Common runs first,
+    so a side-specific option has final say. Credential and IAM hooks belong
+    to a side; a common credential hook is an explicit and dangerous choice.
 
 ## Where the escaping actually lives
 
@@ -104,7 +108,7 @@ column rather than the missing parameter.
 | `utils/vvdb/dsn.go` | the four builders, `DSN`, `prepare`, `tlsParam`, `seconds` |
 | `utils/vvdb/open.go` | `Open`, `MustOpen`, `OpenReadWrite`, `Pool.apply` |
 | `utils/vvdb/doc.go` | the boundary: who opens the connection |
-| `utils/vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option` |
+| `utils/vvdb/dbpgx/dbpgx.go` | `Connect`, `MustConnect`, `ConnectReadWrite`, `Option`, and the scoped `Common`/`Primary`/`Replica` declarations |
 
 ## Tests that walk this flow
 
@@ -122,6 +126,7 @@ column rather than the missing parameter.
 | `utils/vvdb/open_test.go:TestAnUnsetPoolLimitIsLeftAlone` | the control: zero is not a limit |
 | `utils/vvdb/open_test.go:TestAFailureToOpenDoesNotPrintThePassword` | the DSN never reaches an error message |
 | `utils/vvdb/dbpgx/dbpgx_test.go:TestTheConfigReachesPgx` | the pool section onto pgx's names |
+| `utils/vvdb/dbpgx/readwrite_options_test.go` | common hooks reach both configurations while credentials stay on their declared side; caller slices are snapshotted |
 | `test/dsn/dsn_test.go` | **the real parsers read back what was written** — pgx and go-sql-driver, which `vvdb` cannot import |
 | `test/dsn/dsn_test.go:TestAnUnescapedParameterIsWhyTheEscapingExists` | the control: the driver does reject the unescaped form |
 | `test/integration/vvdb_test.go:TestOneConfigShapeOpensEveryEngine` | three live servers from one shape of config |

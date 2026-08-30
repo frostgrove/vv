@@ -172,7 +172,10 @@ func TestDeleteIsScoped(t *testing.T) {
 		t.Fatalf("n = %d", n)
 	}
 	got := crudtest.Normalize(rec.Last().SQL)
-	for _, want := range []string{`"tenant_id" = $`, `"id" IN`, `"title" = $`, `"body" = $`} {
+	// Only the row Inspect actually saw reaches the storage plan. The missing
+	// second id is not carried as a redundant IN member into the conditional
+	// delete.
+	for _, want := range []string{`"tenant_id" = $`, `"id" = $`, `"title" = $`, `"body" = $`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("sql = %s, want snapshot condition %s", got, want)
 		}

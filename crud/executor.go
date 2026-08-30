@@ -13,6 +13,7 @@ import (
 	"context"
 	"reflect"
 	"sync/atomic"
+	"time"
 )
 
 // Rows is the minimal cursor vv needs. pgx.Rows satisfies it as-is;
@@ -296,6 +297,26 @@ type ScopedSaveOnlyer[M any, ID comparable] interface {
 	SaveScopedOnly(ctx context.Context, m *M, save *ScopedSave[M]) error
 }
 
+// ScopedDelete is the policy state attached to an id-set deletion. Snapshots
+// is nil when row-level inspection was not requested. When it is non-nil, only
+// ids present in the map may be deleted and each row must still match the
+// complete predicate Inspect approved. Keeping the map keyed by ID lets the
+// storage layer split statements without separating an id from its snapshot.
+type ScopedDelete[ID comparable] struct {
+	IDs            []ID
+	Scope          Predicate
+	RelationScopes *RelationScopes
+	Snapshots      map[ID]Predicate
+}
+
+// ScopedDeleter is the optional storage capability for a policy-narrowed
+// Delete(ids...). The storage implementation owns statement bind budgets,
+// soft-delete timestamps and the transaction spanning chunks; the policy layer
+// owns authorisation, scope resolution and inspection.
+type ScopedDeleter[M any, ID comparable] interface {
+	DeleteScoped(ctx context.Context, deletion *ScopedDelete[ID]) (int64, error)
+}
+
 // SaveScopedOf calls ScopedSaver only on the core it was handed. It deliberately
 // does not walk Nexter: a decorator may enforce authorisation, validation or
 // auditing on Save, and tunnelling through it to an inner storage capability
@@ -325,6 +346,20 @@ func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, 
 		return s.SaveScopedOnly(ctx, m, save), true
 	}
 	return nil, false
+}
+
+// DeleteScopedOf invokes a capability only through the handed core. Like the
+// conditional Save capabilities, it never tunnels through a decorator that did
+// not explicitly preserve the operation and its own enforcement/observability.
+func DeleteScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, deletion *ScopedDelete[ID]) (int64, error, bool) {
+	if deletion == nil {
+		return 0, ErrBadRequest, true
+	}
+	if d, ok := c.(ScopedDeleter[M, ID]); ok {
+		n, err := d.DeleteScoped(ctx, deletion)
+		return n, err, true
+	}
+	return 0, nil, false
 }
 
 // SourceUnwrapper is the optional interface a Source *wrapper* implements to
@@ -588,17 +623,16 @@ var (
 // one — a datasource handle is a pointer in practice, but nothing in the
 // contract says it must be.
 //
-// It asks reflect, so it answers about the *static* type, which is as far as it
-// can see: a struct holding an interface is comparable and == on it still panics
-// once that interface turns out to hold a slice. A caller that must not panic on
-// anything a user hands it guards the comparison itself — catalog does, and
-// [[D-041]] says why.
+// reflect.Value.Comparable checks the value recursively, including dynamic
+// values held by interface fields. reflect.Type.Comparable is not enough here:
+// a struct with an interface field has a comparable static type while comparing
+// two values still panics when that field contains a slice.
 func SameDataSource(a, b any) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
-	if ta != tb || !ta.Comparable() {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() || !va.Comparable() || !vb.Comparable() {
 		return false
 	}
 	return a == b
@@ -636,6 +670,18 @@ func InNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 	return inNewTx(ctx, source, fn)
 }
 
+// InAtomic joins an ambient executor only when it is known to be a live
+// transaction. A bare executor may be a pool installed with WithExecutor; it
+// is suitable for one statement but cannot make a multi-statement operation
+// atomic. In that case InAtomic opens a new transaction from source (or returns
+// ErrNoTxSupport before fn runs).
+func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error {
+	if executor, ok := ExecutorFor(ctx, source); ok && IsTransaction(executor) {
+		return fn(ctx)
+	}
+	return inNewTx(ctx, source, fn)
+}
+
 func inNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error) {
 	b, ok := BeginnerOf(source)
 	if !ok {
@@ -647,15 +693,26 @@ func inNewTx(ctx context.Context, source Executor, fn func(context.Context) erro
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback(ctx)
+			_ = rollback(tx, ctx)
 			panic(p)
 		}
 	}()
 	if err := fn(push(ctx, ownScope(source), tx, true)); err != nil {
-		if rbErr := tx.Rollback(ctx); rbErr != nil {
+		if rbErr := rollback(tx, ctx); rbErr != nil {
 			return errJoin(err, rbErr)
 		}
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+const rollbackTimeout = 5 * time.Second
+
+// rollback must remain possible after the request that caused it was canceled.
+// WithoutCancel preserves values needed by an adapter while the deadline keeps
+// cleanup from holding a connection forever.
+func rollback(tx Tx, ctx context.Context) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+	return tx.Rollback(cleanup)
 }

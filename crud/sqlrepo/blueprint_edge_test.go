@@ -3,6 +3,7 @@ package sqlrepo_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -158,6 +159,58 @@ func TestAnEmptyTableNameBecomesThePluralOfTheModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSQL(t, rec.Last().SQL, `SELECT "id", "title" FROM "stories"`)
+}
+
+func TestTryDefineReturnsALateTableConflictInsteadOfPanicking(t *testing.T) {
+	type Ledger struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	type Entry struct {
+		ID       int64   `db:"id,pk,auto"`
+		LedgerID int64   `db:"ledger_id"`
+		Ledger   *Ledger `rel:"belongs_to"`
+	}
+	entry, err := crud.NewMeta[Entry]("entries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := entry.Relation("Ledger").Resolve(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sqlrepo.TryDefine[Ledger, int64, struct{}]("accounting_ledgers")
+	if err == nil || !strings.Contains(err.Error(), "already resolved") {
+		t.Fatalf("TryDefine error = %v, want late table declaration refusal", err)
+	}
+	var schemaErr *crud.SchemaError
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("TryDefine error = %T, want *crud.SchemaError", err)
+	}
+}
+
+func TestAnIndependentBlueprintDoesNotCompeteForTheRelationTable(t *testing.T) {
+	type Ledger struct {
+		ID int64 `db:"id,pk,auto"`
+	}
+	if _, err := sqlrepo.TryDefine[Ledger, int64, struct{}]("accounting_ledgers"); err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := sqlrepo.TryDefine[Ledger, int64, struct{}]("archived_ledgers",
+		sqlrepo.IndependentTable())
+	if err != nil {
+		t.Fatalf("independent blueprint: %v", err)
+	}
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	if _, err := alternate.Bind(rec).GetAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantSQL(t, rec.Last().SQL, `SELECT "id" FROM "archived_ledgers"`)
+	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "accounting_ledgers" {
+		t.Fatalf("independent blueprint changed relation target to %q", got)
+	}
+	if _, err := sqlrepo.TryDefine[Ledger, int64, struct{}]("another_default"); err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("ordinary conflicting blueprint = %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

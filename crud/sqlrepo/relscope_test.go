@@ -140,6 +140,47 @@ type Reviewer struct {
 	Name string `db:"name"`
 }
 
+type PostUpdate struct {
+	Title *string
+}
+
+// An Update's load is not a response read: it decides which row may be written
+// and what the patch changes. The root predicate and the per-request relation
+// narrowing therefore both have to survive while response-only shape is
+// stripped. Losing the second predicate turns the relation hop into an oracle
+// over rows the caller's policy hid.
+func TestMutationReadKeepsPerRequestRelationNarrowing(t *testing.T) {
+	posts := sqlrepo.Define[Post, int64, PostUpdate]("posts",
+		sqlrepo.Scope(crud.Eq("Hidden", false)))
+	requestScope := (*crud.RelationScopes)(nil).
+		AtPath("Remarks", crud.Eq("Spam", false))
+	rec := crudtest.Postgres().Push(
+		crudtest.Rows([]any{int64(1), "visible", false, int64(9)}),
+	)
+
+	got, err := posts.Bind(rec).Update(context.Background(), 1,
+		PostUpdate{Title: ptr("visible")},
+		crud.Where(crud.Eq("Remarks.Body", "allowed")),
+		crud.NarrowRelations(requestScope),
+		crud.Select("Title"),
+		crud.Preload("Remarks"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "visible" || got.AuthorID != 9 {
+		t.Fatalf("mutation read returned a partial row: %+v", got)
+	}
+	if n := len(rec.Statements()); n != 1 {
+		t.Fatalf("%d statements, want one full mutation read and a no-op diff: %v", n, rec.SQL())
+	}
+	wantSQL(t, rec.Last().SQL,
+		`SELECT "id", "title", "hidden", "author_id" FROM "posts" WHERE (`+
+			`"hidden" = $1 AND EXISTS (SELECT 1 FROM "remarks" AS rx1 `+
+			`WHERE rx1."post_id" = "posts"."id" AND rx1."spam" = $2 AND rx1."body" = $3) `+
+			`AND "id" = $4) LIMIT 1`)
+}
+
 // Another model's rows are another repository's business, so the narrowing has
 // to be declared — but once it is, it holds on both routes into that table.
 func TestRelationScopeNarrowsBothThePreloadAndTheFilterHop(t *testing.T) {

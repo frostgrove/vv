@@ -37,12 +37,12 @@ import (
 // the same envelope as every other failure, so a client sees one error shape
 // whether the request was refused at the door or by the repository.
 //
-// Installing it twice authenticates once — [auth.Guard] hands back a context
-// that already carries a principal untouched — so mounting it globally and
-// again on a subtree costs one verification, not two.
+// Consecutive installs with the same [auth.Guard] authenticate once. A
+// different guard performs its own check; A -> B -> A fails closed because no
+// assurance order is inferred ([[D-076]]).
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.Handler) http.Handler {
-	if guard == nil {
-		panic("authnet: Middleware needs a Guard; without one nothing is authenticated")
+	if err := guard.Validate(); err != nil {
+		panic("authnet: Middleware needs a ready Guard: " + err.Error())
 	}
 	renderer := authhttp.RendererFor(options)
 	return func(next http.Handler) http.Handler {

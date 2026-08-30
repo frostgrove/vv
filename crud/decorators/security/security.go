@@ -1036,32 +1036,104 @@ func (this *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 	if scope == nil && rel == nil && this.p.Inspect == nil {
 		return this.Core.Delete(ctx, ids...)
 	}
-	pk := this.Meta().PK.Name
-	within := crud.And(scope, crud.InAny(pk, ids))
-	// The resolved relation scope goes into the final statement as well as the
-	// victim read. This is both the relation-side equivalent of the row WHERE
-	// and the reason it was resolved before the direct-delete fast path.
-	narrow := relationNarrowing(rel)
+	var snapshots map[ID]crud.Predicate
+	var snapshotList []crud.Predicate
 	if this.p.Inspect != nil {
-		victims, err := this.Core.GetAll(ctx, this.whole(true, []crud.Option{crud.Where(within), narrow, crud.PrimaryOnly()})...)
+		victims, err := this.deleteVictims(ctx, ids, scope, rel)
 		if err != nil {
 			return 0, err
 		}
 		if len(victims) == 0 {
 			return 0, nil
 		}
-		inspected, err := snapshotPredicates(this.Meta(), victims)
-		if err != nil {
-			return 0, err
-		}
+		snapshots = make(map[ID]crud.Predicate, len(victims))
+		snapshotList = make([]crud.Predicate, 0, len(victims))
 		for i := range victims {
+			snapshot, err := snapshotPredicate(this.Meta(), &victims[i])
+			if err != nil {
+				return 0, err
+			}
 			if err := this.p.Inspect(ctx, Delete, &victims[i]); err != nil {
 				return 0, err
 			}
+			rawID, err := this.Meta().ID(&victims[i])
+			if err != nil {
+				return 0, err
+			}
+			id, ok := rawID.(ID)
+			if !ok {
+				return 0, &crud.SchemaError{Model: this.Meta().Name, Field: this.Meta().PK.Name,
+					Reason: fmt.Sprintf("inspected id has type %T, expected the repository id type", rawID)}
+			}
+			snapshots[id] = snapshot
+			snapshotList = append(snapshotList, snapshot)
 		}
-		within = crud.And(within, inspected)
 	}
-	return this.Core.DeleteAll(ctx, crud.Where(within), narrow)
+
+	// SQL storage exposes this narrow capability so the layer that knows the
+	// dialect can split the id/snapshot pairs, preserve one soft-delete stamp and
+	// put every chunk in one transaction. A transparent faults decorator forwards
+	// it; an enforcing decorator must opt in rather than being bypassed.
+	if n, err, ok := crud.DeleteScopedOf(this.Core, ctx, &crud.ScopedDelete[ID]{
+		IDs: ids, Scope: scope, RelationScopes: rel, Snapshots: snapshots,
+	}); ok {
+		return n, err
+	}
+
+	// Low-level/custom cores keep the old one-statement contract. It is safe and
+	// fail-closed when their own statement limit is exceeded; only a core that
+	// explicitly owns atomic chunking receives the capability above.
+	pk := this.Meta().PK.Name
+	within := crud.And(scope, crud.InAny(pk, ids))
+	if snapshots != nil {
+		within = crud.And(within, crud.Or(snapshotList...))
+	}
+	return this.Core.DeleteAll(ctx, crud.Where(within), relationNarrowing(rel))
+}
+
+// deleteVictims reads an inspected id set in bounded pieces. These are only
+// decision reads, so a statement-budget refusal may be retried as two smaller
+// reads without any partial write. The final conditional deletes still carry
+// the snapshots and run atomically in storage.
+func (this *gate[M, ID]) deleteVictims(ctx context.Context, ids []ID, scope crud.Predicate, rel *crud.RelationScopes) ([]M, error) {
+	chunk := len(ids)
+	if source, ok := crud.SourceOf(this.Core); ok {
+		chunk = min(chunk, crud.BindLimit(source.Dialect()))
+	}
+	chunk = min(chunk, 4096)
+	if chunk < 1 {
+		chunk = 1
+	}
+	var out []M
+	var read func([]ID) error
+	read = func(part []ID) error {
+		byID := crud.InAny(this.Meta().PK.Name, part)
+		if len(part) == 1 {
+			byID = crud.Eq(this.Meta().PK.Name, part[0])
+		}
+		rows, err := this.Core.GetAll(ctx, this.whole(true, []crud.Option{
+			crud.Where(crud.And(scope, byID)), relationNarrowing(rel), crud.PrimaryOnly(),
+		})...)
+		if err == nil {
+			out = append(out, rows...)
+			return nil
+		}
+		var schemaErr *crud.SchemaError
+		if len(part) > 1 && errors.As(err, &schemaErr) {
+			middle := len(part) / 2
+			if err := read(part[:middle]); err != nil {
+				return err
+			}
+			return read(part[middle:])
+		}
+		return err
+	}
+	for start := 0; start < len(ids); start += chunk {
+		if err := read(ids[start:min(start+chunk, len(ids))]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (this *gate[M, ID]) DeleteAll(ctx context.Context, options ...crud.Option) (int64, error) {

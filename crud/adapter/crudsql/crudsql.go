@@ -148,8 +148,9 @@ type DB struct {
 	Executor
 	database *sql.DB
 	d        crud.Dialect
-	// TxOptions is used by Begin; nil means the driver default.
-	TxOptions *sql.TxOptions
+	// txOptions is private so a configured source is immutable after build.
+	// nil means the driver default.
+	txOptions *sql.TxOptions
 }
 
 // Open binds a *sql.DB to a dialect.
@@ -187,12 +188,22 @@ func (this DB) Dialect() crud.Dialect { return this.d }
 // DB returns the underlying handle.
 func (this DB) DB() *sql.DB { return this.database }
 
-// WithTxOptions returns a copy that starts transactions with the given options.
-func (this DB) WithTxOptions(o *sql.TxOptions) DB { this.TxOptions = o; return this }
+// WithTxOptions returns a copy that starts transactions with a snapshot of the
+// given options. Keeping the caller's pointer would let a later mutation change
+// a live source and race with Begin.
+func (this DB) WithTxOptions(o *sql.TxOptions) DB {
+	if o == nil {
+		this.txOptions = nil
+		return this
+	}
+	options := *o
+	this.txOptions = &options
+	return this
+}
 
 // Begin starts a transaction.
 func (this DB) Begin(ctx context.Context) (crud.Tx, error) {
-	tx, err := this.database.BeginTx(ctx, this.TxOptions)
+	tx, err := this.database.BeginTx(ctx, this.txOptions)
 	if err != nil {
 		return nil, err
 	}

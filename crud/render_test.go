@@ -2,6 +2,7 @@ package crud_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/crud"
@@ -160,6 +161,32 @@ func TestOnlyTheFirstFailureIsKept(t *testing.T) {
 	var unknown *crud.UnknownFieldError
 	if !errors.As(b.Err(), &unknown) || unknown.Field != "First" {
 		t.Fatalf("err = %v, want the first unknown field", b.Err())
+	}
+}
+
+type threeBindDialect struct{ crud.Postgres }
+
+func (threeBindDialect) Name() string       { return "three-bind" }
+func (threeBindDialect) MaxBindValues() int { return 3 }
+
+func TestStatementBindBudgetIsCheckedBeforeExecution(t *testing.T) {
+	b := crud.NewSQL(threeBindDialect{}, articleMeta(t)).
+		Raw("SELECT 1 FROM ").Table().
+		Where(crud.And(crud.Eq("Views", 1), crud.In("ID", 2, 3, 4)))
+
+	_, args, err := b.Done()
+	var schemaErr *crud.SchemaError
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("err = %T %v, want *crud.SchemaError", err, err)
+	}
+	if len(args) != 4 {
+		t.Fatalf("args = %#v, want all four values counted before the refusal", args)
+	}
+	if !strings.Contains(schemaErr.Reason, "needs 4") || !strings.Contains(schemaErr.Reason, "at most 3") {
+		t.Fatalf("reason = %q, want the requested and available bind counts", schemaErr.Reason)
+	}
+	if !errors.As(b.Err(), new(*crud.SchemaError)) {
+		t.Fatalf("Err = %v, want the same typed preflight refusal", b.Err())
 	}
 }
 

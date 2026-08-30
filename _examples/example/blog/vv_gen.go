@@ -87,7 +87,6 @@ func NewArticleRepository(src crud.Source) *ArticleRepo {
 // under this resource's own wire names. ArticleUpdate is the PATCH shape; a
 // partial update has to tell absent from null and an entity body does not.
 type ArticleInput struct {
-	ID          int64               `json:"id"`
 	AuthorID    int64               `json:"authorID"`
 	Title       string              `json:"title"`
 	Body        string              `json:"body"`
@@ -105,7 +104,6 @@ type ArticleMapper struct{}
 // Model implements port.Mapper.
 func (ArticleMapper) Model(_ context.Context, in ArticleInput) (Article, error) {
 	return Article{
-		ID:          in.ID,
 		AuthorID:    in.AuthorID,
 		Title:       in.Title,
 		Body:        in.Body,
@@ -125,7 +123,6 @@ func (ArticleMapper) Resolve(p errs.Path) (errs.Path, bool) { return ArticlePath
 // initialisation, so a column it does not cover refuses to start rather than
 // answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var ArticlePaths = port.MustPathMap[Article](port.PathMap{
-	"ID":          port.At("id"),
 	"AuthorID":    port.At("authorID"),
 	"Title":       port.At("title"),
 	"Body":        port.At("body"),
@@ -133,7 +130,7 @@ var ArticlePaths = port.MustPathMap[Article](port.PathMap{
 	"Rating":      port.At("rating"),
 	"PublishedAt": port.At("publishedAt"),
 	"TenantID":    port.At("tenantID"),
-})
+}, "ID")
 
 // ArticleService is the service shell: the default orchestration, and somewhere to
 // override one method without writing the other eight.
@@ -207,7 +204,6 @@ func NewAuthorRepository(src crud.Source) *AuthorRepo {
 // under this resource's own wire names. AuthorUpdate is the PATCH shape; a
 // partial update has to tell absent from null and an entity body does not.
 type AuthorInput struct {
-	ID   int64  `json:"id"`
 	Name string `json:"name"`
 }
 
@@ -219,7 +215,6 @@ type AuthorMapper struct{}
 // Model implements port.Mapper.
 func (AuthorMapper) Model(_ context.Context, in AuthorInput) (Author, error) {
 	return Author{
-		ID:   in.ID,
 		Name: in.Name,
 	}, nil
 }
@@ -233,9 +228,8 @@ func (AuthorMapper) Resolve(p errs.Path) (errs.Path, bool) { return AuthorPaths.
 // initialisation, so a column it does not cover refuses to start rather than
 // answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var AuthorPaths = port.MustPathMap[Author](port.PathMap{
-	"ID":   port.At("id"),
 	"Name": port.At("name"),
-})
+}, "ID")
 
 // AuthorService is the service shell: the default orchestration, and somewhere to
 // override one method without writing the other eight.
@@ -308,7 +302,6 @@ func NewCommentRepository(src crud.Source) *CommentRepo {
 // under this resource's own wire names. CommentUpdate is the PATCH shape; a
 // partial update has to tell absent from null and an entity body does not.
 type CommentInput struct {
-	ID        int64  `json:"id"`
 	ArticleID int64  `json:"articleID"`
 	AuthorID  int64  `json:"authorID"`
 	Body      string `json:"body"`
@@ -323,7 +316,6 @@ type CommentMapper struct{}
 // Model implements port.Mapper.
 func (CommentMapper) Model(_ context.Context, in CommentInput) (Comment, error) {
 	return Comment{
-		ID:        in.ID,
 		ArticleID: in.ArticleID,
 		AuthorID:  in.AuthorID,
 		Body:      in.Body,
@@ -340,12 +332,11 @@ func (CommentMapper) Resolve(p errs.Path) (errs.Path, bool) { return CommentPath
 // initialisation, so a column it does not cover refuses to start rather than
 // answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var CommentPaths = port.MustPathMap[Comment](port.PathMap{
-	"ID":        port.At("id"),
 	"ArticleID": port.At("articleID"),
 	"AuthorID":  port.At("authorID"),
 	"Body":      port.At("body"),
 	"Approved":  port.At("approved"),
-})
+}, "ID")
 
 // CommentService is the service shell: the default orchestration, and somewhere to
 // override one method without writing the other eight.
@@ -404,7 +395,6 @@ func NewTagRepository(src crud.Source) *TagRepo {
 // under this resource's own wire names. TagUpdate is the PATCH shape; a
 // partial update has to tell absent from null and an entity body does not.
 type TagInput struct {
-	ID   int64  `json:"id"`
 	Slug string `json:"slug"`
 }
 
@@ -416,7 +406,6 @@ type TagMapper struct{}
 // Model implements port.Mapper.
 func (TagMapper) Model(_ context.Context, in TagInput) (Tag, error) {
 	return Tag{
-		ID:   in.ID,
 		Slug: in.Slug,
 	}, nil
 }
@@ -430,9 +419,8 @@ func (TagMapper) Resolve(p errs.Path) (errs.Path, bool) { return TagPaths.Resolv
 // initialisation, so a column it does not cover refuses to start rather than
 // answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var TagPaths = port.MustPathMap[Tag](port.PathMap{
-	"ID":   port.At("id"),
 	"Slug": port.At("slug"),
-})
+}, "ID")
 
 // TagService is the service shell: the default orchestration, and somewhere to
 // override one method without writing the other eight.

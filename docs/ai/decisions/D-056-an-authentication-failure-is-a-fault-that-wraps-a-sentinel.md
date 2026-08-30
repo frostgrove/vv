@@ -2,6 +2,8 @@
 
 **Status:** accepted
 **Invariant:** a 401 is built with `auth.Unauthenticated`, which produces an `errs.Fault` of `errs.KindUnauthorized` wrapping `auth.ErrUnauthenticated`. Nothing in `crud`, `port` or `errs` changes to carry it, and the reason it was refused travels in the wrapped error — never in `Fault.Message`, never in a body.
+**Narrowed by:** [[D-078]] — inability to obtain verification keys is not an
+authentication failure and remains a typed infrastructure error.
 
 ## The decision
 
@@ -67,7 +69,9 @@ produces, and not of this path. That is the trap this decision exists to record.
 failure [[D-008]] describes for rows and answers the same way: one response for
 every cause. Every reason renders as `unauthenticated` / *"authentication is
 required"*, whether the token was absent, expired, forged, for another audience,
-or valid for a tenant that no longer exists.
+  or valid for a tenant that no longer exists. A key provider that did not
+  answer has made no credential decision; [[D-078]] keeps that failure out of
+  this equivalence class.
 
 ## What a caller can still find out
 
@@ -119,8 +123,9 @@ NotFound(1) < Unauthorized(2) < Forbidden(3)`.
   decision is written down.
 - `auth/http/authhttp/authhttp.go` — `Refuse`, and the paragraph on
   `WWW-Authenticate`.
-- `auth/authjwt/parser.go` — `Parse`, where every verification failure collapses
-  to one answer.
+- `auth/authjwt/parser.go` — `Parse`, where every credential-verification
+  failure collapses to one answer and typed key-source availability travels
+  unchanged ([[D-078]]).
 - `auth/apikey/apikey.go` — `Store`'s three results, which keep an outage from
   being reported as a bad key.
 

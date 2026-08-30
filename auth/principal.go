@@ -1,6 +1,10 @@
 package auth
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/frostgrove/vv/internal/nilvalue"
+)
 
 // A Role is a named bundle of permissions. It is what an identity provider
 // usually puts in a token.
@@ -136,7 +140,7 @@ func dedupe(ps []Permission) []Permission {
 // is true, which is what makes a rule that names none a rule that refuses
 // nothing.
 func HasAll(p Principal, ps ...Permission) bool {
-	if p == nil {
+	if nilvalue.Is(p) {
 		return false
 	}
 	for _, want := range ps {
@@ -153,7 +157,7 @@ func HasAll(p Principal, ps ...Permission) bool {
 // the other way for the same reason — both answers are the safe one for their
 // own quantifier.
 func HasAny(p Principal, ps ...Permission) bool {
-	if p == nil {
+	if nilvalue.Is(p) {
 		return false
 	}
 	for _, want := range ps {
@@ -167,7 +171,7 @@ func HasAny(p Principal, ps ...Permission) bool {
 // InAny reports membership of at least one role, and is false for no roles for
 // the same reason [HasAny] is.
 func InAny(p Principal, rs ...Role) bool {
-	if p == nil {
+	if nilvalue.Is(p) {
 		return false
 	}
 	for _, want := range rs {
