@@ -1,6 +1,7 @@
 package authgin_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -167,6 +168,47 @@ func TestDifferentGuardsAuthenticateIndependently(t *testing.T) {
 	}
 	if firstCalls != 1 || secondCalls != 1 {
 		t.Fatalf("composed guards authenticated %d and %d times, want once each", firstCalls, secondCalls)
+	}
+}
+
+func TestAReenteredGuardFailsClosedWithoutGuessingAssurance(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		firstSubject, secondSubject string
+	}{
+		{"ordinary -> step-up -> ordinary", "ordinary", "step-up"},
+		{"strict -> weak -> strict", "strict", "weak"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstCalls, middleCalls := 0, 0
+			first := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				firstCalls++
+				return auth.Claims{Sub: tc.firstSubject}, nil
+			}))
+			middle := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				middleCalls++
+				return auth.Claims{Sub: tc.secondSubject}, nil
+			}))
+			h := &seen{}
+
+			router := gin.New()
+			router.Use(authgin.Middleware(first), authgin.Middleware(middle), authgin.Middleware(first))
+			router.GET("/articles", h.handle)
+			request := httptest.NewRequest(http.MethodGet, "/articles", nil)
+			request.Header.Set("Authorization", "Bearer t")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, request)
+
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("ambiguous guard order answered %d, want 500 rather than a caller-facing 401", w.Code)
+			}
+			if h.ran {
+				t.Fatal("the handler ran after an assurance-ambiguous guard re-entry")
+			}
+			if firstCalls != 1 || middleCalls != 1 {
+				t.Fatalf("ambiguous re-entry called authenticators %d and %d times, want once each", firstCalls, middleCalls)
+			}
+		})
 	}
 }
 

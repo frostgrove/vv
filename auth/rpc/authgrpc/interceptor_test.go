@@ -176,6 +176,64 @@ func TestDifferentGuardsAuthenticateIndependently(t *testing.T) {
 	}
 }
 
+func TestAReenteredUnaryGuardFailsClosedWithoutGuessingAssurance(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		firstSubject, secondSubject string
+	}{
+		{"ordinary -> step-up -> ordinary", "ordinary", "step-up"},
+		{"strict -> weak -> strict", "strict", "weak"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstCalls, middleCalls := 0, 0
+			first := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				firstCalls++
+				return auth.Claims{Sub: tc.firstSubject}, nil
+			}))
+			middle := auth.NewGuard(auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
+				middleCalls++
+				return auth.Claims{Sub: tc.secondSubject}, nil
+			}))
+			h := &seen{}
+
+			_, err := unaryChain(authgrpc.Unary(first), authgrpc.Unary(middle), authgrpc.Unary(first))(
+				incoming("authorization", "Bearer t"), nil, info(articleCreate), h.handle,
+			)
+			if !errors.Is(err, auth.ErrAmbiguousGuardOrder) {
+				t.Fatalf("ambiguous unary guard order answered %v", err)
+			}
+			if errors.Is(err, auth.ErrUnauthenticated) || port.KindOf(err) != errs.KindInternal {
+				t.Fatalf("ambiguous unary guard order was classified as a caller refusal: %v", err)
+			}
+			if h.ran {
+				t.Fatal("the unary handler ran after an assurance-ambiguous guard re-entry")
+			}
+			if firstCalls != 1 || middleCalls != 1 {
+				t.Fatalf("ambiguous unary re-entry called authenticators %d and %d times, want once each", firstCalls, middleCalls)
+			}
+		})
+	}
+}
+
+func unaryChain(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		request any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		chained := handler
+		for i := len(interceptors) - 1; i >= 0; i-- {
+			interceptor := interceptors[i]
+			next := chained
+			chained = func(ctx context.Context, request any) (any, error) {
+				return interceptor(ctx, request, info, next)
+			}
+		}
+		return chained(ctx, request)
+	}
+}
+
 // Skip keys on the full method name, which is why crudgrpc gives each resource
 // its own service rather than sharing one.
 func TestSkipLeavesTheNamedMethodAlone(t *testing.T) {
@@ -243,6 +301,28 @@ func TestAStreamIsAuthenticatedWhenItOpens(t *testing.T) {
 			t.Fatal("the stream handler ran for a call nobody authenticated")
 		}
 	})
+}
+
+func TestAKeyProviderOutageRemainsTypedAndTheStreamNeverOpens(t *testing.T) {
+	ran := false
+	err := authgrpc.Stream(auth.NewGuard(unavailable()))(
+		nil,
+		&fakeStream{ctx: incoming("authorization", "Bearer valid-looking")},
+		&grpc.StreamServerInfo{FullMethod: articleCreate},
+		func(any, grpc.ServerStream) error {
+			ran = true
+			return nil
+		},
+	)
+	if !errors.Is(err, errKeyProviderUnavailable) {
+		t.Fatalf("a stream key-provider outage became %v", err)
+	}
+	if errors.Is(err, auth.ErrUnauthenticated) || port.KindOf(err) != errs.KindInternal {
+		t.Fatalf("a stream key-provider outage became a credential refusal: %v", err)
+	}
+	if ran {
+		t.Fatal("the stream handler opened when verification trust was unavailable")
+	}
 }
 
 func TestADoubleStreamInstallAuthenticatesOnce(t *testing.T) {
@@ -331,6 +411,9 @@ func TestAReenteredStreamGuardFailsClosedWithoutGuessingAssurance(t *testing.T) 
 			)
 			if !errors.Is(err, auth.ErrAmbiguousGuardOrder) {
 				t.Fatalf("ambiguous stream guard order answered %v", err)
+			}
+			if errors.Is(err, auth.ErrUnauthenticated) || port.KindOf(err) != errs.KindInternal {
+				t.Fatalf("ambiguous stream guard order was classified as a caller refusal: %v", err)
 			}
 			if ran {
 				t.Fatal("the stream handler ran after ambiguous identity ordering")
