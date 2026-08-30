@@ -188,6 +188,10 @@ safe default: `JWKSFreshness` bounds cache age at five minutes,
 `JWKSStaleAfter` changes it, and a hit at the boundary refreshes the whole map;
 `TestARetiredCachedKidStopsVerifyingAtTheFreshnessBoundary` uses a fake clock
 and mutable server to prove the removed key fails while its replacement works.
+A method mismatch for a cached `kid` is an immediate refusal only while that
+policy is fresh; at the boundary it refreshes too, so a same-`kid` RS256→PS256
+rotation works and a failed refresh stays `ErrKeySourceUnavailable` rather than
+becoming a verdict from stale metadata.
 4 is split from credential failure by `ErrKeySourceUnavailable`, pinned cold by
 `TestAKeySetThatCannotBeReachedIsUnavailableAndNotARefusal` and warm by
 `TestAStaleCacheDoesNotHideAnOutageByDefault`. The optional availability policy
@@ -196,10 +200,23 @@ and `TestStaleOnErrorIsBoundedAndSignalsTheDegradedDecision` proves stale works
 inside the window and unavailable wins at its exact end. Detached provider
 timeouts and transport failures have the same stale semantics, while an
 initiator or waiter cancelling only stops its own wait and receives its exact
-context error. [[D-078]] binds the whole policy.
+context error. Observer delivery begins only after the flight releases waiters;
+it is serialised/coalesced and its panic, re-entry or failure to honour the
+one-second context cannot poison authentication. `Warm` refuses stale readiness
+during the same outage even when request traffic has explicitly bought the
+stale window. [[D-078]] binds the whole policy.
 **One shape that remains deliberate:** a token with no `kid` matches only a set
 holding exactly one key; anything else would choose a trust anchor on the
-caller's behalf. Provider entries themselves always need non-empty, unique ids.
+caller's behalf. A present malformed `kid` never enters that branch. Provider
+entries themselves always need non-empty, unique ids, a verification operation
+when `key_ops` is present, and one exact method: EC from `crv`, Ed25519 as EdDSA,
+and RSA from mandatory `alg`. Explicit JSON `null` or empty policy values are
+present and unusable, not aliases for omission. Static and remote RSA share the 2048..16384-bit
+odd/composite/coprime checks; static and remote Ed25519 share canonical point
+decoding and low-order rejection. `TestJWKSMethodsAndOperationsBelongToEachKey`
+includes the cross-method EC control that the dependency itself accepts, and
+`TestLowOrderEd25519TrustWouldAcceptAUniversalJWTForgery` proves why a 32-byte
+length check is not key validation.
 
 ### H-AUTH-08 — Accept two issuers for a month, and two audiences during a rename
 **Who:** the author moving off a legacy in-house issuer, with a month of overlap
@@ -430,7 +447,9 @@ The return shape: `(T, bool)` collapses "absent" into "wrong type", and that is 
 malformed and weak material at declaration, and deep-copy mutable coordinates,
 moduli or bytes. `TestStaticAsymmetricKeysAreValidatedAtDeclaration` and
 `TestStaticAsymmetricKeysAreSnapshottedAtDeclaration` pin both properties; JWKS
-reuses RSA's 2048-bit modulus and sane-exponent validation. The module page
+reuses RSA's complete 2048..16384-bit odd/composite/coprime modulus and
+sane-exponent validation, and Ed25519's canonical non-low-order point
+validation. The module page
 lists the constructors, but no snippet anywhere shows how to get a
 `*rsa.PublicKey` from a PEM: `grep -rn "ParsePKIX\|pem.Decode" --include="*.go"
 .` is empty across the whole repository and `_examples/`.
@@ -893,13 +912,16 @@ by `TestEachHMACConstructorPinsOneAlgorithm` ([[D-078]]).
 **What must happen:** Every static-key constructor validates usable key material before `New` can build a parser.
 **Today:** ✅ handled
 **Evidence:** `RSA`, `ECDSA`, and `EdDSA` validate at declaration and panic on
-nil or malformed material. RSA also enforces a 2048-bit minimum and sane odd
-exponent, ECDSA normalises to a supported curve and checks the point, and
-Ed25519 requires exactly 32 bytes. All three deep-copy caller-owned mutable
-material. `TestStaticAsymmetricKeysAreValidatedAtDeclaration` pins the invalid
-matrix and `TestStaticAsymmetricKeysAreSnapshottedAtDeclaration` mutates every
-original key after construction while the parser continues verifying the
-pre-mutation token ([[D-078]]).
+nil or malformed material. RSA enforces an odd composite modulus from 2048
+through 16384 bits, coprime to a sane odd exponent; ECDSA normalises to a
+supported curve and checks the point; Ed25519 strictly decodes a canonical
+32-byte point and rejects the low-order subgroup. All three deep-copy
+caller-owned mutable material. `TestStaticAsymmetricKeysAreValidatedAtDeclaration`
+pins the invalid matrix, `TestLowOrderEd25519TrustWouldAcceptAUniversalJWTForgery`
+pins the security consequence, and
+`TestStaticAsymmetricKeysAreSnapshottedAtDeclaration` mutates every original key
+after construction while the parser continues verifying the pre-mutation token
+([[D-078]]).
 **Blast radius:** none
 
 ### E-AUTH-09 — A signed JWT has permissions but no subject

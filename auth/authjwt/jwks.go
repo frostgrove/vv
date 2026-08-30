@@ -1,6 +1,7 @@
 package authjwt
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -25,8 +26,11 @@ import (
 //
 //	authjwt.JWKS("https://id.example.com/.well-known/jwks.json")
 //
-// Only asymmetric methods are accepted. A key set is a public document, so an
-// HMAC entry in one would be a shared secret published to the internet; the
+// Only asymmetric methods are accepted. Every usable key owns one exact method:
+// EC derives it from crv, Ed25519 derives EdDSA, and RSA must publish alg. A
+// present alg must be a non-null, non-empty match, and a present key_ops must be
+// a non-null string array containing verify. A key set is a public document, so
+// an HMAC entry in one would be a shared secret published to the internet; the
 // pinning [KeySource] describes is what makes that unreachable here.
 //
 // # Refetching
@@ -172,7 +176,9 @@ type JWKSDegradedObserver func(context.Context, JWKSDegraded)
 // JWKSServeStaleFor keeps a cached key eligible for at most d beyond its
 // freshness deadline when a refresh fails. observe is mandatory: accepting a
 // stale trust anchor without a typed operational signal is not a supported
-// state. At the boundary the parser returns [ErrKeySourceUnavailable].
+// state. Delivery is queued after fetch waiters are released and never blocks
+// request processing. At the boundary the parser returns
+// [ErrKeySourceUnavailable].
 func JWKSServeStaleFor(d time.Duration, observe JWKSDegradedObserver) JWKSOption {
 	if d <= 0 {
 		panic("authjwt: JWKSServeStaleFor needs a positive, bounded duration")
@@ -258,9 +264,10 @@ func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	}
 	method := t.Method.Alg()
 
-	if k, found, allowed, fresh, _ := this.cached(kid, method); found && !allowed {
-		return nil, errNoKeyForToken
-	} else if found && fresh {
+	if k, found, allowed, fresh, _ := this.cached(kid, method); found && fresh {
+		if !allowed {
+			return nil, errNoKeyForToken
+		}
 		return k, nil
 	}
 	if err := this.refresh(ctx); err != nil {
@@ -285,10 +292,10 @@ func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	return nil, errNoKeyForToken
 }
 
-// cached answers a key already held together with the two cache-policy states
-// its caller needs. A token with no kid matches only when the set holds exactly
-// one key — anything else would be this package choosing which key to trust on
-// the caller's behalf.
+// cached answers a key already held, whether its exact method matches, and the
+// two cache-policy states its caller needs. A token with no kid matches only
+// when the set holds exactly one key — anything else would be this package
+// choosing which key to trust on the caller's behalf.
 func (this *jwks) cached(kid, method string) (key any, found, allowed, fresh, staleAllowed bool) {
 	now := this.now()
 	this.mu.Lock()
@@ -582,23 +589,69 @@ func (this *jwks) fetch(ctx context.Context) (map[string]verificationKey, error)
 
 // jsonWebKey is the subset of RFC 7517 this package reads.
 type jsonWebKey struct {
-	Kty    string   `json:"kty"`
-	Kid    string   `json:"kid"`
-	Use    string   `json:"use"`
-	Alg    string   `json:"alg"`
-	KeyOps []string `json:"key_ops"`
-	Crv    string   `json:"crv"`
-	N      string   `json:"n"`
-	E      string   `json:"e"`
-	X      string   `json:"x"`
-	Y      string   `json:"y"`
+	Kty    string                                 `json:"kty"`
+	Kid    string                                 `json:"kid"`
+	Use    string                                 `json:"use"`
+	Alg    jsonWebKeyMember[string]               `json:"alg"`
+	KeyOps jsonWebKeyMember[jsonWebKeyOperations] `json:"key_ops"`
+	Crv    string                                 `json:"crv"`
+	N      string                                 `json:"n"`
+	E      string                                 `json:"e"`
+	X      string                                 `json:"x"`
+	Y      string                                 `json:"y"`
+}
+
+// jsonWebKeyMember preserves the distinction encoding/json otherwise erases
+// for scalar and slice fields: a member which is absent, explicitly null, or
+// carries a value. JWK policy treats only actual absence as unspecified.
+// Explicit null is still a declaration and therefore cannot waive alg or
+// key_ops validation.
+type jsonWebKeyMember[T any] struct {
+	present bool
+	null    bool
+	value   T
+}
+
+func (this *jsonWebKeyMember[T]) UnmarshalJSON(data []byte) error {
+	this.present = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		this.null = true
+		var zero T
+		this.value = zero
+		return nil
+	}
+	this.null = false
+	return json.Unmarshal(data, &this.value)
+}
+
+type jsonWebKeyOperations []string
+
+func (this *jsonWebKeyOperations) UnmarshalJSON(data []byte) error {
+	var members []json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	ops := make(jsonWebKeyOperations, len(members))
+	for i, member := range members {
+		if bytes.Equal(bytes.TrimSpace(member), []byte("null")) {
+			return errors.New("authjwt: a key operation must be a string")
+		}
+		if err := json.Unmarshal(member, &ops[i]); err != nil {
+			return err
+		}
+	}
+	*this = ops
+	return nil
 }
 
 func (this jsonWebKey) allowsVerify() bool {
-	if this.KeyOps == nil {
+	if !this.KeyOps.present {
 		return true
 	}
-	for _, op := range this.KeyOps {
+	if this.KeyOps.null {
+		return false
+	}
+	for _, op := range this.KeyOps.value {
 		if op == "verify" {
 			return true
 		}
@@ -609,7 +662,7 @@ func (this jsonWebKey) allowsVerify() bool {
 func (this jsonWebKey) public() (verificationKey, error) {
 	switch this.Kty {
 	case "RSA":
-		if !rsaJWTMethod(this.Alg) {
+		if !this.Alg.present || this.Alg.null || !rsaJWTMethod(this.Alg.value) {
 			return verificationKey{}, errors.New("authjwt: an RSA key needs one supported alg")
 		}
 		n, err := b64uint(this.N)
@@ -624,7 +677,7 @@ func (this jsonWebKey) public() (verificationKey, error) {
 			return verificationKey{}, errors.New("authjwt: implausible RSA exponent")
 		}
 		pub, err := rsaPublicKey(&rsa.PublicKey{N: n, E: int(e.Int64())})
-		return verificationKey{key: pub, method: this.Alg}, err
+		return verificationKey{key: pub, method: this.Alg.value}, err
 
 	case "EC":
 		var curve elliptic.Curve
@@ -639,8 +692,8 @@ func (this jsonWebKey) public() (verificationKey, error) {
 		default:
 			return verificationKey{}, fmt.Errorf("authjwt: unsupported curve %q", this.Crv)
 		}
-		if this.Alg != "" && this.Alg != method {
-			return verificationKey{}, fmt.Errorf("authjwt: %s does not match curve %s", this.Alg, this.Crv)
+		if this.Alg.present && (this.Alg.null || this.Alg.value != method) {
+			return verificationKey{}, fmt.Errorf("authjwt: the declared alg does not match curve %s", this.Crv)
 		}
 		x, err := b64uint(this.X)
 		if err != nil {
@@ -661,8 +714,8 @@ func (this jsonWebKey) public() (verificationKey, error) {
 			return verificationKey{}, fmt.Errorf("authjwt: unsupported curve %q", this.Crv)
 		}
 		method := jwt.SigningMethodEdDSA.Alg()
-		if this.Alg != "" && this.Alg != method {
-			return verificationKey{}, fmt.Errorf("authjwt: %s does not match curve %s", this.Alg, this.Crv)
+		if this.Alg.present && (this.Alg.null || this.Alg.value != method) {
+			return verificationKey{}, fmt.Errorf("authjwt: the declared alg does not match curve %s", this.Crv)
 		}
 		x, err := base64.RawURLEncoding.DecodeString(this.X)
 		if err != nil {

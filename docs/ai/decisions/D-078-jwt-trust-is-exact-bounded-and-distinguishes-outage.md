@@ -26,12 +26,17 @@ The short path is safe without extra declarations:
   is unusable rather than a weaker remote route into otherwise forbidden trust.
 - A usable JWKS key carries one method. EC derives it from `crv`, Ed25519 derives
   `EdDSA`, and a RSA JWK must name one supported `alg` because its modulus alone
-  cannot choose hash or padding. A present `alg` must agree with the key, and a
-  present `key_ops` must include `verify`. The token never widens that choice.
+  cannot choose hash or padding. A present `alg` must be a non-null, non-empty
+  match for the key, and a present `key_ops` must be a non-null string array
+  containing `verify`. Only an absent JSON member is unspecified. The token
+  never widens that choice.
 - `JWKS` refreshes a successfully fetched set after `JWKSFreshness`, five
-  minutes by default, even when the presented `kid` is already cached. A
-  successful refresh replaces the whole map, so a withdrawn key stops
-  verifying without a restart or unrelated cache miss.
+  minutes by default, even when the presented `kid` is already cached or its
+  stale per-key method differs from the token. A successful refresh replaces
+  the whole map, so a withdrawn key stops verifying without a restart or
+  unrelated cache miss. If that required refresh fails, the result is typed
+  provider unavailability rather than a credential verdict made from stale
+  method metadata.
 - `JWKSMinRefreshEvery` accepts only a positive duration. Removing the outbound
   request bound is possible only through `UnsafeJWKSNoMinRefresh`.
 - Removing key-withdrawal freshness is possible only through
@@ -140,8 +145,9 @@ is an invalid standard identity.
   bits, an even/prime/non-coprime modulus, an implausible exponent, an
   unsupported/off-curve EC key, or a non-canonical/low-order Ed25519 point
   through either the static or JWKS path.
-- Do not discard a JWK's `alg` or `key_ops`, infer a RSA algorithm from the token,
-  or let an EC token select a method other than the one its curve determines.
+- Do not discard a JWK's `alg` or `key_ops`, reinterpret their explicit JSON
+  `null` or empty values as omission, infer a RSA algorithm from the token, or
+  let an EC token select a method other than the one its curve determines.
 - Do not add a safe-looking legacy HMAC or JWKS constructor whose name hides
   weaker verification or unbounded trust.
 - Do not let a zero or negative refresh interval disable the unknown-`kid`

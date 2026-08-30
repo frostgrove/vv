@@ -83,8 +83,9 @@ func hmac(method string, minimum int, secret []byte) KeySource {
 }
 
 // RSA verifies tokens signed with an RSA private key, in both the PKCS#1 v1.5
-// and the PSS families. It requires a modulus of at least 2048 bits and a sane
-// exponent, and snapshots the public key at declaration.
+// and the PSS families. It requires an odd composite modulus from 2048 through
+// 16384 bits, coprime to a sane exponent, and snapshots the public key at
+// declaration.
 func RSA(pub *rsa.PublicKey) KeySource {
 	key, err := rsaPublicKey(pub)
 	if err != nil {
@@ -112,8 +113,8 @@ func ECDSA(pub *ecdsa.PublicKey) KeySource {
 	}
 }
 
-// EdDSA verifies tokens signed with an Ed25519 key of exactly 32 public bytes,
-// snapshotted at declaration.
+// EdDSA verifies tokens signed with a canonical, non-low-order Ed25519 public
+// point, snapshotted at declaration.
 func EdDSA(pub ed25519.PublicKey) KeySource {
 	key, err := ed25519PublicKey(pub)
 	if err != nil {

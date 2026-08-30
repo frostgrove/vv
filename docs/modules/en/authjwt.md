@@ -144,8 +144,10 @@ an explicit stale-on-error window.
 RSA, EC (P-256/384/521) and Ed25519 keys are read; an `oct` entry is ignored,
 because a key set is a public document and an HMAC entry in one is a shared
 secret published to the internet. An entry with `use` set to anything but `sig`
-is ignored too. A present `key_ops` must include `verify`, and one unusable entry
-does not cost the whole set. Every entry must still have a non-empty `kid`, and
+is ignored too. A present `key_ops` must be a real string array containing
+`verify`; JSON `null`, null members and an empty array are not omission. One
+unusable entry does not cost the whole set. Every entry must still have a
+non-empty `kid`, and
 duplicate ids reject the whole document: trust is never chosen by JSON array
 order. Remote RSA and Ed25519 keys obey the same strength and point rules as
 their static constructors; publishing a key through JWKS is not a weaker path.
@@ -153,13 +155,16 @@ their static constructors; publishing a key through JWKS is not a weaker path.
 Every cached key also owns exactly one JWT method. EC derives it from `crv` and
 Ed25519 derives `EdDSA`; a RSA JWK must carry one supported `alg`, because the
 modulus cannot choose hash and padding. When `alg` is present on EC or Ed25519,
-it must agree with the derived method. This per-key check is separate from the
-parser's asymmetric-family check: the token header cannot widen either one.
+it must be a non-null, non-empty match for the derived method. Only an absent
+member means unspecified. This per-key check is separate from the parser's
+asymmetric-family check: the token header cannot widen either one.
 
 **A cached set has a finite lifetime.** `JWKSFreshness` is five minutes by
 default. The first token at that boundary refreshes the whole set even when its
-`kid` is cached; a successful response replaces the map, so a provider-withdrawn
-key stops verifying without a restart. `JWKSStaleAfter(d)` changes that age.
+`kid` is cached and the token's method differs from the stale per-key policy;
+the policy must be refreshed before that difference can become a credential
+verdict. A successful response replaces the map, so a provider-withdrawn key
+stops verifying without a restart. `JWKSStaleAfter(d)` changes that age.
 `UnsafeJWKSNoFreshness()` is the explicit compatibility waiver for trusting a
 cached key until a miss or restart.
 

@@ -1,7 +1,6 @@
 package authjwt_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -27,7 +26,11 @@ func TestStaticAsymmetricKeysAreValidatedAtDeclaration(t *testing.T) {
 	primeN := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 2203), big.NewInt(1))
 	identity := make(ed25519.PublicKey, ed25519.PublicKeySize)
 	identity[0] = 1
-	nonCanonical := ed25519.PublicKey(bytes.Repeat([]byte{0xff}, ed25519.PublicKeySize))
+	nonCanonical := append(ed25519.PublicKey(nil), identity...)
+	// Edwards decoders commonly accept the sign bit for x=0 even though its
+	// canonical encoding is clear. This reaches the canonical round-trip check,
+	// rather than merely being an arbitrary byte string that is not a point.
+	nonCanonical[ed25519.PublicKeySize-1] = 0x80
 	for _, tc := range []struct {
 		name string
 		make func()

@@ -139,8 +139,12 @@ func (this *fakeClock) Advance(d time.Duration) {
 }
 
 func signKid(t *testing.T, kid string, key *rsa.PrivateKey) string {
+	return signRSAKid(t, jwt.SigningMethodRS256, kid, key)
+}
+
+func signRSAKid(t *testing.T, method jwt.SigningMethod, kid string, key *rsa.PrivateKey) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims())
+	tok := jwt.NewWithClaims(method, claims())
 	tok.Header["kid"] = kid
 	s, err := tok.SignedString(key)
 	if err != nil {
@@ -853,16 +857,25 @@ func TestDegradedObserverCannotHoldOrReenterTheSingleflight(t *testing.T) {
 	t.Run("blocking observer", func(t *testing.T) {
 		started := make(chan struct{})
 		release := make(chan struct{})
-		var once sync.Once
+		completed := make(chan struct{}, 2)
+		var (
+			calls       atomic.Int64
+			startedOnce sync.Once
+			releaseOnce sync.Once
+		)
+		t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 		p := parser[MyClaims](t, authjwt.JWKS(set.serve(t),
 			authjwt.JWKSClock(clock.Now),
 			authjwt.JWKSStaleAfter(freshFor),
-			authjwt.JWKSServeStaleFor(time.Minute, func(ctx context.Context, _ authjwt.JWKSDegraded) {
-				once.Do(func() { close(started) })
-				select {
-				case <-release:
-				case <-ctx.Done():
-				}
+			authjwt.UnsafeJWKSNoMinRefresh(),
+			authjwt.JWKSServeStaleFor(time.Minute, func(context.Context, authjwt.JWKSDegraded) {
+				calls.Add(1)
+				startedOnce.Do(func() { close(started) })
+				// Deliberately violate the observer contract and ignore its
+				// deadline. Even this extension code must not own a request or
+				// start one goroutine per refresh.
+				<-release
+				completed <- struct{}{}
 			}),
 		))
 		if _, err := p.Parse(t.Context(), token); err != nil {
@@ -890,11 +903,28 @@ func TestDegradedObserverCannotHoldOrReenterTheSingleflight(t *testing.T) {
 			t.Fatal("the observer was never started")
 		}
 
-		// A second request does not join observer work either.
-		if _, err := p.Parse(t.Context(), token); err != nil {
-			t.Fatalf("a blocked observer poisoned later requests: %v", err)
+		// Later refreshes neither join observer work nor start another blocked
+		// observer. They only coalesce the newest pending descriptor.
+		for range 3 {
+			if _, err := p.Parse(t.Context(), token); err != nil {
+				t.Fatalf("a blocked observer poisoned a later request: %v", err)
+			}
 		}
-		close(release)
+		if got := calls.Load(); got != 1 {
+			t.Fatalf("%d observers blocked concurrently, want exactly one", got)
+		}
+
+		releaseOnce.Do(func() { close(release) })
+		for range 2 {
+			select {
+			case <-completed:
+			case <-time.After(time.Second):
+				t.Fatal("the serial observer loop did not drain its coalesced notice")
+			}
+		}
+		if got := calls.Load(); got != 2 {
+			t.Fatalf("observer delivered %d states, want active plus one coalesced state", got)
+		}
 	})
 
 	t.Run("reentrant observer", func(t *testing.T) {
@@ -1002,6 +1032,67 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 		}
 	})
 
+	t.Run("a stale method mismatch refreshes provider policy", func(t *testing.T) {
+		const freshFor = time.Minute
+		clock := newFakeClock()
+		set := &keySet{}
+		set.set(jwkOf("k1", &rsaKey.PublicKey))
+		p := parser[MyClaims](t, authjwt.JWKS(set.serve(t),
+			authjwt.JWKSClock(clock.Now),
+			authjwt.JWKSStaleAfter(freshFor),
+		))
+		oldToken := signKid(t, "k1", rsaKey)
+		if _, err := p.Parse(t.Context(), oldToken); err != nil {
+			t.Fatalf("warming the original RS256 policy: %v", err)
+		}
+
+		rotated := jwkOf("k1", &rsaKey.PublicKey)
+		rotated["alg"] = "PS256"
+		set.set(rotated)
+		clock.Advance(freshFor)
+		newToken := signRSAKid(t, jwt.SigningMethodPS256, "k1", rsaKey)
+		if _, err := p.Parse(t.Context(), newToken); err != nil {
+			t.Fatalf("a valid token could not refresh stale method policy for the same kid: %v", err)
+		}
+		if n := set.fetches.Load(); n != 2 {
+			t.Fatalf("stale method policy made %d fetches, want the warm fetch plus one refresh", n)
+		}
+
+		if _, err := p.Parse(t.Context(), oldToken); !errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatalf("the provider's fresh PS256 policy still accepted RS256: %v", err)
+		}
+		if n := set.fetches.Load(); n != 2 {
+			t.Fatalf("a mismatch against fresh policy triggered %d fetches, want 2", n)
+		}
+	})
+
+	t.Run("a stale method mismatch cannot hide a provider outage as 401", func(t *testing.T) {
+		const freshFor = time.Minute
+		clock := newFakeClock()
+		set := &keySet{}
+		set.set(jwkOf("k1", &rsaKey.PublicKey))
+		p := parser[MyClaims](t, authjwt.JWKS(set.serve(t),
+			authjwt.JWKSClock(clock.Now),
+			authjwt.JWKSStaleAfter(freshFor),
+		))
+		if _, err := p.Parse(t.Context(), signKid(t, "k1", rsaKey)); err != nil {
+			t.Fatalf("warming the original RS256 policy: %v", err)
+		}
+
+		set.fail(http.StatusServiceUnavailable)
+		clock.Advance(freshFor)
+		_, err := p.Parse(t.Context(), signRSAKid(t, jwt.SigningMethodPS256, "k1", rsaKey))
+		if !errors.Is(err, authjwt.ErrKeySourceUnavailable) {
+			t.Fatalf("stale method metadata plus an outage answered %v, want ErrKeySourceUnavailable", err)
+		}
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatalf("stale method metadata turned a provider outage into a credential refusal: %v", err)
+		}
+		if n := set.fetches.Load(); n != 2 {
+			t.Fatalf("the outage path made %d fetches, want the warm fetch plus one refresh", n)
+		}
+	})
+
 	t.Run("EC curve and alg are exact", func(t *testing.T) {
 		private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
@@ -1029,8 +1120,11 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 		}
 
 		// RFC 7517 makes alg optional. For EC the curve itself determines the
-		// exact JWT method, so omission is still unambiguous and remains usable.
+		// exact JWT method, so actual omission is still unambiguous and remains
+		// usable. An explicit empty or null value is tested below as a malformed
+		// declaration, not reinterpreted as omission.
 		withoutAlg := ecJWK("ec", "", &private.PublicKey)
+		delete(withoutAlg, "alg")
 		set = &keySet{}
 		set.set(withoutAlg)
 		p = parser[MyClaims](t, authjwt.JWKS(set.serve(t)))
@@ -1042,17 +1136,31 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 		}
 	})
 
-	t.Run("key_ops must allow verify", func(t *testing.T) {
-		jwk := jwkOf("k1", &rsaKey.PublicKey)
-		jwk["key_ops"] = []string{"sign"}
-		set := &keySet{}
-		set.set(jwk)
-		if err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Warm(t.Context()); !errors.Is(err, authjwt.ErrKeySourceUnavailable) {
-			t.Fatalf("a sign-only public key became verification trust: %v", err)
+	t.Run("key_ops must be a real array allowing verify", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			ops  any
+		}{
+			{"explicit null", nil},
+			{"empty array", []string{}},
+			{"sign only", []string{"sign"}},
+			{"null array member", []any{"verify", nil}},
+			{"string instead of array", "verify"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				jwk := jwkOf("k1", &rsaKey.PublicKey)
+				jwk["key_ops"] = tc.ops
+				set := &keySet{}
+				set.set(jwk)
+				if err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Warm(t.Context()); !errors.Is(err, authjwt.ErrKeySourceUnavailable) {
+					t.Fatalf("key_ops=%#v became verification trust: %v", tc.ops, err)
+				}
+			})
 		}
 
+		jwk := jwkOf("k1", &rsaKey.PublicKey)
 		jwk["key_ops"] = []string{"verify"}
-		set = &keySet{}
+		set := &keySet{}
 		set.set(jwk)
 		if err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Warm(t.Context()); err != nil {
 			t.Fatalf("a verify key operation was refused: %v", err)
@@ -1063,11 +1171,20 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	edWithoutAlg := edJWK("ed", "", edPublic)
+	delete(edWithoutAlg, "alg")
+	edSet := &keySet{}
+	edSet.set(edWithoutAlg)
+	if err := parser[MyClaims](t, authjwt.JWKS(edSet.serve(t))).Warm(t.Context()); err != nil {
+		t.Fatalf("Ed25519 without alg did not derive EdDSA: %v", err)
+	}
 	for _, tc := range []struct {
 		name string
 		jwk  map[string]any
 	}{
 		{"RSA without alg", func() map[string]any { j := jwkOf("k1", &rsaKey.PublicKey); delete(j, "alg"); return j }()},
+		{"RSA with empty alg", func() map[string]any { j := jwkOf("k1", &rsaKey.PublicKey); j["alg"] = ""; return j }()},
+		{"RSA with null alg", func() map[string]any { j := jwkOf("k1", &rsaKey.PublicKey); j["alg"] = nil; return j }()},
 		{"curve and alg disagree", func() map[string]any {
 			private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
@@ -1075,7 +1192,25 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 			}
 			return ecJWK("ec", "ES384", &private.PublicKey)
 		}()},
+		{"EC with empty alg", func() map[string]any {
+			private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ecJWK("ec", "", &private.PublicKey)
+		}()},
+		{"EC with null alg", func() map[string]any {
+			private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			j := ecJWK("ec", "ES256", &private.PublicKey)
+			j["alg"] = nil
+			return j
+		}()},
 		{"Ed25519 and alg disagree", edJWK("ed", "ES256", edPublic)},
+		{"Ed25519 with empty alg", edJWK("ed", "", edPublic)},
+		{"Ed25519 with null alg", func() map[string]any { j := edJWK("ed", "EdDSA", edPublic); j["alg"] = nil; return j }()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			set := &keySet{}
@@ -1090,13 +1225,25 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 func TestJWKSRejectsLowOrderEd25519AndMalformedTokenKids(t *testing.T) {
 	identity := make(ed25519.PublicKey, ed25519.PublicKeySize)
 	identity[0] = 1
-	set := &keySet{}
-	set.set(edJWK("ed", "EdDSA", identity))
-	if err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Warm(t.Context()); !errors.Is(err, authjwt.ErrKeySourceUnavailable) {
-		t.Fatalf("JWKS installed a universally forgeable low-order Ed25519 key: %v", err)
+	nonCanonical := append(ed25519.PublicKey(nil), identity...)
+	nonCanonical[ed25519.PublicKeySize-1] = 0x80
+	for _, tc := range []struct {
+		name string
+		key  ed25519.PublicKey
+	}{
+		{"low-order identity", identity},
+		{"non-canonical point encoding", nonCanonical},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set := &keySet{}
+			set.set(edJWK("ed", "EdDSA", tc.key))
+			if err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Warm(t.Context()); !errors.Is(err, authjwt.ErrKeySourceUnavailable) {
+				t.Fatalf("JWKS installed invalid Ed25519 trust material: %v", err)
+			}
+		})
 	}
 
-	set = &keySet{}
+	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
 	p := parser[MyClaims](t, authjwt.JWKS(set.serve(t)))
 	withoutKid := jwt.NewWithClaims(jwt.SigningMethodRS256, claims())

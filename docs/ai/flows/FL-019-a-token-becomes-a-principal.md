@@ -49,8 +49,9 @@
    come from the `KeySource` and never from the token
    (`auth/authjwt/parser.go:128`); for JWKS, `jwks.key` additionally requires the
    exact method cached beside the selected key. EC derives it from `crv`,
-   Ed25519 derives `EdDSA`, and RSA requires the provider's `alg`. A present
-   malformed `kid` is refused rather than treated as omission. `exp` is required
+   Ed25519 derives `EdDSA`, and RSA requires the provider's `alg`; explicit
+   `null` or empty policy members are not omission. A present malformed `kid`
+   is refused rather than treated as omission. `exp` is required
    unless waived, and every credential failure collapses to one
    `Unauthenticated`. A JWKS provider or document failure carries
    `ErrKeySourceUnavailable` through instead: no credential verdict was possible
@@ -162,8 +163,11 @@ does differently is the `SetContext` row above, which every binding's copy of
   provider failure and never partially installed.
 - **A JWK method/operation mismatch or weak point/modulus.** That entry is not
   installed. If nothing usable remains, readiness and parsing report provider
-  unavailability; a token selecting another method for an installed key is the
-  same silent 401 as a bad signature.
+  unavailability. Explicit JSON `null` or empty `alg`/`key_ops` values do not
+  waive the declaration. A token selecting another method for a fresh installed
+  key is the same silent 401 as a bad signature; when that method metadata is
+  stale, the set refreshes before deciding, and refresh failure remains typed
+  provider unavailability.
 - **A present malformed token key id.** Empty, non-string and structured `kid`
   values are silent 401s even if the set has one key; only actual omission uses
   the sole-key rule.
