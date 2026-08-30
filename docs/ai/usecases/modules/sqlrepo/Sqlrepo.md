@@ -886,10 +886,11 @@ Point 7 **fails, and it is the headline nobody has stated.** `Scope` takes a
 package-level `var` in every example. There is no context in it and no place to
 put one, so `sqlrepo.Scope(crud.Eq("TenantID", t))` with a per-request `t` cannot
 be written at all — unless the consumer calls `Define` and `Bind` per request,
-which they should not: `Bind` is cheap (`blueprint.go:246-249` allocates and
-issues nothing) but `Define` mutates a process-global table registry
-(`crud.RegisterTable[M]`, `blueprint.go:182` → `crud/relation.go:152`, a
-`sync.Map`). That registry now rejects conflicting and late canonical choices
+which they should not: `Bind` is cheap (`blueprint.go:272-276` allocates and
+issues nothing) but a successful ordinary `Define` publishes through the
+process-global table registry (`crud.TryRegisterTable[M]`, `blueprint.go:217` →
+`crud/relation.go:263`, backed by the `sync.Map` at `relation.go:185`). That
+registry rejects conflicting and late canonical choices
 ([[D-080]]), which closes declaration-order drift but also makes especially
 clear why choosing a table through per-request `Define` is invalid.
 Per-request narrowing was always the gate's job. `Scope` is per-table and
