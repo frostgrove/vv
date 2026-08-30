@@ -532,11 +532,13 @@ func Between(field string, low, high any) Predicate {
 }
 
 // In renders `field IN (...)`. An empty list is always false.
-func In(field string, values ...any) Predicate { return inNode{field: field, values: values} }
+func In(field string, values ...any) Predicate {
+	return inNode{field: field, values: append([]any(nil), values...)}
+}
 
 // NotIn renders `field NOT IN (...)`. An empty list is always true.
 func NotIn(field string, values ...any) Predicate {
-	return inNode{field: field, values: values, not: true}
+	return inNode{field: field, values: append([]any(nil), values...), not: true}
 }
 
 // InAny is In for a typed slice.

@@ -98,6 +98,27 @@ func TestPredicateConstructors(t *testing.T) {
 	}
 }
 
+func TestMembershipPredicatesOwnTheirVariadicBackingSlice(t *testing.T) {
+	m := articleMeta(t)
+
+	for _, tc := range []struct {
+		name string
+		make func([]any) crud.Predicate
+		sql  string
+	}{
+		{"In", func(values []any) crud.Predicate { return crud.In("Views", values...) }, `"views" IN ($1, $2)`},
+		{"NotIn", func(values []any) crud.Predicate { return crud.NotIn("Views", values...) }, `"views" NOT IN ($1, $2)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := []any{1, 2}
+			predicate := tc.make(values)
+			values[0], values[1] = 100, 200
+
+			checkRender(t, crud.Postgres{}, m, predicate, tc.sql, []any{1, 2})
+		})
+	}
+}
+
 func TestEqualityUnderstandsAllThreeOptStates(t *testing.T) {
 	m := articleMeta(t)
 	checkRender(t, crud.Postgres{}, m, crud.Eq("Title", crud.Set("Go")), `"title" = $1`, []any{"Go"})
