@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/frostgrove/vv/auth"
@@ -17,6 +18,17 @@ import (
 // administrator acting deliberately — ends here, and this is the only place a
 // token of any kind comes into existence.
 type SessionIssuer interface {
+	// Issue is invoked synchronously while the subject's password credential
+	// rows are locked in an access-owned transaction. Implementations that
+	// persist a session in that store must use ctx, so their write joins the
+	// transaction and is visible to a reset/logout-all that acquires the lock
+	// next. The built-in opaque and rotating JWT strategies do this.
+	//
+	// Returning is not permission to publish the credential elsewhere: the
+	// transaction can still fail to commit, in which case Login discards the
+	// response. A custom issuer must therefore return the credential as data and
+	// leave delivery to the caller after Execute succeeds; an irreversible
+	// external side effect from inside Issue cannot be rolled back by this API.
 	Issue(ctx context.Context, subject SubjectRef, agent Agent) (AuthResponse, error)
 }
 
@@ -139,10 +151,18 @@ func (this *opaqueIssuer) Issue(ctx context.Context, subject SubjectRef, agent A
 	if err != nil {
 		return AuthResponse{}, err
 	}
+	sessionID, err := uuid.NewRandom()
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("access: reading entropy for a session id: %w", err)
+	}
 
 	now := this.deps.Config.Now()
 	agent = agent.Truncated()
 	saved, err := this.deps.Store.Sessions.Save(ctx, &Session{
+		// Application-assigned UUID keeps this model portable to engines that
+		// cannot return a generated UUID through LastInsertId (MySQL/MariaDB).
+		// The database default remains a safety net for direct SQL inserts.
+		ID:          sessionID,
 		SubjectType: string(subject.Type),
 		SubjectID:   subject.ID,
 		TokenHash:   HashToken(token),

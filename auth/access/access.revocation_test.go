@@ -46,9 +46,9 @@ func sessionRow(id uuid.UUID, subject SubjectType) []any {
 	return []any{id.String(), string(subject)}
 }
 
-func credentialRow(subject SubjectRef, secret string) []any {
+func credentialRow(id uuid.UUID, subject SubjectRef, secret string) []any {
 	return []any{
-		uuid.New().String(), string(subject.Type), subject.ID.String(),
+		id.String(), string(subject.Type), subject.ID.String(),
 		ProviderPassword, "someone@example.test", secret, time.Now(), time.Now(),
 	}
 }
@@ -117,7 +117,13 @@ func TestOnlyTheOwningSubjectsStrategyIsTold(t *testing.T) {
 	mine, theirs := uuid.New(), uuid.New()
 
 	recorder := crudtest.Postgres().
-		Push(crudtest.Rows(sessionRow(mine, testSubject), sessionRow(theirs, staff))).
+		Push(
+			// logout-all takes the authentication serialization lock before it
+			// reads sessions. This fixture has no password credential, so the lock
+			// set is empty but the locking statement still precedes revocation.
+			crudtest.Rows(),
+			crudtest.Rows(sessionRow(mine, testSubject), sessionRow(theirs, staff)),
+		).
 		ExecResult(crud.Result{RowsAffected: 2})
 
 	users, others := &recordingSink{}, &recordingSink{}
@@ -146,12 +152,14 @@ func TestASinkIsNotToldWhenTheTransactionRollsBack(t *testing.T) {
 	subject := SubjectRef{Type: testSubject, ID: uuid.New()}
 	const current = "the-current-password"
 	boom := errors.New("the credential write failed")
+	credentialID := uuid.New()
 
 	recorder := crudtest.Postgres().Push(
-		// The lookup that verifies the current password, and then the row
-		// Update locks inside the transaction before it writes.
-		crudtest.Rows(credentialRow(subject, "hashed:"+current)),
-		crudtest.Rows(credentialRow(subject, "hashed:"+current)),
+		// ID discovery, the exact-PK locking read that verifies the current
+		// password, and then Update's re-read before it writes.
+		crudtest.Rows([]any{credentialID.String()}),
+		crudtest.Rows(credentialRow(credentialID, subject, "hashed:"+current)),
+		crudtest.Rows(credentialRow(credentialID, subject, "hashed:"+current)),
 		// The write itself fails, so the sessions this change would have closed
 		// are still live when the transaction unwinds. Queued rather than
 		// Recorder.Fail: the UPDATE carries RETURNING and is therefore issued as
@@ -174,6 +182,42 @@ func TestASinkIsNotToldWhenTheTransactionRollsBack(t *testing.T) {
 	}
 	if len(sink.told) != 0 {
 		t.Fatalf("the strategy was told about %v from a transaction that rolled back", sink.flat())
+	}
+}
+
+func TestSessionInvalidationOwnsCommitBeforeAnnouncementDespiteOuterRollback(t *testing.T) {
+	session := uuid.New()
+	recorder := crudtest.Postgres().
+		Push(crudtest.Rows(sessionRow(session, testSubject))).
+		ExecResult(crud.Result{RowsAffected: 1})
+	source := &serialSource{Recorder: recorder}
+	sink := &recordingSink{}
+	registry := newRevocationSinks()
+	registry.register(testSubject, sink)
+	dependencies := newDeps(NewStore(source), nil, nil, Config{}, slog.New(slog.DiscardHandler), registry)
+
+	outerExec, err := source.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := outerExec.(*serialTx)
+	ctx := crud.BindExecutor(t.Context(), source, outer)
+	closed, err := NewLogout(dependencies).Execute(ctx, LogoutCommand{SessionID: session})
+	if err != nil || closed != 1 {
+		t.Fatalf("closed=%d err=%v", closed, err)
+	}
+	inner := source.last
+	if inner == nil || inner == outer || !inner.committed {
+		t.Fatalf("owned invalidation transaction=%p committed=%v outer=%p", inner, inner != nil && inner.committed, outer)
+	}
+	if got := sink.flat(); len(got) != 1 || got[0] != session {
+		t.Fatalf("post-commit sink announcement=%v, want [%s]", got, session)
+	}
+	if err := outer.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !inner.committed || len(sink.flat()) != 1 {
+		t.Fatal("ambient rollback changed committed invalidation/sink outcome")
 	}
 }
 
@@ -221,6 +265,9 @@ func TestClosingASessionReadsTheRowsBeforeItWritesThem(t *testing.T) {
 	statements := recorder.Statements()
 	if len(statements) != 2 {
 		t.Fatalf("signing out ran %d statements, want a read then a write: %v", len(statements), recorder.SQL())
+	}
+	if depth := recorder.TxDepth(); depth != 1 {
+		t.Fatalf("signing out opened %d transactions, want one around its locking read and write", depth)
 	}
 	if !statements[0].Query || !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statements[0].SQL)), "SELECT") {
 		t.Fatalf("the first statement is not the read: %q", statements[0].SQL)

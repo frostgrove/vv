@@ -181,6 +181,14 @@ func (this *Registrar) Create(ctx context.Context, form SignUpForm) (uuid.UUID, 
 func (this *Registrar) Password(form SignUpForm) string { return form.Password }
 ```
 
+Высокоуровневый `SignUp` владеет этой транзакцией и до единственного commit
+записывает account, credential, grant default role и session. Ambient-
+транзакцию он игнорирует и не возвращает credential до успешного собственного commit. Поэтому
+reset или logout-all видит либо ничего от параллельной регистрации, либо вместе
+её credential и session, но никогда — закоммиченный credential без session. Для
+caller-owned транзакции, которая должна атомарно собрать account и credential,
+но не выпускать токен, остаётся намеренно joinable низкоуровневый `Enroll`.
+
 Добавить поле в форму регистрации — это правка `SignUpForm` и `Create`, и ничего
 под `access`.
 
@@ -243,6 +251,34 @@ response, err := users.Endpoints().SignIn(ctx, access.SignInRequest{
 деактивированный аккаунт отвечают одинаково, а пароль проверяется против
 `DummyHash()`, когда credential не найден, — чтобы и время ответа ничего не
 сказало.
+
+Вход по паролю, reset/change пароля и logout-all используют один DB-backed
+протокол сериализации. В одной транзакции они блокируют password credentials
+субъекта по возрастанию credential id, прежде чем трогать sessions. Login
+проверяет именно locking read, физически версионирует эту строку credential и
+открывает сессию до освобождения блокировки. Equal-value update служит
+PostgreSQL snapshot fence: reset/logout со старым REPEATABLE READ/SERIALIZABLE
+snapshot либо увидит и закроет сессию, либо получит retryable serialization
+error; успешно закоммитить пропуск он не может. Если первой была инвалидация,
+login увидит уже закоммиченный новый secret и откажет старому паролю. В
+канонической PostgreSQL-миграции update trigger также делает
+`credentials.updated_at` временем последнего успешного использования/изменения
+пароля; MySQL/MariaDB-схеме для такой семантики timestamp нужен аналогичный
+trigger. Порядок всегда credentials → sessions. Credential id сначала читаются
+без блокировок, сортируются и затем блокируются по точному primary key по одному:
+протокол не полагается на то, что InnoDB secondary-index scan превратит SQL
+`ORDER BY` в физический порядок захвата блокировок.
+
+Пользовательский `SessionIssuer` вызывается внутри транзакции, которой
+владеет access use case, даже если context несёт ambient executor. Он обязан
+использовать переданный context для записей в access store и вернуть credential
+как данные: доставка происходит только после успешного commit `Execute`.
+Необратимый внешний side effect внутри `Issue` находится вне гарантий rollback.
+
+Use case, закрывающие сессии, тоже владеют своей транзакцией: JWT
+deny-list уведомляется только после её commit. Внешняя application-
+транзакция не откладывает и не откатывает login/logout; для атомарной
+композиции обычной регистрации остаётся намеренно joinable `Enroll`.
 
 ## Куда уходят учётные данные
 

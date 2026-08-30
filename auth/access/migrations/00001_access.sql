@@ -132,6 +132,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_credentials_subject_type_provider_identifi
 CREATE INDEX IF NOT EXISTS "ix_credentials_subject"
     ON "credentials" ("subject_type", "subject_id");
 
+-- Successful password login deliberately performs an equal-value update of
+-- secret_hash while holding this row lock. Besides fencing PostgreSQL snapshot
+-- invalidators, this makes updated_at the last successful password-use/change
+-- time; the hash itself is never rewritten to a different value by that fence.
 CREATE TRIGGER "credentials_set_updated_at"
     BEFORE UPDATE ON "credentials"
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

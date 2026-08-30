@@ -124,7 +124,12 @@ type Credential struct {
 	Identifier string    `json:"identifier"`
 	SecretHash string    `db:"secret_hash" json:"-"`
 	CreatedAt  time.Time `db:"created_at,generated" json:"createdAt"`
-	UpdatedAt  time.Time `db:"updated_at,generated" json:"updatedAt"`
+	// With the canonical PostgreSQL migration, UpdatedAt is also the last
+	// successful password-session issuance time: its trigger observes Login's
+	// credential fence. Other schemas only get that timestamp semantic when they
+	// install an equivalent update trigger; the concurrency fence does not rely
+	// on it.
+	UpdatedAt time.Time `db:"updated_at,generated" json:"updatedAt"`
 }
 
 // A Session is one live sign-in.

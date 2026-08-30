@@ -38,7 +38,19 @@ func (this *LogoutAllUseCase) Execute(ctx context.Context, cmd LogoutAllCommand)
 	if cmd.Except != uuid.Nil {
 		options = append(options, specs.As(Session_.ID.Ne(cmd.Except)))
 	}
-	closed, err := this.revoke(ctx, ReasonSignedOutEverywhere, options...)
+	var closed revoked
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		// Password login holds this same lock until its session insert commits.
+		// Taking it before reading sessions makes the two possible orders honest:
+		// either this invalidation commits first and login re-checks afterwards,
+		// or login commits first and its new session is in the set revoked below.
+		if _, err := this.Store.LockPasswordCredentials(txCtx, cmd.Subject); err != nil {
+			return err
+		}
+		var err error
+		closed, err = this.revoke(txCtx, ReasonSignedOutEverywhere, options...)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -58,11 +70,16 @@ func (this *LogoutAllUseCase) Execute(ctx context.Context, cmd LogoutAllCommand)
 // and — more to the point here — an id belonging to somebody else then matches
 // no row instead of producing a 403 that confirms the id exists.
 func (this *LogoutAllUseCase) RevokeOne(ctx context.Context, ref SubjectRef, id uuid.UUID) (int64, error) {
-	closed, err := this.revoke(ctx, ReasonSignedOut,
-		OfSubject(ref),
-		specs.As(Session_.ID.Eq(id)),
-		specs.As(Session_.RevokedAt.IsNull()),
-	)
+	var closed revoked
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		var err error
+		closed, err = this.revoke(txCtx, ReasonSignedOut,
+			OfSubject(ref),
+			specs.As(Session_.ID.Eq(id)),
+			specs.As(Session_.RevokedAt.IsNull()),
+		)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -70,7 +87,7 @@ func (this *LogoutAllUseCase) RevokeOne(ctx context.Context, ref SubjectRef, id 
 	return closed.count, nil
 }
 
-// revoke is the one statement every closing path runs. It is here rather than
+// revoke is the one operation every closing path runs. It is here rather than
 // in each of them because "closed" is a shape — a timestamp and a reason — and
 // two spellings of it drift the first time a column is added. It is also the
 // one place a [RevocationSink] can be told from, which is why it reads before
@@ -83,15 +100,27 @@ func (this *LogoutAllUseCase) RevokeOne(ctx context.Context, ref SubjectRef, id 
 // predicate, and the one that got it wrong would leave a signed token working
 // after a sign-out with nothing to see.
 //
-// The write is narrowed to the ids the read found rather than repeating the
-// predicate, so what was announced and what was closed are the same set. A row
-// somebody else revoked in between is excluded by RevokedAt IS NULL and drops
-// out of the count — announcing it anyway costs nothing, since telling a sink
-// about an already-closed session is what it would have been told before.
+// Every caller owns [Store.OwnedTx]. The read locks matching rows in
+// ascending session-id order, so it is both a MySQL current read and a stable
+// multi-row lock order. Subject-wide invalidators acquire password credentials
+// first; single-session logout acquires no credential afterwards, so there is
+// no sessions -> credentials reverse edge.
+//
+// The write is narrowed to the ids the locking read found rather than repeating
+// the caller's predicate, so what was announced and what was closed are the
+// same set. RevokedAt IS NULL remains on the UPDATE as the idempotency guard for
+// an already-closed row and as defence if a custom repository weakens locking.
 func (this *Deps) revoke(ctx context.Context, reason string, options ...crud.Option) (revoked, error) {
 	found, err := this.Store.Sessions.GetAll(ctx, append(
-		append(make([]crud.Option, 0, len(options)+1), options...),
+		append(make([]crud.Option, 0, len(options)+4), options...),
 		crud.Select(Session_.ID.Name(), Session_.SubjectType.Name()),
+		// In a MySQL REPEATABLE READ transaction the caller may already have
+		// established a consistent-read snapshot before it waited on the
+		// credential lock. Revocation must be a current locking read or it can
+		// miss the login that committed immediately before the lock was acquired.
+		crud.OrderBy(Session_.ID.Asc()),
+		crud.ForUpdate(),
+		crud.PrimaryOnly(),
 	)...)
 	if err != nil {
 		return revoked{}, err

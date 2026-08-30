@@ -180,6 +180,14 @@ func (this *Registrar) Create(ctx context.Context, form SignUpForm) (uuid.UUID, 
 func (this *Registrar) Password(form SignUpForm) string { return form.Password }
 ```
 
+High-level `SignUp` owns that transaction and writes the account, credential,
+default-role grant and session before one commit. It ignores an ambient
+transaction and returns no credential until its own commit succeeds. Therefore
+reset or sign-out-all can observe either none of a concurrent registration or both its
+credential and session, never the committed credential without its session.
+For a caller-owned transaction that must compose an account row and credential
+without issuing a token, use the deliberately joinable low-level `Enroll`.
+
 Adding a field to the sign-up form is an edit to `SignUpForm` and to `Create`,
 and to nothing under `access`.
 
@@ -240,6 +248,34 @@ Every refusal is the same refusal — an unknown identifier, a wrong password an
 a deactivated account answer alike, and the password is verified against
 `DummyHash()` when no credential was found so the response time says nothing
 either.
+
+Password login, password reset/change and sign-out-all share one database
+serialization protocol. Inside one transaction they lock the subject's password
+credentials by ascending credential id before touching sessions. A login
+verifies the locking read, physically versions that credential row, and opens
+its session before releasing the lock. The equal-value write is a PostgreSQL
+snapshot fence: a reset/logout on an older REPEATABLE READ/SERIALIZABLE snapshot
+either sees and closes the session or receives a retryable serialization error;
+it cannot commit a successful miss. If invalidation wins, login sees the
+committed new secret and the old password is refused. With the canonical
+PostgreSQL migration its update trigger also makes `credentials.updated_at` the
+last successful password-use/change time; a MySQL/MariaDB schema needs an
+equivalent trigger if it wants that timestamp semantic. The order is always
+credentials → sessions. Credential ids are discovered without locks, sorted,
+then locked by exact primary key one at a time; this does not trust an InnoDB
+secondary-index scan to honour SQL's `ORDER BY` as a physical lock order.
+
+A custom `SessionIssuer` is called inside a transaction owned by the access
+use case, even when the context carries an ambient executor. It must use the
+given context for access-store writes and return the credential as data; delivery
+happens only after `Execute` commits. An issuer that performs an irreversible
+external side effect before it returns has stepped outside the rollback
+guarantee.
+
+Session-closing use cases own their transaction for the same reason: a JWT
+deny-list is notified only after that transaction commits. An outer application
+transaction is not a way to defer or roll back login/logout; compose ordinary
+account enrollment with `Enroll`, whose transaction is deliberately joinable.
 
 ## Where the credentials go
 

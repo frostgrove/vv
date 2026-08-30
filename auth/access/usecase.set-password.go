@@ -59,13 +59,13 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 	}
 
 	var closed revoked
-	err = this.Store.Tx(ctx, func(txCtx context.Context) error {
-		existing, err := this.Store.Credentials.First(txCtx,
-			OfSubject(cmd.Subject),
-			specs.As(Credential_.Provider.Eq(ProviderPassword)),
-		)
+	err = this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		credentials, err := this.Store.LockPasswordCredentials(txCtx, cmd.Subject)
+		if err != nil {
+			return err
+		}
 		switch {
-		case IsNotFound(err):
+		case len(credentials) == 0:
 			err = this.Store.Credentials.SaveOnly(txCtx, &Credential{
 				SubjectType: string(cmd.Subject.Type),
 				SubjectID:   cmd.Subject.ID,
@@ -73,7 +73,8 @@ func (this *SetPasswordUseCase) Execute(ctx context.Context, cmd SetPasswordComm
 				Identifier:  identifier,
 				SecretHash:  hash,
 			})
-		case err == nil:
+		default:
+			existing := credentials[0]
 			_, err = this.Store.Credentials.Update(txCtx, existing.ID, CredentialUpdate{
 				Identifier: &identifier,
 				SecretHash: &hash,

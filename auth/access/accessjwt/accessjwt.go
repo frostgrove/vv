@@ -213,10 +213,19 @@ func (this *core) Issue(ctx context.Context, subject access.SubjectRef, agent ac
 	if err != nil {
 		return access.AuthResponse{}, err
 	}
+	sessionID, err := uuid.NewRandom()
+	if err != nil {
+		return access.AuthResponse{}, fmt.Errorf("accessjwt: reading entropy for a session id: %w", err)
+	}
 
 	now := this.now()
 	agent = agent.Truncated()
 	saved, err := this.sessions.Save(ctx, &rotatingSession{
+		// MySQL-family drivers cannot surface a generated UUID through
+		// LastInsertId. Supplying the UUID makes the same issuer work on every
+		// datasource access supports while preserving the database default for
+		// direct inserts.
+		ID:          sessionID,
 		SubjectType: string(subject.Type),
 		SubjectID:   subject.ID,
 		TokenHash:   access.HashToken(refresh),

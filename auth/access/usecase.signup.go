@@ -45,12 +45,13 @@ func NewSignUp[P any](
 
 // Execute registers and signs in.
 //
-// The account and its credential share one transaction, so an address the
-// application's own unique index refuses rolls the credential back with it and
-// a half-registered account never exists. The session is opened after that
-// transaction commits: opening it inside would let a failure with nothing to do
-// with signing in roll it back, and an account that exists while the response
-// said 500 is the worse of the two outcomes for the person at the other end.
+// The account, credential, role and session share one transaction owned by this
+// use case. An address the application's own unique index refuses rolls every
+// access row back with it; an issuer or commit failure returns no token and
+// leaves no half-registered account. Owning the boundary also serialises signup
+// with reset/logout-all: either they commit first and signup follows, or signup
+// commits its credential and session together and the invalidator sees both.
+// An ambient executor is intentionally not this operation's commit boundary.
 //
 // The identifier is folded once, here, by [Subject.Normalize] — the same
 // function [LoginUseCase] is given by the same binding, which is what makes the
@@ -65,9 +66,9 @@ func NewSignUp[P any](
 // while a registration is in flight cannot produce an account granted a role
 // that no longer exists by the time the credential commits.
 func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agent) (AuthResponse, error) {
-	var subject SubjectRef
+	var response AuthResponse
 
-	err := this.Store.Tx(ctx, func(txCtx context.Context) error {
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
 		role, err := this.DefaultRole(txCtx, this.subject.Type)
 		if err != nil {
 			return err
@@ -77,7 +78,7 @@ func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agen
 		if err != nil {
 			return err
 		}
-		subject = this.subject.Ref(id)
+		subject := this.subject.Ref(id)
 
 		// The role goes through resolved as well as named. It is the row this
 		// use case just read, so the enrolment grants it without looking the
@@ -87,16 +88,19 @@ func (this *SignUpUseCase[P]) Execute(ctx context.Context, payload P, agent Agen
 		if role != nil {
 			slug = auth.Role(role.Slug)
 		}
-		return this.enroll.execute(txCtx, EnrollCommand{
+		if err := this.enroll.execute(txCtx, EnrollCommand{
 			Subject:    subject,
 			Identifier: this.subject.Identifier(identifier),
 			Password:   this.registrar.Password(payload),
 			Role:       slug,
-		}, role)
+		}, role); err != nil {
+			return err
+		}
+		response, err = this.issuer.Issue(txCtx, subject, agent)
+		return err
 	})
 	if err != nil {
 		return AuthResponse{}, err
 	}
-
-	return this.issuer.Issue(ctx, subject, agent)
+	return response, nil
 }

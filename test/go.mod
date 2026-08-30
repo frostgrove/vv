@@ -11,6 +11,8 @@ replace github.com/frostgrove/vv => ../
 require (
 	entgo.io/ent v0.14.6
 	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv/auth/access v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/auth/access/accessjwt v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
 	github.com/gin-gonic/gin v1.12.0
@@ -114,6 +116,10 @@ replace github.com/frostgrove/vv/crud/adapter/crudpgx => ../crud/adapter/crudpgx
 replace github.com/frostgrove/vv/crud/rpc/crudgrpc => ../crud/rpc/crudgrpc
 
 replace github.com/frostgrove/vv/auth/authjwt => ../auth/authjwt
+
+replace github.com/frostgrove/vv/auth/access => ../auth/access
+
+replace github.com/frostgrove/vv/auth/access/accessjwt => ../auth/access/accessjwt
 
 replace github.com/frostgrove/vv/auth/http/authgin => ../auth/http/authgin
 

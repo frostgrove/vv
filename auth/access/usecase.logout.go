@@ -27,13 +27,20 @@ func (this *LogoutUseCase) Execute(ctx context.Context, cmd LogoutCommand) (int6
 	if cmd.SessionID == uuid.Nil {
 		return 0, nil
 	}
-	closed, err := this.revoke(ctx, ReasonSignedOut,
-		specs.As(Session_.ID.Eq(cmd.SessionID)),
-		specs.As(Session_.RevokedAt.IsNull()),
-	)
+	var closed revoked
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		var err error
+		closed, err = this.revoke(txCtx, ReasonSignedOut,
+			specs.As(Session_.ID.Eq(cmd.SessionID)),
+			specs.As(Session_.RevokedAt.IsNull()),
+		)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
+	// Revocation sinks are external to the database transaction. Announcing
+	// after commit keeps a rollback from denying a session whose row stayed live.
 	this.announce(ctx, closed)
 	return closed.count, nil
 }

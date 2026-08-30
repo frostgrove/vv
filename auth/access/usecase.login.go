@@ -51,47 +51,69 @@ func (this *LoginUseCase) Execute(ctx context.Context, cmd LoginCommand) (AuthRe
 		return AuthResponse{}, fmt.Errorf("access: signing in with no subject type")
 	}
 
-	credential, err := this.Store.CredentialFor(ctx, cmd.Subject, ProviderPassword, cmd.Identifier)
-	found := err == nil
-	if err != nil && !IsNotFound(err) {
-		return AuthResponse{}, err
-	}
-
-	hash := credential.SecretHash
-	if !found {
-		hash = DummyHash()
-	}
-	ok, err := this.Hasher.Verify(cmd.Password, hash)
-	if err != nil {
-		// An unreadable stored hash is a deployment fault, not a wrong
-		// password. Answering "bad credentials" here would lock an account out
-		// silently and leave nothing in the logs to find it by.
-		if errors.Is(err, ErrSecretFormat) {
-			this.Log.ErrorContext(ctx, "stored password hash is unreadable",
-				slog.String("credential_id", credential.ID.String()))
-			return AuthResponse{}, err
+	var (
+		response  AuthResponse
+		directory Directory
+		ref       SubjectRef
+	)
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		// LockCredentialFor does a non-locking candidate lookup followed by the
+		// canonical subject-wide current read. Password verification and session
+		// creation use only that locked value. If reset/change/logout-all commits
+		// first, this sees the new hash; if login locks first, its session is
+		// visible to the invalidator after it gets the same lock.
+		credential, err := this.Store.LockCredentialFor(
+			txCtx, cmd.Subject, ProviderPassword, cmd.Identifier)
+		found := err == nil
+		if err != nil && !IsNotFound(err) {
+			return err
 		}
-		return AuthResponse{}, err
-	}
-	if !ok || !found {
-		return AuthResponse{}, badCredentials("Login")
-	}
 
-	ref := SubjectRef{Type: SubjectType(credential.SubjectType), ID: credential.SubjectID}
-	directory, exists := this.Grants.Directory(ref.Type)
-	if !exists {
-		return AuthResponse{}, badCredentials("Login")
-	}
-	active, err := directory.Active(ctx, ref.ID)
-	if err != nil {
-		return AuthResponse{}, err
-	}
-	if !active {
-		return AuthResponse{}, badCredentials("Login")
-	}
+		hash := credential.SecretHash
+		if !found {
+			hash = DummyHash()
+		}
+		ok, err := this.Hasher.Verify(cmd.Password, hash)
+		if err != nil {
+			// An unreadable stored hash is a deployment fault, not a wrong
+			// password. Answering "bad credentials" here would lock an account out
+			// silently and leave nothing in the logs to find it by.
+			if errors.Is(err, ErrSecretFormat) {
+				this.Log.ErrorContext(txCtx, "stored password hash is unreadable",
+					slog.String("credential_id", credential.ID.String()))
+			}
+			return err
+		}
+		if !ok || !found {
+			return badCredentials("Login")
+		}
 
-	response, err := this.issuer.Issue(ctx, ref, cmd.Agent)
+		ref = SubjectRef{Type: SubjectType(credential.SubjectType), ID: credential.SubjectID}
+		var exists bool
+		directory, exists = this.Grants.Directory(ref.Type)
+		if !exists {
+			return badCredentials("Login")
+		}
+		active, err := directory.Active(txCtx, ref.ID)
+		if err != nil {
+			return err
+		}
+		if !active {
+			return badCredentials("Login")
+		}
+
+		// PostgreSQL snapshot isolation needs a write/write conflict, not only a
+		// row lock, to stop an invalidator with an older snapshot from committing
+		// after missing the session below. The repository owns that storage detail.
+		if err := this.Store.FenceSessionIssue(txCtx, credential); err != nil {
+			return err
+		}
+		response, err = this.issuer.Issue(txCtx, ref, cmd.Agent)
+		return err
+	})
 	if err != nil {
+		// response may contain a token created before a later statement or the
+		// commit failed. Never hand a credential for a rolled-back session out.
 		return AuthResponse{}, err
 	}
 

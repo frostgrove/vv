@@ -32,35 +32,35 @@ func (this *ChangePasswordUseCase) Execute(ctx context.Context, cmd ChangePasswo
 		return 0, badCredentials("ChangePassword")
 	}
 
-	credential, err := this.Store.Credentials.First(ctx,
-		OfSubject(cmd.Subject),
-		specs.As(Credential_.Provider.Eq(ProviderPassword)),
-	)
-	if IsNotFound(err) {
-		return 0, badCredentials("ChangePassword")
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	ok, err := this.Hasher.Verify(cmd.Current, credential.SecretHash)
-	if err != nil && !errors.Is(err, ErrSecretFormat) {
-		return 0, err
-	}
-	if err != nil || !ok {
-		return 0, badCredentials("ChangePassword")
-	}
-	if err := this.checkPassword(cmd.New); err != nil {
-		return 0, err
-	}
-
-	hash, err := this.Hasher.Hash(cmd.New)
-	if err != nil {
-		return 0, err
-	}
-
 	var closed revoked
-	err = this.Store.Tx(ctx, func(txCtx context.Context) error {
+	err := this.Store.OwnedTx(ctx, func(txCtx context.Context) error {
+		credentials, err := this.Store.LockPasswordCredentials(txCtx, cmd.Subject)
+		if err != nil {
+			return err
+		}
+		if len(credentials) == 0 {
+			return badCredentials("ChangePassword")
+		}
+		// Multiple password credentials are a separate schema-policy concern.
+		// The lock protocol nevertheless takes all of them in primary-key order;
+		// retaining First's one-row behaviour here does not let another row invert
+		// the lock order or escape subject-wide serialisation.
+		credential := credentials[0]
+		ok, err := this.Hasher.Verify(cmd.Current, credential.SecretHash)
+		if err != nil && !errors.Is(err, ErrSecretFormat) {
+			return err
+		}
+		if err != nil || !ok {
+			return badCredentials("ChangePassword")
+		}
+		if err := this.checkPassword(cmd.New); err != nil {
+			return err
+		}
+
+		hash, err := this.Hasher.Hash(cmd.New)
+		if err != nil {
+			return err
+		}
 		if _, err := this.Store.Credentials.Update(txCtx, credential.ID, CredentialUpdate{
 			SecretHash: &hash,
 		}); err != nil {
