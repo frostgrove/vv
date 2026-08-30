@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud/crudtest"
 	"github.com/frostgrove/vv/errs"
 	"github.com/google/uuid"
@@ -114,6 +115,231 @@ func TestMountRefusesASpecWithNoTypeOrNoDirectory(t *testing.T) {
 	if _, _, err := Mount(runtime, SubjectSpec[struct{}]{Type: testSubject}); err == nil {
 		t.Fatal("a subject with no directory was mounted")
 	}
+}
+
+func TestMountRejectsNilLikeDirectoryAndStrategyDeclarations(t *testing.T) {
+	var (
+		directory *mountTestDirectory
+		strategy  mountStrategyFunc
+	)
+	for _, tc := range []struct {
+		name string
+		spec SubjectSpec[struct{}]
+	}{
+		{
+			name: "typed-nil directory",
+			spec: SubjectSpec[struct{}]{Type: testSubject, Directory: directory},
+		},
+		{
+			name: "typed-nil strategy",
+			spec: SubjectSpec[struct{}]{Type: testSubject, Directory: stubDirectory{}, Strategy: strategy},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := testRuntime(t)
+			if _, _, err := Mount(runtime, tc.spec); err == nil {
+				t.Fatal("Mount accepted a nil-like extension declaration")
+			}
+			assertNothingMounted(t, runtime)
+
+			if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+				Type: testSubject, Directory: stubDirectory{}, Strategy: validMountStrategy(),
+			}); err != nil {
+				t.Fatalf("a corrected retry after the rejected declaration failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestMountRejectsTypedNilRegistrarBeforeBuildingOrPublishing(t *testing.T) {
+	runtime := testRuntime(t)
+	var registrar *mountTestRegistrar
+	builds := 0
+	strategy := mountStrategyFunc(func(dependencies StrategyDeps) (Issued, error) {
+		builds++
+		return OpaqueToken().Build(dependencies)
+	})
+
+	if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+		Type: testSubject, Directory: stubDirectory{}, Registrar: registrar, Strategy: strategy,
+	}); err == nil {
+		t.Fatal("Mount accepted a typed-nil registrar")
+	}
+	if builds != 0 {
+		t.Fatalf("Mount called Strategy.Build %d time(s) before rejecting the registrar", builds)
+	}
+	assertNothingMounted(t, runtime)
+
+	if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+		Type: testSubject, Directory: stubDirectory{}, Strategy: strategy,
+	}); err != nil {
+		t.Fatalf("a corrected retry after the rejected registrar failed: %v", err)
+	}
+	if builds != 1 {
+		t.Fatalf("the corrected retry called Strategy.Build %d time(s), want one", builds)
+	}
+}
+
+func TestMountRejectsIncompleteOrTypedNilIssuedCapabilitiesWithoutPublishing(t *testing.T) {
+	var (
+		typedNilIssuer        *mountTestIssuer
+		typedNilAuthenticator auth.AuthenticatorFunc
+		typedNilRefresher     *mountTestRefresher
+		typedNilRevocations   *mountTestRevocationSink
+	)
+	for _, tc := range []struct {
+		name       string
+		invalidate func(*Issued)
+	}{
+		{"nil issuer", func(built *Issued) { built.Issuer = nil }},
+		{"typed-nil issuer", func(built *Issued) { built.Issuer = typedNilIssuer }},
+		{"nil authenticator", func(built *Issued) { built.Authenticator = nil }},
+		{"typed-nil authenticator", func(built *Issued) { built.Authenticator = typedNilAuthenticator }},
+		{"typed-nil refresher", func(built *Issued) { built.Refresher = typedNilRefresher }},
+		{"typed-nil revocation sink", func(built *Issued) { built.Revocations = typedNilRevocations }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := testRuntime(t)
+			wouldBePublished := &mountTestRevocationSink{}
+			strategy := mountStrategyFunc(func(dependencies StrategyDeps) (Issued, error) {
+				built, err := OpaqueToken().Build(dependencies)
+				if err != nil {
+					return Issued{}, err
+				}
+				built.Revocations = wouldBePublished
+				tc.invalidate(&built)
+				return built, nil
+			})
+
+			if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+				Type: testSubject, Directory: stubDirectory{}, Strategy: strategy,
+			}); err == nil {
+				t.Fatal("Mount accepted an unusable strategy capability")
+			}
+			assertNothingMounted(t, runtime)
+
+			// Validation is build-on-copy: correcting the same declaration must not
+			// encounter a directory, subject, grant resolver or sink left behind.
+			if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+				Type: testSubject, Directory: stubDirectory{}, Strategy: validMountStrategy(),
+			}); err != nil {
+				t.Fatalf("a corrected strategy could not retry after validation failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestMountCanRetryAfterStrategyBuildFailure(t *testing.T) {
+	runtime := testRuntime(t)
+	if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
+		Type: testSubject, Prefix: "/users", Directory: stubDirectory{}, Strategy: validMountStrategy(),
+	}); err != nil {
+		t.Fatalf("mounting the control subject: %v", err)
+	}
+	beforeGrants := runtime.grants
+	beforeDirectory := append([]Directory(nil), runtime.directory...)
+	beforeSubjects := append([]*MountedSubject(nil), runtime.subjects...)
+
+	buildFailure := errors.New("custom strategy cannot build")
+	failing := mountStrategyFunc(func(StrategyDeps) (Issued, error) {
+		return Issued{}, buildFailure
+	})
+	service := SubjectSpec[struct{}]{
+		Type: "service", Prefix: "/services", Directory: stubDirectory{t: "service"}, Strategy: failing,
+	}
+	if _, _, err := Mount(runtime, service); !errors.Is(err, buildFailure) {
+		t.Fatalf("Mount answered %v, want the strategy's build failure", err)
+	}
+	if runtime.grants != beforeGrants {
+		t.Fatal("a failed Strategy.Build replaced the published grants resolver")
+	}
+	if len(runtime.directory) != len(beforeDirectory) ||
+		runtime.directory[0].SubjectType() != beforeDirectory[0].SubjectType() {
+		t.Fatalf("a failed Strategy.Build changed the directory registry: %#v", runtime.directory)
+	}
+	if len(runtime.subjects) != len(beforeSubjects) || runtime.subjects[0] != beforeSubjects[0] {
+		t.Fatalf("a failed Strategy.Build changed the mounted subjects: %#v", runtime.subjects)
+	}
+	if !runtime.revocations.empty() {
+		t.Fatalf("a failed Strategy.Build registered a revocation sink: %#v", runtime.revocations.byType)
+	}
+
+	service.Strategy = validMountStrategy()
+	if _, _, err := Mount(runtime, service); err != nil {
+		t.Fatalf("a corrected strategy could not retry after Build failed: %v", err)
+	}
+	if len(runtime.directory) != 2 || len(runtime.subjects) != 2 || runtime.grants == beforeGrants {
+		t.Fatal("the successful retry did not publish the complete second subject")
+	}
+}
+
+func assertNothingMounted(t *testing.T, runtime *Runtime) {
+	t.Helper()
+	if len(runtime.directory) != 0 {
+		t.Fatalf("a rejected mount published directories: %#v", runtime.directory)
+	}
+	if runtime.grants != nil {
+		t.Fatal("a rejected mount published a grants resolver")
+	}
+	if len(runtime.subjects) != 0 {
+		t.Fatalf("a rejected mount published subjects: %#v", runtime.subjects)
+	}
+	if !runtime.revocations.empty() {
+		t.Fatalf("a rejected mount published revocation sinks: %#v", runtime.revocations.byType)
+	}
+}
+
+type mountStrategyFunc func(StrategyDeps) (Issued, error)
+
+func (this mountStrategyFunc) Build(dependencies StrategyDeps) (Issued, error) {
+	return this(dependencies)
+}
+
+func validMountStrategy() Strategy {
+	return mountStrategyFunc(func(dependencies StrategyDeps) (Issued, error) {
+		return OpaqueToken().Build(dependencies)
+	})
+}
+
+type mountTestDirectory struct{}
+
+func (*mountTestDirectory) SubjectType() SubjectType { panic("typed-nil directory was called") }
+func (*mountTestDirectory) Active(context.Context, uuid.UUID) (bool, error) {
+	panic("typed-nil directory was called")
+}
+func (*mountTestDirectory) Describe(context.Context, uuid.UUID) (Profile, error) {
+	panic("typed-nil directory was called")
+}
+func (*mountTestDirectory) Touch(context.Context, uuid.UUID) error {
+	panic("typed-nil directory was called")
+}
+
+type mountTestIssuer struct{}
+
+func (*mountTestIssuer) Issue(context.Context, SubjectRef, Agent) (AuthResponse, error) {
+	panic("typed-nil issuer was called")
+}
+
+type mountTestRefresher struct{}
+
+func (*mountTestRefresher) Refresh(context.Context, string, Agent) (AuthResponse, error) {
+	panic("typed-nil refresher was called")
+}
+
+type mountTestRevocationSink struct{}
+
+func (*mountTestRevocationSink) SessionsRevoked(context.Context, []uuid.UUID) error {
+	panic("typed-nil revocation sink was called")
+}
+
+type mountTestRegistrar struct{}
+
+func (*mountTestRegistrar) Create(context.Context, struct{}) (uuid.UUID, string, error) {
+	panic("typed-nil registrar was called")
+}
+
+func (*mountTestRegistrar) Password(struct{}) string {
+	panic("typed-nil registrar was called")
 }
 
 // A runtime with no subject mounted resolves nothing and signs nobody in. The

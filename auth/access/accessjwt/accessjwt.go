@@ -170,7 +170,7 @@ func (this *strategy) Build(dependencies access.StrategyDeps) (access.Issued, er
 	}
 	// Only when there is a list to write to, and as an explicit branch rather
 	// than assigning core either way: a typed nil in that interface is not nil,
-	// and access would call a sink that dereferences nothing.
+	// and Mount correctly refuses it as a broken advertised capability.
 	if settings.Revocation != nil {
 		issued.Revocations = core
 	}

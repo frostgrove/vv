@@ -5,14 +5,24 @@
 the `auth.Authenticator` for one subject. A guard is mounted per subject's route
 group and refuses a credential belonging to another subject type. The verifier
 set is closed by what was declared, never by trying every format the library can
-parse.
+parse. `Mount` publishes a subject only after the whole strategy result is
+usable; a failed custom build leaves the runtime unchanged.
 
 ## The decision
 
 How a caller holds a session — an opaque token, a signed one, a signed one with
 a revocation list — is one declaration in `SubjectSpec.Strategy`, and it answers
 for both ends. `Strategy.Build` returns an `Issued{Issuer, Authenticator,
-Refresher}`.
+Refresher, Revocations}`. Issuer and Authenticator are required non-nil
+capabilities. Refresher and Revocations are absent only as literal nil; a typed
+nil would advertise a route or callback that panics and is rejected at
+composition.
+
+`Mount` builds against a candidate directory/grants graph. Only after Build and
+the complete `Issued` validation succeed does it publish that graph, register
+the revocation sink and append the mounted subject. A corrected declaration can
+therefore retry after an error without colliding with state from its failed
+attempt.
 
 Each mounted subject exposes its own `Guard()`. A binding puts it in front of
 that subject's routes, so the route group a request arrived on selects the
@@ -51,7 +61,13 @@ check lives in the authenticator, so no binding can forget it.
 ## What it forbids
 
 - Do not return an `Authenticator` from one place and an `Issuer` from another.
-  If a strategy grows a third end, it goes on `Issued`.
+  If a strategy grows another end, it goes on `Issued`.
+- Do not retain a nil-like strategy/directory or publish an incomplete
+  `Issued`. Optional strategy capabilities use literal nil for absence, never a
+  typed nil.
+- Do not mutate the runtime directory, grants resolver, revocation registry or
+  subjects list until a custom `Strategy.Build` and its result validation have
+  both succeeded.
 - Do not mount one guard over every subject's routes when more than one strategy
   is declared.
 - Do not build the admin chain from anything but the mounted subjects.
@@ -73,5 +89,15 @@ check lives in the authenticator, so no binding can forget it.
 - `access.TestMountRegistersAWellFormedSubject` asserts a mounted subject leaves
   with both an issuer and a verifier; the three refusal tests beside it are the
   ones a broken `Mount` would trip.
+- `access.TestMountRejectsIncompleteOrTypedNilIssuedCapabilitiesWithoutPublishing`
+  covers both required capabilities and both optional typed-nil declarations,
+  then retries the corrected strategy.
+- `access.TestMountCanRetryAfterStrategyBuildFailure` proves a failed extension
+  does not alter an already published runtime.
+- `access.TestMountRejectsNilLikeDirectoryAndStrategyDeclarations` keeps typed
+  nil composition values from reaching their methods.
+- `access.TestMountRejectsTypedNilRegistrarBeforeBuildingOrPublishing` proves
+  the optional signup seam distinguishes literal absence from a broken
+  advertised implementation, before strategy extension code runs.
 - `access.TestMountRefusesTwoSubjectsUnderOnePrefix` — two guards on one group
   is the shape this forbids.

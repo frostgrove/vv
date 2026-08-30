@@ -86,7 +86,8 @@ question is safe, refusing to finish a completed action is not.
 - Do not turn a sink failure into a failed sign-out, and do not swallow it
   silently either — it is logged with the ids.
 - Do not assign a strategy's `core` to `Issued.Revocations` unconditionally. A
-  typed nil in that interface is not nil, and `access` would call it.
+  typed nil in that interface is not absence, and `Mount` rejects it rather
+  than publishing a broken callback.
 - Do not announce to every registered sink. A session belongs to one subject
   type, and a key in another deployment's deny-list is one nothing ever reads.
 

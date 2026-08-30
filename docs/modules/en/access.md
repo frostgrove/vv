@@ -81,6 +81,13 @@ under one prefix, and a directory that answers for a type other than the spec's.
 All three otherwise fail at run time as a caller authenticated against the wrong
 store.
 
+Nil-like extension values are refused at the same boundary. A literal nil
+`Strategy` deliberately selects `OpaqueToken`; an interface carrying a typed
+nil strategy or directory is a configuration error rather than a request-time
+panic. Literal nil `Registrar` deliberately omits self-service sign-up, while a
+typed nil registrar is refused before the strategy builds or any route can be
+advertised.
+
 ## Strategies
 
 A **strategy** is how one kind of caller holds a session. One value declares
@@ -111,6 +118,14 @@ where the next request will look. Every path that closes a session announces
 through it, including the administrator's password reset behind
 `Runtime.SetPassword`, and the announcement happens after the transaction
 commits. See [[D-072]].
+
+`Mount` builds a custom strategy against a private candidate resolver, then
+validates the complete `Issued` result before publishing the subject. `Issuer`
+and `Authenticator` are required and must not be literal or typed nil.
+`Refresher` and `Revocations` are optional as literal nil; a typed nil is an
+invalid advertised capability. A failed `Build` or validation publishes no
+directory, grants resolver, revocation sink or mounted subject, so correcting
+the same declaration and retrying is safe.
 
 **Verification is per subject, not per API.** Each mounted subject has its own
 guard, and the route group a request arrived on selects it before anything is

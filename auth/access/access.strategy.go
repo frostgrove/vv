@@ -32,7 +32,8 @@ type Strategy interface {
 	// Build wires the strategy for one subject against the runtime's stores.
 	//
 	// It is called once per subject at composition, not per request. An error
-	// is a misconfiguration and stops the process starting.
+	// is a misconfiguration and stops the process starting. Mount validates the
+	// returned Issued before publishing any part of the subject registration.
 	Build(dependencies StrategyDeps) (Issued, error)
 }
 
@@ -85,12 +86,16 @@ type RevocationSink interface {
 
 // Issued is what a built strategy answers with.
 type Issued struct {
+	// Issuer and Authenticator are required. Mount rejects literal and typed nil
+	// implementations at composition rather than leaving a request-time panic.
 	Issuer        SessionIssuer
 	Authenticator auth.Authenticator
-	// Refresher is optional. nil means this strategy does not rotate.
+	// Refresher is optional. Literal nil means this strategy does not rotate; a
+	// typed nil is an invalid declaration because it would mount a broken route.
 	Refresher SessionRefresher
-	// Revocations is optional. nil means closing a session is fully expressed
-	// by the row, which is true of everything that verifies by reading it.
+	// Revocations is optional. Literal nil means closing a session is fully
+	// expressed by the row, which is true of everything that verifies by reading
+	// it. A typed nil is rejected before it can be registered as a callable sink.
 	Revocations RevocationSink
 }
 

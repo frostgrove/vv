@@ -81,6 +81,12 @@ type Directory interface {
 Все три иначе всплывают в рантайме как вызывающий, аутентифицированный не тем
 хранилищем.
 
+Nil-like extension values отклоняются на той же границе. Literal nil в
+`Strategy` осознанно выбирает `OpaqueToken`; interface с typed-nil стратегией
+или директорией — ошибка конфигурации, а не panic на первом запросе. Literal
+nil в `Registrar` осознанно убирает self-service sign-up, а typed-nil registrar
+отклоняется до сборки стратегии и публикации маршрута.
+
 ## Стратегии
 
 **Стратегия** — это то, как один вид вызывающего держит сессию. Одно значение
@@ -112,6 +118,14 @@ type Directory interface {
 сток отчитывается каждый путь закрытия сессии, включая сброс пароля
 администратором за `Runtime.SetPassword`, и отчёт уходит после коммита
 транзакции. См. [[D-072]].
+
+`Mount` строит custom strategy на приватном candidate resolver и валидирует весь
+результат `Issued` до публикации субъекта. `Issuer` и `Authenticator`
+обязательны и не могут быть literal- или typed-nil. `Refresher` и `Revocations`
+опциональны как literal nil; typed nil — это сломанная объявленная capability.
+Ошибка `Build` или валидации не публикует directory, grants resolver,
+revocation sink или mounted subject, поэтому исправленную декларацию можно
+безопасно повторить.
 
 **Проверка персубъектная, а не общая на API.** У каждого смонтированного
 субъекта свой guard, и группа роутов, на которую пришёл запрос, выбирает его до

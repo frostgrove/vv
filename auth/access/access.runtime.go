@@ -7,6 +7,7 @@ import (
 
 	"github.com/frostgrove/vv/auth"
 	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/internal/nilvalue"
 )
 
 // A RuntimeSpec is everything this context needs from an application, once.
@@ -130,9 +131,10 @@ type SubjectSpec[P any] struct {
 	// nil compares verbatim, which is right for an opaque external subject id
 	// and wrong for an email address.
 	Normalize func(identifier string) string
-	// Registrar creates the account behind a self-service sign-up. nil mounts
-	// no sign-up route at all, which is what an invitation-only deployment
-	// wants — a mounted route that always refuses says one exists.
+	// Registrar creates the account behind a self-service sign-up. Literal nil
+	// mounts no sign-up route at all, which is what an invitation-only deployment
+	// wants — a mounted route that always refuses says one exists. A typed nil is
+	// a configuration error rather than a registrar that panics on first use.
 	Registrar Registrar[P]
 	// Strategy is how this caller holds a session. nil means [OpaqueToken].
 	Strategy Strategy
@@ -212,6 +214,10 @@ func (this *MountedSubject) Refreshes() bool { return this.refresher != nil }
 // The sign-up is nil when the spec has no registrar, which is what an
 // invitation-only deployment passes.
 //
+// Mount is build-on-copy. If directory indexing, Strategy.Build or validation
+// fails, no directory, grants resolver, revocation sink or subject is published
+// to runtime, and the corrected declaration may be retried.
+//
 // A free function rather than a method because Go has no generic methods, and
 // the payload type belongs to the spec rather than to the runtime.
 func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *SignUpUseCase[P], error) {
@@ -221,8 +227,11 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 	if spec.Type == "" {
 		return nil, nil, fmt.Errorf("access: a subject spec needs a type")
 	}
-	if spec.Directory == nil {
+	if nilvalue.Is(spec.Directory) {
 		return nil, nil, fmt.Errorf("access: subject %q has no directory", spec.Type)
+	}
+	if spec.Registrar != nil && nilvalue.Is(spec.Registrar) {
+		return nil, nil, fmt.Errorf("access: subject %q has a typed-nil registrar; omit it when sign-up is unsupported", spec.Type)
 	}
 	if declared := spec.Directory.SubjectType(); declared != spec.Type {
 		return nil, nil, fmt.Errorf("access: subject %q was given a directory that answers for %q", spec.Type, declared)
@@ -239,39 +248,42 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 
 	subject := Subject{Type: spec.Type, Directory: spec.Directory, Normalize: spec.Normalize}
 
-	// The resolver is built on first use rather than in New, because it needs
-	// every directory and the last one is not registered until now.
-	runtime.directory = append(runtime.directory, spec.Directory)
-	directories, err := NewDirectories(runtime.directory...)
+	// Build the candidate graph without publishing any of it. Strategy.Build is
+	// extension code and may fail; appending directly to runtime.directory first
+	// used to leave the failed subject in the resolver and made a corrected retry
+	// look like a duplicate registration.
+	candidateDirectories := make([]Directory, len(runtime.directory)+1)
+	copy(candidateDirectories, runtime.directory)
+	candidateDirectories[len(runtime.directory)] = spec.Directory
+	directories, err := NewDirectories(candidateDirectories...)
 	if err != nil {
 		return nil, nil, err
 	}
-	runtime.grants = NewGrants(runtime.store, directories)
+	candidateGrants := NewGrants(runtime.store, directories)
 
 	strategy := spec.Strategy
 	if strategy == nil {
 		strategy = OpaqueToken()
+	} else if nilvalue.Is(strategy) {
+		return nil, nil, fmt.Errorf("access: subject %q has a typed-nil strategy; omit it to use OpaqueToken", spec.Type)
 	}
 	built, err := strategy.Build(StrategyDeps{
 		Subject: subject,
 		Store:   runtime.store,
 		Source:  runtime.source,
-		Grants:  runtime.grants,
+		Grants:  candidateGrants,
 		Config:  runtime.config,
 		Logger:  runtime.logger,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("access: building the strategy for subject %q: %w", spec.Type, err)
 	}
-
-	// Registered before the use cases are assembled, and keyed by this subject:
-	// what closes a session has to reach the strategy that issued it, and a
-	// strategy that verifies without reading the row has no other way to find
-	// out. See [[D-072]].
-	runtime.revocations.register(spec.Type, built.Revocations)
+	if err := validateIssued(built); err != nil {
+		return nil, nil, fmt.Errorf("access: strategy for subject %q: %w", spec.Type, err)
+	}
 
 	dependencies := newDeps(
-		runtime.store, runtime.grants, runtime.hasher, runtime.config, runtime.logger, runtime.revocations)
+		runtime.store, candidateGrants, runtime.hasher, runtime.config, runtime.logger, runtime.revocations)
 
 	var signUp *SignUpUseCase[P]
 	if spec.Registrar != nil {
@@ -287,8 +299,37 @@ func Mount[P any](runtime *Runtime, spec SubjectSpec[P]) (*MountedSubject, *Sign
 		endpoints:     newEndpoints(dependencies, subject, built.Issuer, built.Refresher),
 		registers:     signUp != nil,
 	}
+
+	// Nothing below can fail. Publish the directory, resolver, revocation sink
+	// and mounted subject together only after the complete candidate has built
+	// and validated. The sink is keyed by this subject because a strategy that
+	// verifies without reading the session row has no other way to learn that
+	// one of its sessions closed — see [[D-072]].
+	runtime.directory = candidateDirectories
+	runtime.grants = candidateGrants
+	runtime.revocations.register(spec.Type, built.Revocations)
 	runtime.subjects = append(runtime.subjects, mounted)
 	return mounted, signUp, nil
+}
+
+// validateIssued keeps a custom strategy's invalid extension values at the
+// composition boundary. Issuer and Authenticator are required capabilities;
+// Refresher and Revocations may be absent as literal nil, but an interface that
+// carries a typed nil would advertise a route or sink that panics when called.
+func validateIssued(built Issued) error {
+	if nilvalue.Is(built.Issuer) {
+		return fmt.Errorf("build returned no usable SessionIssuer")
+	}
+	if nilvalue.Is(built.Authenticator) {
+		return fmt.Errorf("build returned no usable auth.Authenticator")
+	}
+	if built.Refresher != nil && nilvalue.Is(built.Refresher) {
+		return fmt.Errorf("build returned a typed-nil SessionRefresher; return nil when refresh is unsupported")
+	}
+	if built.Revocations != nil && nilvalue.Is(built.Revocations) {
+		return fmt.Errorf("build returned a typed-nil RevocationSink; return nil when revocation notification is unnecessary")
+	}
+	return nil
 }
 
 // Subjects answers everything registered, in registration order.

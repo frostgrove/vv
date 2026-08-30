@@ -54,6 +54,7 @@ type RoleMap map[Role][]Permission
 ```go
 const DefaultScheme = "ApiKey"
 var ErrUnsupportedStaticAttribute = errors.New("apikey: Static cannot safely snapshot a Claims attribute")
+var ErrUnsupportedStaticPrincipal = errors.New("apikey: Static can safely snapshot only auth.Claims principals")
 func Header(name string) auth.Option
 func New(s Store, options ...Option) auth.Authenticator
 type Option func(*authenticator)
