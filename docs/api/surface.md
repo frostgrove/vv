@@ -93,6 +93,217 @@ type Surface struct{ ... }
     func Over(mux *http.ServeMux) *Surface
 ```
 
+## github.com/frostgrove/vv/cache
+```go
+const MaxNamespacePartBytes = 128 ...
+const MaximumTransientWaiters = 4096 ...
+const MaxCodecIDBytes = 64
+var ErrInvalid = errors.New("invalid cache declaration or call") ...
+var Hot = profile("Hot", MemoryProviderKind, hotDefaults()) ...
+func Activate(ctx context.Context, spec ActivationSpec) error
+func CapabilityOf[T any](backend Backend) (T, bool)
+func Supports(backend Backend, capability Capability) bool
+type ActivationError struct{ ... }
+type ActivationSpec struct{ ... }
+type Address struct{ ... }
+type Backend interface{ ... }
+type BackendDescriber interface{ ... }
+type BackendDescription struct{ ... }
+    func BackendDescriptionOf(backend Backend) (description BackendDescription, ok bool)
+type BackendTopology uint8
+    const ProcessBackend BackendTopology = iota + 1 ...
+type BackendWrapper interface{ ... }
+type BatchReadLimit struct{ ... }
+type BatchReader interface{ ... }
+    func BatchReaderOf(backend Backend) (BatchReader, bool)
+type Cache[K, V any] struct{ ... }
+    func Auto[K, V any](profiles ...Profile) *Cache[K, V]
+    func New[K, V any](runtime Runtime, backend Backend, scope Scope[K], keys KeyCodec[K], ...) (*Cache[K, V], error)
+type Capability string
+    const BatchReadCapability Capability = "batch_read"
+type Clock interface{ ... }
+type ClockSkewDescription struct{ ... }
+type Codec[V any] interface{ ... }
+    func Bytes(schema ValueSchema) Codec[[]byte]
+    func JSON[V any](schema ValueSchema) Codec[V]
+    func RFC3339UTC(schema ValueSchema) Codec[time.Time]
+    func String(schema ValueSchema) Codec[string]
+    func TrustedJSON[V any](schema ValueSchema) Codec[V]
+type CorruptionPolicy uint8
+    const RefuseCorrupt CorruptionPolicy = iota + 1 ...
+type Declaration interface{ ... }
+type DecodeCharger[V any] interface{ ... }
+type Definition[K, V any] struct{ ... }
+    func Define[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) (*Definition[K, V], error)
+    func MustDefine[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) *Definition[K, V]
+type DefinitionSpec[K, V any] struct{ ... }
+type Descriptor struct{ ... }
+type Error struct{ ... }
+type Event struct{ ... }
+type Expiry struct{ ... }
+type ExpiryClock uint8
+    const ProcessExpiryClock ExpiryClock = iota + 1 ...
+type ExpiryMode uint8
+    const RelativeExpiry ExpiryMode = iota + 1 ...
+type FailurePolicy uint8
+    const Propagate FailurePolicy = iota + 1 ...
+type FlightSaturationMode uint8
+    const RejectFlight FlightSaturationMode = iota + 1 ...
+type FlightSaturationPolicy struct{ ... }
+    func Reject() FlightSaturationPolicy
+    func ServeStale() FlightSaturationPolicy
+    func WaitBounded(timeout time.Duration) FlightSaturationPolicy
+type Freshness struct{ ... }
+    func AlwaysFresh(reason string) Freshness
+    func Expiring(freshFor, staleFor time.Duration) Freshness
+type FreshnessDescription struct{ ... }
+type FreshnessMode string
+    const ExpiringFreshnessMode FreshnessMode = "expiring" ...
+type Generation uint32
+type JitterDescription struct{ ... }
+type JitterMode string
+    const NoJitterMode JitterMode = "disabled" ...
+type JitterPolicy struct{ ... }
+    func NoJitter() JitterPolicy
+    func SubtractUpTo(duration time.Duration) JitterPolicy
+type KeyCodec[K any] interface{ ... }
+    func HMACKey[K any](inner KeyCodec[K], secret []byte) (KeyCodec[K], error)
+    func KeyFunc[K any](version KeyVersion, encode func(K, KeyLimit) ([]byte, error)) (KeyCodec[K], error)
+    func MustKeyFunc[K any](version KeyVersion, encode func(K, KeyLimit) ([]byte, error)) KeyCodec[K]
+    func MustStructKey[K any](version KeyVersion) KeyCodec[K]
+    func StructKey[K any](version KeyVersion) (KeyCodec[K], error)
+type KeyLimit struct{ ... }
+type KeyVersion uint32
+type LastWaiterPolicy uint8
+    const CancelLoader LastWaiterPolicy = iota + 1 ...
+type LoadResult[V any] struct{ ... }
+    func Absent[V any]() LoadResult[V]
+    func Present[V any](value V) LoadResult[V]
+type Loader[K, V any] func(context.Context, K) (LoadResult[V], error)
+type LocalStats struct{ ... }
+type Namespace struct{ ... }
+    func MustNamespace(application, environment, purpose string, generation Generation) Namespace
+    func NamespaceOf(application, environment, purpose string, generation Generation) (Namespace, error)
+type NamespaceTemplate struct{ ... }
+type NegativeCaching struct{ ... }
+    func CacheAbsenceFor(duration time.Duration) NegativeCaching
+    func NoNegativeCaching() NegativeCaching
+type NegativeDescription struct{ ... }
+type NegativeMode string
+    const NoNegativeMode NegativeMode = "disabled" ...
+type Observer interface{ ... }
+type Operation string
+    const LookupOperation Operation = "lookup" ...
+type Option interface{ ... }
+    func FlightSaturation(value FlightSaturationPolicy) Option
+    func MaxFlights(value int) Option
+    func MaxTransientBytes(value int64) Option
+    func MaxTransientWaiters(value int) Option
+    func MaxValueBytes(value int) Option
+    func NegativeFor(value time.Duration) Option
+    func StaleBehavior(value StalePolicy) Option
+    func TransientSaturation(value TransientSaturationPolicy) Option
+type Outcome string
+    const HitOutcome Outcome = "hit" ...
+type Partitioner[K any] func(K, KeyLimit) ([]byte, error)
+type Policy struct{ ... }
+type PolicyDescription struct{ ... }
+type Presence uint8
+    const Found Presence = iota + 1 ...
+type Profile struct{ ... }
+type ProfileDescription struct{ ... }
+type Provider struct{ ... }
+type ProviderID string
+type ProviderKind string
+    const MemoryProviderKind ProviderKind = "memory" ...
+type Random interface{ ... }
+type ReadLimit struct{ ... }
+type Reason string
+    const BackendReason Reason = "backend" ...
+type ResourceID string
+type Result[V any] struct{ ... }
+type Retention struct{ ... }
+    func CapacityBoundedRetention() Retention
+    func ExpireAfter(duration time.Duration) Retention
+type RetentionDescription struct{ ... }
+type RetentionMode string
+    const ExpiringRetentionMode RetentionMode = "expiring" ...
+type Runtime struct{ ... }
+type Scope[K any] struct{ ... }
+    func Global[K any](namespace Namespace) Scope[K]
+    func Partitioned[K any](namespace Namespace, partition Partitioner[K]) Scope[K]
+type ScopeMode string
+    const GlobalScopeMode ScopeMode = "global" ...
+type ScopePlan[K any] struct{ ... }
+    func GlobalPlan[K any]() ScopePlan[K]
+    func PartitionedPlan[K any](partition Partitioner[K]) ScopePlan[K]
+type Set struct{ ... }
+    func MustSet(declarations ...Declaration) Set
+    func NewSet(declarations ...Declaration) (Set, error)
+type SkewMode uint8
+    const SingleProcessSkew SkewMode = iota + 1 ...
+type SkewPolicy struct{ ... }
+    func BoundedClockSkew(bound time.Duration) (SkewPolicy, error)
+    func SingleProcessClock() SkewPolicy
+type StalePolicy uint8
+    const RefreshBlocking StalePolicy = iota + 1 ...
+type State uint8
+    const Hit State = iota + 1 ...
+type Timer interface{ ... }
+type TransientSaturationMode uint8
+    const RejectTransientMode TransientSaturationMode = iota + 1 ...
+type TransientSaturationPolicy struct{ ... }
+    func RejectTransient() TransientSaturationPolicy
+    func WaitForTransient(timeout time.Duration) TransientSaturationPolicy
+type ValueLimit struct{ ... }
+type ValueSchema uint32
+```
+
+## github.com/frostgrove/vv/cache/cachememory
+```go
+const ChargeModelVersion = 1 ...
+func EntryCharge(valueBytes int) (int64, error)
+type Backend struct{ ... }
+    func New(limits Limits, options ...Option) (*Backend, error)
+type Clock interface{ ... }
+type Event struct{ ... }
+type Limits struct{ ... }
+type Observer interface{ ... }
+type Operation string
+    const GetOperation Operation = "get" ...
+type Option interface{ ... }
+    func WithClock(clock Clock) Option
+    func WithObserver(observer Observer) Option
+type Outcome string
+    const HitOutcome Outcome = "hit" ...
+type Reason string
+    const ExpiredReason Reason = "expired" ...
+type Stats struct{ ... }
+```
+
+## github.com/frostgrove/vv/cache/cachetest
+```go
+var ErrPauseCanceled = errors.New("cachetest: pause canceled")
+func Run(t *testing.T, factory Factory)
+type Capacity struct{ ... }
+type Clock struct{ ... }
+    func ClockAt(start time.Time) *Clock
+    func NewClock() *Clock
+type Controller struct{ ... }
+    func MustController(next cache.Backend) *Controller
+    func NewController(next cache.Backend) (*Controller, error)
+type Factory func(*testing.T) Harness
+type Harness struct{ ... }
+type Observer struct{ ... }
+    func NewObserver() *Observer
+type Operation string
+    const GetOperation Operation = "get" ...
+type Pause struct{ ... }
+type Random struct{ ... }
+    func NewRandom(values ...uint64) *Random
+type Record struct{ ... }
+```
+
 ## github.com/frostgrove/vv/crud
 ```go
 const DefaultPreloadDepth = 5
