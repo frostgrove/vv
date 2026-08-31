@@ -2,7 +2,7 @@
 
 **Entry point:** `crud/executor.go:BindExecutor` and `crud/executor.go:InTx`
 **Implements:** [[UC-005]] [[UC-012]] · **Governed by:** [[D-082]] [[D-016]]
-[[D-017]] [[D-041]] [[D-042]] [[D-046]] [[D-061]] [[D-077]] [[D-079]]
+[[D-017]] [[D-041]] [[D-042]] [[D-046]] [[D-061]] [[D-077]] [[D-079]] [[D-083]]
 
 vv never owns a transaction it did not open, never guesses which pool a foreign
 transaction came from, and never lets an unresolved binding fall back to a pool.
@@ -46,6 +46,8 @@ pool and reproduce the outside-rollback write the safe API exists to prevent.
    `crud/sqlrepo/repository.go`. Every statement asks
    `crud.ExecutorFor(ctx, repositorySource)` before using the writable source or
    replica. Reads inside a transaction therefore cannot route around it.
+   `repository.InsertBatch` resolves `exec` before looking for native bulk, so
+   pgx COPY follows the same binding rather than the pool receiver.
 
 2. **The binding stack** — `crud/executor.go:binding`. Bindings chain through
    `context`; each carries a datasource identity, executor, ownership bit and
@@ -97,6 +99,12 @@ pool and reproduce the outside-rollback write the safe API exists to prevent.
    `crudsql.WithTransaction()`. `InNewTx` deliberately opens a fresh transaction
    inside existing bindings.
 
+10. **Raw helpers below a repository** — `UnsafeExecFor`, `UnsafeQueryFor` and
+    `UnsafeBulkInsertFor` run the same source-bound resolution before executing.
+    They preserve a failed declaration and never infer that an arbitrary query
+    is replica-safe. The exact-handle pgx methods `UnsafeCopyFrom*` deliberately
+    do not consult `ctx`; the caller must already hold the intended handle.
+
 ## Nested and multi-database contexts
 
 Bindings are searched innermost first. A matching inner session wins. A
@@ -131,6 +139,18 @@ the transaction, while a foreign owner retains commit control. This includes
 Ent, sqlx and prepared Gorm transaction wrappers; live rollback tests execute
 both chunked `Delete` and `SaveAll`. A source without transaction support returns
 `ErrNoTxSupport` before the first chunk ([[D-079]]).
+
+## Native batch effects
+
+`InsertBatch` first selects the source-bound executor and only then tests that
+exact value for `UnsafeBulkInserter`. A pool capability cannot pull work out of
+an ambient transaction. COPY is atomic on the pgx handle; the portable fallback
+uses the chunk rule above. `ReadWrite` forwards native bulk only to its primary.
+An unknown Source wrapper does not expose the underlying effect, so portable
+INSERT is selected instead of silently invoking COPY underneath it. A direct
+one-statement plan goes through the wrapper's `Exec`; chunked plans execute on
+the transaction handle and need transaction-aware or driver instrumentation for
+complete visibility ([[D-061]], [[D-062]], [[D-083]]).
 
 ## Savepoints and ownership
 
@@ -185,6 +205,8 @@ issues ([[D-017]]).
 | `WithExecutorFor(ctx, tx, From(tx))` on sql or pgx | strict legacy binding | mismatch error; no pool fallback |
 | context carries a session for another database | normal scoped resolution | repository uses its own source |
 | caller explicitly uses `WithUnsafeExecutor` | unsafe fallback | every reached repository adopts it |
+| raw `Unsafe*For` call receives a nil/failed source association | helper resolution | `ErrExecutorScope`; no executor call |
+| exact pgx native method is called on a pool while a tx exists only in `ctx` | caller selected exact handle | pool call; use the repository or `UnsafeBulkInsertFor` |
 | source cannot begin | `InTx` | `ErrNoTxSupport`; callback not run |
 | stale committed/rolled-back session | driver | driver error; never pool fallback |
 | callback error or panic | `InTx` | bounded detached rollback; panic re-raised |
@@ -194,13 +216,14 @@ issues ([[D-017]]).
 
 | File | Role |
 |---|---|
-| `crud/executor.go` | contracts, identity walk, `Session`, binding resolution, ownership, transaction lifecycle |
+| `crud/executor.go` | contracts, identity walk, `Session`, binding resolution, ownership, transaction lifecycle and context-bound raw helpers |
 | `crud/errors.go` | `ErrNoTxSupport`, `ErrExecutorScope`, typed reasons |
 | `crud/sqlrepo/repository.go` | every statement's `exec`/`read` resolution and `Tx` |
 | `crud/adapter/crudsql/crudsql.go` | database/sql executor/source/transaction/savepoints and `DB.BindExecutor` |
 | `crud/adapter/crudpgx/crudpgx.go` | pgx executor/source/transaction/savepoints and `Executor.BindExecutor` |
 | `crud/crudtest/recorder.go` | in-memory source identified by its own pointer |
 | `crud/decorators/faults/probe.go` | owned savepoint consumer |
+| `crud/batch.go` | typed repository entry before native executor selection |
 
 ## Tests that walk this flow
 
@@ -214,12 +237,15 @@ issues ([[D-017]]).
   legacy behaviour, database/sql rollback, same-source siblings and natural
   transaction-identity refusals.
 - `test/integration/driver_pgx_test.go` — pgx shared rollback and both strict and
-  new-session transaction-source refusals.
+  new-session transaction-source refusals, plus live InsertBatch rollback.
 - `test/integration/driver_gorm_test.go`, `driver_ent_test.go`,
   `driver_sqlx_test.go`, `driver_sqlc_test.go`, `driver_sql_test.go` — one
   source-bound session shared with each foreign owner.
 - `crud/sqlrepo/bind_budget_test.go` and `test/integration/saveall_test.go` —
   atomic statement chunks.
+- `crud/executor_effect_test.go` and `crud/sqlrepo/insert_batch_test.go` — raw
+  helper scoping, native capability selection inside owned/ambient sessions and
+  portable fallback on the ambient executor.
 - `test/integration/edge_test.go` — savepoints, stale transactions, isolation
   and commit classification.
 

@@ -1,4 +1,3 @@
-// Package storagefs implements storage.Backend on a private filesystem tree.
 package storagefs
 
 import (
@@ -31,9 +30,6 @@ const (
 	workRandomBytes  = 18
 )
 
-// Config declares the filesystem root and, optionally, the HTTP endpoint used
-// for temporary bearer links. Root must be absolute so a later chdir cannot
-// change which tree the backend owns.
 type Config struct {
 	Root       string
 	FileMode   fs.FileMode
@@ -44,8 +40,6 @@ type Config struct {
 	MaxLinkTTL time.Duration
 }
 
-// Backend is a filesystem implementation of storage.Backend. It owns only its
-// os.Root handle; callers still own every source and returned body.
 type Backend struct {
 	root       *os.Root
 	fileMode   fs.FileMode
@@ -68,8 +62,6 @@ var _ storage.Backend = (*Backend)(nil)
 
 var caseSafeEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// New opens an explicitly configured root. It creates the root when absent,
-// but never resolves a relative path against the process working directory.
 func New(config *Config) (*Backend, error) {
 	if config == nil {
 		return nil, storage.NewError("construct", storage.KindInvalid, fmt.Errorf("config is nil"))
@@ -147,7 +139,6 @@ func New(config *Config) (*Backend, error) {
 	return b, nil
 }
 
-// Close releases the root directory handle. It is safe to call more than once.
 func (this *Backend) Close() error {
 	if this == nil || this.root == nil {
 		return nil
@@ -309,9 +300,6 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 	}
 	placed, err := this.placeClaim(ctx, namespace, claimedName, objectPath(namespace, key), mode)
 	if placed {
-		// Final identity is visible while both protecting links still exist.
-		// Consume stage before claim so a second promoter can never observe an
-		// unlocked live stage, including after a post-placement sync failure.
 		releaseOnReturn = false
 		if _, consumeErr := this.consumeClaim(namespace, id, this.removeClaimName); consumeErr != nil {
 			return storage.Info{}, filesystemError("promote", consumeErr)
@@ -406,8 +394,6 @@ func (this *Backend) cleanupExpiredStages(ctx context.Context, namespace storage
 					continue
 				}
 				if errors.Is(openErr, errInvalidPrivateFormat) {
-					// Corrupted entries are not proven owned stages and are deliberately
-					// left for an operator rather than deleted by a sweep.
 					continue
 				}
 				return filesystemError("cleanup", openErr)
@@ -602,8 +588,6 @@ func (this *Backend) place(ctx context.Context, sourceName, destinationName stri
 		return false, filesystemError("place", err)
 	}
 	if mode == storage.CreateOnly {
-		// The destination is already complete. Failure to unlink the private
-		// work/stage name cannot make that committed object false.
 		if this.placeRemove != nil {
 			_ = this.placeRemove(sourceName)
 		} else {
@@ -624,10 +608,6 @@ func (this *Backend) place(ctx context.Context, sourceName, destinationName stri
 	return true, nil
 }
 
-// placeClaim establishes the final object without consuming either protecting
-// link of a staged upload. CreateOnly can link the claim directly. Replace
-// atomically renames a fresh private hard link, leaving stage and claim intact
-// until final visibility is known.
 func (this *Backend) placeClaim(ctx context.Context, namespace storage.Namespace, sourceName, destinationName string, mode storage.WriteMode) (bool, error) {
 	if err := contextError(ctx); err != nil {
 		return false, storage.NewError("place", storage.KindCancelled, err)
@@ -722,11 +702,6 @@ func stageIDFromName(name string) (storage.StageID, bool) {
 	return id, err == nil
 }
 
-// claimStage gives one operation exclusive ownership without a process-local
-// mutex. The hard-link creation is the election. The public stage link remains
-// present for the whole operation; deterministic failure removes only the
-// claim, while successful consumption removes stage before claim. These
-// monotonic states avoid an absent-name ABA window between concurrent retries.
 func (this *Backend) claimStage(operation string, namespace storage.Namespace, id storage.StageID) (string, error) {
 	stagedName := stagePath(namespace, id)
 	claimedName := stageClaimPath(namespace, id)
@@ -808,9 +783,6 @@ func (this *Backend) releaseClaim(namespace storage.Namespace, id storage.StageI
 	return nil
 }
 
-// consumeClaim removes the public stage before its exclusive claim. Its bool
-// reports that the stage name is already absent; after that point releasing the
-// claim would risk making a committed stage identity reusable.
 func (this *Backend) consumeClaim(namespace storage.Namespace, id storage.StageID, remove func(string) error) (bool, error) {
 	stagedName := stagePath(namespace, id)
 	claimedName := stageClaimPath(namespace, id)
@@ -889,6 +861,4 @@ func operationError(operation string, err error) error {
 	return filesystemError(operation, err)
 }
 
-// Handler is declared here so users find filesystem construction and its link
-// endpoint on the same concrete backend. It is implemented in link.go.
 func (this *Backend) Handler() http.Handler { return this.linkHandler() }

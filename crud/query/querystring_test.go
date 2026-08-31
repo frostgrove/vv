@@ -10,15 +10,12 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// Every operator spelling has to mean the same thing on both front doors. A
-// drift here is silent: the JSON client filters, the query-string client gets
-// something else, and nothing errors.
 func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 	for _, tc := range []struct {
 		alias string
-		doc   string // the operand as JSON
-		text  string // the same operand as query-string text
-		want  string // the clause both doors must build
+		doc   string
+		text  string
+		want  string
 		args  []any
 	}{
 		{"eq", `"go"`, "go", `"title" = $1`, []any{"go"}},
@@ -43,8 +40,6 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 		{"<=", `"go"`, "go", `"title" <= $1`, []any{"go"}},
 		{"le", `"go"`, "go", `"title" <= $1`, []any{"go"}},
 
-		// The LIKE family takes the pattern as written; only the convenience
-		// operators wrap it in wildcards.
 		{"like", `"go%"`, "go%", `"title" LIKE $1`, []any{"go%"}},
 		{"notlike", `"go%"`, "go%", `"title" NOT LIKE $1`, []any{"go%"}},
 		{"notLike", `"go%"`, "go%", `"title" NOT LIKE $1`, []any{"go%"}},
@@ -70,11 +65,10 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 		{"null", `true`, "true", `"title" IS NULL`, nil},
 		{"isnotnull", `true`, "true", `"title" IS NOT NULL`, nil},
 		{"notnull", `true`, "true", `"title" IS NOT NULL`, nil},
-		// A unary operator flips when it is asked to.
+
 		{"isnull", `false`, "false", `"title" IS NOT NULL`, nil},
 		{"notnull", `false`, "false", `"title" IS NULL`, nil},
 
-		// Case and the Mongo-style `$` prefix fold away.
 		{"GTE", `"go"`, "go", `"title" >= $1`, []any{"go"}},
 		{"Contains", `"go"`, "go", `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
 		{"NotIn", `["go"]`, "go", `"title" NOT IN ($1)`, []any{"go"}},
@@ -108,8 +102,6 @@ func TestEveryOperatorAliasMeansTheSameOnBothDoors(t *testing.T) {
 	}
 }
 
-// An operator nobody defined is a rejection on both doors, never an ignored
-// clause that returns the whole table.
 func TestUnknownOperatorIsRefusedOnBothDoors(t *testing.T) {
 	mustFail(t, `{"filter":{"title":{"approximately":"go"}}}`, nil, `unknown operator "approximately"`)
 
@@ -123,8 +115,6 @@ func TestUnknownOperatorIsRefusedOnBothDoors(t *testing.T) {
 	}
 }
 
-// A term with no operator at all is an equality, and a term whose operator is
-// unary needs no value.
 func TestTermDefaults(t *testing.T) {
 	sql, args := runReq(t, &query.Request{
 		Terms: []query.Term{{Path: "title", Values: query.Strings{"go"}}},
@@ -141,9 +131,6 @@ func TestTermDefaults(t *testing.T) {
 	}
 }
 
-// A binary operator with nothing to compare against is a rejection: an empty
-// value would otherwise become an equality against the empty string, which
-// quietly matches nothing.
 func TestTermWithoutAValueIsRefused(t *testing.T) {
 	for _, term := range []query.Term{
 		{Path: "title", Op: "eq"},
@@ -169,7 +156,7 @@ func TestParseTerm(t *testing.T) {
 		{"the usual triple", "views:gte:100", "views", "gte", []string{"100"}},
 		{"two segments mean equality", "title:go", "title", "eq", []string{"go"}},
 		{"a comma separates values", "status:in:draft,live", "status", "in", []string{"draft", "live"}},
-		// Only the first two colons are structural, so a timestamp survives.
+
 		{"a timestamp keeps its colons", "createdAt:gte:2026-01-02T03:04:05Z",
 			"createdAt", "gte", []string{"2026-01-02T03:04:05Z"}},
 		{"a value may be a whole range", "createdAt:between:2026-01-02T00:00:00Z,2026-01-03T00:00:00Z",
@@ -248,12 +235,10 @@ func TestFlatTermBackslashesOnlyEscapeItsDeclaredGrammar(t *testing.T) {
 	}
 }
 
-// The whole query string, read in one go.
 func TestParseQueryReadsEveryParameter(t *testing.T) {
 	v, err := url.ParseQuery("page=2&limit=25&offset=5" +
 		"&sort=-views,title&sort=%2BcreatedAt" +
-		// distinct is in here too, and a DISTINCT projection has to select
-		// whatever it sorts by — both engines refuse it otherwise.
+
 		"&select=id,title,views,createdAt&preload=author&preload=comments.author" +
 		"&search=go&searchFields=title,body" +
 		"&f=views:gte:100|title:contains:go&f=publishedAt:isNull:true" +
@@ -283,7 +268,7 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 	if request.Search != "go" || !reflect.DeepEqual([]string(request.SearchFields), []string{"title", "body"}) {
 		t.Fatalf("search = %q %v", request.Search, request.SearchFields)
 	}
-	// Three terms: the pipe separates two of them inside one parameter.
+
 	wantTerms := []struct{ path, op, value string }{
 		{"views", "gte", "100"},
 		{"title", "contains", "go"},
@@ -305,8 +290,6 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 		t.Fatalf("flags = %v/%v/%v, want all true", request.Unpaged, request.SkipTotal, request.Distinct)
 	}
 
-	// And it all compiles into one statement: the JSON document and the flat
-	// terms are ANDed, not one instead of the other.
 	sql, _ := runReq(t, request, exports)
 	want := `("body" = $1 AND "views" >= $2 AND "title" LIKE $3 ESCAPE '\' AND "published_at" IS NULL ` +
 		`AND (LOWER("title") LIKE LOWER($4) ESCAPE '\' OR LOWER("body") LIKE LOWER($5) ESCAPE '\'))`
@@ -315,7 +298,6 @@ func TestParseQueryReadsEveryParameter(t *testing.T) {
 	}
 }
 
-// Each parameter answers to the spellings different clients use.
 func TestParseQueryAliases(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -347,7 +329,6 @@ func TestParseQueryAliases(t *testing.T) {
 		{"noTotal", "noTotal=true", func(r *query.Request) bool { return r.SkipTotal }},
 		{"filters", "filters=views:gte:1", func(r *query.Request) bool { return len(r.Terms) == 1 }},
 
-		// A flag is only set when it says so.
 		{"unpaged=false", "unpaged=false", func(r *query.Request) bool { return !r.Unpaged }},
 		{"distinct=0", "distinct=0", func(r *query.Request) bool { return !r.Distinct }},
 	} {
@@ -367,8 +348,6 @@ func TestParseQueryAliases(t *testing.T) {
 	}
 }
 
-// A number that is not one is a rejection naming the parameter, not a zero that
-// silently means "the default".
 func TestParseQueryRejectsNonNumbers(t *testing.T) {
 	for _, tc := range []struct{ param, want string }{
 		{"page=one", "page"},
@@ -422,8 +401,6 @@ func TestParseQueryRefusesConflictingScalarControls(t *testing.T) {
 	}
 }
 
-// An empty query string receives the query endpoint's page cap rather than a
-// repository's potentially larger default.
 func TestParseQueryOfNothing(t *testing.T) {
 	request, err := query.ParseQuery(url.Values{})
 	if err != nil {
@@ -441,8 +418,6 @@ func TestParseQueryOfNothing(t *testing.T) {
 	}
 }
 
-// Empty and blank entries drop out rather than becoming empty field names that
-// no schema can resolve.
 func TestParseQuerySkipsBlankEntries(t *testing.T) {
 	v, err := url.ParseQuery("sort=,title,&select=%20&preload=&f=%20|views:gte:1")
 	if err != nil {

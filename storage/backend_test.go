@@ -7,8 +7,6 @@ import (
 	"github.com/frostgrove/vv/storage"
 )
 
-// fakeBackend records the adapter boundary. The core tests use it to prove
-// validation and normalization happen before an implementation sees a call.
 type fakeBackend struct {
 	calls int
 

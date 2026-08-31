@@ -9,15 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Every fixed path is mounted next to /:id. Gin resolves a static segment ahead
-// of a parameter one, so unlike Fiber this does not depend on the order the
-// routes were registered in — but a caller cannot see the difference, and the
-// guarantee is that GET /widgets/count counts rather than fetching an entity
-// called "count".
-//
-// The control case is the point of the test: it shows the :id route really is
-// live and really would have taken these paths, so if the static routes ever
-// stop being mounted this test fails instead of passing on an empty router.
 func TestStaticRoutesAreNotSwallowedByTheIDRoute(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -39,9 +30,6 @@ func TestStaticRoutesAreNotSwallowedByTheIDRoute(t *testing.T) {
 		})
 	}
 
-	// The control: a segment that is not one of the fixed paths does reach the
-	// :id route, and "not-a-number" fails to coerce to the int64 key. Without
-	// the fixed routes above, "count" would have arrived here the same way.
 	t.Run("control: an unclaimed segment reaches the id route", func(t *testing.T) {
 		app, fake := mount(t)
 
@@ -56,10 +44,6 @@ func TestStaticRoutesAreNotSwallowedByTheIDRoute(t *testing.T) {
 	})
 }
 
-// The collection routes are registered as "" so that GET /widgets matches. The
-// "/" form would mount them at /widgets/, which is a different path — the
-// trailing-slash spelling is left to Gin's own redirect, which is on by
-// default.
 func TestTheCollectionRouteAnswersWithoutATrailingSlash(t *testing.T) {
 	app, fake := mount(t)
 
@@ -80,10 +64,6 @@ func TestTheCollectionRouteAnswersWithoutATrailingSlash(t *testing.T) {
 	})
 }
 
-// Mounting on the engine itself is the degenerate case of Mount: the prefix is
-// "/" and the collection routes land on the root path. Registering both "" and
-// "/" would collapse to the same path here and make Gin panic, which is why
-// only one form is registered.
 func TestMountingAtTheRootDoesNotCollide(t *testing.T) {
 	fake := newFake()
 	app := gin.New()
@@ -100,13 +80,6 @@ func TestMountingAtTheRootDoesNotCollide(t *testing.T) {
 	}
 }
 
-// A verb a route does not have is 405, and this binding is one of the two that
-// can say so.
-//
-// Gin answers one through NoMethod once HandleMethodNotAllowed is on, which
-// [Routing] turns on. crudnet has no seam for it — a ServeMux answers the 405
-// itself, past every handler — and [[FL-013]] carries that difference rather
-// than the triplet's test names disagreeing about it.
 func TestAVerbARouteDoesNotHaveIsA405(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -122,8 +95,6 @@ func TestAVerbARouteDoesNotHaveIsA405(t *testing.T) {
 		t.Fatalf("405 does not carry a code of its own, so a client cannot tell it from any other refusal: %s", r.body)
 	}
 
-	// The control. The very same path with the verb it does have is served, so
-	// the refusal above is about the method and not about the path.
 	if r := do(t, engine, http.MethodGet, "/widgets", ""); r.status != http.StatusOK {
 		t.Fatalf("the path itself answered %d, so the 405 above proves nothing", r.status)
 	}

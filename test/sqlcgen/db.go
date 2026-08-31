@@ -1,9 +1,3 @@
-// Package sqlcgen mirrors what sqlc emits for PostgreSQL with
-// sql_package: "database/sql". The sources it was written from are in
-// test/sqlc/ — regenerate with `sqlc generate` if you change them.
-//
-// It exists so the integration suite can prove the thing that matters: sqlc's
-// Queries and an vv repository can be driven by the same *sql.Tx.
 package sqlcgen
 
 import (

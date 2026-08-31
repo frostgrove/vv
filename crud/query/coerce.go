@@ -13,21 +13,10 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// decodeValue turns a JSON scalar into the Go type of the column it will be
-// compared against. This is the difference between `views >= 100` binding an
-// int64 and binding a float64 that the planner may refuse to use an index for —
-// and it is what makes `"createdAt": {"gte": "2026-01-01T00:00:00Z"}` work at
-// all.
 func decodeValue(raw json.RawMessage, f *crud.Field) (any, error) {
 	t := crud.ElemType(f.Type)
 	ptr := reflect.New(t)
 	if err := json.Unmarshal(raw, ptr.Interface()); err != nil {
-		// A protobuf Struct carries every JSON number as float64. Sending an
-		// exact large integer as a JSON string is therefore the only lossless
-		// gRPC spelling, and it should compile exactly as the flat query-string
-		// spelling does. Keep this narrow: strings are only an alternate scalar
-		// encoding for the numeric kinds, not a way to bypass a model's own JSON
-		// decoder for arbitrary structs.
 		if numericKind(t.Kind()) {
 			var s string
 			if json.Unmarshal(raw, &s) == nil {
@@ -36,7 +25,7 @@ func decodeValue(raw json.RawMessage, f *crud.Field) (any, error) {
 				}
 			}
 		}
-		// A date-only string is worth a second try; clients send them constantly.
+
 		if t == reflect.TypeOf(time.Time{}) {
 			var s string
 			if json.Unmarshal(raw, &s) == nil {
@@ -61,7 +50,6 @@ func numericKind(k reflect.Kind) bool {
 	}
 }
 
-// decodeList decodes a JSON array into a []any of correctly typed elements.
 func decodeList(raw json.RawMessage, f *crud.Field) ([]any, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
@@ -101,18 +89,9 @@ func parseTime(s string) (time.Time, error) {
 
 var textUnmarshaler = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 
-// Coerce converts a text value into the Go type t, using the type's own
-// TextUnmarshaler when it has one. It is exported because transports need it
-// for path parameters too.
 func Coerce(s string, t reflect.Type) (any, error) { return coerceString(s, t) }
 
-// coerceString converts a query-string value — always text — into the Go type
-// of its column. It tries the type's own TextUnmarshaler first, so uuid, enum
-// and money types keep their parsing rules.
 func coerceString(s string, t reflect.Type) (any, error) {
-	// time.Time is checked before the TextUnmarshaler branch it would otherwise
-	// win: its own UnmarshalText takes RFC 3339 and nothing else, which would
-	// reject the date-only and space-separated forms the JSON door accepts.
 	if t == reflect.TypeOf(time.Time{}) {
 		return parseTime(s)
 	}
@@ -171,7 +150,6 @@ func coerceString(s string, t reflect.Type) (any, error) {
 		}
 		return nil, fmt.Errorf("cannot parse %q as %s", s, wanted(t))
 	default:
-		// Fall back to JSON, which covers structs with their own decoder.
 		if err := json.Unmarshal([]byte(strconv.Quote(s)), ptr.Interface()); err != nil {
 			return nil, fmt.Errorf("cannot parse %q as %s", s, wanted(t))
 		}
@@ -179,17 +157,6 @@ func coerceString(s string, t reflect.Type) (any, error) {
 	return ptr.Elem().Interface(), nil
 }
 
-// wanted names a column's shape in the vocabulary a client speaks, never in Go's.
-//
-// These messages are rendered — port.FaultOf turns a *query.Error into a
-// violation whose message is its Reason — so formatting a reflect.Type into one
-// puts the Go type of the consumer's own field, package path included, on the
-// wire: "Price expects crud.Opt[int64]". [[D-044]] forbids exactly that, and the
-// corpus render test cannot see it, because that test renders faults the
-// *database* produced and these come from the decoder.
-//
-// The field name stays. It is the client's own path into its own document, which
-// is what [[D-013]] requires a refusal to carry.
 func wanted(t reflect.Type) string {
 	if t == nil {
 		return "a value of a different shape"
@@ -197,9 +164,7 @@ func wanted(t reflect.Type) string {
 	if t == reflect.TypeOf(time.Time{}) {
 		return "a timestamp"
 	}
-	// A type with its own text or JSON decoding — a uuid, an enum, a money type —
-	// has rules of its own that this package cannot summarise and must not guess
-	// at. Naming the field is as far as it can honestly go.
+
 	if t.Implements(textUnmarshaler) || reflect.PointerTo(t).Implements(textUnmarshaler) ||
 		t.Implements(jsonUnmarshaler) || reflect.PointerTo(t).Implements(jsonUnmarshaler) {
 		return "a value in this field's own format"

@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// tags turns @ into the backtick a struct tag needs, so a model can be written
-// as a raw string in the test that reads it.
 func tags(s string) string { return strings.ReplaceAll(s, "@", "`") }
 
 func testGenerator(dir string) *generator {
@@ -29,8 +27,6 @@ func testGenerator(dir string) *generator {
 	}
 }
 
-// gen runs the generator over a scratch package built from the given sources
-// and returns the file it wrote.
 func gen(t *testing.T, files map[string]string, tweak func(*generator)) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -169,8 +165,6 @@ func TestGeneratedOutputIsAtomicallyReplaceable(t *testing.T) {
 	}
 }
 
-// decl returns the generated declaration that starts with header, through its
-// closing brace, so one type can be compared at a time.
 func decl(t *testing.T, source, header string) string {
 	t.Helper()
 	i := strings.Index(source, header)
@@ -185,22 +179,6 @@ func decl(t *testing.T, source, header string) string {
 	return rest[:j+2]
 }
 
-// comment returns the doc comment block that starts with header, so a test can
-// assert what the generator said about a declaration rather than about the file.
-func comment(source, header string) string {
-	i := strings.Index(source, header)
-	if i < 0 {
-		return ""
-	}
-	rest := source[i:]
-	j := strings.Index(rest, "\ntype ")
-	if j < 0 {
-		return rest
-	}
-	return rest[:j]
-}
-
-// declares reports whether a generated struct has a field of that name.
 func declares(block, name string) bool {
 	for _, line := range strings.Split(block, "\n") {
 		if f, _, _ := strings.Cut(strings.TrimSpace(line), " "); f == name {
@@ -249,10 +227,6 @@ type Article struct {
 }
 `
 
-// The DTO's field types are the whole point of generating it: a nullable column
-// gets utils.Opt so an explicit null and an absent key stay different things,
-// and a non-nullable one gets a pointer, which only has two states because it
-// only needs two.
 func TestUpdateDTOFollowsNullability(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 	want := tags(`type ArticleUpdate struct {
@@ -301,9 +275,6 @@ type Product struct {
 	}
 }
 
-// The columns a client must never write are the ones a repository would refuse
-// anyway: the key, a generated column, an immutable one, and a field the model
-// took out of the mapping altogether.
 func TestUpdateDTOLeavesOutWhatCannotBeWritten(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 	dataTransferObject := decl(t, out, "type ArticleUpdate struct {")
@@ -317,14 +288,12 @@ func TestUpdateDTOLeavesOutWhatCannotBeWritten(t *testing.T) {
 			t.Fatalf("%s left the metamodel too, so it can no longer be filtered or sorted:\n%s", f, attrs)
 		}
 	}
-	// db:"-" is not a column at all, so it is in neither.
+
 	if declares(dataTransferObject, "Secret") || declares(attrs, "Secret") {
 		t.Fatalf("an unmapped field reached the generated code:\n%s\n%s", dataTransferObject, attrs)
 	}
 }
 
-// -readonly is the flag for a column somebody else owns: still filterable and
-// sortable, never writable.
 func TestReadonlyKeepsAFieldQueryableButNotWritable(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) {
 		g.readonly = names("Title,CreatedAt")
@@ -368,10 +337,6 @@ type Article struct {
 	}
 }
 
-// -skip is the flag for a field the generated code should not know about — with
-// one exception the flag cannot avoid. Reflection reads the struct and never the
-// command line, so a skipped column is an ordinary writable column at run time
-// and the coverage assertion has to be told about it by name.
 func TestSkipRemovesAFieldEverywhere(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) {
 		g.skip = names("Title,Comments")
@@ -384,19 +349,16 @@ func TestSkipRemovesAFieldEverywhere(t *testing.T) {
 	if strings.Contains(out, "ArticleCommentsAttrs") {
 		t.Fatalf("a skipped relation still has a metamodel:\n%s", out)
 	}
-	// The exception, asserted rather than tolerated.
+
 	if !strings.Contains(out, `port.MustCoverUpdate[Article, ArticleUpdate]("Title")`) {
 		t.Fatalf("the skipped column is not declared as an exclusion, so start-up refuses it:\n%s", out)
 	}
-	// And its control: a skipped *relation* is not a column, so there is nothing
-	// for reflection to disagree about and nothing to declare.
+
 	if strings.Contains(out, `"Comments"`) {
 		t.Fatalf("a skipped relation was declared as a column exclusion:\n%s", out)
 	}
 }
 
-// A relation becomes a nested struct of the *root's* attributes, so
-// Article_.Author.Name still filters articles.
 func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 
@@ -408,10 +370,6 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 	if got := decl(t, out, "type ArticleAuthorAttrs struct {"); got != want {
 		t.Fatalf("the nested metamodel is\n%s\nwant\n%s", got, want)
 	}
-	if !strings.Contains(out, "// ArticleAuthorAttrs reaches Article through Author.") {
-		t.Fatalf("the nested struct is not documented as a path:\n%s", out)
-	}
-
 	root := decl(t, out, "type ArticleAttrs struct {")
 	for _, line := range []string{
 		"\tAuthor      ArticleAuthorAttrs\n",
@@ -421,8 +379,7 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 			t.Fatalf("the root metamodel is missing %q:\n%s", strings.TrimSpace(line), root)
 		}
 	}
-	// A column keeps the attribute type its Go type earns: text is searchable,
-	// ordered types compare, everything else only equals.
+
 	for _, want := range []string{
 		"\tTitle       specs.Str[Article]\n",
 		"\tViews       specs.Ord[Article, int]\n",
@@ -435,9 +392,6 @@ func TestRelationsBecomeNestedAttributeStructs(t *testing.T) {
 	}
 }
 
-// A relation group carries its own path as a handle, so sqlrepo.RelationScope,
-// crud.Preload and a relation policy take an identifier the compiler resolves
-// instead of a string literal.
 func TestRelationGroupsCarryATypedPath(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 
@@ -450,48 +404,11 @@ func TestRelationGroupsCarryATypedPath(t *testing.T) {
 		}
 	}
 
-	// The control: the root is not reached through a relation, so it has no
-	// path to answer and must not be handed one.
 	if root := decl(t, out, "type ArticleAttrs struct {"); strings.Contains(root, "specs.Rel[") {
 		t.Fatalf("the root metamodel was given a relation handle:\n%s", root)
 	}
 }
 
-// The handle is embedded, so a column of the *target* called Path sits a level
-// nearer and shadows the promoted method. The generated file has to say so
-// where a reader is looking, not only in the module doc.
-func TestATargetColumnNamedPathIsCalledOut(t *testing.T) {
-	const model = `package files
-
-type File struct {
-	ID    int64  @db:"id,pk,auto"@
-	DirID int64  @db:"dir_id"@
-	Path  string @db:"path"@
-	Dir   *Dir   @rel:"belongs_to"@
-}
-
-type Dir struct {
-	ID    int64  @db:"id,pk,auto"@
-	Name  string @db:"name"@
-	Files []File @rel:"has_many"@
-}
-`
-	out := gen(t, map[string]string{"model.go": model}, nil)
-
-	const note = "spell this relation's path RelPath() here"
-	if !strings.Contains(comment(out, "// DirFilesAttrs"), note) {
-		t.Fatalf("the shadowed path is not called out where the group is declared:\n%s", out)
-	}
-
-	// The control: the other direction of the same schema reaches Dir, which has
-	// no such column, and must not carry the note.
-	if strings.Contains(comment(out, "// FileDirAttrs"), note) {
-		t.Fatalf("a group whose target has no Path column was warned about one:\n%s", out)
-	}
-}
-
-// Article -> Author -> Articles -> Author -> … has no end, so the walk stops at
-// a model it has already passed through.
 func TestRelationCyclesAreCutShort(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) { g.depth = 6 })
 	if declares(decl(t, out, "type ArticleAuthorAttrs struct {"), "Articles") {
@@ -500,16 +417,12 @@ func TestRelationCyclesAreCutShort(t *testing.T) {
 	if strings.Contains(out, "ArticleAuthorArticlesAttrs") {
 		t.Fatalf("a cyclic path was expanded:\n%s", out)
 	}
-	// Comment -> Author is not a cycle, so with the depth for it, it expands.
+
 	if !strings.Contains(out, "type ArticleCommentsAuthorAttrs struct {") {
 		t.Fatalf("a second hop that is not a cycle was dropped:\n%s", out)
 	}
-	if !strings.Contains(out, "// ArticleCommentsAuthorAttrs reaches Article through Comments.Author.") {
-		t.Fatalf("the two-hop path is not documented:\n%s", out)
-	}
 }
 
-// Depth is what bounds the expansion; one hop is the default.
 func TestDepthBoundsHowFarRelationsExpand(t *testing.T) {
 	shallow := gen(t, map[string]string{"model.go": blogModel}, func(g *generator) { g.depth = 1 })
 	if strings.Contains(shallow, "ArticleAuthorAttrs") {
@@ -526,9 +439,6 @@ func TestDepthBoundsHowFarRelationsExpand(t *testing.T) {
 	}
 }
 
-// The runtime flattens an embedded struct into its parent's columns, so the
-// generator has to as well — otherwise the shared audit columns would be
-// missing from every DTO and metamodel in the package.
 func TestEmbeddedStructsAreFlattened(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": `package store
 
@@ -560,8 +470,6 @@ type Product struct {
 	}
 }
 
-// gorm.Model lives in another package, so its fields cannot be read from
-// source. It is common enough that the generator knows them by heart.
 func TestGormModelIsFlattenedFromTheWellKnownTable(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": `package gormstore
 
@@ -583,11 +491,11 @@ type Team struct {
 	if got := decl(t, out, "type TeamAttrs struct {"); got != want {
 		t.Fatalf("the metamodel is\n%s\nwant\n%s", got, want)
 	}
-	// gorm's own package has to be imported, or the DeletedAt attribute dangles.
+
 	if !strings.Contains(out, `gorm "gorm.io/gorm"`) {
 		t.Fatalf("the generated file does not import gorm:\n%s", out)
 	}
-	// Nothing gorm manages is writable through the DTO.
+
 	dataTransferObject := decl(t, out, "type TeamUpdate struct {")
 	for _, f := range []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt"} {
 		if declares(dataTransferObject, f) {
@@ -1198,9 +1106,6 @@ type User struct {
 }
 `
 
-// A generated entity from another tool carries no db tags at all, so naming it
-// with -types is what makes it a model — and the output goes into a package of
-// your own, where the names do not collide with the ones that tool generated.
 func TestIntoAnotherPackageQualifiesTheModelTypes(t *testing.T) {
 	out := gen(t, map[string]string{"user.go": entModel}, func(g *generator) {
 		g.only = map[string]bool{"User": true}
@@ -1228,12 +1133,11 @@ func TestIntoAnotherPackageQualifiesTheModelTypes(t *testing.T) {
 	if !strings.Contains(out, "var User_ = specs.Metamodel[ent.User, UserAttrs]()") {
 		t.Fatalf("the metamodel is not bound to the qualified model type:\n%s", out)
 	}
-	// Edges is another struct in the same package: bookkeeping for the tool that
-	// generated it, never a column.
+
 	if strings.Contains(out, "Edges") {
 		t.Fatalf("the entity's own bookkeeping field became a column:\n%s", out)
 	}
-	// Only the named type is a model; the others in the file are not.
+
 	if strings.Contains(out, "PostAttrs") {
 		t.Fatalf("a type nobody asked for was generated:\n%s", out)
 	}
@@ -2047,8 +1951,6 @@ type Team struct {
 	}
 }
 
-// When the target directory is already a package, the generated file joins it
-// rather than inventing a second package name in the same folder.
 func TestIntoAnExistingPackageKeepsItsName(t *testing.T) {
 	into := t.TempDir()
 	if err := os.WriteFile(filepath.Join(into, "doc.go"), []byte("package entstore\n"), 0o644); err != nil {
@@ -2144,7 +2046,7 @@ func TestGeneratingOnlyOneHalf(t *testing.T) {
 	if !strings.Contains(noDTO, "ArticleAttrs") {
 		t.Fatalf("-no-dto took the metamodel with it:\n%s", noDTO)
 	}
-	// With no DTO nothing needs crud, and the import goes away with it.
+
 	if strings.Contains(noDTO, `"github.com/frostgrove/vv/crud"`) {
 		t.Fatalf("an unused import would not compile:\n%s", noDTO)
 	}
@@ -2158,9 +2060,6 @@ func TestGeneratingOnlyOneHalf(t *testing.T) {
 	}
 }
 
-// Generated code is committed and diffed. Two runs over the same package have
-// to produce the same bytes, whatever order the parser handed the files and the
-// types back in.
 func TestOutputIsByteIdenticalAcrossRuns(t *testing.T) {
 	files := map[string]string{
 		"article.go": blogModel,
@@ -2187,9 +2086,6 @@ type Event struct {
 		}
 	}
 
-	// The adapter half has two more map iterations in it — the inverse map and
-	// the exclusion list — so it gets the same treatment rather than inheriting
-	// the claim.
 	firstAdapter := gen(t, files, func(g *generator) {
 		g.adapter = true
 		g.readonly = names("Views,Title")
@@ -2203,7 +2099,7 @@ type Event struct {
 			t.Fatalf("adapter run %d produced different bytes:\n%s\n---\n%s", i+2, firstAdapter, got)
 		}
 	}
-	// Models are emitted in a stable order, not the order the parser found them.
+
 	order := []string{"ArticleUpdate", "AuthorUpdate", "CommentUpdate", "EventUpdate", "TagUpdate"}
 	at := 0
 	for _, name := range order {
@@ -2215,12 +2111,6 @@ type Event struct {
 	}
 }
 
-// runGenerated builds a throwaway module holding nothing but a model and the
-// file the generator wrote for it, and runs it.
-//
-// Package initialisation is the whole point: the metamodel's check, the inverse
-// path map and the update-coverage assertion all live there, so "it starts" and
-// "it refuses to start" are the two answers this can give.
 func runGenerated(t *testing.T, model, generated string) (string, error) {
 	t.Helper()
 	root, err := filepath.Abs("../..")
@@ -2249,8 +2139,6 @@ func runGenerated(t *testing.T, model, generated string) (string, error) {
 	return string(response), err
 }
 
-// The proof that matters: the generated file builds, and the metamodel's
-// package-init check agrees with the model it was generated from.
 func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": blogModel}, nil)
 	if response, err := runGenerated(t, tags(blogModel), out); err != nil {
@@ -2258,8 +2146,6 @@ func TestGeneratedCodeCompilesAndValidates(t *testing.T) {
 	}
 }
 
-// resourceModel is the fixture for the adapter half: a key the database
-// generates, two ordinary columns and one the database fills.
 const resourceModel = `package m
 
 import "time"
@@ -2274,17 +2160,11 @@ type Doc struct {
 
 func withAdapter(g *generator) { g.adapter = true }
 
-// The phase's load-bearing test. A column the generated artefacts do not cover
-// refuses to start, and it does so with nothing regenerated — which is the half
-// regenerate-and-diff cannot reach, because that comparison only ever measures
-// the generator against itself.
 func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go toolchain")
 	}
 
-	// The control. Without it a binary that never builds for some unrelated
-	// reason would pass both arms below by failing for the wrong cause.
 	t.Run("the untampered resource starts", func(t *testing.T) {
 		out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
 		if response, err := runGenerated(t, tags(resourceModel), out); err != nil {
@@ -2292,10 +2172,6 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 		}
 	})
 
-	// The scenario UC-014 gap 1 describes: somebody adds a column and does not
-	// regenerate. The generator read the model's source text; the assertion
-	// reads the compiled struct. That is what makes this a check rather than a
-	// tautology.
 	t.Run("a column the model gained without regenerating", func(t *testing.T) {
 		out := gen(t, map[string]string{"model.go": resourceModel}, nil)
 		grown := strings.Replace(tags(resourceModel),
@@ -2313,8 +2189,6 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 		}
 	})
 
-	// The other direction: the map is edited by hand, which is what
-	// DO NOT EDIT is there to stop and what nothing could catch before.
 	t.Run("an entry deleted from the inverse map", func(t *testing.T) {
 		out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
 		cut := strings.Replace(out, "\t\"Title\": port.At(\"title\"),\n", "", 1)
@@ -2331,7 +2205,6 @@ func TestAGeneratedResourceRefusesToStartWhenAColumnIsMissing(t *testing.T) {
 	})
 }
 
-// The map's domain, asserted against what a client can and cannot send.
 func TestTheGeneratedMapCoversEveryWritableColumn(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
 	block := decl(t, out, "var DocPaths = port.MustPathMap[Doc](port.PathMap{")
@@ -2344,14 +2217,11 @@ func TestTheGeneratedMapCoversEveryWritableColumn(t *testing.T) {
 	if strings.Contains(block, `"ID":`) {
 		t.Fatalf("an auto-generated key has a request path although the body cannot carry it:\n%s", block)
 	}
-	// The control: a column the database fills is deliberately outside the
-	// domain, so a generator that emitted every column fails here rather than
-	// passing the loop above.
+
 	if strings.Contains(block, `"CreatedAt"`) {
 		t.Fatalf("a generated column has an entry; no client sends a key for one:\n%s", block)
 	}
-	// And the input body agrees with the map, which is what the start-up check
-	// measures the two halves against.
+
 	input := decl(t, out, "type DocInput struct {")
 	if !declares(input, "Title") || declares(input, "ID") || declares(input, "CreatedAt") {
 		t.Fatalf("the entity body and the map disagree:\n%s", input)
@@ -2379,9 +2249,6 @@ func TestAnAssignedPrimaryKeyRemainsInTheGeneratedInput(t *testing.T) {
 	}
 }
 
-// The runtime does not require users to repeat the database's integer identity
-// convention in every model. Codegen must make the same model-wide decision or
-// its transport body and path map disagree with Schema.Insert at start-up.
 func TestIntegralPrimaryKeysFollowTheRuntimeAutoConvention(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -2551,8 +2418,6 @@ func assertAssignedGeneratedKey(t *testing.T, out, model, key string) {
 	}
 }
 
-// The exclusion list is what carries a command-line flag into a file that
-// reflection reads. Without it the assertion refuses a column dropped on purpose.
 func TestTheGeneratedAssertionNamesTheReadonlyExclusions(t *testing.T) {
 	out := gen(t, map[string]string{"model.go": resourceModel}, func(g *generator) {
 		g.adapter = true
@@ -2564,16 +2429,13 @@ func TestTheGeneratedAssertionNamesTheReadonlyExclusions(t *testing.T) {
 	if !strings.Contains(out, `}, "Body", "ID")`) {
 		t.Fatalf("the inverse map does not declare the -readonly column:\n%s", out)
 	}
-	// The control: with no flag the list is empty, so this is not a generator
-	// that names every column whatever it was told.
+
 	plain := gen(t, map[string]string{"model.go": resourceModel}, withAdapter)
 	if !strings.Contains(plain, `port.MustCoverUpdate[Doc, DocUpdate]()`) {
 		t.Fatalf("an exclusion appeared with nothing declared:\n%s", plain)
 	}
 }
 
-// The lock, end to end: the artefacts a versioned model produces are ones that
-// start. This is the case that had no model in the tree at all.
 func TestAVersionedModelGeneratesAResourceThatStarts(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go toolchain")
@@ -2595,9 +2457,6 @@ type Doc struct {
 		t.Fatalf("the lock reached the entity body:\n%s", out)
 	}
 
-	// The control: name the lock in the map and the package refuses to start,
-	// because no request carries that key. Without it, a validator that accepted
-	// anything would pass the arm above.
 	named := strings.Replace(out, "\t\"Title\": port.At(\"title\"),\n",
 		"\t\"Title\":   port.At(\"title\"),\n\t\"Version\": port.At(\"version\"),\n", 1)
 	if named == out {
@@ -2612,10 +2471,6 @@ type Doc struct {
 	}
 }
 
-// The optimistic lock is the repository's column: it pins the write to the
-// version it read and advances it. crud.PlanFor refuses a DTO that names it, so
-// a generator that emitted it produced a package which panicked at Define time —
-// the two features shipped in the same change and did not know about each other.
 func TestTheVersionColumnIsLeftOutOfTheDTO(t *testing.T) {
 	source := tags(`package m
 
@@ -2641,8 +2496,6 @@ type Doc struct {
 		t.Fatalf("an ordinary column left the DTO with it:\n%s", dataTransferObject)
 	}
 
-	// It is still a column, so filtering and sorting by it must keep working —
-	// "the repository owns the writes" is not "the column is invisible".
 	attrs := decl(t, out, "type DocAttrs struct {")
 	for _, f := range []string{"Version", "Revision"} {
 		if !declares(attrs, f) {

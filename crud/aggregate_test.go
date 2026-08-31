@@ -8,21 +8,10 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// ---------------------------------------------------------------------------
-// reading a summary back
-//
-// The driver decides the shape. PostgreSQL hands an AVG back as a float64 and a
-// NUMERIC as a string; MySQL hands a SUM over a DECIMAL back as []byte; a SUM
-// over an integer column arrives as an int64 on both. A caller writing
-// row.Float("total") knows none of that and should not have to, so every shape
-// a driver produces is part of the contract rather than a fallback.
-
 func aggRow(name string, v any) crud.AggregateRow {
 	return crud.AggregateRow{Value: map[string]any{name: v}}
 }
 
-// Every shape a driver puts a numeric aggregate in reads back as the number it
-// stands for.
 func TestAFloatAggregateIsReadWhateverShapeTheDriverReturned(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -51,10 +40,6 @@ func TestAFloatAggregateIsReadWhateverShapeTheDriverReturned(t *testing.T) {
 	}
 }
 
-// The same value read as an integer and as a float is the same number. The two
-// accessors are separate coercion paths over the same driver shapes, and a
-// shape handled by one and not the other is a total that comes back zero on
-// exactly one engine.
 func TestASumReadsAsTheSameNumberThroughIntAndFloat(t *testing.T) {
 	for _, raw := range []any{int64(30), 30, 30.0, float32(30), "30", []byte("30")} {
 		n, okInt := aggRow("total", raw).Int("total")
@@ -69,10 +54,6 @@ func TestASumReadsAsTheSameNumberThroughIntAndFloat(t *testing.T) {
 	}
 }
 
-// A value that is not a number is refused rather than read as zero. This is the
-// half that makes the test above mean something: a coercion that answered "ok"
-// for everything would pass it and would turn a wrong column into a silent
-// zero.
 func TestAnAggregateThatIsNotANumberIsRefusedRatherThanReadAsZero(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -98,10 +79,6 @@ func TestAnAggregateThatIsNotANumberIsRefusedRatherThanReadAsZero(t *testing.T) 
 	}
 }
 
-// "There is no such aggregate" and "the aggregate is zero" are different
-// answers, and the second return value is the only place the difference is
-// visible. A caller that only reads the number cannot tell a misspelt name from
-// a group that really summed to nothing.
 func TestAnAbsentAggregateAndOneThatIsZeroAreDifferentAnswers(t *testing.T) {
 	present := crud.AggregateRow{Value: map[string]any{"total": int64(0), "mean": 0.0}}
 
@@ -112,7 +89,6 @@ func TestAnAbsentAggregateAndOneThatIsZeroAreDifferentAnswers(t *testing.T) {
 		t.Fatalf("an average of zero read as (%v, %v), want (0, true) — a real zero must still be present", f, ok)
 	}
 
-	// The control: the same zero from a name that was never asked for.
 	if n, ok := present.Int("nosuch"); ok || n != 0 {
 		t.Fatalf("a name no aggregation answers to read as (%d, %v), want (0, false)", n, ok)
 	}
@@ -120,23 +96,15 @@ func TestAnAbsentAggregateAndOneThatIsZeroAreDifferentAnswers(t *testing.T) {
 		t.Fatalf("a name no aggregation answers to read as (%v, %v), want (0, false)", f, ok)
 	}
 
-	// And a row with no aggregates at all, which is what a caller gets from the
-	// zero AggregateRow — the map is nil, not empty.
 	var empty crud.AggregateRow
 	if _, ok := empty.Float("total"); ok {
 		t.Fatal("the zero AggregateRow answered for an aggregate it does not carry")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the refusal path
-
 func schemaErr(err error) bool   { return errors.As(err, new(*crud.SchemaError)) }
 func unknownName(err error) bool { return errors.As(err, new(*crud.UnknownFieldError)) }
 
-// Validate is where an aggregate read is refused, and it refuses eagerly: a
-// name that does not resolve is an error, never a clause that quietly
-// disappears from the projection.
 func TestValidateRefusesAnAggregateNoEngineCouldAnswer(t *testing.T) {
 	m := articleMeta(t)
 
@@ -204,13 +172,6 @@ func TestValidateRefusesAnAggregateNoEngineCouldAnswer(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the projection
-
-// The grouping columns come first and each aggregate renders under the function
-// it names. CountOf sits next to CountDistinct on purpose: it is the control
-// for the DISTINCT keyword, so a renderer that emitted DISTINCT for every count
-// fails here rather than shipping a wrong number.
 func TestTheProjectionRendersEachAggregateUnderTheFunctionItNames(t *testing.T) {
 	m := articleMeta(t)
 	spec := crud.AggregateSpec{
@@ -235,9 +196,6 @@ func TestTheProjectionRendersEachAggregateUnderTheFunctionItNames(t *testing.T) 
 		`AVG("views"), SUM("views"), MIN("views"), MAX("views") FROM "articles"`)
 }
 
-// Without a grouping column the projection starts with the first aggregate and
-// no leading comma — the separator rule has two halves and only this case
-// exercises the second.
 func TestAnAggregateProjectionWithoutGroupingStartsAtTheFirstAggregate(t *testing.T) {
 	m := articleMeta(t)
 	spec := crud.AggregateSpec{Aggregations: []crud.Aggregation{
@@ -252,9 +210,6 @@ func TestAnAggregateProjectionWithoutGroupingStartsAtTheFirstAggregate(t *testin
 	done(t, b, `SELECT COUNT(*), SUM("views") FROM "articles"`)
 }
 
-// The function reaches the statement upper-cased whatever case it was declared
-// in, so the closed set in Validate and the text in the statement are the same
-// set of names.
 func TestTheAggregateFunctionIsRenderedInTheCaseTheEnginesSpellIt(t *testing.T) {
 	m := articleMeta(t)
 	spec := crud.AggregateSpec{Aggregations: []crud.Aggregation{{As: "total", Fn: "sum", Field: "Views"}}}
@@ -265,8 +220,6 @@ func TestTheAggregateFunctionIsRenderedInTheCaseTheEnginesSpellIt(t *testing.T) 
 	done(t, b, `SUM("views")`)
 }
 
-// The two options accumulate rather than replace, so a caller can add a summary
-// column in one place and the grouping in another.
 func TestASecondAggregateAddsToTheFirstRatherThanReplacingIt(t *testing.T) {
 	var o crud.Options
 	crud.Aggregate(crud.CountAll("rows"))(&o)
@@ -285,11 +238,6 @@ func TestASecondAggregateAddsToTheFirstRatherThanReplacingIt(t *testing.T) {
 	}
 }
 
-// The three shapes Validate used to let through, each of which reached an
-// engine as a statement this package built and no engine parses.
-//
-// All three came out of writing the tests above: a refusal path with no test is
-// a refusal path nobody has read, and these are what was behind it.
 func TestValidateRefusesTheThreeShapesThatReachedTheDriver(t *testing.T) {
 	m := articleMeta(t)
 
@@ -303,9 +251,6 @@ func TestValidateRefusesTheThreeShapesThatReachedTheDriver(t *testing.T) {
 	})
 
 	t.Run("an aggregate over a relation path", func(t *testing.T) {
-		// FieldAt resolves this happily — it is a real path — and Render then
-		// writes it with w.Column, which expands a path into a correlated
-		// EXISTS. The result was SUM(EXISTS (SELECT 1 FROM ...)).
 		spec := crud.AggregateSpec{Aggregations: []crud.Aggregation{
 			crud.Sum("total", "Comments.ArticleID"),
 		}}
@@ -314,9 +259,6 @@ func TestValidateRefusesTheThreeShapesThatReachedTheDriver(t *testing.T) {
 		}
 	})
 
-	// The control, and it is the point: the two refusals above must not have
-	// been bought by refusing aggregates generally. Both of these are ordinary
-	// and must still pass.
 	t.Run("control: the ordinary shapes still validate", func(t *testing.T) {
 		for _, spec := range []crud.AggregateSpec{
 			{Aggregations: []crud.Aggregation{crud.CountAll("n")}},

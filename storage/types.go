@@ -9,16 +9,12 @@ import (
 )
 
 const (
-	// MaxKeyBytes leaves room for a bounded backend prefix, namespace and the
-	// private object marker inside S3's 1024-byte object-name limit.
 	MaxKeyBytes           = 768
 	MaxKeySegmentBytes    = 128
 	MaxMetadataEntries    = 32
 	MaxMetadataKeyBytes   = 64
 	MaxMetadataValueBytes = 512
-	// MaxMetadataTotalBytes reserves enough of the S3-compatible 2 KiB user
-	// metadata budget for up to MaxMetadataEntries x-amz-meta- prefixes and the
-	// two private headers used by staged uploads.
+
 	MaxMetadataTotalBytes  = 1536
 	DefaultStageTTL        = 24 * time.Hour
 	MaxStageTTL            = 7 * 24 * time.Hour
@@ -28,7 +24,6 @@ const (
 	MaxCleanupLimit        = 1000
 )
 
-// Namespace is one validated logical collection. It is not a bucket or path.
 type Namespace struct{ value string }
 
 func ParseNamespace(raw string) (Namespace, error) {
@@ -47,9 +42,6 @@ func (this Namespace) valid() bool {
 	return validateNamespace(this.value) == nil
 }
 
-// Key is one canonical logical object identifier. Parsing is intentionally
-// stricter than either POSIX paths or S3 object names so every backend sees the
-// same identity.
 type Key struct{ value string }
 
 func ParseKey(raw string) (Key, error) {
@@ -59,9 +51,6 @@ func ParseKey(raw string) (Key, error) {
 	return Key{value: raw}, nil
 }
 
-// Value deliberately exposes the already validated representation for domain
-// persistence and adapter implementations. String stays redacted so accidental
-// formatting does not disclose the key.
 func (this Key) Value() string  { return this.value }
 func (this Key) String() string { return "[storage key]" }
 func (this Key) Format(state fmt.State, _ rune) {
@@ -69,8 +58,6 @@ func (this Key) Format(state fmt.State, _ rune) {
 }
 func (this Key) valid() bool { return validateKey(this.value) == nil }
 
-// StageID identifies an unconfirmed upload. It is safe to round-trip through a
-// form, but is still an authorization-sensitive opaque value.
 type StageID struct{ value string }
 
 func NewStageID() (StageID, error) {
@@ -102,12 +89,8 @@ func (this StageID) valid() bool {
 	return err == nil
 }
 
-// Metadata is a small portable set of application values. It is copied at
-// every public boundary.
 type Metadata map[string]string
 
-// WriteMode makes collision behaviour explicit. The zero value is normalized
-// to CreateOnly; replacement never happens accidentally.
 type WriteMode uint8
 
 const (
@@ -138,22 +121,15 @@ type TemporaryURLOptions struct {
 }
 
 type CleanupOptions struct {
-	// Limit bounds successful removals of owned temporary resources, not the
-	// number of entries a backend may inspect while finding expired work.
-	// Callers that also need a wall-time or remote-request bound must supply a
-	// context deadline.
 	Limit int
 }
 
 type CleanupResult struct {
 	Removed int
-	// More is conservative: the removal limit was reached, so another pass may
-	// be necessary. It does not prove that another removable temporary resource
-	// exists.
+
 	More bool
 }
 
-// ExactSize returns a fresh size pointer suitable for PutOptions/StageOptions.
 func ExactSize(n int64) *int64 { return &n }
 
 type Info struct {
@@ -161,8 +137,8 @@ type Info struct {
 	ContentType string
 	Metadata    Metadata
 	ModifiedAt  time.Time
-	ETag        string // opaque validator; it is not a portable content hash
-	Version     string // opaque backend version when one was returned
+	ETag        string
+	Version     string
 }
 
 type Staged struct {
@@ -171,8 +147,6 @@ type Staged struct {
 	ExpiresAt time.Time
 }
 
-// Link is a temporary bearer capability. Call URL only at the response
-// boundary; ordinary formatting is intentionally redacted.
 type Link struct {
 	rawURL    string
 	expiresAt time.Time

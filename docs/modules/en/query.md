@@ -240,9 +240,19 @@ of using this library. Every figure below is read back from a recording
 | `GetAll` | 1 | no `LIMIT` — its contract is every matching row |
 | `Count`, `Exists`, `Aggregate` | 1 | |
 | `Save` | 1 | `INSERT … RETURNING`, or `INSERT … ON CONFLICT DO UPDATE … RETURNING` |
-| `SaveAll(n)` | 1 | one multi-row `VALUES` |
+| `SaveAll(n)` | k | the fewest bind-budgeted multi-row `VALUES` statements; chunks are atomic |
+| `InsertBatch(n)` | 1 native, or k | pgx COPY when an exact capability is exposed; otherwise insert-only SQL chunks |
 | `Update` | **2** | the load-diff-write of [[D-010]]: `SELECT`, then `UPDATE … RETURNING` |
-| `UpdateAll`, `Delete(ids…)`, `DeleteAll` | 1 | |
+| `UpdateAll`, `DeleteAll` | 1 | |
+| `Delete(ids…)` | k | the fewest bind-budgeted ID-list statements; chunks are atomic |
+
+Here `k` is the minimum number of operation chunks after fixed statement
+arguments and per-row/per-ID width consume the dialect's bind limit. It is 1
+while the call fits and grows only at row/ID boundaries. For an insert it may
+be `n` when the entire shape is `DEFAULT`-only. `crud.PortableBatch()` forces
+the SQL side of the `InsertBatch` row; `sqlrepo.PortableBatch()` declares that
+choice once. The rows assume a non-empty input; empty `SaveAll`, `InsertBatch`,
+and `Delete(ids…)` calls are universal zero-statement no-ops.
 
 **MySQL adds a read-back** wherever PostgreSQL uses `RETURNING`: `Save` 2,
 `Update` 3.
@@ -254,10 +264,11 @@ one row beyond the cap and refuses instead of silently returning a partial
 relation.
 
 **The security gate adds statements only where it has to.** A custom scope with
-no `Inspect` is read-only: body writes are refused before SQL. With an
-`Inspect`, filtered writes fetch their victims — `UpdateAll`, `Delete` and
-`DeleteAll` each become 2, because the rule has to see every row it destroys
-([[D-026]]).
+no `Inspect` is read-only: body writes, including `InsertBatch`, are refused
+before SQL. With an `Inspect`, filtered writes fetch their victims —
+`UpdateAll`, `Delete` and `DeleteAll` each become 2, because the rule has to see
+every row it destroys ([[D-026]]). `InsertBatch` instead inspects the incoming
+rows as `Create`, so assigned keys do not add lookup/update statements.
 
 **Inside a transaction the counts are identical**, and `Update`'s load gains
 `FOR UPDATE`. **With a replica**, `Get`'s page and count both go to the replica

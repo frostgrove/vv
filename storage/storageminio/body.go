@@ -4,9 +4,6 @@ import (
 	"io"
 )
 
-// openBody keeps ownership with the caller while projecting errors that occur
-// after Open returns through the same bounded adapter taxonomy as immediate
-// failures.
 type openBody struct {
 	body io.ReadCloser
 }

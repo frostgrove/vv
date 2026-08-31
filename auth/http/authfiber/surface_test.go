@@ -12,10 +12,6 @@ import (
 	"github.com/frostgrove/vv/auth/http/authhttp"
 )
 
-// The gate exists because a route with no access check and a route that is
-// deliberately public look the same from the inside. These tests break an
-// application on purpose and assert that start-up notices.
-
 const apiPrefix = "/api/v1"
 
 func mountedApp(register func(fiber.Router)) *fiber.App {
@@ -44,7 +40,7 @@ func TestTheGatePassesWhenEveryMountedRouteIsDeclared(t *testing.T) {
 func TestTheGateRefusesARouteNobodyDeclared(t *testing.T) {
 	app := mountedApp(func(r fiber.Router) {
 		r.Post("/auth/login", nothing)
-		// The one somebody added in a hurry.
+
 		r.Delete("/users/:id", nothing)
 	})
 
@@ -62,7 +58,6 @@ func TestTheGateRefusesARouteNobodyDeclared(t *testing.T) {
 func TestTheGateRefusesADeclarationThatMountsNothing(t *testing.T) {
 	app := mountedApp(func(r fiber.Router) { r.Post("/auth/login", nothing) })
 
-	// The route was renamed and this line was left behind.
 	err := authfiber.Verify(app, []authhttp.Endpoint{
 		authhttp.Public(http.MethodPost, "/auth/login", "there is no credential to present yet"),
 		authhttp.Requires(http.MethodGet, "/users/:id", auth.Permission("user.read")),

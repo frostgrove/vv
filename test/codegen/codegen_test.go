@@ -1,18 +1,3 @@
-// Package codegen holds the drift check for every generated artefact in the
-// tree: regenerate into a temporary directory and compare against what is
-// checked in.
-//
-// It has no build tag and needs no database, and that is the whole reason it
-// moved here. It used to live in test/integration, whose harness opens
-// PostgreSQL and MySQL and aborts the binary if either is unreachable — so a
-// contributor with no containers ran the unit suite, saw green, and did not
-// learn that the flag-driven artefacts were stale.
-//
-// The blank imports are load-bearing. entstore and gormstore carry no test
-// files of their own, so nothing links them and their package initialisation —
-// which is where the generated coverage assertion and the inverse path map
-// refuse a drifted model ([[D-050]]) — never runs. Importing them here is what
-// makes those refusals reachable without a database.
 package codegen
 
 import (
@@ -28,13 +13,6 @@ import (
 	_ "github.com/frostgrove/vv/test/versionstore"
 )
 
-// example/blog pins its own generated file against the generator, but it runs
-// the generator with no flags at all. The two stores here are generated with the
-// flag combination the ORM guides actually tell a reader to use — `-dir` at
-// another package, `-types`, `-readonly`, `-import`, `-into` — and nothing was
-// checking that the files in the tree still match what those flags produce. A
-// generated file that has silently drifted is worse than a broken build, because
-// the tests that use it keep passing.
 func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go toolchain")
@@ -44,11 +22,9 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		pkg  string
-		// directive is the //go:generate line the package carries, checked
-		// verbatim so that this test and the tree cannot drift apart.
+
 		directive string
-		// regen runs the same generation into dir and is the same command with
-		// its destination moved.
+
 		regen func(t *testing.T, pkg, dir string)
 	}{
 		{
@@ -56,8 +32,6 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 			pkg:       filepath.Join(root, "test", "entstore"),
 			directive: "//go:generate go run github.com/frostgrove/vv/cmd/vv -dir ../ent -types User -readonly CreatedAt -import github.com/frostgrove/vv/test/ent -into .",
 			regen: func(t *testing.T, pkg, dir string) {
-				// The model lives in another package and is named through
-				// -import, so only the destination has to move.
 				run(t, pkg, "-dir", "../ent", "-types", "User",
 					"-readonly", "CreatedAt", "-import", "github.com/frostgrove/vv/test/ent", "-into", dir)
 			},
@@ -76,10 +50,6 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 			pkg:       filepath.Join(root, "test", "gormstore"),
 			directive: "//go:generate go run github.com/frostgrove/vv/cmd/vv -readonly UpdatedAt,DeletedAt",
 			regen: func(t *testing.T, pkg, dir string) {
-				// This one generates beside its own model, and -into is refused
-				// without -import for exactly that reason: the generated file
-				// would have no way to name the types. So the sources move
-				// instead of the destination.
 				copyGoSources(t, pkg, dir)
 				run(t, root, "-dir", dir, "-readonly", "UpdatedAt,DeletedAt")
 			},
@@ -88,8 +58,6 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertDirective(t, tc.pkg, tc.directive)
 
-			// The generated file's package clause comes from the directory it
-			// is written into, so the copy has to keep the package's name.
 			dir := filepath.Join(t.TempDir(), filepath.Base(tc.pkg))
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
@@ -111,9 +79,7 @@ func TestTheGeneratedStoresAreUpToDate(t *testing.T) {
 				t.Fatalf("%s/vv_gen.go is stale; run `go generate ./test/%s/...`",
 					filepath.Base(tc.pkg), filepath.Base(tc.pkg))
 			}
-			// The control for the comparison itself. A helper that had read one
-			// file twice, or compared two empty reads, would be green above
-			// whatever the generator did.
+
 			tampered := bytes.Replace(fresh, []byte("package "), []byte("package drifted"), 1)
 			if string(tampered) == string(current) {
 				t.Fatal("the comparison cannot tell a changed file from the checked-in one")
@@ -131,8 +97,6 @@ func run(t *testing.T, wd string, args ...string) {
 	}
 }
 
-// copyGoSources copies a package's hand-written files, leaving the generated one
-// behind — the generator must produce it from the model alone.
 func copyGoSources(t *testing.T, from, to string) {
 	t.Helper()
 	entries, err := os.ReadDir(from)
@@ -153,9 +117,6 @@ func copyGoSources(t *testing.T, from, to string) {
 	}
 }
 
-// assertDirective keeps this test honest: change the //go:generate line without
-// changing the case above, and the staleness check would quietly be checking a
-// command nobody runs.
 func assertDirective(t *testing.T, pkg, want string) {
 	t.Helper()
 	entries, err := os.ReadDir(pkg)

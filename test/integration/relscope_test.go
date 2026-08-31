@@ -10,16 +10,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A scope is a WHERE clause, and a WHERE clause only ever constrains its own
-// FROM. A preload is a second statement against a second table and a nested
-// filter opens a correlated subquery with its own FROM, so neither inherits
-// anything from the parent query — which is how ?preload=kids used to hand back
-// exactly the rows the parent's scope existed to hide.
-//
-// The two engines get the same treatment because the leak was in the statement,
-// not in the driver: what is asserted here is the rows that come back.
-
-// egLiveParents narrows both ends: its own table, and the kids it reaches.
 var egLiveParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents",
 	sqlrepo.Scope(crud.Ne("Name", "TOMBSTONE")),
 	sqlrepo.RelationScope("Kids", crud.Ne("Name", "TOMBSTONE")))
@@ -73,8 +63,6 @@ func TestARelationScopeHidesTheSameRowsAPreloadWouldHaveExposed(t *testing.T) {
 				}
 			})
 
-			// The filter half is worse than a leak: a client can probe the
-			// content of hidden rows and read the answer off the parent page.
 			t.Run("the filter hop", func(t *testing.T) {
 				got, err := live.GetAll(ctx, crud.Where(crud.Eq("Kids.Name", "TOMBSTONE")))
 				if err != nil {
@@ -86,8 +74,6 @@ func TestARelationScopeHidesTheSameRowsAPreloadWouldHaveExposed(t *testing.T) {
 				}
 			})
 
-			// And the same question about a row that is not hidden still works,
-			// so the narrowing is doing its job rather than breaking the feature.
 			t.Run("a visible child is still findable", func(t *testing.T) {
 				got, err := live.GetAll(ctx, crud.Where(crud.Eq("Kids.Name", "visible")))
 				if err != nil {
@@ -101,10 +87,6 @@ func TestARelationScopeHidesTheSameRowsAPreloadWouldHaveExposed(t *testing.T) {
 	}
 }
 
-// Without the declaration nothing is narrowed, which is the honest half of the
-// contract: RelationScope is per relation and a relation without one is read
-// raw. Pinned so that the day a scope starts leaking sideways between models,
-// this fails rather than silently changing what a query returns.
 func TestARelationNobodyNarrowedIsStillReadWhole(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)

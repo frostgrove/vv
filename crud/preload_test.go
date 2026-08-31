@@ -41,8 +41,6 @@ func TestPreloadOptionCollectsPaths(t *testing.T) {
 	}
 }
 
-// One statement for the whole page, with the parent keys deduplicated — the
-// entire reason preloading exists instead of a lazy getter.
 func TestPreloadBelongsToIsOneBatchedQuery(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(
 		[]any{int64(7), "ann", "berlin"},
@@ -76,8 +74,6 @@ func TestPreloadBelongsToIsOneBatchedQuery(t *testing.T) {
 	}
 }
 
-// A has_many hands each parent its own children, and a parent with none gets an
-// empty slice rather than nil — which is what makes the JSON honest.
 func TestPreloadHasManyDistributesChildren(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(
 		[]any{int64(10), int64(1), int64(7), "first", true},
@@ -103,8 +99,6 @@ func TestPreloadHasManyDistributesChildren(t *testing.T) {
 	}
 }
 
-// A many_to_many reads the owner key out of the join table, so one statement
-// still serves every parent.
 func TestPreloadManyToManyCarriesTheOwnerKey(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(
 		[]any{int64(1), int64(100), "go"},
@@ -128,8 +122,6 @@ func TestPreloadManyToManyCarriesTheOwnerKey(t *testing.T) {
 	}
 }
 
-// Shop and Ware are both perfectly ordinary models whose keys happen to be of
-// different widths — the join table's owner column is a shop id, not a ware id.
 type Shop struct {
 	ID    int32  `db:"id,pk,auto"`
 	Name  string `db:"name"`
@@ -141,19 +133,12 @@ type Ware struct {
 	Name string `db:"name"`
 }
 
-// Store keeps the same wares under a text key, which is what a uuid or a slug
-// primary key looks like.
 type Store struct {
 	ID    string `db:"id,pk"`
 	Wares []Ware `rel:"many_to_many,join=store_wares"`
 }
 
-// The owner column of a join table holds the parent's key, so it has to be read
-// as the parent's type. Guessing the target's type instead fails in two
-// different ways, and neither of them says so out loud.
 func TestPreloadManyToManyReadsTheOwnerKeyAsTheOwnersType(t *testing.T) {
-	// Silently, when the two types are convertible: the children are indexed
-	// under a key no parent can match and the relation comes back empty.
 	t.Run("an owner key of another width", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows([]any{int32(1), int64(100), "hammer"}))
 		shops := []Shop{{ID: 1}}
@@ -165,9 +150,6 @@ func TestPreloadManyToManyReadsTheOwnerKeyAsTheOwnersType(t *testing.T) {
 		}
 	})
 
-	// Loudly but far from the cause, when they are not: a text owner key does
-	// not scan into the integer destination the target's key would have asked
-	// for, and the caller is handed a scan error from a column it never named.
 	t.Run("an owner key that is not a number at all", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows([]any{"acme", int64(100), "hammer"}))
 		stores := []Store{{ID: "acme"}}
@@ -180,10 +162,6 @@ func TestPreloadManyToManyReadsTheOwnerKeyAsTheOwnersType(t *testing.T) {
 	})
 }
 
-// Yard and Pallet are the same mismatch one hop over, without a join table in
-// sight: an INT foreign key pointing at a BIGINT primary key is an ordinary
-// schema, and it is what an ORM generates the moment two models were written by
-// two people.
 type Yard struct {
 	ID      int64    `db:"id,pk,auto"`
 	Name    string   `db:"name"`
@@ -197,10 +175,6 @@ type Pallet struct {
 	Yard   *Yard  `rel:"belongs_to,fk=YardID"`
 }
 
-// The keys either side of a relation are two different struct fields, so they
-// may be two different integer widths. Both directions have to match on the
-// value, because the failure is silent: a key that misses files the children
-// under something no parent ever looks up, and the query itself succeeded.
 func TestPreloadMatchesKeysOfDifferentWidths(t *testing.T) {
 	t.Run("has_many, narrow fk to a wide key", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows(
@@ -235,8 +209,6 @@ func TestPreloadMatchesKeysOfDifferentWidths(t *testing.T) {
 	})
 }
 
-// A nested preload has to fill the children where they now live — inside the
-// parent's slice — not the temporaries they were scanned into.
 func TestNestedPreloadReachesIntoTheStoredChildren(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(
@@ -272,8 +244,6 @@ func TestNestedPreloadReachesIntoTheStoredChildren(t *testing.T) {
 	}
 }
 
-// Preloading a shared parent set of pointers works the same way as a value
-// slice; both are what a repository hands over.
 func TestPreloadAcceptsAPointerSlice(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(7), "ann", "berlin"}))
 	articles := []*Article{{ID: 1, AuthorID: 7}, nil}
@@ -285,9 +255,6 @@ func TestPreloadAcceptsAPointerSlice(t *testing.T) {
 	}
 }
 
-// Keys are chunked so a large page cannot build an IN list the database will
-// refuse — and the chunking is the only reason there is more than one
-// statement.
 func TestPreloadChunksLargeKeySets(t *testing.T) {
 	const n = 901
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows())
@@ -307,8 +274,6 @@ func TestPreloadChunksLargeKeySets(t *testing.T) {
 	}
 }
 
-// A preload may be narrowed and sorted; the extra clauses land inside the one
-// batched statement.
 func TestPreloadWhereNarrowsTheChildQuery(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(10), int64(1), int64(7), "first", true}))
 	articles := []Article{{ID: 1}}
@@ -328,8 +293,6 @@ func TestPreloadWhereNarrowsTheChildQuery(t *testing.T) {
 	}
 }
 
-// A LIMIT on a batched preload would truncate some parents' children and not
-// others, so it is refused instead of quietly lying.
 func TestPreloadCannotBePaginated(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -521,10 +484,9 @@ func TestMaximumPreloadCapDoesNotOverflowItsDetectionLimit(t *testing.T) {
 	}
 }
 
-// Preload paths usually arrive from an HTTP client, so their depth is capped.
 func TestPreloadDepthIsCapped(t *testing.T) {
 	rec := crudtest.Postgres()
-	deep := strings.Repeat("Manager.", 5) + "Manager" // six hops
+	deep := strings.Repeat("Manager.", 5) + "Manager"
 	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(), metaOf[Person](t, "persons"),
 		[]Person{{ID: 1}}, specs(deep), 0, nil)
 	if err == nil {
@@ -534,7 +496,6 @@ func TestPreloadDepthIsCapped(t *testing.T) {
 		t.Fatalf("err = %v, want it to name the depth limit", err)
 	}
 
-	// The cap is per call, so a repository may tighten it.
 	err = crud.RunPreloads(context.Background(), rec, rec.Dialect(), articleMeta(t),
 		[]Article{{ID: 1}}, specs("Comments.Author"), 1, nil)
 	if err == nil {
@@ -625,9 +586,6 @@ func TestPreloadKeepsANonNilEmptyByteKeyDistinctFromNull(t *testing.T) {
 	}
 }
 
-// valuerBinaryKey is deliberately non-comparable. Its driver representation is
-// the stable relation identity and its Scanner makes the child side behave like
-// a real database result.
 type valuerBinaryKey struct{ raw []byte }
 
 func (this valuerBinaryKey) Value() (driver.Value, error) {
@@ -688,9 +646,6 @@ func TestPreloadCanonicalisesNonComparableDriverValuerKeys(t *testing.T) {
 	}
 }
 
-// oneShotRelationKey exercises the pointer-only Valuer path. Value returns its
-// own mutable buffer deliberately: canonicalisation must call it once and copy
-// that one observation for both the map identity and driver bind.
 type oneShotRelationKey struct {
 	raw   []byte
 	calls *int

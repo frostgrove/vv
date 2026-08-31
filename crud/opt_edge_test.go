@@ -10,12 +10,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// ---------------------------------------------------------------------------
-// JSON
-
-// The three states have to survive a JSON round trip, because that is where
-// they come from: a PATCH body is the only place the difference between "leave
-// it alone" and "set it to NULL" is ever expressed.
 func TestOptUnmarshalsAbsentNullAndValueDifferently(t *testing.T) {
 	type patch struct {
 		Bio crud.Opt[string] `json:"bio,omitzero"`
@@ -24,7 +18,7 @@ func TestOptUnmarshalsAbsentNullAndValueDifferently(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
-		want string // Opt.String(): "<undefined>", "<null>" or the value
+		want string
 	}{
 		{"an absent key never reaches UnmarshalJSON", `{}`, "<undefined>"},
 		{"a key that is present elsewhere leaves this one undefined", `{"other":1}`, "<undefined>"},
@@ -45,8 +39,6 @@ func TestOptUnmarshalsAbsentNullAndValueDifferently(t *testing.T) {
 	}
 }
 
-// Decoding into an Opt that already carries something replaces it outright:
-// re-using a DTO must not leave a previous request's value behind.
 func TestOptUnmarshalOverwritesWhateverWasThere(t *testing.T) {
 	o := crud.Set("old")
 	if err := json.Unmarshal([]byte(`null`), &o); err != nil {
@@ -63,8 +55,6 @@ func TestOptUnmarshalOverwritesWhateverWasThere(t *testing.T) {
 	}
 }
 
-// A payload the element type cannot take is reported, and the Opt keeps the
-// state it had — a half-decoded DTO would be worse than a rejected one.
 func TestOptUnmarshalOfTheWrongTypeIsAnError(t *testing.T) {
 	o := crud.Set(7)
 	if err := json.Unmarshal([]byte(`"seven"`), &o); err == nil {
@@ -75,9 +65,6 @@ func TestOptUnmarshalOfTheWrongTypeIsAnError(t *testing.T) {
 	}
 }
 
-// omitzero is the only thing that keeps an undefined field out of the wire
-// format; without it undefined and null are the same JSON, which is exactly the
-// collapse Opt exists to prevent.
 func TestOnlyOmitzeroDropsAnUndefinedFieldOnMarshal(t *testing.T) {
 	type tagged struct {
 		Bio crud.Opt[string] `json:"bio,omitzero"`
@@ -97,13 +84,6 @@ func TestOnlyOmitzeroDropsAnUndefinedFieldOnMarshal(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// element types that are not scalars
-
-// Opt[*T] has four states on paper and three in practice: a set nil pointer is
-// indistinguishable from null once it is written. Opt[T] is the type to reach
-// for; this test says what Opt[*T] actually does rather than leaving it to be
-// discovered in production.
 func TestOptOfAPointer(t *testing.T) {
 	set := crud.Set(ptr(5))
 	if v, ok := set.Get(); !ok || *v != 5 {
@@ -124,8 +104,6 @@ func TestOptOfAPointer(t *testing.T) {
 		t.Fatalf("marshal = %s (%v), want null", out, err)
 	}
 
-	// Round tripping that null does not come back as a set nil pointer: an
-	// explicit null in a body always means null.
 	var back crud.Opt[*int]
 	if err := json.Unmarshal([]byte("null"), &back); err != nil {
 		t.Fatal(err)
@@ -140,10 +118,6 @@ type Point struct {
 	Y int `json:"y"`
 }
 
-// A struct or a slice element survives JSON unchanged, and Value hands the
-// driver the raw Go value when database/sql has no canonical form for it — pgx
-// and friends take rich types, and silently flattening them would be worse than
-// letting the driver refuse.
 func TestOptOfAStructAndOfASlice(t *testing.T) {
 	var p crud.Opt[Point]
 	if err := json.Unmarshal([]byte(`{"x":1,"y":2}`), &p); err != nil {
@@ -177,14 +151,9 @@ func TestOptOfAStructAndOfASlice(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// database/sql
-
 type Status string
 
 func TestOptScanConvertsWhatDatabaseSQLConverts(t *testing.T) {
-	// Drivers are allowed to hand back any of a handful of types for the same
-	// column; Opt has to accept whatever database/sql itself would.
 	t.Run("int64 into Opt[int]", func(t *testing.T) {
 		var o crud.Opt[int]
 		mustScan(t, &o, int64(42))
@@ -233,8 +202,6 @@ func TestOptScanConvertsWhatDatabaseSQLConverts(t *testing.T) {
 	})
 }
 
-// A conversion database/sql refuses is an error, not a panic, and the Opt is
-// left as it was: a half-scanned row must not look like a successful one.
 func TestOptScanOfAnImpossibleValueFailsAndChangesNothing(t *testing.T) {
 	o := crud.Set(7)
 	err := o.Scan(1.5)
@@ -246,8 +213,6 @@ func TestOptScanOfAnImpossibleValueFailsAndChangesNothing(t *testing.T) {
 	}
 }
 
-// Drivers reuse the byte slice they hand to Scan, so an Opt that kept the
-// original would change under the caller as the next row is read.
 func TestOptScanCopiesTheDriversBytes(t *testing.T) {
 	source := []byte("first")
 	var o crud.Opt[[]byte]
@@ -259,13 +224,11 @@ func TestOptScanCopiesTheDriversBytes(t *testing.T) {
 	}
 }
 
-// Scanning never produces undefined: a row always answers the question, either
-// with a value or with NULL. Only a DTO that was never written to is undefined.
 func TestScanningNeverProducesUndefined(t *testing.T) {
 	for _, source := range []any{nil, int64(1), "x"} {
 		var o crud.Opt[string]
 		if err := o.Scan(source); err != nil {
-			continue // a conversion this element type refuses proves nothing here
+			continue
 		}
 		if !o.IsDefined() {
 			t.Fatalf("scanning %#v left the Opt undefined", source)
@@ -285,9 +248,7 @@ func TestOptValueForEveryState(t *testing.T) {
 		{"a set time goes through as it is", crud.Set(when), when},
 		{"a set []byte goes through as it is", crud.Set([]byte("x")), []byte("x")},
 		{"a set uint8 widens too", crud.Set(uint8(3)), int64(3)},
-		// Both non-set states are the same on the way out: nothing distinguishes
-		// them once a value has to be written, which is why the repository
-		// decides whether to write the column at all before it ever calls Value.
+
 		{"null is NULL", crud.Null[int](), nil},
 		{"undefined is NULL as well", crud.Undefined[int](), nil},
 	} {
@@ -303,8 +264,6 @@ func TestOptValueForEveryState(t *testing.T) {
 	}
 }
 
-// An element type that knows how to render itself is asked, rather than being
-// reflected over.
 type Money struct{ Cents int64 }
 
 func (this Money) Value() (driver.Value, error) { return this.Cents, nil }
@@ -319,10 +278,6 @@ func TestOptAsksItsElementTypeForItsDriverValue(t *testing.T) {
 	}
 }
 
-// A set Opt holding a nil pointer is NULL even when the type it points at
-// knows how to render itself: calling that method on a nil receiver is exactly
-// what database/sql guards against, and a driver.Valuer that panics on a value
-// a caller can legally construct is not one.
 func TestOptOfANilPointerToAValuerIsNullNotAPanic(t *testing.T) {
 	got, err := crud.Set((*Money)(nil)).Value()
 	if err != nil {
@@ -333,12 +288,6 @@ func TestOptOfANilPointerToAValuerIsNullNotAPanic(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// construction and comparison
-
-// FromPtr is the bridge from the two-state pointer convention, where a zero
-// value and an absent one are easy to confuse. &0 is a value; nil is NULL;
-// neither is undefined, because a pointer cannot express "not provided".
 func TestFromPtrOfAZeroValueIsAValueNotAnAbsence(t *testing.T) {
 	zero := crud.FromPtr(ptr(0))
 	if !zero.IsSet() {
@@ -357,9 +306,6 @@ func TestFromPtrOfAZeroValueIsAValueNotAnAbsence(t *testing.T) {
 	}
 }
 
-// Opt is a plain comparable struct for comparable element types, and the three
-// states are three distinct values — a *T-plus-bool encoding would collapse
-// null and undefined into one.
 func TestOptsCompareByStateThenValue(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -382,8 +328,6 @@ func TestOptsCompareByStateThenValue(t *testing.T) {
 	}
 }
 
-// MustGet is the one Opt method that panics, and it says so; the failure mode
-// is a programming mistake, not bad input.
 func TestMustGetPanicsOnlyWhenThereIsNoValue(t *testing.T) {
 	if got := crud.Set(3).MustGet(); got != 3 {
 		t.Fatalf("MustGet = %v, want 3", got)

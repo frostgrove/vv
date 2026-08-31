@@ -1,17 +1,3 @@
-// Package vvgoose is the application migration command for vvdb.
-//
-// A command needs no bootstrap framework of its own:
-//
-//	func main() {
-//		cfg := vvcfg.MustLoad[config.Config]()
-//		vvgoose.Execute(&cfg.DB)
-//	}
-//
-// Execute reads os.Args and provides migration generation, applying, status,
-// rollback, a reset followed by re-application, and a development database
-// flush. SQL files stay compatible with the Goose CLI; the package uses Goose's
-// instance Provider internally so two database configurations never share
-// process-global migration state.
 package vvgoose
 
 import (
@@ -37,10 +23,6 @@ const (
 	defaultMigrationTable = "goose_db_version"
 )
 
-// Execute runs the migration CLI using cfg. It is deliberately a terminal
-// entrypoint rather than a library-shaped error return: the intended caller is
-// cmd/migrate/main.go, and failures must result in a non-zero process status
-// even when that minimal main does not contain error handling.
 func Execute(config *vvdb.Config) {
 	if err := execute(context.Background(), os.Args[1:], normalizeConfig(config), commandIO{
 		in: os.Stdin, out: os.Stdout, err: os.Stderr,
@@ -105,9 +87,6 @@ func newRootCommand(config vvdb.Config, streams commandIO) *cobra.Command {
 	root.SetErr(streams.err)
 	root.CompletionOptions.DisableDefaultCmd = true
 
-	// vvcfg reads this flag directly from os.Args. Keeping a hidden declaration
-	// here prevents the same, still-present flag from becoming an unknown option
-	// when control moves from configuration loading to this CLI.
 	root.PersistentFlags().StringVar(&ignoredConfigPath, "config-path", "", "configuration file (consumed by vvcfg)")
 	_ = root.PersistentFlags().MarkHidden("config-path")
 	root.PersistentFlags().BoolVar(&noInteractive, "no-interactive", false, "disable interactive prompts and menus")
@@ -280,9 +259,6 @@ const (
 )
 
 func runInteractive(ctx context.Context, config vvdb.Config, streams commandIO) error {
-	// Exit is the safe default if the terminal disappears while the menu is
-	// waiting for input. A disconnected terminal must never start a database
-	// operation merely because the first option happened to be selected.
 	selected := interactiveExit
 	menu := huh.NewSelect[interactiveCommand]().
 		Title("What do you want to do?").

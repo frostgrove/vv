@@ -1,7 +1,5 @@
 package crud
 
-// PaginatedResponse is what Get returns: the slice plus everything a client
-// needs to render a pager. It is JSON-ready as is.
 type PaginatedResponse[T any] struct {
 	Items      []T   `json:"items"`
 	Page       int   `json:"page"`
@@ -11,15 +9,10 @@ type PaginatedResponse[T any] struct {
 	HasNext    bool  `json:"hasNext"`
 	HasPrev    bool  `json:"hasPrev"`
 
-	// NextCursor and PrevCursor name available neighbouring pages. Hand
-	// NextCursor back as crud.After to get the following page; a client that
-	// stores one has a position that survives concurrent writes, which a page
-	// number does not.
 	NextCursor string `json:"nextCursor,omitempty"`
 	PrevCursor string `json:"prevCursor,omitempty"`
 }
 
-// NewPaginatedResponse fills in the derived fields.
 func NewPaginatedResponse[T any](items []T, page, limit int, total int64) PaginatedResponse[T] {
 	if items == nil {
 		items = []T{}
@@ -40,11 +33,8 @@ func NewPaginatedResponse[T any](items []T, page, limit int, total int64) Pagina
 	return r
 }
 
-// IsEmpty reports whether the page has no items.
 func (this PaginatedResponse[T]) IsEmpty() bool { return len(this.Items) == 0 }
 
-// MapPage converts the items of a page while keeping the pager intact — handy
-// for turning entities into DTOs at the transport edge.
 func MapPage[A, B any](p PaginatedResponse[A], f func(A) B) PaginatedResponse[B] {
 	out := make([]B, len(p.Items))
 	for i, v := range p.Items {

@@ -2,9 +2,6 @@ package query
 
 import "strings"
 
-// opKind is the canonical operator. Every spelling a client may send — JSON
-// key, `$`-prefixed Mongo style, or a query-string triple — folds into one of
-// these, so the two front doors can never drift apart.
 type opKind int
 
 const (
@@ -56,7 +53,6 @@ var opNames = map[string]opKind{
 	"isnotnull": opIsNotNull, "notnull": opIsNotNull,
 }
 
-// normalizeOp folds a spelling into its canonical operator.
 func normalizeOp(s string) (opKind, bool) {
 	s = strings.TrimPrefix(strings.TrimSpace(s), "$")
 	if k, ok := opNames[s]; ok {
@@ -66,8 +62,6 @@ func normalizeOp(s string) (opKind, bool) {
 	return k, ok
 }
 
-// textual reports whether the operator compares against a LIKE pattern rather
-// than a typed value, so the raw string is used instead of a coerced one.
 func (this opKind) textual() bool {
 	switch this {
 	case opLike, opNotLike, opILike, opContains, opStartsWith, opEndsWith, opIContains, opIStartsWith, opIEndsWith:
@@ -76,7 +70,6 @@ func (this opKind) textual() bool {
 	return false
 }
 
-// multi reports whether the operator takes a value list.
 func (this opKind) multi() bool {
 	switch this {
 	case opIn, opNotIn, opBetween:
@@ -85,7 +78,6 @@ func (this opKind) multi() bool {
 	return false
 }
 
-// unary reports whether the operator takes no value at all.
 func (this opKind) unary() bool { return this == opIsNull || this == opIsNotNull }
 
 func (this opKind) String() string {

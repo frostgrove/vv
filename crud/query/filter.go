@@ -9,11 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// node compiles one filter object. Keys are either logical combinators
-// (and/or/not) or field paths; the rest of the object is ANDed together.
-//
-// Keys are visited in sorted order so the generated SQL is deterministic —
-// Go map iteration is not, and untestable SQL is not worth having.
 func (this *compiler) node(raw json.RawMessage, where string, depth int) (crud.Predicate, error) {
 	raw = trim(raw)
 	if len(raw) == 0 || isNull(raw) {
@@ -26,11 +21,7 @@ func (this *compiler) node(raw json.RawMessage, where string, depth int) (crud.P
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, errf(where, "expected an object, got %s", preview(raw))
 	}
-	// Request.UnmarshalJSON scans the whole document. RawFilter is also public,
-	// though, so compile its programmatic route with the same no-duplicates
-	// rule rather than granting it a last-wins escape hatch. Do it after the
-	// shape check so malformed query-string JSON keeps the useful "expected an
-	// object" diagnostic rather than exposing a decoder implementation detail.
+
 	if depth == 1 {
 		if err := rejectDuplicateJSONKeys(raw); err != nil {
 			return nil, err
@@ -51,11 +42,6 @@ func (this *compiler) node(raw json.RawMessage, where string, depth int) (crud.P
 		val := obj[key]
 		sub := where + "." + key
 
-		// A schema may legitimately expose a field called Or, And or Not. The
-		// dollar spelling is always a combinator; the bare spelling is a
-		// combinator only when it does not resolve to a model field. That keeps
-		// old documents readable on ordinary models and gives the ambiguous
-		// models both operations (`$or`) and the field itself (`or`).
 		logical := !isFilterField(this, key)
 		switch strings.ToLower(key) {
 		case "$and":
@@ -155,11 +141,9 @@ func appendPred(destination []crud.Predicate, p crud.Predicate) []crud.Predicate
 	return append(destination, p)
 }
 
-// list compiles the array form of and/or.
 func (this *compiler) list(raw json.RawMessage, where string, depth int, op string) (crud.Predicate, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
-		// A bare object is accepted too: {"or": {...}} is just that object.
 		p, oerr := this.node(raw, where, depth)
 		if oerr != nil {
 			return nil, errf(where, "expected an array of filter objects, got %s", preview(raw))
@@ -183,8 +167,6 @@ func (this *compiler) list(raw json.RawMessage, where string, depth int, op stri
 	return crud.And(preds...), nil
 }
 
-// condition compiles one field entry: either a shorthand value or an operator
-// object.
 func (this *compiler) condition(path string, raw json.RawMessage, where string) (crud.Predicate, error) {
 	f, canonical, err := this.path(path, where)
 	if err != nil {
@@ -203,7 +185,6 @@ func (this *compiler) condition(path string, raw json.RawMessage, where string) 
 	case '{':
 		return this.operators(canonical, f, raw, where)
 	case '[':
-		// {"status": ["draft","live"]} means IN.
 		if err := this.count(where); err != nil {
 			return nil, err
 		}
@@ -233,7 +214,6 @@ func (this *compiler) condition(path string, raw json.RawMessage, where string) 
 	}
 }
 
-// operators compiles {"gte": 1, "lt": 10} into one ANDed condition.
 func (this *compiler) operators(field string, f *crud.Field, raw json.RawMessage, where string) (crud.Predicate, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -274,11 +254,7 @@ func (this *compiler) operator(field string, f *crud.Field, op string, raw json.
 	if !ok {
 		return nil, errf(where, "unknown operator %q", op)
 	}
-	// json.Unmarshal reads null as "leave the destination alone", so a null
-	// operand used to arrive as the zero value of whatever the operator wanted:
-	// {"contains": null} became LIKE '%%' and {"notIn": null} became NOT IN () —
-	// a narrowing the client asked for turning into no narrowing at all. Only a
-	// scalar comparison has an answer for null, and crud.Eq folds that to IS NULL.
+
 	if isNull(trim(raw)) && (kind.unary() || kind.textual() || kind.multi()) {
 		return nil, errf(where, "%s has no meaning with null", op)
 	}
@@ -335,9 +311,6 @@ func (this *compiler) operator(field string, f *crud.Field, op string, raw json.
 	}
 }
 
-// buildScalar, buildText and buildMulti are the single place an operator turns
-// into a predicate; both the JSON and the query-string front doors go through
-// them.
 func buildScalar(field string, kind opKind, v any) crud.Predicate {
 	switch kind {
 	case opNe:

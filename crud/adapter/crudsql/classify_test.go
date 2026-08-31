@@ -101,19 +101,6 @@ func TestSourceBoundExecutorInheritsTheDeclaredEngine(t *testing.T) {
 	}
 }
 
-// The degradation [[D-046]]'s last forbid buys, made visible.
-//
-// A constructor that names its engine classifies; one that cannot name it does
-// not. crud.Dialect is not the engine — crud.MySQL is MariaDB too, and the two
-// answer a failed CHECK with different numbers — so Open, From and Source name
-// nothing and get no classifier. The cost is a 409 with no code; the alternative
-// is a wrong code on MariaDB, which is worse and silent.
-//
-// The pair is its own control in both directions. Without the Open/From half
-// this says nothing about the degradation, and without the WithFaults half it
-// passes for an option that is ignored. crudsql.From is [[UC-005]]'s headline
-// path and appears all over the tree, so an invisible loss of the feature there
-// is the failure this exists to catch.
 func TestOnlyADeclaredEngineProducesACode(t *testing.T) {
 	driver := &pgconnish{
 		Code:           "23505",
@@ -137,8 +124,6 @@ func TestOnlyADeclaredEngineProducesACode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.conflict(driver)
 
-			// Every one of them answers the sentinel. That half never degrades:
-			// the gate is dialect-free.
 			if !errors.Is(got, crud.ErrConflict) {
 				t.Fatalf("a duplicate key stopped being a conflict: %v", got)
 			}
@@ -156,9 +141,6 @@ func TestOnlyADeclaredEngineProducesACode(t *testing.T) {
 	}
 }
 
-// MariaDB is a constructor of its own because the two servers disagree about a
-// number while sharing a driver, a dialect and a wire protocol. Getting it wrong
-// costs the code and never the status.
 func TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor(t *testing.T) {
 	check := newMySQLish(4025, "23000", "CONSTRAINT `ck_age` failed")
 
@@ -167,9 +149,6 @@ func TestAMariaDBNumberIsOnlyReadByTheMariaDBConstructor(t *testing.T) {
 		t.Fatalf("MariaDB's 4025 did not classify as a check through MariaDB(): %v", f)
 	}
 
-	// The control. Through MySQL() the same violation is still a 409 — class 23
-	// covers it — and carries no code, because 4025 is not in MySQL's table.
-	// That is the whole reason the constructor exists.
 	got := MySQL(nil).conflict(check)
 	if !errors.Is(got, crud.ErrConflict) {
 		t.Fatalf("the sentinel was lost as well as the code: %v", got)

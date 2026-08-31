@@ -9,9 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud/crudtest"
 )
 
-// UpdateAll is Update's filtered partner, and the whole point of it is that
-// "rename every user in this tenant" is one statement rather than one SELECT and
-// one UPDATE per row.
 func TestUpdateAllIsOneStatementForTheWholeFilter(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 3})
 
@@ -32,10 +29,6 @@ func TestUpdateAllIsOneStatementForTheWholeFilter(t *testing.T) {
 	}
 }
 
-// The three DTO states mean here exactly what they mean on Update — undefined is
-// never written, null is written as NULL — with one difference that the shape
-// forces: there is no row to diff against, so a value a row already holds is
-// written rather than skipped.
 func TestUpdateAllWritesEveryDefinedFieldAndNothingElse(t *testing.T) {
 	ctx := context.Background()
 
@@ -72,9 +65,6 @@ func TestUpdateAllWritesEveryDefinedFieldAndNothingElse(t *testing.T) {
 	})
 }
 
-// A repository-level scope is a narrowing no caller can widen, and a write that
-// touches rows nobody named is the last place it may be forgotten: without it
-// UpdateAll would reach exactly the rows the repository exists to hide.
 func TestUpdateAllCarriesTheRepositoryScope(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
 

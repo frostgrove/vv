@@ -7,18 +7,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// KindForStatus is [StatusFor] read backwards: the kind a client recovers from
-// the status a service answered.
-//
-// It lives beside the table it inverts because the two have to agree, and two
-// files would agree until the first time one of them gained a row. What it
-// cannot recover is anything the forward table never distinguished — a status
-// outside the table is [errs.KindInternal], which is what an unrecognised
-// failure means on this side too.
-//
-// Every 2xx is [errs.KindInternal] as well, and that is not an oversight: this
-// is only ever asked about a response that failed, and a success reaching it is
-// a bug in the caller rather than a kind.
 func KindForStatus(code int) errs.Kind {
 	switch code {
 	case http.StatusNotFound:
@@ -44,18 +32,6 @@ func KindForStatus(code int) errs.Kind {
 	}
 }
 
-// ParseEnvelope reads a failure body back into the [Envelope] a renderer wrote.
-//
-// The second result is what makes it safe to use. It is false when the body is
-// not an envelope at all, and a caller must treat that as a transport failure
-// rather than as the status it arrived with. The case that forces it: a wrong
-// base URL gets `404 page not found` in text/plain from http.ServeMux, and a
-// client that read the status alone would report crud.ErrNotFound — turning a
-// misconfiguration into "the row is not there", permanently and quietly, with
-// nothing in the response to contradict it.
-//
-// [Envelope.Type] is checked for exactly this. It is always "error", so that a
-// client can branch before parsing.
 func ParseEnvelope(body []byte) (Envelope, bool) {
 	var w wireEnvelope
 	if err := json.Unmarshal(body, &w); err != nil {
@@ -74,12 +50,6 @@ func ParseEnvelope(body []byte) (Envelope, bool) {
 	}, true
 }
 
-// Violations flattens the envelope's two groups back into one list.
-//
-// General first, which is the order errs.SortViolations put them in before
-// [group] split them: an empty path is shorter than any other, and a shorter
-// path sorts first. Restoring it means a gateway that decodes a failure and
-// renders it again produces the same body it received.
 func (this Envelope) Violations() []errs.Violation {
 	out := make([]errs.Violation, 0, len(this.Errors.General)+len(this.Errors.Validation))
 	out = append(out, this.Errors.General...)
@@ -87,13 +57,6 @@ func (this Envelope) Violations() []errs.Violation {
 	return out
 }
 
-// The wire shapes. They exist rather than an UnmarshalJSON on errs.Violation
-// because the decode is lossy and has to look it: three public fields out of
-// seven reach a client ([[D-044]]), and a method that read like the inverse of
-// Violation.MarshalJSON would hand back Origin, Params and Source as their zero
-// values with nothing saying they were never sent. errs.Path is the opposite
-// case and does have an UnmarshalJSON — a path is the whole of itself on the
-// wire.
 type wireEnvelope struct {
 	Type    string `json:"type"`
 	Partial bool   `json:"partial"`
@@ -115,8 +78,6 @@ func violationsOf(ws []wireViolation) []errs.Violation {
 	}
 	out := make([]errs.Violation, 0, len(ws))
 	for _, w := range ws {
-		// Origin is not set here and is not guessed here either. It is derived
-		// from the kind, which this layer does not know, by port.FaultFrom.
 		out = append(out, errs.Violation{Path: w.Field, Code: w.Code, Message: w.Message})
 	}
 	return out

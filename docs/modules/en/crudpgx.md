@@ -59,32 +59,72 @@ is refused with `crud.ErrExecutorScope` rather than falling back to the pool
 
 ## Bulk insert, through COPY
 
-`crudpgx` implements `crud.BulkInserter` with `COPY`. **Nothing in the library
-reaches for it.** `SaveAll` writes one multi-row `INSERT` whatever the executor
-underneath can do, so this is a door the application opens itself:
+Use the typed repository verb; when metadata yields insert columns, `crudpgx`
+supplies PostgreSQL `COPY` behind it automatically:
 
 ```go
-if bulk, ok := src.(crud.BulkInserter); ok {
-    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
-}
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
 ```
 
-The compatibility interface accepts one table-name component. For a table in a
-non-default PostgreSQL schema, keep the components structured:
+The repository derives the exact table, columns and values from metadata,
+applies security and fault decorators before reaching the driver, and treats
+every row as create-only. An assigned primary key may conflict; it is never an
+upsert. The models are not mutated and generated values are not read back.
+
+`InsertBatch` resolves the executor bound to this datasource in `ctx`. Inside a
+foreign or vv-owned transaction, COPY therefore runs on that transaction and
+rolls back with it. If the resolved handle cannot COPY, or the model has no
+insert columns, the repository uses atomic bind-budgeted `INSERT` statements
+instead.
+
+COPY and ordinary INSERT do not have identical PostgreSQL table semantics. RLS
+and rewrite-rule tables, values that need pgx's ordinary parameter encoding, or
+callers requiring ordinary INSERT semantics should select the portable path:
 
 ```go
-n, err := src.CopyFromTable(ctx,
-    crud.TableRef{Schema: "tenant_42", Name: "products"},
-    cols, rows,
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+
+var Users = sqlrepo.Define[User, int64, UserUpdate](
+    "users",
+    sqlrepo.PortableBatch(),
 )
 ```
 
-`CopyFrom(ctx, "tenant_42.products", ...)` is rejected before pgx is called;
-it is never guessed or passed as one quoted relation name. `CopyFromTable`
-hands pgx the two exact `pgx.Identifier` components.
+A Source wrapper sees a direct one-statement portable plan, not statements on a
+transaction handle opened underneath it. Configure pgx's driver tracer, or
+return an instrumented transaction from `Begin`, when every statement must be
+visible.
 
-The call runs on the handle that executor holds and ignores any transaction in
-the context ([[UC-008]]).
+This is an explicit semantic choice. A server/encoding error from a COPY that
+was already attempted is returned as-is (with the configured classifier); vv
+does not retry those rows as SQL and risk duplicating effects.
+
+For deliberate raw work, the context-aware escape hatch still resolves an
+ambient executor:
+
+```go
+n, err := crud.UnsafeBulkInsertFor(ctx, src,
+    crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
+```
+
+For exact-handle behaviour, the adapter exposes
+`src.UnsafeCopyFrom(ctx, "users", cols, rows)` and the structured form:
+
+```go
+n, err := src.UnsafeCopyFromTable(ctx,
+    crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
+```
+
+`UnsafeCopyFrom` accepts one exact identifier component and refuses a dotted
+legacy string. `UnsafeCopyFromTable` gives pgx the structured
+`pgx.Identifier` components. Both run on the receiver's exact handle and do not
+consult a transaction in `ctx`; both bypass repository metadata and Core
+decorators, although pgx errors still pass through this executor's classifier.
+
+Pre-release migration: `crud.BulkInserter`, `CopyFrom` and `CopyFromTable` were
+removed. Use `Repo.InsertBatch` for application writes,
+`crud.UnsafeBulkInsertFor` for raw context-aware rows, or the explicitly unsafe
+adapter methods when an exact handle is intentional.
 
 ## Structured error codes
 
@@ -121,4 +161,4 @@ instead of an anonymous 500.
 - [crudsql](crudsql.md) — `database/sql`, and therefore ent, gorm, sqlx, sqlc, bun
 - [sqlfault](sqlfault.md) — what `WithFaults` takes
 - [`_examples/pgx-fiber`](../../../_examples/pgx-fiber/) · [`_examples/pgx-grpc`](../../../_examples/pgx-grpc/)
-- [[UC-008]] write many rows in one statement · [[FL-009]] transactions
+- [[UC-008]] safe typed batch insert · [[FL-009]] transactions

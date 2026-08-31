@@ -11,10 +11,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// render is the whole comparison this file rests on: a predicate as the
-// database would see it, arguments included. Two predicates that render the
-// same statement with the same binds are the same question, whatever shape the
-// document that produced them had.
 func render(t *testing.T, p crud.Predicate) (string, []any) {
 	t.Helper()
 	sql, args, err := crud.NewSQL(crud.Postgres{}, Articles.Meta()).Predicate(p).Done()
@@ -24,8 +20,6 @@ func render(t *testing.T, p crud.Predicate) (string, []any) {
 	return sql, args
 }
 
-// filterOf compiles a filter document on its own and folds it to one predicate,
-// the way a repository does.
 func filterOf(t *testing.T, doc string) crud.Predicate {
 	t.Helper()
 	var request query.Request
@@ -39,14 +33,6 @@ func filterOf(t *testing.T, doc string) crud.Predicate {
 	return crud.Build(options...).Predicate()
 }
 
-// A filter that goes out to another service and comes back has to ask the same
-// question. Not to look the same — shorthand spellings may be canonicalised —
-// but to render the same statement against the same binds, because that is the
-// only thing a caller can observe.
-//
-// This is the test that makes crud.MarshalPredicate worth having: without it,
-// a remote Get with a filter is a remote Get with no filter, answering 200 with
-// every row in the table.
 func TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate(t *testing.T) {
 	docs := map[string]string{
 		"shorthand value":           `{"title": "go"}`,
@@ -88,9 +74,6 @@ func TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate(t *testing.T) {
 			first := filterOf(t, doc)
 			wantSQL, wantArgs := render(t, first)
 
-			// Without this the test would pass for a marshaller that produced
-			// an empty document and a compiler that read it as no filter: both
-			// sides would render "" and agree.
 			if wantSQL == "" {
 				t.Fatalf("%s rendered no SQL, so this case proves nothing", doc)
 			}
@@ -115,10 +98,6 @@ func TestEveryFilterDocumentSurvivesARoundTripThroughAPredicate(t *testing.T) {
 	}
 }
 
-// The dangerous half. Every one of these means "no rows" or "SQL", and the
-// filter document can say neither. Dropping one silently is the failure that
-// matters: an And that loses a term answers with more rows than the caller
-// asked for, over a 200, and nothing in the response says so.
 func TestAPredicateTheWireCannotCarryIsRefusedByName(t *testing.T) {
 	cases := map[string]struct {
 		p    crud.Predicate
@@ -156,9 +135,6 @@ func TestAPredicateTheWireCannotCarryIsRefusedByName(t *testing.T) {
 	}
 }
 
-// The identity elements are not refused, because a scope default of crud.True()
-// is documented as a thing to write and it narrows nothing. What it must not do
-// is survive into an Or, where "every row" swallows the rest.
 func TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr(t *testing.T) {
 	both := func(t *testing.T, p crud.Predicate) string {
 		t.Helper()
@@ -178,15 +154,14 @@ func TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr(t *testing.T) {
 	if got := both(t, crud.NotIn("Views")); got != "{}" {
 		t.Fatalf("NotIn of nothing went out as %s; it is the true identity", got)
 	}
-	// The term survives and the identity does not: an And keeps the narrowing.
+
 	if got := both(t, crud.And(crud.True(), crud.Eq("Title", "go"))); got != `{"Title":{"eq":"go"}}` {
 		t.Fatalf("And(True, eq) went out as %s", got)
 	}
 	if got := both(t, crud.And(crud.NotIn("Views"), crud.Eq("Title", "go"))); got != `{"Title":{"eq":"go"}}` {
 		t.Fatalf("And(empty NotIn, eq) went out as %s", got)
 	}
-	// The Or does not: any-true is true, and sending only the other term would
-	// answer with fewer rows than the caller asked for.
+
 	if got := both(t, crud.Or(crud.True(), crud.Eq("Title", "go"))); got != "{}" {
 		t.Fatalf("Or(True, eq) went out as %s; Or with an unconditional term is every row", got)
 	}
@@ -248,10 +223,6 @@ func TestJSONTermNullSurvivesARoundTrip(t *testing.T) {
 	}
 }
 
-// Two conditions on one field are the case a document built out of a map gets
-// wrong: {"views":{...},"views":{...}} is a repeated JSON key, and a decoder
-// keeps the last one. Half the caller's filter would go missing with nothing to
-// see, so every node writes a single-key object and And writes an array.
 func TestTwoConditionsOnOneFieldBothSurvive(t *testing.T) {
 	p := crud.And(crud.Gte("Views", 1), crud.Lte("Views", 10))
 	wantSQL, wantArgs := render(t, p)

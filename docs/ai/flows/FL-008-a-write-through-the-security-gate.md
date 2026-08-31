@@ -1,9 +1,9 @@
 # FL-008 — A write through the security gate
 
-**Entry point:** `crud/decorators/security/security.go:gate.Save` / `:gate.Update` / `:gate.Delete` / `:gate.DeleteAll` / `:gate.UpdateAll`
-**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-079]]
+**Entry point:** the write methods on `crud/decorators/security/security.go:gate`, including `InsertBatch`
+**Implements:** [[UC-004]] [[UC-008]] · **Governed by:** [[D-008]] [[D-004]] [[D-011]] [[D-030]] [[D-079]] [[D-083]]
 
-Reads have one shape. Writes have five, and each one has a different reason it
+Reads have one shape. Writes have several, and each has a different reason it
 cannot simply AND a predicate into a statement.
 
 ## Save — the unscoped-existence probe
@@ -40,6 +40,21 @@ cannot simply AND a predicate into a statement.
 4. `authorize(Create|Update)`, then `inspect(action, m)` on the **incoming**
    model (`security.go:377`) — this is what catches a row being written *into*
    somebody else's scope — then `Core.Save`.
+
+## InsertBatch — create-only and exact
+
+`gate.InsertBatch` copies every command, resolves its scope and relation-scope
+preconditions once, authorises `Create`, then inspects every row as `Create`
+before any storage call.
+An assigned key never changes the action to Update because the repository verb
+is insert-only. A scope or relation scope without `Inspect` is refused: an
+INSERT has no WHERE clause in which to enforce it.
+
+The gate invokes `crud.InsertBatchOf` on its exact inner Core. It does not walk
+through a decorator that may own another validation or audit obligation. That
+layer must implement the optional verb explicitly or the call fails closed with
+`ErrNoBatchInsertSupport`. Batch options are forwarded unchanged; sqlrepo alone
+selects native COPY or portable SQL ([[D-083]]).
 
 ## Update — the scope in both halves
 
@@ -113,6 +128,8 @@ scope are simply not matched, so the reported count is honest.
 - **Storage chunking repeats the declaration-time scope.** The gate's direct
   fast path may become several statements only at a dialect bind boundary; the
   repository preflights all of them and shares one transaction ([[D-079]]).
+- **InsertBatch is always Create.** Assigned ids conflict rather than becoming
+  authorised overwrites, and every row is checked before native or portable I/O.
 
 ## Failure modes
 
@@ -128,6 +145,9 @@ scope are simply not matched, so the reported count is honest.
 | `Inspect` refuses one victim | the scan loops (`security.go:527`, `:561`, `:586`) | 403, and no statement is issued |
 | policy is `ReadOnly` | `Authorize` (`policies.go:127`) | 403 |
 | `nil` model to `Save` | `gate.Save` (`security.go:339`) | 403 |
+| one `InsertBatch` row fails `Inspect` | `gate.InsertBatch` preflight | 403, no row written |
+| a scope-only policy cannot validate an inserted row | `gate.InsertBatch` | 403 naming the missing Inspect |
+| an inner decorator did not preserve the optional verb | exact capability check | `ErrNoBatchInsertSupport`, no I/O |
 
 ## Files
 
@@ -139,6 +159,7 @@ scope are simply not matched, so the reported count is honest.
 | `crud/access.go` | `HasID`, `ID`, `Values`, `ElemValue` |
 | `crud/sqlrepo/repository.go` | `Update` (options in both halves), `Delete`, `DeleteAll`, `UpdateAll` |
 | `crud/options.go` | `Where` accumulating, which is what makes a prepended scope unremovable |
+| `crud/batch.go` | exact optional-verb dispatch and fail-closed error |
 
 ## Tests that walk this flow
 
@@ -163,6 +184,9 @@ scope are simply not matched, so the reported count is honest.
 - `TestUpdateAllInspectsEveryRowItIsAboutToWrite` — `crud/decorators/security/updateall_test.go`.
 - `TestUpdateAllIsRefusedByAReadOnlyPolicy` — `crud/decorators/security/updateall_test.go`.
 - `TestInspectAbortsTheWholeCall` — `crud/decorators/security/edge_test.go`.
+- `TestGateTreatsEveryInsertBatchRowAsCreateBeforeNativeIO` and
+  `TestPortableBatchSurvivesEveryBuiltInDecoratorOrder` —
+  `crud/sqlrepo/insert_batch_test.go`.
 - `TestARowHiddenFromReadsIsStillDeletableByID` — `crud/http/crudfiber/write_edge_test.go` — what happens *without* a gate, and why `WithScope` is not one.
 
 ## See also

@@ -10,9 +10,6 @@ import (
 	"github.com/frostgrove/vv/auth"
 )
 
-// The same three fixtures the HTTP bindings carry, and for the same reason: a
-// test name that appears in all four transports has to mean the same thing.
-
 const badToken = "signature does not verify"
 
 var errKeyProviderUnavailable = errors.New("verification key source unavailable")
@@ -48,8 +45,6 @@ func counting(n *int) auth.Authenticator {
 	})
 }
 
-// seen records the principal the handler behind the interceptor observed. A
-// gRPC method has only the context, so there is nowhere else it could look.
 type seen struct {
 	ran       bool
 	principal auth.Principal
@@ -62,8 +57,6 @@ func (this *seen) handle(ctx context.Context, _ any) (any, error) {
 	return "ok", nil
 }
 
-// incoming builds the context a server sees for a call carrying these metadata
-// pairs.
 func incoming(kv ...string) context.Context {
 	if len(kv) == 0 {
 		return context.Background()

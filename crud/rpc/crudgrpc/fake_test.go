@@ -16,14 +16,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// ---------------------------------------------------------------------------
-// the model
-
-// Widget is the model every test in this package drives the handler with, the
-// same shape the three HTTP bindings use: the auto primary key and the
-// `generated` column are what a create request must not be allowed to dictate,
-// Secret is what a presenter has to hide, and Note is the nullable column whose
-// three states have to survive a fourth transport.
 type Widget struct {
 	ID        int64            `db:"id,pk,auto" json:"id"`
 	Name      string           `db:"name" json:"name"`
@@ -34,22 +26,12 @@ type Widget struct {
 	Parts     []Part           `rel:"has_many" json:"-"`
 }
 
-// Part lets the remote-client round trip cover a narrowed preload on gRPC.
-// It stays out of fixture response JSON; the test observes the options after
-// the real binding compiles them.
 type Part struct {
 	ID       int64  `db:"id,pk,auto" json:"id"`
 	WidgetID int64  `db:"widget_id" json:"widgetId"`
 	Label    string `db:"label" json:"label"`
 }
 
-// WidgetUpdate is the patch DTO: a pointer for the two-state column and an Opt
-// for the nullable one, so "absent" and "explicitly null" stay distinguishable
-// all the way from the request document to the repository.
-// The tags are the ones cmd/vv writes. The Opt's `omitzero` is load-bearing on
-// the way out rather than the way in: an undefined Opt marshals to null, so a
-// patch built from this type and sent to a service would empty every column the
-// caller left alone. remote.New refuses a DTO without it.
 type WidgetUpdate struct {
 	Name  *string          `json:"name,omitempty"`
 	Price *int             `json:"price,omitempty"`
@@ -64,12 +46,7 @@ var widgetMeta = func() *crud.Meta {
 	return m
 }()
 
-// savedAt is what the fake writes into the `generated` column, the way a
-// database default would.
 var savedAt = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
-
-// ---------------------------------------------------------------------------
-// the fake repository
 
 type recordedCall struct {
 	Method string
@@ -87,7 +64,6 @@ type fakeRepo struct {
 	one     Widget
 	count   int64
 
-	// err, when set, fails every method — the seam for error-mapping tests.
 	err error
 
 	calls []recordedCall
@@ -160,8 +136,6 @@ func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, e
 	return this.count, nil
 }
 
-// Save records the model as it arrived — before the key is filled in — because
-// what the handler handed over is exactly what the write tests are about.
 func (this *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	this.calls = append(this.calls, recordedCall{Method: "Save", Model: *m})
 	if this.err != nil {
@@ -202,8 +176,6 @@ func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
 	return int64(len(ids)), nil
 }
 
-// only returns the one call the handler made to method, failing when it made
-// none or several.
 func (this *fakeRepo) only(t *testing.T, method string) recordedCall {
 	t.Helper()
 	var found []recordedCall
@@ -231,16 +203,8 @@ func (this *fakeRepo) methods() []string {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// driving the handler over a real connection
-
-// The resource name every test registers under, so a full method name is
-// spelled once.
 const resource = "Widget"
 
-// serve runs a handler on an in-process gRPC server and answers a client that
-// calls it by full method name — no generated stub, which is the point of the
-// Struct shape.
 func serve(t *testing.T, desc *grpc.ServiceDesc, options ...grpc.ServerOption) *client {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
@@ -262,8 +226,6 @@ func serve(t *testing.T, desc *grpc.ServiceDesc, options ...grpc.ServerOption) *
 	return &client{t: t, conn: conn, service: desc.ServiceName}
 }
 
-// mount builds a handler over a fresh fake and serves it the way the package
-// documentation says to.
 func mount(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*client, *fakeRepo) {
 	t.Helper()
 	f := newFake()
@@ -277,16 +239,12 @@ type client struct {
 	md      metadata.MD
 }
 
-// with answers a client that sends the given metadata on every call.
 func (this *client) with(md metadata.MD) *client {
 	out := *this
 	out.md = md
 	return &out
 }
 
-// call sends one request and hands back the answer and the status. Both, always:
-// a test that only ever saw the error could not tell an empty answer from a
-// missing one.
 func (this *client) call(method string, in *structpb.Struct) (*structpb.Struct, *status.Status) {
 	this.t.Helper()
 	ctx := context.Background()
@@ -305,8 +263,6 @@ func (this *client) call(method string, in *structpb.Struct) (*structpb.Struct, 
 	return nil, st
 }
 
-// ok sends a request and insists it succeeded, so a test that is about the
-// answer fails with the server's own words when there was none.
 func (this *client) ok(method string, in *structpb.Struct) *structpb.Struct {
 	this.t.Helper()
 	out, st := this.call(method, in)
@@ -316,7 +272,6 @@ func (this *client) ok(method string, in *structpb.Struct) *structpb.Struct {
 	return out
 }
 
-// fails sends a request and insists it did not succeed.
 func (this *client) fails(method string, in *structpb.Struct) *status.Status {
 	this.t.Helper()
 	out, st := this.call(method, in)
@@ -326,8 +281,6 @@ func (this *client) fails(method string, in *structpb.Struct) *status.Status {
 	return st
 }
 
-// doc builds a request document out of literal JSON, so a test reads like the
-// call a client makes.
 func doc(t *testing.T, raw string) *structpb.Struct {
 	t.Helper()
 	st := &structpb.Struct{}

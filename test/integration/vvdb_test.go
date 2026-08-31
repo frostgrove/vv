@@ -15,10 +15,6 @@ import (
 	"github.com/frostgrove/vv/utils/vvdb/dbpgx"
 )
 
-// The compose file is the source of these, and the environment overrides them
-// the same way the rest of the suite is overridden. When VV_*_DSN is set the
-// builder is bypassed on purpose: the question this file asks then is only
-// whether vvdb can open what it is pointed at.
 func vvdbConfig(t *testing.T, engine vvdb.Engine, envVar string, port int) vvdb.Config {
 	t.Helper()
 	if dsn := os.Getenv(envVar); dsn != "" {
@@ -29,14 +25,11 @@ func vvdbConfig(t *testing.T, engine vvdb.Engine, envVar string, port int) vvdb.
 		User: "vv", Password: "vv", Name: "vv",
 		Pool: vvdb.Pool{MaxOpen: 4, ConnectTimeout: 5 * time.Second},
 	}
-	// The local compose services intentionally do not provision certificates.
-	// Plaintext is therefore an explicit test-fixture waiver for every engine.
+
 	c.SSLMode = "disable"
 	return c
 }
 
-// The whole promise of the package in one test: the same three fields, spelled
-// once, reach three different servers through two different string syntaxes.
 func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -57,8 +50,7 @@ func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 			if err := database.PingContext(ctx); err != nil {
 				t.Fatalf("the %s server refused the string vvdb built: %v", tc.name, err)
 			}
-			// Through the adapter, because a handle that pings and cannot run a
-			// statement would still pass the line above.
+
 			var one int
 			rows, err := tc.source(database).Query(ctx, "SELECT 1")
 			if err != nil {
@@ -78,8 +70,6 @@ func TestOneConfigShapeOpensEveryEngine(t *testing.T) {
 	}
 }
 
-// The control case. Without it the test above passes on any string that
-// happens to connect, including one built from the wrong fields.
 func TestAWrongPasswordIsRefusedByTheServer(t *testing.T) {
 	if os.Getenv("VV_PG_DSN") != "" {
 		t.Skip("the DSN is supplied whole, so there are no fields to get wrong")

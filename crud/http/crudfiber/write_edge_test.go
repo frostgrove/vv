@@ -14,11 +14,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// POST refuses a client-chosen key when the database generates it, and PUT is
-// the other write route to the same table. It used to hand the URL's id
-// straight to the repository, so /widgets/999 created row 999 — and on
-// PostgreSQL an explicit insert into a serial column does not advance the
-// sequence, so the next POST collides on the primary key and keeps colliding.
 func TestPutIsNotAWayAroundAllowClientID(t *testing.T) {
 	t.Run("POST cannot choose an id", func(t *testing.T) {
 		app, fake := mount(t)
@@ -30,7 +25,7 @@ func TestPutIsNotAWayAroundAllowClientID(t *testing.T) {
 
 	t.Run("and neither can PUT", func(t *testing.T) {
 		app, fake := mount(t)
-		fake.err = crud.ErrNotFound // no row 999 to replace
+		fake.err = crud.ErrNotFound
 
 		r := do(t, app, http.MethodPut, "/widgets/999", `{"name":"bolt"}`)
 
@@ -64,10 +59,6 @@ func TestPutIsNotAWayAroundAllowClientID(t *testing.T) {
 	})
 }
 
-// WithScope reaches the reads and nothing else, because Save, Update and Delete
-// take no options — there is nowhere for a predicate to go. That is documented,
-// and pinned here so it cannot quietly drift into looking like protection: with
-// a read scope in place the same id is 404 on GET and 200 on DELETE.
 func TestWithScopeReachesTheReadsAndSaysNothingAboutTheWrites(t *testing.T) {
 	scoped := WithScope[Widget, int64, WidgetUpdate](func(fiber.Ctx) ([]crud.Option, error) {
 		return []crud.Option{crud.Where(crud.Eq("OwnerID", int64(7)))}, nil
@@ -111,8 +102,6 @@ func TestWithScopeReachesTheReadsAndSaysNothingAboutTheWrites(t *testing.T) {
 	}
 }
 
-// The asymmetry, stated as the outcome a reader would meet: a row a read scope
-// hides is still deletable by id through the same handler.
 func TestARowHiddenFromReadsIsStillDeletableByID(t *testing.T) {
 	app, fake := mount(t, WithScope[Widget, int64, WidgetUpdate](func(fiber.Ctx) ([]crud.Option, error) {
 		return []crud.Option{crud.Where(crud.Eq("OwnerID", int64(7)))}, nil
@@ -130,9 +119,6 @@ func TestARowHiddenFromReadsIsStillDeletableByID(t *testing.T) {
 	}
 }
 
-// A conflict is a client-visible outcome, so it must not fall into the 500 that
-// deliberately says nothing. The adapters classify a driver's integrity errors
-// into crud.ErrConflict; this is the other end of that wire.
 func TestAnIntegrityConflictIsA409WithAMessage(t *testing.T) {
 	app, fake := mount(t)
 	fake.err = errors.Join(crud.ErrConflict, errors.New("duplicate key value violates unique constraint"))
@@ -147,10 +133,6 @@ func TestAnIntegrityConflictIsA409WithAMessage(t *testing.T) {
 	}
 }
 
-// A misspelled key in the query document used to parse into an empty request:
-// the endpoint answered 200 with the whole table, which is the one failure a
-// client cannot see. The transport half of that fix is here — the refusal has to
-// survive Fiber's binding and arrive as a 400 naming the key.
 func TestAMisspelledQueryKeyIs400(t *testing.T) {
 	app, fake := mount(t)
 
@@ -163,7 +145,6 @@ func TestAMisspelledQueryKeyIs400(t *testing.T) {
 	}
 }
 
-// And the query-string half, for a parameter that is one typo from one of ours.
 func TestAMisspelledQueryParameterIs400(t *testing.T) {
 	app, fake := mount(t)
 
@@ -173,11 +154,6 @@ func TestAMisspelledQueryParameterIs400(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// what a classified conflict tells the client
-
-// leaky is a driver error shaped like PostgreSQL's, and everything on it is
-// something a response body must not carry.
 type leaky struct {
 	Code                                  string
 	Message                               string
@@ -188,9 +164,6 @@ type leaky struct {
 func (this *leaky) Error() string    { return this.Message }
 func (this *leaky) SQLState() string { return this.Code }
 
-// mysqlish is the other shape, and it is here for one assertion the PostgreSQL
-// one cannot make: the engine's own number. Searching a body for a zero would be
-// matched by any digit it prints.
 type mysqlish struct {
 	Number   uint16
 	SQLState [5]byte
@@ -199,19 +172,6 @@ type mysqlish struct {
 
 func (this *mysqlish) Error() string { return this.Message }
 
-// [[D-044]] on the wire, and [[D-038]]'s seam control against a real produced
-// fault: the fault still answers 409 because the sentinel it wraps is still
-// reachable, and the body carries a code and a sentence and nothing a driver
-// said.
-//
-// The control this test used to carry has inverted, and that is the phase-4
-// change in one place. It used to assert that the *unclassified* conflict
-// beside it still leaked the constraint name, so that something closing the
-// leak would redden here and say the positive leg had stopped measuring
-// anything. Phase 4 is that something: nothing reads err.Error() any more, so
-// the leak is closed for classified and unclassified alike. What replaces it is
-// the same idea one step earlier — the secrets are asserted present on the Go
-// value before the body is searched for them.
 func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 	driver := &leaky{
 		Code:           "23505",
@@ -228,8 +188,7 @@ func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 		"the statement":         "INSERT INTO widgets",
 		"the connection string": "host=db.internal",
 	}
-	// The control: every fragment has to be in the fixture, or finding it absent
-	// from the body proves nothing.
+
 	for name, leak := range leaks {
 		var found bool
 		for _, said := range []string{driver.Message, driver.Code, driver.ConstraintName, driver.TableName, driver.SchemaName, driver.ColumnName} {
@@ -253,9 +212,7 @@ func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 			t.Fatalf("the 409 body names %s: %s", name, r.body)
 		}
 	}
-	// And it is not merely empty: a client still learns what went wrong, and
-	// learns it from the code rather than from a sentence it would have to
-	// parse. A renderer emitting {} passes "names nothing" perfectly.
+
 	if got.Code != "unique" {
 		t.Fatalf("the 409 answered error_code %q, and a client has to be able to branch on it", got.Code)
 	}
@@ -263,17 +220,11 @@ func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 		t.Fatalf("the 409 carries no message: %s", r.body)
 	}
 
-	// The engine's own number, guarded separately: it is an int, and zero
-	// searched for as "0" would be matched by any digit the body prints.
 	my := &mysqlish{Number: 1062, Message: "Duplicate entry 'bolt' for key 'widgets.name'"}
 	copy(my.SQLState[:], "23000")
 	app, fake = mount(t)
 	fake.err = sqlfault.Wrap(sqlfault.New("mysql"), my)
-	// The control this leg needs, and the one the loop above gets for free: the
-	// number has to be in a produced fault. Unclassified, the sentinel gate
-	// alone answers the same 409 and the body carries the driver's message,
-	// which never named the number either — so the assertion below would pass
-	// with MySQL classification deleted.
+
 	mf, isFault := errs.AsFault(fake.err)
 	if !isFault {
 		t.Fatal("the MySQL fixture did not classify, so the 409 below comes from the sentinel gate and searching its body says nothing")
@@ -289,12 +240,6 @@ func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 		t.Fatalf("the 409 body names the engine's own number: %s", r.body)
 	}
 
-	// The second control, and the one that keeps this test honest now that the
-	// old one has inverted: the *unclassified* conflict — the same driver error
-	// with no engine declared — used to answer 409 with the constraint name in
-	// the body, and must not any more. Its secrets are asserted reachable on the
-	// Go error first, so finding them absent from the body measures the
-	// renderer rather than an empty fixture.
 	app, fake = mount(t)
 	fake.err = errors.Join(crud.ErrConflict, driver)
 	if !strings.Contains(fake.err.Error(), "widgets_name_key") {
@@ -318,9 +263,6 @@ func TestAClassifiedConflictsBodyCarriesNothingInternal(t *testing.T) {
 	}
 }
 
-// The 422 arm. A value the engine refused for what it *is* rather than for
-// colliding with something is not a conflict, and a client can now tell the two
-// apart from the status alone.
 func TestAValidationFaultIsA422(t *testing.T) {
 	app, fake := mount(t)
 	fake.err = errs.Validation().Op("Save").Entity("Widget").Code(errs.CodeTooLong).
@@ -335,8 +277,6 @@ func TestAValidationFaultIsA422(t *testing.T) {
 		t.Fatalf("the envelope was %+v, want too_long at name", got)
 	}
 
-	// The control: a collision on the same route is still a 409. Without it a
-	// table answering 422 to everything passes.
 	app, fake = mount(t)
 	fake.err = errs.Conflict().Code(errs.CodeUnique).Field("Name").Code(errs.CodeUnique).
 		Wrapping(crud.ErrConflict).Fault()
@@ -345,9 +285,6 @@ func TestAValidationFaultIsA422(t *testing.T) {
 	}
 }
 
-// [[D-040]]'s 503, owed since phase 3. A deadlock is not the client's mistake
-// and the same request succeeds unmodified a moment later, so a 4xx would tell
-// it to change something it has no way to change.
 func TestARetryableFailureIsA503WithRetryAfter(t *testing.T) {
 	app, fake := mount(t)
 	fake.err = errs.Retryable().Op("Save").Entity("Widget").Code(errs.CodeDeadlock).Fault()
@@ -364,8 +301,6 @@ func TestARetryableFailureIsA503WithRetryAfter(t *testing.T) {
 		t.Fatalf("the envelope names the error %q, want deadlock", got)
 	}
 
-	// The control: the 409 beside it carries no Retry-After. Without it, a
-	// renderer that stamped the header on every response would pass.
 	app, fake = mount(t)
 	fake.err = errs.Conflict().Code(errs.CodeUnique).Wrapping(crud.ErrConflict).Fault()
 	r = do(t, app, http.MethodPost, "/widgets", `{"name":"bolt"}`)
@@ -374,10 +309,6 @@ func TestARetryableFailureIsA503WithRetryAfter(t *testing.T) {
 	}
 }
 
-// The whole point of the chain, end to end: a column the client never sent
-// arrives as the key it did send. The decorator resolves the column to the
-// model field ([[D-043]]'s first hop) and the renderer's raw-body fallback
-// carries it the rest of the way.
 func TestAConstraintViolationNamesTheFieldTheClientSent(t *testing.T) {
 	app, fake := mount(t)
 	fake.err = enriched(t, "widgets", "name")
@@ -395,9 +326,6 @@ func TestAConstraintViolationNamesTheFieldTheClientSent(t *testing.T) {
 		t.Fatalf("the body names the table or the constraint: %s", r.body)
 	}
 
-	// The control: a fault whose table is not this model's yields no field at
-	// all. Without it, a decorator that translated every column it was handed
-	// — including another table's `name` — would pass the leg above.
 	app, fake = mount(t)
 	fake.err = enriched(t, "audit_log", "name")
 	r = do(t, app, http.MethodPost, "/widgets", `{"name":"bolt","price":250}`)
@@ -406,8 +334,6 @@ func TestAConstraintViolationNamesTheFieldTheClientSent(t *testing.T) {
 	}
 }
 
-// enriched runs a driver error through the two layers that fill a path in: the
-// adapter's classifier and the faults decorator.
 func enriched(t *testing.T, table, column string) error {
 	t.Helper()
 	f, ok := errs.AsFault(sqlfault.Wrap(sqlfault.New("postgres"), &leaky{
@@ -420,9 +346,7 @@ func enriched(t *testing.T, table, column string) error {
 	if !ok {
 		t.Fatal("the fixture did not classify, so nothing downstream has a Source to translate")
 	}
-	// The decorator's own hop, applied here rather than through a repository:
-	// this package has no crud.Core to wrap, and crud/decorators/faults is
-	// where that path is tested.
+
 	g := *f
 	g.Violations = append([]errs.Violation(nil), f.Violations...)
 	for i := range g.Violations {

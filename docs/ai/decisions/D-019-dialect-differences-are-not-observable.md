@@ -1,7 +1,7 @@
 # D-019 — A dialect difference must not be observable through the API
 
 **Status:** accepted
-**Invariant:** The same repository call against PostgreSQL, MySQL and SQLite must return the same result, the same error and the same refreshed model, except where a difference is named in this file. There are eleven.
+**Invariant:** The same repository call against PostgreSQL, MySQL and SQLite must return the same result, the same error and the same refreshed model, except where a difference is named in this file. There are twelve.
 
 ## The decision
 
@@ -43,10 +43,11 @@ The compensations, and what each one costs:
 | literal `LIKE` escape syntax | optional `LikeEscaper`: PostgreSQL and SQLite use `ESCAPE '\'`; MySQL/MariaDB use `ESCAPE X'5C'` so `NO_BACKSLASH_ESCAPES` cannot change the one-character expression | hidden behind `Contains` / `StartsWith` / `EndsWith`; raw `Like` still owns its pattern |
 | a generated key on insert | `RETURNING` where available, `LastInsertID` on MySQL | none |
 | `count(DISTINCT a, b)` is MySQL-only | a derived table, which MySQL insists on being able to name (`AS vv_distinct`) | none |
+| an insert with no client-supplied columns | optional `DefaultValuesInserter`: SQL-standard `DEFAULT VALUES` on PostgreSQL/SQLite/external dialects, `() VALUES ()` on MySQL/MariaDB | one statement per default-only row |
 
 ## Where the difference *is* observable
 
-Eleven places. They are documented rather than hidden because hiding them would
+Twelve places. They are documented rather than hidden because hiding them would
 mean emulating an engine, which is worse than saying so. Differences 5 through 8
 were measured while building the error corpus, and were observable before anyone
 wrote them down; difference 9 was measured while building the catalog,
@@ -224,6 +225,19 @@ the probe.
     unambiguous one — everywhere else. The `field` is the same; the certainty
     behind it is not.
 
+12. **`InsertBatch` may select a native storage protocol.** The safe repository
+    semantics are constant — typed metadata, insert-only assigned keys,
+    policy/fault hooks, ambient transaction and an atomic batch — but a bare pgx
+    source selects PostgreSQL COPY while sources without an exact native
+    capability use bind-budgeted INSERT. COPY is not transparent for every
+    PostgreSQL table: the server refuses it on row-level-security tables,
+    rewrite rules do not behave like ordinary INSERT, and pgx binary encoding
+    can differ from its parameter path. The explicit portable spelling is
+    `crud.PortableBatch()` per call or `sqlrepo.PortableBatch()` per blueprint.
+    This source-capability difference is named rather than hidden because making
+    COPY a surprise optimisation of `SaveAll` would silently change established
+    INSERT semantics. See [[D-083]].
+
 ## What it forbids
 
 - Do not branch on `Dialect.Name()` in a repository or a builder. Add a method
@@ -251,6 +265,8 @@ the probe.
   default for a dialect that implements neither.
 - `crud/dialect.go:BindBudget` / `:BindLimit` — the optional statement-parameter
   ceiling and the conservative default for an external dialect ([[D-079]]).
+- `crud/dialect.go:DefaultValuesInserter` / `:DefaultValuesClause` — portable
+  default-only inserts without adding a required Dialect method.
 - `crud/dialect.go:LikeEscaper` — a dialect-specific literal `LIKE` escape
   expression, including MySQL/MariaDB's mode-independent `X'5C'` spelling.
 - `crud/dialect.go:Postgres`, `crud/dialect.go:MySQL`, `crud/dialect.go:SQLite`.
@@ -269,6 +285,8 @@ the probe.
 - `crud/sqlrepo/repository.go:repository.Count` — the derived table for a DISTINCT
   count.
 - `crud/repo.go:Repo.UpdateAll` — documents observable difference 2.
+- `crud/batch.go`, `crud/sqlrepo/repository.go:InsertBatch` — observable
+  difference 12 and its explicit portable override.
 - `crud/dialect.go:Postgres.Upsert` / `crud/dialect.go:MySQL.Upsert` — where
   difference 5 comes from.
 - `crud/catalog/postgres.go`, `crud/catalog/mysql.go`, `crud/catalog/mariadb.go`,
@@ -292,6 +310,13 @@ the probe.
   the portable `ESCAPE '\\'` spelling.
 - `TestBindLimitsAreDialectOwnedAndExternalDialectsStayPortable` in
   `crud/dialect_test.go` — built-in ceilings and the external-dialect fallback.
+- `TestDefaultValuesClausesAreDialectOwnedAndNormalised` in the same file — the
+  empty-column syntax and external-dialect fallback.
+- `TestPgxInsertBatchSelectsCopyFromTheRepository` in
+  `test/integration/driver_pgx_test.go`, plus
+  `TestPgxPortableBatchIsTheExplicitRLSPath` in the same file, plus
+  `TestPortableBatchSurvivesEveryBuiltInDecoratorOrder` in
+  `crud/sqlrepo/insert_batch_test.go` — both branches of difference 12.
 - `TestSQLiteLiteralLikeHelpers` and
   `TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes` in
   `test/integration/` — literal pattern helpers preserve `%`, `_` and `\\`,

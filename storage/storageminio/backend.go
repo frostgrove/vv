@@ -15,10 +15,6 @@ import (
 )
 
 const (
-	// MaxCreateOnlySize is the largest payload the adapter can place with an
-	// atomic CreateOnly precondition. minio-go/v7 does not preserve custom
-	// conditional headers when it completes a multipart upload, so CreateOnly
-	// deliberately uses one conditional PUT, whose SDK limit is 5 GiB.
 	MaxCreateOnlySize int64 = 5 * 1024 * 1024 * 1024
 
 	maxObjectNameBytes  = 1024
@@ -38,12 +34,8 @@ const (
 	backendBody
 )
 
-// Clock supplies wall time for staging expiry, cleanup and returned link
-// expiry. A nil Clock uses time.Now.
 type Clock func() time.Time
 
-// Config contains only adapter-owned choices. Client construction and lifetime
-// remain with the application.
 type Config struct {
 	Client     *minio.Client
 	Bucket     string
@@ -52,7 +44,6 @@ type Config struct {
 	Clock      Clock
 }
 
-// Backend stores objects in one caller-selected MinIO bucket.
 type Backend struct {
 	client     clientAPI
 	core       coreAPI
@@ -60,10 +51,7 @@ type Backend struct {
 	prefix     string
 	maxLinkTTL time.Duration
 	clock      Clock
-	// admin is the real client, kept apart from clientAPI because bucket
-	// administration is not part of the object surface a decorator or a test
-	// double has to implement. It is nil for a backend built from a double,
-	// which is what [Backend.EnsureBucket] reports on.
+
 	admin bucketAdmin
 }
 
@@ -81,7 +69,6 @@ type coreAPI interface {
 
 var _ storage.Backend = (*Backend)(nil)
 
-// New validates configuration without contacting MinIO.
 func New(config *Config) (*Backend, error) {
 	if config == nil {
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("config is nil"))
@@ -123,10 +110,9 @@ func newBackend(config *Config, client clientAPI, core coreAPI) (*Backend, error
 
 	prefixBytes := len(config.Prefix)
 	if prefixBytes != 0 {
-		prefixBytes++ // separator after the configured prefix
+		prefixBytes++
 	}
-	// Namespace is at most 63 bytes. Check the longest logical key now so a
-	// successfully constructed backend can represent every portable Key.
+
 	if prefixBytes+63+1+storage.MaxKeyBytes > maxObjectNameBytes {
 		return nil, storage.NewError("construct", storage.KindInvalid, errors.New("prefix leaves insufficient object-name space"))
 	}
@@ -185,16 +171,12 @@ func (this *Backend) putUnknownCreateOnly(ctx context.Context, namespace storage
 		stageMarkerKey: stageMarkerValue,
 		stageExpiryKey: expiresAt.Format(time.RFC3339Nano),
 	}
-	// The cryptographically random private identity does not need overwrite
-	// semantics from the user-facing contract. In particular, minio-go drops
-	// custom conditional headers when completing an unknown-size multipart
-	// upload, so advertising CreateOnly here would be false.
+
 	if _, err := this.put(ctx, "put", stageObject, source, callerSource, storage.Replace, nil, options.ContentType, options.Metadata, internal); err != nil {
 		_ = this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{})
 		return storage.Info{}, err
 	}
-	// The caller never receives this private StageID, so every later return path
-	// must attempt cleanup; an unsuccessful attempt remains bounded by its TTL.
+
 	defer func() {
 		_ = this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{})
 	}()
@@ -309,9 +291,6 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 	defer func() {
 		if release {
 			if _, err := this.releaseClaim(ctx, "promote", claim, releaseState); err != nil && !committed {
-				// A deterministic final failure is retryable only after its active
-				// generation was retired. Surface a transition failure instead of
-				// promising a retry that would immediately conflict.
 				result = storage.Info{}
 				resultErr = err
 			}
@@ -357,19 +336,12 @@ func (this *Backend) Promote(ctx context.Context, namespace storage.Namespace, i
 		if uncertain(err) {
 			release = false
 		}
-		// In particular, a destination collision keeps the staged upload so the
-		// caller can choose another final key or abort it explicitly.
+
 		return storage.Info{}, err
 	}
 	committed = true
 
-	// The final object is already committed. Staging cleanup is deliberately
-	// best effort because this interface has no state for "promoted, cleanup
-	// pending" and returning failure would invite an unsafe duplicate retry.
 	if err := this.client.RemoveObject(ctx, this.bucket, stageObject, minio.RemoveObjectOptions{}); err != nil && !isNotFound(err) {
-		// A committed final object plus a possibly live stage must retain the
-		// election claim; otherwise a retry could promote the same StageID to a
-		// second key.
 		release = false
 	} else {
 		releaseState = claimStateTerminal
@@ -457,8 +429,6 @@ func (this *Backend) CleanupExpired(ctx context.Context, namespace storage.Names
 		}
 		expiresAt, ok, err := stageExpiry(objectInfo)
 		if err != nil || !ok {
-			// Never delete an object merely because it happens to be below the
-			// private prefix. Only an intact marker authorizes cleanup.
 			continue
 		}
 		if this.now().Before(expiresAt) {
@@ -471,9 +441,7 @@ func (this *Backend) CleanupExpired(ctx context.Context, namespace storage.Names
 		if err != nil {
 			return result, err
 		}
-		// Acquisition has a preflight check; this second Stat closes the window
-		// before deletion and prevents a stale claimant from acting on an absent
-		// stage after a terminal claim is reclaimed.
+
 		objectInfo, err = this.client.StatObject(ctx, this.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
 			mapped := mapError("cleanup", err, 0, nil)
@@ -561,8 +529,7 @@ func (this *Backend) TemporaryURL(ctx context.Context, namespace storage.Namespa
 	if u == nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInternal, errors.New("presigned URL is absent"))
 	}
-	// SigV4 encodes the signing timestamp and expiration in whole seconds.
-	// Truncating is conservative and never reports a later expiry than the URL.
+
 	link, err := storage.NewLink(u.String(), issuedAt.Truncate(time.Second).Add(options.ExpiresIn))
 	if err != nil {
 		return storage.Link{}, storage.NewError("temporary URL", storage.KindInternal, err)
@@ -593,9 +560,7 @@ func (this *Backend) put(ctx context.Context, operation, object string, source i
 	if err != nil {
 		return storage.Info{}, storage.NewError(operation, storage.KindInvalid, err)
 	}
-	// exactSizeReader holds back the declared final byte until it has observed
-	// EOF. This lets minio-go retain the known size without accepting either
-	// early EOF or an unobserved byte N+1.
+
 	objectSize := int64(-1)
 	if size != nil {
 		objectSize = *size
@@ -606,9 +571,6 @@ func (this *Backend) put(ctx context.Context, operation, object string, source i
 	}
 	if mode == storage.CreateOnly {
 		if size == nil {
-			// Public unknown-size writes are materialized in a private stage first;
-			// reaching this branch would otherwise select an unsafe conditional
-			// multipart path in minio-go.
 			return storage.Info{}, storage.NewError(operation, storage.KindUnsupported, errors.New("create-only placement requires a known size"))
 		}
 		if *size > MaxCreateOnlySize {
@@ -627,9 +589,6 @@ func (this *Backend) put(ctx context.Context, operation, object string, source i
 		exact = &exactSizeReader{reader: tracked, remaining: *size}
 		uploadSource = exact
 		if *size == 0 {
-			// minio-go may issue a Content-Length: 0 request without reading the
-			// source. Probe here so a non-empty source cannot become a successful,
-			// visibly empty object.
 			var probe [1]byte
 			if _, err := exact.Read(probe[:]); !errors.Is(err, io.EOF) {
 				if ctxErr := ctx.Err(); ctxErr != nil {

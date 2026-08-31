@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// ProductUpdate is the partial-update DTO for Product.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type ProductUpdate struct {
 	Sku    *string        `json:"sku,omitempty"`
 	Name   *string        `json:"name,omitempty"`
@@ -22,7 +19,6 @@ type ProductUpdate struct {
 	Active *bool          `json:"active,omitempty"`
 }
 
-// ProductAttrs is the generated metamodel shape for Product.
 type ProductAttrs struct {
 	ID        specs.Ord[Product, int64]
 	Sku       specs.Str[Product]
@@ -33,27 +29,16 @@ type ProductAttrs struct {
 	CreatedAt specs.Cmp[Product, time.Time]
 }
 
-// Product_ is the metamodel of Product: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Product_ = specs.Metamodel[Product, ProductAttrs]()
 
-// ProductRepo is the typed repository for Product.
 type ProductRepo = crud.Repo[Product, int64, ProductUpdate]
 
-// ProductRepository describes Product independently of a database driver.
-// Bind it through NewProductRepository with the application's datasource.
 var ProductRepository = sqlrepo.Define[Product, int64, ProductUpdate]("")
 
-// NewProductRepository binds ProductRepository to src.
 func NewProductRepository(src crud.Source) *ProductRepo {
 	return ProductRepository.Bind(src)
 }
 
-// A writable column the update DTO does not name refuses to start, rather than
-// becoming a column updates silently cannot reach ([[D-050]]). The generator
-// read the model's source text and this reads the compiled struct, so the two
-// can drift apart — and this is what says so when they do, with nothing
-// regenerated.
 func init() {
 	port.MustCoverUpdate[Product, ProductUpdate]()
 }

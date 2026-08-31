@@ -11,17 +11,12 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// The failure this guards against is the quiet one: a client misspells the key
-// that carries the narrowing, the document parses into an empty Request, and the
-// endpoint answers 200 with every row in the table. Rejection inside the filter
-// never sees it, because there is no filter.
-
 func TestAMisspelledDocumentKeyIsRefused(t *testing.T) {
 	for _, body := range []string{
 		`{"filtr":{"title":"x"}}`,
 		`{"filter":{"title":"x"},"limits":10}`,
 		`{"sortt":["-id"]}`,
-		`{"preloads":["author"]}`, // the query-string spelling, not the document's
+		`{"preloads":["author"]}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			var request query.Request
@@ -77,8 +72,6 @@ func TestDuplicateKeysAndNullListElementsAreRefused(t *testing.T) {
 		})
 	}
 
-	// RawFilter is the programmatic public door. It must preserve the same
-	// no-last-wins invariant as a JSON request body.
 	request := query.Request{Filter: query.RawFilter(`{"views":{"gte":1,"gte":2}}`)}
 	if _, err := request.Compile(Articles.Meta(), nil); err == nil {
 		t.Fatal("RawFilter accepted a duplicate operator key")
@@ -105,8 +98,6 @@ func TestAMisspelledNestedObjectKeyIsRefused(t *testing.T) {
 	}
 }
 
-// Everything the document really defines still parses, in every accepted shape.
-// Without this the strictness above could be satisfied by rejecting everything.
 func TestEveryDocumentKeyStillParses(t *testing.T) {
 	body := `{
 		"page": 2, "limit": 20, "offset": 5,
@@ -136,9 +127,6 @@ func TestEveryDocumentKeyStillParses(t *testing.T) {
 	}
 }
 
-// The error message offers the caller the list of real keys. If the struct grows
-// a field and the list does not, the message starts lying — so the list is
-// checked against the struct rather than trusted.
 func TestTheOfferedKeyListMatchesTheStruct(t *testing.T) {
 	rt := reflect.TypeOf(query.Request{})
 	var fromStruct []string
@@ -149,7 +137,6 @@ func TestTheOfferedKeyListMatchesTheStruct(t *testing.T) {
 		}
 	}
 
-	// Provoke the message and read the offer back out of it.
 	var request query.Request
 	err := json.Unmarshal([]byte(`{"nope":1}`), &request)
 	if err == nil {
@@ -167,9 +154,6 @@ func TestTheOfferedKeyListMatchesTheStruct(t *testing.T) {
 	}
 }
 
-// The query string cannot be closed the way the document can — a handler reads
-// its own parameters off the same URL. So only a near-miss of one of ours is
-// refused.
 func TestAMisspelledQueryParameterIsRefused(t *testing.T) {
 	for _, raw := range []string{"filtr=x", "limi=10", "prelaod=author", "seach=go", "sortt=-id"} {
 		t.Run(raw, func(t *testing.T) {
@@ -181,15 +165,13 @@ func TestAMisspelledQueryParameterIsRefused(t *testing.T) {
 	}
 }
 
-// The control: an application's own parameters have to survive, or WithScope
-// stops working. This is the half that makes the rule narrow on purpose.
 func TestAnApplicationsOwnParametersArePassedThrough(t *testing.T) {
 	for _, raw := range []string{
 		"includeArchived=1",
 		"tenant=7&format=csv",
-		"a=1&b=2",          // too short to be a typo of anything
-		"page=2&myFlag=on", // ours and theirs together
-		"expand=profile",   // nothing like any of ours
+		"a=1&b=2",
+		"page=2&myFlag=on",
+		"expand=profile",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			v, _ := url.ParseQuery(raw)
@@ -200,8 +182,6 @@ func TestAnApplicationsOwnParametersArePassedThrough(t *testing.T) {
 	}
 }
 
-// Every spelling ParseQuery answers to has to pass its own check, or a
-// documented alias becomes a 400.
 func TestEveryAcceptedSpellingSurvivesTheCheck(t *testing.T) {
 	for _, name := range []string{
 		"page", "limit", "perPage", "per_page", "per-page", "pageSize", "offset",

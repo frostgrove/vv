@@ -19,18 +19,6 @@ import (
 const maxExactQueryInteger = float64((1 << 53) - 1)
 const maxExactResponseInteger int64 = (1 << 53) - 1
 
-// The wire shape of every method is google.protobuf.Struct, in and out, and the
-// document inside it is the one the HTTP bindings speak.
-//
-// It goes through encoding/json rather than through structpb's own map
-// conversion, and that is the load-bearing part. The model's `json` tags decide
-// the document, a generated <Model>Input keeps meaning, and crud.Opt keeps its
-// three states: a key that is absent is absent, a key holding NullValue is an
-// explicit null, and structpb tells the two apart because one is a map entry
-// and the other is not ([[UC-003]]). A map[string]any built by hand would
-// collapse them the moment it went through a Go nil.
-
-// toStruct turns a value the service answered into the response document.
 func toStruct(v any) (*structpb.Struct, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -43,9 +31,6 @@ func toStruct(v any) (*structpb.Struct, error) {
 	return st, nil
 }
 
-// fromStruct decodes a request document into a Go value. A nil or empty Struct
-// leaves the value alone: an empty request means "no narrowing", as an empty
-// body does on POST /query and POST /count.
 func fromStruct(st *structpb.Struct, v any) error {
 	if st == nil || len(st.GetFields()) == 0 {
 		return nil
@@ -60,10 +45,6 @@ func fromStruct(st *structpb.Struct, v any) error {
 	return nil
 }
 
-// sub reads one field of a request as a nested document. A field that is
-// present and is not an object is a client mistake rather than an empty one:
-// silently reading `{"patch": 3}` as "no patch" is how a request that meant
-// something becomes a no-op.
 func sub(st *structpb.Struct, name string) (*structpb.Struct, error) {
 	v, ok := st.GetFields()[name]
 	if !ok || v == nil {
@@ -80,10 +61,6 @@ func sub(st *structpb.Struct, name string) (*structpb.Struct, error) {
 	return nested.StructValue, nil
 }
 
-// requiredSub is the write-body variant of sub. A query can reasonably be
-// absent (or explicitly null) because it is optional narrowing; a present
-// mutation body cannot. Treating null as a zero DTO turns a malformed request
-// into a write with a meaning the client did not send.
 func requiredSub(st *structpb.Struct, name string) (*structpb.Struct, error) {
 	v, ok := st.GetFields()[name]
 	if !ok || v == nil {
@@ -102,7 +79,6 @@ func requiredSub(st *structpb.Struct, name string) (*structpb.Struct, error) {
 	return nested.StructValue, nil
 }
 
-// queryOf reads a whole request document as the query DSL.
 func queryOf(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
 	request := &query.Request{}
 	switch lossyQueryNumber(st, meta) {
@@ -119,11 +95,6 @@ func queryOf(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
 	return request, nil
 }
 
-// structpb stores every JSON number as float64. The loss matters for an
-// integral model column, not for a float column merely because its magnitude
-// is large. Walk the query's structured filter with its model metadata and
-// reject only unsafe integral operands; exact decimal strings then reach the
-// normal query coercer unchanged.
 type lossyQueryNumberKind uint8
 
 const (
@@ -155,10 +126,6 @@ func lossyQueryNumber(st *structpb.Struct, meta *crud.Meta) lossyQueryNumberKind
 	return noLossyQueryNumber
 }
 
-// lossyPreloads follows each declared relation before inspecting its filter.
-// Preload filters are compiled against the relation target, not the root model,
-// so checking them with root metadata either misses the target's integral
-// columns or mistakes an unrelated root field for one.
 func lossyPreloads(value *structpb.Value, root *crud.Meta) lossyQueryNumberKind {
 	if value == nil || root == nil {
 		return noLossyQueryNumber
@@ -179,15 +146,12 @@ func lossyPreloads(value *structpb.Value, root *crud.Meta) lossyQueryNumberKind 
 }
 
 func lossyPreload(item *structpb.Struct, root *crud.Meta) lossyQueryNumberKind {
-	// Struct stores every JSON number as float64. A row cap is an integer too,
-	// so it needs the same exactness gate as paging before Request unmarshalling
-	// turns the already-rounded value back into an int.
 	if lossyIntegralValue(item.GetFields()["maxRows"]) {
 		return lossyQueryControl
 	}
 	pathValue, ok := item.GetFields()["path"]
 	if !ok || pathValue.GetStringValue() == "" {
-		return noLossyQueryNumber // Query's normal validation gives malformed preloads their error.
+		return noLossyQueryNumber
 	}
 	rel, _, err := root.RelationAt(pathValue.GetStringValue())
 	if err != nil {
@@ -226,7 +190,7 @@ func lossyFilter(value *structpb.Value, meta *crud.Meta) bool {
 		}
 		field, _, err := meta.FieldAt(name)
 		if err != nil {
-			continue // Compile will name the unknown path as the client error.
+			continue
 		}
 		if lossyFieldOperand(operand, crud.ElemType(field.Type).Kind()) {
 			return true
@@ -294,7 +258,6 @@ func lossyNumber(n float64) bool {
 	return math.Trunc(n) == n && math.Abs(n) > maxExactQueryInteger
 }
 
-// queryIn reads the nested `query` field of a request as the query DSL.
 func queryIn(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
 	nested, err := sub(st, "query")
 	if err != nil {
@@ -303,12 +266,6 @@ func queryIn(st *structpb.Struct, meta *crud.Meta) (*query.Request, error) {
 	return queryOf(nested, meta)
 }
 
-// idOf reads the key out of a request.
-//
-// A string, because google.protobuf.Value has no integer. The API treats an
-// integral number at magnitude 2^53 and beyond as outside its safe range. A number is accepted only
-// inside that exact range, because a caller typing {"id": 42} into grpcurl
-// means it; outside it the caller must use the string spelling.
 func idOf[ID comparable](st *structpb.Struct, name string) (ID, error) {
 	var zero ID
 	v, ok := st.GetFields()[name]
@@ -322,7 +279,6 @@ func idOf[ID comparable](st *structpb.Struct, name string) (ID, error) {
 	return port.CoerceID[ID](raw)
 }
 
-// idsOf reads a set of keys, in the order the client sent them.
 func idsOf[ID comparable](st *structpb.Struct, name string) ([]ID, error) {
 	v, ok := st.GetFields()[name]
 	if !ok {
@@ -353,7 +309,6 @@ func idsOf[ID comparable](st *structpb.Struct, name string) ([]ID, error) {
 	return out, nil
 }
 
-// scalar reads a key as the text port.CoerceID converts.
 func scalar(v *structpb.Value, name string) (string, error) {
 	switch k := v.GetKind().(type) {
 	case *structpb.Value_StringValue:
@@ -363,8 +318,7 @@ func scalar(v *structpb.Value, name string) (string, error) {
 			return "", port.BadRequestAs(errs.CodeInvalidID, errs.Path{errs.Named(name)},
 				"%s outside the exact integer range must be sent as a string", name)
 		}
-		// 'f' with -1 precision, so 42 is "42" and not "42.000000". A caller
-		// that needs a key this cannot spell exactly sends it as a string.
+
 		return strconv.FormatFloat(k.NumberValue, 'f', -1, 64), nil
 	default:
 		return "", port.BadRequestAs(errs.CodeInvalidID, errs.Path{errs.Named(name)},
@@ -372,9 +326,6 @@ func scalar(v *structpb.Value, name string) (string, error) {
 	}
 }
 
-// countDoc and deletedDoc are the two answers that are not an entity. They are
-// built as Structs directly rather than through a Go map, so the key is spelled
-// once and matches the HTTP bindings' body.
 func countDoc(n int64) *structpb.Struct {
 	return &structpb.Struct{Fields: map[string]*structpb.Value{
 		"count": exactIntValue(n),
@@ -387,10 +338,6 @@ func deletedDoc(n int64) *structpb.Struct {
 	}}
 }
 
-// exactIntValue keeps response counts truthful in protobuf Struct, whose only
-// numeric representation is float64. Small values remain JSON numbers for
-// ergonomic clients; values outside vv's safe contiguous integer range
-// (|n| < 2^53) travel as decimal strings rather than as nearby counts.
 func exactIntValue(n int64) *structpb.Value {
 	if n > maxExactResponseInteger || n < -maxExactResponseInteger {
 		return structpb.NewStringValue(strconv.FormatInt(n, 10))

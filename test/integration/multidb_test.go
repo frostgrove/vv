@@ -15,14 +15,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// Two databases on one engine, reached through two *sql.DB handles. Everything
-// about them is identical except which physical rows they hold, so a statement
-// that lands in the wrong one is visible rather than merely suspected.
-//
-// This is the shape crud.WithExecutorFor exists for: a process that shards, or
-// that keeps an analytics database next to its main one, and opens a
-// transaction on one of them.
-
 type ShardRow struct {
 	ID   int64  `db:"id,pk,auto"`
 	Name string `db:"name"`
@@ -46,8 +38,6 @@ var (
 	ShardNotes = sqlrepo.Define[ShardNote, int64, ShardNoteUpdate]("shard_notes")
 )
 
-// shardDSN points the configured Postgres DSN at another database on the same
-// server.
 func shardDSN(t *testing.T, database string) string {
 	t.Helper()
 	u, err := url.Parse(pgDSN)
@@ -58,9 +48,6 @@ func shardDSN(t *testing.T, database string) string {
 	return u.String()
 }
 
-// openShards creates vv_shard_a and vv_shard_b if they are not there
-// yet and returns a live handle to each. CREATE DATABASE cannot run inside a
-// transaction and has no IF NOT EXISTS, so a duplicate is simply expected.
 func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -95,8 +82,6 @@ func openShards(t *testing.T) (*sql.DB, *sql.DB) {
 	return open("vv_shard_a"), open("vv_shard_b")
 }
 
-// names reads a shard directly, so the assertion never goes through the seam
-// under test.
 func names(t *testing.T, database *sql.DB) []string {
 	t.Helper()
 	rows, err := database.QueryContext(context.Background(), "SELECT name FROM shard_rows ORDER BY name")
@@ -127,8 +112,6 @@ func equal(a, b []string) bool {
 	return true
 }
 
-// The legacy source-less spelling cannot prove which pool a foreign transaction
-// belongs to. It fails before either repository can touch a datasource.
 func TestWithExecutorRefusesToAdoptARepositoryOnTheWrongDatabase(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
@@ -161,9 +144,6 @@ func TestWithExecutorRefusesToAdoptARepositoryOnTheWrongDatabase(t *testing.T) {
 	}
 }
 
-// Unconditional adoption remains available for applications whose adapter
-// genuinely cannot name a source. Its spelling makes the cross-database risk
-// explicit and preserves the old behaviour exactly.
 func TestWithUnsafeExecutorKeepsTheLegacyCrossDatabaseOptOut(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
@@ -193,8 +173,6 @@ func TestWithUnsafeExecutorKeepsTheLegacyCrossDatabaseOptOut(t *testing.T) {
 	}
 }
 
-// The scoped form says which database the executor belongs to, and a repository
-// on any other one carries on using its own.
 func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
@@ -216,7 +194,6 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Rolling back must take the first write and only the first write.
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
@@ -229,9 +206,6 @@ func TestAScopedExecutorKeepsEachRepositoryOnItsOwnDatabase(t *testing.T) {
 	}
 }
 
-// Naming the transaction as its own datasource used to miss the repository's
-// pool and write outside the transaction. Recognised transaction handles now
-// fail loudly instead.
 func TestWithExecutorForTransactionIdentityCannotEscapeRollback(t *testing.T) {
 	ctx := context.Background()
 	dbA, _ := openShards(t)
@@ -268,8 +242,6 @@ func TestWithExecutorForTransactionIdentityCannotEscapeRollback(t *testing.T) {
 	}
 }
 
-// A repository opening its own transaction scopes it the same way, so a second
-// repository on a different database inside that block is untouched by it.
 func TestARepositoryTransactionDoesNotCaptureAnotherDatabase(t *testing.T) {
 	ctx := context.Background()
 	dbA, dbB := openShards(t)
@@ -299,14 +271,12 @@ func TestARepositoryTransactionDoesNotCaptureAnotherDatabase(t *testing.T) {
 	}
 }
 
-// The documented reason InTx exists — several repositories, one transaction —
-// still holds, because two sources over the same *sql.DB name the same database.
 func TestTwoRepositoriesOnOneDatabaseStillShareOneTransaction(t *testing.T) {
 	ctx := context.Background()
 	dbA, _ := openShards(t)
 
 	rows := ShardRows.Bind(crudsql.Postgres(dbA))
-	notes := ShardNotes.Bind(crudsql.Postgres(dbA)) // a second, independently built source
+	notes := ShardNotes.Bind(crudsql.Postgres(dbA))
 
 	boom := errors.New("rolled back")
 	err := rows.Tx(ctx, func(ctx context.Context) error {
@@ -316,7 +286,7 @@ func TestTwoRepositoriesOnOneDatabaseStillShareOneTransaction(t *testing.T) {
 		if _, err := notes.Save(ctx, &ShardNote{Text: "n"}); err != nil {
 			return err
 		}
-		// Both are visible from inside, which is only true if they share it.
+
 		if n, err := notes.Count(ctx); err != nil || n != 1 {
 			t.Errorf("the second repository did not join: count = %d err = %v", n, err)
 		}

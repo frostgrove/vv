@@ -5,29 +5,6 @@ import (
 	"strings"
 )
 
-// This file is the second half of predicate.go's nodes: every one of them
-// renders to SQL there and to a filter document here. The two live apart
-// because predicate.go is already long, and they cannot drift because
-// [Predicate] declares both methods — a node that forgets one does not compile.
-
-// MarshalPredicate renders a predicate as a query-DSL filter document, the
-// shape query.Request's Filter carries. It is what lets a filter built in Go be
-// sent to a service that speaks this library's wire protocol.
-//
-// The result is json.RawMessage and not a query.Filter because query imports
-// crud, so the dependency cannot run both ways. The caller wraps it:
-//
-//	doc, err := crud.MarshalPredicate(crud.Build(opts...).Predicate())
-//	req.Filter = query.RawFilter(string(doc))
-//
-// Some predicates have no spelling in the DSL, and those are refused by name
-// rather than dropped. A clause that goes missing between a caller and a server
-// is a query that answers with more rows than were asked for, and it is the one
-// failure a caller cannot see: the response is well-formed, the status is 200,
-// and the extra rows look like data.
-//
-// A nil predicate is an empty document — no narrowing, which is what no filter
-// means.
 func MarshalPredicate(p Predicate) (json.RawMessage, error) {
 	if p == nil {
 		return json.RawMessage("{}"), nil
@@ -40,11 +17,6 @@ func MarshalPredicate(p Predicate) (json.RawMessage, error) {
 	return json.RawMessage(w.sb.String()), nil
 }
 
-// A PredicateError reports a predicate that has no filter document.
-//
-// Node names the constructor that produced it rather than the internal type,
-// because the fix is at the call site that wrote crud.Raw, and the caller has
-// never heard of a rawNode.
 type PredicateError struct {
 	Node   string
 	Reason string
@@ -54,9 +26,6 @@ func (this *PredicateError) Error() string {
 	return "crud: " + this.Node + " has no filter document: " + this.Reason
 }
 
-// docWriter accumulates a document and remembers the first refusal, the way
-// writer does for SQL. Every document method can then be written straight
-// through with no error plumbing.
 type docWriter struct {
 	sb  strings.Builder
 	err error
@@ -74,16 +43,11 @@ func (this *docWriter) fail(node, reason string) {
 
 func (this *docWriter) str(s string) { this.sb.WriteString(s) }
 
-// text writes a JSON string. Field names go through it as well as values: a
-// field named `a"b` would otherwise close the key and the remainder of the
-// document would be whatever that produced.
 func (this *docWriter) text(s string) {
-	b, _ := json.Marshal(s) // a string always encodes
+	b, _ := json.Marshal(s)
 	this.sb.Write(b)
 }
 
-// value writes a bind value. A value encoding/json refuses — a channel, a NaN —
-// fails here rather than producing a document the server would answer 400 to.
 func (this *docWriter) value(v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -93,13 +57,6 @@ func (this *docWriter) value(v any) {
 	this.sb.Write(b)
 }
 
-// leaf writes {"field":{"op":…}}, the shape every comparison has, with emit
-// writing the operand.
-//
-// One key per object, always. Two conditions on one field merged into a single
-// object would need the field name twice, and a JSON object with a repeated key
-// decodes to whichever copy came last — half the caller's filter silently gone.
-// logicNode writes an array for exactly this reason.
 func (this *docWriter) leaf(field, op string, emit func()) {
 	this.str("{")
 	this.text(field)
@@ -110,9 +67,6 @@ func (this *docWriter) leaf(field, op string, emit func()) {
 	this.str("}}")
 }
 
-// sub renders one node on its own, so a parent can look at what it got before
-// deciding where to put it. logicNode and notNode both have to: an inner
-// document of {} means "every row", and where that lands changes the answer.
 func sub(p Predicate) (string, error) {
 	var w docWriter
 	p.document(&w)
@@ -122,13 +76,7 @@ func sub(p Predicate) (string, error) {
 	return w.sb.String(), nil
 }
 
-// everyRow is the document that narrows nothing. An empty filter object is how
-// the DSL spells it, and there is no document for its opposite — which is why
-// the nodes that mean "no rows" are refused instead.
 const everyRow = "{}"
-
-// ---------------------------------------------------------------------------
-// the nodes, in predicate.go's order
 
 func (this cmpNode) document(w *docWriter) {
 	if this.undefined {
@@ -143,9 +91,6 @@ func (this cmpNode) document(w *docWriter) {
 	w.leaf(this.field, op, func() { w.value(this.value) })
 }
 
-// docOps is the SQL operator each comparison renders with, back to the word the
-// DSL reads. Keyed on the rendered operator rather than on a constructor, so
-// there is one entry per thing cmpNode can hold.
 var docOps = map[string]string{
 	"=": "eq", "<>": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte",
 }
@@ -161,9 +106,6 @@ func (this nullNode) document(w *docWriter) {
 func (this inNode) document(w *docWriter) {
 	if len(this.values) == 0 {
 		if this.not {
-			// Trusted Go predicates define NotIn(field) as true. Emit the identity
-			// document so a surrounding AND/OR can fold it without sending the
-			// public query DSL a value-list shape that it deliberately refuses.
 			w.str(everyRow)
 			return
 		}
@@ -197,10 +139,6 @@ func (this betweenNode) document(w *docWriter) {
 		})
 	}
 	if this.not {
-		// No notBetween in the DSL, and no NotBetween constructor here either,
-		// so this arm is unreachable today. Negation rather than refusal
-		// because NOT (a BETWEEN b AND c) is the same set of rows, spelled
-		// differently.
 		w.str(`{"not":`)
 		emit()
 		w.str("}")
@@ -211,8 +149,6 @@ func (this betweenNode) document(w *docWriter) {
 
 func (this likeNode) document(w *docWriter) {
 	if this.mode != likePattern && this.not {
-		// The DSL's convenience operators have no negative spellings. Preserve
-		// the meaning as a Boolean negation rather than degrading it to raw LIKE.
 		w.str(`{"not":`)
 		likeNode{field: this.field, pattern: this.pattern, ignoreCase: this.ignoreCase, mode: this.mode}.document(w)
 		w.str("}")
@@ -234,9 +170,6 @@ func (this likeNode) document(w *docWriter) {
 	}
 	switch {
 	case this.ignoreCase && this.not:
-		// The DSL has ilike and notlike, not both at once. Unreachable from the
-		// constructors, and negated rather than refused for betweenNode's
-		// reason.
 		w.str(`{"not":`)
 		w.leaf(this.field, "ilike", func() { w.value(this.pattern) })
 		w.str("}")
@@ -264,11 +197,6 @@ func (this logicNode) document(w *docWriter) {
 			return
 		}
 		if doc == everyRow {
-			// AND with an unconditional term is the rest of the terms; OR with
-			// one is unconditional. Getting either backwards changes which rows
-			// come back. Keep walking after an unconditional OR: a commutative
-			// expression must not hide a later Raw, False or other unsupported
-			// node merely because the true identity was written first.
 			if this.op == "OR" {
 				unconditional = true
 			}
@@ -314,10 +242,6 @@ func (this notNode) document(w *docWriter) {
 		return
 	}
 	if doc == everyRow {
-		// {"not":{}} is the trap this guard exists for: the DSL reads an empty
-		// inner object as no condition, drops the not with it, and the caller's
-		// "no rows" arrives as "every row" — the exact inversion, with a 200 on
-		// it.
 		w.fail("crud.Not", "Not of an unconditional predicate matches no rows, which no filter document says")
 		return
 	}

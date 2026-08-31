@@ -8,10 +8,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// fieldError is what a validation library hands over, written out here so this
-// package's tests import nothing. The live assertion that the real type still
-// has these four methods is in test/bridge, the one module allowed to import a
-// validator.
 type fieldError struct {
 	namespace string
 	tag       string
@@ -25,7 +21,6 @@ func (this fieldError) Param() string     { return this.param }
 func (this fieldError) Value() any        { return this.value }
 
 func TestTheMeasuredValidatorNamespacesBecomePaths(t *testing.T) {
-	// The three rows measured against v10.30.1 with the roadmap's own input DTO.
 	vs := []fieldError{
 		{namespace: "In.smth", tag: "required"},
 		{namespace: "In.user.email", tag: "email", value: "nope"},
@@ -60,9 +55,6 @@ func TestTheMeasuredValidatorNamespacesBecomePaths(t *testing.T) {
 }
 
 func TestARootThatDoesNotMatchKeepsEverySegment(t *testing.T) {
-	// The control for the strip above. An unconditional first-segment drop
-	// turns a mistyped root into a silently wrong path — user.email becoming
-	// email — where match-or-keep leaves one visibly extra step.
 	got := errs.FromFieldViolations("In", fieldError{namespace: "Other.user.email", tag: "email"})
 
 	want := errs.Path{errs.Named("Other"), errs.Named("user"), errs.Named("email")}
@@ -70,7 +62,6 @@ func TestARootThatDoesNotMatchKeepsEverySegment(t *testing.T) {
 		t.Fatalf("a namespace that does not start with the root became %v, want %v", got[0].Path, want)
 	}
 
-	// And an empty root strips nothing at all.
 	got = errs.FromFieldViolations("", fieldError{namespace: "In.user.email", tag: "email"})
 	want = errs.Path{errs.Named("In"), errs.Named("user"), errs.Named("email")}
 	if !reflect.DeepEqual(got[0].Path, want) {
@@ -93,9 +84,6 @@ func TestAnIndexedNamespaceBecomesAnIndexStep(t *testing.T) {
 		t.Fatalf("it renders as %s, and a client reading the position needs a number", b)
 	}
 
-	// The control: without it the test passes for a parser that treats any
-	// trailing digits as a position, and — since none of the three measured
-	// namespaces contains an index at all — for one that ignores brackets.
 	got = errs.FromFieldViolations("In", fieldError{namespace: "In.Items3.Email", tag: "email"})
 	want = errs.Path{errs.Named("Items3"), errs.Named("Email")}
 	if !reflect.DeepEqual(got[0].Path, want) {
@@ -111,15 +99,10 @@ func TestAnIndexedNamespaceBecomesAnIndexStep(t *testing.T) {
 }
 
 func TestNoFieldViolationsConvertToNoSlice(t *testing.T) {
-	// A caller ranges the result, and an empty non-nil slice reads as "the
-	// validator ran and found nothing" exactly as nil does — but a caller who
-	// branches on == nil to mean "nothing to report" gets the wrong answer.
 	if got := errs.FromFieldViolations[fieldError]("In"); got != nil {
 		t.Fatalf("no violations converted to %v, want nil", got)
 	}
 
-	// The control: one violation still produces one, so the row above is not
-	// passing for a function that returns nil whatever it is given.
 	if got := errs.FromFieldViolations("In", fieldError{namespace: "In.smth", tag: "required"}); len(got) != 1 {
 		t.Fatalf("one violation converted to %d", len(got))
 	}

@@ -17,10 +17,6 @@ import (
 	"github.com/frostgrove/vv/test/sqlcpgx"
 )
 
-// sqlc generates hand-written queries; vv does the boring CRUD. The point
-// of these tests is that they can share one transaction, so a handler can mix
-// both without a second connection or a second commit.
-
 func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -33,7 +29,6 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	// One *sql.Tx, handed to both.
 	q := sqlcgen.New(tx)
 	txCtx := source.BindExecutor(ctx, tx)
 
@@ -45,7 +40,6 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// vv reads what sqlc wrote.
 	got, err := repository.GetByID(txCtx, created.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +51,6 @@ func TestSqlcDatabaseSQLPostgres(t *testing.T) {
 		t.Fatalf("age = %v", got.Age)
 	}
 
-	// And sqlc reads what vv wrote.
 	u := User{TenantID: 1, Email: "vv@x.io", Name: "ByVV", Active: true}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
@@ -99,8 +92,6 @@ func TestSqlcPgx(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 
-	// pgx.Tx satisfies sqlc's DBTX and vv's Queryer at the same time, so
-	// the exact same object goes into both.
 	q := sqlcpgx.New(tx)
 	txCtx := source.BindExecutor(ctx, tx)
 

@@ -16,28 +16,26 @@ func articleRow(id, authorID int64, title string) []any {
 	return []any{id, authorID, title, "body", 0, nil, time.Time{}}
 }
 
-// preloads run as one batched statement per relation per level — never one per
-// row, and never a join that would multiply the parents.
 func TestPreloadBatchesAndWires(t *testing.T) {
 	rec := crudtest.Postgres().Push(
-		// the page itself
+
 		crudtest.Rows(
 			articleRow(1, 10, "first"),
 			articleRow(2, 11, "second"),
 			articleRow(3, 10, "third"),
 		),
-		// authors, one statement for all three articles
+
 		crudtest.Rows(
 			[]any{int64(10), "Ann"},
 			[]any{int64(11), "Bob"},
 		),
-		// comments, one statement
+
 		crudtest.Rows(
 			[]any{int64(100), int64(1), int64(11), "nice", true},
 			[]any{int64(101), int64(1), int64(10), "ok", false},
 			[]any{int64(102), int64(3), int64(11), "hm", true},
 		),
-		// the comments' authors, one statement
+
 		crudtest.Rows([]any{int64(10), "Ann"}, []any{int64(11), "Bob"}),
 	)
 
@@ -57,7 +55,7 @@ func TestPreloadBatchesAndWires(t *testing.T) {
 		t.Fatalf("%d statements, want 4 (page + author + comments + comment authors):\n%s",
 			len(sql), strings.Join(sql, "\n"))
 	}
-	// Note the deduplicated key list: two articles share author 10.
+
 	if want := `SELECT "id", "name" FROM "authors" WHERE "id" IN ($1, $2) LIMIT 1001`; crudtest.Normalize(sql[1]) != want {
 		t.Fatalf("author preload = %s\nwant %s", sql[1], want)
 	}
@@ -77,8 +75,7 @@ func TestPreloadBatchesAndWires(t *testing.T) {
 	if len(got[0].Comments) != 2 || len(got[1].Comments) != 0 || len(got[2].Comments) != 1 {
 		t.Fatalf("comment counts = %d/%d/%d", len(got[0].Comments), len(got[1].Comments), len(got[2].Comments))
 	}
-	// A to-many relation with no rows is an empty slice, not nil, so it renders
-	// as [] rather than null.
+
 	if got[1].Comments == nil {
 		t.Fatal("an empty relation should still be an empty slice")
 	}
@@ -90,7 +87,7 @@ func TestPreloadBatchesAndWires(t *testing.T) {
 func TestPreloadManyToMany(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(articleRow(1, 10, "first"), articleRow(2, 10, "second")),
-		// the join column comes back first, then the target columns
+
 		crudtest.Rows(
 			[]any{int64(1), int64(50), "go"},
 			[]any{int64(1), int64(51), "rust"},
@@ -114,8 +111,6 @@ func TestPreloadManyToMany(t *testing.T) {
 	}
 }
 
-// A preload can carry its own filter and sort, validated against the related
-// model rather than the root.
 func TestFilteredPreload(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(articleRow(1, 10, "first")),
@@ -145,8 +140,6 @@ func TestFilteredPreload(t *testing.T) {
 	}
 }
 
-// A preload filter is checked against the related model, so a root-only field
-// is a rejection rather than a confusing SQL error.
 func TestPreloadFilterIsScopedToTheTarget(t *testing.T) {
 	var request query.Request
 	_ = json.Unmarshal([]byte(`{"preload":[{"path":"comments","filter":{"views":1}}]}`), &request)
@@ -156,8 +149,6 @@ func TestPreloadFilterIsScopedToTheTarget(t *testing.T) {
 	}
 }
 
-// Pagination inside a preload would truncate some parents' children and not
-// others, so it is refused rather than silently wrong.
 func TestPreloadCannotBePaginated(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(articleRow(1, 10, "first")))
 	_, err := Articles.Bind(rec).GetAll(context.Background(),
@@ -273,8 +264,6 @@ func TestPreloadDepthIsCapped(t *testing.T) {
 	}
 }
 
-// Selecting a narrow projection still brings back the columns a preload needs
-// to join on.
 func TestProjectionKeepsPreloadKeys(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows([]any{int64(1), "first", int64(10)}),

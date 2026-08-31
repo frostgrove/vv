@@ -66,8 +66,6 @@ func TestEnsureBucketLeavesAnExistingBucketAlone(t *testing.T) {
 	}
 }
 
-// Two replicas starting together both want the bucket to exist. The one that
-// loses the create must not fail start-up over a bucket that is now there.
 func TestEnsureBucketAcceptsABucketAnotherReplicaCreated(t *testing.T) {
 	admin := &fakeBucketAdmin{
 		exists:  []bool{false, true},

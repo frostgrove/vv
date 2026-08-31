@@ -16,20 +16,11 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// TestMain silences Gin's start-up banner and per-route debug lines, which
-// otherwise bury the one line a failing test prints.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	os.Exit(m.Run())
 }
 
-// ---------------------------------------------------------------------------
-// the model
-
-// Widget is the model every test in this package drives the handler with. Each
-// part of it earns its place: the auto primary key and the `generated` column
-// are what a create request must not be allowed to dictate, Secret is what a
-// presenter has to hide, and the two relations are what a preload resolves.
 type Widget struct {
 	ID        int64            `db:"id,pk,auto" json:"id"`
 	OwnerID   int64            `db:"owner_id" json:"ownerId"`
@@ -56,17 +47,12 @@ type Part struct {
 	Label    string `db:"label" json:"label"`
 }
 
-// WidgetUpdate is the PATCH DTO: pointers for the two-state columns and an Opt
-// for the nullable one, so "absent" and "explicitly null" stay distinguishable
-// all the way from the JSON body to the repository.
 type WidgetUpdate struct {
 	Name  *string          `json:"name,omitempty"`
 	Price *int             `json:"price,omitempty"`
 	Note  crud.Opt[string] `json:"note,omitzero"`
 }
 
-// widgetMeta is what the fake reports from Meta(). Building it directly, rather
-// than through a repository, is what keeps this module's tests database-free.
 var widgetMeta = mustMeta()
 
 func mustMeta() *crud.Meta {
@@ -77,16 +63,8 @@ func mustMeta() *crud.Meta {
 	return m
 }
 
-// savedAt is the value the fake writes back into the `generated` column, the
-// way a database default would.
 var savedAt = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
 
-// ---------------------------------------------------------------------------
-// the fake repository
-
-// recordedCall is one repository call exactly as the handler made it. Opts is
-// the resolved option list — the handler's real output, since compiling a
-// request into repository options is the whole of its job on a read.
 type recordedCall struct {
 	Method string
 	Opts   *crud.Options
@@ -96,20 +74,14 @@ type recordedCall struct {
 	DTO    WidgetUpdate
 }
 
-// fakeRepo is an in-memory Repository. It answers with canned values and
-// records what it was asked for, so a test can assert the request the handler
-// made instead of the SQL some database would have run.
 type fakeRepo struct {
 	page  crud.PaginatedResponse[Widget]
 	all   []Widget
 	one   Widget
 	count int64
 
-	// err, when set, fails every method — the seam for error-mapping tests.
 	err error
 
-	// onSave stands in for the database assigning a key and filling generated
-	// columns; onUpdate applies the DTO the way a repository would.
 	onSave   func(*Widget) error
 	onUpdate func(int64, WidgetUpdate) (Widget, error)
 
@@ -188,8 +160,6 @@ func (this *fakeRepo) Count(_ context.Context, options ...crud.Option) (int64, e
 	return this.count, nil
 }
 
-// Save records the model as it arrived — before onSave touches it — because
-// what the handler handed over is exactly what the write tests are about.
 func (this *fakeRepo) Save(_ context.Context, m *Widget) (Widget, error) {
 	this.calls = append(this.calls, recordedCall{Method: "Save", Model: *m})
 	if this.err != nil {
@@ -218,8 +188,6 @@ func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
 	return int64(len(ids)), nil
 }
 
-// only returns the one call the handler made to method, failing when it made
-// none or several.
 func (this *fakeRepo) only(t *testing.T, method string) recordedCall {
 	t.Helper()
 	var found []recordedCall
@@ -239,7 +207,6 @@ func (this *fakeRepo) only(t *testing.T, method string) recordedCall {
 	return recordedCall{}
 }
 
-// methods lists the repository calls in the order they were made.
 func (this *fakeRepo) methods() []string {
 	out := make([]string, len(this.calls))
 	for i, c := range this.calls {
@@ -248,15 +215,6 @@ func (this *fakeRepo) methods() []string {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// driving the handler
-
-// mount builds a handler over a fresh fake and mounts it the way the package
-// documentation says to.
-//
-// HandleMethodNotAllowed is on because Gin answers 404 for it by default, and a
-// 404 cannot tell "this route was never mounted" from "no such row" — which is
-// exactly what the ReadOnly test has to distinguish.
 func mount(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*gin.Engine, *fakeRepo) {
 	t.Helper()
 	f := newFake()
@@ -269,9 +227,7 @@ func mount(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*gin.E
 type response struct {
 	status int
 	body   []byte
-	// header is what a status carries besides a body — Retry-After on a 503 is
-	// the only one the library sets, and a test that could not see it would
-	// have to trust the renderer's word for it.
+
 	header http.Header
 }
 
@@ -282,8 +238,6 @@ func (this response) decode(t *testing.T, into any) {
 	}
 }
 
-// do sends one request through the mounted engine. A non-empty body is sent as
-// JSON, which is the only body encoding this binding accepts.
 func do(t *testing.T, r *gin.Engine, method, target, body string) response {
 	t.Helper()
 	var rdr io.Reader
@@ -299,8 +253,6 @@ func do(t *testing.T, r *gin.Engine, method, target, body string) response {
 	return response{status: w.Code, body: w.Body.Bytes(), header: w.Header()}
 }
 
-// ok sends a request and insists it succeeded, so a test that is about what
-// reached the repository fails with the server's own words when it did not.
 func ok(t *testing.T, e *gin.Engine, method, target, body string, want int) response {
 	t.Helper()
 	r := do(t, e, method, target, body)
@@ -310,12 +262,6 @@ func ok(t *testing.T, e *gin.Engine, method, target, body string, want int) resp
 	return r
 }
 
-// ---------------------------------------------------------------------------
-// inspecting compiled options
-
-// whereSQL renders the filter that reached the repository. The predicate AST is
-// closed, so its SQL is the only honest way to state what a request compiled to
-// — and it is what the database would have been asked, which is the point.
 func whereSQL(t *testing.T, o *crud.Options) (string, []any) {
 	t.Helper()
 	return predSQL(t, widgetMeta, o.Predicate())
@@ -341,8 +287,6 @@ func preloadPaths(o *crud.Options) []string {
 	return out
 }
 
-// relMeta resolves the model on the far side of a relation, so a preload's own
-// filter can be rendered against the table it will actually run on.
 func relMeta(t *testing.T, path string) *crud.Meta {
 	t.Helper()
 	rel, _, err := widgetMeta.RelationAt(path)
@@ -356,8 +300,6 @@ func relMeta(t *testing.T, path string) *crud.Meta {
 	return target
 }
 
-// sortTerms spells the compiled sort the way a reader thinks of it: "-Price"
-// for descending, canonical field names throughout.
 func sortTerms(o *crud.Options) []string {
 	out := make([]string, len(o.Sort))
 	for i, s := range o.Sort {
@@ -369,27 +311,17 @@ func sortTerms(o *crud.Options) []string {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// the port layer
-
-// widgetInput is a request body that is not the model: it calls the model's
-// Name column "label" and leaves "price" alone. One renamed field and one not
-// renamed is what makes the path-chain control in edge_test.go mean something.
 type widgetInput struct {
 	Label string `json:"label"`
 	Price int    `json:"price"`
 }
 
-// widgetMapper is the resource adapter — it turns this transport's shape into
-// the model before the service sees it.
 type widgetMapper struct{}
 
 func (widgetMapper) Model(_ context.Context, in widgetInput) (Widget, error) {
 	return Widget{Name: in.Label, Price: in.Price}, nil
 }
 
-// mountHandler mounts a handler the caller built, for the tests that use a
-// constructor other than New.
 func mountHandler[In any](h *HandlerFor[Widget, int64, WidgetUpdate, In]) *gin.Engine {
 	r := gin.New()
 	r.HandleMethodNotAllowed = true

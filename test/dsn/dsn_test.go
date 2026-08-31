@@ -1,11 +1,3 @@
-// Package dsn holds the assertions that vvdb's connection strings are read
-// back by the drivers the way they were written.
-//
-// vvdb is in the root module and takes no third-party dependency, so it cannot
-// import pgx or go-sql-driver to check its own work; on its own it can only
-// compare strings, and a string comparison agrees with a rule this repository
-// invented. These tests parse with the real parsers, which is where the two
-// engines' escaping rules actually live ([[FL-021]]).
 package dsn
 
 import (
@@ -20,9 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// The password holds every character that means something to one of the two
-// parsers: '@' ends the userinfo, '/' ends the address, ':' starts the
-// password, and '?' starts the query.
 const nasty = `p@ss/w:rd?&=#`
 
 func TestPgxReadsBackWhatVvdbWrote(t *testing.T) {
@@ -174,9 +163,7 @@ func TestTheMySQLDriverReadsBackWhatVvdbWrote(t *testing.T) {
 	c := vvdb.Config{
 		Engine: vvdb.MySQL, Host: "db.internal", Port: 6000,
 		User: "vv", Password: nasty, Name: "app",
-		// Europe/Moscow is the parameter that breaks an unescaped string
-		// outright: the driver looks for the *last* '/' in the whole DSN to
-		// find where the database name ends.
+
 		Params: map[string]string{"loc": "Europe/Moscow"},
 	}
 	dsn, err := vvdb.MySQLDSN(&c)
@@ -299,9 +286,6 @@ func TestRedactedSQLiteTargetFailsClosedOnAnAuthorityTheDriverRejects(t *testing
 	}
 }
 
-// The control: the escaping is not decoration. Written out plainly, the same
-// parameter moves where the driver thinks the database name ends, and the
-// error is a connection to a database nobody named.
 func TestAnUnescapedParameterIsWhyTheEscapingExists(t *testing.T) {
 	broken := `vv:pw@tcp(db.internal:6000)/app?loc=Europe/Moscow&parseTime=true`
 	if _, err := mysql.ParseDSN(broken); err == nil {

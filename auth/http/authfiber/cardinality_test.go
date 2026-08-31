@@ -59,9 +59,6 @@ func TestCredentialCardinalityIsSingularForEveryTransportSource(t *testing.T) {
 		})
 	}
 
-	// Fiber can preserve field-name spelling exactly. HTTP names remain
-	// case-insensitive in that mode, and the two spellings must still contribute
-	// to one credential cardinality.
 	t.Run("disabled header normalization", func(t *testing.T) {
 		for _, source := range []struct {
 			name      string
@@ -129,9 +126,6 @@ func serveFiberHeaderValues(
 	handler := &seen{}
 	app := fiber.New()
 	app.Use(func(c fiber.Ctx) error {
-		// Add directly to fasthttp's raw request header. This pins the transport
-		// seam itself rather than relying on net/http's test adapter to preserve
-		// repeated fields for us.
 		for _, value := range values {
 			c.Request().Header.Add(name, value)
 		}

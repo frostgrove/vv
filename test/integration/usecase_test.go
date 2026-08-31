@@ -19,14 +19,6 @@ import (
 	"github.com/frostgrove/vv/test/entstore"
 )
 
-// These are the shapes the docs show: a DSL filter arrives over HTTP, a usecase
-// opens one transaction, does something the ORM is better at, runs the
-// repository with the compiled DSL options inside that same transaction, and
-// commits. Everything is one atomic unit.
-
-// ---------------------------------------------------------------------------
-// gorm
-
 type promoteResult struct {
 	Matched  int64    `json:"matched"`
 	Promoted []string `json:"promoted"`
@@ -39,35 +31,28 @@ type teamUsecase struct {
 	config   *query.Config
 }
 
-// PromoteMembers is the whole pattern in one method.
 func (this teamUsecase) PromoteMembers(ctx context.Context, teamID uint, request *query.Request) (promoteResult, error) {
-	// 1. The DSL is compiled and validated before anything opens.
 	options, err := request.Compile(this.members.Meta(), this.config)
 	if err != nil {
 		return promoteResult{}, err
 	}
 
 	var out promoteResult
-	// 2. gorm owns the transaction.
+
 	err = this.database.Transaction(func(tx *gorm.DB) error {
-		// 3. vv joins it — one line, and every repository call made with
-		//    txCtx now runs on this transaction.
 		txCtx := crud.BindExecutor(ctx, this.source, crudsql.From(tx.Statement.ConnPool))
 
-		// 4. The client's filter, narrowed by something it cannot override.
 		page, err := this.members.Get(txCtx, append(options, crud.Where(crud.Eq("TeamID", teamID)))...)
 		if err != nil {
 			return err
 		}
 		out.Matched = page.Total
 
-		// 5. Something gorm is better at, in the same transaction.
 		if err := tx.Model(&Team{}).Where("id = ?", teamID).
 			Update("name", gorm.Expr("name || ' (promoted)'")).Error; err != nil {
 			return err
 		}
 
-		// 6. Writes back through the repository, still the same transaction.
 		for _, m := range page.Items {
 			renamed := "Sr. " + m.Name
 			updated, err := this.members.Update(txCtx, m.ID, MemberUpdate{Name: &renamed})
@@ -81,7 +66,7 @@ func (this teamUsecase) PromoteMembers(ctx context.Context, teamID uint, request
 	if err != nil {
 		return promoteResult{}, err
 	}
-	// 7. Committed.
+
 	return out, nil
 }
 
@@ -104,7 +89,6 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Exactly what an HTTP client would post.
 	var request query.Request
 	if err := json.Unmarshal([]byte(`{"filter":{"age":{"gte":30}},"sort":["name"],"limit":50}`), &request); err != nil {
 		t.Fatal(err)
@@ -121,7 +105,6 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 		t.Fatalf("promoted = %v", got.Promoted)
 	}
 
-	// Both halves of the transaction landed.
 	var reloaded Team
 	if err := database.First(&reloaded, team.ID).Error; err != nil {
 		t.Fatal(err)
@@ -138,7 +121,6 @@ func TestGormUsecaseDSLInsideTransaction(t *testing.T) {
 	}
 }
 
-// A failure anywhere in the usecase takes the ORM's work and vv's with it.
 func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
@@ -184,9 +166,6 @@ func TestGormUsecaseRollsBackBothHalves(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ent
-
 type userUsecase struct {
 	client *entpkg.Client
 	source crud.Source
@@ -206,7 +185,7 @@ func (this userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req
 	}
 
 	var out deactivateResult
-	// ent owns the transaction, so ent's hooks and privacy rules still run.
+
 	tx, err := this.client.Tx(ctx)
 	if err != nil {
 		return deactivateResult{}, err
@@ -221,7 +200,6 @@ func (this userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req
 	}
 	out.Matched = page.Total
 
-	// ent's builder, same transaction: a bulk update expressed the ent way.
 	ids := make([]int64, 0, len(page.Items))
 	for _, u := range page.Items {
 		ids = append(ids, u.ID)
@@ -233,7 +211,6 @@ func (this userUsecase) DeactivateUsers(ctx context.Context, tenantID int64, req
 		}
 	}
 
-	// …and a repository write, still the same transaction.
 	for _, id := range ids {
 		name := "deactivated"
 		if _, err := this.users.Update(txCtx, id, entstore.UserUpdate{Name: &name}); err != nil {
@@ -281,7 +258,6 @@ func TestEntUsecaseDSLInsideTransaction(t *testing.T) {
 		t.Fatalf("result = %+v", got)
 	}
 
-	// ent's bulk update and vv's per-row update both committed.
 	still, err := client.User.Query().Where(entuser.ActiveEQ(true)).All(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +272,7 @@ func TestEntUsecaseDSLInsideTransaction(t *testing.T) {
 	if renamed != 2 {
 		t.Fatalf("%d renamed, want 2", renamed)
 	}
-	// The other tenant was never in scope.
+
 	other, err := client.User.Query().Where(entuser.TenantIDEQ(2)).Only(ctx)
 	if err != nil {
 		t.Fatal(err)

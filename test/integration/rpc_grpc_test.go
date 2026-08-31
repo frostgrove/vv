@@ -21,20 +21,8 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// The fourth transport against a live database. http_port_test.go makes this
-// claim for the three HTTP bindings; this is the arm that says the port layer
-// carries a protocol that is not HTTP, on every engine.
-//
-// No t.Parallel anywhere: every test in this package shares the same physical
-// tables.
-
-// The gRPC binding holds the same Service type the three HTTP ones do, because
-// a generic alias is the same type. The compile-time half of the claim; the
-// tests below are the half that runs.
 var _ crudgrpc.Service[Article, int64, ArticleUpdate] = articlePort{}
 
-// grpcServe mounts one service on an in-process server and answers a client
-// that calls it by full method name.
 func grpcServe(t *testing.T, service articlePort) *grpcClient {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -56,8 +44,6 @@ func grpcServe(t *testing.T, service articlePort) *grpcClient {
 	return &grpcClient{t: t, conn: conn, service: crudgrpc.ServiceName("Article")}
 }
 
-// grpcServeRepo mounts a repository directly, for a fixture that has no service
-// of its own.
 func grpcServeRepo[M any, ID comparable, U any](t *testing.T, repository crudgrpc.Repository[M, ID, U]) *grpcClient {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -113,11 +99,6 @@ func (this *grpcClient) ok(method, request string) *structpb.Struct {
 	return out
 }
 
-// One port.Service value, mounted on gRPC, against every engine.
-//
-// It is the same service http_port_test.go mounts on the three HTTP bindings —
-// the same value, the same rules, the same generated query config — so what
-// this measures is the transport and nothing else.
 func TestOnePortServiceAlsoMountsOnGRPC(t *testing.T) {
 	engines := 0
 	for _, b := range blogs(t) {
@@ -161,10 +142,6 @@ func TestOnePortServiceAlsoMountsOnGRPC(t *testing.T) {
 				}
 			})
 
-			// The control: a title it allows is written, and the key the client
-			// sent is cleared below the binding. Without it the leg above
-			// passes for a service that refuses everything, or for a binding
-			// whose Create method was never registered.
 			t.Run("and the control: a title it allows is written", func(t *testing.T) {
 				out := c.ok("Create", `{"AuthorID":`+itoa64(ann.ID)+`,"Title":"through the port over gRPC","ID":999999}`)
 				var got Article
@@ -182,8 +159,6 @@ func TestOnePortServiceAlsoMountsOnGRPC(t *testing.T) {
 					t.Fatal("the client chose its own key")
 				}
 
-				// And the row is really there, read back through the same
-				// transport.
 				c.ok("Get", `{"id":"`+itoa64(got.ID)+`"}`)
 
 				n := c.ok("Delete", `{"id":"`+itoa64(got.ID)+`"}`)
@@ -208,21 +183,11 @@ func TestOnePortServiceAlsoMountsOnGRPC(t *testing.T) {
 		})
 	}
 
-	// The control on the loop: an engine that stopped running cannot leave this
-	// green.
 	if engines == 0 {
 		t.Fatal("no engine was walked, so this test measured nothing")
 	}
 }
 
-// A real constraint violation from a real server reaches a gRPC client as a
-// code and a machine-readable reason, and as nothing a client could not have
-// known.
-//
-// The unit suite renders the whole captured corpus; this is the live half — the
-// error came out of the server running beside this process, over every target
-// including the two ORM ones, because there are two independent classifiers and
-// the corpus exercises neither of them end to end.
 func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -260,9 +225,6 @@ func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) 
 				}
 			}
 
-			// Nothing internal. The names are the ones this schema really has,
-			// so a renderer that echoed the driver would be caught by the
-			// table, the column or the constraint.
 			for what, secret := range map[string]string{
 				"the table":         "eg_cons",
 				"the column":        "slug",
@@ -277,19 +239,13 @@ func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) 
 				}
 			}
 
-			// And it says something: a client that can branch is the whole
-			// point, and a renderer answering an empty status would pass every
-			// assertion above.
 			if st.Message() == "" {
 				t.Fatal("the status carries no message")
 			}
 			if reason == "" {
 				t.Fatalf("the status carries no machine-readable reason: %v", st.Details())
 			}
-			// The finer code only where the adapter names its engine. Through
-			// ent it is the coarse one — [[D-046]]'s degradation, and asserting
-			// it here is what stops this test from quietly passing on a target
-			// that classifies nothing.
+
 			want := string(errs.CodeConflict)
 			if tg.classifies {
 				want = string(errs.CodeUnique)
@@ -298,9 +254,6 @@ func TestAClassifiedConflictReachesAGrpcClientWithNothingInternal(t *testing.T) 
 				t.Fatalf("the reason is %q, want %q on this target", reason, want)
 			}
 
-			// The control on the fixture: a row that breaks nothing goes
-			// through, so the refusal above came from the constraint rather
-			// than from a binding that refuses every write.
 			c.ok("Create", `{"Slug":"free","Tag":"t"}`)
 		})
 	}

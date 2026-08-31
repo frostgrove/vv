@@ -9,7 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// fakeExec is an executor that only has to be distinguishable from another one.
 type fakeExec struct {
 	name string
 	ds   any
@@ -21,14 +20,12 @@ func (fakeExec) Exec(context.Context, string, ...any) (crud.Result, error) {
 func (fakeExec) Query(context.Context, string, ...any) (crud.Rows, error) { return nil, nil }
 func (this fakeExec) Dialect() crud.Dialect                               { return crud.Postgres{} }
 
-// named is a source that can say which database it speaks to.
 type named struct {
 	fakeExec
 }
 
 func (this named) DataSource() any { return this.ds }
 
-// beginnerSource hands out a transaction so InTx has something to open.
 type beginnerSource struct {
 	named
 	tx *fakeTx
@@ -98,7 +95,7 @@ func (this *fakeTx) Rollback(ctx context.Context) error {
 }
 
 var (
-	dbA = new(int) // two handles that are only ever compared by identity
+	dbA = new(int)
 	dbB = new(int)
 )
 
@@ -120,16 +117,11 @@ func assertScopeFailure(t *testing.T, ctx context.Context, source any, reason cr
 	}
 }
 
-// The source-less spelling can infer a pool identity, but a transaction names
-// the transaction handle rather than the pool. That must fail before a
-// repository can fall back to its own source.
 func TestWithExecutorRefusesAnInferredScopeMismatch(t *testing.T) {
 	ctx := crud.WithExecutor(context.Background(), fakeExec{name: "foreign"})
 	assertScopeFailure(t, ctx, srcOn(dbA, "a"), crud.ExecutorScopeMismatch)
 }
 
-// Cross-datasource capture still exists for integrations that genuinely need
-// it, but the danger is part of the function name.
 func TestWithUnsafeExecutorReachesEverySource(t *testing.T) {
 	ctx := crud.WithUnsafeExecutor(context.Background(), fakeExec{name: "foreign"})
 
@@ -141,8 +133,6 @@ func TestWithUnsafeExecutorReachesEverySource(t *testing.T) {
 	}
 }
 
-// A session binds a canonical Source once. Repositories on the same database
-// join it and repositories elsewhere are not blocked or captured.
 func TestASessionReachesOnlyItsOwnDatabase(t *testing.T) {
 	source := srcOn(dbA, "declaration")
 	ctx := crud.BindExecutor(context.Background(), source, fakeExec{name: "tx-of-a"})
@@ -331,7 +321,6 @@ func TestASessionRefusesATransactionUsedAsTheCanonicalSource(t *testing.T) {
 	}
 }
 
-// Naming the raw handle and naming a source over it are the same statement.
 func TestTheHandleAndASourceOverItNameTheSameDatabase(t *testing.T) {
 	byHandle := crud.WithExecutorFor(context.Background(), dbA, fakeExec{name: "tx"})
 	bySource := crud.WithExecutorFor(context.Background(), srcOn(dbA, "a"), fakeExec{name: "tx"})
@@ -343,8 +332,6 @@ func TestTheHandleAndASourceOverItNameTheSameDatabase(t *testing.T) {
 	}
 }
 
-// Bindings stack rather than replace, so a safe session cannot hide an explicit
-// unsafe fallback underneath it.
 func TestASessionDoesNotHideTheUnsafeExecutorUnderIt(t *testing.T) {
 	ctx := crud.WithUnsafeExecutor(context.Background(), fakeExec{name: "outer"})
 	ctx = crud.BindExecutor(ctx, srcOn(dbA, "declaration"), fakeExec{name: "inner-a"})
@@ -357,8 +344,6 @@ func TestASessionDoesNotHideTheUnsafeExecutorUnderIt(t *testing.T) {
 	}
 }
 
-// ExecutorFrom answers a different question — "is there a transaction here at
-// all" — and still sees a scoped binding.
 func TestExecutorFromSeesAnyBinding(t *testing.T) {
 	ctx := crud.WithExecutorFor(context.Background(), dbA, fakeExec{name: "tx"})
 	if _, ok := crud.ExecutorFrom(ctx); !ok {
@@ -369,19 +354,14 @@ func TestExecutorFromSeesAnyBinding(t *testing.T) {
 	}
 }
 
-// A datasource handle is a pointer in practice, but the contract does not say
-// so — an uncomparable one must not take the process down.
 func TestAnUncomparableDataSourceDoesNotPanic(t *testing.T) {
-	weird := []int{1, 2, 3} // slices panic on ==
+	weird := []int{1, 2, 3}
 	ctx := crud.WithExecutorFor(context.Background(), weird, fakeExec{name: "tx"})
 
 	assertScopeFailure(t, ctx, srcOn(weird, "same-slice"), crud.ExecutorScopeInvalidSource)
 	assertScopeFailure(t, ctx, srcOn(dbA, "a"), crud.ExecutorScopeInvalidSource)
 }
 
-// A comparable outer type is not sufficient: comparing an interface field
-// whose dynamic value is a slice still panics. Datasource identity is fed by
-// adapters, so one unusual implementation must not take the process down.
 func TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic(t *testing.T) {
 	type identity struct{ Value any }
 	left := identity{Value: []int{1}}
@@ -395,8 +375,6 @@ func TestADataSourceWithAnUncomparableInterfaceValueDoesNotPanic(t *testing.T) {
 	assertScopeFailure(t, ctx, srcOn(right, "right"), crud.ExecutorScopeInvalidSource)
 }
 
-// A transaction vv opens itself is scoped to the source that opened it, so
-// it reaches siblings on the same database and nothing else.
 func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}
 	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
@@ -418,9 +396,6 @@ func TestInTxScopesTheTransactionItOpens(t *testing.T) {
 	}
 }
 
-// A source that cannot name a physical datasource cannot safely share a
-// transaction: an unscoped binding may capture another database, while wrapper
-// identity may make a sibling miss it. Refuse before Begin and before fn.
 func TestInTxRefusesAnUnidentifiedSourceBeforeBegin(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "anonymous-tx"}}
 	source := struct {
@@ -466,8 +441,6 @@ type beginner struct{ tx crud.Tx }
 
 func (this beginner) Begin(context.Context) (crud.Tx, error) { return this.tx, nil }
 
-// Already inside a transaction of my own database means join it, not open a
-// second one.
 func TestInTxJoinsRatherThanNests(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "outer"}}
 	source := beginnerSource{named: srcOn(dbA, "a"), tx: &fakeTx{fakeExec: fakeExec{name: "should-not-open"}}}
@@ -481,7 +454,6 @@ func TestInTxJoinsRatherThanNests(t *testing.T) {
 	}
 }
 
-// But a transaction on somebody else's database is not one to join.
 func TestInTxDoesNotJoinAnotherDatabasesTransaction(t *testing.T) {
 	own := &fakeTx{fakeExec: fakeExec{name: "own"}}
 	source := beginnerSource{named: srcOn(dbA, "a"), tx: own}
@@ -495,7 +467,6 @@ func TestInTxDoesNotJoinAnotherDatabasesTransaction(t *testing.T) {
 	}
 }
 
-// A source with no transactions at all still says so.
 func TestInTxWithoutABeginnerIsRefused(t *testing.T) {
 	err := crud.InTx(context.Background(), fakeExec{name: "no-tx"}, func(context.Context) error {
 		t.Error("fn ran without a transaction")
@@ -597,9 +568,6 @@ func TestRollbackPreservesRequestContextValues(t *testing.T) {
 	}
 }
 
-// Rows 2 and 3 of the probe's transaction matrix differ on who owns the
-// transaction, and until this flag existed the seam could not tell them apart:
-// InTx and WithExecutorFor pushed the same binding.
 func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	tx := &fakeTx{fakeExec: fakeExec{name: "tx-of-a"}}
 	source := beginnerSource{named: srcOn(dbA, "a"), tx: tx}
@@ -608,8 +576,7 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 		if _, found, owned := crud.OwnedExecutorFor(ctx, source); !found || !owned {
 			t.Errorf("a transaction vv opened reports found=%v owned=%v", found, owned)
 		}
-		// Joining it keeps it ours: InTx joins rather than nests, so the
-		// binding underneath is still the one InTx pushed.
+
 		return crud.InTx(ctx, source, func(inner context.Context) error {
 			if _, _, owned := crud.OwnedExecutorFor(inner, source); !owned {
 				t.Error("joining our own transaction gave up ownership of it")
@@ -621,8 +588,6 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The control, and the whole reason for the flag: an ent or gorm transaction
-	// bound as a session is found and is not ours.
 	foreign := crud.BindExecutor(context.Background(), source, tx)
 	if _, found, owned := crud.OwnedExecutorFor(foreign, source); !found || owned {
 		t.Fatalf("a foreign transaction reports found=%v owned=%v", found, owned)
@@ -631,9 +596,7 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	if _, found, owned := crud.OwnedExecutorFor(scoped, source); !found || owned {
 		t.Fatalf("a foreign transaction named by handle reports found=%v owned=%v", found, owned)
 	}
-	// And the trap the matrix names: a foreign transaction scoped to another
-	// handle is not this repository's transaction at all, however much
-	// ExecutorFrom says there is one.
+
 	elsewhere := crud.WithExecutorFor(context.Background(), dbB, tx)
 	if _, found, _ := crud.OwnedExecutorFor(elsewhere, source); found {
 		t.Fatal("a transaction on another database was reported as this repository's")
@@ -643,11 +606,9 @@ func TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot(t *testing.T) {
 	}
 }
 
-// The budget lives with the transaction, because that is what PostgreSQL's
-// subxid cache counts.
 func TestASavepointClaimCountsPerTransactionAndNotPerRepository(t *testing.T) {
 	one := beginnerSource{named: srcOn(dbA, "one"), tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
-	two := srcOn(dbA, "two") // a second repository over the same database
+	two := srcOn(dbA, "two")
 
 	err := crud.InTx(context.Background(), one, func(ctx context.Context) error {
 		if n, ok := crud.ClaimSavepoint(ctx, one); !ok || n != 1 {
@@ -663,8 +624,6 @@ func TestASavepointClaimCountsPerTransactionAndNotPerRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The control: a second transaction starts again at one, or the cap would
-	// shut the feature off for the life of the process.
 	other := beginnerSource{named: srcOn(dbA, "one"), tx: &fakeTx{fakeExec: fakeExec{name: "tx2"}}}
 	err = crud.InTx(context.Background(), other, func(ctx context.Context) error {
 		if n, ok := crud.ClaimSavepoint(ctx, other); !ok || n != 1 {
@@ -677,7 +636,6 @@ func TestASavepointClaimCountsPerTransactionAndNotPerRepository(t *testing.T) {
 	}
 }
 
-// Nothing claims a savepoint inside somebody else's unit of work.
 func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
 	source := srcOn(dbA, "a")
 	if _, ok := crud.ClaimSavepoint(context.Background(), source); ok {
@@ -687,7 +645,7 @@ func TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne(t *testing.T) {
 	if _, ok := crud.ClaimSavepoint(foreign, source); ok {
 		t.Error("a savepoint was claimed inside a transaction vv does not own")
 	}
-	// The control: our own transaction hands one out.
+
 	own := beginnerSource{named: source, tx: &fakeTx{fakeExec: fakeExec{name: "tx"}}}
 	if err := crud.InTx(context.Background(), own, func(ctx context.Context) error {
 		if _, ok := crud.ClaimSavepoint(ctx, own); !ok {
@@ -706,8 +664,6 @@ func TestARejectedScopeCannotBeConsumedAsASavepointMiss(t *testing.T) {
 	if _, ok := crud.ClaimSavepoint(ctx, source); ok {
 		t.Fatal("ClaimSavepoint accepted an executor whose scope was rejected")
 	}
-	// ClaimSavepoint's boolean cannot carry an error. It must leave the failed
-	// binding intact so the repository's next executor resolution reports the
-	// original typed failure instead of falling through to its datasource.
+
 	assertScopeFailure(t, ctx, source, crud.ExecutorScopeMismatch)
 }

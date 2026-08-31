@@ -44,11 +44,6 @@ type structSource struct {
 	fset      *token.FileSet
 }
 
-// Discover walks the configured source roots and returns model declarations in
-// a deterministic order. Model files (`model.go`, `*.model.go` and
-// `*_model.go`) are models by convention. An ordinary Go file contributes a
-// model only when its struct has db/rel/gorm evidence or a constant TableName
-// method.
 func Discover(o *Options) ([]Model, error) {
 	if o == nil {
 		return nil, fmt.Errorf("modelscan: options are nil")

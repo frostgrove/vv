@@ -19,8 +19,6 @@ func TestMigrationCommandCreatesAnEditableFileWithoutOpeningTheDatabase(t *testi
 	root := t.TempDir()
 	migrations := filepath.Join(root, "migrations")
 	config := vvdb.Config{
-		// This is deliberately not a usable SQLite connection. Generation only
-		// needs the dialect and must not validate/open the database.
 		Engine: vvdb.SQLite,
 		Migration: vvdb.Migration{
 			Path:   migrations,
@@ -176,8 +174,6 @@ func TestAmbiguousModelIsEmptyOutsideInteractiveMode(t *testing.T) {
 }
 
 func TestInteractiveAmbiguityLetsTheAuthorChooseAModel(t *testing.T) {
-	// Huh's accessible renderer is deterministic over a pipe while exercising
-	// the same selection value as its searchable terminal renderer.
 	t.Setenv("TERM", "dumb")
 	models := []modelscan.Model{
 		{Package: "billing", Name: "User", Table: "users"},
@@ -463,7 +459,6 @@ func TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments(t *testing.T)
 	}
 	var out bytes.Buffer
 	err := runInteractive(context.Background(), config, commandIO{
-		// 1 = migration, then its name, then an empty optional tables field.
 		in: &byteAtATimeReader{Reader: strings.NewReader("1\ninit_users\n\n")}, out: &out, err: &out,
 	})
 	if err != nil {
@@ -478,9 +473,6 @@ func TestInteractiveMenuCreatesAnEmptyMigrationWithoutCLIArguments(t *testing.T)
 	}
 }
 
-// Huh's accessible fields each create their own buffered reader. A terminal
-// delivers input over time, while a strings.Reader can let the first field
-// buffer every later answer; limiting reads models the terminal accurately.
 type byteAtATimeReader struct{ io.Reader }
 
 func (this *byteAtATimeReader) Read(p []byte) (int, error) {

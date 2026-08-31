@@ -12,13 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// crud.Base and crud.Decorate are what a third-party decorator is written
-// against. If either stops working every user-written middleware stops working
-// with it, and nothing inside the library would notice — so they are exercised
-// here through the same seam a stranger would use.
-
-// countingRepo embeds Base and overrides one method, which is exactly the shape
-// the Base documentation promises.
 type countingRepo struct {
 	crud.Base[Article, int64]
 	deletes *int
@@ -35,7 +28,6 @@ func counting(deletes *int) crud.Middleware[Article, int64] {
 	}
 }
 
-// refusing denies everything, so which layer answered is visible in the result.
 func refusing() crud.Middleware[Article, int64] {
 	return func(next crud.Core[Article, int64]) crud.Core[Article, int64] {
 		return refusingRepo{crud.Base[Article, int64]{Core: next}}
@@ -50,9 +42,6 @@ func (this refusingRepo) Delete(context.Context, ...int64) (int64, error) {
 
 var decArticles = sqlrepo.Define[Article, int64, struct{}]("articles")
 
-// An overridden method runs instead of the wrapped one; every method that was
-// not overridden still reaches the repository, which is the entire point of
-// embedding Base rather than implementing eleven methods.
 func TestBasePassesEverythingThroughAndLetsOneOverrideWin(t *testing.T) {
 	ctx := context.Background()
 	var deletes int
@@ -72,7 +61,6 @@ func TestBasePassesEverythingThroughAndLetsOneOverrideWin(t *testing.T) {
 		t.Fatalf("the override swallowed the statement instead of forwarding it: %v", rec.SQL())
 	}
 
-	// A method the decorator says nothing about still reaches the repository.
 	if _, err := repository.GetByID(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +69,6 @@ func TestBasePassesEverythingThroughAndLetsOneOverrideWin(t *testing.T) {
 	}
 }
 
-// Decorate adds a layer to an already-typed repository, and the first argument
-// ends up outermost — so it is the one that gets to refuse.
 func TestDecorateStacksWithTheFirstMiddlewareOutermost(t *testing.T) {
 	ctx := context.Background()
 	var deletes int
@@ -100,7 +86,6 @@ func TestDecorateStacksWithTheFirstMiddlewareOutermost(t *testing.T) {
 		t.Fatalf("a refused delete still reached the database: %v", rec.SQL())
 	}
 
-	// Reversed, the counter is outermost and the refusal comes from beneath it.
 	rec = crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
 	repository = crud.Decorate(decArticles.Bind(rec), counting(&deletes), refusing())
 	if _, err := repository.Delete(ctx, 1); !errors.Is(err, crud.ErrForbidden) {
@@ -111,8 +96,6 @@ func TestDecorateStacksWithTheFirstMiddlewareOutermost(t *testing.T) {
 	}
 }
 
-// Unwrap hands back the Core underneath, which is how a caller adds another
-// layer to a repository somebody else built.
 func TestUnwrapReturnsTheDecoratedCore(t *testing.T) {
 	rec := crudtest.Postgres()
 	repository := decArticles.Bind(rec, refusing())
@@ -122,9 +105,6 @@ func TestUnwrapReturnsTheDecoratedCore(t *testing.T) {
 	}
 }
 
-// A relation resolves its target's table through the registry, so a model whose
-// repository lives elsewhere — or is never declared at all — can still be
-// reached by pointing the registry at the right table.
 func TestRegisterTableTypeRedirectsARelationsTarget(t *testing.T) {
 	type Ledger struct {
 		ID   int64  `db:"id,pk,auto"`

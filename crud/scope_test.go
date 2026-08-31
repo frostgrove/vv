@@ -8,14 +8,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// MergeRelationScopes is where a repository's permanent narrowing meets the one
-// a single request carries — the per-tenant filter an access-control decorator
-// adds, which cannot be baked into the blueprint because it depends on who is
-// asking. Two things about that meeting are load-bearing and neither is visible
-// from a call site: the two narrowings compose, and the request's copy does not
-// stay behind.
-
-// commentScope renders the narrowing that applies to a hop landing on Comments.
 func commentScope(t *testing.T, rs *crud.RelationScopes, path string) string {
 	t.Helper()
 	p := rs.At(path, metaOf[Comment](t, "comments"))
@@ -31,9 +23,6 @@ func commentScope(t *testing.T, rs *crud.RelationScopes, path string) string {
 	return sql
 }
 
-// Where both sides narrow the same relation the two are ANDed. Replacing one
-// with the other would hand the request whichever narrowing was declared last —
-// and one of the two is the repository's own, which nobody asked to have lifted.
 func TestMergingTwoNarrowingsOfOneRelationKeepsBoth(t *testing.T) {
 	permanent := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("Approved", true))
 	perRequest := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("AuthorID", int64(7)))
@@ -43,8 +32,6 @@ func TestMergingTwoNarrowingsOfOneRelationKeepsBoth(t *testing.T) {
 		t.Fatalf("the merged narrowing is %s\nwant %s — one of the two declarations was dropped", got, want)
 	}
 
-	// The same for a declaration made by model rather than by path, which is
-	// the form that survives a self-relation at any depth.
 	ct := reflect.TypeOf(Comment{})
 	byModel := crud.MergeRelationScopes(
 		(*crud.RelationScopes)(nil).ForModel(ct, crud.Eq("Approved", true)),
@@ -55,11 +42,6 @@ func TestMergingTwoNarrowingsOfOneRelationKeepsBoth(t *testing.T) {
 	}
 }
 
-// The merge builds its own maps. A merge that wrote into the repository's
-// blueprint would leave one caller's narrowing on it, and every later request —
-// another tenant's — would then be answered through a filter nobody declared for
-// it. Nothing at the call site would show it, because the first request was
-// answered correctly.
 func TestMergingDoesNotLeaveTheRequestsNarrowingOnTheRepositorysOwn(t *testing.T) {
 	permanent := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("Approved", true))
 	perRequest := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("AuthorID", int64(7)))
@@ -73,19 +55,11 @@ func TestMergingDoesNotLeaveTheRequestsNarrowingOnTheRepositorysOwn(t *testing.T
 		t.Fatalf("the request's narrowing became %s after being merged", got)
 	}
 
-	// The control: the merge did compose the two, so the two assertions above
-	// are about isolation and not about a merge that quietly did nothing.
 	if got := commentScope(t, merged, "Comments"); got == `"approved" = $1` {
 		t.Fatal("the merge returned the left side unchanged, so nothing above is being tested")
 	}
 }
 
-// Nothing declared on one side hands back the other untouched, which is what
-// makes the merge free on every request that carries no scope of its own.
-// The first two legs pin the shared-value optimisation rather than an answer a
-// caller can observe: merging with nothing hands back the same pointer instead
-// of a fresh equivalent value. A failure there is a cost change, not a bug — the
-// third leg is the one about behaviour.
 func TestMergingWithNothingDeclaredHandsBackTheOtherSide(t *testing.T) {
 	declared := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("Approved", true))
 
@@ -100,21 +74,10 @@ func TestMergingWithNothingDeclaredHandsBackTheOtherSide(t *testing.T) {
 	}
 }
 
-// The chained builders do not write into the value they were called on.
-//
-// `(*RelationScopes)(nil).AtPath(…).AtPath(…)` reads as a builder, and it used to
-// mutate its receiver. On this path that is not a style question: a policy's
-// RelationScopes function runs per request, so a consumer who kept the result of
-// one call and extended it on the next would be writing into a value another
-// in-flight request is reading — and what they would be corrupting is a
-// narrowing, which is the thing that decides whose rows come back.
 func TestTheRelationScopeBuildersDoNotMutateWhatTheyWereCalledOn(t *testing.T) {
-	// At answers nil for a nil target, so the lookups below need a real one. Any
-	// meta will do: a path narrowing is found by path, not by what it lands on.
 	m := articleMeta(t)
 	base := (*crud.RelationScopes)(nil).AtPath("Comments", crud.Eq("Approved", true))
 
-	// Two requests extend the same stored base differently.
 	one := base.AtPath("Author", crud.Eq("AuthorID", 1))
 	two := base.AtPath("Author", crud.Eq("AuthorID", 2))
 
@@ -128,7 +91,6 @@ func TestTheRelationScopeBuildersDoNotMutateWhatTheyWereCalledOn(t *testing.T) {
 		t.Fatal("two requests extending the same base got each other's narrowing")
 	}
 
-	// The control: what the base already carried survives into both.
 	for _, rs := range []*crud.RelationScopes{one, two} {
 		if rs.At("Comments", m) == nil {
 			t.Fatal("the copy dropped the narrowing the base already had")
@@ -136,10 +98,6 @@ func TestTheRelationScopeBuildersDoNotMutateWhatTheyWereCalledOn(t *testing.T) {
 	}
 }
 
-// Repeating a declaration for the same relation is not replacement syntax.
-// The two guards are usually written by different concerns (tenant and
-// visibility), so losing either one would expose rows the first was meant to
-// hide.
 func TestRepeatedRelationScopeDeclarationsComposeByAND(t *testing.T) {
 	rs := (*crud.RelationScopes)(nil).
 		AtPath("Comments", crud.Eq("AuthorID", int64(7))).
@@ -158,9 +116,6 @@ func TestRepeatedRelationScopeDeclarationsComposeByAND(t *testing.T) {
 	}
 }
 
-// A route-specific rule narrows a model invariant; it never replaces it. This
-// keeps a dynamic tenant scope from exposing soft-deleted rows through a
-// self-relation.
 func TestPathAndModelRelationScopesComposeByAND(t *testing.T) {
 	ct := reflect.TypeOf(Comment{})
 	rs := (*crud.RelationScopes)(nil).
@@ -172,13 +127,6 @@ func TestPathAndModelRelationScopesComposeByAND(t *testing.T) {
 	}
 }
 
-// same reports whether two predicates are the same narrowing, which is the only
-// comparison a closed AST allows ([[D-003]]).
-//
-// SQL *and* args. A value is a bind parameter, so `Eq("TenantID", 1)` and
-// `Eq("TenantID", 2)` render byte-identically — comparing the text alone would
-// call two different tenants the same narrowing, which is exactly the confusion
-// this test exists to catch.
 func same(t *testing.T, a, b crud.Predicate) bool {
 	t.Helper()
 	m := articleMeta(t)

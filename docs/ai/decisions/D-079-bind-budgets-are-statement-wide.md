@@ -86,9 +86,10 @@ turn compatibility into a runtime failure.
 - `crud/dialect.go:BindBudget`, `BindLimit`, `PortableBindLimit` and the three
   built-in dialect declarations.
 - `crud/render.go:SQL.Err` / `SQL.Done` — the statement-wide preflight.
-- `crud/sqlrepo/repository.go:saveAllPlan`, `deletePlan`, `executePrepared` —
+- `crud/sqlrepo/repository.go:batchInsertPlan`, `deletePlan`, `executePrepared` —
   deterministic plans and their atomic execution.
-- `crud/sqlrepo/repository.go:SaveAll` / `Delete` — the two public write paths.
+- `crud/sqlrepo/repository.go:SaveAll` / `InsertBatch` / `Delete` — the public
+  chunked write paths.
 
 ## Proven by
 

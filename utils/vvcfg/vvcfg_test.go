@@ -80,9 +80,6 @@ func setArgs(t *testing.T, args ...string) {
 }
 
 func TestLoadReadsThePathItIsGiven(t *testing.T) {
-	// The defect this pins: MustLoad took a variadic path and ignored it,
-	// reading --config-path instead. A caller passing a path got a different
-	// file, silently.
 	p := write(t, "name: from-the-argument\nport: 1\n")
 	got, err := Load[conf](p)
 	if err != nil {
@@ -98,9 +95,7 @@ func TestAMissingFileAndAnUnreadableOneAreDifferentMessages(t *testing.T) {
 	if missing == nil || !strings.Contains(missing.Error(), "no such file") {
 		t.Fatalf("a missing file should say so, got %v", missing)
 	}
-	// The original checked only os.IsNotExist, so anything else fell through to
-	// the decoder and surfaced as "failed to read config" — the wrong place to
-	// go looking.
+
 	dir := t.TempDir()
 	_, isDir := Load[conf](dir)
 	if isDir == nil {
@@ -128,8 +123,6 @@ func TestValidateRefusesTheProcessAtStartUp(t *testing.T) {
 }
 
 func TestAConfigWithoutValidateIsLoadedAsIs(t *testing.T) {
-	// The control for the test above: without it, a Validate that never runs
-	// would look identical to a Validate that always passes.
 	p := write(t, "name: x\nport: 0\n")
 	if _, err := Load[conf](p); err != nil {
 		t.Fatalf("a config with no Validate method has nothing to refuse it: %v", err)

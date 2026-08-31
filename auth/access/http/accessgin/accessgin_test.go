@@ -12,9 +12,6 @@ import (
 	"github.com/frostgrove/vv/auth/access/http/accesshttp"
 )
 
-// A second subject mounts the same endpoints under its own prefix, which is the
-// whole reason the prefix exists: without it the two collide on /auth/login and
-// whichever registered last wins silently.
 func TestTheRouteTableIsMountedUnderTheConfiguredPrefix(t *testing.T) {
 	if got := (accesshttp.Table{}).Path("/login"); got != "/auth/login" {
 		t.Fatalf("Path(\"/login\") = %q, want /auth/login", got)
@@ -22,21 +19,16 @@ func TestTheRouteTableIsMountedUnderTheConfiguredPrefix(t *testing.T) {
 	if got := (accesshttp.Table{Prefix: "staff"}).Path("/login"); got != "/staff/auth/login" {
 		t.Fatalf("Path(\"/login\") = %q, want /staff/auth/login", got)
 	}
-	// A prefix somebody wrote with slashes is the same prefix. Otherwise the
-	// route is //staff//auth/login and it 404s for a reason nobody can see.
+
 	if got := (accesshttp.Table{Prefix: "/staff/"}).Path("/login"); got != "/staff/auth/login" {
 		t.Fatalf("a slashed prefix produced %q", got)
 	}
-	// The sign-up route follows the same prefix, or a second subject's sign-up
-	// lands on the first subject's path.
+
 	if got := (accesshttp.Table{Prefix: "staff"}).RegisterRoute().Path; got != "/staff/auth/register" {
 		t.Fatalf("RegisterRoute().Path = %q", got)
 	}
 }
 
-// Signing up is mounted separately, so a deployment without one serves no path
-// rather than a route that always refuses — and the other seven carry no type
-// parameter for its sake.
 func TestTheSignUpRouteIsMountedSeparately(t *testing.T) {
 	for _, route := range (accesshttp.Table{}).Routes() {
 		if route.Name == accesshttp.Register {
@@ -48,9 +40,6 @@ func TestTheSignUpRouteIsMountedSeparately(t *testing.T) {
 	}
 }
 
-// Every name the route table produces has to reach a handler. A name added to
-// accesshttp and not to a binding is a route mounted on whatever the default
-// arm returns, which answers the wrong endpoint rather than failing.
 func TestEveryNamedEndpointHasAHandler(t *testing.T) {
 	handler := &Handler{}
 	seen := make(map[string]bool)
@@ -68,8 +57,6 @@ func TestEveryNamedEndpointHasAHandler(t *testing.T) {
 	}
 }
 
-// The delivery is a request header, so each binding has to read one — and each
-// of the three reads headers its own way.
 func TestTheDeliveryHeaderIsReadFromThisTransportsRequest(t *testing.T) {
 	jar := newJar(accesshttp.Table{}, []Option{Delivering(accesshttp.Cookies{Prefix: "/api"})})
 
@@ -90,9 +77,6 @@ func TestTheDeliveryHeaderIsReadFromThisTransportsRequest(t *testing.T) {
 	}
 }
 
-// The cookie half is where the three bindings differ most: each has its own
-// cookie type or setter, and an attribute lost in one of them is a credential a
-// script can read.
 func TestACredentialCookieIsWrittenThroughThisTransport(t *testing.T) {
 	jar := newJar(accesshttp.Table{}, []Option{
 		Delivering(accesshttp.Cookies{Prefix: "/api", Secure: true}),
@@ -110,9 +94,6 @@ func TestACredentialCookieIsWrittenThroughThisTransport(t *testing.T) {
 	assertCookiesLeftTheBody(t, recorder.Result(), recorder.Body.Bytes())
 }
 
-// assertCookiesLeftTheBody is the check the three bindings share: both
-// credentials arrive in cookies a script cannot read, and no copy of either
-// stayed in the body.
 func assertCookiesLeftTheBody(t *testing.T, response *http.Response, body []byte) {
 	t.Helper()
 

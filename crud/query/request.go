@@ -1,24 +1,3 @@
-// Package query is the wire DSL: one JSON (or query-string) document that
-// compiles into crud.Options. It is what turns a repository into an HTTP API
-// without writing a line of per-model code.
-//
-//	POST /articles/query
-//	{
-//	  "page": 2, "limit": 20,
-//	  "sort": ["-createdAt", "author.name"],
-//	  "preload": ["author", "comments.author"],
-//	  "search": "generics", "searchFields": ["title", "body"],
-//	  "filter": {
-//	    "views":       {"gte": 100},
-//	    "author.name": {"contains": "an"},
-//	    "tags.slug":   {"in": ["go", "rust"]},
-//	    "or": [ {"status": "draft"}, {"publishedAt": {"isNull": true}} ]
-//	  }
-//	}
-//
-// Every field reference — in filters, sorts, projections and preloads — may walk
-// relations, and every one of them is resolved against the model schema before
-// any SQL is built. An unknown path is a 400, never a silently ignored clause.
 package query
 
 import (
@@ -29,7 +8,6 @@ import (
 	"strings"
 )
 
-// Request is the parsed query document.
 type Request struct {
 	Page   int `json:"page,omitempty"`
 	Limit  int `json:"limit,omitempty"`
@@ -39,14 +17,12 @@ type Request struct {
 	Select  Strings  `json:"select,omitempty"`
 	Preload Preloads `json:"preload,omitempty"`
 	Filter  Filter   `json:"filter,omitzero"`
-	// Terms is the flat filter form, ANDed with Filter.
+
 	Terms []Term `json:"terms,omitempty"`
 
 	Search       string  `json:"search,omitempty"`
 	SearchFields Strings `json:"searchFields,omitempty"`
 
-	// After and Before page by cursor: an opaque string a previous page handed
-	// back. They replace page/offset rather than adding to them.
 	After  string `json:"after,omitempty"`
 	Before string `json:"before,omitempty"`
 
@@ -54,31 +30,14 @@ type Request struct {
 	SkipTotal bool `json:"skipTotal,omitempty"`
 	Distinct  bool `json:"distinct,omitempty"`
 
-	// unpagedParam is the query-string spelling that set Unpaged — "unpaged" or
-	// its alias "all" — so a refusal names the key the client sent rather than
-	// the one this struct calls it.
-	//
-	// Unexported, so it is not part of the document: a JSON body has one
-	// spelling and needs no record of it, and an exported field would put a
-	// query-string detail on the wire shape.
 	unpagedParam string
 
-	// afterSet and beforeSet retain JSON object-key presence. An empty cursor is
-	// invalid just as `?after=` is invalid, but a Go Request with Before set and
-	// After left at its zero value is a perfectly ordinary backwards page. The
-	// value alone cannot distinguish those two cases.
 	afterSet  bool
 	beforeSet bool
 
-	// omitPaging is set by a transport that compiles this document for an
-	// operation whose own contract supplies cardinality (COUNT and GetByID).
-	// It is not JSON: a client may not turn the endpoint's hard page budget off.
 	omitPaging bool
 }
 
-// UnpagedParam is the request parameter that asked for unpaged results, for a
-// caller building its own refusal. It is "unpaged" for a JSON document and for
-// a query string that spelled it that way, and "all" for the alias.
 func (this *Request) UnpagedParam() string {
 	if this == nil || this.unpagedParam == "" {
 		return "unpaged"
@@ -86,19 +45,12 @@ func (this *Request) UnpagedParam() string {
 	return this.unpagedParam
 }
 
-// OmitPaging marks this request for an operation that does not use list
-// pagination, such as a count or a lookup by primary key. It is for transport
-// adapters; it never appears on the wire and cannot be selected by a client.
 func (this *Request) OmitPaging() {
 	if this != nil {
 		this.omitPaging = true
 	}
 }
 
-// ClearCursors removes cursor controls, including the JSON presence markers.
-// Count and entity endpoints call it because a cursor has no meaning there;
-// keeping only the private marker would turn an intentionally removed cursor
-// into a misleading "must not be empty" refusal.
 func (this *Request) ClearCursors() {
 	if this != nil {
 		this.After, this.Before = "", ""
@@ -106,14 +58,6 @@ func (this *Request) ClearCursors() {
 	}
 }
 
-// UnmarshalJSON refuses a key this document does not define.
-//
-// Every field reference *inside* the document is resolved against the model and
-// an unknown one is a 400 — but that check starts one level too deep. A client
-// that writes "filtr" instead of "filter" produces a document with no filter at
-// all, and the endpoint answers 200 with every row in the table. That is the one
-// failure a client cannot see, and it is the failure the strictness inside the
-// document exists to prevent, so the document's own keys are held to it too.
 func (this *Request) UnmarshalJSON(b []byte) error {
 	b = trim(b)
 	if len(b) == 0 {
@@ -128,8 +72,7 @@ func (this *Request) UnmarshalJSON(b []byte) error {
 	if err := rejectDuplicateJSONKeys(b); err != nil {
 		return err
 	}
-	// A distinct type so the decoder does not call this method again. The field
-	// types keep their own unmarshallers.
+
 	type document Request
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -202,10 +145,6 @@ func decodeObject(b []byte, destination any, where string, keys []string) error 
 	return requireJSONEOF(dec)
 }
 
-// rejectDuplicateJSONKeys closes the last-wins hole in encoding/json. Query
-// documents are policy, not a convenient map: accepting both values of a key
-// lets a proxy, logger or signature checker see a different filter than the
-// decoder that executes it.
 func rejectDuplicateJSONKeys(b []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	if err := rejectDuplicateJSONValue(dec, ""); err != nil {
@@ -247,7 +186,7 @@ func rejectDuplicateJSONValue(dec *json.Decoder, where string) error {
 				return err
 			}
 		}
-		_, err := dec.Token() // closing '}'
+		_, err := dec.Token()
 		return err
 	case '[':
 		for dec.More() {
@@ -255,16 +194,13 @@ func rejectDuplicateJSONValue(dec *json.Decoder, where string) error {
 				return err
 			}
 		}
-		_, err := dec.Token() // closing ']'
+		_, err := dec.Token()
 		return err
 	default:
 		return fmt.Errorf("query: malformed JSON delimiter %q", delim)
 	}
 }
 
-// unknownFieldOf digs the offending key out of encoding/json's message. The
-// package gives no typed error for it, and the message is stable enough to be
-// worth a better diagnostic than passing it through raw.
 func unknownFieldOf(err error) (string, bool) {
 	const prefix = "json: unknown field "
 	message := err.Error()
@@ -275,15 +211,11 @@ func unknownFieldOf(err error) (string, bool) {
 	return strings.Trim(message[i+len(prefix):], `"`), true
 }
 
-// requestKeys is what the error message offers back. Kept next to the struct so
-// the two cannot drift; the test walks the struct tags to prove they agree.
 var requestKeys = []string{
 	"page", "limit", "offset", "sort", "select", "preload", "filter", "terms",
 	"search", "searchFields", "after", "before", "unpaged", "skipTotal", "distinct",
 }
 
-// Strings accepts either a JSON array or a single comma-separated string, so
-// `"select": "id,title"` and `"select": ["id","title"]` both work.
 type Strings []string
 
 func (this *Strings) UnmarshalJSON(b []byte) error {
@@ -320,15 +252,13 @@ func (this *Strings) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Sort is one ordering term. `-field` means descending.
 type Sort struct {
 	Field string `json:"field"`
 	Desc  bool   `json:"desc,omitempty"`
-	// Nulls is "first" or "last"; empty leaves it to the database.
+
 	Nulls string `json:"nulls,omitempty"`
 }
 
-// Sorts accepts "-createdAt", ["-createdAt","title"] or the object form.
 type Sorts []Sort
 
 func (this *Sorts) UnmarshalJSON(b []byte) error {
@@ -403,7 +333,6 @@ func parseSortList(items []string) Sorts {
 	return out
 }
 
-// Preload is one relation to load, optionally narrowed.
 type Preload struct {
 	Path    string `json:"path"`
 	Filter  Filter `json:"filter,omitzero"`
@@ -411,8 +340,6 @@ type Preload struct {
 	MaxRows int    `json:"maxRows,omitzero"`
 }
 
-// Preloads accepts "author", ["author","comments.author"] or the object form
-// with a per-relation filter.
 type Preloads []Preload
 
 func (this *Preloads) UnmarshalJSON(b []byte) error {
@@ -479,8 +406,6 @@ func pathsToPreloads(paths []string) Preloads {
 	return out
 }
 
-// Filter holds the filter document untouched until it is compiled against a
-// schema, so errors can point at the exact path that was wrong.
 type Filter struct{ raw json.RawMessage }
 
 func (this *Filter) UnmarshalJSON(b []byte) error {
@@ -495,13 +420,8 @@ func (this Filter) MarshalJSON() ([]byte, error) {
 	return this.raw, nil
 }
 
-// IsZero reports an absent filter, and makes `json:",omitzero"` work. A JSON
-// null is present input rather than absence: Compile rejects it instead of
-// treating a malformed narrowing as no narrowing at all.
 func (this Filter) IsZero() bool { return len(trim(this.raw)) == 0 }
 
-// RawFilter builds a Filter from a JSON document, for tests and for callers
-// that assemble the document themselves.
 func RawFilter(doc string) Filter { return Filter{raw: json.RawMessage(doc)} }
 
 func splitList(s string) []string {

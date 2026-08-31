@@ -35,8 +35,6 @@ type migrationOptions struct {
 	Now         func() time.Time
 }
 
-// createTableMigration creates one conventional create_<table>_table
-// migration, inferring its columns from the matching source model.
 func createTableMigration(ctx context.Context, raw vvdb.Config, options createOptions) (string, error) {
 	config := normalizeConfig(&raw)
 	if err := config.Migration.Validate(); err != nil {
@@ -52,10 +50,7 @@ func createTableMigration(ctx context.Context, raw vvdb.Config, options createOp
 	}
 
 	var model *modelscan.Model
-	// A source model describes a complete CREATE TABLE statement. Reusing it
-	// for names such as add_email_to_users would silently turn an ALTER intent
-	// into a destructive duplicate CREATE, so non-create names stay editable
-	// Goose skeletons.
+
 	if !options.Empty && createsTable(fileSlug) {
 		models, discoverErr := modelscan.Discover(&modelscan.Options{Roots: config.Migration.Models})
 		if discoverErr != nil {
@@ -82,9 +77,6 @@ func createTableMigration(ctx context.Context, raw vvdb.Config, options createOp
 	return writeNewMigration(config.Migration.Path, fileSlug, contents, options.Now)
 }
 
-// createTableMigrations accepts a comma-separated table list and creates one
-// conventional migration per table. Separate files keep later rollbacks and
-// reviews focused on the table that changed.
 func createTableMigrations(ctx context.Context, raw vvdb.Config, tables []string, options createOptions) ([]string, error) {
 	targets, err := splitTableList(tables...)
 	if err != nil {
@@ -113,10 +105,6 @@ func createTableMigrations(ctx context.Context, raw vvdb.Config, tables []string
 	return paths, nil
 }
 
-// createMigration creates an ordinary editable Goose migration. Supplying
-// tables makes model generation explicit rather than guessing from the
-// migration name, and puts all selected CREATE TABLE statements in this one
-// file.
 func createMigration(ctx context.Context, raw vvdb.Config, options migrationOptions) (string, error) {
 	config := normalizeConfig(&raw)
 	if err := config.Migration.Validate(); err != nil {
@@ -157,9 +145,6 @@ func createMigration(ctx context.Context, raw vvdb.Config, options migrationOpti
 	return writeNewMigration(config.Migration.Path, fileSlug, contents, options.Now)
 }
 
-// createInitMigration produces one baseline migration from all discovered
-// models. Its version is stable: rerunning init replaces the existing *_init
-// file instead of adding another competing baseline.
 func createInitMigration(raw vvdb.Config, now func() time.Time) (string, error) {
 	config := normalizeConfig(&raw)
 	if err := config.Migration.Validate(); err != nil {
@@ -215,8 +200,6 @@ func initModels(models []modelscan.Model) ([]modelscan.Model, error) {
 	selected := make([]modelscan.Model, 0, len(models))
 	seen := make(map[string]bool, len(models))
 	for _, model := range models {
-		// A model stub with no columns cannot form a portable CREATE TABLE
-		// statement. It is deliberately left out of an init baseline.
 		if len(model.Fields) == 0 {
 			continue
 		}
@@ -376,9 +359,6 @@ func createsTable(fileSlug string) bool {
 	return strings.HasPrefix(fileSlug, "create_") && strings.HasSuffix(fileSlug, "_table")
 }
 
-// writeVersionedMigration reserves the Goose version, not merely the final
-// filename. Goose identifies migrations by the timestamp prefix, so two
-// different names created in the same second must not both receive it.
 func writeVersionedMigration(dir, version, path string, contents []byte) (bool, error) {
 	lockPath := filepath.Join(dir, ".vvgoose-"+version+".lock")
 	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -474,9 +454,6 @@ func explicitlyNamedModels(models []modelscan.Model, name string) []modelscan.Mo
 }
 
 func selectModel(ctx context.Context, models []modelscan.Model, in io.Reader, out io.Writer) (*modelscan.Model, error) {
-	// Empty is deliberately the default. In accessible mode Huh returns the
-	// current value when input reaches EOF, so a disconnected terminal must not
-	// silently turn the first candidate into a schema decision.
 	selected := len(models)
 	options := make([]huh.Option[int], 0, len(models)+1)
 	for i, model := range models {
@@ -542,8 +519,6 @@ func identifierSlug(raw string) string {
 				lastUnderscore = true
 			}
 		default:
-			// A migration name becomes both a filename and SQL identifier. Drop
-			// punctuation instead of ever copying syntax into either context.
 			if b.Len() > 0 && !lastUnderscore {
 				b.WriteByte('_')
 				lastUnderscore = true

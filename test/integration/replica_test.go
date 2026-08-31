@@ -13,19 +13,12 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A real replica lags, which is exactly what makes routing hard to test: you
-// cannot tell "went to the replica" from "went to the primary" when the two
-// agree. So these use two databases that deliberately *disagree* — the second
-// one holds different rows. Whichever rows come back name the datasource the
-// statement actually reached.
-
 var ReplicaRows = sqlrepo.Define[ShardRow, int64, ShardRowUpdate]("shard_rows")
 
 func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 	ctx := context.Background()
 	primary, replica := openShards(t)
 
-	// The two disagree on purpose.
 	if _, err := primary.ExecContext(ctx, `INSERT INTO shard_rows (id, name) VALUES (1, 'on-primary')`); err != nil {
 		t.Fatal(err)
 	}
@@ -90,9 +83,6 @@ func TestReadsGoToTheReplicaAndWritesDoNot(t *testing.T) {
 	})
 }
 
-// The load half of an Update is a read that decides a write. Served from a
-// replica it diffs against a row as it was, and writes the difference — so it is
-// pinned to the primary whether or not anyone asked.
 func TestUpdateDiffsAgainstThePrimary(t *testing.T) {
 	ctx := context.Background()
 	primary, replica := openShards(t)
@@ -106,8 +96,6 @@ func TestUpdateDiffsAgainstThePrimary(t *testing.T) {
 
 	repository := ReplicaRows.Bind(crud.ReadWrite(crudsql.Postgres(primary), crudsql.Postgres(replica)))
 
-	// Setting the name to what the *replica* holds must still be a real change,
-	// because the row on the primary says something else.
 	got, err := repository.Update(ctx, 1, ShardRowUpdate{Name: ptrOf("stale")})
 	if err != nil {
 		t.Fatal(err)
@@ -124,22 +112,10 @@ func TestUpdateDiffsAgainstThePrimary(t *testing.T) {
 	}
 }
 
-// The gate's own authorisation load takes the primary too.
-//
-// gate.Update loads the row and hands it to Inspect, which decides whether the
-// update is allowed. That is a read that decides a write, so [[D-032]] puts it on
-// the primary — and it was the one check in the gate that did not say so. Every
-// other one (saveTarget, the hidden-row Exists, UpdateAll's target fetch,
-// Delete's and DeleteAll's victim fetches) already passed PrimaryOnly.
-//
-// The failure it allows is the one D-032 exists for: a row that has just moved
-// out of the caller's reach still authorises the update on a lagging replica,
-// and the UPDATE that follows lands on the primary anyway.
 func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 	ctx := context.Background()
 	primary, replica := openShards(t)
 
-	// The two disagree about who owns the row. The replica is stale.
 	if _, err := primary.ExecContext(ctx, `INSERT INTO shard_rows (id, name) VALUES (1, 'moved-away')`); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +123,6 @@ func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A rule that reads the row: only "still-mine" may be updated.
 	seen := ""
 	policy := security.Policy[ShardRow, int64]{
 		Inspect: func(_ context.Context, _ security.Action, m *ShardRow) error {
@@ -172,8 +147,6 @@ func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 		t.Fatalf("Inspect was shown %q — the replica's row, not the primary's", seen)
 	}
 
-	// The control: with the primary agreeing, the same call goes through. The
-	// refusal above is the staleness, not a policy that denies everything.
 	if _, err := primary.ExecContext(ctx, `UPDATE shard_rows SET name = 'still-mine' WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +155,6 @@ func TestTheGatesAuthorisationLoadTakesThePrimary(t *testing.T) {
 	}
 }
 
-// A transaction wins over the replica outright. Reading around a transaction one
-// has just joined would defeat the transaction.
 func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 	ctx := context.Background()
 	primary, replica := openShards(t)
@@ -198,8 +169,7 @@ func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 		if _, err := repository.Save(ctx, &row); err != nil {
 			return err
 		}
-		// Read-your-own-writes: the row exists only in this transaction, on the
-		// primary. A read served by the replica would not see it.
+
 		got, err := repository.GetByID(ctx, 42)
 		if err != nil {
 			return err
@@ -207,7 +177,7 @@ func TestAReadInsideATransactionIgnoresTheReplica(t *testing.T) {
 		if got.Name != "in-tx" {
 			t.Errorf("read back %q", got.Name)
 		}
-		// And the replica's row is not visible from in here.
+
 		if n, err := repository.Count(ctx); err != nil || n != 1 {
 			t.Errorf("count inside the transaction = %d err = %v, want just the row written here", n, err)
 		}

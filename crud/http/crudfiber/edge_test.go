@@ -17,20 +17,12 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// wireViolation is one entry of the envelope exactly as a client reads it.
-//
-// The tests decode the wire shape rather than errs.Violation, and that is not a
-// stylistic choice: the Go type marshals into this and has no UnmarshalJSON, so
-// decoding a response into it would answer the zero value for every field and
-// every assertion below would pass against an empty body.
 type wireViolation struct {
 	Field   []any  `json:"field"`
 	Code    string `json:"error_code"`
 	Message string `json:"message"`
 }
 
-// path renders the field array the dotted way, so a test can say
-// "filter.Price" instead of building a slice.
 func (this wireViolation) path() string {
 	var b strings.Builder
 	for i, step := range this.Field {
@@ -55,8 +47,6 @@ type wireEnvelope struct {
 	} `json:"errors"`
 }
 
-// envelope decodes the body every failing request answers with. A body that is
-// not that envelope is itself the bug: a client cannot branch on a stack trace.
 func envelope(t *testing.T, r response) wireEnvelope {
 	t.Helper()
 	var env wireEnvelope
@@ -67,7 +57,6 @@ func envelope(t *testing.T, r response) wireEnvelope {
 	return env
 }
 
-// failed is the single violation almost every test here is about.
 func failed(t *testing.T, r response) wireViolation {
 	t.Helper()
 	env := envelope(t, r)
@@ -81,12 +70,6 @@ func failed(t *testing.T, r response) wireViolation {
 	return vs[0]
 }
 
-// ---------------------------------------------------------------------------
-// bad input
-
-// A body that is not the shape the route expects is the client's mistake, and
-// it is caught during binding — before the repository is asked to do anything
-// with the half-decoded value.
 func TestAMalformedBodyIsRejectedWithoutTouchingTheRepository(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -120,9 +103,6 @@ func TestAMalformedBodyIsRejectedWithoutTouchingTheRepository(t *testing.T) {
 	}
 }
 
-// The :id path parameter is converted to the repository's key type before
-// anything else happens, so a key that cannot exist is a 400 rather than a
-// lookup for the zero value.
 func TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -153,9 +133,6 @@ func TestAnIDThatDoesNotParseIsRefusedBeforeTheRepository(t *testing.T) {
 	}
 }
 
-// A query naming something the model does not have is a client mistake, so it
-// answers 400 — and it says which part of the request was wrong, because "bad
-// request" alone leaves the caller guessing. It is not a 500: nothing broke.
 func TestAQueryThatNamesSomethingTheModelLacksIsABadRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -197,10 +174,6 @@ func TestAQueryThatNamesSomethingTheModelLacksIsABadRequest(t *testing.T) {
 	}
 }
 
-// A bulk delete with nothing to delete is not an error, and it is the one shape
-// that must never be read as "delete everything". The empty list is covered by
-// TestBulkDeleteWithNoIDsNeverReachesTheRepository; these are the two spellings
-// a client reaches for instead.
 func TestABulkDeleteWithNoIDsAtAllIsAnEmptySuccess(t *testing.T) {
 	for _, body := range []string{`{}`, `{"ids":null}`} {
 		t.Run(body, func(t *testing.T) {
@@ -222,12 +195,6 @@ func TestABulkDeleteWithNoIDsAtAllIsAnEmptySuccess(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// errors on the way back
-
-// The repository speaks in sentinels and the transport speaks in status codes;
-// this is the whole of the translation. Matching is by errors.Is, so a
-// repository that adds context to a sentinel still maps to the same code.
 func TestRepositoryErrorsBecomeStatusCodes(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -262,8 +229,6 @@ func TestRepositoryErrorsBecomeStatusCodes(t *testing.T) {
 	}
 }
 
-// Every route funnels its failures through the same handler, so a policy that
-// refuses a request is a 403 whichever door the request came in by.
 func TestEveryRouteMapsARefusalTheSameWay(t *testing.T) {
 	for _, tc := range []struct{ name, method, target, body string }{
 		{"list", http.MethodGet, "/widgets", ""},
@@ -292,17 +257,10 @@ func TestEveryRouteMapsARefusalTheSameWay(t *testing.T) {
 	}
 }
 
-// A 500 is the one status where the error came from inside the house: the
-// message could be a driver's connection string or a fragment of SQL, so the
-// body says nothing but "something broke here".
 func TestA500NeverEchoesTheInternalError(t *testing.T) {
 	secret := errors.New(`pq: password authentication failed for user "reporting" (host=10.0.0.5 db=prod)`)
 	leaks := []string{"pq:", "password", "reporting", "10.0.0.5", "prod"}
 
-	// The same secret, arriving through a fault instead of a bare error: a
-	// classified failure carries Detail and Params, and those are the two
-	// channels a renderer could copy into a body without ever touching
-	// err.Error(). [[D-044]] owed this extension to phase 4.
 	rich := errs.Internal().Op("Save").Entity("Widget").Code(errs.CodeInternal).
 		Message(secret.Error()).
 		Field("Name").Code(errs.CodeInternal).Message(secret.Error()).
@@ -349,9 +307,6 @@ func TestA500NeverEchoesTheInternalError(t *testing.T) {
 	}
 }
 
-// Status is exported for handlers that render their own bodies, so the mapping
-// has to hold on its own — including the branches no route reaches with a real
-// repository behind it.
 func TestStatusMapsWhatItPromisesTo(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -374,11 +329,6 @@ func TestStatusMapsWhatItPromisesTo(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// deleting nothing
-
-// deletesNothing is the repository of a row that somebody else already removed:
-// the statement runs, and it matches no rows.
 type deletesNothing struct{ *fakeRepo }
 
 func (this deletesNothing) Delete(ctx context.Context, ids ...int64) (int64, error) {
@@ -386,9 +336,6 @@ func (this deletesNothing) Delete(ctx context.Context, ids ...int64) (int64, err
 	return 0, err
 }
 
-// DELETE /:id names one row, so removing none of them means that row was not
-// there: 404. A bulk delete names a set, and an empty result is a truthful
-// answer about a set — it reports zero and succeeds.
 func TestDeletingNothingIs404ForOneRowAndZeroForASet(t *testing.T) {
 	newApp := func(t *testing.T) (*fiber.App, *fakeRepo) {
 		t.Helper()
@@ -429,12 +376,6 @@ func TestDeletingNothingIs404ForOneRowAndZeroForASet(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// a scope that fails
-
-// A scope runs per request, so it can fail for two very different reasons, and
-// the difference is visible to the client: a refusal is the caller's answer, an
-// outage is not.
 func TestAScopeThatFailsIsMappedLikeAnyOtherError(t *testing.T) {
 	t.Run("a refusal is a 403", func(t *testing.T) {
 		app, fake := mount(t, WithScope[Widget, int64, WidgetUpdate](func(fiber.Ctx) ([]crud.Option, error) {
@@ -470,9 +411,6 @@ func TestAScopeThatFailsIsMappedLikeAnyOtherError(t *testing.T) {
 	})
 }
 
-// pathService is a Service that declares its own hop of the path chain — the
-// model's field names to the ones its commands use. It is what a generated
-// service will be, and the reason Serving exists.
 type pathService struct {
 	*port.DefaultService[Widget, int64, WidgetUpdate]
 	fields port.Fields
@@ -480,10 +418,6 @@ type pathService struct {
 
 func (this *pathService) Paths() errs.Resolver { return this.fields }
 
-// The service's hop of the path chain reaches the rendered body: a violation
-// the repository raised at a model field arrives as the key the client actually
-// sent, because the service declared the mapping and the renderer applies it
-// before the raw-body fallback ([[D-043]]).
 func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 	mounted := func(t *testing.T, field string) response {
 		t.Helper()
@@ -508,10 +442,6 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 		}
 	})
 
-	// The control, and the reason an undeclared head passes through instead of
-	// declining: the hop behind it still runs. A declining hop would poison the
-	// chain, the raw-body fallback would never see the path, and the client
-	// would get the model's own "Price" back.
 	t.Run("and the control: an undeclared field reaches the body index", func(t *testing.T) {
 		if got := failed(t, mounted(t, "Price")).path(); got != "price" {
 			t.Fatalf("the violation names %q, want the lower-case key the client sent; %q means the service hop stopped the chain", got, "Price")
@@ -519,17 +449,6 @@ func TestAServicePathHopReachesTheRenderedField(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// the body cap
-
-// A body past the cap is refused before anything parses it, and the refusal is
-// this library's envelope rather than the framework's own words.
-//
-// Without a cap the read was io.ReadAll on a body nobody bounded, which is one
-// request holding as much memory as a client cares to send. The three bindings
-// refuse at the same size on purpose ([[FL-013]]) — the number is Fiber's
-// default, because Fiber is the one framework of the three that brought a limit
-// of its own and the other two would otherwise accept what it rejects.
 func TestABodyPastTheCapIsRefusedAndReachesNoRepository(t *testing.T) {
 	app, f := mount(t, MaxBody[Widget, int64, WidgetUpdate](64))
 
@@ -546,21 +465,12 @@ func TestABodyPastTheCapIsRefusedAndReachesNoRepository(t *testing.T) {
 		t.Fatalf("the body was refused and the repository was still called: %v", f.calls)
 	}
 
-	// The control. Every assertion above would hold just as well if this route
-	// refused every POST, so a body under the cap has to get through — and the
-	// same handler, so the difference really is the size.
 	small := `{"name":"ok"}`
 	if r := do(t, app, http.MethodPost, "/widgets", small); r.status != http.StatusCreated {
 		t.Fatalf("a body of %d bytes under a cap of 64 answered %d, want 201: %s", len(small), r.status, r.body)
 	}
 }
 
-// The default cap is a cap and not a refusal: a handler nobody configured still
-// accepts an ordinary body.
-//
-// The control on the constant. A default of zero read as "read nothing" would
-// make every write 413 and every test above still pass, because they all name
-// their own cap.
 func TestTheDefaultCapAcceptsAnOrdinaryBody(t *testing.T) {
 	app, f := mount(t)
 
@@ -574,18 +484,6 @@ func TestTheDefaultCapAcceptsAnOrdinaryBody(t *testing.T) {
 	}
 }
 
-// A response value that will not encode is a server fault, and says nothing.
-//
-// The presenter is the consumer's, so an unencodable value is a failure this
-// library cannot prevent — only answer honestly. It has to become a 500 with the
-// silent body, because the alternative is a status already on the wire and a
-// half-written document after it.
-//
-// The three bindings disagreed about this until it was measured: net/http
-// answered the silent 500, Gin answered **200** with a truncated body, and Fiber
-// returned the encoder's error to its default handler, which answers text/plain
-// with the message in it — a presenter's internals on the wire at a status that
-// said success ([[D-063]], [[FL-013]]).
 func TestAnUnencodableResponseIsAServerFaultThatSaysNothing(t *testing.T) {
 	app, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](func(fiber.Ctx, Widget) any { return make(chan int) }))
 
@@ -601,8 +499,6 @@ func TestAnUnencodableResponseIsAServerFaultThatSaysNothing(t *testing.T) {
 		t.Fatalf("the silent 500 is not JSON, so a client cannot parse it: %q — %s", ct, r.body)
 	}
 
-	// The control. Everything above would hold for a handler that answered 500
-	// to every GET, so the same route with an encodable presenter has to work.
 	app2, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](func(_ fiber.Ctx, w Widget) any { return w.Name }))
 	if r := do(t, app2, http.MethodGet, "/widgets/1", ""); r.status != http.StatusOK {
 		t.Fatalf("an encodable presenter answered %d, want 200: %s", r.status, r.body)

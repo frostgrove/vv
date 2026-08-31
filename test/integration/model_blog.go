@@ -9,9 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// The blog schema exercises every relation kind at once: belongs_to, has_many,
-// a two-hop path, and many_to_many through a join table.
-
 type Author struct {
 	ID   int64  `db:"id,pk,auto"`
 	Name string `db:"name"`
@@ -34,10 +31,6 @@ type Comment struct {
 	Author *Author `rel:"belongs_to"`
 }
 
-// ArticleStats is the has_one end: the child holds the foreign key and there is
-// at most one of it. The table deliberately carries no unique index on
-// article_id — see TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime, which is
-// about what the library does when a schema does not keep that promise.
 type ArticleStats struct {
 	ID        int64 `db:"id,pk,auto"`
 	ArticleID int64 `db:"article_id"`

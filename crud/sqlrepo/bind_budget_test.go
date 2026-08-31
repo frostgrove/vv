@@ -24,9 +24,6 @@ type limitedPostgres struct {
 func (this limitedPostgres) Name() string       { return "limited-postgres" }
 func (this limitedPostgres) MaxBindValues() int { return this.limit }
 
-// budgetSource makes transaction ownership observable without changing the
-// production recorder. Successful statements still pass through Recorder, so
-// the SQL and bind order remain asserted through the normal test seam.
 type budgetSource struct {
 	*crudtest.Recorder
 
@@ -144,7 +141,7 @@ func TestSaveAllChunksAtTheDialectBudgetAndKeepsInputOrder(t *testing.T) {
 		if len(statement.Args) > 10 {
 			t.Fatalf("chunk %d has %d binds, limit is 10", i, len(statement.Args))
 		}
-		width := 5 // id, email, name, age, tenant_id; created_at is generated.
+		width := 5
 		for row, want := range wantIDs[i] {
 			if got := statement.Args[row*width]; got != want {
 				t.Fatalf("chunk %d row %d id = %v, want %d", i, row, got, want)
@@ -177,7 +174,7 @@ func TestGeneratedKeySaveAllKeepsItsWriteOnlySemanticsAcrossChunks(t *testing.T)
 		if strings.Contains(statement.SQL, "ON CONFLICT") {
 			t.Fatalf("chunk %d became an assigned-key upsert: %s", i, statement.SQL)
 		}
-		width := 4 // email, name, age, tenant_id; id and created_at are generated.
+		width := 4
 		for row, want := range wantEmails[i] {
 			if got := statement.Args[row*width]; got != want {
 				t.Fatalf("chunk %d row %d email = %v, want %q", i, row, got, want)
@@ -254,7 +251,7 @@ func TestChunkedSaveAllJoinsAKnownAmbientTransaction(t *testing.T) {
 }
 
 func TestSingleSaveRefusesAnOversizedStatementBeforeTheDatasource(t *testing.T) {
-	source := newBudgetSource(4) // User's assigned-key insert carries five binds.
+	source := newBudgetSource(4)
 	err := Users.Bind(source).SaveOnly(context.Background(), &User{ID: 1, Email: "one@x"})
 	var schemaErr *crud.SchemaError
 	if !errors.As(err, &schemaErr) || !strings.Contains(schemaErr.Reason, "Save needs 5 bound values") {
@@ -356,7 +353,7 @@ func TestDeleteChunksAfterChargingScopeAndSoftDeleteBinds(t *testing.T) {
 }
 
 func TestDeleteRefusesWhenScopesExhaustTheBudgetBeforeOpeningATransaction(t *testing.T) {
-	source := newBudgetSource(2) // tombstone + tenant scope leave no bind for an id
+	source := newBudgetSource(2)
 	_, err := budgetSoftDocs.Bind(source).Delete(context.Background(), "a")
 	var schemaErr *crud.SchemaError
 	if !errors.As(err, &schemaErr) ||
@@ -385,7 +382,7 @@ func TestDeleteRollsEveryChunkBackWhenALaterChunkFails(t *testing.T) {
 }
 
 func TestRestoreChunksAfterChargingScopeBindsAndCommitsAtomically(t *testing.T) {
-	source := newBudgetSource(3) // tenant scope + two ids per statement
+	source := newBudgetSource(3)
 	source.ExecResult(crud.Result{RowsAffected: 1})
 
 	n, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "b", "c", "d", "e")
@@ -422,7 +419,7 @@ func TestRestoreChunksAfterChargingScopeBindsAndCommitsAtomically(t *testing.T) 
 }
 
 func TestRestoreRollsEveryChunkBackWhenALaterChunkFails(t *testing.T) {
-	source := newBudgetSource(2) // tenant scope + one id forces two chunks
+	source := newBudgetSource(2)
 	boom := errors.New("second restore chunk failed")
 	source.failAt, source.failure = 2, boom
 	_, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "b")
@@ -493,7 +490,7 @@ func TestRestoreSQLIsPortableAcrossStockDialects(t *testing.T) {
 }
 
 func TestSecurityGateKeepsScopedInspectedDeleteChunking(t *testing.T) {
-	source := newBudgetSource(8) // tenant + id + the six-field inspected snapshot
+	source := newBudgetSource(8)
 	source.ExecResult(crud.Result{RowsAffected: 1})
 	rows := make([][]any, 0, 5)
 	for id := int64(1); id <= 5; id++ {

@@ -16,9 +16,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// code is a column type that parses itself. Coercion has to let it, or a uuid,
-// an enum or a money column would lose its own rules the moment its value
-// arrives as text.
 type code string
 
 func (this *code) UnmarshalText(b []byte) error {
@@ -30,9 +27,6 @@ func (this *code) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// Sample carries one column of every scalar kind the library maps, so the JSON
-// door and the query-string door can be pointed at the same column and their
-// answers compared.
 type Sample struct {
 	ID     int64            `db:"id,pk,auto"`
 	Name   string           `db:"name"`
@@ -53,8 +47,6 @@ type Sample struct {
 
 var Samples = sqlrepo.Define[Sample, int64, struct{}]("samples")
 
-// runSample compiles a request against the sample model and returns the WHERE
-// clause and the arguments the database would receive.
 func runSample(t *testing.T, request *query.Request) (string, []any) {
 	t.Helper()
 	options, err := request.Compile(Samples.Meta(), nil)
@@ -87,7 +79,6 @@ func termRequest(t *testing.T, terms ...string) *query.Request {
 	return request
 }
 
-// same compares two bound arguments the way the database would see them.
 func same(a, b any) bool {
 	switch av := a.(type) {
 	case time.Time:
@@ -100,22 +91,18 @@ func same(a, b any) bool {
 	return a == b
 }
 
-// A value must mean the same thing whichever door it came through. A filter
-// that binds an int64 as JSON and a string as a query string is a bug nobody
-// notices until the planner stops using the index.
 func TestBothDoorsBindTheSameValue(t *testing.T) {
 	for _, tc := range []struct {
 		field string
-		doc   string // the value as a JSON scalar
-		text  string // the same value as query-string text
+		doc   string
+		text  string
 		want  any
 	}{
 		{"name", `"hi"`, "hi", "hi"},
 		{"active", `true`, "true", true},
 		{"small", `7`, "7", int8(7)},
 		{"count", `42`, "42", 42},
-		// Beyond 2^53: a value that would silently change if it went through a
-		// float64 on its way to the database.
+
 		{"big", `9007199254740993`, "9007199254740993", int64(9007199254740993)},
 		{"tiny", `255`, "255", uint8(255)},
 		{"total", `18446744073709551615`, "18446744073709551615", uint64(18446744073709551615)},
@@ -123,15 +110,12 @@ func TestBothDoorsBindTheSameValue(t *testing.T) {
 		{"score", `1.25`, "1.25", 1.25},
 		{"at", `"2026-01-02T03:04:05Z"`, "2026-01-02T03:04:05Z",
 			time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
-		// The column type's own parser runs on both doors, so "go" arrives as
-		// the canonical "GO" either way.
+
 		{"code", `"go"`, "go", code("GO")},
-		// crud.Opt and *T columns compare against their element type.
+
 		{"nick", `"ann"`, "ann", "ann"},
 		{"age", `31`, "31", 31},
-		// encoding/json represents []byte as base64, so the query-string door
-		// uses the same portable spelling rather than treating the text bytes as
-		// the column value.
+
 		{"blob", `"aGk="`, "aGk=", []byte("hi")},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
@@ -155,8 +139,6 @@ func TestBothDoorsBindTheSameValue(t *testing.T) {
 	}
 }
 
-// Null is the one value that changes the operator rather than the argument, and
-// it has to do so on both doors.
 func TestNullMeansIsNullOnBothDoors(t *testing.T) {
 	docSQL, docArgs := runSample(t, jsonRequest(t, `{"filter":{"nick":null}}`))
 	textSQL, textArgs := runSample(t, termRequest(t, "nick:eq:null"))
@@ -168,7 +150,6 @@ func TestNullMeansIsNullOnBothDoors(t *testing.T) {
 	}
 }
 
-// A list keeps its element type, and a null inside one stays null.
 func TestListsCoerceEveryElement(t *testing.T) {
 	_, args := runSample(t, jsonRequest(t, `{"filter":{"count":{"in":[1,2,3]}}}`))
 	for i, arg := range args {
@@ -183,16 +164,13 @@ func TestListsCoerceEveryElement(t *testing.T) {
 	if len(args) != 2 || args[0] != "a" || args[1] != nil {
 		t.Fatalf("args = %#v, want [\"a\" <nil>]", args)
 	}
-	// The query-string form spells null with the bare word.
+
 	_, args = runSample(t, termRequest(t, "nick:in:a,null"))
 	if len(args) != 2 || args[0] != "a" || args[1] != nil {
 		t.Fatalf("args = %#v, want [\"a\" <nil>]", args)
 	}
 }
 
-// Both doors accept the timestamp spellings clients actually send. The
-// query-string door used to accept only RFC 3339, because time.Time's own
-// UnmarshalText got there first.
 func TestEveryTimestampLayoutIsAccepted(t *testing.T) {
 	for _, tc := range []struct {
 		text string
@@ -220,8 +198,6 @@ func TestEveryTimestampLayoutIsAccepted(t *testing.T) {
 	}
 }
 
-// Coerce is exported for transports that have to turn a path parameter into an
-// identifier, so every kind it claims to handle is pinned here directly.
 func TestCoerceHandlesEveryScalarKind(t *testing.T) {
 	for _, tc := range []struct {
 		text string
@@ -258,8 +234,6 @@ func TestCoerceHandlesEveryScalarKind(t *testing.T) {
 	}
 }
 
-// A value the column cannot hold is a rejection, not a wrapped or truncated
-// number reaching the database.
 func TestCoerceRefusesValuesTheColumnCannotHold(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -285,8 +259,6 @@ func TestCoerceRefusesValuesTheColumnCannotHold(t *testing.T) {
 	}
 }
 
-// The same refusals arrive as a 400-shaped query error, naming the field and
-// the type it expected, rather than as SQL.
 func TestBadValuesAreRejectedByBothDoors(t *testing.T) {
 	for _, tc := range []struct {
 		name, doc, term, want string
@@ -312,8 +284,6 @@ func TestBadValuesAreRejectedByBothDoors(t *testing.T) {
 	}
 }
 
-// An int8 overflow is the loudest case: 300 into an int8 would wrap to 44 and
-// quietly match the wrong rows.
 func TestOverflowNeverWraps(t *testing.T) {
 	request := jsonRequest(t, `{"filter":{"small":300}}`)
 	if _, err := request.Compile(Samples.Meta(), nil); err == nil {

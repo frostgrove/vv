@@ -10,25 +10,12 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// The sentinels are declared here rather than imported from crud on purpose.
-// What is being pinned is the mechanism — a fault wraps, so errors.Is walks
-// through it — and the mechanism does not care whose sentinel it is. The
-// version against a real crud sentinel lives in port/porthttp/errors_test.go,
-// where the status mapping it has to keep working is; putting it here would put
-// a first-party import into this package's test dependencies, and at the first
-// tag that becomes errs requiring the root module that requires errs
-// ([[D-036]]).
 var (
 	errSentinel = errors.New("test: conflict")
 	errOther    = errors.New("test: not found")
 	errThird    = errors.New("test: forbidden")
 )
 
-// driverErr is the shape a driver error has, modelled on *pgconn.PgError and
-// *mysql.MySQLError: every field exported, and a message that names things a
-// client must never read. The exported fields are the point — a driver error
-// whose fields were unexported would marshal to {} and a leak test over it
-// would pass for nothing.
 type driverErr struct {
 	Code           string
 	Message        string
@@ -55,8 +42,6 @@ func TestAFaultWrappingASentinelMatchesIt(t *testing.T) {
 		t.Fatalf("errors.As found a different driver error than the one that was wrapped")
 	}
 
-	// Without the negative below this test passes for errors.Join, for a fault
-	// that embeds its cause, and for a dozen other wrong implementations.
 }
 
 func TestAFaultWrappingNothingMatchesNothing(t *testing.T) {
@@ -65,9 +50,7 @@ func TestAFaultWrappingNothingMatchesNothing(t *testing.T) {
 		err  error
 	}{
 		{"built with no Wrapping step", errs.Validation().Field("Age").Code("too_young").Fault()},
-		// Everything an implementer of errs.Classifier can construct: the
-		// wrapped list is unexported, so a struct literal is the whole of what
-		// a third party can build without going through the builder.
+
 		{"built as a struct literal, as a third-party classifier would",
 			&errs.Fault{Kind: errs.KindConflict, Code: errs.CodeUnique}},
 	} {
@@ -107,9 +90,6 @@ func TestAFaultSurvivesBeingWrappedAgain(t *testing.T) {
 		}
 	})
 
-	// The control: one more level of nesting must not make an unrelated error
-	// reachable. Without it the test above passes for an implementation that
-	// answers yes to anything it can reach.
 	t.Run("a fault that wrapped nothing", func(t *testing.T) {
 		err := fmt.Errorf("saving user: %w", errs.Validation().Field("Age").Code("too_young").Fault())
 
@@ -126,7 +106,6 @@ func TestAFaultSurvivesBeingWrappedAgain(t *testing.T) {
 	})
 }
 
-// unique is one duplicate-key error, in the shape a driver hands one over.
 func unique() *driverErr {
 	return &driverErr{
 		Code:           "23505",
@@ -157,9 +136,6 @@ func TestAFaultsErrorTextCarriesNothingInternal(t *testing.T) {
 		Wrapping(errSentinel, drv).
 		Fault()
 
-	// Half one of the control: every string searched for below is asserted to
-	// be there on the value first. Without it this test passes for an empty
-	// fixture, which is how a leak assertion usually rots.
 	forbidden := map[string]string{
 		"the constraint name":   f.Detail.Constraint,
 		"the SQLSTATE":          f.Detail.SQLState,
@@ -169,9 +145,7 @@ func TestAFaultsErrorTextCarriesNothingInternal(t *testing.T) {
 		"the developer message": f.Message,
 		"the driver's own text": f.Detail.Driver.Error(),
 	}
-	// The native number is an int, so a zero would be searched for as "0" and
-	// found in any digit Error() prints. It has to be non-zero before it can
-	// join the set.
+
 	if f.Detail.Native == 0 {
 		t.Fatalf("the native error number is unset in the fixture, so finding it absent proves nothing")
 	}
@@ -189,8 +163,6 @@ func TestAFaultsErrorTextCarriesNothingInternal(t *testing.T) {
 		}
 	}
 
-	// Half two: an Error() that returned "" would pass the leak check
-	// perfectly. It has to still say what the failure was.
 	for _, want := range []string{"Save", "User", "conflict", string(errs.CodeUnique), "1 violation"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Error() = %q, which does not say %q — the method is parsimonious, not silent", got, want)
@@ -199,9 +171,6 @@ func TestAFaultsErrorTextCarriesNothingInternal(t *testing.T) {
 }
 
 func TestAFaultsErrorTextNamesWhicheverOfOpAndEntityItWas(t *testing.T) {
-	// Three of the four arms are unreachable from the test above, which sets
-	// both. A repository verb with no entity is what a decorator produces, and
-	// an entity with no verb is what a service layer does.
 	for _, tc := range []struct {
 		name string
 		b    *errs.Builder
@@ -220,10 +189,6 @@ func TestAFaultsErrorTextNamesWhicheverOfOpAndEntityItWas(t *testing.T) {
 	}
 }
 
-// AsFault is the only way anything reaches a fault, and three call sites in
-// this package branch on its second return. Made to answer true always it
-// hands every one of them a nil *Fault, and the suite stays green because no
-// test asks it about an error that is not a fault.
 func TestAsFaultAnswersFalseForAnythingThatIsNotAFault(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -245,8 +210,6 @@ func TestAsFaultAnswersFalseForAnythingThatIsNotAFault(t *testing.T) {
 		})
 	}
 
-	// The control: it has to find one when there is one, or the rows above
-	// pass for an AsFault that answers false to everything.
 	if _, ok := errs.AsFault(errs.Conflict().Code(errs.CodeUnique).Fault()); !ok {
 		t.Fatalf("AsFault did not find a fault that was right there")
 	}

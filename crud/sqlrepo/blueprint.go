@@ -1,19 +1,3 @@
-// Package sqlrepo is the implementation of crud.Core whose rows are in a
-// database, behind SQL. crudtest holds them in memory and remote holds them in
-// another service; everything in crud/decorators/ wraps one of the three.
-//
-// It is named for where the data is, not for a rank — "basic", which it was
-// called until [[D-058]], distinguished it from nothing.
-//
-// Declaring one is a two-liner next to the model:
-//
-//	var Users = sqlrepo.Define[User, int64, UserUpdate]("users")
-//
-//	users := Users.Bind(db)                       // plain
-//	users := Users.Bind(db, security.Gate(policy)) // decorated
-//
-// Define validates the model tags, the ID type and the update DTO eagerly, so a
-// broken mapping panics at package initialisation rather than on first request.
 package sqlrepo
 
 import (
@@ -22,151 +6,70 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// DefaultPageSize is the page size used when a query does not ask for one.
 const DefaultPageSize = 20
 
-// Setting tunes a repository at declaration time.
 type Setting func(*settings)
 
 type settings struct {
-	softDelete   string
-	replica      crud.Source
-	defaultLimit int
-	maxLimit     int
-	defaultSort  []crud.Order
-	stableSort   bool
-	preloadDepth int
-	scope        crud.Predicate
-	relScopes    []relScope
-	// independentTable says this blueprint is an alternate physical view of M,
-	// not the canonical target of untagged relations to M.
+	softDelete    string
+	replica       crud.Source
+	defaultLimit  int
+	maxLimit      int
+	defaultSort   []crud.Order
+	stableSort    bool
+	preloadDepth  int
+	scope         crud.Predicate
+	relScopes     []relScope
+	portableBatch bool
+
 	independentTable bool
 }
 
-// relScope is a RelationScope declaration, kept as written until Define can
-// validate the path against the model.
 type relScope struct {
 	path string
 	pred crud.Predicate
 }
 
-// DefaultLimit sets the page size used when a caller does not pass one.
 func DefaultLimit(n int) Setting { return func(s *settings) { s.defaultLimit = n } }
 
-// MaxLimit caps the page size a caller may request. Zero disables the cap.
 func MaxLimit(n int) Setting { return func(s *settings) { s.maxLimit = n } }
 
-// DefaultSort is applied to paginated queries that do not sort explicitly.
 func DefaultSort(orders ...crud.Order) Setting {
 	return func(s *settings) { s.defaultSort = orders }
 }
 
-// UnstablePagination turns off the implicit primary-key tiebreaker that is
-// otherwise appended to paginated queries.
 func UnstablePagination() Setting { return func(s *settings) { s.stableSort = false } }
 
-// PreloadDepth caps how many relation hops a single preload path may take.
 func PreloadDepth(n int) Setting { return func(s *settings) { s.preloadDepth = n } }
 
-// Scope narrows every read this repository performs, permanently. It is ANDed
-// in before anything a caller passes, so no query option can widen it again.
-//
-// This is how a table with soft deletes stops handing back tombstones:
-//
-//	sqlrepo.Define[User, uint, UserUpdate]("users",
-//	    sqlrepo.Scope(crud.IsNull("DeletedAt")))
-//
-// It applies to Get, GetAll, GetByID, Count, Exists, Delete and DeleteAll, and
-// to the load half of Update. It cannot apply to Save, which is an upsert and
-// has no WHERE clause — guard that in a service method or a security policy.
-//
-// It also follows a relation back into this same model, at any depth: a
-// preload of User.Manager, and a filter or sort that hops through it, carry the
-// scope too. Reaching a *different* model is a different question, because
-// another model's rows are another repository's business — say what should
-// happen there with RelationScope.
+func PortableBatch() Setting { return func(s *settings) { s.portableBatch = true } }
+
 func Scope(p crud.Predicate) Setting {
 	return func(s *settings) { s.scope = crud.And(s.scope, p) }
 }
 
-// SoftDelete turns deletion into a column write: Delete and DeleteAll stamp the
-// named timestamp instead of removing rows, and every read filters the stamped
-// ones out.
-//
-//	var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs",
-//	    sqlrepo.SoftDelete("DeletedAt"))
-//
-// The two halves are one declaration on purpose. Written by hand this is
-// sqlrepo.Scope for the reads plus a service layer that overrides two methods for
-// the writes, and the failure when somebody adds the first and forgets the
-// second is silent: the reads hide rows that the deletes are still destroying.
-//
-// It lives here rather than in a decorator because a decorator sits above
-// crud.Core, and Core has no verb for "write this column" — only Update, whose
-// DTO is the one declared at Define time. The stamp is a statement, so it
-// belongs where the statements are built.
-//
-// The field must be a nullable timestamp, because "not deleted" has to have a
-// value and Delete stamps time.Time. Use crud.Opt[time.Time], *time.Time, or a
-// Scanner/Valuer timestamp wrapper such as sql.NullTime; incompatible nullable
-// types are refused here rather than on the first delete.
-//
-// What it does not do: a unique index still sees the tombstones. Re-creating a
-// row whose soft-deleted twin holds the same unique key is a conflict, and the
-// answer is a partial index the library cannot write for you.
 func SoftDelete(field string) Setting {
 	return func(s *settings) { s.softDelete = field }
 }
 
-// RelationScope narrows the far side of a relation, wherever this repository
-// reaches it: a preload of that path, a filter that hops through it, a sort
-// that walks it. The predicate is written against the *target* model.
-//
-//	sqlrepo.Define[Article, int64, ArticleUpdate]("articles",
-//	    sqlrepo.Scope(crud.IsNull("DeletedAt")),                  // articles
-//	    sqlrepo.RelationScope("Comments", crud.IsNull("DeletedAt"))) // comments
-//
-// Scope alone would not have covered the second line. A preload is a second
-// statement against a second table and a nested filter opens a correlated
-// subquery with its own FROM, so neither inherits the parent statement's WHERE:
-// without this, ?preload=comments hands back exactly the rows the article's own
-// scope exists to hide.
-//
-// The path is canonical and may be nested ("Comments.Author"). It is validated
-// against the model, so a typo fails at declaration time rather than silently
-// narrowing nothing.
 func RelationScope(path string, p crud.Predicate) Setting {
 	return func(s *settings) { s.relScopes = append(s.relScopes, relScope{path, p}) }
 }
 
-// IndependentTable keeps this blueprint's table local to the blueprint rather
-// than registering it as the process-wide target of relations to M. Ordinary
-// applications should not need it: the first/default Blueprint remains the
-// declarative source for relation wiring. It is the explicit low-level seam for
-// projections, archive tables, catalog probes, and other additional blueprints
-// over the same Go model. Self-relations and cycles that return to M stay on
-// this blueprint's table. An explicit `table=...` relation tag still overrides
-// that local choice for the exceptional edge that deliberately leaves it.
 func IndependentTable() Setting {
 	return func(s *settings) { s.independentTable = true }
 }
 
-// Blueprint is a validated, datasource-independent repository declaration.
-// Bind it to as many sources as you like — the reflection work happens once.
 type Blueprint[M any, ID comparable, U any] struct {
 	meta       *crud.Meta
 	plan       *crud.UpdatePlan
 	set        settings
 	relScopes  *crud.RelationScopes
 	softDelete *crud.Field
-	// restoreScope is the permanent scope before the live-row predicate is
-	// added. Restore must see tombstones while retaining tenant/archive policy.
+
 	restoreScope crud.Predicate
 }
 
-// Define declares a repository for model M with primary key ID and update DTO
-// U, and panics if the declaration does not hold together. An empty table name
-// falls back to the snake_case plural of the model type name.
 func Define[M any, ID comparable, U any](table string, options ...Setting) *Blueprint[M, ID, U] {
 	bp, err := TryDefine[M, ID, U](table, options...)
 	if err != nil {
@@ -175,7 +78,6 @@ func Define[M any, ID comparable, U any](table string, options ...Setting) *Blue
 	return bp
 }
 
-// TryDefine is Define without the panic.
 func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*Blueprint[M, ID, U], error) {
 	meta, err := crud.NewMeta[M](table)
 	if err != nil {
@@ -184,9 +86,6 @@ func TryDefine[M any, ID comparable, U any](table string, options ...Setting) (*
 	return tryDefine[M, ID, U](meta, options...)
 }
 
-// DefineInSchema declares a repository whose physical table has a separate
-// qualifier component. The qualifier is a PostgreSQL schema, MySQL database,
-// or SQLite attached database. Each component is quoted independently.
 func DefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) *Blueprint[M, ID, U] {
 	bp, err := TryDefineInSchema[M, ID, U](schema, table, options...)
 	if err != nil {
@@ -195,7 +94,6 @@ func DefineInSchema[M any, ID comparable, U any](schema, table string, options .
 	return bp
 }
 
-// TryDefineInSchema is DefineInSchema without the panic.
 func TryDefineInSchema[M any, ID comparable, U any](schema, table string, options ...Setting) (*Blueprint[M, ID, U], error) {
 	meta, err := crud.NewMetaInSchema[M](schema, table)
 	if err != nil {
@@ -234,13 +132,7 @@ func tryDefine[M any, ID comparable, U any](meta *crud.Meta, options ...Setting)
 	if err := bp.resolveRelationScopes(); err != nil {
 		return nil, err
 	}
-	// Publish only after every fallible declaration check has succeeded. A
-	// failed TryDefine must not reserve a process-wide name for either M or a
-	// relation target and make a corrected declaration fail merely because it
-	// ran second.
-	//
-	// An explicitly independent blueprint is an additional physical view and
-	// must not compete for the canonical relation-table meaning.
+
 	if !bp.set.independentTable {
 		if err := crud.TryRegisterTableRef[M](meta.TableReference()); err != nil {
 			return nil, err
@@ -249,10 +141,6 @@ func tryDefine[M any, ID comparable, U any](meta *crud.Meta, options ...Setting)
 	return bp, nil
 }
 
-// resolveSoftDelete validates the tombstone column and folds its "not deleted"
-// test into the permanent scope — so declaring the delete behaviour is what
-// declares the read behaviour, and the two cannot be added separately or fall
-// out of step.
 func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
 	this.restoreScope = this.set.scope
 	if this.set.softDelete == "" && this.meta.Tombstone != nil {
@@ -287,20 +175,13 @@ func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
 			Reason: "a soft-delete column cannot be present in the update DTO; tag it `tombstone` so codegen excludes it or remove it from the hand-written patch"}
 	}
 	this.softDelete = f
-	// Legacy SoftDelete("Field") remains a supported low-level declaration. Its
-	// model Schema may also back a raw repository view, so do not mutate the
-	// process-wide Field flags. Give this blueprint a local slice view instead:
-	// generic Save/Create/Replace omit the lifecycle field while the raw view
-	// retains the model's literal mapping.
+
 	meta := *this.meta
 	schema := *this.meta.Schema
 	schema.Insert = withoutField(schema.Insert, f)
 	schema.InsertGen = withoutField(schema.InsertGen, f)
 	schema.Update = withoutField(schema.Update, f)
-	// Publish the explicit lifecycle identity to consumers of this blueprint's
-	// metadata. This is a local Schema copy: another raw blueprint over the same
-	// external Go model remains raw, and the shared Field flags still describe
-	// the literal untagged model declaration.
+
 	schema.Tombstone = f
 	meta.Schema = &schema
 	this.meta = &meta
@@ -318,10 +199,6 @@ func withoutField(fields []*crud.Field, excluded *crud.Field) []*crud.Field {
 	return out
 }
 
-// resolveRelationScopes turns the declarations into the form the SQL writer and
-// the preloader consult, and settles the one case that needs no declaring: a
-// relation that points back at this repository's own model is narrowed by
-// Scope, because there is only one possible answer to what those rows are.
 func (this *Blueprint[M, ID, U]) resolveRelationScopes() error {
 	for _, rs := range this.set.relScopes {
 		canonical, err := this.meta.ValidateRelationPath(rs.path)
@@ -334,18 +211,13 @@ func (this *Blueprint[M, ID, U]) resolveRelationScopes() error {
 	return nil
 }
 
-// Meta exposes the bound model description — useful for building specifications
-// or introspecting columns.
 func (this *Blueprint[M, ID, U]) Meta() *crud.Meta { return this.meta }
 
-// Bind attaches the blueprint to a datasource, wrapping it in the given
-// decorators. The first decorator ends up outermost.
 func (this *Blueprint[M, ID, U]) Bind(source crud.Source, mw ...crud.Middleware[M, ID]) *crud.Repo[M, ID, U] {
 	core := crud.Core[M, ID](newRepository[M, ID, U](source, this))
 	return crud.Wrap[M, ID, U](crud.Chain(core, mw...))
 }
 
-// New declares and binds in one call.
 func New[M any, ID comparable, U any](source crud.Source, table string, options ...Setting) *crud.Repo[M, ID, U] {
 	return Define[M, ID, U](table, options...).Bind(source)
 }

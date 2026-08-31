@@ -15,8 +15,6 @@ import (
 
 func ptrTo[T any](v T) *T { return &v }
 
-// sqlKinds lists the first word of every statement that reached the database,
-// which is what a "nothing was written" assertion is really about.
 func sqlKinds(rec *crudtest.Recorder) []string {
 	out := make([]string, 0, len(rec.SQL()))
 	for _, s := range rec.SQL() {
@@ -35,15 +33,8 @@ func wrote(rec *crudtest.Recorder, verb string) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
-// failing closed
-
 var errNoPrincipal = errors.New("the principal could not be resolved")
 
-// A scope that cannot be computed is the request of a caller nobody could
-// identify. Every entry point has to refuse it — an operation that treats "no
-// scope yet" as "no scope needed" runs unfiltered, which is the worst possible
-// reading of a failure.
 func TestAScopeThatFailsClosesEveryDoor(t *testing.T) {
 	ctx := context.Background()
 	broken := security.Policy[Doc, int64]{
@@ -121,9 +112,6 @@ func TestAScopeThatFailsClosesEveryDoor(t *testing.T) {
 	}
 }
 
-// Save is the one call a scope cannot reach — an upsert has no WHERE clause —
-// so the policy's own check is what has to hold the line. Without a principal
-// nothing is written, whether or not the payload carries a key.
 func TestSaveWithoutAPrincipalWritesNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -148,12 +136,6 @@ func TestSaveWithoutAPrincipalWritesNothing(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// an out-of-scope row is absent, not forbidden
-
-// Answering 403 for somebody else's id confirms that the id exists, which is
-// exactly the fact the scope is there to hide. Every lookup has to behave as if
-// the row simply is not there.
 func TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 
@@ -173,8 +155,6 @@ func TestAnIDInAnotherTenantIsInvisibleRatherThanForbidden(t *testing.T) {
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		// An inspecting policy has no approved victim when its scoped read is
-		// empty, so it issues no DELETE at all.
 		rec := crudtest.Postgres().Push(crudtest.Rows())
 		n, err := gated(rec).Delete(ctx, 42)
 		if err != nil || n != 0 {
@@ -196,17 +176,11 @@ func mustBeMissingNotForbidden(t *testing.T, err error) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// immutable fields
-
-// An update DTO that defines a frozen field is refused for defining it, not for
-// changing it: "I am sending the tenant I already have" is how a caller probes
-// whether the field is writable, and it must not get an answer.
 func TestAFrozenFieldIsRefusedOnUpdateEvenWhenTheValueIsUnchanged(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "old")))
 
-	_, err := gated(rec).Update(ctx, 1, DocUpdate{TenantID: ptrTo(int64(7))}) // the row's own tenant
+	_, err := gated(rec).Update(ctx, 1, DocUpdate{TenantID: ptrTo(int64(7))})
 
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
@@ -219,16 +193,13 @@ func TestAFrozenFieldIsRefusedOnUpdateEvenWhenTheValueIsUnchanged(t *testing.T) 
 	}
 }
 
-// A Save carries the whole row, so every frozen column is always "defined" and
-// the same rule would reject every update. There the test is the value: an
-// unchanged tenant goes through, a changed one does not.
 func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 
 	t.Run("unchanged goes through", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(
-			crudtest.Rows(docRow(1, 7, "old")), // the gate reads the row it is replacing
-			crudtest.Rows(docRow(1, 7, "new")), // RETURNING
+			crudtest.Rows(docRow(1, 7, "old")),
+			crudtest.Rows(docRow(1, 7, "new")),
 		)
 		d := Doc{ID: 1, TenantID: 7, Title: "new"}
 		if _, err := gated(rec).Save(ctx, &d); err != nil {
@@ -254,9 +225,6 @@ func TestSaveJudgesAFrozenFieldByItsValue(t *testing.T) {
 	})
 }
 
-// Inspect is a policy decision about the state it saw, not a best-effort audit
-// before an unconstrained write. The repository receives that snapshot as an
-// additional WHERE predicate on both its read and final UPDATE.
 func TestInspectPinsUpdateToTheRowItApproved(t *testing.T) {
 	policy := security.Policy[Doc, int64]{
 		Inspect: func(_ context.Context, a security.Action, d *Doc) error {
@@ -268,9 +236,9 @@ func TestInspectPinsUpdateToTheRowItApproved(t *testing.T) {
 	}
 	title := "after"
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(docRow(1, 7, "before")), // gate inspection
-		crudtest.Rows(docRow(1, 7, "before")), // repository's own diff read
-		crudtest.Rows(docRow(1, 7, "after")),  // conditional UPDATE RETURNING
+		crudtest.Rows(docRow(1, 7, "before")),
+		crudtest.Rows(docRow(1, 7, "before")),
+		crudtest.Rows(docRow(1, 7, "after")),
 	)
 	if _, err := Docs.Bind(rec, security.Gate(policy)).Update(context.Background(), 1, DocUpdate{Title: &title}); err != nil {
 		t.Fatal(err)
@@ -283,11 +251,6 @@ func TestInspectPinsUpdateToTheRowItApproved(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Inspect
-
-// rejecting builds a policy whose per-row check refuses one particular title,
-// counting the rows it was asked about.
 func rejecting(title string, seen *int) security.Policy[Doc, int64] {
 	return security.Policy[Doc, int64]{
 		Inspect: func(_ context.Context, a security.Action, d *Doc) error {
@@ -300,8 +263,6 @@ func rejecting(title string, seen *int) security.Policy[Doc, int64] {
 	}
 }
 
-// Inspect is a veto over the whole operation, not a filter applied to the rows
-// it likes: one refused row means the batch does not happen at all.
 func TestInspectAbortsTheWholeCall(t *testing.T) {
 	ctx := context.Background()
 
@@ -361,9 +322,6 @@ func TestInspectAbortsTheWholeCall(t *testing.T) {
 	})
 }
 
-// A page is all or nothing. Handing back the rows that passed would tell the
-// caller precisely how many rows it is not allowed to see, and a caller that
-// ignores the error would render a page that is quietly missing rows.
 func TestInspectReadsFailsThePageInsteadOfTrimmingIt(t *testing.T) {
 	ctx := context.Background()
 	rows := func() crudtest.Result { return crudtest.Rows(docRow(1, 7, "fine"), docRow(2, 7, "sealed")) }
@@ -416,11 +374,6 @@ func TestInspectReadsFailsThePageInsteadOfTrimmingIt(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// a gate over a repository that already has a scope
-
-// Note is soft-deleted, so the repository narrows every read to the live rows,
-// while the gate narrows them to one tenant. Neither knows about the other.
 type Note struct {
 	ID        int64               `db:"id,pk,auto"`
 	TenantID  int64               `db:"tenant_id"`
@@ -439,9 +392,6 @@ var (
 
 func noteRow(id, tenant int64, title string) []any { return []any{id, tenant, title, nil} }
 
-// Two independent narrowings, both permanent, neither able to displace the
-// other: the repository scope, the gate scope and the caller's own filter all
-// end up in the same AND.
 func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 
@@ -461,7 +411,7 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 
 	t.Run("on a delete", func(t *testing.T) {
 		rec := crudtest.Postgres().
-			Push(crudtest.Rows(noteRow(1, 7, "mine"))). // the policy inspects the victims
+			Push(crudtest.Rows(noteRow(1, 7, "mine"))).
 			ExecResult(crud.Result{RowsAffected: 1})
 		repository := liveNotes.Bind(rec, security.Gate(notePolicy))
 
@@ -476,8 +426,6 @@ func TestTheGateScopeAndTheRepositoryScopeBothApply(t *testing.T) {
 		}
 	})
 
-	// The gate cannot see the repository's scope, so it counts as unscoped and
-	// the refusal stands. Erring towards the refusal is the right way round.
 	t.Run("a repository scope does not satisfy the gate's own delete guard", func(t *testing.T) {
 		rec := crudtest.Postgres()
 		repository := liveNotes.Bind(rec, security.Gate(security.Freeze[Note, int64]("Title")))

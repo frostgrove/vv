@@ -75,6 +75,7 @@ error-returning form. Low-level metadata and adapters carry the same identity as
 | `Save(ctx, *M)` | no key → INSERT, key → UPSERT; returns a new stored model and leaves its argument unchanged |
 | `SaveOnly(ctx, *M)` | the same write with no stored-row result and no argument mutation |
 | `SaveAll(ctx, []*M)` | write-only batch insert/upsert; never mutates its models |
+| `InsertBatch(ctx, []*M, opts...)` | write-only, insert-only typed bulk; native when explicitly exposed, portable otherwise |
 | `Update(ctx, id, dto, opts...)` | load, diff, write only what changed |
 | `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns rows touched |
 | `Delete(ctx, ids...)` | returns how many rows went away |
@@ -98,10 +99,10 @@ passed is never changed.
 fetch a model and does not mutate its argument. Use it for writes whose
 generated values are irrelevant.
 
-`SaveAll` is likewise write-only. It is an `INSERT` on every adapter: a
-driver's bulk-copy path is never reached for, because it takes its own handle
-and would step outside a transaction the caller opened. pgx's `COPY` is there
-as `crud.BulkInserter`, for an application that asks for it directly.
+`SaveAll` is likewise write-only and always uses ordinary SQL. It keeps Save's
+semantics: assigned keys upsert, generated keys insert. Native bulk is a
+separate verb because PostgreSQL COPY is not semantically identical to INSERT
+for every table feature.
 
 The dialect's bind budget is automatic. A fitting batch stays one statement. A
 larger one is split on row boundaries, in caller order, after every model and
@@ -109,6 +110,73 @@ statement has passed preflight. All chunks join one transaction, so an error in
 the last chunk cannot leave the first committed. Generated-key batches remain
 write-only: `SaveAll` neither adds `RETURNING` nor mutates the models
 ([[D-079]]).
+
+### InsertBatch is create-only native bulk
+
+```go
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
+```
+
+Unlike `SaveAll`, `InsertBatch` never upserts: a row with an assigned key is
+still an insert and may conflict. It derives the exact table, columns and values
+from immutable metadata, preserves Gate and fault decorators, joins an ambient
+executor, and never mutates the models or reads generated values back.
+The Gate authorises `Create` once and inspects every incoming row; a scope-only
+policy with no `Inspect` refuses the batch rather than trusting values it cannot
+verify. Fault enrichment keeps `InsertBatch` as the operation and preserves
+field paths from the driver classifier.
+
+When the resolved executor exposes `crud.UnsafeBulkInserter` directly and
+metadata yields insert columns, the repository selects it; crudpgx provides
+PostgreSQL COPY this way. Otherwise it uses the same preflighted, atomic
+bind-budgeted `INSERT` machinery as a portable fallback. Capability discovery
+does not guess whether COPY fits a table's semantics: RLS/rewrite-rule tables,
+special pgx encodings, or callers requiring ordinary INSERT semantics need an
+explicit opt-out:
+
+```go
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+
+var Users = sqlrepo.Define[User, int64, UserUpdate](
+    "users",
+    sqlrepo.PortableBatch(),
+)
+```
+
+`SourceUnwrapper` is not followed for this write effect. An unknown source
+wrapper therefore selects portable SQL unless it explicitly implements the
+unsafe native forwarder. Its `Exec` sees a direct one-statement plan; chunked
+plans run on the transaction handle. Complete statement tracing belongs in the
+driver/connector or an explicitly instrumented `Begin`/`Tx`. A native
+server/encoding failure is final; only a before-I/O
+`ErrNoBulkInsertSupport` selects fallback, so rows are never retried after the
+server has begun processing the native call.
+
+Pre-release migration: the old driver-level `BulkInserter`, `CopyFrom` and
+`CopyFromTable` surface was removed. Application code moves to
+`Repo.InsertBatch`; deliberate raw pgx work uses the explicitly unsafe APIs.
+
+### Raw predicates and raw statements are different boundaries
+
+`crud.Raw(fragment, args...)` is a predicate node inside a repository-built
+statement. Its fragment is not field-validated, but the repository still owns
+the table, combines permanent and security scopes around it, resolves the
+ambient executor, and runs the usual fault hooks.
+
+A whole raw statement bypasses that repository boundary. Calling `Exec` or
+`Query` on the `Source` returned by `SourceOf` runs on that source handle
+directly and does **not** resolve an executor bound in `ctx`. Use the explicit
+context-aware escape hatches when raw SQL must join the same transaction:
+
+```go
+result, err := crud.UnsafeExecFor(ctx, source, statement, args...)
+rows, err := crud.UnsafeQueryFor(ctx, source, query, args...)
+```
+
+The `Unsafe` prefix is still literal: these calls preserve datasource/ambient
+transaction routing, but bypass metadata, repository policy, validation and
+fault decorators. Put business SQL behind a repository method; reserve these
+functions for deliberate infrastructure-level statements.
 
 ### Update is load, diff, write
 
@@ -142,6 +210,7 @@ and applied to every call.
 | `Scope(pred)` | a predicate ANDed into every read and every scoped write |
 | `RelationScope(path, pred)` | the same, on the far side of a relation |
 | `SoftDelete(field)` | rows are flagged rather than removed, and hidden from every read |
+| `PortableBatch()` | keep every `InsertBatch` call on ordinary bind-budgeted SQL |
 | `UnstablePagination()` | drop the primary-key tiebreaker appended to every sort |
 | `IndependentTable()` | keep an additional physical table for the model local to this blueprint |
 
@@ -329,10 +398,16 @@ back independently. `crud.InTx(ctx, db, fn)` does the same for several
 repositories at once. For genuine nesting, `Begin` gives a savepoint — natively
 on pgx, via `SAVEPOINT` on `database/sql` ([[FL-009]]).
 
-`SaveAll` and `Delete(ids...)` use that same rule when a bind budget requires
-several statements. They join an ambient transaction or open one; a datasource
-that cannot provide either atomic boundary returns `crud.ErrNoTxSupport` before
-the first chunk. A one-statement call opens nothing extra.
+`SaveAll`, portable `InsertBatch`, and `Delete(ids...)` use that same rule when
+a bind budget requires several statements. They join an ambient transaction or
+open one; a datasource that cannot provide either atomic boundary returns
+`crud.ErrNoTxSupport` before the first chunk. A one-statement call opens nothing
+extra. Native `InsertBatch` runs on the exact resolved executor, so pgx COPY
+joins the same ambient transaction rather than escaping to the pool.
+A bound non-transaction executor is not an atomic boundary and is not reused for
+a chunked plan; sqlrepo opens a transaction from its source. Bind an already
+started transaction, or bind the repository to the session source itself, when
+connection-local state must survive across the chunks.
 
 ## Sharp edges
 
@@ -351,9 +426,13 @@ the first chunk. A one-statement call opens nothing extra.
   ([[D-014]]). That is what makes it testable with [crudtest](crudtest.md).
 - **Bind limits are preflighted.** `In` / `InAny` and every other direct Go
   predicate share one statement-wide dialect budget. An oversized statement is
-  a typed schema refusal before the datasource. `SaveAll` and `Delete(ids...)`
-  chunk because their operation stays equivalent; an arbitrary predicate does
-  not ([[D-079]]).
+  a typed schema refusal before the datasource. `SaveAll`, portable
+  `InsertBatch`, and `Delete(ids...)` chunk because their operation stays
+  equivalent; an arbitrary predicate does not ([[D-079]]).
+- **COPY suitability is a declaration, not a guess.** A bare pgx source exposes
+  native bulk by default. Choose per-call `crud.PortableBatch()` or blueprint
+  `sqlrepo.PortableBatch()` for RLS/rewrite rules, special encoding, or complete
+  statement-middleware observability.
 - **Table registration is typed.** `RegisterTable` accepts a struct model, not
   `*Model`, a scalar, or an interface. A conflicting or already-published name
   fails loudly ([[D-080]]).

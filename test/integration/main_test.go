@@ -18,22 +18,12 @@ import (
 	"github.com/frostgrove/vv/test/corpus"
 )
 
-// Where the databases are. The corpus generator reads the same variables and
-// the same defaults, from the one place that declares them: two copies would
-// mean pointing the suite at another server silently left the corpus behind.
 var (
 	pgDSN    = corpus.PostgresDSN()
 	mysqlDSN = corpus.MySQLDSN()
 	mariaDSN = corpus.MariaDBDSN()
 )
 
-// Package-level handles, opened once for the whole run.
-//
-// MariaDB is a fourth engine and not a second MySQL. It answers a failed CHECK
-// with 4025 and SQLSTATE 23000 where MySQL answers 3819 and HY000, and it names
-// a duplicated index without its table where MySQL prefixes one. crud.MySQL
-// claims to target both and, until this handle existed, had never been run
-// against it.
 var (
 	pgDB    *sql.DB
 	myDB    *sql.DB
@@ -129,8 +119,6 @@ func teardown() {
 	}
 }
 
-// truncate wipes the shared table; the suite calls it between subtests, but
-// interop tests that build their own repositories use it directly.
 func truncate(t *testing.T, database *sql.DB) {
 	t.Helper()
 	if _, err := database.Exec("DELETE FROM users"); err != nil {
@@ -138,13 +126,4 @@ func truncate(t *testing.T, database *sql.DB) {
 	}
 }
 
-// unpagedOK is the query configuration of an endpoint that serves whole result
-// sets.
-//
-// It bounds nothing else — every allow-list is empty, which means "anything the
-// model maps" — so a test compiled with it is compiled the way a test compiled
-// with a nil config used to be. The one difference is the one field: unpaged is
-// off by default, because it is the only knob a request can set that has no
-// ceiling of its own, and an endpoint has to say it serves whole tables
-// ([[D-060]]).
 var unpagedOK = &query.Config{AllowUnpaged: true}

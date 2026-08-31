@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// UserUpdate is the partial-update DTO for ent.User.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type UserUpdate struct {
 	TenantID *int64         `json:"tenantID,omitempty"`
 	Email    *string        `json:"email,omitempty"`
@@ -23,7 +20,6 @@ type UserUpdate struct {
 	Active   *bool          `json:"active,omitempty"`
 }
 
-// UserAttrs is the generated metamodel shape for User.
 type UserAttrs struct {
 	ID        specs.Ord[ent.User, int64]
 	TenantID  specs.Ord[ent.User, int64]
@@ -34,27 +30,16 @@ type UserAttrs struct {
 	CreatedAt specs.Cmp[ent.User, time.Time]
 }
 
-// User_ is the metamodel of User: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var User_ = specs.Metamodel[ent.User, UserAttrs]()
 
-// UserRepo is the typed repository for ent.User.
 type UserRepo = crud.Repo[ent.User, int64, UserUpdate]
 
-// UserRepository describes ent.User independently of a database driver.
-// Bind it through NewUserRepository with the application's datasource.
 var UserRepository = sqlrepo.Define[ent.User, int64, UserUpdate]("")
 
-// NewUserRepository binds UserRepository to src.
 func NewUserRepository(src crud.Source) *UserRepo {
 	return UserRepository.Bind(src)
 }
 
-// A writable column the update DTO does not name refuses to start, rather than
-// becoming a column updates silently cannot reach ([[D-050]]). The generator
-// read the model's source text and this reads the compiled struct, so the two
-// can drift apart — and this is what says so when they do, with nothing
-// regenerated.
 func init() {
 	port.MustCoverUpdate[ent.User, UserUpdate]("CreatedAt")
 }

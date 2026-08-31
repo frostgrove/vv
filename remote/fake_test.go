@@ -13,10 +13,6 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// The model and the fake are crudnet's, name for name. A client test that
-// invented its own would be proving that the client agrees with itself; using
-// the binding's own fixture means the two halves are being compared.
-
 type Widget struct {
 	ID        int64            `db:"id,pk,auto" json:"id"`
 	OwnerID   int64            `db:"owner_id" json:"ownerId"`
@@ -40,10 +36,6 @@ type Part struct {
 	Label    string `db:"label" json:"label"`
 }
 
-// The tags are the ones cmd/vv writes: omitempty on the pointers, omitzero on
-// the Opt. The Opt's is load-bearing rather than tidy — without it an undefined
-// Opt marshals to null and a patch empties the column — and remote.New refuses
-// a DTO that lacks it.
 type WidgetUpdate struct {
 	Name  *string          `json:"name,omitempty"`
 	Price *int             `json:"price,omitempty"`
@@ -62,9 +54,6 @@ func mustMeta() *crud.Meta {
 
 var savedAt = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
 
-// recordedCall is one repository call as the far side received it. Opts is the
-// resolved option list, which is what a read test is about: whether the filter
-// the caller wrote in Go arrived as the same narrowing.
 type recordedCall struct {
 	Method string
 	Opts   *crud.Options
@@ -201,7 +190,6 @@ func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
 	return this.del, nil
 }
 
-// last is the call the far side received most recently.
 func (this *fakeRepo) last(t *testing.T) recordedCall {
 	t.Helper()
 	if len(this.calls) == 0 {
@@ -210,12 +198,6 @@ func (this *fakeRepo) last(t *testing.T) recordedCall {
 	return this.calls[len(this.calls)-1]
 }
 
-// serve mounts a real binding on a real server. Nothing here is a stub between
-// the client and the handler: what the client writes is what net/http parses.
-//
-// There is no separate "every row" route over HTTP. remote.GetAll walks the
-// ordinary List pages, which means an endpoint with a page cap remains
-// consumable without granting unpaged reads.
 func serve(t *testing.T, repository port.Repository[Widget, int64, WidgetUpdate], options ...crudnet.Option[Widget, int64, WidgetUpdate]) string {
 	t.Helper()
 	mux := http.NewServeMux()

@@ -1,16 +1,3 @@
-// Package corpus captures what each database actually says when it refuses a
-// statement.
-//
-// It exists because the engine matrix it replaced was written from memory and
-// half of it was wrong. MySQL answers a failed CHECK with 3819 and SQLSTATE
-// HY000 — not class 23, which is where every reading of the specification puts
-// it — so the shipped classifier returned 500 where the documentation promised
-// 409, and no test noticed. A table nobody provoked is a guess with a citation.
-//
-// The output is checked in under errs/sqlerr/testdata/corpus and is what the
-// dialect parsers are written against. It lives in the test module because it
-// needs the drivers; the types it writes live in the root module, because the
-// parsers are unit-tested and a unit test there cannot import this.
 package corpus
 
 import (
@@ -28,8 +15,6 @@ import (
 	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
-// The defaults match docker-compose.yml, and the variables match the ones the
-// integration suite reads, so pointing one at another server points both.
 func PostgresDSN() string {
 	return env("VV_PG_DSN", "postgres://vv:vv@127.0.0.1:55432/vv?sslmode=disable")
 }
@@ -47,13 +32,6 @@ func env(key, def string) string {
 	return def
 }
 
-// Engines is every database the corpus covers. tmp is a writable directory for
-// SQLite, which needs a file rather than a server.
-//
-// Foreign keys are switched on in the DSN. SQLite has them off by default, so
-// without that line the two foreign-key cases would insert cleanly and the
-// corpus would record that SQLite has no foreign keys — which is a statement
-// about the connection, not the engine.
 func Engines(tmp string) []Engine {
 	return []Engine{
 		postgres(PostgresDSN()),
@@ -64,11 +42,6 @@ func Engines(tmp string) []Engine {
 	}
 }
 
-// Dir locates the checked-in corpus by walking up to the repository root.
-//
-// The generator and the integration suite sit at different depths, and a
-// relative literal in each is how one of them goes stale without anybody
-// noticing which.
 func Dir() (string, error) {
 	d, err := os.Getwd()
 	if err != nil {
@@ -87,19 +60,6 @@ func Dir() (string, error) {
 	}
 }
 
-// Capture builds one engine's tables, provokes every case and records what came
-// back.
-//
-// A case that produces no error at all aborts the run, naming itself. Without
-// that an engine which quietly accepted everything would write a clean-looking
-// file full of nulls, and the corpus would be at its least trustworthy exactly
-// when it mattered most. The inverse holds for a case declared Unreachable: it
-// is expected to succeed, and an error there is equally a finding.
-//
-// A failure of the probe itself — a session statement the server refused, a race
-// both sides lost — aborts too, and does not become an entry. An engine's answer
-// and a broken fixture look the same in a JSON file, and only one of them is
-// evidence.
 func Capture(ctx context.Context, e Engine) (*sqlerr.Corpus, error) {
 	database, err := e.Open(ctx)
 	if err != nil {
@@ -136,12 +96,6 @@ func Capture(ctx context.Context, e Engine) (*sqlerr.Corpus, error) {
 	return out, nil
 }
 
-// Open connects, builds the fixture tables and seeds the anchor row.
-//
-// The schema is rebuilt on every run rather than created once. These tables are
-// the corpus's own, nothing else reads them, and a case that leaves a row behind
-// — SQLite accepts three the others refuse — would otherwise change what the
-// next run's duplicate-key case collides with.
 func (this Engine) Open(ctx context.Context) (*sql.DB, error) {
 	database, err := sql.Open(this.Driver, this.DSN)
 	if err != nil {
@@ -160,8 +114,6 @@ func (this Engine) Open(ctx context.Context) (*sql.DB, error) {
 	return database, nil
 }
 
-// provoke runs one case against a raw handle. A case with nothing to run at all
-// is one this engine cannot reach, and says so in Unreachable.
 func (this Engine) provoke(ctx context.Context, database *sql.DB, p Probe) error {
 	switch {
 	case p.Contend:
@@ -198,20 +150,8 @@ func (this Engine) provoke(ctx context.Context, database *sql.DB, p Probe) error
 	}
 }
 
-// errHarness marks a failure of the capture rather than of the statement. A
-// probe that could not even be set up must abort the run: recorded as the case's
-// error it would look like a server answer, and the one file whose whole value
-// is that every entry is real would be carrying a fabrication.
 var errHarness = errors.New("the probe could not be run")
 
-// Script runs a transaction probe. The error it returns is the *last* step's,
-// not the first one that failed: both cases that need this are about what
-// happens after something already failed, and "first non-nil" would record
-// MySQL's duplicate-key error under the name transaction_aborted and call an
-// unreachable case reachable.
-//
-// A step spelled COMMIT commits. A deferred constraint fires there and nowhere
-// else, so a script that could not name the commit could not reach it.
 func Script(stmts []string, exec func(string) error, commit func() error) error {
 	var last error
 	for _, stmt := range stmts {
@@ -224,21 +164,6 @@ func Script(stmts []string, exec func(string) error, commit func() error) error 
 	return last
 }
 
-// Race runs two scripts on two connections in lock step: both sides finish
-// statement N before either starts N+1.
-//
-// Exactly one side is expected to lose. Which one is the engine's own choice —
-// PostgreSQL picks a deadlock victim by cost, InnoDB by the smaller
-// transaction — so the schedule is not ours to predict; what is stable is the
-// key, which is why the entry regenerates identically even though the run does
-// not. Both sides failing, or neither, is a finding rather than a capture: the
-// corpus records one error and picking between two would be a coin toss.
-//
-// The rendezvous is between every pair of statements and not only the first,
-// because the statement that opens the transaction takes no lock. Letting the
-// two sides race from there is what made a deadlock look like something that
-// needed a barrier and a retry ([[D-040]]); with the rendezvous it fires every
-// run.
 func (this Engine) Race(ctx context.Context, database *sql.DB, p Probe, exec func(*sql.Conn, string) error) error {
 	if len(p.RaceA) != len(p.RaceB) {
 		return fmt.Errorf("%w: %s: the two sides have %d and %d statements and would wait for each other forever",
@@ -255,9 +180,6 @@ func (this Engine) Race(ctx context.Context, database *sql.DB, p Probe, exec fun
 	}
 	defer b.Close()
 
-	// Capacity one, one token per round: a side reaching the next round before
-	// the other has taken its token blocks on the send, which is the rendezvous
-	// doing its job rather than a lost wakeup.
 	toA, toB := make(chan struct{}, 1), make(chan struct{}, 1)
 	side := func(c *sql.Conn, stmts []string, mine chan<- struct{}, theirs <-chan struct{}) error {
 		var first error
@@ -294,20 +216,6 @@ func (this Engine) Race(ctx context.Context, database *sql.DB, p Probe, exec fun
 	}
 }
 
-// Contend holds the anchor row on one connection and hands wait a second one
-// whose patience has been cut to a fraction of a second. What wait returns is
-// the contention error.
-//
-// The caller supplies the waiting statement so the same contention can be run
-// through a repository rather than a raw handle, which is what lets the
-// integration suite check the adapter's verdict on the same error the corpus
-// recorded.
-//
-// A deadlock is the other half of the retryable class and needs the other shape:
-// two connections that both hold something before either reaches for what the
-// other holds. That is Engine.Race, and a rendezvous between every pair of
-// statements is what made it deterministic — the entry regenerates identically
-// because the key does, even though which side loses is the engine's choice.
 func (this Engine) Contend(ctx context.Context, database *sql.DB, wait func(*sql.Conn) error) error {
 	holder, err := database.Conn(ctx)
 	if err != nil {
@@ -333,8 +241,7 @@ func (this Engine) Contend(ctx context.Context, database *sql.DB, wait func(*sql
 			return fmt.Errorf("%w: %s: %v", errHarness, stmt, err)
 		}
 	}
-	// The connection goes back to the pool when this returns, and a cut-down
-	// patience left on it is measured by whatever probe draws it next.
+
 	defer func() {
 		for _, stmt := range this.Restore {
 			waiter.ExecContext(ctx, stmt)
@@ -343,14 +250,6 @@ func (this Engine) Contend(ctx context.Context, database *sql.DB, wait func(*sql
 	return wait(waiter)
 }
 
-// Session runs the probe's session statements on a connection of its own and
-// then hands that same connection to run.
-//
-// The handle is its own, not one drawn from the shared pool, and that is the
-// whole point. A session variable set on a pooled connection goes back to the
-// pool with it: the first capture recorded the undefined-table message in
-// Russian, two cases after the locale probe, because the locale outlived the
-// probe that set it. Closing this handle closes the connection for real.
 func (this Engine) Session(ctx context.Context, p Probe, run func(*sql.Conn) error) error {
 	database, err := sql.Open(this.Driver, this.DSN)
 	if err != nil {
@@ -370,9 +269,6 @@ func (this Engine) Session(ctx context.Context, p Probe, run func(*sql.Conn) err
 	return run(conn)
 }
 
-// Reach opens a second handle at dsn and pings it. Both connection-time
-// negatives are refusals no statement on the main handle can produce, and a
-// repository bound to such a DSN meets them on its first call.
 func (this Engine) Reach(ctx context.Context, dsn string) error {
 	database, err := sql.Open(this.Driver, dsn)
 	if err != nil {

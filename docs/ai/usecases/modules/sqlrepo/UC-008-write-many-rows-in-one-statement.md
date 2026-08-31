@@ -51,10 +51,13 @@ the set as well — including a refusal when the set turns out to be "everything
 
 ## Out of scope
 
-- **Bulk insert.** Nothing in the library reaches for a driver's bulk-copy path;
-  a save is one statement per row. The pgx adapter exposes a copy interface, but
-  an application that wants it type-asserts its own datasource and calls it, and
-  that call ignores any transaction in the context.
+- **Bulk insert is a separate repository verb.** `Repo.InsertBatch` accepts
+  typed models and is insert-only even when a row carries an assigned key. On a
+  directly capable pgx source it selects `COPY` by default; otherwise it uses
+  bind-budgeted, atomic `INSERT` chunks. `crud.PortableBatch()` selects that SQL
+  path for one call and `sqlrepo.PortableBatch()` selects it for a blueprint
+  (notably for PostgreSQL RLS/rewrite-rule tables). This use case remains about
+  filtered `UpdateAll`/`DeleteAll`, not about importing models.
 - **Returning the written rows.** A filtered write reports a count, not a set.
 - **Per-row values.** One DTO, one set of values, every matching row. Writing
   different values to different rows is many statements.
@@ -101,4 +104,19 @@ column's `IS NOT NULL` / self-comparison for a tautology. The sentinels wrap
 
 The asymmetry worth stating: a delete by explicit ids is never subject to the
 unscoped-write guard, because the ids are the narrowing. That is right, but it
-means "every bulk write is guarded" is not true as stated.
+means "every filtered write is subject to the unscoped guard" is not true as
+stated. The adjacent insert path no longer creates a second exception:
+`security.Gate.InsertBatch` authorises `Create` once and inspects every private
+row copy before I/O, while `faults.Enrich.InsertBatch` preserves operation and
+field attribution.
+
+**Historical adjacent gap, closed before the first release (FW-CORE-003).** The
+original sweep found a source-level `crud.BulkInserter`/`CopyFrom` assertion. It
+required callers to hand-build table, column and value lists, bypassed every
+repository decorator, ignored an executor carried by the context and returned
+pgx COPY failures without the normal classifier. Those safe-looking names were
+removed rather than deprecated pre-release. Driver-level escape hatches now use
+only `UnsafeBulkInsert*` / `UnsafeCopyFrom*`; their names state that they bypass
+repository policy and lifecycle. `UnsafeBulkInsertFor` still resolves the
+source-bound ambient executor so an intentional low-level call cannot silently
+leave a transaction.

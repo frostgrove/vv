@@ -5,10 +5,10 @@
 **Verdict:** not ready — every part is deep and proven in isolation; a stock mount is writable by anyone who can reach the port, open in five query dimensions and serialises the whole model, the README's flagship error example promises a status the code does not answer, the wiring the README prescribes for the error vocabulary configures nothing on a generated route, and nothing assembles the parts into an application. The edge pass adds a cross-stack ambiguity: two HTTP credentials select a tenant by header order instead of being refused before the generated route. The `Save` and gRPC numeric-key integrity defects are tracked by their canonical Sqlrepo and Crudgrpc sweeps.
 
 **This table is not the whole gate.** It carries what no single module owns. The
-module sweeps carry **35** blocker-severity rows of their own — `grep -c "| blocker |"
-docs/ai/usecases/modules/*/[A-Z]*.md` sums to 35 across 14 sweeps — and a tag has to
-clear both sets. Round 1 said sixteen, which is the row count of this file's own table and not a count of theirs.
-The rollup is under "Release blockers found here".
+module sweeps carry their own active blocker-severity rows, and a tag has to
+clear both sets. Closed findings remain in those tables as labelled historical
+evidence, so a raw row count is no longer a readiness metric. The rollup is under
+"Release blockers found here".
 
 ## What a consumer is actually trying to do
 
@@ -250,13 +250,44 @@ code gets real code without the rest unravelling.
 ### H-GENERAL-16 — Importing fifty thousand rows
 **Who:** whoever gets the CSV upload, the backfill or the nightly sync — every application, month one
 **Wants:** to write a large batch without leaving the framework or leaving the gate
-**Story:** They read a file, build a slice, and call `SaveAll`. When that fails they reach for the `COPY` door the README mentions.
+**Story:** They read a file, build a typed slice and call `repo.InsertBatch`.
+Pgx should become fast automatically without turning the import into a second,
+less-safe architecture.
 **Must hold:**
-1. A batch too large for one statement is chunked, or refused with a number.
-2. The bulk door goes through the same gate, decorators and soft-delete rules as an ordinary write.
-**Today:** ❌ missing
-**Evidence:** `SaveAll` builds one multi-row `INSERT` with a placeholder per value and never chunks (`crud/sqlrepo/repository.go:1157-1174`); at a dozen columns a batch past roughly five thousand rows crosses PostgreSQL's 65535 bind parameters and the import fails as a driver error — a 500 naming nothing about vv. `Delete(ids...)` has the same shape (`:884`). The read side caps `in` lists at 1024 for precisely this reason and says so (`crud/query/compile.go:38-46`: "without this the honest 400 arrives from the driver, as a 500, after the statement was built"); the write side has no equivalent, and the library already chunks at 900 in the preloader (`crud/preload.go:17`). **Guarantee 2 is the general seam and it is why this case is here rather than only in `sqlrepo`'s.** The one bulk door, `crud.BulkInserter`/`COPY`, is on the *source* rather than the repository, so taking it bypasses the gate, the faults decorator and soft delete — and the `adapters` sweep files two blockers on the same door: it is reached by a bare type assertion with no walker, so `crud.ReadWrite` and any `Source` wrapper delete it silently (row 1), and a `COPY` ignores the transaction in the context (row 2). A tenant-isolated application's only fast import path is the one the gate cannot see.
-**If not ready:** they chunk it themselves and find the right number by failing in production. The `sqlrepo` sweep files the chunking half as its row 4, `serious`. The fix is the preloader's own constant applied one verb over, and the number belongs in the doc comment either way; guarantee 2 needs a decision about whether a bulk verb may exist above the gate at all.
+1. A batch too large for one statement is split by the dialect's bind budget and
+   remains atomic.
+2. The import goes through the same Gate, faults and consumer decorators as an
+   ordinary repository write.
+3. Pgx COPY is the default acceleration, while tables whose semantics require
+   ordinary INSERT can opt out without leaving the typed API.
+**Today:** ✅ covered
+**Evidence:** `Repo.InsertBatch` is an optional typed repository capability and
+is insert-only even for assigned keys. Sqlrepo derives table, columns and values
+from metadata, preflights the complete input and selects native pgx COPY only on
+the resolved executor. Otherwise it renders bind-budgeted INSERT chunks and
+runs a multi-statement plan through one ambient or owned transaction. `SaveAll`
+and `Delete(ids...)` use the same budgeted atomic-plan machinery, so the original
+one-statement ceiling is gone there too.
+
+`security.Gate.InsertBatch` authorises Create and inspects a private copy of
+every row; a scope-only policy without Inspect refuses. `faults.Enrich` preserves
+operation and field attribution. An unknown repository decorator fails closed;
+an unknown source wrapper gets SQL rather than a native effect tunneled
+underneath it. Its `Exec` sees a direct one-statement plan; chunked work executes
+on the transaction handle and needs transaction-aware or driver-level tracing.
+`ReadWrite` explicitly routes native bulk to the primary.
+`crud.PortableBatch()` chooses SQL for one call and `sqlrepo.PortableBatch()`
+declares it for a repository. This is the RLS, rewrite-rule and special-encoding
+escape hatch; magic remains the default.
+
+**Historical finding, closed before the first release (FW-CORE-003).** The
+original evidence correctly found unbounded `SaveAll`/`Delete` statements and a
+source-level `crud.BulkInserter`/`CopyFrom` call that duplicated metadata,
+disappeared behind wrappers, bypassed Gate/faults, ignored context transactions
+and returned unclassified COPY errors. The old unmarked symbols were removed.
+Only explicitly low-level `UnsafeBulkInsert*` / `UnsafeCopyFrom*` remain, for a
+caller intentionally leaving repository policy and lifecycle.
+**If not ready:** —
 
 ### H-GENERAL-17 — Errors a form can display, without a research project
 **Who:** a full-stack developer whose signup form has three fields wrong
@@ -380,7 +411,7 @@ enumeration rather than a cross-page snapshot.
 1. Reads go to the replica and writes to the primary; a read that decides a write does not; a read inside a transaction stays there.
 2. The split survives a consumer's own `Source` wrapper.
 **Today:** 🟡 partial — 1 is proven; 2 is the one erasure that fails silently
-**Evidence:** guarantee 1 is `crud.ReadWrite`, `vvdb.OpenReadWrite`, `dbpgx.ConnectReadWrite`, `[[D-032]]`, and `test/integration/replica_test.go:24`, `:96`, `:138`, `:187`. Guarantee 2 is the seam: `[[D-061]]` names three optional interfaces a wrapper erases, and `ReadSourcer` is the one whose loss reports nothing — the transaction beginner disappearing produces an error, the replica split disappearing produces correct answers from the primary and a CPU graph that never flattens. `crud/wrapsource_test.go:15-31` is the only working example of a wrapper that keeps it, and it lives in a test file. **Round 1 attributed this to an `adapters` blocker about "no provided `Source` wrapper" and no such row exists**; the nearest is `adapters` row 1, which is the same `[[D-061]]` failure on a different optional interface — `crud.BulkInserter` reached by a bare type assertion, deleted silently by `crud.ReadWrite` and by any wrapper.
+**Evidence:** guarantee 1 is `crud.ReadWrite`, `vvdb.OpenReadWrite`, `dbpgx.ConnectReadWrite`, `[[D-032]]`, and `test/integration/replica_test.go:24`, `:96`, `:138`, `:187`. Guarantee 2 is the seam: `[[D-061]]` names three optional interfaces a wrapper erases, and `ReadSourcer` is the one whose loss reports nothing — the transaction beginner disappearing produces an error, the replica split disappearing produces correct answers from the primary and a CPU graph that never flattens. `crud/wrapsource_test.go:15-31` is the only working example of a wrapper that keeps it, and it lives in a test file. **Round 1 attributed this to an `adapters` blocker about "no provided `Source` wrapper" and no such row exists.** Its nearest historical comparison was the old bare `crud.BulkInserter` assertion; FW-CORE-003 closed that separate effect seam by making `ReadWrite` forward explicitly and making an unknown wrapper select portable SQL rather than lose the repository operation. `ReadSourcer` remains a read-capability walk and this case remains partial.
 **If not ready:** they read `[[D-061]]`, or they do not. The general-remit fact is that H-GENERAL-22's remedy and this case's guarantee are the same wrapper, written by the same person, and one of them silently undoes the other.
 
 ### H-GENERAL-27 — Adopting it one resource at a time
@@ -805,16 +836,16 @@ declaration are out of reach.
 
 ## Release blockers found here
 
-**This table is the general remit only.** The fourteen module sweeps carry **35**
-blocker-severity rows between them and a tag has to clear both sets. The five
+**This table is the general remit only.** The fourteen module sweeps carry their
+own active blockers and a tag has to clear both sets. The four
 that are load-bearing for the cases above and are not in this table: a preload
 has no row ceiling and nothing can give it one (`query` row 1); a cursor over a
 `sql.Null*` column is accepted and returns a page short of rows (`crud` row 1);
 `sqlrepo.Scope` does not reach `Save` or `SaveAll` (`sqlrepo` row 1); a `Save`
-carrying a tombstone's key resurrects the row (`sqlrepo` row 2); `crud.BulkInserter`
-is reached by a bare type assertion so every `Source` wrapper deletes `COPY`
-silently (`adapters` row 1). The rest are in their own tables, which is where
-their fixes live.
+carrying a tombstone's key resurrects the row (`sqlrepo` row 2). The former fifth
+item — the source-level COPY bypass — is retained as a closed historical row in
+the adapters sweep. The rest are in their own tables, which is where their fixes
+live.
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
@@ -831,7 +862,7 @@ their fixes live.
 | 11 | A 500's cause reaches nobody on `crudnet` and `crudfiber` (`crud/http/crudnet/options.go:174-193`) | serious | The first production incident has no evidence at all, and choosing net/http for costing no dependency also chooses an API with no post-mortem. |
 | 12 | Nothing composes an application: the decorator stack, `specs.Executor`, the renderer and the bounds are per-resource with no way to say them once | serious | Every consumer writes the same private helper, and the failure mode of omitting one on resource fourteen is silent in all five cases. |
 | 13 | `query.Config.Check` is called by nothing outside its own file — not by an example, not by the README, not by `WithQuery` — so a misspelled allow-list entry closes a field forever and answers every request naming it with the client's own 400 (`crud/query/compile.go:152-204`) | serious | It is the check that exists because the mistake is inert, on the one value H-GENERAL-04 asks consumers to share across twenty models, and `Check` validates it against exactly one of them. |
-| 14 | `SaveAll` and `Delete(ids...)` never chunk (`crud/sqlrepo/repository.go:1157-1174`, `:884`), and the one bulk door that does — `crud.BulkInserter`/`COPY` — sits on the source, so it bypasses the gate, the faults decorator and soft delete | serious | The only bulk-write verb has an undocumented row ceiling below any real import, and the escape from it is the one path a tenant-isolated application must not take. Every application does an import in month one. |
+| 14 | Historical: `SaveAll`/`Delete(ids...)` were unbounded and source-level `BulkInserter`/COPY bypassed the repository | closed (FW-CORE-003) | Budgeted atomic plans now cover SaveAll/Delete; typed `Repo.InsertBatch` provides pgx COPY magic without leaving Gate/faults/decorators, and portable SQL is automatic or explicitly selectable. The old unmarked driver API was removed before release. |
 | 15 | Nothing compares the model against the live schema for any column but the key; nothing writes down the expand-contract order a deploy needs; and `catalog.Reloader` is called by nothing, so a running fleet cannot be told about a migration | serious | A renamed column is a detail-free 500 at the worst moment when the check is fifteen lines over data already loaded — but the check has to be directional or it refuses to boot during a normal deploy, and that rule is nowhere. |
 | 16 | Field-level write permission cannot be a function of the principal: `Freeze` is a static list on the policy (`crud/decorators/security/policies.go:183-185`) | serious | The security decorator looks like it covers "an admin may set `role`" and does not; the hand-written substitute is privilege escalation when it is wrong. `security`'s own sweep carries no blocker rows, so this is filed here or nowhere. |
 | 17 | An old binding against a new library is not detectable (`docs/roadmaps/Roadmap.md`, item 4), and `errs` becomes a twelfth module right after the tag (item 2) | serious | `go get -u` produces exactly that pairing, `retract` is the only lever, and no module asserts a version floor at start-up. |
@@ -852,12 +883,13 @@ their fixes live.
   Kept and narrowed: guarantees 1, 2 and 4 link rather than restate, and the case
   exists for `[[UC-012]]`'s two silent scoped-binding failures, which no module
   sweep lists as a blocker and which look exactly like the correct call.
-- **H-GENERAL-12 (the cursor) and H-GENERAL-16 (`SaveAll`) were called
+- **H-GENERAL-12 (the cursor) and H-GENERAL-16 (bulk import) were called
   restatements with no general-remit half.** Both kept, and both now carry one:
   the cursor because the token crosses a service boundary through `remote`, where
-  two implementations of the same format meet and no test does; `SaveAll` because
-  its guarantee 2 is that the escape hatch from the missing chunking is the one
-  door that bypasses the gate, which `sqlrepo` and `adapters` each own half of.
+  two implementations of the same format meet and no test does; bulk import
+  because its general-remit guarantee is that acceleration must not create a
+  second architecture below the Gate. `sqlrepo` owns typed/budgeted storage and
+  `adapters` owns native COPY; `Repo.InsertBatch` now joins those halves safely.
   Round 1's defences — "a tag freezes wire behaviour" and "every application does
   an import" — were true of every defect in the repository and are dropped.
 - **H-GENERAL-09 (field-level write permission) was called `security`'s.** It is,
@@ -1030,8 +1062,15 @@ their fixes live.
 **Setup:** An import calls `SaveAll` with a batch containing one row that the database rejects.
 **What the consumer does:** They need a truthful answer about whether rows were written and, when faults are enabled, whether the reported violations are complete.
 **What must happen:** The API must document atomicity by dialect and mark an enrichment it cannot finish as partial; it must never imply that every row was considered when it was not.
-**Today:** 🟡 partial
-**Evidence:** `crud/decorators/faults/probe.go:229-248` marks a batch request but abandons its constructed row set on a nil model or metadata failure. `docs/usage-guides/gorm.md:1295-1304` says batch probing is off unless `faults.WithProbeFor("SaveAll", ...)` is supplied and describes `"partial": true` for probe failure. No cross-dialect test found for a failed multi-row `SaveAll` that states whether any row committed.
+**Today:** 🟡 partial — atomicity is covered; enrichment completeness remains conditional
+**Evidence:** `SaveAll` preflights its complete chunk plan and executes more than
+one statement through one transaction. `TestSaveAllRollsEveryChunkBackWhenALaterChunkFails`
+pins the storage seam and
+`TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine` proves the rollback on
+every live engine. The remaining partial half is fault probing:
+`crud/decorators/faults/probe.go` can mark a batch request partial when it cannot
+construct or inspect the complete row set, and probing remains opt-in per
+operation.
 **Blast radius:** confusing error
 
 ### E-GENERAL-20 — Empty and over-cap bulk deletion
@@ -1045,7 +1084,7 @@ their fixes live.
 
 ## Edge verdict
 
-The cross-stack edge is an ambiguous HTTP identity: `authnet` reads the first credential, so a proxy can choose which authenticated principal becomes a generated tenant route’s scope. The canonical Sqlrepo and Crudgrpc sweeps carry the separate `Save` and numeric-ID integrity verdicts; General points to them rather than competing with their source ownership. Hostile query text and query alias bypasses are closed; request-body cap code has the right one-byte-past shape but lacks an exact/plus-one binding-triplet verdict. `port.Rules.BulkCap` is the one bulk-cap policy owner, and Crudnet proves its empty/exact/over-cap journey; Gin and Fiber conformance remains unverified here. Schema resolution rejects malformed mappings when invoked, but no universal start-up declaration pass invokes it. Remote response code has the right one-byte-over implementation but lacks the exact-cap test, while ambiguous write outcomes after a disconnect and a failed batch’s cross-dialect atomicity remain unverified.
+The cross-stack edge is an ambiguous HTTP identity: `authnet` reads the first credential, so a proxy can choose which authenticated principal becomes a generated tenant route’s scope. The canonical Sqlrepo and Crudgrpc sweeps carry the separate `Save` and numeric-ID integrity verdicts; General points to them rather than competing with their source ownership. Hostile query text and query alias bypasses are closed; request-body cap code has the right one-byte-past shape but lacks an exact/plus-one binding-triplet verdict. `port.Rules.BulkCap` is the one bulk-cap policy owner, and Crudnet proves its empty/exact/over-cap journey; Gin and Fiber conformance remains unverified here. Schema resolution rejects malformed mappings when invoked, but no universal start-up declaration pass invokes it. Remote response code has the right one-byte-over implementation but lacks the exact-cap test, while ambiguous write outcomes after a disconnect and failed-batch fault-enrichment completeness remain the unverified write edges; cross-dialect batch rollback itself is covered.
 
 ## Release blockers found here (edge)
 

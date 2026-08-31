@@ -1,9 +1,3 @@
-// Package portmount holds [[D-045]]'s control: one port.Service value mounts on
-// all three bindings, and all three answer identically.
-//
-// It lives in the test module because that is the only place the three can be
-// imported together — crudfiber and crudgin are satellites and crudnet is in
-// the library. It needs no database, so `make unit` runs it.
 package portmount
 
 import (
@@ -32,17 +26,11 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// TestMain silences Gin's start-up banner and per-route debug lines.
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	os.Exit(m.Run())
 }
 
-// ---------------------------------------------------------------------------
-// the model
-
-// Widget carries the two things a create request may not dictate: a key the
-// database generates and a column it fills.
 type Widget struct {
 	ID          int64      `db:"id,pk,auto" json:"id"`
 	Name        string     `db:"name" json:"name"`
@@ -53,7 +41,6 @@ type Widget struct {
 	DeletedAt   *time.Time `db:"deleted_at,serverowned,tombstone" json:"deletedAt,omitempty"`
 }
 
-// WidgetUpdate is the PATCH DTO.
 type WidgetUpdate struct {
 	Name *string `json:"name"`
 }
@@ -68,11 +55,6 @@ var widgetMeta = func() *crud.Meta {
 
 var savedAt = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
 
-// ---------------------------------------------------------------------------
-// the repository under the service
-
-// repoCall is one call the service made, which is what says the rules ran below
-// the binding rather than inside it.
 type repoCall struct {
 	Method string
 	ID     int64
@@ -86,9 +68,7 @@ type repoCall struct {
 
 type fakeRepo struct {
 	calls []repoCall
-	// err is what Save answers, for the path-translation test: the whole chain
-	// below the binding has to be real for the field it renders to mean
-	// anything.
+
 	err error
 }
 
@@ -148,15 +128,6 @@ func (this *fakeRepo) Delete(_ context.Context, ids ...int64) (int64, error) {
 	return int64(len(ids)), nil
 }
 
-// ---------------------------------------------------------------------------
-// the service every binding is handed
-
-// command is one command exactly as a binding handed it over.
-//
-// The query document is copied rather than referenced. The service narrows it
-// in place, so a binding that narrowed it first would be indistinguishable from
-// one that did not by the time the call returned — which is precisely the
-// drift this test exists to catch.
 type command struct {
 	Verb     string
 	Query    query.Request
@@ -169,8 +140,6 @@ type command struct {
 	Hook     bool
 }
 
-// recorder is a Service that records what it was handed and then behaves like
-// the default one. It is the seam [[D-045]] is about: three bindings, one value.
 type recorder struct {
 	inner      *port.DefaultService[Widget, int64, WidgetUpdate]
 	repository *fakeRepo
@@ -236,16 +205,10 @@ func (this *recorder) DeleteMany(ctx context.Context, cmd port.BulkDeleteCommand
 	return this.inner.DeleteMany(ctx, cmd)
 }
 
-// ---------------------------------------------------------------------------
-// the three bindings
-
-// A binding is the whole of what a transport is allowed to be: a way to mount
-// the same service and a way to send it a request.
 type binding struct {
 	name  string
 	serve func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
-	// mappedServe mounts the same service behind a generated mapper, which is
-	// the only difference between the two halves of the path-translation test.
+
 	mappedServe func(t *testing.T, service port.Service[Widget, int64, WidgetUpdate], method, target, body string) (int, []byte)
 }
 
@@ -329,18 +292,6 @@ func throughFiber(t *testing.T, app *fiber.App, method, target, body string) (in
 	return response.StatusCode, raw
 }
 
-// ---------------------------------------------------------------------------
-
-// [[D-045]]'s control. One service value, three bindings, and the claim is not
-// that they compile — it is that they say the same thing.
-//
-// Three assertions per request, and the second is the one with teeth. Equal
-// statuses would pass for two bindings that both answered 200 with different
-// bodies. Equal bodies would pass for two bindings that reached the service by
-// different routes. The command is what says the transport did nothing but
-// route, decode and write: the moment one binding re-derives a rule — narrows a
-// count itself, coerces a key differently, clears a field before handing it
-// over — the recorded command diverges and this fails.
 func TestOneServiceMountsOnAllThreeBindings(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -394,8 +345,6 @@ func TestOneServiceMountsOnAllThreeBindings(t *testing.T) {
 	}
 }
 
-// The other half: what the three agree on is right, not merely equal. Three
-// bindings that all forgot to narrow a count would pass the test above.
 func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -403,8 +352,7 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 	}{
 		{
 			name: "the binding hands over the document it parsed, unnarrowed",
-			// A count is where the two would differ: the binding used to narrow
-			// it and the service does now.
+
 			method: http.MethodGet, target: "/widgets/count?page=2&limit=5&sort=-price",
 			want: func(t *testing.T, cmds []command, calls []repoCall) {
 				if len(cmds) != 1 || cmds[0].Verb != "Count" {
@@ -474,13 +422,6 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// a generated resource
-
-// WidgetInput, WidgetMapper and widgetPaths are what `vv -adapter` writes: a
-// wire shape of the resource's own, a mapper onto the model, and the inverse of
-// that mapping. Written out by hand here because the generator cannot run
-// against a model declared inside a test file.
 type WidgetInput struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"label"`
@@ -501,12 +442,6 @@ var widgetPaths = port.MustPathMap[Widget](port.PathMap{
 	"Price": port.At("price"),
 })
 
-// [[D-050]]'s control on the transports: the generated hop is wired the same
-// way by all three bindings, so the same violation names the same client key
-// wherever it is mounted.
-//
-// It lives here because this is the only package that can import Fiber, Gin and
-// net/http at once, and it needs no database.
 func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) {
 	fault := func() error {
 		return errs.Conflict().Code(errs.CodeUnique).
@@ -514,7 +449,6 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) 
 	}
 	const body = `{"label":"bolt","price":250}`
 
-	// The mapper's key is what the client sent, on every binding.
 	mapped := map[string]string{}
 	for _, b := range bindings {
 		service := newRecorder()
@@ -531,11 +465,6 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) 
 		}
 	}
 
-	// The control. Mounted with New — Identity, no map — the same violation on
-	// the same body has nothing to translate it: the body carries no key that
-	// folds to "Name", so the raw-body index declines and the client is handed
-	// the model's own field name back. Without this the test above passes for a
-	// binding that never wired the hop at all.
 	for _, b := range bindings {
 		service := newRecorder()
 		service.repository.err = fault()
@@ -550,7 +479,6 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllThreeBindings(t *testing.T) 
 	}
 }
 
-// fieldOf reads the dotted field path out of the first validation violation.
 func fieldOf(t *testing.T, binding string, raw []byte) string {
 	t.Helper()
 	var env struct {

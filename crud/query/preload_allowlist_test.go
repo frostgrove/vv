@@ -7,12 +7,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// A preload compiles against the related model but keeps the *root's*
-// allow-lists, so every entry it matches has to be spelled the way the root
-// spells it. Without the prefix the two routes to one column cost different
-// permissions, in both directions: a grant on the root's own Body authorised
-// Comments.Body through a preload, and a grant on Comments.Body — the spelling
-// the documentation shows — authorised the root path and refused the preload.
 func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 	const (
 		byFilter  = `{"filter":{"comments.body":"x"}}`
@@ -20,8 +14,6 @@ func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 	)
 
 	t.Run("a grant on the root's own column does not leak sideways", func(t *testing.T) {
-		// Article.Body and Comment.Body are different columns on different
-		// tables that happen to share a name.
 		config := &query.Config{Filterable: []string{"Body"}, Preloadable: []string{"Comments"}}
 
 		if _, _, err := tryDoc(t, byFilter, config); err == nil {
@@ -51,16 +43,12 @@ func TestAPreloadSubFilterCostsTheSamePermissionAsTheFilterPath(t *testing.T) {
 	})
 }
 
-// Sorting is the same axis the root sort guards, and a preload's sort used to
-// skip the guard entirely: a column the config never named was sortable as long
-// as the request went through a relation.
 func TestAPreloadSortObeysTheSortableList(t *testing.T) {
 	config := &query.Config{
 		Sortable:    []string{"Title"},
 		Preloadable: []string{"Comments"},
 	}
 
-	// The root refuses it, and so must the preload.
 	if _, _, err := tryDoc(t, `{"sort":["-body"]}`, config); err == nil {
 		t.Fatal("the root sort accepted a column the list does not name")
 	}
@@ -77,16 +65,12 @@ func TestAPreloadSortObeysTheSortableList(t *testing.T) {
 		}
 	}
 
-	// And the grant that names the preloaded column lets it through.
 	ok := &query.Config{Sortable: []string{"Comments.Body"}, Preloadable: []string{"Comments"}}
 	if _, _, err := tryDoc(t, `{"preload":[{"path":"comments","sort":["-body"]}]}`, ok); err != nil {
 		t.Fatalf("a preload sort named by the list was refused: %v", err)
 	}
 }
 
-// A `nulls` the root rejects with a 400 was accepted inside a preload and then
-// thrown away — the client asked for an ordering, got a 200, and got a
-// different ordering.
 func TestAPreloadSortValidatesItsNullsPlacementLikeTheRootDoes(t *testing.T) {
 	const rootDoc = `{"sort":[{"field":"title","nulls":"nope"}]}`
 	const preloadDoc = `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"nope"}]}]}`
@@ -102,7 +86,6 @@ func TestAPreloadSortValidatesItsNullsPlacementLikeTheRootDoes(t *testing.T) {
 		t.Fatalf("error = %q, want the same refusal the root gives", err)
 	}
 
-	// The two placements the root does accept keep working inside a preload.
 	for _, nulls := range []string{"first", "last"} {
 		doc := `{"preload":[{"path":"comments","sort":[{"field":"body","nulls":"` + nulls + `"}]}]}`
 		if _, _, err := tryDoc(t, doc, nil); err != nil {

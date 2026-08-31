@@ -29,9 +29,6 @@ type DocUpdate struct {
 
 var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs")
 
-// AuditEntry is the second model, and it exists for one control: two tables in
-// one database with a column of the same name. Without it, a decorator that
-// translated every column it was handed would look correct.
 type AuditEntry struct {
 	ID    int64  `db:"id,pk,auto"`
 	Title string `db:"title"`
@@ -50,8 +47,6 @@ type QualifiedDocUpdate struct{ Title *string }
 
 var QualifiedDocs = sqlrepo.DefineInSchema[QualifiedDoc, int64, QualifiedDocUpdate]("Tenant", "Docs")
 
-// conflict is what the adapters hand this decorator: a classified fault with a
-// Source and no path at all.
 func conflict(table string, columns ...string) error {
 	return errs.Conflict().Code(errs.CodeUnique).
 		General().Code(errs.CodeUnique).Origin(errs.OriginState).
@@ -63,10 +58,6 @@ func docs(rec *crudtest.Recorder) *crud.Repo[Doc, int64, DocUpdate] {
 	return Docs.Bind(rec, faults.Enrich[Doc, int64]())
 }
 
-// failWith refuses the next statement whichever way the repository issues it.
-// A Save is an Exec on MySQL and a Query on PostgreSQL (RETURNING), and a
-// recorder that only failed one of the two would leave half the verbs below
-// succeeding quietly.
 func failWith(rec *crudtest.Recorder, err error) *crudtest.Recorder {
 	rec.Fail(err)
 	for i := 0; i < 4; i++ {
@@ -75,8 +66,6 @@ func failWith(rec *crudtest.Recorder, err error) *crudtest.Recorder {
 	return rec
 }
 
-// saveFailing runs one Save that the recorder refuses with err, and hands back
-// whatever the decorator turned it into.
 func saveFailing(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate], rec *crudtest.Recorder, err error) *errs.Fault {
 	t.Helper()
 	failWith(rec, err)
@@ -91,8 +80,6 @@ func saveFailing(t *testing.T, r *crud.Repo[Doc, int64, DocUpdate], rec *crudtes
 	return f
 }
 
-// The hop [[D-043]] gives this layer: a column becomes the model field, through
-// crud.Meta and never crud.Schema.
 func TestAColumnBecomesAModelField(t *testing.T) {
 	rec := crudtest.Postgres()
 	f := saveFailing(t, docs(rec), rec, conflict("docs", "title"))
@@ -108,8 +95,6 @@ func TestAColumnBecomesAModelField(t *testing.T) {
 	}
 }
 
-// The control the hop needs, and the reason it goes through Meta: two tables in
-// one database carry a `title`, and only one of them is this repository's.
 func TestAColumnFromAnotherTableIsNotTranslated(t *testing.T) {
 	rec := crudtest.Postgres()
 	f := saveFailing(t, docs(rec), rec, conflict("audit_log", "title"))
@@ -121,10 +106,6 @@ func TestAColumnFromAnotherTableIsNotTranslated(t *testing.T) {
 		t.Fatal("a column this layer did not translate was not marked approximate")
 	}
 
-	// The other half, and the one that makes this a control rather than a
-	// second positive: the same column name through the repository that owns
-	// audit_log does translate. Without it, a decorator that translated nothing
-	// would pass both legs.
 	rec2 := crudtest.Postgres()
 	failWith(rec2, conflict("audit_log", "title"))
 	_, err := Audits.Bind(rec2, faults.Enrich[AuditEntry, int64]()).Save(context.Background(), &AuditEntry{Title: "a"})
@@ -190,8 +171,6 @@ func TestAQualifiedFaultDoesNotTrustAPreResolvedPathWithoutExactSource(t *testin
 	}
 }
 
-// A column name in `field` would be a live [[D-044]] breach: the path is the one
-// thing that is rendered.
 func TestAnUnresolvedColumnNeverBecomesTheField(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -201,8 +180,7 @@ func TestAnUnresolvedColumnNeverBecomesTheField(t *testing.T) {
 		{"a column the model does not declare", conflict("docs", "shadow_ban"), true},
 		{"a column from another table", conflict("audit_log", "title"), true},
 		{"one of two columns unresolved", conflict("docs", "title", "shadow_ban"), true},
-		// No column at all is not a failure to translate. The driver named
-		// nothing, so there was nothing to attempt.
+
 		{"no column at all", conflict("docs"), false},
 		{"no table either", conflict("", "title"), false},
 	} {
@@ -224,9 +202,6 @@ func TestAnUnresolvedColumnNeverBecomesTheField(t *testing.T) {
 	}
 }
 
-// §13's recommendation: one violation at the deepest common ancestor of the
-// fields a composite key spans. The per-column form says "slug is not unique"
-// and "tenant_id is not unique", and neither is true on its own.
 func TestACompositeUniqueYieldsOneViolationAtTheCommonAncestor(t *testing.T) {
 	rec := crudtest.Postgres()
 	f := saveFailing(t, docs(rec), rec, conflict("docs", "tenant_id", "title"))
@@ -241,15 +216,11 @@ func TestACompositeUniqueYieldsOneViolationAtTheCommonAncestor(t *testing.T) {
 	if v.Approximate {
 		t.Fatal("the ancestor was chosen deliberately, so the violation is not approximate")
 	}
-	// And nothing internal came with it. Params is where a column name would
-	// arrive wearing presentation ([[D-044]]).
+
 	for k, val := range v.Params {
 		t.Fatalf("the composite violation carries a param %q = %v", k, val)
 	}
 
-	// The control: the single-column case on the same repository still names
-	// its field, so "empty path" is the composite answer rather than the
-	// decorator giving up.
 	rec2 := crudtest.Postgres()
 	one := saveFailing(t, docs(rec2), rec2, conflict("docs", "title"))
 	if got := one.Violations[0].Path.String(); got != "Title" {
@@ -257,9 +228,6 @@ func TestACompositeUniqueYieldsOneViolationAtTheCommonAncestor(t *testing.T) {
 	}
 }
 
-// Op is what unblocks the foreign-key direction [[D-046]] defers: on PostgreSQL
-// and SQLite a missing parent and a child still referring to a row are the same
-// key with the same fields, and only the verb separates them.
 func TestTheDecoratorSetsOpAndEntity(t *testing.T) {
 	rec := crudtest.Postgres()
 	f := saveFailing(t, docs(rec), rec, conflict("docs", "title"))
@@ -267,8 +235,6 @@ func TestTheDecoratorSetsOpAndEntity(t *testing.T) {
 		t.Fatalf("the fault says op=%q entity=%q, want Save/Doc", f.Op, f.Entity)
 	}
 
-	// The control: a layer closer to the failure that already said which
-	// command this was knows better than the verb does.
 	rec2 := crudtest.Postgres()
 	already := errs.Conflict().Op("RegisterUser").Entity("Signup").Code(errs.CodeUnique).
 		General().Code(errs.CodeUnique).Wrapping(crud.ErrConflict).Fault()
@@ -278,8 +244,6 @@ func TestTheDecoratorSetsOpAndEntity(t *testing.T) {
 	}
 }
 
-// A decorator that manufactured faults would turn every closed pool into a
-// structured 500 that looked classified.
 func TestAnErrorThatIsNotAFaultIsReturnedUnchanged(t *testing.T) {
 	boom := errors.New("dial tcp 10.0.0.5:5432: connection refused")
 	rec := crudtest.Postgres()
@@ -294,9 +258,6 @@ func TestAnErrorThatIsNotAFaultIsReturnedUnchanged(t *testing.T) {
 	}
 }
 
-// A fault is a value two goroutines may render at once, and [[D-042]] treats it
-// as immutable. The adapter that produced it may also have handed the same
-// pointer to a caller who already wrapped it.
 func TestTheDecoratorDoesNotMutateTheFaultItWasGiven(t *testing.T) {
 	given := conflict("docs", "title")
 	original, _ := errs.AsFault(given)
@@ -313,19 +274,13 @@ func TestTheDecoratorDoesNotMutateTheFaultItWasGiven(t *testing.T) {
 	if original.Op != "" || original.Entity != "" {
 		t.Fatalf("the original's op/entity were written to: %q/%q", original.Op, original.Entity)
 	}
-	// The copy still wraps what the original wrapped, or errors.Is stops
-	// finding crud.ErrConflict one layer above the adapter that attached it.
+
 	if !errors.Is(got, crud.ErrConflict) {
 		t.Fatal("the copy stopped matching crud.ErrConflict")
 	}
 }
 
-// [[D-030]] made mechanical: every method on the seam that can fail is
-// decorated, and a verb added later reddens here rather than silently skipping
-// enrichment.
 func TestEveryVerbIsDecorated(t *testing.T) {
-	// Each entry drives one Core method to failure and reports the fault the
-	// decorator produced, so "decorated" means observed rather than declared.
 	verbs := map[string]func(*crud.Repo[Doc, int64, DocUpdate]) error{
 		"GetByID": func(r *crud.Repo[Doc, int64, DocUpdate]) error {
 			_, err := r.GetByID(context.Background(), 1)
@@ -389,14 +344,11 @@ func TestEveryVerbIsDecorated(t *testing.T) {
 		},
 	}
 
-	// The control, and the reason this is reflection rather than a list: the
-	// seam's own method set decides what has to be here. A verb added to
-	// crud.Core reddens this line.
 	seam := reflect.TypeOf((*crud.Core[Doc, int64])(nil)).Elem()
 	for i := 0; i < seam.NumMethod(); i++ {
 		name := seam.Method(i).Name
 		if name == "Meta" {
-			continue // it returns no error, so there is nothing to enrich
+			continue
 		}
 		if _, ok := verbs[name]; !ok {
 			t.Fatalf("crud.Core has a verb %q that this test does not drive, so nothing says whether it is decorated", name)
@@ -428,8 +380,27 @@ func TestEveryVerbIsDecorated(t *testing.T) {
 	}
 }
 
-// The decorator is the innermost middleware, so the gate's own refusal passes
-// through with nothing added: a 403 is not a driver error.
+func TestInsertBatchIsEnrichedWithoutLeavingTheOptionalRepositorySeam(t *testing.T) {
+	recorder := crudtest.Postgres()
+	failWith(recorder, conflict("docs", "title"))
+	repository := Docs.Bind(recorder, faults.Enrich[Doc, int64]())
+
+	err := repository.InsertBatch(context.Background(), []*Doc{{Title: "duplicate"}})
+	if err == nil {
+		t.Fatal("the batch succeeded, so nothing reached the decorator")
+	}
+	fault, ok := errs.AsFault(err)
+	if !ok {
+		t.Fatalf("error = %T %v, want enriched fault", err, err)
+	}
+	if fault.Op != "InsertBatch" || fault.Entity != "Doc" {
+		t.Fatalf("fault op/entity = %q/%q", fault.Op, fault.Entity)
+	}
+	if got := fault.Violations[0].Path.String(); got != "Title" {
+		t.Fatalf("fault path = %q, want Title", got)
+	}
+}
+
 func TestTheGatesRefusalPassesThroughUnenriched(t *testing.T) {
 	rec := crudtest.Postgres()
 	r := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()), faults.Enrich[Doc, int64]())

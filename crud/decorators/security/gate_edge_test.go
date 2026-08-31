@@ -13,10 +13,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// scopeOnly is the policy a reader writes by hand when they want tenancy and
-// nothing else: a Scope, no Inspect, no Immutable. The shipped ScopeField sets
-// Scope and Inspect together, so the documented path was safe and this one was
-// not — which is exactly why it needs pinning.
 var scopeOnly = security.Policy[Doc, int64]{
 	Scope: func(ctx context.Context) (crud.Predicate, error) {
 		t, err := tenantOf(ctx)
@@ -27,9 +23,6 @@ var scopeOnly = security.Policy[Doc, int64]{
 	},
 }
 
-// A scope has no way to judge an INSERT body: there is no WHERE clause to carry
-// it. A scope-only policy must therefore refuse Save before it can turn a
-// client-owned key into a cross-tenant overwrite.
 func TestAScopeWithoutInspectRefusesSaveBeforeItCanWrite(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres()
@@ -101,15 +94,12 @@ type softDoc struct {
 
 type softDocUpdate struct{ Title *string }
 
-// A tombstone is permanently invisible to normal repository reads, but it is
-// still physically present. Save must discover that fact before it can upsert
-// over a row another caller is not allowed to revive or re-tenant.
 func TestSaveRefusesToOverwriteATombstoneHiddenByRepositoryScope(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	docs := sqlrepo.Define[softDoc, int64, softDocUpdate]("soft_docs", sqlrepo.SoftDelete("DeletedAt"))
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(),                // no visible row under the dynamic scope
-		crudtest.Rows([]any{int64(1)}), // unscoped physical-existence probe sees the tombstone
+		crudtest.Rows(),
+		crudtest.Rows([]any{int64(1)}),
 	)
 	repository := docs.Bind(rec, security.Gate(security.ScopeField[softDoc, int64]("TenantID", tenantOf)))
 
@@ -125,15 +115,11 @@ func TestSaveRefusesToOverwriteATombstoneHiddenByRepositoryScope(t *testing.T) {
 	}
 }
 
-// A save needs an unscoped physical-existence check so it never turns a hidden
-// assigned key into an overwrite. That check is an implementation detail: the
-// response must remain the same not-found answer a caller gets for a hidden
-// row through GetByID or Update.
 func TestSaveOfAnotherTenantsAssignedKeyLooksMissing(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(),                // the scoped lookup finds no row
-		crudtest.Rows([]any{int64(1)}), // the internal existence check does
+		crudtest.Rows(),
+		crudtest.Rows([]any{int64(1)}),
 	)
 
 	_, err := gated(rec).Save(ctx, &Doc{ID: 1, TenantID: 7, Title: "overwrite"})
@@ -178,9 +164,6 @@ func TestScopeOnlySavePreservesResolverFailures(t *testing.T) {
 	}
 }
 
-// Generated-key saves have no SQL WHERE in which to carry a scope, but a
-// resolver failure is still a failed authorization decision. Inspect does not
-// turn that failure into permission to insert an unscoped row.
 func TestGeneratedSaveStillFailsWhenAScopeResolverFails(t *testing.T) {
 	boom := errors.New("principal lookup failed")
 	policies := []struct {
@@ -229,16 +212,12 @@ func TestGeneratedSaveStillFailsWhenAScopeResolverFails(t *testing.T) {
 	}
 }
 
-// The scope belongs in the UPDATE itself, not only in the check in front of it.
-// Checking and then writing unscoped is check-then-act: a row that leaves the
-// scope in between is written anyway, and the gate hands the fresh copy of
-// somebody else's record back to this caller with err == nil.
 func TestTheGateScopeIsInTheUpdatesOwnWhereClause(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(docRow(42, 7, "mine")), // the gate's scoped load
-		crudtest.Rows(docRow(42, 7, "mine")), // the repository's load
-		crudtest.Rows(docRow(42, 7, "new")),  // RETURNING
+		crudtest.Rows(docRow(42, 7, "mine")),
+		crudtest.Rows(docRow(42, 7, "mine")),
+		crudtest.Rows(docRow(42, 7, "new")),
 	)
 
 	if _, err := gated(rec).Update(ctx, 42, DocUpdate{Title: ptrTo("new")}); err != nil {
@@ -254,15 +233,12 @@ func TestTheGateScopeIsInTheUpdatesOwnWhereClause(t *testing.T) {
 	}
 }
 
-// And the consequence, from the caller's side: when the row is no longer inside
-// the scope by the time the write runs, the write matches nothing and the
-// answer is ErrNotFound — not another tenant's record.
 func TestAnUpdateOfARowThatLeftTheScopeIsNotFound(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(docRow(42, 7, "mine")), // still visible when the gate looks
-		crudtest.Rows(docRow(42, 7, "mine")), // and when the repository looks
-		crudtest.Rows(),                      // by the time the UPDATE runs, gone
+		crudtest.Rows(docRow(42, 7, "mine")),
+		crudtest.Rows(docRow(42, 7, "mine")),
+		crudtest.Rows(),
 	)
 
 	got, err := gated(rec).Update(ctx, 42, DocUpdate{Title: ptrTo("new")})
@@ -272,9 +248,6 @@ func TestAnUpdateOfARowThatLeftTheScopeIsNotFound(t *testing.T) {
 	}
 }
 
-// Update has an inspect/read/write protocol. Its scope must be a single
-// decision for that whole protocol: resolving it again after Inspect would let
-// a changing principal or clock select a different row set for the mutation.
 func TestUpdateResolvesItsWriteScopeOnce(t *testing.T) {
 	boom := errors.New("scope was resolved twice")
 	calls := 0
@@ -289,9 +262,9 @@ func TestUpdateResolvesItsWriteScopeOnce(t *testing.T) {
 		Inspect: func(context.Context, security.Action, *Doc) error { return nil },
 	}
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(docRow(42, 7, "before")), // gate's inspected snapshot
-		crudtest.Rows(docRow(42, 7, "before")), // repository's diff load
-		crudtest.Rows(docRow(42, 7, "after")),  // UPDATE ... RETURNING
+		crudtest.Rows(docRow(42, 7, "before")),
+		crudtest.Rows(docRow(42, 7, "before")),
+		crudtest.Rows(docRow(42, 7, "after")),
 	)
 
 	got, err := Docs.Bind(rec, security.Gate(policy)).Update(context.Background(), 42, DocUpdate{Title: ptrTo("after")})
@@ -318,13 +291,6 @@ func TestDeleteFailsClosedWhenARelationScopeCannotBeResolved(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// projections and Inspect
-
-// ?select= is untrusted input and Inspect is an opaque closure, so the gate
-// cannot know which columns the check reads. Under the documented tenancy
-// policy a projection that left TenantID out made Inspect compare 0 against the
-// context tenant: every single-entity read with ?select= answered 403.
 func TestAProjectionDoesNotTurnEveryScopedReadIntoADenial(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(42, 7, "mine")))
@@ -341,8 +307,6 @@ func TestAProjectionDoesNotTurnEveryScopedReadIntoADenial(t *testing.T) {
 	}
 }
 
-// The same hole pointed the other way: a rule that hides rows by a column value
-// was bypassed by simply not selecting that column.
 func TestAProjectionCannotBypassAnInspectRule(t *testing.T) {
 	hideClassified := security.Policy[Doc, int64]{
 		InspectReads: true,
@@ -353,8 +317,7 @@ func TestAProjectionCannotBypassAnInspectRule(t *testing.T) {
 			return nil
 		},
 	}
-	// The row's Body is the one the rule refuses; Title, which the client did
-	// select, says nothing about it.
+
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(1), int64(7), "innocent", "secret"}))
 
 	_, err := Docs.Bind(rec, security.Gate(hideClassified)).
@@ -365,8 +328,6 @@ func TestAProjectionCannotBypassAnInspectRule(t *testing.T) {
 	}
 }
 
-// A policy with no Inspect has nothing to blind, so the projection the caller
-// asked for is the projection that runs.
 func TestAProjectionSurvivesAPolicyThatDoesNotInspect(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(1), "t"}))
@@ -380,13 +341,6 @@ func TestAProjectionSurvivesAPolicyThatDoesNotInspect(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// composition
-
-// Combine folds AllowUnscopedDeleteAll with &&, and "every policy allows it" is
-// vacuously true of no policies. A policy list built from a role produces an
-// empty list for a role with no policies, and that must not be the one shape
-// that permits truncating the table.
 func TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy(t *testing.T) {
 	ctx := context.Background()
 
@@ -411,9 +365,6 @@ func TestCombineOfNothingIsNoMorePermissiveThanTheZeroPolicy(t *testing.T) {
 	}
 }
 
-// A Gate is an enforcement declaration, not a decorative wrapper. A policy
-// list that becomes empty during boot must fail immediately rather than mount
-// an endpoint that reads every row.
 func TestAGateWithNoEffectivePolicyPanicsAtBinding(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -423,9 +374,6 @@ func TestAGateWithNoEffectivePolicyPanicsAtBinding(t *testing.T) {
 	_ = security.Gate(security.Policy[Doc, int64]{})
 }
 
-// A nil predicate once meant both "administrator" and "could not resolve the
-// tenant". The latter must fail closed; the former now needs a declaration that
-// makes the bypass visible in code review.
 func TestANilScopePredicateFailsClosedUnlessExplicitlyAllowed(t *testing.T) {
 	nilScope := func(context.Context) (crud.Predicate, error) { return nil, nil }
 
@@ -455,8 +403,6 @@ func TestANilScopePredicateFailsClosedUnlessExplicitlyAllowed(t *testing.T) {
 	})
 }
 
-// Composition is AND, including the failure rule. A second predicate must not
-// make a missing tenant predicate disappear from the combined policy.
 func TestCombinedScopeFailsWhenOneRequiredScopeAnswersNil(t *testing.T) {
 	rec := crudtest.Postgres()
 	policy := security.Combine(
@@ -477,8 +423,7 @@ func TestCombinedScopeFailsWhenOneRequiredScopeAnswersNil(t *testing.T) {
 func TestATautologicalFilterDoesNotPermitAnUnscopedDeleteAll(t *testing.T) {
 	for _, p := range []crud.Predicate{
 		crud.NotInAny("ID", []int64{}),
-		// Or drops nil branches when it renders. Its negation is therefore
-		// `NOT (1 = 0)`, another spelling of an unrestricted statement.
+
 		crud.Not(crud.Or(nil)),
 	} {
 		rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
@@ -493,8 +438,6 @@ func TestATautologicalFilterDoesNotPermitAnUnscopedDeleteAll(t *testing.T) {
 	}
 }
 
-// Freeze is the one-liner for "these columns are not yours to change", and it
-// is the whole policy — no scope, no checks.
 func TestFreezeRefusesAnUpdateThatNamesAFrozenField(t *testing.T) {
 	ctx := context.Background()
 	frozen := Docs.Bind(crudtest.Postgres(), security.Gate(security.Freeze[Doc, int64]("TenantID")))
@@ -514,13 +457,6 @@ func TestFreezeRefusesAnUpdateThatNamesAFrozenField(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// scope across a relation
-
-// The gate's scope is a predicate over the root model and, like any WHERE
-// clause, it stops at the statement's own FROM. Reaching another model through
-// a relation is the repository's declaration to make, and it holds under a gate
-// too — the two narrowings compose rather than replace.
 func TestARelationScopeStillAppliesUnderAGate(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 

@@ -60,9 +60,7 @@ func TestSecretsStayOutOfOrdinaryRendering(t *testing.T) {
 		fmt.Sprintf("%v", outer), fmt.Sprintf("%+v", outer), fmt.Sprintf("%#v", outer),
 		string(encoded), string(outerJSON), log.String(), outerLog.String(),
 	}
-	// Every value-rendering verb reaches Formatter. %T prints only the type;
-	// %p and %w are deliberately excluded because fmt defines them as pointer
-	// address and error-wrapping operations, not value rendering.
+
 	for _, value := range []any{config, &config, config.Password, &config.Password, config.Params, &config.Params} {
 		for _, verb := range []rune{'v', 's', 'q', 'x', 'X', 'b', 'c', 'd', 'o', 'O', 'e', 'E', 'f', 'F', 'g', 'G', 'U', 't'} {
 			views = append(views, fmt.Sprintf("%"+string(verb), value))
@@ -76,8 +74,6 @@ func TestSecretsStayOutOfOrdinaryRendering(t *testing.T) {
 		}
 	}
 
-	// The protection follows Secret when a consumer copies it into its own
-	// configuration rather than relying on a special formatter for Config.
 	type copiedSecret struct {
 		Credential vvdb.Secret `json:"credential"`
 	}

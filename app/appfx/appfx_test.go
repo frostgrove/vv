@@ -21,10 +21,6 @@ func records(name string, order int, into *[]string) func() app.Seeder {
 	}
 }
 
-// Two contributors that know nothing about each other, and a command that names
-// neither. That is the whole reason the group exists: without it the seed
-// command would have to name every module, and could not be extended without
-// editing it.
 func TestSeedersFromEveryContributorReachTheRunner(t *testing.T) {
 	var ran []string
 	var runner *app.Runner
@@ -47,8 +43,6 @@ func TestSeedersFromEveryContributorReachTheRunner(t *testing.T) {
 	}
 }
 
-// A wiring mistake fails the command rather than producing a seed that half
-// works and reports success.
 func TestAMisregisteredSeederFailsTheCommand(t *testing.T) {
 	var runner *app.Runner
 	twice := records("roles", 100, new([]string))

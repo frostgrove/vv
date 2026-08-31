@@ -12,20 +12,11 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/security"
 )
 
-// The three constructors below are the ones a consumer reaches for, and the
-// leak they close is [[D-007]]'s: Scope narrows the statement's own FROM, so a
-// preload of a second table is a second statement over a table nobody narrowed.
-// ScopeRelationAttr and ScopeRelationSubject are the one-line spellings of the
-// declaration that closes it, and the claim they carry comes off the token
-// rather than out of a context key the application invented.
-
-// preloadOf drives one GetAll with a preload of Notes through the given policy
-// and hands back the statement that read the far table.
 func preloadOf(t *testing.T, ctx context.Context, p security.Policy[Folder, int64]) crudtest.Statement {
 	t.Helper()
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(folderRow(1, 7, "mine", 1)), // the folders page
-		crudtest.Rows(), // the notes preload
+		crudtest.Rows(folderRow(1, 7, "mine", 1)),
+		crudtest.Rows(),
 	)
 	if _, err := Folders.Bind(rec, security.Gate(p)).GetAll(ctx, crud.Preload("Notes")); err != nil {
 		t.Fatal(err)
@@ -36,9 +27,6 @@ func preloadOf(t *testing.T, ctx context.Context, p security.Policy[Folder, int6
 	return rec.Statements()[1]
 }
 
-// ScopeRelationAttr is ScopeRelationField with the extractor filled in, so the
-// only honest way to say it works is to compile both and compare what reached
-// the database.
 func TestScopeRelationAttrNarrowsThePreloadTheWayTheHandWrittenFormDoes(t *testing.T) {
 	ctx := auth.WithPrincipal(withTenant(context.Background(), 7), editor)
 
@@ -54,16 +42,11 @@ func TestScopeRelationAttrNarrowsThePreloadTheWayTheHandWrittenFormDoes(t *testi
 			fromTheToken.Args, handWritten.Args)
 	}
 
-	// Two policies that both narrow nothing also produce identical SQL, so the
-	// comparison above only means something once the narrowing is shown to be
-	// there at all.
 	if !strings.Contains(fromTheToken.SQL, `"tenant_id" = $`) {
 		t.Fatalf("neither form narrowed the preload, so the comparison above proves nothing:\n%s", fromTheToken.SQL)
 	}
 }
 
-// ScopeRelationSubject is the same wrapper over the subject rather than a
-// claim, and the far side names its owner column its own way.
 func TestScopeRelationSubjectNarrowsTheFarTableToTheCallersOwnRows(t *testing.T) {
 	ctx := auth.WithPrincipal(context.Background(), editor)
 
@@ -76,11 +59,6 @@ func TestScopeRelationSubjectNarrowsTheFarTableToTheCallersOwnRows(t *testing.T)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// InspectOwner
-
-// owned is the rule InspectOwner exists for: owning a row is not the same as
-// the row naming you, so this cannot be written as a scope.
 func owned() security.Policy[Ticket, int64] {
 	return security.InspectOwner[Ticket, int64](func(p auth.Principal, _ security.Action, m *Ticket) bool {
 		return m.Owner == p.Subject()
@@ -98,8 +76,6 @@ func TestInspectOwnerRefusesARowTheCallerDoesNotOwn(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the refusal above passes for a policy that
-	// refuses every row, and nothing would ever be readable.
 	t.Run("control: the caller's own row is handed back", func(t *testing.T) {
 		rec := crudtest.Postgres().Push(crudtest.Rows(ticketRow(1, "u-1", "mine")))
 		got, err := Tickets.Bind(rec, security.Gate(owned())).GetByID(as(editor), 1)
@@ -112,8 +88,6 @@ func TestInspectOwnerRefusesARowTheCallerDoesNotOwn(t *testing.T) {
 	})
 }
 
-// The check sees the row *and* the verb. A rule that ignored the action would
-// authorise a delete with whatever answer it gave for a read.
 func TestInspectOwnerIsToldWhichVerbIsBeingAttempted(t *testing.T) {
 	var seen []security.Action
 	readOnlyOwner := security.InspectOwner[Ticket, int64](
@@ -142,8 +116,6 @@ func TestInspectOwnerIsToldWhichVerbIsBeingAttempted(t *testing.T) {
 	}
 }
 
-// Without a principal there is nobody to compare the row against, and the rule
-// must not be asked — a callback that read a nil principal would decide on one.
 func TestInspectOwnerRefusesBeforeConsultingTheRuleWhenNobodyIsAuthenticated(t *testing.T) {
 	consulted := false
 	policy := security.InspectOwner[Ticket, int64](func(auth.Principal, security.Action, *Ticket) bool {

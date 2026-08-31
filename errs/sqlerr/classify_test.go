@@ -7,13 +7,8 @@ import (
 	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
-// dir is where the checked-in corpus lives, relative to this package.
 const dir = "testdata/corpus"
 
-// engines is the four dialect strings Classify accepts, which are also the four
-// file names. Written out rather than read off the directory: a file that
-// stopped being loaded would otherwise shrink every table test below to three
-// engines with nothing turning red.
 var engines = []string{"postgres", "mysql", "mariadb", "sqlite"}
 
 func corpora(t *testing.T) map[string]*sqlerr.Corpus {
@@ -42,9 +37,6 @@ func isZero(s errs.Source) bool {
 	return s.Table == "" && s.Schema == "" && s.Constraint == "" && s.Columns == nil
 }
 
-// The four words the corpus speaks that the public vocabulary does not. A
-// parser must coarsen each to the code beside it, because a public code naming
-// which index was hit is a hair away from naming the constraint ([[D-044]]).
 var coarsened = map[string]errs.Code{
 	"primary_key":     errs.CodeUnique,
 	"not_null":        errs.CodeRequired,
@@ -52,24 +44,10 @@ var coarsened = map[string]errs.Code{
 	"bad_type":        errs.CodeInvalidFormat,
 }
 
-// Every case the corpus says is classifiable classifies, as the code its Want
-// names — or, where Want is one of the four fine words, as the coarser code.
-//
-// The identity half is derived from StandardCodes rather than written out,
-// which is what shrinks the hand-written table to the interesting rows: a
-// parser can never answer a *different* declared code for a Want that names
-// one, so writing those out would only be a second copy of the corpus.
 func TestEveryClassifiableCorpusCaseGetsTheCodeItsClassNames(t *testing.T) {
 	std := errs.StandardCodes()
 	all := corpora(t)
 
-	// The control, and it is the reason this test is not a tautology: the set
-	// of Want values with no declared code must be exactly the four above.
-	// Without it the loop below passes for a corpus with nothing classifiable
-	// in it, for a fifth fine word silently left unclassified, and for a
-	// coarsening row no engine exercises — and those four rows are what
-	// errs/codes.go says this phase owes, so an unexercised one is an unpaid
-	// debt wearing a green test.
 	fine := map[string]bool{}
 	for _, c := range all {
 		for _, cs := range c.Cases {
@@ -119,22 +97,9 @@ func TestEveryClassifiableCorpusCaseGetsTheCodeItsClassNames(t *testing.T) {
 	}
 }
 
-// The failures whose keys do not identify a safe operational code must stay
-// unclassified. PostgreSQL, MySQL and MariaDB identify an absent table with a
-// dedicated key; SQLite reports only primary result 1 for it, which also covers
-// unrelated SQL errors, so guessing from its English message is forbidden.
-//
-// A parser that classifies everything is worse than one that classifies
-// nothing, and the corpus supplies both input and expectation everywhere else —
-// so these are what make the positive test above evidence rather than a
-// statement about the harness.
 func TestTheCorpusNegativesStayUnclassified(t *testing.T) {
 	all := corpora(t)
 
-	// The control, first half: an Unreachable row carries no error at all, and
-	// SQLite has six of them. A loop over Kind == KindNone would take those as
-	// free passes from a parser that knows nothing, so the count of *real*
-	// negatives actually walked is asserted per engine, longhand.
 	want := map[string]int{"postgres": 2, "mysql": 2, "mariadb": 2, "sqlite": 2}
 
 	for _, engine := range engines {
@@ -144,7 +109,7 @@ func TestTheCorpusNegativesStayUnclassified(t *testing.T) {
 				continue
 			}
 			if cs.Err == nil {
-				continue // stated as unreachable; there is nothing to classify
+				continue
 			}
 			code, source, ok := sqlerr.Classify(engine, cs.Err)
 			if ok {
@@ -163,19 +128,8 @@ func TestTheCorpusNegativesStayUnclassified(t *testing.T) {
 		}
 	}
 
-	// The control, second half: a parser returning false for everything passes
-	// every assertion above. TestEveryClassifiableCorpusCaseGetsTheCodeItsClassNames
-	// is the leg that fails for it, over these same four corpora.
 }
 
-// The invariant [[D-039]] states: the key decides, and the text is not part of
-// the key.
-//
-// This is the total, server-free half of the evidence. It reaches all four
-// engines and every case, including PostgreSQL and SQLite, which cannot produce
-// a localised twin at all — and it is what fails the day somebody reads Detail
-// to tell foreign_key from restrict, which is the one temptation §6 names by
-// name.
 func TestAParserAnswersTheSameWhateverTheServerSaid(t *testing.T) {
 	const (
 		foreignMessage = "ОШИБКА: значение не прошло проверку"
@@ -184,8 +138,6 @@ func TestAParserAnswersTheSameWhateverTheServerSaid(t *testing.T) {
 	)
 	all := corpora(t)
 
-	// The control that the substitution substitutes something: PostgreSQL's
-	// three rows a parser would be most tempted to read.
 	for _, name := range []string{"unique", "foreign_key", "restrict"} {
 		cs := find(t, all["postgres"], name)
 		if cs.Err == nil || cs.Err.Fields["Detail"] == "" {
@@ -248,13 +200,6 @@ func TestAParserAnswersTheSameWhateverTheServerSaid(t *testing.T) {
 			}
 		}
 
-		// The control, and without it the whole test is green for a Classify
-		// that refuses everything: a refusal agrees with a refusal, so all four
-		// verdicts match and nothing about the text has been shown. Per engine,
-		// because one engine's table deleted leaves that engine's rows agreeing
-		// on refusal while the other three carry the file. Not every case
-		// classifies — three refusals per engine are corpus negatives — so the
-		// assertion is that some did, not that all did.
 		if classified == 0 {
 			t.Errorf("%s: not one case classified as captured, so its comparisons above are refusals agreeing with refusals",
 				engine)
@@ -283,13 +228,6 @@ func sameSource(a, b errs.Source) bool {
 	return true
 }
 
-// The evidence [[D-039]] was owed: the same violation, captured from a server
-// answering in Russian, classifies as the English one does.
-//
-// The invariant itself rests on the test above, which reaches every engine and
-// every case. This is what says the invariant is about something real — that
-// there exists a server, running now, whose sentence for a duplicate key shares
-// not one word with the sentence the parsers were written beside.
 func TestTheSameViolationInAnotherLocaleClassifiesIdentically(t *testing.T) {
 	all := corpora(t)
 	localised := 0
@@ -307,7 +245,6 @@ func TestTheSameViolationInAnotherLocaleClassifiesIdentically(t *testing.T) {
 			t.Fatalf("%s has no plain unique case to compare the twin against", engine)
 		}
 
-		// The control: two identical sentences prove nothing.
 		if twin.Err.Message == plain.Err.Message {
 			t.Fatalf("%s: the twin's message is the plain case's, word for word — the locale did not take and this comparison is empty",
 				engine)
@@ -315,9 +252,7 @@ func TestTheSameViolationInAnotherLocaleClassifiesIdentically(t *testing.T) {
 		localised++
 
 		wantCode, wantSrc, wantOK := sqlerr.Classify(engine, plain.Err)
-		// The third control: the English capture has to classify. Two refusals
-		// agree as readily as two duplicate-key verdicts do, and a parser that
-		// lost this engine's 1062 row would otherwise pass here.
+
 		if !wantOK {
 			t.Fatalf("%s: the English duplicate key does not classify, so the twin agreeing with it is one refusal agreeing with another",
 				engine)
@@ -329,16 +264,11 @@ func TestTheSameViolationInAnotherLocaleClassifiesIdentically(t *testing.T) {
 		}
 	}
 
-	// The other half of the control: an lc_messages setting that quietly stopped
-	// taking effect would leave every engine's twin unreachable and this test
-	// vacuously green.
 	if localised < 2 {
 		t.Fatalf("only %d engine(s) captured a localised twin; MySQL and MariaDB were both measured to localise a duplicate key", localised)
 	}
 }
 
-// No parser ever answers one of the four words the corpus speaks and the public
-// vocabulary does not.
 func TestNoParserAnswersWithTheCorpusFinerVocabulary(t *testing.T) {
 	all := corpora(t)
 	for _, engine := range engines {
@@ -356,12 +286,6 @@ func TestNoParserAnswersWithTheCorpusFinerVocabulary(t *testing.T) {
 		}
 	}
 
-	// The control. On PostgreSQL and MySQL a primary key already shares its key
-	// with an ordinary unique, and on PostgreSQL and SQLite a missing default
-	// already shares one with an explicit NULL — so on those engines the
-	// coarsening falls out of a parser that never heard of it. Two rows are the
-	// only ones where a parser *could* answer the finer word, and both are
-	// pinned here on keys the corpus is first asserted to keep distinct.
 	sq := all["sqlite"]
 	pk, uq := find(t, sq, "primary_key"), find(t, sq, "unique")
 	if pk.Err.Native == uq.Err.Native {
@@ -386,14 +310,6 @@ func TestNoParserAnswersWithTheCorpusFinerVocabulary(t *testing.T) {
 	}
 }
 
-// A case the corpus calls retryable never comes back as something a client is
-// told to fix. [[D-040]]: the same request succeeds unmodified a moment later,
-// so a 4xx tells the caller to change something that is not wrong.
-//
-// This is the only test here whose expectation is not written beside the
-// parser. The corpus-Want table is hand-written on both sides, so a
-// consistently wrong row — 1205 answering check, which is [[D-040]]'s fourth
-// forbid verbatim — passes it and fails here.
 func TestARetryableCaseNeverAnswersAConflictOrValidationCode(t *testing.T) {
 	std := errs.StandardCodes()
 	all := corpora(t)
@@ -406,7 +322,7 @@ func TestARetryableCaseNeverAnswersAConflictOrValidationCode(t *testing.T) {
 			}
 			code, _, ok := sqlerr.Classify(engine, cs.Err)
 			if !ok {
-				continue // the positive test above is what fails for this
+				continue
 			}
 			kind, known := std.KindOf(code)
 			if !known {
@@ -420,8 +336,7 @@ func TestARetryableCaseNeverAnswersAConflictOrValidationCode(t *testing.T) {
 				retryable++
 				continue
 			}
-			// The negative half: without it every assertion above passes for a
-			// table answering retryable to everything.
+
 			if kind == errs.KindRetryable {
 				t.Errorf("%s/%s is a %s case and answered %q, which is retryable — a caller would be told to try again for something it has to fix",
 					engine, cs.Name, cs.Kind, code)
@@ -432,13 +347,8 @@ func TestARetryableCaseNeverAnswersAConflictOrValidationCode(t *testing.T) {
 		}
 	}
 
-	// It deliberately does not cross-check the other three labels. The corpus's
-	// Kind is a statement about today's crud.ErrConflict sentinel and §2's
-	// status table is a statement about phase 4's Kind, and they disagree by
-	// design on required and check.
 }
 
-// Only PostgreSQL fills in a Source, because only pgconn carries the fields.
 func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 	all := corpora(t)
 	pg := all["postgres"]
@@ -461,9 +371,6 @@ func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 		t.Errorf("a NOT NULL violation carries ColumnName and the source's columns are %v", source.Columns)
 	}
 
-	// The corpus records no fields at all for this one, and an absent column
-	// list must not come back reading as "no columns" — errs/build.go's own
-	// rule, here at the other end of the same journey.
 	tl := find(t, pg, "too_long")
 	if tl.Err.Fields != nil {
 		t.Fatalf("postgres/too_long now carries fields %v, so it no longer tests the empty case", tl.Err.Fields)
@@ -476,9 +383,6 @@ func TestOnlyPostgreSQLFillsInASource(t *testing.T) {
 		t.Errorf("the column list came back as %#v rather than nil, which reads as \"no columns\" instead of \"not known\"", source.Columns)
 	}
 
-	// The control: on the other three the driver carries nothing, so a parser
-	// that reached into the message for a table name passes the leg above and
-	// fails only here.
 	for _, engine := range []string{"mysql", "mariadb", "sqlite"} {
 		for _, cs := range all[engine].Cases {
 			if cs.Err == nil {
@@ -502,22 +406,12 @@ func TestAnUnknownDialectAndANilErrorAreRefusedRatherThanPanicking(t *testing.T)
 		t.Errorf("a nil error answered (%q, %+v, %v)", code, source, ok)
 	}
 
-	// The control: without it both assertions pass for a Classify stubbed to
-	// return false, and every call site's `if !ok` would look proven.
 	if _, _, ok := sqlerr.Classify("postgres", entry.Err); !ok {
 		t.Fatal("a real corpus entry through its own dialect did not classify, so the two refusals above say nothing")
 	}
 }
 
-// The four files ask the same twenty questions, in the same order.
-//
-// TestTheCorpusStillDescribesTheseServers compares each engine only against its
-// own checked-in file, so nothing else in the tree notices a case added to
-// three engines and forgotten on the fourth — after which every table test here
-// quietly stops covering it there.
 func TestEveryEngineAnswersTheSameQuestions(t *testing.T) {
-	// Longhand on purpose. Derived from one of the files, this passes for four
-	// files that all lost the same case.
 	want := []string{
 		"unique", "unique_composite", "primary_key", "foreign_key", "restrict",
 		"not_null", "check", "missing_default", "too_long", "out_of_range",

@@ -9,8 +9,6 @@ import (
 
 func deps(configuration Config) *Deps { return &Deps{Config: configuration} }
 
-// Length and nothing else. A composition rule ("one digit, one symbol") makes
-// the password people choose more predictable, not less.
 func TestAPasswordIsRefusedOnLengthAndNothingElse(t *testing.T) {
 	d := deps(Config{Password: PasswordConfig{MinLength: 10}})
 
@@ -35,15 +33,12 @@ func TestAPasswordIsRefusedOnLengthAndNothingElse(t *testing.T) {
 	if len(f.Violations[0].Path) != 1 || f.Violations[0].Path[0].Name != "Password" {
 		t.Fatalf("the refusal does not name the password field: %v", f.Violations[0].Path)
 	}
-	// The minimum travels with the violation, so a message catalogue can say
-	// what it is without this package writing the sentence.
+
 	if f.Violations[0].Params["min"] != 10 {
 		t.Fatalf("params = %v, want the configured minimum", f.Violations[0].Params)
 	}
 }
 
-// A length of zero is "not configured", not "no rule". A deployment that left
-// the key out must not accept a one-character password.
 func TestAnUnsetMinimumFallsBackRatherThanAcceptingAnything(t *testing.T) {
 	d := deps(Config{})
 
@@ -59,12 +54,9 @@ func TestAnUnsetMinimumFallsBackRatherThanAcceptingAnything(t *testing.T) {
 	}
 }
 
-// A password is counted in characters and not in bytes: "пароль" is six
-// characters and twelve bytes, and a rule that counted bytes would let a
-// six-character Cyrillic password through a ten-character minimum.
 func TestThePasswordLengthIsCountedInCharacters(t *testing.T) {
 	d := deps(Config{Password: PasswordConfig{MinLength: 10}})
-	if err := d.checkPassword("паролище"); err == nil { // 8 characters, 16 bytes
+	if err := d.checkPassword("паролище"); err == nil {
 		t.Fatal("an eight-character password passed a ten-character minimum by being counted in bytes")
 	}
 }
@@ -79,9 +71,6 @@ func TestAnUnsetSessionLifetimeFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// Every failed sign-in gets one answer. Telling an unknown address apart from a
-// wrong password turns the endpoint into a way to ask whether somebody has an
-// account here.
 func TestARefusedSignInSaysNothingAboutWhichHalfWasWrong(t *testing.T) {
 	err := badCredentials("Login")
 	f, ok := errs.AsFault(err)
@@ -94,9 +83,7 @@ func TestARefusedSignInSaysNothingAboutWhichHalfWasWrong(t *testing.T) {
 	if f.Code != CodeBadCredentials {
 		t.Fatalf("code = %q", f.Code)
 	}
-	// The message may name both halves — it has to, to be useful — but never
-	// one of them. Each phrase below identifies a single branch, which is the
-	// thing a stranger is trying to learn.
+
 	for _, giveaway := range []string{
 		"no such", "not found", "unknown", "does not exist", "no account",
 		"wrong password", "incorrect password", "is disabled", "deactivated",

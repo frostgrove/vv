@@ -15,8 +15,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// docsCatalog is the schema the probe reads. Two unique keys, so a test can tell
-// "the probe ran" from "the probe found the one thing it was told about".
 func docsCatalog() catalog.Catalog {
 	return &fakeCatalog{tables: []catalog.Table{{
 		Name:   "docs",
@@ -54,10 +52,6 @@ func (this *fakeCatalog) Constraint(table, name string) (*catalog.Constraint, bo
 	return t.Constraint(name)
 }
 
-// stub is a datasource that refuses writes and answers the probe. It is written
-// out rather than driven off crudtest.Recorder because these tests have to tell
-// the write's own statement from the probe's, and both arrive through Query on
-// a dialect with RETURNING.
 type stub struct {
 	mu     sync.Mutex
 	d      crud.Dialect
@@ -75,8 +69,6 @@ func newStub(fail error, cells ...any) *stub {
 func (this *stub) Dialect() crud.Dialect { return this.d }
 func (this *stub) DataSource() any       { return this }
 
-// The probe's own statement, told from the write's. A bulk probe leads with the
-// row index rather than with the first term, so a prefix test misses it.
 func (this *stub) isProbe(q string) bool { return strings.Contains(q, "EXISTS(SELECT 1 FROM") }
 
 func (this *stub) record(q string) bool {
@@ -121,6 +113,17 @@ func (this *stub) beginCount() int {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	return this.depth
+}
+
+func (this *stub) lastProbeSQL() string {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	for i := len(this.stmts) - 1; i >= 0; i-- {
+		if this.isProbe(this.stmts[i]) {
+			return this.stmts[i]
+		}
+	}
+	return ""
 }
 
 type stubTx struct{ *stub }
@@ -180,7 +183,7 @@ func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) 
 		batch   int
 	}{
 		{"the default set", []faults.Option{faults.WithProbe(probe.Full(docsCatalog()))}, 1, 0},
-		// The control: naming the verb flips exactly one of them.
+
 		{"a bulk override", []faults.Option{
 			faults.WithProbe(probe.Full(docsCatalog())),
 			faults.WithProbeFor("SaveAll", probe.Full(docsCatalog())),
@@ -208,10 +211,38 @@ func TestFullIsTheDefaultForSaveAndUpdateAndSimpleForTheBulkVerbs(t *testing.T) 
 	}
 }
 
-// The probe's violations go through the same column-to-field hop the driver's
-// do, and exactly once.
+func TestInsertBatchCanOptIntoTheFullProbeWithoutLosingItsCapability(t *testing.T) {
+	source := newStub(uniqueFault(), int64(0), false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
+		faults.WithProbeFor("InsertBatch", probe.Full(docsCatalog()))))
+
+	if err := repository.InsertBatch(context.Background(), []*Doc{{Title: "a", Body: "b"}}); err == nil {
+		t.Fatal("the batch write was supposed to fail")
+	}
+	if got := source.probeCount(); got != 1 {
+		t.Fatalf("InsertBatch ran %d probes, want 1", got)
+	}
+}
+
+func TestAssignedInsertBatchKeyIsProbedAsANewRow(t *testing.T) {
+	source := newStub(uniqueFault(), false, false, false)
+	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
+		faults.WithProbeFor("InsertBatch", probe.Full(docsCatalog()))))
+
+	if err := repository.InsertBatch(context.Background(), []*Doc{{ID: 42, Title: "a", Body: "b"}}); err == nil {
+		t.Fatal("the batch write was supposed to fail")
+	}
+	query := source.lastProbeSQL()
+	if !strings.Contains(query, `vvt."id" = `) {
+		t.Fatalf("assigned primary key was not probed: %s", query)
+	}
+	if strings.Contains(query, `<>`) {
+		t.Fatalf("create-only InsertBatch excluded an alleged existing row: %s", query)
+	}
+}
+
 func TestTheProbesViolationsGetTheSameFieldHopTheDriversDoes(t *testing.T) {
-	source := newStub(uniqueFault(), false, true) // the body key, not the title one
+	source := newStub(uniqueFault(), false, true)
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 
 	err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"})
@@ -227,15 +258,11 @@ func TestTheProbesViolationsGetTheSameFieldHopTheDriversDoes(t *testing.T) {
 	}
 }
 
-// The control for the hop: a probe violation over another table is marked
-// approximate rather than translated onto a field of this model.
 func TestAProbeViolationNamingAnotherTableIsMarkedApproximate(t *testing.T) {
 	source := newStub(uniqueFault(), false, false)
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))))
 	_ = repository
 
-	// The decorator's own hop, exercised through the fault it produces for a
-	// driver violation on a table this model is not bound to.
 	other := errs.Conflict().Code(errs.CodeUnique).
 		General().Code(errs.CodeUnique).Origin(errs.OriginState).
 		Source(errs.Source{Table: "audit_log", Constraint: "x", Columns: []string{"title"}}).
@@ -275,23 +302,12 @@ func TestAProbeIsNotRunForAnErrorThatIsNotAFault(t *testing.T) {
 	}
 }
 
-// A probe finds its datasource through a decorator sitting between it and the
-// repository, so the order the two are listed in is not what decides whether it
-// works.
-//
-// This used to refuse. The probe asserted crud.Sourced on the layer directly
-// below it, and an interface embedded in a struct promotes only its own method
-// set — so the gate, which forwards everything a Core names and nothing else,
-// answered no. The chain always knew; only the type system did not. crud.SourceOf
-// walks it through Next().
 func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
 	source := newStub(uniqueFault(), false, false)
 	repository := Docs.Bind(source,
 		faults.Enrich[Doc, int64](faults.WithProbe(probe.Full(docsCatalog()))),
 		security.Gate(security.Freeze[Doc, int64]("Title")))
 
-	// Binding is half the claim. The probe has to actually run, or a source
-	// that resolved to something unusable would pass this just as well.
 	if err := repository.SaveOnly(context.Background(), &Doc{Title: "a", Body: "b"}); err == nil {
 		t.Fatal("the write was supposed to fail with the stub's unique violation")
 	}
@@ -300,12 +316,6 @@ func TestAProbeFindsItsSourceThroughADecoratorAboveTheRepository(t *testing.T) {
 	}
 }
 
-// A probe over a chain that genuinely cannot say what it wraps still refuses at
-// Bind time.
-//
-// The control on the walk. Without it, every assertion above would hold for a
-// SourceOf that answered "yes" to anything, and a probe with no datasource would
-// go back to failing at the first collision instead of at start-up ([[D-021]]).
 func TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -318,15 +328,12 @@ func TestADeclaredProbeWithNoReachableSourceRefusesAtBindTime(t *testing.T) {
 		opaque[Doc, int64]())
 }
 
-// opaque is a decorator that forwards no optional interface and does not say
-// what it wraps — the shape crud.Base exists to stop anyone writing by accident.
 func opaque[M any, ID comparable]() crud.Middleware[M, ID] {
 	return func(next crud.Core[M, ID]) crud.Core[M, ID] { return opaqueCore[M, ID]{next} }
 }
 
 type opaqueCore[M any, ID comparable] struct{ crud.Core[M, ID] }
 
-// The control: named explicitly, any order binds, including through opaque.
 func TestAProbeWithAnExplicitSourceBindsWhereverItSits(t *testing.T) {
 	source := newStub(uniqueFault(), false, false)
 	Docs.Bind(source,
@@ -372,15 +379,12 @@ func TestPastTheSavepointBudgetTheAnswerIsPartial(t *testing.T) {
 	if !f2.Partial {
 		t.Fatal("the second write was past the savepoint budget and said nothing about it")
 	}
-	// The control that the budget did the refusing: one savepoint was taken and
-	// not two. The outer count is InTx's own Begin.
+
 	if got := source.beginCount(); got != 2 {
 		t.Fatalf("%d transactions were begun, want the outer one plus exactly one savepoint", got)
 	}
 }
 
-// A foreign transaction is never given a savepoint, whatever WithSavepoints
-// says.
 func TestAForeignTransactionIsNeverGivenASavepoint(t *testing.T) {
 	source := newStub(uniqueFault(), false, false)
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
@@ -398,7 +402,6 @@ func TestAForeignTransactionIsNeverGivenASavepoint(t *testing.T) {
 	}
 }
 
-// The control: our own transaction does get one, and the probe does run.
 func TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns(t *testing.T) {
 	source := newStub(uniqueFault(), false, true)
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](
@@ -422,8 +425,6 @@ func TestOurOwnTransactionIsGivenASavepointAndTheProbeRuns(t *testing.T) {
 	}
 }
 
-// Without the savepoint mode the same write inside the same transaction
-// degrades to one violation rather than erroring.
 func TestWithoutSavepointsATransactionDegradesRatherThanErroring(t *testing.T) {
 	source := newStub(uniqueFault(), false, true)
 	repository := Docs.Bind(source, faults.Enrich[Doc, int64](

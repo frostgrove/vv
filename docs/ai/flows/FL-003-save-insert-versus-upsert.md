@@ -1,7 +1,7 @@
 # FL-003 — Save: insert versus upsert
 
-**Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command)
-**Implements:** [[UC-001]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]] [[D-079]]
+**Entry point:** `crud/sqlrepo/repository.go:Save` (reached from `DefaultService.Create` and `:Replace`, whichever binding built the command) and `crud.Repo.InsertBatch`
+**Implements:** [[UC-001]] [[UC-008]] [[UC-009]] · **Governed by:** [[D-011]] [[D-012]] [[D-019]] [[D-079]] [[D-083]]
 
 One method, two statements, and a fork decided entirely by whether the model's
 primary key holds a value.
@@ -101,9 +101,9 @@ primary key holds a value.
 `repository.SaveAll` keeps the same key fork but is write-only. It validates the
 whole batch first, chooses `Meta.Insert` plus the upsert tail for assigned keys
 or `Meta.InsertGen` with no tail for generated keys, and passes that fixed row
-width to `saveAllPlan`.
+width to `batchInsertPlan`.
 
-`saveAllPlan` divides `crud.BindLimit(dialect)` by the row width and renders
+`batchInsertPlan` divides `crud.BindLimit(dialect)` by the row width and renders
 contiguous chunks in caller order. Every model value and every statement is
 resolved before execution. A row wider than the whole dialect budget is a typed
 schema refusal before a transaction or statement exists. A generated-key batch
@@ -114,6 +114,27 @@ One chunk executes directly. Several go through `executePrepared`, which joins
 an executor already bound to this datasource or opens one transaction through
 `crud.InTx`; a later error rolls back the earlier chunks. A source that can do
 neither is refused before the first statement ([[D-079]], [[FL-009]]).
+
+## InsertBatch and the native boundary
+
+`Repo.InsertBatch` invokes the optional `crud.BatchInserter` only on its exact
+outer Core. An unknown decorator therefore returns
+`ErrNoBatchInsertSupport` instead of being bypassed. Gate and faults preserve
+the verb explicitly ([[FL-008]], [[FL-017]]).
+
+`repository.InsertBatch` reuses the complete batch-shape preflight but is always
+insert-only: an assigned key gets no upsert tail. It derives `TableRef`, columns
+and values from `Meta`, resolves the source-bound executor, then asks that exact
+executor for `UnsafeBulkInserter`. A bare pgx source performs COPY. A source
+without the capability, or behind a wrapper that did not explicitly preserve
+it, uses `batchInsertPlan` and ordinary `Exec`.
+
+`crud.PortableBatch()` selects ordinary SQL for one call;
+`sqlrepo.PortableBatch()` fixes that choice on the declaration. This is the RLS,
+rewrite-rule, pgx-encoding and statement-observability path. vv does not infer
+those table semantics. Only the before-I/O `ErrNoBulkInsertSupport` may fall
+back; a driver/server COPY failure is final. Default-only models use dialect-
+owned `DEFAULT VALUES` / `() VALUES ()` statements under one atomic boundary.
 
 ## Where the decisions bite
 
@@ -131,6 +152,9 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 - **A batch boundary never changes the Save fork.** Assigned and generated keys
   still cannot mix. Bind-budget chunks preserve order and statement shape, and
   all chunks share one atomic boundary ([[D-079]]).
+- **InsertBatch is not SaveAll with a faster statement.** It never upserts,
+  never reads generated values back, and its explicit native/portable choice is
+  part of [[D-083]].
 - **A generated key is never client-chosen unless someone opted in.** Two
   independent guards, `Sanitize` on POST and the existence probe on PUT, because
   PUT bypasses the first. Both are in the service, so a fourth binding gets them
@@ -147,6 +171,9 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 | `ON CONFLICT DO NOTHING` matched an existing row and RETURNING produced none | `saveReturning` | 404 `ErrNotFound`; the legacy full-row upsert contract is tracked by AUDIT `FW-CORE-030` before release |
 | the row disappears between the write and the read-back | `refresh` (`repository.go:525`) | 404 |
 | gate refuses an overwrite of a hidden row | `gate.saveTarget` (`security.go:423`) | 403 |
+| an unknown decorator did not preserve `InsertBatch` | exact `InsertBatchOf` check | `ErrNoBatchInsertSupport`, no I/O |
+| native bulk is unavailable before I/O | `nativeInsertBatch` | portable INSERT fallback |
+| native COPY fails after selection | pgx adapter / classifier | classified error; no retry as INSERT |
 
 ## Files
 
@@ -156,12 +183,14 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 | `port/model.go` | `Sanitize`, `ClearGenerated` — what a client may not dictate, in one place for every binding and every transport ([[D-045]]). `crudhttp.Sanitize` and `:ClearGenerated` forward to it |
 | `port/service.go` | `DefaultService.Create` / `:Replace` — where the clearing runs, and the one place the hook order is decided ([[FL-015]]) |
 | `crud/sqlrepo/repository.go` | `Save`, `insert`, `refresh`, statement assembly in `newRepository` |
+| `crud/batch.go` | `Repo.InsertBatch`, the optional exact capability and portable option |
 | `crud/meta.go` | `Insert` / `InsertGen` / `Update` column lists, tag options |
 | `crud/access.go` | `HasID`, `ID`, `SetID`, `Values` |
 | `crud/dialect.go` | `Upsert`, `SupportsReturning` |
 | `crud/dialect.go`, `crud/render.go` | the statement-wide bind ceiling and its typed preflight ([[D-079]]) |
 | `crud/errors.go` | `ErrMissingID`, `ErrConflict` |
 | `crud/adapter/crudsql/conflict.go`, `crud/adapter/crudpgx/conflict.go` | `Executor.conflict` — integrity errors → `ErrConflict`, and a fault where the engine was declared. The gate and the assembly are `sqlfault`'s ([[FL-014]]) |
+| `crud/adapter/crudpgx/crudpgx.go` | exact-handle COPY selected behind the repository |
 | `crud/decorators/security/security.go` | the gated variant |
 
 ## Tests that walk this flow
@@ -185,6 +214,14 @@ neither is refused before the first statement ([[D-079]], [[FL-009]]).
 - `TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine` —
   `test/integration/saveall_test.go` — a failure in the second budget chunk
   leaves no row behind on every live adapter.
+- `crud/sqlrepo/insert_batch_test.go` — metadata derivation, create-only keys,
+  native and portable selection, preflight, direct-statement wrapper observability, transaction
+  routing and default-only rows.
+- `TestPgxInsertBatchSelectsCopyFromTheRepository`,
+  `TestPgxPortableBatchIsTheExplicitRLSPath` and
+  `TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable` —
+  `test/integration/driver_pgx_test.go` — live protocol selection, the portable
+  table-semantics opt-out and structured fault classification.
 Each `crud/http/crudfiber/` test below has an identical twin in `crud/http/crudgin/` and
 `crud/http/crudnet/`.
 

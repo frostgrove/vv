@@ -1,6 +1,3 @@
-// Package codegen generates the update DTO and the typed metamodel from a
-// package's model structs. It is the half of `vv generate` that has nothing to
-// do with the command line, so it can be tested without one.
 package codegen
 
 import (
@@ -28,42 +25,29 @@ import (
 
 type field struct {
 	Name      string
-	Type      string // the type expression, as written
-	Tag       string // db tag value
-	Rel       string // rel tag value, "" when absent
-	HasRel    bool   // rel tag presence; rel:"" requests runtime inference
-	RelTarget string // canonical local model name after aliases/pointers/slices
+	Type      string
+	Tag       string
+	Rel       string
+	HasRel    bool
+	RelTarget string
 	Skip      bool
 	PK        bool
-	// ExplicitPK distinguishes a tagged key from the runtime's ID/id
-	// convention. Key selection is a model-wide decision: an explicit key wins
-	// even when another ordinary column happens to be called ID.
+
 	ExplicitPK bool
 	Auto       bool
-	// NoAuto is the explicit escape hatch from the integer-key convention.
-	// Runtime metadata retains the same bit until it has selected the model's
-	// key, so codegen must not collapse it into Auto=false while parsing one
-	// field at a time.
+
 	NoAuto      bool
 	Integral    bool
 	Immutable   bool
 	Generated   bool
 	ServerOwned bool
 	Tombstone   bool
-	// Version is the optimistic lock. The repository advances it, so it is not
-	// a field a caller may set — and a DTO that names it is refused at Define
-	// time, which is why the generator has to know about it too.
+
 	Version bool
-	// Excluded records that the command line, rather than the model's own tags,
-	// is what keeps this column out of the generated artefacts. Reflection reads
-	// the struct and never the flags, so the generated file has to carry the
-	// list or the coverage assertion refuses a column its author dropped on
-	// purpose.
+
 	Excluded bool
 }
 
-// tagDropped reports whether the model's own tags already keep this column out
-// of the update DTO — the half the runtime can see for itself.
 func (this field) tagDropped() bool {
 	return this.Skip || this.PK || this.Generated || this.Immutable || this.ServerOwned || this.Tombstone || this.Version
 }
@@ -73,7 +57,6 @@ type model struct {
 	Fields []field
 }
 
-// pk answers the primary key, which the adapter half needs to name the id type.
 func (this *model) pk() (field, bool) {
 	for _, f := range this.Fields {
 		if f.PK {
@@ -83,8 +66,6 @@ func (this *model) pk() (field, bool) {
 	return field{}, false
 }
 
-// excluded lists the columns the command line keeps out of the artefacts, in a
-// stable order — the output has to be byte-identical across runs ([[D-014]]).
 func (this *model) excluded() []string {
 	var out []string
 	seen := map[string]bool{}
@@ -120,39 +101,29 @@ type generator struct {
 	order      []string
 	skip       map[string]bool
 	readonly   map[string]bool
-	structs    map[string]bool            // struct types declared in this package
-	embeds     map[string]*ast.StructType // …and their declarations, for embedding
-	embedFiles map[string]*ast.File       // declaration file, so nested field imports keep their meaning
-	// mirrorProblems are declaration failures collected while walking models.
-	// The parser visits package files through maps, so they are kept as a set and
-	// sorted before returning: the same broken package must produce the same
-	// diagnostic on every machine.
+	structs    map[string]bool
+	embeds     map[string]*ast.StructType
+	embedFiles map[string]*ast.File
+
 	mirrorProblems map[string]bool
 
-	// Set when the output lands in a different package from the models.
 	into        string
 	modelImport string
 	modelAlias  string
-	// imports collected from the source files, so generated field types keep
-	// resolving (time.Time, uuid.UUID, …).
-	imports       map[string]string               // generated package alias -> import path
-	fileImports   map[*ast.File]map[string]string // source qualifier -> generated alias
-	sourceImports []sourceImport                  // source aliases, checked against emitted declarations
-	declaredNames map[string]bool                 // authored package-scope declarations
-	pathAliases   map[string]string               // import path -> generated package alias
-	aliasPaths    map[string]string               // generated package alias -> import path
-	usedAliases   map[string]bool                 // every identifier unavailable to an import
-	types         *sourceTypes                    // best-effort go/types view of the parsed package
 
-	// Where the "wrote …" line goes. Nil is silent, which is what a test wants;
-	// swapping os.Stdout to get that made every test share global state.
+	imports       map[string]string
+	fileImports   map[*ast.File]map[string]string
+	sourceImports []sourceImport
+	declaredNames map[string]bool
+	pathAliases   map[string]string
+	aliasPaths    map[string]string
+	usedAliases   map[string]bool
+	types         *sourceTypes
+
 	log io.Writer
 }
 
 func (this *generator) run(outPath string) error {
-	// Check ownership before excluding the basename from the source parse. An
-	// authored target must not disappear from the input immediately before the
-	// generator refuses to overwrite it.
 	if err := validateGeneratedTarget(outPath); err != nil {
 		return err
 	}
@@ -175,9 +146,6 @@ func (this *generator) run(outPath string) error {
 		return fmt.Errorf("a generated repository needs its update DTO; drop -no-dto or add -no-repo")
 	}
 	if this.adapter && !this.withDTO {
-		// The mapper, the service and the wiring all name <Model>Update. Emitting
-		// them without it produces a file that does not compile, which is a worse
-		// answer than this one.
 		return fmt.Errorf("-adapter needs the update DTO; drop -no-dto")
 	}
 	if err := this.validateDeclarations(outPath); err != nil {
@@ -260,8 +228,7 @@ func writeGenerated(path string, source []byte) (err error) {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("codegen: close temporary output: %w", err)
 	}
-	// Close the validation/write race. Rename replaces a symlink rather than
-	// following it, but an authored regular file appearing here must still win.
+
 	if err := validateGeneratedTarget(path); err != nil {
 		return err
 	}
@@ -304,9 +271,6 @@ func (this *generator) load(skip string) error {
 	this.pathAliases = map[string]string{}
 	this.aliasPaths = map[string]string{}
 
-	// A first pass over the struct names, so a field whose type is another
-	// struct in this package can be recognised as a relation holder rather than
-	// mistaken for a column. That is what keeps ent's `Edges UserEdges` out.
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
 			ast.Inspect(file, func(n ast.Node) bool {
@@ -385,11 +349,6 @@ type sourceImport struct {
 	path      string
 }
 
-// prepareImports gives every imported path one output-file alias and records
-// how each source file's own qualifier maps onto it. Two Go files may legally
-// use the same qualifier for different packages; one generated file cannot, so
-// collisions receive stable path-derived names and field type expressions are
-// rewritten per declaration file.
 func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 	packageNames := make([]string, 0, len(pkgs))
 	for name := range pkgs {
@@ -421,9 +380,6 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 		this.pathAliases[fixed.path] = fixed.alias
 	}
 	if this.modelImport != "" {
-		// When models themselves live in one of the generated support packages,
-		// one path must still have one alias. Reusing it is both legal Go and the
-		// only way the import block can be deduplicated without changing selectors.
 		this.modelAlias = this.pathAliases[this.modelImport]
 		if this.modelAlias == "" {
 			this.modelAlias = allocateReadableImportAlias(inputPackage, this.modelImport, used, false)
@@ -459,11 +415,7 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 					}
 				} else {
 					qualifier = filepath.Base(path)
-					// Package declarations, not path basenames, own unaliased import
-					// names. Resolve them authoritatively when possible. The syntax
-					// fallback keeps temporarily unavailable dependencies generatable,
-					// but only when the basename is an unresolved package selector and
-					// not a package declaration from a different source file.
+
 					if path == "C" {
 						qualifier = "C"
 					} else if declared := this.importPackageName(path); declared != "" {
@@ -519,11 +471,6 @@ func (this *generator) prepareImports(pkgs map[string]*ast.Package) error {
 	return nil
 }
 
-// reserveGeneratedAndPackageNames keeps an imported package from being given
-// an alias that is already meaningful at package scope or that this run will
-// emit. Source files may legally call an import UserUpdate because imports are
-// file-scoped; the generated file may not use that alias and declare the
-// UserUpdate DTO in the same file.
 func (this *generator) reserveGeneratedAndPackageNames(pkgs map[string]*ast.Package, used map[string]bool) {
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
@@ -563,11 +510,6 @@ func (this *generator) reserveGeneratedAndPackageNames(pkgs map[string]*ast.Pack
 	this.reserveRelationAttrNames(used)
 }
 
-// reserveRelationAttrNames covers the declarations renderAttrs derives from a
-// relation path (ArticleCommentsAuthorAttrs, for example). Imports are planned
-// before model parsing and type checking, so this deliberately over-approximates
-// local struct-shaped fields. Reserving an unused identifier only lengthens an
-// import alias; missing a real one would produce uncompilable generated Go.
 func (this *generator) reserveRelationAttrNames(used map[string]bool) {
 	if this.depth <= 1 {
 		return
@@ -622,10 +564,6 @@ func (this *generator) reserveRelationAttrNames(used map[string]bool) {
 	}
 }
 
-// validateDeclarations catches collisions an output-only alias rewrite cannot
-// solve. That includes two generated names with different owners, an authored
-// package declaration, and a source import called ProductUpdate when another
-// file declares ProductUpdate. Refuse every case before writing.
 func (this *generator) validateDeclarations(outPath string) error {
 	emitted := map[string]string{}
 	add := func(declaration, owner string) error {
@@ -703,9 +641,7 @@ func (this *generator) validateDeclarations(outPath string) error {
 			return fmt.Errorf("codegen: package declaration %s conflicts with generated declaration %s; rename the authored declaration or select a different generated artefact", declaration, declaration)
 		}
 	}
-	// Source imports live in the model package and cannot collide with output
-	// declarations only when the output stays there. With -into they are in
-	// separate file blocks in separate packages.
+
 	if this.into != "" {
 		return nil
 	}
@@ -733,11 +669,6 @@ func (this *generator) validateDeclarations(outPath string) error {
 	return nil
 }
 
-// validateRenderedImports checks the other direction of Go's package namespace
-// rule: an import name in the new file may not match a package declaration in
-// any other file. It runs on the final rendered import block, so unused source
-// imports and generated features that were not selected cannot cause a false
-// refusal.
 func (this *generator) validateRenderedImports(outPath string, source []byte) error {
 	authored := this.declaredNames
 	if this.into != "" {
@@ -793,10 +724,6 @@ func (this *generator) validateRenderedImports(outPath string, source []byte) er
 	return nil
 }
 
-// packageImportAliases collects the file-scoped import names in an existing
-// destination package. Go rejects those names when a different file adds a
-// package declaration with the same identifier, so -into must inspect both
-// halves of the namespace before it writes.
 func (this *generator) packageImportAliases(dir, packageName, skip string) ([]sourceImport, error) {
 	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
 		return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != skip
@@ -956,9 +883,6 @@ func (this *generator) sharedImportAlias(path string) string {
 	return ""
 }
 
-// allocateReadableImportAlias keeps collision handling visible to a human.
-// Numeric suffixes say only that a collision happened; alpha, alphaCommon and
-// betaCommon say which package each selector names.
 func allocateReadableImportAlias(preferred, path string, used map[string]bool, forcePath bool) string {
 	preferred = strings.TrimSpace(preferred)
 	if !forcePath && usableImportAlias(preferred, used) {
@@ -968,9 +892,6 @@ func allocateReadableImportAlias(preferred, path string, used map[string]bool, f
 	candidates := pathImportAliases(path)
 	start := 0
 	if forcePath && len(candidates) > 1 {
-		// Two packages both called common are clearer as alphaCommon and
-		// betaCommon than as common and betaCommon: neither gets privileged by
-		// path sort order.
 		start = 1
 	}
 	for _, candidate := range candidates[start:] {
@@ -1150,10 +1071,7 @@ func (this *generator) typeString(expr ast.Expr, file *ast.File) string {
 func (this *generator) parseModel(name string, st *ast.StructType, force bool, file *ast.File) *model {
 	m := &model{Name: name}
 	var mirrorProblems []string
-	// An explicitly named type is a model whether or not it carries tags — which
-	// is how a generated entity from another tool qualifies. Model files carry
-	// the same meaning without a tag: plain Go structs are vv models by
-	// convention, independently of their database driver or ORM.
+
 	tagged := force || (this.only != nil && this.only[name])
 	for _, f := range st.Fields.List {
 		if len(f.Names) == 0 {
@@ -1170,9 +1088,6 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			typ := strings.TrimSpace(this.typeString(f.Type, file))
 			resolved := this.goType(f.Type)
 			if resolved != nil {
-				// Runtime flattens only a completely untagged, non-scalar struct.
-				// A relation or db declaration belongs to the anonymous field
-				// itself and follows the ordinary field path below.
 				if !hasDB && !hasRel && this.flattenableStruct(resolved) {
 					if isPointerSource(resolved) {
 						mirrorProblems = append(mirrorProblems, fmt.Sprintf(
@@ -1204,9 +1119,6 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 				continue
 			}
 
-			// An incomplete package may leave a type unresolved. Preserve the
-			// audited/local syntactic cases, but never guess whether an unknown
-			// anonymous value is a scalar column or a struct to flatten.
 			if !hasDB && !hasRel {
 				if strings.HasPrefix(typ, "*") {
 					mirrorProblems = append(mirrorProblems, fmt.Sprintf(
@@ -1250,20 +1162,15 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			}
 			fl := field{Name: ident.Name, Type: rendered, Tag: database, Rel: rel, HasRel: hasRel}
 			if hasDB && database == "-" {
-				// db:"-" wins before relation parsing at runtime, including when a
-				// rel tag is present on the same field.
 				continue
 			}
-			// A field whose type is another struct from this package is either a
-			// relation or somebody else's bookkeeping; it is never a column.
+
 			if !hasRel {
 				if base, _ := relElem(fl.Type); this.structs[base] {
 					continue
 				}
 			}
 			if hasRel && rel != "-" {
-				// A relation is not a column, so dropping one leaves nothing for
-				// reflection to disagree about and nothing to declare.
 				if this.skip[ident.Name] {
 					continue
 				}
@@ -1276,8 +1183,7 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 			parsed := this.columnField(fl.Name, fl.Type, nil, database)
 			parsed.Rel, parsed.HasRel, parsed.Skip = fl.Rel, fl.HasRel, fl.Skip
 			fl = parsed
-			// After the tags, not before: whether the flag is the only reason
-			// the column leaves is a question the tags have to have answered.
+
 			this.exclude(&fl)
 			m.Fields = append(m.Fields, fl)
 		}
@@ -1293,16 +1199,6 @@ func (this *generator) parseModel(name string, st *ast.StructType, force bool, f
 	return m
 }
 
-// resolvePrimaryKey mirrors crud.buildSchema after all flattened fields are
-// known. A tagged key wins. Otherwise runtime's Field("ID") lookup means an
-// exact Go field named ID, then an exact database column named ID; its final
-// fallback is the exact database column id. Integral keys are database-generated
-// by convention unless noauto opted out; non-integral keys remain client-owned.
-//
-// Doing this per model rather than in columnField matters for a model that has
-// both an ordinary ID column and a differently named explicit key. Runtime does
-// not let the convention steal that declaration, and generated input must not
-// either.
 func resolvePrimaryKey(m *model) []string {
 	if m == nil {
 		return nil
@@ -1312,8 +1208,7 @@ func resolvePrimaryKey(m *model) []string {
 		if m.Fields[index].ExplicitPK && primaryKeyColumn(m.Fields[index]) {
 			explicit = append(explicit, index)
 		}
-		// PK is resolved below in one pass. ExplicitPK remains the source-level
-		// declaration bit, so clearing the derived result does not lose it.
+
 		m.Fields[index].PK = false
 	}
 	if len(explicit) > 1 {
@@ -1366,9 +1261,6 @@ func resolvePrimaryKey(m *model) []string {
 	return nil
 }
 
-// primaryKeyColumn excludes declarations runtime metadata does not put in its
-// column index. A command-line -skip still leaves the model column present at
-// runtime and therefore remains eligible; db:"-" and relations do not.
 func primaryKeyColumn(item field) bool {
 	return item.Tag != "-" && !item.isRelation()
 }
@@ -1381,11 +1273,6 @@ func effectiveColumn(item field) string {
 	return column
 }
 
-// validateEffectiveFields catches collisions introduced by flattening before
-// render emits duplicate Go fields. Runtime metadata separately refuses exact
-// column/relation duplicates; codegen must also reject a column and relation
-// that share one effective Go name because one generated struct cannot spell
-// both even though reflection keeps those namespaces separately.
 func validateEffectiveFields(m *model) []string {
 	names := map[string]bool{}
 	columns := map[string]bool{}
@@ -1412,8 +1299,6 @@ func validateEffectiveFields(m *model) []string {
 	return problems
 }
 
-// codegenSnake mirrors crud.snake. Keeping the column collision check at
-// generation time avoids writing an artefact that runtime SchemaOf must reject.
 func codegenSnake(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 4)
@@ -1433,11 +1318,6 @@ func codegenSnake(s string) string {
 	return b.String()
 }
 
-// exclude applies -skip and -readonly, and records when a flag is the only
-// reason the column leaves the generated artefacts. A skipped column stays in
-// the model with Skip set rather than being dropped: it is absent from the DTO
-// and the metamodel either way, and the name is still needed for the exclusion
-// list.
 func (this *generator) exclude(f *field) {
 	skipped, readonly := this.skip[f.Name], this.readonly[f.Name]
 	if !skipped && !readonly {
@@ -1458,13 +1338,8 @@ func exprString(e ast.Expr) string {
 	return b.String()
 }
 
-// ---------------------------------------------------------------------------
-// classification
-
 func (this field) isRelation() bool { return this.HasRel && this.Rel != "-" }
 
-// elem strips *T and either compatibility crud.Opt[T] or canonical
-// utils.Opt[T] down to T, reporting whether the column is nullable.
 func elem(typ string) (string, bool) {
 	typ = strings.TrimSpace(typ)
 	for _, name := range []string{"utils.Opt", "crud.Opt"} {
@@ -1485,7 +1360,6 @@ func cutGeneric(typ, name string) (string, bool) {
 	return typ[len(name)+1 : len(typ)-1], true
 }
 
-// relElem strips []T, []*T and *T down to T for a relation field.
 func relElem(typ string) (string, bool) {
 	slice := strings.HasPrefix(typ, "[]")
 	typ = strings.TrimPrefix(typ, "[]")
@@ -1499,8 +1373,6 @@ var ordered = map[string]bool{
 	"float32": true, "float64": true,
 }
 
-// attrType picks the metamodel attribute for a column type: Str for text, Ord
-// for anything cmp.Ordered, Cmp for time-like values, Attr for the rest.
 func attrType(specsPkg, model, typ string) string {
 	e, _ := elem(typ)
 	switch {
@@ -1515,8 +1387,6 @@ func attrType(specsPkg, model, typ string) string {
 	}
 }
 
-// dtoType picks the DTO field type: Opt for a nullable column (three states),
-// a pointer for a non-nullable one (two).
 func dtoType(typ string) string {
 	e, nullable := elem(typ)
 	if nullable {
@@ -1529,7 +1399,7 @@ func lowerFirst(s string) string {
 	if s == "" {
 		return s
 	}
-	// Keep an all-caps prefix together: ID -> id, HTTPCode -> httpCode.
+
 	i := 0
 	for i < len(s) && s[i] >= 'A' && s[i] <= 'Z' {
 		i++
@@ -1540,7 +1410,6 @@ func lowerFirst(s string) string {
 	return strings.ToLower(s[:i]) + s[i:]
 }
 
-// qual renders a model type name as the output package must spell it.
 func (this *generator) qual(name string) string {
 	if this.modelAlias == "" {
 		return name
@@ -1548,8 +1417,6 @@ func (this *generator) qual(name string) string {
 	return this.modelAlias + "." + name
 }
 
-// packageNameOf reuses the package already declared in dir, falling back to its
-// base name.
 func packageNameOf(dir string) string {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
@@ -1563,7 +1430,6 @@ func packageNameOf(dir string) string {
 	return strings.ReplaceAll(filepath.Base(dir), "-", "")
 }
 
-// cmpOr answers the first non-empty string.
 func cmpOr(a, b string) string {
 	if a != "" {
 		return a
@@ -1571,7 +1437,6 @@ func cmpOr(a, b string) string {
 	return b
 }
 
-// names parses a comma-separated flag into a set.
 func names(csv string) map[string]bool {
 	out := map[string]bool{}
 	for _, n := range strings.Split(csv, ",") {
@@ -1582,13 +1447,6 @@ func names(csv string) map[string]bool {
 	return out
 }
 
-// wellKnownEmbeds are embedded types from other packages whose fields the
-// generator cannot read but that are common enough to be worth knowing.
-//
-// The three timestamps are marked Excluded as well as Immutable, and the two
-// are not the same claim. gorm.Model carries no `db` tags, so reflection sees
-// three ordinary writable columns where this table sees server-owned ones —
-// only the generated file can say which, so it declares them.
 var wellKnownEmbeds = map[string][]field{
 	"gorm.Model": {
 		{Name: "ID", Type: "uint", Integral: true},
@@ -1598,8 +1456,6 @@ var wellKnownEmbeds = map[string][]field{
 	},
 }
 
-// embedded resolves the fields of an embedded struct: from this package when it
-// is declared here, from the table above otherwise.
 func (this *generator) embedded(typ string) ([]field, bool) {
 	typ = strings.TrimPrefix(strings.TrimSpace(typ), "*")
 	if fields, ok := wellKnownEmbeds[typ]; ok {
@@ -1620,45 +1476,34 @@ func (this *generator) embedded(typ string) ([]field, bool) {
 	return nil, false
 }
 
-// Options is one invocation, as the command line describes it.
 type Options struct {
-	Dir      string // package directory to read
-	Out      string // output file name, written into Dir unless Into is set
-	Into     string // write into this directory instead of Dir
-	Types    string // comma-separated model names; empty means every tagged struct
-	Skip     string // comma-separated field names to leave out entirely
-	Readonly string // comma-separated field names to keep out of the update DTO
-	Import   string // import path of Dir, to qualify models written elsewhere
-	Depth    int    // how far to expand relation paths into the metamodel
+	Dir      string
+	Out      string
+	Into     string
+	Types    string
+	Skip     string
+	Readonly string
+	Import   string
+	Depth    int
 	WithDTO  bool
 	WithMeta bool
-	// NoRepo keeps the generator useful for a DTO/metamodel-only consumer.
-	// The normal command generates a datasource-independent repository
-	// blueprint and binding factory for every model.
+
 	NoRepo bool
-	// Recursive discovers model files below Dir and writes one vv_gen.go next
-	// to each package that contains an exported model.
+
 	Recursive bool
-	Adapter   bool   // also generate the resource adapter: input DTO, mapper, inverse map, service, wiring
-	Binding   string // which transport the wiring is written for: "net" or "none"
+	Adapter   bool
+	Binding   string
 	SpecsPkg  string
 	CrudPkg   string
 	UtilsPkg  string
 
-	// The adapter half names three more packages than the DTO half does, and
-	// they are fields rather than flags. -crud and -specs exist because a
-	// consumer may point the generated file at a vendored copy of those two;
-	// nobody has asked for the same over these, and six import-path flags is
-	// five ways to produce a file that does not compile.
 	PortPkg string
 	ErrsPkg string
 	NetPkg  string
 
-	// Log receives the one line the command prints on success. Nil is silent.
 	Log io.Writer
 }
 
-// The packages the adapter half names. See Options.
 const (
 	DefaultCrudPkg  = "github.com/frostgrove/vv/crud"
 	DefaultSpecsPkg = "github.com/frostgrove/vv/crud/decorators/specs"
@@ -1668,8 +1513,6 @@ const (
 	DefaultUtilsPkg = "github.com/frostgrove/vv/utils"
 )
 
-// Run generates from o and writes the result. The output path is Out resolved
-// against Into when set, Dir otherwise.
 func Run(o *Options) error {
 	if o == nil {
 		return fmt.Errorf("codegen: options are nil")
@@ -1695,8 +1538,6 @@ func Run(o *Options) error {
 			one.Out = outName
 			one.Recursive = false
 			if err := Run(&one); err != nil {
-				// A model file may carry only package-private helpers. It is not a
-				// generation target, and must not make an application-wide scan fail.
 				if strings.Contains(err.Error(), "no models found in ") {
 					continue
 				}
@@ -1711,10 +1552,6 @@ func Run(o *Options) error {
 		binding = "net"
 	}
 	if binding != "net" && binding != "none" {
-		// Fiber and Gin wiring would import a satellite module, which a
-		// consumer may do and the library's own generated files may not
-		// ([[D-033]]). Refused rather than emitted, so the failure is a message
-		// and not a build error in the output.
 		return fmt.Errorf("-binding %s: only net and none are generated today", binding)
 	}
 	g := &generator{
@@ -1773,9 +1610,6 @@ func containedOutputPath(dir, name string) (string, error) {
 	return target, nil
 }
 
-// modelDirs finds packages that opted into generation by placing a model in a
-// conventional model file. It follows vvgoose's model-file convention and
-// emits one generated Go file per package.
 func modelDirs(root string) ([]string, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

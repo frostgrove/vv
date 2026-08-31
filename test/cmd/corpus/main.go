@@ -1,11 +1,3 @@
-// Command corpus recaptures the SQL error corpus from the live databases.
-//
-//	make corpus
-//
-// It writes one file per engine under errs/sqlerr/testdata/corpus. Recapturing
-// an unchanged set of servers produces byte-identical files, so a diff is always
-// a real change — a server upgrade, a driver upgrade, or a case that stopped
-// violating what it was written to violate.
 package main
 
 import (
@@ -64,19 +56,10 @@ func run(out, only string) error {
 	return nil
 }
 
-// report says what moved, because a rewritten file that nobody reads is how a
-// corpus stops describing anything.
-//
-// It does not refuse the change. A server upgrade legitimately moves a key, and
-// a generator that failed on one could not be used for the thing it is for. The
-// judgement belongs to TestTheCorpusStillDescribesTheseServers, which fails on
-// the next `make integration`; this is here so the person running the capture
-// sees it first, and sees a case that started violating something other than
-// what it is named for.
 func report(dir string, c *sqlerr.Corpus) {
 	old, err := sqlerr.Load(dir, c.Engine)
 	if err != nil {
-		return // the first capture of this engine: everything is new
+		return
 	}
 	if old.Server != c.Server {
 		fmt.Printf("          server was %s\n", old.Server)

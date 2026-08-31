@@ -1,7 +1,12 @@
 # D-061 — A wrapper forwards what it wraps, and the library walks to find it
 
 **Status:** accepted
-**Invariant:** No optional interface is looked up with a bare type assertion on the layer directly below. A decorator says what it wraps with `Next()`; a `Source` wrapper says so with `UnwrapSource()`; and `crud.SourceOf`, `crud.BeginnerOf`, `crud.ReadSourceOf` and `crud.KeyOf` follow both. The order layers were listed in never decides whether a feature works.
+**Invariant:** Navigation, identity, routing and transaction-construction
+capabilities are discovered through declared wrapper walks; repository and
+storage statement effects never tunnel through a wrapper that did not preserve
+that exact verb. The order built-in layers were listed in never decides whether
+a feature works, and an unknown layer fails closed or selects the explicit SQL
+fallback. Transaction-handle observability remains governed by [[D-062]].
 
 ## The decision
 
@@ -11,12 +16,15 @@ had that `Core` does not name — silently, at compile time, with nothing to see
 The same is true one level down: a `Source` wrapper erases `Beginner`,
 `ReadSourcer` and `Identified`.
 
-Two one-method interfaces make the chain walkable, and four helpers walk it:
+Two one-method interfaces make discovery chains walkable, and four helpers walk
+them. Effect capabilities use a deliberately different rule:
 
 | Interface | Implemented by | Walked by |
 |---|---|---|
 | `crud.Nexter` — `Next() Core[M, ID]` | `crud.Base`, `security.gate`, `faults.enricher` | `crud.SourceOf` |
 | `crud.SourceUnwrapper` — `UnwrapSource() Source` | any consumer wrapper | `crud.BeginnerOf`, `crud.ReadSourceOf`, `crud.KeyOf` |
+| `crud.BatchInserter` — `InsertBatch(...)` | `sqlrepo`, and each transparent repository decorator | exact outer `Core` only through `crud.InsertBatchOf` |
+| `crud.UnsafeBulkInserter` — `UnsafeBulkInsert(...)` | `crudpgx`, and an explicitly transparent source wrapper | exact executor/source only through `crud.UnsafeBulkInserterOf` |
 
 Both walks are bounded at 64 steps: a chain is built once at start-up and is a
 handful of layers deep, so a walk that long is following a cycle somebody built
@@ -68,10 +76,27 @@ implements neither `Sourced` nor `Nexter` still ends the walk, and `faults` stil
 refuses at Bind time. That refusal is now about the chain rather than about Go's
 promotion rules, and its message says which.
 
+**Because discovery and execution are different authorities.** Walking through
+an unknown repository decorator to invoke `InsertBatch` could skip validation,
+authorisation or audit logic owned by that decorator. Walking through an
+instrumented `Source` to invoke native bulk I/O could skip tracing, rate limits,
+circuit breaking or transaction-local session setup. Therefore
+`InsertBatchOf` and `UnsafeBulkInserterOf` are exact assertions by design.
+Built-in Gate and faults layers explicitly forward the typed repository verb;
+an unknown repository decorator returns `ErrNoBatchInsertSupport`. A source
+wrapper explicitly implements `UnsafeBulkInserter` when forwarding is truly
+transparent; otherwise `sqlrepo.InsertBatch` selects portable SQL. A direct
+statement reaches the wrapper's `Exec`; atomic multi-statement work runs on the
+transaction returned by `Begin` and is visible only when that transaction is
+also wrapped. `ReadWrite` explicitly forwards to the primary because routing is
+the only behaviour it owns.
+
 ## What it forbids
 
 - Do not write `x.(crud.Beginner)`, `x.(crud.ReadSourcer)` or
-  `x.(crud.Sourced)` on a value that may be wrapped. Use the helper.
+  `x.(crud.Sourced)` on a value that may be wrapped. Use the discovery helper.
+- Do not extend `Nexter` or `SourceUnwrapper` walks to execute storage effects.
+  Preserve the exact optional verb explicitly or fail closed/use portable SQL.
 - Do not add a decorator to this repository without a `Next()`. Embedding
   `crud.Base` gives one.
 - Do not make either walk unbounded.
@@ -82,7 +107,9 @@ promotion rules, and its message says which.
 
 - `crud/executor.go` — `Nexter`, `SourceOf`, `SourceUnwrapper`, `unwrapSource`,
   `identityOf`, `BeginnerOf`, `ReadSourceOf`, `KeyOf`, `ownScope`,
-  `readWrite.UnwrapSource`, `readWrite.DataSource`, `maxChainDepth`.
+  `readWrite.UnwrapSource`, `readWrite.DataSource`, `UnsafeBulkInserterOf`,
+  `readWrite.UnsafeBulkInsert`, `maxChainDepth`.
+- `crud/batch.go` — the exact `BatchInserter`/`InsertBatchOf` repository effect.
 - `crud/repo.go:Base` — the pass-through that supplies `Next()`.
 - `crud/decorators/security/security.go:Next`
 - `crud/decorators/faults/faults.go:Next`
@@ -123,9 +150,16 @@ about what a wrapped source is — which is exactly how they came to disagree.
   deliberately opaque decorator: the control that the walk has not become "yes to
   anything".
 - `TestAWrappedSourceKeepsWhatItWrapsWhenItSaysWhatItWraps` in
-  `crud/wrapsource_test.go` — all three interfaces through a wrapper, with a
+  `crud/wrapsource_test.go` — all three discovery interfaces through a wrapper,
+  while native bulk remains hidden unless explicitly forwarded, with a
   wrapper that omits `UnwrapSource` as the control that the helpers are following
   a declaration rather than guessing.
+- `TestUnknownRepositoryDecoratorFailsBatchInsertionClosed` in
+  `crud/batch_test.go` — an optional write does not tunnel through an opaque
+  consumer decorator.
+- `TestUnknownSourceWrapperSeesSingleStatementPortableSQL` and
+  `TestReadWriteExplicitlyForwardsBulkInsertionToThePrimary` in
+  `crud/sqlrepo/insert_batch_test.go` — the two source-side branches.
 - `TestInTxReachesTheBeginnerThroughAWrapper`, same file, with the same control.
 - `TestAWrappedPrimaryIsStillTheDatabaseItNames` and
   `TestATransactionOnAWrappedSourceIsScopedToItsDatabase`, same file — the two

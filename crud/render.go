@@ -2,30 +2,19 @@ package crud
 
 import "fmt"
 
-// SQL assembles a statement against a dialect and a bound model. It is the
-// exported seam that repository implementations build on: predicates resolve
-// field references through the schema, bind markers are numbered per dialect,
-// and the first resolution failure is remembered instead of panicking.
 type SQL struct {
 	w writer
 }
 
-// NewSQL starts a statement.
 func NewSQL(d Dialect, m *Meta) *SQL {
 	return &SQL{w: writer{d: d, m: m}}
 }
 
-// Alias qualifies every column this statement renders with a table alias, and
-// declares that alias as the correlation target for nested paths.
 func (this *SQL) Alias(alias string) *SQL {
 	this.w.cur = scope{meta: this.w.m, alias: alias}
 	return this
 }
 
-// RelationScopes declares the narrowing that follows this statement into every
-// table a relation hop opens — the EXISTS a nested filter builds and the scalar
-// subquery a nested sort builds. Without it those subqueries read their tables
-// raw, whatever the statement's own WHERE says.
 func (this *SQL) RelationScopes(rs *RelationScopes) *SQL {
 	if !rs.Empty() {
 		this.w.rel = rs
@@ -33,14 +22,10 @@ func (this *SQL) RelationScopes(rs *RelationScopes) *SQL {
 	return this
 }
 
-// Raw appends literal SQL. Nothing is escaped or rewritten.
 func (this *SQL) Raw(s string) *SQL { this.w.str(s); return this }
 
-// Ident appends a quoted identifier.
 func (this *SQL) Ident(name string) *SQL { this.w.str(this.w.d.Quote(name)); return this }
 
-// TableRef appends a validated table reference, quoting each component on its
-// own. Unlike Ident, it understands the structured qualifier boundary.
 func (this *SQL) TableRef(table TableRef) *SQL {
 	if err := table.Validate(); err != nil {
 		this.w.fail(err)
@@ -50,13 +35,10 @@ func (this *SQL) TableRef(table TableRef) *SQL {
 	return this
 }
 
-// Table appends the bound Meta's physical table reference.
 func (this *SQL) Table() *SQL { return this.TableRef(this.w.m.TableReference()) }
 
-// Column resolves a Go field name (or column name) and appends it quoted.
 func (this *SQL) Column(ref string) *SQL { this.w.column(ref); return this }
 
-// Columns appends a comma separated, quoted column list.
 func (this *SQL) Columns(fields []*Field) *SQL {
 	for i, f := range fields {
 		if i > 0 {
@@ -67,10 +49,8 @@ func (this *SQL) Columns(fields []*Field) *SQL {
 	return this
 }
 
-// Bind appends a placeholder and records the argument.
 func (this *SQL) Bind(v any) *SQL { this.w.bind(v); return this }
 
-// Binds appends `?, ?, ?` for a whole argument list.
 func (this *SQL) Binds(vs []any) *SQL {
 	for i, v := range vs {
 		if i > 0 {
@@ -81,7 +61,6 @@ func (this *SQL) Binds(vs []any) *SQL {
 	return this
 }
 
-// Where appends ` WHERE <p>` when p is non-nil.
 func (this *SQL) Where(p Predicate) *SQL {
 	if p == nil {
 		return this
@@ -91,7 +70,6 @@ func (this *SQL) Where(p Predicate) *SQL {
 	return this
 }
 
-// Predicate appends a predicate without the WHERE keyword.
 func (this *SQL) Predicate(p Predicate) *SQL {
 	if p != nil {
 		p.render(&this.w)
@@ -99,7 +77,6 @@ func (this *SQL) Predicate(p Predicate) *SQL {
 	return this
 }
 
-// OrderBy appends ` ORDER BY ...` when there is anything to sort by.
 func (this *SQL) OrderBy(orders []Order) *SQL {
 	if len(orders) == 0 {
 		return this
@@ -114,8 +91,6 @@ func (this *SQL) OrderBy(orders []Order) *SQL {
 	return this
 }
 
-// LimitOffset appends pagination. A limit of zero emits nothing but still
-// honours a non-zero offset.
 func (this *SQL) LimitOffset(limit, offset int) *SQL {
 	if limit > 0 {
 		this.w.str(" LIMIT ")
@@ -123,11 +98,6 @@ func (this *SQL) LimitOffset(limit, offset int) *SQL {
 	}
 	if offset > 0 {
 		if limit <= 0 {
-			// Not every grammar has a bare OFFSET, and the ones that do not
-			// spell "no limit" differently. Asking the dialect rather than
-			// checking its name for "mysql" is what SQLite needs: it used to be
-			// handed `OFFSET 5` on its own and answer `near "5": syntax error`,
-			// reachable straight from the wire as {"unpaged":true,"offset":5}.
 			if d, ok := this.w.d.(OffsetLimiter); ok {
 				this.w.str(d.LimitAll())
 			}
@@ -138,12 +108,8 @@ func (this *SQL) LimitOffset(limit, offset int) *SQL {
 	return this
 }
 
-// Args returns the collected bind arguments.
 func (this *SQL) Args() []any { return this.w.args }
 
-// Err reports the first field-resolution failure or a statement that exceeds
-// its dialect's bind budget. The latter is checked here, after every predicate,
-// scope and SET value has contributed to the same statement-wide count.
 func (this *SQL) Err() error {
 	if this.w.err != nil {
 		return this.w.err
@@ -161,15 +127,12 @@ func (this *SQL) Err() error {
 		len(this.w.args), this.w.d.Name(), limit)}
 }
 
-// String returns the assembled statement.
 func (this *SQL) String() string { return this.w.sb.String() }
 
-// Done returns the statement, its arguments and any error in one go.
 func (this *SQL) Done() (string, []any, error) {
 	return this.w.sb.String(), this.w.args, this.Err()
 }
 
-// Dialect exposes the dialect the statement is being built for.
 func (this *SQL) Dialect() Dialect { return this.w.d }
 
 func itoa(n int) string {

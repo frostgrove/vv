@@ -24,8 +24,6 @@ func TestAnUnknownDialectIsRefusedBeforeAnyStatement(t *testing.T) {
 	}
 }
 
-// The control. Without it a Load that refused everything passes the test above,
-// and the whole start-up-failure claim would rest on a test that proves nothing.
 func TestAKnownDialectLoadsAndIssuesItsStatements(t *testing.T) {
 	ctx := context.Background()
 	rec := recorder(oneTable(), 1)
@@ -45,23 +43,9 @@ func TestAKnownDialectLoadsAndIssuesItsStatements(t *testing.T) {
 	}
 }
 
-// Insufficient privileges and a proxy blocking information_schema arrive here.
-// [[D-021]] makes them fail at start-up, and the thing that must not happen is
-// the half-built catalog: a schema missing its constraints answers "no
-// violations found" for the rest of the process's life.
-//
-// Two axes, because one refusal reaches the read two ways and only one of them
-// is database/sql's. pgx hands a refused statement back as a live Rows that
-// yields what it has and then answers Err, so a loop that ends without asking
-// reads a truncated schema as a complete one — which is the arm that stays dead
-// if only the first axis is walked.
 func TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog(t *testing.T) {
 	blocked := errors.New("permission denied for table pg_constraint")
 
-	// The second arm reuses the statement's own rows, so every row still scans
-	// and the only thing wrong with the read is that it ended in a failure. Two
-	// of oneTable()'s three result sets have a row and one has none, so both
-	// shapes of a truncated read are walked.
 	for _, how := range []struct {
 		name     string
 		response func(crudtest.Result) crudtest.Result
@@ -97,16 +81,6 @@ func TestABlockedIntrospectionFailsLoadRatherThanReturningAHalfCatalog(t *testin
 	}
 }
 
-// A row the driver cannot scan is the same start-up failure as a blocked
-// statement, and the reason it is not theoretical is in catEngines' own comment:
-// the two PostgreSQL drivers disagree about what a NULL and a smallint scan
-// into. What must not happen is a catalog missing the columns that failed,
-// answering "no violations found" for the rest of the process's life.
-//
-// The wrong-arity row has to stay deliberately one short of pgColumnRow, or a
-// statement that gains a column turns this into a tautology.
-// TestAKnownDialectLoadsAndIssuesItsStatements is its control: the same
-// oneTable() schema with full-arity rows loads and finds the table.
 func TestARowThatCannotBeScannedFailsLoadRatherThanDroppingIt(t *testing.T) {
 	s := oneTable()
 	short := pgColumnRow("rows", "id", 1)
@@ -121,10 +95,6 @@ func TestARowThatCannotBeScannedFailsLoadRatherThanDroppingIt(t *testing.T) {
 	}
 }
 
-// The control, and the statement count is not decoration: crudtest.Recorder
-// answers an exhausted queue with an empty result set and no error, so without
-// it a loader sending more statements than the test queued would silently build
-// empty tables and the failure half above would pass for the wrong reason.
 func TestAnUnblockedIntrospectionBuildsThePopulatedCatalog(t *testing.T) {
 	ctx := context.Background()
 	s := pgSchema{

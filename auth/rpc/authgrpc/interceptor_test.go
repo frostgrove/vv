@@ -16,7 +16,6 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// call runs one unary call through the interceptor.
 func call(t *testing.T, guard *auth.Guard, ctx context.Context, options ...authgrpc.Option) (*seen, error) {
 	t.Helper()
 	h := &seen{}
@@ -41,9 +40,6 @@ func TestAnAuthenticatedCallReachesTheMethodWithItsPrincipal(t *testing.T) {
 	}
 }
 
-// The metadata key is lowercased by the transport, and md.Get lowercases what
-// it is asked for — so the Guard's default "Authorization" finds it. If it did
-// not, every call would be a 401 and the default would be useless.
 func TestTheMetadataKeyIsFoundWhateverItsCase(t *testing.T) {
 	for _, key := range []string{"authorization", "Authorization"} {
 		t.Run(key, func(t *testing.T) {
@@ -89,10 +85,6 @@ func TestAKeyProviderOutageRemainsTypedAndTheMethodNeverRuns(t *testing.T) {
 	}
 }
 
-// There is no status table in this package: the refusal is an error, and the
-// kind it already carries is what crudgrpc.Errors turns into a status. This is
-// the gRPC spelling of the HTTP bindings' "the refusal body is the shared
-// envelope".
 func TestTheRefusalCarriesUnauthenticatedAndNamesNoReason(t *testing.T) {
 	_, err := call(t, auth.NewGuard(refuses()), incoming("authorization", "Bearer forged"))
 
@@ -234,8 +226,6 @@ func unaryChain(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInt
 	}
 }
 
-// Skip keys on the full method name, which is why crudgrpc gives each resource
-// its own service rather than sharing one.
 func TestSkipLeavesTheNamedMethodAlone(t *testing.T) {
 	const health = "/grpc.health.v1.Health/Check"
 
@@ -251,8 +241,6 @@ func TestSkipLeavesTheNamedMethodAlone(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the test above passes for a Skip that skips
-	// everything, which would leave the whole server unauthenticated.
 	t.Run("control: every other method is still authenticated", func(t *testing.T) {
 		h, err := call(t, auth.NewGuard(accepts()), incoming(), authgrpc.Skip(health))
 		if err == nil {

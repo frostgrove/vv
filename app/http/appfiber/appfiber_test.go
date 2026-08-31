@@ -18,8 +18,6 @@ import (
 
 const prefix = "/api/v1"
 
-// a route is one contributor, with whatever it mounts and whatever it declares
-// held apart — because the whole point of the gate is that the two can disagree.
 type route struct {
 	mount   func(fiber.Router)
 	declare []authhttp.Endpoint
@@ -62,15 +60,13 @@ func TestAContributedRouteIsMountedUnderThePrefix(t *testing.T) {
 	}
 }
 
-// The gate is the reason a module declares anything at all. A route added
-// without a check looks exactly like a route that is deliberately public.
 func TestStartUpFailsWhenARouteDeclaresNothing(t *testing.T) {
 	err := fx.New(
 		provide(newFiber),
 		provide(appfiber.AsRoute(newRoute(route{
 			mount: func(r fiber.Router) {
 				r.Get("/things", handler)
-				// The one somebody added in a hurry.
+
 				r.Delete("/things/:id", handler)
 			},
 			declare: []authhttp.Endpoint{authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read"))},
@@ -86,9 +82,6 @@ func TestStartUpFailsWhenARouteDeclaresNothing(t *testing.T) {
 	}
 }
 
-// The other half, and the one that is easy to leave out: a declaration that
-// outlives its handler is what makes the list look complete while it covers less
-// every month.
 func TestStartUpFailsWhenADeclarationMountsNothing(t *testing.T) {
 	err := fx.New(
 		provide(newFiber),
@@ -110,9 +103,6 @@ func TestStartUpFailsWhenADeclarationMountsNothing(t *testing.T) {
 	}
 }
 
-// A value group has no order of its own, and "the guard runs before the handler"
-// decided by which provider fx happened to visit first is a security property
-// decided by luck — one that every test mounting a single module still passes.
 func TestMiddlewareRunsInTheOrderItDeclared(t *testing.T) {
 	var ran []string
 	records := func(name string, order int) func() appfiber.Middleware {
@@ -127,8 +117,7 @@ func TestMiddlewareRunsInTheOrderItDeclared(t *testing.T) {
 	var mounted *fiber.App
 	err := fx.New(
 		provide(newFiber),
-		// Registered in the wrong order on purpose: what decides the chain has
-		// to be the number, not the order fx walked the group in.
+
 		provide(appfiber.AsMiddleware(records("handler-assumes-a-caller", 200))),
 		provide(appfiber.AsMiddleware(records("guard", 100))),
 		provide(appfiber.AsRoute(newRoute(route{
@@ -149,8 +138,6 @@ func TestMiddlewareRunsInTheOrderItDeclared(t *testing.T) {
 	}
 }
 
-// A middleware is not an endpoint and has nothing to declare. If the gate
-// counted one, every application would have to declare its own CORS handler.
 func TestAMiddlewareDeclaresNoAccess(t *testing.T) {
 	err := fx.New(
 		provide(newFiber),

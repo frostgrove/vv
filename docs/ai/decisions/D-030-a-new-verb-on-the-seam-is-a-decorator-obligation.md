@@ -76,12 +76,34 @@ gate that refused everything.
 batch and only then hands it down. A partially-written batch that failed halfway
 would be worse than a refusal: the caller cannot tell which rows landed.
 
+## Optional side-effect verbs obey the same rule
+
+`InsertBatch` is intentionally not a `Core` method: adding it there would break
+direct external Core implementations, while a decorator embedding Core would
+compile and silently inherit the new verb — this decision's exact bypass
+hazard. The optional exact capability preserves source compatibility and turns
+that silent inheritance into a refusal. `crud.BatchInserter` is a typed
+repository effect, and `Repo.InsertBatch` checks only the exact outer Core. It
+never walks `Nexter` looking for an implementation underneath an unknown
+decorator. Such a layer receives `ErrNoBatchInsertSupport` before I/O.
+
+Every built-in decorator that may transparently preserve the verb implements it
+explicitly. `security.gate.InsertBatch` authorises `Create`, works on private
+copies, inspects every row and refuses a scope-only policy that cannot validate
+incoming rows. `faults.enricher.InsertBatch` enriches/probes the exact verb and
+then forwards it. Both preserve the opaque `BatchOption` list without resolving
+or dropping it; sqlrepo resolves the storage choice exactly once. Thus both
+built-in decorator orders work, while consumer middleware must make the same
+written decision before opting in.
+
 ## What it forbids
 
 - Do not add a method to `crud.Core` without deciding, in writing, what
   `security.gate` does with it.
 - Do not implement a gate override that checks nothing "for now".
 - Do not let a batched write check fewer rows than the unbatched one would.
+- Do not walk through an unknown decorator to find an optional side-effect
+  verb. Explicitly preserve its policy/observability semantics or fail closed.
 
 ## Where it lives
 
@@ -89,6 +111,9 @@ would be worse than a refusal: the caller cannot tell which rows landed.
 - `crud/decorators/security/security.go:Aggregate`
 - `crud/decorators/security/security.go:SaveAll`
 - `crud/decorators/security/security.go:UpdateAll`
+- `crud/batch.go:BatchInserter`, `InsertBatchOf`
+- `crud/decorators/security/security.go:InsertBatch`
+- `crud/decorators/faults/faults.go:InsertBatch`
 - `crud/decorators/security/obligation_test.go:coreVerbs` — the seam decided one
   method at a time, and the reason for each of the two that are not.
 
@@ -104,6 +129,10 @@ would be worse than a refusal: the caller cannot tell which rows landed.
   named.
 - `TestTheInheritedVerbsAreNotGated`, same file — the control on the two rows
   that claim to inherit.
+- `TestUnknownRepositoryDecoratorFailsBatchInsertionClosed` in
+  `crud/batch_test.go`, and
+  `TestPortableBatchSurvivesEveryBuiltInDecoratorOrder` in
+  `crud/sqlrepo/insert_batch_test.go` — the optional-verb counterpart.
 
 ## See also
 

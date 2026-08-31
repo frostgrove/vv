@@ -15,10 +15,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// Every route the package documents, with the verb it answers, the status it
-// answers with, and the repository method it is a front door for. A route that
-// stops being mounted, changes its success code or starts calling something
-// else fails here first.
 func TestRoutesMountEveryDocumentedEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -35,8 +31,7 @@ func TestRoutesMountEveryDocumentedEndpoint(t *testing.T) {
 		{"one entity", http.MethodGet, "/widgets/42", "", http.StatusOK, []string{"GetByID"}},
 		{"create", http.MethodPost, "/widgets", `{"name":"bolt"}`, http.StatusCreated, []string{"Save"}},
 		{"partial update", http.MethodPatch, "/widgets/42", `{"name":"renamed"}`, http.StatusOK, []string{"Update"}},
-		// PUT on a database-generated key replaces and never creates, so it
-		// looks the row up before writing it.
+
 		{"replace", http.MethodPut, "/widgets/42", `{"name":"replaced"}`, http.StatusOK, []string{"GetByID", "Save"}},
 		{"delete one", http.MethodDelete, "/widgets/42", "", http.StatusOK, []string{"Delete"}},
 		{"bulk delete", http.MethodPost, "/widgets/bulk-delete", `{"ids":[1,2]}`, http.StatusOK, []string{"Delete"}},
@@ -54,8 +49,6 @@ func TestRoutesMountEveryDocumentedEndpoint(t *testing.T) {
 	}
 }
 
-// /count is registered before /:id, so the literal path wins instead of being
-// read as an entity called "count".
 func TestCountIsNotSwallowedByTheIDRoute(t *testing.T) {
 	app, fake := mount(t)
 
@@ -66,8 +59,6 @@ func TestCountIsNotSwallowedByTheIDRoute(t *testing.T) {
 	}
 }
 
-// Register mounts on a router that already exists — the other half of the
-// documented set-up, and the one a real application with a versioned group uses.
 func TestRegisterMountsOnAnExistingRouter(t *testing.T) {
 	fake := newFake()
 	app := fiber.New()
@@ -99,9 +90,6 @@ func TestListCompilesQueryStringPagingAndSorting(t *testing.T) {
 	}
 }
 
-// Fiber's Queries() folds repeated parameters into a map, which would keep only
-// the last `f=` term. The handler reads the raw query args instead, so every
-// repeat survives: the filter is the AND of all of them, in the order sent.
 func TestRepeatedFilterTermsAllSurvive(t *testing.T) {
 	app, fake := mount(t)
 
@@ -118,7 +106,6 @@ func TestRepeatedFilterTermsAllSurvive(t *testing.T) {
 	}
 }
 
-// The same goes for every other repeatable parameter, not just the filter.
 func TestRepeatedPreloadAndSortParametersAllSurvive(t *testing.T) {
 	app, fake := mount(t)
 
@@ -133,8 +120,6 @@ func TestRepeatedPreloadAndSortParametersAllSurvive(t *testing.T) {
 	}
 }
 
-// The full JSON DSL: filter, sort, preload and paging in one document, each
-// landing as its own repository option.
 func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	app, fake := mount(t)
 
@@ -158,7 +143,6 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 		t.Fatalf("sort compiled to %v, want %v", got, want)
 	}
 
-	// A relation hop in a filter is a correlated EXISTS, never a join.
 	sql, args := whereSQL(t, o)
 	wantSQL := `(EXISTS (SELECT 1 FROM "owners" AS rx1 WHERE rx1."id" = "widgets"."owner_id" ` +
 		`AND rx1."name" LIKE $1 ESCAPE '\') AND "price" >= $2)`
@@ -172,7 +156,7 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	if got, want := preloadPaths(o), []string{"Owner", "Parts"}; !slices.Equal(got, want) {
 		t.Fatalf("preloads reached the repository as %v, want %v", got, want)
 	}
-	// The per-relation filter is compiled against the related model, not the root.
+
 	partsSQL, partsArgs := predSQL(t, relMeta(t, "Parts"), crud.Build(o.Preloads[1].Opts...).Predicate())
 	if partsSQL != `"label" LIKE $1 ESCAPE '\'` {
 		t.Fatalf("the preload filter compiled to %q, want %q", partsSQL, `"label" LIKE $1 ESCAPE '\'`)
@@ -182,8 +166,6 @@ func TestQueryBodyCompilesTheWholeDSL(t *testing.T) {
 	}
 }
 
-// The page a client receives: the items, then every field a pager is drawn
-// from, under the names the wire format promises.
 func TestListAnswersWithThePageEnvelope(t *testing.T) {
 	app, _ := mount(t)
 
@@ -222,9 +204,6 @@ func TestListAnswersWithThePageEnvelope(t *testing.T) {
 	}
 }
 
-// A count is a single number, so paging, sorting and preloads are dropped
-// before the request reaches the repository — they would cost a join or a
-// second round trip and could not change the answer.
 func TestCountKeepsTheFilterAndDropsEverythingElse(t *testing.T) {
 	app, fake := mount(t)
 
@@ -271,9 +250,6 @@ func TestCountAcceptsTheJSONDocumentToo(t *testing.T) {
 	}
 }
 
-// GET /:id identifies the candidate row by its path parameter, but a filter
-// can still prove that candidate ineligible (for example, outside a tenant).
-// Paging and sorting remain meaningless for one row.
 func TestGetByIDPassesThePathIDAndEligibilityOptions(t *testing.T) {
 	app, fake := mount(t)
 
@@ -305,8 +281,6 @@ func TestGetByIDPassesThePathIDAndEligibilityOptions(t *testing.T) {
 	}
 }
 
-// A create answers 201 with the row as the repository stored it — including the
-// key the database chose, which is the only part the client cannot know.
 func TestCreateReturns201WithTheStoredRow(t *testing.T) {
 	app, fake := mount(t)
 
@@ -325,8 +299,6 @@ func TestCreateReturns201WithTheStoredRow(t *testing.T) {
 	}
 }
 
-// The two things a client may not decide for itself: a database-generated key
-// and any `generated` column.
 func TestCreateRefusesAClientChosenKeyAndGeneratedColumns(t *testing.T) {
 	app, fake := mount(t)
 
@@ -348,9 +320,6 @@ func TestCreateRefusesAClientChosenKeyAndGeneratedColumns(t *testing.T) {
 	}
 }
 
-// A PATCH body carries only the fields it means to change; everything else must
-// arrive at the repository undefined, and the row must come back unchanged in
-// those columns.
 func TestUpdateForwardsOnlyTheFieldsTheBodyCarried(t *testing.T) {
 	app, fake := mount(t)
 
@@ -380,8 +349,6 @@ func TestUpdateForwardsOnlyTheFieldsTheBodyCarried(t *testing.T) {
 	}
 }
 
-// An explicit null is a value, not an omission: it reaches the DTO as null and
-// the row comes back with the column cleared.
 func TestUpdateCarriesAnExplicitNullThrough(t *testing.T) {
 	app, fake := mount(t)
 
@@ -399,8 +366,6 @@ func TestUpdateCarriesAnExplicitNullThrough(t *testing.T) {
 	}
 }
 
-// PUT replaces the whole row, and the URL decides which row that is: an id in
-// the payload is overwritten rather than obeyed.
 func TestReplaceTakesTheIDFromThePathNotTheBody(t *testing.T) {
 	app, fake := mount(t)
 
@@ -436,7 +401,6 @@ func TestDeleteReportsTheNumberOfRowsRemoved(t *testing.T) {
 	}
 }
 
-// A bulk delete is one repository call carrying every id, not one call per id.
 func TestBulkDeletePassesEveryIDInOneCall(t *testing.T) {
 	app, fake := mount(t)
 
@@ -454,8 +418,6 @@ func TestBulkDeletePassesEveryIDInOneCall(t *testing.T) {
 	}
 }
 
-// An empty id list is answered without touching the repository — a DELETE with
-// no keys is the one shape that could turn into "delete everything".
 func TestBulkDeleteWithNoIDsNeverReachesTheRepository(t *testing.T) {
 	app, fake := mount(t)
 
@@ -473,7 +435,6 @@ func TestBulkDeleteWithNoIDsNeverReachesTheRepository(t *testing.T) {
 	}
 }
 
-// A count with no body at all is a valid request: it counts every row.
 func TestCountPostAcceptsAnEmptyBody(t *testing.T) {
 	app, fake := mount(t)
 
@@ -485,14 +446,7 @@ func TestCountPostAcceptsAnEmptyBody(t *testing.T) {
 	}
 }
 
-// The DSL's flags are options in their own right, and a list request that asks
-// for everything must not silently keep paginating.
 func TestListHonoursUnpagedAndSkipTotal(t *testing.T) {
-	// The endpoint declares AllowUnpaged. Without it the flag is refused, which
-	// is the point of the default: unpaged is the one thing a client can ask for
-	// that has no ceiling — MaxLimit clamps it, and MaxLimit is unset by default
-	// ([[D-060]]). skipTotal and distinct need no declaration; neither changes
-	// how many rows come back.
 	app, fake := mount(t, WithQuery[Widget, int64, WidgetUpdate](&query.Config{AllowUnpaged: true, AllowDistinct: true}))
 
 	ok(t, app, http.MethodGet, "/widgets?unpaged=true&skipTotal=true&distinct=true", "", http.StatusOK)
@@ -503,12 +457,6 @@ func TestListHonoursUnpagedAndSkipTotal(t *testing.T) {
 	}
 }
 
-// And a request that asks for it on an endpoint that never declared it is
-// refused rather than served.
-//
-// The control on the test above: without this, that one would hold just as well
-// for a handler that ignored the flag entirely, and the flag's whole cost is
-// that it is honoured.
 func TestUnpagedIsRefusedOnAnEndpointThatDidNotDeclareIt(t *testing.T) {
 	app, fake := mount(t)
 
@@ -521,8 +469,6 @@ func TestUnpagedIsRefusedOnAnEndpointThatDidNotDeclareIt(t *testing.T) {
 	}
 }
 
-// The handler never reaches past the Repository interface, which is what lets a
-// service layer with its own rules stand in for the repository.
 func TestAServiceLayerCanStandInForTheRepository(t *testing.T) {
 	fake := newFake()
 	service := &widgetService{fakeRepo: fake}
@@ -539,8 +485,6 @@ func TestAServiceLayerCanStandInForTheRepository(t *testing.T) {
 	}
 }
 
-// widgetService is what an application puts between the handler and the
-// repository: it embeds one and overrides only the method it cares about.
 type widgetService struct {
 	*fakeRepo
 	saved bool
@@ -553,9 +497,6 @@ func (this *widgetService) Save(ctx context.Context, w *Widget) (Widget, error) 
 	return this.fakeRepo.Save(ctx, &copy)
 }
 
-// A request body that is not the model reaches the repository as the model,
-// because the mapper ran in between. That is the resource adapter of the
-// layering, and it is the whole of what NewFor buys.
 func TestADistinctInputDTOReachesTheModelThroughTheMapper(t *testing.T) {
 	t.Run("on create", func(t *testing.T) {
 		fake := newFake()
@@ -579,9 +520,6 @@ func TestADistinctInputDTOReachesTheModelThroughTheMapper(t *testing.T) {
 		}
 	})
 
-	// The control: the same body through New, where the input type is the model
-	// and "label" is a key the model has never heard of. Without it a NewFor
-	// that had quietly bound onto the model would pass both legs above.
 	t.Run("and the control: the same body through New means nothing", func(t *testing.T) {
 		app, fake := mount(t)
 

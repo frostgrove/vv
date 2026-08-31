@@ -6,13 +6,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Repository is everything a Service needs. *crud.Repo[M, ID, U] satisfies it,
-// and so does *specs.Repo and any struct that embeds either — which is how a
-// service layer with extra checks takes the repository's place ([[D-022]]).
-//
-// It is narrow on purpose: it lists what the routes call, not what the
-// repository can do. Every method added here is a method every hand-written
-// stand-in has to supply.
 type Repository[M any, ID comparable, U any] interface {
 	Meta() *crud.Meta
 	GetByID(ctx context.Context, id ID, options ...crud.Option) (M, error)

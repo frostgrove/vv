@@ -50,8 +50,6 @@ func TestQueryOfRefusesAnUnsafeIntegralNumber(t *testing.T) {
 		t.Fatal("an integral number that Struct rounded was accepted")
 	}
 
-	// Struct preserves the decimal string, and the whole query pipeline — not
-	// merely queryOf — accepts it as the same integer a query string carries.
 	request, err := queryOf(doc(t, `{"filter":{"price":"9007199254740993"}}`), widgetMeta)
 	if err != nil {
 		t.Fatalf("the exact string spelling was refused at the gRPC door: %v", err)
@@ -60,8 +58,6 @@ func TestQueryOfRefusesAnUnsafeIntegralNumber(t *testing.T) {
 		t.Fatalf("the exact string spelling did not compile: %v", err)
 	}
 
-	// A huge float does not pretend to be an exact integer. It is representable
-	// as the float64 Struct transports and must reach a float model field.
 	request, err = queryOf(doc(t, `{"filter":{"score":1e100}}`), queryNumberMeta)
 	if err != nil {
 		t.Fatalf("a high-magnitude float was refused at the gRPC door: %v", err)

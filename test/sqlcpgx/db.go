@@ -1,7 +1,3 @@
-// Package sqlcpgx mirrors what sqlc emits for PostgreSQL with
-// sql_package: "pgx/v5". Its DBTX is satisfied by *pgxpool.Pool, *pgx.Conn and
-// pgx.Tx — the very same handles vv's pgx adapter takes, so one pgx.Tx can
-// drive both.
 package sqlcpgx
 
 import (

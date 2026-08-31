@@ -68,9 +68,7 @@ func (this *Backend) writePrivateFile(ctx context.Context, file *os.File, source
 	if expectedSize != nil && *expectedSize < 0 {
 		return storage.Info{}, storage.NewError("write", storage.KindInvalid, fmt.Errorf("declared size is negative"))
 	}
-	// Preflight the largest possible numeric fields before consuming the source.
-	// Portable metadata is bounded by storage, and disabling HTML escaping keeps
-	// its encoded representation within this fixed private header.
+
 	preflight, err := encodePrivateHeader(privateHeader{
 		Version:     1,
 		Size:        math.MaxInt64,

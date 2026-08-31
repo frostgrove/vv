@@ -13,10 +13,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// Scope only ever narrows the statement's own FROM. Everything below is about
-// the second table a query reaches — the one a preload selects from, and the one
-// a nested filter opens an EXISTS over.
-
 type Folder struct {
 	ID       int64   `db:"id,pk,auto"`
 	TenantID int64   `db:"tenant_id"`
@@ -24,8 +20,7 @@ type Folder struct {
 	Notes    []Memo  `rel:"has_many,fk=FolderID"`
 	Owner    *Person `rel:"belongs_to,fk=OwnerID"`
 	OwnerID  int64   `db:"owner_id"`
-	// DeletedAt is what SoftFolders stamps. Folders itself ignores it, so the
-	// two repositories differ in exactly one setting.
+
 	DeletedAt crud.Opt[time.Time] `db:"deleted_at"`
 }
 
@@ -33,8 +28,7 @@ type Memo struct {
 	ID       int64 `db:"id,pk,auto"`
 	TenantID int64 `db:"tenant_id"`
 	FolderID int64 `db:"folder_id"`
-	// Author is what ScopeRelationSubject narrows by: the far side names the
-	// caller its own way, and a subject is not a claim.
+
 	Author string `db:"author"`
 	Text   string `db:"text"`
 }
@@ -51,14 +45,9 @@ type FolderUpdate struct {
 
 var Folders = sqlrepo.Define[Folder, int64, FolderUpdate]("folders")
 
-// SoftFolders is the same table and the same model, soft-deleting. It exists so
-// a test can compare the two: a soft delete and a hard one must narrow
-// identically, and for one call site they did not.
 var SoftFolders = sqlrepo.Define[Folder, int64, FolderUpdate]("folders",
 	sqlrepo.SoftDelete("DeletedAt"))
 
-// The policy a multi-tenant application actually needs: the table itself, plus
-// every table this repository can reach from it.
 var tenantEverywhere = security.Combine(
 	security.ScopeField[Folder, int64]("TenantID", tenantOf),
 	security.ScopeRelationField[Folder, int64]("Notes", "TenantID", tenantOf),
@@ -69,19 +58,15 @@ func folders(rec *crudtest.Recorder, p security.Policy[Folder, int64]) *crud.Rep
 	return Folders.Bind(rec, security.Gate(p))
 }
 
-// folderRow carries the tombstone column too, because the model has one: the
-// soft-deleting twin of this repository is what proves the stamp narrows.
 func folderRow(id, tenant int64, name string, owner int64) []any {
 	return []any{id, tenant, name, owner, nil}
 }
 
-// The leak this closes: a preload is a second statement over a table the scope
-// never mentioned, so without a relation narrowing it reads every tenant's rows.
 func TestAPreloadIsNarrowedByThePolicy(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(folderRow(1, 7, "mine", 3)), // the folders page
-		crudtest.Rows(), // the notes preload
+		crudtest.Rows(folderRow(1, 7, "mine", 3)),
+		crudtest.Rows(),
 	)
 
 	if _, err := folders(rec, tenantEverywhere).GetAll(ctx, crud.Preload("Notes")); err != nil {
@@ -97,8 +82,6 @@ func TestAPreloadIsNarrowedByThePolicy(t *testing.T) {
 	}
 }
 
-// Same statement, no relation narrowing declared: proof that the assertion above
-// is testing the policy and not something the preloader does anyway.
 func TestAPreloadIsNotNarrowedWithoutTheDeclaration(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
@@ -110,8 +93,7 @@ func TestAPreloadIsNotNarrowedWithoutTheDeclaration(t *testing.T) {
 	if _, err := folders(rec, onlyTheTable).GetAll(ctx, crud.Preload("Notes")); err != nil {
 		t.Fatal(err)
 	}
-	// Note the shape: tenant_id appears in every projection, so the assertion has
-	// to look for it as a comparison or it proves nothing either way.
+
 	if strings.Contains(rec.Statements()[1].SQL, `"tenant_id" = $`) {
 		t.Fatal("the preload narrowed itself — the positive test above proves nothing")
 	}
@@ -168,8 +150,6 @@ func TestAnIneffectiveCustomRelationScopeFailsBeforeSQL(t *testing.T) {
 	}
 }
 
-// A nested filter opens a correlated EXISTS over the target table, and that
-// subquery is just as unnarrowed as a preload is.
 func TestANestedFilterIsNarrowedByThePolicy(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows())
@@ -183,16 +163,12 @@ func TestANestedFilterIsNarrowedByThePolicy(t *testing.T) {
 	if !strings.Contains(sql, "EXISTS") {
 		t.Fatalf("expected a correlated subquery:\n%s", sql)
 	}
-	// Two tenant checks: one on folders, one inside the EXISTS over notes.
+
 	if n := strings.Count(sql, `"tenant_id" = $`); n != 2 {
 		t.Fatalf("found %d tenant checks, want 2 (the table and the subquery):\n%s", n, sql)
 	}
 }
 
-// Assigned-key Save does not use the ordinary Core options path for its final
-// write. Its conditional UPDATE must nevertheless carry relation scopes into a
-// relation-hopping root Scope, or the preflight and the write judge different
-// sets of notes.
 func TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	policy := security.Combine(
@@ -211,8 +187,8 @@ func TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate(t *testing.T) {
 		},
 	)
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(folderRow(1, 7, "before", 3)), // inspected snapshot
-		crudtest.Rows(folderRow(1, 7, "after", 3)),  // conditional UPDATE RETURNING
+		crudtest.Rows(folderRow(1, 7, "before", 3)),
+		crudtest.Rows(folderRow(1, 7, "after", 3)),
 	)
 	f := Folder{ID: 1, TenantID: 7, Name: "after", OwnerID: 3}
 	if _, err := folders(rec, policy).Save(ctx, &f); err != nil {
@@ -227,8 +203,6 @@ func TestScopedSaveCarriesRelationScopesIntoItsFinalUpdate(t *testing.T) {
 	}
 }
 
-// A to-one preload lands on a different model, and it is narrowed by the same
-// declaration.
 func TestABelongsToPreloadIsNarrowed(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
@@ -244,8 +218,6 @@ func TestABelongsToPreloadIsNarrowed(t *testing.T) {
 	}
 }
 
-// The narrowing has to survive the paths that build their own option lists —
-// GetByID and Update do not go through the same code as Get.
 func TestTheNarrowingReachesEveryReadPath(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 
@@ -283,7 +255,6 @@ func TestTheNarrowingReachesEveryReadPath(t *testing.T) {
 	}
 }
 
-// Count and Exists reach the same second table through a nested filter.
 func TestCountAndExistsNarrowTheirSubqueries(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	where := crud.Where(crud.Eq("Notes.Text", "x"))
@@ -310,8 +281,6 @@ func TestCountAndExistsNarrowTheirSubqueries(t *testing.T) {
 	}
 }
 
-// A caller cannot append its way out of a narrowing, the same way it cannot
-// append its way out of Scope.
 func TestACallerCannotWidenARelationNarrowing(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
@@ -319,7 +288,6 @@ func TestACallerCannotWidenARelationNarrowing(t *testing.T) {
 		crudtest.Rows(),
 	)
 
-	// Ask for the notes of every tenant, explicitly.
 	_, err := folders(rec, tenantEverywhere).GetAll(ctx,
 		crud.PreloadWhere("Notes", crud.Where(crud.IsNotNull("TenantID"))))
 	if err != nil {
@@ -331,7 +299,6 @@ func TestACallerCannotWidenARelationNarrowing(t *testing.T) {
 	}
 }
 
-// Failing to resolve the principal must fail the query, not quietly widen it.
 func TestARelationScopeErrorFailsClosed(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows())
 
@@ -347,7 +314,6 @@ func TestARelationScopeErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// Combine has to merge them, not let the last one win.
 func TestCombineMergesRelationNarrowings(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(
@@ -366,8 +332,6 @@ func TestCombineMergesRelationNarrowings(t *testing.T) {
 	}
 }
 
-// Two narrowings of one path AND rather than replace, so composing a role out
-// of policies can only ever tighten it.
 func TestTwoNarrowingsOfOnePathAreBothApplied(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows(folderRow(1, 7, "mine", 3)), crudtest.Rows())
@@ -389,13 +353,7 @@ func TestTwoNarrowingsOfOnePathAreBothApplied(t *testing.T) {
 	}
 }
 
-// A path or a field that does not exist is a declaration bug, and it surfaces
-// where it was written rather than as an empty result set months later.
 func TestABadRelationDeclarationPanics(t *testing.T) {
-	// Each row is declared through all three spellings. The two token-driven
-	// constructors are thin wrappers over the hand-written one, and a wrapper
-	// that resolved its path differently — or not at all — would narrow nothing
-	// and look exactly like a declaration nobody wrote.
 	for _, tc := range []struct{ name, path, field string }{
 		{"unknown relation", "Nope", "TenantID"},
 		{"unknown field on the target", "Notes", "Nope"},
@@ -426,9 +384,6 @@ func TestABadRelationDeclarationPanics(t *testing.T) {
 		}
 	}
 
-	// The control: the same three spellings over a path and field that do
-	// resolve must not panic, or the table above would pass for constructors
-	// that refused everything.
 	security.ScopeRelationField[Folder, int64]("Notes", "TenantID", tenantOf)
 	security.ScopeRelationAttr[Folder, int64]("Notes", "TenantID", "tenant")
 	security.ScopeRelationSubject[Folder, int64]("Notes", "Author")
@@ -443,16 +398,6 @@ func containsArg(args []any, want any) bool {
 	return false
 }
 
-// Every statement a gated call issues carries the same relation narrowing.
-//
-// Four of them did not, and each was found by rendering the SQL rather than by
-// reading. They are one bug in four places: the narrowing arrives in
-// `Options.RelScopes`, and four internal call sites rebuilt an `Options` without
-// it. Two of the four are writes.
-//
-// The table asserts on the *statement*, because that is the only place the
-// question has an answer: a policy that narrows and a statement that does not
-// carry the narrowing look identical from the outside until a row comes back.
 func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 	policy := security.Combine(
 		security.ScopeField[Folder, int64]("TenantID", tenantOf),
@@ -461,9 +406,6 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 
 	t.Run("the page total's COUNT", func(t *testing.T) {
-		// A *full* page, or there is no COUNT to inspect: a short first page is
-		// already the whole answer and the repository skips the total. Limit(1)
-		// with one row returned is the cheapest full page there is.
 		rec := crudtest.Postgres().Push(
 			crudtest.Rows(folderRow(1, 7, "mine", 1)),
 			crudtest.Rows([]any{int64(1)}),
@@ -475,9 +417,7 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 		if n := len(rec.Statements()); n != 2 {
 			t.Fatalf("%d statements ran, want the page and its total — without the COUNT this test inspects nothing", n)
 		}
-		// The SELECT was always narrowed; the COUNT beside it was not, so Total
-		// counted over rows the page cannot show — a wrong number and a count
-		// oracle over another tenant's rows.
+
 		count := rec.Statements()[len(rec.Statements())-1]
 		if !strings.Contains(count.SQL, `rx1."tenant_id"`) {
 			t.Fatalf("the total counts rows the gate hides:\n%s", count.SQL)
@@ -485,9 +425,6 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 	})
 
 	t.Run("the soft-delete stamp", func(t *testing.T) {
-		// Two repositories over the same table under the same policy, differing
-		// only in SoftDelete. They must narrow identically; the soft one wrote
-		// an unnarrowed UPDATE.
 		hard := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
 		soft := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
 
@@ -510,10 +447,6 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 	})
 
 	t.Run("the DELETE behind Delete(ids...)", func(t *testing.T) {
-		// The scope itself hops the relation — an ordinary predicate, and legal.
-		// That is what makes the narrowing observable: RelationScopes render only
-		// where something crosses the relation, so a scope on the near table
-		// alone would show nothing either way.
 		hopping := security.Combine(
 			security.Policy[Folder, int64]{
 				Scope: func(context.Context) (crud.Predicate, error) {
@@ -534,11 +467,6 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The same request by two routes has to carry the same narrowing. The
-		// two spell the id differently — `IN ($2)` against `= $2` — which is not
-		// the question; the question is whether the relation narrowing is on
-		// both. Delete computed it only inside its Inspect branch and then issued
-		// the statement without it.
 		a, b := byID.Last().SQL, byFilter.Last().SQL
 		if !strings.Contains(b, `rx1."tenant_id"`) {
 			t.Fatalf("the control failed: DeleteAll is not narrowed either, so this proves nothing:\n%s", b)
@@ -549,7 +477,6 @@ func TestEveryStatementAGatedCallIssuesCarriesTheNarrowing(t *testing.T) {
 	})
 }
 
-// whereOf isolates a statement's WHERE clause for comparison.
 func whereOf(sql string) string {
 	_, clause, _ := strings.Cut(sql, " WHERE ")
 	return clause

@@ -12,14 +12,10 @@ import (
 	"time"
 )
 
-// LabelUpdate is the partial-update DTO for Label.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type LabelUpdate struct {
 	Slug *string `json:"slug,omitempty"`
 }
 
-// LabelAttrs is the generated metamodel shape for Label.
 type LabelAttrs struct {
 	ID        specs.Ord[Label, uint]
 	CreatedAt specs.Cmp[Label, time.Time]
@@ -28,32 +24,22 @@ type LabelAttrs struct {
 	Slug      specs.Str[Label]
 }
 
-// Label_ is the metamodel of Label: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Label_ = specs.Metamodel[Label, LabelAttrs]()
 
-// LabelRepo is the typed repository for Label.
 type LabelRepo = crud.Repo[Label, uint, LabelUpdate]
 
-// LabelRepository describes Label independently of a database driver.
-// Bind it through NewLabelRepository with the application's datasource.
 var LabelRepository = sqlrepo.Define[Label, uint, LabelUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
-// NewLabelRepository binds LabelRepository to src.
 func NewLabelRepository(src crud.Source) *LabelRepo {
 	return LabelRepository.Bind(src)
 }
 
-// MemberUpdate is the partial-update DTO for Member.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type MemberUpdate struct {
 	TeamID *uint          `json:"teamID,omitempty"`
 	Name   *string        `json:"name,omitempty"`
 	Age    utils.Opt[int] `json:"age,omitzero"`
 }
 
-// MemberTeamAttrs reaches Member through Team.
 type MemberTeamAttrs struct {
 	specs.Rel[Member, Team]
 	ID        specs.Ord[Member, uint]
@@ -63,7 +49,6 @@ type MemberTeamAttrs struct {
 	Name      specs.Str[Member]
 }
 
-// MemberAttrs is the generated metamodel shape for Member.
 type MemberAttrs struct {
 	ID        specs.Ord[Member, uint]
 	CreatedAt specs.Cmp[Member, time.Time]
@@ -75,30 +60,20 @@ type MemberAttrs struct {
 	Team      MemberTeamAttrs
 }
 
-// Member_ is the metamodel of Member: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Member_ = specs.Metamodel[Member, MemberAttrs]()
 
-// MemberRepo is the typed repository for Member.
 type MemberRepo = crud.Repo[Member, uint, MemberUpdate]
 
-// MemberRepository describes Member independently of a database driver.
-// Bind it through NewMemberRepository with the application's datasource.
 var MemberRepository = sqlrepo.Define[Member, uint, MemberUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
-// NewMemberRepository binds MemberRepository to src.
 func NewMemberRepository(src crud.Source) *MemberRepo {
 	return MemberRepository.Bind(src)
 }
 
-// TeamUpdate is the partial-update DTO for Team.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type TeamUpdate struct {
 	Name *string `json:"name,omitempty"`
 }
 
-// TeamMembersAttrs reaches Team through Members.
 type TeamMembersAttrs struct {
 	specs.Rel[Team, Member]
 	ID        specs.Ord[Team, uint]
@@ -110,7 +85,6 @@ type TeamMembersAttrs struct {
 	Age       specs.Ord[Team, int]
 }
 
-// TeamLabelsAttrs reaches Team through Labels.
 type TeamLabelsAttrs struct {
 	specs.Rel[Team, Label]
 	ID        specs.Ord[Team, uint]
@@ -120,7 +94,6 @@ type TeamLabelsAttrs struct {
 	Slug      specs.Str[Team]
 }
 
-// TeamAttrs is the generated metamodel shape for Team.
 type TeamAttrs struct {
 	ID        specs.Ord[Team, uint]
 	CreatedAt specs.Cmp[Team, time.Time]
@@ -131,27 +104,16 @@ type TeamAttrs struct {
 	Labels    TeamLabelsAttrs
 }
 
-// Team_ is the metamodel of Team: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Team_ = specs.Metamodel[Team, TeamAttrs]()
 
-// TeamRepo is the typed repository for Team.
 type TeamRepo = crud.Repo[Team, uint, TeamUpdate]
 
-// TeamRepository describes Team independently of a database driver.
-// Bind it through NewTeamRepository with the application's datasource.
 var TeamRepository = sqlrepo.Define[Team, uint, TeamUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
-// NewTeamRepository binds TeamRepository to src.
 func NewTeamRepository(src crud.Source) *TeamRepo {
 	return TeamRepository.Bind(src)
 }
 
-// A writable column the update DTO does not name refuses to start, rather than
-// becoming a column updates silently cannot reach ([[D-050]]). The generator
-// read the model's source text and this reads the compiled struct, so the two
-// can drift apart — and this is what says so when they do, with nothing
-// regenerated.
 func init() {
 	port.MustCoverUpdate[Label, LabelUpdate]("CreatedAt", "DeletedAt", "UpdatedAt")
 	port.MustCoverUpdate[Member, MemberUpdate]("CreatedAt", "DeletedAt", "UpdatedAt")

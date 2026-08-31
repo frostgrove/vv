@@ -39,6 +39,7 @@ SQL здесь никто не выполняет — этим занимает�
 | **Связи** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — выводятся автоматически, переопределяемы |
 | **Шов исполнителя** | `Exec` и `Query`. Это вся граница абстракции |
 | **Транзакции** | `InTx`, `BindExecutor`, `Session` — подключение к чужой транзакции без угадывания БД |
+| **Типизированный bulk** | `Repo.InsertBatch`: магия нативного драйвера с opt-out на переносимый SQL |
 | **Диалекты** | `Postgres`, `MySQL` (и MariaDB), `SQLite` |
 | **Сигнальные ошибки** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
 
@@ -306,6 +307,34 @@ rows, err := orders.Aggregate(ctx,
 `crud.Sum("total", Order_.Amount.Name())`. Имя самого агрегата — это ключ, под
 которым возвращается значение, поэтому оно остаётся строкой.
 
+## Типизированная массовая вставка
+
+```go
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
+```
+
+`Repo.InsertBatch` работает только как create: назначенный primary key остаётся
+вставкой и может дать conflict, но никогда не превращается в upsert. SQL
+repository выводит таблицу, колонки и значения из metadata, сохраняет security-
+и fault-декораторы, подключается к executor из `ctx` и не меняет модели и не
+читает сгенерированные значения обратно.
+
+Нативный bulk — магический default. Чистый pgx-source использует `COPY`,
+когда metadata даёт insert-колонки; source без нативной capability или с
+statement middleware, который не форвардит её явно, получает
+атомарные bind-budgeted чанки `INSERT`. vv не инспектирует
+конфигурацию RLS или rewrite rules и не угадывает пригодность COPY. Для
+PostgreSQL RLS/rewrite rules, особых pgx encoding и случаев, где
+нужна именно семантика обычного INSERT, выбирайте переносимый SQL явно:
+
+```go
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+```
+
+Low-level capability называется `BatchInserter[M]` и оставлена вне `Core` ради
+source compatibility. Repository-декоратор обязан форвардить её явно; opaque-
+декоратор закрывается с `ErrNoBatchInsertSupport`, а не пропускается насквозь.
+
 ## Шов исполнителя
 
 Два метода. Это вся граница абстракции, и именно поэтому любую чужую
@@ -358,8 +387,26 @@ events.Save(ctx, &e)   // привязан к analyticsDB — выполняет
 
 **Опциональные интерфейсы**, которые может реализовать адаптер: они ищутся, а
 не требуются, чтобы сторонний адаптер компилировался и без них: `Beginner`
-(savepoint'ы), `BulkInserter` (`COPY`), `OffsetLimiter`, `ReadSourcer`,
-`Identified`, `Sourced`, `UpsertScope`, `StatementRollback`, `Tabler`.
+(savepoint'ы), `UnsafeBulkInserter` (нативный bulk), `OffsetLimiter`,
+`ReadSourcer`, `Identified`, `Sourced`, `UpsertScope`, `StatementRollback`,
+`Tabler`.
+
+Raw-выполнение доступно без потери ambient-транзакции:
+
+```go
+result, err := crud.UnsafeExecFor(ctx, source, statement, args...)
+rows, err := crud.UnsafeQueryFor(ctx, source, query, args...)
+n, err := crud.UnsafeBulkInsertFor(ctx, source, tableRef, columns, values)
+```
+
+Эти вызовы разрешают привязанный к `source` executor из `ctx`, но имя `Unsafe`
+важно: сырой SQL и сырые table/column/value строки обходят metadata модели и
+все repository-декораторы. Для обычной прикладной записи используйте
+`Repo.InsertBatch`.
+
+Миграция pre-release API: `BulkInserter`, `CopyFrom` и `CopyFromTable` удалены.
+Безопасная замена — `Repo.InsertBatch`; COPY на точном pgx-хэндле доступен только
+как `UnsafeCopyFrom` / `UnsafeCopyFromTable`.
 
 ### Обёртка над Source — для трейсинга, таймингов, логов стейтментов
 
@@ -390,6 +437,15 @@ func (t tracing) UnwrapSource() crud.Source { return t.inner }
 `UnwrapSource` закрывает все три сразу: `crud.BeginnerOf`, `crud.ReadSourceOf` и
 `crud.KeyOf` идут по нему ([[D-061]]).
 
+Нативный bulk намеренно отличается. `UnsafeBulkInserterOf` **не** идёт по
+`UnwrapSource`: запись под неизвестным tracing/rate-limit/session wrapper
+обошла бы его поведение. Без явного форвардера `UnsafeBulkInserter`
+`InsertBatch` выбирает переносимый SQL. Прямой план из одного statement проходит
+через `Exec` wrapper-а; атомарный план из нескольких statements выполняется на
+transaction handle, который вернул внутренний source. Чтобы видеть каждый
+statement, используйте instrumentation драйвера либо явно обёрнутые
+`Begin`/`Tx`. Встроенный `ReadWrite` явно форвардит нативный bulk в primary.
+
 **То же правило уровнем выше.** Декоратор над `crud.Core` стирает точно так же.
 Встраивайте `crud.Base` — он даёт `Next()`, по которому идёт `crud.SourceOf`, —
 иначе probe, навешенный над вашим декоратором, не найдёт источник под ним.
@@ -413,7 +469,8 @@ db := crud.ReadWrite(primary, replica)
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
-crud.ErrNoTxSupport    crud.ErrExecutorScope
+crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
+crud.ErrNoBulkInsertSupport
 ```
 
 Каждая из них переживает обёртывание в `errs.Fault`, поэтому вызывающий код,

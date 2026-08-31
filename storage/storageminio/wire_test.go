@@ -46,9 +46,6 @@ func newWireStore(t *testing.T, transport http.RoundTripper) storage.Store {
 }
 
 func TestWireCreateOnlyAboveMultipartThresholdIsOneConditionalPUT(t *testing.T) {
-	// minio-go switches to multipart above 16 MiB by default. CreateOnly must
-	// override that path because v7.3.0 drops custom headers at multipart
-	// completion.
 	payload := bytes.Repeat([]byte("x"), 16*1024*1024+1)
 	calls := 0
 	var wireErr error

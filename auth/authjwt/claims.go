@@ -7,39 +7,17 @@ import (
 	"github.com/frostgrove/vv/auth"
 )
 
-// Claims is the ready-made claims type, for the ordinary shape of token: a
-// subject, some roles, some permissions or an OAuth scope string, and whatever
-// else the issuer put in.
-//
-// It implements [auth.Principal], so the zero-config path is [Standard] and
-// there is no mapping function to write. A token that does not look like this
-// gets its own struct and [Authenticator] — that is what the parser being
-// generic is for.
 type Claims struct {
-	// Sub is the subject. It is spelled the short way because [Claims.Subject]
-	// is the method that implements [auth.Principal], and a field and a method
-	// cannot share a name.
 	Sub         string   `json:"sub"`
 	Issuer      string   `json:"iss"`
 	Roles       []string `json:"roles,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
-	// Scope is the OAuth 2.0 spelling: one string, space-separated. Both it and
-	// Permissions are read, because issuers disagree about which to send and a
-	// consumer should not have to care which one theirs uses.
+
 	Scope string `json:"scope,omitempty"`
 
-	// Extra is every claim in the payload, including the ones above. It is what
-	// [Claims.Attr] reads, so a tenant, an organisation or an email needs no
-	// field here.
 	Extra map[string]any `json:"-"`
 }
 
-// UnmarshalJSON fills the named fields and keeps the whole payload in Extra.
-//
-// The numbers are decoded through json.Number and then narrowed, so an integer
-// claim stays an integer. Left as the float64 encoding/json would produce, a
-// tenant id read out of [Claims.Attr] compiles into a float in the WHERE
-// clause of every scoped query.
 func (this *Claims) UnmarshalJSON(b []byte) error {
 	type plain Claims
 	var named plain
@@ -61,9 +39,6 @@ func (this *Claims) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// narrow turns a json.Number into the Go value a caller expects, leaving
-// everything else alone. An integral number is an int64 because that is what a
-// key column holds; anything else stays a float64.
 func narrow(v any) any {
 	switch n := v.(type) {
 	case json.Number:
@@ -75,11 +50,6 @@ func narrow(v any) any {
 		}
 		return n.String()
 	case map[string]any:
-		// One level deep was not enough. A nested claim — `{"org": {"id": 42}}`,
-		// which is how every identity provider spells a tenant — came back from
-		// Attr as a json.Number, so a caller comparing it to an int64 got a type
-		// mismatch and a scope that narrowed to nothing. The claim is the shape
-		// the issuer chose, not one this package gets to assume is flat.
 		for k, e := range n {
 			n[k] = narrow(e)
 		}
@@ -94,10 +64,8 @@ func narrow(v any) any {
 	}
 }
 
-// Subject implements [auth.Principal].
 func (this Claims) Subject() string { return this.Sub }
 
-// In implements [auth.Principal].
 func (this Claims) In(r auth.Role) bool {
 	for _, has := range this.Roles {
 		if auth.Role(has) == r {
@@ -107,7 +75,6 @@ func (this Claims) In(r auth.Role) bool {
 	return false
 }
 
-// Has implements [auth.Principal], reading both spellings of a permission.
 func (this Claims) Has(p auth.Permission) bool {
 	for _, has := range this.Permissions {
 		if auth.Permission(has) == p {
@@ -122,18 +89,11 @@ func (this Claims) Has(p auth.Permission) bool {
 	return false
 }
 
-// Attr implements [auth.Principal] over the whole payload.
 func (this Claims) Attr(name string) (any, bool) {
 	v, ok := this.Extra[name]
 	return v, ok
 }
 
-// Grant is the neutral copy, with a role map expanded into permissions.
-//
-// It exists because roles are the thing an identity provider puts in a token
-// and permissions are the thing an authorization rule should name. Expanding
-// once, here, is what keeps the same token from meaning two things in one
-// process ([[D-055]]).
 func (this Claims) Grant(m auth.RoleMap) auth.Claims {
 	roles := make([]auth.Role, 0, len(this.Roles))
 	for _, r := range this.Roles {

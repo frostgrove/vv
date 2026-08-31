@@ -16,8 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// unreachable is a config that parses and cannot connect: the assertions here
-// are about what reaches pgx, and an option runs before the first dial.
 func unreachable() *vvdb.Config {
 	return &vvdb.Config{
 		Engine: vvdb.Postgres, Host: "127.0.0.1", Port: 1,
@@ -53,8 +51,6 @@ func TestTheConfigReachesPgx(t *testing.T) {
 	}
 }
 
-// The control case: without a pool section, pgx keeps its own defaults rather
-// than being told zero.
 func TestAnUnsetPoolLeavesPgxsDefaults(t *testing.T) {
 	c := unreachable()
 	c.Pool = vvdb.Pool{}

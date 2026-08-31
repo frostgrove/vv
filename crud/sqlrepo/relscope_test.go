@@ -11,8 +11,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A tree of soft-deletable rows, all in one table. The scope is the whole point
-// of the model: a tombstone must not come back through any door.
 type Node struct {
 	ID       int64  `db:"id,pk,auto"`
 	ParentID int64  `db:"parent_id"`
@@ -30,13 +28,10 @@ func nodeRow(id, parent int64, deleted bool, name string) []any {
 	return []any{id, parent, deleted, name}
 }
 
-// The scope exists so a tombstone is unreachable. A preload is a second
-// statement against the same table, so unless the narrowing travels with it,
-// ?preload=children hands back exactly the rows the scope was declared to hide.
 func TestAPreloadOfTheRepositorysOwnModelCarriesItsScope(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(nodeRow(1, 0, false, "root")),
-		crudtest.Rows(), // no live children
+		crudtest.Rows(),
 	)
 
 	if _, err := liveNodes.Bind(rec).GetAll(context.Background(), crud.Preload("Children")); err != nil {
@@ -51,8 +46,6 @@ func TestAPreloadOfTheRepositorysOwnModelCarriesItsScope(t *testing.T) {
 	}
 }
 
-// A tombstone reached through two hops is still a tombstone. The narrowing is
-// declared for the model, not for one path, so depth cannot shake it off.
 func TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(nodeRow(1, 0, false, "root")),
@@ -71,10 +64,6 @@ func TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel(t *testing.T) {
 	}
 }
 
-// A filter that hops a relation opens a correlated EXISTS with its own FROM, so
-// it inherits nothing from the outer WHERE. Left alone it is an oracle: the
-// client cannot read a deleted row, but it can ask whether one exists and what
-// it says, and read the answer off the parent page.
 func TestARelationFilterCarriesTheScopeIntoItsSubquery(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 
@@ -89,9 +78,6 @@ func TestARelationFilterCarriesTheScopeIntoItsSubquery(t *testing.T) {
 			`AND rx1."deleted" = $2 AND rx1."name" = $3))`)
 }
 
-// The scalar subquery a nested sort opens has the same hole as the EXISTS: it
-// picks a value out of the related table with no narrowing, so a row could be
-// ordered by a deleted relative's column.
 func TestANestedSortCarriesTheScopeIntoItsSubquery(t *testing.T) {
 	type Employee struct {
 		ID        int64  `db:"id,pk,auto"`
@@ -114,9 +100,6 @@ func TestANestedSortCarriesTheScopeIntoItsSubquery(t *testing.T) {
 			`ORDER BY (SELECT rx1."name" FROM "employees" AS rx1 WHERE rx1."id" = "employees"."manager_id" `+
 			`AND rx1."retired" = $2 LIMIT 1) ASC, "id" ASC LIMIT 10`)
 }
-
-// ---------------------------------------------------------------------------
-// a relation to another model
 
 type Post struct {
 	ID      int64     `db:"id,pk,auto"`
@@ -144,11 +127,6 @@ type PostUpdate struct {
 	Title *string
 }
 
-// An Update's load is not a response read: it decides which row may be written
-// and what the patch changes. The root predicate and the per-request relation
-// narrowing therefore both have to survive while response-only shape is
-// stripped. Losing the second predicate turns the relation hop into an oracle
-// over rows the caller's policy hid.
 func TestMutationReadKeepsPerRequestRelationNarrowing(t *testing.T) {
 	posts := sqlrepo.Define[Post, int64, PostUpdate]("posts",
 		sqlrepo.Scope(crud.Eq("Hidden", false)))
@@ -181,8 +159,6 @@ func TestMutationReadKeepsPerRequestRelationNarrowing(t *testing.T) {
 			`AND "id" = $4) LIMIT 1`)
 }
 
-// Another model's rows are another repository's business, so the narrowing has
-// to be declared — but once it is, it holds on both routes into that table.
 func TestRelationScopeNarrowsBothThePreloadAndTheFilterHop(t *testing.T) {
 	posts := sqlrepo.Define[Post, int64, struct{}]("posts",
 		sqlrepo.Scope(crud.Eq("Hidden", false)),
@@ -213,9 +189,6 @@ func TestRelationScopeNarrowsBothThePreloadAndTheFilterHop(t *testing.T) {
 	})
 
 	t.Run("a relation nobody narrowed is still read raw", func(t *testing.T) {
-		// The honest half of the contract: RelationScope is per relation, and a
-		// relation without one is not narrowed. If this ever starts failing
-		// because some other model's scope leaked in, that is the bug.
 		rec := crudtest.Postgres().Push(
 			crudtest.Rows([]any{int64(1), "t", false, int64(9)}),
 			crudtest.Rows(),
@@ -228,8 +201,6 @@ func TestRelationScopeNarrowsBothThePreloadAndTheFilterHop(t *testing.T) {
 	})
 }
 
-// A caller's own PreloadWhere narrows further; it can never take the
-// repository's narrowing back off.
 func TestACallerCannotWidenARelationScope(t *testing.T) {
 	posts := sqlrepo.Define[Post, int64, struct{}]("posts",
 		sqlrepo.RelationScope("Remarks", crud.Eq("Spam", false)))
@@ -252,8 +223,6 @@ func TestACallerCannotWidenARelationScope(t *testing.T) {
 	}
 }
 
-// A path that names no relation is a typo, and a typo that silently narrows
-// nothing is the worst kind — the declaration reads as protection and is not.
 func TestRelationScopeRefusesAPathTheModelDoesNotHave(t *testing.T) {
 	_, err := sqlrepo.TryDefine[Post, int64, struct{}]("posts",
 		sqlrepo.RelationScope("Remrks", crud.Eq("Spam", false)))
@@ -265,14 +234,6 @@ func TestRelationScopeRefusesAPathTheModelDoesNotHave(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the typed spelling of the same declaration
-
-// What the generator writes: the group carries the relation's path, and the
-// target model has a metamodel of its own. The two are different jobs —
-// Post_.Remarks.Spam is an attribute of a *Post*, spelled "Remarks.Spam", while
-// a relation scope's predicate is written against the target and spelled
-// "Spam". Only Remark_ can say the second one.
 type postRemarksAttrs struct {
 	specs.Rel[Post, Remark]
 	Spam specs.Attr[Post, bool]
@@ -293,9 +254,6 @@ var (
 	Remark_ = specs.Metamodel[Remark, remarkAttrs]()
 )
 
-// A relation path is a string literal today, and a renamed relation therefore
-// narrows nothing while still reading as protection. Declared through the
-// metamodel instead, the same rename is a build failure at every call site.
 func TestARelationScopeAcceptsAGeneratedPath(t *testing.T) {
 	const want = `SELECT "id", "post_id", "spam", "body" FROM "remarks" ` +
 		`WHERE "post_id" IN ($1) AND "spam" = $2`
@@ -319,8 +277,6 @@ func TestARelationScopeAcceptsAGeneratedPath(t *testing.T) {
 		t.Fatalf("the typed declaration bound %#v, want the relation scope's own value", args)
 	}
 
-	// The control: the literal spelling of the same declaration has to produce
-	// the identical statement, or the typed form is narrowing something else.
 	byName := preload(t, sqlrepo.Define[Post, int64, struct{}]("posts",
 		sqlrepo.RelationScope("Remarks", crud.Eq("Spam", false))))
 	if byName.SQL != typed.SQL {

@@ -9,21 +9,8 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// crud.Base is what docs/modules/en/crud.md tells a consumer to embed, and the
-// reason it gives is this one: "it supplies the Next() that crud.SourceOf
-// walks". The decorators inside this library each write their own Next() by
-// hand, so nothing else in the tree exercises Base's — the advice a stranger
-// follows is the part that had no test.
-//
-// What the advice buys is not visible from the decorator: a probe wired above
-// it looks for the datasource by walking down, and a layer that cannot say what
-// it wraps ends that walk. An interface embedded in a struct promotes only its
-// own method set, so the erasure is silent and compiles.
-
 var walkArticles = sqlrepo.Define[Article, int64, struct{}]("articles")
 
-// auditing is the shape the documentation describes: embed Base, override
-// nothing or one method, forward the rest.
 type auditing struct{ crud.Base[Article, int64] }
 
 func auditingLayer() crud.Middleware[Article, int64] {
@@ -32,9 +19,6 @@ func auditingLayer() crud.Middleware[Article, int64] {
 	}
 }
 
-// handRolled is the same decorator written without Base — it holds the Core
-// interface directly. It forwards all eleven methods, compiles, and passes
-// every functional test a consumer would write for it.
 type handRolled struct{ crud.Core[Article, int64] }
 
 func handRolledLayer() crud.Middleware[Article, int64] {
@@ -43,18 +27,13 @@ func handRolledLayer() crud.Middleware[Article, int64] {
 	}
 }
 
-// A decorator built on Base keeps the chain walkable: the datasource is found
-// through it, from any depth.
 func TestADecoratorBuiltOnBaseIsStillWalkableToItsDatasource(t *testing.T) {
 	rec := crudtest.Postgres()
 
-	// First that there is something to find at all, or neither half below says
-	// anything: the repository itself answers with the source it was bound to.
 	if source, ok := crud.SourceOf(walkArticles.Bind(rec).Unwrap()); !ok || source != crud.Source(rec) {
 		t.Fatal("the repository does not answer with its own datasource, so nothing here proves anything about decorators")
 	}
 
-	// Two layers, so this is a walk and not a single hop past the outermost.
 	repository := walkArticles.Bind(rec, auditingLayer(), auditingLayer())
 	source, ok := crud.SourceOf(repository.Unwrap())
 	if !ok {
@@ -64,26 +43,17 @@ func TestADecoratorBuiltOnBaseIsStillWalkableToItsDatasource(t *testing.T) {
 		t.Fatalf("the walk answered with %T, want the source the repository was bound to", source)
 	}
 
-	// The control. Every assertion above would hold for a walk that reached
-	// past any decorator whatsoever, and then Base would be advice with nothing
-	// behind it. The decorator that does not say what it wraps has to end the
-	// walk — that loss is what makes embedding Base worth recommending.
 	deaf := walkArticles.Bind(rec, handRolledLayer())
 	if _, ok := crud.SourceOf(deaf.Unwrap()); ok {
 		t.Fatal("a decorator that says nothing about what it wraps was walked through anyway — the walk is guessing, not following Next()")
 	}
 
-	// And Base still ends the walk honestly when what it wraps is deaf: the
-	// answer is "I cannot say", not the wrong source.
 	mixed := walkArticles.Bind(rec, auditingLayer(), handRolledLayer())
 	if _, ok := crud.SourceOf(mixed.Unwrap()); ok {
 		t.Fatal("the walk reached past a deaf layer sitting under a Base one")
 	}
 }
 
-// looping is a chain somebody built by accident: its Next returns itself. The
-// walk has to end rather than run forever, because a decorator chain is
-// assembled at start-up and a hang there is a process that never serves.
 type looping struct{ crud.Base[Article, int64] }
 
 func (this *looping) Next() crud.Core[Article, int64] { return this }

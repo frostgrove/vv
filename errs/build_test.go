@@ -11,9 +11,6 @@ import (
 )
 
 func TestAViolationCodeIsNotTheFaultsCode(t *testing.T) {
-	// The spelling ROADMAP-errors.md §5 puts in front of a consumer. It has to
-	// work as written, and the ambiguity it creates — whose Code? — has to have
-	// one answer rather than an inferred one.
 	t.Run("a code after a field belongs to the violation", func(t *testing.T) {
 		f := errs.Validation().
 			Field("Age").Code("too_young").Params(errs.P{"min": 18}).
@@ -37,9 +34,6 @@ func TestAViolationCodeIsNotTheFaultsCode(t *testing.T) {
 		}
 	})
 
-	// The other half, and each is the other's control: without this one the
-	// test passes for a builder that routes every Code to a violation, and
-	// without the one above, for a builder that routes every Code to the fault.
 	t.Run("a code before any field belongs to the fault", func(t *testing.T) {
 		f := errs.NotFound().Op("GetByID").Entity("User").Code(errs.CodeNotFound).Fault()
 
@@ -98,11 +92,6 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		}
 	}
 
-	// The table is total, and stays total. A constructor added without a row
-	// here is one whose kind nothing pins — TooLarge arrived that way and was
-	// caught by a reader rather than by this test, which is the job this loop
-	// exists to do. Kind.String is total, so a kind outside its own table
-	// renders as "internal" and is how a new one is spotted.
 	declared := 0
 	for k := errs.Kind(0); k < errs.Kind(64); k++ {
 		if k != errs.KindInternal && k.String() == "internal" {
@@ -114,18 +103,12 @@ func TestEveryEntryPointCarriesItsKind(t *testing.T) {
 		t.Fatalf("errs declares %d kinds and this table has 10 rows — a constructor for the new one is owed", declared)
 	}
 
-	// The control: ten entry points that all built the same kind would pass
-	// any single assertion above. Internal is zero, so it is the one an
-	// unwritten field would look like.
 	if errs.Validation().Fault().Kind == errs.Internal().Fault().Kind {
 		t.Fatalf("Validation and Internal built the same kind")
 	}
 }
 
 func TestAPerViolationStepWithNoViolationOpenOpensAGeneralOne(t *testing.T) {
-	// A misordered chain must not drop what it was given. It produces a fault
-	// with a visibly odd violation instead, which is the failure a reader can
-	// see.
 	f := errs.Validation().Params(errs.P{"min": 18}).Fault()
 
 	if len(f.Violations) != 1 {
@@ -140,9 +123,6 @@ func TestAPerViolationStepWithNoViolationOpenOpensAGeneralOne(t *testing.T) {
 }
 
 func TestTheStepsThatWriteNothingElseReadsStillWrite(t *testing.T) {
-	// Origin, Source, Approximate and Partial are the four steps no other test
-	// reads back. Stub all four to `return b` and the whole root module stays
-	// green — which is the definition of a step nothing pins.
 	t.Run("the per-violation steps land on the open violation", func(t *testing.T) {
 		f := errs.Conflict().
 			Field("email").Code(errs.CodeUnique).
@@ -164,10 +144,6 @@ func TestTheStepsThatWriteNothingElseReadsStillWrite(t *testing.T) {
 		}
 	})
 
-	// The control. Every assertion above compares against a non-zero value, so
-	// each one already fails for a step that writes nothing — but only if the
-	// zero value is what an unwritten field holds. This says it is, and it is
-	// what the four steps would produce if they were stubbed.
 	t.Run("without the steps the same violation is the zero one", func(t *testing.T) {
 		f := errs.Conflict().Field("email").Code(errs.CodeUnique).Fault()
 
@@ -194,8 +170,6 @@ func TestTheStepsThatWriteNothingElseReadsStillWrite(t *testing.T) {
 			t.Fatalf("a capped answer did not say so on the wire: %s", b)
 		}
 
-		// The other half: the key is absent when nothing was capped, so a
-		// marshal that always emitted it would not pass the assertion above.
 		full, err := json.Marshal(errs.Validation().Field("email").Code(errs.CodeUnique).Fault())
 		if err != nil {
 			t.Fatalf("marshalling the complete fault failed: %v", err)
@@ -207,9 +181,6 @@ func TestTheStepsThatWriteNothingElseReadsStillWrite(t *testing.T) {
 }
 
 func TestOriginSourceAndApproximateAlsoOpenAGeneralViolation(t *testing.T) {
-	// The same rule Params is held to. The doc comment on Builder names all
-	// four; without this only Params is pinned, and the other three could drop
-	// what they were given.
 	for _, tc := range []struct {
 		name string
 		b    *errs.Builder
@@ -236,10 +207,6 @@ func TestOriginSourceAndApproximateAlsoOpenAGeneralViolation(t *testing.T) {
 }
 
 func TestAViolationMessageIsNotTheFaultsMessage(t *testing.T) {
-	// The same rule as Code, and it needs the same two halves. Route every
-	// Message to the fault and the whole root module stays green: the violation
-	// loses its text, and Fault.Message — developer-facing, never rendered — is
-	// overwritten with words meant for a client.
 	t.Run("a message after a field belongs to the violation", func(t *testing.T) {
 		f := errs.Conflict().
 			Code(errs.CodeUnique).Message("constraint cp_parent_slug_key on cp_parent").
@@ -264,9 +231,6 @@ func TestAViolationMessageIsNotTheFaultsMessage(t *testing.T) {
 		}
 	})
 
-	// The control, and each half is the other's: without this one the test
-	// passes for a builder that routes every Message to a violation, which is
-	// how the fault's developer-facing text would reach the wire.
 	t.Run("a message before any field belongs to the fault", func(t *testing.T) {
 		f := errs.Conflict().Message("constraint cp_parent_slug_key on cp_parent").Fault()
 
@@ -279,10 +243,6 @@ func TestAViolationMessageIsNotTheFaultsMessage(t *testing.T) {
 	})
 }
 
-// The copy Fault() promises is a deep one. A shallow copy leaves two faults
-// from one builder sharing one Path array, and leaves a caller's scratch slice
-// live inside a fault it already handed off — which is what a phase-3 resolver
-// rewriting a hop in place would then propagate ([[D-043]]).
 func TestAFaultDoesNotShareASliceWithTheBuilderOrTheCaller(t *testing.T) {
 	t.Run("two faults from one builder share no path", func(t *testing.T) {
 		b := errs.Validation().Field("Age").Code("too_young")
@@ -324,9 +284,6 @@ func TestAFaultDoesNotShareASliceWithTheBuilderOrTheCaller(t *testing.T) {
 		}
 	})
 
-	// The control on the clone helper: an absent column list must come back
-	// absent. Cloning with an unconditional make turns "not known" into "no
-	// columns", and every assertion above would still pass.
 	t.Run("an absent column list stays nil", func(t *testing.T) {
 		f := errs.Conflict().Field("slug").Code(errs.CodeUnique).Fault()
 
@@ -337,8 +294,6 @@ func TestAFaultDoesNotShareASliceWithTheBuilderOrTheCaller(t *testing.T) {
 }
 
 func TestWrappingSkipsANilErrorAndKeepsTheRest(t *testing.T) {
-	// A classifier that has a sentinel and no driver error passes both, and a
-	// nil in Unwrap() []error is a nil every errors.Is walk has to survive.
 	f := errs.Conflict().Code(errs.CodeUnique).Wrapping(errSentinel, nil).Fault()
 
 	for i, err := range f.Unwrap() {
@@ -346,8 +301,7 @@ func TestWrappingSkipsANilErrorAndKeepsTheRest(t *testing.T) {
 			t.Fatalf("Unwrap() element %d is nil", i)
 		}
 	}
-	// The control: a Wrapping that dropped everything would pass the loop
-	// above without wrapping anything at all.
+
 	if !errors.Is(f, errSentinel) {
 		t.Fatalf("the nil argument took the sentinel with it")
 	}

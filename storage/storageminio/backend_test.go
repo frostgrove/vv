@@ -283,7 +283,7 @@ func TestPutDeclaredZeroSizeIsProbedBeforeSDKCall(t *testing.T) {
 				if size != 0 {
 					t.Fatalf("SDK size = %d", size)
 				}
-				// A real HTTP client need not call Read for Content-Length: 0.
+
 				return minio.UploadInfo{}, nil
 			}}
 			store := newTestStore(t, newTestBackend(t, client, &fakeCore{}))
@@ -1372,17 +1372,13 @@ func TestClaimReleaseLostResponseRetryCannotOverwriteSuccessor(t *testing.T) {
 				return claims.put(object, source, size, options)
 			}
 
-			// A's active -> retired CAS commits, but its response is lost.
 			if _, err := claims.put(object, source, size, options); err != nil {
 				return minio.UploadInfo{}, err
 			}
-			// Before A's SDK retry is observed by the adapter, B acquires the
-			// retired claim with a fresh generation and ETag.
+
 			successorToken = claims.acquireSuccessor(object)
 			injectedABA = true
 
-			// This is the deterministic outcome of A's transparent stale retry:
-			// its old If-Match no longer matches B, so B remains untouched.
 			return minio.UploadInfo{}, minio.ErrorResponse{Code: minio.PreconditionFailed, StatusCode: http.StatusPreconditionFailed}
 		},
 		stat: stageAndClaimStat(t, claims),

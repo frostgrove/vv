@@ -21,19 +21,10 @@ import (
 	"github.com/frostgrove/vv/test/entstore"
 )
 
-// EntUserUpdate is generated from ent.User by cmd/vv; test/entstore holds
-// the real output and this alias keeps the tests reading naturally.
 type EntUserUpdate = entstore.UserUpdate
 
-// ent's *generated* entity is the vv model: no second struct, no tags.
-// The embedded config, the selectValues field and the Edges holder are all
-// ignored, and the column names fall out of the Go names exactly as ent's own
-// naming does.
 var EntUsers = sqlrepo.Define[ent.User, int64, EntUserUpdate](entuser.Table)
 
-// The mapping self-check every ent project should copy: vv derives column
-// names from the Go field names, ent knows the real ones, so compare them and
-// find out at build time rather than at runtime.
 func TestEntGeneratedStructIsAModel(t *testing.T) {
 	s, err := crud.SchemaOf[ent.User]()
 	if err != nil {
@@ -57,14 +48,12 @@ func TestEntGeneratedStructIsAModel(t *testing.T) {
 	if s.PK.Name != "ID" || !s.PK.Auto {
 		t.Fatalf("pk = %+v", s.PK)
 	}
-	// Age is *int on the ent struct, so vv treats the column as nullable.
+
 	if f := s.Field("Age"); f == nil || crud.ElemType(f.Type).Kind().String() != "int" {
 		t.Fatalf("age = %+v", f)
 	}
 }
 
-// The generated metamodel gives typed, compile-checked filters over ent's own
-// entity type.
 func TestEntGeneratedMetamodel(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -88,7 +77,6 @@ func TestEntGeneratedMetamodel(t *testing.T) {
 	}
 }
 
-// The full read path over ent's struct: filters, sort, pagination, projection.
 func TestEntStructReadsThroughVV(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -97,7 +85,6 @@ func TestEntStructReadsThroughVV(t *testing.T) {
 	source := crudsql.Postgres(pgDB)
 	users := EntUsers.Bind(source)
 
-	// Written by ent, read by vv.
 	for i, name := range []string{"Ann", "Bob", "Cid"} {
 		if _, err := client.User.Create().
 			SetTenantID(1).SetEmail(name + "@x.io").SetName(name).SetAge(30 + i).SetActive(i != 2).
@@ -133,7 +120,6 @@ func TestEntStructReadsThroughVV(t *testing.T) {
 	}
 }
 
-// The write path too: create through vv, read back through ent.
 func TestEntStructWritesThroughVV(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -142,8 +128,6 @@ func TestEntStructWritesThroughVV(t *testing.T) {
 	source := crudsql.Postgres(pgDB)
 	users := EntUsers.Bind(source)
 
-	// ent's schema puts the created_at default in Go, not in the column, so a
-	// write that does not go through ent sets it itself.
 	u := ent.User{TenantID: 1, Email: "new@x.io", Name: "New", Active: true, CreatedAt: time.Now()}
 	if stored, err := users.Save(ctx, &u); err != nil {
 		t.Fatal(err)
@@ -162,7 +146,6 @@ func TestEntStructWritesThroughVV(t *testing.T) {
 		t.Fatalf("ent read back %+v", back)
 	}
 
-	// A partial update, with the three-state nullable column.
 	name := "Renamed"
 	got, err := users.Update(ctx, u.ID, EntUserUpdate{Name: &name, Age: crud.Set(41)})
 	if err != nil {
@@ -184,8 +167,6 @@ func TestEntStructWritesThroughVV(t *testing.T) {
 	}
 }
 
-// The point of it all: one ent transaction, ent's builders and vv's
-// repository writing into it, over ent's own struct.
 func TestEntStructInsideEntTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -209,7 +190,7 @@ func TestEntStructInsideEntTransaction(t *testing.T) {
 	if _, err := users.Update(txCtx, byEnt.ID, EntUserUpdate{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	// ent sees vv's update inside the same transaction.
+
 	seen, err := tx.User.Get(ctx, byEnt.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -225,20 +206,12 @@ func TestEntStructInsideEntTransaction(t *testing.T) {
 	}
 }
 
-// docs/ent.md §16 warns that ent's Go-side defaults belong to ent's builders:
-// a write that goes through vv is one INSERT and never sees them, so the
-// column gets whatever the model carries. matrix_test.go works around it in a
-// comment; this is the claim itself, from both sides of the same schema.
-//
-// `field.Bool("active").Default(true)` is the cleanest probe: ent fills it in,
-// vv does not, and the difference is visible in the row.
 func TestEntsGoSideDefaultsDoNotApplyToVVWrites(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
 	client := entClient(pgDB, dialect.Postgres)
 	users := EntUsers.Bind(crudsql.Postgres(pgDB))
 
-	// ent's own builder applies the default.
 	byEnt, err := client.User.Create().
 		SetTenantID(1).SetEmail("ent@x.io").SetName("ByEnt").SetCreatedAt(time.Now()).
 		Save(ctx)
@@ -249,7 +222,6 @@ func TestEntsGoSideDefaultsDoNotApplyToVVWrites(t *testing.T) {
 		t.Fatal("ent did not apply its own default, so this test cannot tell the two paths apart")
 	}
 
-	// vv writes the model, and the model says false.
 	byVV := ent.User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", CreatedAt: time.Now()}
 	if stored, err := users.Save(ctx, &byVV); err != nil {
 		t.Fatal(err)
@@ -259,8 +231,7 @@ func TestEntsGoSideDefaultsDoNotApplyToVVWrites(t *testing.T) {
 	if byVV.Active {
 		t.Fatal("an ent Go-side default reached an vv write")
 	}
-	// From ent's side of the same row, so this is the stored value and not
-	// something vv failed to read back.
+
 	stored, err := client.User.Get(ctx, byVV.ID)
 	if err != nil {
 		t.Fatal(err)

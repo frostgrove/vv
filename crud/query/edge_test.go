@@ -15,9 +15,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// tryDoc compiles a JSON document and hands back the statement the repository
-// would run, or the error the compiler raised. Unlike run() it never fails the
-// test itself: these tests are about which of the two happens.
 func tryDoc(t *testing.T, doc string, config *query.Config) (string, []any, error) {
 	t.Helper()
 	var request query.Request
@@ -41,8 +38,6 @@ func tryReq(t *testing.T, request *query.Request, config *query.Config) (string,
 	return crudtest.Normalize(st.SQL), st.Args, nil
 }
 
-// tryQuery is the same for the query-string door, including ParseQuery's own
-// rejections.
 func tryQuery(t *testing.T, qs string, config *query.Config) (string, []any, error) {
 	t.Helper()
 	v, err := url.ParseQuery(qs)
@@ -123,8 +118,6 @@ func TestStructuredFiltersCanReachFieldsNamedLikeLogicalOperators(t *testing.T) 
 	}
 }
 
-// A document that is not a filter object is a rejection naming what arrived,
-// not an empty WHERE clause that hands back the whole table.
 func TestMalformedFilterDocumentsAreRefused(t *testing.T) {
 	for _, tc := range []struct{ name, doc, want string }{
 		{"an array", `{"filter":[{"title":"a"}]}`, `expected an object, got [{"title":"a"}]`},
@@ -152,9 +145,6 @@ func TestMalformedFilterDocumentsAreRefused(t *testing.T) {
 	}
 }
 
-// A present filter must be meaningful. Treating a malformed or half-cleared
-// filter as absent silently widens a request, which is the one answer an
-// untrusted-query API must never invent.
 func TestDegenerateFilterShapesAreRefused(t *testing.T) {
 	for _, tc := range []struct{ name, doc string }{
 		{"an empty document", `{"filter":{}}`},
@@ -174,9 +164,6 @@ func TestDegenerateFilterShapesAreRefused(t *testing.T) {
 	}
 }
 
-// Empty value lists are a UI state, not a predicate. IN and NOT IN have
-// opposite SQL constants for an empty list, so accepting either silently
-// changes the question a caller asked.
 func TestAnEmptyValueListIsRefused(t *testing.T) {
 	for _, tc := range []struct{ name, doc string }{
 		{"in", `{"filter":{"views":{"in":[]}}}`},
@@ -193,10 +180,6 @@ func TestAnEmptyValueListIsRefused(t *testing.T) {
 	}
 }
 
-// null is only an operand for a scalar comparison, where it means IS NULL.
-// Handed to any other operator it used to pass straight through
-// json.Unmarshal as that operator's zero value, so a filter the client asked
-// for stopped narrowing anything.
 func TestNullOperandsAreRefusedWhereTheyHaveNoMeaning(t *testing.T) {
 	for _, tc := range []struct{ name, doc string }{
 		{"contains", `{"filter":{"title":{"contains":null}}}`},
@@ -218,8 +201,6 @@ func TestNullOperandsAreRefusedWhereTheyHaveNoMeaning(t *testing.T) {
 		})
 	}
 
-	// The scalar door keeps its meaning: both spellings of "no value" are the
-	// same IS NULL, so a client cannot pick the wrong one by accident.
 	for _, doc := range []string{
 		`{"filter":{"publishedAt":null}}`,
 		`{"filter":{"publishedAt":{"eq":null}}}`,
@@ -238,10 +219,6 @@ func TestNullOperandsAreRefusedWhereTheyHaveNoMeaning(t *testing.T) {
 	}
 }
 
-// Every rejection is a *query.Error carrying the path that was wrong, because
-// that is what a transport turns into a 400 body. An error that is merely a
-// string forces the caller to choose between leaking internals and saying
-// nothing useful.
 func TestEveryRejectionNamesThePathThatWasWrong(t *testing.T) {
 	for _, tc := range []struct{ name, doc, path string }{
 		{"a filter field", `{"filter":{"nope":1}}`, "filter.nope"},
@@ -276,8 +253,6 @@ func TestEveryRejectionNamesThePathThatWasWrong(t *testing.T) {
 	}
 }
 
-// A column reference is resolved through the schema, so the spelling a client
-// happens to use never survives into the statement.
 func TestClientSpellingNeverReachesTheStatement(t *testing.T) {
 	for _, spelling := range []string{"authorId", "author_id", "AuthorID", "AUTHOR_ID", "author-id", "author id"} {
 		doc := `{"filter":{"` + spelling + `":7},"sort":["` + spelling + `"],"select":["` + spelling + `"]}`
@@ -296,19 +271,11 @@ func TestClientSpellingNeverReachesTheStatement(t *testing.T) {
 	}
 }
 
-// Coercion failures are rejections naming the column and the type it wanted.
-// A silently zeroed value would match the wrong rows; a panic would take the
-// process down on a request anyone can send.
 func TestUncoercibleValuesAreRejectedNotZeroed(t *testing.T) {
 	mentions := func(err error, what string) bool {
 		return strings.Contains(strings.ToLower(err.Error()), strings.ToLower(what))
 	}
-	// `typ` is what the refusal says the column wanted, in the vocabulary a client
-	// speaks. It used to be the Go type — "int8", "uint64", "time.Time" — and this
-	// table pinned it there, which is [[D-044]] broken by the test that was
-	// supposed to be checking the refusal. The claim it really makes survives: an
-	// uncoercible value is refused, and the refusal names the column and says what
-	// belonged in it.
+
 	for _, tc := range []struct{ name, doc, term, field, typ string }{
 		{"a word into an int", `{"filter":{"count":"twelve"}}`, "count:eq:twelve", "count", "a whole number"},
 		{"a fraction into an int", `{"filter":{"count":1.5}}`, "count:eq:1.5", "count", "a whole number"},
@@ -343,9 +310,6 @@ func TestUncoercibleValuesAreRejectedNotZeroed(t *testing.T) {
 	}
 }
 
-// A timestamp keeps the zone it arrived with, and one without a zone is read as
-// UTC rather than as the server's local time — which would move the boundary of
-// every range filter with the deployment.
 func TestTimestampZonesSurviveCoercion(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
@@ -383,8 +347,6 @@ func TestTimestampZonesSurviveCoercion(t *testing.T) {
 	}
 }
 
-// The flat form's edges: what a query string can carry that a JSON body cannot
-// express, and what it does with the shapes in between.
 func TestQueryStringTermEdges(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -454,9 +416,6 @@ func TestQueryStringTermEdges(t *testing.T) {
 	}
 }
 
-// The `filter` parameter holds a JSON document, and a malformed one is a
-// rejection. Dropping it would answer a narrowed request with the whole table,
-// which is the one failure the client cannot see from the response.
 func TestAMalformedFilterParameterIsRefusedNotDropped(t *testing.T) {
 	for _, tc := range []struct{ name, qs string }{
 		{"truncated json", "filter=%7B%22title%22"},
@@ -475,8 +434,6 @@ func TestAMalformedFilterParameterIsRefusedNotDropped(t *testing.T) {
 		})
 	}
 
-	// An absent filter is no filter. A present blank or null is malformed rather
-	// than an instruction to discard the caller's narrowing.
 	for _, qs := range []string{""} {
 		sql, _, err := tryQuery(t, qs, nil)
 		if err != nil {
@@ -492,8 +449,6 @@ func TestAMalformedFilterParameterIsRefusedNotDropped(t *testing.T) {
 		}
 	}
 
-	// And a well-formed one still compiles, so the rule above did not simply
-	// close the door.
 	sql, args, err := tryQuery(t, "filter=%7B%22views%22:%7B%22gte%22:10%7D%7D", nil)
 	if err != nil {
 		t.Fatalf("a well-formed filter parameter was refused: %v", err)
@@ -503,10 +458,6 @@ func TestAMalformedFilterParameterIsRefusedNotDropped(t *testing.T) {
 	}
 }
 
-// The same request must produce byte-identical SQL every time. Go randomises
-// map iteration, so a document with many keys is the case that catches a
-// forgotten sort — and the arguments have to line up with the placeholders they
-// were numbered for.
 func TestTheSameDocumentAlwaysCompilesToTheSameStatement(t *testing.T) {
 	doc := `{"filter":{
 		"title":"a","body":"b","authorId":3,"views":{"gte":1,"lt":9,"ne":5},
@@ -520,8 +471,7 @@ func TestTheSameDocumentAlwaysCompilesToTheSameStatement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Sorted key order, not document order: author.name, authorId, body,
-	// comments.body, createdAt, not, or, publishedAt, tags.slug, title, views.
+
 	want := `SELECT "id", "title", "views", "author_id" FROM "articles" WHERE ` +
 		`(EXISTS (SELECT 1 FROM "authors" AS rx1 WHERE rx1."id" = "articles"."author_id" AND rx1."name" = $1) ` +
 		`AND "author_id" = $2 AND "body" = $3 ` +
@@ -549,8 +499,6 @@ func TestTheSameDocumentAlwaysCompilesToTheSameStatement(t *testing.T) {
 		}
 	}
 
-	// Then the same document, and the same document with its keys written in a
-	// different order, over and over.
 	shuffled := `{"filter":{
 		"not":{"title":"spam"},"tags.slug":{"in":["go","rust"]},"comments.body":{"contains":"x"},
 		"or":[{"title":"c"},{"body":"d"},{"views":7}],"author.name":"Ann",

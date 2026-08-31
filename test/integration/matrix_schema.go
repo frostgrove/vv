@@ -4,11 +4,6 @@ package integration
 
 import "github.com/frostgrove/vv/crud/sqlrepo"
 
-// The provider matrix needs one relation it can grow past a single preload
-// batch. It gets its own pair of tables rather than the blog ones because every
-// other test reseeds those from scratch, and a thousand rows would make each of
-// them slower for no reason.
-
 type MxOwner struct {
 	ID   int64  `db:"id,pk,auto"`
 	Name string `db:"name"`
@@ -29,9 +24,6 @@ var (
 	MxItems  = sqlrepo.Define[MxItem, int64, struct{}]("mx_items")
 )
 
-// Both lists start with DROP so a rerun is a clean slate, and both keep the
-// generated key so the model's `auto` tag stays honest even though the fixture
-// assigns ids itself.
 var schemaMatrixPostgres = []string{
 	`DROP TABLE IF EXISTS mx_items`,
 	`DROP TABLE IF EXISTS mx_owners`,

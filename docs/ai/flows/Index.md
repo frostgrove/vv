@@ -63,7 +63,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 |----|------|-------------|-----------|
 | [FL-001](FL-001-list-request-to-rows.md) | A list request from wire to rows | `crud/http/crudfiber/handler.go:List` / `:Query` | [[UC-001]] [[UC-002]] |
 | [FL-002](FL-002-patch-becomes-an-update.md) | A PATCH becomes an UPDATE | `crud/http/crudfiber/handler.go:Update` | [[UC-003]] [[UC-009]] |
-| [FL-003](FL-003-save-insert-versus-upsert.md) | Save: insert versus upsert | `crud/sqlrepo/repository.go:Save` | [[UC-001]] [[UC-009]] |
+| [FL-003](FL-003-save-insert-versus-upsert.md) | Save and InsertBatch: upsert versus insert-only | `crud/sqlrepo/repository.go:Save` / `:InsertBatch` | [[UC-001]] [[UC-008]] [[UC-009]] |
 | [FL-004](FL-004-declaration-what-define-validates.md) | Declaration: what `sqlrepo.Define` validates and when | `crud/sqlrepo/blueprint.go:Define` | [[UC-010]] [[UC-014]] [[UC-016]] |
 | [FL-005](FL-005-relation-filter-becomes-a-correlated-exists.md) | A relation filter becomes a correlated EXISTS | `crud/predicate.go:writer.leaf` | [[UC-006]] [[UC-004]] |
 | [FL-006](FL-006-preload-becomes-batched-second-queries.md) | A preload becomes batched second queries | `crud/preload.go:RunPreloads` | [[UC-006]] [[UC-004]] |
@@ -91,7 +91,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | File | Flows |
 |---|---|
 | `crud/adapter/crudpgx/conflict.go` | FL-003, FL-011, FL-014 |
-| `crud/adapter/crudpgx/crudpgx.go` | FL-009, FL-011, FL-014 |
+| `crud/adapter/crudpgx/crudpgx.go` | FL-003, FL-009, FL-011, FL-014 |
 | `crud/adapter/crudsql/conflict.go` | FL-003, FL-011, FL-014 |
 | `crud/adapter/crudsql/crudsql.go` | FL-009, FL-011, FL-014 |
 | `app/doc.go` | FL-024 |
@@ -146,7 +146,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/crudtest/recorder.go` | FL-009, FL-016 |
 | `crud/dialect.go` | FL-002, FL-003, FL-009, FL-017 |
 | `crud/errors.go` | FL-002, FL-003, FL-009, FL-011 |
-| `crud/executor.go` | FL-002, FL-009, FL-016, FL-017 |
+| `crud/executor.go` | FL-002, FL-003, FL-009, FL-016, FL-017 |
 | `errs/doc.go` | FL-011 |
 | `errs/code.go` | FL-011 |
 | `errs/codes.go` | FL-011, FL-014 |
@@ -175,7 +175,8 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `crud/preload.go` | FL-006 |
 | `crud/relation.go` | FL-001, FL-004, FL-005, FL-006 |
 | `crud/render.go` | FL-001, FL-004, FL-005, FL-017 |
-| `crud/repo.go` | FL-002, FL-007 |
+| `crud/repo.go` | FL-002, FL-003, FL-007 |
+| `crud/batch.go` | FL-003, FL-008, FL-009, FL-017 |
 | `crud/scope.go` | FL-004, FL-005, FL-006, FL-007 |
 | `crud/update.go` | FL-002, FL-004, FL-008, FL-010, FL-017 |
 | `*/vv_gen.go` — ten checked-in files under `test/` and `_examples/` | FL-010 |

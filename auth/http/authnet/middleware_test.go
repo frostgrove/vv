@@ -11,8 +11,6 @@ import (
 	"github.com/frostgrove/vv/auth/http/authnet"
 )
 
-// serve runs one request through the middleware and answers what the handler
-// saw and what the client got.
 func serve(t *testing.T, guard *auth.Guard, header string) (*seen, *httptest.ResponseRecorder) {
 	t.Helper()
 	h := &seen{}
@@ -106,7 +104,6 @@ func TestAnOptionalGuardLetsAnAnonymousRequestThrough(t *testing.T) {
 		}
 	})
 
-	// The arm that makes the option safe rather than a hole.
 	t.Run("a bad credential is still refused", func(t *testing.T) {
 		h, w := serve(t, auth.NewGuard(refuses(), auth.Optional()), "Bearer forged")
 		if w.Code != http.StatusUnauthorized {

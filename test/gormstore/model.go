@@ -1,6 +1,3 @@
-// Package gormstore is the gorm half of the integration: ordinary gorm models,
-// with `rel` tags alongside the `gorm` ones so vv can navigate the same
-// associations. It is what docs/gorm.md tells a gorm project to do, executed.
 package gormstore
 
 //go:generate go run github.com/frostgrove/vv/cmd/vv -readonly UpdatedAt,DeletedAt
@@ -11,8 +8,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Team is an ordinary gorm model. The only additions are the `rel` tags, which
-// gorm ignores and vv reads — one struct, two libraries.
 type Team struct {
 	gorm.Model
 	Name string `gorm:"size:120"`
@@ -35,14 +30,8 @@ type Label struct {
 	Slug string `gorm:"size:64"`
 }
 
-// LabelCreations counts the gorm callbacks that fired. docs/gorm.md §16 says
-// gorm hooks do not run on vv writes — vv sends one statement to the
-// driver and never goes through gorm's callback chain — and no model in the
-// tree declared a hook, so the claim was pinned by nothing.
 var LabelCreations atomic.Int64
 
-// BeforeCreate is an ordinary gorm hook: it counts, and it defaults the slug, so
-// a test can see whether it ran from the row itself and not only from a counter.
 func (this *Label) BeforeCreate(*gorm.DB) error {
 	LabelCreations.Add(1)
 	if this.Slug == "" {

@@ -23,12 +23,6 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// articlePort is the same rule articleService enforces, stated at the service
-// seam instead of at the repository one: it embeds the default service and
-// overrides the one command it cares about.
-//
-// It is what a generated service will be, and it is [[D-045]]'s control against
-// a live database — one value, three bindings, no glue.
 type articlePort struct {
 	*port.DefaultService[Article, int64, ArticleUpdate]
 	blocked string
@@ -41,9 +35,6 @@ func (this articlePort) Create(ctx context.Context, cmd port.CreateCommand[Artic
 	return this.DefaultService.Create(ctx, cmd)
 }
 
-// The three bindings hold one Service type, because a generic alias is the same
-// type. This is the compile-time half of the claim; the test below is the half
-// that runs.
 var (
 	_ crudfiber.Service[Article, int64, ArticleUpdate] = articlePort{}
 	_ crudgin.Service[Article, int64, ArticleUpdate]   = articlePort{}
@@ -63,7 +54,6 @@ func newPortService(b blog) articlePort {
 	}
 }
 
-// portBinding is one transport's whole job: mount the service, send a request.
 type portBinding struct {
 	name  string
 	serve func(t *testing.T, service articlePort, method, target, body string) response
@@ -115,9 +105,6 @@ var portBindings = []portBinding{
 	}},
 }
 
-// [[D-045]]'s control, live: one port.Service value mounted on all three
-// bindings answers the same status, the same bytes and the same rule against a
-// real database.
 func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -152,10 +139,6 @@ func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 				}
 			})
 
-			// The control: the same route with a title the service allows
-			// writes a row. Without it the leg above passes for a service that
-			// refuses everything, or for three bindings whose create route was
-			// never mounted at all.
 			t.Run("and the control: a title it allows is written", func(t *testing.T) {
 				for _, bind := range portBindings {
 					got := bind.serve(t, service, http.MethodPost, "/articles",
@@ -170,8 +153,7 @@ func TestOnePortServiceMountsOnAllThreeBindings(t *testing.T) {
 					if out.Title != "through the port" {
 						t.Fatalf("%s stored %q", bind.name, out.Title)
 					}
-					// And the clearing still runs, at the service now rather
-					// than in each binding: the key the client sent is gone.
+
 					if out.ID == 999999 {
 						t.Fatalf("%s let the client choose its own key", bind.name)
 					}

@@ -1,7 +1,3 @@
-// Package modelscan discovers database model declarations in application
-// source files. It deliberately uses only the Go parser: creating a migration
-// should still work while an unrelated package is unfinished, and discovery
-// must never execute application code.
 package modelscan
 
 import (
@@ -12,15 +8,10 @@ import (
 	"unicode"
 )
 
-// Options describes the source trees Discover walks. Empty Roots means the
-// current directory.
 type Options struct {
 	Roots []string
 }
 
-// Model is the source-level part of a database model needed by migration
-// generation. Package is the declared Go package name; Dir and File disambiguate
-// equally named models in different packages.
 type Model struct {
 	Package       string
 	Name          string
@@ -33,10 +24,6 @@ type Model struct {
 	Tagged        bool
 }
 
-// Field is one mapped column. GoType is the type expression exactly as the
-// model spells it, which keeps named application types visible to diagnostics.
-// CanonicalType resolves import aliases and UnderlyingType resolves local named
-// scalar declarations; SQL generation uses the strongest available spelling.
 type Field struct {
 	Name           string
 	Column         string
@@ -54,7 +41,6 @@ type Field struct {
 	Version        bool
 }
 
-// Label is a stable, human-readable option for an interactive model picker.
 func (this Model) Label() string {
 	name := this.Name
 	if this.Package != "" {
@@ -70,13 +56,6 @@ func (this Model) Label() string {
 	return fmt.Sprintf("%s (table %s) — %s", name, this.Table, where)
 }
 
-// Candidates returns the most likely models for target. It intentionally
-// returns every equally good answer: the caller decides whether to show an
-// interactive picker or create an empty migration in non-interactive mode.
-//
-// Both `users` and the conventional `create_users_table` spelling select the
-// users table. A constant TableName method is stronger evidence than a table
-// name inferred from the Go type.
 func Candidates(models []Model, target string) []Model {
 	target = migrationTarget(target)
 	if target == "" {
@@ -155,8 +134,6 @@ func normalizeName(s string) string {
 	return strings.ToLower(snake(strings.Trim(b.String(), "_")))
 }
 
-// snake mirrors crud's field and default-table convention: UserID becomes
-// user_id and HTTPCode becomes http_code.
 func snake(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 4)

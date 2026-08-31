@@ -23,12 +23,12 @@ The validated reference inside `Meta` and `Relation` is private; public
 diagnostic strings and value-returning accessors cannot retarget cached SQL or
 relation metadata after declaration.
 
-Legacy string entry points (`Define`, `NewMeta`, `RegisterTable`, `CopyFrom`)
-accept one component. A dot is an eager error naming the structured path, never
-an instruction to split. Declarative code uses `DefineInSchema`; low-level code
-uses `TableRef`, `NewMetaRef`, and structured registration. Exact components in
-a `TableRef` may themselves contain dots because their boundary is no longer a
-guess.
+One-component string entry points (`Define`, `NewMeta`, `RegisterTable`,
+`UnsafeCopyFrom`) accept one component. A dot is an eager error naming the
+structured path, never an instruction to split. Declarative code uses
+`DefineInSchema`; low-level code uses `TableRef`, `NewMetaRef`, structured
+registration, and `UnsafeCopyFromTable`. Exact components in a `TableRef` may
+themselves contain dots because their boundary is no longer a guess.
 
 `TableNameOf` is a read-only preview: merely asking for the conventional or
 model-owned name does not publish relation metadata. An untagged
@@ -148,7 +148,7 @@ publication plus an immutable, root-local relation context.
 - `crud/probe/declare_test.go:TestAQualifiedDeclarationUsesOnlyItsSchemasTableAndForeignKeys`
 - `crud/sqlfault/catalog_test.go:TestFromCatalogUsesTheDriverSchemaForSameNamedConstraints`
 - `crud/decorators/faults/faults_test.go:TestAQualifiedFaultRequiresExactSchemaAndTableComponents`
-- `crud/adapter/crudpgx/copy_test.go:TestStringCopyFromRefusesADotBeforeCallingPgx`
+- `crud/adapter/crudpgx/copy_test.go:TestUnsafeStringCopyFromRefusesADotBeforeCallingPgx`
 - `test/integration/driver_pgx_test.go:TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable`
 - `test/integration/qualified_table_test.go:TestMySQLDatabaseQualifierAndSQLiteAttachedDatabaseAreLive`
 

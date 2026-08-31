@@ -14,7 +14,7 @@ func TestSlugifyNormalisesWhatAnAdministratorTypes(t *testing.T) {
 		"Lease Reviewer":  "lease-reviewer",
 		"  ADMIN  ":       "admin",
 		"a//b":            "a-b",
-		"Юрист":           "", // nothing a URL segment can carry
+		"Юрист":           "",
 		"":                "",
 		"-leading-":       "leading",
 		"Level 2 Auditor": "level-2-auditor",
@@ -47,14 +47,11 @@ func TestSessionIsClosedByRevocationExpiryAndIdleness(t *testing.T) {
 		}
 	}
 
-	// The boundary: exactly at ExpiresAt is expired, because the field says
-	// when it stops rather than the last moment it works.
 	atExpiry := Session{LastUsedAt: now, ExpiresAt: now}
 	if atExpiry.Live(now, idle) {
 		t.Error("a session exactly at its expiry still authenticates")
 	}
 
-	// An idle timeout of zero turns the rule off rather than closing everything.
 	stale := Session{LastUsedAt: now.Add(-1000 * time.Hour), ExpiresAt: now.Add(time.Hour)}
 	if !stale.Live(now, 0) {
 		t.Error("an unset idle timeout closed a session instead of not applying")
@@ -81,9 +78,6 @@ func TestPrincipalAnswersRolesPermissionsAndClaims(t *testing.T) {
 		t.Fatal("Has answers the wrong permissions")
 	}
 
-	// The claim is the uuid and not its text: security.ScopeAttr turns whatever
-	// comes out of here into a bind parameter, and a string against a uuid
-	// column fails at run time rather than at wiring time.
 	got, ok := p.Attr(AttrSubjectID)
 	if !ok {
 		t.Fatal("the subject id is not readable as a claim")
@@ -117,9 +111,6 @@ func TestAnEmptySubjectReferenceIsNeverACaller(t *testing.T) {
 	}
 }
 
-// A header is caller-controlled and unbounded; the column is not. Truncating at
-// the boundary rather than leaving it to the engine is what makes the limit a
-// limit on every engine.
 func TestTheUserAgentIsTruncatedBeforeItReachesAColumn(t *testing.T) {
 	long := strings.Repeat("x", MaxUserAgent*3)
 	got := Agent{UserAgent: long, IP: "127.0.0.1"}.Truncated()
@@ -135,9 +126,6 @@ func TestTheUserAgentIsTruncatedBeforeItReachesAColumn(t *testing.T) {
 	}
 }
 
-// Admin is recomputed at every start as the union of everything declared
-// anywhere. The role that exists to be able to fix things must not fall behind
-// the code that added something to fix.
 func TestAdminIsPlannedToHoldEveryDeclaredPermission(t *testing.T) {
 	plan := rolePlan([]ModuleGrants{
 		{Module: "access", Permissions: []PermissionDef{{Code: PermRoleRead}, {Code: PermRoleWrite}}},
@@ -169,8 +157,6 @@ func TestAPermissionDeclaredTwiceIsPlannedOnce(t *testing.T) {
 	}
 }
 
-// Two directories claiming one subject type is a composition mistake whose
-// symptom at run time is a caller authenticated against the wrong store.
 func TestTwoDirectoriesForOneSubjectTypeRefuseToWire(t *testing.T) {
 	if _, err := NewDirectories(stubDirectory{}, stubDirectory{}); err == nil {
 		t.Fatal("a duplicate subject type wired silently; whichever was passed first would then decide")
@@ -183,8 +169,6 @@ func TestADirectoryWithNoSubjectTypeRefusesToWire(t *testing.T) {
 	}
 }
 
-// The control: the same call with one well-formed directory has to succeed, or
-// the two refusals above would pass even if NewDirectories always failed.
 func TestOneWellFormedDirectoryWires(t *testing.T) {
 	indexed, err := NewDirectories(stubDirectory{})
 	if err != nil {
@@ -196,13 +180,11 @@ func TestOneWellFormedDirectoryWires(t *testing.T) {
 }
 
 func TestTheAuthBodyMapTranslatesToTheKeyTheClientSent(t *testing.T) {
-	// A violation the repository raised at Credential.SecretHash is about the
-	// key the caller typed a password into.
 	got, ok := AuthBodyPaths.Resolve(errsPath("SecretHash"))
 	if !ok || len(got) != 1 || got[0].Name != "password" {
 		t.Fatalf("SecretHash resolved to %v", got)
 	}
-	// A head nobody mapped passes through rather than being invented.
+
 	through, ok := AuthBodyPaths.Resolve(errsPath("Whatever"))
 	if !ok || through[0].Name != "Whatever" {
 		t.Fatalf("an unmapped field was rewritten to %v", through)

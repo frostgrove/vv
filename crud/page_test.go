@@ -8,7 +8,6 @@ import (
 )
 
 func TestPagerArithmetic(t *testing.T) {
-	// Five rows, two per page: pages 1 and 2 are full, page 3 holds the rest.
 	for _, tc := range []struct {
 		name       string
 		items      []string
@@ -49,8 +48,6 @@ func TestPagerArithmetic(t *testing.T) {
 	}
 }
 
-// Asking for a page past the end is a client mistake, not a crash: the pager
-// still describes the result set truthfully and offers the way back.
 func TestPagerBeyondTheLastPage(t *testing.T) {
 	r := crud.NewPaginatedResponse[string](nil, 9, 2, 5)
 	if r.TotalPages != 3 || r.HasNext || !r.HasPrev {
@@ -58,8 +55,6 @@ func TestPagerBeyondTheLastPage(t *testing.T) {
 	}
 }
 
-// An empty page must serialise as [] rather than null, or every JavaScript
-// client has to special-case it.
 func TestEmptyPageMarshalsAsAnEmptyArray(t *testing.T) {
 	out, err := json.Marshal(crud.NewPaginatedResponse[int](nil, 1, 10, 0))
 	if err != nil {
@@ -71,8 +66,6 @@ func TestEmptyPageMarshalsAsAnEmptyArray(t *testing.T) {
 	}
 }
 
-// MapPage exists so a transport can swap entities for DTOs without recomputing
-// — or mistyping — the pager.
 func TestMapPageKeepsThePagerAndChangesTheItems(t *testing.T) {
 	type user struct{ Name string }
 	source := crud.NewPaginatedResponse([]user{{"ann"}, {"bo"}}, 2, 2, 5)

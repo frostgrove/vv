@@ -103,10 +103,6 @@ func TestAPasswordSurvivesEveryPunctuationMark(t *testing.T) {
 		}
 	})
 
-	// The mysql driver does not unescape the password, so escaping it would be
-	// the bug. It finds the field by taking the last '@' before the last '/',
-	// and both of those are ours. test/vvdb_test.go proves it by parsing the
-	// string back with the real driver.
 	t.Run("mysql leaves it alone", func(t *testing.T) {
 		config := base(vvdb.MySQL)
 		config.Password = nasty
@@ -120,9 +116,6 @@ func TestAPasswordSurvivesEveryPunctuationMark(t *testing.T) {
 	})
 }
 
-// The failure this pins is silent and total: with `loc=Europe/Moscow` written
-// out plainly, the driver scans back to the last '/' in the whole string, finds
-// the one inside the value, and reads "Moscow" as the database name.
 func TestAParameterHoldingASlashIsEscapedForMySQL(t *testing.T) {
 	config := base(vvdb.MySQL)
 	config.Params = map[string]string{"loc": "Europe/Moscow"}
@@ -210,8 +203,7 @@ func TestASubSecondConnectTimeoutDoesNotBecomeForever(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// connect_timeout is whole seconds and 0 means no timeout at all, so
-	// rounding down is the one answer that must not happen.
+
 	if !strings.Contains(got, "connect_timeout=1") {
 		t.Errorf("half a second should round up to one, not down to none: %s", got)
 	}
@@ -380,8 +372,6 @@ func TestSQLitePragmasKeepBothDurabilityAndLockSettings(t *testing.T) {
 		}
 	}
 
-	// Validation is case-insensitive, and rendering has to be too: mattn reads
-	// lower-case URI names, so preserving JOURNAL_MODE would silently drop it.
 	config = vvdb.Config{Engine: vvdb.SQLite, Driver: "sqlite3", Path: "/tmp/vv.db", Pragmas: vvdb.SQLitePragmas{"JOURNAL_MODE=WAL"}}
 	if got, err := vvdb.SQLiteDSN(&config); err != nil || !strings.Contains(got, "_journal_mode=WAL") {
 		t.Fatalf("case-normalized sqlite pragma = %q, %v", got, err)
@@ -497,8 +487,6 @@ func TestAFieldThatBelongsToAnotherEngineIsRefused(t *testing.T) {
 	}
 }
 
-// A colon in the user is the one thing the mysql driver reads wrongly and
-// cannot be worked around, because it splits at the *first* one.
 func TestAMySQLUserCannotHoldAColon(t *testing.T) {
 	config := base(vvdb.MySQL)
 	config.User = "svc:reader"

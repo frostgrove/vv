@@ -37,11 +37,6 @@ func (this integrationBudgetSource) Begin(ctx context.Context) (crud.Tx, error) 
 	return beginner.Begin(ctx)
 }
 
-// SaveAll exists to turn N round trips into one. These are about it still being
-// the same write: its command objects remain untouched, stored rows can be read
-// back explicitly, the batch is one statement, and nothing that guards Save is
-// skipped because the rows arrived together.
-
 func TestSaveAllWritesTheWholeBatch(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -80,8 +75,7 @@ func TestSaveAllChunksRollBackAsOneWriteAgainstEveryEngine(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			egWipe(t, tg.source)
-			// Three generated-key columns means a six-bind budget puts two rows
-			// in the first chunk and the duplicate in the second one.
+
 			rows := EgConses.Bind(withBindBudget(tg.source, 6))
 			err := rows.SaveAll(ctx, []*EgCons{
 				{Slug: "first", Tag: crud.Set("ok")},
@@ -131,9 +125,6 @@ func TestDeleteChunksRemoveTheWholeIDSetAgainstEveryEngine(t *testing.T) {
 	}
 }
 
-// A batch that fits the dialect budget is one statement, not a loop wearing a
-// batch's name. Larger batches chunk only at that hard boundary. Proved through
-// the recorder rather than by timing.
 func TestSaveAllIsOneStatement(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -153,9 +144,6 @@ func TestSaveAllIsOneStatement(t *testing.T) {
 	}
 }
 
-// A batch that mixes rows the database keys with rows the caller keyed is two
-// different statements. Splitting it silently would hide the cost, which is the
-// only reason to use this over a loop.
 func TestSaveAllRefusesAMixedBatch(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -171,9 +159,6 @@ func TestSaveAllRefusesAMixedBatch(t *testing.T) {
 	}
 }
 
-// SaveAll is the write-only batch primitive on every dialect. A caller that
-// needs database-owned values reads the stored rows explicitly rather than
-// observing dialect-dependent mutation of command objects.
 func TestSaveAllLeavesGeneratedKeysOnItsInputsUntouched(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -211,8 +196,6 @@ func TestSaveAllLeavesGeneratedKeysOnItsInputsUntouched(t *testing.T) {
 	}
 }
 
-// The batch is checked row by row. Inherited from crud.Core it would have been
-// the one call that writes the most rows and checks none of them.
 func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -231,7 +214,6 @@ func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 			gated := EgRows.Bind(tg.source, security.Gate(policy))
 			mine := context.WithValue(ctx, gatePrincipal{}, int64(1))
 
-			// One row of somebody else's is enough to refuse the batch.
 			err := gated.SaveAll(mine, []*EgRow{
 				{ID: 1, Tenant: 1, Name: "mine"},
 				{ID: 2, Tenant: 2, Name: "theirs"},
@@ -239,12 +221,11 @@ func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 			if !errors.Is(err, security.ErrForbidden) {
 				t.Fatalf("err = %v, want ErrForbidden", err)
 			}
-			// And nothing was written: the checks all run before the statement.
+
 			if n, _ := EgRows.Bind(tg.source).Count(ctx); n != 0 {
 				t.Fatalf("%d rows written by a refused batch", n)
 			}
 
-			// A batch that is entirely the caller's goes through.
 			if err := gated.SaveAll(mine, []*EgRow{
 				{ID: 3, Tenant: 1, Name: "a"}, {ID: 4, Tenant: 1, Name: "b"},
 			}); err != nil {
@@ -257,7 +238,6 @@ func TestSaveAllIsCheckedByTheGate(t *testing.T) {
 	}
 }
 
-// countingSource wraps a source and counts the statements that reach it.
 type countingSource struct {
 	crud.Source
 	n int

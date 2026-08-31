@@ -7,9 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// stubDirectory is a Directory that answers whatever a test needs it to and
-// records nothing. It lives here rather than in each test file because three of
-// them need one and three copies drift.
 type stubDirectory struct {
 	t        SubjectType
 	active   bool
@@ -21,17 +18,8 @@ type stubDirectory struct {
 	provisionErr error
 }
 
-// testSubject is the subject type these tests use.
-//
-// It is declared here rather than borrowed from a module because access ships
-// no such constant: a subject type is whatever a registered directory claims,
-// and a test reaching into the user module for the string would re-create the
-// dependency the port exists to remove.
 const testSubject SubjectType = "user"
 
-// namelessDirectory is what a module that forgot to fill in its subject type
-// looks like from here. It is a type of its own rather than a field on
-// stubDirectory, so the stub's convenient default cannot hide the case.
 type namelessDirectory struct{ stubDirectory }
 
 func (namelessDirectory) SubjectType() SubjectType { return "" }

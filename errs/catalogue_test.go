@@ -8,7 +8,6 @@ import (
 	"testing/fstest"
 )
 
-// files is a catalogue on disk, in the shape a consumer embeds.
 func files(entries map[string]string) fstest.MapFS {
 	out := fstest.MapFS{}
 	for name, body := range entries {
@@ -32,13 +31,8 @@ func say(t *testing.T, m *Messages, v Violation, locale string) string {
 	return s
 }
 
-// A catalogue read from files resolves the same ladder as one declared in Go.
-// The loader is measured against the in-code path rather than against nothing:
-// this is plumbing over [Messages], and the way it fails is by keying an entry
-// somewhere the walk never looks.
 func TestACatalogueLoadedFromFilesResolvesTheSameLadder(t *testing.T) {
 	entries := map[string][2]string{
-		// key -> {locale, template}
 		"user.email.unique": {"", "that address is already registered"},
 		"email.unique":      {"", "that address is taken"},
 		"unique":            {"", "already taken"},
@@ -83,8 +77,6 @@ func TestACatalogueLoadedFromFilesResolvesTheSameLadder(t *testing.T) {
 		})
 	}
 
-	// The control on the fixture: the four keys really are distinguishable, so
-	// the agreement above is not four lookups landing on one entry.
 	seen := map[string]bool{}
 	for _, v := range []Violation{
 		{Path: Path{Named("user"), Named("email")}, Code: CodeUnique},
@@ -98,8 +90,6 @@ func TestACatalogueLoadedFromFilesResolvesTheSameLadder(t *testing.T) {
 	}
 }
 
-// Two files disagreeing about one key in one locale is a catalogue that renders
-// differently depending on load order.
 func TestTwoFilesDisagreeingOnOneKeyAreRefused(t *testing.T) {
 	_, err := LoadMessages(StandardCodes(), files(map[string]string{
 		"en.json":    `{"email.unique": "that address is taken"}`,
@@ -109,8 +99,6 @@ func TestTwoFilesDisagreeingOnOneKeyAreRefused(t *testing.T) {
 		t.Fatalf("two files in different locales are not a redeclaration: %v", err)
 	}
 
-	// The control: two files *agreeing* load cleanly, so the refusal is about
-	// the disagreement rather than about the second file.
 	if _, err := LoadMessages(StandardCodes(), files(map[string]string{
 		"a-en.json": `{"email.unique": "that address is taken"}`,
 		"b-en.json": `{"email.unique": "that address is taken"}`,
@@ -133,8 +121,6 @@ func TestTwoFilesDisagreeingOnOneKeyAreRefused(t *testing.T) {
 	}
 }
 
-// A nested file is refused where it is written rather than loading into keys
-// the ladder never asks for.
 func TestANestedCatalogueFileIsRefused(t *testing.T) {
 	_, err := LoadMessages(StandardCodes(), files(map[string]string{
 		"default.json": `{"user": {"email": {"unique": "that address is taken"}}}`,
@@ -143,8 +129,6 @@ func TestANestedCatalogueFileIsRefused(t *testing.T) {
 		t.Fatal("a nested file loaded; every key in it would be one nothing ever consults")
 	}
 
-	// The control: the flat spelling of the same thing loads, so the refusal is
-	// about the shape rather than about the keys.
 	if _, err := LoadMessages(StandardCodes(), files(map[string]string{
 		"default.json": `{"user.email.unique": "that address is taken"}`,
 	}), "messages"); err != nil {
@@ -152,8 +136,6 @@ func TestANestedCatalogueFileIsRefused(t *testing.T) {
 	}
 }
 
-// Missing is a report. A partial catalogue is the normal case, so it names what
-// falls through rather than refusing to load.
 func TestMissingNamesTheCodesWithNoTemplate(t *testing.T) {
 	m := load(t, map[string]string{
 		"default.json": `{"unique": "already taken"}`,
@@ -169,8 +151,6 @@ func TestMissingNamesTheCodesWithNoTemplate(t *testing.T) {
 		}
 	}
 
-	// The control: declare them all and the list empties, so the report is
-	// about the templates rather than a list of every code there is.
 	for _, c := range missing {
 		if err := m.Add("", string(c), "declared"); err != nil {
 			t.Fatalf("declaring %q: %v", c, err)
@@ -180,16 +160,13 @@ func TestMissingNamesTheCodesWithNoTemplate(t *testing.T) {
 		t.Fatalf("after declaring every one, %v is still reported missing", left)
 	}
 
-	// And the ladder is walked rather than the one locale: what en-GB leaves to
-	// en is not missing from en-GB.
 	base := load(t, map[string]string{"en.json": `{"unique": "already taken"}`})
 	for _, c := range base.Missing("en-GB") {
 		if c == CodeUnique {
 			t.Fatal("a code en-GB resolves through en is reported missing from en-GB")
 		}
 	}
-	// Its control: a locale that does not fall through to en really does miss
-	// it, so the assertion above is about the ladder.
+
 	var found bool
 	for _, c := range base.Missing("fr") {
 		found = found || c == CodeUnique
@@ -199,7 +176,6 @@ func TestMissingNamesTheCodesWithNoTemplate(t *testing.T) {
 	}
 }
 
-// Locales is what a start-up check reads to decide which languages it has.
 func TestLocalesNamesEveryFileThatDeclaredSomething(t *testing.T) {
 	m := load(t, map[string]string{
 		"default.json": `{"unique": "already taken"}`,
@@ -212,8 +188,6 @@ func TestLocalesNamesEveryFileThatDeclaredSomething(t *testing.T) {
 	}
 }
 
-// Two loads of one filesystem render identically. fstest.MapFS iterates
-// randomly, so the assertion is on repeated loads rather than on one.
 func TestTheCatalogueLoadsInADeterministicOrder(t *testing.T) {
 	fsys := files(map[string]string{
 		"default.json": `{"unique": "already taken", "email.unique": "that address is taken", "check": "not allowed"}`,
@@ -238,8 +212,6 @@ func TestTheCatalogueLoadsInADeterministicOrder(t *testing.T) {
 		}
 	}
 
-	// The control on the comparison: the three locales really do differ, so
-	// twenty identical answers are not three identical lookups.
 	if len(first) == 0 || first[0] == '|' {
 		t.Fatalf("the fixture answers %q; it does not distinguish the locales", first)
 	}

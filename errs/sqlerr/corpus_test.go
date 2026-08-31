@@ -8,29 +8,14 @@ import (
 	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
-// SameKey is what keeps the checked-in corpus honest, and every table test in
-// this package reads that corpus and trusts it.
-//
-// Its one caller is the live guard in test/integration, so a comparator that
-// silently narrowed would leave the whole tree green: cut down to a comparison
-// of the driver type alone, the guard still passes on four live engines, and
-// MySQL could start answering a CHECK under a different SQLSTATE with nothing
-// going red. Every leg below is an unequal pair drawn from the corpus, and each
-// asserts its own precondition first, so a corpus that shifts turns this red
-// rather than vacuous.
 func TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently(t *testing.T) {
 	all := corpora(t)
 
-	// A capture against itself. Without it a comparator stuck on false passes
-	// every refusal below.
 	uq := find(t, all["postgres"], "unique").Err
 	if !uq.SameKey(uq) {
 		t.Fatal("a capture does not read as its own key, so every refusal below is a comparator that answers no to everything")
 	}
 
-	// The message is deliberately left out of the key ([[D-039]]), and nothing
-	// else in the tree pins that omission: the same duplicate key, from the same
-	// server, in two languages.
 	plain := find(t, all["mysql"], "unique").Err
 	twin := find(t, all["mysql"], "unique_in_another_locale").Err
 	if plain.Message == twin.Message {
@@ -41,9 +26,6 @@ func TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently(t *testing.T) {
 			plain.Message, twin.Message)
 	}
 
-	// Then the three halves of the key, each moved on its own while the rest of
-	// the pair stays put. A comparator that stopped reading one of them calls
-	// the pair one key.
 	for _, tc := range []struct {
 		moved string
 		a, b  *sqlerr.Err
@@ -82,10 +64,6 @@ func TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently(t *testing.T) {
 		}
 	}
 
-	// Which structured fields the driver filled in is the fourth half, because
-	// that is where an errs.Source comes from. The untouched copy beside it is
-	// what makes the refusal attributable to the missing name rather than to
-	// the copying.
 	pg := find(t, all["postgres"], "unique").Err
 	if _, ok := pg.Fields["ConstraintName"]; !ok {
 		t.Fatalf("postgres/unique no longer records a ConstraintName, so removing one removes nothing: %s", pg.Key())
@@ -101,9 +79,6 @@ func TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently(t *testing.T) {
 			pg.Key(), fewer.Key())
 	}
 
-	// Both absent captures come from the corpus: an engine that cannot reach a
-	// case at all records no error, and comparing against one must neither
-	// panic nor read as a match.
 	none := find(t, all["sqlite"], "too_long").Err
 	other := find(t, all["mysql"], "transaction_aborted").Err
 	if none != nil || other != nil {
@@ -117,9 +92,6 @@ func TestSameKeySeparatesTwoCapturesThatWouldClassifyDifferently(t *testing.T) {
 	}
 }
 
-// copyErr is a copy deep enough to edit. A plain assignment shares the Fields
-// map, and editing the loaded corpus would change what the next assertion in
-// the same test reads.
 func copyErr(e *sqlerr.Err) *sqlerr.Err {
 	c := *e
 	c.Fields = make(map[string]string, len(e.Fields))
@@ -129,13 +101,6 @@ func copyErr(e *sqlerr.Err) *sqlerr.Err {
 	return &c
 }
 
-// Save's promise is that recapturing an unchanged server rewrites nothing.
-//
-// The whole guard on these files is a human reading a diff, so a Save that
-// reordered a map or stamped a time would bury a real change in noise — and
-// test/corpus redacts PostgreSQL's deadlock DETAIL for exactly that reason
-// ([[D-040]]). Nothing else exercises it: `make corpus` writes the files and no
-// target diffs the result.
 func TestSavingAnUnchangedCorpusRewritesNothing(t *testing.T) {
 	tmp := t.TempDir()
 	for _, engine := range engines {
@@ -159,9 +124,6 @@ func TestSavingAnUnchangedCorpusRewritesNothing(t *testing.T) {
 				engine, len(want), len(got))
 		}
 
-		// The control: a Save that wrote nothing at all, or the same bytes
-		// whatever it was handed, passes the leg above. One changed field has to
-		// come out different.
 		c.Server += " (not this server)"
 		if err := sqlerr.Save(tmp, c); err != nil {
 			t.Fatalf("%s: %v", engine, err)

@@ -48,18 +48,14 @@ func (this *packageSource) fields(decl *structSource, prefix string, seen map[st
 		if database == "-" || hasRel || hasGormOption(gormOpts, "-") {
 			continue
 		}
-		// A named local struct is normally a relation/bookkeeping field. GORM's
-		// explicit embedded spelling is the exception and flattens its columns.
+
 		if name := localTypeName(raw.Type); name != "" && this.structs[name] != nil {
 			if hasGormOption(gormOpts, "embedded") || gormOpts["embeddedprefix"] != "" {
 				out = append(out, this.fields(this.structs[name], prefix+gormOpts["embeddedprefix"], seen)...)
 			}
 			continue
 		}
-		// Without type-checking, an imported selector that is not one of the
-		// database scalar packages is much more likely to be a relation than a
-		// column. An explicit db/column tag remains the author's escape hatch for
-		// an imported scalar type.
+
 		if !hasDB && gormOpts["column"] == "" && !gormScalarOption(gormOpts) &&
 			(gormRelationOption(gormOpts) || importedRelationCandidate(raw.Type, decl.imports)) {
 			continue
@@ -117,9 +113,6 @@ func finishPrimaryKey(fields []Field) {
 		}
 	}
 	for i := range fields {
-		// A single integer key follows vv's auto-ID convention. For a
-		// composite key the source must name the one auto field explicitly;
-		// inferring auto on every integer component produces invalid DDL.
 		if primaryKeys == 1 && fields[i].PrimaryKey && !fields[i].Auto && !fields[i].NoAuto && integerType(databaseType(fields[i])) {
 			fields[i].Auto = true
 		}
@@ -311,12 +304,6 @@ unwrapped:
 	return relationShape && !knownImportedScalar(path, selector.Sel.Name)
 }
 
-// knownImportedScalar names source packages whose exported values are database
-// scalar wrappers rather than domain entities. Keep this list deliberately
-// narrow: treating an arbitrary imported pointer as a column is the dangerous
-// direction, because it can produce plausible SQL for a relation. UUID and
-// Decimal are also stable type names already understood by sqlType, independent
-// of which implementation package an application chose.
 func knownImportedScalar(path, typeName string) bool {
 	if typeName == "UUID" || typeName == "Decimal" {
 		return true

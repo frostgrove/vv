@@ -60,8 +60,6 @@ func TestQualifiedRelationAndJoinTablesRenderEveryComponent(t *testing.T) {
 		t.Fatalf("join ref = %#v", rel.JoinTableReference())
 	}
 
-	// Neither compatibility diagnostics nor returned value copies are an
-	// authority after validation.
 	joinCopy := rel.JoinTableReference()
 	joinCopy.Schema = "retargeted"
 	rel.JoinTable = "retargeted"

@@ -48,7 +48,6 @@ func TestBearerAcceptsOnlyItsOwnSchemeAndIsCaseInsensitive(t *testing.T) {
 	})
 }
 
-// yes and no are the two authenticators every Chain case is built from.
 func yes(sub string) auth.Authenticator {
 	return auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
 		return auth.Claims{Sub: sub}, nil
@@ -133,8 +132,6 @@ func TestChainSnapshotsTheVariadicSlice(t *testing.T) {
 	members := []auth.Authenticator{yes("frozen")}
 	chain := auth.Chain(members...)
 
-	// The immediate mutation is the deterministic contract; the concurrent
-	// mutations below are its race-detector control.
 	members[0] = yes("replacement")
 	p, err := chain.Authenticate(t.Context(), auth.Credential{})
 	if err != nil || p.Subject() != "frozen" {

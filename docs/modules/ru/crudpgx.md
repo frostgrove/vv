@@ -59,32 +59,72 @@ source-ом сам `tx`, framework вернёт `crud.ErrExecutorScope`, а не
 
 ## Массовая вставка через COPY
 
-`crudpgx` реализует `crud.BulkInserter` через `COPY`. **Библиотека сама за этим
-не тянется.** `SaveAll` пишет один многострочный `INSERT` независимо от того, что
-умеет исполнитель под ним, так что эту дверь приложение открывает само:
+Используйте типизированный repository-метод; когда metadata даёт
+insert-колонки, `crudpgx` автоматически даёт ему PostgreSQL `COPY`:
 
 ```go
-if bulk, ok := src.(crud.BulkInserter); ok {
-    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
-}
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
 ```
 
-Compatibility-интерфейс принимает один компонент имени таблицы. Для таблицы
-в нестандартной схеме PostgreSQL сохраняйте компоненты структурированными:
+Repository выводит точную таблицу, колонки и значения из metadata, применяет
+security- и fault-декораторы до обращения к драйверу и считает каждую строку
+только create-операцией. Назначенный primary key может дать conflict, но никогда
+не становится upsert. Модели не меняются, generated-значения не читаются назад.
+
+`InsertBatch` разрешает executor, привязанный к этому datasource в `ctx`.
+Внутри чужой или открытой vv транзакции COPY поэтому выполняется на этой
+транзакции и откатывается вместе с ней. Если разрешённый хэндл не умеет COPY
+или у модели нет insert-колонок, repository использует атомарные
+bind-budgeted statements `INSERT`.
+
+У COPY и обычного INSERT не полностью одинаковая семантика таблицы PostgreSQL.
+Для RLS, rewrite rules, значений, которым нужен обычный parameter encoding pgx,
+или требования обычной INSERT-семантики выбирайте переносимый путь:
 
 ```go
-n, err := src.CopyFromTable(ctx,
-    crud.TableRef{Schema: "tenant_42", Name: "products"},
-    cols, rows,
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+
+var Users = sqlrepo.Define[User, int64, UserUpdate](
+    "users",
+    sqlrepo.PortableBatch(),
 )
 ```
 
-`CopyFrom(ctx, "tenant_42.products", ...)` отклоняется до вызова pgx: vv не
-угадывает разделитель и не передаёт всю строку как одно quoted relation name.
-`CopyFromTable` отдаёт pgx два точных компонента `pgx.Identifier`.
+Source wrapper видит прямой переносимый план из одного statement, но не
+statements на transaction handle, открытом под ним. Чтобы видеть каждый
+statement, настройте tracer драйвера pgx либо возвращайте инструментированную
+транзакцию из `Begin`.
 
-Вызов идёт на том хэндле, который держит исполнитель, и игнорирует любую
-транзакцию в контексте ([[UC-008]]).
+Это явный выбор семантики. Server/encoding error уже начатого COPY возвращается
+как есть (после настроенного классификатора); vv не повторяет эти строки как SQL
+и не рискует продублировать эффект.
+
+Для намеренной raw-работы context-aware escape hatch всё равно разрешает
+ambient executor:
+
+```go
+n, err := crud.UnsafeBulkInsertFor(ctx, src,
+    crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
+```
+
+Для поведения на точном хэндле адаптер предоставляет
+`src.UnsafeCopyFrom(ctx, "users", cols, rows)` и structured-форму:
+
+```go
+n, err := src.UnsafeCopyFromTable(ctx,
+    crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
+```
+
+`UnsafeCopyFrom` принимает один точный identifier-компонент и отказывает
+legacy-строке с точкой. `UnsafeCopyFromTable` передаёт pgx structured-компоненты
+`pgx.Identifier`. Оба выполняются на точном receiver и не смотрят на транзакцию
+в `ctx`; оба обходят metadata repository и Core-декораторы, хотя pgx-ошибки всё
+равно проходят через classifier этого executor.
+
+Миграция pre-release API: `crud.BulkInserter`, `CopyFrom` и `CopyFromTable`
+удалены. Для application-записей используйте `Repo.InsertBatch`, для raw
+context-aware строк — `crud.UnsafeBulkInsertFor`, а для намеренной работы
+на точном хэндле — явно unsafe-методы адаптера.
 
 ## Структурированные коды ошибок
 
@@ -121,4 +161,4 @@ db  := crudpgx.Open(pool, crudpgx.WithFaults(cls))
 - [crudsql](crudsql.md) — `database/sql`, а значит и ent, gorm, sqlx, sqlc, bun
 - [sqlfault](sqlfault.md) — что принимает `WithFaults`
 - [`_examples/pgx-fiber`](../../../_examples/pgx-fiber/) · [`_examples/pgx-grpc`](../../../_examples/pgx-grpc/)
-- [[UC-008]] запись многих строк одним запросом · [[FL-009]] транзакции
+- [[UC-008]] безопасная типизированная batch-вставка · [[FL-009]] транзакции

@@ -7,8 +7,6 @@ import (
 	"reflect"
 )
 
-// Store is the application-facing contract shared by filesystem and MinIO
-// backends. Callers own every source reader and every returned read body.
 type Store interface {
 	Put(context.Context, Key, io.Reader, PutOptions) (Info, error)
 	Open(context.Context, Key) (io.ReadCloser, Info, error)
@@ -24,8 +22,6 @@ type Store interface {
 	Capabilities() Capabilities
 }
 
-// Backend is the adapter seam. Applications normally use it only as the value
-// of Config.Backend and call the scoped Store returned by New.
 type Backend interface {
 	Put(context.Context, Namespace, Key, io.Reader, PutOptions) (Info, error)
 	Open(context.Context, Namespace, Key) (io.ReadCloser, Info, error)

@@ -18,24 +18,6 @@ import (
 	"github.com/frostgrove/vv/remote"
 )
 
-// Transport calls a resource another service mounted, over net/http.
-//
-//	articles := remote.New[Article, int64, ArticleInput](
-//	    remotehttp.Transport("https://content.internal/articles"))
-//
-// baseURL is the prefix the resource was mounted under; the routes below it are
-// the ones every HTTP binding registers, so a service on Fiber, on Gin or on
-// net/http answers the same calls. There is one HTTP client for that reason: a
-// consumer calling out uses net/http whatever it serves with.
-//
-// It used to live in crudhttp, beside the binding it calls, because the tables
-// it reads were there. They are porthttp's now ([[D-059]]), so it sits with the
-// rest of "talking to a service that is not this process" instead, and the
-// server half no longer imports the client ([[D-058]] §5.2).
-// [porthttp.KindForStatus] is [porthttp.StatusFor] read backwards and
-// [porthttp.ParseEnvelope] reads what [porthttp.EnvelopeRenderer] wrote — one
-// copy of each, which is the whole of [[D-045]]'s rule read from the client
-// side.
 func Transport(baseURL string, options ...TransportOption) remote.Transport {
 	t := &transport{base: strings.TrimSuffix(baseURL, "/"), client: defaultClient()}
 	for _, o := range options {
@@ -46,36 +28,14 @@ func Transport(baseURL string, options ...TransportOption) remote.Transport {
 	return t
 }
 
-// DefaultTimeout bounds a call that nobody bounded. It is deliberately generous
-// — this is the backstop for a peer that stopped answering, not a latency
-// budget, and a service with one of its own passes a client with [WithClient].
 const DefaultTimeout = 30 * time.Second
 
-// MaxResponse is how many bytes of an answer this transport reads.
-//
-// A remote resource is another service, and another service can be wrong: a
-// paging bug on the far side, a proxy substituting an HTML page, a peer that has
-// been taken over. io.ReadAll on a body nobody bounded turns any of those into
-// this process running out of memory, which is the one failure a client cannot
-// report. The cap is generous because a legitimate page of rows is large, and it
-// is a cap because "as much as they send" is not a number.
 const MaxResponse = 32 << 20
 
-// defaultClient is what a Transport uses when nobody named one.
-//
-// A client of its own and never http.DefaultClient. http.DefaultClient has no
-// timeout at all, so a peer that accepts a connection and then says nothing
-// holds the caller for as long as it likes; and it belongs to the whole process,
-// so a consumer tuning it for this transport would be tuning it for every other
-// library in the binary too.
 func defaultClient() *http.Client { return &http.Client{Timeout: DefaultTimeout} }
 
-// A TransportOption wires one part of a [Transport].
 type TransportOption func(*transport)
 
-// WithClient replaces the http.Client, which is where a timeout other than
-// [DefaultTimeout], a transport with connection limits, or an instrumented round
-// tripper goes.
 func WithClient(c *http.Client) TransportOption {
 	return func(t *transport) {
 		if c != nil {
@@ -84,16 +44,10 @@ func WithClient(c *http.Client) TransportOption {
 	}
 }
 
-// WithRequestHook runs on every request before it is sent — an Authorization
-// header, a trace header, an Accept-Language the far end reads with
-// [AcceptLanguage]. An error from it fails the call and nothing is sent.
 func WithRequestHook(fn func(*http.Request) error) TransportOption {
 	return func(t *transport) { t.hook = fn }
 }
 
-// WithMaxResponse caps how many bytes of an answer this transport reads, for a
-// resource whose pages are genuinely larger — or smaller — than [MaxResponse].
-// Zero or less means [MaxResponse]; there is no spelling for "unbounded".
 func WithMaxResponse(n int) TransportOption {
 	return func(t *transport) { t.maxResponse = n }
 }
@@ -105,7 +59,6 @@ type transport struct {
 	maxResponse int
 }
 
-// cap answers the byte limit this transport reads an answer to.
 func (this *transport) cap() int {
 	if this.maxResponse > 0 {
 		return this.maxResponse
@@ -113,7 +66,6 @@ func (this *transport) cap() int {
 	return MaxResponse
 }
 
-// Do implements remote.Transport.
 func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
 	if call == nil {
 		return nil, fmt.Errorf("remotehttp: call is nil")
@@ -144,9 +96,6 @@ func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessa
 	}
 	defer response.Body.Close()
 
-	// One byte past the cap, so an answer of exactly MaxResponse is read rather
-	// than reported as over it: io.LimitReader cannot tell a full buffer from an
-	// exhausted reader, and the honest answer to the first is that it fits.
 	limit := this.cap()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
@@ -162,8 +111,6 @@ func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessa
 	return nil, fault(call.Method, method+" "+target, response.Status, response.StatusCode, raw)
 }
 
-// route is the one place a call becomes a verb, a path and a body. The routes
-// are crudnet's Mount, and the three bindings register the same ones.
 func (this *transport) route(call *remote.Call) (method, path string, body []byte, err error) {
 	switch call.Method {
 	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
@@ -188,8 +135,6 @@ func (this *transport) route(call *remote.Call) (method, path string, body []byt
 		return http.MethodGet, "/" + url.PathEscape(call.ID) + q, nil, nil
 
 	case remote.MethodCreate:
-		// The collection, which every binding registers with and without the
-		// trailing slash. An empty path is the base URL itself.
 		return http.MethodPost, "", call.Body, nil
 
 	case remote.MethodUpdate:
@@ -208,9 +153,6 @@ func (this *transport) route(call *remote.Call) (method, path string, body []byt
 		return http.MethodDelete, "/" + url.PathEscape(call.ID), nil, nil
 
 	case remote.MethodBulkDelete:
-		// Assembled rather than marshalled from BulkDeleteRequest, because the
-		// keys are already JSON in the caller's own key type and re-encoding
-		// them through []string would turn 42 into "42".
 		ids := bytes.TrimSpace(call.IDs)
 		if len(ids) == 0 {
 			ids = []byte("null")
@@ -232,26 +174,11 @@ func requireMutationBody(method remote.Method, body json.RawMessage) error {
 	return nil
 }
 
-// entityQuery renders the shaping options GET /{id} carries.
-//
-// Only the projection and the preload paths reach a direct GET /{id}. A
-// Resource switches a keyed read with a root filter or narrowed/capped preload
-// to the document-shaped List route first, so this function never flattens that
-// shape into an entity request.
-//
-// A narrowed or capped preload is refused rather than flattened. The query
-// string carries paths and has nowhere to put a per-relation filter, sort, or
-// row cap, so sending the path alone could load more children than were asked
-// for, over a 200. This defensive check also protects callers that construct a
-// transport Call directly.
 func entityQuery(request *query.Request) (string, error) {
 	if request == nil {
 		return "", nil
 	}
 	if !request.Filter.IsZero() || len(request.Terms) > 0 || request.Search != "" || len(request.SearchFields) > 0 {
-		// Resource routes these document-shaped eligibility controls through
-		// List before it reaches this function. Call is exported, though, so a
-		// direct Transport user needs the same no-silent-drop guarantee.
 		return "", &remote.OptionError{
 			Option: "root eligibility controls on GetByID",
 			Reason: "the entity route has no spelling for filter, terms, search, or searchFields; use the List route",
@@ -280,11 +207,6 @@ func entityQuery(request *query.Request) (string, error) {
 	return "?" + v.Encode(), nil
 }
 
-// fault turns a failed response into the error a caller branches on.
-//
-// A body that is not an envelope is a *remote.ProtocolError and never a
-// classified failure, whatever the status said. That is what keeps a wrong base
-// URL from arriving as crud.ErrNotFound.
 func fault(m remote.Method, where, status string, code int, body []byte) error {
 	env, ok := porthttp.ParseEnvelope(body)
 	if !ok {
@@ -300,18 +222,6 @@ func fault(m remote.Method, where, status string, code int, body []byte) error {
 	return port.FaultFrom(kind, faultCode(vs, kind), vs, env.Partial)
 }
 
-// faultCode recovers the fault's own code.
-//
-// The envelope does not carry it — it carries one per violation — so it is read
-// off the first violation in the rendered order, which is where a synthesised
-// fault puts a copy of it. That matters for exactly one answer: a stale write
-// is CodeStaleVersion, and port.FaultFrom wraps crud.ErrStaleVersion rather
-// than the coarse crud.ErrConflict when it sees that code, which is the branch
-// a caller re-reads the row from.
-//
-// A gRPC status carries the fault's code exactly, in ErrorInfo.Reason. This is
-// the difference between the two, and it is the envelope's shape rather than a
-// choice made here ([[FL-013]]).
 func faultCode(vs []errs.Violation, kind errs.Kind) errs.Code {
 	for _, v := range vs {
 		if v.Code != "" {

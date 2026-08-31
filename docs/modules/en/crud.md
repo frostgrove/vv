@@ -34,6 +34,7 @@ implement an adapter. Three-state values and small generic helpers live in
 | **Relations** | `belongs_to`, `has_one`, `has_many`, `many_to_many` — inferred, overridable |
 | **The executor seam** | `Exec` and `Query`. That is the whole abstraction boundary |
 | **Transactions** | `InTx`, `BindExecutor`, `Session` — join a foreign transaction without guessing its database |
+| **Typed bulk writes** | `Repo.InsertBatch`, with native-driver magic and a portable SQL opt-out |
 | **Dialects** | `Postgres`, `MySQL` (MariaDB too), `SQLite` |
 | **Sentinels** | `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrStaleVersion`, … |
 
@@ -295,6 +296,34 @@ The field names take the metamodel too — `crud.GroupBy(Order_.Status.Name())`,
 `crud.Sum("total", Order_.Amount.Name())`. The aggregate's own name is the key
 the value comes back under, so that one stays a string.
 
+## Typed bulk insert
+
+```go
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
+```
+
+`Repo.InsertBatch` is create-only: an assigned primary key remains an insert
+and may conflict, but never becomes an upsert. A SQL repository derives the
+table, columns and values from model metadata, applies the same security and
+fault decorators as the rest of the repository, joins an executor bound in
+`ctx`, and never mutates the models or reads generated values back.
+
+Native bulk is the default magic. A bare pgx source uses `COPY` when metadata
+yields insert columns; a source with no native capability, or one wrapped by
+statement middleware that has not explicitly forwarded native bulk, uses
+atomic bind-budgeted `INSERT` chunks.
+vv does not inspect RLS or rewrite-rule configuration to guess whether COPY is
+appropriate. PostgreSQL RLS/rewrite rules, special pgx encodings, and callers
+that require ordinary INSERT semantics can choose portable SQL explicitly:
+
+```go
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+```
+
+The low-level capability is `BatchInserter[M]`, kept outside `Core` for source
+compatibility. Repository decorators must forward it deliberately; an opaque
+decorator fails closed with `ErrNoBatchInsertSupport` instead of being skipped.
+
 ## The executor seam
 
 Two methods. That is the entire abstraction boundary, and it is why any foreign
@@ -347,8 +376,26 @@ cannot expose a stable `Identified` identity is refused before `Begin`.
 
 **Optional interfaces** an adapter may implement, each looked up rather than
 required so a third-party adapter keeps compiling without them: `Beginner`
-(savepoints), `BulkInserter` (`COPY`), `OffsetLimiter`, `ReadSourcer`,
-`Identified`, `Sourced`, `UpsertScope`, `StatementRollback`, `Tabler`.
+(savepoints), `UnsafeBulkInserter` (native bulk), `OffsetLimiter`,
+`ReadSourcer`, `Identified`, `Sourced`, `UpsertScope`, `StatementRollback`,
+`Tabler`.
+
+Raw execution is available without losing an ambient transaction:
+
+```go
+result, err := crud.UnsafeExecFor(ctx, source, statement, args...)
+rows, err := crud.UnsafeQueryFor(ctx, source, query, args...)
+n, err := crud.UnsafeBulkInsertFor(ctx, source, tableRef, columns, values)
+```
+
+These calls resolve the executor bound to `source` in `ctx`, but the `Unsafe`
+name remains important: raw SQL and raw table/column/value rows bypass model
+metadata and every repository decorator. Use `Repo.InsertBatch` for ordinary
+application writes.
+
+Pre-release migration: `BulkInserter`, `CopyFrom` and `CopyFromTable` were
+removed. Their safe replacement is `Repo.InsertBatch`; exact pgx-handle COPY is
+available only under `UnsafeCopyFrom` / `UnsafeCopyFromTable`.
 
 ### Wrapping a Source — for tracing, timing, statement logs
 
@@ -379,6 +426,16 @@ cost something, and only two of the three say so:
 `UnwrapSource` is all three at once: `crud.BeginnerOf`, `crud.ReadSourceOf` and
 `crud.KeyOf` follow it ([[D-061]]).
 
+Native bulk is deliberately different. `UnsafeBulkInserterOf` does **not** walk
+`UnwrapSource`, because invoking a write beneath an unknown tracing, rate-limit,
+or session wrapper would bypass its behaviour. Without an explicit
+`UnsafeBulkInserter` forwarder, `InsertBatch` selects portable SQL. A direct
+one-statement plan crosses the wrapper's `Exec`; an atomic multi-statement plan
+runs on the transaction handle returned underneath it. Use driver-level
+instrumentation, or an explicitly wrapped `Begin`/`Tx`, to observe every
+statement. `ReadWrite` is the built-in wrapper that explicitly forwards native
+bulk to the primary.
+
 **The same rule one level up.** A decorator over `crud.Core` erases in the same
 way. Embed `crud.Base` — it supplies the `Next()` that `crud.SourceOf` walks —
 or a probe wired above your decorator cannot find the datasource underneath it.
@@ -402,7 +459,8 @@ Compare with `errors.Is`, never by string ([[D-015]]).
 ```go
 crud.ErrNotFound       crud.ErrConflict       crud.ErrForbidden
 crud.ErrStaleVersion   crud.ErrReadOnly       crud.ErrMissingID
-crud.ErrNoTxSupport    crud.ErrExecutorScope
+crud.ErrNoTxSupport    crud.ErrExecutorScope   crud.ErrNoBatchInsertSupport
+crud.ErrNoBulkInsertSupport
 ```
 
 Every one of them survives being wrapped in an `errs.Fault`, so a caller who

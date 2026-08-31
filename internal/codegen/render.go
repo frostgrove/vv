@@ -132,7 +132,7 @@ func (this *generator) render() ([]byte, error) {
 			return nil, err
 		}
 	}
-	// Anything else the model types reference has to come along too.
+
 	for alias, path := range this.extraImports(body.String()) {
 		if err := addImport(alias, path, false); err != nil {
 			return nil, err
@@ -163,9 +163,6 @@ func (this *generator) render() ([]byte, error) {
 	return source, nil
 }
 
-// used says which imports the rendered body needs. A flag per package rather
-// than a scan of the output: the output is what the flags produce, so reading
-// it back to decide would be one derivation checking itself.
 type used struct{ crud, utils, specs, sqlrepo, time, port, errs, context, http, net bool }
 
 func (this *used) also(o used) {
@@ -181,12 +178,6 @@ func (this *used) also(o used) {
 	this.net = this.net || o.net
 }
 
-// ---------------------------------------------------------------------------
-// repository
-
-// renderRepository emits the declaration every vv model needs, but deliberately
-// does not choose a driver. The application binds it to database/sql, pgx,
-// a test source, or any other vv Source at composition time.
 func (this *generator) renderRepository(m *model) (string, used, error) {
 	pk, ok := m.pk()
 	if !ok {
@@ -194,10 +185,7 @@ func (this *generator) renderRepository(m *model) (string, used, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "// %sRepo is the typed repository for %s.\n", m.Name, this.qual(m.Name))
 	fmt.Fprintf(&b, "type %sRepo = crud.Repo[%s, %s, %sUpdate]\n\n", m.Name, this.qual(m.Name), pk.Type, m.Name)
-	fmt.Fprintf(&b, "// %sRepository describes %s independently of a database driver.\n", m.Name, this.qual(m.Name))
-	fmt.Fprintf(&b, "// Bind it through New%sRepository with the application's datasource.\n", m.Name)
 	setting := ""
 	for _, f := range m.Fields {
 		if f.Tombstone {
@@ -207,21 +195,16 @@ func (this *generator) renderRepository(m *model) (string, used, error) {
 	}
 	fmt.Fprintf(&b, "var %sRepository = sqlrepo.Define[%s, %s, %sUpdate](\"\"%s)\n\n",
 		m.Name, this.qual(m.Name), pk.Type, m.Name, setting)
-	fmt.Fprintf(&b, "// New%sRepository binds %sRepository to src.\n", m.Name, m.Name)
 	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) *%sRepo {\n", m.Name, m.Name)
 	fmt.Fprintf(&b, "\treturn %sRepository.Bind(src)\n}\n\n", m.Name)
 	return b.String(), used{crud: true, sqlrepo: true}, nil
 }
 
-// extraImports finds selectors that survived into the rendered declarations.
-// Looking at the body rather than the source field's first token matters twice:
-// wrappers such as crud.Opt are transformed away, while composite/generic types
-// may carry several package qualifiers below their first node.
 func (this *generator) extraImports(body string) map[string]string {
 	need := map[string]string{}
 	file, err := parser.ParseFile(token.NewFileSet(), "generated-body.go", "package generated\n"+body, 0)
 	if err != nil {
-		return need // the final format.Source call reports the full broken output.
+		return need
 	}
 	ast.Inspect(file, func(node ast.Node) bool {
 		selector, ok := node.(*ast.SelectorExpr)
@@ -232,11 +215,7 @@ func (this *generator) extraImports(body string) map[string]string {
 		if !ok {
 			return true
 		}
-		// parser object resolution links variables, parameters, fields and other
-		// declarations to their identifiers. A package qualifier has no object in
-		// this import-less synthetic file. This distinction matters for generated
-		// adapter locals such as out.ID: a source import once called `out` must not
-		// be resurrected merely because that local selector survived rendering.
+
 		if pkg.Obj != nil {
 			return true
 		}
@@ -248,22 +227,13 @@ func (this *generator) extraImports(body string) map[string]string {
 	return need
 }
 
-// ---------------------------------------------------------------------------
-// update DTO
-
 func (this *generator) renderDTO(m *model) (string, used) {
 	var b strings.Builder
 	var u used
 
-	fmt.Fprintf(&b, "// %sUpdate is the partial-update DTO for %s.\n", m.Name, this.qual(m.Name))
-	fmt.Fprintf(&b, "// A pointer field is optional; a utils.Opt field is optional and nullable,\n")
-	fmt.Fprintf(&b, "// so an absent key, an explicit null and a value stay three different things.\n")
 	fmt.Fprintf(&b, "type %sUpdate struct {\n", m.Name)
 
 	for _, f := range m.Fields {
-		// The version column is left out for the same reason the primary key is:
-		// the repository owns it. A DTO that names it is refused at Define time,
-		// so emitting it would hand the caller a package that panics at start-up.
 		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.ServerOwned || f.Tombstone || f.Version {
 			continue
 		}
@@ -283,9 +253,6 @@ func (this *generator) renderDTO(m *model) (string, used) {
 	return b.String(), u
 }
 
-// ---------------------------------------------------------------------------
-// metamodel
-
 func (this *generator) renderMetamodel(m *model) (string, used) {
 	var b strings.Builder
 	var u used
@@ -294,14 +261,10 @@ func (this *generator) renderMetamodel(m *model) (string, used) {
 	emitted := map[string]bool{}
 	this.renderAttrs(&b, m, m, "", 0, []string{m.Name}, emitted, &u)
 
-	fmt.Fprintf(&b, "// %s_ is the metamodel of %s: typed, path-aware field references.\n", m.Name, m.Name)
-	fmt.Fprintf(&b, "// It is validated against the model at package initialisation.\n")
 	fmt.Fprintf(&b, "var %s_ = specs.Metamodel[%s, %sAttrs]()\n\n", m.Name, this.qual(m.Name), m.Name)
 	return b.String(), u
 }
 
-// renderAttrs writes the attribute struct for `on`, expressed as attributes of
-// the root model, and recurses into relations up to the configured depth.
 func (this *generator) renderAttrs(b *strings.Builder, root, on *model, suffix string, level int, path []string, emitted map[string]bool, u *used) {
 	typeName := root.Name + suffix + "Attrs"
 	if emitted[typeName] {
@@ -317,20 +280,12 @@ func (this *generator) renderAttrs(b *strings.Builder, root, on *model, suffix s
 
 	var body strings.Builder
 	if suffix != "" {
-		// The group's own path, as an identifier. Embedded rather than named so
-		// the call site reads Article_.Comments.Path().
 		fmt.Fprintf(&body, "\tspecs.Rel[%s, %s]\n", this.qual(root.Name), this.qual(on.Name))
 	}
-	// A column of the target called Path or String sits at depth zero and
-	// shadows the promoted method, so the doc comment has to say which spelling
-	// still works here.
-	var shadows []string
+
 	for _, f := range on.Fields {
 		if f.Skip {
 			continue
-		}
-		if suffix != "" && !f.isRelation() && (f.Name == "Path" || f.Name == "String") {
-			shadows = append(shadows, f.Name)
 		}
 		if f.isRelation() {
 			if level+1 >= this.depth {
@@ -345,10 +300,9 @@ func (this *generator) renderAttrs(b *strings.Builder, root, on *model, suffix s
 			}
 			tm, ok := this.models[target]
 			if !ok {
-				continue // the related model lives in another package
+				continue
 			}
-			// Do not walk back into a model already on this path: Article ->
-			// Author -> Articles -> … has no end.
+
 			cycle := false
 			for _, seen := range path {
 				if seen == target {
@@ -374,35 +328,9 @@ func (this *generator) renderAttrs(b *strings.Builder, root, on *model, suffix s
 		fmt.Fprintf(&body, "\t%s %s\n", f.Name, attrType("specs", this.qual(root.Name), f.Type))
 	}
 
-	// Emit the nested structs first so the file reads top-down.
 	for _, n := range nested {
 		this.renderAttrs(b, root, n.target, n.suffix, level+1, append(path, n.target.Name), emitted, u)
 	}
 
-	if suffix == "" {
-		fmt.Fprintf(b, "// %sAttrs is the generated metamodel shape for %s.\n", root.Name, root.Name)
-	} else {
-		fmt.Fprintf(b, "// %s reaches %s through %s.\n", typeName, root.Name,
-			strings.Join(splitCamelPath(suffix), "."))
-		if len(shadows) > 0 {
-			fmt.Fprintf(b, "// %s has a column called %s, which shadows the promoted method of\n",
-				on.Name, strings.Join(shadows, " and one called "))
-			fmt.Fprintf(b, "// that name: spell this relation's path RelPath() here.\n")
-		}
-	}
 	fmt.Fprintf(b, "type %s struct {\n%s}\n\n", typeName, body.String())
-}
-
-// splitCamelPath turns the concatenated suffix back into a readable path for
-// the doc comment: "CommentsAuthor" -> ["Comments", "Author"].
-func splitCamelPath(s string) []string {
-	var out []string
-	start := 0
-	for i := 1; i < len(s); i++ {
-		if s[i] >= 'A' && s[i] <= 'Z' {
-			out = append(out, s[start:i])
-			start = i
-		}
-	}
-	return append(out, s[start:])
 }

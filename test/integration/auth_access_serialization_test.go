@@ -23,10 +23,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestAccessPasswordSessionSerialization is the live half of FW-AUTH-003.
-// Every scenario runs against three distinct engines and both built-in session
-// strategies. Channels are attached before a driver's blocking Query call, so
-// the test orders contenders by observed lock attempts rather than sleeps.
 func TestAccessPasswordSessionSerialization(t *testing.T) {
 	targets := []authSerializationTarget{
 		{name: "postgres", database: pgDB, source: crudsql.Postgres(pgDB), postgres: true},
@@ -161,8 +157,6 @@ func (this authSerializationTarget) loginBeforeInvalidation(
 		t.Fatalf("unknown invalidation %q", invalidation)
 	}
 
-	// The hook runs before the driver's Query. Seeing this second event proves
-	// reset/logout reached the same FOR UPDATE while login still holds it.
 	awaitAuthSignal(t, locks, invalidation+" credential lock attempt")
 	select {
 	case result := <-invalidated:
@@ -189,12 +183,6 @@ func (this authSerializationTarget) loginBeforeInvalidation(
 	}
 }
 
-// postgresSnapshotInvalidationFailsClosed reproduces the PostgreSQL MVCC edge
-// that a plain row lock cannot close. The invalidator's exact-PK locking
-// statement establishes its snapshot before login commits, waits, and then
-// tries to continue. Login's equal-value credential UPDATE must make the
-// old-snapshot writer fail with 40001. Returning a successful zero here would
-// leave the stale-password session alive.
 func (this authSerializationTarget) postgresSnapshotInvalidationFailsClosed(
 	t *testing.T,
 	strategy authStrategyFixture,
@@ -249,8 +237,6 @@ func (this authSerializationTarget) postgresSnapshotInvalidationFailsClosed(
 			result.count, result.err, errs.CodeSerializationFailure)
 	}
 
-	// The failed invalidation rolled back; the session is live until a caller
-	// retries in a fresh transaction. The retry must then see and revoke it.
 	sessions, err := runtime.Store().Sessions.GetAll(t.Context(), access.OfSubject(ref))
 	if err != nil || len(sessions) != 1 || sessions[0].RevokedAt != nil {
 		t.Fatalf("post-40001 sessions=%+v err=%v, want one live committed login", sessions, err)
@@ -308,9 +294,6 @@ func (this authSerializationTarget) resetBeforeLogin(t *testing.T, strategy auth
 		loginDone <- authLoginResult{response: response, err: err}
 	}()
 
-	// Login's candidate and ID discovery may see the old row. This event is its
-	// exact-PK current locking read. On MySQL REPEATABLE READ it must wait and
-	// then return reset's committed version, not the candidate snapshot.
 	awaitAuthSignal(t, locks, "login current-read lock attempt")
 	select {
 	case result := <-loginDone:
@@ -514,8 +497,6 @@ func (this authSerializationTarget) credentialCreationAfterDiscovery(t *testing.
 		t.Fatalf("invalidation count=%d err=%v", result.count, result.err)
 	}
 
-	// The insert overlapped the invalidator but happened after its discovery
-	// point, so it is ordered after that call and may authenticate afterwards.
 	response, err := mounted.Endpoints().SignIn(t.Context(), access.SignInRequest{
 		Email: createdIdentifier, Password: oldPassword,
 	}, access.Agent{})
@@ -729,11 +710,6 @@ func awaitAuthResult[T any](t *testing.T, ch <-chan T, what string) T {
 	return awaitAuthSignal(t, ch, what)
 }
 
-// authHookSource preserves the physical datasource identity while wrapping
-// both the pool and the transaction it begins. A credential-lock event is sent
-// immediately before the real Query call, which is the deterministic barrier
-// needed to prove that the server — rather than goroutine scheduling — blocks
-// the contender.
 type authHookSource struct {
 	inner       crud.Source
 	locks       chan<- string
@@ -876,9 +852,7 @@ func (this authSerializationTarget) clear(t *testing.T) {
 
 func (this authSerializationTarget) drop(t *testing.T) {
 	t.Helper()
-	// testing cancels t.Context before running Cleanup functions. Schema
-	// teardown is bounded independently so a successful scenario is not turned
-	// into a failure by the test lifecycle itself.
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, table := range []string{

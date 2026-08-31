@@ -1,25 +1,3 @@
-// Package apikey authenticates a caller by a shared secret it presents
-// verbatim.
-//
-//	authn := apikey.New(apikey.Static(map[string]auth.Principal{
-//	    "k-batch-1": auth.Claims{Sub: "batch", Permissions: []auth.Permission{"article:read"}},
-//	}))
-//
-// It is the second implementation of [auth.Authenticator], and it is here
-// rather than in a module of its own because it imports nothing outside the
-// standard library — a second `go get` bought for no dependency is a cost with
-// nothing on the other side of it ([[D-033]]).
-//
-// # What a Store is for
-//
-// A real deployment does not hold keys in a map. It holds a hash of each key,
-// looks the hash up, and revokes by deleting a row. [Store] is that seam, and
-// [Static] is the small case: tests, a single batch job, a service with three
-// keys in its configuration.
-//
-// Whatever implements it must compare in constant time. [Static] does; a Store
-// that indexes a database by the hash of the presented key does too, because
-// the hash is what travels.
 package apikey
 
 import (
@@ -34,56 +12,29 @@ import (
 	"github.com/frostgrove/vv/internal/nilvalue"
 )
 
-// A Store resolves a presented key to a caller.
-//
-// The three results separate the two failures that must not be confused. A key
-// nobody issued is (nil, false, nil) and becomes a 401. A lookup that could not
-// be performed — the database is down — is (nil, false, err), and that error
-// travels on unchanged, so it renders as the 500 it is. Collapsing the second
-// into the first would answer "your key is wrong" to every caller during an
-// outage, and the callers would rotate their keys.
-//
-// Custom [auth.Principal] implementations belong behind Store (or [StoreFunc]),
-// where the implementation explicitly owns their snapshot and concurrency
-// semantics. [Static] deliberately accepts only the built-in [auth.Claims].
 type Store interface {
 	Lookup(ctx context.Context, key string) (auth.Principal, bool, error)
 }
 
-// StoreFunc adapts a function to [Store].
 type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, error)
 
-// Lookup implements [Store].
 func (this StoreFunc) Lookup(ctx context.Context, key string) (auth.Principal, bool, error) {
 	return this(ctx, key)
 }
 
-// DefaultScheme is the auth-scheme this authenticator expects in an
-// Authorization header.
 const DefaultScheme = "ApiKey"
 
-// ErrUnsupportedStaticAttribute reports an auth.Claims attribute whose value
-// cannot be copied without sharing mutable state. Use [TryStatic] when this is a
-// configuration error the application wants to return; [Static] panics on it
-// as a declarative start-up failure.
 var ErrUnsupportedStaticAttribute = errors.New("apikey: Static cannot safely snapshot a Claims attribute")
 
-// ErrUnsupportedStaticPrincipal reports a nil-like or custom [auth.Principal]
-// passed to [Static] or [TryStatic]. Principal exposes queries rather than an
-// enumerable value, so these constructors cannot make a fixed snapshot of an
-// arbitrary implementation without retaining caller-owned state. Use [Store]
-// or [StoreFunc] when principal construction is deliberately dynamic.
 var ErrUnsupportedStaticPrincipal = errors.New("apikey: Static can safely snapshot only auth.Claims principals")
 
 type authenticator struct {
 	store  Store
-	scheme string // "" accepts any
+	scheme string
 }
 
-// An Option configures [New].
 type Option func(*authenticator)
 
-// Scheme replaces the auth-scheme the credential must carry.
 func Scheme(name string) Option {
 	return func(a *authenticator) {
 		if strings.TrimSpace(name) == "" {
@@ -93,23 +44,10 @@ func Scheme(name string) Option {
 	}
 }
 
-// AnyScheme accepts the credential whatever scheme it arrived under, for a
-// deployment whose clients send the key as a bearer token.
-//
-// It is opt-in rather than the default because an endpoint that also accepts
-// JWTs would otherwise hand every expired JWT to the key store as a candidate
-// key, and a store that logs misses would then log tokens.
 func AnyScheme() Option {
 	return func(a *authenticator) { a.scheme = "" }
 }
 
-// Header reads a bare key from the named header. It deliberately uses
-// [auth.Lookup] rather than [auth.Header]: auth.Header moves the Authorization
-// parser and therefore still expects "ApiKey <key>", while this helper makes
-// "X-Api-Key: <key>" the complete credential.
-//
-// It synthesises [DefaultScheme], so it pairs with the default authenticator.
-// [Scheme] remains available for clients that send a scheme-shaped credential.
 func Header(name string) auth.Option {
 	if strings.TrimSpace(name) == "" {
 		panic("apikey: Header needs a non-empty header name")
@@ -124,9 +62,6 @@ func Header(name string) auth.Option {
 	return lookup
 }
 
-// New builds the authenticator. It panics on a nil store: a key authenticator
-// with nothing to look keys up in refuses every request, and that is a
-// misconfiguration a process should not start with ([[D-021]]).
 func New(s Store, options ...Option) auth.Authenticator {
 	if nilvalue.Is(s) {
 		panic("apikey: New needs a Store; without one every request is refused")
@@ -140,7 +75,6 @@ func New(s Store, options ...Option) auth.Authenticator {
 	return a
 }
 
-// Authenticate implements [auth.Authenticator].
 func (this *authenticator) Authenticate(ctx context.Context, c auth.Credential) (auth.Principal, error) {
 	if this.scheme != "" && !c.Is(this.scheme) {
 		return nil, auth.Unauthenticatedf("credential is not %s", this.scheme)
@@ -150,7 +84,6 @@ func (this *authenticator) Authenticate(ctx context.Context, c auth.Credential) 
 	}
 	p, ok, err := this.store.Lookup(ctx, c.Token)
 	if err != nil {
-		// Not a 401. The key may well be valid and nothing here can tell.
 		return nil, err
 	}
 	if !ok || nilvalue.Is(p) {
@@ -159,31 +92,6 @@ func (this *authenticator) Authenticate(ctx context.Context, c auth.Credential) 
 	return p, nil
 }
 
-// Static is the declarative in-memory [Store]: a fixed set of keys, fixed at
-// start-up. It panics if [TryStatic] cannot make a sound snapshot; use TryStatic
-// when configuration assembly needs an error instead.
-//
-// It is a slice rather than a map, and it compares every entry rather than
-// stopping at the first match. A map lookup branches on the key's bytes and
-// returns as soon as it knows, which times differently for a key that shares a
-// prefix with a real one than for one that does not — enough, over enough
-// requests, to recover a key a character at a time. Comparing all of them with
-// crypto/subtle costs a few hundred nanoseconds for the handful of keys this is
-// meant to hold.
-//
-// It snapshots the map. Built-in [auth.Claims] values (including pointers) are
-// deep-copied at construction and copied again for each lookup, so mutating the
-// declaration or one request's returned slices/maps cannot change another
-// request's identity. Maps, slices, pointers, arrays and structs whose state is
-// exported are copied recursively, including cycles. A struct with unexported
-// state (bytes.Buffer and big.Int are examples), a function, channel or unsafe
-// pointer is refused: shallow-copying one would make "fixed" a lie.
-//
-// A custom Principal has no enumeration API from which a copy could be made,
-// so the safe declarative constructor refuses it. A deployment that owns the
-// custom principal's lifetime uses the explicit lower-level [Store] or
-// [StoreFunc] seam instead. A nil-like entry is also a declaration error, not a
-// fixed key whose only possible result is unknown.
 func Static(keys map[string]auth.Principal) Store {
 	store, err := TryStatic(keys)
 	if err != nil {
@@ -192,8 +100,6 @@ func Static(keys map[string]auth.Principal) Store {
 	return store
 }
 
-// TryStatic is [Static] with a configuration error result. It never includes a
-// presented key in that error: keys are credentials, including at start-up.
 func TryStatic(keys map[string]auth.Principal) (Store, error) {
 	type entry struct {
 		key   []byte
@@ -228,9 +134,6 @@ func TryStatic(keys map[string]auth.Principal) (Store, error) {
 	}), nil
 }
 
-// freezePrincipal returns a per-lookup materialiser. Principal deliberately has
-// query methods rather than enumeration methods, so Claims is the only general
-// purpose implementation Static can soundly snapshot.
 func freezePrincipal(p auth.Principal) (func() (auth.Principal, error), error) {
 	if nilvalue.Is(p) {
 		return nil, ErrUnsupportedStaticPrincipal
@@ -294,9 +197,6 @@ type attributeVisit struct {
 	cap  int
 }
 
-// cloneAttribute copies the mutable container shapes JSON claims use while
-// preserving their concrete Go types. The seen table also makes hand-built,
-// cyclic maps and slices safe even though decoded token attributes are acyclic.
 func cloneAttribute(in reflect.Value, seen map[attributeVisit]reflect.Value) (reflect.Value, error) {
 	if !in.IsValid() {
 		return in, nil

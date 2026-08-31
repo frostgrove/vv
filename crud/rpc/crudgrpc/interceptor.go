@@ -7,19 +7,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Errors is the interceptor. It renders an error a method returned through the
-// same code table and the same violation pipeline this binding's own methods
-// use, so a mux carrying both CRUD methods and hand-written ones answers one
-// way.
-//
-// Installing it twice renders once, and the marker is the error itself rather
-// than a wrapper. An HTTP binding cannot do that — a response is a stream a
-// handler may already have half-written, so the marker there is the
-// response-writer wrapper — but a gRPC response is a return value, and an error
-// that already carries a status has already been rendered by something. That
-// something may be the inner copy of this interceptor or the application's own
-// status; either way, overwriting it would be the interceptor deciding it knows
-// better than the method it wrapped.
 func Errors(options ...RenderOption) grpc.UnaryServerInterceptor {
 	rd := Renderer(defaultRenderer)
 	if len(options) > 0 {
@@ -37,19 +24,6 @@ func Errors(options ...RenderOption) grpc.UnaryServerInterceptor {
 	}
 }
 
-// StreamErrors is [Errors] for a streaming method.
-//
-// It exists because the unary one is not enough and the gap was invisible: the
-// auth interceptor (`authgrpc.Stream`) returns an unrendered `errs.Fault` and
-// relies on something downstream to turn it into a status, exactly as its unary
-// twin does — and there was no downstream for a stream. grpc-go then wrapped the
-// bare error as codes.Unknown, so a refused stream answered Unknown where a
-// refused unary call answered Unauthenticated, and a client branching on the code
-// could not tell a rejected credential from a server bug.
-//
-// The same renderer and the same table as [Errors], for the reason [[D-045]]
-// gives: one classification, spelled once per protocol, never once per entry
-// point.
 func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor {
 	rd := Renderer(defaultRenderer)
 	if len(options) > 0 {

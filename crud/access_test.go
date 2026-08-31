@@ -8,8 +8,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Robot is deliberately awkward: a narrow integer key (drivers report int64),
-// a pointer column and an Opt column.
 type Robot struct {
 	ID     int32            `db:"id,pk,auto"`
 	Name   string           `db:"name"`
@@ -26,8 +24,6 @@ func robotSchema(t *testing.T) *crud.Schema {
 	return s
 }
 
-// Pointers is what every scan goes through: writing into the destinations must
-// land in the model itself, in the order the fields were asked for.
 func TestPointersScanIntoTheModel(t *testing.T) {
 	s := robotSchema(t)
 	var r Robot
@@ -56,7 +52,6 @@ func TestPointersScanIntoTheModel(t *testing.T) {
 	}
 }
 
-// A subset of fields — a projection — yields exactly those destinations.
 func TestPointersHonourAProjection(t *testing.T) {
 	s := robotSchema(t)
 	var r Robot
@@ -74,8 +69,6 @@ func TestPointersHonourAProjection(t *testing.T) {
 	}
 }
 
-// Values are the bind arguments of an INSERT: the field's own value, wrappers
-// intact, so the driver (or Opt.Value) decides how to encode NULL.
 func TestValuesAreTheBindArguments(t *testing.T) {
 	s := robotSchema(t)
 	w := 3.5
@@ -120,8 +113,6 @@ func TestIDAndHasID(t *testing.T) {
 	}
 }
 
-// A driver hands back LastInsertId as an int64 whatever the column is, so
-// SetID has to narrow it.
 func TestSetIDConvertsBetweenIntegerWidths(t *testing.T) {
 	s := robotSchema(t)
 	var r Robot
@@ -193,8 +184,6 @@ func TestSetIDRefusesLossyOrCrossFamilyConversions(t *testing.T) {
 	})
 }
 
-// Every accessor takes a *M of this very model; anything else is a programming
-// error worth naming rather than a nil dereference.
 func TestAccessorsRejectTheWrongModel(t *testing.T) {
 	s := robotSchema(t)
 	other := struct{ ID int32 }{}
@@ -228,8 +217,6 @@ func TestAccessorsRejectTheWrongModel(t *testing.T) {
 	}
 }
 
-// ElemValue is what makes a bare int64 out of a request context comparable
-// with an Opt[int64] column.
 func TestElemValueUnwraps(t *testing.T) {
 	n := 5
 	for _, tc := range []struct {
@@ -253,8 +240,6 @@ func TestElemValueUnwraps(t *testing.T) {
 	}
 }
 
-// CheckID runs once at Define time so that a repository declared with the wrong
-// ID type fails at start-up instead of on the first request.
 func TestCheckIDAcceptsTheKeyItsWrappersAndNothingElse(t *testing.T) {
 	type optKey struct {
 		ID   crud.Opt[int64] `db:"id,pk"`

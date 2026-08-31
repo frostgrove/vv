@@ -180,8 +180,6 @@ func TestLegacySoftDeleteSettingStillFreezesGenericWrites(t *testing.T) {
 		t.Fatalf("legacy SoftDelete let full Save dictate lifecycle state: %s", sql)
 	}
 
-	// The same model may deliberately have a raw low-level view. Blueprint-local
-	// freezing must not mutate its process-wide Schema behind that view.
 	raw := sqlrepo.Define[legacyRow, string, safePatch]("legacy_raw_rows", sqlrepo.IndependentTable())
 	if raw.Meta().Tombstone != nil {
 		t.Fatalf("soft-delete metadata leaked into an independent raw view: %+v", raw.Meta().Tombstone)
@@ -235,9 +233,6 @@ func TestRestoreDoesNotPanicOnANonComparableDynamicInterfaceKey(t *testing.T) {
 		}
 	}
 
-	// A public scoped call cannot possibly carry a snapshot map entry for an
-	// unhashable dynamic key. It must skip that unauthorised id fail-closed,
-	// rather than panic while indexing the map.
 	key := any(nestedKey{Part: []byte("scoped-binary-key")})
 	n, err, ok := crud.RestoreScopedOf(repository.Unwrap(), context.Background(), &crud.ScopedRestore[any]{
 		IDs:       []any{key},

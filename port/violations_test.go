@@ -10,8 +10,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// pipeline is what every test here measures: the list a transport renders from,
-// in the order and with the messages it will carry.
 func pipeline(t *testing.T, err error, o ViolationOptions) []errs.Violation {
 	t.Helper()
 	return pipelineCtx(t, context.Background(), err, o)
@@ -22,9 +20,6 @@ func pipelineCtx(t *testing.T, ctx context.Context, err error, o ViolationOption
 	return Violations(ctx, FaultOf(err), &o)
 }
 
-// bytesOf is the determinism assertion's subject: a violation marshals to the
-// public three fields and nothing else, so comparing bytes compares what a
-// client reads.
 func bytesOf(t *testing.T, vs []errs.Violation) string {
 	t.Helper()
 	raw, err := json.Marshal(vs)
@@ -34,14 +29,6 @@ func bytesOf(t *testing.T, vs []errs.Violation) string {
 	return string(raw)
 }
 
-// ---------------------------------------------------------------------------
-// determinism
-
-// [[D-014]] one layer up: the same failing request twice produces byte-identical
-// output, so a response can be asserted on at all.
-//
-// Eight violations spanning names, indices and equal-prefix paths, built in
-// reverse. Two would pass by luck half the time.
 func TestTheViolationOrderIsTotalAndByteIdentical(t *testing.T) {
 	paths := []errs.Path{
 		{errs.Named("email")},
@@ -54,9 +41,6 @@ func TestTheViolationOrderIsTotalAndByteIdentical(t *testing.T) {
 		{errs.Named("user"), errs.Named("name")},
 	}
 
-	// The control on the fixture itself. Without it the eight could be eight
-	// copies of one path, and a sort that did nothing would render identically
-	// every time and pass.
 	seen := map[string]bool{}
 	var equalPrefix, indexed bool
 	for _, p := range paths {
@@ -94,8 +78,6 @@ func TestTheViolationOrderIsTotalAndByteIdentical(t *testing.T) {
 		t.Fatalf("the same eight violations built in reverse rendered differently:\n forwards %s\n backwards %s", want, got)
 	}
 
-	// Fifty runs over one fault, byte for byte. A map iterated anywhere in the
-	// pipeline shows up here and nowhere else.
 	f := forwards.Fault()
 	for i := 0; i < 50; i++ {
 		if again := bytesOf(t, pipeline(t, f, ViolationOptions{})); again != want {
@@ -103,17 +85,12 @@ func TestTheViolationOrderIsTotalAndByteIdentical(t *testing.T) {
 		}
 	}
 
-	// The control on the comparison: a deliberately different set has to come
-	// out different, or the two lists above agreeing means nothing.
 	other := errs.Validation().Code(errs.CodeCheck).Field("zzz").Code(errs.CodeCheck).Fault()
 	if differs := bytesOf(t, pipeline(t, other, ViolationOptions{})); differs == want {
 		t.Fatal("a different set of violations rendered identically, so byte equality above measures nothing")
 	}
 }
 
-// Within one path an input violation comes before a collision: a malformed
-// value explains a failed lookup, and the reverse reads as nonsense. This is
-// the half `ROADMAP-errors.md` §5 states and §8 omitted.
 func TestAtOnePathTheInputViolationComesFirst(t *testing.T) {
 	f := errs.Validation().Code(errs.CodeCheck).
 		Field("email").Code(errs.CodeUnique).Origin(errs.OriginState).
@@ -129,12 +106,6 @@ func TestAtOnePathTheInputViolationComesFirst(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the cap
-
-// A response is not a log. Past the cap the list is cut, and what survives is
-// the front of the total order rather than whatever the classifier appended
-// first — which is why the cap runs after the sort.
 func TestACappedListKeepsTheFrontOfTheOrder(t *testing.T) {
 	b := errs.Validation().Code(errs.CodeCheck)
 	for i := 9; i >= 0; i-- {
@@ -152,39 +123,27 @@ func TestACappedListKeepsTheFrontOfTheOrder(t *testing.T) {
 		}
 	}
 
-	// The control: under the cap nothing is dropped. A pipeline that always cut
-	// to three would pass the leg above.
 	if vs := pipeline(t, f, ViolationOptions{Max: 50}); len(vs) != 10 {
 		t.Fatalf("ten violations under a cap of fifty came out as %d", len(vs))
 	}
-	// And with no cap at all, which is what a transport that forgot to set one
-	// gets.
+
 	if vs := pipeline(t, f, ViolationOptions{}); len(vs) != 10 {
 		t.Fatalf("ten violations with no cap came out as %d", len(vs))
 	}
 }
 
-// A 404 carries no violation at all, and a transport class alone is not
-// something a client can branch on.
 func TestAFaultWithNoViolationsStillNamesItsCode(t *testing.T) {
 	vs := pipeline(t, errs.NotFound().Code(errs.CodeNotFound).Fault(), ViolationOptions{})
 	if len(vs) != 1 || vs[0].Code != errs.CodeNotFound {
 		t.Fatalf("a fault with no violations came out as %+v", vs)
 	}
 
-	// The control: a fault with no code either still names something rather
-	// than carrying an empty one.
 	vs = pipeline(t, errs.Forbidden().Fault(), ViolationOptions{})
 	if len(vs) != 1 || vs[0].Code == "" {
 		t.Fatalf("a fault with neither violations nor a code came out as %+v", vs)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the message ladder
-
-// catalogue is a message source keyed the way errs.Messages is, so the test can
-// say which key was consulted.
 type catalogue map[string]string
 
 func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (string, bool) {
@@ -198,9 +157,6 @@ func (this catalogue) Message(_ context.Context, v errs.Violation, _ string) (st
 	return m, ok
 }
 
-// renamer is a transport's fallback hop: the guess a binding makes for a path
-// nothing declared. Over HTTP it is the raw-body index; here it is one rule, so
-// the ordering property is measured without a body format in the way.
 type renamer map[string]string
 
 func (this renamer) Resolve(p errs.Path) (errs.Path, bool) {
@@ -214,10 +170,6 @@ func (this renamer) Resolve(p errs.Path) (errs.Path, bool) {
 	return errs.Path{errs.Named(to)}, true
 }
 
-// Messages are expanded after the path is translated, because the ladder is
-// derived from the path. Expanding first would key a catalogue entry on the
-// model's field name on one deployment and on the client's on another, for the
-// same violation.
 func TestTheMessageLadderSeesTheTranslatedPath(t *testing.T) {
 	cat := catalogue{
 		"email.unique": "that address is taken",
@@ -231,16 +183,11 @@ func TestTheMessageLadderSeesTheTranslatedPath(t *testing.T) {
 		t.Fatalf("the message is %q; the ladder saw the untranslated path", got)
 	}
 
-	// The control: the pre-translation key is in the catalogue and must not
-	// win. Without it the assertion above passes for a catalogue with one entry.
 	if _, ok := cat["Email.unique"]; !ok {
 		t.Fatal("the pre-translation key is not in the catalogue, so it losing proves nothing")
 	}
 }
 
-// No catalogue entry falls back to the code's declared default, and then to the
-// code itself. Never to the driver's text — there is nowhere left for it to
-// come from.
 func TestAMessageFallsBackToTheCodesDefaultAndThenToTheCode(t *testing.T) {
 	f := errs.Conflict().Code(errs.CodeUnique).Field("email").Code(errs.CodeUnique).Fault()
 	if got := pipeline(t, f, ViolationOptions{})[0].Message; got != "this value is already taken" {
@@ -253,9 +200,6 @@ func TestAMessageFallsBackToTheCodesDefaultAndThenToTheCode(t *testing.T) {
 	}
 }
 
-// A declared hop beats the transport's guess, which is the whole reason a
-// generated map is wired ahead of the fallback ([[D-043]], [[D-050]]). And a
-// hop that declines stops the chain, so the fallback behind it never runs.
 func TestADeclaredHopBeatsTheFallback(t *testing.T) {
 	unique := func(field string) error {
 		return errs.Conflict().Code(errs.CodeUnique).
@@ -272,16 +216,10 @@ func TestADeclaredHopBeatsTheFallback(t *testing.T) {
 		t.Fatal("a path the map declared was marked approximate")
 	}
 
-	// The control. With no declared hop the same violation reaches the fallback
-	// and comes out with its answer — so the assertion above measures the
-	// declaration winning rather than a pipeline that ignores Fallback.
 	if got := pipeline(t, unique("Email"), ViolationOptions{Fallback: fallback})[0].Path.String(); got != "guessed" {
 		t.Fatalf("without a declared hop the field is %q, want the fallback's own answer", got)
 	}
 
-	// The other half of a total map: a field it does not declare declines, so
-	// the violation is marked approximate rather than taking the guess. The
-	// fallback knows this name, which is what makes the decline visible.
 	declined := pipeline(t, unique("Nickname"), ViolationOptions{Resolvers: []errs.Resolver{declared}, Fallback: fallback})
 	if got := declined[0].Path.String(); got != "Nickname" || !declined[0].Approximate {
 		t.Fatalf("an undeclared field resolved to %q (approximate %v); the declining hop was not honoured",
@@ -292,9 +230,6 @@ func TestADeclaredHopBeatsTheFallback(t *testing.T) {
 	}
 }
 
-// The pipeline holds no per-request state, so running the same fault twice must
-// not change it. A resolved path or an expanded message written through to the
-// fault would make the second render depend on the first ([[D-042]]).
 func TestRenderingDoesNotWriteThroughToTheFault(t *testing.T) {
 	f := errs.Conflict().Code(errs.CodeUnique).
 		Field("Email").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()

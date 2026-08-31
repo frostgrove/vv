@@ -15,9 +15,6 @@ import (
 	"time"
 )
 
-// ArticleUpdate is the partial-update DTO for Article.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type ArticleUpdate struct {
 	AuthorID    *int64               `json:"authorID,omitempty"`
 	Title       *string              `json:"title,omitempty"`
@@ -27,14 +24,12 @@ type ArticleUpdate struct {
 	PublishedAt utils.Opt[time.Time] `json:"publishedAt,omitzero"`
 }
 
-// ArticleAuthorAttrs reaches Article through Author.
 type ArticleAuthorAttrs struct {
 	specs.Rel[Article, Author]
 	ID   specs.Ord[Article, int64]
 	Name specs.Str[Article]
 }
 
-// ArticleCommentsAttrs reaches Article through Comments.
 type ArticleCommentsAttrs struct {
 	specs.Rel[Article, Comment]
 	ID        specs.Ord[Article, int64]
@@ -44,14 +39,12 @@ type ArticleCommentsAttrs struct {
 	Approved  specs.Attr[Article, bool]
 }
 
-// ArticleTagsAttrs reaches Article through Tags.
 type ArticleTagsAttrs struct {
 	specs.Rel[Article, Tag]
 	ID   specs.Ord[Article, int64]
 	Slug specs.Str[Article]
 }
 
-// ArticleAttrs is the generated metamodel shape for Article.
 type ArticleAttrs struct {
 	ID          specs.Ord[Article, int64]
 	AuthorID    specs.Ord[Article, int64]
@@ -67,25 +60,16 @@ type ArticleAttrs struct {
 	Tags        ArticleTagsAttrs
 }
 
-// Article_ is the metamodel of Article: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Article_ = specs.Metamodel[Article, ArticleAttrs]()
 
-// ArticleRepo is the typed repository for Article.
 type ArticleRepo = crud.Repo[Article, int64, ArticleUpdate]
 
-// ArticleRepository describes Article independently of a database driver.
-// Bind it through NewArticleRepository with the application's datasource.
 var ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("")
 
-// NewArticleRepository binds ArticleRepository to src.
 func NewArticleRepository(src crud.Source) *ArticleRepo {
 	return ArticleRepository.Bind(src)
 }
 
-// ArticleInput is the entity body for Article: what a create or a replace carries,
-// under this resource's own wire names. ArticleUpdate is the PATCH shape; a
-// partial update has to tell absent from null and an entity body does not.
 type ArticleInput struct {
 	AuthorID    int64               `json:"authorID"`
 	Title       string              `json:"title"`
@@ -96,12 +80,8 @@ type ArticleInput struct {
 	TenantID    int64               `json:"tenantID"`
 }
 
-// ArticleMapper turns ArticleInput into Article, and inverts that mapping for the
-// path chain. It performed the mapping, so it is the only layer that can
-// invert it ([[D-043]]).
 type ArticleMapper struct{}
 
-// Model implements port.Mapper.
 func (ArticleMapper) Model(_ context.Context, in ArticleInput) (Article, error) {
 	out := Article{}
 	out.AuthorID = in.AuthorID
@@ -114,14 +94,8 @@ func (ArticleMapper) Model(_ context.Context, in ArticleInput) (Article, error) 
 	return out, nil
 }
 
-// Resolve implements errs.Resolver, which is what puts this hop ahead of
-// the raw-body fallback: a declared mapping always beats a guess.
 func (ArticleMapper) Resolve(p errs.Path) (errs.Path, bool) { return ArticlePaths.Resolve(p) }
 
-// ArticlePaths is the inverse of ArticleMapper: a model field name to the key the
-// client sent for it. It is checked against the model at package
-// initialisation, so a column it does not cover refuses to start rather than
-// answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var ArticlePaths = port.MustPathMap[Article](port.PathMap{
 	"AuthorID":    port.At("authorID"),
 	"Title":       port.At("title"),
@@ -132,38 +106,24 @@ var ArticlePaths = port.MustPathMap[Article](port.PathMap{
 	"TenantID":    port.At("tenantID"),
 }, "ID")
 
-// ArticleService is the service shell: the default orchestration, and somewhere to
-// override one method without writing the other eight.
 type ArticleService struct {
 	*port.DefaultService[Article, int64, ArticleUpdate]
 }
 
-// An override that changes a signature is a build failure here rather than
-// a service that quietly no longer mounts.
 var _ port.Service[Article, int64, ArticleUpdate] = (*ArticleService)(nil)
 
-// NewArticleService builds the service over a repository.
 func NewArticleService(repo port.Repository[Article, int64, ArticleUpdate], opts ...port.ServiceOption) *ArticleService {
 	return &ArticleService{DefaultService: port.NewService(repo, opts...)}
 }
 
-// MountArticle mounts the resource on a ServeMux under prefix, behind ArticleMapper.
-//
-// It takes a service rather than a repository, so a hand-written one slots in
-// and the service-shaped options a Serving constructor refuses cannot be handed
-// to it by mistake ([[D-021]]).
 func MountArticle(mux *http.ServeMux, prefix string, svc port.Service[Article, int64, ArticleUpdate], opts ...crudnet.Option[Article, int64, ArticleUpdate]) {
 	crudnet.ServingFor(svc, ArticleMapper{}, opts...).Mount(mux, prefix)
 }
 
-// AuthorUpdate is the partial-update DTO for Author.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type AuthorUpdate struct {
 	Name *string `json:"name,omitempty"`
 }
 
-// AuthorArticlesAttrs reaches Author through Articles.
 type AuthorArticlesAttrs struct {
 	specs.Rel[Author, Article]
 	ID          specs.Ord[Author, int64]
@@ -177,87 +137,54 @@ type AuthorArticlesAttrs struct {
 	CreatedAt   specs.Cmp[Author, time.Time]
 }
 
-// AuthorAttrs is the generated metamodel shape for Author.
 type AuthorAttrs struct {
 	ID       specs.Ord[Author, int64]
 	Name     specs.Str[Author]
 	Articles AuthorArticlesAttrs
 }
 
-// Author_ is the metamodel of Author: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Author_ = specs.Metamodel[Author, AuthorAttrs]()
 
-// AuthorRepo is the typed repository for Author.
 type AuthorRepo = crud.Repo[Author, int64, AuthorUpdate]
 
-// AuthorRepository describes Author independently of a database driver.
-// Bind it through NewAuthorRepository with the application's datasource.
 var AuthorRepository = sqlrepo.Define[Author, int64, AuthorUpdate]("")
 
-// NewAuthorRepository binds AuthorRepository to src.
 func NewAuthorRepository(src crud.Source) *AuthorRepo {
 	return AuthorRepository.Bind(src)
 }
 
-// AuthorInput is the entity body for Author: what a create or a replace carries,
-// under this resource's own wire names. AuthorUpdate is the PATCH shape; a
-// partial update has to tell absent from null and an entity body does not.
 type AuthorInput struct {
 	Name string `json:"name"`
 }
 
-// AuthorMapper turns AuthorInput into Author, and inverts that mapping for the
-// path chain. It performed the mapping, so it is the only layer that can
-// invert it ([[D-043]]).
 type AuthorMapper struct{}
 
-// Model implements port.Mapper.
 func (AuthorMapper) Model(_ context.Context, in AuthorInput) (Author, error) {
 	out := Author{}
 	out.Name = in.Name
 	return out, nil
 }
 
-// Resolve implements errs.Resolver, which is what puts this hop ahead of
-// the raw-body fallback: a declared mapping always beats a guess.
 func (AuthorMapper) Resolve(p errs.Path) (errs.Path, bool) { return AuthorPaths.Resolve(p) }
 
-// AuthorPaths is the inverse of AuthorMapper: a model field name to the key the
-// client sent for it. It is checked against the model at package
-// initialisation, so a column it does not cover refuses to start rather than
-// answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var AuthorPaths = port.MustPathMap[Author](port.PathMap{
 	"Name": port.At("name"),
 }, "ID")
 
-// AuthorService is the service shell: the default orchestration, and somewhere to
-// override one method without writing the other eight.
 type AuthorService struct {
 	*port.DefaultService[Author, int64, AuthorUpdate]
 }
 
-// An override that changes a signature is a build failure here rather than
-// a service that quietly no longer mounts.
 var _ port.Service[Author, int64, AuthorUpdate] = (*AuthorService)(nil)
 
-// NewAuthorService builds the service over a repository.
 func NewAuthorService(repo port.Repository[Author, int64, AuthorUpdate], opts ...port.ServiceOption) *AuthorService {
 	return &AuthorService{DefaultService: port.NewService(repo, opts...)}
 }
 
-// MountAuthor mounts the resource on a ServeMux under prefix, behind AuthorMapper.
-//
-// It takes a service rather than a repository, so a hand-written one slots in
-// and the service-shaped options a Serving constructor refuses cannot be handed
-// to it by mistake ([[D-021]]).
 func MountAuthor(mux *http.ServeMux, prefix string, svc port.Service[Author, int64, AuthorUpdate], opts ...crudnet.Option[Author, int64, AuthorUpdate]) {
 	crudnet.ServingFor(svc, AuthorMapper{}, opts...).Mount(mux, prefix)
 }
 
-// CommentUpdate is the partial-update DTO for Comment.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type CommentUpdate struct {
 	ArticleID *int64  `json:"articleID,omitempty"`
 	AuthorID  *int64  `json:"authorID,omitempty"`
@@ -265,14 +192,12 @@ type CommentUpdate struct {
 	Approved  *bool   `json:"approved,omitempty"`
 }
 
-// CommentAuthorAttrs reaches Comment through Author.
 type CommentAuthorAttrs struct {
 	specs.Rel[Comment, Author]
 	ID   specs.Ord[Comment, int64]
 	Name specs.Str[Comment]
 }
 
-// CommentAttrs is the generated metamodel shape for Comment.
 type CommentAttrs struct {
 	ID        specs.Ord[Comment, int64]
 	ArticleID specs.Ord[Comment, int64]
@@ -282,25 +207,16 @@ type CommentAttrs struct {
 	Author    CommentAuthorAttrs
 }
 
-// Comment_ is the metamodel of Comment: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Comment_ = specs.Metamodel[Comment, CommentAttrs]()
 
-// CommentRepo is the typed repository for Comment.
 type CommentRepo = crud.Repo[Comment, int64, CommentUpdate]
 
-// CommentRepository describes Comment independently of a database driver.
-// Bind it through NewCommentRepository with the application's datasource.
 var CommentRepository = sqlrepo.Define[Comment, int64, CommentUpdate]("")
 
-// NewCommentRepository binds CommentRepository to src.
 func NewCommentRepository(src crud.Source) *CommentRepo {
 	return CommentRepository.Bind(src)
 }
 
-// CommentInput is the entity body for Comment: what a create or a replace carries,
-// under this resource's own wire names. CommentUpdate is the PATCH shape; a
-// partial update has to tell absent from null and an entity body does not.
 type CommentInput struct {
 	ArticleID int64  `json:"articleID"`
 	AuthorID  int64  `json:"authorID"`
@@ -308,12 +224,8 @@ type CommentInput struct {
 	Approved  bool   `json:"approved"`
 }
 
-// CommentMapper turns CommentInput into Comment, and inverts that mapping for the
-// path chain. It performed the mapping, so it is the only layer that can
-// invert it ([[D-043]]).
 type CommentMapper struct{}
 
-// Model implements port.Mapper.
 func (CommentMapper) Model(_ context.Context, in CommentInput) (Comment, error) {
 	out := Comment{}
 	out.ArticleID = in.ArticleID
@@ -323,14 +235,8 @@ func (CommentMapper) Model(_ context.Context, in CommentInput) (Comment, error) 
 	return out, nil
 }
 
-// Resolve implements errs.Resolver, which is what puts this hop ahead of
-// the raw-body fallback: a declared mapping always beats a guess.
 func (CommentMapper) Resolve(p errs.Path) (errs.Path, bool) { return CommentPaths.Resolve(p) }
 
-// CommentPaths is the inverse of CommentMapper: a model field name to the key the
-// client sent for it. It is checked against the model at package
-// initialisation, so a column it does not cover refuses to start rather than
-// answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var CommentPaths = port.MustPathMap[Comment](port.PathMap{
 	"ArticleID": port.At("articleID"),
 	"AuthorID":  port.At("authorID"),
@@ -338,119 +244,71 @@ var CommentPaths = port.MustPathMap[Comment](port.PathMap{
 	"Approved":  port.At("approved"),
 }, "ID")
 
-// CommentService is the service shell: the default orchestration, and somewhere to
-// override one method without writing the other eight.
 type CommentService struct {
 	*port.DefaultService[Comment, int64, CommentUpdate]
 }
 
-// An override that changes a signature is a build failure here rather than
-// a service that quietly no longer mounts.
 var _ port.Service[Comment, int64, CommentUpdate] = (*CommentService)(nil)
 
-// NewCommentService builds the service over a repository.
 func NewCommentService(repo port.Repository[Comment, int64, CommentUpdate], opts ...port.ServiceOption) *CommentService {
 	return &CommentService{DefaultService: port.NewService(repo, opts...)}
 }
 
-// MountComment mounts the resource on a ServeMux under prefix, behind CommentMapper.
-//
-// It takes a service rather than a repository, so a hand-written one slots in
-// and the service-shaped options a Serving constructor refuses cannot be handed
-// to it by mistake ([[D-021]]).
 func MountComment(mux *http.ServeMux, prefix string, svc port.Service[Comment, int64, CommentUpdate], opts ...crudnet.Option[Comment, int64, CommentUpdate]) {
 	crudnet.ServingFor(svc, CommentMapper{}, opts...).Mount(mux, prefix)
 }
 
-// TagUpdate is the partial-update DTO for Tag.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type TagUpdate struct {
 	Slug *string `json:"slug,omitempty"`
 }
 
-// TagAttrs is the generated metamodel shape for Tag.
 type TagAttrs struct {
 	ID   specs.Ord[Tag, int64]
 	Slug specs.Str[Tag]
 }
 
-// Tag_ is the metamodel of Tag: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Tag_ = specs.Metamodel[Tag, TagAttrs]()
 
-// TagRepo is the typed repository for Tag.
 type TagRepo = crud.Repo[Tag, int64, TagUpdate]
 
-// TagRepository describes Tag independently of a database driver.
-// Bind it through NewTagRepository with the application's datasource.
 var TagRepository = sqlrepo.Define[Tag, int64, TagUpdate]("")
 
-// NewTagRepository binds TagRepository to src.
 func NewTagRepository(src crud.Source) *TagRepo {
 	return TagRepository.Bind(src)
 }
 
-// TagInput is the entity body for Tag: what a create or a replace carries,
-// under this resource's own wire names. TagUpdate is the PATCH shape; a
-// partial update has to tell absent from null and an entity body does not.
 type TagInput struct {
 	Slug string `json:"slug"`
 }
 
-// TagMapper turns TagInput into Tag, and inverts that mapping for the
-// path chain. It performed the mapping, so it is the only layer that can
-// invert it ([[D-043]]).
 type TagMapper struct{}
 
-// Model implements port.Mapper.
 func (TagMapper) Model(_ context.Context, in TagInput) (Tag, error) {
 	out := Tag{}
 	out.Slug = in.Slug
 	return out, nil
 }
 
-// Resolve implements errs.Resolver, which is what puts this hop ahead of
-// the raw-body fallback: a declared mapping always beats a guess.
 func (TagMapper) Resolve(p errs.Path) (errs.Path, bool) { return TagPaths.Resolve(p) }
 
-// TagPaths is the inverse of TagMapper: a model field name to the key the
-// client sent for it. It is checked against the model at package
-// initialisation, so a column it does not cover refuses to start rather than
-// answering a wrong path on some later request ([[D-021]], [[D-050]]).
 var TagPaths = port.MustPathMap[Tag](port.PathMap{
 	"Slug": port.At("slug"),
 }, "ID")
 
-// TagService is the service shell: the default orchestration, and somewhere to
-// override one method without writing the other eight.
 type TagService struct {
 	*port.DefaultService[Tag, int64, TagUpdate]
 }
 
-// An override that changes a signature is a build failure here rather than
-// a service that quietly no longer mounts.
 var _ port.Service[Tag, int64, TagUpdate] = (*TagService)(nil)
 
-// NewTagService builds the service over a repository.
 func NewTagService(repo port.Repository[Tag, int64, TagUpdate], opts ...port.ServiceOption) *TagService {
 	return &TagService{DefaultService: port.NewService(repo, opts...)}
 }
 
-// MountTag mounts the resource on a ServeMux under prefix, behind TagMapper.
-//
-// It takes a service rather than a repository, so a hand-written one slots in
-// and the service-shaped options a Serving constructor refuses cannot be handed
-// to it by mistake ([[D-021]]).
 func MountTag(mux *http.ServeMux, prefix string, svc port.Service[Tag, int64, TagUpdate], opts ...crudnet.Option[Tag, int64, TagUpdate]) {
 	crudnet.ServingFor(svc, TagMapper{}, opts...).Mount(mux, prefix)
 }
 
-// A writable column the update DTO does not name refuses to start, rather than
-// becoming a column updates silently cannot reach ([[D-050]]). The generator
-// read the model's source text and this reads the compiled struct, so the two
-// can drift apart — and this is what says so when they do, with nothing
-// regenerated.
 func init() {
 	port.MustCoverUpdate[Article, ArticleUpdate]()
 	port.MustCoverUpdate[Author, AuthorUpdate]()

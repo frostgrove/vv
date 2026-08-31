@@ -35,8 +35,6 @@ func TestAnAbsentPrincipalFailsClosed(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the test above passes for a Require that refuses
-	// unconditionally, which would fail every authenticated request too.
 	t.Run("control: Require succeeds once a principal is there", func(t *testing.T) {
 		ctx := auth.WithPrincipal(t.Context(), auth.Claims{Sub: "u-1"})
 		if _, err := auth.Require(ctx); err != nil {
@@ -56,7 +54,6 @@ func TestANilPrincipalIsNotStored(t *testing.T) {
 }
 
 func TestANilContextIsNotAPanic(t *testing.T) {
-	//lint:ignore SA1012 the point of the test is the nil
 	if _, ok := auth.PrincipalFrom(context.Context(nil)); ok {
 		t.Fatal("a nil context reported a principal")
 	}

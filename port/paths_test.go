@@ -9,14 +9,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// shipment is a model mounted straight onto the wire — the json tag is what the
-// client sent — with one of everything the domain rule has to reason about: a
-// database-generated key, an insert-only column, the optimistic lock and a
-// column the database fills.
-//
-// Origin's tag is deliberately not any mechanical transform of its field name.
-// A derivation that answered "origin" or "Origin" would look right in every
-// other test here, and that one entry is what says the tag was read.
 type shipment struct {
 	ID        int64     `db:"id,pk,auto" json:"id"`
 	Recipient string    `db:"recipient" json:"recipient"`
@@ -26,12 +18,6 @@ type shipment struct {
 	CreatedAt time.Time `db:"created_at,generated" json:"createdAt"`
 }
 
-// The map somebody would otherwise have typed, derived instead.
-//
-// Weight carries the option-stripping and Origin carries the proof that a tag
-// was read at all. What is *absent* matters as much: the lock and the generated
-// column both carry a json tag and neither gets an entry, because no request
-// carries them and MustPathMap refuses a map that claims otherwise.
 func TestADerivedMapIsTheOneSomebodyWouldHaveTyped(t *testing.T) {
 	got, err := Paths[shipment]().Build()
 	if err != nil {
@@ -49,10 +35,6 @@ func TestADerivedMapIsTheOneSomebodyWouldHaveTyped(t *testing.T) {
 	}
 }
 
-// `json:",omitempty"` keeps the Go field name as the key — that is what the
-// decoder does with it, so it is what the map has to say. It is not the
-// OrFieldName fallback arriving by the back door: the test below shows a field
-// with no tag at all is still refused here.
 func TestATagWithOptionsAndNoNameMeansTheFieldName(t *testing.T) {
 	type crate struct {
 		ID       int64  `db:"id,pk,auto" json:"id"`
@@ -68,10 +50,6 @@ func TestATagWithOptionsAndNoNameMeansTheFieldName(t *testing.T) {
 	}
 }
 
-// A column no tag names is a refusal naming the column, not a key invented from
-// the field name. The failure that rule prevents is a map that looks complete
-// and reports "SourceFilename" where the wire says "sourceFilename" — nothing
-// tells anybody until a violation lands in a production error body.
 func TestAColumnNoTagNamesIsRefusedRatherThanGuessed(t *testing.T) {
 	type pallet struct {
 		ID     int64 `db:"id,pk,auto"`
@@ -88,9 +66,6 @@ func TestAColumnNoTagNamesIsRefusedRatherThanGuessed(t *testing.T) {
 		}
 	}
 
-	// The control: the same model, with the consumer stating that the field
-	// name *is* the key. Without this the test above would pass on a builder
-	// that could never derive anything.
 	got, err := Paths[pallet]().OrFieldName().Build()
 	if err != nil {
 		t.Fatalf("OrFieldName did not rescue an untagged model: %v", err)
@@ -101,10 +76,6 @@ func TestAColumnNoTagNamesIsRefusedRatherThanGuessed(t *testing.T) {
 	}
 }
 
-// A tag that says `-` is the author stating the column is not on the wire, and
-// that is a different answer from saying nothing. OrFieldName covers silence;
-// it must not cover this, because a key for a column the client never sends
-// points a violation at something it cannot find in its own body.
 func TestAColumnTakenOffTheWireIsNotRescuedByTheFieldNameFallback(t *testing.T) {
 	type strongbox struct {
 		ID   int64  `db:"id,pk,auto" json:"id"`
@@ -115,8 +86,6 @@ func TestAColumnTakenOffTheWireIsNotRescuedByTheFieldNameFallback(t *testing.T) 
 		t.Fatalf("a column tagged `-` was given a key: %v", err)
 	}
 
-	// The distinction under test: the same call that rescues an untagged model
-	// leaves this one refused.
 	_, err := Paths[strongbox]().OrFieldName().Build()
 	if err == nil {
 		t.Fatal("OrFieldName gave a key to a column the tag says is not on the wire")
@@ -125,9 +94,6 @@ func TestAColumnTakenOffTheWireIsNotRescuedByTheFieldNameFallback(t *testing.T) 
 		t.Fatalf("the refusal does not say how to resolve it: %v", err)
 	}
 
-	// Both cures, because a refusal with no way out is a feature nobody can
-	// adopt: the column is either genuinely off the wire, or it arrives under a
-	// name the tag does not give.
 	excluded, err := Paths[strongbox]().Except("Seal").Build()
 	if err != nil {
 		t.Fatalf("Except did not drop the column: %v", err)
@@ -144,8 +110,6 @@ func TestAColumnTakenOffTheWireIsNotRescuedByTheFieldNameFallback(t *testing.T) 
 	}
 }
 
-// The tag list is preference and not a merge: the first tag that names a field
-// wins, and a field only the second one names still gets a key.
 func TestTheFirstTagThatNamesAColumnWins(t *testing.T) {
 	type consignment struct {
 		ID     int64  `db:"id,pk,auto" json:"id" form:"id"`
@@ -162,9 +126,6 @@ func TestTheFirstTagThatNamesAColumnWins(t *testing.T) {
 		t.Fatalf("the derived map is %v, want %v", got, want)
 	}
 
-	// The control: reverse the order and the column carrying both changes its
-	// answer. Without it the test above would pass on a builder that read only
-	// whichever tag happened to be first in the struct.
 	reversed, err := Paths[consignment]().From("form", "json").Build()
 	if err != nil {
 		t.Fatalf("deriving from two tags in the other order: %v", err)
@@ -174,8 +135,6 @@ func TestTheFirstTagThatNamesAColumnWins(t *testing.T) {
 	}
 }
 
-// Any tag key at all, because a house convention is a tag somebody chose and
-// this has no business holding a list of the acceptable ones.
 func TestAnyTagKeyCanBeTheSource(t *testing.T) {
 	type ledger struct {
 		ID     int64  `db:"id,pk,auto" my_custom_tag:"id"`
@@ -192,9 +151,6 @@ func TestAnyTagKeyCanBeTheSource(t *testing.T) {
 	}
 }
 
-// An override replaces what the tag says, and is validated like anything else:
-// deriving the rest of the map does not make the one hand-written entry
-// unchecked.
 func TestAnOverrideBeatsTheTagAndIsStillChecked(t *testing.T) {
 	got, err := Paths[shipment]().Override(PathMap{"Origin": At("file")}).Build()
 	if err != nil {
@@ -207,25 +163,17 @@ func TestAnOverrideBeatsTheTagAndIsStillChecked(t *testing.T) {
 		t.Fatalf("an override changed a column it did not name: %v", got["Recipient"])
 	}
 
-	// A misspelled override is the mistake this whole feature otherwise makes
-	// easier: the map is derived, so the one line somebody typed is the only
-	// one that can be wrong, and it silently does nothing without this.
 	if _, err := Paths[shipment]().Override(PathMap{"Orign": At("file")}).Build(); err == nil ||
 		!strings.Contains(err.Error(), "Orign") {
 		t.Fatalf("an override naming no column was accepted: %v", err)
 	}
 
-	// The other direction: a real column that no request carries. An entry for
-	// it translates a violation to a key the client cannot find, which is the
-	// same wrong answer as a missing one ([[D-050]]).
 	if _, err := Paths[shipment]().Override(PathMap{"CreatedAt": At("createdAt")}).Build(); err == nil ||
 		!strings.Contains(err.Error(), "CreatedAt") {
 		t.Fatalf("an override for a generated column was accepted: %v", err)
 	}
 }
 
-// Excepting a column and overriding it are opposite instructions. Resolving one
-// in favour of the other would make half of what somebody wrote do nothing.
 func TestOverridingAndExceptingTheSameColumnIsRefused(t *testing.T) {
 	_, err := Paths[shipment]().
 		Except("Origin").
@@ -236,8 +184,6 @@ func TestOverridingAndExceptingTheSameColumnIsRefused(t *testing.T) {
 	}
 }
 
-// A promoted column is one column to crud, so its tag has to be found through
-// however many embeddings it sits behind.
 func TestAPromotedColumnCarriesTheTagOfTheFieldItIs(t *testing.T) {
 	type stamped struct {
 		CreatedBy string `db:"created_by" json:"createdBy"`
@@ -261,13 +207,6 @@ func TestAPromotedColumnCarriesTheTagOfTheFieldItIs(t *testing.T) {
 	}
 }
 
-// Only a column may lend a tag to a column.
-//
-// A field crud is told to ignore, and a relation, can each share a name with a
-// promoted column without crud objecting — it never mapped the other one. Both
-// carry a tag of their own, and reading it would answer a key from a field that
-// is not the column, which is the silent wrong answer this whole type exists to
-// avoid.
 func TestOnlyAColumnLendsItsTagToAColumn(t *testing.T) {
 	type stamped struct {
 		Label string `db:"label" json:"label"`
@@ -293,9 +232,7 @@ func TestOnlyAColumnLendsItsTagToAColumn(t *testing.T) {
 	type manifested struct {
 		Items string `db:"items" json:"itemsColumn"`
 	}
-	// The relation is the *outer* field and the column is promoted from below,
-	// so shallowest-wins would hand the column the relation's tag. That is the
-	// arrangement under test; the other way round it never gets the chance.
+
 	type carried struct {
 		manifested
 		ID    int64  `db:"id,pk,auto" json:"id"`
@@ -311,10 +248,6 @@ func TestOnlyAColumnLendsItsTagToAColumn(t *testing.T) {
 	}
 }
 
-// The result is a PathMap and behaves like one: a declared head is rewritten
-// with its tail kept, and an undeclared head declines rather than passing
-// through, because a derived map is total for the same reason a generated one
-// is ([[D-050]]).
 func TestADerivedMapResolvesLikeTheHandWrittenOne(t *testing.T) {
 	m, err := Paths[shipment]().Build()
 	if err != nil {
@@ -331,9 +264,6 @@ func TestADerivedMapResolvesLikeTheHandWrittenOne(t *testing.T) {
 	}
 }
 
-// Both misuses of the builder itself are held until Build, where the message
-// can name the model. A method that panicked would name the builder and the
-// stack, and the model is what has to change.
 func TestABuilderMisuseIsAnswerLater(t *testing.T) {
 	if _, err := Paths[shipment]().From().Build(); err == nil {
 		t.Fatal("From with no tag was accepted; the map would be derived from nothing")
@@ -343,8 +273,6 @@ func TestABuilderMisuseIsAnswerLater(t *testing.T) {
 	}
 }
 
-// MustBuild is the package-level declaration, so what Build reports as an error
-// has to stop the process ([[D-021]]).
 func TestMustBuildRefusesAtDeclaration(t *testing.T) {
 	type pallet struct {
 		ID     int64 `db:"id,pk,auto"`

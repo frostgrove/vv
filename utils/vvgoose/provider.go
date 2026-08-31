@@ -17,13 +17,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// newProvider builds one isolated Goose provider over the configured primary
-// database. A read replica is deliberately not opened: schema changes belong
-// to the primary and replication is responsible for carrying them downstream.
-//
-// The returned database belongs to the caller and must be closed. Returning it
-// separately keeps that ownership visible; Provider.Close would close the same
-// handle but obscures who created it.
 func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 	config := normalizeConfig(&raw)
 	if err := config.Validate(); err != nil {
@@ -72,9 +65,6 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 	if err != nil {
 		closeErr := database.Close()
 		if closeErr != nil {
-			// Do not wrap ErrNoMigrations in this branch: callers intentionally
-			// turn that one condition into a no-op, but a failed close must remain
-			// observable instead of being swallowed with it.
 			return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %v; close database: %w", config.Migration.Path, err, closeErr)
 		}
 		return nil, nil, fmt.Errorf("vvgoose: load migrations from %q: %w", config.Migration.Path, err)
@@ -82,11 +72,6 @@ func newProvider(raw vvdb.Config) (*goose.Provider, *sql.DB, error) {
 	return provider, database, nil
 }
 
-// providerDatabaseConfig makes the connection suitable for Goose without
-// mutating the application's ordinary database config. Goose may execute a
-// StatementBegin block as one string; go-sql-driver/mysql refuses that unless
-// multiStatements is enabled. Goose scans its history timestamp into time.Time,
-// so parseTime must also stay on even when a raw DSN disabled it.
 func providerDatabaseConfig(config vvdb.Config) (vvdb.Config, error) {
 	primary := config
 	primary.Replica = nil
@@ -127,8 +112,6 @@ func providerLockerOption(engine vvdb.Engine, table string) (goose.ProviderOptio
 		sum := sha256.Sum256([]byte(table))
 		return goose.WithSessionLocker(mysqlSessionLocker{name: fmt.Sprintf("vvgoose:%x", sum[:20])}), nil
 	default:
-		// SQLite serializes schema writers through the database file itself. The
-		// Goose lock package has no SQLite session-lock primitive.
 		return nil, nil
 	}
 }
@@ -185,9 +168,6 @@ func runMigrate(ctx context.Context, config vvdb.Config) (results []*goose.Migra
 	return provider.Up(ctx)
 }
 
-// runFresh rolls every known migration back and applies the complete set
-// again. This follows Goose reset semantics: it executes Down sections rather
-// than dropping arbitrary tables that are not owned by migrations.
 func runFresh(ctx context.Context, config vvdb.Config) (results []*goose.MigrationResult, err error) {
 	provider, database, err := newProvider(config)
 	if err != nil {
@@ -208,11 +188,6 @@ func runFresh(ctx context.Context, config vvdb.Config) (results []*goose.Migrati
 	return results, err
 }
 
-// runFlush drops all application objects from the active development database
-// without consulting migration files or Goose history. It is the recovery
-// hatch for a history table that names a migration file that no longer exists.
-// It intentionally does not run Up afterwards: the caller can inspect the
-// empty database, or run migrate explicitly.
 func runFlush(ctx context.Context, raw vvdb.Config) (err error) {
 	config := normalizeConfig(&raw)
 	if err := config.Validate(); err != nil {

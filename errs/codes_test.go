@@ -8,9 +8,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// everyStandardCode is the vocabulary this package declares. It is written out
-// rather than derived, so a code added to the constant block and forgotten in
-// StandardCodes fails here instead of answering "unknown" at run time.
 var everyStandardCode = []errs.Code{
 	errs.CodeUnique, errs.CodeNotUnique, errs.CodeForeignKey, errs.CodeRestrict,
 	errs.CodeRequired, errs.CodeCheck, errs.CodeExclusion, errs.CodeTooLong,
@@ -30,9 +27,6 @@ func TestRedeclaringACodeWithADifferentKindIsRefused(t *testing.T) {
 		t.Fatalf("after declaring too_long as validation, KindOf said (%v, %v)", k, ok)
 	}
 
-	// The control: a second declaration that agrees is not an error. Refusing
-	// every redeclaration is the process-wide panic this design rejected,
-	// wearing a return value.
 	if err := c.Add("too_long", errs.KindValidation, "a different sentence"); err != nil {
 		t.Fatalf("a redeclaration with the same kind was refused: %v", err)
 	}
@@ -48,14 +42,10 @@ func TestRedeclaringACodeWithADifferentKindIsRefused(t *testing.T) {
 		t.Fatalf("the refusal is not reachable with errors.Is(ErrCodeRedeclared): %v", err)
 	}
 
-	// The control that matters most: a caller told its declaration was refused
-	// must not then find the table changed anyway.
 	if k, _ := c.KindOf("too_long"); k != errs.KindValidation {
 		t.Fatalf("the refused declaration changed the kind to %v", k)
 	}
 
-	// And the whole point of a wired value rather than a global: two of them do
-	// not see each other.
 	other := errs.NewCodes()
 	if err := other.Add("too_long", errs.KindConflict, "this value is already taken"); err != nil {
 		t.Fatalf("a second, independent Codes could not declare too_long its own way: %v", err)
@@ -83,9 +73,6 @@ func TestTheRetryableCodesAreTheirOwnKind(t *testing.T) {
 		}
 	}
 
-	// The control: without these four the assertions above pass for a table
-	// that answers retryable to everything, and both of D-040's forbids — never
-	// a conflict, never a fall-through to 500 — would look proven.
 	for _, tc := range []struct {
 		code errs.Code
 		want errs.Kind
@@ -107,7 +94,6 @@ func TestTheInternalCodeHasNoDefaultMessage(t *testing.T) {
 		t.Fatalf(`the internal code answered (%q, %v) — a 500 says nothing, and that has to hold by construction`, message, ok)
 	}
 
-	// The control: an empty Codes would pass the assertion above.
 	for _, code := range everyStandardCode {
 		if code == errs.CodeInternal {
 			continue
@@ -132,8 +118,6 @@ func TestTheZeroKindIsInternalAndSoIsAnUnknownOne(t *testing.T) {
 		t.Fatalf("an unrecognised kind renders as %q — a kind that lost its meaning must not read as a 4xx", got)
 	}
 
-	// The control: a String that returned "internal" for everything would pass
-	// both assertions above and make the type useless.
 	seen := map[string]errs.Kind{}
 	for _, k := range []errs.Kind{
 		errs.KindInternal, errs.KindNotFound, errs.KindUnauthorized, errs.KindForbidden,
@@ -153,9 +137,6 @@ func TestTheZeroKindIsInternalAndSoIsAnUnknownOne(t *testing.T) {
 	}
 }
 
-// A nil *Codes is a wiring that exists: NewMessages documents it, and a
-// component handed no vocabulary must read as "no code is known" rather than
-// dereferencing at the first error — the moment least able to absorb a panic.
 func TestANilCodesReadsAsEmptyInsteadOfPanicking(t *testing.T) {
 	var none *errs.Codes
 	if k, ok := none.KindOf(errs.CodeUnique); ok || k != errs.KindInternal {
@@ -167,10 +148,6 @@ func TestANilCodesReadsAsEmptyInsteadOfPanicking(t *testing.T) {
 
 	v := errs.Violation{Path: errs.Path{errs.Named("email")}, Code: errs.CodeUnique}
 
-	// The control: with a vocabulary wired, an empty catalogue falls through to
-	// MessageFor. Without this assertion the nil case below would hold just as
-	// well for a Message that never consults the codes at all, and the nil
-	// receiver would go unexercised.
 	wired := errs.NewMessages(errs.StandardCodes())
 	if got, ok := wired.Message(context.Background(), v, "en"); !ok || got != "this value is already taken" {
 		t.Fatalf("an unresolved message did not reach the code's default: (%q, %v)", got, ok)
@@ -181,15 +158,7 @@ func TestANilCodesReadsAsEmptyInsteadOfPanicking(t *testing.T) {
 	}
 }
 
-// Only the kind reaches the status table — ROADMAP-errors.md §2 maps the kind
-// and never the code — so a row declared with the wrong one is the wrong HTTP
-// status for every consumer from phase 4 on. It is also a one-token edit
-// nothing else in the tree notices: eight of these rows could be changed at
-// once with the whole root module green.
 func TestEveryStandardCodeHasTheKindTheStatusTableGivesIt(t *testing.T) {
-	// Written out rather than read back from StandardCodes, for the same reason
-	// everyStandardCode is: an expectation derived from the thing it checks
-	// agrees with it whatever it says.
 	want := []struct {
 		code errs.Code
 		kind errs.Kind
@@ -239,8 +208,6 @@ func TestEveryStandardCodeHasTheKindTheStatusTableGivesIt(t *testing.T) {
 		}
 	}
 
-	// The control: a row missing from the expectation above is a row nothing
-	// pins, and the loop passes without ever looking at it.
 	for _, code := range everyStandardCode {
 		if !pinned[code] {
 			t.Fatalf("%s is declared but no row above says which kind it must have", code)

@@ -1,7 +1,7 @@
 # FL-017 — A failed write becomes every violation it caused
 
 **Entry point:** `crud/decorators/faults/probe.go:enricher.probed`
-**Implements:** [[UC-017]] [[UC-004]] · **Governed by:** [[D-042]] [[D-041]] [[D-019]] [[D-009]] [[D-010]] [[D-011]] [[D-014]] [[D-032]] [[D-043]] [[D-044]] [[D-008]] [[D-021]] [[D-025]]
+**Implements:** [[UC-017]] [[UC-004]] · **Governed by:** [[D-042]] [[D-041]] [[D-019]] [[D-009]] [[D-010]] [[D-011]] [[D-014]] [[D-032]] [[D-043]] [[D-044]] [[D-008]] [[D-021]] [[D-025]] [[D-083]]
 
 [[FL-014]] carries a refused statement as far as a fault with **one** violation
 in it, because that is what a database reports: the first constraint it reaches
@@ -35,7 +35,8 @@ keeps it and marks the answer incomplete, and nothing is ever invented
    - `crud/probe/plan.go:candidatesFor` reads the catalog once and keeps every
      constraint the probe can replay from a value.
 
-2. **A write runs, wrapped.** `enricher.Save` / `.SaveAll` / `.Update` build a
+2. **A write runs, wrapped.** `enricher.Save` / `.SaveAll` / `.InsertBatch` /
+   `.Update` build a
    `probe.Request` — `insertRequest` and `updateRequest` in
    `crud/decorators/faults/probe.go` — and hand the write to
    `enricher.probed`. Under `probe.WithSavepoints()` on a transaction vv owns,
@@ -44,6 +45,9 @@ keeps it and marks the answer incomplete, and nothing is ever invented
    fact. `BeginnerOf` and not an assertion: a `Source` wrapped for
    instrumentation is still a `Beginner` underneath, and losing it here means
    `spRefused` and a probe that quietly declines ([[D-061]]).
+   InsertBatch uses `Batch=true` and `Upsert=false` even when a row has an
+   assigned key; the native/portable storage choice happens underneath the same
+   wrapper and changes none of the fault semantics.
 
 3. **The write fails.** `enricher.enrichProbed` finds the fault
    (`errs.AsFault`) and returns anything that is not one untouched — this
@@ -231,12 +235,13 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 | `crud/probe/options.go` | `Option`, `WithSavepoints`, `WithScope`, `WithValues`, `CodeOnly`, `Skip`, `WithMaxConstraints`, `WithMaxRows`, `WithTimeout`, `WithMaxSavepoints`, and the four `Default*` numbers |
 | `crud/probe/declare.go` | `Declare`, `identifies`, and the four sentinels |
 | `crud/decorators/faults/probe.go` | `Option`, `WithProbe`, `WithProbeFor`, `WithSource`, `WithProbeError`, `probeCfg`, `declare`, `probed`, `enrichProbed`, `savepoint`, `insertRequest`, `updateRequest` |
-| `crud/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, `Next`, and the three probed verbs |
+| `crud/decorators/faults/faults.go` | `Enrich`, `enricher`, `enrich`, `finish`, `resolve`, `resolvePath`, `Next`, and the probed verbs including `InsertBatch` |
 | `crud/executor.go` | `binding.owned`, `binding.saves`, `push`, `OwnedExecutorFor`, `ClaimSavepoint`, `bindingFor`, `Sourced`, `Nexter`, `SourceOf`, `BeginnerOf` — the last three are what let the probe sit anywhere in the chain ([[D-061]]) |
 | `crud/dialect.go` | `UpsertScope`, `StatementRollback`, and their implementations |
 | `crud/update.go` | `DefinedChanges` — `DefinedFields` with the values as well as the names |
 | `crud/render.go` | `SQL` — the builder every term is rendered through |
 | `crud/sqlrepo/repository.go` | `repository.Source` — three lines, and the whole of `crud.Sourced` |
+| `crud/batch.go` | exact optional InsertBatch dispatch through the decorator chain |
 | `crud/catalog/catalog.go` | `Referrers` — the inbound direction of the schema |
 | `crud/catalog/load.go` | `snapshot.refs`, `loaded.ReferencedBy` |
 | `errs/violation.go` | `SortViolations` — the order the answer is returned in |
@@ -263,6 +268,14 @@ counter it owns, and a hand-rolled name can collide with one the seam issued.
 - `crud/probe/declare_test.go` — each refusal with the declaration that starts beside it, and the transaction matrix as a unit table with a counter.
 - `crud/probe/probe_test.go` — `Simple`: no statement, the driver's violation unchanged, and `Full` over the same request issuing one as the control.
 - `crud/decorators/faults/probe_test.go` — the per-verb defaults, the field hop, the bind-time refusals, the savepoint budget, the foreign transaction, and the probe error reaching `WithProbeError` and not the client.
+- `TestInsertBatchIsEnrichedWithoutLeavingTheOptionalRepositorySeam` in
+  `crud/decorators/faults/faults_test.go` and
+  `TestInsertBatchCanOptIntoTheFullProbeWithoutLosingItsCapability` in
+  `crud/decorators/faults/probe_test.go` — exact verb, entity/path and the
+  assigned-key non-upsert branch.
+- `TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable` in
+  `test/integration/driver_pgx_test.go` — a live COPY duplicate reaches the same
+  classified/enriched fault path.
 - `crud/executor_test.go:TestATransactionVVOpenedIsMarkedOwnedAndAForeignOneIsNot` / `:TestASavepointClaimCountsPerTransactionAndNotPerRepository` / `:TestNoSavepointIsClaimedInAForeignTransactionOrOutsideOne`.
 - `crud/dialect_test.go:TestOnlyADialectThatSaysSoSwallowsThePrimaryKeyOnly` / `:TestOnlyADialectThatSaysSoRollsBackTheStatementAlone` — each with a dialect implementing neither interface as its control.
 - `crud/update_test.go:TestDefinedChangesCarriesTheValuesDefinedFieldsOnlyNames`.

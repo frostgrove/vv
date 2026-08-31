@@ -14,65 +14,30 @@ import (
 	"github.com/frostgrove/vv/utils"
 )
 
-// NowFunc is the clock a soft delete stamps with. Swap it in a test rather than
-// reaching for a fake database.
 var NowFunc = time.Now
 
-// TagKey is the struct tag vv reads. `db:"column,option,option"`.
-//
-// Options:
-//
-//	pk         this column is the primary key
-//	auto       the database generates the value on insert (serial / identity /
-//	           auto_increment). Integer primary keys get this by default.
-//	noauto     opt an integer primary key out of the default above
-//	immutable  written on insert, never on update (created_at, tenant_id)
-//	generated  never written at all; read back after every write (computed
-//	           columns, DB-side defaults, updated_at triggers)
-//	serverowned never written by generic create/replace/patch paths. A dedicated
-//	           repository lifecycle operation may own it instead
-//	tombstone  nullable soft-delete timestamp owned by the repository. It implies
-//	           serverowned and makes sqlrepo soft delete the declarative default
-//	version    optimistic lock: an integer the repository advances on every
-//	           update and checks in the update's own WHERE, so a write against a
-//	           row somebody else has changed since it was read is refused with
-//	           ErrStaleVersion rather than silently overwriting them
-//	-          ignore the field completely
-//
-// The column name may be omitted (`db:",pk"`), in which case it is derived from
-// the Go field name in snake_case. Without any tag at all a field is still
-// mapped, so a plain struct works out of the box.
 const TagKey = "db"
 
-// Field is one mapped column.
 type Field struct {
-	Name        string       // Go field name, as used by predicates and update DTOs
-	Column      string       // SQL column name
-	Type        reflect.Type // Go type of the field
-	Offset      uintptr      // byte offset inside the model struct
-	Ordinal     int          // index in Schema.Fields
+	Name        string
+	Column      string
+	Type        reflect.Type
+	Offset      uintptr
+	Ordinal     int
 	PK          bool
 	Auto        bool
 	Immutable   bool
 	Generated   bool
-	ServerOwned bool // generic writes never accept or persist caller values
-	Tombstone   bool // soft-delete state; implies ServerOwned
-	Version     bool // optimistic lock counter, owned by the repository
-	Optional    bool // the field is a crud.Opt[...]
+	ServerOwned bool
+	Tombstone   bool
+	Version     bool
+	Optional    bool
 
-	noAutoOptOut bool // `noauto` was requested explicitly
+	noAutoOptOut bool
 }
 
-// Nullable reports whether the field can represent SQL NULL. Besides pointers
-// and Opt values it recognises Scanner/Valuer wrappers such as sql.NullTime and
-// gorm.DeletedAt.
 func (this *Field) Nullable() bool { return nullableField(this) }
 
-// AcceptsTombstoneTimestamp reports whether Delete can stamp time.Time into the
-// column and a later read can scan it back. Besides *time.Time and Opt[time.Time]
-// it accepts Scanner/Valuer wrappers such as sql.NullTime and gorm.DeletedAt,
-// but rejects merely nullable *string/Opt[int] fields that would fail only on
-// the first delete (or rely on database-specific coercion).
 func (this *Field) AcceptsTombstoneTimestamp() bool {
 	if this == nil {
 		return false
@@ -93,18 +58,14 @@ func (this *Field) AcceptsTombstoneTimestamp() bool {
 	return scannerValuerCarriesTime(t)
 }
 
-// pointerTo returns a *T aimed at this field inside the model at base.
 func (this *Field) pointerTo(base unsafe.Pointer) any {
 	return reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Interface()
 }
 
-// valueOf reads the field out of the model at base.
 func (this *Field) valueOf(base unsafe.Pointer) any {
 	return reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Elem().Interface()
 }
 
-// comparable returns the field value normalised for diffing: nil for NULL,
-// the bare element otherwise.
 func (this *Field) comparableOf(base unsafe.Pointer) any {
 	v := reflect.NewAt(this.Type, unsafe.Add(base, this.Offset)).Elem()
 	if this.Optional {
@@ -123,23 +84,19 @@ func (this *Field) comparableOf(base unsafe.Pointer) any {
 	return v.Interface()
 }
 
-// Schema is the reflective description of a model type. It is independent of
-// the table it is bound to and cached per type.
 type Schema struct {
 	Type   reflect.Type
 	Name   string
 	Fields []*Field
 	PK     *Field
 
-	Insert    []*Field // written by INSERT, including the PK
-	InsertGen []*Field // written by INSERT when the PK is DB-generated
-	Update    []*Field // eligible for UPDATE SET
-	HasGen    bool     // has at least one `generated` column
-	Version   *Field   // the optimistic-lock column, or nil
-	Tombstone *Field   // repository-owned soft-delete timestamp, or nil
+	Insert    []*Field
+	InsertGen []*Field
+	Update    []*Field
+	HasGen    bool
+	Version   *Field
+	Tombstone *Field
 
-	// Relations are navigable edges: they never become columns, but query
-	// paths, sorts and preloads can walk them.
 	Relations []*Relation
 
 	byName    map[string]*Field
@@ -149,10 +106,6 @@ type Schema struct {
 	byRelFold map[string]*Relation
 }
 
-// Field resolves a reference by Go field name, then by column name, then by a
-// case- and separator-insensitive match. That last step is what lets an HTTP
-// client send `createdAt`, `created_at` or `CreatedAt` and mean the same
-// column. An alias that would be ambiguous is not registered at all.
 func (this *Schema) Field(ref string) *Field {
 	if f, ok := this.byName[ref]; ok {
 		return f
@@ -166,8 +119,6 @@ func (this *Schema) Field(ref string) *Field {
 	return nil
 }
 
-// Relation resolves an edge the same way, so `author.name` and `Author.Name`
-// are the same path.
 func (this *Schema) Relation(ref string) *Relation {
 	if r, ok := this.byRel[ref]; ok {
 		return r
@@ -178,9 +129,6 @@ func (this *Schema) Relation(ref string) *Relation {
 	return nil
 }
 
-// fold normalises an identifier for forgiving lookups: lower case, no
-// separators. CreatedAt, created_at, createdAt and CREATED-AT all fold to
-// "createdat".
 func fold(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -194,7 +142,6 @@ func fold(s string) string {
 	return b.String()
 }
 
-// ambiguous marks a folded alias as unusable rather than picking a winner.
 var ambiguousField = &Field{}
 var ambiguousRel = &Relation{}
 
@@ -214,7 +161,6 @@ func (this *Schema) addRelFold(key string, r *Relation) {
 	this.byRelFold[key] = r
 }
 
-// Columns returns every mapped column, primary key first.
 func (this *Schema) Columns() []string {
 	cols := make([]string, len(this.Fields))
 	for i, f := range this.Fields {
@@ -223,7 +169,7 @@ func (this *Schema) Columns() []string {
 	return cols
 }
 
-var schemaCache sync.Map // reflect.Type -> *schemaFuture
+var schemaCache sync.Map
 
 type schemaResult struct {
 	s   *Schema
@@ -235,15 +181,12 @@ type schemaFuture struct {
 	schemaResult
 }
 
-// SchemaOf reflects over M once and caches the result.
 func SchemaOf[M any]() (*Schema, error) {
 	var zero M
 	t := reflect.TypeOf(&zero).Elem()
 	return schemaOfType(t)
 }
 
-// schemaOfType is SchemaOf for a reflect.Type; relations resolve their target
-// through it, lazily, so two models may reference each other.
 func schemaOfType(t reflect.Type) (*Schema, error) {
 	candidate := &schemaFuture{done: make(chan struct{})}
 	value, loaded := schemaCache.LoadOrStore(t, candidate)
@@ -256,11 +199,8 @@ func schemaOfType(t reflect.Type) (*Schema, error) {
 	return future.s, future.err
 }
 
-// SchemaOfType exposes schema resolution for a reflect.Type.
 func SchemaOfType(t reflect.Type) (*Schema, error) { return schemaOfType(t) }
 
-// MustSchemaOf is SchemaOf, panicking on a broken declaration. Use it in
-// package-level initialisers so a bad mapping fails at start-up.
 func MustSchemaOf[M any]() *Schema {
 	s, err := SchemaOf[M]()
 	if err != nil {
@@ -289,7 +229,6 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		return nil, &SchemaError{Model: t.String(), Reason: "no mapped columns"}
 	}
 	if s.PK == nil {
-		// Fall back to a field called ID, then to a column called id.
 		if f := s.Field("ID"); f != nil {
 			f.PK = true
 			s.PK = f
@@ -303,7 +242,7 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 			s.PK.Auto = true
 		}
 	}
-	// The primary key sorts first; the rest keep declaration order.
+
 	if s.PK.Ordinal != 0 {
 		ordered := make([]*Field, 0, len(s.Fields))
 		ordered = append(ordered, s.PK)
@@ -338,11 +277,7 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		s.Insert = append(s.Insert, f)
 		if !f.PK {
 			s.InsertGen = append(s.InsertGen, f)
-			// The version column is left out of the UPDATE list for the same
-			// reason an immutable one is: it is not the caller's to set. The
-			// repository writes `version = version + 1` itself, and Save's
-			// conflict clause leaves it alone, so an upsert built from a stale
-			// model cannot wind the counter back.
+
 			if !f.Immutable && !f.Version {
 				s.Update = append(s.Update, f)
 			}
@@ -361,9 +296,6 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 	return s, nil
 }
 
-// checkTombstone makes the lifecycle declaration complete at schema-build
-// time. A tombstone cannot share ownership with another generic write policy,
-// and one model cannot have two competing notions of being deleted.
 func checkTombstone(t reflect.Type, s *Schema, f *Field) error {
 	deny := func(reason string) error {
 		return &SchemaError{Model: t.String(), Field: f.Name, Reason: reason}
@@ -387,10 +319,6 @@ func checkTombstone(t reflect.Type, s *Schema, f *Field) error {
 	return nil
 }
 
-// scannerValuerCarriesTime validates the actual driver contract rather than a
-// struct's name. The copy is addressable so wrappers with pointer-only methods
-// are supported. A hostile/broken declaration becomes false here and a normal
-// SchemaError at the caller, not a panic escaping TryDefine.
 func scannerValuerCarriesTime(t reflect.Type) (ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -431,16 +359,11 @@ func nullableField(f *Field) bool {
 	if f.Optional || f.Type.Kind() == reflect.Pointer {
 		return true
 	}
-	// Scanner/Valuer wrappers such as sql.NullTime and gorm.DeletedAt carry
-	// NULL in a value struct rather than in a Go pointer.
+
 	return reflect.PointerTo(f.Type).Implements(scannerType) &&
 		(f.Type.Implements(valuerType) || reflect.PointerTo(f.Type).Implements(valuerType))
 }
 
-// checkVersion refuses the declarations an optimistic lock cannot be built on.
-// Each of them fails silently at run time otherwise: a version the caller can
-// set is not a lock, a version nobody writes never advances, and a version on
-// the primary key would be checked against the row it identifies.
 func checkVersion(t reflect.Type, s *Schema, f *Field) error {
 	deny := func(reason string) error {
 		return &SchemaError{Model: t.String(), Field: f.Name, Reason: reason}
@@ -455,8 +378,6 @@ func checkVersion(t reflect.Type, s *Schema, f *Field) error {
 	case f.Generated:
 		return deny("`version` and `generated` contradict each other: the lock is written by vv, not read back from a default")
 	case !isIntKind(ElemType(f.Type).Kind()):
-		// A timestamp version would need a clock, and two application servers
-		// do not share one. An integer counter needs nothing but the row.
 		return deny("a `version` column must be an integer; " + f.Type.String() + " is not")
 	}
 	return nil
@@ -470,10 +391,7 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 		if tag == "-" {
 			continue
 		}
-		// An explicit relation declaration belongs to the anonymous field itself,
-		// exactly as it does on a named field. Flattening it used to discard the
-		// declaration and expose the embedded struct's columns instead. Only a
-		// completely untagged non-scalar struct is a mixin to flatten.
+
 		if sf.Anonymous && !hasTag && !hasRel && deref(sf.Type).Kind() == reflect.Struct && !isOptType(sf.Type) && !isScalarStruct(sf.Type) {
 			if sf.Type.Kind() == reflect.Pointer {
 				return &SchemaError{Model: s.Type.String(), Field: sf.Name, Reason: "embedded pointer structs are not supported"}
@@ -489,9 +407,6 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 			continue
 		}
 		if !sf.IsExported() {
-			// Reflection cannot read the field, so a tag asking for it to be
-			// mapped can only ever be a typo — and silently dropping the column
-			// would show up as a zero in the row rather than as an error here.
 			if hasTag {
 				return &SchemaError{Model: s.Type.String(), Field: sf.Name,
 					Reason: `unexported fields cannot be mapped; rename it or tag it db:"-"`}
@@ -499,11 +414,9 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 			continue
 		}
 
-		// A relation is anything tagged `rel`, and any struct-shaped field is a
-		// relation candidate: mapping one as a column is never what was meant.
 		if _, _, candidate := relCandidate(sf.Type); candidate {
 			if !hasRel || relTag == "-" {
-				continue // neither a column nor an edge
+				continue
 			}
 			r, err := parseRelation(s, sf, base, relTag)
 			if err != nil {
@@ -576,12 +489,9 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 	return nil
 }
 
-// Meta binds a schema to a physical table.
 type Meta struct {
 	*Schema
-	// Table is the conventional diagnostic spelling kept for compatibility.
-	// SQL and relation identity use the private structured reference, so callers
-	// cannot retarget validated metadata by mutating an exported field.
+
 	Table string
 
 	tableRef TableRef
@@ -589,10 +499,6 @@ type Meta struct {
 	relations *relationContext
 }
 
-// NewMeta binds M to a table. An empty name asks the model first, through
-// TableName(), then falls back to the snake_case plural of its type name. The
-// string form accepts exactly one identifier component; use NewMetaInSchema or
-// NewMetaRef for a qualified table.
 func NewMeta[M any](table string) (*Meta, error) {
 	s, err := SchemaOf[M]()
 	if err != nil {
@@ -612,9 +518,6 @@ func NewMeta[M any](table string) (*Meta, error) {
 	return bindMeta(s, ref), nil
 }
 
-// NewMetaInSchema binds M to a qualified physical table. Schema is the first
-// identifier component: a PostgreSQL schema, MySQL database, or SQLite attached
-// database.
 func NewMetaInSchema[M any](schema, table string) (*Meta, error) {
 	ref, err := NewTableRefInSchema(schema, table)
 	if err != nil {
@@ -624,8 +527,6 @@ func NewMetaInSchema[M any](schema, table string) (*Meta, error) {
 	return NewMetaRef[M](ref)
 }
 
-// NewMetaRef is the low-level structured form of NewMeta. It never interprets
-// dots inside a component.
 func NewMetaRef[M any](table TableRef) (*Meta, error) {
 	s, err := SchemaOf[M]()
 	if err != nil {
@@ -650,9 +551,6 @@ func tableRefSchemaError(model reflect.Type, err error) error {
 	return &SchemaError{Model: model.String(), Reason: reason}
 }
 
-// TableReference returns the structured physical identity. The fallback keeps
-// manually-constructed legacy Meta values useful; metadata created by NewMeta
-// always has TableRef populated and validated.
 func (this *Meta) TableReference() TableRef {
 	if this == nil {
 		return TableRef{}
@@ -663,8 +561,6 @@ func (this *Meta) TableReference() TableRef {
 	return TableRef{Name: this.Table}
 }
 
-// QuotedTable renders the validated physical table for d. It is the safe seam
-// used by repository implementations that cache statement fragments.
 func (this *Meta) QuotedTable(d Dialect) string {
 	return quoteTable(d, this.TableReference())
 }
@@ -684,12 +580,9 @@ func deref(t reflect.Type) reflect.Type {
 	return t
 }
 
-// isScalarStruct reports whether a struct type is one column rather than
-// something to flatten or navigate into: time.Time, sql.Null[T], crud.Opt[T],
-// decimals — anything the driver already knows how to carry.
 func isScalarStruct(t reflect.Type) bool {
 	if t == timeType {
-		return true // database/sql special-cases it; it implements nothing
+		return true
 	}
 	pt := reflect.PointerTo(t)
 	return t.Implements(valuerType) || pt.Implements(valuerType) ||
@@ -705,20 +598,14 @@ var (
 	scannerType         = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
 )
 
-// isOptType reports whether t is a utils.Opt[...]. Its concrete identity is
-// still protected by utils' private marker, so an arbitrary Optional cannot
-// accidentally alter CRUD persistence semantics.
 func isOptType(t reflect.Type) bool {
 	return utils.IsOptType(t)
 }
 
-// OptElem returns the element type of a utils.Opt[T], or nil.
 func OptElem(t reflect.Type) reflect.Type {
 	return utils.OptElem(t)
 }
 
-// ElemType strips Opt and pointer wrappers, giving the type a caller actually
-// works with: Opt[int] and *int both report int.
 func ElemType(t reflect.Type) reflect.Type {
 	if e := OptElem(t); e != nil {
 		return e
@@ -745,8 +632,6 @@ func cmpOr(a, b string) string {
 	return b
 }
 
-// snake converts a Go identifier to snake_case: UserID -> user_id,
-// HTTPCode -> http_code, CreatedAt -> created_at.
 func snake(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 4)

@@ -22,8 +22,6 @@ import (
 	"github.com/frostgrove/vv/port"
 )
 
-// widgetDTO is what the API is willing to show. Secret is not in it, which is
-// the whole reason a presenter exists.
 type widgetDTO struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
@@ -34,9 +32,6 @@ func present(_ *gin.Context, w Widget) any {
 	return widgetDTO{ID: w.ID, Name: w.Name, Price: w.Price}
 }
 
-// A presenter renders single entities and page items alike: each shape has to
-// arrive as the DTO — no more, so the hidden column cannot leak, and no less,
-// so an empty body cannot pass for a presented one.
 func TestWithTransformHidesColumnsOnEveryReadShape(t *testing.T) {
 	app, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](present))
 
@@ -72,7 +67,6 @@ func TestWithTransformHidesColumnsOnEveryReadShape(t *testing.T) {
 	}
 }
 
-// Mapping a page keeps the pager intact: only the items change shape.
 func TestWithTransformKeepsThePager(t *testing.T) {
 	app, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](present))
 
@@ -96,8 +90,6 @@ func TestWithTransformKeepsThePager(t *testing.T) {
 	}
 }
 
-// The presenter also runs on what a write returns, so a create cannot answer
-// with the columns a read is not allowed to show.
 func TestWithTransformAppliesToWritesToo(t *testing.T) {
 	app, _ := mount(t, WithTransform[Widget, int64, WidgetUpdate](present))
 
@@ -115,8 +107,6 @@ func TestWithTransformAppliesToWritesToo(t *testing.T) {
 	}
 }
 
-// BeforeSave is where a request-derived value is stamped onto the model; it
-// runs after binding, so what it writes is what the repository stores.
 func TestBeforeSaveMutationReachesTheRepository(t *testing.T) {
 	stamp := BeforeSave[Widget, int64, WidgetUpdate](func(c *gin.Context, w *Widget) error {
 		w.OwnerID = 99
@@ -140,7 +130,6 @@ func TestBeforeSaveMutationReachesTheRepository(t *testing.T) {
 	}
 }
 
-// A hook that refuses the request stops it: the repository is never asked.
 func TestBeforeSaveCanRefuseTheRequest(t *testing.T) {
 	app, fake := mount(t, BeforeSave[Widget, int64, WidgetUpdate](func(c *gin.Context, w *Widget) error {
 		return crud.ErrForbidden
@@ -155,8 +144,6 @@ func TestBeforeSaveCanRefuseTheRequest(t *testing.T) {
 	}
 }
 
-// BeforeUpdate sees the id from the URL alongside the DTO, which is what lets
-// it decide per row.
 func TestBeforeUpdateSeesThePathIDAndItsMutationLands(t *testing.T) {
 	var seen int64
 	app, fake := mount(t, BeforeUpdate[Widget, int64, WidgetUpdate](func(c *gin.Context, id int64, dataTransferObject *WidgetUpdate) error {
@@ -180,8 +167,6 @@ func TestBeforeUpdateSeesThePathIDAndItsMutationLands(t *testing.T) {
 	}
 }
 
-// A scope is added to every read, whatever door the request came in by. It is
-// ANDed in, so a client's own filter narrows further rather than replacing it.
 func TestWithScopeNarrowsEveryRead(t *testing.T) {
 	tenant := WithScope[Widget, int64, WidgetUpdate](func(c *gin.Context) ([]crud.Option, error) {
 		return []crud.Option{crud.Where(crud.Eq("OwnerID", int64(7)))}, nil
@@ -210,8 +195,6 @@ func TestWithScopeNarrowsEveryRead(t *testing.T) {
 	}
 }
 
-// The client's filter and the scope are ANDed: a request cannot widen the scope
-// by sending a filter of its own.
 func TestWithScopeIsANDedWithTheClientFilter(t *testing.T) {
 	app, fake := mount(t, WithScope[Widget, int64, WidgetUpdate](func(c *gin.Context) ([]crud.Option, error) {
 		return []crud.Option{crud.Where(crud.Eq("OwnerID", int64(7)))}, nil
@@ -229,8 +212,6 @@ func TestWithScopeIsANDedWithTheClientFilter(t *testing.T) {
 	}
 }
 
-// A read-only handler mounts the reads and nothing else, so every write is
-// refused by the router before any handler runs.
 func TestReadOnlyMountsOnlyTheReadRoutes(t *testing.T) {
 	app, fake := mount(t, ReadOnly[Widget, int64, WidgetUpdate]())
 
@@ -263,8 +244,6 @@ func TestReadOnlyMountsOnlyTheReadRoutes(t *testing.T) {
 	}
 }
 
-// Without the option the key is cleared on create; with it, the client's key is
-// handed to the repository untouched.
 func TestAllowClientIDLetsTheClientChooseTheKey(t *testing.T) {
 	app, fake := mount(t, AllowClientID[Widget, int64, WidgetUpdate]())
 
@@ -275,8 +254,6 @@ func TestAllowClientIDLetsTheClientChooseTheKey(t *testing.T) {
 	}
 }
 
-// MaxBulk is a bound on one request, not a filter: at the cap the delete goes
-// through, past it the repository is never asked at all.
 func TestMaxBulkCapsOneRequest(t *testing.T) {
 	t.Run("at the cap", func(t *testing.T) {
 		app, fake := mount(t, MaxBulk[Widget, int64, WidgetUpdate](2))
@@ -298,8 +275,6 @@ func TestMaxBulkCapsOneRequest(t *testing.T) {
 	})
 }
 
-// The query config is an allow-list: what it names compiles, what it does not
-// name never becomes a repository call.
 func TestWithQueryBoundsWhatClientsMayAskFor(t *testing.T) {
 	config := WithQuery[Widget, int64, WidgetUpdate](&query.Config{
 		Preloadable: []string{"Owner"},
@@ -338,8 +313,6 @@ func TestWithQueryBoundsWhatClientsMayAskFor(t *testing.T) {
 	}
 }
 
-// The error handler is the only place a repository error becomes a response, so
-// replacing it replaces every failure shape at once.
 func TestWithErrorHandlerReplacesTheMapping(t *testing.T) {
 	app, fake := mount(t, WithErrorHandler[Widget, int64, WidgetUpdate](func(c *gin.Context, err error) {
 		if errors.Is(err, crud.ErrNotFound) {
@@ -363,9 +336,6 @@ func TestWithErrorHandlerReplacesTheMapping(t *testing.T) {
 	}
 }
 
-// The documented one-line set-up: New takes no explicit type arguments, because
-// all three are inferred from the repository it is handed, and an unconfigured
-// handler is already a working API.
 func TestNewInfersItsTypeParametersFromTheRepository(t *testing.T) {
 	fake := newFake()
 	app := gin.New()
@@ -381,10 +351,6 @@ func TestNewInfersItsTypeParametersFromTheRepository(t *testing.T) {
 	}
 }
 
-// NewFor's fourth type parameter is inferred like the other three, from the
-// mapper rather than from the repository. The twin above,
-// TestNewInfersItsTypeParametersFromTheRepository, is the half a fourth
-// parameter on New would have broken ([[D-022]]).
 func TestNewForInfersItsInputFromTheMapper(t *testing.T) {
 	fake := newFake()
 	app := mountHandler(NewFor(fake, widgetMapper{}))
@@ -396,10 +362,6 @@ func TestNewForInfersItsInputFromTheMapper(t *testing.T) {
 	}
 }
 
-// The hook runs after the fields a client may not choose have been cleared, and
-// it stayed that way when the clearing moved into the service ([[UC-013]]
-// guarantee 7). A hook that ran first would be handed a client-chosen key and a
-// forged timestamp, and whatever it stamped on top of them would be saved.
 func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
 	var seen Widget
 	hook := BeforeSave[Widget, int64, WidgetUpdate](func(_ *gin.Context, w *Widget) error {
@@ -453,10 +415,6 @@ func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
 	})
 }
 
-// Serving is handed a service that is already built, so an option that
-// configures one has nowhere to go. It is refused by name at declaration rather
-// than ignored at run time: an API whose author believed it was bounded and is
-// not is the failure [[D-021]] says must happen at start-up.
 func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 	service := port.NewService[Widget, int64, WidgetUpdate](newFake())
 
@@ -481,8 +439,6 @@ func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 		})
 	}
 
-	// The control: through New the same two options are honoured. Without it
-	// the legs above would pass for a binding that refused every option.
 	t.Run("and the control: through New both are honoured", func(t *testing.T) {
 		app, fake := mount(t, AllowClientID[Widget, int64, WidgetUpdate]())
 		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt"}`, http.StatusCreated)
@@ -497,10 +453,6 @@ func TestAServiceShapedOptionOnServingIsRefusedAtDeclaration(t *testing.T) {
 	})
 }
 
-// localeCatalogue declares one key in two locales, so the test can say which
-// one the ladder was asked for. The real errs.Messages rather than a fake, so
-// the locale ladder — fr-CA, then fr, then the default — is the one a consumer
-// gets.
 func localeCatalogue(t *testing.T) *errs.Messages {
 	t.Helper()
 	m := errs.NewMessages(nil)
@@ -515,9 +467,6 @@ func localeCatalogue(t *testing.T) *errs.Messages {
 	return m
 }
 
-// The locale a client asked for reaches the message ladder. Nothing tested this
-// end to end through a binding before phase 9, and it is the arm the gRPC
-// metadata test mirrors.
 func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
 	taken := errs.Conflict().Code(errs.CodeUnique).
 		Field("Name").Code(errs.CodeUnique).Origin(errs.OriginState).Fault()
@@ -549,16 +498,11 @@ func TestTheRequestLocaleReachesTheMessageLadder(t *testing.T) {
 		t.Fatalf("with Accept-Language fr-CA the message is %q; the first tag is what the ladder is asked for", got)
 	}
 
-	// The control: with no Accept-Language the default entry wins. Without it a
-	// catalogue that answered the same sentence whatever it was asked would
-	// pass the leg above.
 	if got := message(t, ""); got != "that address is taken" {
 		t.Fatalf("with no Accept-Language the message is %q, want the default-locale entry", got)
 	}
 }
 
-// localeRequest sends one create through the mounted mux with the header under
-// test, or without it when the header is empty.
 func localeRequest(t *testing.T, r *gin.Engine, header string) response {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/widgets", bytes.NewReader([]byte(`{"name":"bolt"}`)))
@@ -571,14 +515,6 @@ func localeRequest(t *testing.T, r *gin.Engine, header string) response {
 	return response{status: w.Code, body: w.Body.Bytes(), header: w.Header()}
 }
 
-// An unconfigured bulk delete is capped too.
-//
-// MaxBulk used to mean "unlimited" at zero, which is what every binding read an
-// unset field as — so the cardinality of a bulk delete was bounded only by the
-// request body, and every id becomes a bound parameter. PostgreSQL refuses a
-// statement past 65535 of them, so the honest 400 arrived from the driver, as a
-// 500, after the statement was built. port.Rules.BulkCap is the one place the
-// four transports read it from, so they cannot disagree about it again.
 func TestAnUnconfiguredBulkDeleteIsStillCapped(t *testing.T) {
 	app, fake := mount(t)
 
@@ -594,8 +530,6 @@ func TestAnUnconfiguredBulkDeleteIsStillCapped(t *testing.T) {
 		t.Fatalf("the request was refused and the repository was still asked: %v", fake.methods())
 	}
 
-	// The control. All of that would hold for a handler that refused every bulk
-	// delete, so a request at the default cap has to get through.
 	app2, _ := mount(t)
 	small := `{"ids":[1,2,3]}`
 	if r := do(t, app2, http.MethodPost, "/widgets/bulk-delete", small); r.status != http.StatusOK {

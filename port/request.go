@@ -10,10 +10,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// requestCopy gives an operation its own query document before it removes
-// controls that are meaningless for that operation. A request is caller-owned
-// data: Count(req) or Get(req) must not turn a later List(req) into a different,
-// unbounded query.
 func requestCopy(request *query.Request) *query.Request {
 	if request == nil {
 		return &query.Request{}
@@ -22,8 +18,6 @@ func requestCopy(request *query.Request) *query.Request {
 	return &copy
 }
 
-// CoerceID converts a path parameter to the repository's key type, which is why
-// a uuid or a slug key works in a URL with no extra code.
 func CoerceID[ID comparable](raw string) (ID, error) {
 	var zero ID
 	if raw == "" {
@@ -40,8 +34,6 @@ func CoerceID[ID comparable](raw string) (ID, error) {
 	return id, nil
 }
 
-// NarrowForCount drops everything that means nothing to a COUNT. Leaving paging
-// in would make the answer the size of one page rather than of the result.
 func NarrowForCount(request *query.Request) {
 	request.Page, request.Limit, request.Offset = 0, 0, 0
 	request.Sort, request.Preload, request.Select = nil, nil, nil
@@ -50,11 +42,6 @@ func NarrowForCount(request *query.Request) {
 	request.OmitPaging()
 }
 
-// NarrowForEntity keeps the shaping options and every condition that can prove
-// the addressed row is not eligible. A key identifies at most one row, but a
-// filter (including search terms) can still narrow that one row — for example,
-// a tenant condition on GetByID. Ordering and paging cannot change which keyed
-// row is returned, so those controls are discarded.
 func NarrowForEntity(request *query.Request) {
 	request.Sort = nil
 	request.Page, request.Limit, request.Offset = 0, 0, 0
@@ -63,20 +50,6 @@ func NarrowForEntity(request *query.Request) {
 	request.OmitPaging()
 }
 
-// FormatID renders a key as the text a URL path or a request document carries.
-// It is [CoerceID]'s inverse, and the pair is what makes a key survive a round
-// trip through a transport that only speaks strings.
-//
-// The order matches CoerceID's arm for arm. encoding.TextMarshaler first,
-// because CoerceID tries encoding.TextUnmarshaler first, and a uuid or an enum
-// key that parses with its own rules has to render with them. time.Time before
-// that, for the same reason CoerceID puts it there.
-//
-// A type with neither falls through to fmt.Sprint, which is right for the
-// numbers and strings that are almost every primary key and is the wrong answer
-// for a struct — but a struct that is a key and cannot spell itself as text was
-// never going to survive CoerceID either, and the failure is visible in the URL
-// rather than silent.
 func FormatID[ID comparable](id ID) string {
 	switch v := any(id).(type) {
 	case string:

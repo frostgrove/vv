@@ -2,6 +2,7 @@ package sqlrepo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -11,24 +12,21 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// repository is the SQL implementation of crud.Core.
 type repository[M any, ID comparable, U any] struct {
 	source crud.Source
-	// replica serves the reads that may be served stale; nil when the source
-	// offered none.
+
 	replica crud.Source
 	bp      *Blueprint[M, ID, U]
 	meta    *crud.Meta
 	d       crud.Dialect
 
-	// Static statement fragments, assembled once at Bind time.
-	selectFrom string // SELECT c1, c2 FROM "t"
-	countFrom  string // SELECT count(*) FROM "t"
-	deleteFrom string // DELETE FROM "t"
-	returning  string // " RETURNING c1, c2" or ""
-	insertGen  string // INSERT with a database-generated primary key
-	insertFull string // INSERT with every insertable column
-	upsertTail string // conflict clause for insertFull
+	selectFrom string
+	countFrom  string
+	deleteFrom string
+	returning  string
+	insertGen  string
+	insertFull string
+	upsertTail string
 }
 
 type preparedWrite struct {
@@ -36,18 +34,13 @@ type preparedWrite struct {
 	args  []any
 }
 
-// SupportsRestore distinguishes a soft-delete blueprint from the same concrete
-// repository type bound without one. The method-set alone cannot express that
-// declaration-time difference.
 func (this *repository[M, ID, U]) SupportsRestore() bool {
 	return this != nil && this.bp != nil && this.bp.softDelete != nil
 }
 
 func newRepository[M any, ID comparable, U any](source crud.Source, bp *Blueprint[M, ID, U]) *repository[M, ID, U] {
 	r := &repository[M, ID, U]{source: source, bp: bp, meta: bp.meta, d: source.Dialect()}
-	// crud.ReadSourceOf and not a type assertion: a source wrapped for
-	// instrumentation is still a ReadWrite underneath, and losing the replica
-	// here would send every read to the primary with nothing saying why.
+
 	if replica, ok := crud.ReadSourceOf(source); ok {
 		r.replica = replica
 	}
@@ -102,10 +95,6 @@ func insertStmt(d crud.Dialect, table string, fields []*crud.Field) string {
 	return b.String()
 }
 
-// exec picks the foreign executor bound to ctx over the repository's own source
-// — but only one this repository's database would accept. A context carrying
-// somebody else's database (crud.WithExecutorFor) is not this repository's
-// business and is left alone.
 func (this *repository[M, ID, U]) exec(ctx context.Context) crud.Executor {
 	if e, ok := crud.ExecutorFor(ctx, this.source); ok {
 		return e
@@ -113,13 +102,6 @@ func (this *repository[M, ID, U]) exec(ctx context.Context) crud.Executor {
 	return this.source
 }
 
-// read picks the datasource for a statement that only reads.
-//
-// Three rules, in order. An executor on the context wins outright — joining a
-// transaction and then reading around it would defeat the transaction, and it is
-// also how read-your-own-writes keeps working inside one. A read marked
-// PrimaryOnly stays on the writable source, because its answer decides a write.
-// Everything else may go to the replica, if one was declared.
 func (this *repository[M, ID, U]) read(ctx context.Context, o *crud.Options) crud.Executor {
 	if e, ok := crud.ExecutorFor(ctx, this.source); ok {
 		return e
@@ -132,15 +114,8 @@ func (this *repository[M, ID, U]) read(ctx context.Context, o *crud.Options) cru
 
 func (this *repository[M, ID, U]) Meta() *crud.Meta { return this.meta }
 
-// Source hands back the datasource this repository was bound to, satisfying
-// crud.Sourced. The probe needs it to resolve its executor through
-// crud.ExecutorFor, which is what makes "never probe on another connection"
-// enforceable rather than aspirational ([[D-009]]).
 func (this *repository[M, ID, U]) Source() crud.Source { return this.source }
 
-// relScopes folds the narrowings this query carries into the repository's own
-// permanent ones. The blueprint's are a property of the table; a query's arrive
-// from a decorator whose answer depends on who is asking, and the two AND.
 func (this *repository[M, ID, U]) relScopes(o *crud.Options) *crud.RelationScopes {
 	if o == nil || o.RelScopes.Empty() {
 		return this.bp.relScopes
@@ -152,9 +127,6 @@ func (this *repository[M, ID, U]) Tx(ctx context.Context, fn func(context.Contex
 	return crud.InTx(ctx, this.source, fn)
 }
 
-// executePrepared runs a preflighted write plan. One statement is atomic on
-// its own. More than one joins the caller's transaction when present and opens
-// one otherwise, so a later refusal cannot leave earlier chunks committed.
 func (this *repository[M, ID, U]) executePrepared(ctx context.Context, plan []preparedWrite) (int64, error) {
 	if len(plan) == 0 {
 		return 0, nil
@@ -185,9 +157,6 @@ func (this *repository[M, ID, U]) executePrepared(ctx context.Context, plan []pr
 	return affected, nil
 }
 
-// ---------------------------------------------------------------------------
-// reads
-
 func (this *repository[M, ID, U]) GetByID(ctx context.Context, id ID, options ...crud.Option) (M, error) {
 	var zero M
 	o := crud.Build(append([]crud.Option{
@@ -203,20 +172,17 @@ func (this *repository[M, ID, U]) GetByID(ctx context.Context, id ID, options ..
 	return items[0], nil
 }
 
+// Get uses one extra row for an honest NoTotal result and replaces offset with
+// a cursor boundary. Combining the two would skip rows past that boundary.
 func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Option) (crud.PaginatedResponse[M], error) {
 	o := crud.Build(options...)
 	limit, offset, page := o.Resolved(this.bp.set.defaultLimit, this.bp.set.maxLimit)
 
-	// A cursor replaces the offset rather than adding to it. Honouring both
-	// would skip a page's worth of rows past the cursor, which is nobody's
-	// intent, and the page number a cursor walk carries is meaningless anyway.
 	_, back, cursoring := o.Cursor()
 	if cursoring {
 		offset, page = 0, 0
 	}
 
-	// Without a COUNT we still want an honest HasNext, so we fetch one row past
-	// the page and throw it away.
 	probe := limit
 	if o.NoTotal && limit > 0 && limit < math.MaxInt {
 		probe = limit + 1
@@ -229,9 +195,6 @@ func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Optio
 	if o.NoTotal && limit > 0 {
 		more := len(items) > limit
 		if more {
-			// Reading backwards, the extra row is the one furthest from the
-			// cursor, and find has already turned the page over — so it is at
-			// the front, not the back.
 			if back {
 				items = items[len(items)-limit:]
 			} else {
@@ -242,8 +205,6 @@ func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Optio
 		response.TotalPages = 0
 		response.HasNext = more
 		if cursoring {
-			// One end is known by construction: a cursor was handed in, so
-			// there is something on that side of it.
 			if back {
 				response.HasPrev, response.HasNext = more, true
 			} else {
@@ -257,14 +218,10 @@ func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Optio
 	var total int64
 	switch {
 	case o.NoTotal:
-		// No COUNT ran, so the only number that is true is the size of what came
-		// back. Deriving it from the offset invented one the client had chosen:
-		// page 999 of an empty table reported 19960 results.
 		total = int64(len(items))
 	case o.Unpaged:
 		total = int64(offset + len(items))
 	case offset == 0 && len(items) < limit:
-		// A short first page is already the whole answer.
 		total = int64(len(items))
 	default:
 		if total, err = this.Count(ctx, crud.With(o)); err != nil {
@@ -276,14 +233,6 @@ func (this *repository[M, ID, U]) Get(ctx context.Context, options ...crud.Optio
 	return response, nil
 }
 
-// setCursors stamps the edges that lead to real neighbouring pages, so a client
-// can leave offsets behind whenever it wants to rather than having to choose up
-// front. An edge without a neighbour would only cause an empty request, so it
-// must not be handed out.
-//
-// They are emitted only when the sort is unique — the same condition paging by
-// cursor needs — because a cursor over a sort that ties names more than one
-// place in the result, and handing one out would be handing out a bug.
 func (this *repository[M, ID, U]) setCursors(response *crud.PaginatedResponse[M], sort []crud.Order) {
 	if len(response.Items) == 0 || len(sort) == 0 {
 		return
@@ -294,10 +243,10 @@ func (this *repository[M, ID, U]) setCursors(response *crud.PaginatedResponse[M]
 	for i, s := range sort {
 		f := this.meta.Field(s.Field)
 		if f == nil {
-			return // a sort through a relation has no value on the row itself
+			return
 		}
 		if !crud.CursorFieldSupported(f) {
-			return // do not issue a token CursorPredicate must refuse
+			return
 		}
 		fields[i], names[i] = f, f.Name
 		unique = unique || f.PK
@@ -327,10 +276,6 @@ func (this *repository[M, ID, U]) setCursors(response *crud.PaginatedResponse[M]
 func (this *repository[M, ID, U]) GetAll(ctx context.Context, options ...crud.Option) ([]M, error) {
 	o := crud.Build(options...)
 	if o.Limit == 0 && o.Page == 0 && o.Offset == 0 && !o.Unpaged {
-		// GetAll's contract is every matching row, and MaxLimit is a cap on a
-		// *page*. Silently truncating here would be worse than a slow query:
-		// the decorators that read a whole set in order to check it would
-		// check the first n and let the rest through.
 		items, _, err := this.find(ctx, o, 0, 0)
 		return items, err
 	}
@@ -339,8 +284,6 @@ func (this *repository[M, ID, U]) GetAll(ctx context.Context, options ...crud.Op
 	return items, err
 }
 
-// First is Get narrowed to one row. Filters, sort, projection, preloads and
-// locking still apply; only pagination is owned by this operation.
 func (this *repository[M, ID, U]) First(ctx context.Context, options ...crud.Option) (M, error) {
 	var zero M
 	o := crud.Build(options...)
@@ -357,7 +300,6 @@ func (this *repository[M, ID, U]) First(ctx context.Context, options ...crud.Opt
 	return items[0], nil
 }
 
-// scoped folds the repository's permanent scope into a caller's predicate.
 func (this *repository[M, ID, U]) scoped(o *crud.Options) crud.Predicate {
 	if this.bp.set.scope == nil {
 		return o.Predicate()
@@ -369,20 +311,12 @@ func (this *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, lim
 	return this.findWithin(ctx, o, limit, offset, this.scoped(o))
 }
 
-// findWithin is the internal read shape for lifecycle operations that must see
-// tombstones without dropping the blueprint's original tenant/archive scope.
-// Ordinary reads always enter through find and therefore always use live scope.
 func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Options, limit, offset int, within crud.Predicate) ([]M, []crud.Order, error) {
 	cols, err := this.projection(o)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Every projection but a DISTINCT one carries the primary key, and the two
-	// things that need it need it for the same reason: a preload attaches its
-	// rows by key, and the stable-pagination tiebreaker breaks ties by key. A
-	// DISTINCT that selects the key back is fine — the caller has then chosen a
-	// unique column, and with it a result that cannot collapse.
 	identified := hasPK(cols)
 	if !identified && len(o.Preloads) > 0 {
 		return nil, nil, &crud.SchemaError{Model: this.meta.Name, Field: o.Preloads[0].Path,
@@ -390,17 +324,9 @@ func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Option
 	}
 	sort := this.sortOf(o, limit > 0 && identified)
 
-	// The cursor's comparison is built from the sort that actually ran, which is
-	// only settled here — the tiebreaker the sort picks up is part of what the
-	// cursor compares.
-
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o))
 	switch {
 	case o.Distinct:
-		// Distinct arrives on its own as often as not — `?distinct=1` with no
-		// select — and the prebuilt SELECT cannot carry the keyword, so the
-		// column list has to be spelled out here or the statement reads
-		// "SELECT DISTINCT FROM users", which no database accepts.
 		if cols == nil {
 			cols = this.meta.Fields
 		}
@@ -413,9 +339,7 @@ func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Option
 	default:
 		b.Raw("SELECT ").Columns(cols).Raw(" FROM ").Table()
 	}
-	// The cursor is built here rather than above because the sort is only final
-	// now: a DISTINCT read rewrites it, and the comparison has to match the
-	// ORDER BY that actually runs or it names a different place in the result.
+
 	where := within
 	order := sort
 	if token, back, ok := o.Cursor(); ok {
@@ -425,10 +349,6 @@ func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Option
 		}
 		where = crud.And(where, step)
 		if back {
-			// Paging backwards asks for the n rows *immediately* before the
-			// cursor. Read in the sort's own direction those are the first n of
-			// everything before it — the far end of the list. So the statement
-			// runs inverted and find turns the page back over.
 			order = invertSort(sort)
 		}
 	}
@@ -454,9 +374,6 @@ func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Option
 	return items, sort, nil
 }
 
-// invertSort flips every term, which turns "the rows before this one, read
-// forwards" into "the rows after it, read backwards" — the same set, in the
-// order that lets LIMIT take the ones nearest the cursor.
 func invertSort(sort []crud.Order) []crud.Order {
 	out := make([]crud.Order, len(sort))
 	for i, o := range sort {
@@ -469,15 +386,6 @@ func invertSort(sort []crud.Order) []crud.Order {
 	return out
 }
 
-// cursorWhere turns the caller's cursor into the row comparison that selects
-// what comes after (or before) it.
-//
-// The sort has to be unique or "after this row" names more than one place in the
-// result: rows sharing the boundary value are skipped or repeated depending on
-// which side of the tie the engine put them. A paged read appends the primary
-// key for exactly that reason, so the check is whether the key survived —
-// sqlrepo.UnstablePagination removes it, and with it the ability to page by
-// cursor.
 func (this *repository[M, ID, U]) cursorWhere(sort []crud.Order, token string, back bool) (crud.Predicate, error) {
 	unique := false
 	for _, s := range sort {
@@ -493,15 +401,6 @@ func (this *repository[M, ID, U]) cursorWhere(sort []crud.Order, token string, b
 	return crud.CursorPredicate(this.meta, sort, token, back)
 }
 
-// projection resolves Select() into a field list, keeping the primary key: it
-// is what preloads join on and what a client needs to address the row. A nil
-// result means "every column", which lets the prebuilt statement be used.
-//
-// Distinct is the one exception. The primary key is unique by definition, so
-// carrying it would make SELECT DISTINCT unable to remove a single row —
-// `?distinct=1&select=title` returned one row per article rather than one per
-// title. A caller who asks for the distinct values of some columns is asking
-// for values, not for rows, and gives up addressing them.
 func (this *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, error) {
 	if len(o.Fields) == 0 {
 		return nil, nil
@@ -515,10 +414,6 @@ func (this *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, er
 		}
 	}
 	if o.Distinct {
-		// Nothing is added under DISTINCT — not the key, not a preload's join
-		// column — because every extra column is one more thing that can differ
-		// between two rows, and a projection nobody chose defeats the keyword
-		// silently. The caller gets the distinct values of what they selected.
 		for _, name := range o.Fields {
 			f := this.meta.Field(name)
 			if f == nil {
@@ -536,7 +431,7 @@ func (this *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, er
 		}
 		add(f)
 	}
-	// Anything a preload joins on has to come back too.
+
 	for _, spec := range o.Preloads {
 		seg, _, _ := strings.Cut(spec.Path, ".")
 		if rel := this.meta.Relation(seg); rel != nil {
@@ -548,8 +443,6 @@ func (this *repository[M, ID, U]) projection(o *crud.Options) ([]*crud.Field, er
 	return out, nil
 }
 
-// hasPK reports whether a projection can still identify its rows. A nil
-// projection is every column, so it always can.
 func hasPK(cols []*crud.Field) bool {
 	if cols == nil {
 		return true
@@ -562,19 +455,6 @@ func hasPK(cols []*crud.Field) bool {
 	return false
 }
 
-// distinctSort reconciles a sort with a DISTINCT projection. Both engines refuse
-// a SELECT DISTINCT that orders by something outside the select list (42P10 /
-// ER_FIELD_IN_ORDER_NOT_SELECT), and all three inputs — distinct, select and
-// sort — come from the wire, so the combination has to end in a statement or in
-// a refusal the client can read, never in a 500.
-//
-// Widening the projection to cover the sort is what this used to do, and it
-// produced a statement that ran and an answer nobody asked for: the extra column
-// is exactly what tells the duplicate rows apart, so DISTINCT stopped removing
-// them and the response carried a column the client had not selected. The
-// caller's own sort is therefore refused, because those two requests genuinely
-// cannot both be honoured; the repository's default sort, which the caller never
-// asked for, is dropped instead of being turned into an error they cannot avoid.
 func (this *repository[M, ID, U]) distinctSort(cols []*crud.Field, sort []crud.Order, asked bool) ([]crud.Order, error) {
 	if len(sort) == 0 {
 		return sort, nil
@@ -586,8 +466,6 @@ func (this *repository[M, ID, U]) distinctSort(cols []*crud.Field, sort []crud.O
 	out := make([]crud.Order, 0, len(sort))
 	for _, s := range sort {
 		if strings.Contains(s.Field, ".") {
-			// A sort through a relation renders as a scalar subquery, which can
-			// never be in the select list; there is no statement to build.
 			return nil, &crud.SchemaError{Model: this.meta.Name, Field: s.Field,
 				Reason: "a DISTINCT query cannot be sorted through a relation"}
 		}
@@ -607,8 +485,6 @@ func (this *repository[M, ID, U]) distinctSort(cols []*crud.Field, sort []crud.O
 	return out, nil
 }
 
-// preload runs the requested relation loads against the same executor, so a
-// preload inside a transaction sees the transaction.
 func (this *repository[M, ID, U]) preload(ctx context.Context, items []M, o *crud.Options) error {
 	if len(o.Preloads) == 0 {
 		return nil
@@ -628,8 +504,6 @@ func (this *repository[M, ID, U]) preload(ctx context.Context, items []M, o *cru
 	return crud.RunPreloads(ctx, this.read(ctx, o), this.d, this.meta, items, specs, this.bp.set.preloadDepth, this.relScopes(o))
 }
 
-// sortOf resolves the sort terms, appending a primary-key tiebreaker so that
-// paginated results are stable across pages.
 func (this *repository[M, ID, U]) sortOf(o *crud.Options, paged bool) []crud.Order {
 	if o.NoSort {
 		return nil
@@ -653,11 +527,6 @@ func (this *repository[M, ID, U]) Count(ctx context.Context, options ...crud.Opt
 	o := crud.Build(options...)
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o))
 	if o.Distinct {
-		// count(*) would count the rows the SELECT DISTINCT is about to
-		// collapse, and Get would then hand the client a total — and a page
-		// count — for pages that do not exist. count(DISTINCT a, b) is MySQL's
-		// spelling only, so the portable one is a derived table, which MySQL in
-		// turn insists on being able to name.
 		cols, err := this.projection(o)
 		if err != nil {
 			return 0, err
@@ -696,10 +565,6 @@ func (this *repository[M, ID, U]) Exists(ctx context.Context, options ...crud.Op
 	return false, rows.Err()
 }
 
-// ExistsUnscoped is the storage capability security uses to distinguish an
-// unused client-owned key from a row hidden by this blueprint's permanent
-// scope. It intentionally bypasses only the blueprint scope; it is not part of
-// Core and ordinary application code cannot reach it through a Repo.
 func (this *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, options ...crud.Option) (bool, error) {
 	o := crud.Build(options...)
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(this.relScopes(o)).
@@ -719,13 +584,6 @@ func (this *repository[M, ID, U]) ExistsUnscoped(ctx context.Context, options ..
 	return false, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// writes
-
-// Save writes m and returns a separately allocated representation of the row
-// the database stored. It never mutates m. Dialects with RETURNING do that in
-// one statement; the remaining dialects write and refresh inside one
-// transaction so a replacement cannot slip into the result between them.
 func (this *repository[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
 	var zero M
 	if this.d.SupportsReturning() {
@@ -746,8 +604,6 @@ func (this *repository[M, ID, U]) Save(ctx context.Context, m *M) (M, error) {
 	return saved, nil
 }
 
-// SaveOnly writes m without fetching the stored row afterwards. In particular,
-// it never adds RETURNING and never mutates m.
 func (this *repository[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
 	stmt, args, _, err := this.saveStatement(m)
 	if err != nil {
@@ -757,27 +613,8 @@ func (this *repository[M, ID, U]) SaveOnly(ctx context.Context, m *M) error {
 	return err
 }
 
-// SaveScoped is the narrow storage primitive used by a security gate after it
-// has classified an assigned-key Save. It deliberately does not use an upsert
-// update branch. That branch cannot tell whether the conflicting row is the
-// row that was inspected: a concurrent insert would turn an authorised Create
-// into an unauthorised Update. Instead a create is INSERT-only and an update is
-// a conditional UPDATE pinned to the complete inspected snapshot.
-//
-// It is an optional capability rather than part of crud.Core because it is not
-// a general persistence verb. Security discovers it through crud.SaveScopedOf;
-// callers that cannot obtain it must refuse the scoped Save rather than fall
-// back to an ordinary upsert.
 func (this *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
-	// MySQL has no RETURNING. Keep its write and refresh in one transaction so a
-	// replacement cannot slip between them and become the model returned for an
-	// action the gate approved on a different row. PostgreSQL and SQLite receive
-	// the refreshed row from the conditional statement itself.
 	if !this.d.SupportsReturning() {
-		// A context executor is the foreign-transaction seam. It may not expose
-		// a concrete transaction type, but replacing it with a source-owned
-		// transaction would split a caller's unit of work and make an outer
-		// rollback leave this guarded write behind.
 		if _, inTx := crud.ExecutorFor(ctx, this.source); !inTx {
 			return crud.InNewTx(ctx, this.source, func(tx context.Context) error {
 				return this.saveScoped(tx, m, save)
@@ -787,9 +624,6 @@ func (this *repository[M, ID, U]) SaveScoped(ctx context.Context, m *M, save *cr
 	return this.saveScoped(ctx, m, save)
 }
 
-// SaveScopedOnly preserves the gate's atomic create-or-update decision without
-// scanning a stored row. It is an internal capability, not a general CRUD
-// verb; public callers reach it through security.Gate.SaveOnly.
 func (this *repository[M, ID, U]) SaveScopedOnly(ctx context.Context, m *M, save *crud.ScopedSave[M]) error {
 	if !this.d.SupportsReturning() {
 		if _, inTx := crud.ExecutorFor(ctx, this.source); !inTx {
@@ -842,11 +676,6 @@ func (this *repository[M, ID, U]) saveScopedOnly(ctx context.Context, m *M, save
 	return this.saveScopedUpdateOnly(ctx, m, save.Previous, save.Scope, rs)
 }
 
-// saveScopedCreate inserts exactly once. PostgreSQL and SQLite can make a
-// duplicate a no-row result with DO NOTHING. MySQL executes a normal INSERT:
-// its duplicate-key error is classified as crud.ErrConflict by the adapter.
-// INSERT IGNORE is not safe here because it also turns invalid data into a
-// warning and can persist a coerced row that normal Save would reject.
 func (this *repository[M, ID, U]) saveScopedCreate(ctx context.Context, m *M, scope crud.Predicate, rs *crud.RelationScopes) error {
 	values, err := this.meta.Values(m, this.meta.Insert)
 	if err != nil {
@@ -886,10 +715,7 @@ func (this *repository[M, ID, U]) saveScopedCreate(ctx context.Context, m *M, sc
 	if response.RowsAffected == 0 {
 		return crud.ErrConflict
 	}
-	// The transaction SaveScoped opened for no-RETURNING dialects keeps this
-	// freshly inserted row locked through the refresh. Its root scope is enough
-	// to preserve the policy decision, while deliberately not pinning values a
-	// trigger may normalise — Save promises to hand those generated values back.
+
 	return this.refresh(ctx, m, crud.And(this.bp.set.scope, scope), rs)
 }
 
@@ -970,17 +796,11 @@ func (this *repository[M, ID, U]) saveScopedUpdate(ctx context.Context, m, previ
 	if err != nil {
 		return err
 	}
-	// A no-op UPDATE reports zero on MySQL, so only a requested value change can
-	// use the count as a miss signal. The no-change case performs a guarded read
-	// below; it writes no confidential state either way.
+
 	if changed && response.RowsAffected == 0 {
 		return crud.ErrNotFound
 	}
-	// MySQL reports zero affected rows for a no-op UPDATE. It may mean the row
-	// still exactly matches the inspected snapshot, or that a concurrent writer
-	// changed it first. A broad scope refresh cannot distinguish the two and
-	// would hand back a row Inspect never approved, so the no-change arm keeps
-	// the complete snapshot guard through the refresh as well.
+
 	if !changed {
 		return this.refresh(ctx, m, guard, rs)
 	}
@@ -1026,9 +846,7 @@ func (this *repository[M, ID, U]) saveScopedUpdateOnly(ctx context.Context, m, p
 	if changed || this.d.Name() != "mysql" {
 		return crud.ErrNotFound
 	}
-	// MySQL reports zero for a matched no-op update. Verify only existence under
-	// the exact inspected guard; no model is loaded and no unapproved row can
-	// become a successful write between the check and the operation.
+
 	return this.existsScoped(ctx, guard, rs)
 }
 
@@ -1052,10 +870,6 @@ func (this *repository[M, ID, U]) existsScoped(ctx context.Context, within crud.
 	return rows.Err()
 }
 
-// scopedSaveGuard pins an update to every scalar field the gate inspected.
-// That is stricter than a version check when a model has no version column and
-// prevents a delete/reinsert or concurrent mutation from being updated under a
-// decision made for an older row.
 func (this *repository[M, ID, U]) scopedSaveGuard(previous *M, scope crud.Predicate) (crud.Predicate, error) {
 	return this.scopedSaveFieldsGuard(previous, scope, this.meta.Fields)
 }
@@ -1090,9 +904,6 @@ func (this *repository[M, ID, U]) scopedSaveChanged(previous, next *M) (bool, er
 	return false, nil
 }
 
-// saveStatement chooses the two physical forms of Save and collects the
-// caller's values once. It never writes to m, which keeps SaveOnly useful for
-// callers who deliberately retain their command object after persistence.
 func (this *repository[M, ID, U]) saveStatement(m *M) (string, []any, bool, error) {
 	if m == nil {
 		return "", nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: "Save called with a nil model"}
@@ -1156,13 +967,6 @@ func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M
 		return zero, err
 	}
 
-	// Start from a zero model rather than a copy of m: custom scanner fields or
-	// pointer fields in a shallow copy could otherwise still mutate the command
-	// object while the refresh scans into the result. The refresh key stays
-	// separate from that model. MySQL exposes every generated key as int64 even
-	// when the declared column is uint; asking Schema.SetID to bridge those
-	// numeric families would weaken its checked-assignment contract merely to
-	// build the SELECT that immediately scans the real stored type.
 	var saved M
 	var refreshID any
 	if generatedPK {
@@ -1184,9 +988,6 @@ func (this *repository[M, ID, U]) saveWithoutReturning(ctx context.Context, m *M
 	return saved, nil
 }
 
-// refresh re-reads the row identified by the model's primary key, optionally
-// through a narrowing — a write that was allowed to touch only some rows must
-// not read back a row it was not allowed to touch.
 func (this *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud.Predicate, rs *crud.RelationScopes) error {
 	id, err := this.meta.ID(m)
 	if err != nil {
@@ -1195,10 +996,6 @@ func (this *repository[M, ID, U]) refresh(ctx context.Context, m *M, within crud
 	return this.refreshByID(ctx, m, id, within, rs)
 }
 
-// refreshByID keeps a driver-returned identity as a query value until the row
-// scanner assigns the database's representation to the model. It is the narrow
-// boundary needed by generated uint keys on LastInsertId dialects; ordinary
-// refresh callers continue to derive the typed identity through refresh.
 func (this *repository[M, ID, U]) refreshByID(ctx context.Context, m *M, id any, within crud.Predicate, rs *crud.RelationScopes) error {
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(rs).Raw(this.selectFrom).
 		Where(crud.And(crud.Eq(this.meta.PK.Name, id), within)).Raw(" LIMIT 1")
@@ -1223,10 +1020,6 @@ func (this *repository[M, ID, U]) refreshByID(ctx context.Context, m *M, id any,
 func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransferObject any, options ...crud.Option) (M, error) {
 	var zero M
 
-	// The caller's narrowing goes into both halves. Only checking it on the
-	// load would be check-then-act: a row that leaves the narrowing between the
-	// two statements would be written anyway, and handed back to a caller who
-	// was never allowed to see it.
 	byID := crud.Where(crud.Eq(this.meta.PK.Name, id))
 	o := crud.Build(options...)
 	within := this.scoped(o)
@@ -1251,10 +1044,7 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 		}
 		b.Ident(ch.Field.Column).Raw(" = ").Bind(ch.Value)
 	}
-	// The optimistic lock, in the two halves it needs: the counter goes up so
-	// that anyone else holding this row knows their copy is old, and the value
-	// it had when we read it goes into the WHERE, so if somebody got there first
-	// this statement matches nothing instead of overwriting them.
+
 	stale, err := this.versionCheck(&cur)
 	if err != nil {
 		return zero, err
@@ -1287,20 +1077,12 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 	if err != nil {
 		return zero, err
 	}
-	// MySQL reports 0 rows affected for a write that changed nothing, so
-	// rows-affected cannot tell "no such row" from "nothing to do". Re-reading
-	// answers both: it is what RETURNING gives the other dialect for free, and
-	// patching the loaded row in memory instead used to report success — with a
-	// fabricated model — for a row deleted between the load and the write.
+
 	response, err := this.exec(ctx).Exec(ctx, q, args...)
 	if err != nil {
 		return zero, err
 	}
-	// With a version column the count is trustworthy after all: every matching
-	// row is changed, because the counter is always one of the changes. So zero
-	// here means the row we read is not the row that is there now — and a
-	// re-read would otherwise hand the caller somebody else's write as if it
-	// were their own.
+
 	if stale != nil && response.RowsAffected == 0 {
 		return zero, this.missedRow(ctx, id, within, true)
 	}
@@ -1310,12 +1092,6 @@ func (this *repository[M, ID, U]) Update(ctx context.Context, id ID, dataTransfe
 	return cur, nil
 }
 
-// mutationRead builds the deliberately small read shape that may decide a
-// write. A caller's predicate and relation narrowings are security boundaries,
-// so they survive. Projection, ordering, cursors, pagination, aggregation and
-// preloads describe a response and must not influence the row used for a diff.
-// In particular, diffing a projected zero value can turn a no-op into a write
-// (or the reverse), and omitting a version column manufactures a stale miss.
 func (this *repository[M, ID, U]) mutationRead(ctx context.Context, byID crud.Option, o *crud.Options) (M, error) {
 	var zero M
 	read := &crud.Options{
@@ -1342,8 +1118,6 @@ func (this *repository[M, ID, U]) mutationRead(ctx context.Context, byID crud.Op
 	return found[0], nil
 }
 
-// versionCheck returns the predicate that pins the row to the version it was
-// read at, or nil for a model with no version column.
 func (this *repository[M, ID, U]) versionCheck(cur *M) (crud.Predicate, error) {
 	f := this.meta.Version
 	if f == nil {
@@ -1356,10 +1130,6 @@ func (this *repository[M, ID, U]) versionCheck(cur *M) (crud.Predicate, error) {
 	return crud.Eq(f.Name, vals[0]), nil
 }
 
-// missedRow explains an UPDATE that matched nothing. Both answers are 4xx and
-// they are not interchangeable: a row that is gone is ErrNotFound and the caller
-// should stop, while a row that moved on is ErrStaleVersion and the caller
-// should read it again and reapply.
 func (this *repository[M, ID, U]) missedRow(ctx context.Context, id ID, within crud.Predicate, versioned bool) error {
 	if !versioned {
 		return crud.ErrNotFound
@@ -1377,9 +1147,6 @@ func (this *repository[M, ID, U]) missedRow(ctx context.Context, id ID, within c
 	return crud.ErrNotFound
 }
 
-// UpdateAll writes the DTO's defined columns to every matching row in one
-// statement. There is no row to diff against — there are many — so this is the
-// one write that does not skip a column whose value is already there.
 func (this *repository[M, ID, U]) UpdateAll(ctx context.Context, dataTransferObject any, options ...crud.Option) (int64, error) {
 	o := crud.Build(options...)
 	changes, err := this.bp.plan.Writes(dataTransferObject)
@@ -1387,8 +1154,6 @@ func (this *repository[M, ID, U]) UpdateAll(ctx context.Context, dataTransferObj
 		return 0, err
 	}
 	if len(changes) == 0 {
-		// A DTO that defines nothing is a caller asking for nothing, not a
-		// caller asking to rewrite the table with its own values.
 		return 0, nil
 	}
 
@@ -1399,15 +1164,11 @@ func (this *repository[M, ID, U]) UpdateAll(ctx context.Context, dataTransferObj
 		}
 		b.Ident(ch.Field.Column).Raw(" = ").Bind(ch.Value)
 	}
-	// There is no version to check against — a filtered write is not a
-	// read-modify-write of one row — but every row it touches still has to
-	// advance, or a stale Update somebody else is holding would sail past this
-	// change and undo it.
+
 	if f := this.meta.Version; f != nil {
 		b.Raw(", ").Ident(f.Column).Raw(" = ").Ident(f.Column).Raw(" + 1")
 	}
-	// The repository's own scope is not optional here either: without it a
-	// filtered update would reach exactly the rows the repository exists to hide.
+
 	q, args, err := b.Where(this.scoped(o)).Done()
 	if err != nil {
 		return 0, err
@@ -1430,10 +1191,6 @@ func (this *repository[M, ID, U]) Delete(ctx context.Context, ids ...ID) (int64,
 	return this.executePrepared(ctx, plan)
 }
 
-// DeleteScoped is the storage half of security.Gate.Delete. Policy has already
-// resolved and inspected; this method keeps that narrowing beside the SQL bind
-// budget, permanent repository scope, soft-delete clock and transaction, so no
-// layer has to guess how many ids fit a physical statement.
 func (this *repository[M, ID, U]) DeleteScoped(ctx context.Context, deletion *crud.ScopedDelete[ID]) (int64, error) {
 	if deletion == nil {
 		return 0, crud.ErrBadRequest
@@ -1448,9 +1205,6 @@ func (this *repository[M, ID, U]) DeleteScoped(ctx context.Context, deletion *cr
 	return this.executePrepared(ctx, plan)
 }
 
-// Restore clears the repository-owned tombstone for ids. It is deliberately a
-// separate lifecycle verb: generic Update and Save exclude server-owned fields,
-// so update permission can never double as restore permission.
 func (this *repository[M, ID, U]) Restore(ctx context.Context, ids ...ID) (int64, error) {
 	if this.bp.softDelete == nil {
 		return 0, crud.ErrNoTombstone
@@ -1465,9 +1219,6 @@ func (this *repository[M, ID, U]) Restore(ctx context.Context, ids ...ID) (int64
 	return this.executePrepared(ctx, plan)
 }
 
-// RestoreScoped is the storage half of security.Gate.Restore. Policy scope and
-// inspected snapshots stay in each conditional UPDATE and all chunks share one
-// transaction.
 func (this *repository[M, ID, U]) RestoreScoped(ctx context.Context, restore *crud.ScopedRestore[ID]) (int64, error) {
 	if this.bp.softDelete == nil {
 		return 0, crud.ErrNoTombstone
@@ -1485,9 +1236,6 @@ func (this *repository[M, ID, U]) RestoreScoped(ctx context.Context, restore *cr
 	return this.executePrepared(ctx, plan)
 }
 
-// LoadTombstones reads archived rows only for lifecycle-policy inspection. It
-// retains the blueprint's original permanent scope, adds the caller's policy
-// scope and forces the primary; ordinary reads remain permanently live-only.
 func (this *repository[M, ID, U]) LoadTombstones(ctx context.Context, ids []ID, scope crud.Predicate, relations *crud.RelationScopes) ([]M, error) {
 	if this.bp.softDelete == nil {
 		return nil, crud.ErrNoTombstone
@@ -1526,9 +1274,6 @@ func (this *repository[M, ID, U]) LoadTombstones(ctx context.Context, ids []ID, 
 	return out, nil
 }
 
-// restorePlan mirrors deletePlan's bind-budget and atomicity rules but starts
-// from restoreScope rather than the live-row scope and writes SQL NULL instead
-// of accepting a caller-supplied DTO value.
 func (this *repository[M, ID, U]) restorePlan(ids []ID, scope crud.Predicate, relationScopes *crud.RelationScopes, snapshots map[ID]crud.Predicate) ([]preparedWrite, error) {
 	ids = uniqueIDs(ids)
 	relationScopes = crud.MergeRelationScopes(this.bp.relScopes, relationScopes)
@@ -1554,10 +1299,6 @@ func (this *repository[M, ID, U]) restorePlan(ids []ID, scope crud.Predicate, re
 	for _, id := range ids {
 		entry := item{id: id, binds: 1}
 		if snapshots != nil {
-			// ScopedRestore is public and may be called by a custom application
-			// layer rather than security.Gate. An interface ID can carry a value
-			// that cannot be used as a map key; no snapshot can authorise such an
-			// entry, so skip it fail-closed instead of panicking on lookup.
 			rv := reflect.ValueOf(id)
 			if rv.IsValid() && !rv.Comparable() {
 				continue
@@ -1610,10 +1351,7 @@ func (this *repository[M, ID, U]) restorePlan(ids []ID, scope crud.Predicate, re
 		f := this.bp.softDelete
 		b := crud.NewSQL(this.d, this.meta).RelationScopes(relationScopes).
 			Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = NULL")
-		// Restore is a row mutation, not a visibility-only metadata edit. The
-		// version bump prevents Delete -> Restore from recreating the same
-		// tombstone/version snapshot and letting an older conditional write pass
-		// after an otherwise invisible ABA lifecycle transition.
+
 		if version := this.meta.Version; version != nil {
 			b.Raw(", ").Ident(version.Column).Raw(" = ").Ident(version.Column).Raw(" + 1")
 		}
@@ -1634,10 +1372,6 @@ func uniqueIDs[ID comparable](ids []ID) []ID {
 	seen := make(map[ID]struct{}, len(ids))
 	out := make([]ID, 0, len(ids))
 	for _, id := range ids {
-		// An interface type satisfies the generic comparable constraint even
-		// though one of its dynamic values may not (for example []byte in any).
-		// Such a value is still a valid driver bind; simply keep it rather than
-		// turning an optional deduplication into a process panic.
 		rv := reflect.ValueOf(id)
 		if rv.IsValid() && !rv.Comparable() {
 			out = append(out, id)
@@ -1652,10 +1386,6 @@ func uniqueIDs[ID comparable](ids []ID) []ID {
 	return out
 }
 
-// deletePlan keeps the permanent scope in every chunk and charges its values
-// before deciding how many ids fit. A relation scope may itself add binds while
-// the root predicate crosses a relation, so counting only the ids would still
-// let the final statement cross the server limit.
 func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, relationScopes *crud.RelationScopes, snapshots map[ID]crud.Predicate) ([]preparedWrite, error) {
 	relationScopes = crud.MergeRelationScopes(this.bp.relScopes, relationScopes)
 	fixedPredicate := crud.And(this.bp.set.scope, scope)
@@ -1686,8 +1416,6 @@ func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, rel
 	for _, id := range ids {
 		entry := item{id: id, binds: 1}
 		if snapshots != nil {
-			// See restorePlan: an unhashable dynamic interface value cannot have
-			// an authorised snapshot entry. Skip it rather than panic on lookup.
 			rv := reflect.ValueOf(id)
 			if rv.IsValid() && !rv.Comparable() {
 				continue
@@ -1695,7 +1423,7 @@ func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, rel
 			var ok bool
 			entry.snapshot, ok = snapshots[id]
 			if !ok || entry.snapshot == nil {
-				continue // no inspected row means there is nothing authorised to delete.
+				continue
 			}
 			_, args, err := crud.NewSQL(this.d, this.meta).Predicate(entry.snapshot).Done()
 			if err != nil {
@@ -1774,19 +1502,6 @@ func (this *repository[M, ID, U]) DeleteAll(ctx context.Context, options ...crud
 	return response.RowsAffected, nil
 }
 
-// stamp is what a delete becomes when the repository soft-deletes: one UPDATE
-// setting the tombstone, under exactly the narrowing the DELETE would have had.
-//
-// The relation narrowings are a parameter and not read from the blueprint, which
-// is what "exactly" costs. Reading `r.bp.relScopes` here dropped the per-request
-// ones — and those are where a security policy's `RelationScopes` arrive
-// ([[D-007]]) — so two repositories differing only in `SoftDelete` produced a
-// narrowed DELETE and an unnarrowed UPDATE for the same call. The unnarrowed one
-// is a write, over rows the policy hides.
-//
-// The permanent scope already carries "not deleted" (the setting folds it in),
-// so a row deleted twice is not counted twice and the number returned is what
-// this call actually removed from view.
 func (this *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicate, rs *crud.RelationScopes) (int64, error) {
 	f := this.bp.softDelete
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(rs).
@@ -1805,9 +1520,6 @@ func (this *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicat
 	}
 	return response.RowsAffected, nil
 }
-
-// ---------------------------------------------------------------------------
-// scanning
 
 func (this *repository[M, ID, U]) query(ctx context.Context, ex crud.Executor, q string, args []any, sizeHint int) ([]M, error) {
 	return this.queryCols(ctx, ex, q, args, sizeHint, nil)
@@ -1828,8 +1540,6 @@ func (this *repository[M, ID, U]) queryCols(ctx context.Context, ex crud.Executo
 	}
 	out := make([]M, 0, sizeHint)
 
-	// One destination slice pointing into a single scratch model; each row is
-	// copied out on append, so the slice is built once per query, not per row.
 	var scratch, blank M
 	dest, err := this.meta.Pointers(&scratch, cols)
 	if err != nil {
@@ -1878,13 +1588,6 @@ func (this *repository[M, ID, U]) scalar(ctx context.Context, ex crud.Executor, 
 
 var _ crud.Core[struct{}, int] = (*repository[struct{}, int, struct{}])(nil)
 
-// Aggregate runs a summary read: the grouping columns and the aggregates, under
-// exactly the narrowing every other read gets.
-//
-// That is the point of it existing at all. A GROUP BY written by hand runs
-// outside the permanent scope, outside the relation scopes and outside whatever
-// the security gate installed — so the query that counts things becomes the
-// query that counts another tenant's things.
 func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud.Option) ([]crud.AggregateRow, error) {
 	o := crud.Build(options...)
 	if err := o.Agg.Validate(this.meta); err != nil {
@@ -1908,14 +1611,11 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 			b.Column(g)
 		}
 	}
-	// A sort is honoured only over the grouping columns; anything else is not a
-	// column this statement has.
+
 	if len(o.Sort) > 0 && !o.NoSort {
 		b.OrderBy(o.Sort)
 	}
-	// A summary is not implicitly a page. With no explicit paging control every
-	// group is returned; otherwise the ordinary repository cap still applies.
-	// In particular Unpaged may not erase MaxLimit on this verb.
+
 	limit, offset := 0, 0
 	if o.Page != 0 || o.Limit != 0 || o.Offset != 0 || o.Unpaged {
 		limit, offset, _ = o.Resolved(this.bp.set.defaultLimit, this.bp.set.maxLimit)
@@ -1932,13 +1632,6 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 	}
 	defer rows.Close()
 
-	// The group columns resolve once, above the loop. FieldAt is a path walk —
-	// a Split, an allocation and a Join per call — and it used to run per group
-	// column *per row*, so a thousand-row aggregate over three groupings did
-	// three thousand walks to answer a question the statement had already
-	// settled. It also belongs here for a second reason: a path that does not
-	// resolve is a request-level failure, and finding that out on row 900 rather
-	// than before the scan is the wrong shape of error.
 	groups := make([]*crud.Field, len(o.Agg.GroupBy))
 	for i, g := range o.Agg.GroupBy {
 		f, _, err := this.meta.FieldAt(g)
@@ -1957,8 +1650,6 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 
 	var out []crud.AggregateRow
 	for rows.Next() {
-		// cells is reused, so every value has to be copied out below before the
-		// next Scan overwrites it — which the two maps already do.
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -1977,49 +1668,20 @@ func (this *repository[M, ID, U]) Aggregate(ctx context.Context, options ...crud
 	return out, rows.Err()
 }
 
-// SaveAll writes many rows in the fewest statements the dialect permits.
-//
-// It is Save's batched partner and it keeps Save's fork: every row must agree
-// about whether the database generates the key, because the two forms are two
-// different statements. A mixed batch is refused rather than split, so the call
-// cannot silently change an assigned-key upsert into a generated-key insert.
-//
-// It is deliberately write-only, like SaveOnly: callers that need individual
-// stored rows can call Save for each command and keep the results explicitly.
 func (this *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) error {
 	if len(models) == 0 {
 		return nil
 	}
-	generated := false
-	for i, m := range models {
-		if m == nil {
-			return &crud.SchemaError{Model: this.meta.Name, Reason: "SaveAll called with a nil model"}
-		}
-		hasID, err := this.meta.HasID(m)
-		if err != nil {
-			return err
-		}
-		gen := !hasID && this.meta.PK.Auto
-		if !hasID && !this.meta.PK.Auto {
-			return crud.ErrMissingID
-		}
-		if i == 0 {
-			generated = gen
-			continue
-		}
-		if gen != generated {
-			return &crud.SchemaError{Model: this.meta.Name, Reason: "SaveAll cannot mix rows with and without a key: " +
-				"they are two different statements, and splitting the batch would hide the cost"}
-		}
+	fields, generated, err := this.batchInsertFields(models, "SaveAll")
+	if err != nil {
+		return err
 	}
-
-	fields := this.meta.Insert
 	tail := this.upsertTail
 	if generated {
-		fields, tail = this.meta.InsertGen, ""
+		tail = ""
 	}
 
-	plan, err := this.saveAllPlan(models, fields, tail)
+	plan, err := this.batchInsertPlan(models, fields, tail, "SaveAll")
 	if err != nil {
 		return err
 	}
@@ -2027,20 +1689,111 @@ func (this *repository[M, ID, U]) SaveAll(ctx context.Context, models []*M) erro
 	return err
 }
 
-// saveAllPlan performs every model read and renders every statement before the
-// first one runs. A bad value in a later chunk is therefore a preflight error,
-// not a partially persisted batch.
-func (this *repository[M, ID, U]) saveAllPlan(models []*M, fields []*crud.Field, tail string) ([]preparedWrite, error) {
+func (this *repository[M, ID, U]) InsertBatch(ctx context.Context, models []*M, options ...crud.BatchOption) error {
+	if len(models) == 0 {
+		return nil
+	}
+	fields, _, err := this.batchInsertFields(models, "InsertBatch")
+	if err != nil {
+		return err
+	}
+	portable := crud.UsesPortableBatch(options...) || this.bp.set.portableBatch
+	if used, err := this.nativeInsertBatch(ctx, models, fields, portable); used || err != nil {
+		return err
+	}
+	plan, err := this.batchInsertPlan(models, fields, "", "InsertBatch")
+	if err != nil {
+		return err
+	}
+	_, err = this.executePrepared(ctx, plan)
+	return err
+}
+
+func (this *repository[M, ID, U]) batchInsertFields(models []*M, operation string) ([]*crud.Field, bool, error) {
+	generated := false
+	for i, model := range models {
+		if model == nil {
+			return nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: operation + " called with a nil model"}
+		}
+		hasID, err := this.meta.HasID(model)
+		if err != nil {
+			return nil, false, err
+		}
+		gen := !hasID && this.meta.PK.Auto
+		if !hasID && !this.meta.PK.Auto {
+			return nil, false, crud.ErrMissingID
+		}
+		if i == 0 {
+			generated = gen
+			continue
+		}
+		if gen != generated {
+			return nil, false, &crud.SchemaError{Model: this.meta.Name, Reason: operation +
+				" cannot mix rows with and without a key: they use different column lists, and splitting the batch would hide the cost"}
+		}
+	}
+	if generated {
+		return this.meta.InsertGen, true, nil
+	}
+	return this.meta.Insert, false, nil
+}
+
+func (this *repository[M, ID, U]) nativeInsertBatch(ctx context.Context, models []*M, fields []*crud.Field, portable bool) (bool, error) {
+	if portable || len(fields) == 0 {
+		return false, nil
+	}
+	_, ok := crud.UnsafeBulkInserterOf(this.source)
+	if !ok {
+		return false, nil
+	}
+	columns := make([]string, len(fields))
+	for i, field := range fields {
+		columns[i] = field.Column
+	}
+	rows := make([][]any, len(models))
+	for i, model := range models {
+		values, err := this.meta.Values(model, fields)
+		if err != nil {
+			return true, err
+		}
+		rows[i] = values
+	}
+	_, err := crud.UnsafeBulkInsertFor(ctx, this.source, this.meta.TableReference(), columns, rows)
+	if errors.Is(err, crud.ErrNoBulkInsertSupport) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (this *repository[M, ID, U]) batchInsertPlan(models []*M, fields []*crud.Field, tail, operation string) ([]preparedWrite, error) {
 	limit := crud.BindLimit(this.d)
 	width := len(fields)
-	perStatement := len(models)
-	if width > 0 {
-		perStatement = limit / width
-		if perStatement == 0 {
-			return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
-				"one SaveAll row needs %d bound values, but dialect %q permits at most %d; use SaveOnly with a narrower model or a driver bulk API",
-				width, this.d.Name(), limit)}
+	if width == 0 {
+		plan := make([]preparedWrite, len(models))
+		for i := range models {
+			q, args, err := crud.NewSQL(this.d, this.meta).
+				Raw("INSERT INTO ").Table().Raw(crud.DefaultValuesClause(this.d)).Done()
+			if err != nil {
+				return nil, err
+			}
+			plan[i] = preparedWrite{query: q, args: args}
 		}
+		return plan, nil
+	}
+	perStatement := limit / width
+	if perStatement == 0 {
+		advice := "reduce the insertable model width"
+		if operation == "SaveAll" {
+			advice += " or use InsertBatch with a native-capable source for insert-only data"
+		} else {
+			advice += " or allow a native bulk capability"
+		}
+		return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+			"one %s row needs %d bound values, but dialect %q permits at most %d; %s",
+			operation, width, this.d.Name(), limit, advice)}
 	}
 	chunks := (len(models)-1)/perStatement + 1
 	plan := make([]preparedWrite, 0, chunks)

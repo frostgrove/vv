@@ -14,7 +14,6 @@ import (
 
 const reason = "signature does not verify"
 
-// render is what a binding does with the error, all the way to the bytes.
 func render(t *testing.T, err error) (int, string) {
 	t.Helper()
 	status, _, body := porthttp.NewRenderer().Render(t.Context(), err)
@@ -25,9 +24,6 @@ func render(t *testing.T, err error) (int, string) {
 	return status, string(b)
 }
 
-// wrappedText is how a caller reaches the diagnostic: a fault unwraps to a
-// slice, which errors.Unwrap does not walk, so errors.As down to the fault is
-// the way in.
 func wrappedText(t *testing.T, err error) string {
 	t.Helper()
 	var f *errs.Fault
@@ -74,11 +70,6 @@ func TestAnAuthenticationFailureIsA401ThatWrapsTheSentinel(t *testing.T) {
 	})
 }
 
-// The leak test and its control. The positive assertion below is worth nothing
-// on its own: a renderer that dropped every message would pass it. The control
-// builds the same fault the obvious way — the reason in Fault.Message — and
-// asserts the leak *is* there, so if port.Violations ever stops copying that
-// field the control fails and says the positive test now proves nothing.
 func TestTheReasonForA401NeverReachesTheBody(t *testing.T) {
 	t.Run("Unauthenticated keeps the reason out", func(t *testing.T) {
 		_, body := render(t, auth.Unauthenticated(reason))

@@ -21,21 +21,11 @@ type otherDriverValue struct{}
 
 func (otherDriverValue) Value() (driver.Value, error) { return int64(7), nil }
 
-// database/sql accepts decimal decomposition without requiring driver.Valuer.
-// A driver may bind this as a non-NULL number, but the predicate guard must not
-// depend on an implementation-specific conversion it cannot inspect.
 type decimalDriverValue struct{}
 
 func (decimalDriverValue) Decompose([]byte) (byte, bool, []byte, int32) {
 	return 0, false, []byte{7}, 0
 }
-
-// ---------------------------------------------------------------------------
-// the predicate AST
-//
-// The tree is rendered exactly as it was built. Nothing is simplified away:
-// a reader debugging a WHERE clause has to be able to find the predicate they
-// wrote in the SQL they got.
 
 func TestDegenerateTreesStillRenderValidSQL(t *testing.T) {
 	m := articleMeta(t)
@@ -52,9 +42,7 @@ func TestDegenerateTreesStillRenderValidSQL(t *testing.T) {
 		{"a contradiction is rendered, not resolved", crud.And(crud.True(), crud.False()), `(1 = 1 AND 1 = 0)`},
 		{"OR of one operand needs no parentheses", crud.Or(a), `"title" = $1`},
 		{"OR of nothing but nils is false", crud.Or(nil, nil), `1 = 0`},
-		// The empty OR keeps its meaning inside the AND rather than being
-		// dropped as an empty node: "and nothing at all" is false, and losing
-		// it would silently widen the query to everything the AND allows.
+
 		{"an empty OR inside an AND still makes it false", crud.And(a, crud.Or()), `("title" = $1 AND 1 = 0)`},
 		{"an empty AND inside an OR is true and swallows it", crud.Or(a, crud.And()), `("title" = $1 OR 1 = 1)`},
 	} {
@@ -67,9 +55,6 @@ func TestDegenerateTreesStillRenderValidSQL(t *testing.T) {
 	}
 }
 
-// An IN over no values cannot name the column at all — `IN ()` is a syntax
-// error everywhere — so it degrades to the constant that answers the question
-// honestly, whichever way the list arrived.
 func TestInOverAnEmptyListIsAConstant(t *testing.T) {
 	m := articleMeta(t)
 
@@ -121,8 +106,6 @@ func TestIsTautologyRecognisesClosedUnconditionalPredicates(t *testing.T) {
 	}
 }
 
-// Bulk-write guards use IsTautology, so it must share the renderer's treatment
-// of nil branches. In particular Or(nil) is false and its negation is true.
 func TestIsTautologyUsesTheRenderersNilBranchSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -145,9 +128,7 @@ func TestIsTautologyUsesTheRenderersNilBranchSemantics(t *testing.T) {
 func TestBooleanConstructorsDoNotRetainACallersSlice(t *testing.T) {
 	kids := []crud.Predicate{nil}
 	p := crud.And(kids...)
-	// If And retained kids, this turns p into a self-reference. Apart from
-	// making the public AST mutable, that would recurse forever in rendering and
-	// in the bulk-write tautology guard.
+
 	kids[0] = p
 	if !crud.IsTautology(p) {
 		t.Fatal("the original And(nil) should stay an unconditional predicate")
@@ -336,9 +317,6 @@ func TestMayBeTautologyForBoundsLargeBooleanSpecifications(t *testing.T) {
 	}
 }
 
-// nil is NULL only where SQL has a spelling for it. Eq and Ne rewrite; every
-// other operator binds the nil, because `x > NULL` is a legal comparison that
-// simply never matches, and inventing an IS NULL there would change the answer.
 func TestNilValuesBecomeISNULLOnlyForEquality(t *testing.T) {
 	m := metaOf[Item](t, "items")
 
@@ -352,8 +330,7 @@ func TestNilValuesBecomeISNULLOnlyForEquality(t *testing.T) {
 		{"a typed nil pointer", crud.Eq("Ratio", (*float64)(nil)), `"ratio" IS NULL`, nil},
 		{"a nil slice", crud.Eq("Tags", []byte(nil)), `"tags" IS NULL`, nil},
 		{"a nil map", crud.Eq("Name", map[string]string(nil)), `"name" IS NULL`, nil},
-		// An empty slice is a value: it is the difference between "no bytes"
-		// and "no value at all".
+
 		{"an empty slice is a value", crud.Eq("Tags", []byte{}), `"tags" = $1`, []any{[]byte{}}},
 		{"Ne of nil is IS NOT NULL", crud.Ne("Ratio", (*float64)(nil)), `"ratio" IS NOT NULL`, nil},
 		{"an ordering comparison binds the nil", crud.Gt("Qty", nil), `"qty" > $1`, []any{nil}},
@@ -364,19 +341,11 @@ func TestNilValuesBecomeISNULLOnlyForEquality(t *testing.T) {
 	}
 }
 
-// BETWEEN is `low <= x AND x <= high`, so bounds handed over the wrong way
-// round match nothing. Swapping them for the caller would turn a query that
-// returns nothing into one that returns everything in range — a wrong answer is
-// worse than an empty one.
 func TestBetweenKeepsTheBoundsInTheOrderItWasGiven(t *testing.T) {
 	checkRender(t, crud.Postgres{}, articleMeta(t), crud.Between("Views", 10, 1),
 		`"views" BETWEEN $1 AND $2`, []any{10, 1})
 }
 
-// Raw is the one place a caller writes SQL by hand, so the count of markers and
-// the count of arguments have to agree. Neither mismatch can be let through:
-// too few arguments leaves a marker unbound, and too many silently drops a
-// value the caller believed was in the statement.
 func TestRawArgumentsHaveToMatchItsMarkers(t *testing.T) {
 	m := articleMeta(t)
 
@@ -416,10 +385,6 @@ func TestRawArgumentsHaveToMatchItsMarkers(t *testing.T) {
 	}
 }
 
-// A filter naming a field the model does not have is reported, and — this is
-// the part that matters — its value never reaches the argument list. A filter
-// that cannot be resolved must not be able to smuggle anything into the
-// statement it was going to appear in.
 func TestAPredicateOnAnUnknownFieldBindsNothing(t *testing.T) {
 	m := articleMeta(t)
 
@@ -451,10 +416,6 @@ func TestAPredicateOnAnUnknownFieldBindsNothing(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// update plans
-
-// Session carries one of every field kind an update DTO can collide with.
 type Session struct {
 	ID       int64            `db:"id,pk,auto"`
 	TenantID int64            `db:"tenant_id,immutable"`
@@ -481,8 +442,6 @@ func planErrOf[U any](s *crud.Schema) func() error {
 	}
 }
 
-// A DTO that cannot be applied is refused where it is declared — at Define
-// time — rather than on the first request that happens to use the field.
 func TestPlanRefusesDTOsThatCannotBeApplied(t *testing.T) {
 	s := sessionSchema(t)
 
@@ -520,9 +479,6 @@ func TestPlanRefusesDTOsThatCannotBeApplied(t *testing.T) {
 	}
 }
 
-// An empty DTO is legal and asks for nothing: no columns, no UPDATE. The
-// repository needs that answer rather than an error, because "PATCH with an
-// empty body" is a request a client is allowed to make.
 func TestADTOWithNothingInItAsksForNoColumns(t *testing.T) {
 	s := sessionSchema(t)
 
@@ -566,9 +522,6 @@ func TestADTOWithNothingInItAsksForNoColumns(t *testing.T) {
 	}
 }
 
-// time.Now() carries a monotonic reading that a value read back from a database
-// never has. Comparing those two with == would report a change on every single
-// request and rewrite the row forever.
 func TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange(t *testing.T) {
 	s := sessionSchema(t)
 	type Touch struct{ SeenAt time.Time }
@@ -578,7 +531,7 @@ func TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange(t *testing.T) {
 	}
 
 	now := time.Now()
-	stored := now.Round(0) // what comes back from the database: no monotonic clock
+	stored := now.Round(0)
 	if now == stored {
 		t.Fatal("the fixture is not testing anything: the two times are identical")
 	}
@@ -588,14 +541,11 @@ func TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange(t *testing.T) {
 		t.Fatalf("changes = %v (%v), want the same instant to count as unchanged", changes, err)
 	}
 
-	// The same instant in another zone is the same instant.
 	elsewhere := stored.In(time.FixedZone("UTC+2", 2*60*60))
 	if changes, err := p.Changes(Touch{SeenAt: elsewhere}, &cur); err != nil || len(changes) != 0 {
 		t.Fatalf("changes = %v (%v), want a zone change alone not to rewrite the row", changes, err)
 	}
 
-	// ...and a different instant still is one, or the comparison would be
-	// letting every update through unwritten.
 	later := stored.Add(time.Nanosecond)
 	changes, err := p.Changes(Touch{SeenAt: later}, &cur)
 	if err != nil || len(changes) != 1 {
@@ -610,11 +560,6 @@ func TestATimeThatOnlyDiffersInItsClockReadingIsNotAChange(t *testing.T) {
 	}
 }
 
-// Nullability is a property of the column, not of the Go type: a model field
-// spelled `int` says how the value is scanned, not whether the database accepts
-// NULL. The planner passes the intent through and lets the database be the one
-// that refuses — so an Opt over a plain field is accepted here, and a null
-// really does write NULL.
 func TestAnOptDTOFieldOverAPlainModelFieldWritesNull(t *testing.T) {
 	s := sessionSchema(t)
 	type Nullable struct{ Score crud.Opt[int] }
@@ -637,9 +582,6 @@ func TestAnOptDTOFieldOverAPlainModelFieldWritesNull(t *testing.T) {
 	}
 }
 
-// Every entry point that takes a caller's value reports what it was given
-// instead of panicking on it: these are the calls a transport makes with
-// whatever arrived on the wire.
 func TestPlanReportsBadArgumentsInsteadOfPanicking(t *testing.T) {
 	s := sessionSchema(t)
 	type Patch struct{ Token *string }
@@ -679,12 +621,6 @@ func TestPlanReportsBadArgumentsInsteadOfPanicking(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// options
-
-// Options are applied left to right and each one owns exactly one field, so the
-// last mention of a field wins. That is what lets a caller override a stored
-// query shape by appending to it rather than by rebuilding it.
 func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -699,9 +635,7 @@ func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 		{"a second page replaces the first", []crud.Option{crud.Page(5), crud.Page(2)}, 20, 20, 2},
 		{"an offset of zero stops overriding the page",
 			[]crud.Option{crud.Page(3), crud.Offset(99), crud.Offset(0)}, 20, 40, 3},
-		// Unpaged is a flag, not a value: there is no option that turns it off,
-		// so the order it arrives in does not matter. What it resolves to here
-		// is the repository's maximum, which no flag may exceed.
+
 		{"a limit before Unpaged is still ignored", []crud.Option{crud.Limit(10), crud.Unpaged()}, 100, 0, 1},
 		{"and after it too", []crud.Option{crud.Unpaged(), crud.Limit(10)}, 100, 0, 1},
 	} {
@@ -715,8 +649,6 @@ func TestTheLastOfTwoContradictoryOptionsWins(t *testing.T) {
 	}
 }
 
-// A negative offset is a syntax error in every dialect, so it must never reach
-// the statement — whatever a client managed to send.
 func TestANegativeOffsetNeverReachesTheStatement(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -734,15 +666,11 @@ func TestANegativeOffsetNeverReachesTheStatement(t *testing.T) {
 	}
 }
 
-// The maximum is the repository's own ceiling: it clamps the caller's limit and
-// its own default alike, so a misconfigured default cannot serve a bigger page
-// than the maximum promises.
 func TestTheMaximumClampsTheDefaultToo(t *testing.T) {
 	if limit, _, _ := crud.Build().Resolved(200, 100); limit != 100 {
 		t.Fatalf("limit = %d, want the default clamped to the maximum", limit)
 	}
-	// A repository with no page size at all cannot paginate: every page is the
-	// whole table, which is why Define insists on a default.
+
 	limit, offset, page := crud.Build(crud.Page(3)).Resolved(0, 0)
 	if limit != 0 || offset != 0 || page != 3 {
 		t.Fatalf("Resolved = (%d, %d, %d), want an unlimited repository to ignore paging", limit, offset, page)

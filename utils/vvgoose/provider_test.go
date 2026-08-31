@@ -83,7 +83,6 @@ func TestSQLiteProviderLifecycle(t *testing.T) {
 	}
 	assertMigrationState(t, statuses, goose.StatePending)
 
-	// Rolling back an already empty database is an intentional no-op.
 	rolledBack, err = runRollback(ctx, config, 2)
 	if err != nil {
 		t.Fatalf("rollback at version zero: %v", err)

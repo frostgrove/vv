@@ -9,8 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// schemaErrOf is the table-friendly spelling of SchemaOf: it throws the schema
-// away and keeps the complaint.
 func schemaErrOf[M any]() func() error {
 	return func() error {
 		_, err := crud.SchemaOf[M]()
@@ -18,8 +16,6 @@ func schemaErrOf[M any]() func() error {
 	}
 }
 
-// wantSchemaError insists on the error *identity* a caller can branch on, then
-// on the parts of the message a human needs: which field, and why.
 func wantSchemaError(t *testing.T, err error, field, reason string) {
 	t.Helper()
 	var se *crud.SchemaError
@@ -36,13 +32,6 @@ func wantSchemaError(t *testing.T, err error, field, reason string) {
 		t.Errorf("error does not say which model it is about: %v", se)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// declaration errors
-//
-// A broken mapping has to be caught where it is written, not where it is used:
-// every one of these is an error at Define time, never a panic and never a
-// column that quietly does the wrong thing.
 
 func TestSchemaRefusesBrokenModels(t *testing.T) {
 	type NoColumns struct{}
@@ -92,8 +81,7 @@ func TestSchemaRefusesBrokenModels(t *testing.T) {
 		{"two fields claiming the same column", schemaErrOf[DuplicateColumn](), "B", "duplicate column x"},
 		{"an embedded field shadowed by an outer one of the same name",
 			schemaErrOf[DuplicateName](), "Name", "duplicate field name"},
-		// `generated` means "never written"; a key that is never written can
-		// never be handed back after an insert. `auto` is the tag that was meant.
+
 		{"a generated primary key", schemaErrOf[GeneratedKey](), "ID", "use `auto`"},
 		{"an embedded pointer to a struct", schemaErrOf[EmbeddedPointer](), "Named", "embedded pointer"},
 	} {
@@ -103,9 +91,6 @@ func TestSchemaRefusesBrokenModels(t *testing.T) {
 	}
 }
 
-// A field the reflection layer cannot read must not be mapped silently: a
-// lower-case letter in a field name would otherwise cost a whole column, and
-// the row would come back with a zero in it.
 func TestADbTagOnAnUnexportedFieldIsRefused(t *testing.T) {
 	type Typo struct {
 		ID   int64  `db:"id,pk"`
@@ -113,8 +98,6 @@ func TestADbTagOnAnUnexportedFieldIsRefused(t *testing.T) {
 	}
 	wantSchemaError(t, schemaErrOf[Typo]()(), "name", "unexported")
 
-	// The documented escape hatch still works: `db:"-"` is how a field says it
-	// is none of the mapper's business, whatever its case.
 	type Quiet struct {
 		ID     int64  `db:"id,pk"`
 		secret string `db:"-"`
@@ -129,8 +112,6 @@ func TestADbTagOnAnUnexportedFieldIsRefused(t *testing.T) {
 	}
 }
 
-// An untagged unexported field is not a mistake — it is how Go structs carry
-// state — so it is skipped, not complained about.
 func TestAnUntaggedUnexportedFieldIsSimplyIgnored(t *testing.T) {
 	type WithState struct {
 		ID    int64 `db:"id,pk"`
@@ -146,8 +127,6 @@ func TestAnUntaggedUnexportedFieldIsSimplyIgnored(t *testing.T) {
 	}
 }
 
-// The primary key may be declared by convention rather than by tag, and both
-// conventions have to keep working — plenty of models never write `pk` at all.
 func TestPrimaryKeyFallsBackToIDByNameThenByColumn(t *testing.T) {
 	type ByName struct {
 		ID   int64
@@ -190,9 +169,6 @@ func TestPrimaryKeyFallsBackToIDByNameThenByColumn(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// relation declaration errors
 
 func TestRelationTagsAreCheckedWhenTheyAreDeclared(t *testing.T) {
 	type NotAStruct struct {
@@ -249,10 +225,6 @@ func TestRelationTagsAreCheckedWhenTheyAreDeclared(t *testing.T) {
 	}
 }
 
-// A relation names fields on two models, and the far one may not be buildable
-// when the near one is. That is why these are reported on first use instead of
-// at declaration — but they are still reported, in the model's own words, and
-// the statement they were going to appear in never renders them.
 func TestARelationPointingAtAMissingFieldIsReportedOnUse(t *testing.T) {
 	type BadLocal struct {
 		ID   int64   `db:"id,pk"`
@@ -264,7 +236,7 @@ func TestARelationPointingAtAMissingFieldIsReportedOnUse(t *testing.T) {
 		Peer   *Author `rel:"belongs_to,fk=PeerID,ref=NoSuchColumn"`
 	}
 	type Unmappable struct {
-		Name string `db:"name"` // no primary key: this model cannot be built at all
+		Name string `db:"name"`
 	}
 	type BadTarget struct {
 		ID   int64       `db:"id,pk"`
@@ -284,8 +256,6 @@ func TestARelationPointingAtAMissingFieldIsReportedOnUse(t *testing.T) {
 			_, _, _, err := tc.meta.Relation("Peer").Resolve()
 			wantSchemaError(t, err, "", tc.reason)
 
-			// The same complaint reaches whoever tries to use the relation, and
-			// no half-resolved column reaches the statement.
 			sql, args, err := crud.NewSQL(crud.Postgres{}, tc.meta).Predicate(crud.Eq("Peer.Name", "Ann")).Done()
 			wantSchemaError(t, err, "", tc.reason)
 			if strings.Contains(sql, "name") || len(args) != 0 {
@@ -295,12 +265,6 @@ func TestARelationPointingAtAMissingFieldIsReportedOnUse(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// forgiving lookups and their limits
-
-// An alias that could mean two different fields is not registered at all:
-// guessing which one the client meant would be a silent wrong answer. The
-// unambiguous spellings keep working.
 func TestAnAmbiguousAliasResolvesToNothing(t *testing.T) {
 	type Muddle struct {
 		ID     int64  `db:"id,pk"`
@@ -321,17 +285,12 @@ func TestAnAmbiguousAliasResolvesToNothing(t *testing.T) {
 			t.Errorf("the exact spelling %q stopped resolving because of the ambiguity", ref)
 		}
 	}
-	// Only the collision is lost; the rest of the model is still forgiving.
+
 	if m.Field("NAME") != m.Field("Name") {
 		t.Error("an unrelated field lost its case-insensitive alias")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// WalkPath
-
-// WalkPath is the one resolver every layer shares, so what it refuses is what
-// the HTTP DSL, the SQL writer and the preloader all refuse.
 func TestWalkPathRefusesMalformedPaths(t *testing.T) {
 	m := articleMeta(t)
 
@@ -365,9 +324,6 @@ func TestWalkPathRefusesMalformedPaths(t *testing.T) {
 	}
 }
 
-// Two to-many hops in one path stay two nested EXISTS. A pair of joins here
-// would multiply the driving rows by both collections at once, and every LIMIT
-// and COUNT downstream would be wrong.
 func TestAPathThroughTwoToManyHopsNestsRatherThanJoins(t *testing.T) {
 	m := metaOf[Person](t, "persons")
 
@@ -388,8 +344,6 @@ func TestAPathThroughTwoToManyHopsNestsRatherThanJoins(t *testing.T) {
 		[]any{"Ann"})
 }
 
-// A path may stop on a relation — that is what a preload is — but then there is
-// no column, and whoever needed one has to say so.
 func TestAPathThatStopsOnARelationHasNoField(t *testing.T) {
 	m := articleMeta(t)
 
@@ -407,18 +361,16 @@ func TestAPathThatStopsOnARelationHasNoField(t *testing.T) {
 	if _, _, err := m.FieldAt("comments.author"); !errors.As(err, new(*crud.SchemaError)) {
 		t.Fatalf("FieldAt = %v, want a SchemaError: there is no column to compare", err)
 	}
-	// The other direction: a column is not something to preload.
+
 	if _, _, err := m.RelationAt("Title"); !errors.As(err, new(*crud.SchemaError)) {
 		t.Fatalf("RelationAt = %v, want a SchemaError", err)
 	}
-	// ...and neither is a path that never leaves the model.
+
 	if _, _, err := m.RelationAt("Views"); !errors.As(err, new(*crud.SchemaError)) {
 		t.Fatalf("RelationAt = %v, want a SchemaError", err)
 	}
 }
 
-// The schema is cached per type, and the cache hands back the very same value:
-// a *Field is compared by pointer all over the query layer.
 func TestSchemaOfIsCachedByType(t *testing.T) {
 	a, err := crud.SchemaOf[Article]()
 	if err != nil {
@@ -431,7 +383,7 @@ func TestSchemaOfIsCachedByType(t *testing.T) {
 	if a != b {
 		t.Fatal("SchemaOf and SchemaOfType built two different schemas for one type")
 	}
-	// Two Metas over one schema differ only in the table they name.
+
 	one, two := metaOf[Article](t, "articles"), metaOf[Article](t, "archived_articles")
 	if one.Schema != two.Schema || one.Table == two.Table {
 		t.Fatalf("binding a second table rebuilt the schema: %v / %v", one.Table, two.Table)

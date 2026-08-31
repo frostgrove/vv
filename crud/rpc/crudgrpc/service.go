@@ -8,20 +8,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// ServicePrefix is the proto package a resource is registered under when the
-// name it was given is a bare one.
-//
-// Per-resource service names, rather than one fixed service with a `resource`
-// field in every request. Reflection is unavailable either way — a generic
-// resource has no compiled file descriptor to serve — so a shared name would
-// cost the one thing it could have bought and take away two: a per-method
-// interceptor and an authorization rule both key on the full method name, and
-// under a shared service every resource's Create is the same method.
 const ServicePrefix = "vv.crud.v1."
 
-// ServiceName is the full proto service name a resource is registered under.
-// A name that already carries a package is used verbatim, so an application can
-// put its resources in a package of its own.
 func ServiceName(name string) string {
 	if strings.Contains(name, ".") {
 		return name
@@ -29,27 +17,10 @@ func ServiceName(name string) string {
 	return ServicePrefix + name
 }
 
-// Register mounts the methods on a gRPC server under the given resource name.
-//
-//	crudgrpc.New(articles).Register(server, "Article")
-//
-// registers vv.crud.v1.Article with the eight methods, or the three read ones
-// under [ReadOnly] — a method that is not registered answers Unimplemented,
-// which is gRPC's own answer and needs no arm here.
 func (this *HandlerFor[M, ID, U, In]) Register(s grpc.ServiceRegistrar, name string) {
-	// The implementation is nil, and that is what makes a generic resource
-	// registrable at all: RegisterService checks the handler type only when it
-	// is given one, so the methods can be closures over this handler and there
-	// is no generated interface to satisfy.
 	s.RegisterService(this.Desc(name), nil)
 }
 
-// Desc is the service descriptor Register installs, for a registrar that is not
-// a *grpc.Server — a mock, a multiplexer, or a server built by something else.
-//
-// HandlerType is *any rather than a generated interface, so a registrar that
-// does check it against a non-nil implementation still passes: every type
-// implements the empty interface.
 func (this *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
 	full := ServiceName(name)
 	desc := &grpc.ServiceDesc{
@@ -77,12 +48,8 @@ func (this *HandlerFor[M, ID, U, In]) Desc(name string) *grpc.ServiceDesc {
 	return desc
 }
 
-// A unaryFunc is what every method of this binding is: a document in, a
-// document out.
 type unaryFunc func(context.Context, *structpb.Struct) (*structpb.Struct, error)
 
-// unary wraps one method as gRPC's own handler shape, including the
-// interceptor hop generated code carries.
 func unary(service, method string, fn unaryFunc) grpc.MethodHandler {
 	full := "/" + service + "/" + method
 	return func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {

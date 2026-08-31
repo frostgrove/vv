@@ -18,8 +18,6 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-// serve runs one request through the middleware and answers what the handler
-// saw and what the client got.
 func serve(t *testing.T, guard *auth.Guard, header string) (*seen, *httptest.ResponseRecorder) {
 	t.Helper()
 	h := &seen{}

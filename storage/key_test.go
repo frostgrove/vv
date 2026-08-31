@@ -68,8 +68,6 @@ func TestTheKeyParserRefusesEveryPortablePathAmbiguity(t *testing.T) {
 		}
 	}
 
-	// The negative corpus proves something only beside representative values
-	// that use the same separators and punctuation successfully.
 	valid := []string{
 		"a",
 		"documents/2026/report.pdf",

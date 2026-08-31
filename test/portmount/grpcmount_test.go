@@ -21,20 +21,8 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// The fourth transport. Everything in this file is the same claim mount_test.go
-// makes for the three HTTP bindings, extended to a protocol that is not HTTP —
-// which is the only thing that has ever measured [[D-045]]'s sentence about the
-// shared half being transport-neutral.
-//
-// The HTTP arms compare body bytes; this one compares documents and statuses,
-// because a gRPC response is a proto message and its map fields have no wire
-// order. What is compared unchanged is the thing with teeth: the command the
-// binding handed the service.
-
 const grpcResource = "Widget"
 
-// grpcServe runs one handler on an in-process server and answers a client that
-// calls it by full method name.
 func grpcServe(t *testing.T, desc *grpc.ServiceDesc) *grpcClient {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
@@ -88,27 +76,11 @@ func grpcDoc(t *testing.T, raw string) *structpb.Struct {
 	return st
 }
 
-// ---------------------------------------------------------------------------
-
-// grpcCall is one request in the vocabulary of the fourth transport, beside the
-// HTTP spelling of the same thing.
 type grpcCall struct {
 	method  string
 	request string
 }
 
-// TestTheSameServiceMountsOnAllFourTransports is this phase's control case.
-//
-// One port.Service value; four transports; the same *command* recorded by all
-// four, the same entity document, and the same violation list. The command is
-// the assertion with teeth: equal answers would pass for four bindings that
-// reached the service by different routes, and the moment one of them
-// re-derives a rule the service owns — narrows a count itself, coerces a key
-// differently, clears a field before handing it over — the recorded command
-// diverges and this fails naming the offender.
-//
-// Verified the way [[D-045]] records: putting NarrowForCount back into one
-// transport makes the recorded command diverge and this test names which one.
 func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, target, body string
@@ -151,8 +123,6 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// The three HTTP bindings first, so a divergence among them is
-			// reported by the test that is about them.
 			var (
 				want      []command
 				wantCalls []repoCall
@@ -173,7 +143,6 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 				}
 			}
 
-			// And the fourth.
 			service := newRecorder()
 			c := grpcServe(t, crudgrpc.Serving(service).Desc(grpcResource))
 			out, st := c.call(tc.grpc.method, grpcDoc(t, tc.grpc.request))
@@ -188,9 +157,6 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 				t.Fatalf("under crudgrpc the application called the repository with %+v and under HTTP with %+v", service.repository.calls, wantCalls)
 			}
 
-			// The documents agree, which is what makes the answer the same API
-			// rather than the same plumbing. Compared as documents and not as
-			// bytes: a proto map has no wire order.
 			if got, want := out.AsMap(), documentOf(t, body); !reflect.DeepEqual(got, want) {
 				t.Fatalf("crudgrpc answered %v and the HTTP bindings answered %v", got, want)
 			}
@@ -198,16 +164,6 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 	}
 }
 
-// commandsOf renders the commands as the document they carry.
-//
-// The gRPC arm is compared this way and the three HTTP ones with DeepEqual,
-// and the difference is not a weakening. query.ParseQuery leaves an empty
-// Sorts{} where the JSON decoder leaves nil, so the query-string front door and
-// the document front door already disagree about slice headers — between two
-// *HTTP* bindings, before gRPC existed. What a command says is the thing this
-// test is about, and every field of query.Request is omitempty, so two
-// documents that say the same thing render the same and two that differ in any
-// value still differ here.
 func commandsOf(t *testing.T, cmds []command) string {
 	t.Helper()
 	raw, err := json.Marshal(cmds)
@@ -217,9 +173,6 @@ func commandsOf(t *testing.T, cmds []command) string {
 	return string(raw)
 }
 
-// documentOf reads an HTTP body as the document a gRPC Struct would carry, so
-// the two can be compared at all. Numbers on both sides are float64, which is
-// what encoding/json and google.protobuf.Value both produce.
 func documentOf(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	var doc map[string]any
@@ -229,9 +182,6 @@ func documentOf(t *testing.T, raw []byte) map[string]any {
 	return doc
 }
 
-// [[D-050]]'s control extended to the fourth transport: the generated hop is
-// wired the same way by every binding, so the same violation names the same
-// client key wherever it is mounted.
 func TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports(t *testing.T) {
 	fault := func() error {
 		return errs.Conflict().Code(errs.CodeUnique).
@@ -250,11 +200,6 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports(t *testing.T)
 		t.Fatalf("crudgrpc rendered the field as %q, want the key the client sent", got)
 	}
 
-	// The control. Mounted with Serving — Identity, no map — the same violation
-	// has nothing to translate it, and this transport has no raw-body fallback
-	// behind the declared hops, so the client is handed the model's own field
-	// name back. Without this the assertion above passes for a binding that
-	// never wired the hop at all.
 	plain := newRecorder()
 	plain.repository.err = fault()
 	c2 := grpcServe(t, crudgrpc.Serving(plain).Desc(grpcResource))
@@ -267,7 +212,6 @@ func TestAGeneratedResourceResolvesTheSameFieldOnAllFourTransports(t *testing.T)
 	}
 }
 
-// grpcFieldOf reads the dotted field path out of the first field violation.
 func grpcFieldOf(t *testing.T, st *status.Status) string {
 	t.Helper()
 	for _, d := range st.Details() {
@@ -284,9 +228,6 @@ func grpcFieldOf(t *testing.T, st *status.Status) string {
 	return ""
 }
 
-// One code, spelled the same on both transports. A client that speaks HTTP and
-// gRPC branches on one table, which is what `ROADMAP-errors.md` §11 asks of a
-// stable machine code.
 func TestTheSameCodeIsSpelledTheSameOnBothTransports(t *testing.T) {
 	fault := func() error {
 		return errs.Conflict().Code(errs.CodeUnique).
@@ -311,9 +252,7 @@ func TestTheSameCodeIsSpelledTheSameOnBothTransports(t *testing.T) {
 	if envelopeCode != reason {
 		t.Fatalf("the envelope says error_code %q and the status detail says reason %q", envelopeCode, reason)
 	}
-	// The control: the literal spelling, so an implementation that
-	// UPPER_SNAKE_CASEs one side fails here rather than passing a check that
-	// both are non-empty.
+
 	if envelopeCode != "unique" {
 		t.Fatalf("both transports agree on %q, and the code this library declares is %q", envelopeCode, "unique")
 	}
@@ -348,8 +287,6 @@ func grpcReasonOf(t *testing.T, st *status.Status) string {
 	return ""
 }
 
-// A malformed request is the same class on both transports, and neither says
-// anything a client cannot act on.
 func TestARefusalIsTheSameClassOnBothTransports(t *testing.T) {
 	for _, tc := range []struct {
 		name, target, request string
@@ -384,7 +321,7 @@ func TestARefusalIsTheSameClassOnBothTransports(t *testing.T) {
 			if st.Code() != tc.wantCode {
 				t.Fatalf("crudgrpc answered %s, want %s", st.Code(), tc.wantCode)
 			}
-			// Neither says anything internal, and both say something.
+
 			if st.Message() == "" {
 				t.Fatal("the status carries no message")
 			}

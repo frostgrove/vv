@@ -27,7 +27,6 @@ type UserUpdate struct {
 	Age   crud.Opt[int]
 }
 
-// A model without generated columns, to exercise the no-refresh paths.
 type Doc struct {
 	ID    string `db:"id,pk"`
 	Title string `db:"title"`
@@ -37,8 +36,6 @@ type DocUpdate struct {
 	Title *string
 }
 
-// MySQL's LastInsertId is int64 even when the schema's generated key is
-// unsigned. The row scanner, not Schema.SetID, owns that driver conversion.
 type UnsignedUser struct {
 	ID   uint   `db:"id,pk,auto"`
 	Name string `db:"name"`
@@ -200,9 +197,6 @@ func TestGetAllIsUnpaged(t *testing.T) {
 	}
 }
 
-// DISTINCT is a keyword in front of a column list, so it cannot reuse the
-// prebuilt SELECT — and a request that asks for it without asking for a
-// projection is the ordinary case, not the exotic one.
 func TestDistinctWithoutAProjectionStillNamesItsColumns(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	if _, err := Users.Bind(rec).GetAll(context.Background(), crud.Distinct()); err != nil {
@@ -212,12 +206,6 @@ func TestDistinctWithoutAProjectionStillNamesItsColumns(t *testing.T) {
 		`SELECT DISTINCT "id", "email", "name", "age", "tenant_id", "created_at" FROM "users"`)
 }
 
-// Select normally keeps the primary key, because a row a client cannot address
-// is not much use. Under DISTINCT that same key is fatal: it is unique, so every
-// row stays distinct from every other and the keyword removes nothing.
-// `?distinct=1&select=name` used to answer one row per user instead of one row
-// per name. TestDistinctActuallyRemovesDuplicateRows in the integration suite
-// counts the rows; this pins the statement that can produce them.
 func TestDistinctProjectsOnlyWhatWasSelected(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	if _, err := Users.Bind(rec).GetAll(context.Background(),
@@ -230,10 +218,6 @@ func TestDistinctProjectsOnlyWhatWasSelected(t *testing.T) {
 	wantSQL(t, rec.Last().SQL, `SELECT DISTINCT "email" FROM "users"`)
 }
 
-// The same reasoning, from the other end: a preload needs the key to attach the
-// second statement's rows to the first statement's models, and a DISTINCT
-// projection has none. Answering with unattached relations, or quietly putting
-// the key back, would both be worse than saying so.
 func TestDistinctRefusesAPreloadItCannotAttach(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 
@@ -345,7 +329,7 @@ func TestSaveOnMySQLUsesLastInsertID(t *testing.T) {
 	}
 	wantSQL(t, mustSQL(t, rec, 0).SQL,
 		"INSERT INTO `users` (`email`, `name`, `age`, `tenant_id`) VALUES (?, ?, ?, ?)")
-	// created_at is `generated`, so MySQL has to read the row back.
+
 	wantSQL(t, mustSQL(t, rec, 1).SQL,
 		"SELECT `id`, `email`, `name`, `age`, `tenant_id`, `created_at` FROM `users` WHERE `id` = ? LIMIT 1")
 	if saved.ID != 77 {
@@ -376,10 +360,6 @@ func TestSaveOnMySQLLetsTheScannerAssignAnUnsignedGeneratedID(t *testing.T) {
 	}
 }
 
-// Save promises the model comes back describing the row. PostgreSQL keeps that
-// promise with RETURNING; a dialect without it has to go and read the row, or
-// the caller is left holding whatever they passed in — including the values an
-// upsert's conflict clause refused to write.
 func TestSaveOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 	rec := crudtest.MySQL().
 		ExecResult(crud.Result{RowsAffected: 1}).
@@ -412,12 +392,12 @@ func TestSaveRequiresAssignedKeyWhenNotGenerated(t *testing.T) {
 
 func TestUpdateWritesOnlyChangedFields(t *testing.T) {
 	rec := crudtest.Postgres().Push(
-		crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)),  // load
-		crudtest.Rows(userRow(1, "a@b.c", "Anna", 30, 7)), // returning
+		crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)),
+		crudtest.Rows(userRow(1, "a@b.c", "Anna", 30, 7)),
 	)
 	u, err := Users.Bind(rec).Update(context.Background(), 1, UserUpdate{
-		Email: ptr("a@b.c"), // unchanged — must not be written
-		Name:  ptr("Anna"),  // changed
+		Email: ptr("a@b.c"),
+		Name:  ptr("Anna"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -451,9 +431,6 @@ func TestUpdateWithNothingToDoSkipsTheWrite(t *testing.T) {
 	}
 }
 
-// Options that shape a response must not shape the internal row used to decide
-// a mutation. The filter remains a security boundary; everything else below is
-// intentionally hostile to a one-row, full-model diff.
 func TestUpdateUsesAFullMutationReadAndKeepsOnlyItsNarrowing(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)))
 
@@ -517,7 +494,6 @@ func TestMutationReadPreservesExplicitAndTransactionalLocks(t *testing.T) {
 }
 
 func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
-	// Undefined: age is left alone.
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)),
 		crudtest.Rows(userRow(1, "a@b.c", "Anna", 30, 7)),
@@ -529,7 +505,6 @@ func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
 		t.Fatalf("undefined Opt leaked into the statement: %s", set)
 	}
 
-	// Explicit null: age is set to NULL.
 	rec = crudtest.Postgres().Push(
 		crudtest.Rows(userRow(1, "a@b.c", "Ann", 30, 7)),
 		crudtest.Rows(userRow(1, "a@b.c", "Ann", nil, 7)),
@@ -548,7 +523,6 @@ func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
 		t.Fatalf("age = %v, want null", u.Age)
 	}
 
-	// Setting a null column to a value is also a change.
 	rec = crudtest.Postgres().Push(
 		crudtest.Rows(userRow(1, "a@b.c", "Ann", nil, 7)),
 		crudtest.Rows(userRow(1, "a@b.c", "Ann", 41, 7)),
@@ -561,15 +535,12 @@ func TestUpdateDistinguishesUndefinedFromNull(t *testing.T) {
 	}
 }
 
-// The same on the update path: without RETURNING the row is read back rather
-// than patched in memory, so what the caller receives is what the table holds —
-// triggers, defaults and all.
 func TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 	rec := crudtest.MySQL().
 		ExecResult(crud.Result{RowsAffected: 1}).
 		Push(
-			crudtest.Rows([]any{"abc", "old"}),           // load
-			crudtest.Rows([]any{"abc", "NEW (trimmed)"}), // read back
+			crudtest.Rows([]any{"abc", "old"}),
+			crudtest.Rows([]any{"abc", "NEW (trimmed)"}),
 		)
 
 	d, err := Docs.Bind(rec).Update(context.Background(), "abc", DocUpdate{Title: ptr("new")})
@@ -586,24 +557,20 @@ func TestUpdateOnADialectWithoutRETURNINGReadsTheRowBack(t *testing.T) {
 	}
 }
 
-// A row deleted between the load and the write is gone, and Update has to say
-// so on every engine. RETURNING reports it for free; without RETURNING nothing
-// but the read-back can tell "no such row" from MySQL's "nothing to do", and
-// the answer used to be a fabricated model with err == nil.
 func TestUpdateOfARowThatVanishedIsNotFoundOnEveryDialect(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		rec  *crudtest.Recorder
 	}{
 		{"postgres", crudtest.Postgres().Push(
-			crudtest.Rows([]any{"abc", "old"}), // load
-			crudtest.Rows(),                    // the UPDATE ... RETURNING matches nothing
+			crudtest.Rows([]any{"abc", "old"}),
+			crudtest.Rows(),
 		)},
 		{"mysql", crudtest.MySQL().
 			ExecResult(crud.Result{RowsAffected: 0}).
 			Push(
-				crudtest.Rows([]any{"abc", "old"}), // load
-				crudtest.Rows(),                    // the read-back finds nothing
+				crudtest.Rows([]any{"abc", "old"}),
+				crudtest.Rows(),
 			)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

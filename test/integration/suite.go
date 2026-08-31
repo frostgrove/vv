@@ -14,10 +14,9 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/specs"
 )
 
-// Target is one driver bound to one database.
 type Target struct {
 	Name   string
-	DB     string // "postgres" or "mysql"
+	DB     string
 	Source crud.Source
 }
 
@@ -30,7 +29,6 @@ func (this Target) reset(t *testing.T) {
 	}
 }
 
-// RunSuite is the conformance suite. Every driver runs exactly this.
 func RunSuite(t *testing.T, tg Target) {
 	ctx := context.Background()
 	repository := Users.Bind(tg.Source)
@@ -94,7 +92,7 @@ func RunSuite(t *testing.T, tg Target) {
 		created := u.CreatedAt
 
 		u.Name = "After"
-		u.TenantID = 99 // immutable: must not be written on conflict
+		u.TenantID = 99
 		saved, err = repository.Save(ctx, &u)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +133,7 @@ func RunSuite(t *testing.T, tg Target) {
 		u = saved
 
 		got, err := repository.Update(ctx, u.ID, UserUpdate{
-			Email: ptr("u@x.io"), // same value — no-op
+			Email: ptr("u@x.io"),
 			Name:  ptr("Anna"),
 		})
 		if err != nil {
@@ -161,7 +159,6 @@ func RunSuite(t *testing.T, tg Target) {
 		}
 		u = saved
 
-		// Undefined: age survives.
 		got, err := repository.Update(ctx, u.ID, UserUpdate{Name: ptr("N2")})
 		if err != nil {
 			t.Fatal(err)
@@ -170,7 +167,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("undefined Opt cleared the column: %v", got.Age)
 		}
 
-		// Explicit null: age is cleared.
 		got, err = repository.Update(ctx, u.ID, UserUpdate{Age: crud.Null[int]()})
 		if err != nil {
 			t.Fatal(err)
@@ -179,7 +175,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("age = %v, want NULL", got.Age)
 		}
 
-		// And back to a value.
 		got, err = repository.Update(ctx, u.ID, UserUpdate{Age: crud.Set(21)})
 		if err != nil {
 			t.Fatal(err)
@@ -217,7 +212,6 @@ func RunSuite(t *testing.T, tg Target) {
 		tg.reset(t)
 		seed(t, repository, 6)
 
-		// The filtered write: one statement for "everybody over 22".
 		n, err := repository.UpdateAll(ctx, UserUpdate{Active: ptr(false)}, crud.Where(crud.Gt("Age", 22)))
 		if err != nil {
 			t.Fatal(err)
@@ -233,8 +227,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("%d rows are inactive, want 3: the filter reached rows it should not have", off)
 		}
 
-		// Undefined stays undefined, and a null Opt still means NULL — the two
-		// rules Update lives by, on a write with no row to diff against.
 		if _, err := repository.UpdateAll(ctx, UserUpdate{Age: crud.Null[int]()}, crud.Where(crud.Eq("Email", "user-00@x.io"))); err != nil {
 			t.Fatal(err)
 		}
@@ -249,19 +241,14 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("an undefined DTO field changed the row: name = %q", got[0].Name)
 		}
 
-		// A DTO that defines nothing is not a request to rewrite the table.
 		if n, err := repository.UpdateAll(ctx, UserUpdate{}); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v: an empty DTO must write nothing", n, err)
 		}
 
-		// Matching nothing is not an error; it is a count of zero.
 		if n, err := repository.UpdateAll(ctx, UserUpdate{Name: ptr("x")}, crud.Where(crud.Eq("Email", "nobody@x.io"))); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
 
-		// The engines disagree about what "affected" counts — PostgreSQL reports
-		// the rows it matched, MySQL the rows whose values actually changed — so
-		// what is pinned here is the row count in the table, not the number.
 		if _, err := repository.UpdateAll(ctx, UserUpdate{Name: ptr("all the same")}); err != nil {
 			t.Fatal(err)
 		}
@@ -300,7 +287,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("last page = %+v", pageOf(last))
 		}
 
-		// SkipTotal answers HasNext without a COUNT.
 		probe, err := repository.Get(ctx, crud.Page(1), crud.Limit(10), crud.SkipTotal())
 		if err != nil {
 			t.Fatal(err)
@@ -349,12 +335,7 @@ func RunSuite(t *testing.T, tg Target) {
 			{"true", crud.True(), 10},
 			{"raw", crud.Raw("age > ?", 25), 4},
 
-			// The rest of the constructors. They were unit-render-only, which
-			// proves the statement and not the answer: a LIKE pattern that no
-			// engine interprets the way the renderer assumed, or a column-to-
-			// column comparison that one dialect will not quote, produces
-			// perfectly good SQL and the wrong rows.
-			{"lte", crud.Lte("Age", 22), 2}, // 21 and 22; user-00's age was nulled above
+			{"lte", crud.Lte("Age", 22), 2},
 			{"gte", crud.Gte("Age", 27), 3},
 			{"like", crud.Like("Email", "user-0_@x.io"), 10},
 			{"not like", crud.NotLike("Email", "%-01@%"), 9},
@@ -418,7 +399,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 
-		// Deleting rows that are already gone is not an error.
 		if n, err := repository.Delete(ctx, users[0].ID); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v", n, err)
 		}
@@ -462,7 +442,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("err = %v, want ErrNotUnique", err)
 		}
 
-		// The literal criteria-builder form has to agree with the metamodel one.
 		byBuilder := specs.Of[User](func(r specs.Root[User], cb specs.Builder) crud.Predicate {
 			return cb.And(
 				cb.GreaterThanOrEqualTo(r.Get("Age"), 25),
@@ -493,11 +472,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("exists = %v err = %v", ok, err)
 		}
 
-		// The rest of the metamodel and the rest of the criteria builder, each
-		// against the same ten rows. Rendering them is not the same as running
-		// them: a pattern the engine reads differently, or a column-to-column
-		// comparison one dialect will not quote, is perfectly good SQL and the
-		// wrong answer.
 		for _, tc := range []struct {
 			name string
 			spec specs.Specification[User]
@@ -570,7 +544,6 @@ func RunSuite(t *testing.T, tg Target) {
 			})
 		}
 
-		// Attr.Asc is a sort term, so its proof is the order that comes back.
 		byAge, err := sp.FindAll(ctx, User_.Active.Eq(true), crud.SortBy(User_.Age.Asc()))
 		if err != nil {
 			t.Fatal(err)
@@ -579,7 +552,6 @@ func RunSuite(t *testing.T, tg Target) {
 			t.Fatalf("the first row is %v, want the youngest", byAge[0].Age)
 		}
 
-		// UpdateBy is the filtered write, addressed by specification.
 		n, err := sp.UpdateBy(ctx, User_.Age.Gte(28), UserUpdate{Name: ptr("senior")})
 		if err != nil {
 			t.Fatal(err)
@@ -590,7 +562,7 @@ func RunSuite(t *testing.T, tg Target) {
 		if seniors, err := sp.CountBy(ctx, User_.Name.Eq("senior")); err != nil || seniors != 2 {
 			t.Fatalf("count = %d err = %v", seniors, err)
 		}
-		// And an empty specification is refused rather than applied to the table.
+
 		if _, err := sp.UpdateBy(ctx, specs.Where[User](nil), UserUpdate{Name: ptr("everyone")}); !errors.Is(err, specs.ErrUnboundedUpdate) {
 			t.Fatalf("err = %v, want ErrUnboundedUpdate", err)
 		}
@@ -604,7 +576,6 @@ func RunSuite(t *testing.T, tg Target) {
 		tg.reset(t)
 		gated := Users.Bind(tg.Source, security.Gate(security.ScopeField[User, int64]("TenantID", tenantOf)))
 
-		// Two tenants, three rows.
 		for _, u := range []User{
 			{TenantID: 1, Email: "t1-a@x.io", Name: "A", Active: true},
 			{TenantID: 1, Email: "t1-b@x.io", Name: "B", Active: true},
@@ -642,17 +613,16 @@ func RunSuite(t *testing.T, tg Target) {
 		if n, err := gated.Delete(mine, foreignID); err != nil || n != 0 {
 			t.Fatalf("n = %d err = %v: a foreign row must not be deletable", n, err)
 		}
-		// The row is untouched.
+
 		if _, err := repository.GetByID(ctx, foreignID); err != nil {
 			t.Fatalf("the foreign row is gone: %v", err)
 		}
 
-		// Writing into another tenant is refused.
 		sneaky := User{TenantID: 2, Email: "sneak@x.io", Name: "S"}
 		if _, err := gated.Save(mine, &sneaky); !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("err = %v, want ErrForbidden", err)
 		}
-		// Writing into my own is fine.
+
 		ok := User{TenantID: 1, Email: "ok@x.io", Name: "OK"}
 		if _, err := gated.Save(mine, &ok); err != nil {
 			t.Fatal(err)
@@ -708,8 +678,6 @@ func RunSuite(t *testing.T, tg Target) {
 	t.Run("NestedTransactionJoins", func(t *testing.T) {
 		tg.reset(t)
 		err := repository.Tx(ctx, func(ctx context.Context) error {
-			// A second Tx on a context that already carries one must join it
-			// rather than open a competing transaction.
 			return repository.Tx(ctx, func(ctx context.Context) error {
 				u := User{TenantID: 1, Email: "nested@x.io", Name: "n"}
 				_, err := repository.Save(ctx, &u)
@@ -725,13 +693,10 @@ func RunSuite(t *testing.T, tg Target) {
 	})
 }
 
-// byCriteria is specs.Of with the type parameter filled in, so the table above
-// reads as a list of criteria expressions rather than of generic instantiations.
 func byCriteria(f func(specs.Root[User], specs.Builder) crud.Predicate) specs.Specification[User] {
 	return specs.Of[User](f)
 }
 
-// seed inserts n users with predictable emails, names and ages 20..20+n.
 func seed(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], n int) []User {
 	t.Helper()
 	ctx := context.Background()
@@ -744,9 +709,7 @@ func seed(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], n int) [
 			Age:      crud.Set(20 + i),
 			Active:   true,
 		}
-		// The stored row and not the one handed in: Save answers what the
-		// database has — the generated key above all — and never changes its
-		// argument. Appending u would seed every later assertion with id 0.
+
 		stored, err := repository.Save(ctx, &u)
 		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
@@ -765,7 +728,6 @@ func mustID(t *testing.T, repository *crud.Repo[User, int64, UserUpdate], email 
 	return got[0].ID
 }
 
-// pageOf renders the pager without the items, for readable failures.
 func pageOf(p crud.PaginatedResponse[User]) string {
 	return fmt.Sprintf("items=%d page=%d limit=%d total=%d pages=%d next=%v prev=%v",
 		len(p.Items), p.Page, p.Limit, p.Total, p.TotalPages, p.HasNext, p.HasPrev)
@@ -785,13 +747,6 @@ func tenantOf(ctx context.Context) (any, error) {
 	return t, nil
 }
 
-// The error envelope as a client actually sees it.
-//
-// Not crudhttp.Envelope: errs.Violation writes error_code through a
-// hand-written MarshalJSON and declares no UnmarshalJSON, so decoding a
-// response back through the library's own types silently yields zero values.
-// A test that did that would pass against any body, which is the one thing
-// these tests must not do.
 type wireEnvelope struct {
 	Type    string `json:"type"`
 	Partial bool   `json:"partial"`

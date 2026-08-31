@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// CredentialUpdate is the partial-update DTO for Credential.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type CredentialUpdate struct {
 	SubjectType *string    `json:"subjectType,omitempty"`
 	SubjectID   *uuid.UUID `json:"subjectID,omitempty"`
@@ -23,7 +20,6 @@ type CredentialUpdate struct {
 	SecretHash  *string    `json:"secretHash,omitempty"`
 }
 
-// CredentialAttrs is the generated metamodel shape for Credential.
 type CredentialAttrs struct {
 	ID          specs.Attr[Credential, uuid.UUID]
 	SubjectType specs.Str[Credential]
@@ -35,32 +31,22 @@ type CredentialAttrs struct {
 	UpdatedAt   specs.Cmp[Credential, time.Time]
 }
 
-// Credential_ is the metamodel of Credential: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Credential_ = specs.Metamodel[Credential, CredentialAttrs]()
 
-// CredentialRepo is the typed repository for Credential.
 type CredentialRepo = crud.Repo[Credential, uuid.UUID, CredentialUpdate]
 
-// CredentialRepository describes Credential independently of a database driver.
-// Bind it through NewCredentialRepository with the application's datasource.
 var CredentialRepository = sqlrepo.Define[Credential, uuid.UUID, CredentialUpdate]("")
 
-// NewCredentialRepository binds CredentialRepository to src.
 func NewCredentialRepository(src crud.Source) *CredentialRepo {
 	return CredentialRepository.Bind(src)
 }
 
-// PermissionUpdate is the partial-update DTO for Permission.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type PermissionUpdate struct {
 	Code   *string `json:"code,omitempty"`
 	Name   *string `json:"name,omitempty"`
 	Module *string `json:"module,omitempty"`
 }
 
-// PermissionAttrs is the generated metamodel shape for Permission.
 type PermissionAttrs struct {
 	ID        specs.Attr[Permission, uuid.UUID]
 	Code      specs.Str[Permission]
@@ -69,31 +55,21 @@ type PermissionAttrs struct {
 	CreatedAt specs.Cmp[Permission, time.Time]
 }
 
-// Permission_ is the metamodel of Permission: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Permission_ = specs.Metamodel[Permission, PermissionAttrs]()
 
-// PermissionRepo is the typed repository for Permission.
 type PermissionRepo = crud.Repo[Permission, uuid.UUID, PermissionUpdate]
 
-// PermissionRepository describes Permission independently of a database driver.
-// Bind it through NewPermissionRepository with the application's datasource.
 var PermissionRepository = sqlrepo.Define[Permission, uuid.UUID, PermissionUpdate]("")
 
-// NewPermissionRepository binds PermissionRepository to src.
 func NewPermissionRepository(src crud.Source) *PermissionRepo {
 	return PermissionRepository.Bind(src)
 }
 
-// RoleUpdate is the partial-update DTO for Role.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type RoleUpdate struct {
 	Slug *string `json:"slug,omitempty"`
 	Name *string `json:"name,omitempty"`
 }
 
-// RolePermissionsAttrs reaches Role through Permissions.
 type RolePermissionsAttrs struct {
 	specs.Rel[Role, Permission]
 	ID        specs.Attr[Role, uuid.UUID]
@@ -103,7 +79,6 @@ type RolePermissionsAttrs struct {
 	CreatedAt specs.Cmp[Role, time.Time]
 }
 
-// RoleAttrs is the generated metamodel shape for Role.
 type RoleAttrs struct {
 	ID          specs.Attr[Role, uuid.UUID]
 	Slug        specs.Str[Role]
@@ -113,56 +88,37 @@ type RoleAttrs struct {
 	Permissions RolePermissionsAttrs
 }
 
-// Role_ is the metamodel of Role: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Role_ = specs.Metamodel[Role, RoleAttrs]()
 
-// RoleRepo is the typed repository for Role.
 type RoleRepo = crud.Repo[Role, uuid.UUID, RoleUpdate]
 
-// RoleRepository describes Role independently of a database driver.
-// Bind it through NewRoleRepository with the application's datasource.
 var RoleRepository = sqlrepo.Define[Role, uuid.UUID, RoleUpdate]("")
 
-// NewRoleRepository binds RoleRepository to src.
 func NewRoleRepository(src crud.Source) *RoleRepo {
 	return RoleRepository.Bind(src)
 }
 
-// RolePermissionUpdate is the partial-update DTO for RolePermission.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type RolePermissionUpdate struct {
 	RoleID       *uuid.UUID `json:"roleID,omitempty"`
 	PermissionID *uuid.UUID `json:"permissionID,omitempty"`
 }
 
-// RolePermissionAttrs is the generated metamodel shape for RolePermission.
 type RolePermissionAttrs struct {
 	ID           specs.Attr[RolePermission, uuid.UUID]
 	RoleID       specs.Attr[RolePermission, uuid.UUID]
 	PermissionID specs.Attr[RolePermission, uuid.UUID]
 }
 
-// RolePermission_ is the metamodel of RolePermission: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var RolePermission_ = specs.Metamodel[RolePermission, RolePermissionAttrs]()
 
-// RolePermissionRepo is the typed repository for RolePermission.
 type RolePermissionRepo = crud.Repo[RolePermission, uuid.UUID, RolePermissionUpdate]
 
-// RolePermissionRepository describes RolePermission independently of a database driver.
-// Bind it through NewRolePermissionRepository with the application's datasource.
 var RolePermissionRepository = sqlrepo.Define[RolePermission, uuid.UUID, RolePermissionUpdate]("")
 
-// NewRolePermissionRepository binds RolePermissionRepository to src.
 func NewRolePermissionRepository(src crud.Source) *RolePermissionRepo {
 	return RolePermissionRepository.Bind(src)
 }
 
-// SessionUpdate is the partial-update DTO for Session.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type SessionUpdate struct {
 	SubjectType   *string              `json:"subjectType,omitempty"`
 	SubjectID     *uuid.UUID           `json:"subjectID,omitempty"`
@@ -175,7 +131,6 @@ type SessionUpdate struct {
 	RevokedReason *string              `json:"revokedReason,omitempty"`
 }
 
-// SessionAttrs is the generated metamodel shape for Session.
 type SessionAttrs struct {
 	ID            specs.Attr[Session, uuid.UUID]
 	SubjectType   specs.Str[Session]
@@ -190,31 +145,21 @@ type SessionAttrs struct {
 	RevokedReason specs.Str[Session]
 }
 
-// Session_ is the metamodel of Session: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var Session_ = specs.Metamodel[Session, SessionAttrs]()
 
-// SessionRepo is the typed repository for Session.
 type SessionRepo = crud.Repo[Session, uuid.UUID, SessionUpdate]
 
-// SessionRepository describes Session independently of a database driver.
-// Bind it through NewSessionRepository with the application's datasource.
 var SessionRepository = sqlrepo.Define[Session, uuid.UUID, SessionUpdate]("")
 
-// NewSessionRepository binds SessionRepository to src.
 func NewSessionRepository(src crud.Source) *SessionRepo {
 	return SessionRepository.Bind(src)
 }
 
-// SubjectDefaultRoleUpdate is the partial-update DTO for SubjectDefaultRole.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type SubjectDefaultRoleUpdate struct {
 	SubjectType *string    `json:"subjectType,omitempty"`
 	RoleID      *uuid.UUID `json:"roleID,omitempty"`
 }
 
-// SubjectDefaultRoleRoleAttrs reaches SubjectDefaultRole through Role.
 type SubjectDefaultRoleRoleAttrs struct {
 	specs.Rel[SubjectDefaultRole, Role]
 	ID        specs.Attr[SubjectDefaultRole, uuid.UUID]
@@ -224,7 +169,6 @@ type SubjectDefaultRoleRoleAttrs struct {
 	CreatedAt specs.Cmp[SubjectDefaultRole, time.Time]
 }
 
-// SubjectDefaultRoleAttrs is the generated metamodel shape for SubjectDefaultRole.
 type SubjectDefaultRoleAttrs struct {
 	ID          specs.Attr[SubjectDefaultRole, uuid.UUID]
 	SubjectType specs.Str[SubjectDefaultRole]
@@ -233,32 +177,22 @@ type SubjectDefaultRoleAttrs struct {
 	Role        SubjectDefaultRoleRoleAttrs
 }
 
-// SubjectDefaultRole_ is the metamodel of SubjectDefaultRole: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var SubjectDefaultRole_ = specs.Metamodel[SubjectDefaultRole, SubjectDefaultRoleAttrs]()
 
-// SubjectDefaultRoleRepo is the typed repository for SubjectDefaultRole.
 type SubjectDefaultRoleRepo = crud.Repo[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]
 
-// SubjectDefaultRoleRepository describes SubjectDefaultRole independently of a database driver.
-// Bind it through NewSubjectDefaultRoleRepository with the application's datasource.
 var SubjectDefaultRoleRepository = sqlrepo.Define[SubjectDefaultRole, uuid.UUID, SubjectDefaultRoleUpdate]("")
 
-// NewSubjectDefaultRoleRepository binds SubjectDefaultRoleRepository to src.
 func NewSubjectDefaultRoleRepository(src crud.Source) *SubjectDefaultRoleRepo {
 	return SubjectDefaultRoleRepository.Bind(src)
 }
 
-// SubjectPermissionUpdate is the partial-update DTO for SubjectPermission.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type SubjectPermissionUpdate struct {
 	SubjectType  *string    `json:"subjectType,omitempty"`
 	SubjectID    *uuid.UUID `json:"subjectID,omitempty"`
 	PermissionID *uuid.UUID `json:"permissionID,omitempty"`
 }
 
-// SubjectPermissionPermissionAttrs reaches SubjectPermission through Permission.
 type SubjectPermissionPermissionAttrs struct {
 	specs.Rel[SubjectPermission, Permission]
 	ID        specs.Attr[SubjectPermission, uuid.UUID]
@@ -268,7 +202,6 @@ type SubjectPermissionPermissionAttrs struct {
 	CreatedAt specs.Cmp[SubjectPermission, time.Time]
 }
 
-// SubjectPermissionAttrs is the generated metamodel shape for SubjectPermission.
 type SubjectPermissionAttrs struct {
 	ID           specs.Attr[SubjectPermission, uuid.UUID]
 	SubjectType  specs.Str[SubjectPermission]
@@ -278,32 +211,22 @@ type SubjectPermissionAttrs struct {
 	Permission   SubjectPermissionPermissionAttrs
 }
 
-// SubjectPermission_ is the metamodel of SubjectPermission: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var SubjectPermission_ = specs.Metamodel[SubjectPermission, SubjectPermissionAttrs]()
 
-// SubjectPermissionRepo is the typed repository for SubjectPermission.
 type SubjectPermissionRepo = crud.Repo[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]
 
-// SubjectPermissionRepository describes SubjectPermission independently of a database driver.
-// Bind it through NewSubjectPermissionRepository with the application's datasource.
 var SubjectPermissionRepository = sqlrepo.Define[SubjectPermission, uuid.UUID, SubjectPermissionUpdate]("")
 
-// NewSubjectPermissionRepository binds SubjectPermissionRepository to src.
 func NewSubjectPermissionRepository(src crud.Source) *SubjectPermissionRepo {
 	return SubjectPermissionRepository.Bind(src)
 }
 
-// SubjectRoleUpdate is the partial-update DTO for SubjectRole.
-// A pointer field is optional; a utils.Opt field is optional and nullable,
-// so an absent key, an explicit null and a value stay three different things.
 type SubjectRoleUpdate struct {
 	SubjectType *string    `json:"subjectType,omitempty"`
 	SubjectID   *uuid.UUID `json:"subjectID,omitempty"`
 	RoleID      *uuid.UUID `json:"roleID,omitempty"`
 }
 
-// SubjectRoleRoleAttrs reaches SubjectRole through Role.
 type SubjectRoleRoleAttrs struct {
 	specs.Rel[SubjectRole, Role]
 	ID        specs.Attr[SubjectRole, uuid.UUID]
@@ -313,7 +236,6 @@ type SubjectRoleRoleAttrs struct {
 	CreatedAt specs.Cmp[SubjectRole, time.Time]
 }
 
-// SubjectRoleAttrs is the generated metamodel shape for SubjectRole.
 type SubjectRoleAttrs struct {
 	ID          specs.Attr[SubjectRole, uuid.UUID]
 	SubjectType specs.Str[SubjectRole]
@@ -323,27 +245,16 @@ type SubjectRoleAttrs struct {
 	Role        SubjectRoleRoleAttrs
 }
 
-// SubjectRole_ is the metamodel of SubjectRole: typed, path-aware field references.
-// It is validated against the model at package initialisation.
 var SubjectRole_ = specs.Metamodel[SubjectRole, SubjectRoleAttrs]()
 
-// SubjectRoleRepo is the typed repository for SubjectRole.
 type SubjectRoleRepo = crud.Repo[SubjectRole, uuid.UUID, SubjectRoleUpdate]
 
-// SubjectRoleRepository describes SubjectRole independently of a database driver.
-// Bind it through NewSubjectRoleRepository with the application's datasource.
 var SubjectRoleRepository = sqlrepo.Define[SubjectRole, uuid.UUID, SubjectRoleUpdate]("")
 
-// NewSubjectRoleRepository binds SubjectRoleRepository to src.
 func NewSubjectRoleRepository(src crud.Source) *SubjectRoleRepo {
 	return SubjectRoleRepository.Bind(src)
 }
 
-// A writable column the update DTO does not name refuses to start, rather than
-// becoming a column updates silently cannot reach ([[D-050]]). The generator
-// read the model's source text and this reads the compiled struct, so the two
-// can drift apart — and this is what says so when they do, with nothing
-// regenerated.
 func init() {
 	port.MustCoverUpdate[Credential, CredentialUpdate]()
 	port.MustCoverUpdate[Permission, PermissionUpdate]()

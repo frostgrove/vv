@@ -55,11 +55,6 @@ type ArticleUpdate struct {
 var (
 	Articles = sqlrepo.Define[Article, int64, ArticleUpdate]("articles")
 
-	// exports is the configuration of an endpoint that serves whole result
-	// sets. It exists because unpaged is off by default and most tests here are
-	// about something else entirely — a preload, a sort, a coercion — and turn
-	// pagination off only so the assertion is about one list rather than a page
-	// of one.
 	exports = &query.Config{AllowUnpaged: true, AllowDistinct: true}
 	_       = sqlrepo.Define[Author, int64, struct{}]("authors")
 	_       = sqlrepo.Define[Comment, int64, struct{}]("comments")
@@ -68,7 +63,6 @@ var (
 
 const cols = `"id", "author_id", "title", "body", "views", "published_at", "created_at"`
 
-// run compiles a JSON query document and returns the SQL the repository built.
 func run(t *testing.T, doc string, config *query.Config) (string, []any) {
 	t.Helper()
 	var request query.Request
@@ -154,8 +148,6 @@ func TestFlatFilters(t *testing.T) {
 	}
 }
 
-// Values are decoded into the column's Go type, not left as float64 — that is
-// what keeps an int column comparing against an int.
 func TestValuesAreTypedByColumn(t *testing.T) {
 	_, args := run(t, `{"filter":{"views":{"gte":100}}}`, nil)
 	if _, ok := args[0].(int); !ok {
@@ -173,7 +165,7 @@ func TestValuesAreTypedByColumn(t *testing.T) {
 	if !got.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
 		t.Fatalf("createdAt = %v", got)
 	}
-	// A date-only string is accepted too.
+
 	_, args = run(t, `{"filter":{"createdAt":{"gte":"2026-01-02"}}}`, nil)
 	if _, ok := args[0].(time.Time); !ok {
 		t.Fatalf("date-only bound as %T", args[0])
@@ -194,8 +186,6 @@ func TestLogicalComposition(t *testing.T) {
 	}
 }
 
-// Nested paths become correlated EXISTS subqueries rather than joins, so a
-// to-many filter cannot multiply the result set or corrupt the count.
 func TestNestedFilters(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -224,8 +214,6 @@ func TestNestedFilters(t *testing.T) {
 	}
 }
 
-// Sorting through a to-one relation is a scalar subquery; through a to-many it
-// has no single value and is refused.
 func TestNestedSort(t *testing.T) {
 	sql, _ := run(t, `{"sort":["-author.name","title"],"limit":10}`, nil)
 	want := `ORDER BY (SELECT rx1."name" FROM "authors" AS rx1 WHERE rx1."id" = "articles"."author_id" LIMIT 1) DESC, ` +
@@ -249,8 +237,6 @@ func TestNestedSort(t *testing.T) {
 }
 
 func TestSearchIsParenthesised(t *testing.T) {
-	// The classic trap: an OR of search terms must not escape the surrounding
-	// AND. The AST parenthesises it, so it cannot.
 	sql, args := run(t, `{"filter":{"views":{"gt":5}},"search":"go","searchFields":["title","body"]}`, nil)
 	want := `("views" > $1 AND (LOWER("title") LIKE LOWER($2) ESCAPE '\' OR LOWER("body") LIKE LOWER($3) ESCAPE '\'))`
 	if got := where(sql); got != want {
@@ -260,7 +246,6 @@ func TestSearchIsParenthesised(t *testing.T) {
 		t.Fatalf("args = %v", args)
 	}
 
-	// With no field list, every text column joins the OR.
 	sql, _ = run(t, `{"search":"go"}`, nil)
 	if got := where(sql); got != `(LOWER("title") LIKE LOWER($1) ESCAPE '\' OR LOWER("body") LIKE LOWER($2) ESCAPE '\')` {
 		t.Fatalf("where = %s", got)
@@ -296,7 +281,7 @@ func TestQueryStringForm(t *testing.T) {
 	if got := where(sql); got != want {
 		t.Fatalf("where = %s\nwant  = %s", got, want)
 	}
-	// The text value became an int, because the column is one.
+
 	if _, ok := args[0].(int); !ok {
 		t.Fatalf("views bound as %T, want int", args[0])
 	}
@@ -305,7 +290,6 @@ func TestQueryStringForm(t *testing.T) {
 	}
 }
 
-// A timestamp keeps its colons: only the first two separators are structural.
 func TestQueryStringTermKeepsColons(t *testing.T) {
 	term, err := query.ParseTerm("createdAt:gte:2026-01-02T03:04:05Z")
 	if err != nil {
@@ -322,10 +306,7 @@ func TestRejections(t *testing.T) {
 		{"unknown nested field", `{"filter":{"author.nope":1}}`, "unknown field"},
 		{"unknown relation", `{"filter":{"nope.name":1}}`, "unknown field"},
 		{"unknown operator", `{"filter":{"title":{"wat":1}}}`, "unknown operator"},
-		// "a whole number", not "int". The message is rendered, so a reflect.Type
-		// formatted into it puts the Go type of the consumer's own field on the
-		// wire ([[D-044]]). What survives is the field's name — the client's own
-		// path into its own document, which [[D-013]] requires.
+
 		{"bad value type", `{"filter":{"views":"lots"}}`, "expects a whole number"},
 		{"unknown sort", `{"sort":["nope"]}`, "unknown field"},
 		{"unknown preload", `{"preload":["nope"]}`, "unknown field"},
@@ -336,9 +317,6 @@ func TestRejections(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { mustFail(t, tc.doc, nil, tc.want) })
 	}
 
-	// The control on the wording above: no refusal in this table names a Go
-	// type. A reader can change one message without noticing what the phrasing
-	// was for, and this is what notices.
 	t.Run("no refusal names a Go type", func(t *testing.T) {
 		for _, doc := range []string{
 			`{"filter":{"views":"lots"}}`,
@@ -363,8 +341,6 @@ func TestRejections(t *testing.T) {
 	})
 }
 
-// An unknown path is a rejection, never a silently dropped clause — the
-// difference between a typo you notice and a filter that quietly does nothing.
 func TestUnknownFieldNeverReachesTheDatabase(t *testing.T) {
 	rec := crudtest.Postgres()
 	var request query.Request
@@ -390,7 +366,6 @@ func TestAllowLists(t *testing.T) {
 	mustFail(t, `{"sort":["views"]}`, config, "not sortable")
 	mustFail(t, `{"preload":["comments"]}`, config, "cannot be preloaded")
 
-	// The subtree wildcard lets nested paths through.
 	if sql, _ := run(t, `{"filter":{"comments.body":"x"}}`, config); !strings.Contains(sql, "comments") {
 		t.Fatalf("sql = %s", sql)
 	}
@@ -405,8 +380,6 @@ func TestLimitsAreEnforced(t *testing.T) {
 		&query.Config{MaxPreloads: 1}, "at most 1 relations")
 }
 
-// The document is order-insensitive but the SQL is not: keys are sorted so the
-// same request always produces the same statement.
 func TestDeterministicOutput(t *testing.T) {
 	doc := `{"filter":{"views":{"gte":1},"title":"a","author.name":"b"}}`
 	first, _ := run(t, doc, nil)

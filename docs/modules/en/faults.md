@@ -51,22 +51,24 @@ caused ([[UC-017]]).
 
 | Option | Does |
 |---|---|
-| `WithProbe(h)` | wire a handler onto the two single-row writes — `Save` and `Update` |
-| `WithProbeFor(op, h)` | wire one verb by name: `Save`, `SaveAll`, `Update`, `UpdateAll`, `Delete`, `DeleteAll` |
+| `WithProbe(h)` | wire a handler onto the three single-row writes — `Save`, `SaveOnly`, and `Update` |
+| `WithProbeFor(op, h)` | wire one supported verb by name: `Save`, `SaveOnly`, `SaveAll`, `InsertBatch`, or `Update` |
 | `WithProbeError(fn)` | where a probe failure goes. **It is advisory — log it, never render it** |
 | `WithSource(src)` | name the datasource the probe runs on. Only needed when this is not the innermost middleware |
 
 The batch verbs keep the cheap answer. A batch is where the cost multiplies and
-where a client is least likely to be a form, so `SaveAll` and the rest stay on
-`probe.Simple` until `WithProbeFor` says otherwise.
+where a client is least likely to be a form, so `SaveAll` and `InsertBatch` stay
+on `probe.Simple` until `WithProbeFor` says otherwise. An `InsertBatch` probe
+keeps its create-only contract even for assigned keys; it never tests an upsert.
 
-`WithProbe` sets two verbs at once and `WithProbeFor` sets one, so **the last
+`WithProbe` sets three verbs at once and `WithProbeFor` sets one, so **the last
 option wins** — put the narrower one second.
 
 ```go
 faults.Enrich[Doc, int64](
-    faults.WithProbe(probe.Full(cat)),                       // Save and Update
+    faults.WithProbe(probe.Full(cat)),                       // Save, SaveOnly, Update
     faults.WithProbeFor("SaveAll", probe.Full(cat)),         // …and batches too
+    faults.WithProbeFor("InsertBatch", probe.Full(cat)),     // …including native/portable inserts
 )
 ```
 

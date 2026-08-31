@@ -13,9 +13,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A scope is what makes a row invisible, and Delete used to be the one statement
-// with a WHERE clause that did not carry it. Through the HTTP handler that read
-// as: GET /:id answers 404 while DELETE /:id on the same row answers 200.
 func TestScopeReachesDeleteByID(t *testing.T) {
 	ctx := context.Background()
 
@@ -44,7 +41,6 @@ func TestScopeReachesDeleteByID(t *testing.T) {
 	}
 }
 
-// An unscoped repository must not grow a WHERE clause it never declared.
 func TestDeleteWithoutAScopeIsStillJustTheKey(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 1})
 	if _, err := Users.Bind(rec).Delete(context.Background(), 42); err != nil {
@@ -53,15 +49,9 @@ func TestDeleteWithoutAScopeIsStillJustTheKey(t *testing.T) {
 	wantSQL(t, rec.Last().SQL, `DELETE FROM "users" WHERE "id" = $1`)
 }
 
-// ---------------------------------------------------------------------------
-// paging
-
 var cappedUsers = sqlrepo.Define[User, int64, UserUpdate]("users",
 	sqlrepo.DefaultLimit(20), sqlrepo.MaxLimit(50))
 
-// MaxLimit is the repository declaring how much of the table one page may
-// return, and `?unpaged=true` is one flag on the wire. The flag used to win, so
-// the declared cap was skipped rather than applied and the whole table came back.
 func TestMaxLimitSurvivesEveryWayAPageCanBeAskedFor(t *testing.T) {
 	ctx := context.Background()
 
@@ -86,9 +76,6 @@ func TestMaxLimitSurvivesEveryWayAPageCanBeAskedFor(t *testing.T) {
 	}
 }
 
-// GetAll's contract is every matching row, and MaxLimit caps a page. Truncating
-// here would be worse than a slow query: the decorators that read a whole set in
-// order to check it would check the first fifty and let the rest through.
 func TestGetAllIsNotCappedByMaxLimit(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	if _, err := cappedUsers.Bind(rec).GetAll(context.Background()); err != nil {
@@ -99,9 +86,6 @@ func TestGetAllIsNotCappedByMaxLimit(t *testing.T) {
 	}
 }
 
-// SkipTotal means no COUNT ran, so the only number that is true is the size of
-// what came back. Deriving it from the offset invented one the client had
-// chosen: page 999 of an empty table reported 19960 results, over no rows.
 func TestSkipTotalReportsWhatWasFetchedAndNotTheOffset(t *testing.T) {
 	ctx := context.Background()
 
@@ -146,9 +130,6 @@ func TestSkipTotalDoesNotOverflowTheLargestLimit(t *testing.T) {
 	}
 }
 
-// A cursor is a link, not merely a serialised edge of the current result: it
-// must only be present when the page on that side actually exists. Otherwise a
-// one-page result advertises two requests that can only return an empty list.
 func TestCursorsOnlyAdvertiseExistingNeighbours(t *testing.T) {
 	ctx := context.Background()
 
@@ -225,9 +206,6 @@ func TestANullableSortNeverAdvertisesACursorItsNextRequestWouldRefuse(t *testing
 	}
 }
 
-// A page number is a client's number, multiplied by the page size, in an int.
-// Wrapping made the offset non-positive, SQL dropped it, and the caller was
-// handed page one wearing the page number they had asked for.
 func TestAPageNumberThatWouldOverflowAsksForAPagePastTheEnd(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(3)}))
 
@@ -243,16 +221,6 @@ func TestAPageNumberThatWouldOverflowAsksForAPagePastTheEnd(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// distinct
-
-// distinct, select and sort all arrive from the wire and all three can arrive
-// together. Both engines refuse a SELECT DISTINCT ordered by a column outside
-// the select list, and the two ways out of that are not equal: quietly adding
-// the column to the projection makes the statement run and the answer wrong —
-// the column that decides the order is also the column that tells the duplicate
-// rows apart, so nothing collapses any more — while refusing tells the caller
-// that the two things they asked for cannot both be true.
 func TestDistinctRefusesASortItCannotProject(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 
@@ -271,10 +239,6 @@ func TestDistinctRefusesASortItCannotProject(t *testing.T) {
 	}
 }
 
-// The repository's default sort is not something the caller asked for, so it
-// must not be able to turn `?distinct=1&select=name` into an error nobody can
-// avoid from the wire. It is dropped: a DISTINCT projection has no rows to put
-// in an order anyway, only values.
 func TestDistinctDropsADefaultSortItCannotProject(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	repository := sqlrepo.Define[User, int64, UserUpdate]("users",
@@ -286,10 +250,6 @@ func TestDistinctDropsADefaultSortItCannotProject(t *testing.T) {
 	wantSQL(t, rec.Last().SQL, `SELECT DISTINCT "name" FROM "users"`)
 }
 
-// The primary-key tiebreaker makes pages a stable partition of rows. A DISTINCT
-// projection has no rows to partition — and appending a unique column to the
-// ORDER BY would put it in the select list, which is what made DISTINCT a no-op
-// in the first place. So a paged DISTINCT goes without it.
 func TestAPagedDistinctDoesNotAppendThePrimaryKey(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(), crudtest.Rows([]any{int64(0)}))
 
@@ -301,9 +261,6 @@ func TestAPagedDistinctDoesNotAppendThePrimaryKey(t *testing.T) {
 		`SELECT DISTINCT "name" FROM "users" ORDER BY "name" ASC LIMIT 10`)
 }
 
-// A sort through a relation renders as a scalar subquery, which can never
-// appear in a select list. There is no statement to build, so say so instead of
-// sending one that will be refused.
 func TestDistinctRefusesASortThroughARelation(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 
@@ -321,12 +278,6 @@ func TestDistinctRefusesASortThroughARelation(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the tiebreaker
-
-// The primary-key tiebreaker is what makes paging over a non-unique sort stable.
-// UnstablePagination is the documented way to turn it off, so it has to actually
-// turn it off — and it must not touch the sort the caller asked for.
 func TestUnstablePaginationDropsTheTiebreaker(t *testing.T) {
 	ctx := context.Background()
 	loose := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.UnstablePagination())
@@ -342,7 +293,6 @@ func TestUnstablePaginationDropsTheTiebreaker(t *testing.T) {
 		t.Fatalf("the caller's own sort went missing: %s", rec.Last().SQL)
 	}
 
-	// And the default, for contrast: without the setting the tiebreaker is on.
 	rec = crudtest.Postgres().Push(crudtest.Rows())
 	if _, err := Users.Bind(rec).Get(ctx, crud.OrderBy(crud.Asc("Name")), crud.Limit(10)); err != nil {
 		t.Fatal(err)

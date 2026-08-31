@@ -15,7 +15,6 @@ import (
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
 )
 
-// GormUser is gorm's own view of the same table.
 type GormUser struct {
 	ID       int64 `gorm:"primaryKey"`
 	TenantID int64
@@ -27,7 +26,6 @@ type GormUser struct {
 
 func (GormUser) TableName() string { return "users" }
 
-// gormPGDialector reuses the shared *sql.DB, so gorm and vv pool together.
 func gormPGDialector() gorm.Dialector { return gormpg.New(gormpg.Config{Conn: pgDB}) }
 
 func openGorm(t *testing.T, d gorm.Dialector) *gorm.DB {
@@ -39,8 +37,6 @@ func openGorm(t *testing.T, d gorm.Dialector) *gorm.DB {
 	return database
 }
 
-// The suite runs on the *sql.DB gorm is pooling, so both libraries share one
-// connection pool.
 func TestGorm(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -61,8 +57,6 @@ func TestGorm(t *testing.T) {
 	}
 }
 
-// gorm owns the transaction. Inside db.Transaction, gorm swaps Statement.ConnPool
-// for the *sql.Tx, and that is exactly what crudsql.From wants.
 func TestGormSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -79,7 +73,7 @@ func TestGormSharedTransaction(t *testing.T) {
 		} else {
 			u = stored
 		}
-		// gorm sees the row vv wrote, in the same transaction.
+
 		var got GormUser
 		if err := tx.First(&got, u.ID).Error; err != nil {
 			return err
@@ -87,7 +81,7 @@ func TestGormSharedTransaction(t *testing.T) {
 		if got.Name != "ByVV" {
 			t.Errorf("gorm read back %q", got.Name)
 		}
-		// And vv sees gorm's write.
+
 		if err := tx.Create(&GormUser{TenantID: 1, Email: "by-gorm@x.io", Name: "ByGorm", Active: true}).Error; err != nil {
 			return err
 		}
@@ -113,7 +107,6 @@ func TestGormSharedTransaction(t *testing.T) {
 	}
 }
 
-// A gorm transaction that rolls back must take vv's writes with it.
 func TestGormRollbackTakesVVWithIt(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)

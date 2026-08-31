@@ -80,6 +80,7 @@ var Events = sqlrepo.DefineInSchema[Event, int64, EventUpdate](
 | `Save(ctx, *M)` | нет ключа → `INSERT`, есть ключ → `UPSERT`; возвращает новую сохранённую модель и не меняет аргумент |
 | `SaveOnly(ctx, *M)` | та же запись без результата-строки и без мутации аргумента |
 | `SaveAll(ctx, []*M)` | пакетный insert/upsert только на запись; модели не меняет |
+| `InsertBatch(ctx, []*M, opts...)` | типизированный bulk только insert/write; нативный при явно доступной capability, иначе переносимый |
 | `Update(ctx, id, dto, opts...)` | загрузить, сравнить, записать только изменившееся |
 | `UpdateAll(ctx, dto, opts...)` | один `UPDATE` по фильтру; возвращает число затронутых строк |
 | `Delete(ctx, ids...)` | возвращает, сколько строк исчезло |
@@ -102,11 +103,10 @@ var Events = sqlrepo.DefineInSchema[Event, int64, EventUpdate](
 `SaveOnly` выполняет только запись: не добавляет `RETURNING`, не читает модель
 и не меняет аргумент. Используйте его, когда сгенерированные значения не нужны.
 
-`SaveAll` тоже работает только на запись. На любом адаптере это `INSERT`: за
-bulk-copy драйвера библиотека не тянется — он идёт на собственном хэндле и
-вышел бы за пределы транзакции, которую открыл вызывающий. `COPY` из pgx
-доступен как `crud.BulkInserter` — для приложения, которое попросит его
-напрямую.
+`SaveAll` тоже работает только на запись и всегда использует обычный SQL. Он
+сохраняет семантику Save: назначенные ключи дают upsert, generated-ключи —
+insert. Нативный bulk выделен в отдельный метод, потому что PostgreSQL COPY не
+семантически равен INSERT для каждой возможности таблицы.
 
 Bind-бюджет диалекта учитывается автоматически. Помещающаяся пачка остаётся
 одним statement. Большая делится по границам строк в порядке вызова, причём все
@@ -114,6 +114,73 @@ Bind-бюджет диалекта учитывается автоматичес
 одну транзакцию, поэтому ошибка последнего не оставляет первый закоммиченным.
 Пачка с генерируемыми ключами остаётся write-only: `SaveAll` не добавляет
 `RETURNING` и не меняет модели ([[D-079]]).
+
+### InsertBatch — create-only нативный bulk
+
+```go
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
+```
+
+В отличие от `SaveAll`, `InsertBatch` никогда не делает upsert: строка с
+назначенным ключом остаётся insert и может дать conflict. Метод выводит точную
+таблицу, колонки и значения из immutable metadata, сохраняет Gate и
+fault-декораторы, подключается к ambient executor, не меняет модели и не читает
+generated-значения обратно.
+Gate один раз авторизует `Create` и инспектирует каждую входящую строку; scope-
+only policy без `Inspect` отказывает пачке, а не доверяет значениям, которые не
+может проверить. Fault enrichment сохраняет операцию `InsertBatch` и пути полей
+из classifier драйвера.
+
+Если разрешённый executor напрямую предоставляет `crud.UnsafeBulkInserter`
+и metadata даёт insert-колонки, repository выбирает его; crudpgx так
+предоставляет PostgreSQL COPY. Иначе используется тот же preflighted
+атомарный bind-budgeted `INSERT` как переносимый fallback. Capability discovery не
+угадывает, подходит ли COPY семантике таблицы: для RLS/rewrite rules, особого
+pgx encoding или требования обычной INSERT-семантики нужен явный opt-out:
+
+```go
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+
+var Users = sqlrepo.Define[User, int64, UserUpdate](
+    "users",
+    sqlrepo.PortableBatch(),
+)
+```
+
+Для этого write effect `SourceUnwrapper` не обходится. Неизвестный source
+wrapper поэтому выбирает переносимый SQL, если сам явно не реализует unsafe
+native forwarder. Его `Exec` видит прямой план из одного statement; chunked-план
+выполняется на transaction handle. Полный statement tracing должен находиться в
+driver/connector либо в явно инструментированных `Begin`/`Tx`. Ошибка
+сервера/encoding после начала native-вызова финальна; только before-I/O
+`ErrNoBulkInsertSupport` выбирает fallback, поэтому строки не повторяются после
+того, как сервер начал обрабатывать native-вызов.
+
+Миграция pre-release API: прежние driver-level `BulkInserter`, `CopyFrom` и
+`CopyFromTable` удалены. Application-код переходит на `Repo.InsertBatch`, а
+намеренная raw-работа с pgx — на явно unsafe API.
+
+### Raw-предикат и raw-statement — разные границы
+
+`crud.Raw(fragment, args...)` — это predicate-node внутри statement, который
+строит repository. Сам фрагмент не проходит field-validation, но repository
+по-прежнему владеет таблицей, добавляет permanent- и security scopes, разрешает
+ambient executor и запускает обычные fault hooks.
+
+Целый raw-statement обходит границу repository. Прямой `Exec` или `Query` на
+`Source`, полученном через `SourceOf`, выполняется на хэндле этого source и
+**не** разрешает executor, привязанный в `ctx`. Чтобы raw SQL подключился к той
+же транзакции, используйте явные context-aware escape hatches:
+
+```go
+result, err := crud.UnsafeExecFor(ctx, source, statement, args...)
+rows, err := crud.UnsafeQueryFor(ctx, source, query, args...)
+```
+
+Префикс `Unsafe` здесь буквальный: datasource/ambient-transaction routing
+сохраняется, но metadata, repository policy, validation и fault-декораторы
+обходятся. Бизнесовый SQL прячьте за методом repository; эти функции оставляйте
+для намеренных infrastructure-level statements.
 
 ### Update — это загрузка, сравнение, запись
 
@@ -149,6 +216,7 @@ Bind-бюджет диалекта учитывается автоматичес
 | `Scope(pred)` | предикат, добавляемый через AND к каждому чтению и каждой скоупленной записи |
 | `RelationScope(path, pred)` | то же самое, на другой стороне связи |
 | `SoftDelete(field)` | строки помечаются флагом, а не удаляются, и скрываются из каждого чтения |
+| `PortableBatch()` | оставлять каждый `InsertBatch` на обычном bind-budgeted SQL |
 | `UnstablePagination()` | убрать добавляемый к каждой сортировке tie-breaker по первичному ключу |
 | `IndependentTable()` | оставить дополнительную физическую таблицу модели локальной для этого blueprint |
 
@@ -344,11 +412,17 @@ rollback, и `fn` не может откатиться самостоятель�
 вложенности `Begin` даёт savepoint — нативно на pgx, через `SAVEPOINT` на
 `database/sql` ([[FL-009]]).
 
-`SaveAll` и `Delete(ids...)` используют то же правило, когда bind-бюджет требует
-нескольких statements. Они присоединяются к ambient-транзакции либо открывают
-одну; источник, который не может дать ни одну атомарную границу, возвращает
-`crud.ErrNoTxSupport` до первого чанка. Для одного statement лишняя транзакция
-не открывается.
+`SaveAll`, переносимый `InsertBatch` и `Delete(ids...)` используют то же
+правило, когда bind-бюджет требует нескольких statements. Они присоединяются к
+ambient-транзакции либо открывают одну; источник, который не может дать ни одну
+атомарную границу, возвращает `crud.ErrNoTxSupport` до первого чанка. Для одного
+statement лишняя транзакция не открывается. Нативный `InsertBatch` выполняется
+на точном разрешённом executor, поэтому pgx COPY подключается к той же
+ambient-транзакции, а не сбегает в pool.
+Привязанный non-transaction executor не является атомарной границей и не
+используется для chunked-плана: sqlrepo открывает транзакцию от своего source.
+Если connection-local state должен сохраниться между чанками, заранее начните и
+привяжите транзакцию либо привяжите repository к самому session source.
 
 ## Острые углы
 
@@ -368,9 +442,13 @@ rollback, и `fn` не может откатиться самостоятель�
   [crudtest](crudtest.md).
 - **Bind-лимиты проверяются до datasource.** `In` / `InAny` и остальные прямые
   Go-предикаты делят один statement-wide бюджет диалекта. Слишком большой
-  statement получает типизированный отказ схемы. `SaveAll` и `Delete(ids...)`
-  чанкуются, потому что их смысл сохраняется; произвольный предикат — нет
-  ([[D-079]]).
+  statement получает типизированный отказ схемы. `SaveAll`, переносимый
+  `InsertBatch` и `Delete(ids...)` чанкуются, потому что их смысл сохраняется;
+  произвольный предикат — нет ([[D-079]]).
+- **Пригодность COPY — это декларация, а не догадка.** Bare pgx-source
+  предоставляет нативный bulk по умолчанию. Для RLS/rewrite rules, особого
+  encoding или полной наблюдаемости statement middleware выбирайте per-call
+  `crud.PortableBatch()` либо blueprint `sqlrepo.PortableBatch()`.
 - **Регистрация таблицы типизирована.** `RegisterTable` принимает struct-модель,
   а не `*Model`, scalar или interface. Конфликтующее либо уже опубликованное
   имя получает явный отказ ([[D-080]]).

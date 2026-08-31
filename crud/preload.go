@@ -11,31 +11,17 @@ import (
 	"unsafe"
 )
 
-// DefaultPreloadDepth caps how deep a preload path may go. It exists because
-// preload paths usually arrive from an HTTP client, and `a.b.a.b.a.b…` should
-// not be able to turn one request into a dozen queries.
 const DefaultPreloadDepth = 5
 
-// preloadBatch is how many parent keys go into one IN (...) list.
 const preloadBatch = 900
 
-// PreloadSpec is one requested relation path, optionally narrowed.
 type PreloadSpec struct {
-	Path string   // "Comments" or "Comments.Author"
-	Opts []Option // resolved shape may contain only Filter, Sort and PreloadRows
+	Path string
+	Opts []Option
 
-	// MaxRows caps every relation hop in Path. It is separate from Opts so a
-	// request for Comments.Author cannot leave the potentially large Comments
-	// hop uncapped while only limiting Author. Zero leaves the direct repository
-	// preload uncapped.
 	MaxRows int
 }
 
-// Preload loads the named relations after the main query. Paths may be nested:
-//
-//	crud.Preload("Author", "Comments.Author")
-//
-// Each relation is fetched in one batched statement per level, never per row.
 func Preload(paths ...string) Option {
 	return func(o *Options) {
 		for _, p := range paths {
@@ -46,38 +32,23 @@ func Preload(paths ...string) Option {
 	}
 }
 
-// PreloadWhere loads a relation with options whose resolved shape contains only
-// Filter, Sort and PreloadRows. The ordinary spelling is Where plus OrderBy or
-// SortBy; a custom low-level Option remains valid when it writes only those
-// fields. PreloadRows is a refusal cap on every hop of a nested path, so an
-// intermediate relation cannot grow without bound. Every other resolved query
-// field is refused: pagination, projection, cursor, datasource, lock and nested
-// preload semantics do not survive this batched second-query boundary.
 func PreloadWhere(path string, options ...Option) Option {
 	return func(o *Options) {
 		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: options})
 	}
 }
 
-// PreloadCap is PreloadWhere with a materialisation ceiling. The cap applies
-// to every hop in a nested path: PreloadCap("Comments.Author", 100) refuses a
-// 101st Comment before it can make the nested Author query unbounded by the
-// parent relation. A cap is a refusal rather than pagination, so no parent is
-// handed a silently partial relation.
 func PreloadCap(path string, maxRows int, options ...Option) Option {
 	return func(o *Options) {
 		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: options, MaxRows: maxRows})
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the tree
-
 type preloadNode struct {
 	name     string
 	options  *Options
 	children []*preloadNode
-	whole    bool // some spec asked for this relation unnarrowed
+	whole    bool
 	maxRows  int
 }
 
@@ -92,8 +63,6 @@ func (this *preloadNode) child(name string) *preloadNode {
 	return c
 }
 
-// buildPreloadTree folds the flat paths into a tree, so "Comments" and
-// "Comments.Author" share a single query for the comments.
 func buildPreloadTree(meta *Meta, specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 	root := &preloadNode{}
 	for _, spec := range specs {
@@ -133,9 +102,6 @@ func buildPreloadTree(meta *Meta, specs []PreloadSpec, maxDepth int) (*preloadNo
 		for i, seg := range segs {
 			cur = cur.child(seg)
 			if i < len(segs)-1 {
-				// Loading a deeper hop necessarily materialises this prefix. With no
-				// options addressed to the prefix itself, that is a request for all
-				// prefix rows, not permission for another folded spec to narrow them.
 				cur.whole = true
 			}
 			if maxRows > 0 && (cur.maxRows == 0 || maxRows < cur.maxRows) {
@@ -151,12 +117,6 @@ func buildPreloadTree(meta *Meta, specs []PreloadSpec, maxDepth int) (*preloadNo
 			narrowed = !IsTautologyFor(target, resolved.Predicate())
 		}
 
-		// Folding two requests for the same path into one query is what makes
-		// "Comments" and "Comments.Author" share a statement. Folding their
-		// filters together is a different thing: a request that asked for all
-		// rows and for a subset would receive only the subset, with a 200 and no
-		// way to tell. The wider ask clears filters, while orthogonal ordering and
-		// refusal caps remain meaningful for the one shared query.
 		if !narrowed {
 			cur.whole = true
 		}
@@ -197,15 +157,6 @@ func clearWholePreloadFilters(node *preloadNode) {
 	}
 }
 
-// BuildPreloadOptions resolves the closed option contract used by
-// PreloadWhere. Filter, Sort and PreloadRows are the only supported fields.
-// Every other non-zero Options field is refused, including fields added in a
-// future release, so an ordinary query option can never become a silent no-op
-// merely because it was nested under a preload.
-//
-// PreloadWhere calls this automatically during execution. The exported form is
-// for adapters and other low-level integrations that need to validate and
-// serialise the same contract without running option closures twice.
 func BuildPreloadOptions(path string, options ...Option) (*Options, error) {
 	return buildPreloadOptions("preload", path, options...)
 }
@@ -267,14 +218,6 @@ func unsupportedPreloadOption(field string) string {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// execution
-
-// RunPreloads fills the relation fields of items (a []M or []*M) according to
-// specs. It issues one query per relation per level, batching parent keys.
-//
-// scopes narrows the related tables; it may be nil, and then a preload reads
-// its table raw — which is the whole reason a repository has to pass its own.
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, specs []PreloadSpec, maxDepth int, scopes *RelationScopes) error {
 	if len(specs) == 0 {
 		return nil
@@ -294,7 +237,6 @@ func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any
 	return p.level(m, rows, tree.children, "")
 }
 
-// addressableRows turns a []M or []*M into pointers to each element's struct.
 func addressableRows(v reflect.Value) []reflect.Value {
 	if !v.IsValid() || v.Kind() != reflect.Slice {
 		return nil
@@ -346,9 +288,6 @@ func (this *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadN
 	return nil
 }
 
-// load fetches one relation for a whole set of parents and wires the results
-// into their fields, returning the loaded children so nested preloads can
-// continue from them.
 func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, options *Options, maxRows int, path string) ([]reflect.Value, error) {
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
@@ -362,7 +301,6 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 		o.PreloadRows = maxRows
 	}
 
-	// Collect the distinct parent keys.
 	keys := make([]any, 0, len(parents))
 	seen := make(map[any]struct{}, len(parents))
 	parentKeys := make([]any, len(parents))
@@ -376,7 +314,7 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 		if err != nil {
 			return nil, err
 		}
-		if canonical.key == nil { // a Scanner/Valuer NULL cannot own a related row.
+		if canonical.key == nil {
 			continue
 		}
 		parentKeys[i], parentHasKey[i] = canonical.key, true
@@ -391,7 +329,6 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 		return nil, nil
 	}
 
-	// index maps a parent key to the children that belong to it.
 	index := make(map[any][]reflect.Value, len(keys))
 	total := 0
 	for chunk := range slices(keys, preloadBatch) {
@@ -409,9 +346,6 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 		}
 	}
 
-	// Collect the children *as stored*, not the temporaries: a []T relation
-	// copies each row into the parent's slice, and a nested preload has to
-	// write into that copy or it writes into nothing.
 	stored := make([]reflect.Value, 0, total)
 	for i, parent := range parents {
 		var kids []reflect.Value
@@ -433,23 +367,18 @@ func (this *preloader) assignEmpty(rel *Relation, parents []reflect.Value) {
 	}
 }
 
-// fetch runs one batched SELECT and returns the scanned children together with
-// the parent key each one belongs to.
 func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, keys []any, o *Options, path string, remaining int) ([]reflect.Value, []any, error) {
 	var (
 		b       *SQL
-		ownerAt = -1 // index of the owner-key column in the result, -1 = derive from the row
+		ownerAt = -1
 	)
-	// The narrowing the parent's repository declared for this relation. It is
-	// ANDed in here, not left to the caller: a preload is a second statement
-	// against a second table, so the parent query's WHERE does nothing for it.
+
 	extra := this.scopes.At(path, target)
 	if sub := o.Predicate(); sub != nil {
 		extra = And(extra, sub)
 	}
 
 	if rel.Kind == ManyToMany {
-		// SELECT j.<owner>, t.<cols> FROM target t JOIN join j ON j.ref = t.pk
 		b = NewSQL(this.d, target).Alias("rxt").RelationScopes(this.scopes.under(path))
 		b.Raw("SELECT rxj.").Ident(rel.JoinLocal).Raw(", ")
 		for i, f := range target.Fields {
@@ -477,18 +406,10 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 	}
 	sort := o.Sort
 	if len(sort) == 0 && rel.Kind == HasOne {
-		// A has_one promises at most one row, and only a unique index on the
-		// foreign key can keep that promise. When the schema does not, the
-		// statement matches several rows and the first one wins — so without an
-		// ORDER BY the winner is whichever row the engine felt like returning,
-		// and it can differ between two runs of the same query. The schema is
-		// what is wrong there, but the answer still has to be the same twice.
 		sort = []Order{Asc(target.PK.Name)}
 	}
 	b.OrderBy(sort)
-	// Fetch one row beyond the remaining budget. It is enough to make the
-	// failure exact while keeping the driver from materialising an unbounded
-	// child table merely to discover the cap was crossed.
+
 	if remaining >= 0 {
 		limit := remaining
 		if limit < math.MaxInt {
@@ -523,9 +444,6 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 		}
 		var ownerKey reflect.Value
 		if ownerAt >= 0 {
-			// The join table's owner column holds the parent's key, so it has
-			// to be read as the parent's type: the index is looked up with the
-			// parent's own value, and int32(1) does not equal int64(1).
 			ownerKey = reflect.New(local.Type)
 			dest = append([]any{ownerKey.Interface()}, dest...)
 		}
@@ -553,10 +471,6 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 	return out, owners, nil
 }
 
-// assignRelation writes the loaded children into the parent's relation field,
-// adapting to whether it is declared as T, *T, []T or []*T. It returns pointers
-// to the children *where they now live*, which is what a nested preload has to
-// keep filling.
 func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) ([]reflect.Value, error) {
 	destination := rel.fieldValue(parent.UnsafePointer())
 
@@ -586,11 +500,6 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 		return nil, nil
 	}
 	if rel.Type.Kind() == reflect.Pointer {
-		// Every parent gets its own copy. Two parents pointing at the same row
-		// used to share one object, so a presenter that rewrote a field on one
-		// rewrote it on all its siblings — and which spelling of the relation
-		// field was used decided whether that happened, because the value form
-		// below has always copied.
 		own := reflect.New(rel.Type.Elem())
 		own.Elem().Set(kids[0].Elem())
 		destination.Set(own)
@@ -600,24 +509,11 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 	return []reflect.Value{destination.Addr()}, nil
 }
 
-// preloadMapKey normalises a value so it can index a map, and — the part that earns
-// its keep — so that the two ends of a relation agree on it. A parent's key and
-// a child's foreign key are separate struct fields that need not share a Go
-// type: int32(1) and int64(1) are different map keys but the same row, and a
-// mismatch here is silent, because the children simply end up filed under a key
-// no parent looks for. So every integer key is widened, every string kind is
-// flattened, and byte slices become strings the way a text driver hands them
-// over. Unsupported values fail rather than sharing reflect.Value.String's
-// generic "<T Value>" spelling with every other value of the same type.
 type canonicalRelationKey struct {
 	key  any
 	bind any
 }
 
-// canonicalPreloadKey resolves a custom driver value exactly once and derives
-// both identities from that one immutable snapshot. A stateful Valuer must not
-// be able to make the IN predicate ask for one value while the child index is
-// keyed under another.
 func canonicalPreloadKey(model string, field *Field, value any) (canonicalRelationKey, error) {
 	value = unwrapRelationKeyValue(relationKeyValue(value))
 	if value == nil {
@@ -639,9 +535,6 @@ func canonicalPreloadKey(model string, field *Field, value any) (canonicalRelati
 	}
 	bind := value
 	if isByteSliceType(rv.Type()) {
-		// Snapshot before deriving either representation. A Valuer may return a
-		// buffer it owns and mutate later; the driver argument and map identity
-		// still have to describe the same observed value.
 		bytes := make([]byte, rv.Len())
 		copy(bytes, rv.Bytes())
 		return canonicalRelationKey{key: string(bytes), bind: bytes}, nil
@@ -651,9 +544,6 @@ func canonicalPreloadKey(model string, field *Field, value any) (canonicalRelati
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		key = rv.Int()
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		// Signed and unsigned meet here too: a key that fits in an int64 is
-		// keyed as one, and a key that does not could never have equalled a
-		// signed one anyway.
 		if u := rv.Uint(); u <= math.MaxInt64 {
 			key = int64(u)
 		} else {
@@ -665,20 +555,16 @@ func canonicalPreloadKey(model string, field *Field, value any) (canonicalRelati
 		key = rv.Bool()
 	case reflect.Float32, reflect.Float64:
 		value := rv.Float()
-		// SQL compares both zero spellings equal. NaN equality is dialect- and
-		// column-dependent, so guessing one shared identity could attach a row
-		// to the wrong parent; refuse that actual value instead.
+
 		if value == 0 {
-			value = 0 // canonicalise -0 to +0.
+			value = 0
 		} else if math.IsNaN(value) {
 			return canonicalRelationKey{}, preloadKeyRuntimeError(model, field,
 				fmt.Errorf("NaN relation keys do not have portable SQL equality"))
 		}
 		key = preloadFloatKey(math.Float64bits(value))
 	}
-	// Value.Comparable, unlike Type.Comparable, follows interface members. A
-	// struct{ Part any } is statically comparable but is not a valid map key
-	// when Part currently contains []byte.
+
 	if !rv.Comparable() {
 		return canonicalRelationKey{}, preloadKeyRuntimeError(model, field, fmt.Errorf(
 			"relation key value of type %T is not comparable; use []byte or a driver.Valuer with a stable scalar value", value))
@@ -696,11 +582,6 @@ func preloadMapKey(model string, field *Field, value any) (any, error) {
 	return canonical.key, nil
 }
 
-// unwrapRelationKeyValue mirrors database/sql's pointer conversion but stops
-// at a pointer that is itself a driver.Valuer. relationKeyValue has already
-// unwrapped the framework's explicit Opt state; relation fields can still be
-// **T or Opt[*T], and using the remaining pointer address as a map key would
-// make separately scanned equal values look different.
 func unwrapRelationKeyValue(value any) any {
 	if value == nil {
 		return nil
@@ -708,9 +589,6 @@ func unwrapRelationKeyValue(value any) any {
 	rv := reflect.ValueOf(value)
 	for rv.Kind() == reflect.Pointer {
 		if rv.Type().Implements(valuerType) {
-			// Match database/sql's nil-pointer exception for the wrapper Go
-			// generates when a value-receiver Valuer is used through *T. A
-			// genuinely pointer-only Valuer still gets to define nil itself.
 			if rv.IsNil() && rv.Type().Elem().Implements(valuerType) {
 				return nil
 			}
@@ -745,10 +623,6 @@ func validRelationDriverValue(value any) bool {
 	}
 }
 
-// relationDriverValue supports both value and pointer-only Valuer methods. The
-// latter receives an addressable copy because a field placed in an interface is
-// not addressable. A broken custom implementation becomes a declaration/use
-// error instead of a process panic in the preloader.
 func relationDriverValue(value any) (resolved any, used bool, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -789,7 +663,6 @@ func preloadKeyRuntimeError(model string, field *Field, err error) error {
 	return fmt.Errorf("crud: canonicalise relation key %s.%s: %w", model, name, err)
 }
 
-// slices yields consecutive chunks of at most n elements.
 func slices[T any](s []T, n int) func(func([]T) bool) {
 	return func(yield func([]T) bool) {
 		for len(s) > 0 {

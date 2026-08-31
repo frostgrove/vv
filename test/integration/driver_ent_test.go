@@ -17,16 +17,11 @@ import (
 	entuser "github.com/frostgrove/vv/test/ent/user"
 )
 
-// With the sql/execquery feature, *ent.Client and *ent.Tx both expose
-// ExecContext/QueryContext — which is exactly crudsql.Queryer. So vv can
-// run straight on ent's driver, transactions included.
 var (
 	_ crudsql.Queryer = (*ent.Client)(nil)
 	_ crudsql.Queryer = (*ent.Tx)(nil)
 )
 
-// entSource is the whole ent adapter: wrap the client, name the dialect, and
-// hand ent's own transaction back as a crud.Tx.
 type entSource struct {
 	crudsql.Executor
 	client *ent.Client
@@ -43,11 +38,6 @@ func (this entSource) Begin(ctx context.Context) (crud.Tx, error) {
 	return entTx{Executor: crudsql.From(tx), tx: tx}, nil
 }
 
-// entTx deliberately has no Begin: ent owns the transaction, and the *sql.Tx
-// that a SAVEPOINT would have to be issued on is behind it. So an ent-backed
-// transaction is not a crud.Beginner at the second level. It can be joined via
-// the canonical source, but cannot itself be used as one; D-082 refuses that
-// spelling before a callback can run.
 type entTx struct {
 	crudsql.Executor
 	tx *ent.Tx
@@ -64,8 +54,6 @@ func entClient(database *sql.DB, d string) *ent.Client {
 	return ent.NewClient(ent.Driver(entsql.OpenDB(d, database)))
 }
 
-// The full conformance suite, executed entirely through ent's driver and ent's
-// transactions.
 func TestEnt(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -81,8 +69,6 @@ func TestEnt(t *testing.T) {
 	}
 }
 
-// ent owns the transaction and the entity API; vv joins through the
-// context. One physical transaction, both libraries writing into it.
 func TestEntSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -98,7 +84,6 @@ func TestEntSharedTransaction(t *testing.T) {
 
 	txCtx := source.BindExecutor(ctx, tx)
 
-	// ent writes an entity.
 	byEnt, err := tx.User.Create().
 		SetTenantID(1).SetEmail("ent@x.io").SetName("ByEnt").SetAge(28).SetActive(true).
 		Save(ctx)
@@ -106,7 +91,6 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// vv sees it inside the transaction.
 	got, err := repository.GetByID(txCtx, byEnt.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +102,6 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatalf("age = %v", got.Age)
 	}
 
-	// vv writes, ent reads.
 	u := User{TenantID: 1, Email: "rx@x.io", Name: "ByVV", Active: true}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
 		t.Fatal(err)
@@ -133,7 +116,6 @@ func TestEntSharedTransaction(t *testing.T) {
 		t.Fatalf("ent read back %+v", back)
 	}
 
-	// vv's partial update is visible to ent.
 	if _, err := repository.Update(txCtx, byEnt.ID, UserUpdate{Name: ptr("Renamed"), Age: crud.Null[int]()}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +135,6 @@ func TestEntSharedTransaction(t *testing.T) {
 	}
 }
 
-// An ent rollback has to undo vv's writes as well.
 func TestEntRollback(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -177,11 +158,6 @@ func TestEntRollback(t *testing.T) {
 	}
 }
 
-// The limitation, stated as a test rather than only as a sentence in the guide:
-// inside an ent transaction there is no savepoint to open, because ent owns the
-// *sql.Tx a SAVEPOINT would have to be issued on. What still works is the shape
-// the library actually encourages — a nested Tx joins the one already running —
-// so the cost is bounded and worth writing down next to the twenty lines.
 func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -196,8 +172,7 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 		if _, ok := ex.(crud.Beginner); ok {
 			t.Error("an ent transaction now offers Begin; this test should be asserting savepoint semantics instead of their absence")
 		}
-		// Asking the transaction itself to act as a canonical source is now a
-		// typed wiring refusal. It cannot recover the pool repositories name.
+
 		called := false
 		err := crud.InTx(context.Background(), ex, func(context.Context) error {
 			called = true
@@ -207,8 +182,7 @@ func TestAnEntTransactionJoinsButCannotOpenASavepoint(t *testing.T) {
 		if !errors.As(err, &scoped) || scoped.Reason != crud.ExecutorScopeTransactionSource || called {
 			t.Errorf("err = %v called=%v, want transaction_source before callback", err, called)
 		}
-		// Joining, on the other hand, works: this is the second write in the
-		// same physical transaction.
+
 		return repository.Tx(ctx, func(ctx context.Context) error {
 			_, err := repository.Save(ctx, &User{TenantID: 1, Email: "ent-inner@x.io", Name: "inner"})
 

@@ -11,9 +11,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// payloads are the strings an attacker puts where a field name goes: statement
-// terminators, comment starters, quotes of both flavours, path traversal,
-// wildcards and control characters.
 var payloads = []string{
 	`id; DROP TABLE users`,
 	`id"; DROP TABLE users --`,
@@ -32,8 +29,6 @@ var payloads = []string{
 	`articles"."id`,
 }
 
-// quoted renders a payload as a JSON string, escapes and all, so the document
-// stays well-formed however hostile the payload is.
 func quoted(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -42,10 +37,6 @@ func quoted(s string) string {
 	return string(b)
 }
 
-// Anywhere the wire DSL takes the *name* of something — a column, a relation, a
-// sort key, an operator — the name is resolved against the schema. A payload
-// that resolves to nothing is a rejection, so there is no path from a request
-// to an identifier the model never declared.
 func TestPayloadsInEveryNamePositionAreRefused(t *testing.T) {
 	for _, position := range []struct {
 		name  string
@@ -85,10 +76,6 @@ func TestPayloadsInEveryNamePositionAreRefused(t *testing.T) {
 	}
 }
 
-// The schema resolves names ignoring separators, so `id--` is a spelling of
-// `ID` rather than a rejection. It is still the canonical column that reaches
-// the statement, which is why a payload that survives the lookup cannot carry
-// its punctuation in with it.
 func TestAPayloadThatFoldsOntoAColumnRendersThatColumn(t *testing.T) {
 	for _, spelling := range []string{"id--", "id-", "id __ ", "i-d"} {
 		doc := `{"filter":{` + quoted(spelling) + `:1},"sort":[` + quoted(spelling) + `]}`
@@ -111,8 +98,6 @@ func TestAPayloadThatFoldsOntoAColumnRendersThatColumn(t *testing.T) {
 	}
 }
 
-// A value, unlike a name, is the client's to choose — so it never becomes SQL
-// text. It is bound, whatever it says.
 func TestPayloadsInValuePositionsAreBoundNotWritten(t *testing.T) {
 	for _, payload := range payloads {
 		t.Run(quoted(payload), func(t *testing.T) {
@@ -144,8 +129,6 @@ func TestPayloadsInValuePositionsAreBoundNotWritten(t *testing.T) {
 	}
 }
 
-// A preload's filter reaches the database in a statement of its own, so the
-// rule has to hold there too — and that statement is the one no caller sees.
 func TestAPreloadsOwnFilterBindsItsValue(t *testing.T) {
 	const payload = `x'; DROP TABLE comments --`
 	rec := crudtest.Postgres().Push(
@@ -178,10 +161,6 @@ func TestAPreloadsOwnFilterBindsItsValue(t *testing.T) {
 	}
 }
 
-// The convenience patterns escape the wildcards a client sends, so a prefix
-// search cannot be turned into a full scan — or into a match on rows the
-// pattern was never meant to reach. `like` is the one operator documented to
-// take the pattern as written.
 func TestWildcardsInAPatternAreEscaped(t *testing.T) {
 	for _, tc := range []struct{ name, doc, want string }{
 		{"contains", `{"filter":{"title":{"contains":"100%"}}}`, `%100\%%`},
@@ -206,8 +185,6 @@ func TestWildcardsInAPatternAreEscaped(t *testing.T) {
 	}
 }
 
-// An allow-list is matched on the canonical path, so none of the spellings that
-// reach the same column reach it around the list.
 func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 	config := &query.Config{
 		Filterable:  []string{"Title"},
@@ -232,8 +209,7 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 			}
 		}
 	}
-	// A relation the list does not name is closed the same way, in every verb
-	// that can walk one.
+
 	for _, doc := range []string{
 		`{"filter":{"comments.body":"x"}}`,
 		`{"sort":["author.name"]}`,
@@ -246,9 +222,6 @@ func TestADeniedColumnStaysDeniedHoweverItIsSpelled(t *testing.T) {
 	}
 }
 
-// A preload's own filter is compiled against the related model, and the
-// allow-list is applied there too: a relation being preloadable does not make
-// its columns filterable.
 func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
 	config := &query.Config{Filterable: []string{"Title"}, Preloadable: []string{"Comments"}}
 	sql, _, err := tryDoc(t, `{"preload":["comments"]}`, config)
@@ -271,9 +244,6 @@ func TestAPreloadableRelationIsNotAFilterableOne(t *testing.T) {
 	}
 }
 
-// The search is confined to the columns the config names, whichever way the
-// request tries to widen it: an explicit field list, a nested path, or a
-// default list the config itself carries.
 func TestSearchCannotReachOutsideItsList(t *testing.T) {
 	config := &query.Config{Searchable: []string{"Title"}}
 	sql, args, err := tryDoc(t, `{"search":"go"}`, config)
@@ -294,8 +264,6 @@ func TestSearchCannotReachOutsideItsList(t *testing.T) {
 	}
 }
 
-// The document budgets hold at their defaults, not only when a config sets
-// them: an endpoint that passes nil is still bounded.
 func TestTheDefaultBudgetsBoundAnUnconfiguredEndpoint(t *testing.T) {
 	t.Run("conditions", func(t *testing.T) {
 		var b strings.Builder
@@ -355,9 +323,6 @@ func TestTheDefaultBudgetsBoundAnUnconfiguredEndpoint(t *testing.T) {
 	})
 }
 
-// The condition budget belongs to the document, not to each model in it. A
-// preload compiles against its own model, and if it also got its own allowance
-// a request could buy sixteen more filters by naming sixteen relations.
 func TestAPreloadSpendsTheDocumentsConditionBudget(t *testing.T) {
 	doc := `{"filter":{"title":"a"},"preload":[{"path":"comments","filter":{"approved":true}}]}`
 	if _, _, err := tryDoc(t, doc, &query.Config{MaxConditions: 2}); err != nil {
@@ -371,7 +336,6 @@ func TestAPreloadSpendsTheDocumentsConditionBudget(t *testing.T) {
 		t.Fatalf("error = %q, want the budget refusal", err)
 	}
 
-	// The same across two preloads, where neither one exceeds the budget alone.
 	two := `{"preload":[{"path":"comments","filter":{"approved":true}},{"path":"tags","filter":{"slug":"go"}}]}`
 	if _, _, err := tryDoc(t, two, &query.Config{MaxConditions: 2}); err != nil {
 		t.Fatalf("two preloads with one comparison each, at a budget of 2: %v", err)
@@ -381,19 +345,13 @@ func TestAPreloadSpendsTheDocumentsConditionBudget(t *testing.T) {
 	}
 }
 
-// A document nested past what encoding/json itself will parse has to come back
-// as a rejection. The recursive descent through the filter tree is the one
-// place a request could take the process down with it.
 func TestADocumentTooDeepToParseIsRejectedNotFatal(t *testing.T) {
 	for _, depth := range []int{100, 5_000, 50_000} {
 		raw := strings.Repeat(`{"not":`, depth) + `{"title":"a"}` + strings.Repeat(`}`, depth)
 
-		// The whole-document door: json.Unmarshal draws its own line.
 		var request query.Request
 		docErr := json.Unmarshal([]byte(`{"filter":`+raw+`}`), &request)
 
-		// And the query-string door, where the document is kept raw until the
-		// compiler walks it.
 		_, _, rawErr := tryReq(t, &query.Request{Filter: query.RawFilter(raw)}, nil)
 		if rawErr == nil {
 			t.Fatalf("a filter nested %d deep compiled", depth)
@@ -406,10 +364,6 @@ func TestADocumentTooDeepToParseIsRejectedNotFatal(t *testing.T) {
 	}
 }
 
-// Two clauses that mean different things must not be able to collide into one.
-// The filter, the flat terms and the search each become their own predicate,
-// and crud.Where ANDs them — so no amount of nesting in one can reach around
-// another.
 func TestOneClauseCannotEscapeAnother(t *testing.T) {
 	sql, args, err := tryDoc(t, `{
 		"filter": {"or": [{"title": "a"}, {"body": "b"}]},
@@ -427,8 +381,6 @@ func TestOneClauseCannotEscapeAnother(t *testing.T) {
 		t.Fatalf("args = %#v", args)
 	}
 
-	// The same for a negated group: NOT wraps the whole of what it was given,
-	// so a nested or cannot leak a branch out of it.
 	sql, _, err = tryDoc(t, `{"filter":{"not":{"or":[{"title":"a"},{"body":"b"}]},"views":1}}`, nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -439,10 +391,6 @@ func TestOneClauseCannotEscapeAnother(t *testing.T) {
 	}
 }
 
-// A rejected document compiles to nothing at all — not to the options it had
-// managed to build before the bad clause. A transport that logs the error and
-// carries on would otherwise run a request nobody wrote: the good half of a
-// filter, without the half that narrowed it.
 func TestARejectedDocumentCompilesToNoOptions(t *testing.T) {
 	for _, doc := range []string{
 		`{"filter":{"title":"a","nope":1}}`,

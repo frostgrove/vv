@@ -13,11 +13,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// ---------------------------------------------------------------------------
-// fixtures
-
-// widget has the two things a create request is not allowed to dictate: a key
-// the database generates, and a column it fills.
 type widget struct {
 	ID        int64      `db:"id,pk,auto" json:"id"`
 	Name      string     `db:"name" json:"name"`
@@ -51,8 +46,6 @@ type call struct {
 	options            *crud.Options
 }
 
-// fakeRepo records what the service asked for, so a test can assert the request
-// the service made rather than the SQL some database would have run.
 type fakeRepo struct {
 	calls   []call
 	deleted int64
@@ -128,8 +121,6 @@ func (this *fakeRepo) only(t *testing.T, method string) call {
 	return found[0]
 }
 
-// fakeService is a Service that is not the default one — what a generator will
-// write, and what the mount control mounts on three bindings.
 type fakeService struct {
 	*DefaultService[widget, int64, widgetUpdate]
 	paths errs.Resolver
@@ -137,8 +128,6 @@ type fakeService struct {
 
 func (this *fakeService) Paths() errs.Resolver { return this.paths }
 
-// mappingIn is a mapper that also declares its hop, which is the adapter's half
-// of the path chain.
 type mappingIn struct{}
 
 func (mappingIn) Model(_ context.Context, in widget) (widget, error) { return in, nil }
@@ -147,8 +136,6 @@ func (mappingIn) Resolve(p errs.Path) (errs.Path, bool) {
 	return append(errs.Path{errs.Named("payload")}, p...), true
 }
 
-// recordingHop is a resolver that says whether it ran, for asserting that a
-// pass-through hop does not stop the chain.
 type recordingHop struct {
 	prefix errs.Step
 	ran    bool
@@ -159,12 +146,6 @@ func (this *recordingHop) Resolve(p errs.Path) (errs.Path, bool) {
 	return append(errs.Path{this.prefix}, p...), true
 }
 
-// ---------------------------------------------------------------------------
-
-// The whole of the write orchestration in one place, in the order the rest of
-// the library documents. Every step is asserted against what the hook saw and
-// what the repository was handed, so a reordering shows up as a wrong value
-// rather than as a passing test.
 func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	t.Run("create clears the server-owned fields before the hook", func(t *testing.T) {
 		repository := &fakeRepo{}
@@ -214,8 +195,7 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		if seen.ID != 999 {
 			t.Fatalf("with AllowClientID the hook saw id %d, want the 999 the client sent — otherwise the subtest above proves nothing about ordering", seen.ID)
 		}
-		// The generated column is cleared either way: AllowClientID is about
-		// the key and nothing else.
+
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("AllowClientID let a forged %v through in a generated column", seen.CreatedAt)
 		}
@@ -295,9 +275,6 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 	})
 }
 
-// Removing nothing is two different answers, and which one depends on what was
-// asked for: one row that was not there is a miss, an empty set is an empty
-// set.
 func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 	t.Run("one row", func(t *testing.T) {
 		repository := &fakeRepo{deleted: 0}
@@ -306,8 +283,6 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 			t.Fatalf("deleting a row that was not there answered %v, want ErrNotFound", err)
 		}
 
-		// The control: a row that was there is not a miss, so the arm above is
-		// reading the count rather than always refusing.
 		repository = &fakeRepo{deleted: 1}
 		service = NewService[widget, int64, widgetUpdate](repository)
 		if n, err := service.Delete(context.Background(), DeleteCommand[int64]{ID: 7}); err != nil || n != 1 {
@@ -361,9 +336,6 @@ func TestRestoreIsASeparateApplicationUseCase(t *testing.T) {
 	}
 }
 
-// The reads narrow the query document before they compile it, and the caller's
-// options are appended afterwards so a scope ANDs with the client's filter
-// rather than replacing it ([[D-004]]).
 func TestTheReadsNarrowTheDocumentAndAppendTheCallersOptions(t *testing.T) {
 	tenant := crud.Where(crud.Eq("Price", 1))
 
@@ -481,8 +453,6 @@ func TestReadNarrowingDoesNotMutateARequestReusedForAList(t *testing.T) {
 	}
 }
 
-// A query config bounds what a client may ask for, and it is the service's
-// rather than the transport's — which is why Serving refuses the option.
 func TestWithQueryBoundsTheServiceAndNotTheTransport(t *testing.T) {
 	repository := &fakeRepo{}
 	config := &query.Config{Filterable: []string{"Name"}}
@@ -493,8 +463,6 @@ func TestWithQueryBoundsTheServiceAndNotTheTransport(t *testing.T) {
 		t.Fatal("a filter outside the allow-list was accepted")
 	}
 
-	// The control: the field that is on the list still works, so the refusal
-	// above is the allow-list and not a service that refuses everything.
 	request = &query.Request{Terms: []query.Term{{Path: "Name", Op: "eq", Values: query.Strings{"bolt"}}}}
 	if _, err := service.List(context.Background(), ListCommand{Query: request}); err != nil {
 		t.Fatalf("a filter on the allow-list was refused: %v", err)

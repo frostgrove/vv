@@ -1,7 +1,3 @@
-// Package crudtest provides an in-memory crud.Source that records the SQL a
-// repository produces and replays canned result sets back at it. It exists so
-// repository behaviour — statement shape, bind order, pagination arithmetic,
-// decorator composition — can be unit-tested without a database.
 package crudtest
 
 import (
@@ -19,41 +15,26 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Statement is one recorded call.
 type Statement struct {
 	SQL   string
 	Args  []any
-	Query bool // Query rather than Exec
+	Query bool
 }
 
 func (this Statement) String() string { return fmt.Sprintf("%s %v", this.SQL, this.Args) }
 
-// Result is a canned query response. Values are assigned to scan destinations
-// positionally, using database/sql-compatible conversions and honouring
-// sql.Scanner.
-//
-// Err and RowsErr are two different failures because the drivers this doubles
-// for report one failure in two places. Err is Query itself refusing, which is
-// database/sql's shape. RowsErr is pgx's: a statement the server refused arrives
-// as a live Rows that yields what it has and then answers Err. A double that
-// could only express the first cannot drive the arm a read has to end with, and
-// a loop that never asks reads a truncated schema as a complete one.
 type Result struct {
 	Rows    [][]any
 	Err     error
 	RowsErr error
 }
 
-// Rows builds a Result from row literals.
 func Rows(rows ...[]any) Result { return Result{Rows: rows} }
 
-// RowsFailing builds a Result that yields its rows and then reports err from
-// Rows.Err — the mid-stream failure, not the refusal Err carries.
 func RowsFailing(err error, rows ...[]any) Result {
 	return Result{Rows: rows, RowsErr: err}
 }
 
-// Recorder is a crud.Source that records everything and answers from a queue.
 type Recorder struct {
 	D crud.Dialect
 
@@ -65,21 +46,15 @@ type Recorder struct {
 	txDepth    int
 }
 
-// New builds a recorder for a dialect.
 func New(d crud.Dialect) *Recorder { return &Recorder{D: d} }
 
-// Postgres and MySQL are the usual shorthands.
 func Postgres() *Recorder { return New(crud.Postgres{}) }
 func MySQL() *Recorder    { return New(crud.MySQL{}) }
 
 func (this *Recorder) Dialect() crud.Dialect { return this.D }
 
-// DataSource makes one recorder one canonical datasource. Transactions opened
-// by it stay available to repositories bound to that recorder without becoming
-// an unscoped executor that unrelated test repositories may adopt.
 func (this *Recorder) DataSource() any { return this }
 
-// Push queues result sets, consumed by successive Query calls in order.
 func (this *Recorder) Push(results ...Result) *Recorder {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -87,7 +62,6 @@ func (this *Recorder) Push(results ...Result) *Recorder {
 	return this
 }
 
-// ExecResult sets what Exec reports back.
 func (this *Recorder) ExecResult(response crud.Result) *Recorder {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -95,7 +69,6 @@ func (this *Recorder) ExecResult(response crud.Result) *Recorder {
 	return this
 }
 
-// Fail makes the next Exec return err.
 func (this *Recorder) Fail(err error) *Recorder {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -103,14 +76,12 @@ func (this *Recorder) Fail(err error) *Recorder {
 	return this
 }
 
-// Statements returns everything recorded so far.
 func (this *Recorder) Statements() []Statement {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	return append([]Statement(nil), this.statements...)
 }
 
-// Last returns the most recent statement.
 func (this *Recorder) Last() Statement {
 	s := this.Statements()
 	if len(s) == 0 {
@@ -119,7 +90,6 @@ func (this *Recorder) Last() Statement {
 	return s[len(s)-1]
 }
 
-// SQL returns just the recorded statement texts.
 func (this *Recorder) SQL() []string {
 	out := []string{}
 	for _, s := range this.Statements() {
@@ -128,14 +98,12 @@ func (this *Recorder) SQL() []string {
 	return out
 }
 
-// Reset clears the recording and the queue.
 func (this *Recorder) Reset() {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	this.statements, this.queue = nil, nil
 }
 
-// TxDepth reports how many transactions were begun.
 func (this *Recorder) TxDepth() int {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -168,7 +136,6 @@ func (this *Recorder) Query(_ context.Context, q string, args ...any) (crud.Rows
 	return &rows{data: response.Rows, err: response.RowsErr}, nil
 }
 
-// Begin hands out a transaction that records into the same recorder.
 func (this *Recorder) Begin(context.Context) (crud.Tx, error) {
 	this.mu.Lock()
 	this.txDepth++
@@ -227,7 +194,6 @@ func assign(destination, source any) error {
 	return setValue(dv.Elem(), source)
 }
 
-// setValue writes src into dst, allocating through a pointer column on the way.
 func setValue(destination reflect.Value, source any) error {
 	if source == nil {
 		switch destination.Kind() {
@@ -274,8 +240,7 @@ func setValue(destination reflect.Value, source any) error {
 		}
 		return nil
 	}
-	// database/sql permits conversion between named and unnamed values of the
-	// same kind, but not arbitrary Go conversions such as int -> string (rune).
+
 	if destination.Kind() == sv.Kind() && sv.Type().ConvertibleTo(destination.Type()) {
 		destination.Set(sv.Convert(destination.Type()))
 		return nil
@@ -341,9 +306,6 @@ func setValue(destination reflect.Value, source any) error {
 			destination.SetString(string(v))
 			return nil
 		default:
-			// The built-in string destination is the database/sql convenience
-			// case that formats numeric and boolean driver values. Named string
-			// types intentionally accept only text, matching database/sql.
 			if destination.Type() == reflect.TypeFor[string]() && scanScalar(sv.Kind()) {
 				destination.SetString(scanString(source))
 				return nil
@@ -409,8 +371,6 @@ func scanBytes(source reflect.Value) ([]byte, bool) {
 	return nil, false
 }
 
-// Normalize collapses runs of whitespace so tests can compare statements
-// without caring about formatting.
 func Normalize(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 var (

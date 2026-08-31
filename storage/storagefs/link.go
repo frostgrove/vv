@@ -185,8 +185,6 @@ func writeLinkError(response http.ResponseWriter, err error) {
 	case storage.KindForbidden:
 		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 	case storage.KindCancelled:
-		// The peer has normally gone away; 408 is useful to an in-process test
-		// and does not disclose a path or filesystem error.
 		http.Error(response, http.StatusText(http.StatusRequestTimeout), http.StatusRequestTimeout)
 	default:
 		http.Error(response, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

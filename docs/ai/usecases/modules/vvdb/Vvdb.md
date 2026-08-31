@@ -765,13 +765,13 @@ the same, so it does reach every connection the pool opens. Nothing says so —
 environment-only deployment of H-VVDB-02 the schema cannot be set at all.
 Schema-per-tenant is the more common multi-tenant shape and is the one the
 config cannot describe.
-(3) is why this is the module's business rather than the catalog's: `crud/catalog`
-resolves every table through `pg_table_is_visible` on the connection vvdb handed
-over (`crud/catalog/postgres.go:17-20`), records the schema it resolved to, and
-never resolves again (`crud/catalog/catalog.go:96-99`, [[D-041]]). The connection
-this module opens therefore decides what the entire library can see. Get it wrong
-and the handle connects, the catalog resolves the wrong tables or none, and it
-reads as a migration problem for a day.
+(3) no longer depends on catalog visibility for explicitly qualified tables:
+`crud/catalog` indexes every non-system schema the role may use by exact
+`(schema, table)` and keeps `pg_table_is_visible` only for legacy bare lookup.
+The connection's `search_path` still decides every unqualified SQL declaration,
+so configuring it remains this module's responsibility. A wrong path is loud
+for a qualified declaration and can still select the wrong table for a legacy
+bare one ([[D-041]], [[D-080]]).
 **If not ready:** the consumer sets `search_path` on the database role and hopes
 no other service shares it, or discovers `params` by reading `dsn.go`. A
 documented sentence is most of the fix; an `env` tag on `params` is the rest. A

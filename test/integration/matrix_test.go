@@ -29,28 +29,11 @@ import (
 	"github.com/frostgrove/vv/test/gormstore"
 )
 
-// This file is the provider matrix. Every other test in this package proves one
-// driver, one ORM or one database does the right thing; these prove the answer
-// does not depend on which one you picked.
-
-// ---------------------------------------------------------------------------
-// one query, every provider
-
-// mxProvider is one supported way of reaching one of the two databases.
 type mxProvider struct {
 	name   string
 	source crud.Source
 }
 
-// mxProviders is one entry per crud.Source these two databases can be reached
-// through, and each entry is a genuinely different one. sqlx and gorm are not
-// separate bindings on a read: sqlx.NewDb(db, …).DB is db, and gorm's DB()
-// returns the very *sql.DB it was handed, so those rows would be the same
-// struct over the same pointer as the database/sql row beside them. That both
-// libraries can lend vv their pool is proven where it is observable, in
-// driver_sqlx_test.go and driver_gorm_test.go. The MySQL row alias is likewise
-// a write-path difference — it only rewrites the upsert clause — and it is
-// covered by driver_sql_test.go, which runs the whole conformance suite with it.
 func mxProviders() []mxProvider {
 	return []mxProvider{
 		{"database/sql+postgres", crudsql.Postgres(pgDB)},
@@ -61,18 +44,6 @@ func mxProviders() []mxProvider {
 	}
 }
 
-// mxUsers is the shared fixture. The keys are assigned by hand so that a row
-// read out of Postgres and the same row read out of MySQL are comparable down
-// to the primary key; created_at is the one column nobody compares, because it
-// is a database default and the two engines are entitled to disagree.
-//
-// Cid's age is explicitly null rather than left undefined, because this fixture
-// is also the expected result: an Opt read back out of a NULL column is null,
-// and a fixture that said "undefined" would not describe the row it wrote.
-//
-// The text is all one case on purpose. MySQL's default collation makes LIKE
-// case-insensitive and Postgres' does not, so a fixture that mixed cases would
-// be measuring the engines' collations rather than vv.
 func mxUsers() []User {
 	return []User{
 		{ID: 1, TenantID: 1, Email: "ada@x.io", Name: "Ada Lovelace", Age: crud.Set(36), Active: true},
@@ -102,9 +73,6 @@ func mxSeedUsers(t *testing.T) {
 	}
 }
 
-// mxRow renders every column a read is allowed to differ on. Opt.String tells
-// undefined from null, so a column a projection left out can never be mistaken
-// for a column that came back NULL.
 func mxRow(u User) string {
 	return fmt.Sprintf("id=%d tenant=%d %s %q age=%s active=%t",
 		u.ID, u.TenantID, u.Email, u.Name, u.Age, u.Active)
@@ -118,10 +86,6 @@ func mxRows(items []User) []string {
 	return out
 }
 
-// mxFixtureRows is the expected answer to a whole-row read, spelled out of the
-// fixture: what comes back has to be the row that went in, column for column.
-// Only a projection reads something other than a whole row, so only a
-// projection has to state its expectation by hand.
 func mxFixtureRows(t *testing.T, emails []string) []string {
 	t.Helper()
 	fixture := mxUsers()
@@ -136,11 +100,6 @@ func mxFixtureRows(t *testing.T, emails []string) []string {
 	return out
 }
 
-// The claim the whole DSL rests on: one document, one answer, whatever is
-// underneath it. Each request is compiled once and handed to every provider,
-// and each of them is held to the same literal rows — not merely to whatever
-// its neighbour said — so that a regression which hits every driver equally
-// still fails here.
 func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 	ctx := context.Background()
 	mxSeedUsers(t)
@@ -149,10 +108,10 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		doc   string
-		want  []string // emails, in order; the rest of each row comes from the fixture
-		total int64    // rows matching the filter, ignoring the page
+		want  []string
+		total int64
 		pages int
-		rows  []string // spelled out only where the read is not a whole-row read
+		rows  []string
 	}{
 		{"filter and sort", `{"filter":{"active":true,"age":{"gte":30}},"sort":["email"],"unpaged":true}`,
 			[]string{"ada@x.io", "dee@x.io", "fay@x.io"}, 3, 1, nil},
@@ -172,10 +131,7 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 			[]string{"eve@x.io"}, 1, 1, nil},
 		{"flat terms", `{"terms":[{"path":"tenantID","op":"eq","values":["1"]},{"path":"active","op":"eq","values":["true"]}],"sort":["email"],"unpaged":true}`,
 			[]string{"ada@x.io", "bob@x.io"}, 2, 1, nil},
-		// A projection is the one read that must come back incomplete. Email and
-		// active were asked for, the key comes along because a row has to stay
-		// addressable, and every other column has to arrive undefined — a zero
-		// there is a value a client would believe.
+
 		{"projection", `{"select":["email","active"],"sort":["email"],"limit":3}`,
 			[]string{"ada@x.io", "bob@x.io", "cid@x.io"}, 6, 2,
 			[]string{
@@ -224,16 +180,11 @@ func TestEveryProviderAnswersTheSameQuery(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the gorm models, on both engines
-
-// mxGorm is one database with gorm's own schema on it, plus the one piece of
-// SQL a gorm application still has to spell differently per engine.
 type mxGorm struct {
 	name     string
 	database *gorm.DB
 	source   crud.Source
-	promote  string // appends " (promoted)" to teams.name
+	promote  string
 }
 
 func mxGorms(t *testing.T) []mxGorm {
@@ -270,10 +221,6 @@ func mxSlugs(labels []Label) []string {
 	return out
 }
 
-// gorm creates the schema and writes every row; vv answers the query. The
-// Postgres half of this is gorm_model_test.go — what is proven here is that
-// none of it was Postgres: the same models, the same DSL document and the same
-// generated metamodel work against a schema MySQL's AutoMigrate produced.
 func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
@@ -299,8 +246,6 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// A filter that walks the association gorm declared, and a preload
-			// back along the same edge.
 			var request query.Request
 			if err := json.Unmarshal([]byte(`{
 				"filter":  {"team.name": "core"},
@@ -331,9 +276,6 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 				t.Fatalf("a NULL age came back as %v", *got[1].Age)
 			}
 
-			// many2many through the join table AutoMigrate created: "rust" is on
-			// both teams, so the filter must not duplicate a team and the preload
-			// must hand the one label row to both of them.
 			found, err := teams.FindAll(ctx,
 				specs.Where(gormstore.Team_.Labels.Slug.Eq("rust")),
 				crud.Preload("Labels"), crud.OrderBy(crud.Asc("Name")))
@@ -353,8 +295,6 @@ func TestGormModelThroughVVOnBothEngines(t *testing.T) {
 	}
 }
 
-// gorm's tombstones are invisible to vv because the repository declares a
-// scope, and a scope is a property of the declaration, not of the engine.
 func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
@@ -398,11 +338,6 @@ func TestGormSoftDeletesStayInvisibleOnBothEngines(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ent's generated entity, on both engines
-
-// mxEnt is one database reached both ways: through ent's client and through
-// vv's source.
 type mxEnt struct {
 	name     string
 	database *sql.DB
@@ -417,8 +352,6 @@ func mxEnts() []mxEnt {
 	}
 }
 
-// ent's generated struct is the model, on either engine: ent writes, the DSL
-// and the generated metamodel read, vv patches, ent reads back.
 func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 	for _, e := range mxEnts() {
 		t.Run(e.name, func(t *testing.T) {
@@ -456,7 +389,6 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 				t.Fatalf("age = %v", page.Items[0].Age)
 			}
 
-			// The generated metamodel, over ent's own entity type.
 			found, err := sp.FindAll(ctx,
 				specs.Where(entstore.User_.Age.Gte(31)).And(entstore.User_.Name.StartsWith("B")))
 			if err != nil {
@@ -466,8 +398,6 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 				t.Fatalf("metamodel found %+v", found)
 			}
 
-			// The write path. ent puts the created_at default in Go rather than in
-			// the column, so a write that bypasses ent supplies it.
 			u := entpkg.User{TenantID: 1, Email: "new@x.io", Name: "New", Active: true, CreatedAt: time.Now()}
 			if stored, err := users.Save(ctx, &u); err != nil {
 				t.Fatal(err)
@@ -507,13 +437,6 @@ func TestEntModelThroughVVOnBothEngines(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the usecase pattern, on both engines
-
-// mxTeamUsecase is the usecase from usecase_test.go with its one Postgres-ism —
-// `||`, which MySQL reads as a logical OR — lifted into a parameter. Everything
-// that makes it a usecase (compile the DSL, let the ORM own the transaction,
-// join it with crud.BindExecutor) is the same code on both engines.
 type mxTeamUsecase struct {
 	database *gorm.DB
 	source   crud.Source
@@ -589,7 +512,6 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 				t.Fatalf("result = %+v", got)
 			}
 
-			// Both halves of the one transaction landed.
 			var reloaded Team
 			if err := g.database.First(&reloaded, team.ID).Error; err != nil {
 				t.Fatal(err)
@@ -605,9 +527,6 @@ func TestGormUsecaseDSLInsideTransactionOnBothEngines(t *testing.T) {
 	}
 }
 
-// The ent usecase from usecase_test.go, not one line of it changed, pointed at
-// MySQL: the pattern is ent's transaction plus crud.WithExecutor, and neither
-// of those knows what a dialect is.
 func TestEntUsecaseDSLInsideTransactionOnMySQL(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, myDB)
@@ -664,15 +583,6 @@ func TestEntUsecaseDSLInsideTransactionOnMySQL(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// preloads at the edges
-
-// A preload is keyed by the rows on the page, so paging must not lose a child,
-// and a child shared with another page must still arrive on this one.
-//
-// That the IN list carries the page's keys and nothing else is a property of
-// the statement rather than of the result, and it is pinned where it can be
-// read: TestPreloadBelongsToIsOneBatchedQuery in crud/preload_test.go.
 func TestPreloadsSurvivePaging(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -723,8 +633,7 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 			if want := []string{"rust traits"}; !eq(titles(second.Items), want) {
 				t.Fatalf("page 2 = %v, want %v", titles(second.Items), want)
 			}
-			// "rust" is shared with page 1's article, so a preload that cached or
-			// deduped by child rather than by parent would drop it here.
+
 			if got := second.Items[0]; got.Author == nil || got.Author.Name != "Bob" || len(got.Tags) != 1 {
 				t.Fatalf("page 2's row = author %+v tags %+v", got.Author, got.Tags)
 			}
@@ -735,10 +644,6 @@ func TestPreloadsSurvivePaging(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// preloads past a batch boundary
-
-// mxRelTarget is one database with the matrix-only relation on it.
 type mxRelTarget struct {
 	name   string
 	source crud.Source
@@ -765,9 +670,6 @@ func mxRelTargets(t *testing.T) []mxRelTarget {
 	return out
 }
 
-// mxBulkInsert writes the fixture a few hundred rows per statement. The whole
-// point of this fixture is its size, and one INSERT per row would be the slowest
-// thing in the suite by an order of magnitude.
 func mxBulkInsert(t *testing.T, source crud.Source, table string, cols []string, rows [][]any) {
 	t.Helper()
 	ctx := context.Background()
@@ -804,14 +706,8 @@ func mxBulkInsert(t *testing.T, source crud.Source, table string, cols []string,
 	}
 }
 
-// mxOwnerCount is deliberately past the 900-key preload batch, so both
-// directions of the relation need more than one statement per level.
 const mxOwnerCount = 1000
 
-// The one number a preload's correctness depends on is how many parent keys go
-// into a single IN list. Below the batch size every implementation looks right;
-// past it, a loop that forgets to run its last chunk drops the tail of the
-// result silently. So: more parents than fit in one batch, in both directions.
 func TestPreloadBatchesSpanTheChunkBoundary(t *testing.T) {
 	for _, tg := range mxRelTargets(t) {
 		t.Run(tg.name, func(t *testing.T) {
@@ -823,9 +719,7 @@ func TestPreloadBatchesSpanTheChunkBoundary(t *testing.T) {
 				owners = append(owners, []any{int64(i), fmt.Sprintf("owner-%04d", i)})
 				items = append(items, []any{int64(i), int64(i), fmt.Sprintf("item-%04d", i)})
 			}
-			// A handful of extra rows on one owner, so that one parent's share
-			// of the children is not one row like everybody else's: chunking
-			// must not decide how many children a parent ends up with.
+
 			const extras = 5
 			for i := 1; i <= extras; i++ {
 				items = append(items, []any{int64(mxOwnerCount + i), int64(1), fmt.Sprintf("extra-%d", i)})
@@ -833,7 +727,6 @@ func TestPreloadBatchesSpanTheChunkBoundary(t *testing.T) {
 			mxBulkInsert(t, tg.source, "mx_owners", []string{"id", "name"}, owners)
 			mxBulkInsert(t, tg.source, "mx_items", []string{"id", "owner_id", "label"}, items)
 
-			// has_many, from the side with more keys than one batch holds.
 			gotOwners, err := tg.owners.GetAll(ctx, crud.Preload("Items"), crud.OrderBy(crud.Asc("ID")))
 			if err != nil {
 				t.Fatal(err)
@@ -856,10 +749,6 @@ func TestPreloadBatchesSpanTheChunkBoundary(t *testing.T) {
 					1+extras, n)
 			}
 
-			// belongs_to, from the side whose keys repeat. Folding those repeats
-			// into one IN list is counted in bind args by
-			// TestPreloadBelongsToIsOneBatchedQuery in crud/preload_test.go; what
-			// is on trial here is only the chunking.
 			gotItems, err := tg.items.GetAll(ctx, crud.Preload("Owner"), crud.OrderBy(crud.Asc("ID")))
 			if err != nil {
 				t.Fatal(err)

@@ -1,6 +1,3 @@
-// The recorder is the foundation every SQL unit test in this repository stands
-// on: if it silently mis-scans a value or drops a statement, those tests keep
-// passing while the library rots. So it gets its own tests.
 package crudtest_test
 
 import (
@@ -17,7 +14,6 @@ import (
 	"github.com/frostgrove/vv/crud/crudtest"
 )
 
-// Widget carries one of each kind of column the mapper knows how to fill.
 type Widget struct {
 	ID     int64            `db:"id,pk,auto"`
 	Name   string           `db:"name"`
@@ -82,9 +78,6 @@ func TestLastAndSQLOnAFreshRecorder(t *testing.T) {
 	}
 }
 
-// Queued results are handed out in order, and running out is not an error —
-// a repository that issues an unexpected extra query gets an empty result set,
-// which is exactly what "no rows" looks like.
 func TestQueriesAreAnsweredFromTheQueueInOrder(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().Push(
@@ -133,10 +126,6 @@ func TestAQueuedErrorSurfacesAndTheStatementIsStillRecorded(t *testing.T) {
 	}
 }
 
-// The other shape of a failed read, and the one Err cannot express: pgx hands a
-// refused statement back as a live Rows that yields what it has and then reports
-// the failure from Err. A caller that loops without asking at the end reads a
-// truncated result as a complete one, so the double has to be able to produce it.
 func TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem(t *testing.T) {
 	ctx := context.Background()
 	cut := errors.New("terminating connection due to administrator command")
@@ -165,9 +154,6 @@ func TestARowsErrorArrivesAfterTheRowsRatherThanInsteadOfThem(t *testing.T) {
 	}
 	rows.Close()
 
-	// The control. Without it a Recorder that reported every result set as
-	// failing would pass the half above, and every test in the tree that reads
-	// rows would still be green because almost none of them ask Err at all.
 	plain, err := rec.Query(ctx, "SELECT n FROM t")
 	if err != nil {
 		t.Fatal(err)
@@ -197,8 +183,7 @@ func TestExecResultAndOneShotFailure(t *testing.T) {
 	if _, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "b"); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the configured failure", err)
 	}
-	// One shot: the next write succeeds again, so a test can make exactly one
-	// statement fail in the middle of a sequence.
+
 	if response, err := rec.Exec(ctx, "UPDATE widgets SET name = $1", "c"); err != nil || response.RowsAffected != 3 {
 		t.Fatalf("Exec after the failure = (%+v, %v), want the configured result back", response, err)
 	}
@@ -207,8 +192,6 @@ func TestExecResultAndOneShotFailure(t *testing.T) {
 	}
 }
 
-// The replay path a repository actually uses: destinations produced by the
-// schema, filled from a canned row.
 func TestScanFillsAModelThroughTheSchema(t *testing.T) {
 	s := widgetSchema(t)
 	made := time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)
@@ -251,8 +234,6 @@ func TestScanFillsAModelThroughTheSchema(t *testing.T) {
 		t.Errorf("note = %v, want a set Opt", got[0].Note)
 	}
 
-	// NULL clears a pointer column and produces an explicitly null Opt —
-	// never an undefined one, because a row always defines every column.
 	if got[1].Weight != nil {
 		t.Errorf("weight = %v, want NULL to leave the pointer nil", got[1].Weight)
 	}
@@ -261,8 +242,6 @@ func TestScanFillsAModelThroughTheSchema(t *testing.T) {
 	}
 }
 
-// Test authors write row literals by hand, so the recorder accepts the safe
-// convenience conversions database/sql itself accepts.
 func TestScanUsesDatabaseSQLConversions(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{1, []byte("spanner"), 3, []byte("handy")}))
@@ -329,9 +308,6 @@ func (r *scanRows) Next(values []driver.Value) error {
 	return nil
 }
 
-// The recorder is useful only when a green unit test means the same scan would
-// be green in production. These cases are intentionally compared with
-// database/sql itself instead of duplicating expectations in prose.
 func TestRecorderScanMatchesDatabaseSQL(t *testing.T) {
 	type label string
 	now := time.Date(2026, 8, 30, 9, 10, 11, 12, time.UTC)
@@ -410,8 +386,6 @@ func TestScanRefusesATypedNilScannerBeforeInvokingIt(t *testing.T) {
 	}
 }
 
-// A row that does not line up with the destinations is a broken test, and it
-// says so instead of filling in whatever it can.
 func TestScanRefusesRowsItCannotFill(t *testing.T) {
 	ctx := context.Background()
 
@@ -450,8 +424,6 @@ func TestScanRefusesRowsItCannotFill(t *testing.T) {
 	rows.Close()
 }
 
-// Statements hands out a copy: a test that sorts or trims the slice it got back
-// must not be able to rewrite the recording.
 func TestStatementsIsACopy(t *testing.T) {
 	rec := crudtest.Postgres()
 	if _, err := rec.Exec(context.Background(), "DELETE FROM widgets"); err != nil {
@@ -488,8 +460,6 @@ func TestResetClearsTheRecordingAndTheQueue(t *testing.T) {
 	}
 }
 
-// A transaction records into the same recorder, so a test can assert the whole
-// sequence — begin, statements, commit — from one place.
 func TestBeginRecordsIntoTheSameRecorder(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres()
@@ -516,8 +486,6 @@ func TestBeginRecordsIntoTheSameRecorder(t *testing.T) {
 	}
 }
 
-// crud.InTx joins whatever executor the context carries, so the recorder is
-// enough to prove a repository's transaction plumbing without a database.
 func TestRecorderDrivesInTx(t *testing.T) {
 	rec := crudtest.Postgres()
 	err := crud.InTx(context.Background(), rec, func(ctx context.Context) error {
@@ -554,8 +522,6 @@ func TestDialectShorthands(t *testing.T) {
 	}
 }
 
-// Normalize lets a test assert the statement it means without pinning the
-// whitespace the builder happens to produce.
 func TestNormalize(t *testing.T) {
 	got := crudtest.Normalize("SELECT  \"id\",\n\t\"name\"\nFROM \"widgets\"  WHERE id = $1 ")
 	if got != `SELECT "id", "name" FROM "widgets" WHERE id = $1` {
@@ -563,8 +529,6 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// One recorder is one datasource. This gives its transactions a safe scope and
-// keeps independent recorders from adopting each other's work by accident.
 func TestTheRecorderNamesItselfAsItsDatasource(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres()

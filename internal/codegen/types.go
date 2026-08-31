@@ -18,10 +18,6 @@ import (
 	"time"
 )
 
-// sourceTypes is a best-effort type view over the source package. Generation
-// still parses packages that are temporarily incomplete (the generated file may
-// be the piece that makes them compile), but every expression that can be
-// resolved gets the same classification reflection will give it at runtime.
 type sourceTypes struct {
 	info       *types.Info
 	locals     map[*types.Package]bool
@@ -35,10 +31,6 @@ type scalarInterfaces struct {
 	textUnmarshaler *types.Interface
 }
 
-// prepareTypes intentionally does not return a package type-check error. A
-// generator commonly runs while references to its previous output are absent.
-// Unresolved anonymous fields are refused later, at the exact declaration that
-// cannot be mirrored; unrelated incomplete application code remains harmless.
 func (this *generator) prepareTypes(fset *token.FileSet, parsed map[string]*ast.Package) {
 	lookup := &exportLookup{dir: this.dir, exports: map[string]string{}, failures: map[string]error{}}
 	imp := importer.ForCompiler(fset, "gc", lookup.open)
@@ -92,10 +84,6 @@ func (this *generator) prepareTypes(fset *token.FileSet, parsed map[string]*ast.
 	}
 }
 
-// exportLookup gives go/importer module-aware export data without adding the
-// x/tools dependency to the generator. One go-list call fills the requested
-// package and all of its dependencies; subsequent importer lookups are file
-// opens from the map.
 type exportLookup struct {
 	dir      string
 	exports  map[string]string
@@ -174,11 +162,6 @@ func (this *generator) goType(expr ast.Expr) types.Type {
 	return t
 }
 
-// usableTypeShape rejects the partial invalid shells go/types may leave after
-// an unrelated import failed. A copied model directory can deliberately sit
-// outside a module during a stale-output check; local `*Team` and `[]Label`
-// relations must then take the syntax fallback, not be misclassified as scalar
-// fields merely because TypeOf returned a non-nil pointer around `invalid`.
 func usableTypeShape(t types.Type, seen map[types.Type]bool) bool {
 	if t == nil {
 		return false
@@ -233,11 +216,6 @@ func (this *generator) renderedType(t types.Type) string {
 
 func (this *generator) importAlias(path, preferred string) string {
 	if alias := this.pathAliases[path]; alias != "" {
-		// Fixed aliases are reserved before any model fields are rendered. A
-		// transitive type discovered through an external embed still needs the
-		// corresponding import recorded even though its alias was already known.
-		// If an inconsistent owner ever reaches this point, discard the stale
-		// path mapping and let the readable allocator choose a safe alias.
 		if owner := this.aliasPaths[alias]; owner == "" || owner == path {
 			this.aliasPaths[alias] = path
 			this.imports[alias] = path
@@ -358,10 +336,6 @@ func implements(t types.Type, iface *types.Interface) bool {
 	return t != nil && iface != nil && types.Implements(t, iface)
 }
 
-// scalarStruct mirrors crud.isScalarStruct, including its deliberate method
-// receiver asymmetry. It receives the original field type on the flatten path
-// and the dereferenced element on the relation-candidate path, just as runtime
-// reflection does.
 func (this *generator) scalarStruct(t types.Type) bool {
 	if t == nil {
 		return false
@@ -369,11 +343,7 @@ func (this *generator) scalarStruct(t types.Type) bool {
 	if isNamed(t, "time", "Time") && !isPointerSource(t) {
 		return true
 	}
-	// An unresolved anonymous base can poison the method set of an otherwise
-	// known local struct: go/types deliberately makes the invalid embedded type
-	// permissive to avoid cascading errors, which can make Team appear to
-	// implement Valuer/TextMarshaler. Do not derive scalar semantics from that
-	// incomplete method set; the syntax fallback still knows local relations.
+
 	if !methodSetReliable(t) {
 		return false
 	}
@@ -439,10 +409,6 @@ func (this *generator) wellKnownFields(t types.Type) ([]field, bool) {
 	return out, true
 }
 
-// flattenType walks the instantiated struct from go/types. Type arguments have
-// already been substituted, aliases have already been followed, and exported
-// dependency data carries field tags, so this handles local aliases, generic
-// embeds and resolvable external mixins without guessing their shape.
 func (this *generator) flattenType(modelName, display string, t types.Type, seen map[types.Type]bool) ([]field, []string) {
 	if fields, ok := this.wellKnownFields(t); ok {
 		return fields, nil
@@ -524,9 +490,6 @@ func (this *generator) appendResolvedField(out *[]field, modelName, name, render
 	return ""
 }
 
-// localRelationTarget follows aliases and container wrappers to the model type
-// reflection will navigate at runtime. The field's rendered spelling is kept
-// separately because the public model may deliberately expose an alias name.
 func (this *generator) localRelationTarget(t types.Type) string {
 	if element, slice := sliceElement(t); slice {
 		t = element
@@ -539,11 +502,6 @@ func (this *generator) localRelationTarget(t types.Type) string {
 	return named.Obj().Name()
 }
 
-// inaccessibleTypeName reports the first named component that the output
-// package cannot spell. Export data can expose an exported field whose type is
-// private; reflection can map it, but emitting pkg.private in a DTO would leave
-// a generated file that only fails later at compile time. An exported alias is
-// itself a usable spelling, so only its type arguments (not its RHS) are walked.
 func (this *generator) inaccessibleTypeName(t types.Type, seen map[types.Type]bool) string {
 	if t == nil || seen[t] {
 		return ""
@@ -605,9 +563,7 @@ func (this *generator) inaccessibleTypeName(t types.Type, seen map[types.Type]bo
 	case *types.Struct:
 		for index := 0; index < value.NumFields(); index++ {
 			field := value.Field(index)
-			// Unexported field identity includes its declaring package. Reprinting
-			// an anonymous struct in another package would create a different type
-			// even though the source text looks identical.
+
 			if problem := inaccessibleObject(field); problem != "" {
 				return problem
 			}
@@ -623,9 +579,7 @@ func (this *generator) inaccessibleTypeName(t types.Type, seen map[types.Type]bo
 	case *types.Interface:
 		for index := 0; index < value.NumExplicitMethods(); index++ {
 			method := value.ExplicitMethod(index)
-			// Like anonymous struct fields, unexported interface method identity is
-			// package-qualified. It cannot be mirrored textually into -into or out
-			// of an externally flattened base.
+
 			if problem := inaccessibleObject(method); problem != "" {
 				return problem
 			}
@@ -688,10 +642,6 @@ func (this *generator) columnField(name, rendered string, typ types.Type, databa
 	return item
 }
 
-// integralSourceType follows the source type rather than its rendered spelling
-// whenever go/types is available. That preserves the runtime convention for
-// named integer keys while deliberately excluding uintptr, which reflection
-// also does not treat as an auto key.
 func integralSourceType(typ types.Type, rendered string) bool {
 	if typ != nil {
 		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)

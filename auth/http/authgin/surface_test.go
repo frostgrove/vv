@@ -12,10 +12,6 @@ import (
 	"github.com/frostgrove/vv/auth/http/authhttp"
 )
 
-// The gate exists because a route with no access check and a route that is
-// deliberately public look the same from the inside. These tests break an
-// application on purpose and assert that start-up notices.
-
 const apiPrefix = "/api/v1"
 
 func mountedEngine(register func(gin.IRouter)) *gin.Engine {
@@ -45,7 +41,7 @@ func TestTheGatePassesWhenEveryMountedRouteIsDeclared(t *testing.T) {
 func TestTheGateRefusesARouteNobodyDeclared(t *testing.T) {
 	engine := mountedEngine(func(r gin.IRouter) {
 		r.POST("/auth/login", nothing)
-		// The one somebody added in a hurry.
+
 		r.DELETE("/users/:id", nothing)
 	})
 
@@ -63,7 +59,6 @@ func TestTheGateRefusesARouteNobodyDeclared(t *testing.T) {
 func TestTheGateRefusesADeclarationThatMountsNothing(t *testing.T) {
 	engine := mountedEngine(func(r gin.IRouter) { r.POST("/auth/login", nothing) })
 
-	// The route was renamed and this line was left behind.
 	err := authgin.Verify(engine, []authhttp.Endpoint{
 		authhttp.Public(http.MethodPost, "/auth/login", "there is no credential to present yet"),
 		authhttp.Requires(http.MethodGet, "/users/:id", auth.Permission("user.read")),

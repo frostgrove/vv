@@ -22,21 +22,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// This file and dialect_edge_test.go are the edge-case half of the integration
-// suite: empty inputs, boundary values, contended transactions and the corners
-// of the preloader, held to the same answer on every provider.
-//
-// They live on their own `eg_` tables. The suite's `users` is reset by whoever
-// touches it next, and a row keyed by the largest int64 left lying around would
-// be a mine under the first test that forgets.
-
-// ---------------------------------------------------------------------------
-// models
-
-// EgRow carries one of every shape an edge case needs: a key the caller assigns
-// (so a test can name the boundary it wants to stand on), a column that must
-// survive an upsert untouched, a nullable text and a nullable int to tell empty
-// from NULL, and a bool to watch MySQL's tinyint cross the wire.
 type EgRow struct {
 	ID     int64            `db:"id,pk,noauto"`
 	Tenant int64            `db:"tenant,immutable"`
@@ -53,23 +38,15 @@ type EgRowUpdate struct {
 	Flag  *bool
 }
 
-// EgAuto is the database-generated-key twin of EgRow, for the cases where the
-// whole point is that the caller supplied nothing at all.
 type EgAuto struct {
 	ID   int64               `db:"id,pk,auto"`
 	Name string              `db:"name"`
 	Note crud.Opt[string]    `db:"note"`
 	At   crud.Opt[time.Time] `db:"at"`
-	// README promises sql.Null[T] counts as one column, like time.Time and
-	// crud.Opt[T]. It is a struct, and a struct-shaped field is otherwise either
-	// flattened or read as a relation, so "one column" is a claim worth having a
-	// column for.
+
 	Tag sql.Null[string] `db:"tag"`
 }
 
-// EgVer carries the optimistic lock. Update is load-then-write, and the gap
-// between the two statements is where a lost update lives; the version column is
-// what makes the second writer notice.
 type EgVer struct {
 	ID      int64  `db:"id,pk,noauto"`
 	Name    string `db:"name"`
@@ -80,9 +57,6 @@ type EgVerUpdate struct {
 	Name *string
 }
 
-// EgCons exists to be violated: slug is unique, tag is NOT NULL and parent_id
-// points back at this same table, so one small table produces all three
-// integrity errors on both engines.
 type EgCons struct {
 	ID     int64            `db:"id,pk,auto"`
 	Slug   string           `db:"slug"`
@@ -96,8 +70,6 @@ type EgConsUpdate struct {
 	Tag    crud.Opt[string]
 }
 
-// The preload fixture: children whose foreign key may be NULL, and a
-// many_to_many some parents have no join rows for.
 type EgParent struct {
 	ID   int64  `db:"id,pk,noauto"`
 	Name string `db:"name"`
@@ -128,15 +100,9 @@ var (
 	EgKids    = sqlrepo.Define[EgKid, int64, struct{}]("eg_kids")
 	EgMarks   = sqlrepo.Define[EgMark, int64, struct{}]("eg_marks")
 
-	// The same model declared with a preload budget small enough to hit.
 	EgShallowParents = sqlrepo.Define[EgParent, int64, struct{}]("eg_parents", sqlrepo.PreloadDepth(2))
 )
 
-// ---------------------------------------------------------------------------
-// schema
-
-// egSchema drops before it creates, so a rerun after a crash starts from the
-// same slate as a clean checkout.
 var egSchema = map[string][]string{
 	"postgres": {
 		`DROP TABLE IF EXISTS eg_parent_marks`,
@@ -174,8 +140,7 @@ var egSchema = map[string][]string{
 			parent_id BIGINT          NULL REFERENCES eg_cons (id),
 			tag       VARCHAR(64) NOT NULL
 		)`,
-		// A reserved word and a name with a space: neither can be written
-		// unquoted, in either dialect.
+
 		`CREATE TABLE eg_odd (
 			id          BIGINT      NOT NULL PRIMARY KEY,
 			"select"    VARCHAR(64) NOT NULL,
@@ -265,8 +230,6 @@ var egSchema = map[string][]string{
 	},
 }
 
-// egTables is delete order: the self-referencing table and the join table go
-// before whatever they point at.
 var egTables = []string{
 	"eg_parent_marks", "eg_kids", "eg_marks", "eg_parents",
 	"eg_cons", "eg_odd", "eg_ver", "eg_auto", "eg_rows",
@@ -274,18 +237,9 @@ var egTables = []string{
 
 var (
 	egOnce sync.Once
-	egErr  error // what the one build attempt failed with, repeated to everyone
+	egErr  error
 )
 
-// egSetup builds the tables once per process and empties them on every call.
-// Creating them once matters: DROP and CREATE on eight tables, twice, in front
-// of every subtest would be by far the slowest thing here.
-//
-// The failure is recorded rather than reported from inside the Once. t.Fatalf
-// there exits through runtime.Goexit and the Once still marks itself done, so
-// one failed CREATE would be consumed by whichever test ran first and every
-// later test would report "relation eg_parent_marks does not exist" instead —
-// eight failures, none of them naming the DDL error that actually broke.
 func egSetup(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
@@ -322,25 +276,14 @@ func egFirstLine(s string) string {
 	return line
 }
 
-// ---------------------------------------------------------------------------
-// targets
-
-// egTarget is one database reached one way.
 type egTarget struct {
 	name     string
-	database string // "postgres" or "mysql"
+	database string
 	source   crud.Source
-	// classifies says whether this source was given an engine to classify
-	// against. The two ent entries are not: they are built on crudsql.From,
-	// which names no engine and therefore gets no classifier ([[D-046]]). A
-	// violation through them is the sentinel and no code.
+
 	classifies bool
 }
 
-// egTargets is every distinct crud.Source these two databases can be reached
-// through, on the same reasoning as mxProviders in matrix_test.go: sqlx and
-// gorm hand vv the very *sql.DB that is already in this list, so an entry
-// for either would run the same code a second time.
 func egTargets() []egTarget {
 	return []egTarget{
 		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB), true},
@@ -351,26 +294,15 @@ func egTargets() []egTarget {
 	}
 }
 
-// egEngines is each database once, for the cases where the driver cannot change
-// the answer and five of them would only cost time.
-//
-// MariaDB is here and not in egTargets. What it can differ about is the engine's
-// own answer — a failed CHECK is 4025 here and 3819 on MySQL — and never the
-// adapter's, which is the same database/sql code either way. An entry in
-// egTargets would run that code a fourth time and learn nothing.
 func egEngines() []egTarget {
 	return []egTarget{
 		{"postgres", "postgres", crudsql.Postgres(pgDB), true},
 		{"mysql", "mysql", crudsql.MySQL(myDB), true},
-		// MariaDB through crudsql.MariaDB, which is the constructor that names
-		// the engine crud.MySQL cannot tell from MySQL.
+
 		{"mariadb", "mysql", crudsql.MariaDB(mariaDB), true},
 	}
 }
 
-// egBeginners is every target that owns its connections and can therefore start
-// a transaction of its own. ent's source begins an ent transaction, which the
-// ent tests already drive; what is on trial in this file is the two adapters.
 func egBeginners() []egTarget {
 	return []egTarget{
 		{"database/sql+postgres", "postgres", crudsql.Postgres(pgDB), true},
@@ -379,25 +311,13 @@ func egBeginners() []egTarget {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the spy
-//
-// egSpy is a crud.Source that records every statement on its way to a real
-// database, and can run a hook in front of one. Recording lets a test hold the
-// generated SQL to account without giving up the database's opinion of it; the
-// hook lets a test wedge a concurrent change into the exact gap between two
-// statements the repository issues, which is the only way to reach some races
-// on purpose.
-
 type egSpy struct {
 	ex crud.Executor
 	d  crud.Dialect
 
-	// A crud.Source is shared by whatever goroutines a test starts, so the
-	// recorder has to be safe even though most tests are sequential.
 	mu     sync.Mutex
 	seen   []string
-	before map[string]func() // keyed by a substring of the statement to precede
+	before map[string]func()
 	fired  map[string]bool
 }
 
@@ -407,13 +327,6 @@ func egWatch(source crud.Source) *egSpy {
 
 func (this *egSpy) Dialect() crud.Dialect { return this.d }
 
-// UnwrapSource hands the library the source underneath, which is what lets it
-// find the optional interfaces this spy does not itself implement — Beginner
-// above all. Without it a repository over this wrapper cannot open a
-// transaction, and a Save on a dialect with no RETURNING (which reads the
-// stored row back in a second statement) fails with "executor cannot begin
-// transactions". That is [[D-061]]: a wrapper has lost every method its own
-// interface does not name, silently, and forwarding is how it gets them back.
 func (this *egSpy) UnwrapSource() crud.Source {
 	source, _ := this.ex.(crud.Source)
 	return source
@@ -446,22 +359,18 @@ func (this *egSpy) Query(ctx context.Context, q string, args ...any) (crud.Rows,
 	return this.ex.Query(ctx, q, args...)
 }
 
-// beforeFirst arranges for fn to run immediately before the first statement
-// whose text contains key.
 func (this *egSpy) beforeFirst(key string, fn func()) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	this.before[key] = fn
 }
 
-// statements returns everything recorded since the last forget.
 func (this *egSpy) statements() []string {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	return append([]string(nil), this.seen...)
 }
 
-// matching narrows statements to the ones containing sub.
 func (this *egSpy) matching(sub string) []string {
 	var out []string
 	for _, q := range this.statements() {
@@ -479,9 +388,6 @@ func (this *egSpy) forget() {
 }
 
 var _ crud.Source = (*egSpy)(nil)
-
-// ---------------------------------------------------------------------------
-// helpers
 
 func egSeed(t *testing.T, repository *crud.Repo[EgRow, int64, EgRowUpdate], rows ...EgRow) {
 	t.Helper()
@@ -502,10 +408,6 @@ func egNames(rows []EgRow) []string {
 	return out
 }
 
-// MySQL's NO_BACKSLASH_ESCAPES changes the parser's treatment of quoted
-// backslashes. Exercise both supported engines on one pinned connection so a
-// regression from the hexadecimal ESCAPE expression back to a quoted literal
-// cannot hide behind the pool's session selection.
 func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 	ctx := context.Background()
 	for _, target := range []struct {
@@ -551,9 +453,6 @@ func TestMySQLLiteralLikeHelpersSurviveNoBackslashEscapes(t *testing.T) {
 				{TenantID: 1, Email: "other@x.io", Name: "1005xraw"},
 				{TenantID: 1, Email: "slash@x.io", Name: `path\file`},
 			} {
-				// The pinned *sql.Conn intentionally cannot open a nested
-				// transaction. This test needs only seed INSERTs; SaveOnly keeps the
-				// session mode and reaches the LIKE assertions below.
 				if err := repository.SaveOnly(ctx, &user); err != nil {
 					t.Fatal(err)
 				}
@@ -587,13 +486,6 @@ func egPager[T any](p crud.PaginatedResponse[T]) string {
 		len(p.Items), p.Page, p.Limit, p.Total, p.TotalPages, p.HasNext, p.HasPrev)
 }
 
-// ---------------------------------------------------------------------------
-// empty and degenerate inputs
-
-// Nothing here should need a special case in a caller: asking for page 999 of
-// three rows, deleting an empty list of ids or filtering on an empty set are all
-// things a paging UI does on its own, and every one of them has to come back as
-// an ordinary empty answer rather than an error or a broken statement.
 func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -655,8 +547,7 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				if len(page.Items) != 0 {
 					t.Fatalf("page 999 of three rows returned %d items", len(page.Items))
 				}
-				// The pager still has to describe the collection, or a client
-				// cannot find its way back to a page that exists.
+
 				if page.Total != 3 || page.TotalPages != 1 || !page.HasPrev || page.HasNext {
 					t.Fatalf("page 999 = %s, want an empty page that still knows about 3 rows on 1 page", egPager(page))
 				}
@@ -717,13 +608,10 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 			})
 
 			t.Run("a model that is entirely zero", func(t *testing.T) {
-				// A key the caller is responsible for, left at zero, is a mistake
-				// worth naming rather than a row worth writing.
 				if _, err := rows.Save(ctx, &EgRow{}); !errors.Is(err, crud.ErrMissingID) {
 					t.Fatalf("err = %v, want ErrMissingID", err)
 				}
-				// With a generated key there is nothing missing: every column is
-				// simply at its zero value, and that is a row.
+
 				autos := EgAutos.Bind(tg.source)
 				var blank EgAuto
 				if stored, err := autos.Save(ctx, &blank); err != nil {
@@ -745,8 +633,6 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 					t.Fatalf("tag = %+v, want an invalid sql.Null for a column nobody wrote", back.Tag)
 				}
 
-				// And the same column carrying a value: one column, both ways,
-				// which is what makes sql.Null[T] usable as a model field.
 				valued := EgAuto{Name: "tagged", Tag: sql.Null[string]{V: "beta", Valid: true}}
 				if stored, err := autos.Save(ctx, &valued); err != nil {
 					t.Fatal(err)
@@ -760,7 +646,7 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 				if !got.Tag.Valid || got.Tag.V != "beta" {
 					t.Fatalf("tag = %+v, want beta", got.Tag)
 				}
-				// It is a column, so it filters like one.
+
 				n, err := autos.Count(ctx, crud.Where(crud.Eq("Tag", "beta")))
 				if err != nil {
 					t.Fatal(err)
@@ -773,18 +659,10 @@ func TestDegenerateInputsAnswerEmptyOnEveryProvider(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// boundary values
-
-// The values that live at the edge of a type or at the edge of SQL's own
-// grammar. Each of them is a value a real caller eventually supplies, and each
-// one has a way of being silently mangled rather than rejected.
 func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
 
-	// A single quote and a backslash are what a naive concatenating layer breaks
-	// on; the emoji is what a latin1 column breaks on.
 	const awkward = `O'Brien \ said "hi" -- ; é🚀`
 	long := strings.Repeat("saturn", 2000)
 
@@ -850,9 +728,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 					EgRow{ID: 2, Tenant: 1, Name: "1005xraw"},
 					EgRow{ID: 3, Tenant: 1, Name: "plain"},
 				)
-				// Every one of these matches all three rows if % and _ reach the
-				// database as wildcards instead of as the characters the caller
-				// typed.
+
 				for _, tc := range []struct {
 					name string
 					pred crud.Predicate
@@ -888,8 +764,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 				if len(note) != len(long) || note != long {
 					t.Fatalf("a %d-byte string came back %d bytes long", len(long), len(note))
 				}
-				// And the same characters survive a second trip as a bind
-				// argument, which is the half a round trip cannot prove.
+
 				n, err := rows.Count(ctx, crud.Where(crud.Eq("Name", awkward)))
 				if err != nil || n != 1 {
 					t.Fatalf("looking the row up by its own name matched %d rows, err = %v", n, err)
@@ -900,9 +775,6 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 				}
 			})
 
-			// The zero time is what a timestamp field holds before anyone sets
-			// it, so it reaches the database whether or not the caller meant it
-			// to — and year 1 is outside the range MySQL documents for DATETIME.
 			t.Run("the zero time", func(t *testing.T) {
 				autos := EgAutos.Bind(tg.source)
 				z := EgAuto{Name: "zero", At: crud.Set(time.Time{})}
@@ -919,8 +791,7 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 				if !ok {
 					t.Fatalf("at = %s, want the instant that went in", back.At)
 				}
-				// Equal, not ==: a timestamp comes back in whatever location the
-				// driver chose, and only the instant is the caller's business.
+
 				if !at.Equal(time.Time{}) {
 					t.Fatalf("the zero time came back as %s", at.UTC())
 				}
@@ -929,13 +800,6 @@ func TestBoundaryValuesRoundTripOnEveryProvider(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// transactions under contention
-
-// FOR UPDATE is the only thing standing between "read, decide, write" and a lost
-// update. Here the second transaction asks for the same row while the first
-// still holds it: it must not be answered until the first commits, and then it
-// must be answered with what the first wrote.
 func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -958,13 +822,7 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 
 			read := make(chan int, 1)
 			done := make(chan error, 1)
-			// started closes at the last instant before the locking read is
-			// issued, so the wait below measures the lock and not the round trip
-			// that precedes it. Timing the goroutine's whole start-up instead
-			// made the test able to pass without proving anything: on a loaded
-			// machine the wait expired first, the first transaction committed,
-			// and the second then read an unlocked row and agreed with every
-			// assertion that follows.
+
 			started := make(chan struct{})
 			go func() {
 				second, err := tg.source.(crud.Beginner).Begin(ctx)
@@ -1030,8 +888,6 @@ func TestForUpdateMakesTwoTransactionsTakeTurns(t *testing.T) {
 	}
 }
 
-// A multi-row write that trips a constraint halfway has to leave the rows it
-// already touched exactly as it found them.
 func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1052,8 +908,6 @@ func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 				ids = append(ids, row.ID)
 			}
 
-			// The third rename collides with the first: two rows are already
-			// updated by the time the statement fails.
 			var applied int
 			err := cons.Tx(ctx, func(ctx context.Context) error {
 				applied = 0
@@ -1092,9 +946,6 @@ func TestATransactionThatFailsHalfwayLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// A transaction in the context is an instruction, not a hint. Once it is over,
-// a repository call carrying it must fail loudly — falling back to the pool
-// would run the caller's "still inside the transaction" code outside of it.
 func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1133,8 +984,6 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 						t.Fatal("a read on a finished transaction was answered")
 					}
 
-					// Whatever the driver said, the write must not have found
-					// another way to the table.
 					n, err := rows.Count(ctx, crud.Where(crud.Eq("Name", "after")))
 					if err != nil {
 						t.Fatal(err)
@@ -1148,9 +997,6 @@ func TestAFinishedTransactionInTheContextIsNotIgnored(t *testing.T) {
 	}
 }
 
-// A nested Begin is a savepoint, and the two things a savepoint can do have to
-// be independent: rolling one back keeps the outer transaction, releasing one
-// keeps its writes.
 func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1204,11 +1050,6 @@ func TestSavepointsRollBackAndReleaseIndependently(t *testing.T) {
 	}
 }
 
-// A savepoint inside a savepoint is what a nested service call looks like when
-// every layer wraps its own work in a transaction, and it is the one shape
-// nothing exercised: crudsql names each savepoint from a counter on the outer
-// transaction and pgx delegates to pgx.Tx's own nesting, so "roll the inner one
-// back and keep the middle one" is a claim about two different implementations.
 func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1240,12 +1081,11 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 				if _, err := rows.Save(crud.BindExecutor(midCtx, tg.source, inner), &EgRow{ID: 3, Tenant: 1, Name: "inner"}); err != nil {
 					return err
 				}
-				// Only the innermost level goes away.
+
 				if err := inner.Rollback(midCtx); err != nil {
 					return err
 				}
-				// The middle one is still usable afterwards, which is the part a
-				// savepoint that released the wrong name would break.
+
 				if _, err := rows.Save(midCtx, &EgRow{ID: 4, Tenant: 1, Name: "after the inner rollback"}); err != nil {
 					return err
 				}
@@ -1267,19 +1107,6 @@ func TestASavepointInsideASavepointUnwindsOneLevelAtATime(t *testing.T) {
 	}
 }
 
-// The savepoint door classifies, and this is the shape that reaches it. A
-// deferred constraint does not: PostgreSQL hands it to the parent transaction and
-// fires it at the top-level COMMIT. A statement the server refuses inside a
-// savepoint poisons the whole transaction, and the RELEASE that follows is
-// refused with 25P02 — so a nested Commit either carries
-// errs.CodeTransactionAborted or is a bare driver error a caller can say nothing
-// about.
-//
-// PostgreSQL only, and that is the engine's doing rather than the adapter's:
-// MySQL rolls the failed statement back and leaves the transaction usable, so
-// there is nothing there to poison. Both PostgreSQL adapters are walked, because
-// the whole reason crudsql.savepoint.Commit classifies is that crudpgx's nested
-// Begin returns the same Tx whose Commit does ([[FL-009]]).
 func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1297,9 +1124,6 @@ func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
 			}
 			defer tx.Rollback(ctx)
 
-			// The control, and it runs first: a nested transaction over a healthy
-			// one releases cleanly. Without it everything below passes for an
-			// implementation whose RELEASE always fails.
 			healthy, err := tx.(crud.Beginner).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -1330,10 +1154,6 @@ func TestANestedCommitOnAPoisonedTransactionCarriesItsCode(t *testing.T) {
 	}
 }
 
-// WithTxOptions is the only way to ask for an isolation level, and asking for
-// one that the driver then drops looks exactly like asking for one that works.
-// Serializable is the level with an observable consequence: two transactions
-// that read and then write the same rows cannot both commit.
 func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1354,8 +1174,6 @@ func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 	}
 	defer second.Rollback(ctx)
 
-	// Both read the same row, then both write it: under serializable exactly one
-	// of them may commit, and PostgreSQL detects it at commit time.
 	for _, tx := range []crud.Tx{first, second} {
 		if _, err := rows.GetAll(crud.BindExecutor(ctx, source, tx), crud.Where(crud.Eq("Tenant", int64(1)))); err != nil {
 			t.Fatal(err)
@@ -1388,9 +1206,6 @@ func TestWithTxOptionsReachesTheDriver(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// preloads at the edges
-
 func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -1416,8 +1231,6 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 					t.Fatalf("%d parents", len(got))
 				}
 				for _, p := range got {
-					// nil and empty are the same length in Go and different
-					// documents in JSON: one is `null`, the other is `[]`.
 					if p.Kids == nil || len(p.Kids) != 0 {
 						t.Fatalf("parent %d has no children; the preload left %#v", p.ID, p.Kids)
 					}
@@ -1456,8 +1269,7 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				if got[1].Parent != nil {
 					t.Fatalf("a NULL foreign key was given parent %+v", got[1].Parent)
 				}
-				// The parent's own side has to agree: the orphan belongs to
-				// nobody, so nobody may claim it.
+
 				back, err := parents.GetAll(ctx, crud.Preload("Kids"))
 				if err != nil {
 					t.Fatal(err)
@@ -1498,9 +1310,6 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				s := egWatch(tg.source)
 				parents := EgParents.Bind(s)
 
-				// One mark shared by everybody, and one parent left out of the
-				// join table entirely. The keys are the parents', so the IN list
-				// spans two batches whichever way the join rows fall.
 				const n = 1000
 				owners := make([][]any, 0, n)
 				links := make([][]any, 0, n)
@@ -1531,8 +1340,7 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 				if last := got[n-1]; last.Marks == nil || len(last.Marks) != 0 {
 					t.Fatalf("the parent with no join rows got %#v, want an empty slice", last.Marks)
 				}
-				// 1000 keys at 900 to a batch is two statements, and two is what
-				// makes this fixture worth its size.
+
 				if stmts := s.matching("eg_parent_marks"); len(stmts) != 2 {
 					t.Fatalf("%d statements against the join table, want 2 batches for %d keys", len(stmts), n)
 				}
@@ -1560,8 +1368,6 @@ func TestPreloadEdgesAgainstDatabases(t *testing.T) {
 					t.Fatalf("err = %T %v, want a *crud.SchemaError naming the budget", err, err)
 				}
 
-				// And the default budget really is five hops deep, wired all the
-				// way down into the copies that live inside the parent slices.
 				deep, err := parents.GetAll(ctx, crud.Preload("Kids.Parent.Kids.Parent.Kids"))
 				if err != nil {
 					t.Fatal(err)

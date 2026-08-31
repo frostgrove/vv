@@ -30,9 +30,6 @@ func renderEmptyMigration(name string) []byte {
 `, name, name))
 }
 
-// renderModelsMigration puts every supplied model into one Goose migration.
-// Downs run in reverse creation order, which is the safe order once a model
-// starts declaring foreign keys.
 func renderModelsMigration(engine vvdb.Engine, models []modelscan.Model) ([]byte, error) {
 	if len(models) == 0 {
 		return nil, fmt.Errorf("vvgoose: no models were selected")
@@ -86,9 +83,6 @@ func renderTableStatements(engine vvdb.Engine, table string, model *modelscan.Mo
 		return "", "", fmt.Errorf("vvgoose: %s has an auto field in a composite primary key, which SQLite cannot represent", model.Name)
 	}
 	if compositePrimaryKey && autoPrimaryKeys == 1 && (engine == vvdb.MySQL || engine == vvdb.MariaDB) {
-		// InnoDB requires an AUTO_INCREMENT column to be the first column of
-		// an index. Moving only the table constraint preserves the source column
-		// order while keeping the same composite-key uniqueness semantics.
 		ordered := make([]modelscan.Field, 0, len(primaryKeys))
 		for _, field := range primaryKeys {
 			if field.Auto {
@@ -152,13 +146,9 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 	}
 
 	if field.PrimaryKey && field.Auto && integer && engine == vvdb.Postgres && typ == "NUMERIC(20)" {
-		// PostgreSQL identity sequences do not support NUMERIC. Go's uint is
-		// gorm.Model's conventional key, and BIGINT is its practical SQL home.
 		typ = "BIGINT"
 	}
 	if field.PrimaryKey && (engine == vvdb.MySQL || engine == vvdb.MariaDB) && typ == "TEXT" {
-		// MySQL cannot index an unbounded TEXT primary key without an explicit
-		// prefix. A bounded string key is the portable mapping.
 		typ = "VARCHAR(255)"
 	}
 	parts := []string{name, typ}
@@ -169,7 +159,6 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 		case vvdb.MySQL, vvdb.MariaDB:
 			parts = append(parts, "AUTO_INCREMENT")
 		case vvdb.SQLite:
-			// SQLite's automatically assigned rowid requires this declaration.
 			parts[1] = "INTEGER"
 		}
 	}
@@ -190,9 +179,6 @@ func renderColumn(engine vvdb.Engine, field modelscan.Field, inlinePrimaryKey bo
 }
 
 func modelFieldType(field modelscan.Field) string {
-	// UUID and Decimal are semantic scalar names, not merely their Go storage
-	// representation. Preserve those exact names before resolving a local
-	// declaration such as `type UUID [16]byte` to array/JSON SQL.
 	for _, sourceType := range []string{field.CanonicalType, field.GoType} {
 		switch semantic := baseGoType(sourceType); semantic {
 		case "uuid.UUID", "decimal.Decimal":
@@ -208,10 +194,6 @@ func modelFieldType(field modelscan.Field) string {
 	return field.GoType
 }
 
-// sqlType deliberately has a useful fallback for application-defined scalar
-// types. Source analysis cannot know whether `Status` has string or integer as
-// its underlying type without loading and type-checking the whole program; a
-// TEXT column is editable and safe, while guessing an integer can destroy data.
 func sqlType(engine vvdb.Engine, raw string) (typ string, integer bool) {
 	base := baseGoType(raw)
 	switch base {
@@ -345,8 +327,7 @@ func baseGoType(raw string) string {
 	if strings.HasPrefix(typ, "[") {
 		return "array"
 	}
-	// UUID packages commonly use aliases (uuid, guuid, googleuuid). The
-	// selector's declared name remains the stable evidence.
+
 	if strings.HasSuffix(typ, ".UUID") || typ == "UUID" {
 		return "uuid.UUID"
 	}

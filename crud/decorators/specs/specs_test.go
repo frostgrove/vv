@@ -27,8 +27,6 @@ type UserUpdate struct {
 	Name *string
 }
 
-// The metamodel: JPA's generated User_ class, written by hand once and checked
-// against the model at package initialisation.
 type userAttrs struct {
 	ID      specs.Ord[User, int64]
 	Email   specs.Str[User]
@@ -60,7 +58,6 @@ func where(t *testing.T, s specs.Specification[User]) (string, []any) {
 	return clause, last.Args
 }
 
-// The literal JPA style: a specification is a function of (root, builder).
 func isActive() specs.Specification[User] {
 	return specs.Of[User](func(root specs.Root[User], cb specs.Builder) crud.Predicate {
 		return cb.Equal(root.Get("Active"), true)
@@ -134,8 +131,7 @@ func TestComposition(t *testing.T) {
 		{"nil operand is ignored", specs.Where[User](nil).And(User_.Age.Gt(1)),
 			`"age" > $1`},
 		{"isNull", specs.Where(User_.Age.IsNull()), `"age" IS NULL`},
-		// Lte was the one ordered comparison this table did not reach; its
-		// three siblings are pinned above and in TestMetamodelStyle.
+
 		{"lte", specs.Where(User_.Age.Lte(30)), `"age" <= $1`},
 		{"between", specs.Where(User_.Created.Between(now, now)),
 			`"created_at" BETWEEN $1 AND $2`},
@@ -201,8 +197,6 @@ func TestOptionalEqualityPreservesPointerAndOptStates(t *testing.T) {
 	}
 }
 
-// Specification.where(null) means "no restriction", so the statement has no
-// WHERE clause at all.
 func TestEmptySpecificationDoesNotRestrict(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	if _, err := specs.Executor(Users.Bind(rec)).FindAll(context.Background(), specs.Where[User](nil)); err != nil {
@@ -224,7 +218,7 @@ func TestFindOne(t *testing.T) {
 	if u.Name != "Ann" {
 		t.Fatalf("user = %+v", u)
 	}
-	// findOne fetches two rows so it can tell "one" from "more than one".
+
 	if !strings.Contains(rec.Last().SQL, "LIMIT 2") {
 		t.Fatalf("sql = %s", rec.Last().SQL)
 	}
@@ -273,8 +267,6 @@ func TestFindPageCountsAndDeletes(t *testing.T) {
 	}
 }
 
-// DeleteBy with an empty specification would truncate the table; that has to be
-// deliberate, so it is refused here.
 func TestDeleteByRefusesEmptySpecification(t *testing.T) {
 	rec := crudtest.Postgres()
 	repository := specs.Executor(Users.Bind(rec))
@@ -286,7 +278,6 @@ func TestDeleteByRefusesEmptySpecification(t *testing.T) {
 	}
 }
 
-// The decorator keeps the whole basic surface.
 func TestExecutorStillHasTheBasicMethods(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(row(1, "a@x", "Ann")))
 	repository := specs.Executor(Users.Bind(rec))
@@ -307,7 +298,7 @@ func TestExecutorStillHasTheBasicMethods(t *testing.T) {
 
 func TestMetamodelValidatesAtDeclarationTime(t *testing.T) {
 	type wrongType struct {
-		Age specs.Str[User] // model has Opt[int]
+		Age specs.Str[User]
 	}
 	type missing struct {
 		Nope specs.Str[User]

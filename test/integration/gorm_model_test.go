@@ -18,8 +18,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// The models live in test/gormstore, next to their generated DTOs and
-// metamodels — exactly the layout docs/gorm.md describes.
 type (
 	Team   = gormstore.Team
 	Member = gormstore.Member
@@ -29,9 +27,6 @@ type (
 	MemberUpdate = gormstore.MemberUpdate
 )
 
-// gorm.Model is a well-known generated lifecycle shape. The generated
-// blueprints bind DeletedAt once as a server-owned tombstone: reads hide it,
-// Delete stamps it, Restore clears it, and no wire DTO can write it.
 var (
 	GormTeams   = gormstore.TeamRepository
 	GormMembers = gormstore.MemberRepository
@@ -52,7 +47,6 @@ func gormDB(t *testing.T) *gorm.DB {
 	return database
 }
 
-// A gorm model maps to exactly the columns gorm itself would use.
 func TestGormModelIsAVVModel(t *testing.T) {
 	s, err := crud.SchemaOf[Member]()
 	if err != nil {
@@ -70,7 +64,7 @@ func TestGormModelIsAVVModel(t *testing.T) {
 			t.Fatalf("unexpected column %q in %v", c, s.Columns())
 		}
 	}
-	// gorm.Model is flattened; the association field is a relation, not a column.
+
 	if s.PK.Name != "ID" || !s.PK.Auto {
 		t.Fatalf("pk = %+v", s.PK)
 	}
@@ -80,14 +74,12 @@ func TestGormModelIsAVVModel(t *testing.T) {
 	if s.Relation("Team") == nil {
 		t.Fatal("the rel tag should have made Team a relation")
 	}
-	// gorm.DeletedAt is one column, not a flattened sql.NullTime.
+
 	if f := s.Field("DeletedAt"); f == nil || f.Column != "deleted_at" {
 		t.Fatalf("deleted_at = %+v", f)
 	}
 }
 
-// The mapping self-check every gorm project should copy: vv derives column
-// names from the Go field names, gorm's schema parser knows the real ones.
 func TestGormMappingMatchesGorm(t *testing.T) {
 	database := gormDB(t)
 	s, err := crud.SchemaOf[Member]()
@@ -108,7 +100,6 @@ func TestGormMappingMatchesGorm(t *testing.T) {
 	}
 }
 
-// gorm writes, vv reads — including the DSL, relations and preloads.
 func TestGormModelThroughVV(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
@@ -117,7 +108,6 @@ func TestGormModelThroughVV(t *testing.T) {
 	teams := specs.Executor(GormTeams.Bind(source))
 	members := GormMembers.Bind(source)
 
-	// Everything below is written with gorm's own API.
 	go1 := Label{Slug: "go"}
 	rust := Label{Slug: "rust"}
 	if err := database.Create(&[]*Label{&go1, &rust}).Error; err != nil {
@@ -137,7 +127,6 @@ func TestGormModelThroughVV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// …and read back through the DSL, walking the association gorm declared.
 	var request query.Request
 	if err := json.Unmarshal([]byte(`{
 		"filter":  {"team.name": "core"},
@@ -165,7 +154,6 @@ func TestGormModelThroughVV(t *testing.T) {
 		t.Fatalf("ages = %v %v", got[0].Age, got[1].Age)
 	}
 
-	// many2many, through the same join table gorm created.
 	found, err := teams.FindAll(ctx, specs.Of[Team](func(r specs.Root[Team], cb specs.Builder) crud.Predicate {
 		return cb.Equal(r.Get("Labels.Slug"), "go")
 	}))
@@ -177,7 +165,6 @@ func TestGormModelThroughVV(t *testing.T) {
 	}
 }
 
-// The scope keeps gorm's tombstones out of every vv read.
 func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
@@ -194,7 +181,6 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// gorm's soft delete: the row stays, deleted_at is set.
 	if err := database.Delete(&ann).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +191,7 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	if _, err := members.GetByID(ctx, ann.ID); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v: a soft-deleted row must look missing", err)
 	}
-	// And a caller cannot widen the scope back open.
+
 	all, err := members.GetAll(ctx, crud.Where(crud.IsNotNull("DeletedAt")))
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +199,7 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	if len(all) != 0 {
 		t.Fatalf("the scope was widened: %+v", all)
 	}
-	// The row really is still there for gorm.
+
 	var raw int64
 	if err := database.Unscoped().Model(&Member{}).Count(&raw).Error; err != nil {
 		t.Fatal(err)
@@ -223,7 +209,6 @@ func TestGormSoftDeletesAreInvisible(t *testing.T) {
 	}
 }
 
-// One transaction, gorm's builder and vv's repository writing into it.
 func TestGormModelInsideGormTransaction(t *testing.T) {
 	ctx := context.Background()
 	database := gormDB(t)
@@ -263,10 +248,6 @@ func TestGormModelInsideGormTransaction(t *testing.T) {
 	}
 }
 
-// docs/gorm.md §14 opens with a curl that walks a has_many hop out of Team and
-// preloads back along it two levels deep. Nothing ran it: only the belongs_to
-// direction and the many2many were covered, so the document a reader is most
-// likely to copy was the one nothing executed.
 func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
@@ -277,7 +258,7 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 			if err := g.database.Create(&[]*Label{&goLbl, &rust}).Error; err != nil {
 				t.Fatal(err)
 			}
-			// core has a member over 30 and a "go" label; ops has neither.
+
 			core := Team{Name: "core", Labels: []Label{goLbl, rust}}
 			ops := Team{Name: "ops", Labels: []Label{rust}}
 			if err := g.database.Create(&[]*Team{&core, &ops}).Error; err != nil {
@@ -292,7 +273,6 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// The document from the guide, character for character.
 			var request query.Request
 			if err := json.Unmarshal([]byte(`{
 				"filter":  {"labels.slug": {"in": ["go","rust"]}, "members.age": {"gte": 30}},
@@ -311,9 +291,6 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Two EXISTS subqueries, ANDed: ops has a matching label but nobody
-			// over 30, so exactly one team comes back — and it comes back once,
-			// even though two of its labels match.
 			if len(got) != 1 || got[0].Name != "core" {
 				t.Fatalf("teams = %v, want just core", mxTeamNames(got))
 			}
@@ -323,8 +300,7 @@ func TestTheGormGuidesHeadlineDocumentRuns(t *testing.T) {
 			if want := []string{"go", "rust"}; !eq(mxSlugs(got[0].Labels), want) {
 				t.Fatalf("labels = %v, want %v", mxSlugs(got[0].Labels), want)
 			}
-			// members.team is the second level, and it points back at the team it
-			// came from.
+
 			for _, m := range got[0].Members {
 				if m.Team == nil {
 					t.Fatalf("member %q has no team: the nested preload did not run", m.Name)
@@ -345,18 +321,12 @@ func mxTeamNames(teams []Team) []string {
 	return out
 }
 
-// docs/gorm.md §16 tells a reader that gorm's hooks, callbacks and defaults do
-// not run on vv writes: vv sends one statement to the driver and never
-// enters gorm's callback chain. That is a promise about what does *not* happen,
-// which is exactly the kind that rots unnoticed — so here it is, from both
-// sides, with a hook that leaves a mark on the row.
 func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 	for _, g := range mxGorms(t) {
 		t.Run(g.name, func(t *testing.T) {
 			ctx := context.Background()
 			labels := GormLabels.Bind(g.source)
 
-			// gorm's own Create goes through the callback chain.
 			before := gormstore.LabelCreations.Load()
 			viaGorm := Label{}
 			if err := g.database.Create(&viaGorm).Error; err != nil {
@@ -369,9 +339,6 @@ func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 				t.Fatalf("slug = %q, want the hook's default", viaGorm.Slug)
 			}
 
-			// vv's Save is one INSERT. The hook does not run, so the column
-			// gets the zero value the model carried — which is the whole point of
-			// the warning in the guide.
 			before = gormstore.LabelCreations.Load()
 			viaVV := Label{}
 			if stored, err := labels.Save(ctx, &viaVV); err != nil {
@@ -386,8 +353,6 @@ func TestGormHooksDoNotRunOnVVWrites(t *testing.T) {
 				t.Fatalf("slug = %q: a gorm-side default reached an vv write", viaVV.Slug)
 			}
 
-			// And the row on disk agrees — this is not a difference in what was
-			// read back afterwards.
 			stored, err := labels.GetByID(ctx, viaVV.ID)
 			if err != nil {
 				t.Fatal(err)

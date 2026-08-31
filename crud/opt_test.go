@@ -55,8 +55,6 @@ func TestOptStates(t *testing.T) {
 	}
 }
 
-// The whole point of Opt: an absent JSON key and an explicit null are different
-// intents, and a PATCH body has to keep them apart.
 func TestOptJSONRoundTrip(t *testing.T) {
 	type patch struct {
 		Name string              `json:"name"`
@@ -100,8 +98,6 @@ func TestOptSQL(t *testing.T) {
 		t.Fatalf("scanning NULL gave %v", o)
 	}
 
-	// Scanning a []byte into a string Opt goes through database/sql's own
-	// conversion rules.
 	var s crud.Opt[string]
 	if err := s.Scan([]byte("hello")); err != nil {
 		t.Fatal(err)

@@ -13,21 +13,6 @@ type bucketAdmin interface {
 	MakeBucket(context.Context, string, minio.MakeBucketOptions) error
 }
 
-// EnsureBucket makes the configured bucket exist, and is the only call in this
-// package that contacts MinIO outside an object operation.
-//
-// An application calls it once at start-up. Every other method assumes the
-// bucket is there and answers a missing one as a failed write, which arrives
-// as a document somebody could not save rather than as a deployment that is not
-// finished.
-//
-// Creating one it did not find is not the same bucket an operator would have
-// provisioned: it has no versioning, no retention and no replication, and it
-// looks identical to one that has. That difference belongs to whoever runs the
-// deployment, so it is worth being deliberate about calling this in production.
-//
-// A bucket that appeared between the check and the create is success: two
-// replicas starting together both wanted it to exist, and it does.
 func (this *Backend) EnsureBucket(ctx context.Context) error {
 	if this.admin == nil {
 		return storage.NewError("ensure bucket", storage.KindInternal,

@@ -17,13 +17,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// The whole chain against a real database: a token is verified, its claims
-// become a principal, and the principal becomes a WHERE clause on three
-// engines.
-//
-// The unit tests assert the SQL that is built. This asserts the rows that come
-// back, which is the only thing that says the two halves agree.
-
 const (
 	authIssuer   = "https://id.example.test"
 	authAudience = "integration"
@@ -32,13 +25,11 @@ const (
 var authSecret = []byte("integration secret, long enough to be one")
 
 var (
-	// The roles the tokens carry, and what they grant.
 	authRoles = auth.RoleMap{
 		"editor": {"eg:read", "eg:write", "eg:delete"},
 		"reader": {"eg:read"},
 	}
 
-	// The policy under test: what you may do, and which rows exist for you.
 	authPolicy = security.Combine(
 		security.PerAction[EgRow, int64](map[security.Action]auth.Permission{
 			security.Read:   "eg:read",
@@ -52,8 +43,6 @@ var (
 	AuthRows = sqlrepo.Define[EgRow, int64, struct{}]("eg_rows")
 )
 
-// authenticate runs a token through the same authenticator a middleware would,
-// and answers the context a repository will see.
 func authenticate(t *testing.T, token string) context.Context {
 	t.Helper()
 	authn := authjwt.Standard(
@@ -93,8 +82,6 @@ func authToken(t *testing.T, role string, tenant int64, mutate func(jwt.MapClaim
 	return s
 }
 
-// authSeed writes two tenants' rows, so a narrowing that does nothing is
-// visible as extra rows rather than as no rows.
 func authSeed(t *testing.T, source crud.Source) {
 	t.Helper()
 	rows := AuthRows.Bind(source)
@@ -129,9 +116,6 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 				}
 			})
 
-			// The control. Without it the assertion above passes for a gate
-			// that returns nothing at all, and for a database that happens to
-			// hold only tenant 1's rows.
 			t.Run("control: the other tenant's token sees the other row", func(t *testing.T) {
 				ctx := authenticate(t, authToken(t, "editor", 2, nil))
 				got, err := gated.GetAll(ctx)
@@ -143,8 +127,6 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 				}
 			})
 
-			// D-008: a row that is there but invisible must not be
-			// distinguishable from one that is not there.
 			t.Run("another tenant's id is not found, not forbidden", func(t *testing.T) {
 				ctx := authenticate(t, authToken(t, "editor", 1, nil))
 				_, err := gated.GetByID(ctx, 3)
@@ -162,7 +144,7 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 				if _, err := gated.Save(ctx, &row); !errors.Is(err, crud.ErrForbidden) {
 					t.Fatalf("writing into another tenant answered %v, want a denial", err)
 				}
-				// And it really did not land.
+
 				if _, err := AuthRows.Bind(tg.source).GetByID(context.Background(), 99); !errors.Is(err, crud.ErrNotFound) {
 					t.Fatal("the refused row is in the table")
 				}
@@ -200,8 +182,6 @@ func TestATokensTenantClaimNarrowsTheStatement(t *testing.T) {
 	}
 }
 
-// Everything the token cannot supply fails closed, against a real connection
-// and with nothing executed.
 func TestAGatedRepositoryRefusesWhatTheTokenDoesNotCarry(t *testing.T) {
 	egSetup(t)
 	tg := egEngines()[0]

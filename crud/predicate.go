@@ -10,28 +10,17 @@ import (
 	"github.com/frostgrove/vv/utils"
 )
 
-// Predicate is a node of the WHERE tree. The AST is closed on purpose — the
-// only way to produce arbitrary SQL is Raw, which is easy to grep for and easy
-// to forbid. A security decorator can therefore trust that whatever it ANDs in
-// cannot be peeled off by the caller.
 type Predicate interface {
 	render(w *writer)
-	// document renders the node as a query-DSL filter object, for a repository
-	// that is not in this process. It is on the interface rather than in a type
-	// switch so that a node added to this file and not to document.go fails to
-	// compile — a switch would fall through to a default and drop the clause.
+
 	document(w *docWriter)
 }
 
-// scope is the table a path segment is being resolved against. The root scope
-// has no alias, so top-level columns stay unqualified; every relation hop opens
-// a subquery with a generated one.
 type scope struct {
 	meta  *Meta
 	alias string
 }
 
-// qualify renders a column for use inside its own scope.
 func (this scope) qualify(d Dialect, col string) string {
 	if this.alias == "" {
 		return d.Quote(col)
@@ -39,8 +28,6 @@ func (this scope) qualify(d Dialect, col string) string {
 	return this.alias + "." + d.Quote(col)
 }
 
-// correlate renders a column of this scope for use from a deeper one, where
-// bare names would be ambiguous.
 func (this scope) correlate(d Dialect, col string) string {
 	if this.alias == "" {
 		return quoteTable(d, this.meta.TableReference()) + "." + d.Quote(col)
@@ -48,8 +35,6 @@ func (this scope) correlate(d Dialect, col string) string {
 	return this.alias + "." + d.Quote(col)
 }
 
-// writer renders an AST against a dialect, resolving field references through
-// the model schema and collecting bind arguments.
 type writer struct {
 	sb    strings.Builder
 	args  []any
@@ -59,8 +44,6 @@ type writer struct {
 	alias int
 	err   error
 
-	// rel narrows the tables a relation hop opens; path is how far down the
-	// relation tree the writer currently is, so the narrowing can be looked up.
 	rel  *RelationScopes
 	path string
 }
@@ -76,7 +59,6 @@ func (this *writer) nextAlias() string {
 	return "rx" + itoa(this.alias)
 }
 
-// current returns the scope in effect, defaulting to the root model.
 func (this *writer) current() scope {
 	if this.cur.meta == nil {
 		return scope{meta: this.m}
@@ -84,10 +66,6 @@ func (this *writer) current() scope {
 	return this.cur
 }
 
-// leaf resolves a possibly-nested field path and hands the rendered column
-// expression to emit. Every relation hop on the way wraps the condition in a
-// correlated EXISTS, which is what keeps `Comments.Body eq x` from multiplying
-// rows the way a join would — COUNT and LIMIT stay honest.
 func (this *writer) leaf(path string, emit func(col string)) {
 	cur := this.current()
 	hops, f, _, err := cur.meta.WalkPath(path)
@@ -133,19 +111,12 @@ func (this *writer) leaf(path string, emit func(col string)) {
 	this.str(strings.Repeat(")", len(hops)))
 }
 
-// hopScope renders the narrowing that applies to the table the writer has just
-// stepped into. Without it a filter through a relation reads rows the caller's
-// own repository would refuse to hand over — the subquery has its own FROM and
-// inherits nothing.
 func (this *writer) hopScope() bool {
 	p := this.rel.At(this.path, this.cur.meta)
 	if p == nil {
 		return false
 	}
-	// A narrowing is the repository's own declaration, not caller input, so it
-	// is rendered without narrowing anything further. That also settles the
-	// only way this could fail to terminate: a scope on a model whose own path
-	// walks back into that same model.
+
 	saved := this.rel
 	this.rel = nil
 	p.render(this)
@@ -164,9 +135,6 @@ func (this *writer) bind(v any) {
 
 func (this *writer) str(s string) { this.sb.WriteString(s) }
 
-// likeEscape makes the backslash escapes the convenience operations add part
-// of SQL's grammar. Dialects own their spelling through LikeEscaper; the
-// standard form is the compatibility default for a dialect that does not.
 func (this *writer) likeEscape() {
 	if d, ok := this.d.(LikeEscaper); ok {
 		this.str(d.LikeEscapeClause())
@@ -174,9 +142,6 @@ func (this *writer) likeEscape() {
 	}
 	this.str(` ESCAPE '\'`)
 }
-
-// ---------------------------------------------------------------------------
-// nodes
 
 type cmpNode struct {
 	field     string
@@ -222,7 +187,6 @@ type inNode struct {
 
 func (this inNode) render(w *writer) {
 	if len(this.values) == 0 {
-		// IN () is a syntax error everywhere; degrade to a constant.
 		if this.not {
 			w.str("1 = 1")
 		} else {
@@ -275,11 +239,6 @@ type likeNode struct {
 	mode       likeMode
 }
 
-// likeMode keeps a literal convenience operation distinct from a raw SQL LIKE
-// pattern. The former owns wildcard escaping and must emit an ESCAPE clause;
-// the latter deliberately gives a trusted caller SQL's pattern vocabulary.
-// Keeping that distinction in the AST also lets a remote filter round-trip
-// without turning an escaped helper back into an unmarked raw pattern.
 type likeMode uint8
 
 const (
@@ -337,13 +296,10 @@ func (this fieldCmpNode) render(w *writer) {
 }
 
 type logicNode struct {
-	op   string // AND / OR
+	op   string
 	kids []Predicate
 }
 
-// flatten inlines nested nodes with the same operator, so a chain of .And()
-// calls renders as one flat clause instead of a staircase of parentheses.
-// AND and OR are associative, so this only affects readability.
 func flatten(op string, kids, out []Predicate) []Predicate {
 	for _, k := range kids {
 		if k == nil {
@@ -362,7 +318,6 @@ func (this logicNode) render(w *writer) {
 	live := flatten(this.op, this.kids, nil)
 	switch len(live) {
 	case 0:
-		// AND of nothing is true, OR of nothing is false.
 		if this.op == "AND" {
 			w.str("1 = 1")
 		} else {
@@ -410,8 +365,6 @@ type rawNode struct {
 	args []any
 }
 
-// render rewrites ? markers into the dialect's placeholders so raw fragments
-// stay portable between MySQL and PostgreSQL.
 func (this rawNode) render(w *writer) {
 	i := 0
 	for {
@@ -419,15 +372,13 @@ func (this rawNode) render(w *writer) {
 		if j < 0 {
 			w.str(this.sql[i:])
 			if len(this.args) > 0 {
-				// The leftovers are not harmless: whoever wrote a native $1 by
-				// hand would get it renumbered against someone else's bind.
 				w.fail(&SchemaError{Model: w.m.Name, Reason: "crud.Raw: fewer ? markers than arguments"})
 			}
 			return
 		}
 		j += i
 		w.str(this.sql[i:j])
-		if j+1 < len(this.sql) && this.sql[j+1] == '?' { // ?? escapes a literal ?
+		if j+1 < len(this.sql) && this.sql[j+1] == '?' {
 			w.str("?")
 			i = j + 2
 			continue
@@ -442,12 +393,6 @@ func (this rawNode) render(w *writer) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// constructors
-//
-// Every field reference is a Go field name (preferred) or a column name.
-
-// Eq renders `field = ?`, or `field IS NULL` when value is nil.
 func Eq(field string, value any) Predicate {
 	if stored, defined, null, ok := utils.Inspect(value); ok {
 		if !defined {
@@ -464,7 +409,6 @@ func Eq(field string, value any) Predicate {
 	return cmpNode{field: field, op: "=", value: value}
 }
 
-// Ne renders `field <> ?`, or `field IS NOT NULL` when value is nil.
 func Ne(field string, value any) Predicate {
 	if stored, defined, null, ok := utils.Inspect(value); ok {
 		if !defined {
@@ -494,8 +438,6 @@ func NotLike(field, pattern string) Predicate {
 	return likeNode{field: field, pattern: pattern, not: true}
 }
 
-// LikeIgnoreCase compares with LOWER() on both sides, which works on MySQL and
-// PostgreSQL alike (unlike ILIKE).
 func LikeIgnoreCase(field, pattern string) Predicate {
 	return likeNode{field: field, pattern: pattern, ignoreCase: true}
 }
@@ -504,9 +446,6 @@ func Contains(field, s string) Predicate {
 	return likeNode{field: field, pattern: s, mode: likeContains}
 }
 
-// ContainsIgnoreCase is Contains with portable case-insensitive matching. Like
-// Contains, % and _ in s are literal characters rather than client-supplied
-// wildcards.
 func ContainsIgnoreCase(field, s string) Predicate {
 	return likeNode{field: field, pattern: s, ignoreCase: true, mode: likeContains}
 }
@@ -517,8 +456,6 @@ func EndsWith(field, s string) Predicate {
 	return likeNode{field: field, pattern: s, mode: likeEndsWith}
 }
 
-// StartsWithIgnoreCase and EndsWithIgnoreCase are the portable,
-// case-insensitive versions of their escaping convenience counterparts.
 func StartsWithIgnoreCase(field, s string) Predicate {
 	return likeNode{field: field, pattern: s, ignoreCase: true, mode: likeStartsWith}
 }
@@ -531,48 +468,33 @@ func Between(field string, low, high any) Predicate {
 	return betweenNode{field: field, low: low, hi: high}
 }
 
-// In renders `field IN (...)`. An empty list is always false.
 func In(field string, values ...any) Predicate {
 	return inNode{field: field, values: append([]any(nil), values...)}
 }
 
-// NotIn renders `field NOT IN (...)`. An empty list is always true.
 func NotIn(field string, values ...any) Predicate {
 	return inNode{field: field, values: append([]any(nil), values...), not: true}
 }
 
-// InAny is In for a typed slice.
 func InAny[T any](field string, values []T) Predicate {
 	return inNode{field: field, values: anySlice(values)}
 }
 
-// NotInAny is NotIn for a typed slice.
 func NotInAny[T any](field string, values []T) Predicate {
 	return inNode{field: field, values: anySlice(values), not: true}
 }
 
-// EqField compares two columns of the same model.
 func EqField(left, right string) Predicate { return fieldCmpNode{left, right, "="} }
 
-// And is true when every non-nil argument is true (and when there are none).
-// Copy the variadic backing slice: retaining it would let a caller mutate an
-// already-built node into a cyclic AST after this function returns.
 func And(preds ...Predicate) Predicate { return logicNode{"AND", append([]Predicate(nil), preds...)} }
 
-// Or is true when any non-nil argument is true; empty Or is false.
 func Or(preds ...Predicate) Predicate { return logicNode{"OR", append([]Predicate(nil), preds...)} }
 
 func Not(p Predicate) Predicate { return notNode{p} }
 
-// True and False are the identity elements, useful as a scope default.
 func True() Predicate  { return constNode(true) }
 func False() Predicate { return constNode(false) }
 
-// IsTautology reports whether the closed predicate AST is provably true for
-// every row. It is intentionally conservative: false means only "not proven
-// unconditional", because a general SQL predicate cannot be decided without a
-// database. Access-control guards use it to reject the closed constants callers
-// most commonly produce by accident, such as NotInAny(field, nil).
 func IsTautology(p Predicate) bool {
 	if !tautologyWithinBudget(p) {
 		return false
@@ -581,10 +503,6 @@ func IsTautology(p Predicate) bool {
 	return known && v
 }
 
-// IsTautologyFor is IsTautology with a model available to resolve field aliases.
-// In particular, EqField("ID", "id") is a same-column comparison for a model
-// whose primary key is named ID, even though the predicate was written with two
-// spellings. Security uses this form for scope and bulk-write guards.
 func IsTautologyFor(m *Meta, p Predicate) bool {
 	if !tautologyWithinBudget(p) {
 		return false
@@ -593,27 +511,17 @@ func IsTautologyFor(m *Meta, p Predicate) bool {
 	return known && v
 }
 
-// MayBeTautologyFor is IsTautologyFor with the fail-closed cases a declarative
-// bulk-write guard needs: raw SQL and a driver.Valuer. Neither can be inspected
-// without either guessing SQL or calling user code, so it reports true for
-// their presence anywhere in the closed AST. It may reject a statement that a
-// particular driver call would make narrow; use it only where a false positive
-// is safer than an unrestricted write.
 func MayBeTautologyFor(m *Meta, p Predicate) bool {
 	if !tautologyWithinBudget(p) {
 		return true
 	}
 	if containsRawForTautology(p) || containsOpaqueBindForTautology(p) {
-		// Raw has no AST semantics we can prove. Specs' direct bulk verbs are
-		// the explicit escape hatch, so its convenience bulk verbs fail closed.
 		return true
 	}
 	if IsTautologyFor(m, p) {
 		return true
 	}
-	// IsTautologyFor deliberately gives up rather than allocating without
-	// bound. A bulk guard makes the opposite trade-off for a logical formula:
-	// it rejects the expression if the exact BDD proof hit that budget.
+
 	if containsLogicForTautology(p) {
 		p = simplifyForTautology(m, p)
 		_, exhausted := bddTautologyFor(m, p)
@@ -672,11 +580,6 @@ func containsOpaqueBindForTautology(p Predicate) bool {
 	return false
 }
 
-// opaqueBindForTautology is deliberately narrower than database/sql and
-// driver-specific bind support. Only the values canonicalBindForTautology can
-// prove stable, plus a known eventual NULL, are safe to let through a
-// declarative bulk-write guard. A custom driver may accept more types (for
-// example a decimal decomposition); that uncertainty is a fail-closed refusal.
 func opaqueBindForTautology(value any) bool {
 	if _, ok := canonicalBindForTautology(value); ok {
 		return false
@@ -734,10 +637,6 @@ type tautologyWalkNode struct {
 	underLogic bool
 }
 
-// tautologyWithinBudget is an iterative preflight before simplification or a
-// BDD recurses. Large direct IN predicates remain legitimate bulk narrowings;
-// their values count only when they sit inside a Boolean formula that would
-// expand them into BDD leaves.
 func tautologyWithinBudget(p Predicate) bool {
 	stack := []tautologyWalkNode{{p: p}}
 	seen := 0
@@ -753,9 +652,6 @@ func tautologyWithinBudget(p Predicate) bool {
 		case notNode:
 			stack = append(stack, tautologyWalkNode{p: n.inner, depth: current.depth + 1, underLogic: current.underLogic})
 		case logicNode:
-			// Refuse before appending a caller-controlled number of children.
-			// Otherwise Or(hugeSlice...) grows this preflight's own stack before
-			// it observes the AST budget.
 			if len(n.kids) > maxTautologyASTNodes-seen-len(stack) {
 				return false
 			}
@@ -779,10 +675,6 @@ func constantValueFor(m *Meta, p Predicate) (bool, bool) {
 	return constantValueForSimplified(m, p)
 }
 
-// constantValueForSimplified recognises constants in a tree whose neutral
-// boolean terms have already been removed. Keeping simplification separate
-// means the AST still renders exactly as the caller wrote it; this is only the
-// model-aware proof used by scope and bulk-write guards.
 func constantValueForSimplified(m *Meta, p Predicate) (bool, bool) {
 	switch n := p.(type) {
 	case nil:
@@ -794,28 +686,14 @@ func constantValueForSimplified(m *Meta, p Predicate) (bool, bool) {
 			return n.not, true
 		}
 	case nullNode:
-		// A primary key is non-NULL by the database contract. Its IS NOT NULL
-		// spelling (including Ne(field, nil) and Not(IsNull(field))) therefore
-		// cannot narrow a guarded bulk write. Other columns may be nullable, so
-		// their IS NOT NULL is a real predicate and must remain admissible.
 		if primaryKeyField(m, n.field) {
 			return n.not, true
 		}
 	case fieldCmpNode:
-		// `nullable = nullable` excludes NULL rows, so it is a real narrowing.
-		// The equality is unconditional only when both spellings resolve to the
-		// same non-NULL primary key. Unknown names stay unknown here and are
-		// reported by normal predicate validation rather than mislabeled as an
-		// unbounded bulk write.
 		if n.op == "=" && samePrimaryKey(m, n.left, n.right) {
 			return true, true
 		}
 	case logicNode:
-		// Rendering drops nil children before applying the identity element. The
-		// constant recogniser must make that same reduction: nil is true as an
-		// AND identity, but it is not a true branch of an OR. Otherwise
-		// Not(Or(nil)) renders as `NOT (1 = 0)` while a bulk-write guard calls it
-		// non-tautological and lets an unrestricted statement through.
 		live := flatten(n.op, n.kids, nil)
 		if len(live) == 0 {
 			return n.op == "AND", true
@@ -851,10 +729,6 @@ func constantValueForSimplified(m *Meta, p Predicate) (bool, bool) {
 	return false, false
 }
 
-// simplifyForTautology removes only boolean identity terms. It is deliberately
-// private to the guard: SQL rendering remains a faithful record of the AST the
-// caller supplied. Besides making the proof easier to read, this makes
-// And(True(), p) and p equivalent when looking for p OR NOT p.
 func simplifyForTautology(m *Meta, p Predicate) Predicate {
 	switch n := p.(type) {
 	case notNode:
@@ -912,10 +786,6 @@ func samePrimaryKey(m *Meta, a, b string) bool {
 	return primaryKeyField(m, b)
 }
 
-// sameValueSet compares IN values with SQL membership semantics: their order
-// and duplicate entries do not change either IN or NOT IN. Values must still
-// be representationally equal here; a conservative missed identity is safer
-// than guessing whether two differently typed binds compare equal in a driver.
 func sameValueSet(left, right []any) bool {
 	for _, l := range left {
 		if !containsValue(right, l) {
@@ -948,10 +818,6 @@ func allNonNil(values []any) bool {
 	return true
 }
 
-// definitelyNonNullBind is stricter than a non-nil Go interface. It shares the
-// canonicalisation used to decide whether two comparison leaves are the same:
-// only a value whose eventual database/sql bind is plainly non-NULL and stable
-// is allowed into a two-valued proof.
 func definitelyNonNullBind(value any) bool {
 	_, ok := canonicalBindForTautology(value)
 	return ok
@@ -963,12 +829,6 @@ func sameBindValue(left, right any) bool {
 	return leftOK && rightOK && reflect.DeepEqual(left, right)
 }
 
-// canonicalBindForTautology mirrors only the safe, value-preserving portion of
-// database/sql's argument conversion. It unwraps non-nil pointers so &id and
-// id mean the same comparison, and unwraps NamedArg exactly as database/sql
-// does before its default conversion. It deliberately declines driver.Valuer
-// and sql.Out: their driver-facing behaviour is not a generic predicate-law
-// proof. A false result merely leaves the guard conservative.
 func canonicalBindForTautology(value any) (any, bool) {
 	seenPointers := map[reflect.Value]struct{}{}
 	namedUnwrapped := false
@@ -978,9 +838,6 @@ func canonicalBindForTautology(value any) (any, bool) {
 			return nil, false
 		}
 		if named, ok := value.(sql.NamedArg); ok {
-			// database/sql's namedValueToDriverValue unwraps precisely the
-			// outer argument. A nested NamedArg reaches DefaultParameterConverter
-			// as a struct and is rejected, so do not mistake it for a usable bind.
 			if namedUnwrapped || !topLevel {
 				return nil, false
 			}
@@ -1030,8 +887,6 @@ func primitiveDriverValue(value any, rv reflect.Value) (any, bool) {
 	case reflect.String:
 		return rv.String(), true
 	case reflect.Slice:
-		// DefaultParameterConverter accepts every byte-slice type, including
-		// sql.RawBytes and application-defined []byte aliases.
 		if rv.Type().Elem().Kind() == reflect.Uint8 {
 			return rv.Bytes(), true
 		}
@@ -1043,13 +898,6 @@ func primitiveDriverValue(value any, rv reflect.Value) (any, bool) {
 	return nil, false
 }
 
-// booleanTautologyFor proves a whole two-valued boolean formula, not merely a
-// literal pair at its top level. For example, P OR (NOT P AND Q) OR NOT Q is
-// a tautology but no two direct children are complements. SQL predicates are
-// eligible only when twoValuedFor has proved every leaf cannot become UNKNOWN.
-// The reduced ordered BDD shares equivalent subexpressions, keeping the usual
-// nested specification shapes compact while remaining an exact propositional
-// proof rather than a heuristic rewrite.
 func booleanTautologyFor(m *Meta, p Predicate) bool {
 	tautology, _ := bddTautologyFor(m, p)
 	return tautology
@@ -1097,10 +945,6 @@ type tautologyBDD struct {
 	exhausted bool
 }
 
-// A guard is not allowed to turn an application's very large In/boolean tree
-// into an unbounded amount of CPU or memory. The exact proof remains useful
-// for ordinary composed specifications; larger BDDs are simply unproven for
-// IsTautologyFor and fail closed for MayBeTautologyFor.
 const maxTautologyBDDNodes = 512
 
 func (this *tautologyBDD) build(m *Meta, p Predicate) int {
@@ -1286,9 +1130,6 @@ func (this *tautologyBDD) branch(node, variable int) (whenFalse, whenTrue int) {
 	return n.whenFalse, n.whenTrue
 }
 
-// twoValuedFor reports whether SQL evaluates a predicate to TRUE or FALSE,
-// never UNKNOWN, for every model row. That proof is what makes P OR NOT P a
-// tautology rather than merely an expression that looks like one.
 func twoValuedFor(m *Meta, p Predicate) bool {
 	switch n := p.(type) {
 	case constNode, nullNode:
@@ -1373,9 +1214,6 @@ func sameField(m *Meta, a, b string) bool {
 	return fa != nil && fa == fb
 }
 
-// Raw is the escape hatch. Use ? for bind markers regardless of dialect; they
-// are rewritten. Write ?? for a literal question mark. Column names are NOT
-// resolved or quoted here — that is the caller's job.
 func Raw(sql string, args ...any) Predicate { return rawNode{sql, args} }
 
 func anySlice[T any](vs []T) []any {
@@ -1403,10 +1241,6 @@ func isNil(v any) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
-// sorting
-
-// Order is one ORDER BY term.
 type Order struct {
 	Field     string
 	Desc      bool
@@ -1414,24 +1248,14 @@ type Order struct {
 	NullsSet  bool
 }
 
-// Asc sorts ascending by a field.
 func Asc(field string) Order { return Order{Field: field} }
 
-// Desc sorts descending by a field.
 func Desc(field string) Order { return Order{Field: field, Desc: true} }
 
-// WithNullsLast places NULLs at the end. Dialects with native NULLS LAST use
-// it; MySQL, MariaDB, and SQLite use a leading boolean null-key instead.
 func (this Order) WithNullsLast() Order { this.NullsLast, this.NullsSet = true, true; return this }
 
-// WithNullsFirst places NULLs at the start, using the same native-or-portable
-// rendering strategy as WithNullsLast.
 func (this Order) WithNullsFirst() Order { this.NullsLast, this.NullsSet = false, true; return this }
 
-// sortExpr renders a sortable expression for a path. A relation hop becomes a
-// scalar subquery, which is the only shape that can appear in ORDER BY; sorting
-// through a to-many relation has no single value, so it is refused rather than
-// quietly picking one.
 func (this *writer) sortExpr(segs []string, cur scope) {
 	if len(segs) == 1 {
 		f := cur.meta.Field(segs[0])
@@ -1465,17 +1289,11 @@ func (this *writer) sortExpr(segs []string, cur scope) {
 	saved, savedPath := this.cur, this.path
 	defer func() { this.cur, this.path = saved, savedPath }()
 
-	// The path has to be extended *before* the recursion, not after it. Setting
-	// it afterwards left a second hop resolving its own narrowing under a path
-	// spelled from the wrong segment — `Manager.Department` was looked up as
-	// `Department` — so a narrowing declared by path silently did not apply to
-	// the inner subquery. Model-declared ones still did, which is what kept it
-	// invisible.
 	this.cur, this.path = scope{meta: target, alias: alias}, joinPath(savedPath, rel.Name)
 
 	this.str("(SELECT ")
 	this.sortExpr(segs[1:], this.cur)
-	// cur, not w.cur: the correlation points back at the parent statement.
+
 	this.str(" FROM " + quoteTable(this.d, target.TableReference()) + " AS " + alias +
 		" WHERE " + alias + "." + this.d.Quote(remote.Column) + " = " + cur.correlate(this.d, local.Column))
 	if this.rel.At(this.path, target) != nil {
@@ -1486,9 +1304,6 @@ func (this *writer) sortExpr(segs []string, cur scope) {
 }
 
 func (this Order) render(w *writer) {
-	// MySQL has no NULLS FIRST/LAST grammar. A boolean null key gives it the
-	// same order as PostgreSQL's clause instead of silently accepting a request
-	// and ordering it by the engine default.
 	if this.NullsSet && (w.d.Name() == "mysql" || w.d.Name() == "sqlite") {
 		w.sortExpr(strings.Split(this.Field, "."), w.current())
 		w.str(" IS NULL")

@@ -26,9 +26,6 @@ func testRuntime(t *testing.T) *Runtime {
 	return runtime
 }
 
-// cheapHasher keeps a suite that enrols several times from paying argon2's
-// 60ms each. It is not a Hasher a deployment could use, which is the point of
-// RuntimeSpec.Hasher being a field.
 type cheapHasher struct{}
 
 func (cheapHasher) Hash(password string) (string, error) { return "hashed:" + password, nil }
@@ -37,8 +34,6 @@ func (cheapHasher) Verify(password, encoded string) (bool, error) {
 	return encoded == "hashed:"+password, nil
 }
 
-// A well-formed subject mounts. This is the control for the four refusals
-// below: without it they would all pass even if Mount never accepted anything.
 func TestMountRegistersAWellFormedSubject(t *testing.T) {
 	runtime := testRuntime(t)
 	mounted, signUp, err := Mount(runtime, SubjectSpec[struct{}]{
@@ -51,8 +46,7 @@ func TestMountRegistersAWellFormedSubject(t *testing.T) {
 	if mounted.Subject().Type != testSubject {
 		t.Fatalf("the mounted subject answers for %q", mounted.Subject().Type)
 	}
-	// No registrar, no sign-up: an invitation-only deployment mounts no route
-	// rather than one that always refuses.
+
 	if signUp != nil || mounted.Registers() {
 		t.Fatal("a subject with no registrar was given a sign-up")
 	}
@@ -61,8 +55,6 @@ func TestMountRegistersAWellFormedSubject(t *testing.T) {
 	}
 }
 
-// Two directories for one subject type is a composition mistake whose run-time
-// symptom is a caller authenticated against the wrong store.
 func TestMountRefusesTwoSubjectsOfOneType(t *testing.T) {
 	runtime := testRuntime(t)
 	spec := SubjectSpec[struct{}]{Type: testSubject, Directory: stubDirectory{}}
@@ -74,8 +66,6 @@ func TestMountRefusesTwoSubjectsOfOneType(t *testing.T) {
 	}
 }
 
-// Two subjects under one prefix collide on /auth/login, and the second one to
-// mount wins silently.
 func TestMountRefusesTwoSubjectsUnderOnePrefix(t *testing.T) {
 	runtime := testRuntime(t)
 	if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
@@ -87,15 +77,12 @@ func TestMountRefusesTwoSubjectsUnderOnePrefix(t *testing.T) {
 	_, _, err := Mount(runtime, SubjectSpec[struct{}]{
 		Type:      "service",
 		Directory: stubDirectory{t: "service"},
-		// The same (empty) prefix as the first.
 	})
 	if err == nil {
 		t.Fatal("two subjects mounted under one prefix; the second would shadow the first's routes")
 	}
 }
 
-// A spec whose type and directory disagree produces a subject that
-// authenticates against a store that never claimed it.
 func TestMountRefusesADirectoryThatAnswersForAnotherType(t *testing.T) {
 	runtime := testRuntime(t)
 	_, _, err := Mount(runtime, SubjectSpec[struct{}]{
@@ -218,8 +205,6 @@ func TestMountRejectsIncompleteOrTypedNilIssuedCapabilitiesWithoutPublishing(t *
 			}
 			assertNothingMounted(t, runtime)
 
-			// Validation is build-on-copy: correcting the same declaration must not
-			// encounter a directory, subject, grant resolver or sink left behind.
 			if _, _, err := Mount(runtime, SubjectSpec[struct{}]{
 				Type: testSubject, Directory: stubDirectory{}, Strategy: validMountStrategy(),
 			}); err != nil {
@@ -342,9 +327,6 @@ func (*mountTestRegistrar) Password(struct{}) string {
 	panic("typed-nil registrar was called")
 }
 
-// A runtime with no subject mounted resolves nothing and signs nobody in. The
-// resolver has to exist by then, because the admin guard and the start-up sync
-// both read it.
 func TestARuntimeWithoutASubjectHasNoResolver(t *testing.T) {
 	runtime := testRuntime(t)
 	if runtime.Grants() != nil {
@@ -361,9 +343,6 @@ func TestARuntimeWithoutASubjectHasNoResolver(t *testing.T) {
 	}
 }
 
-// A runtime needs a source and a logger. The library never writes to a
-// process-wide logger, so an absent one is a misconfiguration and not a
-// default.
 func TestARuntimeRefusesToBuildWithoutASourceOrALogger(t *testing.T) {
 	if _, err := New(RuntimeSpec{Logger: slog.New(slog.DiscardHandler)}); err == nil {
 		t.Fatal("a runtime was built with no source")
@@ -373,8 +352,6 @@ func TestARuntimeRefusesToBuildWithoutASourceOrALogger(t *testing.T) {
 	}
 }
 
-// Everything an enrolment can refuse runs before anything is written, so a
-// rejected password is not a half-enrolled subject.
 func TestEnrolmentRefusesBeforeItWritesAnything(t *testing.T) {
 	recorder := crudtest.Postgres()
 	runtime, err := New(RuntimeSpec{
@@ -405,8 +382,6 @@ func TestEnrolmentRefusesBeforeItWritesAnything(t *testing.T) {
 	}
 }
 
-// The password rule is length and nothing else, and the minimum travels with
-// the violation so a message catalogue can say what it is.
 func TestAWeakPasswordNamesTheFieldAndCarriesTheMinimum(t *testing.T) {
 	runtime := testRuntime(t)
 	runtime.config = Config{Password: PasswordConfig{MinLength: 10}}
@@ -429,9 +404,6 @@ func TestAWeakPasswordNamesTheFieldAndCarriesTheMinimum(t *testing.T) {
 	}
 }
 
-// A registrar that refuses stops the sign-up before a session is opened. The
-// caller sees the registrar's own error — a closed deployment, a malformed
-// address — rather than a generic failure from further down.
 func TestASignUpThatTheRegistrarRefusesOpensNoSession(t *testing.T) {
 	runtime := testRuntime(t)
 	mounted, signUp, err := Mount(runtime, SubjectSpec[testForm]{

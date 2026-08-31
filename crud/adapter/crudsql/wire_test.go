@@ -7,12 +7,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// The engine switch is the one place a configuration string becomes a call, and
-// getting it wrong is silent in a particular way: MariaDB and MySQL share a
-// driver, a dialect and a wire protocol, and answer a failed CHECK with two
-// different numbers. An application that resolved "mariadb" to the MySQL
-// constructor would look entirely correct until a CHECK failed.
-
 func TestEveryEngineResolvesToItsOwnClassifier(t *testing.T) {
 	for _, tc := range []struct {
 		engine  Engine
@@ -31,9 +25,7 @@ func TestEveryEngineResolvesToItsOwnClassifier(t *testing.T) {
 			if got, want := db.Dialect().Name(), tc.dialect.Name(); got != want {
 				t.Fatalf("%q writes %s SQL, want %s", tc.engine, got, want)
 			}
-			// MariaDB and MySQL share a dialect, so the check above cannot tell
-			// them apart. What differs is the engine the classifier keys on, and
-			// that pair is the one a switch collapses by accident.
+
 			named, ok := db.faults.(interface{ Engine() string })
 			if !ok || named.Engine() != string(tc.engine) {
 				t.Fatalf("%q resolved to a classifier for %v, so a refused write is classified against the wrong engine",

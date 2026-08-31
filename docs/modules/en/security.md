@@ -104,13 +104,17 @@ matches nothing instead of turning, for example, an approved unlocked delete
 into a delete of a row that was locked a moment later.
 
 **A custom `Scope` or `RelationScopes` without `Inspect` may read, but cannot write a body**:
-`Save`, `SaveAll`, `Update`, and `UpdateAll` could set a field that moves a row
-out of its old `WHERE` scope. The gate refuses that policy shape before it
-queries or writes. Use `ScopeField` for the normal tenancy case (it supplies
-the matching inspection), or add `Inspect` to the custom policy. With that
-check, an assigned-key save is create-only on a missing row and a
-snapshot-pinned, scoped update on an existing one. This is a deliberate
-fail-closed migration from older zero/Scope-only gate behaviour.
+`Save`, `SaveAll`, `InsertBatch`, `Update`, and `UpdateAll` accept values that a
+predicate alone cannot validate. An existing-row write could move the row out
+of its old `WHERE` scope; `InsertBatch` could create one outside it. The gate
+refuses that policy shape before it queries or writes. Use `ScopeField` for the
+normal tenancy case (it supplies the matching inspection), or add `Inspect` to
+the custom policy. With that check, an assigned-key save is create-only on a
+missing row and a snapshot-pinned, scoped update on an existing one.
+`InsertBatch` is always `Create`, including for assigned keys: the gate
+authorises it once, inspects every incoming row, and never turns a conflict into
+an authorised overwrite. This is a deliberate fail-closed migration from older
+zero/Scope-only gate behaviour.
 
 The scope and relation-scope resolvers run before **every** save, including a
 generated-key insert where no SQL `WHERE` can carry their predicates. A failed

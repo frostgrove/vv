@@ -29,8 +29,7 @@ func TestAReplicaInheritsEverythingItDoesNotRestate(t *testing.T) {
 	if r.Host != "replica.internal" {
 		t.Errorf("the replica should keep its own host, got %q", r.Host)
 	}
-	// The credentials are the failure this inheritance exists to prevent: two
-	// copies drift the day one of them is rotated.
+
 	if r.User != "vv" || r.Password != "s3cret" || r.Name != "app" || r.SSLMode != "require" {
 		t.Errorf("the replica should inherit what it did not restate, got %+v", r)
 	}
@@ -80,10 +79,7 @@ func TestAReplicaMergesPoolFieldsAndDoesNotAliasPrimaryParams(t *testing.T) {
 
 func TestMigrationConfigurationValidatesDeclarationWithoutInspectingTheFilesystem(t *testing.T) {
 	config := primary()
-	// The migration command may create this directory later, and the ordinary
-	// server binary need not ship migration sources at all. Config validation is
-	// therefore deliberately about the declaration rather than current disk
-	// state.
+
 	config.Migration = vvdb.Migration{
 		Path:   t.TempDir() + "/not-created",
 		Models: []string{".", "./src/app"},
@@ -93,8 +89,6 @@ func TestMigrationConfigurationValidatesDeclarationWithoutInspectingTheFilesyste
 		t.Fatalf("a valid migration declaration whose directory is not created yet = %v", err)
 	}
 
-	// A Config assembled in Go does not pass through cleanenv's env-default
-	// tags. Its zero value remains valid and is resolved by the migration tool.
 	config.Migration = vvdb.Migration{}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("zero migration configuration should select downstream defaults: %v", err)
@@ -262,15 +256,11 @@ func TestTypedPostgresRefusesLibPQRatherThanLosingItsSingleConfigurationSource(t
 		t.Fatalf("typed postgres with lib/pq = %v, want the named unsupported driver", err)
 	}
 
-	// A raw DSN is intentionally different: it is the escape hatch where the
-	// caller owns every lib/pq option and its interaction with the environment.
 	config = vvdb.Config{Engine: vvdb.Postgres, Driver: "postgres", DSN: "postgres://db.internal/orders"}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("raw lib/pq DSN = %v, want the explicit escape hatch", err)
 	}
 
-	// The driver name is not a security proof. An alias can point at lib/pq just
-	// as easily, so typed PostgreSQL accepts the one documented pgx name only.
 	config = primary()
 	config.Driver = "company-postgres"
 	if err := config.Validate(); !errors.Is(err, vvdb.ErrUnsupported) {
@@ -295,8 +285,6 @@ func TestReplicaTopologyIsClosedRatherThanSilentlyRewritten(t *testing.T) {
 }
 
 func TestAReplicaIsValidatedAsItWillBeOpened(t *testing.T) {
-	// The control case: the replica fragment on its own has no database name,
-	// and validating the fragment rather than the merge would call it invalid.
 	config := primary()
 	config.Replica = &vvdb.Config{Host: "replica.internal"}
 	if err := config.Validate(); err != nil {

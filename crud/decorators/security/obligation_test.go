@@ -11,24 +11,15 @@ import (
 	"github.com/frostgrove/vv/crud/decorators/security"
 )
 
-// verb is one method of crud.Core and what the gate is obliged to do with it.
-//
-// The reason field is not decoration. [[D-030]] says a method the gate does not
-// override must have a *written* reason why inheriting it is safe, and until
-// this test existed that obligation was carried by a paragraph in a decision
-// document — which nothing read and nothing checked.
 type verb struct {
 	name string
-	// call drives the method through a gated repository. It exists because the
-	// interesting question is behavioural: a gate that declared an override and
-	// checked nothing would satisfy any list-comparison test ever written.
+
 	call func(context.Context, *crud.Repo[Doc, int64, DocUpdate]) error
-	// gated is false for a method inherited from the wrapped Core.
+
 	gated  bool
 	reason string
 }
 
-// coreVerbs is the whole of crud.Core, decided one method at a time.
 var coreVerbs = []verb{
 	{name: "GetByID", gated: true, call: func(ctx context.Context, r *crud.Repo[Doc, int64, DocUpdate]) error {
 		_, err := r.GetByID(ctx, 1)
@@ -101,16 +92,7 @@ var coreVerbs = []verb{
 		"nobody took."},
 }
 
-// Every method on crud.Core is either overridden by the gate or has a written
-// reason why inheriting it is safe, and the reason is checked to be true.
-//
-// This is [[D-030]] made mechanical. The decision has been in force since the
-// seam grew Aggregate, SaveAll and UpdateAll — each of which was a leak until it
-// was overridden — and it was enforced by nothing: the gate embeds crud.Core, so
-// a thirteenth verb added to the seam would be inherited silently, run against
-// the plain repository with no policy at all, and break no test.
 func TestEveryVerbOnTheSeamIsGatedOrHasAWrittenReason(t *testing.T) {
-	// Totality first. The seam is the source of truth, not this list.
 	core := reflect.TypeOf((*crud.Core[Doc, int64])(nil)).Elem()
 	listed := map[string]bool{}
 	for _, v := range coreVerbs {
@@ -128,8 +110,6 @@ func TestEveryVerbOnTheSeamIsGatedOrHasAWrittenReason(t *testing.T) {
 			core.NumMethod(), len(coreVerbs))
 	}
 
-	// Then the behaviour. A row that claims an override has to refuse, and
-	// refuse before the database is touched.
 	denied := errors.New("no")
 	policy := security.Policy[Doc, int64]{
 		Authorize: func(context.Context, security.Action) error { return denied },
@@ -156,11 +136,6 @@ func TestEveryVerbOnTheSeamIsGatedOrHasAWrittenReason(t *testing.T) {
 	}
 }
 
-// The control on the table above.
-//
-// Every assertion in it would hold just as well if the gate refused everything
-// unconditionally, including the two verbs it is supposed to inherit. This says
-// they really do pass through, so "gated: false" means something.
 func TestTheInheritedVerbsAreNotGated(t *testing.T) {
 	rec := crudtest.New(crud.Postgres{})
 	repository := Docs.Bind(rec, security.Gate(security.Policy[Doc, int64]{

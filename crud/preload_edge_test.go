@@ -9,11 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud/crudtest"
 )
 
-// Two articles by the same author must not end up holding the same *Author.
-// They did, and which spelling of the relation field was used decided it: the
-// value form has always copied. Anything that walks the page and rewrites a
-// child — a redaction pass, a presenter, a service normalising a name —
-// rewrote it for every sibling that happened to share the row.
 func TestAPreloadedToOneIsNotSharedBetweenParents(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(7), "ann", "berlin"}))
 	articles := []Article{{ID: 1, AuthorID: 7}, {ID: 2, AuthorID: 7}}
@@ -51,8 +46,6 @@ type plTicket struct {
 	Owner   *plOwner `rel:"belongs_to,fk=OwnerID"`
 }
 
-// Copying per parent only helps if the second level then fills every copy —
-// otherwise the nested preload writes into an object nobody holds.
 func TestANestedPreloadFillsEveryParentsOwnCopy(t *testing.T) {
 	rec := crudtest.Postgres().Push(
 		crudtest.Rows([]any{int64(7), "ann"}),
@@ -72,10 +65,6 @@ func TestANestedPreloadFillsEveryParentsOwnCopy(t *testing.T) {
 	}
 }
 
-// Folding two requests for one relation into a single query is what lets
-// "Comments" and "Comments.Author" share a statement. Folding their narrowings
-// together is a different thing: a request that asks for all of them and for a
-// subset would receive only the subset, with a 200 and no way to notice.
 func TestABarePreloadWinsOverANarrowedOneForTheSamePath(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -261,8 +250,6 @@ func TestAUnsupportedOptionCannotBeCanceledByALaterOption(t *testing.T) {
 	}
 }
 
-// Narrowing the same path twice is still an intersection — only an unnarrowed
-// request widens it back out.
 func TestTwoNarrowedPreloadsOfOnePathStillBothApply(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	o := crud.Build(

@@ -80,8 +80,6 @@ func TestPutNormalizesAndCopiesEverythingBeforeTheBackend(t *testing.T) {
 		t.Fatalf("Put closed its caller-owned source %d times", source.closes)
 	}
 
-	// Mutating either caller-owned input or the returned Info must not mutate
-	// what lives on the other side of the storage boundary.
 	size = 1
 	metadata["classification"] = "changed"
 	info.Metadata["answer"] = "changed"

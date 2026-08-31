@@ -13,15 +13,6 @@ import (
 	"github.com/frostgrove/vv/errs/sqlerr"
 )
 
-// dispatchKey is the three things sqlerr.Classify reads, and the three things a
-// wrapping must not be able to change.
-//
-// sqlerr.Err.Key would also compare the driver type, and that one is not what a
-// classifier dispatches on: it is the capture's evidence marker, and Err.SameKey
-// compares it because the corpus records unwrapped errors. An error that says
-// what happened in neither a state nor a number — pgconn's ConnectError, a bare
-// net.OpError — gives driverType no mark to find, so its type is the outermost
-// error's and does move under wrapping.
 func dispatchKey(e *sqlerr.Err) string {
 	if e == nil {
 		return "<nothing extracted>"
@@ -34,14 +25,6 @@ func dispatchKey(e *sqlerr.Err) string {
 	return fmt.Sprintf("sqlstate=%q native=%d fields=[%s]", e.SQLState, e.Native, strings.Join(names, " "))
 }
 
-// A driver error has to be found however the layers above wrapped it, and the
-// shapes that matter are the ones errors.Unwrap cannot walk.
-//
-// This is [[D-038]]'s owed regression, and it covers all three readers rather
-// than only the SQLSTATE: the forbid is general, and the MySQL number and the
-// SQLite result code were separate walks with the same blindness. Leaving those
-// two behind would re-open the HY000 arm and the whole SQLite arm that phase 0
-// fixed.
 func TestADriverErrorIsFoundThroughEveryWrappingShape(t *testing.T) {
 	for _, fx := range []struct {
 		name string
@@ -53,10 +36,7 @@ func TestADriverErrorIsFoundThroughEveryWrappingShape(t *testing.T) {
 	} {
 		t.Run(fx.name, func(t *testing.T) {
 			want := dispatchKey(Extract(fx.err))
-			// The blank to guard against is an Err that read nothing, not a nil
-			// one: Extract answers nil only for a nil error and says so. Compared
-			// against nil this guard cannot fire, and the table then goes green
-			// with extraction broken because every leg compares two blanks.
+
 			if want == dispatchKey(&sqlerr.Err{}) {
 				t.Fatalf("the bare error extracted nothing (%s), so every leg below compares two blanks", want)
 			}
@@ -67,9 +47,7 @@ func TestADriverErrorIsFoundThroughEveryWrappingShape(t *testing.T) {
 			}{
 				{"bare", fx.err},
 				{"wrapped once", fmt.Errorf("exec: %w", fx.err)},
-				// The sentinel goes first on purpose. A walk that returns
-				// whatever the first branch produced finds crud.ErrConflict,
-				// which carries no state and no number, and stops.
+
 				{"a multi-error with the sentinel first", fmt.Errorf("%w: %w", crud.ErrConflict, fx.err)},
 				{"errors.Join", errors.Join(errors.New("saving user"), fx.err)},
 				{"inside a fault", errs.Conflict().Wrapping(crud.ErrConflict, fx.err).Fault()},
@@ -92,7 +70,6 @@ func TestADriverErrorIsFoundThroughEveryWrappingShape(t *testing.T) {
 	}
 }
 
-// Why a plain errors.Unwrap loop goes blind, stated rather than implied.
 func TestTheWrappingsThatDefeatAPlainUnwrapLoop(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -113,9 +90,6 @@ func TestTheWrappingsThatDefeatAPlainUnwrapLoop(t *testing.T) {
 	}
 }
 
-// The control. Without it the test above passes for an extractor that answers
-// 23505 for anything, and the nil half is what keeps "the driver populated no
-// fields" from reading as "there were none".
 func TestAnErrorWithNothingInItExtractsToNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -142,11 +116,6 @@ func TestAnErrorWithNothingInItExtractsToNothing(t *testing.T) {
 	}
 }
 
-// A driver error need not be a struct. modernc.org/sqlite's is, but a defined
-// integer or string type with one method is a shape Go drivers do use, and a
-// walk that hands its callback only structs drops both method paths silently —
-// every fake in crud/adapter/crudsql/conflict_test.go is a struct, so nothing there
-// would go red.
 type sqliteCode int
 
 func (this sqliteCode) Error() string { return "constraint failed" }
@@ -157,7 +126,6 @@ type pqState string
 func (this pqState) Error() string    { return "pq: " + string(this) }
 func (this pqState) SQLState() string { return string(this) }
 
-// The controls: the same underlying types with no method at all.
 type bareCode int
 
 func (this bareCode) Error() string { return "constraint failed" }
@@ -174,9 +142,6 @@ func TestTheMethodPathIsReachedOnAnErrorThatIsNotAStruct(t *testing.T) {
 		t.Fatalf("SQLState = %q, want 23505 — the SQLState method on a non-struct error was not reached", got)
 	}
 
-	// The control. Without it both assertions above pass for an extractor that
-	// read the underlying integer or string directly, which would classify
-	// every defined-type error by coincidence.
 	if got := Extract(bareCode(2067)).Native; got != 0 {
 		t.Fatalf("Native = %d for an error with no Code method: the underlying integer was read", got)
 	}
@@ -201,8 +166,7 @@ func TestExtractionCarriesOnlyTheWhitelistedFields(t *testing.T) {
 		Routine:        "_bt_check_unique",
 		Position:       17,
 	}
-	// The excluded ones have to be populated, or "they are not carried" is a
-	// statement about a fixture that had nothing to carry.
+
 	for name, v := range map[string]string{"File": full.File, "Routine": full.Routine} {
 		if v == "" {
 			t.Fatalf("the fixture's %s is empty, so excluding it proves nothing", name)
@@ -229,9 +193,6 @@ func TestExtractionCarriesOnlyTheWhitelistedFields(t *testing.T) {
 		t.Fatalf("Key() = %s\nwant  %s", got, want)
 	}
 
-	// The control: the same shape with every whitelisted field blank still reads
-	// the SQLSTATE, and carries no map at all. Without it the test above passes
-	// for an extractor that copies whatever it finds rather than filtering.
 	e = Extract(&pgconnish{Code: "23505", Message: full.Message, File: full.File, Line: full.Line, Routine: full.Routine, Position: full.Position})
 	if e.SQLState != "23505" {
 		t.Fatalf("SQLState = %q: the state stopped being read once the fields were empty", e.SQLState)
@@ -241,9 +202,6 @@ func TestExtractionCarriesOnlyTheWhitelistedFields(t *testing.T) {
 	}
 }
 
-// The number is one field, and which of a driver's several integers fills it is
-// not free. mattn/go-sqlite3 has Code and ExtendedCode and only the extended one
-// names the constraint; pgconn has a Code that is a string.
 func TestTheNumberComesFromTheFieldThatMeansIt(t *testing.T) {
 	if got := Extract(&mattnish{Code: 19, ExtendedCode: 2067}).Native; got != 2067 {
 		t.Fatalf("Native = %d, want the extended code 2067 — the primary code says only that it was a constraint", got)
@@ -259,11 +217,6 @@ func TestTheNumberComesFromTheFieldThatMeansIt(t *testing.T) {
 	}
 }
 
-// A wrapper of the caller's own is not the driver. The names in the whitelist are
-// ordinary ones — Detail and Hint most of all — and the walk meets the wrapper
-// first, so a reader that took whatever contributed first would hand the
-// classifier the wrapper's sentence in place of pgconn's constraint and table,
-// and Classifier.fill would then have no key to look the columns up by.
 type noisy struct {
 	Detail string
 	err    error
@@ -275,8 +228,6 @@ func (this *noisy) Unwrap() error { return this.err }
 func TestAWrappersOwnFieldsAreNotTheDriversFields(t *testing.T) {
 	pg := duplicateKey()
 
-	// The control: what the bare driver error yields. Without it the assertions
-	// below pass for a reader that answers the same thing for everything.
 	bare := Extract(pg)
 	if bare.Fields["ConstraintName"] != "users_email_key" || bare.Fields["TableName"] != "users" {
 		t.Fatalf("the bare fixture already carries %#v, so wrapping it proves nothing", bare.Fields)
@@ -293,8 +244,6 @@ func TestAWrappersOwnFieldsAreNotTheDriversFields(t *testing.T) {
 		t.Fatalf("Type = %q, want the driver's %q — a Detail field is not the mark of an engine's error", wrapped.Type, bare.Type)
 	}
 
-	// And the consequence, which is what makes the mechanism worth pinning: the
-	// constraint and the table are the key the catalog fill is asked with.
 	cat := &fakeColumns{cols: []string{"email"}}
 	f, ok := New("postgres", WithColumns(cat)).Classify(&noisy{Detail: "saving user", err: pg})
 	if !ok {

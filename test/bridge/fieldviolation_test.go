@@ -1,13 +1,3 @@
-// Package bridge holds the one assertion in the repository that imports a
-// validation library.
-//
-// errs.FieldViolation is satisfied structurally, so neither package imports the
-// other and the bridge costs no dependency ([[D-033]]). The cost of that is
-// that a signature change in the library is not a compile error in errs — it is
-// a failed type assertion at a consumer's call site. This is what turns it back
-// into a compile error, and it lives in the test module because the library is
-// a driver-and-framework dependency the library itself must never take
-// ([[D-036]]).
 package bridge
 
 import (
@@ -19,11 +9,8 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// The signatures still match. This is the assertion the whole dependency-free
-// bridge rests on, and it proves nothing about the values.
 var _ errs.FieldViolation = (validator.FieldError)(nil)
 
-// In is ROADMAP-errors.md §2's own input DTO.
 type In struct {
 	Smth string `json:"smth" validate:"required"`
 	User struct {
@@ -41,8 +28,6 @@ func payload() In {
 	return in
 }
 
-// jsonNames is the one thing a consumer must register. Without it every path is
-// silently wrong — which is what the second test below asserts.
 func jsonNames(fld reflect.StructField) string {
 	name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
 	if name == "-" {
@@ -85,8 +70,6 @@ func TestValidatorFieldErrorSatisfiesFieldViolation(t *testing.T) {
 		t.Fatalf("the validator reported %v, want %v — the paths below are read straight out of these", got, want)
 	}
 
-	// One line, no explicit type argument: T is inferred and ValidationErrors
-	// passes straight through as the variadic.
 	vs := errs.FromFieldViolations("In", verrs...)
 
 	for i, want := range []errs.Path{
@@ -109,11 +92,6 @@ func TestValidatorFieldErrorSatisfiesFieldViolation(t *testing.T) {
 	}
 }
 
-// The control, in the shape of test/integration/gate_relscope_test.go's "not
-// declared" subtest: it asserts the wrong paths are there without the
-// registration. Without it the test above passes for a validator that reported
-// json names by default, and the claim that registering the tag-name function
-// is the one thing a consumer must do would be untested.
 func TestWithoutTheTagNameFuncEveryPathIsGoFieldNames(t *testing.T) {
 	verrs := validate(t, validator.New())
 

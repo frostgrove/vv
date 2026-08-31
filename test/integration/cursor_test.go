@@ -12,13 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// Offset paging answers "skip 10, take 10", and what those ten rows are depends
-// on how many rows exist above them *at the moment the statement runs*. A cursor
-// answers "the ten after this row", which nothing else writing to the table can
-// change the meaning of.
-//
-// The tests below are about that difference, so they all interleave a write.
-
 func cursorSeed(t *testing.T, tg egTarget, names ...string) {
 	t.Helper()
 	ctx := context.Background()
@@ -39,9 +32,6 @@ func namesOf(page crud.PaginatedResponse[EgRow]) []string {
 	return out
 }
 
-// The headline: a row inserted above the reader shifts every offset by one, and
-// the second page of an offset walk repeats a row the first page already showed.
-// The same walk by cursor does not.
 func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -53,7 +43,6 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 			rows := EgRows.Bind(tg.source)
 			byName := crud.OrderBy(crud.Asc("Name"))
 
-			// Page one, both ways.
 			offsetPage, err := rows.Get(ctx, byName, crud.Limit(2))
 			if err != nil {
 				t.Fatal(err)
@@ -69,12 +58,10 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 				t.Fatal("no cursor came back, so a client cannot switch to one")
 			}
 
-			// Somebody inserts a row that sorts above everything already read.
 			if _, err := rows.Save(ctx, &EgRow{ID: 99, Name: "a", Tenant: 1}); err != nil {
 				t.Fatal(err)
 			}
 
-			// Offset two now starts one row too early: "c" is served twice.
 			second, err := rows.Get(ctx, byName, crud.Limit(2), crud.Page(2))
 			if err != nil {
 				t.Fatal(err)
@@ -83,7 +70,6 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 				t.Fatalf("offset page 2 = %v: the premise of this test no longer holds", got)
 			}
 
-			// The cursor walk continues from where it actually stopped.
 			next, err := rows.Get(ctx, byName, crud.Limit(2), crud.After(cursorPage.NextCursor))
 			if err != nil {
 				t.Fatal(err)
@@ -95,7 +81,6 @@ func TestACursorWalkIsNotDisturbedByAConcurrentInsert(t *testing.T) {
 	}
 }
 
-// Walking the whole table by cursor visits every row exactly once.
 func TestACursorWalkVisitsEveryRowOnce(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -108,7 +93,7 @@ func TestACursorWalkVisitsEveryRowOnce(t *testing.T) {
 
 			var seen []string
 			cursor := ""
-			for range 10 { // bounded so a bug cannot spin forever
+			for range 10 {
 				options := []crud.Option{crud.OrderBy(crud.Asc("Name")), crud.Limit(3)}
 				if cursor != "" {
 					options = append(options, crud.After(cursor))
@@ -136,8 +121,6 @@ func TestACursorWalkVisitsEveryRowOnce(t *testing.T) {
 	}
 }
 
-// Paging backwards returns the rows immediately before the cursor, in the sort's
-// own order — not the first n of everything before it, which is the far end.
 func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -149,7 +132,6 @@ func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 			rows := EgRows.Bind(tg.source)
 			byName := crud.OrderBy(crud.Asc("Name"))
 
-			// Walk to the last page, then step back.
 			page, err := rows.Get(ctx, byName, crud.Limit(2), crud.After(mustCursorAt(t, rows, byName, 2)))
 			if err != nil {
 				t.Fatal(err)
@@ -162,7 +144,7 @@ func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The two rows immediately before "c" are "a" and "b", in that order.
+
 			if got := namesOf(back); len(got) != 2 || got[0] != "a" || got[1] != "b" {
 				t.Fatalf("backward page = %v, want [a b]", got)
 			}
@@ -170,7 +152,6 @@ func TestPagingBackwardsReturnsTheRowsNearestTheCursor(t *testing.T) {
 	}
 }
 
-// mustCursorAt reads one page of n rows and returns its trailing cursor.
 func mustCursorAt(t *testing.T, rows *crud.Repo[EgRow, int64, EgRowUpdate], sort crud.Option, n int) string {
 	t.Helper()
 	page, err := rows.Get(context.Background(), sort, crud.Limit(n))
@@ -183,9 +164,6 @@ func mustCursorAt(t *testing.T, rows *crud.Repo[EgRow, int64, EgRowUpdate], sort
 	return page.NextCursor
 }
 
-// A descending sort reverses the comparison, and a mixed sort has to compare
-// each column in its own direction — the case a naive row-value comparison gets
-// wrong.
 func TestACursorFollowsEachColumnsOwnDirection(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -193,7 +171,7 @@ func TestACursorFollowsEachColumnsOwnDirection(t *testing.T) {
 	for _, tg := range egEngines() {
 		t.Run(tg.name, func(t *testing.T) {
 			egWipe(t, tg.source)
-			// Two tenants so the first sort column ties and the second decides.
+
 			rows := EgRows.Bind(tg.source)
 			for i, r := range []EgRow{
 				{ID: 1, Name: "x", Tenant: 1}, {ID: 2, Name: "x", Tenant: 2},
@@ -233,8 +211,6 @@ func firstIDs(p crud.PaginatedResponse[EgRow]) []int64 {
 	return out
 }
 
-// A cursor is positional, so replaying one under a different sort would compare
-// whichever columns happen to line up. It is refused instead.
 func TestACursorIsRefusedUnderADifferentSort(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -256,8 +232,6 @@ func TestACursorIsRefusedUnderADifferentSort(t *testing.T) {
 	}
 }
 
-// The wire half: a client walks the list without ever sending a page number,
-// and the cursor it gets back in the JSON is the one it sends next.
 func TestACursorWalkOverTheWireDSL(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -295,13 +269,11 @@ func TestACursorWalkOverTheWireDSL(t *testing.T) {
 	if got := namesOf(second); len(got) != 2 || got[0] != "c" || got[1] != "d" {
 		t.Fatalf("second page = %v, want [c d]", got)
 	}
-	// A cursor walk has no total to divide into pages, and saying otherwise
-	// would invite a client to render a pager it cannot drive.
+
 	if second.TotalPages != 0 {
 		t.Fatalf("totalPages = %d on a cursor walk", second.TotalPages)
 	}
 
-	// The query-string door says the same thing.
 	v, _ := url.ParseQuery("sort=name&limit=2&after=" + url.QueryEscape(first.NextCursor))
 	request, err := query.ParseQuery(v)
 	if err != nil {

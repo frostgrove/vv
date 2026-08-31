@@ -21,31 +21,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// JWKS verifies against a key set published by an identity provider, and is
-// what an OIDC deployment wires instead of a key of its own.
-//
-//	authjwt.JWKS("https://id.example.com/.well-known/jwks.json")
-//
-// Only asymmetric methods are accepted. Every usable key owns one exact method:
-// EC derives it from crv, Ed25519 derives EdDSA, and RSA must publish alg. A
-// present alg must be a non-null, non-empty match, and a present key_ops must be
-// a non-null string array containing verify. A key set is a public document, so
-// an HMAC entry in one would be a shared secret published to the internet; the
-// pinning [KeySource] describes is what makes that unreachable here.
-//
-// # Refetching
-//
-// A cached set is refetched after [JWKSFreshness], including on a hit, so a key
-// the provider withdrew does not remain trusted for the life of the process. A
-// token naming a kid the cached set does not have also triggers a refetch. Both
-// paths are rate-limited by [JWKSMinRefresh] — otherwise one forged token per
-// fetch is a denial-of-service against the provider.
 func JWKS(rawURL string, options ...JWKSOption) KeySource {
-	// An empty URL is the hardest misconfiguration in this package to diagnose
-	// from outside: every request answers the same reasonless 401 a forged token
-	// does ([[D-056]] keeps the reason inside the process), so nothing in the logs
-	// or the response tells anyone the key set was never fetched. New already
-	// panics on three misconfigurations for exactly this reason ([[D-021]]).
 	if strings.TrimSpace(rawURL) == "" {
 		panic("authjwt: JWKS needs the provider's key-set URL; with none, every token is refused for a reason nothing reports")
 	}
@@ -79,37 +55,16 @@ func JWKS(rawURL string, options ...JWKSOption) KeySource {
 	}
 }
 
-// JWKSFetchTimeout bounds one key-set fetch.
-//
-// It belongs to the fetch and not to whoever triggered it. The waiters parked
-// behind a refresh share the leader's work, so a leader that could wait forever
-// could park them forever — and the leader's own request context is the wrong
-// bound in the other direction, because that one is cancelled when a single
-// client disconnects. A deadline of its own is the only one that is nobody's.
-//
-// It is deliberately not configurable. A deployment that wants a different
-// number wants a different HTTP client, and [JWKSClient] is where that goes.
 const JWKSFetchTimeout = 10 * time.Second
 
-// JWKSMinRefresh is how long a key set is trusted before an unknown kid may
-// trigger another fetch.
 const JWKSMinRefresh = time.Minute
 
-// JWKSFreshness is the default maximum age of a successfully fetched key set.
-// A hit after this age lazily refreshes the whole set before it is trusted.
 const JWKSFreshness = 5 * time.Minute
 
-// JWKSMaxBody is the largest key set that will be read. A provider's key set is
-// a few kilobytes; without a limit, a compromised or misbehaving endpoint is an
-// unbounded allocation on the request path.
 const JWKSMaxBody = 1 << 20
 
-// A JWKSOption configures [JWKS].
 type JWKSOption func(*jwks)
 
-// JWKSClient replaces the HTTP client — for a proxy, a timeout, or a test
-// server. The default is http.DefaultClient, which has no timeout of its own,
-// so a deployment that cares supplies one.
 func JWKSClient(c *http.Client) JWKSOption {
 	return func(s *jwks) {
 		if c != nil {
@@ -118,9 +73,6 @@ func JWKSClient(c *http.Client) JWKSOption {
 	}
 }
 
-// JWKSMinRefreshEvery replaces the rate limit on refetching. The duration must
-// be positive; use [UnsafeJWKSNoMinRefresh] when an unbounded provider request
-// rate is a deliberate deployment decision.
 func JWKSMinRefreshEvery(d time.Duration) JWKSOption {
 	if d <= 0 {
 		panic("authjwt: JWKSMinRefreshEvery needs a positive duration; use UnsafeJWKSNoMinRefresh to waive the outbound request bound")
@@ -128,18 +80,10 @@ func JWKSMinRefreshEvery(d time.Duration) JWKSOption {
 	return func(s *jwks) { s.minRefresh = d }
 }
 
-// UnsafeJWKSNoMinRefresh removes the outbound request-rate bound.
-//
-// An unknown kid is caller input, so this lets one forged token cause one HTTP
-// request to the identity provider. It exists for controlled tests and unusual
-// providers; the unsafe name is the compatibility boundary.
 func UnsafeJWKSNoMinRefresh() JWKSOption {
 	return func(s *jwks) { s.minRefresh = 0 }
 }
 
-// JWKSStaleAfter replaces the maximum age of a key set before the next token,
-// including one naming a cached kid, must refresh it. The duration must be
-// positive and no shorter than the configured minimum refresh interval.
 func JWKSStaleAfter(d time.Duration) JWKSOption {
 	if d <= 0 {
 		panic("authjwt: JWKSStaleAfter needs a positive duration; use UnsafeJWKSNoFreshness to waive key withdrawal freshness")
@@ -147,18 +91,10 @@ func JWKSStaleAfter(d time.Duration) JWKSOption {
 	return func(s *jwks) { s.staleAfter = d }
 }
 
-// UnsafeJWKSNoFreshness trusts a successfully fetched key set until a cache
-// miss or process restart. A provider cannot withdraw a cached key from such a
-// process, which is why the unsafe name is part of the call site.
 func UnsafeJWKSNoFreshness() JWKSOption {
 	return func(s *jwks) { s.staleAfter = 0 }
 }
 
-// JWKSDegraded describes one failed refresh for which cached keys remain
-// eligible under an explicitly bounded stale-on-error policy.
-//
-// Cause is operational detail and must not be rendered to a caller. The
-// descriptor deliberately carries no URL or kid.
 type JWKSDegraded struct {
 	Cause       error
 	FetchedAt   time.Time
@@ -167,18 +103,8 @@ type JWKSDegraded struct {
 	MaxStaleFor time.Duration
 }
 
-// JWKSDegradedObserver receives degraded-state descriptors after completed
-// fetch work has released its waiters. Calls are serialised and coalesced to the
-// latest descriptor if an earlier call is still running. The supplied context
-// has a one-second deadline; request processing never waits for the observer.
 type JWKSDegradedObserver func(context.Context, JWKSDegraded)
 
-// JWKSServeStaleFor keeps a cached key eligible for at most d beyond its
-// freshness deadline when a refresh fails. observe is mandatory: accepting a
-// stale trust anchor without a typed operational signal is not a supported
-// state. Delivery is queued after fetch waiters are released and never blocks
-// request processing. At the boundary the parser returns
-// [ErrKeySourceUnavailable].
 func JWKSServeStaleFor(d time.Duration, observe JWKSDegradedObserver) JWKSOption {
 	if d <= 0 {
 		panic("authjwt: JWKSServeStaleFor needs a positive, bounded duration")
@@ -192,9 +118,6 @@ func JWKSServeStaleFor(d time.Duration, observe JWKSDegradedObserver) JWKSOption
 	}
 }
 
-// JWKSClock replaces the clock used for cache age and refresh-rate decisions.
-// It does not replace HTTP timeouts. The option exists for deterministic tests
-// and simulations; production code normally uses the default time.Now.
 func JWKSClock(now func() time.Time) JWKSOption {
 	if now == nil {
 		panic("authjwt: JWKSClock needs a clock")
@@ -213,16 +136,13 @@ type jwks struct {
 
 	mu   sync.Mutex
 	keys map[string]verificationKey
-	// fetched is the last *successful* fetch; attempted is the last fetch of any
-	// kind. The rate limit reads attempted, and the two are separate because
-	// only one of them is what a caller wants to know about the keys it holds.
+
 	fetched      time.Time
 	hasFetched   bool
 	attempted    time.Time
 	hasAttempted bool
 	attemptErr   error
-	// inflight is closed when the fetch currently running finishes, and nil when
-	// none is. It is what makes a burst of concurrent misses one request.
+
 	inflight *jwksFetch
 
 	observeMu sync.Mutex
@@ -235,10 +155,6 @@ type jwksFetch struct {
 	err  error
 }
 
-// verificationKey keeps one immutable key beside the one method the provider
-// declared for it. The parser-level method list rejects non-asymmetric
-// families; this per-key check is what prevents a token from selecting another
-// method that happens to consume the same Go key type.
 type verificationKey struct {
 	key    any
 	method string
@@ -249,7 +165,6 @@ type degradedNotice struct {
 	state JWKSDegraded
 }
 
-// key answers the verification key for one token.
 func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -271,10 +186,6 @@ func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 		return k, nil
 	}
 	if err := this.refresh(ctx); err != nil {
-		// Cancellation belongs to this caller and is never converted into either
-		// stale acceptance or provider unavailability. A deadline on the detached
-		// provider fetch is different: while this caller remains live it is an
-		// outage, and an explicitly bounded stale policy may cover it.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -292,10 +203,6 @@ func (this *jwks) key(ctx context.Context, t *jwt.Token) (any, error) {
 	return nil, errNoKeyForToken
 }
 
-// cached answers a key already held, whether its exact method matches, and the
-// two cache-policy states its caller needs. A token with no kid matches only
-// when the set holds exactly one key — anything else would be this package
-// choosing which key to trust on the caller's behalf.
 func (this *jwks) cached(kid, method string) (key any, found, allowed, fresh, staleAllowed bool) {
 	now := this.now()
 	this.mu.Lock()
@@ -332,9 +239,6 @@ func elapsed(now, then time.Time) time.Duration {
 	return now.Sub(then)
 }
 
-// warm fetches and validates the remote trust set without requiring a token.
-// A stale-on-error policy is deliberately not a readiness policy: if the set
-// is stale and its provider cannot refresh it, Warm reports the outage.
 func (this *jwks) warm(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -355,25 +259,6 @@ func (this *jwks) warm(ctx context.Context) error {
 	return nil
 }
 
-// refresh refetches the set, at most once per minRefresh and never twice at once.
-//
-// A kid is the caller's own input, and any unknown one reaches here — so without
-// both of those bounds, a token naming a kid nobody has is an outbound request
-// this process makes because somebody asked it to.
-//
-// **The limit reads the last attempt, not the last success.** Arming it only on
-// success is what it used to do, and it meant the limit did nothing in exactly
-// the case it exists for: while the provider is down, every fetch fails, nothing
-// is ever recorded, and each token costs a request to a service that is already
-// failing. The stated purpose — "a burst of tokens naming unknown kids costs one
-// request rather than one each" — was only true when the provider was healthy,
-// which is when it does not matter.
-//
-// **And one fetch at a time.** The lock has to be dropped across the HTTP call,
-// so a burst arriving together all passed the check before any of them recorded
-// an attempt. Waiters share the in-flight fetch rather than being refused,
-// because after a key rotation they are asking for a kid that really is about to
-// exist, and refusing them would turn one rotation into a wave of 401s.
 func (this *jwks) refresh(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -405,10 +290,6 @@ func (this *jwks) refresh(ctx context.Context) error {
 	this.hasAttempted = true
 	this.mu.Unlock()
 
-	// The fetch runs in its own goroutine and on a context of its own, not the
-	// initiator's. The initiator is a waiter just like every request behind it:
-	// each may leave promptly while the bounded shared work continues for the
-	// callers that still need it.
 	go this.runFetch(context.WithoutCancel(ctx), flight)
 	return waitForJWKSFetch(ctx, flight)
 }
@@ -426,17 +307,6 @@ func waitForJWKSFetch(ctx context.Context, flight *jwksFetch) error {
 }
 
 func (this *jwks) runFetch(seed context.Context, flight *jwksFetch) {
-	// The fetch runs on a context of its own, not the initiating request's.
-	//
-	// The waiters share the work, and under net/http a request context is
-	// cancelled the moment *that one client* disconnects — so one
-	// abandoned request failed every request parked behind it and, because the
-	// attempt is recorded either way, suppressed the refetch for the whole
-	// minRefresh window. A shared piece of work must not belong to whoever
-	// happened to ask for it first.
-	//
-	// seed has already kept values and dropped request cancellation. The deadline
-	// is the fetch's own, so shared work cannot park all waiters indefinitely.
 	fctx, cancel := context.WithTimeout(seed, JWKSFetchTimeout)
 	keys, err := this.fetch(fctx)
 	cancel()
@@ -469,19 +339,11 @@ func (this *jwks) runFetch(seed context.Context, flight *jwksFetch) {
 	close(flight.done)
 	this.mu.Unlock()
 
-	// Publish only after the singleflight is released. The observer is extension
-	// code: it may re-enter Parse/Warm, panic, or fail to honour its context. None
-	// of those behaviours may keep requests parked behind a completed provider
-	// call. Delivery is serialised and coalesced, so a callback that ignores its
-	// deadline can consume at most this one detached goroutine rather than one
-	// additional goroutine per refresh.
 	if degraded != nil && this.queueDegraded(seed, *degraded) {
 		this.drainDegraded()
 	}
 }
 
-// queueDegraded keeps only the newest pending state. It answers whether this
-// caller owns the one observer-delivery loop.
 func (this *jwks) queueDegraded(ctx context.Context, state JWKSDegraded) bool {
 	this.observeMu.Lock()
 	defer this.observeMu.Unlock()
@@ -514,14 +376,8 @@ func (this *jwks) drainDegraded() {
 	}
 }
 
-// errNoKeyForToken is deliberately not "no key with kid abc123": the kid is the
-// caller's own input echoed back, and a message naming it turns the endpoint
-// into a reflector ([[D-056]]).
 var errNoKeyForToken = errors.New("authjwt: the key set has no key for this token")
 
-// ErrKeySourceUnavailable marks a key-provider failure. It is not an
-// authentication refusal: a valid token may have been presented and the
-// verifier could not obtain the trust material needed to decide.
 var ErrKeySourceUnavailable = errors.New("authjwt: verification key source unavailable")
 
 func keySourceUnavailable(err error) error {
@@ -565,8 +421,6 @@ func (this *jwks) fetch(ctx context.Context) (map[string]verificationKey, error)
 
 	out := make(map[string]verificationKey, len(set.Keys))
 	for _, k := range set.Keys {
-		// A key published for encryption is not a key to verify signatures
-		// with, and a set that says so must be believed.
 		if k.Use != "" && k.Use != "sig" {
 			continue
 		}
@@ -575,8 +429,6 @@ func (this *jwks) fetch(ctx context.Context) (map[string]verificationKey, error)
 		}
 		pub, err := k.public()
 		if err != nil {
-			// One unusable entry — an unsupported curve, a future key type —
-			// must not cost the whole set.
 			continue
 		}
 		out[k.Kid] = pub
@@ -587,7 +439,6 @@ func (this *jwks) fetch(ctx context.Context) (map[string]verificationKey, error)
 	return out, nil
 }
 
-// jsonWebKey is the subset of RFC 7517 this package reads.
 type jsonWebKey struct {
 	Kty    string                                 `json:"kty"`
 	Kid    string                                 `json:"kid"`
@@ -601,11 +452,6 @@ type jsonWebKey struct {
 	Y      string                                 `json:"y"`
 }
 
-// jsonWebKeyMember preserves the distinction encoding/json otherwise erases
-// for scalar and slice fields: a member which is absent, explicitly null, or
-// carries a value. JWK policy treats only actual absence as unspecified.
-// Explicit null is still a declaration and therefore cannot waive alg or
-// key_ops validation.
 type jsonWebKeyMember[T any] struct {
 	present bool
 	null    bool

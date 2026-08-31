@@ -9,22 +9,12 @@ import (
 	"github.com/frostgrove/vv/auth"
 )
 
-// An Option configures the interceptors.
 type Option func(*config)
 
 type config struct {
 	skip map[string]struct{}
 }
 
-// Skip leaves the named full method names unauthenticated — a health check, a
-// reflection service, a login call.
-//
-//	authgrpc.Unary(guard, authgrpc.Skip("/grpc.health.v1.Health/Check"))
-//
-// The name is the full one, with the leading slash, as it appears in
-// grpc.UnaryServerInfo.FullMethod. A prefix is not accepted on purpose: an
-// exact list is auditable and a prefix quietly widens the day somebody adds a
-// method under it.
 func Skip(fullMethods ...string) Option {
 	return func(c *config) {
 		if c.skip == nil {
@@ -36,16 +26,6 @@ func Skip(fullMethods ...string) Option {
 	}
 }
 
-// Unary authenticates every unary call.
-//
-// A refusal is returned rather than rendered: crudgrpc.Errors turns an
-// errs.Fault into a google.rpc.Status, and errs.KindUnauthorized already maps to
-// UNAUTHENTICATED, so chaining the two is the whole wiring. Returning also means
-// the method never runs.
-//
-// Consecutive interceptors with the same [auth.Guard] authenticate once. A
-// different guard performs its own check; A -> B -> A fails closed because no
-// assurance order is inferred ([[D-076]]).
 func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
 	configuration := configure(guard, "Unary", options)
 	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -60,13 +40,6 @@ func Unary(guard *auth.Guard, options ...Option) grpc.UnaryServerInterceptor {
 	}
 }
 
-// Stream authenticates a stream when it opens.
-//
-// Once, and only then. A credential that expires while the stream is open is
-// not noticed here — an interceptor runs before the first message and never
-// again — so a long-lived stream that must re-check does it in its own loop.
-// Guard composition has the same adjacent-idempotence and ambiguous-reentry
-// rules as [Unary].
 func Stream(guard *auth.Guard, options ...Option) grpc.StreamServerInterceptor {
 	configuration := configure(guard, "Stream", options)
 	return func(server any, serverStream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
@@ -109,12 +82,6 @@ func methodOf(info *grpc.UnaryServerInfo) string {
 	return info.FullMethod
 }
 
-// valuesFor adapts incoming metadata to the list-aware shape auth.Guard takes.
-//
-// metadata.MD.Get lowercases the key it is given and the transport lowercased
-// the keys on the way in, so "Authorization" finds what a client sent as
-// "authorization" — the same case-insensitivity an http.Header has, reached a
-// different way.
 func valuesFor(ctx context.Context) func(string) []string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -125,9 +92,6 @@ func valuesFor(ctx context.Context) func(string) []string {
 	}
 }
 
-// authenticated is a stream carrying the context the guard produced. A
-// grpc.ServerStream answers its context from a method, so replacing it is the
-// only way a handler downstream sees the principal.
 type authenticated struct {
 	grpc.ServerStream
 	ctx context.Context

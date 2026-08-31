@@ -74,7 +74,7 @@ same way every time.
 - `crud/predicate.go:writer.nextAlias` — aliases are numbered by walk order.
 - `internal/codegen/codegen.go:generator.load` — `sort.Strings(g.order)`.
 - `internal/codegen/render.go:generator.render` — sorts the import block.
-- `crud/sqlrepo/repository.go:saveAllPlan` / `:deletePlan` — contiguous,
+- `crud/sqlrepo/repository.go:batchInsertPlan` / `:deletePlan` — contiguous,
   pre-rendered bind-budget chunks.
 
 ## Proven by

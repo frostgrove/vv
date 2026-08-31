@@ -105,6 +105,7 @@ func BindExecutor(ctx context.Context, source Source, e Executor) context.Contex
 func BindLimit(d Dialect) int
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
 func CursorFieldSupported(f *Field) bool
+func DefaultValuesClause(d Dialect) string
 func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
 func DeleteScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, deletion *ScopedDelete[ID]) (int64, error, bool)
 func ElemType(t reflect.Type) reflect.Type
@@ -115,6 +116,7 @@ func ExistsUnscopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, 
 func InAtomic(ctx context.Context, source Executor, fn func(context.Context) error) error
 func InNewTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
 func InTx(ctx context.Context, source Executor, fn func(context.Context) error) (err error)
+func InsertBatchOf[M any, ID comparable](core Core[M, ID], ctx context.Context, models []*M, options ...BatchOption) (error, bool)
 func IsTautology(p Predicate) bool
 func IsTautologyFor(m *Meta, p Predicate) bool
 func IsTransaction(e Executor) bool
@@ -139,6 +141,8 @@ func TryRegisterTable[M any](table string) error
 func TryRegisterTableRef[M any](table TableRef) error
 func TryRegisterTableRefType(t reflect.Type, table TableRef) error
 func TryRegisterTableType(t reflect.Type, table string) error
+func UnsafeBulkInsertFor(ctx context.Context, source Source, table TableRef, columns []string, ...) (int64, error)
+func UsesPortableBatch(options ...BatchOption) bool
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
 func WithUnsafeExecutor(ctx context.Context, e Executor) context.Context
@@ -153,14 +157,17 @@ type Aggregation struct{ ... }
     func Min(as, field string) Aggregation
     func Sum(as, field string) Aggregation
 type Base[M any, ID comparable] struct{ ... }
+type BatchInserter[M any] interface{ ... }
+type BatchOption struct{ ... }
+    func PortableBatch() BatchOption
 type Beginner interface{ ... }
     func BeginnerOf(v any) (Beginner, bool)
 type BindBudget interface{ ... }
-type BulkInserter interface{ ... }
 type Change struct{ ... }
     func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error)
 type Core[M any, ID comparable] interface{ ... }
     func Chain[M any, ID comparable](c Core[M, ID], mw ...Middleware[M, ID]) Core[M, ID]
+type DefaultValuesInserter interface{ ... }
 type Dialect interface{ ... }
 type Executor interface{ ... }
     func ExecutorFor(ctx context.Context, source any) (Executor, bool)
@@ -267,7 +274,9 @@ type Repo[M any, ID comparable, U any] struct{ ... }
 type RestoreSupport interface{ ... }
 type Restorer[M any, ID comparable] interface{ ... }
 type Result struct{ ... }
+    func UnsafeExecFor(ctx context.Context, source Source, query string, args ...any) (Result, error)
 type Rows interface{ ... }
+    func UnsafeQueryFor(ctx context.Context, source Source, query string, args ...any) (Rows, error)
 type SQL struct{ ... }
     func NewSQL(d Dialect, m *Meta) *SQL
 type SQLite struct{}
@@ -303,6 +312,8 @@ type TombstoneLoader[M any, ID comparable] interface{ ... }
 type Transactional interface{ ... }
 type Tx interface{ ... }
 type UnknownFieldError struct{ ... }
+type UnsafeBulkInserter interface{ ... }
+    func UnsafeBulkInserterOf(v any) (UnsafeBulkInserter, bool)
 type UnscopedExister[M any, ID comparable] interface{ ... }
 type UpdatePlan struct{ ... }
     func PlanFor[U any](s *Schema) (*UpdatePlan, error)
@@ -590,6 +601,7 @@ type Setting func(*settings)
     func DefaultSort(orders ...crud.Order) Setting
     func IndependentTable() Setting
     func MaxLimit(n int) Setting
+    func PortableBatch() Setting
     func PreloadDepth(n int) Setting
     func RelationScope(path string, p crud.Predicate) Setting
     func Scope(p crud.Predicate) Setting

@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// MySQL calls every InnoDB table's primary index PRIMARY, so a catalog holding
-// one name-to-constraint map answers the same value for two different tables and
-// nothing says otherwise. This is [[D-041]]'s "why Constraint takes the table" in
-// executable form.
 func TestAConstraintIsKeyedOnItsTableAsWellAsItsName(t *testing.T) {
 	ctx := context.Background()
 	s := pgSchema{
@@ -36,8 +32,6 @@ func TestAConstraintIsKeyedOnItsTableAsWellAsItsName(t *testing.T) {
 		t.Fatal("orders has no PRIMARY")
 	}
 
-	// The control is asserting they differ. Without it a catalog holding one
-	// global name-to-constraint map returns the same value twice and passes.
 	if users.Table == orders.Table {
 		t.Errorf("both PRIMARYs belong to %q — the name was looked up without its table", users.Table)
 	}
@@ -46,14 +40,6 @@ func TestAConstraintIsKeyedOnItsTableAsWellAsItsName(t *testing.T) {
 	}
 }
 
-// A probe reads its results by column position ([[D-042]], citing [[D-014]]), so
-// the order a catalog reports its columns and its constraints in is part of what
-// it means, not a presentation detail.
-//
-// The control is that the order asserted is the one the *engine* reported, which
-// here is deliberately not lexical: a loader that collected through a map and
-// then sorted by name would be stable across runs and still wrong. Eight of each
-// rather than two, because two elements come out right by luck half the time.
 func TestColumnsAndConstraintsKeepTheOrderTheEngineReported(t *testing.T) {
 	ctx := context.Background()
 	engineColumns := []string{"id", "zeta", "alpha", "note", "beta", "yankee", "code", "aardvark"}
@@ -107,9 +93,6 @@ func TestColumnsAndConstraintsKeepTheOrderTheEngineReported(t *testing.T) {
 	}
 }
 
-// A component wired wrong degrades rather than taking the process down. Every
-// accessor here is nil-safe on purpose, and the rule is invisible in the
-// signature.
 func TestANilTableAnswersFalseRatherThanPanicking(t *testing.T) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -124,8 +107,6 @@ func TestANilTableAnswersFalseRatherThanPanicking(t *testing.T) {
 		t.Error("a nil table found a constraint")
 	}
 
-	// The control: the same two calls on a real table find what is there, so
-	// the test above is not passing because every lookup answers false.
 	cat, err := Load(context.Background(), recorder(oneTable(), 1))
 	if err != nil {
 		t.Fatal(err)

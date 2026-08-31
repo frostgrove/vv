@@ -1,5 +1,3 @@
-// Package sqlcmysql mirrors what sqlc emits for MySQL with
-// sql_package: "database/sql": ? placeholders and :execresult for inserts.
 package sqlcmysql
 
 import (

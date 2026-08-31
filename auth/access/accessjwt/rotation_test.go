@@ -12,8 +12,6 @@ func at(offset time.Duration) *time.Time {
 
 var now = time.Unix(1_700_000_000, 0)
 
-// The current credential rotates. This is the control for everything below: if
-// Classify ever returned Unusable unconditionally, only this test would notice.
 func TestTheCurrentCredentialRotates(t *testing.T) {
 	got := Classify(Presented{
 		Digest:    "current",
@@ -25,8 +23,6 @@ func TestTheCurrentCredentialRotates(t *testing.T) {
 	}
 }
 
-// Two tabs refreshing at once is not an attack. Refusing here signs somebody
-// out for having two windows open, which is the failure people actually hit.
 func TestThePreviousCredentialInsideTheGraceWindowRotatesAgain(t *testing.T) {
 	got := Classify(Presented{
 		Digest:    "previous",
@@ -40,8 +36,6 @@ func TestThePreviousCredentialInsideTheGraceWindowRotatesAgain(t *testing.T) {
 	}
 }
 
-// The same credential outside the window is a credential someone kept. That is
-// what a stolen refresh token looks like, and the lineage is closed.
 func TestThePreviousCredentialOutsideTheGraceWindowIsAReplay(t *testing.T) {
 	got := Classify(Presented{
 		Digest:    "previous",
@@ -55,8 +49,6 @@ func TestThePreviousCredentialOutsideTheGraceWindowIsAReplay(t *testing.T) {
 	}
 }
 
-// The boundary is inclusive, and it is worth pinning: an off-by-one here turns
-// every refresh that lands exactly on the grace edge into a forced sign-out.
 func TestTheGraceWindowIsInclusiveAtItsEdge(t *testing.T) {
 	presented := Presented{
 		Digest:    "previous",
@@ -74,9 +66,6 @@ func TestTheGraceWindowIsInclusiveAtItsEdge(t *testing.T) {
 	}
 }
 
-// A closed or expired session refuses without classifying. A replay against a
-// session that is already shut costs nothing more, and reporting it would bury
-// the ones that matter.
 func TestAClosedOrExpiredSessionIsRefusedWithoutBeingClassified(t *testing.T) {
 	replayShaped := Presented{
 		Digest:    "previous",
@@ -85,7 +74,7 @@ func TestAClosedOrExpiredSessionIsRefusedWithoutBeingClassified(t *testing.T) {
 		RotatedAt: at(-time.Hour),
 		ExpiresAt: now.Add(time.Hour),
 	}
-	// The control: with the session live, this same input is a replay.
+
 	if got := Classify(replayShaped, now, 10*time.Second); got != Replay {
 		t.Fatalf("the control input classified as %v, so the two checks below prove nothing", got)
 	}
@@ -103,8 +92,6 @@ func TestAClosedOrExpiredSessionIsRefusedWithoutBeingClassified(t *testing.T) {
 	}
 }
 
-// A digest matching neither is not a replay — nothing says it was ever real —
-// and an empty one is a caller who sent no credential at all.
 func TestACredentialThatMatchesNeitherDigestIsSimplyUnusable(t *testing.T) {
 	base := Presented{Current: "current", Previous: "previous", RotatedAt: at(0), ExpiresAt: now.Add(time.Hour)}
 
@@ -120,8 +107,6 @@ func TestACredentialThatMatchesNeitherDigestIsSimplyUnusable(t *testing.T) {
 	}
 }
 
-// A row with a previous digest and no rotation time was not written by this
-// module. Refusing is the only safe reading.
 func TestAPreviousDigestWithNoRotationTimeIsRefused(t *testing.T) {
 	got := Classify(Presented{
 		Digest:    "previous",

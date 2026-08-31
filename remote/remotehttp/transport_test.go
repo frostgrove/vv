@@ -13,15 +13,6 @@ import (
 	"github.com/frostgrove/vv/remote"
 )
 
-// The client a Transport builds for itself is never the process-wide one, and
-// it is never without a deadline.
-//
-// Both halves matter and they fail differently. http.DefaultClient has no
-// timeout, so a peer that accepts the connection and then says nothing holds
-// the caller until something else gives up — which, inside a request handler
-// with no deadline of its own, is never. And it belongs to the whole binary, so
-// a consumer setting a timeout on it for this transport sets one for every
-// other library that reached for the same value.
 func TestTheDefaultClientIsOursAndHasADeadline(t *testing.T) {
 	tr, ok := Transport("http://example.invalid/widgets").(*transport)
 	if !ok {
@@ -34,8 +25,6 @@ func TestTheDefaultClientIsOursAndHasADeadline(t *testing.T) {
 		t.Fatalf("the default client has no timeout, so a peer that stops answering holds the caller forever")
 	}
 
-	// The control. WithClient still wins, or the constructor would be quietly
-	// ignoring the one option that exists to replace this.
 	mine := &http.Client{}
 	tr2 := Transport("http://example.invalid/widgets", WithClient(mine)).(*transport)
 	if tr2.client != mine {
@@ -43,12 +32,6 @@ func TestTheDefaultClientIsOursAndHasADeadline(t *testing.T) {
 	}
 }
 
-// An answer past the cap is refused rather than buffered.
-//
-// A remote resource is another service, and another service can be wrong: a
-// paging bug on the far side, a proxy substituting an HTML page, a peer that has
-// been taken over. Reading it whole turns any of those into this process
-// running out of memory, which is the one failure a client cannot report.
 func TestAnAnswerPastTheCapIsRefusedRatherThanBuffered(t *testing.T) {
 	var sent int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +51,6 @@ func TestAnAnswerPastTheCapIsRefusedRatherThanBuffered(t *testing.T) {
 		t.Fatalf("the refusal does not say what happened: %v", err)
 	}
 
-	// The control. Everything above would hold just as well if this transport
-	// refused every answer, so one under the cap has to get through.
 	small := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":1}`))
@@ -86,8 +67,6 @@ func TestAnAnswerPastTheCapIsRefusedRatherThanBuffered(t *testing.T) {
 	}
 }
 
-// The context's deadline still reaches the request, so a caller that bounds the
-// call itself is not overridden by the client's own backstop.
 func TestTheCallersDeadlineReachesTheRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()

@@ -10,10 +10,6 @@ import (
 	"github.com/frostgrove/vv/auth/http/authhttp"
 )
 
-// The gate exists because a route with no access check and a route that is
-// deliberately public look the same from the inside. These tests break an
-// application on purpose and assert that start-up notices.
-
 const prefix = "/api/v1"
 
 func mounted(routes ...string) []authhttp.Route {
@@ -44,7 +40,7 @@ func TestAMountedRouteThatDeclaresNothingIsRefused(t *testing.T) {
 		[]authhttp.Endpoint{
 			authhttp.Public(http.MethodPost, "/auth/login", "there is no credential to present yet"),
 		},
-		// The one somebody added in a hurry.
+
 		mounted("POST /api/v1/auth/login", "DELETE /api/v1/users/:id"),
 		authhttp.UnderPrefix(prefix),
 	)
@@ -56,13 +52,11 @@ func TestAMountedRouteThatDeclaresNothingIsRefused(t *testing.T) {
 	}
 }
 
-// The half that is easy to leave out, and the half that decides whether the
-// declaration is still worth reading a year later.
 func TestADeclarationThatMountsNothingIsRefused(t *testing.T) {
 	err := authhttp.Verify(
 		[]authhttp.Endpoint{
 			authhttp.Public(http.MethodPost, "/auth/login", "there is no credential to present yet"),
-			// The route was renamed and this line was left behind.
+
 			authhttp.Requires(http.MethodGet, "/users/:id", auth.Permission("user.read")),
 		},
 		mounted("POST /api/v1/auth/login"),
@@ -104,9 +98,6 @@ func TestTheSameEndpointDeclaredTwiceIsRefused(t *testing.T) {
 	}
 }
 
-// A trailing slash is how a CRUD handler registers a collection root and is not
-// how anybody writes a declaration. If the check failed on that difference it
-// would be switched off within a week, so it must not.
 func TestATrailingSlashIsNotADisagreement(t *testing.T) {
 	err := authhttp.Verify(
 		[]authhttp.Endpoint{authhttp.Requires(http.MethodGet, "/roles", auth.Permission("role.read"))},
@@ -118,9 +109,6 @@ func TestATrailingSlashIsNotADisagreement(t *testing.T) {
 	}
 }
 
-// Everything outside the versioned API — the health check, the favicon — is not
-// what this gate is about, and demanding declarations for it would only teach
-// people to write them without reading.
 func TestARouteOutsideThePrefixIsNotPartOfTheSurface(t *testing.T) {
 	declared := []authhttp.Endpoint{
 		authhttp.Requires(http.MethodGet, "/things", auth.Permission("thing.read")),
@@ -131,15 +119,11 @@ func TestARouteOutsideThePrefixIsNotPartOfTheSurface(t *testing.T) {
 		t.Fatalf("a route outside %s was checked: %v", prefix, err)
 	}
 
-	// The control. Without the prefix every one of those three is part of the
-	// surface, so the test above proves the option does something rather than
-	// passing because nothing was ever checked.
 	if err := authhttp.Verify(declared, routes); err == nil {
 		t.Fatal("with no prefix the health check and the favicon were still exempt, so the case above proves nothing")
 	}
 }
 
-// Three restarts to learn what one message could have said is what this avoids.
 func TestEveryDisagreementIsReportedAtOnce(t *testing.T) {
 	err := authhttp.Verify(
 		[]authhttp.Endpoint{

@@ -49,7 +49,7 @@ func TestSignUpDiscardsResponseAndRollsBackOnIssuerOrCommitFailure(t *testing.T)
 		{name: "commit failure", commitErr: commitFailure, want: commitFailure},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			recorder := crudtest.Postgres().Push(crudtest.Rows()) // no default role
+			recorder := crudtest.Postgres().Push(crudtest.Rows())
 			source := &serialSource{Recorder: recorder, commitErr: tc.commitErr}
 			issuer := &serialIssuer{
 				response: AuthResponse{Token: "must-not-escape"},

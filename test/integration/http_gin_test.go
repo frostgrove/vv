@@ -19,9 +19,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// The Gin binding holds the same interface as the Fiber one, so the very same
-// service type — declared in http_test.go — slots into both without a line of
-// glue. That is the claim this file exists to keep honest.
 var _ crudgin.Repository[Article, int64, ArticleUpdate] = articleService{}
 
 func newGinApp(t *testing.T, b blog) *gin.Engine {
@@ -81,7 +78,6 @@ func TestGinHTTPListAndQuery(t *testing.T) {
 			seedBlog(t, b)
 			app := newGinApp(t, b)
 
-			// GET with the query-string DSL.
 			r := ginCall(t, app, http.MethodGet,
 				"/articles?f=views:gte:50&sort=-views&preload=author,tags&limit=10", nil)
 			if r.status != http.StatusOK {
@@ -102,7 +98,6 @@ func TestGinHTTPListAndQuery(t *testing.T) {
 				t.Fatalf("tags = %+v", p.Items[0].Tags)
 			}
 
-			// POST /query with the full JSON DSL, including a nested path.
 			r = ginRaw(t, app, http.MethodPost, "/articles/query", `{
 				"filter": {
 					"or": [{"tags.slug": "go"}, {"comments.author.name": "Ann"}],
@@ -175,8 +170,6 @@ func TestGinHTTPCrudLifecycle(t *testing.T) {
 			ann, _, _, _, _ := seedBlog(t, b)
 			app := newGinApp(t, b)
 
-			// Create. The client tries to dictate the id and the timestamp; both
-			// are ignored, because one is generated and the other is `generated`.
 			r := ginRaw(t, app, http.MethodPost, "/articles", `{
 				"ID": 9999, "AuthorID": `+itoa64(ann.ID)+`,
 				"Title": "new post", "Body": "hello", "Views": 3,
@@ -194,7 +187,6 @@ func TestGinHTTPCrudLifecycle(t *testing.T) {
 				t.Fatalf("created_at = %v: a generated column should not be client-set", created.CreatedAt)
 			}
 
-			// Read it back with a preload.
 			r = ginCall(t, app, http.MethodGet, "/articles/"+itoa64(created.ID)+"?preload=author", nil)
 			if r.status != http.StatusOK {
 				t.Fatalf("status %d: %s", r.status, r.body)
@@ -205,7 +197,6 @@ func TestGinHTTPCrudLifecycle(t *testing.T) {
 				t.Fatalf("got %+v author %+v", got.Title, got.Author)
 			}
 
-			// PATCH: an absent field is left alone, an explicit null clears.
 			r = ginRaw(t, app, http.MethodPatch, "/articles/"+itoa64(created.ID),
 				`{"Title": "renamed", "PublishedAt": "2026-02-03T04:05:06Z"}`)
 			if r.status != http.StatusOK {
@@ -229,7 +220,6 @@ func TestGinHTTPCrudLifecycle(t *testing.T) {
 				t.Fatalf("an absent field should be left alone, got %q", patched.Title)
 			}
 
-			// DELETE, then a 404 on the way back.
 			r = ginCall(t, app, http.MethodDelete, "/articles/"+itoa64(created.ID), nil)
 			if r.status != http.StatusOK {
 				t.Fatalf("status %d: %s", r.status, r.body)
@@ -242,19 +232,12 @@ func TestGinHTTPCrudLifecycle(t *testing.T) {
 	}
 }
 
-// PUT is the one write the integration suite never issued: everything about it
-// was proved against a fake repository, and the hazard it is written to avoid —
-// an explicit insert into a serial column, which does not advance the sequence —
-// only exists on a real PostgreSQL.
 func TestGinHTTPReplace(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
 			ann, _, generics, _, _ := seedBlog(t, b)
 			app := newGinApp(t, b)
 
-			// PUT replaces the whole row, and the id comes from the URL, not from
-			// the body — a client cannot move a row by putting a different one in
-			// the payload.
 			r := ginRaw(t, app, http.MethodPut, "/articles/"+itoa64(generics.ID), `{
 				"ID": 424242, "AuthorID": `+itoa64(ann.ID)+`,
 				"Title": "replaced", "Body": "whole new body", "Views": 7
@@ -270,8 +253,7 @@ func TestGinHTTPReplace(t *testing.T) {
 			if replaced.Title != "replaced" || replaced.Body != "whole new body" || replaced.Views != 7 {
 				t.Fatalf("replaced = %+v", replaced)
 			}
-			// A field the body left out is not left alone — this is a replace, not
-			// a patch — and a `generated` column is still the database's.
+
 			if replaced.PublishedAt.IsSet() {
 				t.Fatalf("publishedAt = %v: PUT replaces the row, so an absent field is cleared", replaced.PublishedAt)
 			}
@@ -283,17 +265,12 @@ func TestGinHTTPReplace(t *testing.T) {
 				t.Fatalf("count = %d err = %v: the replace inserted a row instead of replacing one", n, err)
 			}
 
-			// On a generated key, PUT never creates: the id has to name a row that
-			// is already there. Otherwise it would be the way around POST's refusal
-			// to let a client choose its own id.
 			r = ginRaw(t, app, http.MethodPut, "/articles/999999",
 				`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "smuggled", "Body": "x"}`)
 			if r.status != http.StatusNotFound {
 				t.Fatalf("status %d: %s — PUT at an unused id must not create on a generated key", r.status, r.body)
 			}
 
-			// And the sequence is intact: the next POST gets a fresh key rather
-			// than colliding with a row a client put there.
 			r = ginRaw(t, app, http.MethodPost, "/articles",
 				`{"AuthorID": `+itoa64(ann.ID)+`, "Title": "after the put", "Body": "y"}`)
 			if r.status != http.StatusCreated {
@@ -330,7 +307,6 @@ func TestGinHTTPBulkDelete(t *testing.T) {
 	}
 }
 
-// The service layer's own rules ride through the handler untouched.
 func TestGinHTTPServiceLayerIsHonoured(t *testing.T) {
 	b := blogs(t)[0]
 	ann, _, _, _, _ := seedBlog(t, b)
@@ -343,8 +319,6 @@ func TestGinHTTPServiceLayerIsHonoured(t *testing.T) {
 	}
 }
 
-// Every bad request is a 400 that names what was wrong — never a silently
-// ignored clause and never a 500.
 func TestGinHTTPRejections(t *testing.T) {
 	b := blogs(t)[0]
 	seedBlog(t, b)
@@ -370,11 +344,7 @@ func TestGinHTTPRejections(t *testing.T) {
 			}
 			var body wireEnvelope
 			r.decode(t, &body)
-			// Decoded into the wire shape and not into crudhttp.Envelope,
-			// because errs.Violation writes error_code through a hand-written
-			// MarshalJSON and has no UnmarshalJSON — reading the response back
-			// through the library's own type yields an empty Code and this
-			// assertion would pass on any body at all.
+
 			vs := append(append([]wireViolation{}, body.Errors.Validation...), body.Errors.General...)
 			if len(vs) == 0 {
 				t.Fatalf("no violations in %s", r.body)
@@ -388,8 +358,6 @@ func TestGinHTTPRejections(t *testing.T) {
 	}
 }
 
-// A model bound through the adapter but never declared as a repository still
-// resolves its table, because Define registers it.
 func TestGinHTTPWorksWithoutExtraDeclarations(t *testing.T) {
 	b := newBlog("postgres", pgDB, crudsql.Postgres(pgDB))
 	seedBlog(t, b)

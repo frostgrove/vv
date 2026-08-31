@@ -44,6 +44,12 @@ The old unconditional adoption is available only as
 `WithUnsafeExecutor`. Its name is the opt-out: every repository the context
 reaches adopts the executor, including repositories on another database.
 
+Raw work below a repository follows the same association when the caller uses
+`UnsafeExecFor`, `UnsafeQueryFor` or `UnsafeBulkInsertFor`. The helpers select
+the executor bound to the named Source and preserve a declaration failure;
+calling `SourceOf(repo).Exec` or an exact-handle adapter method directly cannot
+read the session from `ctx` and is therefore not the supported spelling.
+
 `InTx` follows the same rule. A source must expose a stable comparable
 `Identified` identity before `Begin` is called. Guessing from an unidentified
 wrapper can either strand a sibling write outside the transaction or capture an
@@ -110,7 +116,8 @@ adapter receiver helpers. In particular, calling
 ## Where it lives
 
 - `crud/executor.go` — `Session`, `NewSession`, `MustSession`, `BindExecutor`,
-  strict resolution, `WithUnsafeExecutor`, and owned transaction validation.
+  strict resolution, `WithUnsafeExecutor`, context-bound unsafe helpers, and
+  owned transaction validation.
 - `crud/errors.go` — `ErrExecutorScope`, `ExecutorScopeError` and its reasons.
 - `crud/adapter/crudsql/crudsql.go` and
   `crud/adapter/crudpgx/crudpgx.go` — the adapter-level one-line helpers.
@@ -148,6 +155,10 @@ adapter receiver helpers. In particular, calling
   `TestSQLXForeignTransactionRollsBackChunkedWrites` and
   `TestPreparedGormForeignTransactionRollsBackChunkedWrites` prove that
   multi-statement `Delete` and `SaveAll` remain inside each foreign transaction.
+- `crud/executor_effect_test.go` proves raw Exec/Query select only the matching
+  source session and never fall through a poisoned or nil declaration;
+  `TestPgxInsertBatchJoinsRepositoryTransaction` proves the native effect on a
+  live pgx transaction.
 
 ## See also
 

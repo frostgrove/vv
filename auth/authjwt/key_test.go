@@ -21,15 +21,12 @@ func TestStaticAsymmetricKeysAreValidatedAtDeclaration(t *testing.T) {
 	evenN := new(big.Int).Lsh(big.NewInt(1), 2047)
 	tooLargeN := new(big.Int).Lsh(big.NewInt(1), 16384)
 	sharesExponent := new(big.Int).Mul(rsaKey.N, big.NewInt(65537))
-	// 2^2203-1 is a known Mersenne prime. As an RSA modulus it makes phi(N)
-	// public and lets anybody derive the private exponent.
+
 	primeN := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 2203), big.NewInt(1))
 	identity := make(ed25519.PublicKey, ed25519.PublicKeySize)
 	identity[0] = 1
 	nonCanonical := append(ed25519.PublicKey(nil), identity...)
-	// Edwards decoders commonly accept the sign bit for x=0 even though its
-	// canonical encoding is clear. This reaches the canonical round-trip check,
-	// rather than merely being an arbitrary byte string that is not a point.
+
 	nonCanonical[ed25519.PublicKeySize-1] = 0x80
 	for _, tc := range []struct {
 		name string
@@ -83,8 +80,7 @@ func TestLowOrderEd25519TrustWouldAcceptAUniversalJWTForgery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// For A=identity, R=identity and S=0 satisfy [S]B=R+[k]A for every
-	// signing string. This is a complete attacker-created JWT signature.
+
 	signature := make([]byte, ed25519.SignatureSize)
 	signature[0] = 1
 	forged := signingString + "." + base64.RawURLEncoding.EncodeToString(signature)
@@ -92,8 +88,6 @@ func TestLowOrderEd25519TrustWouldAcceptAUniversalJWTForgery(t *testing.T) {
 		t.Fatal("the Go verifier no longer demonstrates the low-order-key forgery; revisit the declaration check")
 	}
 
-	// Custom is the deliberately caller-owned escape hatch and demonstrates the
-	// impact. The safe constructor below must make this parser unreachable.
 	unsafeSource := authjwt.Custom([]string{jwt.SigningMethodEdDSA.Alg()}, func(context.Context, *jwt.Token) (any, error) {
 		return identity, nil
 	})

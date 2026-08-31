@@ -18,19 +18,10 @@ import (
 	"github.com/frostgrove/vv/crud/catalog"
 )
 
-// What a catalog claims about a schema can only be checked against a server, and
-// the four engines disagree about most of it. These tests are the record of what
-// each one actually answers — not what a reading of the standards would predict,
-// which is how the engine matrix this repository started with came to be half
-// wrong.
-//
-// Never t.Parallel() here: every test shares the same physical tables.
-
-// catTarget is one database reached one way, plus what the catalog must call it.
 type catTarget struct {
 	name     string
-	database string // which catSchema built it
-	dialect  string // what catalog.Catalog.Dialect must answer
+	database string
+	dialect  string
 	source   crud.Source
 }
 
@@ -39,25 +30,10 @@ var (
 	catErr  error
 )
 
-// catEngines is its own four-engine walker and not a widened egEngines.
-//
-// egEngines() returns three and says in its own comment why SQLite is not one of
-// them; changing it would change what every test that walks it runs against.
-// corpus.Engines is the only four-engine list in the tree and it hands back DSNs
-// rather than crud.Sources.
-//
-// PostgreSQL appears twice, through database/sql and through pgx. The two
-// drivers disagree about what a NULL and a smallint scan into, and every
-// introspection statement here was written to be portable between them — which
-// is a claim, until both run it.
 func catEngines(t *testing.T) []catTarget {
 	t.Helper()
 	ctx := context.Background()
 
-	// The three servers are built once per process. The failure is recorded
-	// rather than reported from inside the Once: a t.Fatalf there exits through
-	// runtime.Goexit, the Once still marks itself done, and every later test
-	// reports a missing table instead of the DDL error that caused it.
 	catOnce.Do(func() {
 		for _, s := range []struct {
 			database string
@@ -88,7 +64,6 @@ func catEngines(t *testing.T) []catTarget {
 	}
 }
 
-// catOpenSQLite builds a fresh file-backed database holding only this fixture.
 func catOpenSQLite(t *testing.T) *sql.DB {
 	t.Helper()
 	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "catalog.db"))
@@ -110,7 +85,6 @@ func catFirstLine(s string) string {
 	return line
 }
 
-// catLoad loads one target's catalog, or fails the test.
 func catLoad(t *testing.T, tg catTarget) catalog.Catalog {
 	t.Helper()
 	cat, err := catalog.Load(context.Background(), tg.source)
@@ -129,11 +103,6 @@ func catConstraint(t *testing.T, cat catalog.Catalog, table, name string) *catal
 	return c
 }
 
-// catUnreproducible reports a unique key this catalog cannot replay from a value
-// — a partial index, a prefix key, or a key part that is an expression rather
-// than a column. It is one rule written once, because the invariant under test
-// is the same on all four engines even though the kind of key that trips it is
-// not.
 func catUnreproducible(c *catalog.Constraint) bool {
 	if c.Partial {
 		return true
@@ -151,13 +120,6 @@ func catUnreproducible(c *catalog.Constraint) bool {
 	return false
 }
 
-// The twin. A unique key the probe could not reproduce is recorded as such, and
-// one of the same shape that it could is not — without the second half, a
-// catalog that marked everything unreproducible passes.
-//
-// Which key is the unreproducible one differs per engine and the invariant does
-// not: partial on PostgreSQL and SQLite, a prefix key on MySQL and MariaDB,
-// because CREATE UNIQUE INDEX ... WHERE is error 1064 on both of those.
 func TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot(t *testing.T) {
 	pairs := 0
 	for _, tg := range catEngines(t) {
@@ -174,7 +136,6 @@ func TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot(t *testing.T) {
 				t.Errorf("its plain twin of the same shape came back marked unreproducible too, so the marking says nothing: %+v", easy)
 			}
 
-			// And the marker is the engine's own, not any marker at all.
 			switch tg.database {
 			case "postgres":
 				if !hard.Partial {
@@ -190,9 +151,7 @@ func TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot(t *testing.T) {
 				if !hard.Partial {
 					t.Error("the partial index is not marked partial")
 				}
-				// Partial with no predicate is the fact, not a bug: SQLite
-				// reports partial = 1 and keeps the WHERE clause only inside the
-				// index's DDL, which nothing here parses.
+
 				if hard.Predicate != "" {
 					t.Errorf("SQLite grew a predicate reader: %q — if that is DDL parsing, D-041 forbids it", hard.Predicate)
 				}
@@ -215,17 +174,12 @@ func TestAnUnreproducibleUniqueKeyIsRecordedAndItsPlainTwinIsNot(t *testing.T) {
 			}
 		})
 	}
-	// A fixture whose DDL silently did not take would leave every subtest above
-	// asserting nothing and the loop green.
+
 	if pairs == 0 {
 		t.Error("no engine produced the twin, so the twin asserted nothing")
 	}
 }
 
-// catAllNamed returns every constraint of a name on a table. Catalog.Constraint
-// answers one, and one name can be two objects — a unique key and a foreign key
-// on MySQL, a CHECK and a bare unique index on PostgreSQL — so the whole list is
-// the only place the second one is visible.
 func catAllNamed(t *testing.T, cat catalog.Catalog, table, name string) []*catalog.Constraint {
 	t.Helper()
 	tbl, ok := cat.Table(table)
@@ -250,18 +204,6 @@ func catAnyPrefix(prefixes []int) bool {
 	return false
 }
 
-// The third kind of key the catalog cannot replay from a value, and the one the
-// twin above cannot reach: a key part that is an expression rather than a
-// column. Every engine that has one reports it by leaving the column name empty,
-// so this is what makes catUnreproducible's Columns clause do anything at all —
-// without it that clause can be deleted with the suite green.
-//
-// The twin is the same cat_rows_ux_easy: two plain columns, no empty part and no
-// expression text. A loader that emptied every column name would otherwise pass.
-//
-// MariaDB builds no such index — ((lower(slug))) is error 1064 there, which is
-// [[D-019]] difference 9 — so its half of the assertion is that the catalog
-// invents nothing.
 func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) {
 	checked, absent := 0, 0
 	for _, tg := range catEngines(t) {
@@ -299,8 +241,6 @@ func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) 
 
 			switch tg.database {
 			case "postgres", "mysql":
-				// These two hand the text back — pg_get_indexdef with a column
-				// number, information_schema.STATISTICS.EXPRESSION.
 				if len(expr.Expressions) != len(expr.Columns) {
 					t.Errorf("Expressions and Columns are not parallel by position: %q against %q", expr.Expressions, expr.Columns)
 				}
@@ -313,9 +253,6 @@ func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) 
 					}
 				}
 			case "sqlite":
-				// The sibling of partial-with-no-predicate: index_xinfo marks
-				// the part with cid = -2 and gives no text, and the only other
-				// source is the index's DDL, which [[D-041]] forbids parsing.
 				if len(expr.Expressions) != 0 {
 					t.Errorf("SQLite grew an expression reader: %q — if that is DDL parsing, D-041 forbids it", expr.Expressions)
 				}
@@ -325,18 +262,12 @@ func TestAnExpressionUniqueKeyIsRecordedAsOneAndItsPlainTwinIsNot(t *testing.T) 
 			}
 		})
 	}
-	// A fixture whose DDL silently did not take, or one that grew an expression
-	// index on MariaDB, would leave one half of this asserting nothing.
+
 	if checked == 0 || absent == 0 {
 		t.Errorf("%d engines reported an expression key and %d were checked for having none; both halves are needed", checked, absent)
 	}
 }
 
-// A constraint the server does not apply until COMMIT is one a pre-flight probe
-// must not claim to have checked. PostgreSQL is the only engine with the notion
-// — MySQL and MariaDB reject DEFERRABLE on a UNIQUE constraint and SQLite's
-// pragmas expose no deferrability at all — so the twin is per engine: the pair
-// on PostgreSQL, and everywhere else the claim that nothing was invented.
 func TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot(t *testing.T) {
 	pairs, flat := 0, 0
 	for _, tg := range catEngines(t) {
@@ -371,15 +302,6 @@ func TestADeferrableConstraintIsRecordedAndItsImmediateTwinIsNot(t *testing.T) {
 	}
 }
 
-// A foreign key's conindid names the index it *references* on the parent table,
-// so an anti-join that stops at conindid deletes the parent's bare unique index.
-// It is silent — Load succeeds — and what is lost is the one class of key
-// PostgreSQL enforces under a name no constraint catalog knows, so a live 23505
-// under that name resolves to nothing for the life of the process.
-//
-// PostgreSQL only: it is the only engine with the anti-join. MySQL and MariaDB
-// list every unique index in TABLE_CONSTRAINTS and SQLite lists every index in
-// pragma_index_list, so neither has anything to qualify.
 func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
@@ -395,20 +317,11 @@ func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 				t.Errorf("the referenced bare unique index came back as %s over %v", referenced.Kind, referenced.Columns)
 			}
 
-			// The twin: the same index with nothing pointing at it. Without it a
-			// loader that lost every bare unique index would pass the half above
-			// by failing it for a different reason, and with it the pair says
-			// the referencing is what made the difference.
 			alone := catConstraint(t, cat, "cat_ref", "cat_ref_alt_ux")
 			if alone.Kind != catalog.KindUniqueIndex || strings.Join(alone.Columns, ",") != "alt" {
 				t.Errorf("the unreferenced twin came back as %s over %v", alone.Kind, alone.Columns)
 			}
 
-			// The control in the other direction: the anti-join still has to do
-			// its original job. cat_ref_pkey is a constraint backed by its own
-			// index, so the unique-index read must skip it — read twice, its one
-			// key column is appended twice and Columns stops being the key.
-			// Deleting the NOT EXISTS outright fails here.
 			pk := catAllNamed(t, cat, "cat_ref", "cat_ref_pkey")
 			if len(pk) != 1 || pk[0].Kind != catalog.KindPrimaryKey {
 				t.Fatalf("cat_ref_pkey came back as %d constraints, want one primary key: %+v", len(pk), pk)
@@ -423,16 +336,6 @@ func TestABareUniqueIndexAForeignKeyPointsAtIsStillInTheCatalog(t *testing.T) {
 	}
 }
 
-// REFERENCES cat_ref with no column list is a foreign key against the parent's
-// primary key, and pragma_foreign_key_list answers NULL for the parent column
-// rather than naming it. Scanned into a string that NULL was a start-up refusal
-// on a schema SQLite creates and enforces without complaint, which is
-// [[D-041]]'s "do not read an empty catalog as a blocked introspection, or the
-// reverse" read backwards.
-//
-// The empty RefColumns entry is the whole of what is known, and it stays
-// parallel to Columns by position. Filling it in from the parent's own primary
-// key would be inventing, which crud/catalog/sqlite.go's header forbids.
 func TestAShorthandReferencesRecordsNoParentColumnAndItsExplicitTwinDoes(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
@@ -454,9 +357,6 @@ func TestAShorthandReferencesRecordsNoParentColumnAndItsExplicitTwinDoes(t *test
 				t.Errorf("the unnamed parent column came back as %q, want one empty entry", short.RefColumns)
 			}
 
-			// The twin, on the same table: the explicit form names its column.
-			// Without it a loader that dropped RefColumns entirely — or one that
-			// never ran — would pass the half above.
 			explicit := catFindFK(t, cat, "cat_rows", "upd_id")
 			if strings.Join(explicit.RefColumns, ",") != "id" {
 				t.Errorf("the explicit-form twin references columns %q, want [id]", explicit.RefColumns)
@@ -468,18 +368,9 @@ func TestAShorthandReferencesRecordsNoParentColumnAndItsExplicitTwinDoes(t *test
 	}
 }
 
-// One name, two objects on one table. An index name and a foreign-key name live
-// in different namespaces on MySQL and MariaDB, and a constraint name and an
-// index name do on PostgreSQL, so a build keyed on the bare name folds the two
-// into one: the key parts of both end up in one Columns, which stops being
-// parallel to Expressions, Prefixes and RefColumns — the position a probe reads
-// its results by ([[D-042]]) — and one of the two objects disappears.
 func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 	checked := 0
-	// Catalog.Constraint answers one of the two, and identical DDL must not
-	// describe itself two ways. The two engines agree only because both reads
-	// order the rows that decide it; nothing in either server promises that on
-	// its own ([[D-014]]).
+
 	answered := map[string]catalog.Kind{}
 	for _, tg := range catEngines(t) {
 		t.Run(tg.name, func(t *testing.T) {
@@ -490,12 +381,6 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 			}
 			dual := catAllNamed(t, cat, "cat_rows", "cat_dual")
 
-			// The control, and it needs no branch: the split happens for the
-			// colliding name and nowhere else. On MySQL and MariaDB every unique
-			// key is announced twice — by TABLE_CONSTRAINTS, which names the
-			// kind, and by STATISTICS, which names the key parts — so a build
-			// that kept objects apart by exact kind rather than by family would
-			// split all of them and the count below would stop meaning anything.
 			seen := map[string]int{}
 			for i := range tbl.Constraints {
 				seen[tbl.Constraints[i].Name]++
@@ -510,8 +395,6 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 			}
 
 			if tg.database == "sqlite" {
-				// Neither collision is expressible: no pragma names a CHECK and
-				// none names a foreign key, so SQLite has nothing to collide.
 				if len(dual) != 0 {
 					t.Errorf("SQLite reported %d constraints named cat_dual and the fixture builds none — if a pragma names one now, D-019 difference 9 needs rewriting", len(dual))
 				}
@@ -577,10 +460,6 @@ func TestTwoObjectsSharingOneNameStayTwoConstraints(t *testing.T) {
 	}
 }
 
-// [[D-019]] difference 9 in executable form. Two engines separate a unique
-// constraint from a bare unique index and two do not, and both directions are
-// asserted per engine — a loader that reported the split everywhere and one that
-// reported it nowhere each fail.
 func TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApart(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
@@ -599,10 +478,6 @@ func TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApar
 					t.Errorf("a bare CREATE UNIQUE INDEX came back as %s, so the two are not told apart", index.Kind)
 				}
 			case "sqlite":
-				// SQLite reports the kind and loses the name: the constraint
-				// declared as cat_rows_uc comes back under a generated
-				// sqlite_autoindex_ name, so a phase-7 lookup by the author's
-				// name misses here and nowhere else.
 				if _, ok := cat.Constraint("cat_rows", "cat_rows_uc"); ok {
 					t.Error("SQLite kept the declared constraint name — if that is true now, D-019 difference 9 needs rewriting")
 				}
@@ -617,10 +492,6 @@ func TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApar
 					t.Errorf("a bare CREATE UNIQUE INDEX came back as %s", index.Kind)
 				}
 			case "mysql", "mariadb":
-				// The half that stops the split reading as universal. Measured
-				// on 8.4 and 11.4: information_schema.TABLE_CONSTRAINTS lists
-				// every unique index as UNIQUE, so there is nothing to tell
-				// apart and the catalog must not pretend otherwise.
 				declared := catConstraint(t, cat, "cat_rows", "cat_rows_uc")
 				if declared.Kind != catalog.KindUnique {
 					t.Errorf("a declared UNIQUE constraint came back as %s", declared.Kind)
@@ -636,8 +507,6 @@ func TestAUniqueIndexAndAUniqueConstraintAreToldApartWhereTheEngineTellsThemApar
 	}
 }
 
-// catFindKind returns the one constraint of a kind on a table, failing when
-// there is not exactly one.
 func catFindKind(t *testing.T, cat catalog.Catalog, table string, kind catalog.Kind) *catalog.Constraint {
 	t.Helper()
 	tbl, ok := cat.Table(table)
@@ -656,8 +525,6 @@ func catFindKind(t *testing.T, cat catalog.Catalog, table string, kind catalog.K
 	return found[0]
 }
 
-// The catalog produces the fourth name in the vocabulary errs.Detail.Dialect
-// uses, which crud.Dialect.Name cannot: it answers "mysql" for MariaDB.
 func TestTheCatalogNamesMariaDBRatherThanCallingItMySQL(t *testing.T) {
 	seen := map[string]bool{}
 	for _, tg := range catEngines(t) {
@@ -668,9 +535,6 @@ func TestTheCatalogNamesMariaDBRatherThanCallingItMySQL(t *testing.T) {
 			}
 			seen[cat.Dialect()] = true
 
-			// The half that shows the detection is worth its round trip: the
-			// seam calls both servers "mysql", so the name above is information
-			// the seam does not have.
 			if tg.database == "mysql" || tg.database == "mariadb" {
 				if got := tg.source.Dialect().Name(); got != "mysql" {
 					t.Errorf("crud.Dialect.Name answers %q here — if it tells the two apart now, the version probe is dead weight", got)
@@ -685,9 +549,6 @@ func TestTheCatalogNamesMariaDBRatherThanCallingItMySQL(t *testing.T) {
 	}
 }
 
-// A bare table name means whatever the loading connection resolved it to, and
-// the catalog records where that was. Resolving it lazily per connection is what
-// [[D-041]] forbids, and it is also what a DSN key would silently merge.
 func TestABareTableNameResolvesOnceAndTheResolvedSchemaIsRecorded(t *testing.T) {
 	ctx := context.Background()
 	for _, stmt := range catSearchPathSchema {
@@ -715,9 +576,6 @@ func TestABareTableNameResolvesOnceAndTheResolvedSchemaIsRecorded(t *testing.T) 
 			a.Columns[0].Name)
 	}
 
-	// The control. Without it the difference above could be two unrelated
-	// reads; with it, a loader that resolved the bare name lazily on whatever
-	// connection asked would answer identically from both and fail here.
 	alsoOne := catLoad(t, catTarget{name: "cat_s1 again", source: crudsql.Postgres(catSearchPath(t, "cat_s1"))})
 	c, ok := alsoOne.Table("cat_same")
 	if !ok {
@@ -729,7 +587,6 @@ func TestABareTableNameResolvesOnceAndTheResolvedSchemaIsRecorded(t *testing.T) 
 	}
 }
 
-// catSearchPath opens a handle whose connections resolve bare names in schema.
 func catSearchPath(t *testing.T, schema string) *sql.DB {
 	t.Helper()
 	u, err := url.Parse(pgDSN)
@@ -748,16 +605,12 @@ func catSearchPath(t *testing.T, schema string) *sql.DB {
 	return database
 }
 
-// SQLite's pragma reports on_update before on_delete, which is the opposite of
-// the order the DDL is written in. Two foreign keys with the actions the other
-// way round is what makes a swap visible: with one action each way, both fail.
 func TestForeignKeysCarryTheirActionsInTheOrderTheEngineReportsThem(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
 		t.Run(tg.name, func(t *testing.T) {
 			cat := catLoad(t, tg)
-			// Looked up by column rather than by name: SQLite records no name
-			// for a foreign key at all.
+
 			del := catFindFK(t, cat, "cat_rows", "del_id")
 			upd := catFindFK(t, cat, "cat_rows", "upd_id")
 			checked++
@@ -783,17 +636,10 @@ func TestForeignKeysCarryTheirActionsInTheOrderTheEngineReportsThem(t *testing.T
 			}
 
 			if tg.database == "sqlite" {
-				// A foreign key SQLite records no name for gets one from its
-				// position, and the constraint map keys on the name: a synthetic
-				// name equal to a real index name would answer about the wrong
-				// object. The sqlite_ prefix is what makes that impossible, so
-				// it is asserted rather than assumed.
 				if !strings.HasPrefix(del.Name, "sqlite_") {
 					t.Errorf("the synthetic foreign-key name is %q — without the sqlite_ prefix it can collide with a user index of the same name", del.Name)
 				}
-				// The control: the prefix protects nothing unless the engine
-				// refuses it for user objects. If this CREATE ever succeeds, the
-				// assertion above has stopped proving anything.
+
 				if _, err := tg.source.Exec(context.Background(), "CREATE TABLE sqlite_cat_probe (id INTEGER)"); err == nil {
 					_, _ = tg.source.Exec(context.Background(), "DROP TABLE sqlite_cat_probe")
 					t.Error("this SQLite accepts a sqlite_-prefixed user table, so the prefix no longer keeps synthetic constraint names out of the user's namespace")
@@ -822,10 +668,6 @@ func catFindFK(t *testing.T, cat catalog.Catalog, table, column string) *catalog
 	return nil
 }
 
-// Every field the probe will read, asserted against its own opposite on the
-// column next to it. That pairing is the control: a loader that hardcoded any of
-// these answers fails the other half, and the fixture carries both shapes of
-// every column so that it can.
 func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 	checked := 0
 	for _, tg := range catEngines(t) {
@@ -844,12 +686,6 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			qty := catColumn(t, tbl, "qty")
 			note := catColumn(t, tbl, "note")
 
-			// The declaration order is the same in every catSchema entry, so the
-			// same ordinals here on all five targets are what says SQLite's cid
-			// — the one 0-based ordinal of the four engines — is still shifted.
-			// Absolutes and not a sorted order: a set shifted by one is still in
-			// order, and a probe binding a violation by position would bind it
-			// to the field next door.
 			if id := catColumn(t, tbl, "id"); id.Position != 1 {
 				t.Errorf("the first declared column reports position %d, want 1", id.Position)
 			}
@@ -869,9 +705,6 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 				t.Error("a nullable column is reported NOT NULL")
 			}
 
-			// SQLite records VARCHAR(255) as type text and enforces no width,
-			// so a catalog answering 255 there would claim an enforcement that
-			// does not exist ([[D-019]] difference 6).
 			wantMax := 255
 			if tg.database == "sqlite" {
 				wantMax = 0
@@ -907,9 +740,6 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 			}
 
 			if tg.database == "sqlite" {
-				// No PRAGMA lists a CHECK, and the alternative is finding it in
-				// the table's DDL, which is the DDL model D-041 forbids. The
-				// text is carried verbatim and read by nobody.
 				if _, ok := cat.Constraint("cat_rows", "cat_rows_qty_ck"); ok {
 					t.Error("SQLite reported a CHECK constraint — if a pragma does that now, D-019 difference 9 needs rewriting")
 				}
@@ -926,13 +756,6 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 				t.Error("the CHECK's own text was not recorded")
 			}
 
-			// PostgreSQL is the only engine that reports a CHECK's columns:
-			// conkey names them, and a CHECK that names none has no key part at
-			// all. The pair is the control — an empty name appended there is the
-			// same shape an expression key part uses, so a probe reading Columns
-			// by position would bind the violation to a field that is not there,
-			// and a loader that dropped every CHECK column would pass the second
-			// half alone.
 			if tg.database == "postgres" {
 				if strings.Join(check.Columns, ",") != "qty" {
 					t.Errorf("the CHECK over qty covers %v, want [qty]", check.Columns)
@@ -942,26 +765,13 @@ func TestEachEngineReportsWhatTheProbeWillNeed(t *testing.T) {
 					t.Errorf("a CHECK that names no column covers %d key parts (%q), want none", len(none.Columns), none.Columns)
 				}
 			} else if check.Columns != nil {
-				// Nil is not empty, and the engine split gives the twin for
-				// free: PostgreSQL reads a CHECK's columns out of conkey, and
-				// MySQL and MariaDB hand back the clause and no columns at all.
-				// A probe that read "not known" as "no columns" would treat a
-				// constraint it cannot reproduce as one with a trivially
-				// reproducible key. Written as a nil test and never as
-				// len() == 0: the len form passes under exactly the mutation
-				// this exists to catch.
 				t.Errorf("%s reported CHECK columns %#v — an empty non-nil slice here is the conflation crud/catalog/doc.go forbids; if it grew a reader, that rule needs rewriting", tg.database, check.Columns)
 			}
 
-			// The control for the line above: a constraint whose columns every
-			// engine does report must be non-nil everywhere, so a loader that
-			// answered nil for every constraint could not pass the MySQL half by
-			// accident.
 			if uc := catConstraint(t, cat, "cat_rows", "cat_rows_uc"); uc.Columns == nil {
 				t.Error("a UNIQUE constraint reports no columns at all, so the CHECK's nil above proves nothing")
 			}
 
-			// The constraint carries the schema its table resolved to, not "".
 			if check.Schema != tbl.Schema || check.Schema == "" {
 				t.Errorf("the CHECK says it lives in %q and its table in %q", check.Schema, tbl.Schema)
 			}
@@ -981,8 +791,6 @@ func catColumn(t *testing.T, tbl *catalog.Table, name string) *catalog.Column {
 	return c
 }
 
-// One Set, four live databases: each one is read once and each one keeps its own
-// schema. This is the identity rule against real handles rather than doubles.
 func TestOneSetHoldsFourLiveDatabasesWithoutMergingThem(t *testing.T) {
 	ctx := context.Background()
 	var set catalog.Set
@@ -1013,9 +821,6 @@ func TestOneSetHoldsFourLiveDatabasesWithoutMergingThem(t *testing.T) {
 		}
 	}
 
-	// The two PostgreSQL targets are two handles over one server, so they are
-	// two catalogs — the control that says this Set is keyed on the handle and
-	// not on the server, which is the whole of the search_path argument.
 	if len(seen) != 5 {
 		t.Errorf("five sources produced %d catalogs, want five", len(seen))
 	}

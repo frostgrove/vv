@@ -29,17 +29,12 @@ func mapError(operation string, err error, mode storage.WriteMode, sourceErr err
 		return nil
 	}
 	if sourceErr != nil {
-		// Provenance wins over the error's concrete value. A live call whose
-		// reader itself returns context.Canceled still has a source failure; only
-		// cancellation reported by the operation/SDK is call cancellation.
 		return storage.NewError(operation, storage.KindSource, sourceErr)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return storage.NewError(operation, storage.KindCancelled, err)
 	}
 	if kind := storage.KindOf(err); kind != "" {
-		// Re-project the bounded kind so a provider seam or nested adapter cannot
-		// leak its own operation label through this backend's public error.
 		return storage.NewError(operation, kind, err)
 	}
 
@@ -84,9 +79,6 @@ func kindFromResponse(response minio.ErrorResponse, mode storage.WriteMode) stor
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return storage.KindForbidden
 	case http.StatusNotFound:
-		// A real missing object carries NoSuchKey/NoSuchVersion above. A bare
-		// 404 is commonly an endpoint/proxy/bucket routing failure and must not
-		// masquerade as logical object absence.
 		return storage.KindUnavailable
 	case http.StatusConflict:
 		return storage.KindConflict

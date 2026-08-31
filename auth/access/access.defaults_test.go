@@ -16,14 +16,6 @@ func testSeeder(recorder *crudtest.Recorder) *Seeder {
 	return NewSeeder(NewStore(recorder), slog.New(slog.DiscardHandler))
 }
 
-// roleRow and defaultRoleRow are the canned result sets these tests replay, in
-// model field order — which is the order a repository selects its columns in.
-// Written once here because getting the order wrong is a scan error that reads
-// like a bug in the code under test.
-//
-// The ids go over as text because that is what a driver hands back: uuid.UUID's
-// Scan takes a string, and pushing the value itself fails to scan into its own
-// type.
 func roleRow(id uuid.UUID, slug string) []any {
 	return []any{id.String(), slug, slug, true, time.Now()}
 }
@@ -32,11 +24,6 @@ func defaultRoleRow(id, roleID uuid.UUID, subjectType string) []any {
 	return []any{id.String(), subjectType, roleID.String(), time.Now()}
 }
 
-// wrote reports whether anything recorded changed a row.
-//
-// The verb and not Statement.Query: an UPDATE carrying RETURNING is issued as a
-// query, so "it did not run a Query" is not the same statement as "it wrote
-// nothing" — and a test that used the second would pass while the row changed.
 func wrote(statements []crudtest.Statement) (string, bool) {
 	for _, statement := range statements {
 		switch verb := strings.ToUpper(strings.Fields(strings.TrimSpace(statement.SQL))[0]); verb {
@@ -47,9 +34,6 @@ func wrote(statements []crudtest.Statement) (string, bool) {
 	return "", false
 }
 
-// The default role is read from the table and nowhere else. This is the whole
-// of [[D-070]] from the reading side: what a sign-up grants is a row, and the
-// slug on it is what reaches the enrolment.
 func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 	recorder := crudtest.Postgres()
 	roleID := uuid.New()
@@ -66,13 +50,11 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 	if role == nil || role.Slug != "client" {
 		t.Fatalf("the default role is %+v, want the role the table pointed at", role)
 	}
-	// The whole row, so the enrolment grants it without a second lookup.
+
 	if role.ID != roleID {
 		t.Fatalf("the default role came back with id %s, want %s", role.ID, roleID)
 	}
 
-	// The lookup is keyed on the subject type. Without it in the predicate, one
-	// kind of caller's default is whichever row the engine reached first.
 	if !strings.Contains(recorder.Statements()[0].SQL, "subject_default_roles") {
 		t.Fatalf("the default role was not read from its table: %v", recorder.SQL())
 	}
@@ -81,9 +63,6 @@ func TestTheDefaultRoleIsWhateverTheTableSays(t *testing.T) {
 	}
 }
 
-// The control for the test above: with no row, the sign-up grants nothing
-// rather than guessing. A deployment where an administrator does the granting
-// is a supported state, not a misconfiguration.
 func TestASubjectTypeWithNoDefaultRoleGrantsNothing(t *testing.T) {
 	recorder := crudtest.Postgres()
 	dependencies := newDeps(NewStore(recorder), nil, nil, Config{}, slog.New(slog.DiscardHandler), nil)
@@ -97,10 +76,6 @@ func TestASubjectTypeWithNoDefaultRoleGrantsNothing(t *testing.T) {
 	}
 }
 
-// The sign-up asks the table before it creates anything. Reading it afterwards
-// would let a registration write an account and then fail on a default nobody
-// had configured, which is the half-registered state the transaction exists to
-// prevent.
 func TestASignUpReadsTheDefaultRoleBeforeItCreatesAnAccount(t *testing.T) {
 	runtime := testRuntime(t)
 	recorder := runtime.source.(*crudtest.Recorder)
@@ -115,8 +90,6 @@ func TestASignUpReadsTheDefaultRoleBeforeItCreatesAnAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The registrar refuses, so nothing past it runs — which is exactly what
-	// makes the first statement the assertion.
 	_, _ = signUp.Execute(context.Background(), testForm{Email: "ann@example.com"}, Agent{})
 
 	statements := recorder.Statements()
@@ -128,9 +101,6 @@ func TestASignUpReadsTheDefaultRoleBeforeItCreatesAnAccount(t *testing.T) {
 	}
 }
 
-// A default naming a role nobody created is refused by the command an operator
-// is watching, rather than at the first registration weeks later. That is the
-// whole reason this is not a configuration key.
 func TestSettingADefaultRoleThatDoesNotExistIsRefusedAndWritesNothing(t *testing.T) {
 	recorder := crudtest.Postgres()
 	seeder := testSeeder(recorder)
@@ -147,9 +117,6 @@ func TestSettingADefaultRoleThatDoesNotExistIsRefusedAndWritesNothing(t *testing
 	}
 }
 
-// Running the seed twice writes once. A command that inserts a second row on
-// the second run is a command nobody dares re-run, and re-running it after a
-// migration is the whole point of having one.
 func TestSettingTheDefaultRoleToWhatItAlreadyIsWritesNothing(t *testing.T) {
 	recorder := crudtest.Postgres()
 	roleID := uuid.New()
@@ -166,17 +133,13 @@ func TestSettingTheDefaultRoleToWhatItAlreadyIsWritesNothing(t *testing.T) {
 	}
 }
 
-// The control for the test above: a default that has actually changed is
-// written. Without this, a SetDefaultRole that never wrote anything at all
-// would pass the idempotence test.
 func TestSettingTheDefaultRoleToADifferentRoleWrites(t *testing.T) {
 	recorder := crudtest.Postgres()
 	bindingID, wasPointingAt := uuid.New(), uuid.New()
 	recorder.Push(
 		crudtest.Rows(roleRow(uuid.New(), "lawyer")),
 		crudtest.Rows(defaultRoleRow(bindingID, wasPointingAt, string(testSubject))),
-		// Update is load-diff-write: it locks and reads the row it is about to
-		// change, then reads it back through RETURNING.
+
 		crudtest.Rows(defaultRoleRow(bindingID, wasPointingAt, string(testSubject))),
 		crudtest.Rows(defaultRoleRow(bindingID, wasPointingAt, string(testSubject))),
 	)
@@ -189,15 +152,12 @@ func TestSettingTheDefaultRoleToADifferentRoleWrites(t *testing.T) {
 	}
 }
 
-// A role wanting a permission no module declared is refused rather than
-// skipped. Attaching it would produce a row that reads like a grant and decides
-// nothing, and the usual cause is a typo in the seed.
 func TestSeedingARoleRefusesAPermissionNobodyDeclared(t *testing.T) {
 	recorder := crudtest.Postgres()
 	roleID := uuid.New()
 	recorder.Push(
 		crudtest.Rows(roleRow(roleID, "lawyer")),
-		crudtest.Rows(), // the permission lookup finds nothing
+		crudtest.Rows(),
 	)
 
 	_, err := testSeeder(recorder).EnsureRole(context.Background(), RoleSpec{
@@ -212,9 +172,6 @@ func TestSeedingARoleRefusesAPermissionNobodyDeclared(t *testing.T) {
 	}
 }
 
-// A role the caller already resolved is granted without looking its slug up
-// again. That is the whole reason the sign-up reads the binding with the role
-// preloaded: it is holding the row a second statement would fetch.
 func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 	recorder := crudtest.Postgres()
 	runtime, err := New(RuntimeSpec{
@@ -246,9 +203,6 @@ func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 		t.Fatalf("no role was granted at all: %v", recorder.SQL())
 	}
 
-	// The control, and it is the one that matters: without a resolved role the
-	// lookup still happens. Otherwise the test above would pass on an enrolment
-	// that had stopped granting roles entirely.
 	recorder.Reset()
 	recorder.Push(crudtest.Rows(roleRow(uuid.New(), "client")))
 	if err := enrol.execute(context.Background(), command, nil); err != nil {
@@ -259,9 +213,6 @@ func TestAResolvedRoleIsGrantedWithoutASecondLookup(t *testing.T) {
 	}
 }
 
-// A resolved role belonging to another slug is not trusted. Granting it would
-// give the subject one role while the command named a different one, and
-// nothing anywhere would report the difference.
 func TestAResolvedRoleForAnotherSlugIsLookedUpAnyway(t *testing.T) {
 	recorder := crudtest.Postgres()
 	runtime, err := New(RuntimeSpec{
@@ -301,9 +252,6 @@ func reads(recorder *crudtest.Recorder, fragment string) bool {
 	return false
 }
 
-// wroteInto looks at every statement, not only the first write: an enrolment
-// writes the credential before it writes the grant, so "the first write
-// mentioned this table" is a different question from the one being asked.
 func wroteInto(recorder *crudtest.Recorder, table string) bool {
 	for _, statement := range recorder.SQL() {
 		if strings.HasPrefix(strings.TrimSpace(statement), "INSERT") && strings.Contains(statement, table) {

@@ -37,10 +37,7 @@ func seedChunkedRollbackRows(t *testing.T, source crud.Source) {
 
 func runChunkedForeignWrites(t *testing.T, ctx context.Context, source crud.Source) {
 	t.Helper()
-	// One bind leaves one id per DELETE statement. Six binds are exactly one
-	// assigned-key User row, so SaveAll also has two statements. If InAtomic
-	// mistakes the foreign transaction for a pool, both operations open and
-	// commit their own transaction before the foreign owner rolls back.
+
 	deleted, err := Users.Bind(withBindBudget(source, 1)).Delete(ctx, chunkedSeedIDs...)
 	if err != nil {
 		t.Fatal(err)

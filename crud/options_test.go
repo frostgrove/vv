@@ -7,7 +7,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// Options are applied left to right, and each one only touches its own field.
 func TestOptionsApplyInSequence(t *testing.T) {
 	o := crud.Build(
 		crud.Where(crud.Eq("Title", "Go")),
@@ -48,15 +47,12 @@ func TestBuildOfNothingIsTheZeroShape(t *testing.T) {
 	if len(o.Filter) != 0 || len(o.Sort) != 0 || o.Limit != 0 || o.Unpaged {
 		t.Fatalf("empty build = %+v, want the zero shape", o)
 	}
-	// A nil option in the list is skipped rather than dereferenced, because
-	// callers assemble option slices conditionally.
+
 	if got := crud.Build(nil, crud.Limit(5), nil).Limit; got != 5 {
 		t.Fatalf("limit = %d, want the surviving option still applied around the nils", got)
 	}
 }
 
-// Where ANDs; it never replaces. This is what lets a security decorator inject
-// a scope that no caller option can peel off.
 func TestWhereAccumulates(t *testing.T) {
 	o := crud.Build(crud.Where(crud.Eq("Title", "Go")))
 	o.Apply(crud.Where(crud.Gt("Views", 10)), crud.Where(nil))
@@ -94,8 +90,6 @@ func TestOrderByAppendsAndSortByReplaces(t *testing.T) {
 	}
 }
 
-// With replays a stored query shape into another one, so a caller can pass a
-// prebuilt Options around.
 func TestWithReplaysAStoredShape(t *testing.T) {
 	stored := crud.Build(
 		crud.Where(crud.Gt("Views", 10)),
@@ -124,8 +118,6 @@ func TestWithReplaysAStoredShape(t *testing.T) {
 	}
 }
 
-// A stored shape that says nothing about pagination must not reset it, and a
-// flag already set cannot be turned back off by replaying a shape without it.
 func TestWithLeavesUnsetFieldsAlone(t *testing.T) {
 	o := crud.Build(crud.Page(4), crud.Limit(9), crud.Offset(3), crud.Distinct(),
 		crud.With(crud.Build()), crud.With(nil))
@@ -159,13 +151,10 @@ func TestResolved(t *testing.T) {
 		{"unpaged drops the limit entirely where no maximum is declared",
 			[]crud.Option{crud.Unpaged(), crud.Page(4), crud.Limit(10)}, 20, 0, 0, 0, 1},
 		{"unpaged still honours an explicit offset", []crud.Option{crud.Unpaged(), crud.Offset(7)}, 20, 0, 0, 7, 1},
-		// MaxLimit is the repository saying how much of the table one call may
-		// return. Unpaged is a flag on the wire; it does not get to overrule it.
+
 		{"a declared maximum survives unpaged",
 			[]crud.Option{crud.Unpaged(), crud.Page(4), crud.Limit(10)}, 20, 100, 100, 0, 1},
-		// The offset that a client's page number multiplies out to can wrap an
-		// int. Saturating asks for a page past the end; wrapping used to hand
-		// back page one wearing the page number that was asked for.
+
 		{"a page number that would overflow the offset saturates",
 			[]crud.Option{crud.Page(math.MaxInt), crud.Limit(20)}, 20, 100, 20, math.MaxInt, math.MaxInt},
 	} {

@@ -11,29 +11,18 @@ import (
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
 )
 
-// database/sql over pgx's stdlib driver.
 func TestDatabaseSQLPostgres(t *testing.T) {
 	RunSuite(t, Target{Name: "database/sql+postgres", DB: "postgres", Source: crudsql.Postgres(pgDB)})
 }
 
-// database/sql over go-sql-driver/mysql. The default upsert form uses VALUES(),
-// which every MySQL and MariaDB understands.
 func TestDatabaseSQLMySQL(t *testing.T) {
 	RunSuite(t, Target{Name: "database/sql+mysql", DB: "mysql", Source: crudsql.MySQL(myDB)})
 }
 
-// The same suite against MariaDB.
-//
-// crud.MySQL has said "targets MySQL and MariaDB" since it was written, and
-// crud.MySQL{RowAlias: false} exists for no other reason — MariaDB has no `AS
-// new` row alias. Neither claim had ever been run. A documented dialect with no
-// test is a claim, not a feature, and this is the whole of what turns it into
-// one.
 func TestDatabaseSQLMariaDB(t *testing.T) {
 	RunSuite(t, Target{Name: "database/sql+mariadb", DB: "mysql", Source: crudsql.MySQL(mariaDB)})
 }
 
-// The same suite with the modern `AS new` row alias (MySQL 8.0.19+).
 func TestDatabaseSQLMySQLRowAlias(t *testing.T) {
 	RunSuite(t, Target{
 		Name:   "database/sql+mysql(row alias)",
@@ -42,7 +31,6 @@ func TestDatabaseSQLMySQLRowAlias(t *testing.T) {
 	})
 }
 
-// A transaction owned by the caller, shared with vv through the context.
 func TestDatabaseSQLSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -81,7 +69,6 @@ func TestDatabaseSQLSharedTransaction(t *testing.T) {
 	}
 }
 
-// Inside a transaction, a nested Tx becomes a SAVEPOINT.
 func TestDatabaseSQLSavepoint(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)

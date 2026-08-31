@@ -247,9 +247,19 @@ page, err := articles.Get(ctx, opts...)
 | `GetAll` | 1 | без `LIMIT` — его контракт это все подходящие строки |
 | `Count`, `Exists`, `Aggregate` | 1 | |
 | `Save` | 1 | `INSERT … RETURNING` либо `INSERT … ON CONFLICT DO UPDATE … RETURNING` |
-| `SaveAll(n)` | 1 | один многострочный `VALUES` |
+| `SaveAll(n)` | k | минимум bind-budgeted многострочных statements `VALUES`; чанки атомарны |
+| `InsertBatch(n)` | 1 native либо k | pgx COPY при явно доступной точной capability; иначе insert-only SQL-чанки |
 | `Update` | **2** | load-diff-write из [[D-010]]: `SELECT`, затем `UPDATE … RETURNING` |
-| `UpdateAll`, `Delete(ids…)`, `DeleteAll` | 1 | |
+| `UpdateAll`, `DeleteAll` | 1 | |
+| `Delete(ids…)` | k | минимум bind-budgeted statements со списком ID; чанки атомарны |
+
+Здесь `k` — минимальное число чанков операции после того, как фиксированные
+аргументы statement и ширина строки/ID расходуют bind-лимит диалекта. Пока вызов
+помещается, это 1; значение растёт только по границам строк/ID. Для insert оно может
+равняться `n`, если вся форма состоит только из `DEFAULT`. `crud.PortableBatch()` принудительно
+выбирает SQL-ветку строки `InsertBatch`, а `sqlrepo.PortableBatch()` объявляет этот выбор один
+раз. Строки предполагают непустой input; пустые `SaveAll`, `InsertBatch` и `Delete(ids…)` —
+универсальные no-op с нулём statements.
 
 **MySQL добавляет обратное чтение** везде, где PostgreSQL пользуется
 `RETURNING`: `Save` 2, `Update` 3.
@@ -261,10 +271,12 @@ page, err := articles.Get(ctx, opts...)
 связь.
 
 **Гейт безопасности добавляет стейтменты только там, где обязан.** Свой scope
-без `Inspect` доступен только для чтения: записи с body отклоняются до SQL. С
-`Inspect` фильтрованные записи забирают свои жертвы: `UpdateAll`, `Delete` и
-`DeleteAll` становятся по 2, потому что правило обязано увидеть каждую
-уничтожаемую строку ([[D-026]]).
+без `Inspect` доступен только для чтения: записи с body, включая `InsertBatch`,
+отклоняются до SQL. С `Inspect` фильтрованные записи забирают свои жертвы:
+`UpdateAll`, `Delete` и `DeleteAll` становятся по 2, потому что правило обязано
+увидеть каждую уничтожаемую строку ([[D-026]]). `InsertBatch` вместо этого
+инспектирует входящие строки как `Create`, поэтому назначенные ключи не
+добавляют lookup/update statements.
 
 **Внутри транзакции счёт тот же**, а загрузка `Update` получает `FOR UPDATE`.
 **С репликой** страница и счётчик `Get` идут на реплику, а всякое чтение,

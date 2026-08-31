@@ -12,8 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// editor is the caller most of these tests run as: one tenant, one role, the
-// two permissions that role grants.
 var editor = auth.Claims{
 	Sub:         "u-1",
 	Roles:       []auth.Role{"editor"},
@@ -43,8 +41,6 @@ func TestRequirePermissionRefusesTheCallerThatLacksOne(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the refusal above passes for a policy that
-	// refuses unconditionally, and nothing would ever reach the table.
 	t.Run("control: a caller holding both is let through", func(t *testing.T) {
 		admin := editor
 		admin.Permissions = append([]auth.Permission{"doc:admin"}, editor.Permissions...)
@@ -120,9 +116,6 @@ func TestPerActionRefusesAVerbNobodyDeclared(t *testing.T) {
 		}
 	})
 
-	// This is the arm that matters. A verb missing from the map is a verb
-	// nobody granted, so a new verb on the seam is refused rather than
-	// inherited ([[D-030]]).
 	t.Run("an undeclared verb is refused even for a caller with every permission", func(t *testing.T) {
 		rec := crudtest.Postgres()
 		_, err := bound(rec, policy).Delete(as(editor), 1)
@@ -160,9 +153,6 @@ func TestScopeAttrNarrowsInSQLAndFreezesTheColumn(t *testing.T) {
 		}
 	})
 
-	// UC-004 Gap 1: a hand-written principal scope narrows reads and leaves
-	// creates open. ScopeAttr wraps ScopeField precisely so it inherits the row
-	// check that closes it.
 	t.Run("a create into another tenant is refused", func(t *testing.T) {
 		rec := crudtest.Postgres()
 		d := Doc{TenantID: 9, Title: "x"}
@@ -209,7 +199,6 @@ func TestAMissingClaimIsADenialAndNotAZeroValue(t *testing.T) {
 	}
 }
 
-// Ticket is the model with an owner column, for the subject scope.
 type Ticket struct {
 	ID    int64  `db:"id,pk,auto"`
 	Owner string `db:"owner"`
@@ -234,16 +223,6 @@ func TestScopeSubjectNarrowsToTheCallersOwnRows(t *testing.T) {
 	}
 }
 
-// Every principal policy fails closed on a context nobody authenticated —
-// UC-004 guarantee 16, and the reason it is a 401 rather than a 403 is that
-// nothing has been decided yet.
-//
-// Every policy here narrows a read. `InspectOwner` is deliberately not in the
-// table: `Inspect` runs on writes, and on reads only when `InspectReads` is set,
-// which is off by default because a scope is the cheap way to filter a list. Its
-// own fail-closed case is a write, and
-// `TestInspectOwnerRefusesBeforeConsultingTheRuleWhenNobodyIsAuthenticated`
-// carries it.
 func TestEveryPrincipalPolicyFailsClosedWithoutOne(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

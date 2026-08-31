@@ -11,16 +11,12 @@ import (
 )
 
 func TestADeclarationWhoseTableTheCatalogDoesNotKnowRefusesToStart(t *testing.T) {
-	// An empty catalog is exactly what a MySQL user with no information_schema
-	// grants reads: zero rows rather than a refusal, so Load succeeds. The first
-	// declaration that names a table is what tells the two apart.
 	_, err := Full(newFakeCatalog("mysql")).(*full).Declare(docMeta(t))
 	if !errors.Is(err, ErrUnknownTable) {
 		t.Fatalf("a declaration against an empty catalog started anyway: %v", err)
 	}
 }
 
-// The control: the loaded twin starts.
 func TestADeclarationWhoseTableTheCatalogKnowsStarts(t *testing.T) {
 	if _, err := Full(fixture()).(*full).Declare(docMeta(t)); err != nil {
 		t.Fatalf("a declaration against a catalog holding the table was refused: %v", err)
@@ -100,8 +96,7 @@ func TestAQualifiedDeclarationUsesOnlyItsSchemasTableAndForeignKeys(t *testing.T
 func TestADeclarationOverAKeyThatDoesNotIdentifyARowRefusesToStart(t *testing.T) {
 	cat := fixture()
 	docs, _ := cat.Table("docs")
-	// The table's real key is composite. The model maps one field onto one half
-	// of it, which is already wrong for the repository's own WHERE pk = ?.
+
 	docs.PrimaryKey = []string{"id", "tenant_id"}
 	docs.Constraints[0].Columns = []string{"id", "tenant_id"}
 
@@ -111,16 +106,12 @@ func TestADeclarationOverAKeyThatDoesNotIdentifyARowRefusesToStart(t *testing.T)
 	}
 }
 
-// The control: the same table with the same model, where the key really is the
-// one column. Without it a Declare that refused everything would pass.
 func TestADeclarationOverASingleColumnKeyStarts(t *testing.T) {
 	if _, err := Full(fixture()).(*full).Declare(docMeta(t)); err != nil {
 		t.Fatalf("a single-column primary key was refused: %v", err)
 	}
 }
 
-// A unique key over the column is a row identity too, which is what a model
-// bound to a table whose primary key the engine does not report needs.
 func TestAUniqueKeyOverTheColumnIdentifiesARow(t *testing.T) {
 	cat := fixture()
 	docs, _ := cat.Table("docs")
@@ -136,7 +127,7 @@ func TestASkipNamingNoConstraintRefusesToStart(t *testing.T) {
 	if !errors.Is(err, ErrUnknownConstraint) {
 		t.Fatalf("an opt-out naming nothing was accepted, so a rename turns the control off silently: %v", err)
 	}
-	// The control: the name as it really is.
+
 	if _, err := Full(fixture(), Skip("docs_email_uk")).(*full).Declare(docMeta(t)); err != nil {
 		t.Fatalf("an opt-out naming a real constraint was refused: %v", err)
 	}
@@ -180,12 +171,11 @@ func TestDeclaringTwoModelsFromOneFullValueGivesTwoHandlers(t *testing.T) {
 	}
 }
 
-// The transaction matrix, unit half. The live half is in test/integration.
 func TestTheTransactionMatrixDecidesWhetherTheProbeRunsAtAll(t *testing.T) {
 	type arm struct {
 		name      string
 		dialect   crud.Dialect
-		tx        string // "none", "own", "foreign"
+		tx        string
 		recovered bool
 		want      bool
 	}
@@ -193,16 +183,12 @@ func TestTheTransactionMatrixDecidesWhetherTheProbeRunsAtAll(t *testing.T) {
 		{"postgres outside a transaction", crud.Postgres{}, "none", false, true},
 		{"mysql outside a transaction", crud.MySQL{}, "none", false, true},
 
-		// The engine that poisons: nothing runs until the transaction is
-		// restored, so Simple is the default there.
 		{"postgres in our own transaction", crud.Postgres{}, "own", false, false},
 		{"postgres in our own transaction, restored", crud.Postgres{}, "own", true, true},
-		// A foreign transaction is never given a savepoint, so it is never
-		// restored — and even if something claimed it was, it is not ours.
+
 		{"postgres in a foreign transaction", crud.Postgres{}, "foreign", false, false},
 		{"postgres in a foreign transaction, claiming restored", crud.Postgres{}, "foreign", true, false},
 
-		// The engines that roll back the statement alone need nothing.
 		{"mysql in our own transaction", crud.MySQL{}, "own", false, true},
 		{"mysql in a foreign transaction", crud.MySQL{}, "foreign", false, true},
 		{"sqlite in our own transaction", crud.SQLite{}, "own", false, true},

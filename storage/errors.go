@@ -6,7 +6,6 @@ import (
 	"fmt"
 )
 
-// Kind is a backend-neutral storage failure class.
 type Kind string
 
 const (
@@ -45,16 +44,12 @@ var (
 	ErrInternal           = kindError{KindInternal}
 )
 
-// Error reports an operation and a bounded failure class. Its text deliberately
-// omits object keys, backend locations and the wrapped provider error.
 type Error struct {
 	Operation string
 	Kind      Kind
 	cause     error
 }
 
-// NewError constructs a portable storage error while retaining cause for
-// controlled errors.Is/errors.As diagnostics.
 func NewError(operation string, kind Kind, cause error) error {
 	if !validKind(kind) {
 		kind = KindInternal
@@ -83,8 +78,6 @@ func (this *Error) Error() string {
 	return fmt.Sprintf("storage %s: %s", this.Operation, this.Kind)
 }
 
-// Format keeps the wrapped backend diagnostics out of every ordinary fmt verb,
-// including Go-syntax formatting with %#v.
 func (this *Error) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, this.Error())
 }
@@ -99,15 +92,10 @@ func (this *Error) Is(target error) bool {
 	return errors.Is(this.cause, target)
 }
 
-// As exposes a specifically requested diagnostic cause without making it an
-// unconditional unwrap chain. This prevents a nested provider/source
-// storage.Error from also changing the outer portable Kind.
 func (this *Error) As(target any) bool {
 	return this != nil && this.cause != nil && errors.As(this.cause, target)
 }
 
-// KindOf returns the portable kind carried by err, or the empty kind when err
-// is not a storage error.
 func KindOf(err error) Kind {
 	var e *Error
 	if errors.As(err, &e) {
@@ -126,9 +114,6 @@ func projectError(operation string, err error) error {
 	}
 	var portable *Error
 	if errors.As(err, &portable) {
-		// Backend implementations are an extension seam. Preserve their bounded
-		// kind and diagnostic cause, but never trust their operation label: it
-		// could otherwise smuggle a key, path or URL into public error text.
 		return NewError(operation, portable.Kind, err)
 	}
 	if kind := KindOf(err); kind != "" {

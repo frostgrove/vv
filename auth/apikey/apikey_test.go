@@ -27,8 +27,6 @@ func cred(token string) auth.Credential {
 func TestAKnownKeyAuthenticatesAndAnUnknownOneDoesNot(t *testing.T) {
 	a := apikey.New(store())
 
-	// The control comes first here on purpose: without it the refusal below
-	// passes for an authenticator that refuses everything.
 	t.Run("control: a known key answers its principal", func(t *testing.T) {
 		p, err := a.Authenticate(t.Context(), cred("k-1"))
 		if err != nil {
@@ -114,8 +112,6 @@ func TestHeaderReadsABareKeyWithoutChangingTheAuthorizationAPI(t *testing.T) {
 		}
 	})
 
-	// The control: Header must be the thing that made the bare value usable,
-	// and Lookup semantics say it replaces rather than augments Authorization.
 	t.Run("control: the helper does not silently keep reading Authorization", func(t *testing.T) {
 		g := auth.NewGuard(a, apikey.Header("X-Api-Key"))
 		_, err := g.Authenticate(t.Context(), keyHeaders(map[string]string{"Authorization": "ApiKey k-1"}))
@@ -140,8 +136,6 @@ func keyHeaders(values map[string]string) func(string) string {
 	return h.Get
 }
 
-// This is the distinction the three-result Lookup exists for. A store that
-// cannot answer must not be reported as a bad key.
 func TestAStoreFailureIsNotARefusal(t *testing.T) {
 	down := errors.New("dial tcp: connection refused")
 	a := apikey.New(apikey.StoreFunc(func(context.Context, string) (auth.Principal, bool, error) {
@@ -182,8 +176,6 @@ func TestStaticSnapshotsClaimsAndReturnsAPerRequestCopy(t *testing.T) {
 	}
 	static := apikey.Static(map[string]auth.Principal{"k-1": declared})
 
-	// Mutating every reference-bearing part of the declaration after Static
-	// returns must not rewrite the identity it stored.
 	declared.Roles[0] = "admin"
 	declared.Permissions[0] = "article:delete"
 	declared.Attrs["tenant"] = "changed"
@@ -200,8 +192,6 @@ func TestStaticSnapshotsClaimsAndReturnsAPerRequestCopy(t *testing.T) {
 	}
 	assertFrozenClaims(t, firstClaims)
 
-	// A caller owns the value returned for its request. These mutations must not
-	// leak back into the store or into the next request.
 	firstClaims.Roles[0] = "owner"
 	firstClaims.Permissions[0] = "root"
 	firstClaims.Attrs["tenant"] = "request-one"
@@ -417,8 +407,6 @@ func TestTryStaticRejectsCustomPrincipalItCannotSnapshot(t *testing.T) {
 		t.Fatal("the custom-principal configuration error disclosed an API key")
 	}
 
-	// This is the mutation that the old implementation published through every
-	// lookup. Refusing the declaration is what keeps it outside the fixed store.
 	principal.subject = "rewritten-after-construction"
 	principal.permissions["article:delete"] = true
 }

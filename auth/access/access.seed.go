@@ -12,32 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Sync makes the tables agree with what the modules declared, at every start.
-//
-// It is not a migration. A migration is a fact about the schema and belongs in
-// goose; this is a fact about the *code* — which permissions exist is decided
-// by which modules are compiled in, and a deployment that adds a module has to
-// end up with that module's permissions in the table without anybody writing
-// SQL for it.
-//
-// Three properties it deliberately has:
-//
-//   - It adds and never deletes. A permission whose module was removed keeps
-//     its row and its grants; taking access away is an administrator's decision
-//     with an audit story, not a side effect of a refactor.
-//   - Admin is recomputed to hold everything, including permissions declared
-//     after it was seeded. The role that exists to be able to fix things must
-//     not fall behind the code that added something to fix.
-//   - It runs before the server accepts a request, so a policy can never be
-//     evaluated against a half-populated table.
 func Sync(ctx context.Context, store *Store, declared []ModuleGrants, logger *slog.Logger) error {
 	byCode, err := syncPermissions(ctx, store, declared)
 	if err != nil {
 		return err
 	}
 
-	// Sorted, so two runs of the same start-up produce the same inserts and the
-	// same log line.
 	wanted := rolePlan(declared)
 	for _, slug := range slices.Sorted(maps.Keys(wanted)) {
 		role, err := ensureRole(ctx, store, slug)
@@ -54,8 +34,6 @@ func Sync(ctx context.Context, store *Store, declared []ModuleGrants, logger *sl
 	return nil
 }
 
-// syncPermissions inserts the codes that are missing and returns every code's
-// id, which is what the role attachment below needs.
 func syncPermissions(ctx context.Context, store *Store, declared []ModuleGrants) (map[auth.Permission]uuid.UUID, error) {
 	existing, err := store.Permissions.GetAll(ctx)
 	if err != nil {
@@ -88,9 +66,6 @@ func syncPermissions(ctx context.Context, store *Store, declared []ModuleGrants)
 	return byCode, nil
 }
 
-// rolePlan folds every module's role declarations together. Admin is seeded
-// with the union of everything declared anywhere, which is what keeps it able
-// to undo whatever the newest module added.
 func rolePlan(declared []ModuleGrants) map[auth.Role][]auth.Permission {
 	plan := map[auth.Role][]auth.Permission{RoleAdmin: nil}
 	for _, module := range declared {
@@ -126,8 +101,6 @@ func ensureRole(ctx context.Context, store *Store, slug auth.Role) (Role, error)
 	return saved, nil
 }
 
-// attachAll adds the missing role_permissions rows and leaves the rest alone,
-// so a permission an administrator attached by hand survives a restart.
 func attachAll(ctx context.Context, store *Store, role Role, want []auth.Permission, byCode map[auth.Permission]uuid.UUID) error {
 	held, err := store.RolePermissions.GetAll(ctx, crud.Where(crud.Eq("RoleID", role.ID)))
 	if err != nil {
@@ -153,10 +126,6 @@ func attachAll(ctx context.Context, store *Store, role Role, want []auth.Permiss
 	return nil
 }
 
-// OwnGrants is this context's own declaration. An application includes it in
-// the slice it hands [Sync], beside its own modules' declarations — through the
-// same list every one of them uses, rather than being folded in here, so there
-// is one path and not two.
 func OwnGrants() ModuleGrants {
 	return ModuleGrants{
 		Module: "access",

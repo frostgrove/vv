@@ -10,11 +10,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// ---------------------------------------------------------------------------
-// The blog fixture. relation_test, predicate_test, render_test and preload_test
-// all query this shape, so the SQL they assert reads like the SQL a real caller
-// would get.
-
 type Author struct {
 	ID   int64            `db:"id,pk,auto"`
 	Name string           `db:"name"`
@@ -45,7 +40,7 @@ type Article struct {
 	Author   *Author   `rel:"belongs_to"`
 	Comments []Comment `rel:"has_many"`
 	Tags     []Tag     `rel:"many_to_many,join=article_tags"`
-	Draft    *Author   `rel:"-"` // opted out: neither a column nor an edge
+	Draft    *Author   `rel:"-"`
 }
 
 func articleMeta(t *testing.T) *crud.Meta {
@@ -62,11 +57,6 @@ func metaOf[M any](t *testing.T, table string) *crud.Meta {
 	return m
 }
 
-// ---------------------------------------------------------------------------
-// tag forms
-
-// A relation kind may be stated outright, and the two column names it joins on
-// then default to the conventional ones.
 func TestRelationTagStatesTheKind(t *testing.T) {
 	m := articleMeta(t)
 
@@ -74,8 +64,8 @@ func TestRelationTagStatesTheKind(t *testing.T) {
 		name        string
 		kind        crud.RelKind
 		toMany      bool
-		local       string // field on the article
-		remote      string // field on the target
+		local       string
+		remote      string
 		targetTable string
 		join        string
 		joinLocal   string
@@ -115,16 +105,14 @@ func TestRelationTagStatesTheKind(t *testing.T) {
 	}
 }
 
-// Ticket states no kind at all: every edge is inferred from the Go type and
-// from whether this struct carries the foreign key.
 type Ticket struct {
 	ID      int64 `db:"id,pk,auto"`
 	OwnerID int64 `db:"owner_id"`
 
-	Owner *Author `rel:""`                  // an OwnerID column exists here -> belongs_to
-	Stamp *Stamp  `rel:""`                  // no StampID column -> the far side holds the key
-	Lines []Line  `rel:""`                  // a slice -> has_many
-	Tags  []Tag   `rel:",join=ticket_tags"` // a slice plus a join table -> many_to_many
+	Owner *Author `rel:""`
+	Stamp *Stamp  `rel:""`
+	Lines []Line  `rel:""`
+	Tags  []Tag   `rel:",join=ticket_tags"`
 }
 
 type Stamp struct {
@@ -175,8 +163,6 @@ func TestRelationKindIsInferredFromTheGoType(t *testing.T) {
 	}
 }
 
-// Person overrides every default the tag offers, and points at itself — which
-// only works because a target is resolved lazily.
 type Person struct {
 	ID        int64  `db:"id,pk,auto"`
 	ManagerNo int64  `db:"manager_no"`
@@ -194,7 +180,6 @@ type Badge struct {
 	Code     string `db:"code"`
 }
 
-// Warehouses join their crates on a natural key instead of the primary one.
 type Warehouse struct {
 	ID   int64  `db:"id,pk,auto"`
 	Code string `db:"code"`
@@ -211,7 +196,6 @@ type Crate struct {
 func TestRelationTagOverrides(t *testing.T) {
 	people := metaOf[Person](t, "persons")
 
-	// fk= names the column that holds the key, on whichever side holds it.
 	manager := people.Relation("Manager")
 	_, local, remote, err := manager.Resolve()
 	if err != nil {
@@ -229,7 +213,6 @@ func TestRelationTagOverrides(t *testing.T) {
 		t.Errorf("Reports joins %s -> %s, want ID -> ManagerNo", local.Name, remote.Name)
 	}
 
-	// table= overrides the target's table without touching its schema.
 	badge, _, _, err := people.Relation("Badge").Resolve()
 	if err != nil {
 		t.Fatal(err)
@@ -241,15 +224,12 @@ func TestRelationTagOverrides(t *testing.T) {
 		t.Errorf("the override leaked into the type's own table name: %q", plain)
 	}
 
-	// joinFK=/joinRef= name the two columns of the join table.
 	aliases := people.Relation("Aliases")
 	if aliases.JoinTable != "person_aliases" || aliases.JoinLocal != "who_id" || aliases.JoinRef != "alias_id" {
 		t.Errorf("join = %s(%s, %s), want person_aliases(who_id, alias_id)",
 			aliases.JoinTable, aliases.JoinLocal, aliases.JoinRef)
 	}
 
-	// ref= names the column on the near side, so a relation can hang off a
-	// natural key rather than the primary key.
 	_, local, remote, err = metaOf[Warehouse](t, "warehouses").Relation("Crates").Resolve()
 	if err != nil {
 		t.Fatal(err)
@@ -259,8 +239,6 @@ func TestRelationTagOverrides(t *testing.T) {
 	}
 }
 
-// A model may reference itself: targets resolve on first use, not at build
-// time, so a cycle never deadlocks the schema builder.
 func TestSelfReferencingRelationResolves(t *testing.T) {
 	people := metaOf[Person](t, "persons")
 	target, err := people.Relation("Manager").Target()
@@ -278,8 +256,6 @@ func TestSelfReferencingRelationResolves(t *testing.T) {
 	}
 }
 
-// A struct-shaped field is never guessed into a column: without a rel tag it is
-// invisible, and with rel:"-" it stays invisible even though it looks like one.
 func TestStructFieldsWithoutARelTagAreIgnored(t *testing.T) {
 	m := articleMeta(t)
 	if m.Relation("Draft") != nil {
@@ -302,10 +278,6 @@ func TestStructFieldsWithoutARelTagAreIgnored(t *testing.T) {
 	}
 }
 
-// A relation tag on an anonymous field describes that field; it is not a tag
-// on the columns promoted from the embedded struct. In particular, silently
-// flattening here would discard an explicit relation declaration and usually
-// collide with the owner's own ID.
 func TestAnonymousRelationTagsPreventFlattening(t *testing.T) {
 	type WithEmbeddedAuthor struct {
 		ID       int64 `db:"id,pk"`
@@ -335,9 +307,6 @@ func TestAnonymousRelationTagsPreventFlattening(t *testing.T) {
 		t.Fatalf(`rel:"-" anonymous field leaked into schema: columns=%v relations=%d`, s.Columns(), len(s.Relations))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// table names
 
 type Continent struct {
 	ID   int64  `db:"id,pk,auto"`
@@ -402,9 +371,6 @@ func TestTableNameOf(t *testing.T) {
 	}
 }
 
-// A relation caches its target metadata. Changing the registry after that
-// point used to report success while the relation kept querying the old table.
-// A declaration that cannot affect already-published metadata must be refused.
 func TestLateAndConflictingTableRegistrationsAreRefused(t *testing.T) {
 	type Ledger struct {
 		ID int64 `db:"id,pk,auto"`
@@ -495,10 +461,7 @@ func TestLookingUpAConventionalTableDoesNotPublishRelationMetadata(t *testing.T)
 	type Ledger struct {
 		ID int64 `db:"id,pk,auto"`
 	}
-	// A previous package-level -count iteration has already completed the proof
-	// and left the intentionally process-lifetime registry populated. Accept that
-	// settled state so the regression remains repeatable without adding a
-	// production-only reset seam.
+
 	if got := crud.TableNameOf(reflect.TypeFor[Ledger]()); got != "ledgers" && got != "accounting_ledgers" {
 		t.Fatalf("table before idempotent registration = %q", got)
 	}
@@ -555,9 +518,6 @@ func TestConcurrentRegistrationAndRelationPublicationHaveOneLinearOutcome(t *tes
 
 	want := "core022_registered_targets"
 	if registrationErr != nil {
-		// Relation.Target won the registry lock and published the conventional
-		// fallback. The competing declaration must lose rather than leave the
-		// registry and the cached Meta naming different tables.
 		want = "core022_concurrent_targets"
 		if !strings.Contains(registrationErr.Error(), "already resolved") {
 			t.Fatalf("losing registration = %v, want an already-resolved refusal", registrationErr)
@@ -596,7 +556,6 @@ func TestExplicitRelationTableDoesNotDependOnRegistryOrder(t *testing.T) {
 	}
 }
 
-// A relation to a Tabler picks the table up without anyone registering it.
 func TestRelationTargetUsesTheTablerName(t *testing.T) {
 	type Country struct {
 		ID          int64 `db:"id,pk,auto"`
@@ -613,19 +572,14 @@ func TestRelationTargetUsesTheTablerName(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// paths
-
-// WalkPath is the single source of truth every layer resolves through, and the
-// canonical spelling it returns is what errors and echoes are phrased in.
 func TestWalkPath(t *testing.T) {
 	m := articleMeta(t)
 
 	for _, tc := range []struct {
 		name      string
 		path      string
-		hops      []string // relation names crossed, in order
-		field     string   // terminal column, empty when the path stops on a relation
+		hops      []string
+		field     string
 		canonical string
 	}{
 		{"an own column", "Title", nil, "title", "Title"},
@@ -635,8 +589,6 @@ func TestWalkPath(t *testing.T) {
 		{"a path may stop on a relation", "Comments", []string{"Comments"}, "", "Comments"},
 		{"...even a nested one", "Comments.Author", []string{"Comments", "Author"}, "", "Comments.Author"},
 
-		// The forgiving spelling: a client sends whatever case it likes and
-		// still gets the model's own vocabulary back.
 		{"column names resolve too", "author_id", nil, "author_id", "AuthorID"},
 		{"camelCase", "authorId", nil, "author_id", "AuthorID"},
 		{"lower case, all the way down", "comments.author.name", []string{"Comments", "Author"}, "name", "Comments.Author.Name"},
@@ -662,8 +614,6 @@ func TestWalkPath(t *testing.T) {
 	}
 }
 
-// Every hop carries the two columns it joins on, so the writer never has to
-// re-derive them.
 func TestWalkPathHopsCarryTheirJoinColumns(t *testing.T) {
 	hops, _, _, err := articleMeta(t).WalkPath("Comments.Author.Name")
 	if err != nil {
@@ -831,17 +781,6 @@ func hopNames(hops []crud.PathHop) []string {
 	return out
 }
 
-// Two goroutines that first cross the same relation do not race on it.
-//
-// A relation's join fields resolve lazily, because the far model may not be
-// buildable yet when two models reference each other (FL-004). Only `Target()`
-// was behind a Once; `resolveDefaults` wrote `LocalField` and `TargetField`
-// outside it — and those writes land on the `*Relation` held by the *process-
-// global* schema cache, which every repository over that model shares.
-//
-// So it was not a race between two repositories. It was a race between any two
-// concurrent requests in the process that both happened to be the first to cross
-// that relation, on two strings the query builder then reads. Run with -race.
 func TestConcurrentFirstUseOfARelationDoesNotRace(t *testing.T) {
 	m := articleMeta(t)
 	rel := m.Schema.Relation("Comments")
@@ -867,9 +806,6 @@ func TestConcurrentFirstUseOfARelationDoesNotRace(t *testing.T) {
 	}
 	wg.Wait()
 
-	// And every goroutine saw the same answer. A race that -race happened not to
-	// catch would still show up here as two different resolutions of one
-	// relation.
 	for i := range n {
 		if locals[i] != locals[0] || targets[i] != targets[0] {
 			t.Fatalf("goroutine %d resolved the relation to %s/%s where goroutine 0 got %s/%s",

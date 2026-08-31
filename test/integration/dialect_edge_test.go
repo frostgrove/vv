@@ -15,17 +15,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// The two engines vv supports disagree about more than syntax: MySQL has no
-// RETURNING, its default collation ignores case, it orders NULLs the other way
-// round and it spells identifiers with backticks. Every one of those is
-// something a caller must not have to know about — and the ones that still leak
-// through are worth a test that says so out loud, so that the next person to
-// meet one finds it written down rather than in production.
-
-// EgOdd's two awkward columns cannot be written unquoted in either dialect: one
-// is a reserved word, the other has a space in it. Between them they walk the
-// quoting through the SELECT list, the WHERE, the ORDER BY, the INSERT, the
-// conflict clause and the UPDATE SET.
 type EgOdd struct {
 	ID       int64  `db:"id,pk,noauto"`
 	Select   string `db:"select"`
@@ -41,8 +30,6 @@ type EgOddUpdate struct {
 
 var EgOdds = sqlrepo.Define[EgOdd, int64, EgOddUpdate]("eg_odd")
 
-// egRowText renders every column of an EgRow, telling undefined from null, so
-// that two engines' idea of the same row can be compared as one string.
 func egRowText(r EgRow) string {
 	return fmt.Sprintf("id=%d tenant=%d %q note=%s score=%s flag=%t",
 		r.ID, r.Tenant, r.Name, r.Note, r.Score, r.Flag)
@@ -55,9 +42,6 @@ func egScores(rows []EgRow) string {
 	}
 	return strings.Join(out, " ")
 }
-
-// ---------------------------------------------------------------------------
-// identifier quoting
 
 func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 	ctx := context.Background()
@@ -77,7 +61,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				}
 			}
 
-			// SELECT list and WHERE.
 			got, err := odd.GetByID(ctx, 1)
 			if err != nil {
 				t.Fatal(err)
@@ -90,7 +73,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				t.Fatalf("filtering on a reserved-word column matched %d rows, err = %v", n, err)
 			}
 
-			// ORDER BY, and a projection that names one of the two.
 			page, err := odd.Get(ctx, crud.OrderBy(crud.Desc("FullName")), crud.Select("FullName"), crud.Limit(10))
 			if err != nil {
 				t.Fatal(err)
@@ -102,7 +84,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				t.Fatalf("a projection that did not ask for it returned %q", page.Items[0].Select)
 			}
 
-			// UPDATE SET.
 			patched, err := odd.Update(ctx, 2, EgOddUpdate{Select: ptr("group"), Flag: ptr(true)})
 			if err != nil {
 				t.Fatal(err)
@@ -111,7 +92,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				t.Fatalf("patched = %+v", patched)
 			}
 
-			// The conflict clause, which quotes the same columns a third time.
 			again := EgOdd{ID: 1, Select: "select", FullName: "Ada L.", Flag: false}
 			if _, err := odd.Save(ctx, &again); err != nil {
 				t.Fatalf("upsert over awkward column names: %v", err)
@@ -124,7 +104,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 				t.Fatalf("after the upsert = %+v", back)
 			}
 
-			// A bool is a bool on both engines, whatever MySQL stores it in.
 			trues, err := odd.Count(ctx, crud.Where(crud.Eq("Flag", true)))
 			if err != nil {
 				t.Fatal(err)
@@ -145,12 +124,6 @@ func TestQuotedIdentifiersSurviveEveryClause(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the upsert
-
-// ON CONFLICT DO UPDATE and ON DUPLICATE KEY UPDATE are different statements
-// with the same job. What has to be identical is the row they leave behind — in
-// all three spellings, including MySQL's `AS new` row alias.
 func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -158,8 +131,7 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 	targets := []egTarget{
 		{"postgres", "postgres", crudsql.Postgres(pgDB), true},
 		{"mysql", "mysql", crudsql.MySQL(myDB), true},
-		// Open takes a dialect and not an engine, so this one names none and
-		// classifies nothing. Nothing in this test asks it to.
+
 		{"mysql(row alias)", "mysql", crudsql.Open(myDB, crud.MySQL{RowAlias: true}), false},
 	}
 
@@ -173,9 +145,6 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Everything changes at once: a plain column, a nullable one cleared
-			// to NULL, a bool flipped — and the immutable column, which the
-			// conflict clause must leave out however it is spelled.
 			second := EgRow{ID: 1, Tenant: 999, Name: "after", Note: crud.Null[string](), Score: crud.Set(2), Flag: true}
 			if _, err := rows.Save(ctx, &second); err != nil {
 				t.Fatal(err)
@@ -196,12 +165,6 @@ func TestUpsertLeavesTheSameRowInEveryDialect(t *testing.T) {
 	}
 }
 
-// Save promises the model comes back describing the row. PostgreSQL keeps it
-// with RETURNING in the same round trip; MySQL has none, so crud/sqlrepo reads the
-// row back. The engines must be indistinguishable here, because the caller's
-// model is what a handler serialises: an upsert's conflict clause leaves every
-// immutable column out, and a model that kept the refused value would put it in
-// the response body on one engine and not the other.
 func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -215,14 +178,13 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 			if _, err := rows.Save(ctx, &row); err != nil {
 				t.Fatal(err)
 			}
-			row.Tenant = 999 // immutable: the conflict clause will not write it
+			row.Tenant = 999
 			row.Name = "after"
 			answered, err := rows.Save(ctx, &row)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			// The table has the right row: tenant 7 survived, the name changed.
 			stored, err := rows.GetByID(ctx, 1)
 			if err != nil {
 				t.Fatal(err)
@@ -231,17 +193,12 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 			if egRowText(stored) != want {
 				t.Fatalf("the stored row is\n  %s\nwant\n  %s", egRowText(stored), want)
 			}
-			// And so does what Save answered — including tenant 7, which the
-			// caller had set to 999 and the conflict clause refused, and note,
-			// which is an explicit null in the table rather than the undefined
-			// Opt that was written.
+
 			if egRowText(answered) != want {
 				t.Fatalf("Save answered\n  %s\nwhere the row is\n  %s",
 					egRowText(answered), want)
 			}
-			// The caller's own value is untouched, which is the contract: Save
-			// answers the stored row and never edits what it was handed, so a
-			// caller that wants the refreshed one uses the return value.
+
 			if row.Tenant != 999 {
 				t.Fatalf("Save edited the caller's model: tenant = %d, want the 999 it set", row.Tenant)
 			}
@@ -249,10 +206,6 @@ func TestSaveLeavesTheCallerHoldingTheStoredRowOnEveryEngine(t *testing.T) {
 	}
 }
 
-// Update loads the row, diffs the DTO against it, then writes — and the row can
-// go away in between. Whatever the engine, the answer has to be ErrNotFound:
-// a model describing a row that does not exist is worse than an error, because
-// the caller has no way to tell it apart from a successful update.
 func TestUpdateOfARowThatVanishesUnderneathIt(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -263,8 +216,6 @@ func TestUpdateOfARowThatVanishesUnderneathIt(t *testing.T) {
 			plain := EgRows.Bind(tg.source)
 			egSeed(t, plain, EgRow{ID: 1, Tenant: 1, Name: "doomed"})
 
-			// The gap between the read and the write is the only place this race
-			// lives, so the delete is wedged into exactly that gap.
 			s := egWatch(tg.source)
 			s.beforeFirst("UPDATE ", func() {
 				if _, err := plain.Delete(ctx, 1); err != nil {
@@ -284,11 +235,6 @@ func TestUpdateOfARowThatVanishesUnderneathIt(t *testing.T) {
 	}
 }
 
-// The same race, on a model that declares a `version` column — and this time the
-// answer is not "the last writer wins quietly". Update is load-then-write, and
-// what the lock does is make the write refuse to land on a row that moved on in
-// between. README used to hand this hole to the caller with "wrap it if that
-// matters"; the wrapping is one struct tag now.
 func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -302,8 +248,6 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// The other writer goes in the gap between this Update's read and its
-			// write — the only place a lost update can happen.
 			s := egWatch(tg.source)
 			s.beforeFirst("UPDATE ", func() {
 				if _, err := plain.Update(ctx, 1, EgVerUpdate{Name: ptr("theirs")}); err != nil {
@@ -319,7 +263,6 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 				t.Fatal("a stale write has to read as a conflict, so a transport answers 409")
 			}
 
-			// And the other writer's row is intact: the refusal is what makes it so.
 			after, err := plain.GetByID(ctx, 1)
 			if err != nil {
 				t.Fatal(err)
@@ -331,8 +274,6 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 				t.Fatalf("version = %d, want 1: exactly one write should have landed", after.Version)
 			}
 
-			// Reading again and reapplying is the caller's way through, and it
-			// works because the version they now hold is the current one.
 			redone, err := plain.Update(ctx, 1, EgVerUpdate{Name: ptr("mine, retried")})
 			if err != nil {
 				t.Fatalf("the retry after a stale write failed: %v", err)
@@ -344,10 +285,6 @@ func TestAConcurrentWriteIsRefusedRatherThanLost(t *testing.T) {
 	}
 }
 
-// A filtered update writes rows nobody named, and it is the write most likely to
-// happen while somebody is in the middle of an Update. It advances every row it
-// touches for exactly that reason: a lock that only one of the two write paths
-// respects protects nothing.
 func TestAFilteredUpdateIsAlsoNoticedByTheLock(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -384,10 +321,6 @@ func TestAFilteredUpdateIsAlsoNoticedByTheLock(t *testing.T) {
 	}
 }
 
-// Save is a whole-row overwrite with no WHERE clause, so it cannot check the
-// lock — MySQL's ON DUPLICATE KEY UPDATE has nowhere to put a condition. What it
-// must not do is wind the counter back: a Save built from a model somebody has
-// been holding would otherwise hand every other stale copy a fresh licence.
 func TestASaveCannotWindTheLockBack(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -404,7 +337,6 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// row is the copy from before the update: version 0, stale.
 			row.Name = "resaved"
 			resaved, err := vers.Save(ctx, &row)
 			if err != nil {
@@ -427,13 +359,6 @@ func TestASaveCannotWindTheLockBack(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// collation
-
-// LIKE is the one predicate whose answer belongs to the column's collation
-// rather than to vv: MySQL's default is case-insensitive and PostgreSQL's
-// is not. LikeIgnoreCase exists precisely so a caller who means "ignore case"
-// can say it and get it on both.
 func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -447,8 +372,6 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 				EgRow{ID: 2, Tenant: 1, Name: "beta"},
 			)
 
-			// The portable half: asked to ignore case, both engines do, in both
-			// directions.
 			for _, tc := range []struct {
 				name string
 				pred crud.Predicate
@@ -463,9 +386,6 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 				}
 			}
 
-			// The half that is the column's business. A caller who writes Like or
-			// Contains gets the collation's answer, and the two engines' answers
-			// are different — which is the whole reason LikeIgnoreCase exists.
 			mismatched, err := rows.Count(ctx, crud.Where(crud.Contains("Name", "LPH")))
 			if err != nil {
 				t.Fatal(err)
@@ -485,13 +405,6 @@ func TestLikeFollowsTheCollationAndLikeIgnoreCaseOverridesIt(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// NULL ordering
-
-// With no hint, NULL placement remains the engine's ordinary ordering:
-// PostgreSQL puts NULLs last on ASC and first on DESC, MySQL does the opposite.
-// Once the caller asks, crud.Order makes that choice portable. PostgreSQL uses
-// its native clause; MySQL uses a leading `col IS NULL` sort key.
 func TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -507,8 +420,6 @@ func TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint(t *tes
 				EgRow{ID: 4, Tenant: 1, Name: "d", Score: crud.Set(1)},
 			)
 
-			// The first two rows are the no-hint control. Every explicit choice
-			// after them must agree across engines.
 			for _, tc := range []struct {
 				name            string
 				order           crud.Order
@@ -545,16 +456,6 @@ func TestNullOrderingUsesEngineDefaultsUntilTheCallerChoosesAPortableHint(t *tes
 	}
 }
 
-// ---------------------------------------------------------------------------
-// distinct
-
-// DISTINCT removes a row only when nothing unique is projected, and the primary
-// key used to be forced into every projection — so `?distinct=1&select=name`
-// asked three articles with two titles for their distinct titles and got three
-// rows back. Nothing failed, because the two unit tests asserted the statement
-// text and the statement was exactly `SELECT DISTINCT "id", "name"`. This
-// counts rows instead, on both engines, which is the only assertion the feature
-// cannot pass while being a no-op.
 func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -583,8 +484,6 @@ func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 				}
 			}
 
-			// The pager has to agree with what it paged. count(*) over the table
-			// would promise four.
 			page, err := rows.Get(ctx, crud.Distinct(), crud.Select("Name"), crud.Limit(1), crud.OrderBy(crud.Asc("Name")))
 			if err != nil {
 				t.Fatal(err)
@@ -593,8 +492,6 @@ func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 				t.Fatalf("page = %+v, want one of two distinct names over two pages", page)
 			}
 
-			// DISTINCT on its own is every column, which for a table with a key
-			// is every row: nothing collapses, and nothing may be dropped either.
 			whole, err := rows.GetAll(ctx, crud.Distinct(), crud.OrderBy(crud.Asc("ID")))
 			if err != nil {
 				t.Fatal(err)
@@ -606,12 +503,6 @@ func TestDistinctActuallyRemovesDuplicateRows(t *testing.T) {
 	}
 }
 
-// Both engines refuse a SELECT DISTINCT ordered by a column outside the select
-// list — 42P10 on PostgreSQL, ER_FIELD_IN_ORDER_NOT_SELECT on MySQL — and all
-// three of distinct, select and sort arrive from the wire together. vv
-// answers before the database does, with a *crud.SchemaError that a transport
-// turns into a 400 naming the column, rather than passing the combination on to
-// be refused as a 500.
 func TestDistinctRefusesASortOutsideItsProjectionOnBothEngines(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -633,7 +524,6 @@ func TestDistinctRefusesASortOutsideItsProjectionOnBothEngines(t *testing.T) {
 				t.Fatalf("the statement was sent anyway and the engine refused it: %v", s.statements())
 			}
 
-			// And the way to ask for it that both engines do accept.
 			ok, err := rows.GetAll(ctx, crud.Distinct(), crud.Select("Name", "Score"), crud.OrderBy(crud.Desc("Score")))
 			if err != nil {
 				t.Fatalf("selecting the sorted column too is the answer, and it failed: %v", err)
@@ -645,10 +535,6 @@ func TestDistinctRefusesASortOutsideItsProjectionOnBothEngines(t *testing.T) {
 	}
 }
 
-// Whatever the engine does with NULLs, paging over a nullable column must be a
-// partition of the table: the primary-key tiebreaker crud/sqlrepo appends is what
-// stops two rows that tie from swapping places between one page and the next and
-// taking a row with them.
 func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -659,8 +545,6 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 			s := egWatch(tg.source)
 			rows := EgRows.Bind(s)
 
-			// Twelve rows and two distinct sort values: every page is nothing but
-			// ties, which is the only shape where the tiebreaker matters.
 			const total, size = 12, 3
 			for i := 1; i <= total; i++ {
 				r := EgRow{ID: int64(i), Tenant: 1, Name: fmt.Sprintf("r%02d", i)}
@@ -696,8 +580,6 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 				}
 			}
 
-			// And the reason it holds, in the statement itself: the sort the
-			// caller asked for, then the key.
 			q := tg.source.Dialect().Quote
 			tail := fmt.Sprintf("ORDER BY %s ASC, %s ASC LIMIT %d OFFSET %d", q("score"), q("id"), size, size)
 			if stmts := s.matching(tail); len(stmts) == 0 {
@@ -707,11 +589,6 @@ func TestPagingOverANullableColumnNeitherLosesNorRepeatsARow(t *testing.T) {
 	}
 }
 
-// crud.Raw rewrites `?` into the dialect's bind marker, which leaves no way to
-// write a question mark that means itself — and PostgreSQL's jsonb operators are
-// spelled `?`, `?|` and `?&`. `??` is that way out, and it is the sort of thing
-// that is only ever proved by sending it: the renderer's own idea of how many
-// arguments a fragment wants has to match the server's.
 func TestRawEscapesAQuestionMarkForPostgresJSONBOperators(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -723,8 +600,6 @@ func TestRawEscapesAQuestionMarkForPostgresJSONBOperators(t *testing.T) {
 		EgRow{ID: 2, Tenant: 1, Name: "beta"},
 	)
 
-	// Renders as: ('{"' || name || '": 1}')::jsonb ? $1 — one literal operator,
-	// one bound argument.
 	n, err := rows.Count(ctx, crud.Where(crud.Raw(`('{"' || name || '": 1}')::jsonb ?? ?`, "beta")))
 	if err != nil {
 		t.Fatalf("the escaped operator did not reach PostgreSQL intact: %v", err)
@@ -733,26 +608,11 @@ func TestRawEscapesAQuestionMarkForPostgresJSONBOperators(t *testing.T) {
 		t.Fatalf("count = %d, want the one row whose name is a key of its own document", n)
 	}
 
-	// And the escape consumes no argument: one marker, one value.
 	if _, err := rows.Count(ctx, crud.Where(crud.Raw(`('{"a": 1}')::jsonb ?? ?`, "a", "b"))); err == nil {
 		t.Fatal("a fragment with more arguments than markers was accepted")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// integrity errors
-
-// A constraint violation is the one failure a CRUD caller is guaranteed to meet,
-// and the first guarantee both engines owe is that they refuse it — MySQL
-// outside strict mode would quietly substitute a value for the NULL instead.
-//
-// The second guarantee is the adapters': whatever the driver hands back becomes
-// crud.ErrConflict, so a transport answers 409 with a message instead of a 500
-// whose body deliberately says nothing. There are two independent classifiers —
-// crudpgx reads *pgconn.PgError, crudsql reaches for a SQLSTATE by shape because
-// the dependency-free module may not name a driver's error type — so this runs
-// over every target rather than over the two engines. With only the engines in
-// the list, the pgx half was never executed at all.
 func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -796,29 +656,16 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 					}
 					t.Logf("the caller receives %T: %v", err, err)
 
-					// The adapter classifies it, so a transport can answer 409
-					// with a message. Unclassified it arrived as a bare 500,
-					// whose body deliberately says nothing at all.
 					if !errors.Is(err, crud.ErrConflict) {
 						t.Fatalf("err = %v, want it to wrap crud.ErrConflict", err)
 					}
 
-					// Mistaken for something else would be worse still. A
-					// violation must never look like a missing row or a
-					// malformed request, because a transport turns those into a
-					// 404 and a 400. This loop is the control on the leg below:
-					// it holds whatever the classifier learned or failed to.
 					for _, sentinel := range []error{crud.ErrNotFound, crud.ErrMissingID, crud.ErrReadOnly, crud.ErrForbidden} {
 						if errors.Is(err, sentinel) {
 							t.Fatalf("a constraint violation came back as %v", sentinel)
 						}
 					}
 
-					// And it arrives carrying which violation it was — except
-					// through ent, which is reached with crudsql.From and
-					// therefore names no engine. That is the degradation
-					// [[D-046]]'s last forbid buys, here against a real ORM: the
-					// status never moves, the code is absent rather than wrong.
 					f, has := errs.AsFault(err)
 					if has != tg.classifies {
 						t.Fatalf("a fault reached the caller = %v, want %v: %T: %v", has, tg.classifies, err, err)
@@ -827,8 +674,6 @@ func TestIntegrityViolationsAreClassifiedByEveryAdapter(t *testing.T) {
 						t.Fatalf("the fault says %q, want %q", f.Code, tc.code)
 					}
 
-					// Nothing was written, and the repository still works: a
-					// failed statement must not poison the connection it ran on.
 					all, err := cons.GetAll(ctx, crud.OrderBy(crud.Asc("ID")))
 					if err != nil {
 						t.Fatalf("the repository stopped working after a rejected statement: %v", err)

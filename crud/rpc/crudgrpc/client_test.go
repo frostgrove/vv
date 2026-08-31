@@ -14,16 +14,11 @@ import (
 	"github.com/frostgrove/vv/remote"
 )
 
-// remoteOver builds a client onto the in-process server a fake is already
-// mounted on, so both ends of the round trip are the real thing.
 func remoteOver(t *testing.T, c *client) *remote.Resource[Widget, int64, WidgetUpdate] {
 	t.Helper()
 	return remote.New[Widget, int64, WidgetUpdate](Transport(c.conn, resource))
 }
 
-// remoted mounts a resource this client can read whole. There is no separate
-// "every row" wire method; remote.GetAll walks the ordinary List pages, so a
-// page cap works as a chunk size on gRPC just as it does on HTTP.
 func remoted(t *testing.T, options ...Option[Widget, int64, WidgetUpdate]) (*remote.Resource[Widget, int64, WidgetUpdate], *fakeRepo) {
 	t.Helper()
 	options = append([]Option[Widget, int64, WidgetUpdate]{
@@ -42,9 +37,6 @@ func clause(t *testing.T, o *crud.Options) string {
 	return sql
 }
 
-// Every method, end to end, with no generated stub anywhere: the client calls
-// by full method name and the server answers from a grpc.ServiceDesc it built
-// out of closures. That is the Struct shape read from the other side.
 func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
@@ -178,10 +170,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	t.Run("GetByID fallback sends an exact large key", func(t *testing.T) {
 		const id int64 = 9007199254740993
 		r, f := remoted(t)
-		// The response fixture uses a safe ID. Struct's documented entity-value
-		// limitation is independent of this test: it proves that the fallback
-		// reaches the peer with the exact key, where the former numeric encoding
-		// was rejected before List could run.
+
 		f.page = crud.NewPaginatedResponse([]Widget{{ID: 42, Name: "bolt", Price: 250}}, 1, 1, 1)
 		w, err := r.GetByID(ctx, id, crud.Where(crud.Gte("Price", 100)))
 		if err != nil {
@@ -242,8 +231,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if saved.ID != 42 || w.ID != 42 {
 			t.Fatalf("the key moved: input=%d stored=%d", w.ID, saved.ID)
 		}
-		// Replace loads the row first, so a set key shows a GetByID before the
-		// Save. A key that had gone out as a create would show none.
+
 		if got := f.methods(); len(got) < 2 || got[0] != "GetByID" {
 			t.Fatalf("a set key did not take the replace route: %v", got)
 		}
@@ -263,8 +251,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if got.DTO.Name == nil || *got.DTO.Name != "spanner" {
 			t.Fatalf("the patch arrived as %+v", got.DTO)
 		}
-		// The three states survive a Struct, which is what the document goes
-		// through encoding/json for: a key nobody sent is absent, not null.
+
 		if got.DTO.Price != nil || got.DTO.Note.IsDefined() {
 			t.Fatalf("a field nobody sent arrived defined: %+v", got.DTO)
 		}
@@ -275,9 +262,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if _, err := r.Update(ctx, 42, WidgetUpdate{Note: crud.Null[string]()}); err != nil {
 			t.Fatalf("update: %v", err)
 		}
-		// The other half of the three states, and the control on the subtest
-		// above: absent and null have to be told apart in both directions, or
-		// one of the two assertions is measuring nothing.
+
 		got := f.only(t, "Update").DTO.Note
 		if !got.IsDefined() || !got.IsNull() {
 			t.Fatalf("an explicit null arrived as %v", got)
@@ -353,9 +338,6 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	})
 }
 
-// The same claim as the HTTP client's, on a transport that carries the whole
-// document rather than a query string: a filter written in Go reaches the far
-// side as the same narrowing a local repository would have been given.
 func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	r, f := remoted(t)
 
@@ -376,8 +358,6 @@ func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	}
 }
 
-// A refusal keeps its class, its violations and the sentinel a caller branches
-// on — and carries nothing the driver said.
 func TestAConflictArrivesAsAConflictWithItsViolations(t *testing.T) {
 	r, f := remoted(t)
 	f.err = errs.Conflict().
@@ -418,8 +398,6 @@ func TestAConflictArrivesAsAConflictWithItsViolations(t *testing.T) {
 	}
 }
 
-// An internal failure says nothing on this transport either: the status carries
-// no details at all, so there is nothing for a client to reconstruct.
 func TestAnInternalFailureArrivesEmpty(t *testing.T) {
 	r, f := remoted(t)
 	f.err = errors.New(`pq: password authentication failed for user "vv" on host db.internal:5432`)
@@ -442,10 +420,6 @@ func TestAnInternalFailureArrivesEmpty(t *testing.T) {
 	}
 }
 
-// This transport's own half of D-052's collapse, read backwards. A validation
-// failure and a malformed request are both InvalidArgument on the wire, so the
-// status word cannot tell them apart and the code has to — which is the job the
-// code was given when the collapse was accepted.
 func TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode(t *testing.T) {
 	kindOf := func(t *testing.T, fail error) errs.Kind {
 		t.Helper()
@@ -464,19 +438,12 @@ func TestAValidationFailureAndAMalformedRequestAreToldApartByTheirCode(t *testin
 		t.Fatalf("a validation failure came back as %v, so 422 and 400 are the same answer here", got)
 	}
 
-	// The control, and it is the half that makes the assertion above mean
-	// something: the same wire code with a different fault code has to come
-	// back as the other kind. A client that answered KindValidation for every
-	// InvalidArgument would pass the first check and fail this one.
 	malformed := errs.BadRequest().Code(errs.CodeBadQuery).General().Code(errs.CodeBadQuery).Fault()
 	if got := kindOf(t, malformed); got != errs.KindBadRequest {
 		t.Fatalf("a malformed request came back as %v", got)
 	}
 }
 
-// gRPC's version of the wrong-address problem. There is no 404 here, so the
-// answer is Unimplemented — and a client must not read it as anything about a
-// row. A read-only service is the case that reaches it without a typo.
 func TestAnUnregisteredMethodIsNotAMissingRow(t *testing.T) {
 	r, _ := remoted(t, ReadOnly[Widget, int64, WidgetUpdate]())
 
@@ -496,9 +463,6 @@ func TestAnUnregisteredMethodIsNotAMissingRow(t *testing.T) {
 		t.Fatalf("the status was reported as %q", pe.Status)
 	}
 
-	// The control: a read the service does register still classifies normally,
-	// so the assertion above is not passing because everything is a protocol
-	// error.
 	r2, f := remoted(t)
 	f.err = crud.ErrNotFound
 	if _, err := r2.GetByID(context.Background(), 42); !errors.Is(err, crud.ErrNotFound) {

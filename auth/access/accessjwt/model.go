@@ -7,21 +7,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// rotatingSession is the sessions row as this module sees it: the core's
-// columns plus the two the rotation migration adds.
-//
-// A second model over the same table rather than two columns on access.Session,
-// because a deployment holding opaque sessions never rotates and would be
-// carrying two columns that mean nothing. crud.Tabler is what points it at the
-// shared table.
 type rotatingSession struct {
 	ID          uuid.UUID `db:"id,pk,auto"`
 	SubjectType string
 	SubjectID   uuid.UUID
 	TokenHash   string `db:"token_hash"`
-	// PreviousTokenHash is the digest this session accepted before the last
-	// rotation. Empty rather than null so a lookup by it needs no null-safe
-	// comparison, and the partial index skips the empty ones.
+
 	PreviousTokenHash string     `db:"previous_token_hash"`
 	UserAgent         string     `db:"user_agent"`
 	IP                string     `db:"ip"`
@@ -33,19 +24,8 @@ type rotatingSession struct {
 	RevokedReason     string     `db:"revoked_reason"`
 }
 
-// TableName implements crud.Tabler: this is the access sessions table, read
-// through a wider model.
 func (rotatingSession) TableName() string { return "sessions" }
 
-// rotatingUpdate is the partial-update DTO. Hand-written rather than generated
-// because this model exists only inside this module and nothing mounts CRUD
-// over it.
-//
-// The two nullable timestamps are crud.Opt and not `any`. A DTO field's type is
-// checked against the model's when the repository is bound, so `any` here is a
-// panic at start-up rather than a wrong statement later — which is the check
-// working, and is what the generated DTO for the core sessions model already
-// spells the same way.
 type rotatingUpdate struct {
 	TokenHash         *string
 	PreviousTokenHash *string

@@ -27,7 +27,6 @@ import (
 	"github.com/frostgrove/vv/auth/authjwt"
 )
 
-// jwkOf renders an RSA public key the way a provider publishes one.
 func jwkOf(kid string, pub *rsa.PublicKey) map[string]any {
 	return map[string]any{
 		"kty": "RSA",
@@ -89,11 +88,10 @@ func receiveDegraded(t *testing.T, ch <-chan authjwt.JWKSDegraded) authjwt.JWKSD
 	}
 }
 
-// keySet serves a set the test can rewrite, and counts what it was asked for.
 type keySet struct {
 	fetches atomic.Int64
 	status  atomic.Int64
-	keys    atomic.Value // []map[string]any
+	keys    atomic.Value
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -171,8 +169,6 @@ func TestAKeySetVerifiesATokenAndIsFetchedOnce(t *testing.T) {
 	}
 }
 
-// A rotation is a new kid the cached set does not have. It must be picked up,
-// and the old key must stop working once the provider stops publishing it.
 func TestARotatedKidIsPickedUp(t *testing.T) {
 	next := newRSAKey(t)
 	set := &keySet{}
@@ -189,8 +185,6 @@ func TestARotatedKidIsPickedUp(t *testing.T) {
 		t.Fatalf("the rotated key was not picked up: %v", err)
 	}
 
-	// The control: rotation is not "accept everything". A key the provider no
-	// longer publishes must stop verifying.
 	if _, err := p.Parse(t.Context(), signKid(t, "k1", rsaKey)); err == nil {
 		t.Fatal("a retired key still verified after the set stopped publishing it")
 	}
@@ -229,8 +223,6 @@ func TestARetiredCachedKidStopsVerifyingAtTheFreshnessBoundary(t *testing.T) {
 		t.Fatalf("the stale cache was fetched %d times, want the boundary refresh", n)
 	}
 
-	// The control: the successful refresh did not disable verification. It
-	// replaced the whole trust set, and the provider's current key works.
 	if _, err := p.Parse(t.Context(), signKid(t, "k2", next)); err != nil {
 		t.Fatalf("the provider's replacement key did not verify: %v", err)
 	}
@@ -259,8 +251,6 @@ func TestStaleOnErrorIsBoundedAndSignalsTheDegradedDecision(t *testing.T) {
 	}
 	set.fail(http.StatusServiceUnavailable)
 
-	// The control: an outage does not trigger a fetch or a degraded decision
-	// while the cached set is still fresh.
 	if _, err := p.Parse(t.Context(), token); err != nil {
 		t.Fatalf("a fresh cached key stopped working during an outage: %v", err)
 	}
@@ -315,8 +305,6 @@ func TestAStaleCacheDoesNotHideAnOutageByDefault(t *testing.T) {
 	}
 }
 
-// The rate limit is what stops one forged token per fetch from becoming a
-// denial-of-service against the identity provider.
 func TestUnknownKidsDoNotBecomeOneFetchEach(t *testing.T) {
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
@@ -332,8 +320,6 @@ func TestUnknownKidsDoNotBecomeOneFetchEach(t *testing.T) {
 	}
 }
 
-// A key set is a public document, so an HMAC entry in one is a shared secret
-// published to the internet. It must never be usable.
 func TestASymmetricKeyInAKeySetIsNotUsable(t *testing.T) {
 	set := &keySet{}
 	set.set(map[string]any{
@@ -412,8 +398,6 @@ func TestAnEmptyOrDuplicateKidRefusesTheWholeKeySet(t *testing.T) {
 		})
 	}
 
-	// The control: rejecting the whole ambiguous document is not a parser that
-	// rejects the same key when it is published exactly once with a real id.
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
 	if _, err := parser[MyClaims](t, authjwt.JWKS(set.serve(t))).Parse(t.Context(), signKid(t, "k1", rsaKey)); err != nil {
@@ -433,8 +417,6 @@ func TestANonPositiveMinRefreshRefusesToStart(t *testing.T) {
 		})
 	}
 
-	// The control: removing the bound is still possible, but the unsafe choice
-	// is named where the provider request rate is configured.
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
 	p := parser[MyClaims](t, authjwt.JWKS(set.serve(t), authjwt.UnsafeJWKSNoMinRefresh()))
@@ -446,14 +428,6 @@ func TestANonPositiveMinRefreshRefusesToStart(t *testing.T) {
 	}
 }
 
-// The refetch limit holds while the provider is failing, which is the case it
-// exists for.
-//
-// It used to be armed only by a *successful* fetch, so with the provider down
-// nothing was ever recorded and every token naming an unknown kid cost a request
-// to a service that was already failing. A kid is the caller's own input, so the
-// rate of those requests was the attacker's to choose — the limiter did its job
-// exactly when it did not matter and stopped when it did.
 func TestAFailingProviderIsStillOnlyFetchedOnce(t *testing.T) {
 	var fetches atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -476,8 +450,6 @@ func TestAFailingProviderIsStillOnlyFetchedOnce(t *testing.T) {
 		t.Fatalf("twenty tokens against a failing provider cost %d fetches; the limit is armed by success only", n)
 	}
 
-	// The control. Everything above would hold for a JWKS that never fetched at
-	// all, so a healthy provider has to be reached — once — and its key used.
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
 	ok := parser[MyClaims](t, authjwt.JWKS(set.serve(t)))
@@ -489,12 +461,6 @@ func TestAFailingProviderIsStillOnlyFetchedOnce(t *testing.T) {
 	}
 }
 
-// A burst of concurrent misses is one fetch, not one each.
-//
-// The lock has to be dropped across the HTTP call, so before the in-flight guard
-// every goroutine in a burst passed the rate check before any of them had
-// recorded an attempt. The sequential loop above cannot see this: it is the same
-// hole, and only concurrency reaches it.
 func TestAConcurrentBurstOfMissesIsOneFetch(t *testing.T) {
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
@@ -516,13 +482,6 @@ func TestAConcurrentBurstOfMissesIsOneFetch(t *testing.T) {
 	}
 }
 
-// A key-set URL that is not there fails where it is written.
-//
-// It is the hardest misconfiguration in this package to diagnose from outside:
-// the refusal's reason stays inside the process ([[D-056]]), so an empty URL
-// answers every request with exactly the 401 a forged token gets, and nothing in
-// the response or the logs says the key set was never fetched. New already
-// panics on three misconfigurations for the same reason ([[D-021]]).
 func TestAJWKSWithNoURLRefusesToStart(t *testing.T) {
 	for _, raw := range []string{"", "   "} {
 		func() {
@@ -535,26 +494,14 @@ func TestAJWKSWithNoURLRefusesToStart(t *testing.T) {
 		}()
 	}
 
-	// The control: a real URL is still accepted without contacting it. The panic
-	// is about the declaration, not about the provider being up — New would
-	// refuse a key source that verifies nothing, and this one does not.
 	authjwt.New[MyClaims](authjwt.JWKS("https://issuer.example/.well-known/jwks.json"),
 		authjwt.Issuer(issuer), authjwt.Audience(audience))
 }
 
-// One client giving up does not fail the requests parked behind it.
-//
-// The single-flight elects a leader to fetch and parks the rest on its result.
-// The leader used to fetch on *its own* request context — and under net/http
-// that is cancelled the moment that one client disconnects, so an abandoned
-// request failed every waiter and, because the attempt is recorded either way,
-// suppressed the refetch for the whole minRefresh window. One client walking
-// away took the key set down for a minute.
 func TestALeaderThatDisconnectsDoesNotFailTheWaiters(t *testing.T) {
 	set := &keySet{}
 	set.set(jwkOf("k1", &rsaKey.PublicKey))
 
-	// The server holds the first fetch until the leader has certainly gone away.
 	release := make(chan struct{})
 	var served atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -572,11 +519,10 @@ func TestALeaderThatDisconnectsDoesNotFailTheWaiters(t *testing.T) {
 	leaderCtx, giveUp := context.WithCancel(context.Background())
 	leaderDone := make(chan error, 1)
 	go func() {
-		_, err := p.Parse(leaderCtx, tok) // the initiator, about to disconnect
+		_, err := p.Parse(leaderCtx, tok)
 		leaderDone <- err
 	}()
 
-	// Let the leader reach the server, then abandon it.
 	for served.Load() == 0 {
 		runtime.Gosched()
 	}
@@ -590,7 +536,6 @@ func TestALeaderThatDisconnectsDoesNotFailTheWaiters(t *testing.T) {
 		t.Fatal("the fetch initiator did not return promptly on its own cancellation")
 	}
 
-	// A waiter arrives while the fetch is in flight, and must still get its key.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	var waiterErr error
@@ -686,8 +631,7 @@ func TestAConcurrentFailedRefreshSharesOneErrorAndOneFetch(t *testing.T) {
 	}
 	close(begin)
 	<-started
-	// Keep the transport at the barrier long enough for the rest of the burst to
-	// join. Even a late scheduler still observes the failed-attempt rate limit.
+
 	for range callers {
 		runtime.Gosched()
 	}
@@ -871,9 +815,7 @@ func TestDegradedObserverCannotHoldOrReenterTheSingleflight(t *testing.T) {
 			authjwt.JWKSServeStaleFor(time.Minute, func(context.Context, authjwt.JWKSDegraded) {
 				calls.Add(1)
 				startedOnce.Do(func() { close(started) })
-				// Deliberately violate the observer contract and ignore its
-				// deadline. Even this extension code must not own a request or
-				// start one goroutine per refresh.
+
 				<-release
 				completed <- struct{}{}
 			}),
@@ -903,8 +845,6 @@ func TestDegradedObserverCannotHoldOrReenterTheSingleflight(t *testing.T) {
 			t.Fatal("the observer was never started")
 		}
 
-		// Later refreshes neither join observer work nor start another blocked
-		// observer. They only coalesce the newest pending descriptor.
 		for range 3 {
 			if _, err := p.Parse(t.Context(), token); err != nil {
 				t.Fatalf("a blocked observer poisoned a later request: %v", err)
@@ -1119,10 +1059,6 @@ func TestJWKSMethodsAndOperationsBelongToEachKey(t *testing.T) {
 			t.Fatalf("a P-256 JWK accepted a token-selected ES384 method: %v", err)
 		}
 
-		// RFC 7517 makes alg optional. For EC the curve itself determines the
-		// exact JWT method, so actual omission is still unambiguous and remains
-		// usable. An explicit empty or null value is tested below as a malformed
-		// declaration, not reinterpreted as omission.
 		withoutAlg := ecJWK("ec", "", &private.PublicKey)
 		delete(withoutAlg, "alg")
 		set = &keySet{}

@@ -13,14 +13,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// Written by hand, a soft delete is two declarations: a scope that hides the
-// tombstones and a service layer that stops Delete destroying rows. Adding the
-// first and forgetting the second fails silently — the reads hide rows the
-// deletes are still removing — so the point of the setting is that one
-// declaration is both halves and they cannot be added separately.
-
-// A table of its own: adding a tombstone column to a shared fixture would
-// change what every other test on it sees.
 type SdRow struct {
 	ID      int64               `db:"id,pk,noauto"`
 	Tenant  int64               `db:"tenant,immutable"`
@@ -33,8 +25,6 @@ type SdRowUpdate struct {
 }
 
 var (
-	// The same table twice: once with the setting, once without, so every
-	// assertion below can be checked against what the row really is.
 	SoftRows = sqlrepo.Define[SdRow, int64, SdRowUpdate]("sd_rows", sqlrepo.SoftDelete("Deleted"))
 	RawRows  = sqlrepo.Define[SdRow, int64, SdRowUpdate]("sd_rows")
 )
@@ -94,7 +84,7 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 		t.Run(tg.name, func(t *testing.T) {
 			sdSetup(t)
 			soft := SoftRows.Bind(tg.source)
-			raw := RawRows.Bind(tg.source) // the same table, without the setting
+			raw := RawRows.Bind(tg.source)
 
 			for _, r := range []SdRow{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}, {ID: 3, Name: "c"}} {
 				row := r
@@ -111,7 +101,6 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 				t.Fatalf("deleted %d rows", n)
 			}
 
-			// Gone as far as this repository is concerned.
 			if _, err := soft.GetByID(ctx, 1); !errors.Is(err, crud.ErrNotFound) {
 				t.Fatalf("err = %v, want ErrNotFound", err)
 			}
@@ -119,7 +108,6 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 				t.Fatalf("count = %d, want 2", c)
 			}
 
-			// Still there in the table, which is the whole point.
 			if c, _ := raw.Count(ctx); c != 3 {
 				t.Fatalf("the row was really deleted: raw count = %d, want 3", c)
 			}
@@ -131,8 +119,6 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 				t.Fatal("the tombstone column was not stamped")
 			}
 
-			// Restore is its own lifecycle action, not a PATCH of Deleted. It sees
-			// only tombstones and makes the row live again.
 			if n, err := soft.Restore(ctx, 1); err != nil || n != 1 {
 				t.Fatalf("restore = %d, %v", n, err)
 			}
@@ -147,7 +133,6 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 	}
 }
 
-// DeleteAll takes the same route, and a filter still narrows it.
 func TestASoftDeleteAllHonoursTheFilter(t *testing.T) {
 	ctx := context.Background()
 	sdSetup(t)
@@ -181,8 +166,6 @@ func TestASoftDeleteAllHonoursTheFilter(t *testing.T) {
 	}
 }
 
-// Deleting the same row twice reports nothing the second time, because the
-// count is what this call removed from view rather than what it matched.
 func TestDeletingATombstoneAgainChangesNothing(t *testing.T) {
 	ctx := context.Background()
 	sdSetup(t)
@@ -203,8 +186,6 @@ func TestDeletingATombstoneAgainChangesNothing(t *testing.T) {
 	}
 }
 
-// A tombstoned row is not there as far as a write is concerned either, or a
-// client that kept an id could keep editing something it deleted.
 func TestATombstonedRowCannotBeUpdated(t *testing.T) {
 	ctx := context.Background()
 	sdSetup(t)
@@ -225,8 +206,6 @@ func TestATombstonedRowCannotBeUpdated(t *testing.T) {
 	}
 }
 
-// The control for every test above: without the setting, the same calls destroy
-// rows. If that ever stops being true, the assertions above prove nothing.
 func TestWithoutTheSettingADeleteStillRemovesTheRow(t *testing.T) {
 	ctx := context.Background()
 	sdSetup(t)
@@ -247,8 +226,6 @@ func TestWithoutTheSettingADeleteStillRemovesTheRow(t *testing.T) {
 	}
 }
 
-// The declaration is checked when it is written, not when a row is first
-// deleted.
 func TestABadSoftDeleteDeclarationIsRefused(t *testing.T) {
 	for _, tc := range []struct{ name, field string }{
 		{"no such field", "Nope"},

@@ -1,7 +1,7 @@
 # D-062 — The library logs through the caller's logger, and instruments through the Source
 
 **Status:** accepted
-**Invariant:** This library never writes to a process-wide logger. Every line it emits goes through `port.Logger(ctx)`, which answers the context's `*slog.Logger` or `slog.Default()`. There is no logging option on any binding, and no statement hook anywhere.
+**Invariant:** This library never writes to a process-wide logger. Every line it emits goes through `port.Logger(ctx)`, which answers the context's `*slog.Logger` or `slog.Default()`. There is no logging option on any binding and no statement hook anywhere. A Source wrapper observes direct calls on that Source; an all-statements tracer belongs below transaction handles. It opts into a native storage effect only by implementing that exact unsafe capability itself.
 
 ## The decision
 
@@ -13,9 +13,14 @@ auth half: a handler panicked and the connection has to be closed, a response
 would not marshal, a status could not carry its details, a refusal could not be
 encoded or written.
 
-**"Show me the statements."** Wrap `crud.Source`. `crud.Executor` is two methods,
-and a wrapper that also implements `crud.SourceUnwrapper` keeps everything the
-wrapped source could do ([[D-061]]).
+**"Show me direct calls on this Source."** Wrap `crud.Source`. `crud.Executor`
+is two methods, and a wrapper that also implements `crud.SourceUnwrapper`
+preserves identity, replica and transaction-construction discovery ([[D-061]]).
+The wrapper is not an all-statements tracer: a joined transaction and an owned
+multi-statement transaction execute on their transaction handle. Instrument the
+driver/connector, or make `Begin` return an instrumented `Tx`, when those calls
+must also be visible. Native storage effects do not tunnel through an unknown
+wrapper; it must explicitly implement and instrument `crud.UnsafeBulkInserter`.
 
 ## Why
 
@@ -38,14 +43,25 @@ a second implementation asks and never when the standard library already
 contracts it. `slog.Handler` is that contract. It is also what a consumer already
 has.
 
-**Because the statement seam already existed and needed documenting, not
-building.** A `crud.Source` is `Exec`, `Query` and `Dialect`. Wrapping it is how
-timing, tracing and statement logging are done, and the reason it was not
-recommended was that wrapping silently broke replica routing. [[D-061]] fixes
-that; this decision is what says the seam is now the answer. A hook on
-`sqlrepo.Setting` would be a second, weaker version of it — visible to `sqlrepo`
-only, blind to the probe's own statement and to anything a consumer's decorator
-runs.
+**Because the direct-call seam already existed and needed documenting, not
+building.** A `crud.Source` is `Exec`, `Query` and `Dialect`. Wrapping it is a
+small way to time or guard calls made on that handle, and [[D-061]] keeps replica,
+identity and transaction construction discoverable. It cannot generically
+retarget the wrapper to a transaction returned by the wrapped source. Driver or
+connector instrumentation sits below both handles and is therefore the default
+for complete tracing. A hook on `sqlrepo.Setting` would still be a second,
+weaker version visible only to `sqlrepo`.
+
+**Because native bulk is an effect rather than discovery.** Automatically
+walking through a wrapper to reach pgx COPY would make the faster path invisible
+to precisely the tracing/rate-limit/circuit-breaker wrapper the application
+installed. The safe default under an unknown wrapper is the portable SQL path:
+its `Exec` sees a direct one-statement plan. A multi-statement plan keeps
+atomicity by using the transaction handle, so observing every chunk requires
+transaction-aware or driver-level instrumentation. A wrapper that deliberately
+preserves native bulk implements `UnsafeBulkInsert` itself and records/guards
+that call before forwarding. `ReadWrite` does so only to route the effect to its
+primary.
 
 **Because "no logger" must not be a nil check at nine call sites.**
 `port.Logger` never returns nil and `port.WithLogger(ctx, nil)` stores nothing.
@@ -58,6 +74,12 @@ runs.
   These lines exist precisely because the response may not carry the cause
   ([[D-044]]).
 - Do not add a statement hook to `sqlrepo`. Wrap the `Source`.
+- Do not present a Source wrapper as an all-statements tracer. Joined and owned
+  transaction handles need driver-level instrumentation or an explicitly
+  instrumented `Begin`/`Tx`.
+- Do not use `SourceUnwrapper` as consent to execute an effect underneath an
+  instrumentation wrapper. Forward `UnsafeBulkInsert` explicitly or select the
+  portable SQL fallback; its transaction visibility follows the rule above.
 
 ## Where it lives
 
@@ -70,7 +92,8 @@ runs.
   the other two.
 - `crud/rpc/crudgrpc/status.go` — the details that would not attach.
 - `auth/http/authhttp/authhttp.go` — the refusal that would not encode or write.
-- `crud/executor.go:SourceUnwrapper` — the statement seam.
+- `crud/executor.go:SourceUnwrapper`, `UnsafeBulkInserterOf` — the statement
+  seam and its explicit effect boundary.
 
 ## Proven by
 
@@ -85,7 +108,10 @@ runs.
   through `context.Background()` and watching the capture come back empty.
 - `TestAWrappedSourceKeepsWhatItWrapsWhenItSaysWhatItWraps` in
   `crud/wrapsource_test.go` — the instrumentation seam, driven by a wrapper that
-  counts statements.
+  counts statements and does not accidentally inherit native bulk.
+- `TestUnknownSourceWrapperSeesSingleStatementPortableSQL` in
+  `crud/sqlrepo/insert_batch_test.go` — a direct one-statement InsertBatch uses
+  the wrapper's `Exec` unless it explicitly publishes the native effect.
 
 ## See also
 

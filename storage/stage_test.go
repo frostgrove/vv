@@ -83,8 +83,6 @@ func TestAStagedUploadRoundTripsThroughAFormBeforePromotion(t *testing.T) {
 		t.Fatal("Stage metadata crossed a caller/backend ownership boundary")
 	}
 
-	// This is the actual two-request UI seam: only the opaque text survives,
-	// and a newly constructed Store can promote the parsed value.
 	serialized := staged.ID.Value()
 	parsed, err := storage.ParseStageID(serialized)
 	if err != nil {

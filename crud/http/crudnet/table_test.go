@@ -9,15 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud/http/crudhttp"
 )
 
-// The table is what everything outside this package reads to learn the shape of
-// a CRUD resource — an access declaration most of all. A table that names a
-// route Register does not mount produces a declaration guarding nothing, and the
-// boot gate that compares the two would then be comparing one wrong list against
-// another. So the two are checked against each other here, by asking the router.
-
-// exercise is a request that reaches each named route. The bodies are the
-// smallest ones that get past binding; what the handler answers is not the
-// point, only that something other than the router answered.
 func exercise(route crudhttp.Route) (target, body string) {
 	target = strings.ReplaceAll(route.Path, ":id", "1")
 	switch route.Name {
@@ -52,9 +43,6 @@ func TestEveryRouteInTheTableIsMounted(t *testing.T) {
 		}
 	}
 
-	// The control. The router really does answer 404 for a path nobody
-	// registered, so the loop above is finding routes rather than passing
-	// because every request reaches something.
 	if r := do(t, app, http.MethodGet, "/widgets/1/nowhere", ""); reachedAHandler(r.status) {
 		t.Fatalf("a path nobody registered answered %d, so this test cannot tell a mounted route from an unmounted one", r.status)
 	}
@@ -79,8 +67,6 @@ func TestAReadOnlyResourceMountsNothingTheTableOmits(t *testing.T) {
 		}
 	}
 
-	// The control. The reads a read-only table does keep are still mounted, so
-	// the loop above is not passing on a router that answers nothing at all.
 	if r := do(t, app, http.MethodGet, "/widgets", ""); !reachedAHandler(r.status) {
 		t.Fatalf("a read-only resource stopped serving its reads (%d), so the refusals above prove nothing", r.status)
 	}

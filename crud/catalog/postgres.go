@@ -6,19 +6,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// PostgreSQL introspection, out of pg_catalog rather than information_schema.
-//
-// information_schema would answer most of this and cannot answer the part that
-// matters: it has no row for a bare unique index, no partial-index predicate and
-// no expression-index expression. pg_get_expr, pg_get_indexdef and
-// pg_get_constraintdef hand all three back as the server's own text, so nothing
-// here parses anything.
-//
-// Every statement reads all non-system schemas for which the connection has
-// USAGE. Qualified repositories have to remain discoverable outside
-// search_path. The columns read also records pg_table_is_visible separately,
-// preserving the server's exact answer for legacy bare-name lookups.
-
 const pgColumns = `
 SELECT n.nspname, c.relname, a.attname, a.attnum::int,
        format_type(a.atttypid, a.atttypmod),
@@ -42,9 +29,8 @@ WHERE c.relkind IN ('r', 'p')
   AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY n.nspname, c.relname, a.attnum`
 
-// One row per constraint key column. confkey is joined on the same ordinal as
-// conkey, so a composite foreign key's columns and the columns it references
-// stay paired by position.
+// pgConstraints keeps LATERAL ordinality so each composite-key column remains
+// paired with the referenced column at the same position.
 const pgConstraints = `
 SELECT n.nspname, tc.relname, con.conname, con.contype::text, con.condeferrable,
        COALESCE(k.ord, 0)::int, COALESCE(a.attname, ''),
@@ -74,24 +60,6 @@ WHERE con.contype IN ('p', 'u', 'f', 'c')
   AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY n.nspname, tc.relname, con.conname, k.ord`
 
-// The unique indexes no constraint backs. A unique index whose indexrelid has a
-// pg_constraint row is that constraint and was already read above; one that has
-// none is a key the database enforces under a name no constraint catalog knows,
-// which is the distinction §7 asks for and PostgreSQL is one of the two engines
-// that makes it.
-//
-// indkey holds 0 where the key part is an expression, and pg_get_indexdef with a
-// column number renders that expression. indisvalid and indislive are checked
-// because a CREATE INDEX CONCURRENTLY that failed leaves an index behind that
-// enforces nothing.
-//
-// The anti-join names the three contypes and does not stop at conindid, because
-// a foreign key carries a conindid too and it names the index it *references* on
-// the parent table. Left unqualified, the clause deletes the parent's bare
-// unique index — the one thing this statement exists to find — and the deletion
-// is silent: Load succeeds and a live 23505 under that index's name resolves to
-// nothing for the life of the process. Only p, u and x point at an index they
-// are backed by.
 const pgUniqueIndexes = `
 SELECT n.nspname, tc.relname, ic.relname,
        COALESCE(a.attname, ''),
@@ -171,9 +139,7 @@ func readPostgres(ctx context.Context, source crud.Source) (*schemaRead, error) 
 			c.RefSchema, c.RefTable = refSchema, refTable
 			c.OnDelete, c.OnUpdate = onDelete, onUpdate
 		}
-		// A CHECK that names no column has one row with no ordinal. Appending
-		// its empty name would claim a key part that does not exist, and
-		// Columns is read by position.
+
 		if ord == 0 {
 			return nil
 		}
@@ -192,8 +158,6 @@ func readPostgres(ctx context.Context, source crud.Source) (*schemaRead, error) 
 		partial                          bool
 	)
 	err = eachRow(ctx, source, "unique indexes", pgUniqueIndexes, nil, func(rows crud.Rows) error {
-		// The key position is the row's place in the result, pinned by the
-		// ORDER BY, so k.ord is in the statement and not in the SELECT.
 		if err := rows.Scan(&schema, &table, &idxName, &col, &expr, &partial, &predicate, &idxDef); err != nil {
 			return err
 		}
@@ -209,8 +173,6 @@ func readPostgres(ctx context.Context, source crud.Source) (*schemaRead, error) 
 	return b.finish(), nil
 }
 
-// pgKind maps pg_constraint.contype. A CHECK arrives with the columns it names
-// in conkey, which is why a check constraint here has columns at all.
 func pgKind(contype string) Kind {
 	switch contype {
 	case "p":

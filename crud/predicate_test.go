@@ -9,8 +9,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// mustRender renders a predicate on its own, with no surrounding statement, so
-// what the test asserts is exactly what the node produces.
 func mustRender(t *testing.T, d crud.Dialect, m *crud.Meta, p crud.Predicate) (string, []any) {
 	t.Helper()
 	sql, args, err := crud.NewSQL(d, m).Predicate(p).Done()
@@ -57,8 +55,6 @@ func TestPredicateConstructors(t *testing.T) {
 		{"LikeIgnoreCase folds both sides", crud.LikeIgnoreCase("Title", "Go%"),
 			`LOWER("title") LIKE LOWER($1)`, []any{"Go%"}},
 
-		// Contains and friends build the pattern, so the wildcards a user typed
-		// have to be escaped or they widen the search.
 		{"Contains", crud.Contains("Title", "go"), `"title" LIKE $1 ESCAPE '\'`, []any{"%go%"}},
 		{"Contains escapes wildcards", crud.Contains("Title", "50%_off"), `"title" LIKE $1 ESCAPE '\'`, []any{`%50\%\_off%`}},
 		{"StartsWith", crud.StartsWith("Title", "go"), `"title" LIKE $1 ESCAPE '\'`, []any{"go%"}},
@@ -72,8 +68,7 @@ func TestPredicateConstructors(t *testing.T) {
 		{"NotIn", crud.NotIn("Views", 1, 2), `"views" NOT IN ($1, $2)`, []any{1, 2}},
 		{"InAny takes a typed slice", crud.InAny("Views", []int{1, 2}), `"views" IN ($1, $2)`, []any{1, 2}},
 		{"NotInAny", crud.NotInAny("Views", []int{1}), `"views" NOT IN ($1)`, []any{1}},
-		// IN () is a syntax error everywhere, and the honest answer to "in
-		// nothing" is false — never "match everything".
+
 		{"In of nothing matches nothing", crud.In("Views"), `1 = 0`, nil},
 		{"NotIn of nothing matches everything", crud.NotIn("Views"), `1 = 1`, nil},
 
@@ -143,8 +138,6 @@ func TestEqualityUnderstandsAllThreeOptStates(t *testing.T) {
 	}
 }
 
-// The same tree renders against whichever dialect the statement is being built
-// for; nothing above the writer knows about placeholders or quoting.
 func TestPredicatesFollowTheDialect(t *testing.T) {
 	m := articleMeta(t)
 	p := crud.And(crud.Eq("Title", "Go"), crud.In("Views", 1, 2), crud.Contains("Title", "x"))
@@ -157,9 +150,6 @@ func TestPredicatesFollowTheDialect(t *testing.T) {
 		`("title" = ? AND "views" IN (?, ?) AND "title" LIKE ? ESCAPE '\')`, []any{"Go", 1, 2, "%x%"})
 }
 
-// A chain of .And() calls is one flat clause, not a staircase of parentheses.
-// AND and OR are associative, so this only ever affects readability — but the
-// SQL is what a human debugs.
 func TestLogicFlattening(t *testing.T) {
 	m := articleMeta(t)
 	a, b, c := crud.Eq("Title", "a"), crud.Eq("Title", "b"), crud.Eq("Title", "c")
@@ -191,9 +181,6 @@ func TestLogicFlattening(t *testing.T) {
 	}
 }
 
-// A relation hop is a correlated EXISTS, never a join: a join against a
-// to-many relation multiplies the driving rows, which would corrupt both LIMIT
-// and COUNT. EXISTS is a semi-join — one row in, one row out.
 func TestRelationHopsRenderAsCorrelatedExists(t *testing.T) {
 	articles := articleMeta(t)
 
@@ -243,8 +230,6 @@ func TestRelationHopsRenderAsCorrelatedExists(t *testing.T) {
 	}
 }
 
-// Each hop gets its own alias within a statement, so two subqueries over
-// different relations cannot shadow one another's correlation.
 func TestEveryHopGetsItsOwnAlias(t *testing.T) {
 	checkRender(t, crud.Postgres{}, articleMeta(t),
 		crud.And(crud.Eq("Author.Name", "Ann"), crud.Eq("Comments.Approved", true)),
@@ -259,8 +244,6 @@ func TestRelationHopFollowsTheDialect(t *testing.T) {
 		[]any{"Ann"})
 }
 
-// A path that stops on a relation names no column to compare, so it is refused
-// rather than guessed at.
 func TestPredicateOnARelationPathIsRefused(t *testing.T) {
 	_, _, err := crud.NewSQL(crud.Postgres{}, articleMeta(t)).Predicate(crud.Eq("Comments", 1)).Done()
 	var schemaErr *crud.SchemaError
@@ -268,9 +251,6 @@ func TestPredicateOnARelationPathIsRefused(t *testing.T) {
 		t.Fatalf("err = %v, want a SchemaError about the path naming a relation", err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// sorting
 
 func orderSQL(t *testing.T, d crud.Dialect, m *crud.Meta, orders ...crud.Order) string {
 	t.Helper()
@@ -306,8 +286,6 @@ func TestOrderBy(t *testing.T) {
 	}
 }
 
-// MySQL has no NULLS LAST grammar, so the renderer synthesises the same order
-// with a boolean null key rather than accepting a request and changing it.
 func TestMySQLPreservesNullsOrdering(t *testing.T) {
 	m := articleMeta(t)
 	if got := orderSQL(t, crud.MySQL{}, m, crud.Asc("Title").WithNullsLast()); got != " ORDER BY `title` IS NULL ASC, `title` ASC" {
@@ -328,8 +306,6 @@ func TestSQLitePreservesNullsOrdering(t *testing.T) {
 	}
 }
 
-// Sorting through a to-one relation is a scalar subquery — the only shape
-// ORDER BY accepts.
 func TestNestedSortIsAScalarSubquery(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -353,8 +329,6 @@ func TestNestedSortIsAScalarSubquery(t *testing.T) {
 	}
 }
 
-// "Order articles by their comments' bodies" has no single value to sort on.
-// Picking one quietly would make the page order depend on the storage engine.
 func TestSortThroughAToManyRelationIsRefused(t *testing.T) {
 	for _, path := range []string{"Comments.Body", "Tags.Slug"} {
 		_, _, err := crud.NewSQL(crud.Postgres{}, articleMeta(t)).OrderBy([]crud.Order{crud.Asc(path)}).Done()
@@ -378,21 +352,13 @@ func TestSortOnAnUnknownFieldIsReported(t *testing.T) {
 	}
 }
 
-// A narrowing declared by path has to reach the hop it names, however deep.
-//
-// It did not. The path was extended after the recursion rather than before it,
-// so the second hop looked itself up as "Manager" instead of "Manager.Manager" —
-// a narrowing declared for the inner hop silently did not apply, and one
-// declared for the outer hop applied twice. Model-declared narrowings still
-// worked, which is what kept this out of sight: sqlrepo.Scope installs one of
-// those, so a self-relation stayed covered while a path declaration did not.
 func TestARelationScopeReachesTheHopItNames(t *testing.T) {
 	m := metaOf[Person](t, "persons")
 
 	for _, tc := range []struct {
 		name   string
 		scopes *crud.RelationScopes
-		want   string // the narrowing, and which subquery it must land in
+		want   string
 	}{
 		{
 			"the inner hop",
@@ -424,9 +390,6 @@ func TestARelationScopeReachesTheHopItNames(t *testing.T) {
 	}
 }
 
-// The control: with nothing declared, neither subquery carries a narrowing — so
-// the assertions above are measuring the declaration and not something the
-// writer does anyway.
 func TestATwoHopSortCarriesNoNarrowingWhenNoneIsDeclared(t *testing.T) {
 	m := metaOf[Person](t, "persons")
 	sql, args, err := crud.NewSQL(crud.Postgres{}, m).

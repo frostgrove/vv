@@ -19,19 +19,6 @@ import (
 	"github.com/frostgrove/vv/remote"
 )
 
-// Transport calls a resource another service registered, over gRPC.
-//
-//	articles := remote.New[Article, int64, ArticleInput](
-//	    crudgrpc.Transport(conn, "Article"))
-//
-// name is what the far side passed to [HandlerFor.Register], and [ServiceName]
-// turns it into the same full service name on both ends, from the same
-// function.
-//
-// There is no generated stub and none is needed. Every method of this binding
-// is one google.protobuf.Struct in and one out, so a call is grpc.Invoke with
-// the document in it — which is the property [[D-052]] chose the Struct shape
-// for, read from the other side.
 func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport {
 	t := &transport{conn: conn, service: ServiceName(name)}
 	for _, o := range options {
@@ -42,18 +29,12 @@ func Transport(conn grpc.ClientConnInterface, name string, options ...TransportO
 	return t
 }
 
-// A TransportOption wires one part of a [Transport].
 type TransportOption func(*transport)
 
-// WithVocabulary replaces the codes the kind is sharpened through — the same
-// value the far side's renderer was given. Without it a service's own code is
-// carried through unchanged and only the standard ones refine a status.
 func WithVocabulary(c *errs.Codes) TransportOption {
 	return func(t *transport) { t.codes = c }
 }
 
-// WithCallOptions adds gRPC call options to every call — a per-call credential,
-// a compressor, a size limit.
 func WithCallOptions(options ...grpc.CallOption) TransportOption {
 	return func(t *transport) { t.call = append(t.call, options...) }
 }
@@ -74,7 +55,6 @@ func (this *transport) vocabulary() *errs.Codes {
 	return standardCodes()
 }
 
-// Do implements remote.Transport.
 func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessage, error) {
 	if call == nil {
 		return nil, fmt.Errorf("crudgrpc: call is nil")
@@ -96,9 +76,6 @@ func (this *transport) Do(ctx context.Context, call *remote.Call) (json.RawMessa
 	return raw, nil
 }
 
-// requestFor builds the document each method reads, field for field with the
-// handler that reads it. The names are read in one place on each side and
-// nowhere else.
 func requestFor(call *remote.Call) (*structpb.Struct, error) {
 	switch call.Method {
 	case remote.MethodGet, remote.MethodUpdate, remote.MethodReplace, remote.MethodDelete:
@@ -165,14 +142,6 @@ func requireMutationBody(method remote.Method, body json.RawMessage) error {
 	return nil
 }
 
-// The key goes out as a string on every route that names one. google.protobuf
-// .Value has no integer, so the API does not send an integral key at magnitude
-// 2^53 and beyond as a number. idOf and idsOf on the far side read either spelling and the string
-// one is the half that is always exact.
-
-// exactBulkIDs turns numeric array members into decimal strings before the
-// Struct encoder sees them. Call.IDs stays JSON so HTTP keeps its ordinary
-// array shape, while gRPC gets the same exact key spelling as its entity routes.
 func exactBulkIDs(raw json.RawMessage) (json.RawMessage, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
@@ -212,10 +181,6 @@ func document(fill func(map[string]*structpb.Value) error) (*structpb.Struct, er
 	return &structpb.Struct{Fields: fields}, nil
 }
 
-// docOf encodes a value as a document, through encoding/json rather than
-// structpb's own map conversion — the same route toStruct takes, and for the
-// same reason: the json tags decide the shape and crud.Opt keeps its three
-// states.
 func docOf(v any, what string) (*structpb.Struct, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -249,22 +214,12 @@ func nestRaw(f map[string]*structpb.Value, key string, raw json.RawMessage) erro
 		return err
 	}
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		// Null is absence for the optional query document. Write routes send an
-		// object (including `{}`) so their required body cannot be dropped.
 		return nil
 	}
 	f[key] = structpb.NewStructValue(st)
 	return nil
 }
 
-// fault turns a failed call into the error a caller branches on.
-//
-// A status this library did not write is a *remote.ProtocolError and never a
-// classified failure: Unimplemented from a method a read-only service never
-// registered, Unavailable from a connection that never opened, anything from an
-// interceptor in between. What tells them apart is the ErrorInfo detail — the
-// [ErrorDomain] is this library's name, and a status without it did not come
-// from a renderer here.
 func (this *transport) fault(m remote.Method, where string, err error) error {
 	st, ok := status.FromError(err)
 	if !ok {
@@ -288,7 +243,6 @@ func (this *transport) fault(m remote.Method, where string, err error) error {
 		case *errdetails.BadRequest:
 			for _, fv := range detail.GetFieldViolations() {
 				vs = append(vs, errs.Violation{
-					// The dotted form, which is what Field was rendered from.
 					Path:    errs.ParsePath(fv.GetField()),
 					Code:    errs.Code(fv.GetReason()),
 					Message: fv.GetDescription(),
@@ -298,8 +252,6 @@ func (this *transport) fault(m remote.Method, where string, err error) error {
 	}
 
 	if !mine {
-		// An Internal status is the one this library writes with no details at
-		// all, so it is the one exception: the silence is the message.
 		if st.Code() == codes.Internal {
 			return port.FaultFrom(errs.KindInternal, errs.CodeInternal, nil, false)
 		}
@@ -314,15 +266,6 @@ func (this *transport) fault(m remote.Method, where string, err error) error {
 	return port.FaultFrom(this.kindOf(st.Code(), code), code, vs, partial)
 }
 
-// kindOf answers the class, sharpened by the code where the status word cannot
-// tell two apart.
-//
-// InvalidArgument is the only such word: [CodeFor] sends a validation failure
-// and a malformed request to the same code, and HTTP tells them apart with 422
-// and 400. The vocabulary resolves the one the sender meant. A code it does not
-// declare contributes nothing, which is the same rule port.KindOfWith follows
-// on the way out — a service that declared a code and forgot to wire it must
-// not have its 422 turned into something else by the omission.
 func (this *transport) kindOf(c codes.Code, code errs.Code) errs.Kind {
 	kind := KindForCode(c)
 	if c != codes.InvalidArgument {

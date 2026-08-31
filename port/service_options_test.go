@@ -7,10 +7,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// WithPaths is the service half of the path chain ([[D-043]]): the model's
-// field names to the ones its commands use. An option that were silently
-// ignored would show up as a violation naming a field the client never sent —
-// at request time, which is exactly what [[D-021]] says must not happen.
 func TestWithPathsPutsTheServicesHopIntoTheChain(t *testing.T) {
 	declared := Fields{"Name": At("title")}
 	service := NewService[widget, int64, widgetUpdate](&fakeRepo{}, WithPaths(declared))
@@ -29,9 +25,6 @@ func TestWithPathsPutsTheServicesHopIntoTheChain(t *testing.T) {
 		t.Fatalf("a violation at the model's Name came out at %v, want the declared %v", got, want)
 	}
 
-	// The control. The same service without the option contributes no hop and
-	// the path arrives unchanged — so the leg above measures the declaration
-	// rather than a chain that rewrites Name whatever it was handed.
 	bare := NewService[widget, int64, widgetUpdate](&fakeRepo{})
 	if bare.Paths() != nil {
 		t.Fatalf("a service with no WithPaths answers the hop %v", bare.Paths())

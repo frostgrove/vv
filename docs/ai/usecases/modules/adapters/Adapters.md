@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/adapter/crudsql`, `github.com/frostgrove/vv/crud/adapter/crudpgx`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here; but seven things are silent when they go wrong: the COPY fast path disappears the day anything wraps the source, a COPY ignores the transaction it was called inside and comes back unclassified, a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level. Pgx-only COPY cannot represent a schema-qualified destination as callers naturally spell one; and no repository transaction test follows a typed driver refusal through rollback and back to the caller.
+**Verdict:** ready with gaps — the binding line is one expression, the transaction join is the best-proven thing in the repository, and instrumentation is answered one level below vv rather than badly here. The former COPY bypass is closed: typed `Repo.InsertBatch` preserves decorators and ambient transactions, chooses pgx COPY as the magic default, and falls back to atomic bind-budgeted SQL. The remaining gaps are elsewhere in the seam: a borrowed `database/sql` transaction answers conflicts without a code, lib/pq loses the constraint and the table, a scoped binding keyed on the wrong handle writes outside the transaction, the MySQL 8 upsert form costs the error codes, and neither adapter can give one flow its own isolation level.
 
 ## What a consumer is actually trying to do
 
@@ -117,8 +117,8 @@ API and nothing anywhere says why.
 2. What the other adapter would have given up is stated with it.
 3. Holding both a `*pgxpool.Pool` and a `*sql.DB` over one physical database is described, including what breaks.
 **Today:** 🟡 partial — 1 holds, 2 and 3 are missing
-**Evidence:** Point 1 is answered, in three places: `README.md:1337-1338` maps `*sql.DB`/`*sql.Tx`/`*sql.Conn` to the `crudsql` constructors and pgx's three handle types to `crudpgx.Open`/`From`; `docs/modules/en/crudsql.md:48-55` carries the same stack table; `docs/modules/en/crudpgx.md:33-39` names the pgx three. Point 2 is answered nowhere — none of those tables says what the *other* column costs. The evidence that it matters is the examples: four of the nine are named `*-pgx-*` and every one binds **`crudsql`** — `_examples/gorm-pgx-fiber/main.go:90`, `_examples/sqlx-pgx-gin/main.go:83`, `_examples/ent-pgx-gin/main.go:79`, `_examples/ent-pgx-fiber/main.go:81`, each with `_ "github.com/jackc/pgx/v5/stdlib"` at the top. A consumer who reads "I chose pgx" off those examples is on the adapter with no `COPY` (H-ADAPTERS-11), no `Rows.Err()` classification (H-ADAPTERS-16) and no code on a joined transaction (H-ADAPTERS-10) — this file's three sharpest adapter findings, and nothing tells them the findings are theirs. Point 3 is worse and is structural: `crud.KeyOf` (`crud/executor.go:414`) reduces a source to the raw handle, so a `*pgxpool.Pool` and a `*sql.DB` over the same server are two different keys. A repository on `crudpgx` therefore cannot join a transaction the ORM opened on the `*sql.DB` at all, and `catalog.Set` would hold two catalogs for one database ([[D-041]], `crud/catalog/set.go:46-80`).
-**If not ready:** The table exists and is missing its third column: what you give up. `COPY` is the largest entry and it is a reason to choose `crudpgx` before the model is declared — swapping adapters afterwards is a one-way door in `main`, because every join site, every scoped binding and the catalog key change with it. One sentence has to say that two handles over one database are two databases as far as this library is concerned.
+**Evidence:** Point 1 is answered, in three places: `README.md:1337-1338` maps `*sql.DB`/`*sql.Tx`/`*sql.Conn` to the `crudsql` constructors and pgx's three handle types to `crudpgx.Open`/`From`; `docs/modules/en/crudsql.md:48-55` carries the same stack table; `docs/modules/en/crudpgx.md:33-39` names the pgx three. Point 2 is answered nowhere — none of those tables says what the *other* column costs. The evidence that it matters is the examples: four of the nine are named `*-pgx-*` and every one binds **`crudsql`** — `_examples/gorm-pgx-fiber/main.go:90`, `_examples/sqlx-pgx-gin/main.go:83`, `_examples/ent-pgx-gin/main.go:79`, `_examples/ent-pgx-fiber/main.go:81`, each with `_ "github.com/jackc/pgx/v5/stdlib"` at the top. A consumer who reads "I chose pgx" off those examples still gets the checked `InsertBatch` contract, but through portable SQL rather than native COPY; they also get no `Rows.Err()` classification (H-ADAPTERS-16) and no code on a joined transaction (H-ADAPTERS-10). Point 3 is worse and is structural: `crud.KeyOf` (`crud/executor.go:414`) reduces a source to the raw handle, so a `*pgxpool.Pool` and a `*sql.DB` over the same server are two different keys. A repository on `crudpgx` therefore cannot join a transaction the ORM opened on the `*sql.DB` at all, and `catalog.Set` would hold two catalogs for one database ([[D-041]], `crud/catalog/set.go:46-80`).
+**If not ready:** The table exists and is missing its third column: what you give up. Native COPY throughput is the largest performance difference, not a semantic hole — `crudsql` automatically receives the atomic SQL implementation. Swapping adapters afterwards is still a one-way door in `main`, because every join site, every scoped binding and the catalog key change with it. One sentence has to say that two handles over one database are two databases as far as this library is concerned.
 
 ### H-ADAPTERS-06 — Write inside the transaction the ORM already opened, and the other direction
 **Who:** an engineer with a service method already wrapped in `db.Transaction` or `client.Tx`, and later a team standardising on `repo.Tx` as the outer boundary
@@ -190,18 +190,65 @@ API and nothing anywhere says why.
 ### H-ADAPTERS-11 — The nightly import
 **Who:** the author of a supplier-feed job
 **Wants:** a quarter of a million rows in, without a forty-minute round-trip loop
-**Story:** They parse a CSV into `[]*Product` and want them in the table. `SaveAll` is one `INSERT` per batch and is fine at a thousand rows; at 250,000 they reach for `COPY`, which is the reason they chose pgx. The job writes a manifest row afterwards, so the whole thing runs inside `repo.Tx`.
+**Story:** They parse a CSV into `[]*Product`, call `repo.InsertBatch`, then
+write a manifest in the same `repo.Tx`. They chose pgx and expect COPY to happen
+without dropping out of the repository contract.
 **Must hold:**
-1. `COPY` is reachable from the source the repository is bound to — including after a replica or an instrumenting wrapper is added.
+1. The safe batch operation stays reachable after repository decorators and
+   source wrappers; native COPY is used only when the effect capability is
+   explicitly preserved.
 2. The columns and the values come from the model that was already declared — a second, hand-kept list of column names is a bug waiting for the next migration.
-3. A `COPY` called inside a transaction is inside it, or the call says loudly that it is not.
+3. A native or portable batch called inside a transaction is inside it.
 4. A row the server refuses comes back the same way it would from the row-at-a-time loop.
-5. What the fast path skips is stated where it is called, not in a reference doc: the tenant scope, the soft-delete filter, the version counter, any hook.
-6. A handle with no `COPY` says so in words about `COPY`.
-7. A consumer on `database/sql` over pgx is told whether this is reachable for them at all.
-**Today:** ❌ missing — only point 1's narrowest reading holds
-**Evidence:** Point 1 holds for a source that is literally `crudpgx.Open(pool)` and for nothing else. `crud.BulkInserter` is the one optional interface in the library with **no walker**: `crud/executor.go` carries `SourceOf` (`:195`), `BeginnerOf` (`:254`), `ReadSourceOf` (`:268`) and `KeyOf` (`:414`) and no fifth, and [[D-061]]'s own table lists only `Nexter` and `SourceUnwrapper` as walkable. The documented call is a bare assertion — `if bulk, ok := src.(crud.BulkInserter); ok` in the library's own doc comment at `crud/executor.go:130-139` and again at `docs/modules/en/crudpgx.md:59-63` — and the only test does `any(src).(crud.BulkInserter)` on a bare `Open(pool)` (`test/integration/driver_pgx_test.go:110-112`). So `crud.ReadWrite`, whose `readWrite` embeds the `Source` **interface** (`crud/executor.go:98-101`) and therefore promotes only `Source`'s three methods, deletes `CopyFrom` today; so does any consumer wrapper written to time statements. The failure is `ok == false`, silently, at run time — and `SourceUnwrapper`'s own doc comment at `:211-219` lists the three things a wrapper loses without mentioning this fourth one. Point 2 fails: the signature is `(table string, columns []string, rows [][]any)` (`crud/executor.go:137-139`) and nothing derives any of the three from the model — `TestPgxBulkCopy` hand-writes both, with `age` written as a bare `20` where the model field is a `crud.Opt[int]` (`test/integration/model.go:24`). Point 3 fails and is the one that loses data: "The call runs on the handle that executor holds and ignores any transaction in the context" (`docs/modules/en/crudpgx.md:65-66`, and [[UC-008]]'s Out of scope at `docs/ai/usecases/modules/sqlrepo/UC-008-write-many-rows-in-one-statement.md:54-57`). Point 4 fails and nothing anywhere says so: `Executor.CopyFrom` (`crudpgx.go:119-126`) returns the driver's error straight out and is the **only** statement path in that file that does not call `e.conflict` — so one duplicate SKU in the feed comes back as a bare `*pgconn.PgError`, not `crud.ErrConflict`, no `errs.Fault`, no code, and the status table above it answers 500 where the row loop answered 409. Point 5 is stated nowhere at all, and the call site is a type assertion the application writes, so there is nothing there to state it. Point 6 fails: an unsupported handle answers `crud.ErrNoTxSupport` (`crudpgx.go:122`), whose message is "crud: executor cannot begin transactions" (`crud/errors.go:13`). Point 7 fails: there is a route on `database/sql` over pgx — `(*sql.Conn).Raw` down to the `*pgx.Conn` underneath, which pgx's own `stdlib` package documents — and nothing in this repository names it (`rg -ni "CopyIn|\.Raw\("` outside `crud/` finds nothing).
-**If not ready:** Today they write the column list twice — once as `db` tags, once as a `[]string` — rebuild each row into `[]any` in that order by hand, must not add a replica or a wrapper afterwards, must not run it inside the job's transaction, and must not rely on the error. The bypass is the sharper half: a repository bound with `security.Gate` narrows every write it makes, and `CopyFrom` sits below the repository entirely, so the first bulk import in a multi-tenant service writes rows past its own tenant scope with nothing in the way. `SaveAll`'s own limits are H-SQLREPO-06's, not this file's.
+5. The ordinary call goes through `security.Gate`, faults and every decorator;
+   only an explicitly `Unsafe*` driver call bypasses them.
+6. A handle with no native COPY transparently retains insert semantics through
+   SQL, while an explicit low-level request gets a bulk-specific sentinel.
+7. A consumer on `database/sql` gets the portable implementation without
+   reaching through `sql.Conn.Raw` to a hidden driver handle.
+**Today:** ✅ covered
+**Evidence:** `crud.Repo.InsertBatch` is the typed, insert-only operation.
+Sqlrepo derives the validated `TableRef`, insert columns and `crud.Opt` values
+from model metadata and preflights every row before I/O. It resolves the
+repository's source-bound executor first, so `repo.Tx` selects its pgx
+transaction. A bare pgx executor exposes `crud.UnsafeBulkInserter` and therefore
+gets COPY by default; a `crudsql` source or a source without that exact
+capability gets ordinary bind-budgeted `INSERT` chunks. More than one chunk
+joins or opens one atomic unit.
+
+The two wrapper boundaries are deliberately different. At repository level,
+`BatchInserter[M]` is asked only of the outermost Core: Gate and faults implement
+and forward it, while an unknown decorator returns
+`ErrNoBatchInsertSupport` rather than being bypassed. At source level,
+`UnsafeBulkInserterOf` does not walk `SourceUnwrapper`: an unknown tracing,
+rate-limit or RLS-session wrapper selects portable SQL. Its `Exec` sees a direct
+one-statement plan; chunked plans execute on the transaction handle, matching
+the pre-existing H-ADAPTERS-19 limitation. `crud.ReadWrite` explicitly forwards
+native bulk to the primary because it owns routing and no statement middleware.
+A wrapper that intentionally preserves native effects implements the capability
+explicitly.
+
+`security.Gate.InsertBatch` treats every row as Create, inspects a private copy
+of each and refuses a scope-only policy without `Inspect`; it never turns an
+assigned key into an update. `faults.Enrich.InsertBatch` classifies COPY through
+the pgx classifier and preserves operation/path attribution. Per-call
+`crud.PortableBatch()` and blueprint-level `sqlrepo.PortableBatch()` force the
+SQL path for PostgreSQL RLS/rewrite rules, special pgx encodings or statement
+observability. The unit matrix is in `crud/sqlrepo/insert_batch_test.go` and
+`crud/adapter/crudpgx/copy_test.go`; live COPY selection, rollback and classified
+qualified-table failures are in `test/integration/driver_pgx_test.go`.
+
+**Historical finding, closed before the first release (FW-CORE-003).** The
+original API was a bare `crud.BulkInserter` assertion over a source and
+`Executor.CopyFrom(table, columns, rows)`. The historical sweep correctly found
+that callers duplicated metadata, `ReadWrite` and wrappers erased the method,
+the exact pool ignored a context transaction, COPY skipped Gate/faults, errors
+escaped the classifier and an unsupported handle returned `ErrNoTxSupport`.
+That safe-looking surface was removed, not deprecated. The remaining direct
+driver operations are only `UnsafeBulkInsert*` / `UnsafeCopyFrom*`;
+`UnsafeBulkInsertFor` resolves an ambient source-bound executor, and an exact
+receiver call documents that it deliberately uses that receiver.
+**If not ready:** —
 
 ### H-ADAPTERS-12 — More than one handle
 **Who:** an engineer whose service grew an events database
@@ -338,7 +385,7 @@ Point 6: nothing pings, probes a version or warns. A MariaDB server bound with `
 3. It is stated in the adapter's own documentation, because that is where a consumer looks for "what runs my SQL".
 **Today:** 🟡 partial — 1 and 2 hold and are structural; 3 is missing
 **Evidence:** Neither adapter opens a connection or reads any pool configuration — `crudsql` never calls `sql.Open` or `SetMaxOpenConns` (H-ADAPTERS-01), and `rg -n "pgxpool" crud/adapter/crudpgx/` returns three comment lines and no code (H-ADAPTERS-04 point 2). That is exactly what makes driver-level instrumentation work without the library's cooperation: an instrumented `database/sql` driver or a `sql.OpenDB(connector)` for `crudsql`, `pgxpool.Config.ConnConfig.Tracer` for `crudpgx`. Both sit *below* the handle every library in the process shares, so they see the ORM's statements and vv's, inside a transaction and out — which the `crud.Source` wrapper [[D-062]] recommends cannot do, because a joined transaction runs through `crudsql.From(tx)` and not through the wrapped source. The repository has already decided this: `docs/roadmaps/2026-08-26-1558-opentelemetry-roadmap.md:38` lists `vv/pgxotel` as "defer; use upstream driver instrumentation". The `vvdb` sweep documents the pgx half (`docs/ai/usecases/modules/vvdb/Vvdb.md:268-274`, `:769-773`). Neither adapter doc says any of it, and `docs/modules/en/crudsql.md` and `crudpgx.md` are where a consumer looks.
-**If not ready:** They find the `crud.Source` wrapper first, because that is what [[D-062]] and [[D-061]] talk about, write four methods, and then discover it goes blind inside the ORM's transaction — and, if they wrapped a pgx source, that it deleted `COPY` (H-ADAPTERS-11). One paragraph per adapter doc naming the driver-level route as the default and the `Source` wrapper as the one for statements vv shapes rather than statements the database runs. `crud.Instrument` as a shipped wrapper is H-CRUD-15's proposal, not this file's.
+**If not ready:** They find the `crud.Source` wrapper first, because that is what [[D-062]] and [[D-061]] talk about, write four methods, and then discover it goes blind inside the ORM's transaction. For `InsertBatch`, that wrapper deliberately selects portable SQL unless it explicitly forwards native bulk; its direct one-statement plan remains visible, while chunked work has the same transaction-handle limitation. One paragraph per adapter doc naming the driver-level route as the default and the `Source` wrapper as the one for statements vv shapes rather than statements the database runs. `crud.Instrument` as a shipped wrapper is H-CRUD-15's proposal, not this file's.
 
 ### H-ADAPTERS-20 — The pool is replaced while the process runs
 **Who:** whoever is on call during a failover, or shipping a blue/green endpoint swap
@@ -370,8 +417,8 @@ handle is named `db`, `sqlDB` or `db.DB` depending on what the ORM gave back, an
 `_examples/gorm-mysql-gin/main.go:102` names a different engine. The one that is
 worth reading separately is `_examples/auth-jwt-gin/main.go:148`,
 `specs.Executor(Notes.Bind(crudpgx.Open(pool), security.Gate(policy)))`: it is the
-only example that puts a gate over a pgx source, which is precisely the stack
-where H-ADAPTERS-11's "a COPY writes past its own tenant scope" lands.
+only example that puts a gate over a pgx source, and H-ADAPTERS-11 now proves
+that `InsertBatch` remains a checked Create operation on precisely that stack.
 
 The adapter's share of the line is one expression — `specs.Executor` belongs to
 another module and is optional — and it is the right amount: the engine named
@@ -404,14 +451,19 @@ err = crud.InTxWith(ctx, sqlSrc, crud.TxOptions{Isolation: crud.Serializable}, f
 ```
 
 ```go
-// pgx, its own stack and its own source value. The import takes the models, so
-// the columns and the value order come from the declaration; it runs inside the
-// caller's transaction; and a refused row is classified like every other one.
+// pgx, its own stack and its own source value. The repository takes typed
+// models, so table, columns and values come from the declaration. Native COPY
+// is automatic on the bare pgx source and the caller's transaction is retained.
 pgxSrc, _, err := crudpgx.Introspect(ctx, crudpgx.Open(pool))
 if err != nil {
     return err
 }
-n, err := crudpgx.CopyUnchecked(ctx, pgxSrc, Products.Meta(), products) // []*Product
+productsRepo := Products.Bind(pgxSrc, security.Gate(policy), faults.Enrich[Product, int64]())
+err = productsRepo.InsertBatch(ctx, products)
+
+// RLS/rewrite-rule tables and special encodings can select ordinary atomic SQL
+// for one call; sqlrepo.PortableBatch() makes the same choice on the blueprint.
+err = productsRepo.InsertBatch(ctx, products, crud.PortableBatch())
 ```
 
 ### Why this shape
@@ -485,36 +537,23 @@ overrides it or a written reason says why inheriting is safe. The one flow that
 needs a level uses the free function and holds the source. That is one line and
 three concepts replacing one line and none, and it is the honest price.
 
-**`CopyUnchecked` takes the source, the meta and the models.**
-`func CopyUnchecked[M any](ctx context.Context, src crud.Source, m *crud.Meta, models []*M) (int64, error)`.
-Taking `crud.Source` is what lets it be reached behind an instrumenting wrapper
-or a `ReadWrite` pair, which the bare type assertion cannot be — and it needs
-`crud.BulkInserterOf` beside `BeginnerOf` and `ReadSourceOf` to do it. Taking the
-models rather than `[][]any` is the half round 1 left open: the caller was still
-hand-building rows in an order they had to match by hand, and could not encode a
-`crud.Opt[T]` at all, which is the exact defect `TestPgxBulkCopy` shows. The
-columns come from `Schema.Insert` or `Schema.InsertGen` (`crud/meta.go:96-97`,
-built at `:285-291`) and **not** from `Schema.Columns()`, which round 1 named:
-`Columns` returns every mapped column, primary key first (`:178-186`), so a copy
-built on it writes explicit zeros into a serial key and into every `generated`
-column — which is why `test/integration/driver_pgx_test.go:120` copies five
-columns and deliberately not `id`. Each row is then `Schema.Values(model, fields)`
-(`crud/access.go:31-41`). `*crud.Meta` embeds `*crud.Schema` and `Blueprint.Meta()`
-is already exported (`crud/sqlrepo/blueprint.go:242`), so `crudpgx` gains no
-`crud/sqlrepo` import. If a 250,000-row CSV should never be materialised, the
-streaming form takes an `iter.Seq[*M]` instead of a slice.
+**The implemented answer is `Repo.InsertBatch`, not the historical
+`CopyUnchecked` proposal.** Putting the typed operation above storage is what
+lets Gate, faults, validation and consumer decorators observe it. It derives
+`Schema.Insert`/`InsertGen` and `Schema.Values` internally, remains create-only,
+and does not mutate models or promise generated-value read-back. The source
+capability is deliberately exact rather than a fifth general unwrap walker:
+walking an effect under an unknown wrapper could skip the very tracing,
+rate-limit or RLS-session behaviour that wrapper owns. Unknown wrappers therefore
+get SQL; known routing (`ReadWrite`) explicitly forwards the primary; unknown
+repository decorators fail closed.
 
-It resolves its executor the way a repository does, `crud.ExecutorFor(ctx, src)`
-first, so a `COPY` inside `repo.Tx` is inside it and rolls back with it. It
-classifies through the same `e.conflict` every other statement in `crudpgx` uses,
-because a duplicate SKU answering 500 in the fast path and 409 in the slow one is
-the divergence `conflict.go:17-20` says the two adapters exist to prevent. When
-the resolved handle has no `COPY` it refuses with a `COPY`-specific sentinel
-rather than `ErrNoTxSupport`, and it never falls back to row-at-a-time: a fast
-path that silently becomes a slow one is the failure that made this a case. The
-name stays ugly on purpose — what a tenant-scoped application loses by reaching
-for `COPY` is its tenant scope, and that belongs in the name and in the doc
-comment where the call site can see it.
+The historical proposal's transaction and classification requirements remain
+and are now repository invariants. Sqlrepo resolves `ExecutorFor(ctx, source)`
+before capability selection, and crudpgx routes COPY errors through the same
+classifier as Exec/Query. The safe operation falls back only when native support
+is known absent before I/O; it never retries SQL after a server-side COPY error,
+which could duplicate rows or continue inside an aborted PostgreSQL transaction.
 
 **`Introspect` returns the concrete `DB`, and the error is a named sentinel.**
 The faults sweep specifies the signature
@@ -536,9 +575,9 @@ shipped statement wrapper. The first cannot exist: `Option` is `func(*config)`
 faults sweep's answer to the same problem and there must be one, not two. The
 second is a `crud` proposal argued in an adapters file; **H-CRUD-15** owns it —
 round 1 sent the reader to H-CRUD-11, which is about `crud.Raw`. The residue that
-is only visible here stays in H-ADAPTERS-11: a `Source` wrapper erases
-`BulkInserter`, which is the one optional interface [[D-061]]'s table does not
-list. And this file no longer carries a case for a connection failure mid-request;
+was only visible here — a wrapper erasing native bulk — is closed by
+H-ADAPTERS-11's exact-effect/fallback rule. This file no longer carries a case
+for a connection failure mid-request;
 H-ERRS-08 and H-ERRS-09 own it, and the one adapter-side fact is recorded above.
 
 ### What it must not break
@@ -573,43 +612,41 @@ H-ERRS-08 and H-ERRS-09 own it, and the one adapter-side fact is recorded above.
   must therefore carry no classifier, exactly as `Open` carries none — and
   H-ADAPTERS-13 point 5 is the reason that matters more than it looks, because
   `Open` is the only way to say `crud.MySQL{RowAlias: true}`.
-- **[[D-030]] — a new verb on the seam is an obligation on every decorator.** Two
-  things here touch it. `repo.TxWith` would be a `crud.Core` verb and is
-  deliberately not proposed. `CopyUnchecked` is *not* on the seam and cannot be
-  seen by `coreVerbs`, which is exactly why its reasoning has to be written down:
-  it is a write path that bypasses `security.Gate`, the soft-delete filter, the
-  version counter and every hook. D-030 exists because of `SaveAll`, "the call
-  that writes the most rows and checks none of them"; this is that one layer
-  lower. The name is the substitute for the gate override D-030 would otherwise
-  require, and H-ADAPTERS-11 point 5's list belongs in the doc comment.
+- **[[D-030]] — a new verb on the seam is an obligation on every decorator.**
+  `InsertBatch` is an optional exact repository capability rather than a new
+  `Core` method, preserving source compatibility for external Core
+  implementations. The same safety rule still applies: Gate and faults
+  implement it explicitly, an unknown decorator fails closed, and only the
+  separately named `Unsafe*` driver API can bypass the seam. `repo.TxWith` would
+  be a `crud.Core` verb and remains deliberately unproposed here.
 - **[[D-057]] — the application opens the connection.** Nothing here opens one.
   `Introspect` reads through the handle it was given and returns an error, which
   is the honest cost of folding the three-statement recipe into one.
-- **[[D-061]] — a wrapper forwards what it wraps, and the library walks to find
-  it.** `crud.BulkInserterOf` is the fifth walker and an extension of the decision
-  rather than a challenge: D-061's table lists two walkable interfaces and four
-  helpers, and `BulkInserter` was left out because nothing in the library reached
-  for it. Something does now. `SourceUnwrapper`'s doc comment
-  (`crud/executor.go:211-219`) lists three losses and gains a fourth.
+- **[[D-061]] — a wrapper forwards what it wraps, but effect capabilities are
+  exact.** `UnsafeBulkInserterOf` deliberately is not a fifth unwrap walker:
+  walking below an unknown wrapper could bypass statement behaviour it owns.
+  `ReadWrite` explicitly forwards the primary; another wrapper either forwards
+  deliberately or causes `InsertBatch` to select ordinary SQL. A direct plan
+  crosses that wrapper; transaction visibility remains H-ADAPTERS-19's separate
+  concern. Repository capabilities use the same fail-closed rule across
+  decorators.
 - **[[D-062]] — no statement hook anywhere.** Nothing proposed here is one. A
   per-call `TxOptions` is an argument to `Begin`, not a callback. H-ADAPTERS-19
   does not challenge it either: driver-level instrumentation is below vv entirely
   and needs nothing from the library. The shipped statement wrapper that *would*
   be a challenge to D-062's invariant sentence is H-CRUD-15's to raise.
-- **[[UC-008]] — nothing in the library reaches for a driver's bulk-copy path.**
-  `CopyUnchecked` is still a named function the caller calls, and `SaveAll` still
-  writes one multi-row `INSERT` whatever is underneath it. But UC-008's Out of
-  scope also says the copy "ignores any transaction in the context", and joining
-  the caller's transaction changes that sentence. **That is a deliberate
-  amendment to UC-008 and the owner should take it as one**, not as an
-  implementation detail: the current behaviour is a rollback that silently keeps
-  250,000 rows.
+- **[[UC-008]] — filtered set writes and typed imports are distinct verbs.**
+  `SaveAll` stays its write-only batched-save contract; `Repo.InsertBatch` is the
+  checked, insert-only path that may select native COPY. UC-008 records that
+  adjacent path but keeps it out of the filtered `UpdateAll`/`DeleteAll`
+  guarantees. Ambient transaction resolution is now shared rather than an
+  exception.
 - **[[D-041]] — the catalog is per physical handle.** `Introspect` keys on the
   handle it was given, which is what the adapter's `DataSource()` already answers.
 
-**What can wait.** Every proposal above is additive except the UC-008 amendment,
-which changes documented behaviour and therefore wants to land before the tag or
-be written down as a known change. The documentation defects cost nothing and can
+**What can wait.** The remaining proposals above are additive. The unsafe COPY
+surface was renamed and the checked repository verb added before the first tag,
+so no compatibility alias preserves the dangerous spelling. The documentation defects cost nothing and can
 ship today: the `*sql.Conn` mapping in `crudsql`'s package doc, the two guides'
 sentence that contradicts [[D-044]], and the `cat, _ := catalog.Load(...)` in both
 module docs.
@@ -627,8 +664,8 @@ module docs.
 | Two databases without crossing them | `crud.WithExecutorFor(ctx, mainDB, ...)` — 1 line, proven both ways on `crudsql`; unmeasured on pgx, and naming the handle you are holding rather than the one you passed matches nothing | small (the call) · large (the silence) |
 | Isolation for one flow | `database/sql`: a second source value, one line, and nothing proves it joins. pgx: abandon `repo.Tx` — 6 lines and a `defer` replacing 1. Neither says who retries the `40001` | large |
 | Columns named on a composite unique | 3 statements, a throwaway source and a discarded error, from a doc; the mechanism is proven and no example walks it | small (the saving is the second handle, not the line count) |
-| Bulk insert from the model | A hand-written `[]string` of columns and hand-built `[][]any` rows, kept in sync with the tags by hand — and only from a source nothing has wrapped | large |
-| A bulk insert inside the job's transaction, whose failures classify | Not reachable, either half. The rollback keeps the copied rows and the refused row is a bare driver error | large |
+| Bulk insert from the model | `repo.InsertBatch(ctx, models)` derives metadata and uses pgx COPY by default; ordinary SQL is automatic elsewhere and explicitly selectable | none |
+| A bulk insert inside the job's transaction, whose failures classify | The repository resolves the ambient source-bound executor before COPY/SQL selection; pgx COPY runs through the same classifier and faults decorator | none |
 | A driver that supplies the constraint name | Choose pgx and do not choose lib/pq. Nothing says so, and `vvdb`'s doc recommends lib/pq | large |
 | Know which engines are supported, and how to add a fifth | The four are named in the README and both module docs; nothing says they are the *boundary* and nothing names `Open(db, yourDialect)` as the route out | small |
 | Test in a rolled-back transaction | `crudpgx`: works. `crudsql`: `repo.Tx` under test answers `ErrNoTxSupport`, and every conflict assertion loses its code | large |
@@ -643,21 +680,21 @@ way five times: the thing a consumer wants next is not an argument to the call
 they already wrote, it is a different call. Isolation for one flow means a second
 source value threaded to the call site. Codes on a joined transaction mean
 restating the engine. The catalog means a throwaway source. The modern MySQL
-upsert means leaving the constructor that names the engine. Worse than any of
-those, three of the knobs cancel each other out with no compiler error and no
-run-time complaint: adding a replica or instrumentation through the `Source`
-removes `COPY`, calling `COPY` removes the transaction and the classifier, and
-wrapping the source without `UnwrapSource` removes the identity every scoped
-binding matches on. The short path is excellent and the second step is where a
-consumer starts writing code this library was supposed to have written.
+upsert means leaving the constructor that names the engine. The former three-way
+COPY cancellation is closed: `InsertBatch` stays above decorators, resolves the
+transaction before storage selection, explicitly routes `ReadWrite` to the
+primary and uses SQL through an unknown source wrapper. A wrapper without
+`UnwrapSource` can still remove the identity every scoped binding matches on;
+that separate transaction-scoping gap remains. The short path is excellent and
+the second step is where the remaining adapter gaps begin.
 
 ## Release blockers found here
 
 | # | What | Severity | Why it blocks |
 |---|---|---|---|
-| 1 | `crud.BulkInserter` is reached by a bare type assertion and has no walker, so `crud.ReadWrite` and any `Source` wrapper delete `COPY` silently | blocker | It is [[D-061]]'s exact failure on the one optional interface D-061's table omits, so a consumer who obeys the decision to the letter still hits it. `ok` is false, the fast path is gone, and this file's own advice — add a replica, instrument the source — is what triggers it |
-| 2 | A `COPY` ignores the transaction in the context, and the call site says nothing about it | blocker | Most bulk importers are transactional. The rollback takes everything except the copied rows, reports success, and nothing anywhere connects the two. Fixing it after a tag changes documented behaviour ([[UC-008]] Out of scope) rather than adding to it |
-| 3 | `crudpgx.Executor.CopyFrom` never calls `e.conflict` — the only statement path in the file that does not | serious | One duplicate SKU in a supplier feed comes back as a bare `*pgconn.PgError`: no `crud.ErrConflict`, no fault, no code, so the importer and any status mapping above it answer 500 where the row-at-a-time loop answered 409. It is H-ADAPTERS-09's whole story evaporating in the path already blocked twice above |
+| 1 | Historical: bare `crud.BulkInserter` discovery disappeared behind `ReadWrite`/wrappers | closed (FW-CORE-003) | The safe operation is now repository-level `InsertBatch`. `ReadWrite` explicitly forwards native bulk to the primary; an unknown source wrapper selects portable SQL instead of invoking native bulk underneath it, and an unknown repository decorator fails closed. Transaction-handle observability remains H-ADAPTERS-19. The old interface was removed pre-release. |
+| 2 | Historical: direct `COPY` ignored the transaction carried by context | closed (FW-CORE-003) | Sqlrepo resolves the source-bound ambient executor before native capability selection; live `TestPgxInsertBatchJoinsRepositoryTransaction` proves rollback removes the imported row. `UnsafeBulkInsertFor` gives deliberate low-level code the same executor resolution. |
+| 3 | Historical: `crudpgx.Executor.CopyFrom` returned COPY failures without `e.conflict` | closed (FW-CORE-003) | `UnsafeCopyFromTable` classifies the pgx error, and the safe path then passes through `faults.Enrich` as operation `InsertBatch` with field attribution. A server-side failure never selects a retrying SQL fallback. |
 | 4 | `crudsql.From(tx)` drops the fault code and there is no spelling that carries the engine the consumer already declared | serious | The 409 body changes because the write moved inside a transaction, which is invisible to any test asserting the status. The degradation is documented in four places; what is missing is a way to avoid it, and no example shows the correct spelling |
 | 5 | On lib/pq a violation loses the constraint, the table, the schema and the column — and with them everything the catalog could fill | serious | `WithFaults` appears to work and the field-level half is gone with nothing reported. The consumer's fix is one import line, which is why not saying so is expensive. `docs/modules/en/vvdb.md:90` recommending lib/pq is `utils/vvdb`'s row to fix, not this one's |
 | 6 | Neither adapter can give one flow its own isolation level; on pgx there is nothing to ask with, and nothing anywhere says who retries the `40001` | serious | `Begin` and `InTx` take no options. On `database/sql` it costs a second source value and no test proves it joins; on pgx it costs leaving `repo.Tx`. Adding the per-call seam later is additive; shipping two adapters that disagree about what a transaction can be asked for is not |
@@ -669,7 +706,7 @@ consumer starts writing code this library was supposed to have written.
 | 12 | `*sql.Conn` has no working call named anywhere — not in `crudsql`'s package doc, not in `README.md:1337`, not in either module doc's stack table | sharp edge | The line that names the type names `crudsql.Open`, which takes a `*sql.DB`. `crudsql.Source(conn, dialect)` is the call that works and appears in none of them |
 | 13 | Both usage guides say an unclassified 409 "carries the driver's own sentence, constraint name included" | sharp edge | [[D-044]]'s invariant forbids it and the render path has no route for `err.Error()`, so the consumer is told the loss is cosmetic when it is total. Two lines, two files, and they are parallel by design |
 | 14 | `crudsql` does not classify `Rows.Err()`; `crudpgx` does, and its comment names exactly the divergence that creates | sharp edge | A server error raised mid-stream is a coded 409/400 through pgx and an anonymous 500 through `database/sql`. All four supported drivers report statement errors from `QueryContext`, so it is narrow, and nothing pins it either way |
-| 15 | `crudpgx.CopyFrom` on a handle without `COPY` returns `crud.ErrNoTxSupport` — "executor cannot begin transactions" | sharp edge | The message describes a different question than the one asked, and there is no sentinel for the one that was |
+| 15 | Historical: a COPY request on an unsupported handle returned `crud.ErrNoTxSupport` | closed (FW-CORE-003) | Explicit low-level bulk uses `crud.ErrNoBulkInsertSupport`; checked `InsertBatch` interprets only that before-I/O capability refusal as permission to use portable SQL. Empty input is a validated no-op. |
 | 16 | No runnable example wires `WithFaults` or `catalog.Load`, and both module docs write `cat, _ := catalog.Load(...)` against that function's own doc comment | sharp edge | The feature that turns a refused write into a field-level 409 has no compiled call site to copy, and the shipped snippet degrades silently to codes-without-columns when the role cannot read the schema |
 | 17 | `crud/dialect.go:65` claims CockroachDB as a Postgres target: no constructor, no captured corpus, no test | sharp edge | It is MySQL-with-a-footnote, which is the shape [[D-046]] exists to refuse, and a Cockroach consumer is routed through PostgreSQL's SQLSTATE table with nothing saying so |
 | 18 | `crudpgx.Queryer`'s three claimed handle types have no compile-time assertion, and a `*pgx.Conn` is bound nowhere | sharp edge | A pgx signature change breaks the consumer's build and not ours. Two of the three assertions are free; the `*pgxpool.Pool` one promotes two indirect requirements into a published module and is [[D-051]]'s decision |
@@ -683,8 +720,8 @@ consumer starts writing code this library was supposed to have written.
   by all three reviewers.** Conceded and corrected: it is the same *shape* nine
   times in three spellings, and the example that deserved naming —
   `auth-jwt-gin`, the only one that puts a `security.Gate` over a pgx source — is
-  now named, because that is the stack H-ADAPTERS-11's tenant-scope finding lands
-  on.
+  now named, because that is the stack on which H-ADAPTERS-11 now proves the
+  historical tenant-scope bypass is closed.
 - **Blocker 6 (isolation) was over-stated in round 1 and is kept, rewritten.** The
   claim that one `SERIALIZABLE` flow means "a second `Bind` for every repository
   it touches" was wrong five times over: `WithTxOptions` returns a copy holding
@@ -727,13 +764,12 @@ consumer starts writing code this library was supposed to have written.
   H-FAULTS-28 already states it, rates it ❌ and counts its blocker. Counting it
   twice would make the release look worse than it is; H-ADAPTERS-09 names it in
   one sentence and says where it is counted.
-- **`CopyUnchecked` keeps the source argument, and now takes models rather than
-  rows.** A `*sqlrepo.Blueprint` holds a meta, a plan, the settings, the relation
-  scopes and the soft-delete field (`crud/sqlrepo/blueprint.go:138-144`) and no
-  handle, so there is nothing on `Products` for the call to resolve an executor
-  from. The `[][]any` half of round 1's proposal is withdrawn: it left the caller
-  hand-ordering values against a column list they could not see, which is the
-  defect the case exists for.
+- **The historical `CopyUnchecked` proposal is withdrawn.** It kept storage
+  below the repository and therefore could not preserve Gate or another Core
+  decorator. The implemented `Repo.InsertBatch` takes typed models after `Bind`,
+  so it has both metadata and the source-bound executor; no caller hand-orders
+  `[][]any`. Only explicitly low-level `UnsafeBulkInsert*` APIs retain that raw
+  shape.
 
 ## Edge cases
 
@@ -819,29 +855,39 @@ consumer starts writing code this library was supposed to have written.
 **Blast radius:** silent wrong answer
 
 ### E-ADAPTERS-10 — Pointer: pgx COPY targets a schema-qualified table
-**Owner:** This is `crudpgx`-only: `crudsql` exposes no COPY fast path. The pgx adapter must either accept schema and relation as distinct identifier parts or reject dotted input before PostgreSQL sees it.
-**Setup:** A PostgreSQL application keeps tenant tables outside `public` and calls `CopyFrom(ctx, "tenant_42.products", columns, rows)`.
+**Owner:** This is `crudpgx`-only: `crudsql` exposes no COPY fast path. The pgx
+adapter's explicit low-level path accepts a structured table reference and
+rejects dotted one-component input before PostgreSQL sees it.
+**Setup:** A PostgreSQL application keeps tenant tables outside `public` and
+either uses a repository declared with `DefineInSchema`, or deliberately calls
+`UnsafeCopyFrom(ctx, "tenant_42.products", columns, rows)`.
 **What the consumer does:** They expect the normal PostgreSQL spelling to reach `tenant_42.products`, or a clear rejection that says the API accepts only one identifier component.
 **What must happen:** The COPY API accepts a schema and relation as distinct identifier parts, or rejects dotted input before contacting PostgreSQL.
 **Today:** ✅ supported
-**Evidence:** `crudpgx.Executor.CopyFromTable` accepts a validated
+**Evidence:** `crudpgx.Executor.UnsafeCopyFromTable` accepts a validated
 `crud.TableRef` and passes `Schema` and `Name` as separate exact
-`pgx.Identifier` components. Compatibility `CopyFrom(table string, ...)`
-accepts one component and rejects a dot before the wrapped pgx handle is called.
+`pgx.Identifier` components. `UnsafeCopyFrom(table string, ...)` accepts one
+component and rejects a dot before the wrapped pgx handle is called; the old
+unmarked `CopyFrom*` spellings were removed before release.
 `crud/adapter/crudpgx/copy_test.go` pins both the two-component hand-off and the
 no-call refusal; the live PostgreSQL
-`TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable` writes through both
-the qualified repository and COPY paths and proves the rejected dotted call
-changes no rows.
+qualified-table journey writes through the checked repository path and proves
+the rejected dotted unsafe call changes no rows.
 **Blast radius:** confusing error
 
 ### E-ADAPTERS-11 — COPY is asked to import an empty feed
 **Shape:** boundary
 **Setup:** A scheduled import has no rows after validation but still takes the same COPY path as a non-empty file.
-**What the consumer does:** They expect `CopyFrom` to return zero, make no durable change, and avoid turning an empty normal condition into a driver-specific protocol error.
+**What the consumer does:** They expect `InsertBatch` (or an intentional
+`UnsafeCopyFrom*` call) to return without a durable change and avoid turning an
+empty normal condition into a driver-specific protocol error.
 **What must happen:** The empty input is either a tested no-op with count zero or a documented, deliberate refusal; it must not be left to a version-specific driver behaviour.
-**Today:** ❓ unverified
-**Evidence:** `crudpgx.Executor.CopyFrom` forwards every `[][]any`, including an empty slice, unchanged to `pgx.CopyFromRows` (`crud/adapter/crudpgx/crudpgx.go:117-125`). The only live COPY test passes two rows (`test/integration/driver_pgx_test.go:110-124`); no zero-row COPY case was found in `crud/adapter/crudpgx` or its adjacent integration test.
+**Today:** ✅ covered
+**Evidence:** `Repo.InsertBatch` is a universal zero-row no-op even when an
+opaque Core has no batch capability. `UnsafeBulkInsertFor` and
+`UnsafeCopyFromTable` validate the table declaration, then return count zero
+before touching pgx. `crud/batch_test.go` and
+`crud/adapter/crudpgx/copy_test.go` pin both sides, including no handle call.
 **Blast radius:** confusing error
 
 ### E-ADAPTERS-12 — Two classifier options disagree
@@ -865,13 +911,13 @@ changes no rows.
 ## Edge verdict
 
 The adapters defer nil dependency and dialect mistakes to request-time crashes,
-and `crudsql` deliberately has no way to retain a close-time cursor error. The
-pgx-only COPY entry point is careful to use pgx identifiers, but its one-string
-shape cannot express the schema-qualified table a PostgreSQL deployment normally
-names. Connection ownership, pgx connection sharing, commit cancellation, empty
-COPY, and the repository callback's typed-driver-error journey are not falsely
-called safe here: the implementation exposes the seams, but the adjacent tests
-do not pin the consumer contract.
+and `crudsql` deliberately has no way to retain a close-time cursor error.
+Qualified and empty pgx bulk boundaries are now explicit and tested: the checked
+repository path carries structured metadata, while the exact low-level path is
+named `UnsafeCopyFrom*`, rejects dotted one-component input and treats an empty
+row set as a validated no-op. Connection ownership, pgx connection sharing,
+commit cancellation, and the repository callback's unrelated typed-driver-error
+journey remain the unclosed edge questions here.
 
 ## Release blockers found here (edge)
 
@@ -893,10 +939,12 @@ accessor must be the same proposal Faults uses, rather than two adapter-specific
 routes: proposed `WithFaultsFrom(src)` copies immutable classifier configuration
 into `From(tx, ...)`, and the proposed `DB.Join`/adoption call scopes that
 transaction to the source's database. Neither turns a foreign transaction into a
-new source or adopts its lifetime. Any optional capability needed through a
-source wrapper — including the proposed COPY lookup — must be preserved by a
-[[D-061]]-style unwrap walk; a bare assertion would make instrumentation change
-semantics. Today `crudsql.Open` returns concrete `DB`
+new source or adopts its lifetime. Read-only optional capabilities needed
+through a source wrapper remain governed by the [[D-061]] walk. Native bulk is
+the deliberate exception: it is an effect capability and must be forwarded
+explicitly; otherwise checked `InsertBatch` selects SQL, with direct-call versus
+transaction-handle instrumentation governed by H-ADAPTERS-19. Today
+`crudsql.Open` returns concrete `DB`
 (`crud/adapter/crudsql/crudsql.go:136-185`), while neither `Introspect`,
 `WithCatalog`, `WithFaultsFrom`, nor `Join` exists (`rg` finds no such exported
 symbol under `crud/adapter/crudsql`).

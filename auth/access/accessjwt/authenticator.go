@@ -9,15 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// authenticator turns a signed access token into a principal.
-//
-// It reads no session row. That is the one thing a signed token buys, and it is
-// also why a revoked session keeps working until the token expires unless a
-// [RevocationList] is configured — stated here rather than discovered.
-//
-// What it still reads, on every request: whether the subject is active, and
-// what it is granted. Both come from rows on purpose, so deactivating an
-// account and taking a role away both bite on the next call.
 type authenticator struct {
 	core   *core
 	parser *authjwt.Parser[Claims]
@@ -25,13 +16,6 @@ type authenticator struct {
 
 var _ auth.Authenticator = (*authenticator)(nil)
 
-// Authenticate implements auth.Authenticator.
-//
-// Every refusal is auth.Unauthenticated with a reason that stays in the wrapped
-// error and never reaches a body. A failure that is *not* a refusal — the
-// revocation list is unreachable — is returned as itself, so it renders as a
-// 500 and shows up where somebody watches the 5xx rate rather than as a
-// mysterious wave of 401s.
 func (this *authenticator) Authenticate(ctx context.Context, credential auth.Credential) (auth.Principal, error) {
 	if !credential.Is(auth.SchemeBearer) {
 		return nil, auth.Unauthenticated("unsupported authentication scheme")
@@ -42,10 +26,6 @@ func (this *authenticator) Authenticate(ctx context.Context, credential auth.Cre
 		return nil, auth.Unauthenticated("the presented token is not a valid access token")
 	}
 
-	// The subject type is checked and not taken. A token minted for one kind of
-	// caller presented to another's guard verifies its signature perfectly —
-	// the session is genuine, nothing looks wrong, and the caller is simply
-	// somebody other than the route assumed.
 	if claims.SubjectType != string(this.core.deps.Subject.Type) {
 		return nil, auth.Unauthenticated("the token was issued for another subject type")
 	}

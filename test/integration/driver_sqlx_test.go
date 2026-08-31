@@ -12,7 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
 )
 
-// sqlx handles are *sql.DB and *sql.Tx underneath, so crudsql takes them as is.
 func TestSqlx(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -32,7 +31,6 @@ func TestSqlx(t *testing.T) {
 	}
 }
 
-// One transaction, two APIs: sqlx's StructScan and vv's repository.
 func TestSqlxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -46,7 +44,6 @@ func TestSqlxSharedTransaction(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	// crudsql.From accepts the sqlx transaction directly.
 	txCtx := source.BindExecutor(ctx, tx)
 	u := User{TenantID: 1, Email: "sqlx@x.io", Name: "Sqlx", Age: crud.Set(44)}
 	if stored, err := repository.Save(txCtx, &u); err != nil {
@@ -67,7 +64,6 @@ func TestSqlxSharedTransaction(t *testing.T) {
 		t.Fatalf("sqlx read back %+v", row)
 	}
 
-	// A row written by sqlx is visible to the repository in the same transaction.
 	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO users (tenant_id, email, name, active) VALUES ($1, $2, $3, true)",
 		1, "by-sqlx@x.io", "BySqlx"); err != nil {

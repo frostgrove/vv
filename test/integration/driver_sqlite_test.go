@@ -8,17 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	// A pure-Go SQLite, so the third engine costs no cgo and no container.
 	_ "modernc.org/sqlite"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
 )
 
-// openSQLite builds a fresh, file-backed database for one test. Files rather
-// than :memory: because a file is where SQLite's locking and its transactions
-// actually behave like a database; one connection because SQLite serialises
-// writers anyway, and a queue is a friendlier failure than SQLITE_BUSY.
 func openSQLite(t *testing.T) *sql.DB {
 	t.Helper()
 	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "vv.db"))
@@ -33,18 +28,10 @@ func openSQLite(t *testing.T) *sql.DB {
 	return database
 }
 
-// The third dialect, running the same conformance suite as the two servers.
-// It is a different set of answers to the same questions — RETURNING like
-// PostgreSQL, `?` markers like MySQL, no row locks at all — so shipping it
-// untested meant shipping a dialect nobody had ever run.
 func TestSQLite(t *testing.T) {
 	RunSuite(t, Target{Name: "database/sql+sqlite", DB: "sqlite", Source: crudsql.SQLite(openSQLite(t))})
 }
 
-// SQLite's grammar has no bare OFFSET: `LIMIT` has to come first, and its
-// spelling of "no limit" is -1, not MySQL's 64-bit sentinel. The combination
-// arrives from the wire as {"unpaged":true,"offset":5} and used to reach the
-// database as `... OFFSET 5`, which SQLite rejects outright.
 func TestSQLiteTakesAnOffsetWithoutALimit(t *testing.T) {
 	ctx := context.Background()
 	repository := Users.Bind(crudsql.SQLite(openSQLite(t)))
@@ -59,9 +46,6 @@ func TestSQLiteTakesAnOffsetWithoutALimit(t *testing.T) {
 	}
 }
 
-// SQLite has no default LIKE escape character. This is a behavioural regression
-// test, rather than just a rendered-SQL assertion: the ESCAPE clause must make
-// a caller's %, _ and backslash literal on the actual engine.
 func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 	ctx := context.Background()
 	repository := Users.Bind(crudsql.SQLite(openSQLite(t)))
@@ -101,11 +85,6 @@ func TestSQLiteLiteralLikeHelpers(t *testing.T) {
 	}
 }
 
-// SQLite locks the database, not the row, so there is no FOR UPDATE to render.
-// The clause is dropped rather than refused — the statement is still correct,
-// and inside a transaction SQLite gives the serialisation the caller wanted —
-// but a silently missing lock is worth pinning, and it is in README's sharp
-// edges for the same reason.
 func TestForUpdateIsANoOpOnSQLite(t *testing.T) {
 	ctx := context.Background()
 	database := openSQLite(t)
@@ -124,8 +103,6 @@ func TestForUpdateIsANoOpOnSQLite(t *testing.T) {
 	}
 }
 
-// The savepoint shape, on the dialect that has no adapter of its own: crudsql
-// gives every *sql.DB the same nested Begin, and SQLite honours it.
 func TestSQLiteSavepointRollsBackWithoutLosingTheTransaction(t *testing.T) {
 	ctx := context.Background()
 	source := crudsql.SQLite(openSQLite(t))

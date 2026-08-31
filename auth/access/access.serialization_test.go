@@ -17,10 +17,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// These are the deterministic half of FW-AUTH-003. The database integration
-// suite proves that the statements block one another on each supported server;
-// here the two queued versions model a reset committing between login's
-// candidate lookup and its locking read. Only the latter may decide anything.
 func TestLoginUsesTheCurrentLockingReadNotTheCandidateSnapshot(t *testing.T) {
 	ref := SubjectRef{Type: testSubject, ID: uuid.New()}
 	id := uuid.New()
@@ -106,8 +102,7 @@ func TestCredentialLocksAreExactPrimaryKeyReadsInByteOrderAtHighCount(t *testing
 		ids[i] = uuid.New()
 	}
 	discovery := append([]uuid.UUID(nil), ids...)
-	// Deliberately reverse the discovery order; the repository must not trust a
-	// secondary-index scan or its SQL ORDER BY as InnoDB's physical lock order.
+
 	for left, right := 0, len(discovery)-1; left < right; left, right = left+1, right-1 {
 		discovery[left], discovery[right] = discovery[right], discovery[left]
 	}
@@ -164,8 +159,6 @@ func TestCredentialLockSetRevalidatesRowsChangedAfterDiscovery(t *testing.T) {
 	for _, id := range ids {
 		rowRef := ref
 		if id == movedID {
-			// This row belonged to ref during discovery but was moved before its
-			// exact current locking read. It must not enter the authenticated set.
 			rowRef = other
 		}
 		recorder.Push(crudtest.Rows(serialCredentialRow(
@@ -181,10 +174,6 @@ func TestCredentialLockSetRevalidatesRowsChangedAfterDiscovery(t *testing.T) {
 	}
 }
 
-// MySQL and MariaDB report zero changed rows when an UPDATE assigns the value a
-// row already has. The fence must still emit that UPDATE and accept its result:
-// on those engines the preceding current locking read supplies correctness,
-// while PostgreSQL uses the physical tuple version the same statement creates.
 func TestSessionIssueFenceDoesNotOptimiseAwayAnEqualValueOrRequireAffectedRows(t *testing.T) {
 	ref := SubjectRef{Type: testSubject, ID: uuid.New()}
 	credential := Credential{
@@ -396,9 +385,6 @@ func (this *serialIssuer) Issue(ctx context.Context, _ SubjectRef, _ Agent) (Aut
 	return this.response, this.err
 }
 
-// serialSource is a transaction-capable test datasource whose final commit can
-// fail. It pins the use-case contract at the only point a normal recorder
-// cannot express: Issue returned a credential, then commit refused it.
 type serialSource struct {
 	*crudtest.Recorder
 	commitErr error

@@ -49,8 +49,6 @@ func TestRemoteAcceptsExactStringCountsFromStructTransports(t *testing.T) {
 	}
 }
 
-// clause renders a narrowing the way the database would see it, which is how
-// two option lists are compared when one of them holds an opaque predicate.
 func clause(t *testing.T, o *crud.Options) (string, []any) {
 	t.Helper()
 	sql, args, err := crud.NewSQL(crud.Postgres{}, widgetMeta).Predicate(o.Predicate()).Done()
@@ -60,9 +58,6 @@ func clause(t *testing.T, o *crud.Options) (string, []any) {
 	return sql, args
 }
 
-// Every method, end to end: a real client, a real HTTP server, a real binding.
-// Nothing between them is a stub, so what this proves is that the encode and
-// the decode agree — which is the only thing a client test can be about.
 func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
@@ -123,7 +118,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if got.ID != 42 {
 			t.Fatalf("the far side was asked for row %d", got.ID)
 		}
-		// The projection always carries the key, which crud.Select adds.
+
 		if !contains(got.Opts.Fields, "Name") {
 			t.Fatalf("the projection arrived as %v", got.Opts.Fields)
 		}
@@ -171,8 +166,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if saved.ID != 42 {
 			t.Fatalf("the key moved to %d", saved.ID)
 		}
-		// PUT loads the row first, so the repository sees a GetByID and then a
-		// Save. A key that had gone out as a create would show no GetByID.
+
 		if len(f.calls) < 2 || f.calls[0].Method != "GetByID" {
 			t.Fatalf("a set key did not take the replace route: %v", methods(f))
 		}
@@ -192,8 +186,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 		if got.DTO.Name == nil || *got.DTO.Name != "spanner" {
 			t.Fatalf("the patch arrived as %+v", got.DTO)
 		}
-		// The field nobody sent stays absent, which is the three-state property
-		// a document has to keep to be worth having.
+
 		if got.DTO.Price != nil || got.DTO.Note.IsDefined() {
 			t.Fatalf("a field nobody sent arrived defined: %+v", got.DTO)
 		}
@@ -544,7 +537,7 @@ func TestUnsupportedNestedPreloadOptionsAreRefusedBeforeTheyCanBeLost(t *testing
 func TestGetAllRefusesAnInconsistentRemoteExport(t *testing.T) {
 	f := newFake()
 	f.page = crud.NewPaginatedResponse(f.page.Items[:1], 1, 1, 2)
-	f.page.HasNext = false // claims the one-item page was complete despite total
+	f.page.HasNext = false
 	_, err := client(t, serve(t, f)).GetAll(context.Background())
 	var partial *remote.PartialResultError
 	if !errors.As(err, &partial) {
@@ -596,11 +589,7 @@ func TestGetAllSwitchesToCursorsBeforeAnEndpointsOffsetBudget(t *testing.T) {
 	if len(all) != 3 || all[0].ID != 1 || all[1].ID != 2 || all[2].ID != 3 {
 		t.Fatalf("GetAll() = %+v, want every row behind MaxLimit(1)", all)
 	}
-	// Four and not five: the walk stops on the first cursor page that reports
-	// no next edge and no more rows, rather than spending a terminal probe to
-	// see an empty one. A page claiming no edge *and* more rows is a
-	// PartialResultError, so the saved round trip cannot hide a truncation —
-	// and the row assertion above is what proves nothing went missing.
+
 	if got := len(rec.Statements()); got != 4 {
 		t.Fatalf("sql calls = %d, want a first-page read and count, then two cursor reads", got)
 	}
@@ -657,7 +646,7 @@ func TestGetAllRefusesAnEmptyCursorPageThatClaimsMore(t *testing.T) {
 func TestGetAllFollowsACursorEdgeEvenWhenHasNextIsFalse(t *testing.T) {
 	f := newFake()
 	first := crud.NewPaginatedResponse(f.page.Items[:1], 0, 1, 1)
-	first.NextCursor = "after-first" // a cursor edge is stronger than a stale HasNext flag
+	first.NextCursor = "after-first"
 	last := crud.NewPaginatedResponse(f.page.Items[1:], 0, 1, 1)
 	terminal := crud.NewPaginatedResponse[Widget](nil, 0, 1, 0)
 	f.cursors = map[string]crud.PaginatedResponse[Widget]{
@@ -746,10 +735,6 @@ func TestGetAllKeepsTheCompletenessTotal(t *testing.T) {
 	}
 }
 
-// The point of crud.MarshalPredicate, measured where it matters: a filter
-// written in Go reaches the far side as the same narrowing a local repository
-// would have been given. Without it the request carries no filter at all and
-// the answer is every row, over a 200.
 func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	f := newFake()
 	base := serve(t, f)
@@ -780,10 +765,6 @@ func TestAFilterWrittenInGoArrivesAsTheSameNarrowing(t *testing.T) {
 	}
 }
 
-// A refusal keeps its class, its violations and the sentinel a caller branches
-// on. This is what the whole client is for: the branch a consumer wrote against
-// a repository in this process keeps working when the repository moves out of
-// it.
 func TestAConflictArrivesAsAConflictWithItsViolations(t *testing.T) {
 	f := newFake()
 	f.err = errs.Conflict().
@@ -820,9 +801,6 @@ func TestAConflictArrivesAsAConflictWithItsViolations(t *testing.T) {
 		t.Fatalf("the violation arrived as %+v", v)
 	}
 
-	// The other half, and the control on the assertion above: nothing internal
-	// crosses. If any of these appeared, the positive assertions would still
-	// pass and the client would be a disclosure.
 	for _, secret := range []string{"widgets_name_key", "23505", "1062", "duplicate key", "pq:"} {
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("%q reached the caller", secret)
@@ -836,9 +814,6 @@ func TestAConflictArrivesAsAConflictWithItsViolations(t *testing.T) {
 	}
 }
 
-// A stale write is a conflict and a stale write, and the finer branch is the
-// one a caller re-reads the row from. Over HTTP the code is recovered from the
-// violation, because the envelope carries no separate field for the fault's own.
 func TestAStaleWriteKeepsTheBranchACallerRereadsFrom(t *testing.T) {
 	f := newFake()
 	f.err = crud.ErrStaleVersion
@@ -852,8 +827,6 @@ func TestAStaleWriteKeepsTheBranchACallerRereadsFrom(t *testing.T) {
 	}
 }
 
-// A 500 says nothing, and the client must not invent anything to fill it. The
-// fixture is a failure built out of everything that must never cross.
 func TestAnInternalFailureArrivesEmpty(t *testing.T) {
 	f := newFake()
 	f.err = errors.New(`pq: password authentication failed for user "vv" on host db.internal:5432`)
@@ -874,17 +847,12 @@ func TestAnInternalFailureArrivesEmpty(t *testing.T) {
 			t.Fatalf("%q reached the caller", secret)
 		}
 	}
-	// The control: an internal failure still has to be an error a caller can
-	// see, or the assertions above would pass for a client that swallowed it.
+
 	if len(err.Error()) == 0 {
 		t.Fatal("the failure arrived with no text at all")
 	}
 }
 
-// The nastiest failure this client has, and the one a status-only decoder gets
-// wrong: a base URL that points at nothing gets the router's own 404 in plain
-// text. Read as a status it is crud.ErrNotFound, and a misconfigured service
-// then reports an empty table for as long as nobody looks.
 func TestARouters404IsNotAMissingRow(t *testing.T) {
 	f := newFake()
 	base := serve(t, f)
@@ -902,10 +870,6 @@ func TestARouters404IsNotAMissingRow(t *testing.T) {
 		t.Fatalf("it arrived as %T, which a caller cannot tell from a real answer: %v", err, err)
 	}
 
-	// And the harder half. A plain-text 404 fails to parse as JSON and would be
-	// caught by that alone; an API gateway, a service mesh or a load balancer
-	// answers JSON, and that body parses. What tells it apart is Envelope.Type,
-	// which is why the field exists.
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -921,19 +885,12 @@ func TestARouters404IsNotAMissingRow(t *testing.T) {
 		t.Fatalf("a gateway's JSON 404 arrived as %T: %v", err, err)
 	}
 
-	// The control. The same status from the same server, on a row the handler
-	// really did not find, must still be crud.ErrNotFound — otherwise the
-	// assertions above would pass for a client that never classifies anything.
 	f.err = crud.ErrNotFound
 	if _, err := client(t, base).GetByID(context.Background(), 42); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("a real missing row arrived as %v", err)
 	}
 }
 
-// An option that cannot cross has to say so before anything is sent. A relation
-// scope is the one that matters: it is what an access-control gate uses to hide
-// rows a preload would otherwise reach, and dropping it is a leak rather than a
-// slow query.
 func TestAnOptionThatCannotCrossIsRefusedBeforeAnythingIsSent(t *testing.T) {
 	scoped := crud.NarrowRelations(new(crud.RelationScopes).AtPath("Parts", crud.Eq("Label", "hex")))
 
@@ -966,16 +923,12 @@ func TestAnOptionThatCannotCrossIsRefusedBeforeAnythingIsSent(t *testing.T) {
 		})
 	}
 
-	// The control: an option that *can* cross is not refused, or the cases
-	// above would pass for a client that refused everything.
 	f := newFake()
 	if _, err := client(t, serve(t, f)).Get(context.Background(), crud.Distinct(), crud.SkipTotal()); err != nil {
 		t.Fatalf("an option that travels fine was refused: %v", err)
 	}
 }
 
-// crud.Raw is the one refusal that is a security answer rather than a missing
-// word: it is SQL, and a filter document carries field paths and values.
 func TestRawSQLIsNeverPutOnTheWire(t *testing.T) {
 	f := newFake()
 	_, err := client(t, serve(t, f)).Get(context.Background(), crud.Where(crud.Raw("1 = 1")))
@@ -1008,14 +961,10 @@ func methods(f *fakeRepo) []string {
 	return out
 }
 
-// An update DTO whose crud.Opt fields carry no `omitzero` cannot be sent: every
-// field the caller left undefined would arrive as an explicit null and empty
-// the column. It is refused when the resource is built, because by the time a
-// request has been made the damage is in the database.
 func TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup(t *testing.T) {
 	type loose struct {
 		Name *string          `json:"name,omitempty"`
-		Note crud.Opt[string] `json:"note"` // the missing tag
+		Note crud.Opt[string] `json:"note"`
 	}
 	if _, err := remote.TryNew[Widget, int64, loose](remotehttp.Transport("http://x")); err == nil {
 		t.Fatal("a DTO that would null out every unset column was accepted")
@@ -1023,9 +972,6 @@ func TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup(t *testing.T) {
 		t.Fatalf("the refusal does not say which field or what to do: %v", err)
 	}
 
-	// Two controls. The tag the generator writes is accepted, or the check is a
-	// blanket refusal; and a field that is never sent is not the check's
-	// business.
 	if _, err := remote.TryNew[Widget, int64, WidgetUpdate](remotehttp.Transport("http://x")); err != nil {
 		t.Fatalf("a generated DTO was refused: %v", err)
 	}
@@ -1037,17 +983,10 @@ func TestAPatchDtoThatWouldEmptyAColumnIsRefusedAtStartup(t *testing.T) {
 	}
 }
 
-// A remote resource is a port.Repository, so a binding mounts it and the
-// service in front of it becomes a gateway over the one behind. Two hops, and
-// what comes out the far end is what went in the near one.
-//
-// This is what the interface is for. A client that only had methods of its own
-// could not be re-exposed, decorated, or stood in for a local repository.
 func TestARemoteResourceMountsAsAGateway(t *testing.T) {
 	ctx := context.Background()
 	origin := newFake()
 
-	// The gateway holds a client to the origin and serves it as its own API.
 	gateway := serve(t, client(t, serve(t, origin)))
 
 	page, err := client(t, gateway).Get(ctx, crud.Where(crud.Eq("Name", "bolt")), crud.Limit(2))
@@ -1058,15 +997,11 @@ func TestARemoteResourceMountsAsAGateway(t *testing.T) {
 		t.Fatalf("the page came back as %+v", page)
 	}
 
-	// The filter made it through both hops. One that stopped at the gateway
-	// would still answer 200 with the same canned page, which is why this is
-	// asserted at the origin rather than on the response.
 	sql, _ := clause(t, origin.last(t).Opts)
 	if !strings.Contains(sql, `"name"`) {
 		t.Fatalf("the origin was asked %q, so the filter stopped at the gateway", sql)
 	}
 
-	// And so does a refusal, sentinel included.
 	origin.err = crud.ErrNotFound
 	if _, err := client(t, gateway).GetByID(ctx, 42); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("a missing row two hops away arrived as %v", err)

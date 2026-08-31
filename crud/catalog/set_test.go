@@ -10,12 +10,6 @@ import (
 	"github.com/frostgrove/vv/crud/crudtest"
 )
 
-// What a Set has to get right is which database a catalog belongs to. Everything
-// here is one assertion about that, and every one of them carries the twin that
-// fails for the opposite mistake — because a Set that merged everything and a Set
-// that shared nothing both pass half of these on their own.
-
-// passes reports how many introspection passes a recorder saw.
 func passes(t *testing.T, r *crudtest.Recorder) int {
 	t.Helper()
 	n := len(r.Statements())
@@ -54,9 +48,6 @@ func TestTwoSourcesOverDifferentHandlesDoNotShareACatalog(t *testing.T) {
 	}
 }
 
-// The control for the test above. Without it a Set that simply loads a fresh
-// catalog every call — no keying at all — passes, because two fresh catalogs are
-// also two different catalogs.
 func TestTwoIndependentlyBuiltSourcesOverOneHandleShareOneCatalog(t *testing.T) {
 	ctx := context.Background()
 	handle := new(int)
@@ -82,12 +73,6 @@ func TestTwoIndependentlyBuiltSourcesOverOneHandleShareOneCatalog(t *testing.T) 
 	}
 }
 
-// Two declarers over one handle at once. Both read — the load is outside the
-// lock on purpose — and the re-scan before the append is what makes the second
-// one back drop its own catalog and take the first one's. Without it the Set
-// holds two entries for one handle, the two declarers hold two catalogs with two
-// negative caches and two reload floors, and which schema a repository consults
-// depends on which goroutine appended first.
 func TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog(t *testing.T) {
 	ctx := context.Background()
 	handle := new(int)
@@ -131,11 +116,6 @@ func TestTwoGoroutinesDeclaringOverOneHandleEndUpWithOneCatalog(t *testing.T) {
 		t.Errorf("the Set holds %d entries for one handle, want 1", n)
 	}
 
-	// The control. Both goroutines have to have really been inside the load: a
-	// recorder that saw nothing means one of them short-circuited on the first
-	// scan and the assertions above proved nothing about the second. One pass
-	// each is what the unlocked load makes them run — asserting a single pass
-	// between them would fail against correct code.
 	for i, source := range srcs {
 		if got := passes(t, source.Recorder); got != 1 {
 			t.Errorf("declarer %d ran %d introspection passes, so it never reached the load the re-scan exists to reconcile", i, got)
@@ -169,8 +149,6 @@ func TestAReadWritePairAndItsPrimaryShareOneCatalog(t *testing.T) {
 	}
 }
 
-// The control for the test above: keying on the pair value rather than on the
-// identity it forwards would still pass that one, because a pair equals itself.
 func TestAReadWritePairOverAnotherPrimaryGetsItsOwnCatalog(t *testing.T) {
 	ctx := context.Background()
 	replica := identified{Recorder: recorder(oneTable(), 1), handle: new(int)}
@@ -191,13 +169,6 @@ func TestAReadWritePairOverAnotherPrimaryGetsItsOwnCatalog(t *testing.T) {
 	}
 }
 
-// The exact difference between crud.KeyOf and a src.(crud.Identified) test.
-//
-// A crud.ReadWrite pair *is* Identified and answers nil when its primary is not.
-// Under the interface test both pairs below key on nil, crud.SameDataSource(nil,
-// nil) is false, and so neither entry is ever found again: the two catalogs come
-// out different — the first half passes — while every lookup misses and every
-// Load re-introspects. That is what the pass counts here catch.
 func TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide(t *testing.T) {
 	ctx := context.Background()
 	recA, recB := recorder(oneTable(), 2), recorder(oneTable(), 2)
@@ -231,7 +202,6 @@ func TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide(t *testing.T) {
 		t.Error("two pairs over two different unidentified primaries share one catalog")
 	}
 
-	// The half that fails under the interface test: the same pair, asked twice.
 	again, err := set.Load(ctx, pairA)
 	if err != nil {
 		t.Fatal(err)
@@ -244,14 +214,6 @@ func TestTwoReadWritePairsOverUnidentifiedPrimariesDoNotCollide(t *testing.T) {
 	}
 }
 
-// The recorder identifies itself after D-082 so its transaction can be scoped
-// safely. That still makes one recorder one catalog and two recorders two
-// catalogs; the catalog seam and transaction seam now agree on the identity.
-//
-// Self-controlling in both directions, and the pass count is what makes that
-// true. A Set that refused every unidentified source fails the first half; one
-// that merged them fails it too; one that never remembers anything fails the
-// second half on the count rather than on identity.
 func TestTheRecorderKeysAsItselfSoTheProbeHasAUnitTestSeam(t *testing.T) {
 	ctx := context.Background()
 	recA, recB := recorder(oneTable(), 2), recorder(oneTable(), 1)
@@ -295,15 +257,10 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 		name   string
 		source func(*crudtest.Recorder) crud.Source
 	}{
-		// The handle itself is a slice: reflect calls the type uncomparable and
-		// crud.SameDataSource answers false without ever comparing.
 		{"an uncomparable handle", func(r *crudtest.Recorder) crud.Source {
 			return identified{Recorder: r, handle: weird}
 		}},
-		// The source names no database, so it *is* the key — and its type is a
-		// pointer beside an interface, which reflect.Type calls comparable even
-		// though the interface contains a slice. SameDataSource inspects the value
-		// recursively and refuses it without evaluating a panicking ==.
+
 		{"a source whose own type only looks comparable", func(r *crudtest.Recorder) crud.Source {
 			return awkward{anonymous: anonymous{recorder: r}, payload: weird}
 		}},
@@ -333,10 +290,6 @@ func TestAnUncomparableHandleIsRefusedRatherThanPanicking(t *testing.T) {
 	}
 }
 
-// The control. Without it a Set that refused every handle passes the test above,
-// and the second lookup is what says the refusal earns its keep: a stored
-// uncomparable key would never be matched again, so the failure it prevents is a
-// catalog that re-reads on every call and looks like it is working.
 func TestAComparableHandleIsAcceptedAndFoundAgain(t *testing.T) {
 	ctx := context.Background()
 	rec := recorder(oneTable(), 2)

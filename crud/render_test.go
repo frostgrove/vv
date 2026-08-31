@@ -8,9 +8,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// done asserts the whole statement at once: text, binds and the resolution
-// error, because a builder that renders the right SQL with the wrong argument
-// order is still broken.
 func done(t *testing.T, b *crud.SQL, wantSQL string, wantArgs ...any) {
 	t.Helper()
 	sql, args, err := b.Done()
@@ -30,8 +27,6 @@ func done(t *testing.T, b *crud.SQL, wantSQL string, wantArgs ...any) {
 	}
 }
 
-// One statement using every piece of the builder, in the order a repository
-// assembles it.
 func TestSQLBuilderAssemblesAWholeStatement(t *testing.T) {
 	m := articleMeta(t)
 	b := crud.NewSQL(crud.Postgres{}, m)
@@ -84,10 +79,6 @@ func TestSQLBuilderPieces(t *testing.T) {
 	}
 }
 
-// LIMIT and OFFSET are the one place the builder has to know a dialect quirk:
-// neither MySQL nor SQLite will take an OFFSET without a LIMIT in front of it,
-// and they spell "no limit" differently. `?unpaged=true&offset=5` is one wire
-// request away, and SQLite used to answer it with `near "5": syntax error`.
 func TestLimitOffset(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -112,7 +103,6 @@ func TestLimitOffset(t *testing.T) {
 	}
 }
 
-// The whole statement follows the dialect: markers and quoting both.
 func TestBuilderFollowsTheDialect(t *testing.T) {
 	m := articleMeta(t)
 	b := crud.NewSQL(crud.MySQL{}, m).
@@ -122,8 +112,6 @@ func TestBuilderFollowsTheDialect(t *testing.T) {
 	done(t, b, "SELECT `id`, `author_id` FROM `articles` WHERE (`title` = ? AND `views` > ?)", "Go", 10)
 }
 
-// An alias qualifies every column the statement renders, which is what lets a
-// batched preload put two tables in one FROM.
 func TestAliasQualifiesColumns(t *testing.T) {
 	m := articleMeta(t)
 	b := crud.NewSQL(crud.Postgres{}, m).Alias("a").
@@ -134,8 +122,6 @@ func TestAliasQualifiesColumns(t *testing.T) {
 	done(t, b, `SELECT a."title" FROM "articles" AS a WHERE a."views" = $1 ORDER BY a."title" ASC`, 1)
 }
 
-// A field that does not exist poisons the statement instead of producing SQL
-// that a database would have to reject.
 func TestUnknownFieldIsReportedNotRendered(t *testing.T) {
 	b := crud.NewSQL(crud.Postgres{}, articleMeta(t)).
 		Raw("SELECT ").Column("Nope").Raw(" FROM ").Table()
@@ -153,8 +139,6 @@ func TestUnknownFieldIsReportedNotRendered(t *testing.T) {
 	}
 }
 
-// The first failure is the one reported: a later error must not overwrite the
-// explanation of what actually went wrong.
 func TestOnlyTheFirstFailureIsKept(t *testing.T) {
 	b := crud.NewSQL(crud.Postgres{}, articleMeta(t)).Column("First").Raw(", ").Column("Second")
 
@@ -196,8 +180,6 @@ func TestBuilderExposesItsDialect(t *testing.T) {
 	}
 }
 
-// A repository may read the statement as it stands without finishing it, and
-// what it reads is what Done would hand back.
 func TestStringAndArgsReadTheStatementWithoutFinishingIt(t *testing.T) {
 	b := crud.NewSQL(crud.Postgres{}, articleMeta(t)).Raw("SELECT 1 WHERE ").Predicate(crud.Eq("Views", 3))
 

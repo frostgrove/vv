@@ -113,8 +113,8 @@ and the next decision written before its code does should say so here.
 | [D-058](D-058-the-layout-axis-is-the-subsystem.md) | The top-level directory is the subsystem and the transport is the second level; `repo/basic` becomes `crud/sqlrepo`, and `utils/` may not import a subsystem | accepted | process & tooling |
 | [D-059](D-059-the-http-projection-of-the-error-contract-belongs-to-port.md) | The status table, the envelope, the `Renderer` seam and the body decode are `port/porthttp`'s, so an auth middleware does not import the repository | accepted | transports, errors |
 | [D-060](D-060-a-request-may-not-choose-how-much-comes-back.md) | `query.Config` is open by default about what a request may *name* and closed about how much comes back; `unpaged` is declared per endpoint | accepted | querying, transports |
-| [D-061](D-061-a-wrapper-forwards-what-it-wraps.md) | No optional interface is found by a bare assertion on the layer below; a decorator forwards `Next()`, a Source wrapper forwards `UnwrapSource()`, and the library walks | accepted | core seam, transactions & datasources |
-| [D-062](D-062-the-library-logs-through-the-callers-logger.md) | The library never writes to a process-wide logger; every line goes through `port.Logger(ctx)`, and statements are instrumented by wrapping the `Source` | accepted | process & tooling, transports |
+| [D-061](D-061-a-wrapper-forwards-what-it-wraps.md) | Discovery follows declared wrapper walks; storage effects require exact explicit forwarding and never tunnel through an unknown layer | accepted | core seam, transactions & datasources |
+| [D-062](D-062-the-library-logs-through-the-callers-logger.md) | Library lines use `port.Logger(ctx)`; Source wrappers see direct calls, while complete transaction tracing belongs below the handles | accepted | process & tooling, transports |
 | [D-063](D-063-every-body-a-transport-reads-is-bounded.md) | Every request and response body is read under a byte cap, the same one on every binding, and a body past it is 413 / `ResourceExhausted` | accepted | transports, errors |
 | [D-064](D-064-migration-generation-never-guesses-a-model.md) | Automatic migration generation uses only one uniquely best model; ambiguity is interactive or empty, never guessed | accepted | process & tooling, migrations |
 | [D-065](D-065-structs-have-reference-semantics-unless-they-are-values.md) | A struct crosses an application boundary by pointer unless copying is its documented value semantics | accepted | API design, process & tooling |
@@ -132,17 +132,19 @@ and the next decision written before its code does should say so here.
 | [D-077](D-077-rollback-outlives-the-request-with-a-bound.md) | Rollback ignores request cancellation but keeps a finite cleanup deadline | accepted | transactions & datasources |
 | [D-078](D-078-jwt-trust-is-exact-bounded-and-distinguishes-outage.md) | HMAC names one strong algorithm, JWKS trust and stale-on-error are bounded, provider failure is not a credential refusal, and Standard principals have subjects | accepted | auth, security, resilience |
 | [D-079](D-079-bind-budgets-are-statement-wide.md) | Every statement respects its dialect bind budget, and chunks of one logical write are atomic | accepted | writes, querying, transactions |
-| [D-080](D-080-a-relation-table-name-is-immutable-after-resolution.md) | A relation target's table name is immutable after resolution; an independent blueprint does not publish one | accepted | relations, declarations |
+| [D-080](D-080-a-relation-table-name-is-immutable-after-resolution.md) | A relation target's structured table reference is immutable; no dotted string is guessed into components | accepted | relations, declarations |
 | [D-081](D-081-database-secrets-are-values-and-typed-tls-is-verified.md) | Database secrets render redacted, and an omitted typed-server TLS mode means verified TLS | accepted | configuration, security |
 | [D-082](D-082-source-bound-sessions-are-the-safe-default.md) | A safe executor binding names its canonical source; unconditional adoption is explicitly unsafe | accepted | transactions & datasources |
+| [D-083](D-083-native-bulk-is-an-explicit-repository-capability.md) | Safe batch insertion is typed and policy-aware; native bulk is the magic default, portable SQL the explicit opt-out, and raw effects are Unsafe | accepted | writes, core seam, transactions & datasources |
 
 ## By area
 
 **Core seam** — D-001 (two-parameter `Core`, three-parameter `Repo`),
 D-002 (`Opt[T]`), D-021 (why any of it is reflective), D-022 (the handler's
 interface), D-030 (a verb on the seam is every decorator's obligation, and the
-test that enforces it), D-061 (what embedding erases, and the two one-method
-interfaces that survive it).
+test that enforces it), D-061 (what embedding erases, which discovery walks are
+safe, and why storage effects require exact forwarding), D-083 (the optional
+typed batch effect and its fail-closed decorator boundary).
 
 **Querying** — D-060 (what a request may name, and how much it may ask for),
 D-028 (cursor pagination), D-003 (closed AST, `Raw`), D-004 (`Where` ANDs),
@@ -176,13 +178,15 @@ finite JWKS freshness, typed outage handling, unambiguous key sets and the
 non-empty subject promised by `Standard`.
 
 **Writes** — D-010 (load-diff-write, locking, `version`), D-011 (`Save` is
-JPA-shaped), D-012 (PUT does not create), D-002 (three-state DTO fields).
+JPA-shaped), D-083 (typed insert-only batch, native magic and portable opt-out),
+D-012 (PUT does not create), D-002 (three-state DTO fields).
 
 **Transactions & datasources** — D-082 (source-bound sessions by default,
 strict legacy inference and the explicit unsafe escape hatch), D-019 (dialect
 differences), D-077 (bounded detached rollback), D-079 (atomic write chunks),
-D-041 (what else keys on datasource identity), D-042 (why the ownership flag
-exists at all). D-009 and D-027 retain the superseded argument.
+D-083 (native effects resolve the same source-bound executor), D-041 (what else
+keys on datasource identity), D-042 (why the ownership flag exists at all).
+D-009 and D-027 retain the superseded argument.
 
 **HTTP** — D-063 (the body cap, and why all three bindings share one number),
 D-062 (where the library's own log lines go), D-012 (PUT), D-022 (interface, not
@@ -220,16 +224,16 @@ mapping is in one place rather than one per binding, and where the violations
 pipeline lives now), D-052 (the second vocabulary the same kinds are rendered
 into, and what it costs).
 
-**Dialects** — D-019 (what is hidden and what is observable, now eleven
+**Dialects** — D-019 (what is hidden and what is observable, now twelve
 differences), D-011 (the upsert forms), D-010 (why MySQL re-reads), D-041 (the
 per-engine half of difference 9), D-046 (difference 10 — what a classified
 violation can say, and which constructor decided the engine), D-042
 (difference 11 — which violations the probe can find on which engine, whether it
 runs inside a transaction at all, and how much a folded violation is known to
-mean).
+mean), D-083 (difference 12 — explicit native COPY versus portable INSERT).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
-D-080 (immutable relation table resolution and independent blueprints),
+D-080 (immutable structured table resolution, qualified refs and independent blueprints),
 D-025 (fail-fast key normalisation).
 
 **Process & tooling** — D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a

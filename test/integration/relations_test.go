@@ -19,7 +19,6 @@ import (
 	"github.com/frostgrove/vv/crud/query"
 )
 
-// blog is one database's worth of bound repositories.
 type blog struct {
 	name     string
 	database *sql.DB
@@ -31,12 +30,6 @@ type blog struct {
 	stats    *crud.Repo[ArticleStats, int64, struct{}]
 }
 
-// blogs is every distinct crud.Source the relation subsystem can be reached
-// through. It is deliberately the same shape as egTargets: correlated EXISTS
-// filters, scalar-subquery sorts, four kinds of preload and the 900-key chunking
-// are the most intricate SQL in the library, and for a long time all of it ran
-// on `database/sql` alone. The blog tables are plain SQL, so ent needs no schema
-// of its own here — only its driver, which is the point.
 func blogs(t *testing.T) []blog {
 	t.Helper()
 	return []blog{
@@ -47,8 +40,6 @@ func blogs(t *testing.T) []blog {
 	}
 }
 
-// newBlog binds every repository in the fixture. Building one by hand is how a
-// test ends up with a nil repository the day the fixture grows another model.
 func newBlog(name string, database *sql.DB, source crud.Source) blog {
 	return blog{
 		name:     name,
@@ -62,11 +53,6 @@ func newBlog(name string, database *sql.DB, source crud.Source) blog {
 	}
 }
 
-// seedBlog builds a small, fully-linked graph:
-//
-//	Ann   -> "go generics" (100 views, published) [go, rust]  + 2 comments
-//	Ann   -> "draft"       (  1 view,  unpublished)
-//	Bob   -> "rust traits" ( 50 views, published) [rust]      + 1 comment
 func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Article) {
 	t.Helper()
 	ctx := context.Background()
@@ -83,9 +69,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Save answers the stored row and never changes what it was
-		// handed, so the generated key has to be written back here or
-		// every row that references it is seeded against a zero id.
+
 		*a = stored
 	}
 
@@ -98,9 +82,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Save answers the stored row and never changes what it was
-		// handed, so the generated key has to be written back here or
-		// every row that references it is seeded against a zero id.
+
 		*a = stored
 	}
 
@@ -110,9 +92,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Save answers the stored row and never changes what it was
-		// handed, so the generated key has to be written back here or
-		// every row that references it is seeded against a zero id.
+
 		*tg = stored
 	}
 	for _, link := range [][2]int64{
@@ -124,8 +104,6 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		}
 	}
 
-	// draft deliberately has no stats row: a has_one with nothing on the other
-	// end has to come back as a nil pointer, not as a zero-valued struct.
 	for _, st := range []*ArticleStats{
 		{ArticleID: generics.ID, WordCount: 500},
 		{ArticleID: traits.ID, WordCount: 50},
@@ -134,9 +112,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Save answers the stored row and never changes what it was
-		// handed, so the generated key has to be written back here or
-		// every row that references it is seeded against a zero id.
+
 		*st = stored
 	}
 
@@ -149,9 +125,7 @@ func seedBlog(t *testing.T, b blog) (ann, bob Author, generics, draft, traits Ar
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Save answers the stored row and never changes what it was
-		// handed, so the generated key has to be written back here or
-		// every row that references it is seeded against a zero id.
+
 		*c = stored
 	}
 	return ann, bob, generics, draft, traits
@@ -184,8 +158,6 @@ func eq(a, b []string) bool {
 	return true
 }
 
-// Filtering across a relation runs as a correlated EXISTS, so a to-many match
-// never duplicates a parent row and never inflates the count.
 func TestNestedFiltersAgainstDatabases(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -242,8 +214,6 @@ func TestNestedFiltersAgainstDatabases(t *testing.T) {
 	}
 }
 
-// The bug a join-based implementation walks into: an article with two matching
-// tags must still be one row, and the total must still be one.
 func TestToManyFilterDoesNotDuplicateOrInflateCount(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -283,9 +253,7 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 
 			var request query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["author.name","-views"],"unpaged":true}`), &request)
-			// The endpoint declares AllowUnpaged: this route serves whole
-			// result sets, which is a thing an endpoint says rather than a
-			// thing a request may decide for it ([[D-060]]).
+
 			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
@@ -294,15 +262,11 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Ann's two articles first (by views desc), then Bob's.
+
 			if want := []string{"go generics", "draft", "rust traits"}; !eq(titles(got), want) {
 				t.Fatalf("got %v, want %v", titles(got), want)
 			}
 
-			// A has_one sorts the same way a belongs_to does — one scalar
-			// subquery — and the article with no stats row goes wherever the
-			// engine puts a NULL, so this asks only for the order of the two
-			// that have one.
 			var byWords query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["-stats.wordCount"],"filter":{"stats.wordCount":{"gt":0}},"unpaged":true}`), &byWords)
 			options, err = byWords.Compile(Articles.Meta(), unpagedOK)
@@ -317,7 +281,6 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 				t.Fatalf("sorted through a has_one got %v, want %v", titles(ranked), want)
 			}
 
-			// Sorting through a to-many has no single value and is refused.
 			var bad query.Request
 			_ = json.Unmarshal([]byte(`{"sort":["comments.body"]}`), &bad)
 			options, err = bad.Compile(Articles.Meta(), unpagedOK)
@@ -331,12 +294,6 @@ func TestNestedSortAgainstDatabases(t *testing.T) {
 	}
 }
 
-// A has_one is a promise the schema has to keep — one row on the other end —
-// and only a unique index keeps it. When there is none, the statement matches
-// several rows and one of them ends up in the model. Which one used to be
-// whichever the engine returned first: no ORDER BY, no error, and two runs of
-// the same query could answer differently. It is the lowest primary key now,
-// which is not a good schema but is at least the same answer twice.
 func TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -373,9 +330,6 @@ func TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime(t *testing.T) {
 				}
 			}
 
-			// The reason it holds is in the statement, and it has to be: without
-			// an ORDER BY the engine is free to answer differently tomorrow, and
-			// no assertion about today's rows would notice.
 			loads := spy.matching("article_stats")
 			if len(loads) == 0 {
 				t.Fatal("the preload never ran")
@@ -398,9 +352,7 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 			var request query.Request
 			_ = json.Unmarshal([]byte(
 				`{"preload":["author","stats","tags","comments.author"],"sort":["title"],"unpaged":true}`), &request)
-			// The endpoint declares AllowUnpaged: this route serves whole
-			// result sets, which is a thing an endpoint says rather than a
-			// thing a request may decide for it ([[D-060]]).
+
 			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
@@ -431,7 +383,7 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 			if g.Stats == nil || g.Stats.WordCount != 500 {
 				t.Fatalf("stats = %+v, want the has_one row filled in", g.Stats)
 			}
-			// Two hops deep, wired into the copies that live in the parent slice.
+
 			names := map[string]bool{}
 			for _, c := range g.Comments {
 				if c.Author == nil {
@@ -451,8 +403,6 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 				t.Fatalf("tags = %#v", d.Tags)
 			}
 			if d.Stats != nil {
-				// A missing to-one is nil, not a zero-valued struct: the caller
-				// has to be able to tell "no stats" from "zero words".
 				t.Fatalf("stats = %+v, want nil for an article with no stats row", d.Stats)
 			}
 			_ = generics
@@ -461,7 +411,6 @@ func TestPreloadsAgainstDatabases(t *testing.T) {
 	}
 }
 
-// A preload on a single entity works the same way.
 func TestPreloadOnGetByID(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -491,9 +440,7 @@ func TestFilteredPreloadAgainstDatabases(t *testing.T) {
 				"filter":  {"title":"go generics"},
 				"unpaged": true
 			}`), &request)
-			// The endpoint declares AllowUnpaged: this route serves whole
-			// result sets, which is a thing an endpoint says rather than a
-			// thing a request may decide for it ([[D-060]]).
+
 			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
@@ -512,7 +459,6 @@ func TestFilteredPreloadAgainstDatabases(t *testing.T) {
 	}
 }
 
-// The has_many side of the same edge, walked from the other model.
 func TestReverseRelation(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -539,8 +485,6 @@ func TestReverseRelation(t *testing.T) {
 	}
 }
 
-// Search must stay inside its own parentheses; if it leaked out of the AND, the
-// unpublished draft would come back too.
 func TestSearchDoesNotEscapeItsScope(t *testing.T) {
 	for _, b := range blogs(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -554,9 +498,7 @@ func TestSearchDoesNotEscapeItsScope(t *testing.T) {
 				"searchFields": ["title", "body"],
 				"unpaged": true
 			}`), &request)
-			// The endpoint declares AllowUnpaged: this route serves whole
-			// result sets, which is a thing an endpoint says rather than a
-			// thing a request may decide for it ([[D-060]]).
+
 			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)
@@ -583,9 +525,7 @@ func TestQueryStringAgainstDatabases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The endpoint declares AllowUnpaged: this route serves whole
-			// result sets, which is a thing an endpoint says rather than a
-			// thing a request may decide for it ([[D-060]]).
+
 			options, err := request.Compile(Articles.Meta(), unpagedOK)
 			if err != nil {
 				t.Fatal(err)

@@ -1,23 +1,3 @@
-// Command ent-pgx-fiber is vv with ent as the model source: an ent
-// client and a database/sql pool over the same pgx stdlib connection, the
-// crudsql adapter, and the Fiber binding.
-//
-// The point is what does not change. An ent project already owns a generated
-// entity struct, a migration and a set of builders; nothing here asks it to
-// give any of that up. vv binds to entmodel.Product as generated, and
-// the *sql.DB that ent's driver wraps is the same one crudsql serves from —
-// one pool, ent migrating and seeding through it, vv reading and writing
-// through it.
-//
-//	go get github.com/frostgrove/vv
-//	go get github.com/frostgrove/vv/crud/http/crudfiber
-//	go get entgo.io/ent
-//	go get github.com/jackc/pgx/v5
-//
-// Run it with the repository's own databases up (`make up` at the root):
-//
-//	go run ./ent-pgx-fiber
-//	curl 'localhost:8080/products?f=price:gte:100&sort=-price'
 package main
 
 import (
@@ -42,15 +22,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// The model is ent's own generated struct, entmodel.Product, bound as-is —
-// nothing declared here. entstore.ProductUpdate and entstore.Product_ are the
-// vv update DTO and metamodel generated from it; see entstore/doc.go for
-// how.
-
-// Products is validated when this package initialises: a mistyped tag, a DTO
-// field the model lacks or a wrong ID type fails here rather than at request
-// time. "products" is ent's own table name for Product — the two clients
-// share the table, not just the connection.
 var Products = sqlrepo.Define[entmodel.Product, int64, entstore.ProductUpdate]("products",
 	sqlrepo.DefaultLimit(20),
 	sqlrepo.MaxLimit(100),
@@ -76,8 +47,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// crudsql.Postgres wraps the same *sql.DB ent's driver holds — the pool
-	// that just migrated and seeded is the pool that serves every request.
 	repository := specs.Executor(Products.Bind(crudsql.Postgres(database)))
 
 	app := fiber.New()
@@ -87,14 +56,7 @@ func main() {
 			Sortable:   []string{"Price", "Name", "CreatedAt"},
 			Searchable: []string{"Sku", "Name"},
 		}),
-		// ent's Go-side defaults never run on an vv write, and ent's
-		// generated struct carries no `db` tags, so there is nowhere to mark
-		// created_at as the server's to fill. vv maps it like any other
-		// column and writes what the struct holds — the zero time on a create,
-		// and the column's DEFAULT never fires because the INSERT names it.
-		// This is the second of the three ways out that
-		// docs/usage-guides/ent.md §16 lists, and the only one available when
-		// the model is generated code you must not edit.
+
 		crudfiber.BeforeSave[entmodel.Product, int64, entstore.ProductUpdate](
 			func(_ fiber.Ctx, p *entmodel.Product) error {
 				if p.CreatedAt.IsZero() {
@@ -108,10 +70,6 @@ func main() {
 	log.Fatal(app.Listen(*addr))
 }
 
-// bootstrap runs ent's own migration and seeds through ent's own builders, so
-// the example runs against an empty database. A real application would use
-// its own migrations; the point here is that vv takes no part in either
-// step and needs none.
 func bootstrap(ctx context.Context, client *entmodel.Client) error {
 	if err := client.Schema.Create(ctx); err != nil {
 		return err

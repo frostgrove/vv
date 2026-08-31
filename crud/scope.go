@@ -6,40 +6,11 @@ import (
 	"strings"
 )
 
-// RelationScopes carries a repository's permanent narrowing across relation
-// boundaries.
-//
-// A WHERE clause only ever constrains the statement's own FROM. The moment a
-// query reaches a second table — a batched preload, the correlated EXISTS that
-// a nested filter opens, the scalar subquery a nested sort opens — that second
-// table is read with no narrowing at all, and a scope that exists to hide rows
-// stops hiding them. RelationScopes is what a repository hands to the SQL
-// writer and to the preloader so the narrowing travels with the hop.
-//
-// Two ways to declare one, because there are two different questions:
-//
-//   - by path, for "whenever *this* repository reaches Comments, narrow them" —
-//     the answer belongs to the repository, since another repository over the
-//     same table may be allowed to see more.
-//   - by model, for "wherever these rows are reached at all". A repository
-//     registers its own model here, which is what makes a self-relation
-//     (Node.Children []Node) obey the scope at any depth.
-//
-// The zero value and a nil *RelationScopes both mean "nothing is narrowed";
-// every method is nil-safe.
 type RelationScopes struct {
 	paths  map[string]Predicate
 	models map[reflect.Type]Predicate
 }
 
-// AtPath narrows a relation path, spelled canonically ("Comments",
-// "Comments.Author"). It is relative to the model the scopes belong to.
-// It copies. The chained shape — `(*RelationScopes)(nil).AtPath(…).AtPath(…)` —
-// reads as a builder, and a builder that mutates its receiver is a trap on this
-// particular path: a policy's RelationScopes function runs per request, and a
-// consumer who stores the result of the first call and extends it on the second
-// would be writing into a value another in-flight request is reading. Copying
-// costs one map per declaration and makes the shape mean what it looks like.
 func (this *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 	if p == nil {
 		return this
@@ -52,9 +23,6 @@ func (this *RelationScopes) AtPath(path string, p Predicate) *RelationScopes {
 	return out
 }
 
-// clone answers a shallow copy, or an empty value for a nil receiver. The
-// predicates themselves are immutable ([[D-003]]: the AST is closed), so the maps
-// are all there is to copy.
 func (this *RelationScopes) clone() *RelationScopes {
 	out := &RelationScopes{}
 	if this == nil {
@@ -71,8 +39,6 @@ func (this *RelationScopes) clone() *RelationScopes {
 	return out
 }
 
-// ForModel narrows a model wherever a hop lands on it.
-// It copies, for the reason [AtPath] gives.
 func (this *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScopes {
 	if p == nil || t == nil {
 		return this
@@ -85,11 +51,6 @@ func (this *RelationScopes) ForModel(t reflect.Type, p Predicate) *RelationScope
 	return out
 }
 
-// At returns the narrowing that applies to a hop that arrived at target by the
-// canonical path. Both declarations apply: a path rule narrows one route
-// further, while a model rule remains the invariant for every occurrence of
-// that model (including a repository's own soft-delete scope on a
-// self-relation).
 func (this *RelationScopes) At(path string, target *Meta) Predicate {
 	if this == nil || target == nil {
 		return nil
@@ -97,21 +58,10 @@ func (this *RelationScopes) At(path string, target *Meta) Predicate {
 	return both(this.paths[path], this.models[target.Type])
 }
 
-// Empty reports whether anything is declared at all, so callers can skip the
-// bookkeeping entirely.
 func (this *RelationScopes) Empty() bool {
 	return this == nil || (len(this.paths) == 0 && len(this.models) == 0)
 }
 
-// Resolve validates a request-specific relation narrowing against root and
-// returns a copy whose path keys use the model's canonical spelling.
-//
-// RelationScopes is deliberately a small, model-independent value so a policy
-// can construct it from a principal at request time. That makes validation at
-// construction impossible for custom policies: an unknown path would otherwise
-// remain a non-empty declaration that never applies, and True would look like a
-// narrowing while it narrows nothing. Resolve is the boundary where the model
-// is available, so it refuses both shapes before a query reaches SQL.
 func (this *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
 	if this.Empty() {
 		return this, nil
@@ -147,14 +97,6 @@ func (this *RelationScopes) Resolve(root *Meta) (*RelationScopes, error) {
 	return out, nil
 }
 
-// MergeRelationScopes combines a repository's permanent narrowings with the ones
-// a single query carries — a per-request scope from an access-control decorator,
-// which cannot be baked into the blueprint because it depends on who is asking.
-//
-// Where both declare the same path or the same model the two are ANDed. A
-// narrowing composes with a narrowing and never replaces one, for the same
-// reason Where ANDs: whoever declared the first one is entitled to assume it
-// still holds.
 func MergeRelationScopes(a, b *RelationScopes) *RelationScopes {
 	if a.Empty() {
 		return b
@@ -191,9 +133,6 @@ func both(a, b Predicate) Predicate {
 	return And(a, b)
 }
 
-// under re-roots the path declarations at prefix, for a statement whose own
-// FROM is already that far down the path. Model declarations are unaffected —
-// they were never relative to anything.
 func (this *RelationScopes) under(prefix string) *RelationScopes {
 	if this == nil {
 		return nil
@@ -215,7 +154,6 @@ func (this *RelationScopes) under(prefix string) *RelationScopes {
 	return out
 }
 
-// joinPath appends a segment to a canonical relation path.
 func joinPath(prefix, seg string) string {
 	if prefix == "" {
 		return seg

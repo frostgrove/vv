@@ -7,8 +7,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// rename is one hop: it replaces a step's name, and declines when it has
-// nothing to say about the path it was given.
 type rename struct{ from, to string }
 
 func (this rename) Resolve(p errs.Path) (errs.Path, bool) {
@@ -37,9 +35,6 @@ func TestAChainReportsWhenAHopDeclined(t *testing.T) {
 		}
 	})
 
-	// The positive twin. Without it the test above passes for a Chain that
-	// always reports false, which would mark every path approximate and make
-	// the marker meaningless.
 	t.Run("every hop accepting reports success", func(t *testing.T) {
 		got, ok := errs.Chain(rename{"email_address", "email"}, rename{"local", "user"}).Resolve(in)
 		if !ok {

@@ -13,10 +13,10 @@ type Timestamps struct {
 }
 
 type Account struct {
-	Timestamps                    // embedded structs are flattened
-	AccountID   int64             `db:"id,pk,auto"`
-	Slug        string            // untagged: snake_cased automatically
-	OwnerUserID int64             // OwnerUserID -> owner_user_id
+	Timestamps
+	AccountID   int64 `db:"id,pk,auto"`
+	Slug        string
+	OwnerUserID int64
 	Secret      string            `db:"-"`
 	Balance     crud.Opt[float64] `db:"balance"`
 }
@@ -43,15 +43,14 @@ func TestSchema(t *testing.T) {
 	if f := s.Field("Balance"); f == nil || !f.Optional {
 		t.Errorf("balance should be recognised as an Opt: %+v", f)
 	}
-	// Insert covers everything but generated columns; Update also drops the key
-	// and immutable columns.
+
 	if got := names(s.Insert); !equal(got, []string{"AccountID", "CreatedAt", "Slug", "OwnerUserID", "Balance"}) {
 		t.Errorf("insert fields = %v", got)
 	}
 	if got := names(s.Update); !equal(got, []string{"Slug", "OwnerUserID", "Balance"}) {
 		t.Errorf("update fields = %v", got)
 	}
-	// Fields resolve by Go name and by column name alike.
+
 	if s.Field("OwnerUserID") != s.Field("owner_user_id") {
 		t.Error("a field should resolve by either name")
 	}
@@ -114,7 +113,6 @@ func TestSchemaRejectsBadDeclarations(t *testing.T) {
 	}
 }
 
-// An assigned (non-integer) key is not treated as database-generated.
 func TestAssignedKeyIsNotAuto(t *testing.T) {
 	type Doc struct {
 		ID   string `db:"id,pk"`

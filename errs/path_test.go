@@ -25,13 +25,6 @@ func TestAPathRendersThreeWaysFromOneValue(t *testing.T) {
 		{"nothing at all", errs.Path{}, `[]`, "", ""},
 		{"nothing at all, spelled nil", nil, `[]`, "", ""},
 
-		// The control. A position and a name that happens to be a digit must
-		// differ in the array and in the dotted form, or the implementation is
-		// stringifying every step and the index rules above are untested. The
-		// pointer is the one rendering where they coincide, and that is RFC
-		// 6901 rather than a gap: a reference token is a string, so an index
-		// and the member named "0" address the same node. Making Pointer tell
-		// them apart would be the defect.
 		{"a position zero", errs.Path{errs.Named("a"), errs.Indexed(0)}, `["a",0]`, "a[0]", "/a/0"},
 		{"a name that reads like one", errs.Path{errs.Named("a"), errs.Named("0")}, `["a","0"]`, "a.0", "/a/0"},
 	} {
@@ -60,8 +53,6 @@ func TestAPointerEscapesWhatRFC6901Requires(t *testing.T) {
 		t.Fatalf("the pointer is %q, want %q — an unescaped slash addresses a different node and nothing downstream would notice", got, want)
 	}
 
-	// The control: the escaping belongs to the pointer alone. Applying it to
-	// the other two would corrupt the one rendering a client actually reads.
 	if got, want := p.String(), "a/b.m~n"; got != want {
 		t.Fatalf("the log rendering is %q, want %q", got, want)
 	}
@@ -92,10 +83,6 @@ func TestParsePathRoundTripsTheDottedForm(t *testing.T) {
 		})
 	}
 
-	// The control, and the documented limit: the dotted form is a log
-	// rendering, not a parseable one. A later "fix" that escaped separators in
-	// String would change every log line in the tree, and without this case the
-	// suite would stay green while it did.
 	t.Run("a name holding a separator does not survive", func(t *testing.T) {
 		p := errs.Path{errs.Named("a.b")}
 		got := errs.ParsePath(p.String())
@@ -123,8 +110,6 @@ func TestParsePathRoundTripsTheDottedForm(t *testing.T) {
 }
 
 func TestAParsedPositionIsANumberOnTheWire(t *testing.T) {
-	// A path built by hand and one parsed from the same text are the same
-	// value, which is what lets the bridge and the message ladder agree.
 	from := errs.ParsePath("Items[3].Email")
 	want := errs.Path{errs.Named("Items"), errs.Indexed(3), errs.Named("Email")}
 	if !reflect.DeepEqual(from, want) {
@@ -140,21 +125,12 @@ func TestAParsedPositionIsANumberOnTheWire(t *testing.T) {
 }
 
 func TestABracketedNegativeNumberStaysPartOfTheName(t *testing.T) {
-	// A position is an index into a list, and there is no minus-first element.
-	// Parsed as one it would be an index step the renderings then print as
-	// [-1], which no framework resolves.
-	// Compared step by step, not by rendering: Named("a[-1]") and the pair
-	// Named("a"), Indexed(-1) both render as a[-1], so a message printing the
-	// two paths would show the same text twice and say nothing.
 	got := errs.ParsePath("a[-1].b")
 	want := errs.Path{errs.Named("a[-1]"), errs.Named("b")}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("a[-1].b parsed to %d steps %+v, want the two %+v — a negative number is not a position, and there is no minus-first element of a list", len(got), []errs.Step(got), []errs.Step(want))
 	}
 
-	// The control: a non-negative number in the same position is an index, so
-	// the row above is about the sign and not about a parser that never makes
-	// an index at all.
 	got = errs.ParsePath("a[1].b")
 	want = errs.Path{errs.Named("a"), errs.Indexed(1), errs.Named("b")}
 	if !reflect.DeepEqual(got, want) {
@@ -162,9 +138,6 @@ func TestABracketedNegativeNumberStaysPartOfTheName(t *testing.T) {
 	}
 }
 
-// A path is the whole of itself on the wire, so what a client reads back is
-// exactly what a service sent. Names and positions both, in the order they had
-// — an index that arrived as a name would address a member that does not exist.
 func TestAPathSurvivesTheWireExactly(t *testing.T) {
 	paths := map[string]errs.Path{
 		"empty":       nil,
@@ -196,8 +169,6 @@ func TestAPathSurvivesTheWireExactly(t *testing.T) {
 		})
 	}
 
-	// The control. Without it every case above would also pass for a decoder
-	// that answered nil and a String() that answered "" for both sides.
 	var p errs.Path
 	if err := json.Unmarshal([]byte(`["a", true]`), &p); err == nil {
 		t.Fatal("a step that is neither a name nor an index was accepted, so the cases above prove nothing")

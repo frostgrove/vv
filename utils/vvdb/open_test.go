@@ -15,17 +15,12 @@ import (
 	"github.com/frostgrove/vv/utils/vvdb"
 )
 
-// recorder is a driver that connects to nothing and remembers the string it was
-// asked to open. It stands in for pgx and go-sql-driver so this package can
-// test what it builds without taking either as a dependency.
 type recorder struct{ dsn string }
 
 type rejectingDriver struct{ err error }
 
 func (this rejectingDriver) Open(string) (driver.Conn, error) { return nil, this.err }
 
-// OpenConnector is called synchronously by sql.Open. A plain Driver.Open is
-// lazy and would exercise Ping rather than Open's error boundary.
 func (this rejectingDriver) OpenConnector(string) (driver.Connector, error) { return nil, this.err }
 
 var pgxRecorder = &recorder{}
@@ -34,7 +29,7 @@ func init() { sql.Register("pgx", pgxRecorder) }
 
 func (this *recorder) Open(name string) (driver.Conn, error) {
 	this.dsn = name
-	return nil, io.EOF // nothing here ever runs a statement
+	return nil, io.EOF
 }
 
 var registeredDriverID atomic.Uint64
@@ -59,8 +54,6 @@ func TestOpenHandsTheDriverTheStringItBuilt(t *testing.T) {
 	}
 	defer database.Close()
 
-	// sql.Open is lazy, so the driver is only asked once a connection is
-	// wanted. The error is the recorder's and is not the point.
 	_ = database.Ping()
 	u, err := url.Parse(pgxRecorder.dsn)
 	if err != nil {
@@ -88,9 +81,6 @@ func TestOpenSizesThePool(t *testing.T) {
 	}
 }
 
-// The control case for the one above: an unset limit must stay database/sql's
-// own default and not become a limit of zero, which would be a pool that can
-// open nothing.
 func TestAnUnsetPoolLimitIsLeftAlone(t *testing.T) {
 	pgxRecorder.dsn = ""
 	database, err := vvdb.Open(&vvdb.Config{Engine: vvdb.Postgres, Host: "h", Name: "app"})

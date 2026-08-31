@@ -332,7 +332,8 @@ n, err     = users.DeleteAll(ctx, crud.Where(crud.Lt("Age", 18)))
 | `Get(ctx, opts...)` | `PaginatedResponse[M]` |
 | `GetAll(ctx, opts...)` | every match; unpaged unless an option says otherwise |
 | `Save(ctx, *M)` | JPA semantics: no key → INSERT, key → UPSERT; the model is refreshed in place |
-| `SaveAll(ctx, []*M)` | the same write, batched into one statement |
+| `SaveAll(ctx, []*M)` | the same write in the fewest bind-budgeted statements; atomic when chunked |
+| `InsertBatch(ctx, []*M, opts...)` | insert-only typed bulk write; native when an exact capability is exposed, portable SQL otherwise |
 | `Update(ctx, id, dto)` | load, diff, write only what changed |
 | `UpdateAll(ctx, dto, opts...)` | one `UPDATE` across a filter; returns how many rows were touched |
 | `Delete(ctx, ids...)` | returns how many rows went away |
@@ -515,13 +516,25 @@ soft-deleted twin holds the same key is a conflict — that wants a partial inde
 err := users.SaveAll(ctx, []*User{&a, &b, &c})
 ```
 
-One `INSERT`, the same upsert semantics, the same three `Opt` states. Two things
-it will not do quietly: a batch that mixes rows the database keys with rows you
-keyed is refused rather than split, because splitting would hide the round trips;
-and generated keys come back only where the dialect has `RETURNING`. MySQL
-reports one `LastInsertId` for the statement and only guarantees the rest are
-contiguous under some settings, so it does not guess — assign the keys yourself
-there and the batch is exact.
+Bind-budgeted `INSERT` statements, the same upsert semantics, the same three
+`Opt` states. A batch that mixes rows the database keys with rows you keyed is
+refused rather than split, because the two shapes have different column lists.
+Generated-key batches stay write-only: the models are not mutated and vv does
+not guess a key sequence from one `LastInsertId`.
+
+For import-style create-only work, use the separate bulk verb:
+
+```go
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
+```
+
+An assigned key is still an insert here, never an upsert. For rows with a
+derived column set, pgx uses `COPY` by default; sources without an exact native
+capability, and wrappers that do not explicitly forward one, use ordinary
+chunked `INSERT`. The repository derives table, columns and values from
+metadata, preserves security and fault decorators, joins an ambient transaction
+when it is actually transactional, and never mutates the models or reads
+generated values back.
 
 ### Replicas
 
@@ -1596,26 +1609,66 @@ transaction gives you a savepoint — natively on pgx, via `SAVEPOINT` on
 
 ### Bulk
 
-`crudpgx` implements `crud.BulkInserter` with `COPY`. **Nothing in the library
-reaches for it.** `SaveAll` writes one multi-row `INSERT` whatever the executor
-underneath can do, so this is a door you open yourself:
+`Repo.InsertBatch` is the safe, typed bulk path. On a bare pgx datasource it
+selects PostgreSQL `COPY` automatically when metadata yields insert columns;
+otherwise it falls back to ordinary bind-budgeted `INSERT` statements. The
+choice happens behind the repository seam, after metadata, security policy and
+fault hooks have applied:
 
 ```go
-if bulk, ok := src.(crud.BulkInserter); ok {
-    n, err := bulk.CopyFrom(ctx, "users", cols, rows)
-}
+err := users.InsertBatch(ctx, []*User{&a, &b, &c})
 ```
 
-For a qualified PostgreSQL table, use the concrete structured path; the legacy
-string path refuses dots before pgx is called:
+The verb is insert-only: a supplied primary key can conflict but never turns
+the row into an update. It resolves the executor carried by `ctx`, so a pgx
+`COPY` participates in the same ambient transaction and rolls back with it.
+Portable multi-statement fallback is preflighted and runs under one transaction.
+A direct one-statement fallback crosses a Source wrapper's `Exec`; chunked work
+runs on the transaction handle. Use driver-level tracing, or a `Begin` that
+returns an instrumented transaction, when every statement must be visible. A
+bound non-transaction executor cannot provide the atomic boundary, so chunked
+work opens a transaction from the repository source; bind an already-started
+transaction when connection-local state must be retained.
+
+PostgreSQL `COPY` is not equivalent to ordinary `INSERT` for every table. vv
+does not guess table semantics from RLS or rewrite-rule configuration. RLS,
+rewrite rules, special pgx encodings, or a need for ordinary INSERT semantics
+can opt out per call or once on the blueprint:
 
 ```go
-n, err := src.CopyFromTable(ctx,
+err := users.InsertBatch(ctx, rows, crud.PortableBatch())
+
+var Users = sqlrepo.Define[User, int64, UserUpdate](
+    "users",
+    sqlrepo.PortableBatch(),
+)
+```
+
+The portable setting is a safety/semantics choice, not a performance failure
+fallback. Once native COPY has reached the server, its error is returned and vv
+does not retry the rows as SQL, because doing so could duplicate work.
+
+Raw driver work remains available, but it is deliberately named unsafe because
+it bypasses repository metadata and Core decorators. The context-aware form
+still resolves an ambient executor:
+
+```go
+n, err := crud.UnsafeBulkInsertFor(ctx, src,
     crud.TableRef{Schema: "tenant_42", Name: "products"}, cols, rows)
+
+result, err := crud.UnsafeExecFor(ctx, src, statement, args...)
+rows, err := crud.UnsafeQueryFor(ctx, src, query, args...)
 ```
 
-The call runs on the handle that executor holds and ignores any transaction in
-the context.
+When exact-handle behaviour is intentional, pgx also exposes
+`src.UnsafeCopyFrom(ctx, "users", cols, rows)` and the structured
+`src.UnsafeCopyFromTable(ctx, tableRef, cols, rows)`. Those methods run on that
+receiver; they do not consult a transaction stored in `ctx`.
+
+Pre-release migration: `crud.BulkInserter`, `CopyFrom` and `CopyFromTable` were
+removed. Use `Repo.InsertBatch` for application writes,
+`crud.UnsafeBulkInsertFor` for context-aware raw rows, or the explicitly unsafe
+crudpgx methods for an exact handle.
 
 ---
 

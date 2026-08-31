@@ -9,8 +9,6 @@ import (
 	"github.com/frostgrove/vv/auth"
 )
 
-// headers turns a map into the getter a Guard takes, so a test does not need a
-// transport to exercise one.
 func headers(kv map[string]string) func(string) string {
 	h := http.Header{}
 	for k, v := range kv {
@@ -53,9 +51,6 @@ func TestAMissingCredentialIsA401UnlessTheGuardIsOptional(t *testing.T) {
 	})
 }
 
-// The arm that makes Optional safe. A token that does not verify must not
-// downgrade to anonymous: a client with a stale session would then see the
-// public view instead of a prompt to sign in again.
 func TestAnOptionalGuardStillRefusesABadCredential(t *testing.T) {
 	g := auth.NewGuard(no("signature does not verify"), auth.Optional())
 
@@ -208,8 +203,6 @@ func TestHeaderAndLookupReplaceWhereTheCredentialComesFrom(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the test above passes for a guard that ignores
-	// the header entirely and authenticates everybody.
 	t.Run("control: the default header is then not read", func(t *testing.T) {
 		g := auth.NewGuard(yes("u-1"), auth.Header("X-Auth"))
 		if _, err := g.Authenticate(t.Context(), headers(map[string]string{"Authorization": "Bearer t"})); err == nil {
@@ -301,15 +294,6 @@ func TestANilOptionRemainsANoOp(t *testing.T) {
 	}
 }
 
-// An outage is an outage whichever order the authenticators are wired in.
-//
-// An authenticator distinguishes "this credential is wrong" from "I could not
-// tell": apikey.Store has three results for exactly that, so a store outage
-// renders as a 500 rather than a 401 ([[D-056]]). Chain returned the *last*
-// error, so the distinction survived only when the failing authenticator
-// happened to be wired last — Chain(keys, jwt) turned a database outage into
-// "your key is invalid", which is wrong for the client and invisible to whoever
-// watches the 5xx rate.
 func TestAnOutageAnywhereInAChainBeatsARefusal(t *testing.T) {
 	outage := errors.New("connection refused")
 	broken := auth.AuthenticatorFunc(func(context.Context, auth.Credential) (auth.Principal, error) {
@@ -338,9 +322,6 @@ func TestAnOutageAnywhereInAChainBeatsARefusal(t *testing.T) {
 		})
 	}
 
-	// The control. All of that would hold for a Chain that never answered
-	// ErrUnauthenticated at all — so a chain where every authenticator genuinely
-	// refuses must still refuse.
 	_, err := auth.Chain(refuses, refuses).Authenticate(context.Background(), auth.Credential{Token: "t"})
 	if !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("a chain that only refused answered %v, want a refusal", err)

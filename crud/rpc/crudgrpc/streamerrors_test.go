@@ -17,22 +17,12 @@ import (
 	"github.com/frostgrove/vv/crud/rpc/crudgrpc"
 )
 
-// A refusal on a streaming method is classified, the way it is on a unary one.
-//
-// The auth interceptor returns an unrendered errs.Fault and relies on something
-// downstream to turn it into a status — exactly as its unary twin does. There
-// was no downstream for a stream: `Errors` is a UnaryServerInterceptor and had no
-// counterpart, so grpc-go wrapped the bare error as codes.Unknown. A refused
-// stream answered Unknown where a refused unary call answered Unauthenticated,
-// and a client branching on the code could not tell a rejected credential from a
-// server bug.
 func TestARefusedStreamIsClassifiedLikeARefusedCall(t *testing.T) {
 	refuse := func(any, grpc.ServerStream) error {
 		return auth.Unauthenticated("forged token")
 	}
 
 	t.Run("without the interceptor the refusal is Unknown", func(t *testing.T) {
-		// The control, and it is the finding: this is what shipped.
 		code := codeOfStream(t, refuse)
 		if code != codes.Unknown {
 			t.Fatalf("an unrendered fault answered %s — if this is no longer Unknown, the test below proves nothing", code)
@@ -47,9 +37,6 @@ func TestARefusedStreamIsClassifiedLikeARefusedCall(t *testing.T) {
 	})
 
 	t.Run("a status the method already set is left alone", func(t *testing.T) {
-		// The same rule the unary interceptor keeps: an error that already
-		// carries a status has been rendered by something, and overwriting it
-		// would be this interceptor deciding it knows better.
 		own := status.Error(codes.FailedPrecondition, "mine")
 		code := codeOfStream(t, func(any, grpc.ServerStream) error { return own },
 			grpc.StreamInterceptor(crudgrpc.StreamErrors()))
@@ -59,8 +46,6 @@ func TestARefusedStreamIsClassifiedLikeARefusedCall(t *testing.T) {
 	})
 }
 
-// codeOfStream runs one streaming call against a server built with opts and
-// answers the code the client saw.
 func codeOfStream(t *testing.T, h grpc.StreamHandler, options ...grpc.ServerOption) codes.Code {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
@@ -97,7 +82,6 @@ func codeOfStream(t *testing.T, h grpc.StreamHandler, options ...grpc.ServerOpti
 	return status.Code(st.RecvMsg(&emptyMsg{}))
 }
 
-// emptyMsg is a message the codec accepts and nobody reads.
 type emptyMsg struct{}
 
 func (*emptyMsg) Reset()         {}

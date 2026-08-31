@@ -12,9 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// UpdateAll writes rows nobody named, which makes it the write that most needs
-// the gate. Everything the gate does to Update it must do here: the scope goes
-// into the statement's own WHERE, not into a check in front of it.
 func TestUpdateAllIsScopedInTheStatementItself(t *testing.T) {
 	ctx := withTenant(context.Background(), 7)
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "before"))).
@@ -35,10 +32,6 @@ func TestUpdateAllIsScopedInTheStatementItself(t *testing.T) {
 	}
 }
 
-// Without a scope and without a filter, UpdateAll rewrites every row of the
-// table. Behind an access-control layer that is almost always a bug, so it is
-// refused unless the policy says otherwise — and the permission is its own, not
-// inherited from having allowed the table to be emptied.
 func TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt(t *testing.T) {
 	ctx := context.Background()
 
@@ -85,8 +78,6 @@ func TestAnUnscopedUpdateAllIsRefusedUnlessThePolicyAllowsIt(t *testing.T) {
 	})
 }
 
-// An empty NOT IN is SQL's true constant. It is not a caller narrowing and
-// must not be able to make a policy's unscoped-write guard think there is one.
 func TestATautologicalFilterDoesNotPermitAnUnscopedUpdateAll(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
 	repository := Docs.Bind(rec, security.Gate(security.Freeze[Doc, int64]("TenantID")))
@@ -109,9 +100,6 @@ func TestASameFieldComparisonDoesNotPermitAnUnscopedBulkWrite(t *testing.T) {
 	}
 }
 
-// A policy that explicitly represents an unrestricted administrator still
-// needs the separate bulk-write opt-in. Otherwise Scope: True would make the
-// same full-table write look scoped merely because it has a predicate node.
 func TestATautologicalPolicyScopeDoesNotPermitBulkWrites(t *testing.T) {
 	policy := security.Policy[Doc, int64]{
 		Scope:              func(context.Context) (crud.Predicate, error) { return crud.True(), nil },
@@ -144,9 +132,6 @@ func TestATautologicalPolicyScopeDoesNotPermitBulkWrites(t *testing.T) {
 	}
 }
 
-// A frozen column cannot be reached through the filtered write either. It would
-// otherwise be the way around Freeze: refused one row at a time, allowed for the
-// whole table at once.
 func TestUpdateAllRefusesAFrozenField(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
@@ -161,7 +146,6 @@ func TestUpdateAllRefusesAFrozenField(t *testing.T) {
 	}
 }
 
-// A read-only repository has no filtered write either.
 func TestUpdateAllIsRefusedByAReadOnlyPolicy(t *testing.T) {
 	rec := crudtest.Postgres().ExecResult(crud.Result{RowsAffected: 99})
 	repository := Docs.Bind(rec, security.Gate(security.ReadOnly[Doc, int64]()))
@@ -175,8 +159,6 @@ func TestUpdateAllIsRefusedByAReadOnlyPolicy(t *testing.T) {
 	}
 }
 
-// With an Inspect hook the gate has to look at the rows first: there is no id in
-// the call, so nothing else in the request could stand for consent to touch them.
 func TestUpdateAllInspectsEveryRowItIsAboutToWrite(t *testing.T) {
 	ctx := context.Background()
 	rec := crudtest.Postgres().Push(crudtest.Rows(docRow(1, 7, "mine"), docRow(2, 9, "theirs")))
@@ -208,10 +190,6 @@ func TestUpdateAllInspectsEveryRowItIsAboutToWrite(t *testing.T) {
 	}
 }
 
-// The public query shape may carry a page or cursor, but neither exists on a
-// bulk UPDATE. Its preliminary read has to ignore those shaping options or an
-// Inspect hook approves only the first page while the UPDATE reaches every
-// matching row.
 func TestBulkInspectionIgnoresCallerPagingAndPreloads(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {

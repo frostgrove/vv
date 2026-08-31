@@ -2,7 +2,7 @@
 
 **Covers:** `github.com/frostgrove/vv/crud/sqlrepo`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, and a second table or relation scope can silently replace the first and leak rows. A save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model and bypasses optimistic-lock refusal, and MySQL can apply that upsert to a row selected by a different unique key. Relations on a model are written nowhere and refused nothing, and the batch verb has a row ceiling below any real import. Two read paths truncate silently and report the truncation as the whole answer.
+**Verdict:** not ready — the write half of this module does not honour the declaration a consumer reads it as: the permanent scope reaches no write statement, and a second table or relation scope can silently replace the first and leak rows. A save over a tombstone's key resurrects the row, a keyed `Save` overwrites every column from a half-filled model and bypasses optimistic-lock refusal, and MySQL can apply that upsert to a row selected by a different unique key. Relations on a model are written nowhere and refused nothing. The former import ceiling and pgx COPY bypass are closed by the checked `InsertBatch` path described below. Two read paths truncate silently and report the truncation as the whole answer.
 
 ## What a consumer is actually trying to do
 
@@ -291,58 +291,61 @@ returning `crud.ErrConflict` — and the `port` sweep owns the rest.
 ### H-SQLREPO-06 — Twenty thousand rows from a supplier file
 **Who:** the author of a nightly import job
 **Wants:** to write the batch without twenty thousand round trips
-**Story:** They parse the file into a slice of models and call the batched save.
-They expect it to be fast, to be one transaction with the rest of the job, and to
-hand back the keys so the next table can reference them.
+**Story:** They parse the file into a slice of models and call the repository's
+insert-only batch verb. They expect pgx to take its native fast path without
+giving up the transaction, policy or error contract, and every other source to
+retain the same write semantics through ordinary SQL.
 **Must hold:**
-1. A batch of any size the job actually produces goes through.
-2. The keys the database generated come back, or the caller is told which dialects cannot say so.
-3. Server-owned columns are filled in the models afterwards, the way they are after a single save.
-4. The batch joins a transaction the job already opened.
-5. A supplier file where some rows carry an id and some do not is the normal shape, and the library either handles it or says why not.
-**Today:** 🟡 partial
-**Evidence:** 2, 4 and 5 hold, and 2 and 5 are *documented refusals* rather than
-holes — worth stating plainly, because both look like gaps from the outside. 4 is
-unconditional: `repository.go:1183` and `:1211` both go through `r.exec(ctx)`,
-which returns the context executor when one is bound (`:95-101`). 2 holds on
-`RETURNING` dialects (`TestSaveAllReadsGeneratedKeysBackWhereItCan`,
-`test/integration/saveall_test.go:91`) and is refused in writing on the others:
-the doc comment at `repository.go:1120-1123` says MySQL reports one
-`LastInsertId` and only guarantees contiguity under some settings, "so reading
-them back from it would be a guess", and `saveall_test.go:106-116` pins the
-silence with a negative assertion. 5 is refused at `repository.go:1145-1148`
-(`TestSaveAllRefusesAMixedBatch`, `saveall_test.go:74`) so the call stays one
-round trip or none — but it is a ceiling nobody has written down, and the
-author's loop has to partition by key presence before it can chunk, which is
-exactly the shape H-SQLREPO-05's sync produces.
-Point 1 **fails**: `repository.go:1156-1176` builds **one** statement with one
-placeholder per value and never chunks. Twenty thousand rows over six insertable
-columns is 120,000 placeholders; PostgreSQL's extended protocol refuses past
-65,535, so the job dies inside the driver with a message that names nothing about
-vv. The library already knows this limit and handles it in the other place it
-bites — `crud/preload.go:17` sets `preloadBatch = 900` and `:221` chunks against
-it — and the wire compiler caps `IN` lists for the same reason
-(`crud/query/compile.go:39-46`). The write path has neither.
-Point 3 **fails and is not documented anywhere.** `:1211-1216` returns with no
-read-back at all on a dialect without `RETURNING`, so a batch of *assigned-key*
-rows — where the keys were never the question — comes home with no `created_at`
-and no other `generated` column, while a single `Save` of the same row has both
-(`repository.go:667` re-reads unconditionally, and the comment there says why).
-The doc comment covers the keys and says nothing about the rest.
-**Nothing in `crud/sqlrepo` tests `SaveAll` at all**, and **no use case covers
-it**: [[UC-008]]'s guarantees are all `UpdateAll`/`DeleteAll`, and its "Out of
-scope" section opens with "**Bulk insert.**"
-(`UC-008-write-many-rows-in-one-statement.md:52-57`). The module reference cites
-`[[UC-008]]` for `SaveAll` anyway.
-**If not ready:** Today the job chunks in its own loop, at a size it guesses,
-partitions by key presence, and on MySQL assigns keys itself. Closing point 1 is
-automatic chunking derived at `Bind` — the dialect knows its placeholder ceiling
-and the blueprint knows `len(fields)` — but it is not free of semantics: see the
-DX section, because chunking turns all-or-nothing into partially-written and the
-doc comment at `:1116-1119` currently argues against it. Point 3 is a read-back
-on the non-`RETURNING` path when the model declares any `generated` column.
-Either way, `SaveAll` needs a use case of its own and a `crudtest` file that pins
-the chunk boundary.
+1. Table, columns, value order and generated/server-owned omissions come from
+   the model declaration; callers maintain no parallel `[]string`/`[][]any`.
+2. Assigned keys are inserts, never an upsert branch.
+3. A directly capable pgx source takes native `COPY` by default; a source
+   without that exact effect capability uses bind-budgeted `INSERT` chunks.
+4. Every portable chunk is in one atomic unit and both paths join a transaction
+   already bound to the repository's source.
+5. `security.Gate`, validation/observability decorators and `faults.Enrich`
+   remain on the call path.
+6. A caller can force ordinary SQL for RLS, rewrite rules, special pgx encodings
+   or statement-level observability, once or for the whole blueprint.
+**Today:** ✅ covered, with an explicit no-read-back boundary
+**Evidence:** `crud.Repo.InsertBatch` delegates to the optional, typed
+`crud.BatchInserter[M]` capability without walking through an opaque decorator.
+An unknown repository decorator therefore fails closed with
+`crud.ErrNoBatchInsertSupport` instead of tunnelling to storage. The sqlrepo
+implementation derives its immutable `TableRef`, insert fields and values from
+`Meta`, preflights the complete slice and treats every assigned key as create.
+It selects pgx COPY only when the resolved executor directly implements
+`UnsafeBulkInserter`; `crud.ReadWrite` explicitly forwards the primary's
+capability, while an unknown `SourceUnwrapper` deliberately receives portable
+SQL instead of invoking native bulk underneath it. A direct one-statement plan
+uses its `Exec`; chunked plans use the transaction handle as described by
+[[D-062]].
+
+The portable plan derives each statement's size from `crud.BindLimit(dialect)`
+and model width. `executePrepared` renders/preflights the complete plan, joins an
+ambient source-bound transaction, and opens one atomic unit when more than one
+chunk is needed. `crud.PortableBatch()` chooses this route per call;
+`sqlrepo.PortableBatch()` makes it a declaration-time choice. On a bare pgx
+source, native COPY is the magic default. `security.Gate.InsertBatch` authorises
+Create and inspects a private copy of every row before I/O; `faults.Enrich`
+classifies the pgx failure as operation `InsertBatch` and retains field
+attribution. Unit coverage lives in `crud/sqlrepo/insert_batch_test.go` and
+`bind_budget_test.go`; live pgx selection, rollback and classified-failure
+journeys live in `test/integration/driver_pgx_test.go`.
+
+`InsertBatch` deliberately does not mutate its models or read generated values
+back. An import that needs downstream keys supplies assigned keys or uses the
+row-oriented `Save`; `SaveAll` is likewise documented as write-only. This is a
+contract boundary, not an adapter-dependent promise.
+
+**Historical finding, closed by FW-CORE-003.** The original sweep observed one
+unbounded `SaveAll` statement and a separate source-level
+`crud.BulkInserter`/`CopyFrom` escape hatch. The latter required duplicate table,
+column and value declarations, disappeared behind wrappers, ignored a context
+transaction, bypassed Gate/faults and returned unclassified pgx errors. Those
+safe-looking symbols were removed before the first release; only explicitly
+low-level `UnsafeBulkInsert*` / `UnsafeCopyFrom*` names remain.
+**If not ready:** —
 
 ### H-SQLREPO-07 — Deactivate every trial account past due
 **Who:** an engineer on a billing job
@@ -642,12 +645,11 @@ and a `NOT NULL` violation on every adapter and engine
 pinned by `TestIntegrityViolationsAreClassifiedByEveryAdapter` at
 `test/integration/dialect_edge_test.go:747`). What a bare binding does *not* give
 is which constraint, and on some sources not even a code — see H-SQLREPO-14.
-5 **fails for the same reason as H-SQLREPO-06 point 1, and it is the same fix,
-not a second one**: `crud.InAny` renders one placeholder per id
-(`repository.go:882`) and nothing chunks, so a select-all-and-delete over a big
-page dies inside the driver.
-**If not ready:** Today the handler maps `0` to 404 itself, and a bulk screen
-chunks its own id list. The count semantics are worth stating in the module
+5 now holds through `deletePlan`: ids are split against the remaining dialect
+bind budget, the complete plan is preflighted, and multiple statements run in
+one ambient or owned transaction. `crud/sqlrepo/bind_budget_test.go` pins the
+boundary, atomic refusal and rollback rules.
+**If not ready:** The handler still maps `0` to 404 itself. The count semantics are worth stating in the module
 reference: `Delete` returning 0 is "nothing in reach", and a caller cannot tell a
 missing row from a hidden one — which is the point.
 
@@ -1014,7 +1016,7 @@ handler already opened.
 1. A predicate the DSL cannot express can be dropped into a query that is otherwise ordinary, and everything the repository narrows still applies.
 2. A whole statement can be run against the same connection the repository uses.
 3. When the caller is inside a transaction, that statement is inside it too.
-**Today:** 🟡 partial
+**Today:** ✅ covered, with the whole-statement path explicitly unsafe
 **Evidence:** 1 holds and is the answer this sweep otherwise talks past.
 `crud.Raw(sql, args...)` (`crud/predicate.go:480`) is a *predicate*: it renders
 inside the `WHERE` the repository built, so the blueprint scope, the relation
@@ -1023,26 +1025,22 @@ renumbered into the dialect's placeholders (`crud/predicate.go:364-385`, which
 also refuses a fragment with fewer markers than arguments — a hand-written `$1`
 would otherwise be renumbered against somebody else's bind). Column names are the
 caller's to quote; the doc comment says so. `grep -n 'crud.Raw'
-docs/modules/en/sqlrepo.md` is empty, so nobody reading this module's reference
-knows it exists.
-2 holds through `crud.SourceOf(repo)` (`crud/executor.go:195`), which walks the
-decorator chain properly rather than type-asserting one layer down ([[D-061]]).
-3 **fails, and it is squarely in this module's remit** — which database a write
-lands on. A `crud.Source` is an `Executor` over the pool
-(`crud/executor.go:56-59`); it does not consult the context. So a hand-written
-statement run through `crud.SourceOf(users)` goes to the pool and **not** to the
-transaction the handler opened, commits independently of it, survives a rollback,
-and reports success. The correct incantation is `crud.ExecutorFor(ctx, src)`
-first, falling back to `src` — which is exactly what the repository does for
-itself at `repository.go:95-101`. `grep -n 'SourceOf\|ExecutorFor'
-docs/modules/en/sqlrepo.md` is empty.
-**If not ready:** Nothing to build. Three paragraphs in the module reference:
-`crud.Raw` for a predicate and what it keeps; `crud.SourceOf` for a statement;
-and `crud.ExecutorFor` before it, with the failure named — a report that runs
-outside the caller's transaction and says nothing. A helper on the seam —
-`crud.ExecutorOf(ctx, repo)` returning the executor the repository itself would
-use — would remove the trap rather than documenting it, and is a few lines in
-`crud`.
+docs/modules/en/sqlrepo.md` now names it beside the stronger escape hatch.
+For a whole statement, application code first obtains the source with
+`crud.SourceOf(repo)` and calls `crud.UnsafeExecFor` or `crud.UnsafeQueryFor`.
+Both helpers resolve the source-bound ambient executor exactly as the repository
+does, so a statement inside `repo.Tx` stays inside that transaction;
+`UnsafeQueryFor` remains on the primary because arbitrary SQL cannot be proved
+read-only. The `Unsafe` prefix states the other half of the contract: a whole
+statement still bypasses repository policy, lifecycle and decorator hooks.
+
+**Historical finding, closed by FW-CORE-003.** The original evidence above
+predated these helpers: code was taught to call `SourceOf(repo).Exec` directly,
+which selected the pool even when `ctx` carried the repository transaction. The
+underlying source method remains low-level by definition; the checked spelling
+now makes executor resolution non-optional and the bypass visible at the call
+site.
+**If not ready:** —
 
 ### H-SQLREPO-23 — Forty columns and one of them is a megabyte
 **Who:** an engineer whose `documents` table has a `body` column
@@ -1263,7 +1261,7 @@ var Users = sqlrepo.Define[User, int64, UserUpdate]("users",
         specs.Predicate(Comment_.DeletedAt.IsNull())),                   // the *target's* metamodel
 
     sqlrepo.ConflictOn(User_.TenantID.Name(), User_.ExternalID.Name()),  // does not exist — H-05
-    sqlrepo.BatchSize(500),                                              // does not exist — H-06
+    sqlrepo.PortableBatch(),                                             // exists — H-06; opt out of native COPY
     sqlrepo.VerifyAgainst(cat),                                          // does not exist — H-17
 )
 
@@ -1274,6 +1272,11 @@ users := Users.Bind(crud.ReadWrite(primary, replica),   // exists
 
 // exists
 err := users.Tx(ctx, func(ctx context.Context) error { ... })
+
+// exists — native COPY is the pgx default; force the same atomic, bind-budgeted
+// SQL path for one call when table/encoding semantics require ordinary INSERT.
+err = users.InsertBatch(ctx, imported)
+err = users.InsertBatch(ctx, imported, crud.PortableBatch())
 
 // does not exist — H-SQLREPO-08. A derived blueprint, not a decorator and not a
 // query option. Its reads see tombstones; Restore is its only write; Delete and
@@ -1297,25 +1300,17 @@ level is not a property of a table at all.
 
 Two of these are cheaper than they look and three are not.
 
-**`BatchSize` should not be a number the author supplies.** The dialect knows its
-placeholder ceiling and the blueprint knows `len(fields)`, and both are in hand at
-`Bind`; `crud/preload.go:17` already chunks at a constant nobody is asked for.
-Keep `BatchSize(n)` as an override for somebody who measured something. But the
-objection to chunking is not [[D-014]] — the boundary comes from the input length,
-not a map walk, so each chunk still renders byte-identically — it is **atomicity
-and cost, and the code states it**: `SaveAll` refuses a mixed batch so the call
-"stays one round trip or none — silently becoming two would make the cost
-invisible, which is the only reason to reach for this over a loop"
-(`repository.go:1116-1119`). Chunking derived at `Bind` is precisely becoming
-two, and it turns 20,000 rows from all-or-nothing into partially written when
-statement 14 fails outside a transaction. So the proposal has to state the
-semantics, not just the mechanism, and pick one: either a chunked `SaveAll` opens
-its own transaction when none is on the context — which needs a `crud.Beginner`,
-and a foreign executor handed over by an ORM is not one — or it refuses a batch
-past the ceiling with an error naming the ceiling and the chunk size to use. The
-second is the smaller change and the honest one. Whichever is chosen, the doc
-comment at `repository.go:1116-1123` is amended in the same change, because it
-currently argues against the fix.
+**Closed by FW-CORE-003 — there is no arbitrary `BatchSize` knob.** The
+historical proposal correctly observed that the dialect knows its bind ceiling
+and the blueprint knows the insert width, but it offered a choice between a
+named refusal and caller-sized chunks. The implementation derives the boundary
+itself, preflights every statement, and runs a multi-statement plan through
+`crud.InAtomic`: it joins an ambient transaction and otherwise opens one, so a
+failure in chunk 14 cannot leave chunks 1–13 committed. A source that cannot
+open the required atomic unit refuses rather than partially writing. The only
+knob is semantic, not numeric: native pgx COPY by default, or ordinary SQL via
+`crud.PortableBatch()` / `sqlrepo.PortableBatch()` when COPY is not equivalent
+for the table or its values.
 
 **`VerifyAgainst` is cheap** and is lifted straight from H-SQLREPO-17's remedy: an
 opt-in that runs `crud/catalog` against the model once, so the deploy-before-the-
@@ -1440,8 +1435,8 @@ has to stop saying "every scoped write".
   around it.
 - **[[D-014]]** — the SQL is deterministic. A chunked batch still renders a
   byte-identical statement for a given chunk, because the boundary comes from the
-  input length, not from a map walk. D-014 is not the objection to chunking;
-  atomicity is.
+  input length, not from a map walk. Atomicity is supplied by the shared
+  preflighted write plan rather than left to callers.
 - **[[D-031]]** — soft delete is a statement, not a decorator, so "show the
   tombstones" cannot be a decorator and must not be a *query option*: an option
   would be exactly the composability the decision exists to deny. A
@@ -1477,9 +1472,15 @@ has to stop saying "every scoped write".
 - **[[D-010]]** — `Update` writes only what differs, so the diff has to see the
   row it is diffing against. That is why a projected load and a version column
   cannot both be honoured.
-- **[[D-061]]** — an optional interface is never found with a bare type
-  assertion. A `BeginTx` seam is discovered through `crud.BeginnerOf`, and
-  `crud.SourceOf` is what H-SQLREPO-22's escape hatch has to use.
+- **[[D-061]]** — discovery depends on the capability's authority. Read-only
+  identity/capability lookups walk declared wrappers; effect capabilities do
+  not. `Repo.InsertBatch` asks only the outermost `BatchInserter`, so an opaque
+  repository decorator fails closed. At the source layer
+  `UnsafeBulkInserterOf` asks only the resolved executor; an unknown wrapper gets
+  portable SQL, whose direct plan crosses its `Exec` and whose chunked plan uses
+  the transaction handle, while `ReadWrite` explicitly forwards native bulk to
+  the primary. `SourceOf` plus `UnsafeExecFor`/`UnsafeQueryFor`
+  is H-SQLREPO-22's explicit whole-statement escape hatch.
 - **[[D-007]]** — a narrowing does not cross a model boundary on its own.
   H-SQLREPO-16 point 6 is that invariant working as designed and reading, to a
   consumer, like a leak. It is a documentation obligation, not a code change.
@@ -1513,8 +1514,8 @@ has to stop saying "every scoped write".
 | A dashboard that returns every group | `crud.Unpaged()`, which nobody is told to pass, and which on this one verb also discards `MaxLimit` | small (one default) |
 | A filtered write that refuses what it cannot do | Accepts `Limit` and ignores it. [[D-026]] option 3 | small |
 | Upsert on a natural key | Nothing. `Exists`-then-`Save` — a race, and a replica read — or a hand-written statement | large |
-| A batch that survives a real import | A hand-written chunking loop at a size the author guesses, partitioned by key presence, and on MySQL the keys assigned by hand | large |
-| The query the DSL cannot express | `crud.Raw` keeps every narrowing; `crud.SourceOf` runs a whole statement and leaves the caller's transaction unless they ask `crud.ExecutorFor` first. Neither is documented here | small (docs) + small (a helper) |
+| A batch that survives a real import | `repo.InsertBatch(ctx, models)`: typed, create-only, pgx COPY by default, atomic bind-budgeted SQL elsewhere; `crud.PortableBatch()` or `sqlrepo.PortableBatch()` opts out of COPY | none |
+| The query the DSL cannot express | `crud.Raw` keeps every narrowing; `crud.UnsafeExecFor` / `crud.UnsafeQueryFor` keep a whole statement on the source-bound ambient executor while explicitly naming the policy/decorator bypass | none |
 | Knowing whether to retry | Nothing. A deadlock is the driver's error; the codes exist in `errs` and there is no `crud.ErrRetryable` | medium |
 | One transaction at a chosen isolation level | A second datasource with `WithTxOptions`, or open it with the driver and hand it over — the short path abandoned. Owned by `crud` | large (cross-reference) |
 | A composite-key table | Refused, with the field named. A surrogate key is the answer | large, and not proposed |
@@ -1529,7 +1530,8 @@ restating the code. Everything else is thinner than the declaration makes it loo
 and it is thinnest in one direction: the model going *back*. The permanent
 narrowing that reads honour is in no write statement; a keyed `Save` is a full
 row replacement that nothing at the call site distinguishes from a patch;
-relations travel one way; the batch verb has a ceiling nobody wrote down. The
+relations travel one way. The former import ceiling now has a checked repository
+verb with native pgx magic and an explicit portable opt-out. The
 read path is not finished either — two of its verbs truncate silently and report
 the truncation as the whole answer, which is the same defect this sweep rates
 serious when it finds it in `Aggregate`. The other place customising means
@@ -1548,26 +1550,26 @@ them.
 | 2 | A `Save` carrying a tombstone's key resurrects the row and reads it back as a success (`crud/meta.go:289-299` → `repository.go:59`, `:667`) | blocker | Soft delete's read half holds and its write half does not. Reachable through the ordinary create endpoint for any client-owned key (`port/service.go:152-167`) and through `PUT` (`:190-211`). The gate makes it worse: `saveTarget`'s existence probe runs through the scope that hides the tombstone (`security.go:541`), so the write is authorised as a fresh create. Open tension 17; UC-016 says so in words; no control test |
 | 3 | A keyed `Save` writes every writable column from the model, and nothing says so (`repository.go:623` → `crud/meta.go:287-299`) | blocker | "Set the id, change a field, save it" is the habit every ORM refugee brings, and it clears every column the model left at its zero value. Same data-loss shape [[UC-003]] exists to prevent, one verb over, reachable from `PUT /{id}`. The fix is a paragraph; the absence of the paragraph is the blocker |
 | 4 | Relations on a model are never written and never refused (`crud/meta.go:102-104`, `repository.go:631`) | serious | `Save(order)` with `order.Items` populated persists the order, returns nil, and the children do not exist. No cascade anywhere in `crud/`, and no sentence in the module reference, [[D-017]] or this module's docs. For an aggregate root that is the most common write in the application |
-| 5 | `SaveAll` builds one statement with a placeholder per value and never chunks (`repository.go:1156-1176`); `Delete(ids...)` does the same (`:882`) | serious | The only bulk-write verb has an undocumented row ceiling below any real import, and crossing it is a driver error naming nothing about vv. One defect, one fix, two call sites. The library already chunks at 900 in the preloader for this exact reason |
+| 5 | Historical: `SaveAll` and `Delete(ids...)` each built one unbounded statement | closed (FW-CORE-003) | Both now derive chunks from the dialect bind budget, preflight the complete plan and execute multiple chunks atomically. `crud/sqlrepo/bind_budget_test.go` pins exact boundaries, rollback and ambient-transaction behaviour; imports also have the checked `Repo.InsertBatch` path. |
 | 6 | `missedRow`'s existence check (`repository.go:821` → `Exists` at `:595`) routes to the replica; its answer decides `ErrNotFound` versus `ErrStaleVersion` | serious | Breaks [[D-032]]'s written invariant with no test, and `missedRow` is absent from that decision's "Where it lives" list. Under lag a lost update is reported 404 — "give up" — for an edit that should have been retried, and a deleted row is retried forever. One line, plus fixing UC-009's "covered" status |
 | 7 | `Aggregate` applies the default page limit of 20 to group rows, with no total and no `HasNext` (`repository.go:1051-1055`) | serious | A dashboard silently loses groups past the twentieth and cannot tell. `crud.Unpaged()` fixes it, nothing tells anyone to pass it, and on this verb alone `Unpaged` also discards the declared `MaxLimit` (`:1052-1054` versus `crud/options.go:238-247`) — one option word with two meanings on one repository |
 | 8 | `Get(crud.Unpaged())` against a repository with `MaxLimit` returns a truncated page reporting itself as the whole answer (`repository.go:217-218`, `crud/page.go:33`, `:38`) | serious | Same silent-truncation shape as row 7, in the read path. Reachable from the wire as `?unpaged=true` / `?all=true` under `AllowUnpaged` — the flag an export endpoint turns on. The pinning test asserts only that a `LIMIT` was emitted, never the response |
-| 9 | `SaveAll` reads nothing back on a dialect without `RETURNING`, `generated` columns included (`repository.go:1211-1216`) | serious | The *keys* are a documented, pinned refusal (`:1120-1123`, `saveall_test.go:106-116`) and should not be re-litigated. The rest is not: an assigned-key batch on MySQL comes home with no `created_at`, while a single `Save` of the same row has it. And **no use case covers `SaveAll` at all** — [[UC-008]]'s "Out of scope" opens with "Bulk insert" |
+| 9 | Historical: `SaveAll` read-back differed by dialect and left its `generated`-column result implicit | closed (explicit contract) | `SaveAll` is now deliberately write-only on every dialect, as its repository doc comment and `TestGeneratedKeySaveAllKeepsItsWriteOnlySemanticsAcrossChunks` state. `InsertBatch` has the same no-mutation contract; callers needing stored values use row-oriented `Save` or assigned keys. H-SQLREPO-06 now owns the import use case. |
 | 10 | The soft-delete column is not frozen against the update DTO (`crud/update.go:112-120`) | serious | `PATCH {"deletedAt":"..."}` deletes a row through the *update* permission — the outcome [[D-031]]'s "Why" names as the thing it chose against. `port.MustCoverUpdate` pushes the column back in unless `-readonly` is declared at generation time |
 | 11 | No conflict target but the primary key (`repository.go:59`), and the key-less branch carries no conflict clause at all (`:619`) | serious | "Insert or update, keyed on the email" has no in-library answer, and the substitute is a read-then-write race — whose read is also replica-eligible — or a hand-written statement. Closing it amends [[D-011]] and widens the exported `crud.Dialect`: cheap before the tag |
 | 12 | `UpdateAll` and `DeleteAll` accept a `Limit` and emit none (`repository.go:834-871`, `:903-918`) | serious | A filtered write silently does more than it was asked. Under the gate it is [[D-026]] — `Status: open` — where `Inspect` sees ten rows and the write takes every match. Option 3 of that decision is this module's to implement |
-| 13 | Three false statements in the module reference (`docs/modules/en/sqlrepo.md:73-74`, `:92-93`, `:107`) | serious | "`SaveAll` … reads every key back in order" is contradicted by the library's own doc comment and a control test. "`UpdateAll` … neither diffs nor advances a version column" is contradicted by `repository.go:857-859` and [[UC-008]] guarantee 8. "`Scope` … ANDed into every read and every scoped write" is the exact belief row 1 says a consumer must not form. A wrong option description in a consumer's reference is a bug they hit and the author did not |
+| 13 | Two false statements remain in the module reference: `UpdateAll` says it does not advance a version, and `Scope` claims every scoped write | serious | The historical `SaveAll`/COPY sentence was corrected with FW-CORE-003: it now states write-only, budgeted SQL and points imports to `InsertBatch`. The other two claims still contradict `repository.go` and row 1, so this finding remains active but no longer counts the closed bulk documentation defect. |
 | 14 | `Scope` and `DefaultSort` are stored unvalidated at `Define` (`blueprint.go:85`, `:158-196`) | sharp edge | A typo in the setting that *is* the safety boundary is a 500 on live traffic, not a start-up panic — while `SoftDelete` and `RelationScope` in the same list are validated. One function, walking the predicate the way `resolveRelationScopes` walks paths |
 | 15 | Nothing checks the model against the live table; `crud/catalog` is never reached from here | sharp edge | Deploying before the migration breaks every endpoint on that table with a driver error, and H-SQLREPO-01's start-up promise reads as if it were covered |
 | 16 | `crud.Contains` renders a plain `LIKE` — case-sensitive on PostgreSQL, insensitive on MySQL (`crud/predicate.go:436`, `:255-274`) | sharp edge | The same search box returns different rows on the two engines this module elsewhere insists agree. The portable spelling is unindexable. The wire's free-text search takes the same path under a comment claiming it is case-insensitive (`crud/query/compile.go:565`) — that comment is `crud/query`'s to fix |
 | 17 | A to-many preload has no row ceiling and cannot be given one (`crud/preload.go:193-196`) | sharp edge | `?limit=50&preload=comments` loads every comment of 50 articles into memory. The refusal is deliberate and right — a `LIMIT` on a batched preload truncates some parents and not others — and the consumer's fix is a second query, which nothing tells them |
 | 18 | A target model's own `SoftDelete` does not follow a preload from another repository (`repository.go:531-536`) | sharp edge | The consumer declares the tombstone filter on the `Comment` blueprint, preloads comments from articles, and gets tombstones. The fix is `RelationScope` on the *article* blueprint — the same fact in two files with nothing checking they agree |
 | 19 | A qualified table name becomes one quoted identifier (`crud/render.go:41` → `crud/dialect.go:70-72`) | sharp edge | `Define[...]("analytics.events")` produces `"analytics.events"` and the first query fails with "relation does not exist". No setting, no refusal at `Define`, no `search_path` note anywhere |
-| 20 | A statement run through `crud.SourceOf(repo)` leaves the caller's transaction and reports success (`crud/executor.go:56-59`, `:195`) | sharp edge | The escape hatch for a report the DSL cannot express commits outside the transaction the handler opened and survives its rollback. The fix at the call site is `crud.ExecutorFor(ctx, src)` first — what the repository does for itself at `repository.go:95-101` — and nothing documents either |
+| 20 | Historical: direct `crud.SourceOf(repo).Exec` selected the pool and could leave the caller's transaction | closed (FW-CORE-003) | `crud.UnsafeExecFor` and `crud.UnsafeQueryFor` resolve the source-bound ambient executor before I/O and are documented as whole-statement policy/decorator bypasses. `crud/executor_effect_test.go` pins datasource scoping and failure. |
 | 21 | A non-integer `auto` primary key on a dialect without `RETURNING` (`repository.go:656`, `:667`) | sharp edge | With `db:"id,pk,auto"` on a uuid and `DEFAULT (UUID())` on MySQL: the insert succeeds, `LastInsertId` is 0, the model keeps its zero key and the read-back answers `ErrNotFound` — a successful write reported as a missing row. Refusable at `Bind` |
 | 22 | `Update` with `crud.Select(...)` on a versioned model (`repository.go:424-467`, `:801-812`) | sharp edge | `projection` forces the primary key in but not the version column, so the pin renders `version = 0` and every such update fails as stale. The neighbouring case is worse and quieter: a projected model handed to `Save` writes the unselected columns as zeroes |
 | 23 | No `crud.ErrRetryable`, and no classifier by default for `40001` / `40P01` / `55P03` (`crud/sqlfault/classify.go:137-157`) | sharp edge | The lock that makes deadlocks likely is taken in this module (`repository.go:712-715`). The codes exist in `errs/sqlerr` and map to `KindRetryable`, so the answer is "configure a classifier" — but from `crud/sqlrepo` there is nothing to compare against and nothing that says where to look |
-| 24 | `SaveAll` and `Aggregate` have no unit test in `crud/sqlrepo` | sharp edge | Every claim about the batch statement and the aggregate statement is proven only behind the `integration` tag, and the natural place to pin a chunk boundary or a paging default — `crudtest`, per [[D-014]] — does not exist for either |
+| 24 | Historical: `SaveAll` and `Aggregate` had no `crud/sqlrepo` unit coverage | closed | `bind_budget_test.go` covers SaveAll chunk boundaries, ordering, atomic rollback and ambient transactions; `repository_test.go` covers aggregate paging/refusals. `insert_batch_test.go` separately covers the native/portable import choice and decorator seams. |
 | 25 | `Count` and `Exists` are replica-eligible with nothing said (`repository.go:584`, `:595`) | sharp edge | Right for a badge count, wrong for the `Exists`-before-create this sweep tells consumers to write today. [[D-032]]'s rule one layer out, where it is the caller's to apply |
 | 26 | The module reference's remedy for "a column DEFAULT does not fire" names `BeforeSave`, which does not exist at this layer (`docs/modules/en/sqlrepo.md:283`) | sharp edge | A service method or background job has no such seam; the only one is a `crud.Middleware`. A reference that names a hook a consumer cannot reach is worse than one that says nothing |
 | 27 | `settings.replica` (`blueprint.go:33`) is declared and never read | sharp edge | Nothing at run time, but the next agent reads a settings field as a setting that exists |
@@ -1612,12 +1614,13 @@ them.
   `crud.Raw`, which is a predicate rendered inside the `WHERE` the repository
   built (`crud/predicate.go:480`, `:364-385`). Adopted: the claim is now narrowed
   to a whole hand-written statement, and H-SQLREPO-22 exists to describe both
-  escape hatches and the transaction trap on the second one.
+  escape hatches. FW-CORE-003 closed the executor trap with the explicitly
+  unsafe, context-aware whole-statement helpers.
 - **The chunking proposal's objection.** Round 1 defended automatic chunking
   against [[D-014]] only. A reviewer pointed out the real objection is atomicity
-  and that `repository.go:1116-1119` states it. Adopted, and the proposal now
-  picks a semantics rather than only a mechanism — with the doc comment amended in
-  the same change, because it currently argues against the fix.
+  and that the old repository comment stated it. Adopted and implemented: the
+  complete plan is preflighted and every multi-statement write owns or joins one
+  atomic unit, with a pre-I/O refusal when the source cannot provide one.
 
 ## Edge cases
 
@@ -1783,11 +1786,12 @@ cardinality is an unverified executor contract, not a supported-adapter blocker.
 
 `Scope` and same-path `RelationScope` must have one declaration rule: AND-compose
 every repeated narrowing or refuse the duplicate; table scope must not be
-last-wins while relation scope is map-overwrite. The illustrative
-`BatchSize(500)` is withdrawn: no arbitrary chunking knob should silently turn a
-one-statement `SaveAll` into a partial multi-statement write. The smaller contract
-is a declared per-statement ceiling and a pre-SQL refusal naming it; callers who
-need more explicitly partition their input and own the transaction.
+last-wins while relation scope is map-overwrite. The historical illustrative
+`BatchSize(500)` proposal stays withdrawn: callers do not guess a
+number. The repository derives chunks from the dialect bind budget, preflights
+them and owns the atomic unit. `crud.PortableBatch()` and
+`sqlrepo.PortableBatch()` choose SQL semantics rather than a chunk size; native
+pgx COPY remains the default for `InsertBatch`.
 
 Any alternative conflict target or version-aware full Save is a direct [[D-011]]
 challenge: `Save` is a single no-option JPA-shaped upsert, so it cannot be added

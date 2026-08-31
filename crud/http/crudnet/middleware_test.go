@@ -11,7 +11,6 @@ import (
 	"github.com/frostgrove/vv/errs"
 )
 
-// serve runs one request through h and reports what the client got.
 func serve(t *testing.T, h http.Handler, method, target string) response {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -19,8 +18,6 @@ func serve(t *testing.T, h http.Handler, method, target string) response {
 	return response{status: w.Code, body: w.Body.Bytes(), header: w.Header()}
 }
 
-// The middleware exists so an author's own handlers answer failures the way the
-// CRUD routes do, without repeating the table.
 func TestTheMiddlewareRendersAnErrorTheHandlerReturned(t *testing.T) {
 	h := WithErrors(func(http.ResponseWriter, *http.Request) error {
 		return crud.ErrNotFound
@@ -36,8 +33,6 @@ func TestTheMiddlewareRendersAnErrorTheHandlerReturned(t *testing.T) {
 	}
 }
 
-// Writing a second body produces a corrupt one, so a handler that answered for
-// itself is left alone whatever it then returns.
 func TestAHandlerThatAlreadyWroteIsLeftAlone(t *testing.T) {
 	wrote := WithErrors(func(w http.ResponseWriter, _ *http.Request) error {
 		w.WriteHeader(http.StatusTeapot)
@@ -54,8 +49,6 @@ func TestAHandlerThatAlreadyWroteIsLeftAlone(t *testing.T) {
 		t.Fatalf("the handler's own body became %s", got)
 	}
 
-	// The control. Without it this passes for a middleware that renders
-	// nothing at all, and the test above would be measuring an empty feature.
 	silent := WithErrors(func(http.ResponseWriter, *http.Request) error {
 		return crud.ErrNotFound
 	})
@@ -64,8 +57,6 @@ func TestAHandlerThatAlreadyWroteIsLeftAlone(t *testing.T) {
 	}
 }
 
-// A response rendered twice is the most likely way to get this wrong, and a
-// double install is how it happens: once on the router, once on a group.
 func TestInstallingTheMiddlewareTwiceRendersOnce(t *testing.T) {
 	fn := HandlerFunc(func(http.ResponseWriter, *http.Request) error { return crud.ErrConflict })
 
@@ -75,8 +66,7 @@ func TestInstallingTheMiddlewareTwiceRendersOnce(t *testing.T) {
 	if twice.status != once.status {
 		t.Fatalf("two installs answered %d where one answered %d", twice.status, once.status)
 	}
-	// The byte length, not only "it decodes": two envelopes concatenated
-	// decode as the first one and every field assertion would pass.
+
 	if len(twice.body) != len(once.body) {
 		t.Fatalf("two installs wrote %d bytes where one wrote %d: %s", len(twice.body), len(once.body), twice.body)
 	}
@@ -85,9 +75,6 @@ func TestInstallingTheMiddlewareTwiceRendersOnce(t *testing.T) {
 	}
 }
 
-// The same middleware covers a route this library never wrote, which is the
-// reason it is a func(http.Handler) http.Handler rather than an option on the
-// handler: a chi or gorilla/mux router takes it unchanged.
 func TestTheMiddlewareCoversAHandRolledRoute(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /reports", HandlerFunc(func(http.ResponseWriter, *http.Request) error {
@@ -107,23 +94,17 @@ func TestTheMiddlewareCoversAHandRolledRoute(t *testing.T) {
 		t.Fatalf("the envelope names the error %q, want forbidden", got)
 	}
 
-	// The control: a route that succeeds is untouched. A middleware that
-	// rendered an envelope over every response would pass the leg above.
 	if r := serve(t, h, http.MethodGet, "/healthy"); r.status != http.StatusOK || string(r.body) != `{"ok":true}` {
 		t.Fatalf("a successful route answered %d %s", r.status, r.body)
 	}
 }
 
-// panicky is a message source that fails the way a consumer's own catalogue
-// would: in the middle of rendering, after the status is decided.
 type panicky struct{}
 
 func (panicky) Message(context.Context, errs.Violation, string) (string, bool) {
 	panic("the catalogue is not loaded")
 }
 
-// A renderer bug must not become a dropped connection. The client gets the same
-// silent 500 any other server fault produces.
 func TestAPanicInTheRendererBecomesASilent500(t *testing.T) {
 	h := Errors(crudhttp.WithMessages(panicky{}))(HandlerFunc(
 		func(http.ResponseWriter, *http.Request) error { return crud.ErrNotFound },
@@ -138,8 +119,6 @@ func TestAPanicInTheRendererBecomesASilent500(t *testing.T) {
 		t.Fatalf("the recovered 500 answered %s, want nothing but the status", got)
 	}
 
-	// The control: the same handler with a renderer that works answers 404. A
-	// middleware that always 500'd would pass the leg above.
 	fine := Errors()(HandlerFunc(func(http.ResponseWriter, *http.Request) error { return crud.ErrNotFound }))
 	if r := serve(t, fine, http.MethodGet, "/anything"); r.status != http.StatusNotFound {
 		t.Fatalf("a working renderer answered %d, want 404: %s", r.status, r.body)

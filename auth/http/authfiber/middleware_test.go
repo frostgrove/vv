@@ -14,8 +14,6 @@ import (
 	"github.com/frostgrove/vv/auth/http/authfiber"
 )
 
-// serve runs one request through the middleware and answers what the handler
-// saw and what the client got.
 func serve(t *testing.T, guard *auth.Guard, header string) (*seen, *http.Response, string) {
 	t.Helper()
 	h := &seen{}
@@ -48,9 +46,7 @@ func TestAnAuthenticatedRequestReachesTheHandlerWithItsPrincipal(t *testing.T) {
 	if !h.ran {
 		t.Fatal("the handler behind the middleware never ran")
 	}
-	// This is the assertion that pins SetContext rather than Locals: a
-	// principal in Locals would leave found false here, and would leave every
-	// policy downstream unable to see one.
+
 	if !h.found {
 		t.Fatal("the handler saw no principal on c.Context, so no policy downstream would see one either")
 	}

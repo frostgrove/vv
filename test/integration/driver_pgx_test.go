@@ -26,12 +26,58 @@ type core028EventUpdate struct {
 	Label *string
 }
 
+type core003RLSRow struct {
+	ID    int64  `db:"id,pk,auto"`
+	Label string `db:"label"`
+}
+
+var core003RLSRows = sqlrepo.DefineInSchema[core003RLSRow, int64, struct{}]("core003", "rls_rows")
+
+func dropCore003RLSRole(ctx context.Context) error {
+	var exists bool
+	if err := pgDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'core003_rls_writer')`).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := pgDB.ExecContext(ctx, `DROP OWNED BY core003_rls_writer`); err != nil {
+		return err
+	}
+	_, err := pgDB.ExecContext(ctx, `DROP ROLE core003_rls_writer`)
+	return err
+}
+
+type observedBulkSource struct {
+	crud.Source
+	bulk int
+	exec int
+}
+
+func (this *observedBulkSource) Exec(ctx context.Context, query string, args ...any) (crud.Result, error) {
+	this.exec++
+	return this.Source.Exec(ctx, query, args...)
+}
+
+func (this *observedBulkSource) Query(ctx context.Context, query string, args ...any) (crud.Rows, error) {
+	return this.Source.Query(ctx, query, args...)
+}
+
+func (this *observedBulkSource) UnwrapSource() crud.Source { return this.Source }
+
+func (this *observedBulkSource) UnsafeBulkInsert(ctx context.Context, target crud.Executor, table crud.TableRef, columns []string, rows [][]any) (int64, error) {
+	bulk, ok := crud.UnsafeBulkInserterOf(this.Source)
+	if !ok {
+		return 0, crud.ErrNoBulkInsertSupport
+	}
+	this.bulk++
+	return bulk.UnsafeBulkInsert(ctx, target, table, columns, rows)
+}
+
 func TestPgx(t *testing.T) {
 	RunSuite(t, Target{Name: "pgx", DB: "postgres", Source: crudpgx.Open(pgPool)})
 }
 
-// pgx owns the transaction; vv joins it through the context. One physical
-// transaction, two APIs.
 func TestPgxSharedTransaction(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -50,7 +96,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	} else {
 		u = stored
 	}
-	// A raw pgx statement in the same transaction sees the row vv wrote.
+
 	var name string
 	if err := tx.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", u.ID).Scan(&name); err != nil {
 		t.Fatal(err)
@@ -58,7 +104,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	if name != "Joined" {
 		t.Fatalf("pgx read back %q", name)
 	}
-	// And vv sees what pgx writes.
+
 	if _, err := tx.Exec(ctx, "UPDATE users SET name = 'ByPgx' WHERE id = $1", u.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +115,7 @@ func TestPgxSharedTransaction(t *testing.T) {
 	if got.Name != "ByPgx" {
 		t.Fatalf("github.com/frostgrove/vv read back %q", got.Name)
 	}
-	// Outside the transaction the row does not exist yet.
+
 	if _, err := repository.GetByID(ctx, u.ID); !errors.Is(err, crud.ErrNotFound) {
 		t.Fatalf("err = %v: the write leaked out of the transaction", err)
 	}
@@ -119,8 +165,6 @@ func TestPgxTransactionIdentityCannotEscapeRollback(t *testing.T) {
 	}
 }
 
-// pgx gives nested Begin savepoint semantics, so an inner failure can be undone
-// without losing the outer transaction.
 func TestPgxNestedSavepoint(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
@@ -157,29 +201,111 @@ func TestPgxNestedSavepoint(t *testing.T) {
 	}
 }
 
-// The COPY fast path is picked up automatically when the executor offers it.
-func TestPgxBulkCopy(t *testing.T) {
+func TestPgxInsertBatchSelectsCopyFromTheRepository(t *testing.T) {
 	ctx := context.Background()
 	truncate(t, pgDB)
-	source := crudpgx.Open(pgPool)
-
-	bulk, ok := any(source).(crud.BulkInserter)
-	if !ok {
-		t.Fatal("the pgx adapter should implement crud.BulkInserter")
+	source := &observedBulkSource{Source: crudpgx.Open(pgPool)}
+	repository := Users.Bind(source)
+	rows := []*User{
+		{TenantID: 1, Email: "copy-1@x.io", Name: "c1", Age: crud.Set(20), Active: true},
+		{TenantID: 1, Email: "copy-2@x.io", Name: "c2", Age: crud.Null[int](), Active: true},
 	}
-	rows := [][]any{
-		{int64(1), "copy-1@x.io", "c1", 20, true},
-		{int64(1), "copy-2@x.io", "c2", 21, true},
+	if err := repository.InsertBatch(ctx, rows); err != nil {
+		t.Fatal(err)
 	}
-	n, err := bulk.CopyFrom(ctx, "users", []string{"tenant_id", "email", "name", "age", "active"}, rows)
+	if source.bulk != 1 || source.exec != 0 {
+		t.Fatalf("native/portable calls = %d/%d, want COPY selected once", source.bulk, source.exec)
+	}
+	if got, err := repository.Count(ctx); err != nil || got != 2 {
+		t.Fatalf("count = %d err = %v", got, err)
+	}
+	stored, err := repository.GetAll(ctx, crud.OrderBy(crud.Asc("Email")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("copied %d rows", n)
+	if len(stored) != 2 || !stored[1].Age.IsNull() {
+		t.Fatalf("stored COPY rows = %+v", stored)
 	}
-	if got, err := Users.Bind(source).Count(ctx); err != nil || got != 2 {
-		t.Fatalf("count = %d err = %v", got, err)
+}
+
+func TestPgxInsertBatchJoinsRepositoryTransaction(t *testing.T) {
+	ctx := context.Background()
+	truncate(t, pgDB)
+	source := crudpgx.Open(pgPool)
+	repository := Users.Bind(source)
+	rollback := errors.New("rollback after repository batch")
+
+	err := repository.Tx(ctx, func(txCtx context.Context) error {
+		if err := repository.InsertBatch(txCtx, []*User{{
+			TenantID: 1, Email: "transaction-copy@x.io", Name: "transaction", Age: crud.Set(20), Active: true,
+		}}); err != nil {
+			return err
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("Tx returned %v, want rollback sentinel", err)
+	}
+	if got, err := repository.Count(ctx); err != nil || got != 0 {
+		t.Fatalf("count after repository batch rollback = %d, %v", got, err)
+	}
+}
+
+func TestPgxPortableBatchIsTheExplicitRLSPath(t *testing.T) {
+	ctx := context.Background()
+	if _, err := pgDB.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS core003`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pgDB.ExecContext(ctx, `DROP TABLE IF EXISTS core003.rls_rows`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dropCore003RLSRole(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := pgDB.ExecContext(cleanupCtx, `DROP TABLE IF EXISTS core003.rls_rows`); err != nil {
+			t.Errorf("drop RLS table: %v", err)
+		}
+		if err := dropCore003RLSRole(cleanupCtx); err != nil {
+			t.Errorf("drop RLS role: %v", err)
+		}
+	})
+	for _, statement := range []string{
+		`CREATE ROLE core003_rls_writer NOLOGIN`,
+		`CREATE TABLE core003.rls_rows (id BIGSERIAL PRIMARY KEY, label TEXT NOT NULL)`,
+		`ALTER TABLE core003.rls_rows ENABLE ROW LEVEL SECURITY`,
+		`CREATE POLICY core003_allow_all ON core003.rls_rows USING (true) WITH CHECK (true)`,
+		`GRANT USAGE ON SCHEMA core003 TO core003_rls_writer`,
+		`GRANT SELECT, INSERT ON core003.rls_rows TO core003_rls_writer`,
+		`GRANT USAGE, SELECT ON SEQUENCE core003.rls_rows_id_seq TO core003_rls_writer`,
+	} {
+		if _, err := pgDB.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	connection, err := pgPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Release()
+	if _, err := connection.Exec(ctx, `SET ROLE core003_rls_writer`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = connection.Exec(context.Background(), `RESET ROLE`) }()
+	repository := core003RLSRows.Bind(crudpgx.From(connection))
+	if err := repository.InsertBatch(ctx, []*core003RLSRow{{Label: "native-copy-must-refuse"}}); err == nil {
+		t.Fatal("COPY unexpectedly accepted an RLS-enabled table")
+	}
+	if count, err := repository.Count(ctx); err != nil || count != 0 {
+		t.Fatalf("count after refused native batch = %d, %v", count, err)
+	}
+	if err := repository.InsertBatch(ctx, []*core003RLSRow{{Label: "portable-insert"}}, crud.PortableBatch()); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := repository.Count(ctx); err != nil || count != 1 {
+		t.Fatalf("count after portable RLS batch = %d, %v", count, err)
 	}
 }
 
@@ -208,9 +334,7 @@ func TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	// The same bare table and constraint names in another schema cover a
-	// different column. A catalog keyed only on the two bare strings can make
-	// the core028 fault confidently point at shadow_code.
+
 	if _, err := pgPool.Exec(ctx, `CREATE TABLE core028_shadow.events (
 		id BIGSERIAL PRIMARY KEY,
 		label TEXT NOT NULL,
@@ -271,17 +395,22 @@ func TestQualifiedRepositoryAndPgxCopyUseTheSameStructuredTable(t *testing.T) {
 			t.Fatalf("qualified fault has no core028.events_label_key violation: %+v", fault.Violations)
 		}
 	}
+	if err := repository.InsertBatch(ctx, []*core028Event{{Label: "repository"}}); err == nil {
+		t.Fatal("qualified InsertBatch unique violation was accepted")
+	} else if fault, ok := errs.AsFault(err); !ok {
+		t.Fatalf("qualified InsertBatch violation was not classified: %v", err)
+	} else if fault.Op != "InsertBatch" || len(fault.Violations) == 0 || fault.Violations[0].Path.String() != "Label" {
+		t.Fatalf("qualified InsertBatch fault = %+v", fault)
+	}
 
-	n, err := source.CopyFromTable(ctx, crud.TableRef{Schema: "core028", Name: "events"},
-		[]string{"label"}, [][]any{{"copy"}})
-	if err != nil || n != 1 {
-		t.Fatalf("qualified COPY = %d, %v", n, err)
+	if err := repository.InsertBatch(ctx, []*core028Event{{Label: "copy"}}); err != nil {
+		t.Fatalf("qualified repository COPY = %v", err)
 	}
 	if count, err := repository.Count(ctx); err != nil || count != 2 {
 		t.Fatalf("count after both paths = %d, %v", count, err)
 	}
 
-	if _, err := source.CopyFrom(ctx, "core028.events", []string{"label"}, [][]any{{"wrong"}}); err == nil {
+	if _, err := source.UnsafeCopyFrom(ctx, "core028.events", []string{"label"}, [][]any{{"wrong"}}); err == nil {
 		t.Fatal("dotted string COPY was not refused")
 	}
 	if count, err := repository.Count(ctx); err != nil || count != 2 {

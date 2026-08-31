@@ -17,16 +17,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A UUID primary key is a different animal from an integer one, and every layer
-// touches it differently: the schema reader has to accept a [16]byte array as a
-// column, the preloader has to key its index by it, the update planner has to
-// compare two of them, and the DSL has to turn the string a client sends into
-// one. None of that follows from the integer tests.
-//
-// The shape below is the one ent produces for a UUID-keyed schema: an array PK
-// with no database default, a defined string type for an enum, and a *string for
-// an Optional().Nillable() column.
-
 type RoomKind string
 
 const (
@@ -85,9 +75,7 @@ var uuSchema = map[string][]string{
 	"mysql": {
 		`DROP TABLE IF EXISTS uu_members`,
 		`DROP TABLE IF EXISTS uu_rooms`,
-		// MySQL has no uuid type, and uuid.UUID.Value() hands the driver the
-		// 36-character string form rather than the 16 raw bytes — so the column
-		// that matches what actually goes over the wire is char(36).
+
 		`CREATE TABLE uu_rooms (
 			id char(36) PRIMARY KEY,
 			created_at datetime(6) NOT NULL,
@@ -131,7 +119,6 @@ func uuSetup(t *testing.T) {
 	}
 }
 
-// uuSeed writes one room with two members and returns their ids.
 func uuSeed(t *testing.T, source crud.Source) (uuid.UUID, []uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
@@ -163,7 +150,6 @@ func uuSeed(t *testing.T, source crud.Source) (uuid.UUID, []uuid.UUID) {
 	return room.ID, ids
 }
 
-// The whole surface over a UUID key, on both engines.
 func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 	ctx := context.Background()
 	uuSetup(t)
@@ -207,7 +193,7 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 				if n != 2 {
 					t.Fatalf("count = %d, want 2", n)
 				}
-				// IN over a list of UUIDs is a different binding path.
+
 				n, err = members.Count(ctx, crud.Where(crud.InAny("ID", memberIDs)))
 				if err != nil {
 					t.Fatal(err)
@@ -218,8 +204,6 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 			})
 
 			t.Run("a preload indexes by the UUID key", func(t *testing.T) {
-				// This is the one that quietly returns nothing if the preloader
-				// cannot use a [16]byte as a map key.
 				got, err := rooms.GetAll(ctx, crud.Preload("Members"))
 				if err != nil {
 					t.Fatal(err)
@@ -230,7 +214,7 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 				if len(got[0].Members) != 2 {
 					t.Fatalf("members = %+v: the preload did not attach by UUID", got[0].Members)
 				}
-				// And back the other way, so belongs_to is covered too.
+
 				back, err := members.GetAll(ctx, crud.Preload("Room"))
 				if err != nil {
 					t.Fatal(err)
@@ -264,7 +248,7 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 				if got.ID != roomID {
 					t.Fatalf("the key changed: %v", got.ID)
 				}
-				// An explicit null on a nullable column, over a UUID key.
+
 				got, err = rooms.Update(ctx, roomID, RoomUpdate{Name: crud.Null[string]()})
 				if err != nil {
 					t.Fatal(err)
@@ -290,8 +274,6 @@ func TestAUUIDPrimaryKeyWorksEverywhere(t *testing.T) {
 	}
 }
 
-// The HTTP path: a client sends a UUID as a JSON string, and the compiler has to
-// turn it into the column's Go type before it can be bound.
 func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 	ctx := context.Background()
 	uuSetup(t)
@@ -319,7 +301,6 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 				t.Fatalf("page = total %d items %d", page.Total, len(page.Items))
 			}
 
-			// An "in" list of UUID strings, which is the shape a bulk filter takes.
 			body = `{"filter":{"id":{"in":["` + memberIDs[0].String() + `","` + memberIDs[1].String() + `"]}}}`
 			request = query.Request{}
 			if err := json.Unmarshal([]byte(body), &request); err != nil {
@@ -333,8 +314,6 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 				t.Fatalf("count = %d err = %v", n, err)
 			}
 
-			// A malformed one must be a query error naming the path, not a panic
-			// and not a silently-zero UUID that matches nothing.
 			request = query.Request{}
 			if err := json.Unmarshal([]byte(`{"filter":{"roomId":"not-a-uuid"}}`), &request); err != nil {
 				t.Fatal(err)
@@ -346,12 +325,6 @@ func TestTheDSLCoercesAUUIDFromTheWire(t *testing.T) {
 	}
 }
 
-// ent generates its UUIDs and timestamps in Go, and vv does not run ent's
-// builders. The good news, pinned here because it is the difference between a
-// clear error and a table full of zero keys: a model whose key is declared
-// `noauto` and left unset is refused before any SQL runs. The bad news is the
-// other half — nothing fills in a Go-side time default, so a NOT NULL timestamp
-// column has to be set by the caller or defaulted by the database.
 func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 	ctx := context.Background()
 	uuSetup(t)
@@ -361,7 +334,6 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 			uuSetup(t)
 			rooms := Rooms.Bind(tg.source)
 
-			// No ID — exactly what ent's Default(uuid.NewV7) would have filled in.
 			blank := Room{Kind: RoomDirect, CreatedAt: time.Now().UTC()}
 			if _, err := rooms.Save(ctx, &blank); !errors.Is(err, crud.ErrMissingID) {
 				t.Fatalf("err = %v, want ErrMissingID: an unset noauto key must be refused, "+
@@ -371,9 +343,6 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 				t.Fatalf("count = %d err = %v: the refused row was written anyway", n, err)
 			}
 
-			// The timestamp half: a key is set, the Go-side time default is not.
-			// The column is NOT NULL with no database default, so the database is
-			// the one that says no — which is the failure mode to know about.
 			zeroTime := Room{ID: uuid.Must(uuid.NewV7()), Kind: RoomDirect}
 			_, err := rooms.Save(ctx, &zeroTime)
 			if err != nil {
@@ -392,9 +361,6 @@ func TestAGoSideDefaultIsNotAppliedByVV(t *testing.T) {
 	}
 }
 
-// A UUID column that is nullable is a *different* Go type again, and sql.Null
-// is how a driver reports it. Covered here because a chat schema is full of
-// optional foreign keys.
 func TestANullableUUIDColumnRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	uuSetup(t)
@@ -405,7 +371,6 @@ func TestANullableUUIDColumnRoundTrips(t *testing.T) {
 			_, ids := uuSeed(t, tg.source)
 			members := RoomMembers.Bind(tg.source)
 
-			// left_at starts NULL.
 			got, err := members.GetByID(ctx, ids[0])
 			if err != nil {
 				t.Fatal(err)

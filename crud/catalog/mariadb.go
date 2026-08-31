@@ -6,31 +6,6 @@ import (
 	"github.com/frostgrove/vv/crud"
 )
 
-// MariaDB 11.4 introspection. Its own statements; only the row-to-struct shaping
-// in mysql.go is shared.
-//
-// It diverges from MySQL in both directions, which is why one statement set
-// cannot serve both:
-//
-//   - information_schema.STATISTICS has no EXPRESSION column here — its columns
-//     end INDEX_COMMENT, IGNORED — so MySQL's statement fails with error 1054.
-//     MariaDB has no expression indexes to report either: CREATE UNIQUE INDEX ...
-//     ((lower(alt))) is error 1064.
-//   - information_schema.CHECK_CONSTRAINTS *has* TABLE_NAME here, which MySQL's
-//     lacks, so the join MySQL needs is unnecessary work.
-//   - COLUMN_DEFAULT is the default's expression text rather than its value, so
-//     a nullable column with no DEFAULT clause reports the unquoted word NULL.
-//     myReadColumns has the argument for what that costs.
-//
-// The two guards mysql.go's statements carry are here for the same measured
-// reason and not for symmetry. KEY_COLUMN_USAGE lists a unique key's parts under
-// the same name and table as a foreign key of that name, and those rows carry a
-// NULL referenced table; without the guard MariaDB answered RefColumns ["" "id"]
-// against Columns ["pid" "pid" "pid"] for one one-column key. And
-// TABLE_CONSTRAINTS answers two rows for a name that is both, differing in
-// nothing but CONSTRAINT_TYPE, so that column is in the ORDER BY — mysql.go
-// states the argument.
-
 const mariaColumns = `
 SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.ORDINAL_POSITION, c.COLUMN_TYPE,
        c.IS_NULLABLE = 'YES',

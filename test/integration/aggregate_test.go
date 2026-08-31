@@ -12,11 +12,6 @@ import (
 	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
-// A GROUP BY written by hand runs outside every narrowing the repository
-// applies, so the moment an application needs a total it drops out from under
-// its own access control. These are about the summary carrying the same
-// narrowing the rows do.
-
 func aggSeed(t *testing.T, tg egTarget) {
 	t.Helper()
 	ctx := context.Background()
@@ -63,7 +58,6 @@ func TestAggregatesGroupAndSummarise(t *testing.T) {
 				t.Fatalf("groups = %d, want 2", len(got))
 			}
 
-			// Tenant 1: three rows, two of them scored, 10 + 20.
 			first := got[0]
 			if n, ok := first.Int("rows"); !ok || n != 3 {
 				t.Fatalf("count(*) = %v %v", first.Value["rows"], ok)
@@ -80,8 +74,7 @@ func TestAggregatesGroupAndSummarise(t *testing.T) {
 			if n, ok := first.Int("highest"); !ok || n != 20 {
 				t.Fatalf("max = %v", first.Value["highest"])
 			}
-			// The grouping column comes back so the caller does not have to
-			// correlate rows by position.
+
 			if _, ok := first.Group["Tenant"]; !ok {
 				t.Fatalf("group = %v, want the grouping column on the row", first.Group)
 			}
@@ -89,7 +82,6 @@ func TestAggregatesGroupAndSummarise(t *testing.T) {
 	}
 }
 
-// A filter narrows the summary, the same way it narrows a page.
 func TestAnAggregateHonoursTheFilter(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -117,7 +109,6 @@ func TestAnAggregateHonoursTheFilter(t *testing.T) {
 	}
 }
 
-// The repository's permanent scope reaches the summary too.
 func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -138,8 +129,6 @@ func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 				t.Fatalf("count = %d, want 3: the scope did not reach the aggregate", n)
 			}
 
-			// The control: without the scope the same call sees everything, so
-			// the assertion above is measuring the scope and not the fixture.
 			all, err := EgRows.Bind(tg.source).Aggregate(ctx, crud.Aggregate(crud.CountAll("n")))
 			if err != nil {
 				t.Fatal(err)
@@ -151,9 +140,6 @@ func TestAnAggregateHonoursThePermanentScope(t *testing.T) {
 	}
 }
 
-// And the gate's, which is the one that would have been missed: the gate embeds
-// crud.Core, so an Aggregate it did not override would have fallen straight
-// through to the plain repository and counted every tenant's rows.
 func TestAnAggregateHonoursTheSecurityGate(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)
@@ -184,7 +170,6 @@ func TestAnAggregateHonoursTheSecurityGate(t *testing.T) {
 				t.Fatalf("sum = %d, want 30: the aggregate summed another tenant's rows", n)
 			}
 
-			// A principal the policy cannot resolve gets nothing, not everything.
 			if _, err := gated.Aggregate(ctx, crud.Aggregate(crud.CountAll("n"))); err == nil {
 				t.Fatal("an aggregate ran without a principal")
 			}
@@ -192,8 +177,6 @@ func TestAnAggregateHonoursTheSecurityGate(t *testing.T) {
 	}
 }
 
-// Names are resolved against the model like every other path, so a typo is a
-// refusal rather than a statement the database rejects.
 func TestAnAggregateRefusesWhatTheModelDoesNotHave(t *testing.T) {
 	ctx := context.Background()
 	egSetup(t)

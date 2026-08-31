@@ -25,13 +25,6 @@ type core022CycleB struct {
 	A   *core022CycleA `rel:"belongs_to,fk=AID"`
 }
 
-// ---------------------------------------------------------------------------
-// declarations
-
-// definePanic runs a declaration that cannot work and returns the error Define
-// panicked with. A declaration that is quietly accepted is the failure: Define
-// exists so a broken mapping dies at package initialisation instead of on the
-// first request.
 func definePanic(t *testing.T, define func()) error {
 	t.Helper()
 	var got error
@@ -53,10 +46,6 @@ func definePanic(t *testing.T, define func()) error {
 	return got
 }
 
-// Every way a declaration can be wrong, refused at declaration time and named
-// in the message — a start-up panic is only useful if it says which part of the
-// mapping is broken. TryDefine is the same check without the panic, so the two
-// have to agree word for word.
 func TestBadDeclarationsAreRefusedAndSayWhy(t *testing.T) {
 	type NoKey struct {
 		Name string `db:"name"`
@@ -157,9 +146,6 @@ func TestBadDeclarationsAreRefusedAndSayWhy(t *testing.T) {
 	}
 }
 
-// An omitted table name is not a broken declaration: it means "the plural of the
-// model", which is what lets the one-line Define in the package documentation be
-// the common case.
 func TestAnEmptyTableNameBecomesThePluralOfTheModel(t *testing.T) {
 	type Story struct {
 		ID    int64  `db:"id,pk,auto"`
@@ -251,8 +237,6 @@ func TestIndependentTableKeepsSelfRelationsInItsOwnPhysicalView(t *testing.T) {
 			`EXISTS (SELECT 1 FROM "core022_archived_nodes" AS rx1 `+
 			`WHERE rx1."id" = "core022_archived_nodes"."parent_id" AND rx1."id" = $1)`)
 
-	// `table=` remains the explicit low-level escape hatch for an edge that is
-	// intentionally supposed to leave the archive and reach the live table.
 	if _, err := repo.GetAll(context.Background(), crud.Where(crud.Eq("CanonicalParent.Parent.ID", int64(7)))); err != nil {
 		t.Fatal(err)
 	}
@@ -475,12 +459,6 @@ func TestLateRelationScopeFailurePublishesNeitherEarlierTargetNorRoot(t *testing
 	}
 }
 
-// ---------------------------------------------------------------------------
-// settings
-
-// The two page-size settings are a floor and a ceiling, and the ceiling wins
-// even when it is below the floor: a repository that says "20 by default, never
-// more than 10" hands out 10, not 20.
 func TestMaxLimitCapsEvenTheDefaultLimit(t *testing.T) {
 	strict := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultLimit(50), sqlrepo.MaxLimit(10))
 
@@ -505,8 +483,6 @@ func TestMaxLimitCapsEvenTheDefaultLimit(t *testing.T) {
 	}
 }
 
-// A default page size of zero would mean LIMIT 0 — a page with no rows on it —
-// so a non-positive setting is read as "not set" and the package default stands.
 func TestANonPositiveDefaultLimitFallsBackToThePackageDefault(t *testing.T) {
 	for _, n := range []int{0, -5} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
@@ -523,10 +499,6 @@ func TestANonPositiveDefaultLimitFallsBackToThePackageDefault(t *testing.T) {
 	}
 }
 
-// Define validates the model, the ID and the update DTO, but not the sort terms
-// — so a default sort naming a column that is not there survives declaration.
-// It cannot survive a query: the statement is refused before it is sent, rather
-// than handed to the database to reject.
 func TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	repository := sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.DefaultSort(crud.Desc("Nope"))).Bind(rec)
@@ -544,9 +516,6 @@ func TestAnUnknownDefaultSortIsRefusedBeforeTheQueryIsSent(t *testing.T) {
 		t.Fatalf("a sort that does not resolve still reached the database: %v", rec.SQL())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// preload depth
 
 type Author struct {
 	ID    int64  `db:"id,pk,auto"`
@@ -567,9 +536,6 @@ type Page struct {
 	Number int   `db:"number"`
 }
 
-// PreloadDepth is the guard against a client turning one request into a dozen
-// queries by asking for `a.b.a.b`. Zero cannot mean "no hops": Bind has no way
-// to tell an explicit zero from an unset setting, so it means "the default".
 func TestPreloadDepthCapsAPathAndZeroMeansUnset(t *testing.T) {
 	authors := func() crudtest.Result { return crudtest.Rows([]any{int64(1), "Ann"}) }
 	books := func() crudtest.Result { return crudtest.Rows([]any{int64(10), int64(1), "Dune"}) }
@@ -621,14 +587,8 @@ func TestPreloadDepthCapsAPathAndZeroMeansUnset(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// scope
-
 var scopedUsers = sqlrepo.Define[User, int64, UserUpdate]("users", sqlrepo.Scope(crud.Eq("TenantID", int64(1))))
 
-// A repository scope is permanent. Every statement that has a WHERE clause
-// carries it, and a caller's own filter is ANDed onto it rather than replacing
-// it.
 func TestScopeIsANDedIntoEveryStatementWithAWhereClause(t *testing.T) {
 	ctx := context.Background()
 	const cols = `"id", "email", "name", "age", "tenant_id", "created_at"`
@@ -674,9 +634,6 @@ func TestScopeIsANDedIntoEveryStatementWithAWhereClause(t *testing.T) {
 	}
 }
 
-// The caller cannot argue with the scope. A filter on the very column the scope
-// pins is ANDed in beside it, which narrows the query to nothing — the one thing
-// it must never do is replace it.
 func TestACallerFilterCannotWidenTheScope(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 
@@ -693,9 +650,6 @@ func TestACallerFilterCannotWidenTheScope(t *testing.T) {
 	}
 }
 
-// Permanent narrowings are independently safe declarations. Repeating Scope
-// must retain both predicates — last-wins would turn adding a visibility guard
-// into removing the tenant guard it followed.
 func TestRepeatedScopesComposeByAND(t *testing.T) {
 	repository := sqlrepo.Define[User, int64, UserUpdate]("users",
 		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
@@ -705,8 +659,7 @@ func TestRepeatedScopesComposeByAND(t *testing.T) {
 	if _, err := repository.GetAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// Bind a fresh recorder to inspect the exact declaration-derived SQL: the
-	// first repository above proves the declaration remains normally callable.
+
 	rec := crudtest.Postgres().Push(crudtest.Rows())
 	repository = sqlrepo.Define[User, int64, UserUpdate]("users",
 		sqlrepo.Scope(crud.Eq("TenantID", int64(1))),
@@ -720,11 +673,8 @@ func TestRepeatedScopesComposeByAND(t *testing.T) {
 			`WHERE ("tenant_id" = $1 AND "age" = $2)`)
 }
 
-// An UPDATE has a WHERE clause of its own, but it is the primary key alone: the
-// scope does its work on the load that precedes it, so a row outside the scope
-// is never diffed and never written.
 func TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound(t *testing.T) {
-	rec := crudtest.Postgres().Push(crudtest.Rows()) // the scoped load finds nothing
+	rec := crudtest.Postgres().Push(crudtest.Rows())
 
 	_, err := scopedUsers.Bind(rec).Update(context.Background(), 5, UserUpdate{Name: ptr("x")})
 
@@ -739,13 +689,9 @@ func TestUpdateLoadsThroughTheScopeSoAnOutsideRowIsNotFound(t *testing.T) {
 	}
 }
 
-// Save is an upsert: there is no WHERE clause for a scope to narrow, which the
-// Scope documentation says out loud. Pinned here so that the day it changes, it
-// changes deliberately — a service method or a security policy is what guards
-// this hole today.
 func TestScopeCannotReachSave(t *testing.T) {
 	rec := crudtest.Postgres().Push(crudtest.Rows(userRow(9, "n@x", "New", 18, 3)))
-	u := User{Email: "n@x", Name: "New", TenantID: 3} // tenant 3, while the scope pins 1
+	u := User{Email: "n@x", Name: "New", TenantID: 3}
 
 	if _, err := scopedUsers.Bind(rec).Save(context.Background(), &u); err != nil {
 		t.Fatal(err)

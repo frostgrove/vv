@@ -48,8 +48,6 @@ func TestClaimsIsAPrincipalOverBothSpellingsOfAPermission(t *testing.T) {
 	var _ auth.Principal = got
 }
 
-// An integer claim must stay an integer. As a float64 a tenant id compiles into
-// a float in the WHERE clause of every scoped query.
 func TestAnIntegerClaimSurvivesAsAnInteger(t *testing.T) {
 	c := claims()
 	c["tenant"] = 7
@@ -91,7 +89,7 @@ func TestGrantExpandsRolesOnceIntoTheNeutralType(t *testing.T) {
 	if !got.Has("article:write") {
 		t.Fatal("the role map was not expanded, so every permission rule would refuse an editor")
 	}
-	// The control: expansion is scoped to the roles the token actually carried.
+
 	if got.Has("article:purge") {
 		t.Fatal("a permission no held role grants was handed out")
 	}
@@ -141,9 +139,6 @@ func TestStandardRefusesATokenWithoutASubject(t *testing.T) {
 		})
 	}
 
-	// The control and the escape hatch: the generic parser still accepts the
-	// issuer's shape, and an explicit mapper may derive the stable subject from
-	// another claim instead of silently creating a subjectless principal.
 	c := claims()
 	delete(c, "sub")
 	p := parser[authjwt.Claims](t, authjwt.HMAC(secret))
@@ -171,20 +166,7 @@ func TestAMapperMayRefuseATokenThatVerified(t *testing.T) {
 	}
 }
 
-// A 64-bit integer claim survives the round trip, at any nesting depth.
-//
-// Two hops had to be right and only one was. encoding/json decodes a JSON number
-// into float64 unless told otherwise, so an id above 2^53 was rounded before this
-// package saw it and `narrow` then faithfully converted the rounded value. And
-// `narrow` ran one level deep, so a nested claim — `{"org":{"id":42}}`, which is
-// how identity providers spell a tenant — came back as a json.Number and a
-// caller comparing it to an int64 got a type mismatch and a scope that narrowed
-// to nothing.
-//
-// Both are silent. A tenant id off by one is a row belonging to the wrong
-// tenant, and nothing anywhere reports it.
 func TestALargeIntegerClaimSurvivesAtAnyDepth(t *testing.T) {
-	// Beyond 2^53: float64 cannot hold it exactly.
 	const big int64 = 9007199254740995
 
 	c := claims()

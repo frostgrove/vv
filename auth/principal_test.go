@@ -48,8 +48,6 @@ func TestGrantFoldsTheRoleMapInOnce(t *testing.T) {
 		}
 	})
 
-	// The control. Without it the assertion above passes for a Grant that
-	// hands out every permission in the map to everybody.
 	t.Run("control: a permission no held role grants stays absent", func(t *testing.T) {
 		c := auth.Claims{Roles: []auth.Role{"editor"}}.Grant(m)
 		if c.Has("article:delete") {

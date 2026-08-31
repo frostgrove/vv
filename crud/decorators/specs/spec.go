@@ -1,28 +1,11 @@
-// Package specs is the JPA Specifications / Criteria API port.
-//
-// The shapes map one to one onto their Java counterparts:
-//
-//	Specification<T>            -> specs.Specification[M]
-//	Root<T>, CriteriaBuilder    -> specs.Root[M], specs.Builder
-//	Specification.where(a).and(b).or(c).not()
-//	                            -> specs.Where(a).And(b).Or(c).Not()
-//	JpaSpecificationExecutor<T> -> specs.Executor(repo)
-//	User_ metamodel             -> specs.Metamodel[User, UserMeta]()
-//
-// A specification is a pure function from (root, builder) to a predicate, so it
-// composes, it is unit-testable without a database, and it never sees SQL.
 package specs
 
 import "github.com/frostgrove/vv/crud"
 
-// Specification is a reusable, composable fragment of a WHERE clause — the
-// analogue of javax.persistence Specification<T>.
 type Specification[M any] interface {
 	ToPredicate(root Root[M], cb Builder) crud.Predicate
 }
 
-// SpecFunc adapts a plain function into a Specification. It is what a Java
-// lambda would be.
 type SpecFunc[M any] func(root Root[M], cb Builder) crud.Predicate
 
 func (this SpecFunc[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
@@ -32,28 +15,14 @@ func (this SpecFunc[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
 	return this(root, cb)
 }
 
-// Of adapts a function into a Specification:
-//
-//	func HasEmail(email string) specs.Specification[User] {
-//	    return specs.Of[User](func(r specs.Root[User], cb specs.Builder) crud.Predicate {
-//	        return cb.Equal(r.Get("Email"), email)
-//	    })
-//	}
 func Of[M any](f func(root Root[M], cb Builder) crud.Predicate) Specification[M] {
 	return SpecFunc[M](f)
 }
 
-// Lift turns a bare predicate into a Specification.
 func Lift[M any](p crud.Predicate) Specification[M] {
 	return SpecFunc[M](func(Root[M], Builder) crud.Predicate { return p })
 }
 
-// If contributes s only when ok. A false condition is no restriction, so it
-// composes safely with AllOf, AnyOf, And and Or without an accumulator.
-//
-// If every member of an AnyOf is absent, that AnyOf is itself unrestricted.
-// Put a mandatory restriction in a surrounding AllOf when that would be too
-// broad for the operation.
 func If[M any](ok bool, s Specification[M]) Specification[M] {
 	if !ok {
 		return nil
@@ -61,21 +30,14 @@ func If[M any](ok bool, s Specification[M]) Specification[M] {
 	return s
 }
 
-// Root resolves model attributes, like JPA's Root<T>. Attributes are addressed
-// by Go field name; a column name also works.
 type Root[M any] struct{}
 
-// Get returns the path of an attribute.
 func (Root[M]) Get(attribute string) Path { return Path{Name: attribute} }
 
-// Path names one attribute of the root.
 type Path struct{ Name string }
 
-// Builder is the CriteriaBuilder: it turns paths and values into predicates.
-// The zero value is ready to use; CB is a shared instance.
 type Builder struct{}
 
-// CB is the shared CriteriaBuilder instance.
 var CB Builder
 
 func (Builder) Equal(p Path, v any) crud.Predicate    { return crud.Eq(p.Name, v) }
@@ -124,21 +86,13 @@ func (Builder) And(ps ...crud.Predicate) crud.Predicate { return crud.And(ps...)
 func (Builder) Or(ps ...crud.Predicate) crud.Predicate  { return crud.Or(ps...) }
 func (Builder) Not(p crud.Predicate) crud.Predicate     { return crud.Not(p) }
 
-// Conjunction is the always-true predicate, Disjunction the always-false one.
 func (Builder) Conjunction() crud.Predicate { return crud.True() }
 func (Builder) Disjunction() crud.Predicate { return crud.False() }
 
-// Raw is the escape hatch; use ? markers for binds.
 func (Builder) Raw(sql string, args ...any) crud.Predicate { return crud.Raw(sql, args...) }
 
-// ---------------------------------------------------------------------------
-// composition — Specification.where(...).and(...).or(...).not()
-
-// Composite is a Specification that can be combined with others.
 type Composite[M any] struct{ inner Specification[M] }
 
-// Where starts a composition. A nil specification means "no restriction",
-// exactly like Specification.where(null) in Spring Data.
 func Where[M any](s Specification[M]) Composite[M] { return Composite[M]{inner: s} }
 
 func (this Composite[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
@@ -148,17 +102,14 @@ func (this Composite[M]) ToPredicate(root Root[M], cb Builder) crud.Predicate {
 	return this.inner.ToPredicate(root, cb)
 }
 
-// And restricts further.
 func (this Composite[M]) And(o Specification[M]) Composite[M] {
 	return combine(this.inner, o, "AND")
 }
 
-// Or widens.
 func (this Composite[M]) Or(o Specification[M]) Composite[M] {
 	return combine(this.inner, o, "OR")
 }
 
-// Not negates the whole composition so far.
 func (this Composite[M]) Not() Composite[M] {
 	inner := this.inner
 	return Composite[M]{inner: SpecFunc[M](func(r Root[M], cb Builder) crud.Predicate {
@@ -193,13 +144,10 @@ func eval[M any](s Specification[M], r Root[M], cb Builder) crud.Predicate {
 	return s.ToPredicate(r, cb)
 }
 
-// Not negates a specification.
 func Not[M any](s Specification[M]) Composite[M] { return Where(s).Not() }
 
-// AllOf ANDs every specification; an empty list means "no restriction".
 func AllOf[M any](ss ...Specification[M]) Composite[M] { return fold(ss, "AND") }
 
-// AnyOf ORs every specification; an empty list means "no restriction".
 func AnyOf[M any](ss ...Specification[M]) Composite[M] { return fold(ss, "OR") }
 
 func fold[M any](ss []Specification[M], op string) Composite[M] {
@@ -220,16 +168,8 @@ func fold[M any](ss []Specification[M], op string) Composite[M] {
 	})}
 }
 
-// ---------------------------------------------------------------------------
-// bridging into the repository
-
-// Predicate renders a specification into the core predicate AST.
 func Predicate[M any](s Specification[M]) crud.Predicate {
 	return eval(s, Root[M]{}, CB)
 }
 
-// As turns a specification into a query option, so specifications work with the
-// plain repository too:
-//
-//	users.Get(ctx, specs.As(activeAdults), crud.Page(2))
 func As[M any](s Specification[M]) crud.Option { return crud.Where(Predicate(s)) }
