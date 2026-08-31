@@ -103,8 +103,8 @@ two runs of the same query.
 - `TestNestedPreloadReachesIntoTheStoredChildren` in `crud/preload_test.go`.
 - `TestAHasOneWithTwoMatchesPicksTheSameRowEveryTime` in
   `test/integration/relations_test.go`.
-- `TestPreloadMatchesKeysOfDifferentWidths` in `crud/preload_test.go` — see
-  [[D-025]] for the part of that normalisation that is still open.
+- `TestPreloadMatchesKeysOfDifferentWidths` in `crud/preload_test.go`; [[D-025]]
+  records the fail-fast rule for non-comparable keys.
 - `TestPreloadsSurvivePaging` in `test/integration/matrix_test.go`.
 
 ## See also

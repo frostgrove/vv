@@ -77,7 +77,7 @@ and the next decision written before its code does should say so here.
 | [D-022](D-022-the-handler-takes-an-interface.md) | The handler holds `Repository[M, ID, U]` and never reaches past it | accepted | HTTP |
 | [D-023](D-023-usage-guides-lead-with-what-you-get.md) | Both guides open with the resulting API; setup is Part II | accepted | docs |
 | [D-024](D-024-distinct-and-the-forced-primary-key.md) | A `DISTINCT` query produces a valid statement or a readable refusal — never a 500, never a silent no-op | **open** | querying |
-| [D-025](D-025-mapkey-collapses-non-comparable-keys.md) | Both ends of a relation agree on a key, and two different keys never collide | **open** | relations |
+| [D-025](D-025-mapkey-collapses-non-comparable-keys.md) | Both ends of a relation agree on a key, and two different keys never collide | accepted | relations |
 | [D-026](D-026-deleteall-fetches-victims-with-caller-options.md) | Every row a gated filtered write touches was shown to `Inspect` first | **open** | security |
 | [D-027](D-027-intx-cross-database-capture-is-documented-not-enforced.md) | A repository never runs on a database it was not bound to, unless the application said so | **superseded by D-082** | transactions & datasources |
 | [D-028](D-028-a-cursor-is-the-sort-tuple.md) | A cursor may only be used with the sort it was made for, and only when that sort ends in the primary key | accepted | querying |
@@ -230,7 +230,7 @@ mean).
 
 **Relations** — D-005 (filters), D-006 (preloads), D-007 (narrowings),
 D-080 (immutable relation table resolution and independent blueprints),
-D-025 (**open** — key normalisation).
+D-025 (fail-fast key normalisation).
 
 **Process & tooling** — D-064 (why migration source discovery never executes code or guesses an ambiguous model), D-048 (what joins the contract manifest, why nothing on the roadmap's `?` list does, and why phase 9's catalogues did not make `i18n` one), D-035 (naming), D-036 (first-party requirements), D-051 (why a satellite's unit is a decision rather than a require), D-033 (one module per optional dependency, and how a
 release is tagged), D-016 (**superseded** in its module half; its stdlib rule
@@ -259,12 +259,6 @@ application), D-023 (guides lead with the result), D-020 (what a test is for).
   included, so it deduplicates nothing and says so to nobody. Separately, a paged
   `DISTINCT` cannot have a stable tiebreaker, so page 2 of the same query can
   legitimately differ between calls. Three ways out, all with a cost.
-- **[D-025](D-025-mapkey-collapses-non-comparable-keys.md) — `mapKey`.**
-  A non-comparable relation key falls through to `reflect.Value.String()`, which
-  returns a per-type constant, so every such key collides and every parent gets
-  every child. Unreachable from any model in the tree today. Fixing it means
-  choosing a serialisation inside a package that may not take a dependency
-  (D-016), or refusing the declaration.
 - **[D-026](D-026-deleteall-fetches-victims-with-caller-options.md) — gated
   filtered writes.** `gate.DeleteAll` and `gate.UpdateAll` fetch the rows they
   will show `Inspect` using the caller's own options, including `Limit`; the

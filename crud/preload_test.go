@@ -2,11 +2,16 @@ package crud_test
 
 import (
 	"context"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/crudtest"
+	"github.com/frostgrove/vv/utils"
 )
 
 func runPreloads(t *testing.T, rec *crudtest.Recorder, m *crud.Meta, items any, specs ...crud.PreloadSpec) {
@@ -392,5 +397,556 @@ func TestPreloadOfAnUnknownRelationIsReported(t *testing.T) {
 		[]Article{{ID: 1}}, specs("Nope"), 0, nil)
 	if err == nil {
 		t.Fatal("preloading a relation that does not exist was accepted")
+	}
+}
+
+type namedBinaryKey []byte
+
+type binaryKeyParent struct {
+	ID       namedBinaryKey   `db:"id,pk"`
+	Children []binaryKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type binaryKeyChild struct {
+	ID       int64          `db:"id,pk"`
+	ParentID namedBinaryKey `db:"parent_id"`
+	Label    string         `db:"label"`
+}
+
+func TestPreloadKeepsDistinctNamedByteSliceKeysApart(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), namedBinaryKey{1}, "first"},
+		[]any{int64(20), namedBinaryKey{2}, "second"},
+	))
+	parents := []binaryKeyParent{{ID: namedBinaryKey{1}}, {ID: namedBinaryKey{2}}}
+
+	runPreloads(t, rec, metaOf[binaryKeyParent](t, "binary_key_parents"), parents, specs("Children")...)
+
+	if len(parents[0].Children) != 1 || parents[0].Children[0].Label != "first" {
+		t.Fatalf("first parent children = %+v", parents[0].Children)
+	}
+	if len(parents[1].Children) != 1 || parents[1].Children[0].Label != "second" {
+		t.Fatalf("second parent children = %+v", parents[1].Children)
+	}
+	if got := rec.Last().Args; len(got) != 2 {
+		t.Fatalf("preload deduplicated two distinct named []byte keys: %#v", got)
+	} else if first, ok := got[0].([]byte); !ok || len(first) != 1 || first[0] != 1 {
+		t.Fatalf("named []byte bind = %T %#v, want a driver-safe []byte", got[0], got[0])
+	}
+}
+
+func TestPreloadKeepsANonNilEmptyByteKeyDistinctFromNull(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), namedBinaryKey{}, "empty"},
+	))
+	parents := []binaryKeyParent{{ID: nil}, {ID: namedBinaryKey{}}}
+
+	runPreloads(t, rec, metaOf[binaryKeyParent](t, "empty_binary_key_parents"), parents, specs("Children")...)
+
+	if len(parents[0].Children) != 0 {
+		t.Fatalf("NULL byte-key parent children = %+v", parents[0].Children)
+	}
+	if len(parents[1].Children) != 1 || parents[1].Children[0].Label != "empty" {
+		t.Fatalf("non-nil empty byte-key parent children = %+v", parents[1].Children)
+	}
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("empty byte-key binds = %#v, want one non-NULL key", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || bound == nil || len(bound) != 0 {
+		t.Fatalf("empty byte-key bind = %T %#v, want a non-nil empty []byte", args[0], args[0])
+	}
+}
+
+// valuerBinaryKey is deliberately non-comparable. Its driver representation is
+// the stable relation identity and its Scanner makes the child side behave like
+// a real database result.
+type valuerBinaryKey struct{ raw []byte }
+
+func (this valuerBinaryKey) Value() (driver.Value, error) {
+	if this.raw == nil {
+		return nil, nil
+	}
+	return append([]byte(nil), this.raw...), nil
+}
+
+func (this *valuerBinaryKey) Scan(src any) error {
+	switch value := src.(type) {
+	case []byte:
+		this.raw = append(this.raw[:0], value...)
+		return nil
+	case string:
+		this.raw = append(this.raw[:0], value...)
+		return nil
+	case valuerBinaryKey:
+		this.raw = append(this.raw[:0], value.raw...)
+		return nil
+	default:
+		return fmt.Errorf("scan valuerBinaryKey from %T", src)
+	}
+}
+
+type valuerKeyParent struct {
+	ID       valuerBinaryKey  `db:"id,pk"`
+	Children []valuerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type valuerKeyChild struct {
+	ID       int64           `db:"id,pk"`
+	ParentID valuerBinaryKey `db:"parent_id"`
+	Label    string          `db:"label"`
+}
+
+func TestPreloadCanonicalisesNonComparableDriverValuerKeys(t *testing.T) {
+	one := valuerBinaryKey{raw: []byte("one")}
+	two := valuerBinaryKey{raw: []byte("two")}
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), one, "first"},
+		[]any{int64(20), two, "second"},
+	))
+	parents := []valuerKeyParent{{ID: one}, {ID: two}}
+
+	runPreloads(t, rec, metaOf[valuerKeyParent](t, "valuer_key_parents"), parents, specs("Children")...)
+
+	if len(parents[0].Children) != 1 || parents[0].Children[0].Label != "first" {
+		t.Fatalf("first Valuer parent children = %+v", parents[0].Children)
+	}
+	if len(parents[1].Children) != 1 || parents[1].Children[0].Label != "second" {
+		t.Fatalf("second Valuer parent children = %+v", parents[1].Children)
+	}
+	if got := rec.Last().Args; len(got) != 2 {
+		t.Fatalf("Valuer preload binds = %#v", got)
+	} else if first, ok := got[0].([]byte); !ok || string(first) != "one" {
+		t.Fatalf("Valuer bind = %T %#v, want resolved driver bytes", got[0], got[0])
+	}
+}
+
+// oneShotRelationKey exercises the pointer-only Valuer path. Value returns its
+// own mutable buffer deliberately: canonicalisation must call it once and copy
+// that one observation for both the map identity and driver bind.
+type oneShotRelationKey struct {
+	raw   []byte
+	calls *int
+}
+
+func (this *oneShotRelationKey) Value() (driver.Value, error) {
+	*this.calls++
+	if *this.calls != 1 {
+		return []byte("changed"), nil
+	}
+	return this.raw, nil
+}
+
+type oneShotKeyParent struct {
+	ID       oneShotRelationKey `db:"id,pk"`
+	Children []oneShotKeyChild  `rel:"has_many,fk=ParentID"`
+}
+
+type oneShotKeyChild struct {
+	ID       int64              `db:"id,pk"`
+	ParentID oneShotRelationKey `db:"parent_id"`
+}
+
+func TestPreloadSnapshotsPointerOnlyDriverValuerExactlyOnce(t *testing.T) {
+	calls := 0
+	raw := []byte("stable")
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	parents := []oneShotKeyParent{{ID: oneShotRelationKey{raw: raw, calls: &calls}}}
+
+	runPreloads(t, rec, metaOf[oneShotKeyParent](t, "one_shot_key_parents"), parents, specs("Children")...)
+
+	if calls != 1 {
+		t.Fatalf("pointer-only Valuer calls = %d, want exactly one", calls)
+	}
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("pointer-only Valuer binds = %#v, want one", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || string(bound) != "stable" {
+		t.Fatalf("pointer-only Valuer bind = %T %#v, want stable bytes", args[0], args[0])
+	}
+	raw[0] = 'X'
+	if string(bound) != "stable" {
+		t.Fatalf("driver bind aliases the Valuer buffer: %q", bound)
+	}
+}
+
+type mutableDecimalCell struct{ digit byte }
+
+func (this *mutableDecimalCell) Decompose(buf []byte) (byte, bool, []byte, int32) {
+	return 0, false, append(buf[:0], this.digit), 0
+}
+
+type mutatingDecimalKey struct {
+	cell  *mutableDecimalCell
+	digit byte
+}
+
+func (this mutatingDecimalKey) Value() (driver.Value, error) {
+	this.cell.digit = this.digit
+	return this.cell, nil
+}
+
+type decimalKeyParent struct {
+	ID       mutatingDecimalKey `db:"id,pk"`
+	Children []decimalKeyChild  `rel:"has_many,fk=ParentID"`
+}
+
+type decimalKeyChild struct {
+	ID       int64              `db:"id,pk"`
+	ParentID mutatingDecimalKey `db:"parent_id"`
+}
+
+func TestPreloadRefusesMutableDecimalDriverValuesBeforeSQL(t *testing.T) {
+	shared := &mutableDecimalCell{}
+	rec := crudtest.Postgres()
+	parents := []decimalKeyParent{
+		{ID: mutatingDecimalKey{cell: shared, digit: 1}},
+		{ID: mutatingDecimalKey{cell: shared, digit: 2}},
+	}
+
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		metaOf[decimalKeyParent](t, "decimal_key_parents"), parents, specs("Children"), 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported relation key type") {
+		t.Fatalf("RunPreloads error = %T %v, want mutable decimal refusal", err, err)
+	}
+	var schemaErr *crud.SchemaError
+	if errors.As(err, &schemaErr) {
+		t.Fatalf("a runtime Valuer result was exposed as a declaration/client error: %v", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("a mutable decimal relation key reached SQL: %v", rec.SQL())
+	}
+}
+
+var errRelationKeyValue = errors.New("relation key value failed")
+
+type failedRelationKey string
+
+func (failedRelationKey) Value() (driver.Value, error) { return nil, errRelationKeyValue }
+
+type failedKeyParent struct {
+	ID       failedRelationKey `db:"id,pk"`
+	Children []failedKeyChild  `rel:"has_many,fk=ParentID"`
+}
+
+type failedKeyChild struct {
+	ID       int64             `db:"id,pk"`
+	ParentID failedRelationKey `db:"parent_id"`
+}
+
+func TestPreloadPropagatesDriverValuerFailuresWithoutQuerying(t *testing.T) {
+	rec := crudtest.Postgres()
+	parents := []failedKeyParent{{ID: failedRelationKey("broken")}}
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		metaOf[failedKeyParent](t, "failed_key_parents"), parents, specs("Children"), 0, nil)
+	if !errors.Is(err, errRelationKeyValue) {
+		t.Fatalf("RunPreloads error = %v, want the Valuer cause", err)
+	}
+	var schemaErr *crud.SchemaError
+	if errors.As(err, &schemaErr) {
+		t.Fatalf("runtime Valuer failure was exposed as a declaration error: %v", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("a failed Valuer reached SQL: %v", rec.SQL())
+	}
+}
+
+type nilJSONRelationKey []string
+
+func (nilJSONRelationKey) Value() (driver.Value, error) { return []byte("null-json"), nil }
+
+type nilValuerKeyParent struct {
+	ID       nilJSONRelationKey  `db:"id,pk"`
+	Children []nilValuerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type nilValuerKeyChild struct {
+	ID       int64              `db:"id,pk"`
+	ParentID nilJSONRelationKey `db:"parent_id"`
+}
+
+func TestPreloadLetsANilNonPointerValuerDefineANonNullKey(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	parents := []nilValuerKeyParent{{ID: nil}}
+
+	runPreloads(t, rec, metaOf[nilValuerKeyParent](t, "nil_valuer_key_parents"), parents, specs("Children")...)
+
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("nil non-pointer Valuer binds = %#v, want its non-NULL driver value", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || string(bound) != "null-json" {
+		t.Fatalf("nil non-pointer Valuer bind = %T %#v, want resolved bytes", args[0], args[0])
+	}
+}
+
+type nilPointerJSONRelationKey []string
+
+func (*nilPointerJSONRelationKey) Value() (driver.Value, error) {
+	return []byte("pointer-null-json"), nil
+}
+
+type nilPointerValuerKeyParent struct {
+	ID       nilPointerJSONRelationKey  `db:"id,pk"`
+	Children []nilPointerValuerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type nilPointerValuerKeyChild struct {
+	ID       int64                     `db:"id,pk"`
+	ParentID nilPointerJSONRelationKey `db:"parent_id"`
+}
+
+func TestPreloadLetsANilPointerOnlyValuerDefineANonNullKey(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	parents := []nilPointerValuerKeyParent{{ID: nil}}
+
+	runPreloads(t, rec, metaOf[nilPointerValuerKeyParent](t, "nil_pointer_valuer_key_parents"), parents, specs("Children")...)
+
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("nil pointer-only Valuer binds = %#v, want its non-NULL driver value", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || string(bound) != "pointer-null-json" {
+		t.Fatalf("nil pointer-only Valuer bind = %T %#v, want resolved bytes", args[0], args[0])
+	}
+}
+
+type nilPointerRelationKey struct{}
+
+func (*nilPointerRelationKey) Value() (driver.Value, error) {
+	return []byte("typed-nil-pointer"), nil
+}
+
+type typedNilPointerKeyParent struct {
+	ID       *nilPointerRelationKey    `db:"id,pk"`
+	Children []typedNilPointerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type typedNilPointerKeyChild struct {
+	ID       int64                  `db:"id,pk"`
+	ParentID *nilPointerRelationKey `db:"parent_id"`
+}
+
+func TestPreloadLetsATypedNilPointerOnlyValuerDefineANonNullKey(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	parents := []typedNilPointerKeyParent{{ID: nil}}
+
+	runPreloads(t, rec, metaOf[typedNilPointerKeyParent](t, "typed_nil_pointer_key_parents"), parents, specs("Children")...)
+
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("typed nil pointer-only Valuer binds = %#v, want its non-NULL driver value", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || string(bound) != "typed-nil-pointer" {
+		t.Fatalf("typed nil pointer-only Valuer bind = %T %#v, want resolved bytes", args[0], args[0])
+	}
+}
+
+type optionalValuerKeyParent struct {
+	ID       utils.Opt[oneShotRelationKey] `db:"id,pk"`
+	Children []optionalValuerKeyChild      `rel:"has_many,fk=ParentID"`
+}
+
+type optionalValuerKeyChild struct {
+	ID       int64                         `db:"id,pk"`
+	ParentID utils.Opt[oneShotRelationKey] `db:"parent_id"`
+}
+
+func TestPreloadUnwrapsOptBeforeDiscoveringAPointerOnlyValuer(t *testing.T) {
+	calls := 0
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	parents := []optionalValuerKeyParent{{ID: utils.Set(oneShotRelationKey{
+		raw: []byte("optional"), calls: &calls,
+	})}}
+
+	runPreloads(t, rec, metaOf[optionalValuerKeyParent](t, "optional_valuer_key_parents"), parents, specs("Children")...)
+
+	if calls != 1 {
+		t.Fatalf("Opt pointer-only Valuer calls = %d, want exactly one", calls)
+	}
+	args := rec.Last().Args
+	if len(args) != 1 {
+		t.Fatalf("Opt pointer-only Valuer binds = %#v, want one", args)
+	}
+	bound, ok := args[0].([]byte)
+	if !ok || string(bound) != "optional" {
+		t.Fatalf("Opt pointer-only Valuer bind = %T %#v, want resolved bytes", args[0], args[0])
+	}
+}
+
+type nilOptPointerKeyParent struct {
+	ID       *utils.Opt[int64]       `db:"id,pk"`
+	Children []nilOptPointerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type nilOptPointerKeyChild struct {
+	ID       int64             `db:"id,pk"`
+	ParentID *utils.Opt[int64] `db:"parent_id"`
+}
+
+func TestPreloadTreatsANilOptPointerAsNullWithoutPanicking(t *testing.T) {
+	rec := crudtest.Postgres()
+	parents := []nilOptPointerKeyParent{{ID: nil}}
+
+	runPreloads(t, rec, metaOf[nilOptPointerKeyParent](t, "nil_opt_pointer_key_parents"), parents, specs("Children")...)
+
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("nil *Opt relation key reached SQL: %v", rec.SQL())
+	}
+}
+
+type pointerKeyParent struct {
+	ID       **int64           `db:"id,pk"`
+	Children []pointerKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type pointerKeyChild struct {
+	ID       int64   `db:"id,pk"`
+	ParentID **int64 `db:"parent_id"`
+	Label    string  `db:"label"`
+}
+
+func nestedInt64(value int64) **int64 {
+	one := &value
+	return &one
+}
+
+func TestPreloadCanonicalisesNestedPointersByValueNotAddress(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), int64(1), "first"},
+		[]any{int64(20), int64(2), "second"},
+	))
+	parents := []pointerKeyParent{{ID: nestedInt64(1)}, {ID: nestedInt64(2)}}
+
+	runPreloads(t, rec, metaOf[pointerKeyParent](t, "pointer_key_parents"), parents, specs("Children")...)
+
+	if len(parents[0].Children) != 1 || parents[0].Children[0].Label != "first" {
+		t.Fatalf("first nested-pointer parent children = %+v", parents[0].Children)
+	}
+	if len(parents[1].Children) != 1 || parents[1].Children[0].Label != "second" {
+		t.Fatalf("second nested-pointer parent children = %+v", parents[1].Children)
+	}
+	if got := rec.Last().Args; len(got) != 2 || got[0] != int64(1) || got[1] != int64(2) {
+		t.Fatalf("nested-pointer binds = %#v, want scalar values", got)
+	}
+}
+
+type relationFlag bool
+
+type scalarKeyParent struct {
+	ID       relationFlag     `db:"id,pk"`
+	Children []scalarKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type scalarKeyChild struct {
+	ID       int64 `db:"id,pk"`
+	ParentID bool  `db:"parent_id"`
+}
+
+type floatKeyParent struct {
+	ID       float32         `db:"id,pk"`
+	Children []floatKeyChild `rel:"has_many,fk=ParentID"`
+}
+
+type floatKeyChild struct {
+	ID       int64   `db:"id,pk"`
+	ParentID float64 `db:"parent_id"`
+}
+
+func TestPreloadCanonicalisesDriverScalarKindsAcrossRelationEnds(t *testing.T) {
+	t.Run("named bool and bool", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(10), true}))
+		parents := []scalarKeyParent{{ID: relationFlag(true)}}
+		runPreloads(t, rec, metaOf[scalarKeyParent](t, "scalar_key_parents"), parents, specs("Children")...)
+		if len(parents[0].Children) != 1 {
+			t.Fatalf("named bool parent children = %+v", parents[0].Children)
+		}
+	})
+
+	t.Run("float32 and float64", func(t *testing.T) {
+		rec := crudtest.Postgres().Push(crudtest.Rows([]any{int64(10), float64(1.5)}))
+		parents := []floatKeyParent{{ID: float32(1.5)}}
+		runPreloads(t, rec, metaOf[floatKeyParent](t, "float_key_parents"), parents, specs("Children")...)
+		if len(parents[0].Children) != 1 {
+			t.Fatalf("float32 parent children = %+v", parents[0].Children)
+		}
+	})
+}
+
+func TestPreloadRefusesNaNRelationKeysBeforeSQL(t *testing.T) {
+	rec := crudtest.Postgres()
+	parents := []floatKeyParent{{ID: float32(math.NaN())}}
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		metaOf[floatKeyParent](t, "nan_key_parents"), parents, specs("Children"), 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "NaN relation keys") {
+		t.Fatalf("RunPreloads error = %T %v, want portable NaN refusal", err, err)
+	}
+	var schemaErr *crud.SchemaError
+	if errors.As(err, &schemaErr) {
+		t.Fatalf("a runtime NaN value was exposed as a declaration/client error: %v", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("a NaN relation key reached SQL: %v", rec.SQL())
+	}
+}
+
+type unsupportedRelationKey []string
+
+type unsupportedKeyParent struct {
+	ID       unsupportedRelationKey `db:"id,pk"`
+	Children []unsupportedKeyChild  `rel:"has_many,fk=ParentID"`
+}
+
+type unsupportedKeyChild struct {
+	ID       int64                  `db:"id,pk"`
+	ParentID unsupportedRelationKey `db:"parent_id"`
+}
+
+type dynamicRelationKey [1]any
+
+type dynamicKeyParent struct {
+	ID       dynamicRelationKey `db:"id,pk"`
+	Children []dynamicKeyChild  `rel:"has_many,fk=ParentID"`
+}
+
+type dynamicKeyChild struct {
+	ID       int64              `db:"id,pk"`
+	ParentID dynamicRelationKey `db:"parent_id"`
+}
+
+func TestPreloadRefusesADeclaredNonComparableRelationKeyBeforeSQL(t *testing.T) {
+	rec := crudtest.Postgres()
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		metaOf[unsupportedKeyParent](t, "unsupported_key_parents"),
+		[]unsupportedKeyParent{{ID: unsupportedRelationKey{"a"}}}, specs("Children"), 0, nil)
+	var schemaErr *crud.SchemaError
+	if !errors.As(err, &schemaErr) || !strings.Contains(schemaErr.Reason, "not comparable") {
+		t.Fatalf("RunPreloads error = %T %v, want an actionable SchemaError", err, err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("an invalid relation key reached SQL: %v", rec.SQL())
+	}
+}
+
+func TestPreloadRefusesADynamicallyNonComparableKeyWithoutPanicking(t *testing.T) {
+	rec := crudtest.Postgres()
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		metaOf[dynamicKeyParent](t, "dynamic_key_parents"),
+		[]dynamicKeyParent{{ID: dynamicRelationKey{[]byte("not-comparable")}}}, specs("Children"), 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "not comparable") {
+		t.Fatalf("RunPreloads error = %T %v, want an actionable runtime mapping error", err, err)
+	}
+	var schemaErr *crud.SchemaError
+	if errors.As(err, &schemaErr) {
+		t.Fatalf("a dynamic server value was exposed as a declaration/client error: %v", err)
+	}
+	if len(rec.Statements()) != 0 {
+		t.Fatalf("a dynamically invalid relation key reached SQL: %v", rec.SQL())
 	}
 }

@@ -129,6 +129,30 @@ func ElemValue(v any) any {
 	return v
 }
 
+// relationKeyValue unwraps the framework's explicit optional state but leaves
+// pointers intact. Relation-key canonicalisation must inspect driver.Valuer
+// before applying ordinary pointer/NULL semantics: a pointer-only Valuer may
+// deliberately give a typed nil pointer a non-NULL database representation.
+func relationKeyValue(v any) any {
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Pointer && rv.IsNil() && utils.IsOptType(rv.Type().Elem()) {
+		// *Opt has value-receiver methods through Go's generated wrapper; calling
+		// Inspect on a nil pointer would enter that wrapper and panic. It carries
+		// no optional state, so it has the same relation-key meaning as NULL.
+		return nil
+	}
+	if value, defined, null, ok := utils.Inspect(v); ok {
+		if !defined || null {
+			return nil
+		}
+		return value
+	}
+	return v
+}
+
 // CheckID verifies that the repository's ID type parameter matches the model's
 // primary key. Called once at Define time.
 func (this *Schema) CheckID(idType reflect.Type) error {

@@ -2,9 +2,12 @@ package crud
 
 import (
 	"context"
+	"database/sql/driver"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -222,17 +225,26 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 	// Collect the distinct parent keys.
 	keys := make([]any, 0, len(parents))
 	seen := make(map[any]struct{}, len(parents))
-	for _, parent := range parents {
-		v := ElemValue(local.valueOf(parent.UnsafePointer()))
+	parentKeys := make([]any, len(parents))
+	parentHasKey := make([]bool, len(parents))
+	for i, parent := range parents {
+		v := local.valueOf(parent.UnsafePointer())
 		if v == nil {
 			continue
 		}
-		k := mapKey(v)
-		if _, dup := seen[k]; dup {
+		canonical, err := canonicalPreloadKey(m.Name, local, v)
+		if err != nil {
+			return nil, err
+		}
+		if canonical.key == nil { // a Scanner/Valuer NULL cannot own a related row.
 			continue
 		}
-		seen[k] = struct{}{}
-		keys = append(keys, v)
+		parentKeys[i], parentHasKey[i] = canonical.key, true
+		if _, dup := seen[canonical.key]; dup {
+			continue
+		}
+		seen[canonical.key] = struct{}{}
+		keys = append(keys, canonical.bind)
 	}
 	if len(keys) == 0 {
 		this.assignEmpty(rel, parents)
@@ -261,11 +273,10 @@ func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, opt
 	// copies each row into the parent's slice, and a nested preload has to
 	// write into that copy or it writes into nothing.
 	stored := make([]reflect.Value, 0, total)
-	for _, parent := range parents {
-		v := ElemValue(local.valueOf(parent.UnsafePointer()))
+	for i, parent := range parents {
 		var kids []reflect.Value
-		if v != nil {
-			kids = index[mapKey(v)]
+		if parentHasKey[i] {
+			kids = index[parentKeys[i]]
 		}
 		placed, err := assignRelation(rel, parent, kids)
 		if err != nil {
@@ -379,9 +390,17 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 		}
 		out = append(out, child)
 		if ownerAt >= 0 {
-			owners = append(owners, mapKey(ElemValue(ownerKey.Elem().Interface())))
+			key, err := preloadMapKey(rel.Owner.Name, local, ownerKey.Elem().Interface())
+			if err != nil {
+				return nil, nil, err
+			}
+			owners = append(owners, key)
 		} else {
-			owners = append(owners, mapKey(ElemValue(remote.valueOf(child.UnsafePointer()))))
+			key, err := preloadMapKey(target.Name, remote, remote.valueOf(child.UnsafePointer()))
+			if err != nil {
+				return nil, nil, err
+			}
+			owners = append(owners, key)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -437,40 +456,193 @@ func assignRelation(rel *Relation, parent reflect.Value, kids []reflect.Value) (
 	return []reflect.Value{destination.Addr()}, nil
 }
 
-// mapKey normalises a value so it can index a map, and — the part that earns
+// preloadMapKey normalises a value so it can index a map, and — the part that earns
 // its keep — so that the two ends of a relation agree on it. A parent's key and
 // a child's foreign key are separate struct fields that need not share a Go
 // type: int32(1) and int64(1) are different map keys but the same row, and a
 // mismatch here is silent, because the children simply end up filed under a key
 // no parent looks for. So every integer key is widened, every string kind is
 // flattened, and byte slices become strings the way a text driver hands them
-// over.
-func mapKey(v any) any {
-	if v == nil {
-		return nil
+// over. Unsupported values fail rather than sharing reflect.Value.String's
+// generic "<T Value>" spelling with every other value of the same type.
+type canonicalRelationKey struct {
+	key  any
+	bind any
+}
+
+// canonicalPreloadKey resolves a custom driver value exactly once and derives
+// both identities from that one immutable snapshot. A stateful Valuer must not
+// be able to make the IN predicate ask for one value while the child index is
+// keyed under another.
+func canonicalPreloadKey(model string, field *Field, value any) (canonicalRelationKey, error) {
+	value = unwrapRelationKeyValue(relationKeyValue(value))
+	if value == nil {
+		return canonicalRelationKey{}, nil
 	}
-	if b, ok := v.([]byte); ok {
-		return string(b)
+	resolved, used, err := relationDriverValue(value)
+	if err != nil {
+		return canonicalRelationKey{}, preloadKeyRuntimeError(model, field, err)
 	}
-	rv := reflect.ValueOf(v)
+	if used {
+		value = resolved
+		if value == nil {
+			return canonicalRelationKey{}, nil
+		}
+	}
+	rv := reflect.ValueOf(value)
+	if nilableKind(rv.Kind()) && rv.IsNil() {
+		return canonicalRelationKey{}, nil
+	}
+	bind := value
+	if isByteSliceType(rv.Type()) {
+		// Snapshot before deriving either representation. A Valuer may return a
+		// buffer it owns and mutate later; the driver argument and map identity
+		// still have to describe the same observed value.
+		bytes := make([]byte, rv.Len())
+		copy(bytes, rv.Bytes())
+		return canonicalRelationKey{key: string(bytes), bind: bytes}, nil
+	}
+	key := value
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return rv.Int()
+		key = rv.Int()
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		// Signed and unsigned meet here too: a key that fits in an int64 is
 		// keyed as one, and a key that does not could never have equalled a
 		// signed one anyway.
 		if u := rv.Uint(); u <= math.MaxInt64 {
-			return int64(u)
+			key = int64(u)
+		} else {
+			key = rv.Uint()
 		}
-		return rv.Uint()
 	case reflect.String:
-		return rv.String()
+		key = rv.String()
+	case reflect.Bool:
+		key = rv.Bool()
+	case reflect.Float32, reflect.Float64:
+		value := rv.Float()
+		// SQL compares both zero spellings equal. NaN equality is dialect- and
+		// column-dependent, so guessing one shared identity could attach a row
+		// to the wrong parent; refuse that actual value instead.
+		if value == 0 {
+			value = 0 // canonicalise -0 to +0.
+		} else if math.IsNaN(value) {
+			return canonicalRelationKey{}, preloadKeyRuntimeError(model, field,
+				fmt.Errorf("NaN relation keys do not have portable SQL equality"))
+		}
+		key = preloadFloatKey(math.Float64bits(value))
 	}
-	if !rv.Type().Comparable() {
-		return rv.String()
+	// Value.Comparable, unlike Type.Comparable, follows interface members. A
+	// struct{ Part any } is statically comparable but is not a valid map key
+	// when Part currently contains []byte.
+	if !rv.Comparable() {
+		return canonicalRelationKey{}, preloadKeyRuntimeError(model, field, fmt.Errorf(
+			"relation key value of type %T is not comparable; use []byte or a driver.Valuer with a stable scalar value", value))
 	}
-	return v
+	return canonicalRelationKey{key: key, bind: bind}, nil
+}
+
+type preloadFloatKey uint64
+
+func preloadMapKey(model string, field *Field, value any) (any, error) {
+	canonical, err := canonicalPreloadKey(model, field, value)
+	if err != nil {
+		return nil, err
+	}
+	return canonical.key, nil
+}
+
+// unwrapRelationKeyValue mirrors database/sql's pointer conversion but stops
+// at a pointer that is itself a driver.Valuer. relationKeyValue has already
+// unwrapped the framework's explicit Opt state; relation fields can still be
+// **T or Opt[*T], and using the remaining pointer address as a map key would
+// make separately scanned equal values look different.
+func unwrapRelationKeyValue(value any) any {
+	if value == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(value)
+	for rv.Kind() == reflect.Pointer {
+		if rv.Type().Implements(valuerType) {
+			// Match database/sql's nil-pointer exception for the wrapper Go
+			// generates when a value-receiver Valuer is used through *T. A
+			// genuinely pointer-only Valuer still gets to define nil itself.
+			if rv.IsNil() && rv.Type().Elem().Implements(valuerType) {
+				return nil
+			}
+			return rv.Interface()
+		}
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	return rv.Interface()
+}
+
+func nilableKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRelationDriverValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch value.(type) {
+	case []byte, bool, float64, int64, string, time.Time:
+		return true
+	default:
+		return false
+	}
+}
+
+// relationDriverValue supports both value and pointer-only Valuer methods. The
+// latter receives an addressable copy because a field placed in an interface is
+// not addressable. A broken custom implementation becomes a declaration/use
+// error instead of a process panic in the preloader.
+func relationDriverValue(value any) (resolved any, used bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			resolved, used, err = nil, true, fmt.Errorf("driver.Valuer panicked while canonicalising the relation key")
+		}
+	}()
+	rv := reflect.ValueOf(value)
+	valuer, ok := value.(driver.Valuer)
+	if ok && rv.Kind() == reflect.Pointer && rv.IsNil() && rv.Type().Elem().Implements(valuerType) {
+		return nil, true, nil
+	}
+	if !ok && rv.IsValid() && rv.Kind() != reflect.Pointer {
+		copy := reflect.New(rv.Type())
+		copy.Elem().Set(rv)
+		valuer, ok = copy.Interface().(driver.Valuer)
+	}
+	if !ok && rv.IsValid() && nilableKind(rv.Kind()) && rv.IsNil() {
+		return nil, false, nil
+	}
+	if !ok {
+		return value, false, nil
+	}
+	resolved, err = valuer.Value()
+	if err != nil {
+		return nil, true, fmt.Errorf("driver.Valuer failed while canonicalising the relation key: %w", err)
+	}
+	if !validRelationDriverValue(resolved) {
+		return nil, true, fmt.Errorf("driver.Valuer returned unsupported relation key type %T", resolved)
+	}
+	return resolved, true, nil
+}
+
+func preloadKeyRuntimeError(model string, field *Field, err error) error {
+	name := "relation key"
+	if field != nil {
+		name = field.Name
+	}
+	return fmt.Errorf("crud: canonicalise relation key %s.%s: %w", model, name, err)
 }
 
 // slices yields consecutive chunks of at most n elements.

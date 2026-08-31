@@ -422,6 +422,26 @@ func TestFailedTryDefineWithUnknownLocalFieldPublishesNeitherModel(t *testing.T)
 	}
 }
 
+func TestRelationScopeRefusesUnsupportedJoinKeysDuringTryDefine(t *testing.T) {
+	type UnsupportedKey []string
+	type Child struct {
+		ID         int64          `db:"id,pk"`
+		ParentCode UnsupportedKey `db:"parent_code"`
+	}
+	type Parent struct {
+		ID       int64          `db:"id,pk"`
+		Code     UnsupportedKey `db:"code"`
+		Children []Child        `rel:"has_many,ref=Code,fk=ParentCode"`
+	}
+
+	_, err := sqlrepo.TryDefine[Parent, int64, struct{}]("core009_invalid_scope_parents",
+		sqlrepo.RelationScope("Children", crud.Eq("ID", int64(1))))
+	var schemaErr *crud.SchemaError
+	if !errors.As(err, &schemaErr) || !strings.Contains(schemaErr.Reason, "not comparable") {
+		t.Fatalf("TryDefine error = %T %v, want unsupported join key SchemaError", err, err)
+	}
+}
+
 func TestLateRelationScopeFailurePublishesNeitherEarlierTargetNorRoot(t *testing.T) {
 	type Target struct {
 		ID int64 `db:"id,pk,auto"`

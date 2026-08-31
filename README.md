@@ -944,7 +944,10 @@ articles.Get(ctx, crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", t
 One batched statement per relation per level — never one per row. Paths sharing
 a prefix share a query, keys are deduplicated, and long lists chunk into
 900-key batches. A `Select()` projection automatically keeps the columns the
-preloads join on.
+preloads join on. Relation keys must be comparable, byte slices, or custom
+`driver.Valuer` values resolving to immutable standard scalars/bytes;
+unsupported slice/map keys are refused before SQL
+instead of collapsing different parents into one bucket.
 
 Pagination inside a preload is refused: a `LIMIT` over a batched load would
 truncate some parents' children and not others.

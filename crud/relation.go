@@ -663,7 +663,54 @@ func (this *Relation) Resolve() (target *Meta, local, remote *Field, err error) 
 	if remote, err = this.Remote(); err != nil {
 		return nil, nil, nil, err
 	}
+	// A preloader indexes both ends in Go maps. Validate that declaration at
+	// the same lazy-resolution seam that fixes the two physical fields, before
+	// any query can use the relation. Dynamic interface contents are checked
+	// again when an actual value is indexed.
+	if err = validateRelationKeyType(this.Owner.Name, local); err != nil {
+		return nil, nil, nil, err
+	}
+	if err = validateRelationKeyType(target.Name, remote); err != nil {
+		return nil, nil, nil, err
+	}
 	return target, local, remote, nil
+}
+
+func validateRelationKeyType(model string, field *Field) error {
+	if field == nil {
+		return nil
+	}
+	if relationKeyTypeSupported(field.Type) {
+		return nil
+	}
+	return &SchemaError{Model: model, Field: field.Name, Reason: fmt.Sprintf(
+		"relation key type %s is not comparable; use []byte or implement driver.Valuer with a stable scalar value", field.Type)}
+}
+
+func relationKeyTypeSupported(t reflect.Type) bool {
+	if elem := OptElem(t); elem != nil {
+		t = elem
+	}
+	for t.Kind() == reflect.Pointer {
+		if t.Implements(valuerType) {
+			return true
+		}
+		t = t.Elem()
+	}
+	if isByteSliceType(t) || t.Implements(valuerType) {
+		return true
+	}
+	if t.Kind() != reflect.Pointer {
+		pointer := reflect.PointerTo(t)
+		if pointer.Implements(valuerType) {
+			return true
+		}
+	}
+	return t.Comparable()
+}
+
+func isByteSliceType(t reflect.Type) bool {
+	return t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8
 }
 
 // ---------------------------------------------------------------------------
@@ -802,9 +849,13 @@ func (this *Meta) ValidateRelationPath(path string) (string, error) {
 		if localName == "" {
 			localName = rel.Owner.PK.Name
 		}
-		if rel.Owner.Field(localName) == nil {
+		local := rel.Owner.Field(localName)
+		if local == nil {
 			return "", &SchemaError{Model: rel.Owner.Name, Field: rel.Name,
 				Reason: "relation references unknown field " + localName}
+		}
+		if err := validateRelationKeyType(rel.Owner.Name, local); err != nil {
+			return "", err
 		}
 
 		target, err := schemaOfType(rel.Elem)
@@ -815,9 +866,13 @@ func (this *Meta) ValidateRelationPath(path string) (string, error) {
 		if remoteName == "" {
 			remoteName = target.PK.Name
 		}
-		if target.Field(remoteName) == nil {
+		remote := target.Field(remoteName)
+		if remote == nil {
 			return "", &SchemaError{Model: target.Name, Field: rel.Name,
 				Reason: "relation references unknown field " + remoteName + " on " + target.Name}
+		}
+		if err := validateRelationKeyType(target.Name, remote); err != nil {
+			return "", err
 		}
 
 		table := rel.table

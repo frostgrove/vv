@@ -213,7 +213,11 @@ refused rather than split ([[D-080]]).
 row ([[D-006]]). Paths sharing a prefix share a statement, keys are deduplicated,
 long lists chunk into 900-key batches, and a `Select()` projection automatically
 keeps the join columns. Pagination inside a preload is refused — a `LIMIT` over a
-batched load would truncate some parents' children and not others.
+batched load would truncate some parents' children and not others. Join keys must
+be comparable, byte slices, or custom `driver.Valuer` values resolving to
+immutable standard scalars/bytes; unsupported
+slice/map keys fail before SQL rather than attaching children to the wrong
+parent.
 
 Sorting through a to-many is refused too: a collection has no single value to
 sort by, so it is declined rather than silently picking one.
