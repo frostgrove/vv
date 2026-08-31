@@ -7,8 +7,8 @@ failure mode that made the answer what it is, and says what a future change must
 not do.
 
 What does not belong here: how to use a feature (that is
-`docs/usage-guides/`), what a function does (that is the doc comment), or a
-change with no alternative worth naming.
+`docs/usage-guides/`), what straightforward code already says through its names
+and structure, or a change with no alternative worth naming.
 
 ## How to use this directory
 

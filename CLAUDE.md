@@ -227,9 +227,12 @@ anything in `crud/query`.
 
 The code has a voice. Match it rather than averaging toward generic Go.
 
-- **Comments say why, never what.** A comment that restates the code is worse
-  than no comment. The good ones here name the failure mode that made the code
-  take its shape.
+- **Comments are exceptional.** Write one only for a genuinely complex function
+  of roughly 40+ lines: a non-trivial algorithm, a large raw SQL statement, or
+  an invariant the code cannot make visible. Short and ordinary code must
+  explain itself through names and structure. Do not add GoDoc merely because a
+  symbol is exported, do not narrate tests, and do not restate code. Removing a
+  comment that fails this rule is expected cleanup, not a regression.
 - Plain and direct. No "simply", "just", "easily". Short sentences.
 - Prefer the boring construct. The magic in this library is deliberate and
   concentrated (reflection over models, codegen, type inference at the seam) —
