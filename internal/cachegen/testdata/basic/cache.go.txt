@@ -1,0 +1,31 @@
+package sample
+
+import (
+	"time"
+
+	cachealias "github.com/frostgrove/vv/cache"
+)
+
+type ProjectionKey struct {
+	TenantID string
+	Revision uint64
+}
+
+type GlobalKey struct {
+	Fingerprint string
+}
+
+type Payload struct {
+	Name string
+}
+
+var Projections = cachealias.Auto[ProjectionKey, string](
+	cachealias.Hot.With(
+		cachealias.MaxValueBytes(2<<20),
+		cachealias.NegativeFor(time.Minute),
+	),
+)
+
+var Globals = cachealias.Auto[GlobalKey, Payload]()
+
+var ExplicitFactory = cachealias.New[string, string]
