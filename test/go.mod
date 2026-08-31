@@ -2,7 +2,7 @@
 // driver, an ORM or a test helper as a dependency.
 module github.com/frostgrove/vv/test
 
-go 1.26
+go 1.26.5
 
 // The library is the repository this test module lives in, so it is used from
 // disk rather than fetched. Nothing else here is published.
@@ -10,10 +10,10 @@ replace github.com/frostgrove/vv => ../
 
 require (
 	entgo.io/ent v0.14.6
-	github.com/frostgrove/vv v0.0.0-20260829132449-bc1e4c0b1038
+	github.com/frostgrove/vv v0.0.0-20260829170205-3b943f2e18f1
 	github.com/frostgrove/vv/auth/access v0.0.0-00010101000000-000000000000
 	github.com/frostgrove/vv/auth/access/accessjwt v0.0.0-00010101000000-000000000000
-	github.com/frostgrove/vv/auth/authjwt v0.0.0-00010101000000-000000000000
+	github.com/frostgrove/vv/auth/authjwt v0.0.0-20260828080822-3c0a8bebc6f6
 	github.com/frostgrove/vv/utils/vvdb/dbpgx v0.0.0-00010101000000-000000000000
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.1
@@ -70,9 +70,9 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.72.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -101,9 +101,9 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
-	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
