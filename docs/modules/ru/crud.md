@@ -57,6 +57,7 @@ type User struct {
     Age       utils.Opt[int] `db:"age"`
     Version   int           `db:"version,version"`
     CreatedAt time.Time     `db:"created_at,generated"`
+    DeletedAt utils.Opt[time.Time] `db:"deleted_at,serverowned,tombstone"`
 }
 ```
 
@@ -67,6 +68,8 @@ type User struct {
 | `noauto` | отключить это поведение по умолчанию для целочисленного первичного ключа |
 | `immutable` | записывается при вставке, никогда — при обновлении: `created_at`, `tenant_id` |
 | `generated` | никогда не записывается, читается заново после каждой записи — вычисляемые колонки, триггеры |
+| `serverowned` | исключается из generic create/replace/patch и полных repository-записей |
+| `tombstone` | nullable timestamp для soft delete, которым владеет repository; включает `serverowned` |
 | `version` | оптимистичная блокировка: целое число, которое vv увеличивает и проверяет при каждом обновлении |
 | `-` | полностью игнорировать поле |
 

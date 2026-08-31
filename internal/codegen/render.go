@@ -198,8 +198,15 @@ func (this *generator) renderRepository(m *model) (string, used, error) {
 	fmt.Fprintf(&b, "type %sRepo = crud.Repo[%s, %s, %sUpdate]\n\n", m.Name, this.qual(m.Name), pk.Type, m.Name)
 	fmt.Fprintf(&b, "// %sRepository describes %s independently of a database driver.\n", m.Name, this.qual(m.Name))
 	fmt.Fprintf(&b, "// Bind it through New%sRepository with the application's datasource.\n", m.Name)
-	fmt.Fprintf(&b, "var %sRepository = sqlrepo.Define[%s, %s, %sUpdate](\"\")\n\n",
-		m.Name, this.qual(m.Name), pk.Type, m.Name)
+	setting := ""
+	for _, f := range m.Fields {
+		if f.Tombstone {
+			setting = fmt.Sprintf(", sqlrepo.SoftDelete(%q)", f.Name)
+			break
+		}
+	}
+	fmt.Fprintf(&b, "var %sRepository = sqlrepo.Define[%s, %s, %sUpdate](\"\"%s)\n\n",
+		m.Name, this.qual(m.Name), pk.Type, m.Name, setting)
 	fmt.Fprintf(&b, "// New%sRepository binds %sRepository to src.\n", m.Name, m.Name)
 	fmt.Fprintf(&b, "func New%sRepository(src crud.Source) *%sRepo {\n", m.Name, m.Name)
 	fmt.Fprintf(&b, "\treturn %sRepository.Bind(src)\n}\n\n", m.Name)
@@ -257,7 +264,7 @@ func (this *generator) renderDTO(m *model) (string, used) {
 		// The version column is left out for the same reason the primary key is:
 		// the repository owns it. A DTO that names it is refused at Define time,
 		// so emitting it would hand the caller a package that panics at start-up.
-		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.Version {
+		if f.Skip || f.isRelation() || f.PK || f.Generated || f.Immutable || f.ServerOwned || f.Tombstone || f.Version {
 			continue
 		}
 		typ := dtoType(f.Type)

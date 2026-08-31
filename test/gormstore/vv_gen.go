@@ -37,7 +37,7 @@ type LabelRepo = crud.Repo[Label, uint, LabelUpdate]
 
 // LabelRepository describes Label independently of a database driver.
 // Bind it through NewLabelRepository with the application's datasource.
-var LabelRepository = sqlrepo.Define[Label, uint, LabelUpdate]("")
+var LabelRepository = sqlrepo.Define[Label, uint, LabelUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
 // NewLabelRepository binds LabelRepository to src.
 func NewLabelRepository(src crud.Source) *LabelRepo {
@@ -84,7 +84,7 @@ type MemberRepo = crud.Repo[Member, uint, MemberUpdate]
 
 // MemberRepository describes Member independently of a database driver.
 // Bind it through NewMemberRepository with the application's datasource.
-var MemberRepository = sqlrepo.Define[Member, uint, MemberUpdate]("")
+var MemberRepository = sqlrepo.Define[Member, uint, MemberUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
 // NewMemberRepository binds MemberRepository to src.
 func NewMemberRepository(src crud.Source) *MemberRepo {
@@ -140,7 +140,7 @@ type TeamRepo = crud.Repo[Team, uint, TeamUpdate]
 
 // TeamRepository describes Team independently of a database driver.
 // Bind it through NewTeamRepository with the application's datasource.
-var TeamRepository = sqlrepo.Define[Team, uint, TeamUpdate]("")
+var TeamRepository = sqlrepo.Define[Team, uint, TeamUpdate]("", sqlrepo.SoftDelete("DeletedAt"))
 
 // NewTeamRepository binds TeamRepository to src.
 func NewTeamRepository(src crud.Source) *TeamRepo {

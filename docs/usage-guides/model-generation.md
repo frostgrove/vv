@@ -126,16 +126,21 @@ type LedgerEntry struct {
     EntryNumber int64  `db:"entry_number,pk,noauto"`
     ExternalRef string `db:"external_reference,immutable"`
     SearchText  string `db:"search_text,generated"`
+    DeletedAt   *time.Time `db:"deleted_at,serverowned,tombstone"`
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entries" }
 ```
 
 `db` covers an unusual column name or repository-owned behaviour such as an
-assigned integer key, immutable field, generated value, version column or a
-field vv must ignore. `rel` declares navigable relationships. Neither tag is
-needed merely to repeat the normal naming convention, and GORM tags are not a
-requirement of vv.
+assigned integer key, immutable field, generated value, version column,
+repository-owned tombstone or a field vv must ignore. A tombstone declaration
+automatically disappears from generated PATCH/create/replace shapes, freezes
+full Save, and makes the generated repository soft-delete with an explicit
+Restore lifecycle action. Its type must be a nullable timestamp such as
+`*time.Time`, `Opt[time.Time]`, `sql.NullTime`, or `gorm.DeletedAt`. `rel`
+declares navigable relationships. Neither tag is needed merely to repeat the
+normal naming convention, and GORM tags are not a requirement of vv.
 
 For a model that cannot live in a conventional model file, keep the explicit
 single-package form:

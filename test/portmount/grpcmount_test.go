@@ -130,16 +130,16 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 		},
 		{
 			name: "a create carrying what it may not choose", method: http.MethodPost, target: "/widgets",
-			body: `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z"}`,
-			grpc: grpcCall{"Create", `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z"}`},
+			body: `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`,
+			grpc: grpcCall{"Create", `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`},
 		},
 		{
 			name: "a patch", method: http.MethodPatch, target: "/widgets/42", body: `{"name":"patched"}`,
 			grpc: grpcCall{"Update", `{"id":"42","patch":{"name":"patched"}}`},
 		},
 		{
-			name: "a replace", method: http.MethodPut, target: "/widgets/42", body: `{"id":999,"name":"replaced"}`,
-			grpc: grpcCall{"Replace", `{"id":"42","entity":{"id":999,"name":"replaced"}}`},
+			name: "a replace", method: http.MethodPut, target: "/widgets/42", body: `{"id":999,"name":"replaced","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`,
+			grpc: grpcCall{"Replace", `{"id":"42","entity":{"id":999,"name":"replaced","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}}`},
 		},
 		{
 			name: "a delete", method: http.MethodDelete, target: "/widgets/42",
@@ -154,18 +154,22 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 			// The three HTTP bindings first, so a divergence among them is
 			// reported by the test that is about them.
 			var (
-				want []command
-				body []byte
+				want      []command
+				wantCalls []repoCall
+				body      []byte
 			)
 			for i, b := range bindings {
 				service := newRecorder()
 				_, raw := b.serve(t, service, tc.method, tc.target, tc.body)
 				if i == 0 {
-					want, body = service.got, raw
+					want, wantCalls, body = service.got, service.repository.calls, raw
 					continue
 				}
 				if !reflect.DeepEqual(service.got, want) {
 					t.Fatalf("%s handed the service %+v and crudnet handed it %+v", b.name, service.got, want)
+				}
+				if !reflect.DeepEqual(service.repository.calls, wantCalls) {
+					t.Fatalf("under %s the application called the repository with %+v and under crudnet with %+v", b.name, service.repository.calls, wantCalls)
 				}
 			}
 
@@ -179,6 +183,9 @@ func TestTheSameServiceMountsOnAllFourTransports(t *testing.T) {
 			if got, first := commandsOf(t, service.got), commandsOf(t, want); got != first {
 				t.Fatalf("crudgrpc handed the service %s and the HTTP bindings handed it %s — one of them is re-deriving a rule the service owns",
 					got, first)
+			}
+			if !reflect.DeepEqual(service.repository.calls, wantCalls) {
+				t.Fatalf("under crudgrpc the application called the repository with %+v and under HTTP with %+v", service.repository.calls, wantCalls)
 			}
 
 			// The documents agree, which is what makes the answer the same API

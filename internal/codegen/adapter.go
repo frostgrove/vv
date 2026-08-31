@@ -25,7 +25,7 @@ import (
 func inputFields(m *model) []field {
 	var out []field
 	for _, f := range m.Fields {
-		if f.Skip || f.isRelation() || f.Generated || f.Version || f.Excluded || (f.PK && f.Auto) {
+		if f.Skip || f.isRelation() || f.Generated || f.ServerOwned || f.Tombstone || f.Version || f.Excluded || (f.PK && f.Auto) {
 			continue
 		}
 		out = append(out, f)

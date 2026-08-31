@@ -40,6 +40,11 @@ var (
 	// ErrForbidden so a transport answers 403 — so it is here for a decorator
 	// that wants to say "read-only" rather than "forbidden", and for nothing else.
 	ErrReadOnly = errors.New("crud: repository is read-only")
+	// ErrNoTombstone marks a restore attempted through a repository whose model
+	// has no soft-delete lifecycle, or through a decorator that did not
+	// explicitly preserve that write capability. It is a wiring error and is not
+	// mapped to a client-visible 4xx response.
+	ErrNoTombstone = errors.New("crud: repository has no tombstone restore capability")
 	// ErrForbidden is the sentinel every access-control layer wraps, so a
 	// transport can answer 403 without importing the decorator that raised it.
 	ErrForbidden = errors.New("forbidden")

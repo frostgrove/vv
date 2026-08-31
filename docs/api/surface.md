@@ -20,6 +20,7 @@ type Seeding struct{ ... }
 const HeaderAuthorization = "Authorization"
 const SchemeBearer = "Bearer"
 var ErrAmbiguousGuardOrder = errors.New("auth: ambiguous guard order")
+var ErrCredentialCardinality = errors.New("auth: credential source must contain at most one value")
 var ErrGuardNotReady = errors.New("auth: guard is not ready")
 var ErrUnauthenticated = errors.New("auth: authentication is required")
 func HasAll(p Principal, ps ...Permission) bool
@@ -105,6 +106,7 @@ func BindLimit(d Dialect) int
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
 func CursorFieldSupported(f *Field) bool
 func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
+func DeleteScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, deletion *ScopedDelete[ID]) (int64, error, bool)
 func ElemType(t reflect.Type) reflect.Type
 func ElemValue(v any) any
 func EncodeCursor(fields []string, values []any) (string, error)
@@ -117,6 +119,7 @@ func IsTautology(p Predicate) bool
 func IsTautologyFor(m *Meta, p Predicate) bool
 func IsTransaction(e Executor) bool
 func KeyOf(v any) any
+func LoadTombstonesOf[M any, ID comparable](core Core[M, ID], ctx context.Context, ids []ID, scope Predicate, ...) ([]M, error, bool)
 func MarshalPredicate(p Predicate) (json.RawMessage, error)
 func MayBeTautologyFor(m *Meta, p Predicate) bool
 func OptElem(t reflect.Type) reflect.Type
@@ -124,10 +127,13 @@ func RegisterTable[M any](table string)
 func RegisterTableRef[M any](table TableRef)
 func RegisterTableRefType(t reflect.Type, table TableRef)
 func RegisterTableType(t reflect.Type, table string)
+func RestoreOf[M any, ID comparable](core Core[M, ID], ctx context.Context, ids ...ID) (int64, error, bool)
+func RestoreScopedOf[M any, ID comparable](core Core[M, ID], ctx context.Context, restore *ScopedRestore[ID]) (int64, error, bool)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
 func SameDataSource(a, b any) bool
 func SaveScopedOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
 func SaveScopedOnlyOf[M any, ID comparable](c Core[M, ID], ctx context.Context, m *M, save *ScopedSave[M]) (error, bool)
+func SupportsRestore[M any, ID comparable](core Core[M, ID]) bool
 func TableNameOf(t reflect.Type) string
 func TryRegisterTable[M any](table string) error
 func TryRegisterTableRef[M any](table TableRef) error
@@ -257,6 +263,8 @@ type RelationScopes struct{ ... }
 type Repo[M any, ID comparable, U any] struct{ ... }
     func Decorate[M any, ID comparable, U any](r *Repo[M, ID, U], mw ...Middleware[M, ID]) *Repo[M, ID, U]
     func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U]
+type RestoreSupport interface{ ... }
+type Restorer[M any, ID comparable] interface{ ... }
 type Result struct{ ... }
 type Rows interface{ ... }
 type SQL struct{ ... }
@@ -267,6 +275,10 @@ type Schema struct{ ... }
     func SchemaOf[M any]() (*Schema, error)
     func SchemaOfType(t reflect.Type) (*Schema, error)
 type SchemaError struct{ ... }
+type ScopedDelete[ID comparable] struct{ ... }
+type ScopedDeleter[M any, ID comparable] interface{ ... }
+type ScopedRestore[ID comparable] struct{ ... }
+type ScopedRestorer[M any, ID comparable] interface{ ... }
 type ScopedSave[M any] struct{ ... }
 type ScopedSaveOnlyer[M any, ID comparable] interface{ ... }
 type ScopedSaver[M any, ID comparable] interface{ ... }
@@ -286,6 +298,7 @@ type TableRef struct{ ... }
     func TableRefOf(t reflect.Type) (TableRef, error)
 type TableRefError struct{ ... }
 type Tabler interface{ ... }
+type TombstoneLoader[M any, ID comparable] interface{ ... }
 type Transactional interface{ ... }
 type Tx interface{ ... }
 type UnknownFieldError struct{ ... }
@@ -427,6 +440,7 @@ func BadRequestf(format string, args ...any) error
 func BodyFrom(ctx context.Context) []byte
 func BodyResolver(raw []byte) errs.Resolver
 func ClearGenerated[M any](meta *crud.Meta, m *M) error
+func ClearWriteProtected[M any](meta *crud.Meta, m *M) error
 func CoerceID[ID comparable](raw string) (ID, error)
 func DecodeJSON(r io.Reader, v any) error
 func DecodeJSONKeep(r io.Reader, v any) ([]byte, error)
@@ -655,6 +669,7 @@ func BadRequest(err error) error
 func BadRequestAs(code errs.Code, path errs.Path, format string, args ...any) error
 func BadRequestf(format string, args ...any) error
 func ClearGenerated[M any](meta *crud.Meta, m *M) error
+func ClearWriteProtected[M any](meta *crud.Meta, m *M) error
 func CodeForKind(k errs.Kind) errs.Code
 func CoerceID[ID comparable](raw string) (ID, error)
 func CoversUpdate[M, U any](except ...string) error
@@ -676,6 +691,7 @@ func Violations(ctx context.Context, f *errs.Fault, o *ViolationOptions) []errs.
 func WithLocale(ctx context.Context, locale string) context.Context
 func WithLogger(ctx context.Context, l *slog.Logger) context.Context
 type BulkDeleteCommand[ID comparable] struct{ ... }
+type BulkRestoreCommand[ID comparable] struct{ ... }
 type CountCommand struct{ ... }
 type CreateCommand[M any] struct{ ... }
 type DefaultService[M any, ID comparable, U any] struct{ ... }
@@ -694,6 +710,9 @@ type PathMap map[string]errs.Path
 type QuerySelector func(context.Context) string
 type ReplaceCommand[ID comparable, M any] struct{ ... }
 type Repository[M any, ID comparable, U any] interface{ ... }
+type RestorableService[ID comparable] interface{ ... }
+    func RestorableOf[ID comparable](service any) (RestorableService[ID], bool)
+type RestoreCommand[ID comparable] struct{ ... }
 type Rules struct{ ... }
 type Service[M any, ID comparable, U any] interface{ ... }
 type ServiceOption func(*serviceConfig)
@@ -847,8 +866,8 @@ func MySQLDSN(c *Config) (string, error)
 func Open(c *Config) (*sql.DB, error)
 func OpenReadWrite(c *Config) (primary, replica *sql.DB, err error)
 func PostgresDSN(config *Config) (string, error)
-func RedactedDSN(c *Config) (string, error)
 func RedactError(operation string, cause error) error
+func RedactedDSN(c *Config) (string, error)
 func SQLiteDSN(config *Config) (string, error)
 type Config struct{ ... }
 type Engine string
@@ -856,8 +875,8 @@ type Engine string
 type Migration struct{ ... }
 type Params map[string]string
 type Pool struct{ ... }
-type Secret string
 type SQLitePragmas []string
+type Secret string
 ```
 
 ## github.com/frostgrove/vv/utils/vvflag

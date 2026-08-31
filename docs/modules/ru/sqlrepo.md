@@ -164,13 +164,23 @@ Bind-бюджет диалекта учитывается автоматичес
 ### Soft delete
 
 ```go
-var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs", sqlrepo.SoftDelete("DeletedAt"))
+type Doc struct {
+    ID        int64                `db:"id,pk,auto"`
+    DeletedAt utils.Opt[time.Time] `db:"deleted_at,serverowned,tombstone"`
+}
+var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs")
 ```
 
 `Delete` и `DeleteAll` пишут флаг вместо удаления строки, и каждое чтение
-исключает помеченные строки. Это свойство самого запроса, а не декоратора,
-поэтому ничего нельзя обернуть вокруг, чтобы увидеть скрытые строки
-([[D-031]], [[UC-016]]).
+исключает помеченные строки. `Restore` очищает только tombstone как отдельное
+lifecycle-действие; generated wire inputs и generic saves не могут записать это
+поле. Security видит `Restore` отдельным action, а не `Update`. Для внешней
+модели без vv-тегов эквивалентом остаётся явная настройка blueprint
+`SoftDelete("DeletedAt")`. Поле обязано быть nullable timestamp:
+`*time.Time`, `Opt[time.Time]` либо совместимым Scanner/Valuer wrapper. При
+наличии optimistic-lock version soft delete и restore увеличивают её, закрывая
+ABA-окно Delete→Restore. Это свойство запроса, а не декоратора ([[D-031]],
+[[UC-016]]).
 
 ### Скоупы для связей
 

@@ -39,6 +39,39 @@ type Service[M any, ID comparable, U any] interface {
 	Paths() errs.Resolver
 }
 
+// RestorableService is the optional application-usecase surface for a
+// soft-deleting resource. Bindings may expose restore routes only when their
+// declaration receives this capability; ordinary Service stays minimal for
+// hard-delete resources and hand-written implementations.
+type RestorableService[ID comparable] interface {
+	Restore(ctx context.Context, cmd RestoreCommand[ID]) (int64, error)
+	RestoreMany(ctx context.Context, cmd BulkRestoreCommand[ID]) (int64, error)
+}
+
+type restorableRepository[ID comparable] interface {
+	Restore(ctx context.Context, ids ...ID) (int64, error)
+}
+
+type restorableProvider[ID comparable] interface {
+	Restorable() (RestorableService[ID], bool)
+}
+
+// RestorableOf resolves the optional lifecycle application use cases without
+// making every ordinary Service structurally restorable. A hand-written
+// service may implement RestorableService directly; DefaultService publishes a
+// capability-preserving wrapper only when its repository really supports a
+// tombstone lifecycle.
+func RestorableOf[ID comparable](service any) (RestorableService[ID], bool) {
+	if direct, ok := service.(RestorableService[ID]); ok {
+		return direct, true
+	}
+	provider, ok := service.(restorableProvider[ID])
+	if !ok {
+		return nil, false
+	}
+	return provider.Restorable()
+}
+
 // A ServiceOption configures the default service. It carries no type
 // parameters because nothing it sets mentions one, which is what lets a binding
 // translate its own options into these without spelling any generics.
@@ -111,6 +144,7 @@ func WithPaths(r errs.Resolver) ServiceOption {
 // no business rules, and no knowledge of how the request arrived.
 type DefaultService[M any, ID comparable, U any] struct {
 	repository    Repository[M, ID, U]
+	restorer      restorableRepository[ID]
 	meta          *crud.Meta
 	config        *query.Config
 	queryVariants map[string]*query.Config
@@ -139,7 +173,7 @@ func NewService[M any, ID comparable, U any](repository Repository[M, ID, U], op
 	for _, config := range c.queryVariants {
 		config.MustCheck(repository.Meta())
 	}
-	return &DefaultService[M, ID, U]{
+	service := &DefaultService[M, ID, U]{
 		repository:    repository,
 		meta:          repository.Meta(),
 		config:        c.query,
@@ -148,6 +182,19 @@ func NewService[M any, ID comparable, U any](repository Repository[M, ID, U], op
 		paths:         c.paths,
 		allowClientID: c.allowClientID,
 	}
+	if restorer, ok := repository.(restorableRepository[ID]); ok {
+		// Stock repositories expose a convenience Restore method even for a
+		// hard-delete blueprint, so its explicit capability probe wins. A custom
+		// repository with a real optional method needs no additional marker.
+		supported := true
+		if probe, ok := any(repository).(interface{ SupportsRestore() bool }); ok {
+			supported = probe.SupportsRestore()
+		}
+		if supported {
+			service.restorer = restorer
+		}
+	}
+	return service
 }
 
 var _ Service[struct{}, int, struct{}] = (*DefaultService[struct{}, int, struct{}])(nil)
@@ -241,7 +288,7 @@ func (this *DefaultService[M, ID, U]) Replace(ctx context.Context, cmd ReplaceCo
 		}
 	}
 	m := cmd.Model
-	if err := ClearGenerated(this.meta, &m); err != nil {
+	if err := ClearWriteProtected(this.meta, &m); err != nil {
 		return zero, err
 	}
 	if err := this.meta.SetID(&m, cmd.ID); err != nil {
@@ -275,6 +322,43 @@ func (this *DefaultService[M, ID, U]) DeleteMany(ctx context.Context, cmd BulkDe
 		return 0, nil
 	}
 	return this.repository.Delete(ctx, cmd.IDs...)
+}
+
+// Restorable returns the optional lifecycle application surface. Keeping it in
+// a wrapper means a hard-delete DefaultService does not accidentally satisfy
+// RestorableService merely because the stock repository has a fail-closed
+// convenience method.
+func (this *DefaultService[M, ID, U]) Restorable() (RestorableService[ID], bool) {
+	if this.restorer == nil {
+		return nil, false
+	}
+	return defaultRestorableService[ID]{repository: this.restorer}, true
+}
+
+type defaultRestorableService[ID comparable] struct {
+	repository restorableRepository[ID]
+}
+
+// Restore runs the lifecycle use case for one tombstone. The application seam
+// turns a zero row count into not-found just as Delete does; the repository owns
+// SQL and the security decorator owns Restore authorisation.
+func (this defaultRestorableService[ID]) Restore(ctx context.Context, cmd RestoreCommand[ID]) (int64, error) {
+	n, err := this.repository.Restore(ctx, cmd.ID)
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, crud.ErrNotFound
+	}
+	return n, nil
+}
+
+// RestoreMany is Restore's set-oriented application use case.
+func (this defaultRestorableService[ID]) RestoreMany(ctx context.Context, cmd BulkRestoreCommand[ID]) (int64, error) {
+	if len(cmd.IDs) == 0 {
+		return 0, nil
+	}
+	return this.repository.Restore(ctx, cmd.IDs...)
 }
 
 // compile turns the query document into repository options and appends the

@@ -17,8 +17,10 @@ package security
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/frostgrove/vv/crud"
 )
@@ -36,6 +38,7 @@ const (
 	Create
 	Update
 	Delete
+	Restore
 )
 
 func (this Action) String() string {
@@ -48,6 +51,8 @@ func (this Action) String() string {
 		return "update"
 	case Delete:
 		return "delete"
+	case Restore:
+		return "restore"
 	default:
 		return "unknown"
 	}
@@ -204,6 +209,12 @@ type gate[M any, ID comparable] struct {
 	crud.Core[M, ID]
 	p         Policy[M, ID]
 	immutable map[string]struct{}
+}
+
+// SupportsRestore preserves the lifecycle probe through the enforcing layer;
+// an opaque decorator below it is deliberately not tunneled through.
+func (this *gate[M, ID]) SupportsRestore() bool {
+	return this != nil && crud.SupportsRestore(this.Core)
 }
 
 // Next hands back the Core this gate wraps, so a chain built with the gate in
@@ -884,9 +895,102 @@ func snapshotPredicate[M any](meta *crud.Meta, m *M) (crud.Predicate, error) {
 	}
 	preds := make([]crud.Predicate, 0, len(meta.Fields))
 	for i, f := range meta.Fields {
-		preds = append(preds, crud.Eq(f.Name, values[i]))
+		value, null, err := snapshotValue(values[i])
+		if err != nil {
+			return nil, fmt.Errorf("security: snapshot %s.%s: %w", meta.Name, f.Name, err)
+		}
+		if null {
+			preds = append(preds, crud.IsNull(f.Name))
+			continue
+		}
+		preds = append(preds, crud.Eq(f.Name, value))
 	}
 	return crud.And(preds...), nil
+}
+
+// snapshotValue resolves driver.Valuer before building a conditional write.
+// A scanner wrapper such as sql.NullTime is a non-nil Go struct even when it
+// represents SQL NULL; binding it to `= $n` would become `= NULL` inside the
+// driver and can never match. Resolve it once and spell NULL as IS NULL. The
+// nil-pointer case mirrors database/sql's Valuer handling and also avoids
+// invoking a method through a typed nil pointer.
+func snapshotValue(value any) (resolved any, null bool, err error) {
+	valuer, ok := value.(driver.Valuer)
+	if !ok && value != nil {
+		// nullableField deliberately accepts Scanner/Valuer wrappers whose methods
+		// live only on *T. Meta.Values returns T, so use an addressable copy to
+		// preserve that supported declaration here as well.
+		rv := reflect.ValueOf(value)
+		if rv.Kind() != reflect.Pointer {
+			copy := reflect.New(rv.Type())
+			copy.Elem().Set(rv)
+			valuer, ok = copy.Interface().(driver.Valuer)
+		}
+	}
+	if !ok {
+		if value == nil {
+			return nil, true, nil
+		}
+		rv := reflect.ValueOf(value)
+		if nilable(rv.Kind()) && rv.IsNil() {
+			return nil, true, nil
+		}
+		return value, false, nil
+	}
+	rv := reflect.ValueOf(value)
+	if rv.IsValid() && rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return nil, true, nil
+	}
+	resolved, err = valuer.Value()
+	if err != nil {
+		return nil, false, err
+	}
+	if resolved == nil {
+		return nil, true, nil
+	}
+	rv = reflect.ValueOf(resolved)
+	if nilable(rv.Kind()) && rv.IsNil() {
+		return nil, true, nil
+	}
+	if !driver.IsValue(resolved) {
+		return nil, false, fmt.Errorf("driver.Valuer returned unsupported type %T", resolved)
+	}
+	return resolved, false, nil
+}
+
+func nilable(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return true
+	default:
+		return false
+	}
+}
+
+// inspectedID normalises the model-side wrappers CheckID explicitly permits.
+// Repository ID is the bare type even when the model stores *ID or Opt[ID].
+func inspectedID[M any, ID comparable](meta *crud.Meta, model *M) (ID, error) {
+	var zero ID
+	raw, err := meta.ID(model)
+	if err != nil {
+		return zero, err
+	}
+	value := crud.ElemValue(raw)
+	id, ok := value.(ID)
+	if !ok {
+		return zero, &crud.SchemaError{Model: meta.Name, Field: meta.PK.Name,
+			Reason: fmt.Sprintf("inspected id has type %T after wrapper normalisation, expected the repository id type", value)}
+	}
+	// ID may itself be an interface, or a comparable struct/array containing an
+	// interface whose dynamic value is not comparable. Type.Comparable only
+	// answers the first question; Value.Comparable follows the dynamic values
+	// recursively and keeps the snapshot map assignment below from panicking.
+	rv := reflect.ValueOf(id)
+	if rv.IsValid() && !rv.Comparable() {
+		return zero, &crud.SchemaError{Model: meta.Name, Field: meta.PK.Name,
+			Reason: fmt.Sprintf("inspected id value of type %T is not comparable and cannot key an atomic snapshot", id)}
+	}
+	return id, nil
 }
 
 func snapshotPredicates[M any](meta *crud.Meta, models []M) (crud.Predicate, error) {
@@ -1056,14 +1160,9 @@ func (this *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 			if err := this.p.Inspect(ctx, Delete, &victims[i]); err != nil {
 				return 0, err
 			}
-			rawID, err := this.Meta().ID(&victims[i])
+			id, err := inspectedID[M, ID](this.Meta(), &victims[i])
 			if err != nil {
 				return 0, err
-			}
-			id, ok := rawID.(ID)
-			if !ok {
-				return 0, &crud.SchemaError{Model: this.Meta().Name, Field: this.Meta().PK.Name,
-					Reason: fmt.Sprintf("inspected id has type %T, expected the repository id type", rawID)}
 			}
 			snapshots[id] = snapshot
 			snapshotList = append(snapshotList, snapshot)
@@ -1089,6 +1188,66 @@ func (this *gate[M, ID]) Delete(ctx context.Context, ids ...ID) (int64, error) {
 		within = crud.And(within, crud.Or(snapshotList...))
 	}
 	return this.Core.DeleteAll(ctx, crud.Where(within), relationNarrowing(rel))
+}
+
+// Restore is a distinct lifecycle action. It never reuses Update authorisation:
+// clearing a tombstone changes visibility and must be granted, scoped and
+// inspected under its own verb.
+func (this *gate[M, ID]) Restore(ctx context.Context, ids ...ID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if err := this.authorize(ctx, Restore); err != nil {
+		return 0, err
+	}
+	scope, rel, err := this.writeScopes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if scope == nil && rel == nil && this.p.Inspect == nil {
+		n, err, ok := crud.RestoreOf(this.Core, ctx, ids...)
+		if !ok {
+			return 0, &crud.SchemaError{Model: this.Meta().Name, Reason: "inner core does not preserve tombstone Restore"}
+		}
+		return n, err
+	}
+
+	var snapshots map[ID]crud.Predicate
+	if this.p.Inspect != nil {
+		rows, err, ok := crud.LoadTombstonesOf(this.Core, ctx, ids, scope, rel)
+		if !ok {
+			return 0, &crud.SchemaError{Model: this.Meta().Name, Reason: "inner core cannot load tombstones for Restore inspection"}
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(rows) == 0 {
+			return 0, nil
+		}
+		snapshots = make(map[ID]crud.Predicate, len(rows))
+		for i := range rows {
+			if err := this.p.Inspect(ctx, Restore, &rows[i]); err != nil {
+				return 0, err
+			}
+			snapshot, err := snapshotPredicate(this.Meta(), &rows[i])
+			if err != nil {
+				return 0, err
+			}
+			id, err := inspectedID[M, ID](this.Meta(), &rows[i])
+			if err != nil {
+				return 0, err
+			}
+			snapshots[id] = snapshot
+		}
+	}
+
+	n, err, ok := crud.RestoreScopedOf(this.Core, ctx, &crud.ScopedRestore[ID]{
+		IDs: ids, Scope: scope, RelationScopes: rel, Snapshots: snapshots,
+	})
+	if !ok {
+		return 0, &crud.SchemaError{Model: this.Meta().Name, Reason: "inner core cannot perform a scoped Restore atomically"}
+	}
+	return n, err
 }
 
 // deleteVictims reads an inspected id set in bounded pieces. These are only

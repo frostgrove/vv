@@ -479,21 +479,34 @@ means to publish.
 
 ### Soft deletes
 
-One declaration, both halves:
+The top-level declaration is on the model; codegen and the repository derive the
+rest:
 
 ```go
-var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs",
-    sqlrepo.SoftDelete("DeletedAt"))
+type Doc struct {
+    ID        int64                `db:"id,pk,auto"`
+    DeletedAt utils.Opt[time.Time] `db:"deleted_at,serverowned,tombstone"`
+}
+
+var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs")
 ```
 
 `Delete` and `DeleteAll` stamp the column instead of removing rows, and every
-read filters the stamped ones out. Written by hand this is a scope for the reads
-plus a service layer for the writes, and adding the first while forgetting the
-second fails silently — the reads hide rows the deletes are still destroying.
+read filters the stamped ones out. Generated PATCH/create/replace inputs omit the
+field, full `Save`/`SaveAll` omit it too, and `Restore` is a separate repository
+and application-usecase action with its own security permission. A client with
+ordinary Update permission therefore cannot delete or restore by writing a
+timestamp or `null`. If the model has a `version` column, both soft delete and
+restore advance it, so a Delete→Restore cycle cannot fool an older conditional
+write with the same visible state.
 
-The column has to be nullable, because "not deleted" needs a value. Bind the same
-blueprint without the setting for a repository that sees the tombstones. What it
-cannot do for you: a unique index still sees them, so re-creating a row whose
+The column has to carry a nullable timestamp: `*time.Time`, `Opt[time.Time]`, or
+a `Scanner`/`Valuer` timestamp wrapper such as `sql.NullTime` or
+`gorm.DeletedAt`. Other nullable types are refused at declaration time. For
+models you cannot tag, `sqlrepo.SoftDelete("DeletedAt")` remains the explicit
+low-level form and freezes that field inside its blueprint. A separate blueprint
+without the setting is the deliberate raw/archive view. What it cannot do for
+you: a unique index still sees tombstones, so re-creating a row whose
 soft-deleted twin holds the same key is a conflict — that wants a partial index.
 
 ### Batched writes

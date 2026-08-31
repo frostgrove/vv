@@ -5,20 +5,29 @@
 
 ## The decision
 
-`sqlrepo.SoftDelete("DeletedAt")` is a blueprint setting, not a decorator. It folds
-`IsNull(field)` into the permanent scope and rewrites `Delete` / `DeleteAll` into
-one `UPDATE` that stamps the column, under exactly the narrowing the `DELETE`
-would have had.
+`db:",serverowned,tombstone"` is the default lifecycle declaration. Codegen
+removes that field from every wire write shape and emits a soft-deleting
+blueprint; runtime metadata removes it from generic Save/Update plans. The
+blueprint folds `IsNull(field)` into permanent live scope and rewrites `Delete` /
+`DeleteAll` into an `UPDATE` that stamps the column under exactly the narrowing
+the `DELETE` would have had. `Restore` is a separate lifecycle action that sets
+the column to NULL only on tombstones. Both mutations advance an optimistic-lock
+version when the model has one, so Delete→Restore cannot recreate an old
+version/state pair. The lifecycle field must carry a nullable timestamp; an
+incompatible nullable declaration is rejected at blueprint construction.
+
+`sqlrepo.SoftDelete("DeletedAt")` remains the explicit low-level declaration for
+models a consumer cannot tag. Its blueprint-local Schema view freezes the same
+generic write paths without mutating a raw blueprint over the same Go model.
 
 ## Why
 
 It was written as a decorator first, and the decorator could not work. A
-middleware sits above `crud.Core`, and `Core` has no verb for "write this
-column": `Update` takes the DTO declared at `Define` time, and `UpdatePlan`
-refuses any other type. Synthesising a DTO would have meant either putting the
-tombstone into the caller's update DTO — where a client could `PATCH` it — or
-adding a raw-column verb to the seam, which is a much larger change than the
-feature is worth.
+middleware sits above `crud.Core`, while the lifecycle column and its permanent
+scope are storage concerns. Putting the tombstone into the caller's update DTO
+lets a client `PATCH` it under Update permission. The dedicated optional
+Restore capability instead crosses decorators only when each one explicitly
+forwards it; security authorises, scopes and snapshots it as `Restore`.
 
 The stamp is a statement. It belongs with the statements.
 
@@ -40,6 +49,9 @@ has none, so every row would read as a tombstone the moment the scope is added.
 - Do not add the read scope and the delete rewrite as separate declarations.
 - Do not stamp outside the scope. A soft delete that reached rows a scope was
   hiding would be a delete that reached them.
+- Do not expose a tombstone through generic PATCH/create/replace or full Save.
+- Do not authorise Restore as Update; making a hidden row visible is a distinct
+  lifecycle decision.
 - Do not promise that a unique index tolerates tombstones. It does not, and the
   fix is a partial index this library cannot write.
 
@@ -48,6 +60,9 @@ has none, so every row would read as a tombstone the moment the scope is added.
 - `crud/sqlrepo/blueprint.go:SoftDelete`
 - `crud/sqlrepo/blueprint.go:resolveSoftDelete` — the validation and the scope fold.
 - `crud/sqlrepo/repository.go:stamp` — the UPDATE both deletes become.
+- `crud/lifecycle.go`, `crud/sqlrepo/repository.go:Restore` — explicit restore.
+- `crud/decorators/security/security.go:Restore` — action, scope and snapshot.
+- `internal/codegen` — generated wire exclusion and blueprint declaration.
 - `crud/meta.go:NowFunc` — the clock.
 
 ## Proven by
@@ -58,6 +73,9 @@ has none, so every row would read as a tombstone the moment the scope is added.
   that makes the rest mean something.
 - `TestATombstonedRowCannotBeUpdated`, `TestDeletingATombstoneAgainChangesNothing`,
   `TestASoftDeleteAllHonoursTheFilter`, `TestABadSoftDeleteDeclarationIsRefused`.
+- `TestTaggedTombstoneMakesSoftDeleteTheDeclarativeDefault`,
+  `TestLegacySoftDeleteSettingStillFreezesGenericWrites`, and
+  `TestRestoreHasItsOwnAuthorizationAndScope`.
 
 ## See also
 

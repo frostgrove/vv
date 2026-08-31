@@ -106,9 +106,10 @@ func Scope(p crud.Predicate) Setting {
 // DTO is the one declared at Define time. The stamp is a statement, so it
 // belongs where the statements are built.
 //
-// The field must be nullable, because "not deleted" has to have a value. A
-// crud.Opt[time.Time] or a *time.Time; anything else is refused here rather than
-// at the first delete.
+// The field must be a nullable timestamp, because "not deleted" has to have a
+// value and Delete stamps time.Time. Use crud.Opt[time.Time], *time.Time, or a
+// Scanner/Valuer timestamp wrapper such as sql.NullTime; incompatible nullable
+// types are refused here rather than on the first delete.
 //
 // What it does not do: a unique index still sees the tombstones. Re-creating a
 // row whose soft-deleted twin holds the same unique key is a conflict, and the
@@ -158,6 +159,9 @@ type Blueprint[M any, ID comparable, U any] struct {
 	set        settings
 	relScopes  *crud.RelationScopes
 	softDelete *crud.Field
+	// restoreScope is the permanent scope before the live-row predicate is
+	// added. Restore must see tombstones while retaining tenant/archive policy.
+	restoreScope crud.Predicate
 }
 
 // Define declares a repository for model M with primary key ID and update DTO
@@ -250,6 +254,10 @@ func tryDefine[M any, ID comparable, U any](meta *crud.Meta, options ...Setting)
 // declares the read behaviour, and the two cannot be added separately or fall
 // out of step.
 func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
+	this.restoreScope = this.set.scope
+	if this.set.softDelete == "" && this.meta.Tombstone != nil {
+		this.set.softDelete = this.meta.Tombstone.Name
+	}
 	if this.set.softDelete == "" {
 		return nil
 	}
@@ -258,17 +266,56 @@ func (this *Blueprint[M, ID, U]) resolveSoftDelete() error {
 		return &crud.SchemaError{Model: this.meta.Name, Field: this.set.softDelete,
 			Reason: "no such field to soft-delete into"}
 	}
-	if !f.Optional && f.Type.Kind() != reflect.Pointer {
+	if !f.Nullable() {
 		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
 			Reason: "a soft-delete column has to be nullable, or there is no value that means `not deleted`"}
 	}
-	if f.PK || f.Immutable || f.Generated || f.Version {
+	if !f.AcceptsTombstoneTimestamp() {
+		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
+			Reason: "a soft-delete column must carry time.Time: use *time.Time, Opt[time.Time], or a Scanner/Valuer timestamp wrapper"}
+	}
+	if tagged := this.meta.Tombstone; tagged != nil && tagged != f {
+		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
+			Reason: "SoftDelete conflicts with model tombstone " + tagged.Name}
+	}
+	if f.PK || f.Immutable || f.Generated || f.Version || (f.ServerOwned && !f.Tombstone) {
 		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
 			Reason: "a soft-delete column has to be writable"}
 	}
+	if this.plan.IncludesField(f) {
+		return &crud.SchemaError{Model: this.meta.Name, Field: f.Name,
+			Reason: "a soft-delete column cannot be present in the update DTO; tag it `tombstone` so codegen excludes it or remove it from the hand-written patch"}
+	}
 	this.softDelete = f
+	// Legacy SoftDelete("Field") remains a supported low-level declaration. Its
+	// model Schema may also back a raw repository view, so do not mutate the
+	// process-wide Field flags. Give this blueprint a local slice view instead:
+	// generic Save/Create/Replace omit the lifecycle field while the raw view
+	// retains the model's literal mapping.
+	meta := *this.meta
+	schema := *this.meta.Schema
+	schema.Insert = withoutField(schema.Insert, f)
+	schema.InsertGen = withoutField(schema.InsertGen, f)
+	schema.Update = withoutField(schema.Update, f)
+	// Publish the explicit lifecycle identity to consumers of this blueprint's
+	// metadata. This is a local Schema copy: another raw blueprint over the same
+	// external Go model remains raw, and the shared Field flags still describe
+	// the literal untagged model declaration.
+	schema.Tombstone = f
+	meta.Schema = &schema
+	this.meta = &meta
 	this.set.scope = crud.And(this.set.scope, crud.IsNull(f.Name))
 	return nil
+}
+
+func withoutField(fields []*crud.Field, excluded *crud.Field) []*crud.Field {
+	out := make([]*crud.Field, 0, len(fields))
+	for _, field := range fields {
+		if field != excluded {
+			out = append(out, field)
+		}
+	}
+	return out
 }
 
 // resolveRelationScopes turns the declarations into the form the SQL writer and

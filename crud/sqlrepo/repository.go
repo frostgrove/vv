@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -33,6 +34,13 @@ type repository[M any, ID comparable, U any] struct {
 type preparedWrite struct {
 	query string
 	args  []any
+}
+
+// SupportsRestore distinguishes a soft-delete blueprint from the same concrete
+// repository type bound without one. The method-set alone cannot express that
+// declaration-time difference.
+func (this *repository[M, ID, U]) SupportsRestore() bool {
+	return this != nil && this.bp != nil && this.bp.softDelete != nil
 }
 
 func newRepository[M any, ID comparable, U any](source crud.Source, bp *Blueprint[M, ID, U]) *repository[M, ID, U] {
@@ -358,6 +366,13 @@ func (this *repository[M, ID, U]) scoped(o *crud.Options) crud.Predicate {
 }
 
 func (this *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, limit, offset int) ([]M, []crud.Order, error) {
+	return this.findWithin(ctx, o, limit, offset, this.scoped(o))
+}
+
+// findWithin is the internal read shape for lifecycle operations that must see
+// tombstones without dropping the blueprint's original tenant/archive scope.
+// Ordinary reads always enter through find and therefore always use live scope.
+func (this *repository[M, ID, U]) findWithin(ctx context.Context, o *crud.Options, limit, offset int, within crud.Predicate) ([]M, []crud.Order, error) {
 	cols, err := this.projection(o)
 	if err != nil {
 		return nil, nil, err
@@ -401,7 +416,7 @@ func (this *repository[M, ID, U]) find(ctx context.Context, o *crud.Options, lim
 	// The cursor is built here rather than above because the sort is only final
 	// now: a DISTINCT read rewrites it, and the comparison has to match the
 	// ORDER BY that actually runs or it names a different place in the result.
-	where := this.scoped(o)
+	where := within
 	order := sort
 	if token, back, ok := o.Cursor(); ok {
 		step, err := this.cursorWhere(sort, token, back)
@@ -1421,6 +1436,210 @@ func (this *repository[M, ID, U]) DeleteScoped(ctx context.Context, deletion *cr
 	return this.executePrepared(ctx, plan)
 }
 
+// Restore clears the repository-owned tombstone for ids. It is deliberately a
+// separate lifecycle verb: generic Update and Save exclude server-owned fields,
+// so update permission can never double as restore permission.
+func (this *repository[M, ID, U]) Restore(ctx context.Context, ids ...ID) (int64, error) {
+	if this.bp.softDelete == nil {
+		return 0, crud.ErrNoTombstone
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	plan, err := this.restorePlan(ids, nil, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	return this.executePrepared(ctx, plan)
+}
+
+// RestoreScoped is the storage half of security.Gate.Restore. Policy scope and
+// inspected snapshots stay in each conditional UPDATE and all chunks share one
+// transaction.
+func (this *repository[M, ID, U]) RestoreScoped(ctx context.Context, restore *crud.ScopedRestore[ID]) (int64, error) {
+	if this.bp.softDelete == nil {
+		return 0, crud.ErrNoTombstone
+	}
+	if restore == nil {
+		return 0, crud.ErrBadRequest
+	}
+	if len(restore.IDs) == 0 {
+		return 0, nil
+	}
+	plan, err := this.restorePlan(restore.IDs, restore.Scope, restore.RelationScopes, restore.Snapshots)
+	if err != nil {
+		return 0, err
+	}
+	return this.executePrepared(ctx, plan)
+}
+
+// LoadTombstones reads archived rows only for lifecycle-policy inspection. It
+// retains the blueprint's original permanent scope, adds the caller's policy
+// scope and forces the primary; ordinary reads remain permanently live-only.
+func (this *repository[M, ID, U]) LoadTombstones(ctx context.Context, ids []ID, scope crud.Predicate, relations *crud.RelationScopes) ([]M, error) {
+	if this.bp.softDelete == nil {
+		return nil, crud.ErrNoTombstone
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ids = uniqueIDs(ids)
+	effectiveRelations := crud.MergeRelationScopes(this.bp.relScopes, relations)
+	fixed := crud.And(this.bp.restoreScope, crud.IsNotNull(this.bp.softDelete.Name), scope)
+	_, args, err := crud.NewSQL(this.d, this.meta).RelationScopes(effectiveRelations).Predicate(fixed).Done()
+	if err != nil {
+		return nil, err
+	}
+	available := crud.BindLimit(this.d) - len(args)
+	if available < 1 {
+		return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+			"Restore inspection needs one id bind in addition to %d scope binds, but dialect %q permits at most %d; reduce the repository scope",
+			len(args), this.d.Name(), crud.BindLimit(this.d))}
+	}
+
+	var out []M
+	for start := 0; start < len(ids); start += available {
+		part := ids[start:min(start+available, len(ids))]
+		byID := crud.InAny(this.meta.PK.Name, part)
+		if len(part) == 1 {
+			byID = crud.Eq(this.meta.PK.Name, part[0])
+		}
+		o := crud.Build(crud.PrimaryOnly(), crud.Unsorted(), crud.NarrowRelations(relations))
+		rows, _, err := this.findWithin(ctx, o, 0, 0, crud.And(fixed, byID))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
+// restorePlan mirrors deletePlan's bind-budget and atomicity rules but starts
+// from restoreScope rather than the live-row scope and writes SQL NULL instead
+// of accepting a caller-supplied DTO value.
+func (this *repository[M, ID, U]) restorePlan(ids []ID, scope crud.Predicate, relationScopes *crud.RelationScopes, snapshots map[ID]crud.Predicate) ([]preparedWrite, error) {
+	ids = uniqueIDs(ids)
+	relationScopes = crud.MergeRelationScopes(this.bp.relScopes, relationScopes)
+	fixedPredicate := crud.And(this.bp.restoreScope, crud.IsNotNull(this.bp.softDelete.Name), scope)
+	_, fixed, err := crud.NewSQL(this.d, this.meta).RelationScopes(relationScopes).Predicate(fixedPredicate).Done()
+	if err != nil {
+		return nil, err
+	}
+	overhead := len(fixed)
+	limit := crud.BindLimit(this.d)
+	if overhead >= limit {
+		return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+			"Restore needs one id bind in addition to %d scope binds, but dialect %q permits at most %d; reduce the repository scope or use a temporary table",
+			overhead, this.d.Name(), limit)}
+	}
+	available := limit - overhead
+	type item struct {
+		id       ID
+		snapshot crud.Predicate
+		binds    int
+	}
+	items := make([]item, 0, len(ids))
+	for _, id := range ids {
+		entry := item{id: id, binds: 1}
+		if snapshots != nil {
+			// ScopedRestore is public and may be called by a custom application
+			// layer rather than security.Gate. An interface ID can carry a value
+			// that cannot be used as a map key; no snapshot can authorise such an
+			// entry, so skip it fail-closed instead of panicking on lookup.
+			rv := reflect.ValueOf(id)
+			if rv.IsValid() && !rv.Comparable() {
+				continue
+			}
+			var ok bool
+			entry.snapshot, ok = snapshots[id]
+			if !ok || entry.snapshot == nil {
+				continue
+			}
+			_, args, err := crud.NewSQL(this.d, this.meta).Predicate(entry.snapshot).Done()
+			if err != nil {
+				return nil, err
+			}
+			entry.binds += len(args)
+		}
+		if entry.binds > available {
+			return nil, &crud.SchemaError{Model: this.meta.Name, Reason: fmt.Sprintf(
+				"one inspected Restore row needs %d id/snapshot binds in addition to %d scope binds, but dialect %q permits at most %d; narrow the persisted model or inspection snapshot",
+				entry.binds, overhead, this.d.Name(), limit)}
+		}
+		items = append(items, entry)
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	plan := make([]preparedWrite, 0, (len(items)-1)/max(1, available)+1)
+	for start := 0; start < len(items); {
+		end, used := start, 0
+		for end < len(items) && used+items[end].binds <= available {
+			used += items[end].binds
+			end++
+		}
+		chunkIDs := make([]ID, 0, end-start)
+		chunkSnapshots := make([]crud.Predicate, 0, end-start)
+		for _, entry := range items[start:end] {
+			chunkIDs = append(chunkIDs, entry.id)
+			if snapshots != nil {
+				chunkSnapshots = append(chunkSnapshots, entry.snapshot)
+			}
+		}
+		byID := crud.InAny(this.meta.PK.Name, chunkIDs)
+		if len(chunkIDs) == 1 {
+			byID = crud.Eq(this.meta.PK.Name, chunkIDs[0])
+		}
+		where := crud.And(fixedPredicate, byID)
+		if snapshots != nil {
+			where = crud.And(where, crud.Or(chunkSnapshots...))
+		}
+		f := this.bp.softDelete
+		b := crud.NewSQL(this.d, this.meta).RelationScopes(relationScopes).
+			Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = NULL")
+		// Restore is a row mutation, not a visibility-only metadata edit. The
+		// version bump prevents Delete -> Restore from recreating the same
+		// tombstone/version snapshot and letting an older conditional write pass
+		// after an otherwise invisible ABA lifecycle transition.
+		if version := this.meta.Version; version != nil {
+			b.Raw(", ").Ident(version.Column).Raw(" = ").Ident(version.Column).Raw(" + 1")
+		}
+		q, args, err := b.Where(where).Done()
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, preparedWrite{query: q, args: args})
+		start = end
+	}
+	return plan, nil
+}
+
+func uniqueIDs[ID comparable](ids []ID) []ID {
+	if len(ids) < 2 {
+		return ids
+	}
+	seen := make(map[ID]struct{}, len(ids))
+	out := make([]ID, 0, len(ids))
+	for _, id := range ids {
+		// An interface type satisfies the generic comparable constraint even
+		// though one of its dynamic values may not (for example []byte in any).
+		// Such a value is still a valid driver bind; simply keep it rather than
+		// turning an optional deduplication into a process panic.
+		rv := reflect.ValueOf(id)
+		if rv.IsValid() && !rv.Comparable() {
+			out = append(out, id)
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
 // deletePlan keeps the permanent scope in every chunk and charges its values
 // before deciding how many ids fit. A relation scope may itself add binds while
 // the root predicate crosses a relation, so counting only the ids would still
@@ -1455,6 +1674,12 @@ func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, rel
 	for _, id := range ids {
 		entry := item{id: id, binds: 1}
 		if snapshots != nil {
+			// See restorePlan: an unhashable dynamic interface value cannot have
+			// an authorised snapshot entry. Skip it rather than panic on lookup.
+			rv := reflect.ValueOf(id)
+			if rv.IsValid() && !rv.Comparable() {
+				continue
+			}
 			var ok bool
 			entry.snapshot, ok = snapshots[id]
 			if !ok || entry.snapshot == nil {
@@ -1504,6 +1729,9 @@ func (this *repository[M, ID, U]) deletePlan(ids []ID, scope crud.Predicate, rel
 		if this.bp.softDelete != nil {
 			f := this.bp.softDelete
 			b.Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(deletedAt)
+			if version := this.meta.Version; version != nil {
+				b.Raw(", ").Ident(version.Column).Raw(" = ").Ident(version.Column).Raw(" + 1")
+			}
 		} else {
 			b.Raw(this.deleteFrom)
 		}
@@ -1550,8 +1778,11 @@ func (this *repository[M, ID, U]) DeleteAll(ctx context.Context, options ...crud
 func (this *repository[M, ID, U]) stamp(ctx context.Context, where crud.Predicate, rs *crud.RelationScopes) (int64, error) {
 	f := this.bp.softDelete
 	b := crud.NewSQL(this.d, this.meta).RelationScopes(rs).
-		Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(crud.NowFunc()).
-		Where(where)
+		Raw("UPDATE ").Table().Raw(" SET ").Ident(f.Column).Raw(" = ").Bind(crud.NowFunc())
+	if version := this.meta.Version; version != nil {
+		b.Raw(", ").Ident(version.Column).Raw(" = ").Ident(version.Column).Raw(" + 1")
+	}
+	b.Where(where)
 	q, args, err := b.Done()
 	if err != nil {
 		return 0, err

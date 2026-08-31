@@ -44,10 +44,12 @@ type field struct {
 	// Runtime metadata retains the same bit until it has selected the model's
 	// key, so codegen must not collapse it into Auto=false while parsing one
 	// field at a time.
-	NoAuto    bool
-	Integral  bool
-	Immutable bool
-	Generated bool
+	NoAuto      bool
+	Integral    bool
+	Immutable   bool
+	Generated   bool
+	ServerOwned bool
+	Tombstone   bool
 	// Version is the optimistic lock. The repository advances it, so it is not
 	// a field a caller may set — and a DTO that names it is refused at Define
 	// time, which is why the generator has to know about it too.
@@ -63,7 +65,7 @@ type field struct {
 // tagDropped reports whether the model's own tags already keep this column out
 // of the update DTO — the half the runtime can see for itself.
 func (this field) tagDropped() bool {
-	return this.Skip || this.PK || this.Generated || this.Immutable || this.Version
+	return this.Skip || this.PK || this.Generated || this.Immutable || this.ServerOwned || this.Tombstone || this.Version
 }
 
 type model struct {
@@ -1592,7 +1594,7 @@ var wellKnownEmbeds = map[string][]field{
 		{Name: "ID", Type: "uint", Integral: true},
 		{Name: "CreatedAt", Type: "time.Time", Immutable: true, Excluded: true},
 		{Name: "UpdatedAt", Type: "time.Time", Immutable: true, Excluded: true},
-		{Name: "DeletedAt", Type: "gorm.DeletedAt", Immutable: true, Excluded: true},
+		{Name: "DeletedAt", Type: "gorm.DeletedAt", ServerOwned: true, Tombstone: true, Excluded: true},
 	},
 }
 

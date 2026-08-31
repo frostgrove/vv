@@ -75,6 +75,12 @@ type enricher[M any, ID comparable] struct {
 // middle stays walkable ([[crud.Nexter]]).
 func (this *enricher[M, ID]) Next() crud.Core[M, ID] { return this.Core }
 
+// SupportsRestore preserves the lifecycle probe through this transparent
+// decorator. It follows the exact inner core, just like Restore itself.
+func (this *enricher[M, ID]) SupportsRestore() bool {
+	return this != nil && crud.SupportsRestore(this.Core)
+}
+
 // enrich is the whole of this package. Everything below it is one line per verb.
 //
 // The fault is copied rather than written to. A *Fault is a value two
@@ -307,6 +313,32 @@ func (this *enricher[M, ID]) DeleteScoped(ctx context.Context, deletion *crud.Sc
 		return 0, &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot perform a scoped Delete atomically"}
 	}
 	return n, this.enrich("Delete", err)
+}
+
+// Restore preserves the explicit tombstone lifecycle capability and classifies
+// faults from its conditional UPDATE as Restore rather than as a generic patch.
+func (this *enricher[M, ID]) Restore(ctx context.Context, ids ...ID) (int64, error) {
+	n, err, ok := crud.RestoreOf(this.Core, ctx, ids...)
+	if !ok {
+		return 0, crud.ErrNoTombstone
+	}
+	return n, this.enrich("Restore", err)
+}
+
+func (this *enricher[M, ID]) RestoreScoped(ctx context.Context, restore *crud.ScopedRestore[ID]) (int64, error) {
+	n, err, ok := crud.RestoreScopedOf(this.Core, ctx, restore)
+	if !ok {
+		return 0, &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot perform a scoped Restore atomically"}
+	}
+	return n, this.enrich("Restore", err)
+}
+
+func (this *enricher[M, ID]) LoadTombstones(ctx context.Context, ids []ID, scope crud.Predicate, relations *crud.RelationScopes) ([]M, error) {
+	rows, err, ok := crud.LoadTombstonesOf(this.Core, ctx, ids, scope, relations)
+	if !ok {
+		return nil, &crud.SchemaError{Model: this.meta.Name, Reason: "inner core cannot load tombstones for Restore inspection"}
+	}
+	return rows, this.enrich("Restore", err)
 }
 
 func (this *enricher[M, ID]) SaveAll(ctx context.Context, ms []*M) error {

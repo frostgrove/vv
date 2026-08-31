@@ -130,6 +130,19 @@ func TestASoftDeleteStampsRatherThanRemoves(t *testing.T) {
 			if back.Deleted.IsNull() {
 				t.Fatal("the tombstone column was not stamped")
 			}
+
+			// Restore is its own lifecycle action, not a PATCH of Deleted. It sees
+			// only tombstones and makes the row live again.
+			if n, err := soft.Restore(ctx, 1); err != nil || n != 1 {
+				t.Fatalf("restore = %d, %v", n, err)
+			}
+			restored, err := soft.GetByID(ctx, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !restored.Deleted.IsNull() {
+				t.Fatalf("restored tombstone = %v, want NULL", restored.Deleted)
+			}
 		})
 	}
 }

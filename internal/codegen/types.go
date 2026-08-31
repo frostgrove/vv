@@ -676,6 +676,11 @@ func (this *generator) columnField(name, rendered string, typ types.Type, databa
 			item.Immutable = true
 		case "generated", "computed":
 			item.Generated = true
+		case "serverowned", "server_owned":
+			item.ServerOwned = true
+		case "tombstone", "softdelete", "soft_delete":
+			item.ServerOwned = true
+			item.Tombstone = true
 		case "version", "lock":
 			item.Version = true
 		}

@@ -39,6 +39,21 @@ type UpdatePlan struct {
 	Fields []planField
 }
 
+// IncludesField reports whether this DTO plan can write field. Blueprint-level
+// lifecycle declarations use it to freeze an untagged legacy SoftDelete column
+// without mutating the process-wide Schema shared by a raw repository view.
+func (this *UpdatePlan) IncludesField(field *Field) bool {
+	if this == nil || field == nil {
+		return false
+	}
+	for _, planned := range this.Fields {
+		if planned.Target == field {
+			return true
+		}
+	}
+	return false
+}
+
 type planKey struct{ dataTransferObject, model reflect.Type }
 
 var planCache sync.Map // planKey -> planResult
@@ -116,6 +131,10 @@ func collectPlanFields(p *UpdatePlan, t reflect.Type, prefix []int, seen []refle
 			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "the primary key cannot be updated"}
 		case target.Generated:
 			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is `generated` and never written"}
+		case target.Tombstone:
+			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is the `tombstone` column and is changed only by delete/restore"}
+		case target.ServerOwned:
+			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is `serverowned`"}
 		case target.Immutable:
 			return &SchemaError{Model: p.DTO.String(), Field: sf.Name, Reason: "model field " + target.Name + " is `immutable`"}
 		case target.Version:

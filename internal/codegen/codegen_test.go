@@ -338,6 +338,36 @@ func TestReadonlyKeepsAFieldQueryableButNotWritable(t *testing.T) {
 	}
 }
 
+func TestTombstoneTagGeneratesLifecycleSafeResourceByDefault(t *testing.T) {
+	source := `package store
+
+import "time"
+
+type Article struct {
+	ID        int64      @db:"id,pk,auto"@
+	Title     string     @db:"title"@
+	DeletedAt *time.Time @db:"deleted_at,serverowned,tombstone"@
+}
+`
+	out := gen(t, map[string]string{"model.go": source}, func(g *generator) { g.adapter = true })
+
+	if dto := decl(t, out, "type ArticleUpdate struct {"); declares(dto, "DeletedAt") {
+		t.Fatalf("tombstone reached PATCH DTO:\n%s", dto)
+	}
+	if input := decl(t, out, "type ArticleInput struct {"); declares(input, "DeletedAt") {
+		t.Fatalf("tombstone reached create/replace input:\n%s", input)
+	}
+	if attrs := decl(t, out, "type ArticleAttrs struct {"); !declares(attrs, "DeletedAt") {
+		t.Fatalf("tombstone disappeared from query metamodel:\n%s", attrs)
+	}
+	if !strings.Contains(out, `var ArticleRepository = sqlrepo.Define[Article, int64, ArticleUpdate]("", sqlrepo.SoftDelete("DeletedAt"))`) {
+		t.Fatalf("generated repository did not bind the lifecycle declaration:\n%s", out)
+	}
+	if response, err := runGenerated(t, tags(source), out); err != nil {
+		t.Fatalf("generated tombstone resource refused to start: %v\n%s\n---- generated ----\n%s", err, response, out)
+	}
+}
+
 // -skip is the flag for a field the generated code should not know about — with
 // one exception the flag cannot avoid. Reflection reads the struct and never the
 // command line, so a skipped column is an ordinary writable column at run time

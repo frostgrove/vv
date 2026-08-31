@@ -73,3 +73,16 @@ type DeleteCommand[ID comparable] struct {
 type BulkDeleteCommand[ID comparable] struct {
 	IDs []ID
 }
+
+// A RestoreCommand makes one soft-deleted row live again. It is deliberately
+// distinct from UpdateCommand so transports and policies cannot treat restore
+// as ordinary field editing.
+type RestoreCommand[ID comparable] struct {
+	ID ID
+}
+
+// A BulkRestoreCommand restores a set of tombstones through the same lifecycle
+// use case. An empty set is an empty success.
+type BulkRestoreCommand[ID comparable] struct {
+	IDs []ID
+}

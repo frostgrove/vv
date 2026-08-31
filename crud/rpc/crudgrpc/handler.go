@@ -152,8 +152,8 @@ func (this *HandlerFor[M, ID, U, In]) Get(ctx context.Context, request *structpb
 
 // Create answers one new row. The document is decoded into this handler's input
 // type and mapped onto the model; the service then clears a database-generated
-// key and every `generated` column, so a client cannot pick its own id or forge
-// a server-side timestamp.
+// key and every generated/version/server-owned field, so a client cannot pick
+// its own id or forge repository lifecycle state.
 func (this *HandlerFor[M, ID, U, In]) Create(ctx context.Context, request *structpb.Struct) (*structpb.Struct, error) {
 	var in In
 	if err := fromStruct(request, &in); err != nil {

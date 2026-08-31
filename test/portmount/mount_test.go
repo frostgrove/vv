@@ -44,10 +44,13 @@ func TestMain(m *testing.M) {
 // Widget carries the two things a create request may not dictate: a key the
 // database generates and a column it fills.
 type Widget struct {
-	ID        int64     `db:"id,pk,auto" json:"id"`
-	Name      string    `db:"name" json:"name"`
-	Price     int       `db:"price" json:"price"`
-	CreatedAt time.Time `db:"created_at,generated" json:"createdAt"`
+	ID          int64      `db:"id,pk,auto" json:"id"`
+	Name        string     `db:"name" json:"name"`
+	Price       int        `db:"price" json:"price"`
+	CreatedAt   time.Time  `db:"created_at,generated" json:"createdAt"`
+	Version     int        `db:"version,version" json:"version,omitempty"`
+	ServerStamp string     `db:"server_stamp,serverowned" json:"serverStamp,omitempty"`
+	DeletedAt   *time.Time `db:"deleted_at,serverowned,tombstone" json:"deletedAt,omitempty"`
 }
 
 // WidgetUpdate is the PATCH DTO.
@@ -347,9 +350,9 @@ func TestOneServiceMountsOnAllThreeBindings(t *testing.T) {
 		{"a count with the paging a count must drop", http.MethodGet, "/widgets/count?page=2&limit=5&sort=-price&f=price:gte:100", ""},
 		{"a count through the JSON document", http.MethodPost, "/widgets/count", `{"page":4,"limit":9}`},
 		{"one entity, with the shaping a keyed read keeps", http.MethodGet, "/widgets/42?select=name&f=price:gte:100&limit=9", ""},
-		{"a create carrying what it may not choose", http.MethodPost, "/widgets", `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z"}`},
+		{"a create carrying what it may not choose", http.MethodPost, "/widgets", `{"id":999,"name":"bolt","price":250,"createdAt":"2001-02-03T04:05:06Z","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`},
 		{"a patch", http.MethodPatch, "/widgets/42", `{"name":"patched"}`},
-		{"a replace", http.MethodPut, "/widgets/42", `{"id":999,"name":"replaced"}`},
+		{"a replace", http.MethodPut, "/widgets/42", `{"id":999,"name":"replaced","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`},
 		{"a delete", http.MethodDelete, "/widgets/42", ""},
 		{"a bulk delete", http.MethodPost, "/widgets/bulk-delete", `{"ids":[1,2,3]}`},
 		{"a key that does not parse", http.MethodGet, "/widgets/nope", ""},
@@ -430,13 +433,31 @@ func TestTheServiceIsWhereTheRulesRan(t *testing.T) {
 		{
 			name:   "a create is cleared below the binding",
 			method: http.MethodPost, target: "/widgets",
-			body: `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`,
+			body: `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`,
 			want: func(t *testing.T, cmds []command, calls []repoCall) {
-				if len(cmds) != 1 || cmds[0].Model.ID != 999 || cmds[0].Model.CreatedAt.IsZero() {
+				if len(cmds) != 1 || cmds[0].Model.ID != 999 || cmds[0].Model.CreatedAt.IsZero() ||
+					cmds[0].Model.Version != 99 || cmds[0].Model.ServerStamp != "forged" || cmds[0].Model.DeletedAt == nil {
 					t.Fatalf("the binding handed over %+v; clearing is the service's, and a binding that cleared first would hand over a zeroed model", cmds)
 				}
-				if len(calls) != 1 || calls[0].Model.ID != 0 || !calls[0].Model.CreatedAt.IsZero() {
-					t.Fatalf("the repository was asked to write %+v, want the key and the generated column cleared", calls)
+				if len(calls) != 1 || calls[0].Model.ID != 0 || !calls[0].Model.CreatedAt.IsZero() ||
+					calls[0].Model.Version != 0 || calls[0].Model.ServerStamp != "" || calls[0].Model.DeletedAt != nil {
+					t.Fatalf("the repository was asked to write %+v, want every non-client field cleared", calls)
+				}
+			},
+		},
+		{
+			name:   "a replace is sanitised below the binding before its path key wins",
+			method: http.MethodPut, target: "/widgets/42",
+			body: `{"id":999,"name":"replaced","version":99,"serverStamp":"forged","deletedAt":"2001-02-03T04:05:06Z"}`,
+			want: func(t *testing.T, cmds []command, calls []repoCall) {
+				if len(cmds) != 1 || cmds[0].Model.ID != 999 || cmds[0].Model.Version != 99 ||
+					cmds[0].Model.ServerStamp != "forged" || cmds[0].Model.DeletedAt == nil {
+					t.Fatalf("the binding did not hand the raw replacement to the application service: %+v", cmds)
+				}
+				if len(calls) != 2 || calls[0].Method != "GetByID" || calls[1].Method != "Save" ||
+					calls[1].Model.ID != 42 || calls[1].Model.Version != 0 ||
+					calls[1].Model.ServerStamp != "" || calls[1].Model.DeletedAt != nil {
+					t.Fatalf("replace repository calls = %+v, want probe then a sanitised row keyed from the path", calls)
 				}
 			},
 		},

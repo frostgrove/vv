@@ -413,7 +413,7 @@ func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
 		seen = Widget{}
 		app, _ := mount(t, hook)
 
-		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`, http.StatusCreated)
+		ok(t, app, http.MethodPost, "/widgets", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z","version":99,"deletedAt":"2001-02-03T04:05:06Z"}`, http.StatusCreated)
 
 		if seen.ID != 0 {
 			t.Fatalf("the hook was handed id %d; it runs after the clearing, so a client-chosen key must not reach it", seen.ID)
@@ -421,19 +421,25 @@ func TestTheHookStillRunsAfterTheServerOwnedFieldsAreCleared(t *testing.T) {
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
 		}
+		if seen.Version != 0 || seen.DeletedAt != nil {
+			t.Fatalf("the hook was handed repository-owned state: version=%d deletedAt=%v", seen.Version, seen.DeletedAt)
+		}
 	})
 
 	t.Run("on replace, where the key comes from the path", func(t *testing.T) {
 		seen = Widget{}
 		app, _ := mount(t, hook)
 
-		ok(t, app, http.MethodPut, "/widgets/42", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z"}`, http.StatusOK)
+		ok(t, app, http.MethodPut, "/widgets/42", `{"id":999,"name":"bolt","createdAt":"2001-02-03T04:05:06Z","version":99,"deletedAt":"2001-02-03T04:05:06Z"}`, http.StatusOK)
 
 		if seen.ID != 42 {
 			t.Fatalf("the hook was handed id %d, want the 42 from the path", seen.ID)
 		}
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
+		}
+		if seen.Version != 0 || seen.DeletedAt != nil {
+			t.Fatalf("replace handed repository-owned state to the hook: version=%d deletedAt=%v", seen.Version, seen.DeletedAt)
 		}
 	})
 

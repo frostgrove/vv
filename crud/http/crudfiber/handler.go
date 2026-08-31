@@ -262,8 +262,8 @@ func (this *HandlerFor[M, ID, U, In]) GetByID(c fiber.Ctx) error {
 
 // Create answers POST /. The body is decoded into this handler's input type and
 // mapped onto the model; the service then clears a database-generated key and
-// every `generated` column, so a client cannot pick its own id or forge a
-// server-side timestamp.
+// every generated/version/server-owned field, so a client cannot pick its own
+// id or forge repository lifecycle state.
 func (this *HandlerFor[M, ID, U, In]) Create(c fiber.Ctx) error {
 	var in In
 	raw, err := this.decode(c, &in)

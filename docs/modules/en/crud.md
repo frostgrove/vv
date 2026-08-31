@@ -52,6 +52,7 @@ type User struct {
     Age       utils.Opt[int] `db:"age"`
     Version   int           `db:"version,version"`
     CreatedAt time.Time     `db:"created_at,generated"`
+    DeletedAt utils.Opt[time.Time] `db:"deleted_at,serverowned,tombstone"`
 }
 ```
 
@@ -62,6 +63,8 @@ type User struct {
 | `noauto` | opt an integer primary key out of that default |
 | `immutable` | written on insert, never on update — `created_at`, `tenant_id` |
 | `generated` | never written, read back after every write — computed columns, triggers |
+| `serverowned` | excluded from generic create/replace/patch and full repository writes |
+| `tombstone` | nullable timestamp owned by the repository for soft delete; implies `serverowned` |
 | `version` | optimistic lock: an integer vv advances and checks on every update |
 | `-` | ignore the field entirely |
 

@@ -29,6 +29,10 @@ var NowFunc = time.Now
 //	immutable  written on insert, never on update (created_at, tenant_id)
 //	generated  never written at all; read back after every write (computed
 //	           columns, DB-side defaults, updated_at triggers)
+//	serverowned never written by generic create/replace/patch paths. A dedicated
+//	           repository lifecycle operation may own it instead
+//	tombstone  nullable soft-delete timestamp owned by the repository. It implies
+//	           serverowned and makes sqlrepo soft delete the declarative default
 //	version    optimistic lock: an integer the repository advances on every
 //	           update and checks in the update's own WHERE, so a write against a
 //	           row somebody else has changed since it was read is refused with
@@ -42,19 +46,51 @@ const TagKey = "db"
 
 // Field is one mapped column.
 type Field struct {
-	Name      string       // Go field name, as used by predicates and update DTOs
-	Column    string       // SQL column name
-	Type      reflect.Type // Go type of the field
-	Offset    uintptr      // byte offset inside the model struct
-	Ordinal   int          // index in Schema.Fields
-	PK        bool
-	Auto      bool
-	Immutable bool
-	Generated bool
-	Version   bool // optimistic lock counter, owned by the repository
-	Optional  bool // the field is a crud.Opt[...]
+	Name        string       // Go field name, as used by predicates and update DTOs
+	Column      string       // SQL column name
+	Type        reflect.Type // Go type of the field
+	Offset      uintptr      // byte offset inside the model struct
+	Ordinal     int          // index in Schema.Fields
+	PK          bool
+	Auto        bool
+	Immutable   bool
+	Generated   bool
+	ServerOwned bool // generic writes never accept or persist caller values
+	Tombstone   bool // soft-delete state; implies ServerOwned
+	Version     bool // optimistic lock counter, owned by the repository
+	Optional    bool // the field is a crud.Opt[...]
 
 	noAutoOptOut bool // `noauto` was requested explicitly
+}
+
+// Nullable reports whether the field can represent SQL NULL. Besides pointers
+// and Opt values it recognises Scanner/Valuer wrappers such as sql.NullTime and
+// gorm.DeletedAt.
+func (this *Field) Nullable() bool { return nullableField(this) }
+
+// AcceptsTombstoneTimestamp reports whether Delete can stamp time.Time into the
+// column and a later read can scan it back. Besides *time.Time and Opt[time.Time]
+// it accepts Scanner/Valuer wrappers such as sql.NullTime and gorm.DeletedAt,
+// but rejects merely nullable *string/Opt[int] fields that would fail only on
+// the first delete (or rely on database-specific coercion).
+func (this *Field) AcceptsTombstoneTimestamp() bool {
+	if this == nil {
+		return false
+	}
+	if elem := OptElem(this.Type); elem != nil {
+		return elem == timeType
+	}
+	t := this.Type
+	if t.Kind() == reflect.Pointer {
+		if t.Elem() == timeType {
+			return true
+		}
+		t = t.Elem()
+	}
+	if t == timeType {
+		return true
+	}
+	return scannerValuerCarriesTime(t)
 }
 
 // pointerTo returns a *T aimed at this field inside the model at base.
@@ -100,6 +136,7 @@ type Schema struct {
 	Update    []*Field // eligible for UPDATE SET
 	HasGen    bool     // has at least one `generated` column
 	Version   *Field   // the optimistic-lock column, or nil
+	Tombstone *Field   // repository-owned soft-delete timestamp, or nil
 
 	// Relations are navigable edges: they never become columns, but query
 	// paths, sorts and preloads can walk them.
@@ -279,14 +316,23 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 	}
 	for i, f := range s.Fields {
 		f.Ordinal = i
+		if f.Tombstone {
+			f.ServerOwned = true
+			if err := checkTombstone(t, s, f); err != nil {
+				return nil, err
+			}
+			s.Tombstone = f
+		}
 		if f.Version {
 			if err := checkVersion(t, s, f); err != nil {
 				return nil, err
 			}
 			s.Version = f
 		}
-		if f.Generated {
-			s.HasGen = true
+		if f.Generated || f.ServerOwned {
+			if f.Generated {
+				s.HasGen = true
+			}
 			continue
 		}
 		s.Insert = append(s.Insert, f)
@@ -313,6 +359,82 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		s.addRelFold(fold(r.Name), r)
 	}
 	return s, nil
+}
+
+// checkTombstone makes the lifecycle declaration complete at schema-build
+// time. A tombstone cannot share ownership with another generic write policy,
+// and one model cannot have two competing notions of being deleted.
+func checkTombstone(t reflect.Type, s *Schema, f *Field) error {
+	deny := func(reason string) error {
+		return &SchemaError{Model: t.String(), Field: f.Name, Reason: reason}
+	}
+	switch {
+	case s.Tombstone != nil:
+		return deny("a model can carry only one `tombstone` column, and " + s.Tombstone.Name + " already is one")
+	case f.PK:
+		return deny("the primary key cannot be the `tombstone` column")
+	case f.Immutable:
+		return deny("`tombstone` and `immutable` contradict each other: delete and restore have to write the tombstone")
+	case f.Generated:
+		return deny("`tombstone` and `generated` contradict each other: the repository, not a database default, owns the lifecycle")
+	case f.Version:
+		return deny("`tombstone` and `version` are distinct repository-owned columns")
+	case !nullableField(f):
+		return deny("a `tombstone` column has to be nullable, or there is no value that means not deleted")
+	case !f.AcceptsTombstoneTimestamp():
+		return deny("a `tombstone` column must carry time.Time: use *time.Time, Opt[time.Time], or a Scanner/Valuer timestamp wrapper")
+	}
+	return nil
+}
+
+// scannerValuerCarriesTime validates the actual driver contract rather than a
+// struct's name. The copy is addressable so wrappers with pointer-only methods
+// are supported. A hostile/broken declaration becomes false here and a normal
+// SchemaError at the caller, not a panic escaping TryDefine.
+func scannerValuerCarriesTime(t reflect.Type) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	holder := reflect.New(t)
+	scanner, ok := holder.Interface().(sql.Scanner)
+	if !ok {
+		if scanner, ok = holder.Elem().Interface().(sql.Scanner); !ok {
+			return false
+		}
+	}
+	sample := time.Date(2001, 2, 3, 4, 5, 6, 7, time.UTC)
+	if err := scanner.Scan(sample); err != nil {
+		return false
+	}
+	var valuer driver.Valuer
+	if candidate, yes := holder.Elem().Interface().(driver.Valuer); yes {
+		valuer = candidate
+	} else if candidate, yes := holder.Interface().(driver.Valuer); yes {
+		valuer = candidate
+	} else {
+		return false
+	}
+	value, err := valuer.Value()
+	if err != nil {
+		return false
+	}
+	_, ok = value.(time.Time)
+	return ok
+}
+
+func nullableField(f *Field) bool {
+	if f == nil {
+		return false
+	}
+	if f.Optional || f.Type.Kind() == reflect.Pointer {
+		return true
+	}
+	// Scanner/Valuer wrappers such as sql.NullTime and gorm.DeletedAt carry
+	// NULL in a value struct rather than in a Go pointer.
+	return reflect.PointerTo(f.Type).Implements(scannerType) &&
+		(f.Type.Implements(valuerType) || reflect.PointerTo(f.Type).Implements(valuerType))
 }
 
 // checkVersion refuses the declarations an optimistic lock cannot be built on.
@@ -419,6 +541,11 @@ func collectFields(s *Schema, t reflect.Type, base uintptr, seen []reflect.Type)
 				f.Immutable = true
 			case "generated", "computed":
 				f.Generated = true
+			case "serverowned", "server_owned":
+				f.ServerOwned = true
+			case "tombstone", "softdelete", "soft_delete":
+				f.ServerOwned = true
+				f.Tombstone = true
 			case "version", "lock":
 				f.Version = true
 			case "":

@@ -19,10 +19,13 @@ import (
 // widget has the two things a create request is not allowed to dictate: a key
 // the database generates, and a column it fills.
 type widget struct {
-	ID        int64     `db:"id,pk,auto" json:"id"`
-	Name      string    `db:"name" json:"name"`
-	Price     int       `db:"price" json:"price"`
-	CreatedAt time.Time `db:"created_at,generated" json:"createdAt"`
+	ID        int64      `db:"id,pk,auto" json:"id"`
+	Name      string     `db:"name" json:"name"`
+	Price     int        `db:"price" json:"price"`
+	CreatedAt time.Time  `db:"created_at,generated" json:"createdAt"`
+	Version   int        `db:"version,version" json:"version"`
+	Digest    string     `db:"digest,serverowned" json:"digest"`
+	DeletedAt *time.Time `db:"deleted_at,serverowned,tombstone" json:"deletedAt,omitempty"`
 }
 
 type widgetUpdate struct {
@@ -54,6 +57,16 @@ type fakeRepo struct {
 	calls   []call
 	deleted int64
 	err     error
+}
+
+type restorableFakeRepo struct {
+	*fakeRepo
+	restored int64
+}
+
+func (this *restorableFakeRepo) Restore(_ context.Context, ids ...int64) (int64, error) {
+	this.calls = append(this.calls, call{method: "Restore", ids: ids})
+	return this.restored, this.err
 }
 
 func (this *fakeRepo) Meta() *crud.Meta { return widgetMeta }
@@ -159,7 +172,7 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 
 		var seen widget
 		got, err := service.Create(context.Background(), CreateCommand[widget]{
-			Model: widget{ID: 999, Name: "bolt", CreatedAt: forged},
+			Model: widget{ID: 999, Name: "bolt", CreatedAt: forged, Version: 99, Digest: "forged", DeletedAt: &forged},
 			Before: func(m *widget) error {
 				seen = *m
 				m.Price = 7
@@ -174,6 +187,9 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		}
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
+		}
+		if seen.Version != 0 || seen.Digest != "" || seen.DeletedAt != nil {
+			t.Fatalf("the hook was handed repository-owned state: version=%d digest=%q deletedAt=%v", seen.Version, seen.Digest, seen.DeletedAt)
 		}
 		stored := repository.only(t, "Save").model
 		if stored.Price != 7 {
@@ -190,7 +206,7 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 
 		var seen widget
 		if _, err := service.Create(context.Background(), CreateCommand[widget]{
-			Model:  widget{ID: 999, Name: "bolt", CreatedAt: forged},
+			Model:  widget{ID: 999, Name: "bolt", CreatedAt: forged, Version: 99, Digest: "forged", DeletedAt: &forged},
 			Before: func(m *widget) error { seen = *m; return nil },
 		}); err != nil {
 			t.Fatalf("creating: %v", err)
@@ -202,6 +218,9 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		// the key and nothing else.
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("AllowClientID let a forged %v through in a generated column", seen.CreatedAt)
+		}
+		if seen.Version != 0 || seen.Digest != "" || seen.DeletedAt != nil {
+			t.Fatalf("AllowClientID widened non-key ownership: version=%d digest=%q deletedAt=%v", seen.Version, seen.Digest, seen.DeletedAt)
 		}
 	})
 
@@ -227,7 +246,7 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		var seen widget
 		if _, err := service.Replace(context.Background(), ReplaceCommand[int64, widget]{
 			ID:     42,
-			Model:  widget{ID: 999, Name: "replaced", CreatedAt: forged},
+			Model:  widget{ID: 999, Name: "replaced", CreatedAt: forged, Version: 99, Digest: "forged", DeletedAt: &forged},
 			Before: func(m *widget) error { seen = *m; return nil },
 		}); err != nil {
 			t.Fatalf("replacing: %v", err)
@@ -240,6 +259,9 @@ func TestTheDefaultServiceAppliesTheRulesInOrder(t *testing.T) {
 		}
 		if !seen.CreatedAt.IsZero() {
 			t.Fatalf("the hook was handed a forged %v in a generated column", seen.CreatedAt)
+		}
+		if seen.Version != 0 || seen.Digest != "" || seen.DeletedAt != nil {
+			t.Fatalf("replace handed repository-owned state to the hook: version=%d digest=%q deletedAt=%v", seen.Version, seen.Digest, seen.DeletedAt)
 		}
 	})
 
@@ -304,6 +326,39 @@ func TestDeletingNothingIsAMissForOneRowAndZeroForASet(t *testing.T) {
 			t.Fatalf("an empty set reached the repository as %v", repository.methods())
 		}
 	})
+}
+
+func TestRestoreIsASeparateApplicationUseCase(t *testing.T) {
+	repository := &restorableFakeRepo{fakeRepo: &fakeRepo{}, restored: 1}
+	service := NewService[widget, int64, widgetUpdate](repository)
+	restore, ok := RestorableOf[int64](service)
+	if !ok {
+		t.Fatal("a repository with a real Restore capability did not publish the lifecycle use cases")
+	}
+	if n, err := restore.Restore(context.Background(), RestoreCommand[int64]{ID: 7}); err != nil || n != 1 {
+		t.Fatalf("Restore = %d, %v", n, err)
+	}
+	if got := repository.only(t, "Restore").ids; !slices.Equal(got, []int64{7}) {
+		t.Fatalf("Restore ids = %v", got)
+	}
+
+	repository = &restorableFakeRepo{fakeRepo: &fakeRepo{}, restored: 0}
+	service = NewService[widget, int64, widgetUpdate](repository)
+	restore, ok = RestorableOf[int64](service)
+	if !ok {
+		t.Fatal("replacement restorable repository lost its capability")
+	}
+	if _, err := restore.Restore(context.Background(), RestoreCommand[int64]{ID: 7}); !errors.Is(err, crud.ErrNotFound) {
+		t.Fatalf("missing Restore = %v, want ErrNotFound", err)
+	}
+
+	plain := NewService[widget, int64, widgetUpdate](&fakeRepo{})
+	if _, structural := any(plain).(RestorableService[int64]); structural {
+		t.Fatal("a hard-delete DefaultService structurally satisfies RestorableService")
+	}
+	if _, advertised := RestorableOf[int64](plain); advertised {
+		t.Fatal("a hard-delete service advertised a restore route")
+	}
 }
 
 // The reads narrow the query document before they compile it, and the caller's

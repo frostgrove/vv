@@ -155,13 +155,23 @@ name](#typed-or-by-name--both-spellings-work) below.
 ### Soft delete
 
 ```go
-var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs", sqlrepo.SoftDelete("DeletedAt"))
+type Doc struct {
+    ID        int64                `db:"id,pk,auto"`
+    DeletedAt utils.Opt[time.Time] `db:"deleted_at,serverowned,tombstone"`
+}
+var Docs = sqlrepo.Define[Doc, int64, DocUpdate]("docs")
 ```
 
 `Delete` and `DeleteAll` write the flag instead of removing the row, and every
-read excludes flagged rows. It is a property of the statement rather than a
-decorator, so nothing can be composed around it to see the hidden rows
-([[D-031]], [[UC-016]]).
+read excludes flagged rows. `Restore` clears only tombstones as a distinct
+lifecycle verb; generated wire inputs and generic saves cannot write the field.
+Security sees `Restore` as a distinct action, not `Update`. For an external model
+that cannot carry vv tags, `SoftDelete("DeletedAt")` is the equivalent explicit
+blueprint setting. The field must be a nullable timestamp (`*time.Time`,
+`Opt[time.Time]`, or a compatible Scanner/Valuer wrapper). Soft delete and
+restore also advance an optimistic-lock version when present, closing
+Delete→Restore ABA windows. It is a property of the statement rather than a
+decorator ([[D-031]], [[UC-016]]).
 
 ### Relation scopes
 

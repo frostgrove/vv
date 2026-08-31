@@ -16,7 +16,6 @@ import (
 	"github.com/frostgrove/vv/crud/adapter/crudsql"
 	"github.com/frostgrove/vv/crud/decorators/specs"
 	"github.com/frostgrove/vv/crud/query"
-	"github.com/frostgrove/vv/crud/sqlrepo"
 )
 
 // The models live in test/gormstore, next to their generated DTOs and
@@ -30,15 +29,13 @@ type (
 	MemberUpdate = gormstore.MemberUpdate
 )
 
-// Soft deletes are a gorm-layer feature; vv sees the raw table, so the
-// tombstone filter is declared once, here, and no query option can widen it.
+// gorm.Model is a well-known generated lifecycle shape. The generated
+// blueprints bind DeletedAt once as a server-owned tombstone: reads hide it,
+// Delete stamps it, Restore clears it, and no wire DTO can write it.
 var (
-	GormTeams = sqlrepo.Define[Team, uint, TeamUpdate]("teams",
-		sqlrepo.Scope(crud.IsNull("DeletedAt")))
-	GormMembers = sqlrepo.Define[Member, uint, MemberUpdate]("members",
-		sqlrepo.Scope(crud.IsNull("DeletedAt")))
-	GormLabels = sqlrepo.Define[Label, uint, gormstore.LabelUpdate]("labels",
-		sqlrepo.Scope(crud.IsNull("DeletedAt")))
+	GormTeams   = gormstore.TeamRepository
+	GormMembers = gormstore.MemberRepository
+	GormLabels  = gormstore.LabelRepository
 )
 
 func gormDB(t *testing.T) *gorm.DB {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -380,6 +381,114 @@ func TestDeleteRollsEveryChunkBackWhenALaterChunkFails(t *testing.T) {
 	begin, commit, rollback, executed := source.counts()
 	if begin != 1 || commit != 0 || rollback != 1 || executed != 2 {
 		t.Fatalf("begin:%d commit:%d rollback:%d executed:%d, want 1/0/1/2", begin, commit, rollback, executed)
+	}
+}
+
+func TestRestoreChunksAfterChargingScopeBindsAndCommitsAtomically(t *testing.T) {
+	source := newBudgetSource(3) // tenant scope + two ids per statement
+	source.ExecResult(crud.Result{RowsAffected: 1})
+
+	n, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "b", "c", "d", "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("affected = %d, want the sum from three chunks", n)
+	}
+	statements := source.Statements()
+	if len(statements) != 3 {
+		t.Fatalf("statements = %d, want three chunks", len(statements))
+	}
+	wantIDs := [][]string{{"a", "b"}, {"c", "d"}, {"e"}}
+	for i, statement := range statements {
+		sql := crudtest.Normalize(statement.SQL)
+		if !strings.HasPrefix(sql, `UPDATE "budget_soft_docs" SET "deleted_at" = NULL`) ||
+			!strings.Contains(sql, `"deleted_at" IS NOT NULL`) {
+			t.Fatalf("chunk %d is not a tombstone-only Restore: %s", i, sql)
+		}
+		if len(statement.Args) > 3 || statement.Args[0] != int64(7) {
+			t.Fatalf("chunk %d args = %#v, want tenant scope then budgeted ids", i, statement.Args)
+		}
+		for j, id := range wantIDs[i] {
+			if got := statement.Args[j+1]; got != id {
+				t.Fatalf("chunk %d id %d = %v, want %q", i, j, got, id)
+			}
+		}
+	}
+	begin, commit, rollback, _ := source.counts()
+	if begin != 1 || commit != 1 || rollback != 0 {
+		t.Fatalf("transactions = begin:%d commit:%d rollback:%d, want 1/1/0", begin, commit, rollback)
+	}
+}
+
+func TestRestoreRollsEveryChunkBackWhenALaterChunkFails(t *testing.T) {
+	source := newBudgetSource(2) // tenant scope + one id forces two chunks
+	boom := errors.New("second restore chunk failed")
+	source.failAt, source.failure = 2, boom
+	_, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "b")
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the second-chunk failure", err)
+	}
+	begin, commit, rollback, executed := source.counts()
+	if begin != 1 || commit != 0 || rollback != 1 || executed != 2 {
+		t.Fatalf("begin:%d commit:%d rollback:%d executed:%d, want 1/0/1/2", begin, commit, rollback, executed)
+	}
+}
+
+func TestChunkedRestoreWithoutTransactionSupportRunsNoStatement(t *testing.T) {
+	recorder := crudtest.New(limitedPostgres{limit: 2})
+	source := noBeginSource{recorder: recorder}
+	_, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "b")
+	if !errors.Is(err, crud.ErrNoTxSupport) {
+		t.Fatalf("err = %v, want ErrNoTxSupport", err)
+	}
+	if len(recorder.Statements()) != 0 {
+		t.Fatalf("statements = %v: a non-atomic chunked Restore must be refused before execution", recorder.SQL())
+	}
+}
+
+func TestRestoreTreatsIDsAsASetBeforeBudgeting(t *testing.T) {
+	source := newBudgetSource(3)
+	source.ExecResult(crud.Result{RowsAffected: 2})
+	if _, err := budgetSoftDocs.Bind(source).Restore(context.Background(), "a", "a", "b", "a"); err != nil {
+		t.Fatal(err)
+	}
+	statements := source.Statements()
+	if len(statements) != 1 {
+		t.Fatalf("duplicate ids produced %d statements: %v", len(statements), source.SQL())
+	}
+	if got := statements[0].Args; !reflect.DeepEqual(got, []any{int64(7), "a", "b"}) {
+		t.Fatalf("Restore args = %#v, want stable first-occurrence set", got)
+	}
+}
+
+func TestRestoreSQLIsPortableAcrossStockDialects(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		d     crud.Dialect
+		table string
+		id    string
+	}{
+		{"postgres", crud.Postgres{}, `UPDATE "budget_soft_docs"`, `$2`},
+		{"mysql", crud.MySQL{}, "UPDATE `budget_soft_docs`", `?`},
+		{"sqlite", crud.SQLite{}, `UPDATE "budget_soft_docs"`, `?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := crudtest.New(tc.d)
+			if _, err := budgetSoftDocs.Bind(recorder).Restore(context.Background(), "a"); err != nil {
+				t.Fatal(err)
+			}
+			statement := recorder.Last()
+			sql := crudtest.Normalize(statement.SQL)
+			if !strings.HasPrefix(sql, tc.table+" SET ") ||
+				!strings.Contains(sql, " = NULL") || !strings.Contains(sql, " IS NOT NULL") ||
+				!strings.Contains(sql, tc.id) {
+				t.Fatalf("Restore SQL = %s", sql)
+			}
+			if !reflect.DeepEqual(statement.Args, []any{int64(7), "a"}) {
+				t.Fatalf("Restore args = %#v", statement.Args)
+			}
+		})
 	}
 }
 

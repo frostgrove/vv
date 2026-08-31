@@ -639,7 +639,7 @@ handlers are annoying to write by hand.
 | Flag | Why |
 | --- | --- |
 | `-types Member,Team` | gorm models carry `gorm` tags, not `db` ones, so name them explicitly |
-| `-readonly CreatedAt,UpdatedAt,DeletedAt` | gorm owns these: still filterable and sortable, never patchable |
+| `-readonly CreatedAt,UpdatedAt,DeletedAt` | compatible explicit spelling; `gorm.Model` is recognised automatically and `DeletedAt` becomes a server-owned tombstone |
 | `-import myapp/models` + `-into .` | write into your own package if the models live elsewhere |
 | `-skip Internal` | drop a field entirely, like `db:"-"` |
 | `-depth 2` | how far to expand associations into the metamodel |
@@ -669,6 +669,12 @@ to reflection they are ordinary writable columns, and only the generated file
 knows the generator was told to leave them alone. Reflection cannot see a
 command-line flag, so the flag's effect is written down — which also means a
 reader of the file can see what the flags did.
+
+For `gorm.Model`, current codegen also emits
+`sqlrepo.SoftDelete("DeletedAt")` on the generated blueprint. `Delete` therefore
+stamps, `Restore` clears the tombstone, and generic entity/PATCH bodies cannot
+write it. The flags above remain useful as an explicit checked-in declaration,
+but the safe lifecycle no longer depends on remembering a manual `Scope`.
 
 ### Generating the resource, not only the DTO
 

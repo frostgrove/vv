@@ -30,6 +30,8 @@ type Widget struct {
 	Note      crud.Opt[string] `db:"note" json:"note"`
 	Secret    string           `db:"secret" json:"secret"`
 	CreatedAt time.Time        `db:"created_at,generated" json:"createdAt"`
+	Version   int              `db:"version,version" json:"version,omitempty"`
+	DeletedAt *time.Time       `db:"deleted_at,serverowned,tombstone" json:"deletedAt,omitempty"`
 
 	Owner *Owner `rel:"belongs_to" json:"owner,omitempty"`
 	Parts []Part `rel:"has_many" json:"parts,omitempty"`

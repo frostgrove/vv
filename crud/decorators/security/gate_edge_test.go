@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostgrove/vv/crud"
 	"github.com/frostgrove/vv/crud/crudtest"
@@ -92,10 +93,10 @@ func TestAScopeWithoutInspectRefusesEveryWriteWithABody(t *testing.T) {
 }
 
 type softDoc struct {
-	ID        int64  `db:"id,pk,auto"`
-	TenantID  int64  `db:"tenant_id"`
-	Title     string `db:"title"`
-	DeletedAt *int64 `db:"deleted_at"`
+	ID        int64      `db:"id,pk,auto"`
+	TenantID  int64      `db:"tenant_id"`
+	Title     string     `db:"title"`
+	DeletedAt *time.Time `db:"deleted_at"`
 }
 
 type softDocUpdate struct{ Title *string }
