@@ -14,6 +14,7 @@ turn that inventory into a proposed order of work without rewriting history.
 | [2026-08-26-1558-postgres-event-sourcing-roadmap.md](2026-08-26-1558-postgres-event-sourcing-roadmap.md) | PostgreSQL-only event-sourcing roadmap: aggregate append semantics, optimistic concurrency, projections/outbox, snapshots, event revisions, upcasters and release compatibility; studies the eugene-khyst PostgreSQL template and Axon versioning model |
 | [2026-08-26-1558-multitenancy-roadmap.md](2026-08-26-1558-multitenancy-roadmap.md) | One-database row isolation and database-per-tenant roadmap: verified scope, complete query matrix, datasource routing, migration/lifecycle and safe cross-domain integration |
 | [2026-08-26-1558-audit-log-roadmap.md](2026-08-26-1558-audit-log-roadmap.md) | Hibernate/Envers-inspired audit revision roadmap: declared resource/action policies, typed redacted diffs, transactional PostgreSQL evidence, protected audit queries and trace/event boundaries |
+| [2026-08-31-jobs-cache-roadmap.md](2026-08-31-jobs-cache-roadmap.md) | Laravel/Rails/Spring/Temporal-informed jobs and cache roadmap: typed execution model, bounded memo/batch resolution, checkpoints, batches, schedules, explicit workflow boundary and single-source PostgreSQL default |
 | [retired-sections.md](retired-sections.md) | Reference map for citations to two deleted roadmaps; not an active plan |
 
 When an item is finished, remove it from the live inventory. A dated roadmap is
