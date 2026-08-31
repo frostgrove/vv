@@ -227,6 +227,15 @@ slice либо custom `driver.Valuer`, возвращающим immutable standa
 неподдерживаемые slice/map ключи
 отклоняются до SQL, а не смешивают детей разных родителей.
 
+Resolved shape `PreloadWhere` может содержать только `Filter`, `Sort` и
+`PreloadRows`. Обычная запись — `Where`, `OrderBy`/`SortBy` и `PreloadRows`;
+low-level custom `Option` может писать те же поля. Проекция, вложенный
+`Preload`, relation scopes, cursor/paging, выбор datasource,
+aggregate, lock и query flags отклоняются, а не теряются молча. Вложенная связь
+задаётся одним dotted-путём верхнего уровня. `PreloadRows` и `PreloadCap` — это
+refusal ceilings на каждом звене пути; при пересечении применяется самый
+строгий предел.
+
 Сортировка через связь "многие" тоже отклоняется: у коллекции нет одного
 значения для сортировки, поэтому она отклоняется, а не молча выбирает
 какое-то одно.

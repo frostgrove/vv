@@ -414,6 +414,15 @@ items, err := products.GetAll(ctx,
 `Product_.Images`. Это разные вопросы: первый фильтрует детей в загруженной
 связи, второй — родителей, у которых есть подходящий ребёнок.
 
+Resolved shape внутри `PreloadWhere` может содержать только `Filter`, `Sort` и
+`PreloadRows`; обычные конструкторы — `Where`, `OrderBy`/`SortBy` и
+`PreloadRows`. Low-level custom `Option` тоже допустим, если пишет только эти
+поля. Проекция, вложенный `Preload`, relation scopes, cursor/paging,
+выбор datasource, aggregate, lock и остальные query flags возвращают ошибку,
+а не игнорируются. Вложенную связь указывайте dotted-путём верхнего уровня.
+`PreloadRows` и `PreloadCap` — refusal ceilings: они действуют на каждом звене
+пути, а при пересечении выбирается самый строгий предел.
+
 ## 6. Проекция и сводки
 
 Когда нужна не полная модель, можно сократить поля, сохранив первичный ключ:

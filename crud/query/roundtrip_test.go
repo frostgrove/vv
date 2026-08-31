@@ -124,14 +124,16 @@ func TestAPredicateTheWireCannotCarryIsRefusedByName(t *testing.T) {
 		p    crud.Predicate
 		node string
 	}{
-		"raw SQL":            {crud.Raw(`"views" > ?`, 1), "crud.Raw"},
-		"column vs column":   {crud.EqField("Title", "Body"), "crud.EqField"},
-		"false":              {crud.False(), "crud.False"},
-		"empty or":           {crud.Or(), "crud.Or"},
-		"not of true":        {crud.Not(crud.True()), "crud.Not"},
-		"not of nothing":     {crud.Not(nil), "crud.Not"},
-		"raw inside an and":  {crud.And(crud.Eq("Title", "go"), crud.Raw("1 = 1")), "crud.Raw"},
-		"false inside an or": {crud.Or(crud.Eq("Title", "go"), crud.False()), "crud.False"},
+		"raw SQL":              {crud.Raw(`"views" > ?`, 1), "crud.Raw"},
+		"column vs column":     {crud.EqField("Title", "Body"), "crud.EqField"},
+		"false":                {crud.False(), "crud.False"},
+		"empty in":             {crud.In("Views"), "crud.In"},
+		"empty or":             {crud.Or(), "crud.Or"},
+		"not of true":          {crud.Not(crud.True()), "crud.Not"},
+		"not of nothing":       {crud.Not(nil), "crud.Not"},
+		"raw inside an and":    {crud.And(crud.Eq("Title", "go"), crud.Raw("1 = 1")), "crud.Raw"},
+		"raw after true in or": {crud.Or(crud.True(), crud.Raw("1 = 1")), "crud.Raw"},
+		"false inside an or":   {crud.Or(crud.Eq("Title", "go"), crud.False()), "crud.False"},
 	}
 
 	for name, c := range cases {
@@ -173,14 +175,23 @@ func TestAnUnconditionalPredicateNarrowsNothingAndSwallowsAnOr(t *testing.T) {
 	if got := both(t, crud.And()); got != "{}" {
 		t.Fatalf("And() went out as %s; And of nothing is every row", got)
 	}
+	if got := both(t, crud.NotIn("Views")); got != "{}" {
+		t.Fatalf("NotIn of nothing went out as %s; it is the true identity", got)
+	}
 	// The term survives and the identity does not: an And keeps the narrowing.
 	if got := both(t, crud.And(crud.True(), crud.Eq("Title", "go"))); got != `{"Title":{"eq":"go"}}` {
 		t.Fatalf("And(True, eq) went out as %s", got)
+	}
+	if got := both(t, crud.And(crud.NotIn("Views"), crud.Eq("Title", "go"))); got != `{"Title":{"eq":"go"}}` {
+		t.Fatalf("And(empty NotIn, eq) went out as %s", got)
 	}
 	// The Or does not: any-true is true, and sending only the other term would
 	// answer with fewer rows than the caller asked for.
 	if got := both(t, crud.Or(crud.True(), crud.Eq("Title", "go"))); got != "{}" {
 		t.Fatalf("Or(True, eq) went out as %s; Or with an unconditional term is every row", got)
+	}
+	if got := both(t, crud.Or(crud.NotIn("Views"), crud.Eq("Title", "go"))); got != "{}" {
+		t.Fatalf("Or(empty NotIn, eq) went out as %s; the true term must swallow the Or", got)
 	}
 }
 

@@ -1,7 +1,9 @@
 # D-006 — A preload is a batched second query; it cannot be paginated
 
 **Status:** accepted
-**Invariant:** A preload must issue exactly one statement per relation per level, and must refuse `Limit`, `Page`, `Offset` and `Unpaged`.
+**Invariant:** A preload issues batched second queries, accepts only filtering,
+ordering and refusal caps, and rejects every other nested query option before a
+child statement can run.
 
 ## The decision
 
@@ -9,7 +11,10 @@
 level at a time. At each level it collects the distinct parent keys, chunks them
 into `IN (…)` lists of at most 900, and runs one statement per chunk. The
 children are indexed by owner key and written into their parents' fields.
-Pagination options on a preload are an error, not a hint.
+Each path is canonicalised against the root schema before paths are folded.
+Each `PreloadSpec` then resolves its options exactly once and in isolation;
+folding combines the resulting values declaratively. Pagination and every
+other unsupported option on a preload are errors, not hints.
 
 ## Why
 
@@ -36,8 +41,34 @@ a dialect method because nothing so far needs it to differ.
 the comments query. Folding the *paths* is free. Folding their *narrowings* is
 not: a request that asked for all comments and, separately, for approved ones
 would get only the approved ones, with a 200 and no way to tell. So the wider
-ask wins — an unnarrowed request for a path sets `whole` and discards the
-narrowings for that node.
+ask wins for the row set — an unnarrowed request for a path sets `whole` and
+discards filters for that node. Orthogonal ordering and refusal caps survive.
+Separate narrowed requests are intersected, their sort terms retain request
+order, and their caps use the strictest positive value. `SortBy` and custom
+filter replacement still replace earlier values *inside their own spec*; one
+request cannot procedurally rewrite another request while a remote round trip
+can only carry their resolved values. A provably true filter is an unnarrowed
+ask. The predicate document folds trusted true identities such as an empty
+`NotIn` recursively, but validates every Boolean branch before folding, so a
+`Raw`, false-only node or other unsupported transport node cannot hide behind
+the identity or depend on commutative operand order.
+
+**Why the option set is closed at runtime.** `PreloadWhere` predates a distinct
+`PreloadOption` type and changing its variadic parameter would break source
+compatibility. The compatible boundary resolves an option list once, permits
+only `Filter`, `Sort` and `PreloadRows`, and reflects over the complete
+`Options` value so a future non-zero field is rejected by default. Projection,
+nested preloads, relation scopes, aggregate state, cursor/paging controls,
+datasource selection, sort/total flags, locks and `DISTINCT` all fail with a
+`SchemaError`; none can disappear into a successful response. Adapters use
+`BuildPreloadOptions` to share that contract without replaying option closures.
+
+**Why a cap applies to every hop.** A cap is a refusal budget, not pagination.
+Applying `PreloadRows` only to the terminal relation of `Comments.Author` would
+still let `Comments` materialise without bound, and the wire has one `maxRows`
+field whose documented meaning is every hop. `PreloadRows`, `PreloadCap`, the
+query endpoint budget and the remote representation therefore converge on the
+same safer rule; overlapping budgets take the minimum.
 
 **Why children are re-collected after assignment.** A `[]T` relation copies each
 row into the parent's slice. A nested preload has to write into that copy or it
@@ -61,8 +92,15 @@ two runs of the same query.
   limits need a window function and a different statement shape; if that is ever
   wanted it is a new feature with its own decision, not a relaxation of this one.
 - Do not switch the preloader to a join to "save a round trip".
-- Do not let two narrowings of the same path silently intersect. The current
-  rule is that an unnarrowed ask wins; changing it needs a reason written down.
+- Do not let folded narrowings constrain a path when any spec asks for the
+  complete relation. Narrowed specs intentionally intersect; an unnarrowed or
+  provably tautological spec clears filters. Changing either half needs a reason
+  written down.
+- Do not resolve duplicate specs into one mutable `Options`. That makes
+  `SortBy`, custom setters and repeated caps behave differently locally and
+  after serialisation.
+- Do not key the tree by the caller's raw spelling. Equivalent aliases and case
+  variants must canonicalise before the wider-ask rule is evaluated.
 - Do not remove the deduplication of parent keys. The `IN` list is bounded by
   distinct keys, not by page size.
 - Do not drop the `has_one` fallback sort.
@@ -73,6 +111,8 @@ two runs of the same query.
   so the second statement is not read raw ([[D-007]]).
 - `crud/preload.go:preloadBatch` — `= 900`.
 - `crud/preload.go:buildPreloadTree` — path folding and the wider-ask-wins rule.
+- `crud/preload.go:BuildPreloadOptions` — the shared fail-closed nested-option
+  boundary used by adapters.
 - `crud/preload.go:preloader.load` — key dedup, chunking, and re-collecting the
   stored children for the next level.
 - `crud/preload.go:preloader.fetch` — the one statement, the many-to-many owner
@@ -96,7 +136,16 @@ two runs of the same query.
   `test/integration/matrix_test.go` — the second one is against a live database,
   which is the only place an off-by-one in the chunk boundary shows up.
 - `TestABarePreloadWinsOverANarrowedOneForTheSamePath` in
-  `crud/preload_edge_test.go`.
+  `crud/preload_edge_test.go` — including equivalent path spellings.
+- `TestPreloadRefusesEveryUnsupportedGenericOptionBeforeRowsOrSQL`,
+  `TestPreloadOptionsAreResolvedExactlyOnce` and
+  `TestNestedPreloadRowsCapsTheIntermediateHop` in `crud/preload_test.go`.
+- `TestFoldedPreloadsKeepDirectAndRemoteSemanticsIdentical` in
+  `remote/roundtrip_test.go` — duplicate filters, sorts and caps survive a full
+  `ToRequest` → `Compile` round trip unchanged.
+- `TestRemoteNormalisesTrueIdentitiesWithoutHidingUnsupportedNodes` and
+  `TestTrueIdentityInsideOnePreloadSpecKeepsItsRealNarrowingAcrossTheWire` in
+  `remote/roundtrip_test.go` — recursive identities and fail-loud validation.
 - `TestANestedPreloadFillsEveryParentsOwnCopy` and
   `TestAPreloadedToOneIsNotSharedBetweenParents` in
   `crud/preload_edge_test.go`.

@@ -384,7 +384,7 @@ func TestPreloadOptionsTravelWithTheRelation(t *testing.T) {
 		t.Fatalf("preloads = %+v", o.Preloads)
 	}
 	sub := crud.Build(o.Preloads[0].Opts...)
-	if len(sub.Filter) != 1 || len(sub.Sort) != 1 || sub.PreloadRows != 1000 {
+	if len(sub.Filter) != 1 || len(sub.Sort) != 1 || o.Preloads[0].MaxRows != 1000 {
 		t.Fatalf("preload options = %d filters, %d sorts; want 1 and 1", len(sub.Filter), len(sub.Sort))
 	}
 	if sub.Sort[0] != (crud.Order{Field: "Body", Desc: true}) {
@@ -393,8 +393,8 @@ func TestPreloadOptionsTravelWithTheRelation(t *testing.T) {
 	// A plain path carries no client filter or sort, but it still gets the
 	// endpoint's row budget.
 	o = resolve(t, `{"preload":["comments"]}`, nil)
-	if sub := crud.Build(o.Preloads[0].Opts...); sub.PreloadRows != 1000 {
-		t.Fatalf("an unqualified preload has row cap %d, want 1000", sub.PreloadRows)
+	if o.Preloads[0].MaxRows != 1000 || len(o.Preloads[0].Opts) != 0 {
+		t.Fatalf("an unqualified preload = %+v, want a direct row cap and no fake narrowing", o.Preloads[0])
 	}
 }
 
@@ -423,8 +423,8 @@ func TestPreloadCanTightenButNotWidenTheEndpointRowCap(t *testing.T) {
 			if len(o.Preloads) != 1 || o.Preloads[0].MaxRows != tc.want {
 				t.Fatalf("preload caps = %+v, want %d", o.Preloads, tc.want)
 			}
-			if sub := crud.Build(o.Preloads[0].Opts...); sub.PreloadRows != tc.want {
-				t.Fatalf("preload options have cap %d, want %d", sub.PreloadRows, tc.want)
+			if sub := crud.Build(o.Preloads[0].Opts...); sub.PreloadRows != 0 {
+				t.Fatalf("preload cap was redundantly encoded as a nested option: %+v", sub)
 			}
 		})
 	}

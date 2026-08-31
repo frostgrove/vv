@@ -610,10 +610,22 @@ func (this *repository[M, ID, U]) distinctSort(cols []*crud.Field, sort []crud.O
 // preload runs the requested relation loads against the same executor, so a
 // preload inside a transaction sees the transaction.
 func (this *repository[M, ID, U]) preload(ctx context.Context, items []M, o *crud.Options) error {
-	if len(o.Preloads) == 0 || len(items) == 0 {
+	if len(o.Preloads) == 0 {
 		return nil
 	}
-	return crud.RunPreloads(ctx, this.read(ctx, o), this.d, this.meta, items, o.Preloads, this.bp.set.preloadDepth, this.relScopes(o))
+	specs := o.Preloads
+	if o.PreloadRows != 0 {
+		if o.PreloadRows < 0 {
+			return &crud.SchemaError{Model: this.meta.Name, Reason: "a preload row cap cannot be negative"}
+		}
+		specs = slices.Clone(specs)
+		for i := range specs {
+			if specs[i].MaxRows == 0 || o.PreloadRows < specs[i].MaxRows {
+				specs[i].MaxRows = o.PreloadRows
+			}
+		}
+	}
+	return crud.RunPreloads(ctx, this.read(ctx, o), this.d, this.meta, items, specs, this.bp.set.preloadDepth, this.relScopes(o))
 }
 
 // sortOf resolves the sort terms, appending a primary-key tiebreaker so that

@@ -219,6 +219,15 @@ immutable standard scalars/bytes; unsupported
 slice/map keys fail before SQL rather than attaching children to the wrong
 parent.
 
+`PreloadWhere` permits only `Filter`, `Sort`, and `PreloadRows` in its resolved
+shape. `Where`, `OrderBy`/`SortBy`, and `PreloadRows` are the ordinary spelling;
+a custom low-level `Option` may write those same fields. Projection, nested
+`Preload`, relation scopes, cursors, paging, datasource
+selection, aggregates, locks, and query flags are refused rather than silently
+dropped. Spell a nested relation as one dotted top-level path. `PreloadRows`
+and `PreloadCap` are refusal ceilings at every hop of that path; overlapping
+ceilings use the strictest value.
+
 Sorting through a to-many is refused too: a collection has no single value to
 sort by, so it is declined rather than silently picking one.
 

@@ -576,7 +576,6 @@ func (this *Request) Compile(meta *crud.Meta, config *Config) ([]crud.Option, er
 		if p.MaxRows > 0 && p.MaxRows < maxRows {
 			maxRows = p.MaxRows
 		}
-		sub = append(sub, crud.PreloadRows(maxRows))
 		options = append(options, crud.PreloadCap(canonical, maxRows, sub...))
 	}
 

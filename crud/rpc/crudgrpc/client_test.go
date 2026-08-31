@@ -166,7 +166,7 @@ func TestEveryMethodMakesTheRoundTrip(t *testing.T) {
 			t.Fatalf("preloads = %+v, want Parts capped at 1", got.Opts.Preloads)
 		}
 		sub := crud.Build(got.Opts.Preloads[0].Opts...)
-		if sub.PreloadRows != 1 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
+		if sub.PreloadRows != 0 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
 			t.Fatalf("narrowed preload options = %+v", sub)
 		}
 		want := `("price" >= $1 AND "id" = $2)`

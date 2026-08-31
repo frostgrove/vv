@@ -58,7 +58,7 @@ and the next decision written before its code does should say so here.
 | [D-003](D-003-closed-predicate-ast.md) | The predicate AST is closed; only `crud.Raw` emits caller text, and its markers must match its arguments | accepted | querying |
 | [D-004](D-004-where-ands-never-replaces.md) | `crud.Where` appends; no option may remove or weaken a predicate another option added | accepted | querying |
 | [D-005](D-005-relation-filter-is-a-correlated-exists.md) | A relation filter must not change the outer statement's cardinality | accepted | querying |
-| [D-006](D-006-preload-is-a-batched-second-query.md) | One statement per relation per level; a preload refuses pagination | accepted | querying |
+| [D-006](D-006-preload-is-a-batched-second-query.md) | Batched preload options are fail-closed and fold identically across transports | accepted | querying |
 | [D-007](D-007-narrowing-crosses-a-relation-only-when-declared.md) | A scope covers its own `FROM`; the far side of a relation is narrowed only where declared | accepted | security |
 | [D-008](D-008-out-of-scope-is-404-not-403.md) | A row hidden by a scope is `ErrNotFound`, never a denial | accepted | security |
 | [D-009](D-009-context-executor-capture-is-unconditional.md) | `WithExecutor` reaches every repository; only `WithExecutorFor` restricts it | **superseded by D-082** | transactions & datasources |

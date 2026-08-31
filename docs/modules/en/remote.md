@@ -126,6 +126,12 @@ peer must grant its primary key **and every field in the caller's filter** in
 `query.Config.Filterable`, just as it would for a direct `Get`. Otherwise the
 peer returns its normal query refusal rather than weakening the keyed read.
 
+Inside `PreloadWhere`, only filter, sort and `PreloadRows` are translatable.
+The shared preload validator rejects every other resolved option before the
+request is sent, and nested caps use the same every-hop `maxRows` semantics as
+local execution. Option closures are resolved once; duplicate specs fold the
+same way locally and after `ToRequest` → `Compile`.
+
 `GetAll` clears `SkipTotal` and turns an all-rows request — no page controls,
 or `Unpaged` (which wins a supplied page/limit) — into bounded requests. With
 `Unpaged+Offset` it returns the whole suffix after that offset. It requests one

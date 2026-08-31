@@ -12,10 +12,10 @@ type Options struct {
 	Preloads []PreloadSpec
 	Fields   []string // projection; empty means every column
 
-	// PreloadRows is the maximum number of child rows one preload relation may
-	// materialise. Zero means no per-relation cap. Query endpoints set it from
-	// their Config; the preloader refuses rather than silently truncating a
-	// relation when the cap is exceeded.
+	// PreloadRows is the maximum number of child rows a requested preload path
+	// may materialise at each hop. Zero means no per-relation cap. Query
+	// endpoints set it from their Config; the preloader refuses rather than
+	// silently truncating a relation when the cap is exceeded.
 	PreloadRows int
 
 	Page   int // 1-based; 0 means the first page
@@ -195,10 +195,13 @@ func ForUpdate() Option { return func(o *Options) { o.ForUpdate = true } }
 // Distinct adds SELECT DISTINCT.
 func Distinct() Option { return func(o *Options) { o.Distinct = true } }
 
-// PreloadRows caps one preloaded relation's materialised children. It is not
-// pagination — the cap is an error when exceeded, so no parent quietly loses
-// part of its relation. Zero disables the cap for trusted direct repository
-// work; public query endpoints declare a positive value in query.Config.
+// PreloadRows caps a preloaded relation's materialised children. At the root it
+// applies to every requested path; inside PreloadWhere it applies to every hop
+// of that path, so a nested preload cannot hide an unbounded intermediate
+// relation. It is not pagination — the cap is an error when exceeded, so no
+// parent quietly loses part of its relation. Zero disables the cap for trusted
+// direct repository work; public query endpoints declare a positive value in
+// query.Config.
 func PreloadRows(n int) Option { return func(o *Options) { o.PreloadRows = n } }
 
 // With replays a prebuilt Options as an Option, so callers can pass a stored

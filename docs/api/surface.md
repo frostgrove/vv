@@ -213,6 +213,7 @@ type Option func(*Options)
 type Optional = utils.Optional
 type Options struct{ ... }
     func Build(options ...Option) *Options
+    func BuildPreloadOptions(path string, options ...Option) (*Options, error)
 type Order struct{ ... }
     func Asc(field string) Order
     func Desc(field string) Order

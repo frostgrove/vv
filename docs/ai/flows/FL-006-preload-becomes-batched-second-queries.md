@@ -16,29 +16,30 @@ structs.
    transaction, and with `r.relScopes(o)` — the blueprint's permanent narrowings
    merged with whatever this query carries.
 
-2. **`RunPreloads`** — `crud/preload.go:113`
-   `buildPreloadTree` (`preload.go:72`) folds the flat paths into a tree, so
-   `Comments` and `Comments.Author` share one query for the comments. Depth is
-   capped here (`preload.go:76`) against the blueprint's `PreloadDepth`
-   (default 5, `preload.go:14`).
-   **The `whole` rule** (`preload.go:93-101`): if any spec asked for a path
-   unnarrowed, the narrowed asks for that same path are discarded. A request
-   that asked for all of them *and* for a subset would otherwise receive only the
-   subset, with a 200 and no way to tell.
-   `addressableRows` (`preload.go:133`) turns `[]M` or `[]*M` into a pointer per
-   element; nil pointers are skipped.
+2. **`RunPreloads` → `buildPreloadTree`** — `crud/preload.go`
+   Every path is validated and canonicalised with `Meta.ValidateRelationPath`,
+   then folded into a tree, so `Comments` and `comments.author` share one query
+   for the comments. Depth is capped against the blueprint's `PreloadDepth`
+   (default 5). Every spec's option list is resolved and validated once before
+   `addressableRows` inspects the result slice. **The `whole` rule:** if any
+   spec asks for a path unnarrowed, filters on that same canonical path are
+   discarded. A request for all rows and for a subset would otherwise receive
+   only the subset, with a 200 and no way to tell. `addressableRows` turns
+   `[]M` or `[]*M` into a pointer per element; nil pointers are skipped.
 
 3. **`preloader.level`** — `crud/preload.go:159`
    Per node: resolve the relation on the current model, extend the canonical
    path with `joinPath`, `load` it, then recurse into the children that `load`
    returned — with the **target's** `Meta`, not the parent's.
 
-4. **`preloader.load`** — `crud/preload.go:187`
-   - Pagination options are refused outright (`preload.go:193`): a `LIMIT` on a
-     batched preload truncates some parents' children and not others.
+4. **`preloader.load`** — `crud/preload.go`
+   - It receives only the already-resolved closed preload shape. A refusal cap
+     becomes `cap+1` in SQL, saturated at `math.MaxInt`; observing the extra row
+     returns an error and never publishes a partial relation.
    - Distinct parent keys are collected by reading `local` at its byte offset,
-     unwrapping with `ElemValue`, and deduplicating on `mapKey`
-     (`preload.go:199-212`). A `NULL` foreign key contributes no key.
+     canonicalising the value once for both map identity and driver binding,
+     and deduplicating that immutable snapshot. A `NULL` foreign key contributes
+     no key.
    - No keys at all → `assignEmpty` and return; every parent still gets a zeroed
      or empty relation field rather than whatever was there.
    - Keys are chunked at **900** (`preloadBatch`, `preload.go:17`) by `slices`
@@ -87,12 +88,13 @@ structs.
    that rewrote a field on one rewrote it on all its siblings — and which
    spelling of the relation field was used decided whether that happened.
 
-7. **`mapKey`** — `crud/preload.go:410`
-   Normalises both ends of the relation onto one map key: every integer widens
-   to `int64` (unsigned too, when it fits), every string kind flattens, `[]byte`
-   becomes `string` the way a text driver hands it over. Without it a mismatch is
-   silent — the children are simply filed under a key no parent looks for, and
-   the response has empty relations with a 200 on it.
+7. **`canonicalPreloadKey`** — `crud/preload.go`
+   Normalises both ends of the relation onto one immutable map key and a matching
+   driver value: integers use checked canonical forms, string kinds flatten,
+   byte slices are copied, optional/pointer/valuer wrappers are unwrapped under
+   a fail-closed allow-list. Unsupported mutable or non-comparable values and
+   `NaN` are errors. Without one snapshot for both uses, mutation or a key-shape
+   collision can file children under the wrong parent.
 
 ## Where the decisions bite
 
@@ -101,13 +103,25 @@ structs.
 - **The narrowing travels with the hop.** `p.scopes.At(path, target)` in `fetch`
   is the only thing standing between `?preload=comments` and every tenant's
   comments. See [[FL-007]] for where those scopes come from at request time.
-- **A preload cannot be paginated.** The refusal is explicit
-  (`preload.go:193-196`) rather than a silently applied limit.
+- **Nested options are a closed contract.** Only `Where`, `OrderBy`/`SortBy`
+  and `PreloadRows` survive the boundary. Every other non-zero `Options` field
+  is refused while the whole tree is prepared, before rows are inspected or a
+  child statement runs.
+- **A refusal cap covers every hop.** Root `PreloadRows`, nested
+  `PreloadRows`, `PreloadCap` and the public query budget all min-merge into the
+  same per-hop ceiling.
 - **The projection must carry the join column.** `repository.projection`
   (`crud/sqlrepo/repository.go:292`) adds it; a `DISTINCT` projection cannot, so
   `find` refuses the combination (`repository.go:206`).
-- **The wider ask wins when two specs name one path.** Folding their narrowings
-  together would answer a superset request with a subset.
+- **Equivalent paths fold before execution.** Each path is canonicalised
+  against the root schema, so `comments` and `Comments` cannot become two
+  queries that bypass wider-ask-wins.
+- **Specs fold declaratively.** Each option list resolves once in isolation;
+  narrowed specs intersect, an unnarrowed or provably tautological spec clears
+  filters, sorts append in request order and refusal caps take the minimum.
+  Trusted true identities are folded recursively at the predicate-document
+  boundary only after every branch is validated. The result is identical
+  before and after a remote round trip.
 
 ## Failure modes
 
@@ -115,11 +129,12 @@ structs.
 |---|---|---|
 | preload path deeper than `PreloadDepth` | `buildPreloadTree` (`preload.go:77`) | 400 (`SchemaError`) |
 | empty segment in the path (`a..b`) | `buildPreloadTree` (`preload.go:84`) | 400 |
-| unknown relation name | `preloader.level` (`preload.go:163`) | 400 (`UnknownFieldError`) |
-| relation whose fk/ref does not resolve | `rel.Resolve()` in `load` | 400 (`SchemaError`) |
-| `crud.Limit`/`Page`/`Offset`/`Unpaged` inside `PreloadWhere` | `load` (`preload.go:193`) | 400 (`SchemaError`) |
+| unknown relation name | `Meta.ValidateRelationPath` during tree preparation | 400 (`UnknownFieldError`), even for an empty root |
+| relation whose fk/ref does not resolve | `Meta.ValidateRelationPath` during tree preparation | 400 (`SchemaError`) |
+| any nested option except filter, sort or `PreloadRows` | preload-tree preparation / `BuildPreloadOptions` | 400 (`SchemaError`), no child SQL |
+| negative nested, path or root preload cap | preload-tree/repository/remote preparation | 400 (`SchemaError`/`OptionError`) |
 | preload over a `DISTINCT` projection | `repository.find` (`repository.go:206`) | 400 (`SchemaError`) |
-| parent and child key types disagree | not an error — `mapKey` reconciles them | correct rows, or empty relations if `mapKey` ever stops covering a kind |
+| unsafe or ambiguous parent/child relation key | relation-path validation / canonical key conversion | 400 (`SchemaError`), never a shared bucket |
 | more preloads than `MaxPreloads` | `Request.Compile` (`crud/query/compile.go:185`) | 400 |
 
 ## Files
@@ -150,6 +165,13 @@ structs.
 - `TestPreloadDepthIsCapped` — `crud/preload_test.go`.
 - `TestABarePreloadWinsOverANarrowedOneForTheSamePath` — `crud/preload_edge_test.go`.
 - `TestTwoNarrowedPreloadsOfOnePathStillBothApply` — `crud/preload_edge_test.go`.
+- `TestPreloadRefusesEveryUnsupportedGenericOptionBeforeRowsOrSQL` and
+  `TestNestedPreloadRowsCapsTheIntermediateHop` — `crud/preload_test.go`.
+- `TestFoldedPreloadsKeepDirectAndRemoteSemanticsIdentical` and
+  `TestRemotePreloadOptionsAreResolvedExactlyOnce` — `remote/roundtrip_test.go`.
+- `TestRemoteNormalisesTrueIdentitiesWithoutHidingUnsupportedNodes` and
+  `TestTrueIdentityInsideOnePreloadSpecKeepsItsRealNarrowingAcrossTheWire` —
+  `remote/roundtrip_test.go`.
 - `TestProjectionKeepsPreloadKeys` — `crud/query/preload_test.go`.
 - `TestAPreloadOfTheRepositorysOwnModelCarriesItsScope` — `crud/sqlrepo/relscope_test.go`.
 - `TestANestedPreloadOfTheSameModelCarriesTheScopeAtEveryLevel` — `crud/sqlrepo/relscope_test.go`.

@@ -159,12 +159,21 @@ func (this nullNode) document(w *docWriter) {
 }
 
 func (this inNode) document(w *docWriter) {
+	if len(this.values) == 0 {
+		if this.not {
+			// Trusted Go predicates define NotIn(field) as true. Emit the identity
+			// document so a surrounding AND/OR can fold it without sending the
+			// public query DSL a value-list shape that it deliberately refuses.
+			w.str(everyRow)
+			return
+		}
+		w.fail("crud.In", "an empty In matches no rows, which no filter document says")
+		return
+	}
 	op := "in"
 	if this.not {
 		op = "nin"
 	}
-	// An empty list is kept and not refused: the DSL compiles {"in":[]} back to
-	// the same always-false node, and {"nin":[]} to the same always-true one.
 	w.leaf(this.field, op, func() {
 		w.str("[")
 		for i, v := range this.values {
@@ -247,6 +256,7 @@ func (this fieldCmpNode) document(w *docWriter) {
 func (this logicNode) document(w *docWriter) {
 	live := flatten(this.op, this.kids, nil)
 	docs := make([]string, 0, len(live))
+	unconditional := false
 	for _, k := range live {
 		doc, err := sub(k)
 		if err != nil {
@@ -256,15 +266,19 @@ func (this logicNode) document(w *docWriter) {
 		if doc == everyRow {
 			// AND with an unconditional term is the rest of the terms; OR with
 			// one is unconditional. Getting either backwards changes which rows
-			// come back, so neither is left to the server to work out from a
-			// document with an empty object in it.
+			// come back. Keep walking after an unconditional OR: a commutative
+			// expression must not hide a later Raw, False or other unsupported
+			// node merely because the true identity was written first.
 			if this.op == "OR" {
-				w.str(everyRow)
-				return
+				unconditional = true
 			}
 			continue
 		}
 		docs = append(docs, doc)
+	}
+	if unconditional {
+		w.str(everyRow)
+		return
 	}
 
 	switch len(docs) {

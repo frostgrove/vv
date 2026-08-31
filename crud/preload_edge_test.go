@@ -89,6 +89,10 @@ func TestABarePreloadWinsOverANarrowedOneForTheSamePath(t *testing.T) {
 			crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", true))),
 			crud.Preload("Comments"),
 		}},
+		{"across equivalent path spellings", []crud.Option{
+			crud.Preload("comments"),
+			crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", true))),
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := crudtest.Postgres().Push(crudtest.Rows())
@@ -107,6 +111,153 @@ func TestABarePreloadWinsOverANarrowedOneForTheSamePath(t *testing.T) {
 					"and would have received a subset", rec.Last().SQL)
 			}
 		})
+	}
+}
+
+func TestABarePreloadCannotHideAnUnsupportedOptionForTheSamePath(t *testing.T) {
+	for _, options := range [][]crud.Option{
+		{
+			crud.Preload("Comments"),
+			crud.PreloadWhere("Comments", crud.Select("Body")),
+		},
+		{
+			crud.PreloadWhere("Comments", crud.Select("Body")),
+			crud.Preload("Comments"),
+		},
+	} {
+		rec := crudtest.Postgres()
+		o := crud.Build(options...)
+		err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+			articleMeta(t), []Article{}, o.Preloads, 0, nil)
+		if err == nil || !strings.Contains(err.Error(), "projection") {
+			t.Fatalf("RunPreloads error = %v, want unsupported projection refusal", err)
+		}
+		if len(rec.Statements()) != 0 {
+			t.Fatalf("unsupported option reached SQL: %v", rec.SQL())
+		}
+	}
+}
+
+func TestABarePreloadKeepsOrthogonalSortAndRowCap(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), int64(1), int64(7), "first", true},
+		[]any{int64(11), int64(1), int64(7), "second", true},
+	))
+	o := crud.Build(
+		crud.PreloadWhere("Comments",
+			crud.Where(crud.Eq("Approved", false)),
+			crud.SortBy(crud.Desc("Body")),
+			crud.PreloadRows(1)),
+		crud.Preload("Comments"),
+	)
+
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		articleMeta(t), []Article{{ID: 1}}, o.Preloads, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "preload exceeds") {
+		t.Fatalf("RunPreloads error = %v, want retained row-cap refusal", err)
+	}
+	sql := crudtest.Normalize(rec.Last().SQL)
+	if strings.Contains(sql, `"approved" =`) {
+		t.Fatalf("bare preload retained the narrower filter: %s", sql)
+	}
+	if !strings.Contains(sql, `ORDER BY "body" DESC`) || !strings.Contains(sql, "LIMIT 2") {
+		t.Fatalf("bare preload dropped orthogonal sort/cap: %s", sql)
+	}
+}
+
+func TestANonFilteringPreloadRequestWinsOverAFilteredOne(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		whole crud.Option
+		want  string
+	}{
+		{"sort only", crud.PreloadWhere("Comments", crud.SortBy(crud.Desc("Body"))), `ORDER BY "body" DESC`},
+		{"cap only", crud.PreloadWhere("Comments", crud.PreloadRows(2)), "LIMIT 3"},
+		{"nil filter", crud.PreloadWhere("Comments", crud.Where(nil)), ""},
+		{"true filter", crud.PreloadWhere("Comments", crud.Where(crud.True())), ""},
+		{"empty not-in filter", crud.PreloadWhere("Comments", crud.Where(crud.NotIn("Approved"))), ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := crudtest.Postgres().Push(crudtest.Rows())
+			o := crud.Build(
+				test.whole,
+				crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", false))),
+			)
+			runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+			sql := crudtest.Normalize(rec.Last().SQL)
+			if strings.Contains(sql, `"approved" =`) {
+				t.Fatalf("non-filtering request retained a narrower filter: %s", sql)
+			}
+			if test.want != "" && !strings.Contains(sql, test.want) {
+				t.Fatalf("non-filtering request dropped %q: %s", test.want, sql)
+			}
+		})
+	}
+}
+
+func TestAFilterReplacementInsideOneSpecRemainsANarrowing(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	replaceFilter := crud.Option(func(o *crud.Options) {
+		o.Filter = []crud.Predicate{crud.Eq("AuthorID", int64(7))}
+	})
+	o := crud.Build(
+		crud.PreloadWhere("Comments",
+			crud.Where(crud.Eq("Approved", false)),
+			replaceFilter),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	sql := crudtest.Normalize(rec.Last().SQL)
+	if !strings.Contains(sql, `"author_id" =`) || strings.Contains(sql, `"approved" =`) {
+		t.Fatalf("replacement filter was widened or composed unexpectedly: %s", sql)
+	}
+}
+
+func TestFiltersFromSeparatePreloadRequestsAreIntersected(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	replaceFilter := crud.Option(func(o *crud.Options) {
+		o.Filter = []crud.Predicate{crud.Eq("AuthorID", int64(7))}
+	})
+	o := crud.Build(
+		crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", false))),
+		crud.PreloadWhere("Comments", replaceFilter),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	sql := crudtest.Normalize(rec.Last().SQL)
+	if !strings.Contains(sql, `"author_id" =`) || !strings.Contains(sql, `"approved" =`) {
+		t.Fatalf("separate preload narrowings were not intersected: %s", sql)
+	}
+}
+
+func TestAnUnnarrowedNestedPathMakesItsPrefixWhole(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(
+		crud.PreloadWhere("Comments", crud.Where(crud.Eq("Approved", false))),
+		crud.Preload("Comments.Author"),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	if sql := crudtest.Normalize(rec.Last().SQL); strings.Contains(sql, `"approved" =`) {
+		t.Fatalf("unnarrowed nested path retained a filter on its prefix: %s", sql)
+	}
+}
+
+func TestAUnsupportedOptionCannotBeCanceledByALaterOption(t *testing.T) {
+	rec := crudtest.Postgres()
+	clearProjection := crud.Option(func(o *crud.Options) { o.Fields = nil })
+	o := crud.Build(
+		crud.PreloadWhere("Comments", crud.Select("Body")),
+		crud.PreloadWhere("Comments", clearProjection),
+	)
+
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+		articleMeta(t), []Article{}, o.Preloads, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "projection") {
+		t.Fatalf("RunPreloads error = %v, want the unsupported option at its own boundary", err)
 	}
 }
 

@@ -71,6 +71,9 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		return nil, &OptionError{"crud.ForUpdate",
 			"a row lock belongs to a transaction, and the transaction is not in this process"}
 	}
+	if o.PreloadRows < 0 && len(o.Preloads) > 0 {
+		return nil, &OptionError{"crud.PreloadRows", "a preload row cap cannot be negative"}
+	}
 
 	request := &query.Request{
 		Page:      o.Page,
@@ -92,25 +95,35 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		if err != nil {
 			return nil, err
 		}
-		// The DSL spells a tautology as {}. On the wire an absent filter has
-		// that meaning, while an explicit {} is deliberately rejected.
-		if string(doc) != "{}" {
+		// MarshalPredicate recursively folds trusted Go-AST true identities, such
+		// as an empty NotIn, to {} while still validating every reachable node.
+		// IsTautology below catches model-independent Boolean proofs whose document
+		// is syntactically non-empty. On the wire an absent filter means all rows,
+		// while an explicit {} is deliberately rejected by the public compiler.
+		if !crud.IsTautology(p) && string(doc) != "{}" {
 			request.Filter = query.RawFilter(string(doc))
 		}
 	}
 
 	for _, pre := range o.Preloads {
-		p := query.Preload{Path: pre.Path, MaxRows: pre.MaxRows}
+		if pre.MaxRows < 0 {
+			return nil, &OptionError{"crud.PreloadCap", "a preload row cap cannot be negative"}
+		}
+		maxRows := pre.MaxRows
+		if o.PreloadRows > 0 && (maxRows == 0 || o.PreloadRows < maxRows) {
+			maxRows = o.PreloadRows
+		}
+		p := query.Preload{Path: pre.Path, MaxRows: maxRows}
 		if len(pre.Opts) > 0 {
 			// A narrowed preload is its own little query, and everything above
 			// applies to it too — including the refusals, which is why this
 			// goes back through requestOf rather than reading the fields it
 			// happens to need.
-			nestedOptions := crud.Build(pre.Opts...)
-			if unsupportedPreloadOptions(nestedOptions) {
+			nestedOptions, err := crud.BuildPreloadOptions(pre.Path, pre.Opts...)
+			if err != nil {
 				return nil, &OptionError{
 					Option: "crud.PreloadWhere",
-					Reason: "a remote preload carries only Where, OrderBy, and PreloadRows; the other nested options have no wire spelling",
+					Reason: err.Error(),
 				}
 			}
 			nested, err := requestOf(nestedOptions)
@@ -128,18 +141,6 @@ func requestOf(o *crud.Options) (*query.Request, error) {
 		request.Preload = append(request.Preload, p)
 	}
 	return request, nil
-}
-
-// unsupportedPreloadOptions keeps the wire contract fail-closed. A preload is
-// its own batched relation query, but query.Preload deliberately exposes only
-// the three controls whose meaning survives that query: narrowing, ordering,
-// and its row-cap refusal. In particular, local pagination is itself refused
-// for a preload; accepting it remotely and dropping it would turn that visible
-// error into a successful, differently shaped relation.
-func unsupportedPreloadOptions(o *crud.Options) bool {
-	return len(o.Fields) > 0 || len(o.Preloads) > 0 || o.Page != 0 || o.Limit != 0 || o.Offset != 0 ||
-		o.RelScopes != nil || len(o.Agg.Aggregations) > 0 || len(o.Agg.GroupBy) > 0 || o.After != "" || o.Before != "" ||
-		o.Primary || o.Unpaged || o.NoSort || o.NoTotal || o.ForUpdate || o.Distinct
 }
 
 // sortsOf carries the ordering across, nulls placement included. crud spells it

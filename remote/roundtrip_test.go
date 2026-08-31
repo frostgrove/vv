@@ -315,7 +315,7 @@ func TestGetByIDPreservesNarrowedAndCappedPreloadsThroughTheListRoute(t *testing
 		t.Fatalf("preloads = %+v, want Parts capped at 1", got.Opts.Preloads)
 	}
 	sub := crud.Build(got.Opts.Preloads[0].Opts...)
-	if sub.PreloadRows != 1 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
+	if sub.PreloadRows != 0 || len(sub.Filter) != 1 || len(sub.Sort) != 1 {
 		t.Fatalf("narrowed preload options = %+v", sub)
 	}
 	sql, args := clause(t, got.Opts)
@@ -334,6 +334,194 @@ func TestPreloadRowsInsideAPreloadWhereCrossesTheWire(t *testing.T) {
 	}
 	if len(request.Preload) != 1 || request.Preload[0].MaxRows != 1 {
 		t.Fatalf("preload document = %+v, want Parts capped at 1", request.Preload)
+	}
+}
+
+func TestRemotePreloadOptionsAreResolvedExactlyOnce(t *testing.T) {
+	calls := 0
+	option := crud.Option(func(o *crud.Options) {
+		calls++
+		o.Filter = append(o.Filter, crud.Eq("Label", "hex"))
+	})
+	request, err := remote.ToRequest(crud.PreloadWhere("Parts", option))
+	if err != nil {
+		t.Fatalf("ToRequest() = %v", err)
+	}
+	if _, err := request.Compile(widgetMeta, nil); err != nil {
+		t.Fatalf("Compile() = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("nested option calls = %d, want one across encode and compile", calls)
+	}
+}
+
+func TestRemoteNormalisesTrueIdentitiesWithoutHidingUnsupportedNodes(t *testing.T) {
+	request, err := remote.ToRequest(crud.Where(crud.And(
+		crud.Eq("Name", "bolt"),
+		crud.NotIn("Name"),
+	)))
+	if err != nil {
+		t.Fatalf("ToRequest() = %v", err)
+	}
+	compiled, err := request.Compile(widgetMeta, nil)
+	if err != nil {
+		t.Fatalf("Compile() = %v", err)
+	}
+	sql, args := clause(t, crud.Build(compiled...))
+	if !strings.Contains(sql, `"name" =`) || len(args) != 1 || args[0] != "bolt" {
+		t.Fatalf("normalised root filter = %s %#v, want the real narrowing only", sql, args)
+	}
+
+	for _, predicate := range []crud.Predicate{
+		crud.Or(crud.Raw("1 = 1"), crud.True()),
+		crud.Or(crud.True(), crud.Raw("1 = 1")),
+		crud.Or(crud.NotIn("Name"), crud.Raw("1 = 1")),
+	} {
+		_, err = remote.ToRequest(crud.Where(predicate))
+		var refusal *crud.PredicateError
+		if !errors.As(err, &refusal) || refusal.Node != "crud.Raw" {
+			t.Fatalf("unsupported node hidden by tautology = %T %v, want crud.Raw PredicateError", err, err)
+		}
+	}
+}
+
+func TestTrueIdentityInsideOnePreloadSpecKeepsItsRealNarrowingAcrossTheWire(t *testing.T) {
+	options := []crud.Option{crud.PreloadWhere("Parts",
+		crud.Where(crud.Eq("Label", "old")),
+		crud.Where(crud.NotIn("Label")),
+		crud.PreloadRows(1000),
+	)}
+	directSQL, directArgs := widgetPreloadStatement(t, crud.Build(options...))
+
+	request, err := remote.ToRequest(options...)
+	if err != nil {
+		t.Fatalf("ToRequest() = %v", err)
+	}
+	compiled, err := request.Compile(widgetMeta, nil)
+	if err != nil {
+		t.Fatalf("Compile() = %v", err)
+	}
+	wireSQL, wireArgs := widgetPreloadStatement(t, crud.Build(compiled...))
+
+	if !strings.Contains(directSQL, `"label" =`) || !strings.Contains(wireSQL, `"label" =`) ||
+		!reflect.DeepEqual(directArgs, wireArgs) || len(wireArgs) != 2 {
+		t.Fatalf("true identity changed preload narrowing\ndirect: %s %#v\n  wire: %s %#v",
+			directSQL, directArgs, wireSQL, wireArgs)
+	}
+}
+
+func TestTopLevelPreloadRowsCapsEveryRemotePreload(t *testing.T) {
+	request, err := remote.ToRequest(
+		crud.Preload("Parts.Owner", "Owner"),
+		crud.PreloadRows(3),
+	)
+	if err != nil {
+		t.Fatalf("ToRequest() = %v", err)
+	}
+	if len(request.Preload) != 2 {
+		t.Fatalf("preload document = %+v, want two paths", request.Preload)
+	}
+	for _, preload := range request.Preload {
+		if preload.MaxRows != 3 {
+			t.Fatalf("preload %s cap = %d, want global 3", preload.Path, preload.MaxRows)
+		}
+	}
+
+	request, err = remote.ToRequest(
+		crud.PreloadCap("Parts", 1),
+		crud.PreloadRows(3),
+	)
+	if err != nil {
+		t.Fatalf("ToRequest() with stricter local cap = %v", err)
+	}
+	if request.Preload[0].MaxRows != 1 {
+		t.Fatalf("local/global cap merge = %d, want stricter 1", request.Preload[0].MaxRows)
+	}
+}
+
+func TestFoldedPreloadsKeepDirectAndRemoteSemanticsIdentical(t *testing.T) {
+	replaceFilter := crud.Option(func(o *crud.Options) {
+		o.Filter = []crud.Predicate{crud.Eq("ID", int64(7))}
+	})
+	tests := []struct {
+		name    string
+		options []crud.Option
+	}{
+		{"strictest cap", []crud.Option{
+			crud.PreloadWhere("Parts", crud.PreloadRows(1)),
+			crud.PreloadWhere("Parts", crud.PreloadRows(5)),
+		}},
+		{"sorts from separate requests", []crud.Option{
+			crud.PreloadWhere("Parts", crud.OrderBy(crud.Asc("ID")), crud.PreloadRows(1000)),
+			crud.PreloadWhere("Parts", crud.SortBy(crud.Desc("Label")), crud.PreloadRows(1000)),
+		}},
+		{"filters from separate requests", []crud.Option{
+			crud.PreloadWhere("Parts", crud.Where(crud.Eq("Label", "old")), crud.PreloadRows(1000)),
+			crud.PreloadWhere("Parts", replaceFilter, crud.PreloadRows(1000)),
+		}},
+		{"tautological request widens filters", []crud.Option{
+			crud.PreloadWhere("Parts", crud.Where(crud.Eq("Label", "old")), crud.PreloadRows(1000)),
+			crud.PreloadWhere("Parts", crud.Where(crud.True()), crud.PreloadRows(1000)),
+		}},
+		{"empty not-in widens filters", []crud.Option{
+			crud.PreloadWhere("Parts", crud.Where(crud.Eq("Label", "old")), crud.PreloadRows(1000)),
+			crud.PreloadWhere("Parts", crud.Where(crud.NotIn("Label")), crud.PreloadRows(1000)),
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			direct := crud.Build(test.options...)
+			directSQL, directArgs := widgetPreloadStatement(t, direct)
+
+			request, err := remote.ToRequest(test.options...)
+			if err != nil {
+				t.Fatalf("ToRequest() = %v", err)
+			}
+			compiled, err := request.Compile(widgetMeta, nil)
+			if err != nil {
+				t.Fatalf("Compile() = %v", err)
+			}
+			wireSQL, wireArgs := widgetPreloadStatement(t, crud.Build(compiled...))
+
+			if wireSQL != directSQL || !reflect.DeepEqual(wireArgs, directArgs) {
+				t.Fatalf("preload changed across the wire\ndirect: %s %#v\n  wire: %s %#v",
+					directSQL, directArgs, wireSQL, wireArgs)
+			}
+			if strings.Contains(test.name, "widens filters") && len(directArgs) != 1 {
+				t.Fatalf("tautological spec retained a narrower bind: %s %#v", directSQL, directArgs)
+			}
+		})
+	}
+}
+
+func widgetPreloadStatement(t *testing.T, o *crud.Options) (string, []any) {
+	t.Helper()
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	if err := crud.RunPreloads(context.Background(), rec, rec.Dialect(), widgetMeta,
+		[]Widget{{ID: 1}}, o.Preloads, 0, nil); err != nil {
+		t.Fatalf("RunPreloads() = %v", err)
+	}
+	return crudtest.Normalize(rec.Last().SQL), rec.Last().Args
+}
+
+func TestNegativeTopLevelPreloadRowsIsRefusedRemotely(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		opt  []crud.Option
+		want string
+	}{
+		{"global", []crud.Option{crud.Preload("Parts"), crud.PreloadRows(-1)}, "crud.PreloadRows"},
+		{"spec", []crud.Option{crud.PreloadCap("Parts", -1)}, "crud.PreloadCap"},
+		{"nested", []crud.Option{crud.PreloadWhere("Parts", crud.PreloadRows(-1))}, "crud.PreloadWhere"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := remote.ToRequest(test.opt...)
+			var option *remote.OptionError
+			if !errors.As(err, &option) || option.Option != test.want {
+				t.Fatalf("ToRequest() = %T %v, want %s OptionError", err, err, test.want)
+			}
+		})
 	}
 }
 

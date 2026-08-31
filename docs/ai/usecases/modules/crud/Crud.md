@@ -2,7 +2,18 @@
 
 **Covers:** `github.com/frostgrove/vv/crud`
 **Sweep:** happy paths · edge cases · release readiness
-**Verdict:** not ready — three Crud-owned things a client can see are wrong and none of them raise an error: a paged read over a nullable sort column hands back a cursor its own next request refuses, and over a `sql.Null[T]` column hands back one that is accepted and returns a page short of rows; a dashboard summary is cut to twenty groups; and eleven options handed to a preload are accepted and dropped. The stale full-model `Save`/`Replace` route is Sqlrepo's canonical blocker (E-SQLREPO-14), with Crud retaining only the [[D-011]] seam implication. Separately and cheaply, the consumer reference names three `Opt` accessors that do not compile and omits the two that matter most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache identity split, and reusable-option isolation without a control; query-door and preload-budget edges point to their owning sweeps.
+**Verdict:** not ready — the remaining Crud-owned silent failures are nullable
+cursor paging and aggregate truncation. The former can mint an unusable cursor
+or accept one that returns a short page; the latter cuts a dashboard summary to
+twenty groups. The former preload-option silence is closed by [[D-006]]: only
+filter, sort and per-hop refusal caps are accepted now, and every other resolved
+field is rejected before child SQL. The stale full-model `Save`/`Replace` route
+is Sqlrepo's canonical blocker (E-SQLREPO-14), with Crud retaining only the
+[[D-011]] seam implication. Separately and cheaply, the consumer reference
+names three `Opt` accessors that do not compile and omits the two that matter
+most. The edge pass adds an unbounded manual ID filter, a first-use schema-cache
+identity split, and reusable-option isolation without a control; query-door and
+preload-budget edges point to their owning sweeps.
 
 ## What a consumer is actually trying to do
 
@@ -172,7 +183,7 @@ The hole in (2): an `Update` whose DTO diffs to nothing returns the loaded row w
 | `Exists` | everything but `Filter`, `RelScopes` and `Primary` |
 | `UpdateAll`, `DeleteAll` | `Limit`, `Page`, `Offset`, `Sort`, `Preloads`, `Fields` ([[D-026]], status open) |
 | `Aggregate` | `Fields`, `Preloads`, `Distinct`, `ForUpdate`, `After`, `Before`, `Primary` |
-| a `PreloadWhere` option list | eleven, listed in H-CRUD-10 |
+| a `PreloadWhere` option list | none silently: filter, sort and `PreloadRows` are honoured; every other resolved field is refused ([[D-006]]) |
 | `Save`, `SaveAll`, `Delete` | take no options at all ([[D-011]]) |
 
 `UpdateAll` at `crud/sqlrepo/repository.go:834-871` and `DeleteAll` at `:903-918` never read `o.Limit`; `Aggregate` at `:1028-1055` reads only `o.Agg`, `o.Sort`, `o.NoSort` and the paging. "Delete the ten oldest" is therefore a filtered write that silently does more than it was asked, and it is the same shape as the preload drops.
@@ -264,18 +275,29 @@ One more thing this case has to carry, because it is the option group's own open
 5. Pagination inside a preload is refused rather than truncating some parents' children and not others.
 6. An option a preload cannot honour is refused, not accepted and ignored.
 
-**Today:** 🟡 partial — (6) fails across eleven options
-**Evidence:** (1) `crud/predicate.go:86` renders each hop as a correlated `EXISTS` ([[D-005]]), pinned at `crud/predicate_test.go:149` and `crud/schema_edge_test.go:371`. (2) `WalkPath` at `crud/relation.go:356` is the single resolver, and the fold at `crud/meta.go:145` makes `author.name` and `Author.Name` one path; an alias that would be ambiguous resolves to nothing rather than to a guess (`crud/meta.go:162`, pinned at `crud/schema_edge_test.go:304`). (3) `crud/preload.go:221` batches, chunking at 900 keys ([[D-006]]), pinned at `crud/preload_test.go:41`, `:286`. (4) refused at `crud/predicate.go:554`, pinned at `crud/predicate_test.go:297`. (5) refused at `crud/preload.go:193`, pinned at `crud/preload_test.go:328`.
+**Today:** 🟢 ready — all six hold
+**Evidence:** (1) relation predicates render each hop as a correlated `EXISTS`
+([[D-005]]), pinned in `crud/predicate_test.go` and
+`crud/schema_edge_test.go`. (2) `WalkPath` is the single resolver, and preload
+paths now pass through `Meta.ValidateRelationPath` before tree folding, so
+aliases and case variants share one node; the mixed-spelling wider-ask
+regression is in `crud/preload_edge_test.go`. (3) `crud/preload.go` batches and
+chunks at 900 keys ([[D-006]]). (4) sorting through a collection is refused in
+`crud/predicate.go`. (5) pagination remains a `SchemaError` rather than a
+partial relation.
 
-(6) is the gap, and it is wider than a projection. Inside `PreloadWhere` the preloader consults exactly three things: the paging fields, to refuse them (`crud/preload.go:193`), the predicate (`:268`) and the sort (`:299`). **`Fields`, `RelScopes`, a nested `Preloads`, `Distinct`, `ForUpdate`, `Primary`, `NoSort`, `NoTotal`, `After`, `Before` and `Agg` are all accepted and dropped** — eleven, and two of them are not projections:
-- `crud.PreloadWhere("Comments", crud.NarrowRelations(rs))` is a **narrowing** that narrows nothing. The preloader reads only the root `p.scopes` (`crud/preload.go:128`, `:267`, `:274`, `:291`) and never `o.RelScopes`. A caller who believes they have constrained the far side of a preload has not, and that is a different severity class from a dropped `Select`.
-- `crud.PreloadWhere("Comments", crud.Preload("Author"))` — a nested preload — is dropped too. The working spelling is the dotted path `Preload("Comments.Author")`, and nothing says the other one does nothing.
-- `crud.PreloadWhere("Author", crud.Select("Name"))` still selects every column of the target (`:276` and `:292` both write `target.Fields`), so the big column comes back anyway.
-- `crud.PreloadWhere("Author", crud.Unsorted())` still gets the default sort at `:307`. **This one only shows on a `has_one`**: the default is guarded by `if len(sort) == 0 && rel.Kind == HasOne` at `:300`, so on a `has_many` the sort list stays empty and `OrderBy(nil)` renders nothing. The option is dropped in both cases; only the has_one makes it visible.
-- `crud.PreloadWhere("Comments", crud.After(tok))` vanishes without a word — `After`/`Before` are not in the paging refusal's list at `:193`.
-
-Paging inside a preload is refused loudly eighty-three lines above the first of these; nothing else is.
-**If not ready:** They eat the column, or they stop preloading and issue their own second query — which is the query that then runs outside the relation narrowing ([[D-007]]). The cheap fix is symmetry: refuse everything a preload cannot honour the way pagination is refused, which is a list of eleven and not of one. The better one is to honour the projection and the narrowing, keeping the join column the way the root projection does at `crud/sqlrepo/repository.go:458`.
+(6) is closed at the option boundary. Each `PreloadSpec` resolves its option
+list exactly once and in isolation. `validatePreloadOptions` permits only
+`Filter`, `Sort` and `PreloadRows`; reflection over the whole `Options` value
+makes every other non-zero field fail closed, including fields added later.
+Projection, nested preloads, `NarrowRelations`, aggregate state, cursor and
+page controls, datasource selection, sort/total flags, locks and `DISTINCT`
+are all refused before child SQL. `BuildPreloadOptions` gives remote and other
+low-level adapters the same validator without replaying closures. Separate
+specs then fold declaratively: filters intersect, an unnarrowed ask clears
+filters, sorts append and refusal caps take the minimum. The full unsupported
+matrix and exact-once tests live in `crud/preload_test.go`; direct versus
+`ToRequest` → `Compile` parity is pinned in `remote/roundtrip_test.go`.
 
 Also unclosed and not a bug: **there is no per-parent limit.** "The last three comments per article" is one of the commonest list-detail asks, and the refusal at `:193` sends the consumer to hand-written SQL — the outcome (6)'s "if not ready" exists to avoid. A lateral join or a window function would express it and both are dialect-divergent, which is [[D-019]]'s territory; this sweep does not propose it, only that it be named as out of scope rather than read as closed.
 
@@ -693,8 +715,8 @@ the relation half of the check with nothing in the output saying why. That is a
 sentence in the reference plus a line in the generator's output, not a redesign.
 
 **The aggregate proposal, stated concretely enough to cost.** Two shapes, and
-both have to carry their own refusals or they become the eleven dropped preload
-options in a new package.
+both have to carry their own refusals or they recreate the now-closed dropped
+preload-option class in a new package.
 
 *Threshold.* `crud.Having(p)` sets `o.Agg.Having`, and `GtAgg`/`LtAgg`/`EqAgg`
 build closed nodes over an `Aggregation` **value**, never over its alias string.
@@ -824,7 +846,7 @@ becomes a refusal.
 | Cursor paging for a feed | Works on a NOT NULL sort. On a `crud.Opt` sort the server mints a token it then refuses; on a `sql.Null[T]` sort it accepts one and returns fewer rows than exist; through a relation, or under `UnstablePagination`, it mints nothing and says nothing | large |
 | Relation filter without a join | `crud.Eq("Author.Name", …)` → correlated `EXISTS`. One argument | none |
 | The list read that skips the big column | `Select` works and keeps the key and the join columns; saving that model then writes zeros over what it did not fetch | small (docs) · large (the upsert behind it) |
-| A preload trimmed, narrowed, sorted or bounded | Predicate and sort are honoured; eleven other options are accepted and dropped — one of them a narrowing — and there is no per-parent limit at all | small (refuse them) · large (honour them) |
+| A preload trimmed, narrowed, sorted or bounded | Predicate, sort and a per-hop refusal cap are honoured; every other option is refused before child SQL. Per-parent pagination remains deliberately out of scope | none for the closed contract · large for a future portable per-parent limit |
 | A filter the vocabulary does not have | `crud.Raw`, binding properly and portably; column names unresolved, so a rename dies at request time | none (capability) · small (reviewability) |
 | A dashboard summary you can rank and threshold | `GroupBy` + `Aggregate`; no `HAVING`, no ordering by an alias, a sort over an ungrouped column renders and the driver refuses it, and every group past the twentieth silently dropped | large |
 | Delete one, delete many, soft-delete | Scope reaches both verbs and soft delete declares both halves; a missing row is `(0, nil)` with nothing saying the count is the only signal; `DeleteAll(ctx)` with no options takes the table | small (docs) · medium (the empty-filter shape) |
@@ -849,10 +871,10 @@ The write half is where the shape thins out — `Save` is one method doing two j
 that need different answers under contention, and every finding in H-CRUD-03,
 H-CRUD-05 and H-CRUD-09 traces back to that one fact, which is why they are one
 blocker and not three. Where the code stops feeling like the ideal is not
-verbosity but silence: eleven of the findings below are things the library
-accepts and then ignores, or mints and then refuses, or counts and then
-truncates. That is the opposite of the failure mode this repository's own
-decisions are built around, and it is the part worth fixing before the tag.
+verbosity but silence: several findings below are things the library accepts
+and then ignores, or mints and then refuses, or counts and then truncates. The
+preload instance is closed; the same fail-closed rule still has to reach the
+remaining seams before the tag.
 
 ## Release blockers found here
 
@@ -866,7 +888,7 @@ closes all four.
 | 2 | Every paged list over a nullable sort column emits a `nextCursor` its own next request refuses (`crud/sqlrepo/repository.go:238` vs `crud/cursor.go:124`) | blocker | `setCursors` runs on both branches of `Get`, so this reaches consumers who never opted into cursor paging and do not know the field is there. A tag freezes the wire behaviour. Must ship with the "no cursor by design" signal or it becomes #10 |
 | — | **Pointer — Sqlrepo E-SQLREPO-14 / edge blocker 3 owns stale full-model `Save`/`Replace`.** `Save` is the core repository verb whose version-tag semantics [[D-011]] make a consumer expect, but its SQL/upsert and `Replace` route live in Sqlrepo. | pointer, not a second blocker | Follow the canonical Sqlrepo finding and its integration matrix (`docs/ai/usecases/modules/sqlrepo/Sqlrepo.md:1741-1748`). Crud retains the decision tension only: either versioned full writes carry a predicate or the core contract must say that `Save` is outside optimistic locking. |
 | 4 | A filter value held in a `crud.Opt` binds NULL and matches nothing (`crud/predicate.go:154-157`, `crud/opt.go:105`) | serious | The predicate path is the only path that never calls `ElemValue`, and `crud.Eq("Age", dto.Age)` is the line [[D-002]] leads a consumer to write. Silently empty result, no error |
-| 5 | Eleven options inside `PreloadWhere` are accepted and dropped, one of them a narrowing (`crud/preload.go:128`, `:268`, `:299`) | serious | `NarrowRelations` on a preload constrains nothing, a nested `Preload` does nothing, `Select` returns the big column anyway. Pagination is refused loudly eighty-three lines above; nothing else is |
+| ~~5~~ | ~~Eleven options inside `PreloadWhere` were accepted and dropped~~ | **closed by [[D-006]]** | only filter, sort and per-hop refusal caps are accepted; the exhaustive validator rejects every other resolved field before child SQL, with direct/remote parity regressions |
 | 6 | Six seam verbs silently drop options, with six different subsets and no document naming any of them (H-CRUD-06's table) | serious | `UpdateAll`/`DeleteAll` take a `Limit` and emit none ([[D-026]], open); `Aggregate` drops seven. A filtered write does more than it was asked and reports the count as if that were the answer |
 | 7 | An aggregate read is silently truncated to the repository's default page size (`crud/sqlrepo/repository.go:1051`, `crud/sqlrepo/blueprint.go:26`) | serious | A dashboard over 21 statuses shows 20, with no total, no flag and no error. **= Sqlrepo blocker 8, one fix** — kept here because `crud.Unpaged()` is the escape and it is this package's option |
 | 8 | `missedRow`'s existence check goes to the replica (`crud/sqlrepo/repository.go:817`) | serious | It decides retry-or-stop after an optimistic-lock miss. On a lagging replica a deleted row retries forever and a live conflict reports as vanished. [[D-032]] names this class explicitly. **= Sqlrepo blocker 3, one fix** |

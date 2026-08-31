@@ -952,6 +952,15 @@ instead of collapsing different parents into one bucket.
 Pagination inside a preload is refused: a `LIMIT` over a batched load would
 truncate some parents' children and not others.
 
+`PreloadWhere` deliberately has a closed resolved contract: only `Filter`,
+`Sort`, and `PreloadRows` may be non-zero. The ordinary spelling is `Where`,
+`OrderBy`/`SortBy`, and `PreloadRows`; a custom low-level `Option` may write the
+same three fields. Projection, nested `Preload`, relation
+scopes, cursors, paging, datasource selection, aggregates, lock and query flags
+are errors instead of ignored hints. Put nested relations in one dotted
+top-level path. `PreloadRows` and `PreloadCap` are refusal ceilings, apply at
+every hop of that path, and overlapping ceilings use the strictest value.
+
 ---
 
 ## The query DSL

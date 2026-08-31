@@ -355,6 +355,172 @@ func TestPreloadCannotBePaginated(t *testing.T) {
 	}
 }
 
+func TestPreloadRefusesEveryUnsupportedGenericOptionBeforeRowsOrSQL(t *testing.T) {
+	relationScopes := (*crud.RelationScopes)(nil).
+		AtPath("Author", crud.Eq("ID", int64(7)))
+	tests := []struct {
+		name string
+		opt  crud.Option
+		want string
+	}{
+		{"projection", crud.Select("Body"), "projection"},
+		{"nested preload", crud.Preload("Author"), "dotted top-level"},
+		{"relation narrowing", crud.NarrowRelations(relationScopes), "containing query"},
+		{"aggregate", crud.Aggregate(crud.CountAll("total")), "aggregate"},
+		{"cursor after", crud.After("cursor"), "cursor"},
+		{"cursor before", crud.Before("cursor"), "cursor"},
+		{"primary", crud.PrimaryOnly(), "containing read"},
+		{"unsorted", crud.Unsorted(), "deterministic"},
+		{"skip total", crud.SkipTotal(), "total query"},
+		{"row lock", crud.ForUpdate(), "lock"},
+		{"distinct", crud.Distinct(), "DISTINCT"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rec := crudtest.Postgres()
+			o := crud.Build(crud.PreloadWhere("Comments", test.opt))
+			err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+				articleMeta(t), []Article{}, o.Preloads, 0, nil)
+			var schemaErr *crud.SchemaError
+			if !errors.As(err, &schemaErr) || !strings.Contains(schemaErr.Reason, test.want) {
+				t.Fatalf("RunPreloads error = %T %v, want SchemaError containing %q", err, err, test.want)
+			}
+			if schemaErr.Field != "Comments" {
+				t.Fatalf("SchemaError field = %q, want preload path Comments", schemaErr.Field)
+			}
+			if len(rec.Statements()) != 0 {
+				t.Fatalf("unsupported preload option reached SQL: %v", rec.SQL())
+			}
+		})
+	}
+}
+
+func TestPreloadOptionsAreResolvedExactlyOnce(t *testing.T) {
+	calls := 0
+	option := crud.Option(func(o *crud.Options) {
+		calls++
+		o.Filter = append(o.Filter, crud.Eq("Approved", true))
+	})
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(crud.PreloadWhere("Comments", option))
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	if calls != 1 {
+		t.Fatalf("preload option calls = %d, want exactly one resolution", calls)
+	}
+	if got := rec.Last().Args; len(got) != 2 || got[1] != true {
+		t.Fatalf("resolved preload args = %#v, want parent key and filter", got)
+	}
+}
+
+func TestPreloadSortReplacementSurvivesInsideOneSpec(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(
+		crud.PreloadWhere("Comments",
+			crud.OrderBy(crud.Asc("ID")),
+			crud.SortBy(crud.Desc("Body"))),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	sql := crudtest.Normalize(rec.Last().SQL)
+	if !strings.Contains(sql, `ORDER BY "body" DESC`) || strings.Contains(sql, `"id" ASC`) {
+		t.Fatalf("folded preload sort = %s, want the later SortBy replacement", sql)
+	}
+}
+
+func TestPreloadSortsFromSeparateRequestsComposeInOrder(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(
+		crud.PreloadWhere("Comments", crud.OrderBy(crud.Asc("ID"))),
+		crud.PreloadWhere("Comments", crud.SortBy(crud.Desc("Body"))),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	if sql := crudtest.Normalize(rec.Last().SQL); !strings.Contains(sql, `ORDER BY "id" ASC, "body" DESC`) {
+		t.Fatalf("sorts from separate preload requests = %s, want both in request order", sql)
+	}
+}
+
+func TestPreloadCapsFromSeparateRequestsUseTheStrictestBudget(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(
+		crud.PreloadWhere("Comments", crud.PreloadRows(1)),
+		crud.PreloadWhere("Comments", crud.PreloadRows(5)),
+	)
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	if sql := crudtest.Normalize(rec.Last().SQL); !strings.Contains(sql, "LIMIT 2") {
+		t.Fatalf("folded preload cap SQL = %s, want strictest cap plus one", sql)
+	}
+}
+
+func TestPreloadRowsOptionIsConsumedAsAnExactRefusalCap(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), int64(1), int64(7), "first", true},
+		[]any{int64(11), int64(1), int64(7), "second", true},
+	))
+	o := crud.Build(crud.PreloadWhere("Comments", crud.PreloadRows(1)))
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(), articleMeta(t),
+		[]Article{{ID: 1}}, o.Preloads, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "preload exceeds") {
+		t.Fatalf("RunPreloads error = %v, want exact row-cap refusal", err)
+	}
+	if sql := rec.Last().SQL; !strings.Contains(sql, "LIMIT 2") {
+		t.Fatalf("preload SQL = %s, want cap plus one", sql)
+	}
+}
+
+func TestNestedPreloadRowsCapsTheIntermediateHop(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows(
+		[]any{int64(10), int64(1), int64(7), "first", true},
+		[]any{int64(11), int64(1), int64(7), "second", true},
+	))
+	o := crud.Build(crud.PreloadWhere("Comments.Author", crud.PreloadRows(1)))
+	err := crud.RunPreloads(context.Background(), rec, rec.Dialect(), articleMeta(t),
+		[]Article{{ID: 1}}, o.Preloads, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "preload exceeds") {
+		t.Fatalf("RunPreloads error = %v, want intermediate-hop row-cap refusal", err)
+	}
+	if len(rec.Statements()) != 1 || !strings.Contains(rec.Last().SQL, "LIMIT 2") {
+		t.Fatalf("nested preload statements = %v, want capped Comments query only", rec.SQL())
+	}
+}
+
+func TestNegativePreloadCapsAreRefusedBeforeRowsOrSQL(t *testing.T) {
+	tests := []crud.Option{
+		crud.PreloadWhere("Comments", crud.PreloadRows(-1)),
+		crud.PreloadCap("Comments", -1),
+	}
+	for i, option := range tests {
+		rec := crudtest.Postgres()
+		o := crud.Build(option)
+		err := crud.RunPreloads(context.Background(), rec, rec.Dialect(),
+			articleMeta(t), []Article{}, o.Preloads, 0, nil)
+		if err == nil || !strings.Contains(err.Error(), "cannot be negative") {
+			t.Fatalf("case %d error = %v, want negative-cap refusal", i, err)
+		}
+		if len(rec.Statements()) != 0 {
+			t.Fatalf("case %d reached SQL: %v", i, rec.SQL())
+		}
+	}
+}
+
+func TestMaximumPreloadCapDoesNotOverflowItsDetectionLimit(t *testing.T) {
+	rec := crudtest.Postgres().Push(crudtest.Rows())
+	o := crud.Build(crud.PreloadWhere("Comments", crud.PreloadRows(math.MaxInt)))
+
+	runPreloads(t, rec, articleMeta(t), []Article{{ID: 1}}, o.Preloads...)
+
+	want := fmt.Sprintf("LIMIT %d", math.MaxInt)
+	if sql := rec.Last().SQL; !strings.Contains(sql, want) {
+		t.Fatalf("maximum preload cap SQL = %s, want saturated %s", sql, want)
+	}
+}
+
 // Preload paths usually arrive from an HTTP client, so their depth is capped.
 func TestPreloadDepthIsCapped(t *testing.T) {
 	rec := crudtest.Postgres()

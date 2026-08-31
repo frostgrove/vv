@@ -22,7 +22,7 @@ const preloadBatch = 900
 // PreloadSpec is one requested relation path, optionally narrowed.
 type PreloadSpec struct {
 	Path string   // "Comments" or "Comments.Author"
-	Opts []Option // extra Where/OrderBy applied to the related query
+	Opts []Option // resolved shape may contain only Filter, Sort and PreloadRows
 
 	// MaxRows caps every relation hop in Path. It is separate from Opts so a
 	// request for Comments.Author cannot leave the potentially large Comments
@@ -46,9 +46,13 @@ func Preload(paths ...string) Option {
 	}
 }
 
-// PreloadWhere loads a relation narrowed by extra options. Pagination options
-// are refused here: a LIMIT on a batched preload would silently truncate some
-// parents' children and not others.
+// PreloadWhere loads a relation with options whose resolved shape contains only
+// Filter, Sort and PreloadRows. The ordinary spelling is Where plus OrderBy or
+// SortBy; a custom low-level Option remains valid when it writes only those
+// fields. PreloadRows is a refusal cap on every hop of a nested path, so an
+// intermediate relation cannot grow without bound. Every other resolved query
+// field is refused: pagination, projection, cursor, datasource, lock and nested
+// preload semantics do not survive this batched second-query boundary.
 func PreloadWhere(path string, options ...Option) Option {
 	return func(o *Options) {
 		o.Preloads = append(o.Preloads, PreloadSpec{Path: path, Opts: options})
@@ -71,7 +75,7 @@ func PreloadCap(path string, maxRows int, options ...Option) Option {
 
 type preloadNode struct {
 	name     string
-	options  []Option
+	options  *Options
 	children []*preloadNode
 	whole    bool // some spec asked for this relation unnarrowed
 	maxRows  int
@@ -90,40 +94,177 @@ func (this *preloadNode) child(name string) *preloadNode {
 
 // buildPreloadTree folds the flat paths into a tree, so "Comments" and
 // "Comments.Author" share a single query for the comments.
-func buildPreloadTree(specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
+func buildPreloadTree(meta *Meta, specs []PreloadSpec, maxDepth int) (*preloadNode, error) {
 	root := &preloadNode{}
 	for _, spec := range specs {
+		if spec.MaxRows < 0 {
+			return nil, &SchemaError{Model: meta.Name, Field: spec.Path, Reason: "a preload row cap cannot be negative"}
+		}
 		segs := strings.Split(spec.Path, ".")
 		if len(segs) > maxDepth {
 			return nil, &SchemaError{Reason: "preload path " + spec.Path + " is deeper than the allowed " +
 				itoa(maxDepth) + " levels"}
 		}
-		cur := root
-		for _, seg := range segs {
-			seg = strings.TrimSpace(seg)
-			if seg == "" {
+		for i := range segs {
+			segs[i] = strings.TrimSpace(segs[i])
+			if segs[i] == "" {
 				return nil, &SchemaError{Reason: "empty segment in preload path " + spec.Path}
 			}
-			cur = cur.child(seg)
-			if spec.MaxRows > 0 && (cur.maxRows == 0 || spec.MaxRows < cur.maxRows) {
-				cur.maxRows = spec.MaxRows
+		}
+		canonical, err := meta.ValidateRelationPath(strings.Join(segs, "."))
+		if err != nil {
+			return nil, err
+		}
+		segs = strings.Split(canonical, ".")
+
+		var resolved *Options
+		if len(spec.Opts) > 0 {
+			resolved, err = buildPreloadOptions(meta.Name, canonical, spec.Opts...)
+			if err != nil {
+				return nil, err
 			}
 		}
+		maxRows := spec.MaxRows
+		if resolved != nil && resolved.PreloadRows > 0 && (maxRows == 0 || resolved.PreloadRows < maxRows) {
+			maxRows = resolved.PreloadRows
+		}
+
+		cur := root
+		for i, seg := range segs {
+			cur = cur.child(seg)
+			if i < len(segs)-1 {
+				// Loading a deeper hop necessarily materialises this prefix. With no
+				// options addressed to the prefix itself, that is a request for all
+				// prefix rows, not permission for another folded spec to narrow them.
+				cur.whole = true
+			}
+			if maxRows > 0 && (cur.maxRows == 0 || maxRows < cur.maxRows) {
+				cur.maxRows = maxRows
+			}
+		}
+		narrowed := false
+		if resolved != nil && len(resolved.Filter) > 0 {
+			target, err := preloadTargetMeta(meta, segs)
+			if err != nil {
+				return nil, err
+			}
+			narrowed = !IsTautologyFor(target, resolved.Predicate())
+		}
+
 		// Folding two requests for the same path into one query is what makes
 		// "Comments" and "Comments.Author" share a statement. Folding their
-		// narrowings together is a different thing: a request that asked for
-		// all of them and for a subset would receive only the subset, with a
-		// 200 and no way to tell. The wider ask wins.
-		if len(spec.Opts) == 0 {
-			cur.whole, cur.options = true, nil
-			continue
+		// filters together is a different thing: a request that asked for all
+		// rows and for a subset would receive only the subset, with a 200 and no
+		// way to tell. The wider ask clears filters, while orthogonal ordering and
+		// refusal caps remain meaningful for the one shared query.
+		if !narrowed {
+			cur.whole = true
 		}
-		if cur.whole {
-			continue
+		if resolved != nil {
+			if cur.options == nil {
+				cur.options = &Options{}
+			}
+			cur.options.Filter = append(cur.options.Filter, resolved.Filter...)
+			cur.options.Sort = append(cur.options.Sort, resolved.Sort...)
 		}
-		cur.options = append(cur.options, spec.Opts...)
 	}
+	clearWholePreloadFilters(root)
 	return root, nil
+}
+
+func preloadTargetMeta(root *Meta, canonicalSegments []string) (*Meta, error) {
+	schema := root.Schema
+	for _, segment := range canonicalSegments {
+		relation := schema.Relation(segment)
+		if relation == nil {
+			return nil, &UnknownFieldError{Model: schema.Name, Field: strings.Join(canonicalSegments, ".")}
+		}
+		var err error
+		schema, err = schemaOfType(relation.Elem)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &Meta{Schema: schema}, nil
+}
+
+func clearWholePreloadFilters(node *preloadNode) {
+	for _, child := range node.children {
+		if child.whole && child.options != nil {
+			child.options.Filter = nil
+		}
+		clearWholePreloadFilters(child)
+	}
+}
+
+// BuildPreloadOptions resolves the closed option contract used by
+// PreloadWhere. Filter, Sort and PreloadRows are the only supported fields.
+// Every other non-zero Options field is refused, including fields added in a
+// future release, so an ordinary query option can never become a silent no-op
+// merely because it was nested under a preload.
+//
+// PreloadWhere calls this automatically during execution. The exported form is
+// for adapters and other low-level integrations that need to validate and
+// serialise the same contract without running option closures twice.
+func BuildPreloadOptions(path string, options ...Option) (*Options, error) {
+	return buildPreloadOptions("preload", path, options...)
+}
+
+func buildPreloadOptions(model, path string, options ...Option) (*Options, error) {
+	o := Build(options...)
+	if err := validatePreloadOptions(model, path, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+func validatePreloadOptions(model, path string, o *Options) error {
+	if o.PreloadRows < 0 {
+		return &SchemaError{Model: model, Field: path, Reason: "a preload row cap cannot be negative"}
+	}
+	value := reflect.ValueOf(*o)
+	typ := value.Type()
+	for i := range value.NumField() {
+		field := typ.Field(i)
+		switch field.Name {
+		case "Filter", "Sort", "PreloadRows":
+			continue
+		}
+		if value.Field(i).IsZero() {
+			continue
+		}
+		return &SchemaError{Model: model, Field: path, Reason: unsupportedPreloadOption(field.Name)}
+	}
+	return nil
+}
+
+func unsupportedPreloadOption(field string) string {
+	switch field {
+	case "Page", "Limit", "Offset", "Unpaged":
+		return "a preload cannot be paginated; it is loaded for every parent at once"
+	case "After", "Before":
+		return "a preload cannot use a cursor; it is loaded for every parent at once"
+	case "Fields":
+		return "a preload cannot change its projection; related models are scanned as complete rows"
+	case "Preloads":
+		return "a preload option cannot declare nested preloads; use one dotted top-level preload path"
+	case "RelScopes":
+		return "relation scopes inside a preload option are not supported; narrow relations on the containing query"
+	case "Agg":
+		return "a preload cannot be an aggregate query"
+	case "Primary":
+		return "a preload cannot select its own datasource; force the containing read onto primary"
+	case "NoSort":
+		return "a preload cannot disable deterministic relation ordering"
+	case "NoTotal":
+		return "a preload has no separate total query to skip"
+	case "ForUpdate":
+		return "a preload cannot lock related rows"
+	case "Distinct":
+		return "a preload cannot apply DISTINCT to complete related rows"
+	default:
+		return "query option " + field + " is not supported inside a preload"
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +282,7 @@ func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any
 	if maxDepth <= 0 {
 		maxDepth = DefaultPreloadDepth
 	}
-	tree, err := buildPreloadTree(specs, maxDepth)
+	tree, err := buildPreloadTree(m, specs, maxDepth)
 	if err != nil {
 		return err
 	}
@@ -208,18 +349,17 @@ func (this *preloader) level(m *Meta, parents []reflect.Value, nodes []*preloadN
 // load fetches one relation for a whole set of parents and wires the results
 // into their fields, returning the loaded children so nested preloads can
 // continue from them.
-func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, options []Option, maxRows int, path string) ([]reflect.Value, error) {
+func (this *preloader) load(m *Meta, rel *Relation, parents []reflect.Value, options *Options, maxRows int, path string) ([]reflect.Value, error) {
 	target, local, remote, err := rel.Resolve()
 	if err != nil {
 		return nil, err
 	}
-	o := Build(options...)
+	o := &Options{}
+	if options != nil {
+		*o = *options
+	}
 	if maxRows > 0 && (o.PreloadRows == 0 || maxRows < o.PreloadRows) {
 		o.PreloadRows = maxRows
-	}
-	if o.Limit != 0 || o.Page != 0 || o.Offset != 0 || o.Unpaged {
-		return nil, &SchemaError{Model: m.Name, Field: rel.Name,
-			Reason: "a preload cannot be paginated; it is loaded for every parent at once"}
 	}
 
 	// Collect the distinct parent keys.
@@ -350,7 +490,11 @@ func (this *preloader) fetch(target *Meta, rel *Relation, local, remote *Field, 
 	// failure exact while keeping the driver from materialising an unbounded
 	// child table merely to discover the cap was crossed.
 	if remaining >= 0 {
-		b.LimitOffset(remaining+1, 0)
+		limit := remaining
+		if limit < math.MaxInt {
+			limit++
+		}
+		b.LimitOffset(limit, 0)
 	}
 
 	q, args, err := b.Done()

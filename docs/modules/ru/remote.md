@@ -126,6 +126,12 @@ paging не могут изменить keyed result и отбрасываютс
 каждое поле фильтра вызывающего**, как и для прямого `Get`. Иначе endpoint
 вернёт обычный отказ query вместо ослабления keyed-read.
 
+Внутри `PreloadWhere` переносимы только filter, sort и `PreloadRows`. Общий
+preload-validator отклоняет все остальные resolved options до отправки запроса,
+а nested caps используют ту же every-hop семантику `maxRows`, что и локальное
+выполнение. Option closures разрешаются один раз; duplicate specs складываются
+одинаково локально и после `ToRequest` → `Compile`.
+
 `GetAll` сбрасывает `SkipTotal` и превращает запрос всех строк — без page
 controls либо с `Unpaged` (он побеждает переданные page/limit) — в ограниченные
 запросы. С `Unpaged+Offset` он возвращает весь suffix после этого offset. Он
