@@ -440,8 +440,11 @@ func (t tracing) UnwrapSource() crud.Source { return t.inner }
 Нативный bulk намеренно отличается. `UnsafeBulkInserterOf` **не** идёт по
 `UnwrapSource`: запись под неизвестным tracing/rate-limit/session wrapper
 обошла бы его поведение. Без явного форвардера `UnsafeBulkInserter`
-`InsertBatch` выбирает переносимый SQL. Прямой план из одного statement проходит
-через `Exec` wrapper-а; атомарный план из нескольких statements выполняется на
+`InsertBatch` выбирает переносимый SQL. Явный forwarder без изменений передаёт
+inner capability полученный target executor; nil означает отсутствие binding и
+работу на точном receiver. Так wrapper остаётся authority, а разрешённый эффект
+всё равно попадает в транзакцию. Прямой план из одного statement проходит через
+`Exec` wrapper-а; атомарный план из нескольких statements выполняется на
 transaction handle, который вернул внутренний source. Чтобы видеть каждый
 statement, используйте instrumentation драйвера либо явно обёрнутые
 `Begin`/`Tx`. Встроенный `ReadWrite` явно форвардит нативный bulk в primary.

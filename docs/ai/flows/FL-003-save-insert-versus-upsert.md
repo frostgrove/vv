@@ -124,8 +124,9 @@ the verb explicitly ([[FL-008]], [[FL-017]]).
 
 `repository.InsertBatch` reuses the complete batch-shape preflight but is always
 insert-only: an assigned key gets no upsert tail. It derives `TableRef`, columns
-and values from `Meta`, resolves the source-bound executor, then asks that exact
-executor for `UnsafeBulkInserter`. A bare pgx source performs COPY. A source
+and values from `Meta`, resolves the source-bound executor, then asks the exact
+repository Source for `UnsafeBulkInserter` and supplies a matching binding as its
+target. A bare pgx source performs COPY. A source
 without the capability, or behind a wrapper that did not explicitly preserve
 it, uses `batchInsertPlan` and ordinary `Exec`.
 

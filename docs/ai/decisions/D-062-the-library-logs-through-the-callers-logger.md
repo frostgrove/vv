@@ -60,8 +60,8 @@ its `Exec` sees a direct one-statement plan. A multi-statement plan keeps
 atomicity by using the transaction handle, so observing every chunk requires
 transaction-aware or driver-level instrumentation. A wrapper that deliberately
 preserves native bulk implements `UnsafeBulkInsert` itself and records/guards
-that call before forwarding. `ReadWrite` does so only to route the effect to its
-primary.
+that call before forwarding the supplied target executor unchanged. `ReadWrite`
+does so only to route the effect to its primary.
 
 **Because "no logger" must not be a nil check at nine call sites.**
 `port.Logger` never returns nil and `port.WithLogger(ctx, nil)` stores nothing.

@@ -131,9 +131,11 @@ only policy без `Inspect` отказывает пачке, а не довер
 может проверить. Fault enrichment сохраняет операцию `InsertBatch` и пути полей
 из classifier драйвера.
 
-Если разрешённый executor напрямую предоставляет `crud.UnsafeBulkInserter`
+Если точный Source repository напрямую предоставляет `crud.UnsafeBulkInserter`
 и metadata даёт insert-колонки, repository выбирает его; crudpgx так
-предоставляет PostgreSQL COPY. Иначе используется тот же preflighted
+предоставляет PostgreSQL COPY и получает подходящий bound executor как target.
+Source остаётся authority, поэтому транзакция не может вновь открыть capability,
+которую wrapper скрыл или запретил. Иначе используется тот же preflighted
 атомарный bind-budgeted `INSERT` как переносимый fallback. Capability discovery не
 угадывает, подходит ли COPY семантике таблицы: для RLS/rewrite rules, особого
 pgx encoding или требования обычной INSERT-семантики нужен явный opt-out:
@@ -416,9 +418,10 @@ rollback, и `fn` не может откатиться самостоятель�
 правило, когда bind-бюджет требует нескольких statements. Они присоединяются к
 ambient-транзакции либо открывают одну; источник, который не может дать ни одну
 атомарную границу, возвращает `crud.ErrNoTxSupport` до первого чанка. Для одного
-statement лишняя транзакция не открывается. Нативный `InsertBatch` выполняется
-на точном разрешённом executor, поэтому pgx COPY подключается к той же
-ambient-транзакции, а не сбегает в pool.
+statement лишняя транзакция не открывается. Нативный `InsertBatch` разрешается
+точным Source и получает resolved executor как target, поэтому pgx COPY
+подключается к той же ambient-транзакции, а не сбегает в pool и не обходит
+Source wrapper.
 Привязанный non-transaction executor не является атомарной границей и не
 используется для chunked-плана: sqlrepo открывает транзакцию от своего source.
 Если connection-local state должен сохраниться между чанками, заранее начните и

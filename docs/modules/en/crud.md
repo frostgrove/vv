@@ -429,7 +429,10 @@ cost something, and only two of the three say so:
 Native bulk is deliberately different. `UnsafeBulkInserterOf` does **not** walk
 `UnwrapSource`, because invoking a write beneath an unknown tracing, rate-limit,
 or session wrapper would bypass its behaviour. Without an explicit
-`UnsafeBulkInserter` forwarder, `InsertBatch` selects portable SQL. A direct
+`UnsafeBulkInserter` forwarder, `InsertBatch` selects portable SQL. A forwarder
+passes the supplied target executor unchanged to the inner capability; nil means
+there was no binding and the capability uses its exact receiver. This preserves
+wrapper authority while routing an accepted effect into a transaction. A direct
 one-statement plan crosses the wrapper's `Exec`; an atomic multi-statement plan
 runs on the transaction handle returned underneath it. Use driver-level
 instrumentation, or an explicitly wrapped `Begin`/`Tx`, to observe every

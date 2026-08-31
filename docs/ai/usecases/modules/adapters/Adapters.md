@@ -210,9 +210,10 @@ without dropping out of the repository contract.
 **Evidence:** `crud.Repo.InsertBatch` is the typed, insert-only operation.
 Sqlrepo derives the validated `TableRef`, insert columns and `crud.Opt` values
 from model metadata and preflights every row before I/O. It resolves the
-repository's source-bound executor first, so `repo.Tx` selects its pgx
-transaction. A bare pgx executor exposes `crud.UnsafeBulkInserter` and therefore
-gets COPY by default; a `crudsql` source or a source without that exact
+repository's source-bound executor first. A bare pgx Source exposes
+`crud.UnsafeBulkInserter` and therefore gets COPY by default; inside `repo.Tx`
+the same exact Source receives its pgx transaction as the execution target. A
+`crudsql` source or a source without that exact
 capability gets ordinary bind-budgeted `INSERT` chunks. More than one chunk
 joins or opens one atomic unit.
 
@@ -625,8 +626,9 @@ H-ERRS-08 and H-ERRS-09 own it, and the one adapter-side fact is recorded above.
 - **[[D-061]] — a wrapper forwards what it wraps, but effect capabilities are
   exact.** `UnsafeBulkInserterOf` deliberately is not a fifth unwrap walker:
   walking below an unknown wrapper could bypass statement behaviour it owns.
-  `ReadWrite` explicitly forwards the primary; another wrapper either forwards
-  deliberately or causes `InsertBatch` to select ordinary SQL. A direct plan
+  `ReadWrite` explicitly forwards the primary and preserves the supplied target;
+  another wrapper either does the same deliberately or causes `InsertBatch` to
+  select ordinary SQL. A direct plan
   crosses that wrapper; transaction visibility remains H-ADAPTERS-19's separate
   concern. Repository capabilities use the same fail-closed rule across
   decorators.

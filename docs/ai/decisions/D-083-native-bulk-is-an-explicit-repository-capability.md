@@ -32,7 +32,8 @@ its optional probe receives insert rather than upsert semantics.
 1. resolve and validate the executor scoped to the repository source from `ctx`;
 2. preflight the complete batch shape and every model value;
 3. invoke `crud.UnsafeBulkInserter` only when the exact repository Source exposes
-   it, passing the resolved executor as the effect target;
+   it, passing a matching bound executor as the effect target, or nil to mean
+   the capability receiver when no binding exists;
 4. otherwise render bind-budgeted multi-row INSERT chunks and execute multiple
    chunks in one transaction.
 
@@ -46,8 +47,9 @@ ordinary SQL with `crud.PortableBatch()`; a declaration selects it for every
 call with `sqlrepo.PortableBatch()`. The opaque option is monotonic and is
 resolved exactly once by sqlrepo after decorators forward it.
 
-A native implementation is atomic on its resolved target executor. Its returned count is
-the database count and may be smaller than the input when a trigger skips rows;
+A native implementation is atomic on its resolved target executor, or on its
+exact receiver when the target is nil. Its returned count is the database count
+and may be smaller than the input when a trigger skips rows;
 the high-level write intentionally exposes no count. `ErrNoBulkInsertSupport`
 is reserved for a before-I/O capability refusal. Only that error may select the
 portable fallback. A driver/server error is final because COPY may already have
@@ -85,7 +87,8 @@ Applications that deliberately work below repositories have explicit names:
 - `UnsafeExecFor` and `UnsafeQueryFor` select the source-bound executor before
   running raw SQL;
 - `UnsafeBulkInsertFor` validates the same source-bound resolution, then passes
-  its resolved executor to the exact Source's native effect;
+  the matching executor, or nil for the unbound receiver, to the exact Source's
+  native effect;
 - `crudpgx.Executor.UnsafeCopyFrom` and `UnsafeCopyFromTable` run on the
   receiver's exact handle.
 

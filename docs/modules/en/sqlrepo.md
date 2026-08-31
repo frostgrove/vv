@@ -126,9 +126,11 @@ policy with no `Inspect` refuses the batch rather than trusting values it cannot
 verify. Fault enrichment keeps `InsertBatch` as the operation and preserves
 field paths from the driver classifier.
 
-When the resolved executor exposes `crud.UnsafeBulkInserter` directly and
+When the exact repository Source exposes `crud.UnsafeBulkInserter` directly and
 metadata yields insert columns, the repository selects it; crudpgx provides
-PostgreSQL COPY this way. Otherwise it uses the same preflighted, atomic
+PostgreSQL COPY and receives the matching bound executor as its target. The
+Source remains authoritative, so a transaction cannot reveal native bulk hidden
+or refused by a wrapper. Otherwise the repository uses the same preflighted, atomic
 bind-budgeted `INSERT` machinery as a portable fallback. Capability discovery
 does not guess whether COPY fits a table's semantics: RLS/rewrite-rule tables,
 special pgx encodings, or callers requiring ordinary INSERT semantics need an
@@ -402,8 +404,9 @@ on pgx, via `SAVEPOINT` on `database/sql` ([[FL-009]]).
 a bind budget requires several statements. They join an ambient transaction or
 open one; a datasource that cannot provide either atomic boundary returns
 `crud.ErrNoTxSupport` before the first chunk. A one-statement call opens nothing
-extra. Native `InsertBatch` runs on the exact resolved executor, so pgx COPY
-joins the same ambient transaction rather than escaping to the pool.
+extra. Native `InsertBatch` is authorised by the exact Source and receives the
+resolved executor as its target, so pgx COPY joins the same ambient transaction
+rather than escaping to the pool or bypassing a Source wrapper.
 A bound non-transaction executor is not an atomic boundary and is not reused for
 a chunked plan; sqlrepo opens a transaction from its source. Bind an already
 started transaction, or bind the repository to the session source itself, when

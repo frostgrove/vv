@@ -46,8 +46,9 @@ pool and reproduce the outside-rollback write the safe API exists to prevent.
    `crud/sqlrepo/repository.go`. Every statement asks
    `crud.ExecutorFor(ctx, repositorySource)` before using the writable source or
    replica. Reads inside a transaction therefore cannot route around it.
-   `repository.InsertBatch` resolves `exec` before looking for native bulk, so
-   pgx COPY follows the same binding rather than the pool receiver.
+   `repository.InsertBatch` validates that resolution before native bulk. The
+   exact repository Source still owns permission/interception, while the
+   matching bound executor is passed to its capability as the effect target.
 
 2. **The binding stack** — `crud/executor.go:binding`. Bindings chain through
    `context`; each carries a datasource identity, executor, ownership bit and
@@ -142,12 +143,15 @@ both chunked `Delete` and `SaveAll`. A source without transaction support return
 
 ## Native batch effects
 
-`InsertBatch` first selects the source-bound executor and only then tests that
-exact value for `UnsafeBulkInserter`. A pool capability cannot pull work out of
-an ambient transaction. COPY is atomic on the pgx handle; the portable fallback
-uses the chunk rule above. `ReadWrite` forwards native bulk only to its primary.
-An unknown Source wrapper does not expose the underlying effect, so portable
-INSERT is selected instead of silently invoking COPY underneath it. A direct
+`InsertBatch` first validates the source-bound executor and then tests the exact
+repository Source for `UnsafeBulkInserter`. The Source owns permission and
+interception; a matching bound executor is supplied as the execution target, or
+nil selects the unbound capability receiver. A pool capability therefore cannot
+pull work out of an ambient transaction, and a raw transaction cannot make a
+wrapper-hidden effect reappear. COPY is atomic on the pgx handle; the portable
+fallback uses the chunk rule above. `ReadWrite` forwards native bulk only to its
+primary. An unknown Source wrapper does not expose the underlying effect, so
+portable INSERT is selected instead of silently invoking COPY underneath it. A direct
 one-statement plan goes through the wrapper's `Exec`; chunked plans execute on
 the transaction handle and need transaction-aware or driver instrumentation for
 complete visibility ([[D-061]], [[D-062]], [[D-083]]).

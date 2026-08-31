@@ -141,3 +141,32 @@ func TestExactUnsafeCopyAndContextResolvedBulkAreDifferentOnPurpose(t *testing.T
 		t.Fatalf("pool/tx COPY calls = %d/%d, want exact unsafe 1 and resolved helper 1", pool.called, tx.called)
 	}
 }
+
+func TestContextResolvedBulkAcceptsPointerExecutorForms(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target func(*copyHandle) crud.Executor
+	}{
+		{"executor", func(handle *copyHandle) crud.Executor {
+			executor := From(handle)
+			return &executor
+		}},
+		{"tx", func(handle *copyHandle) crud.Executor {
+			return &Tx{Executor: From(handle)}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := new(copyHandle)
+			targetHandle := new(copyHandle)
+			source := From(pool)
+			ctx := crud.BindExecutor(context.Background(), source, tc.target(targetHandle))
+
+			if _, err := crud.UnsafeBulkInsertFor(ctx, source, crud.TableRef{Name: "events"}, []string{"id"}, [][]any{{1}}); err != nil {
+				t.Fatal(err)
+			}
+			if pool.called != 0 || targetHandle.called != 1 {
+				t.Fatalf("pool/target COPY calls = %d/%d", pool.called, targetHandle.called)
+			}
+		})
+	}
+}

@@ -94,7 +94,17 @@ func (this Executor) UnsafeBulkInsert(ctx context.Context, target crud.Executor,
 		return this.UnsafeCopyFromTable(ctx, table, columns, rows)
 	case Executor:
 		return executor.UnsafeCopyFromTable(ctx, table, columns, rows)
+	case *Executor:
+		if executor == nil {
+			return 0, crud.ErrNoBulkInsertSupport
+		}
+		return executor.UnsafeCopyFromTable(ctx, table, columns, rows)
 	case Tx:
+		return executor.Executor.UnsafeCopyFromTable(ctx, table, columns, rows)
+	case *Tx:
+		if executor == nil {
+			return 0, crud.ErrNoBulkInsertSupport
+		}
 		return executor.Executor.UnsafeCopyFromTable(ctx, table, columns, rows)
 	default:
 		return 0, crud.ErrNoBulkInsertSupport

@@ -397,6 +397,21 @@ func TestForwardingBulkWrapperKeepsItsInterceptionAndTheRepositoryTransaction(t 
 	}
 }
 
+func TestForwardingBulkWrapperUsesItsReceiverWithoutABinding(t *testing.T) {
+	inner := newNativeBatchSource(crud.Postgres{})
+	wrapper := &forwardingBulkSource{observingSource: &observingSource{Source: inner}}
+
+	if err := Users.Bind(wrapper).InsertBatch(context.Background(), []*User{{Email: "forwarded-native@example.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	if wrapper.attempts != 1 || inner.attempts != 1 || len(inner.calls) != 1 {
+		t.Fatalf("wrapper/receiver native = %d/%d/%d", wrapper.attempts, inner.attempts, len(inner.calls))
+	}
+	if len(inner.Statements()) != 0 {
+		t.Fatalf("unbound native call fell back to SQL: %v", inner.SQL())
+	}
+}
+
 func TestReadWriteExplicitlyForwardsBulkInsertionToThePrimary(t *testing.T) {
 	primary := newNativeBatchSource(crud.Postgres{})
 	replica := crudtest.Postgres()

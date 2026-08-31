@@ -24,7 +24,7 @@ them. Effect capabilities use a deliberately different rule:
 | `crud.Nexter` — `Next() Core[M, ID]` | `crud.Base`, `security.gate`, `faults.enricher` | `crud.SourceOf` |
 | `crud.SourceUnwrapper` — `UnwrapSource() Source` | any consumer wrapper | `crud.BeginnerOf`, `crud.ReadSourceOf`, `crud.KeyOf` |
 | `crud.BatchInserter` — `InsertBatch(...)` | `sqlrepo`, and each transparent repository decorator | exact outer `Core` only through `crud.InsertBatchOf` |
-| `crud.UnsafeBulkInserter` — `UnsafeBulkInsert(...)` | `crudpgx`, and an explicitly transparent source wrapper | exact executor/source only through `crud.UnsafeBulkInserterOf` |
+| `crud.UnsafeBulkInserter` — `UnsafeBulkInsert(...)` | `crudpgx`, and an explicitly transparent source wrapper | exact Source authority only through `crud.UnsafeBulkInserterOf` |
 
 Both walks are bounded at 64 steps: a chain is built once at start-up and is a
 handful of layers deep, so a walk that long is following a cycle somebody built
@@ -85,7 +85,10 @@ circuit breaking or transaction-local session setup. Therefore
 Built-in Gate and faults layers explicitly forward the typed repository verb;
 an unknown repository decorator returns `ErrNoBatchInsertSupport`. A source
 wrapper explicitly implements `UnsafeBulkInserter` when forwarding is truly
-transparent; otherwise `sqlrepo.InsertBatch` selects portable SQL. A direct
+transparent and passes the supplied target executor unchanged to the inner
+capability; otherwise `sqlrepo.InsertBatch` selects portable SQL. Capability
+ownership stays on that exact Source after a raw transaction handle is bound,
+so `Source → Tx` cannot make a hidden effect reappear or skip a refusing wrapper. A direct
 statement reaches the wrapper's `Exec`; atomic multi-statement work runs on the
 transaction returned by `Begin` and is visible only when that transaction is
 also wrapped. `ReadWrite` explicitly forwards to the primary because routing is
@@ -160,6 +163,11 @@ about what a wrapped source is — which is exactly how they came to disagree.
 - `TestUnknownSourceWrapperSeesSingleStatementPortableSQL` and
   `TestReadWriteExplicitlyForwardsBulkInsertionToThePrimary` in
   `crud/sqlrepo/insert_batch_test.go` — the two source-side branches.
+- `TestUnknownSourceWrapperCannotGainNativeBulkInsideRepositoryTransaction`,
+  `TestRefusingBulkWrapperRemainsAuthoritativeInsideRepositoryTransaction` and
+  `TestForwardingBulkWrapperKeepsItsInterceptionAndTheRepositoryTransaction`,
+  same file — Source effect authority survives transaction binding while an
+  explicit forwarder still reaches the bound transaction.
 - `TestInTxReachesTheBeginnerThroughAWrapper`, same file, with the same control.
 - `TestAWrappedPrimaryIsStillTheDatabaseItNames` and
   `TestATransactionOnAWrappedSourceIsScopedToItsDatabase`, same file — the two

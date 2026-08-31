@@ -314,10 +314,11 @@ An unknown repository decorator therefore fails closed with
 `crud.ErrNoBatchInsertSupport` instead of tunnelling to storage. The sqlrepo
 implementation derives its immutable `TableRef`, insert fields and values from
 `Meta`, preflights the complete slice and treats every assigned key as create.
-It selects pgx COPY only when the resolved executor directly implements
-`UnsafeBulkInserter`; `crud.ReadWrite` explicitly forwards the primary's
-capability, while an unknown `SourceUnwrapper` deliberately receives portable
-SQL instead of invoking native bulk underneath it. A direct one-statement plan
+It selects pgx COPY only when the exact repository Source directly implements
+`UnsafeBulkInserter`, passing a matching bound executor as the effect target;
+`crud.ReadWrite` explicitly forwards the primary's capability, while an unknown
+`SourceUnwrapper` deliberately receives portable SQL instead of invoking native
+bulk underneath it. A direct one-statement plan
 uses its `Exec`; chunked plans use the transaction handle as described by
 [[D-062]].
 
@@ -1476,10 +1477,11 @@ has to stop saying "every scoped write".
   identity/capability lookups walk declared wrappers; effect capabilities do
   not. `Repo.InsertBatch` asks only the outermost `BatchInserter`, so an opaque
   repository decorator fails closed. At the source layer
-  `UnsafeBulkInserterOf` asks only the resolved executor; an unknown wrapper gets
-  portable SQL, whose direct plan crosses its `Exec` and whose chunked plan uses
-  the transaction handle, while `ReadWrite` explicitly forwards native bulk to
-  the primary. `SourceOf` plus `UnsafeExecFor`/`UnsafeQueryFor`
+  `UnsafeBulkInserterOf` asks only the exact Source and the framework passes it a
+  matching bound executor as the effect target; an unknown wrapper gets portable
+  SQL, whose direct plan crosses its `Exec` and whose chunked plan uses the
+  transaction handle, while `ReadWrite` explicitly forwards native bulk to the
+  primary. `SourceOf` plus `UnsafeExecFor`/`UnsafeQueryFor`
   is H-SQLREPO-22's explicit whole-statement escape hatch.
 - **[[D-007]]** — a narrowing does not cross a model boundary on its own.
   H-SQLREPO-16 point 6 is that invariant working as designed and reading, to a

@@ -263,8 +263,10 @@ less-safe architecture.
 **Today:** ✅ covered
 **Evidence:** `Repo.InsertBatch` is an optional typed repository capability and
 is insert-only even for assigned keys. Sqlrepo derives table, columns and values
-from metadata, preflights the complete input and selects native pgx COPY only on
-the resolved executor. Otherwise it renders bind-budgeted INSERT chunks and
+from metadata, preflights the complete input and selects native pgx COPY only
+when the exact Source exposes the effect. A matching bound executor is supplied
+as its target, so wrapper authority and transaction routing both survive.
+Otherwise it renders bind-budgeted INSERT chunks and
 runs a multi-statement plan through one ambient or owned transaction. `SaveAll`
 and `Delete(ids...)` use the same budgeted atomic-plan machinery, so the original
 one-statement ceiling is gone there too.
