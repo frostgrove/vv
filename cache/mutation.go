@@ -26,10 +26,15 @@ func (this *Cache[K, V]) Put(ctx context.Context, key K, value V) error {
 	if core.policy.disabled {
 		return nil
 	}
-	address, _, err := addressOf(core.scope, core.keys, core.keyVersion, key, core.policy.MaxKeyBytes)
+	address, _, err := core.transientAddress(ctx, key, PutOperation)
 	if err != nil {
 		return err
 	}
+	lease, err := core.transient.acquire(ctx, core.runtime.Clock, core.policy.TransientSaturation, core.transientPlan.putOperation)
+	if err != nil {
+		return failure("put", err)
+	}
+	defer lease.release()
 	write, err := core.beginMutation(ctx, address)
 	if err != nil {
 		return err
@@ -67,7 +72,7 @@ func (this *cacheCore[K, V]) beginMutation(ctx context.Context, address Address)
 		}
 		changed := state.changed
 		this.coord.mu.Unlock()
-		if err := waitChannel(ctx, changed); err != nil {
+		if err := this.waitCoordination(ctx, changed); err != nil {
 			this.releaseState(address, state)
 			return mutation{}, failure("put", err)
 		}
@@ -151,7 +156,7 @@ func (this *cacheCore[K, V]) claimMutation(ctx context.Context, write mutation) 
 		}
 		changed := write.state.changed
 		this.coord.mu.Unlock()
-		if err := waitChannel(ctx, changed); err != nil {
+		if err := this.waitCoordination(ctx, changed); err != nil {
 			this.abandonMutation(write)
 			return mutation{}, failure("put", err)
 		}
@@ -195,10 +200,15 @@ func (this *Cache[K, V]) Forget(ctx context.Context, key K) error {
 	if core.policy.disabled {
 		return nil
 	}
-	address, _, err := addressOf(core.scope, core.keys, core.keyVersion, key, core.policy.MaxKeyBytes)
+	address, _, err := core.transientAddress(ctx, key, ForgetOperation)
 	if err != nil {
 		return err
 	}
+	lease, err := core.transient.acquire(ctx, core.runtime.Clock, core.policy.TransientSaturation, core.transientPlan.forgetOperation)
+	if err != nil {
+		return failure("forget", err)
+	}
+	defer lease.release()
 	state, err := core.beginInvalidation(ctx, address)
 	if err != nil {
 		return err
@@ -226,7 +236,7 @@ func (this *cacheCore[K, V]) beginInvalidation(ctx context.Context, address Addr
 		}
 		changed := state.changed
 		this.coord.mu.Unlock()
-		if err := waitChannel(ctx, changed); err != nil {
+		if err := this.waitCoordination(ctx, changed); err != nil {
 			this.releaseState(address, state)
 			return nil, failure("forget", err)
 		}
@@ -245,7 +255,7 @@ func (this *cacheCore[K, V]) completeInvalidation(ctx context.Context, address A
 			this.endInvalidation(address, state)
 		}
 	}()
-	cleanupCtx, cancel, contextErr := this.cleanupContext(ctx)
+	cleanupCtx, cancel, contextErr := this.cleanupContext()
 	if contextErr != nil {
 		return failure("forget", contextErr)
 	}
@@ -284,7 +294,7 @@ func (this *cacheCore[K, V]) waitForWrite(state *addressState) {
 		}
 		changed := state.changed
 		this.coord.mu.Unlock()
-		<-changed
+		this.waitCoordinationSignal(changed)
 	}
 }
 
@@ -358,4 +368,25 @@ func waitChannel(ctx context.Context, changed <-chan struct{}) error {
 	case <-changed:
 		return nil
 	}
+}
+
+func (this *cacheCore[K, V]) waitCoordination(ctx context.Context, changed <-chan struct{}) error {
+	this.coord.mu.Lock()
+	this.coord.coordWaiters++
+	this.coord.mu.Unlock()
+	err := waitChannel(ctx, changed)
+	this.coord.mu.Lock()
+	this.coord.coordWaiters--
+	this.coord.mu.Unlock()
+	return err
+}
+
+func (this *cacheCore[K, V]) waitCoordinationSignal(changed <-chan struct{}) {
+	this.coord.mu.Lock()
+	this.coord.coordWaiters++
+	this.coord.mu.Unlock()
+	<-changed
+	this.coord.mu.Lock()
+	this.coord.coordWaiters--
+	this.coord.mu.Unlock()
 }

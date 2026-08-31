@@ -45,6 +45,7 @@ through it.
 | a permission, a role, a claim-driven scope, or what an identified caller may do | [[FL-020]] |
 | a DSN, a config file, a pool size, a replica, or how the application reaches its database | [[FL-021]] |
 | a route group, an ordered middleware, an access declaration, the boot gate, or how a module reaches the router | [[FL-024]] |
+| a cache declaration, codec, loader flight, transient budget, stale value or process backend | [[FL-025]] |
 
 **A code change that alters a path must update its flow document in the same
 change.** Not afterwards, not in a follow-up. A flow that describes a path the
@@ -85,6 +86,7 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | [FL-022](FL-022-a-migration-command-becomes-sql-and-schema.md) | A migration command becomes SQL and schema | `utils/vvgoose/vvgoose.go:Execute` | [[UC-022]] |
 | [FL-023](FL-023-a-sign-in-becomes-a-session.md) | A sign-in becomes a session | `auth/access/access.runtime.go` | [[UC-023]] |
 | [FL-024](FL-024-a-modules-routes-become-a-verified-api.md) | A module's routes become a verified API | `app/http/appfiber/appfiber.go:Mount` | — |
+| [FL-025](FL-025-a-cache-declaration-becomes-a-bounded-value.md) | A cache declaration becomes a bounded value | `cache.Auto` / `cache.Cache.Resolve` | [[UC-024]] |
 
 ## By file — which flows touch this file
 
@@ -99,6 +101,22 @@ phase 3 landed FL-014 and before phase 5 landed FL-015.
 | `app/seed.go` | FL-024 |
 | `app/appfx/appfx.go` | FL-024 |
 | `app/http/appfiber/appfiber.go` | FL-024 |
+| `cache/declaration.go` | FL-025 |
+| `cache/activation.go` | FL-025 |
+| `cache/policy.go` | FL-025 |
+| `cache/descriptor.go` | FL-025 |
+| `cache/address.go` | FL-025 |
+| `cache/scope.go` | FL-025 |
+| `cache/key.go` | FL-025 |
+| `cache/transient.go` | FL-025 |
+| `cache/lookup.go` | FL-025 |
+| `cache/resolve.go` | FL-025 |
+| `cache/mutation.go` | FL-025 |
+| `cache/envelope.go` | FL-025 |
+| `cache/codec.go` | FL-025 |
+| `cache/context.go` | FL-025 |
+| `cache/runtime.go` | FL-025 |
+| `cache/cachememory/backend.go` | FL-025 |
 | `auth/http/authhttp/surface.go` | FL-024, FL-019 |
 | `auth/http/authfiber/surface.go` | FL-024 |
 | `auth/http/authgin/surface.go` | FL-024 |

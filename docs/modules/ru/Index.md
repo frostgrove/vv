@@ -106,6 +106,13 @@
 | [storageminio](storageminio.md) | `vv/storage/storageminio` | **Модуль** — MinIO SDK backend и штатный pre-signed GET |
 | [storageminiofx](storageminio.md) | `vv/storage/storageminio/storageminiofx` | **Модуль** — тот же backend, собранный в uber/fx, с проверкой бакета на старте |
 
+## Cache — пересоздаваемые значения с ограниченной работой
+
+| Модуль | Импорт | Что это |
+|---|---|---|
+| [cache](cache.md) | `vv/cache` | Типизированные декларации, profiles, schemas, локальная координация loaders, stale/negative results и жёсткий transient admission. Только stdlib |
+| [cachememory](cachememory.md) | `vv/cache/cachememory` | Ограниченный process-local LRU backend с точным публичным charge accounting и batch reads |
+
 ## Запрос — один документ, четыре транспорта
 
 | Модуль | Импорт | Что это |

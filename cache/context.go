@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -11,12 +12,19 @@ type timedContext struct {
 	parent   context.Context
 	deadline time.Time
 	done     chan struct{}
+	exited   chan struct{}
 	once     sync.Once
 	mu       sync.Mutex
 	err      error
 }
 
-func newTimedContext(parent context.Context, clock Clock, duration time.Duration) (context.Context, func(), error) {
+type valueBlindContext struct {
+	context.Context
+}
+
+func (valueBlindContext) Value(any) any { return nil }
+
+func newTimedContext(parent context.Context, clock Clock, duration time.Duration, watchers *atomic.Int64) (context.Context, func(), error) {
 	now, err := runtimeNow(clock)
 	if err != nil {
 		return nil, nil, err
@@ -28,7 +36,7 @@ func newTimedContext(parent context.Context, clock Clock, duration time.Duration
 	if parentDeadline, ok := parent.Deadline(); ok && parentDeadline.Before(deadline) {
 		deadline = parentDeadline
 	}
-	ctx := &timedContext{parent: parent, deadline: deadline, done: make(chan struct{})}
+	ctx := &timedContext{parent: parent, deadline: deadline, done: make(chan struct{}), exited: make(chan struct{})}
 	timer, err := runtimeTimer(clock, duration)
 	if err != nil {
 		return nil, nil, err
@@ -36,7 +44,14 @@ func newTimedContext(parent context.Context, clock Clock, duration time.Duration
 	if parentErr := parent.Err(); parentErr != nil {
 		ctx.finish(parentErr)
 		timer.Stop()
-		return ctx, func() { ctx.finish(context.Canceled) }, nil
+		close(ctx.exited)
+		return ctx, func() {
+			ctx.finish(context.Canceled)
+			<-ctx.exited
+		}, nil
+	}
+	if watchers != nil {
+		watchers.Add(1)
 	}
 	go func() {
 		select {
@@ -47,8 +62,15 @@ func newTimedContext(parent context.Context, clock Clock, duration time.Duration
 		case <-ctx.done:
 		}
 		timer.Stop()
+		if watchers != nil {
+			watchers.Add(-1)
+		}
+		close(ctx.exited)
 	}()
-	return ctx, func() { ctx.finish(context.Canceled) }, nil
+	return ctx, func() {
+		ctx.finish(context.Canceled)
+		<-ctx.exited
+	}, nil
 }
 
 func (this *timedContext) Deadline() (time.Time, bool) { return this.deadline, true }
@@ -71,13 +93,13 @@ func (this *timedContext) finish(err error) {
 }
 
 func (this *cacheCore[K, V]) backendContext(parent context.Context) (context.Context, func(), error) {
-	return newTimedContext(parent, this.runtime.Clock, this.runtime.BackendTimeout)
+	return newTimedContext(parent, this.runtime.Clock, this.runtime.BackendTimeout, &this.timedWatchers)
 }
 
-func (this *cacheCore[K, V]) cleanupContext(parent context.Context) (context.Context, func(), error) {
-	return newTimedContext(context.WithoutCancel(parent), this.runtime.Clock, this.runtime.CleanupTimeout)
+func (this *cacheCore[K, V]) cleanupContext() (context.Context, func(), error) {
+	return newTimedContext(context.Background(), this.runtime.Clock, this.runtime.CleanupTimeout, &this.timedWatchers)
 }
 
 func (this *cacheCore[K, V]) loaderContext(parent context.Context) (context.Context, func(), error) {
-	return newTimedContext(parent, this.runtime.Clock, this.runtime.LoaderTimeout)
+	return newTimedContext(parent, this.runtime.Clock, this.runtime.LoaderTimeout, &this.timedWatchers)
 }

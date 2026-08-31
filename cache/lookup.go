@@ -34,7 +34,7 @@ func (this *Cache[K, V]) Lookup(ctx context.Context, key K) (Result[V], error) {
 	if core.policy.disabled {
 		return Result[V]{State: Miss}, nil
 	}
-	address, _, err := addressOf(core.scope, core.keys, core.keyVersion, key, core.policy.MaxKeyBytes)
+	address, _, err := core.transientAddress(ctx, key, LookupOperation)
 	if err != nil {
 		return Result[V]{}, err
 	}
@@ -42,14 +42,23 @@ func (this *Cache[K, V]) Lookup(ctx context.Context, key K) (Result[V], error) {
 }
 
 func (this *cacheCore[K, V]) lookupStable(ctx context.Context, address Address) (Result[V], error) {
+	lease, err := this.transient.acquire(ctx, this.runtime.Clock, this.policy.TransientSaturation, this.transientPlan.lookupOperation)
+	if err != nil {
+		return Result[V]{}, failure("lookup", err)
+	}
+	defer lease.release()
 	state := this.acquireState(address)
 	defer this.releaseState(address, state)
+	return this.lookupStableStateAdmitted(ctx, address, state)
+}
+
+func (this *cacheCore[K, V]) lookupStableStateAdmitted(ctx context.Context, address Address, state *addressState) (Result[V], error) {
 	for {
 		ticket, err := this.beginRead(ctx, state)
 		if err != nil {
 			return Result[V]{}, failure("lookup", err)
 		}
-		result, err := this.lookupAddress(ctx, address)
+		result, err := this.lookupAddressAdmitted(ctx, address)
 		if !this.readCurrent(ticket) {
 			continue
 		}
@@ -57,7 +66,7 @@ func (this *cacheCore[K, V]) lookupStable(ctx context.Context, address Address) 
 	}
 }
 
-func (this *cacheCore[K, V]) lookupAddress(ctx context.Context, address Address) (Result[V], error) {
+func (this *cacheCore[K, V]) lookupAddressAdmitted(ctx context.Context, address Address) (Result[V], error) {
 	backendCtx, cancel, contextErr := this.backendContext(ctx)
 	if contextErr != nil {
 		this.observe(ctx, Event{Operation: LookupOperation, Outcome: ErrorOutcome, Reason: RuntimeReason, Items: 1})
@@ -132,7 +141,19 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 	if len(keys) > core.policy.MaxBatchKeys {
 		return nil, failure("lookup many", ErrTooLarge)
 	}
-	if core.policy.disabled || len(keys) == 0 {
+	if len(keys) == 0 {
+		return []Result[V]{}, nil
+	}
+	charge, err := core.transientPlan.batch(len(keys), int64(core.policy.MaxBatchResultBytes))
+	if err != nil {
+		return nil, failure("lookup many", err)
+	}
+	lease, err := core.transient.acquire(ctx, core.runtime.Clock, core.policy.TransientSaturation, charge)
+	if err != nil {
+		return nil, failure("lookup many", err)
+	}
+	defer lease.release()
+	if core.policy.disabled {
 		return misses[V](len(keys)), nil
 	}
 	addresses, unique, err := core.batchAddresses(ctx, keys)
@@ -141,7 +162,9 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 	}
 	states := core.acquireStates(unique)
 	defer core.releaseStates(unique, states)
+	results := misses[V](len(keys))
 	for {
+		resetMisses(results)
 		generations, err := core.beginBatchRead(ctx, states)
 		if err != nil {
 			return nil, failure("lookup many", err)
@@ -153,8 +176,9 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 		if err != nil {
 			return nil, err
 		}
-		decoded := core.decodeBatch(ctx, addresses, encoded, misses[V](len(keys)))
-		if !core.batchReadCurrent(states, generations) {
+		decoded := core.decodeBatch(ctx, addresses, encoded, results)
+		current := core.batchReadCurrent(states, generations)
+		if !current {
 			continue
 		}
 		if decoded.err != nil {
@@ -176,10 +200,14 @@ func (this *Cache[K, V]) LookupMany(ctx context.Context, keys []K) ([]Result[V],
 
 func misses[V any](count int) []Result[V] {
 	results := make([]Result[V], count)
-	for index := range results {
-		results[index].State = Miss
-	}
+	resetMisses(results)
 	return results
+}
+
+func resetMisses[V any](results []Result[V]) {
+	for index := range results {
+		results[index] = Result[V]{State: Miss}
+	}
 }
 
 func (this *cacheCore[K, V]) batchAddresses(ctx context.Context, keys []K) ([]Address, []Address, error) {
@@ -305,7 +333,8 @@ func (this *cacheCore[K, V]) batchReadFailure(ctx context.Context, addresses []A
 }
 
 func (this *cacheCore[K, V]) decodeBatch(ctx context.Context, addresses []Address, encoded map[Address][]byte, results []Result[V]) batchDecoded[V] {
-	var encodedTotal, payloadTotal int64
+	var encodedTotal, payloadTotal, decodedTotal int64
+	maximum := int64(this.policy.MaxBatchResultBytes)
 	for index, address := range addresses {
 		if err := ctx.Err(); err != nil {
 			return batchDecoded[V]{err: failure("lookup many", err)}
@@ -314,11 +343,12 @@ func (this *cacheCore[K, V]) decodeBatch(ctx context.Context, addresses []Addres
 		if !ok {
 			continue
 		}
-		if int64(len(raw)) > int64(this.policy.MaxBatchResultBytes)-encodedTotal {
+		if int64(len(raw)) > maximum-encodedTotal {
 			return batchDecoded[V]{reason: LimitReason, err: failure("lookup many", ErrTooLarge)}
 		}
 		encodedTotal += int64(len(raw))
-		result, payloadBytes, err := decodeEnvelope(bytes.Clone(raw), this.runtime, this.values, this.valueDescriptor, this.policy)
+		var decodedBytes int64
+		result, payloadBytes, err := decodeEnvelopeAccounting(bytes.Clone(raw), this.runtime, this.values, this.valueDescriptor, this.policy, &decodedBytes)
 		if err != nil {
 			if !errors.Is(err, ErrCorrupt) {
 				return batchDecoded[V]{reason: RuntimeReason, err: failure("lookup many", err)}
@@ -327,6 +357,15 @@ func (this *cacheCore[K, V]) decodeBatch(ctx context.Context, addresses []Addres
 				return batchDecoded[V]{reason: CorruptReason, err: failure("lookup many", ErrCorrupt)}
 			}
 			continue
+		}
+		if int64(payloadBytes) > maximum-payloadTotal {
+			return batchDecoded[V]{reason: LimitReason, err: failure("lookup many", ErrTooLarge)}
+		}
+		if result.State == Hit || result.State == Stale {
+			if decodedBytes > maximum-decodedTotal {
+				return batchDecoded[V]{reason: LimitReason, err: failure("lookup many", ErrTooLarge)}
+			}
+			decodedTotal += decodedBytes
 		}
 		payloadTotal += int64(payloadBytes)
 		results[index] = result
@@ -364,7 +403,7 @@ func (this *cacheCore[K, V]) beginRead(ctx context.Context, state *addressState)
 		}
 		changed := state.changed
 		this.coord.mu.Unlock()
-		if err := waitChannel(ctx, changed); err != nil {
+		if err := this.waitCoordination(ctx, changed); err != nil {
 			return readTicket{}, err
 		}
 	}
@@ -395,7 +434,7 @@ func (this *cacheCore[K, V]) beginBatchRead(ctx context.Context, states []*addre
 			return generations, nil
 		}
 		this.coord.mu.Unlock()
-		if err := waitChannel(ctx, changed); err != nil {
+		if err := this.waitCoordination(ctx, changed); err != nil {
 			return nil, err
 		}
 	}

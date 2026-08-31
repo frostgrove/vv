@@ -6,7 +6,9 @@ import (
 )
 
 type automaticDeclaration struct {
-	profile Profile
+	profile       Profile
+	policy        Policy
+	transientPlan transientPlan
 }
 
 type NamespaceTemplate struct {
@@ -53,6 +55,7 @@ type Definition[K, V any] struct {
 	spec            DefinitionSpec[K, V]
 	profile         Profile
 	policy          Policy
+	transientPlan   transientPlan
 	keyVersion      KeyVersion
 	valueDescriptor codecDescriptor
 }
@@ -80,11 +83,16 @@ func Auto[K, V any](profiles ...Profile) *Cache[K, V] {
 	if len(profiles) == 1 {
 		profile = profiles[0]
 	}
-	if _, err := profile.Build(); err != nil {
+	policy, err := profile.Build()
+	if err != nil {
+		panic(failure("declare cache", err))
+	}
+	policy, transientPlan, err := resolveTypedPolicy[K, V](policy)
+	if err != nil {
 		panic(failure("declare cache", err))
 	}
 	target := &Cache[K, V]{}
-	target.automatic.Store(&automaticDeclaration{profile: profile})
+	target.automatic.Store(&automaticDeclaration{profile: profile, policy: policy, transientPlan: transientPlan})
 	return target
 }
 
@@ -96,10 +104,7 @@ func Define[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) (*Definiti
 	if automatic == nil {
 		return nil, failure("define cache", fmt.Errorf("%w: target was not created by Auto", ErrInvalid))
 	}
-	policy, err := automatic.profile.Build()
-	if err != nil {
-		return nil, failure("define cache", err)
-	}
+	policy := automatic.policy
 	if validNamespacePart(spec.Name) != nil || validNamespacePart(spec.Namespace.Purpose) != nil || spec.Namespace.Generation == 0 || !spec.Scope.valid() {
 		return nil, failure("define cache", fmt.Errorf("%w: name, namespace, generation, or scope is invalid", ErrInvalid))
 	}
@@ -130,6 +135,7 @@ func Define[K, V any](target *Cache[K, V], spec DefinitionSpec[K, V]) (*Definiti
 		spec:            spec,
 		profile:         automatic.profile,
 		policy:          policy,
+		transientPlan:   automatic.transientPlan,
 		keyVersion:      keyVersion,
 		valueDescriptor: valueDescriptor,
 	}
@@ -211,7 +217,7 @@ func (this *Definition[K, V]) declaredDescriptor() Descriptor {
 		ProviderKind: this.profile.provider,
 		ProviderID:   this.spec.Provider,
 		Requires:     append([]Capability(nil), this.spec.Requires...),
-		Policy:       describePolicy(this.policy),
+		Policy:       describePolicyWithTransient(this.policy, this.transientPlan),
 	}
 }
 

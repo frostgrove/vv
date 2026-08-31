@@ -33,7 +33,6 @@ type flightGroup struct {
 	loaderCtx   context.Context
 	cancel      context.CancelFunc
 	timerCancel func()
-	members     map[Address]*flightMember
 }
 
 type flightMember struct {
@@ -47,6 +46,52 @@ type flightMember struct {
 	invalidated bool
 	snapshot    resultSnapshot
 	err         error
+	transient   *transientLease
+	finished    bool
+	observed    bool
+	decodeToken chan struct{}
+}
+
+type resolveReservation struct {
+	lease  *transientLease
+	weight int64
+}
+
+func (this *resolveReservation) release() {
+	if this == nil || this.lease == nil {
+		return
+	}
+	this.lease.release()
+	this.lease = nil
+	this.weight = 0
+}
+
+func (this *resolveReservation) reduceTo(weight int64) bool {
+	if this == nil || this.lease == nil || weight < 0 || weight > this.weight || !this.lease.reduceTo(weight) {
+		return false
+	}
+	this.weight = weight
+	return true
+}
+
+func (this *resolveReservation) tryGrowTo(weight int64) bool {
+	if this == nil || this.lease == nil || weight < this.weight || !this.lease.tryGrowTo(weight) {
+		return false
+	}
+	this.weight = weight
+	return true
+}
+
+func (this *resolveReservation) split(weight int64) (*transientLease, bool) {
+	if this == nil || this.lease == nil || weight <= 0 || weight > this.weight {
+		return nil, false
+	}
+	lease, ok := this.lease.split(weight)
+	if !ok {
+		return nil, false
+	}
+	this.weight -= weight
+	return lease, true
 }
 
 func (this *Cache[K, V]) Resolve(ctx context.Context, key K, load Loader[K, V]) (Result[V], error) {
@@ -61,124 +106,406 @@ func (this *Cache[K, V]) Resolve(ctx context.Context, key K, load Loader[K, V]) 
 		return Result[V]{}, failure("resolve", err)
 	}
 	if core.policy.disabled {
-		return disabledLoad(ctx, key, load)
+		return core.disabledLoad(ctx, key, load)
 	}
-	address, _, err := addressOf(core.scope, core.keys, core.keyVersion, key, core.policy.MaxKeyBytes)
+	address, _, err := core.transientAddress(ctx, key, LoadOperation)
 	if err != nil {
 		return Result[V]{}, err
 	}
 	return core.resolveAddress(ctx, address, key, load)
 }
 
-func disabledLoad[K, V any](ctx context.Context, key K, load Loader[K, V]) (Result[V], error) {
-	loaded, err := invokeLoader(ctx, key, load)
+func (this *cacheCore[K, V]) disabledLoad(ctx context.Context, key K, load Loader[K, V]) (Result[V], error) {
+	lease, err := this.transient.acquire(ctx, this.runtime.Clock, this.policy.TransientSaturation, this.transientPlan.build)
 	if err != nil {
-		return Result[V]{}, &loaderFailure{cause: err}
+		return Result[V]{}, failure("load", err)
+	}
+	defer lease.release()
+	loaderCtx, cancel, err := this.loaderContext(valueBlindContext{Context: ctx})
+	if err != nil {
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
+		if callerErr := ctx.Err(); callerErr != nil {
+			return Result[V]{}, failure("resolve", callerErr)
+		}
+		return Result[V]{}, failure("load", err)
+	}
+	callerDeadline, hasCallerDeadline := ctx.Deadline()
+	effectiveDeadline, _ := loaderCtx.Deadline()
+	loaded, loadErr, clockErr, termination := invokeTimedLoader(this.runtime, loaderCtx, key, load, context.Canceled)
+	cancel()
+	if callerErr := ctx.Err(); callerErr != nil {
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
+		return Result[V]{}, failure("resolve", callerErr)
+	}
+	if clockErr != nil {
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
+		return Result[V]{}, failure("load", clockErr)
+	}
+	if errors.Is(termination, context.DeadlineExceeded) && hasCallerDeadline && !callerDeadline.After(effectiveDeadline) {
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
+		return Result[V]{}, failure("resolve", context.DeadlineExceeded)
+	}
+	if loadErr != nil {
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
+		return Result[V]{}, &loaderFailure{cause: loadErr}
 	}
 	switch loaded.Presence {
 	case Found:
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: LoadedOutcome, Items: 1})
 		return Result[V]{Value: loaded.Value, State: Loaded}, nil
 	case CleanAbsent:
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: NegativeOutcome, Items: 1})
 		return Result[V]{State: Negative}, nil
 	default:
+		this.observe(context.Background(), Event{Operation: LoadOperation, Outcome: ErrorOutcome, Items: 1})
 		return Result[V]{}, failure("load", fmt.Errorf("%w: loader presence is invalid", ErrInvalid))
 	}
 }
 
 func (this *cacheCore[K, V]) resolveAddress(ctx context.Context, address Address, key K, load Loader[K, V]) (Result[V], error) {
-	state := this.acquireState(address)
-	defer this.releaseState(address, state)
-	var saturationTimer Timer
-	defer func() { stopTimer(saturationTimer) }()
+	var state *addressState
+	var flightTimer Timer
+	stopFlightTimer := func() {
+		stopTimer(flightTimer)
+		flightTimer = nil
+	}
+	reservation := resolveReservation{}
+	defer func() {
+		if state != nil {
+			this.releaseState(address, state)
+		}
+		stopFlightTimer()
+		reservation.release()
+	}()
+
+restart:
 	for {
-		ticket, err := this.beginRead(ctx, state)
+		stopFlightTimer()
+		if state != nil {
+			this.releaseState(address, state)
+			state = nil
+		}
+		reservation.release()
+		probe, err := this.transient.acquire(ctx, this.runtime.Clock, this.policy.TransientSaturation, this.transientPlan.background)
 		if err != nil {
 			return Result[V]{}, failure("resolve", err)
 		}
-		cached, readErr := this.lookupAddress(ctx, address)
-		this.coord.mu.Lock()
-		if state.generation != ticket.generation || state.writeActive || state.invalidating {
-			this.coord.mu.Unlock()
-			continue
-		}
-		if readErr != nil {
-			this.coord.mu.Unlock()
-			return Result[V]{}, readErr
-		}
-		member := state.member
-		if cached.State == Hit || cached.State == Negative {
-			this.coord.mu.Unlock()
-			return cached, nil
-		}
-		if cached.State == Stale && this.policy.Stale == ServeWhileRefreshing {
-			if member != nil {
-				this.coord.mu.Unlock()
-				return cached, nil
-			}
-			if state.stagedMutation != 0 {
-				this.coord.mu.Unlock()
-				return cached, nil
-			}
-			if this.coord.activeFlights < this.policy.MaxFlights {
-				start := this.registerFlightLocked(ctx, address, state, true)
-				this.coord.mu.Unlock()
-				this.startFlight(start, key, load)
-				return cached, nil
-			}
-		}
-		if state.stagedMutation != 0 {
-			changed := state.changed
-			this.coord.mu.Unlock()
-			if err := waitChannel(ctx, changed); err != nil {
-				return Result[V]{}, failure("resolve", err)
-			}
-			continue
-		}
-		if member != nil {
-			member.waiters++
-			this.coord.mu.Unlock()
-			result, err := this.awaitMember(ctx, member)
-			if safeErrorIs(err, errSuperseded) {
-				continue
-			}
-			if isLoaderFailure(err) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
-				return cached, nil
-			}
-			return result, err
-		}
-		if this.coord.activeFlights < this.policy.MaxFlights {
-			member = this.registerFlightLocked(ctx, address, state, false)
-			member.waiters++
-			this.coord.mu.Unlock()
-			this.startFlight(member, key, load)
-			result, err := this.awaitMember(ctx, member)
-			if safeErrorIs(err, errSuperseded) {
-				continue
-			}
-			if isLoaderFailure(err) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
-				return cached, nil
-			}
-			return result, err
-		}
-		capacityChanged := this.coord.capacityChanged
-		stateChanged := state.changed
-		this.coord.mu.Unlock()
-		if cached.State == Stale && this.policy.FlightSaturation.mode == ServeStaleFlight {
-			return cached, nil
-		}
-		if this.policy.FlightSaturation.mode != WaitForFlight {
-			return Result[V]{}, failure("resolve", ErrSaturated)
-		}
-		if saturationTimer == nil {
-			saturationTimer, err = runtimeTimer(this.runtime.Clock, this.policy.FlightSaturation.timeout)
+		reservation = resolveReservation{lease: probe, weight: this.transientPlan.background}
+		state = this.acquireState(address)
+		for {
+			ticket, err := this.beginRead(ctx, state)
 			if err != nil {
 				return Result[V]{}, failure("resolve", err)
 			}
+			cached, readErr := this.lookupAddressAdmitted(ctx, address)
+			this.coord.mu.Lock()
+			if state.generation != ticket.generation || state.writeActive || state.invalidating {
+				this.coord.mu.Unlock()
+				continue
+			}
+			if readErr != nil {
+				this.coord.mu.Unlock()
+				return Result[V]{}, readErr
+			}
+			member := state.member
+			if cached.State == Hit || cached.State == Negative {
+				this.coord.mu.Unlock()
+				return cached, nil
+			}
+			if cached.State == Stale && this.policy.Stale == ServeWhileRefreshing {
+				if member != nil || state.stagedMutation != 0 {
+					this.coord.mu.Unlock()
+					return cached, nil
+				}
+			}
+			if state.stagedMutation != 0 {
+				changed := state.changed
+				this.coord.mu.Unlock()
+				stopFlightTimer()
+				if err := this.waitCoordination(ctx, changed); err != nil {
+					return Result[V]{}, failure("resolve", err)
+				}
+				continue
+			}
+			if member != nil {
+				this.addWaiterLocked(member)
+				this.coord.mu.Unlock()
+				stopFlightTimer()
+				weight := this.transientPlan.waiter
+				if cached.State == Stale {
+					weight = this.transientPlan.retained
+				}
+				reservation.reduceTo(weight)
+				result, memberErr := this.awaitMember(ctx, member)
+				if isLoaderFailure(memberErr) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
+					return cached, nil
+				}
+				if safeErrorIs(memberErr, errSuperseded) {
+					continue restart
+				}
+				return result, memberErr
+			}
+			if this.coord.activeFlights < this.policy.MaxFlights {
+				background := cached.State == Stale && this.policy.Stale == ServeWhileRefreshing
+				member, grown, admissionErr := this.prepareProbedFlightLocked(ctx, address, state, background, flightTimer, &reservation)
+				this.coord.mu.Unlock()
+				if admissionErr != nil {
+					return Result[V]{}, failure("resolve", admissionErr)
+				}
+				if !grown {
+					break
+				}
+				stopFlightTimer()
+				if background {
+					reservation.reduceTo(this.transientPlan.retained)
+					this.startFlight(member, key, load)
+					return cached, nil
+				}
+				if cached.State == Stale {
+					reservation.reduceTo(this.transientPlan.retained)
+				} else {
+					reservation.reduceTo(this.transientPlan.waiter)
+				}
+				this.startFlight(member, key, load)
+				result, memberErr := this.awaitMember(ctx, member)
+				if safeErrorIs(memberErr, errSuperseded) {
+					continue restart
+				}
+				if isLoaderFailure(memberErr) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
+					return cached, nil
+				}
+				return result, memberErr
+			}
+			capacityChanged := this.coord.capacityChanged
+			stateChanged := state.changed
+			this.coord.mu.Unlock()
+			if cached.State == Stale && this.policy.FlightSaturation.mode == ServeStaleFlight {
+				return cached, nil
+			}
+			if this.policy.FlightSaturation.mode != WaitForFlight {
+				return Result[V]{}, failure("resolve", ErrSaturated)
+			}
+			if flightTimer == nil {
+				flightTimer, err = runtimeTimer(this.runtime.Clock, this.policy.FlightSaturation.timeout)
+				if err != nil {
+					return Result[V]{}, failure("resolve", err)
+				}
+			}
+			if err := this.waitCoordinationCapacity(ctx, flightTimer, capacityChanged, stateChanged); err != nil {
+				return Result[V]{}, failure("resolve", err)
+			}
 		}
-		if err := waitForCapacity(ctx, saturationTimer, capacityChanged, stateChanged); err != nil {
+		stopFlightTimer()
+		this.releaseState(address, state)
+		state = nil
+		reservation.release()
+		lease, err := this.transient.acquire(ctx, this.runtime.Clock, this.policy.TransientSaturation, this.transientPlan.resolve)
+		if err != nil {
 			return Result[V]{}, failure("resolve", err)
 		}
+		reservation = resolveReservation{lease: lease, weight: this.transientPlan.resolve}
+		state = this.acquireState(address)
+		for {
+			ticket, err := this.beginRead(ctx, state)
+			if err != nil {
+				return Result[V]{}, failure("resolve", err)
+			}
+			cached, readErr := this.lookupAddressAdmitted(ctx, address)
+			this.coord.mu.Lock()
+			if state.generation != ticket.generation || state.writeActive || state.invalidating {
+				this.coord.mu.Unlock()
+				continue
+			}
+			if readErr != nil {
+				this.coord.mu.Unlock()
+				return Result[V]{}, readErr
+			}
+			member := state.member
+			if cached.State == Hit || cached.State == Negative {
+				this.coord.mu.Unlock()
+				return cached, nil
+			}
+			if cached.State == Stale && this.policy.Stale == ServeWhileRefreshing {
+				if member != nil {
+					this.coord.mu.Unlock()
+					reservation.reduceTo(this.transientPlan.retained)
+					return cached, nil
+				}
+				if state.stagedMutation != 0 {
+					this.coord.mu.Unlock()
+					return cached, nil
+				}
+				if this.coord.activeFlights < this.policy.MaxFlights {
+					generation := state.generation
+					this.coord.mu.Unlock()
+					start, admitted, admissionErr := this.prepareFlight(ctx, address, state, generation, true, flightTimer, &reservation)
+					if admissionErr != nil {
+						if this.policy.FlightSaturation.mode == ServeStaleFlight && ctx.Err() == nil {
+							return cached, nil
+						}
+						return Result[V]{}, failure("resolve", admissionErr)
+					}
+					if !admitted {
+						continue
+					}
+					reservation.reduceTo(this.transientPlan.retained)
+					this.startFlight(start, key, load)
+					return cached, nil
+				}
+			}
+			if state.stagedMutation != 0 {
+				changed := state.changed
+				this.coord.mu.Unlock()
+				stopFlightTimer()
+				if err := this.waitCoordination(ctx, changed); err != nil {
+					return Result[V]{}, failure("resolve", err)
+				}
+				continue
+			}
+			if member != nil {
+				this.addWaiterLocked(member)
+				this.coord.mu.Unlock()
+				if cached.State == Stale {
+					reservation.reduceTo(this.transientPlan.retained)
+				} else {
+					reservation.reduceTo(this.transientPlan.waiter)
+				}
+				stopFlightTimer()
+				result, err := this.awaitMember(ctx, member)
+				if safeErrorIs(err, errSuperseded) {
+					continue restart
+				}
+				if isLoaderFailure(err) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
+					return cached, nil
+				}
+				return result, err
+			}
+			if this.coord.activeFlights < this.policy.MaxFlights {
+				generation := state.generation
+				this.coord.mu.Unlock()
+				member, admitted, admissionErr := this.prepareFlight(ctx, address, state, generation, false, flightTimer, &reservation)
+				if admissionErr != nil {
+					if cached.State == Stale && this.policy.FlightSaturation.mode == ServeStaleFlight && ctx.Err() == nil {
+						return cached, nil
+					}
+					return Result[V]{}, failure("resolve", admissionErr)
+				}
+				if !admitted {
+					continue
+				}
+				if cached.State == Stale {
+					reservation.reduceTo(this.transientPlan.retained)
+				} else {
+					reservation.reduceTo(this.transientPlan.waiter)
+				}
+				stopFlightTimer()
+				this.startFlight(member, key, load)
+				result, err := this.awaitMember(ctx, member)
+				if safeErrorIs(err, errSuperseded) {
+					continue restart
+				}
+				if isLoaderFailure(err) && this.staleStillUsable(cached) && this.policy.Stale == ServeOnLoaderError && ctx.Err() == nil {
+					return cached, nil
+				}
+				return result, err
+			}
+			capacityChanged := this.coord.capacityChanged
+			stateChanged := state.changed
+			this.coord.mu.Unlock()
+			if cached.State == Stale && this.policy.FlightSaturation.mode == ServeStaleFlight {
+				return cached, nil
+			}
+			if this.policy.FlightSaturation.mode != WaitForFlight {
+				return Result[V]{}, failure("resolve", ErrSaturated)
+			}
+			if flightTimer == nil {
+				flightTimer, err = runtimeTimer(this.runtime.Clock, this.policy.FlightSaturation.timeout)
+				if err != nil {
+					return Result[V]{}, failure("resolve", err)
+				}
+			}
+			if err := this.waitCoordinationCapacity(ctx, flightTimer, capacityChanged, stateChanged); err != nil {
+				return Result[V]{}, failure("resolve", err)
+			}
+		}
 	}
+}
+
+func (this *cacheCore[K, V]) prepareProbedFlightLocked(ctx context.Context, address Address, state *addressState, background bool, deadline Timer, reservation *resolveReservation) (*flightMember, bool, error) {
+	if !background && ctx.Err() != nil {
+		return nil, false, ctx.Err()
+	}
+	if timerExpired(deadline) {
+		return nil, false, ErrSaturated
+	}
+	probeWeight := reservation.weight
+	if !reservation.tryGrowTo(this.transientPlan.resolve) {
+		return nil, false, nil
+	}
+	if !background && ctx.Err() != nil {
+		reservation.reduceTo(probeWeight)
+		return nil, false, ctx.Err()
+	}
+	if timerExpired(deadline) {
+		reservation.reduceTo(probeWeight)
+		return nil, false, ErrSaturated
+	}
+	lease, ok := reservation.split(this.transientPlan.build)
+	if !ok {
+		return nil, true, ErrTooLarge
+	}
+	if !background && ctx.Err() != nil {
+		lease.release()
+		return nil, false, ctx.Err()
+	}
+	if timerExpired(deadline) {
+		lease.release()
+		return nil, false, ErrSaturated
+	}
+	member := this.registerFlightLocked(address, state, background, lease)
+	if !background {
+		this.addWaiterLocked(member)
+	}
+	return member, true, nil
+}
+
+func (this *cacheCore[K, V]) prepareFlight(ctx context.Context, address Address, state *addressState, generation uint64, background bool, deadline Timer, reservation *resolveReservation) (*flightMember, bool, error) {
+	this.coord.mu.Lock()
+	if !background && ctx.Err() != nil {
+		this.coord.mu.Unlock()
+		return nil, false, ctx.Err()
+	}
+	if timerExpired(deadline) {
+		this.coord.mu.Unlock()
+		return nil, false, ErrSaturated
+	}
+	allowed := state.generation == generation && !state.writeActive && !state.invalidating && state.stagedMutation == 0 &&
+		state.member == nil && this.coord.activeFlights < this.policy.MaxFlights
+	if !allowed {
+		this.coord.mu.Unlock()
+		return nil, false, nil
+	}
+	lease, ok := reservation.split(this.transientPlan.build)
+	if !ok {
+		this.coord.mu.Unlock()
+		return nil, false, ErrTooLarge
+	}
+	if !background && ctx.Err() != nil {
+		this.coord.mu.Unlock()
+		lease.release()
+		return nil, false, ctx.Err()
+	}
+	if timerExpired(deadline) {
+		this.coord.mu.Unlock()
+		lease.release()
+		return nil, false, ErrSaturated
+	}
+	member := this.registerFlightLocked(address, state, background, lease)
+	if !background {
+		this.addWaiterLocked(member)
+	}
+	this.coord.mu.Unlock()
+	return member, true, nil
 }
 
 func (this *cacheCore[K, V]) staleStillUsable(result Result[V]) bool {
@@ -194,14 +521,13 @@ func isLoaderFailure(err error) bool {
 	return ok
 }
 
-func (this *cacheCore[K, V]) registerFlightLocked(ctx context.Context, address Address, state *addressState, background bool) *flightMember {
-	base := context.WithoutCancel(ctx)
+func (this *cacheCore[K, V]) registerFlightLocked(address Address, state *addressState, background bool, lease *transientLease) *flightMember {
+	base := context.Background()
 	root, cancel := context.WithCancel(base)
 	group := &flightGroup{
-		base:    base,
-		root:    root,
-		cancel:  cancel,
-		members: make(map[Address]*flightMember, 1),
+		base:   base,
+		root:   root,
+		cancel: cancel,
 	}
 	member := &flightMember{
 		done:       make(chan struct{}),
@@ -210,13 +536,18 @@ func (this *cacheCore[K, V]) registerFlightLocked(ctx context.Context, address A
 		address:    address,
 		generation: state.generation,
 		background: background,
+		transient:  lease,
 	}
-	group.members[address] = member
 	state.member = member
 	state.refs++
 	this.coord.activeFlights++
 	this.signalStateLocked(state)
 	return member
+}
+
+func (this *cacheCore[K, V]) addWaiterLocked(member *flightMember) {
+	member.waiters++
+	this.coord.flightWaiters++
 }
 
 func (this *cacheCore[K, V]) startFlight(member *flightMember, key K, load Loader[K, V]) {
@@ -243,29 +574,13 @@ func (this *cacheCore[K, V]) runFlight(member *flightMember, key K, load Loader[
 				err = failure("load", fmt.Errorf("cache flight panicked"))
 			}
 		}()
-		var loaded LoadResult[V]
-		loadErr := member.group.loaderCtx.Err()
-		if loadErr == nil {
-			loaded, loadErr = invokeLoader(member.group.loaderCtx, key, load)
-		}
-		deadline, _ := member.group.loaderCtx.Deadline()
-		loaderErr := member.group.loaderCtx.Err()
-		now, clockErr := runtimeNow(this.runtime.Clock)
+		loaded, loadErr, clockErr, _ := invokeTimedLoader(this.runtime, member.group.loaderCtx, key, load, errSuperseded)
 		if clockErr != nil {
 			member.group.cancel()
 			member.group.timerCancel()
 			snapshot = resultSnapshot{}
 			err = failure("load", clockErr)
 			return
-		} else if !now.Before(deadline) {
-			loaderErr = context.DeadlineExceeded
-		}
-		if loaderErr != nil {
-			if errors.Is(loaderErr, context.Canceled) {
-				loadErr = errSuperseded
-			} else {
-				loadErr = loaderErr
-			}
 		}
 		member.group.cancel()
 		member.group.timerCancel()
@@ -286,6 +601,31 @@ func invokeLoader[K, V any](ctx context.Context, key K, load Loader[K, V]) (resu
 		}
 	}()
 	return load(ctx, key)
+}
+
+func invokeTimedLoader[K, V any](runtime Runtime, ctx context.Context, key K, load Loader[K, V], canceled error) (LoadResult[V], error, error, error) {
+	var loaded LoadResult[V]
+	loadErr := ctx.Err()
+	if loadErr == nil {
+		loaded, loadErr = invokeLoader(ctx, key, load)
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	loaderErr := ctx.Err()
+	now, clockErr := runtimeNow(runtime.Clock)
+	if clockErr != nil {
+		return LoadResult[V]{}, nil, clockErr, nil
+	}
+	if hasDeadline && !now.Before(deadline) {
+		loaderErr = context.DeadlineExceeded
+	}
+	if loaderErr != nil {
+		if errors.Is(loaderErr, context.Canceled) {
+			loadErr = canceled
+		} else {
+			loadErr = loaderErr
+		}
+	}
+	return loaded, loadErr, nil, loaderErr
 }
 
 func (this *cacheCore[K, V]) storeLoaded(member *flightMember, loaded LoadResult[V], loadErr error) (resultSnapshot, error) {
@@ -380,6 +720,14 @@ func (this *cacheCore[K, V]) finishFlight(member *flightMember, snapshot resultS
 	}
 	member.snapshot = snapshot
 	member.err = err
+	member.finished = true
+	if err == nil && snapshot.state == Loaded && member.waiters > 0 {
+		member.decodeToken = make(chan struct{}, 1)
+		member.decodeToken <- struct{}{}
+	}
+	if member.waiters == 0 {
+		member.snapshot = resultSnapshot{}
+	}
 	if state.member == member {
 		state.member = nil
 		state.generation++
@@ -391,12 +739,6 @@ func (this *cacheCore[K, V]) finishFlight(member *flightMember, snapshot resultS
 	}
 	this.cleanupStateLocked(member.address, state)
 	this.coord.mu.Unlock()
-	defer func() {
-		this.coord.mu.Lock()
-		this.coord.activeFlights--
-		this.signalCapacityLocked()
-		this.coord.mu.Unlock()
-	}()
 	outcome := outcomeForState(snapshot.state)
 	if safeErrorIs(err, errSuperseded) {
 		outcome = SupersededOutcome
@@ -410,26 +752,64 @@ func (this *cacheCore[K, V]) finishFlight(member *flightMember, snapshot resultS
 		EncodedBytes: int64(snapshot.encodedBytes),
 		PayloadBytes: int64(len(snapshot.payload)),
 	})
+	this.coord.mu.Lock()
+	member.observed = true
+	var release *transientLease
+	if member.waiters == 0 && member.transient != nil {
+		release = member.transient
+		member.transient = nil
+	}
+	this.coord.activeFlights--
+	this.signalCapacityLocked()
+	this.coord.mu.Unlock()
+	release.release()
 }
 
 func (this *cacheCore[K, V]) awaitMember(ctx context.Context, member *flightMember) (Result[V], error) {
 	select {
 	case <-member.done:
-		this.finishWaiter(member, false)
+		if err := ctx.Err(); err != nil {
+			this.finishWaiter(member, true)
+			return Result[V]{}, failure("resolve", err)
+		}
 		if member.err != nil {
+			this.finishWaiter(member, false)
 			return Result[V]{}, member.err
 		}
-		return this.materialize(member.snapshot)
 	case <-ctx.Done():
 		this.finishWaiter(member, true)
 		return Result[V]{}, failure("resolve", ctx.Err())
 	}
+	if member.snapshot.state == Negative {
+		this.finishWaiter(member, false)
+		return Result[V]{State: Negative}, nil
+	}
+	if member.snapshot.state != Loaded || member.decodeToken == nil {
+		this.finishWaiter(member, false)
+		return Result[V]{}, failure("resolve", ErrCorrupt)
+	}
+	select {
+	case <-member.decodeToken:
+	case <-ctx.Done():
+		this.finishWaiter(member, true)
+		return Result[V]{}, failure("resolve", ctx.Err())
+	}
+	if err := ctx.Err(); err != nil {
+		member.decodeToken <- struct{}{}
+		this.finishWaiter(member, true)
+		return Result[V]{}, failure("resolve", err)
+	}
+	result, err := this.materialize(member.snapshot)
+	contextErr := ctx.Err()
+	member.decodeToken <- struct{}{}
+	this.finishWaiter(member, contextErr != nil)
+	if contextErr != nil {
+		return Result[V]{}, failure("resolve", contextErr)
+	}
+	return result, err
 }
 
 func (this *cacheCore[K, V]) materialize(snapshot resultSnapshot) (Result[V], error) {
-	if snapshot.state == Negative {
-		return Result[V]{State: Negative}, nil
-	}
 	if snapshot.state != Loaded {
 		return Result[V]{}, failure("resolve", ErrCorrupt)
 	}
@@ -441,6 +821,9 @@ func (this *cacheCore[K, V]) materialize(snapshot resultSnapshot) (Result[V], er
 	if err != nil {
 		return Result[V]{}, failure("resolve", ErrCorrupt)
 	}
+	if _, err := invokeDecodeCharge(this.values, value, this.policy.MaxValueBytes); err != nil {
+		return Result[V]{}, failure("resolve", ErrCorrupt)
+	}
 	return Result[V]{Value: value, State: Loaded}, nil
 }
 
@@ -448,11 +831,22 @@ func (this *cacheCore[K, V]) finishWaiter(member *flightMember, canceled bool) {
 	this.coord.mu.Lock()
 	if member.waiters > 0 {
 		member.waiters--
+		this.coord.flightWaiters--
 	}
 	if canceled && member.waiters == 0 && !member.background && this.policy.LastWaiter == CancelLoader {
 		member.group.cancel()
 	}
+	var release *transientLease
+	if member.finished && member.observed && member.waiters == 0 && member.transient != nil {
+		release = member.transient
+		member.transient = nil
+	}
+	if member.finished && member.waiters == 0 {
+		member.snapshot = resultSnapshot{}
+		member.decodeToken = nil
+	}
 	this.coord.mu.Unlock()
+	release.release()
 }
 
 func (this *cacheCore[K, V]) cleanupStateLocked(address Address, state *addressState) {
@@ -479,8 +873,31 @@ func waitForCapacity(ctx context.Context, timer Timer, capacityChanged, stateCha
 	}
 }
 
+func (this *cacheCore[K, V]) waitCoordinationCapacity(ctx context.Context, timer Timer, capacityChanged, stateChanged <-chan struct{}) error {
+	this.coord.mu.Lock()
+	this.coord.coordWaiters++
+	this.coord.mu.Unlock()
+	err := waitForCapacity(ctx, timer, capacityChanged, stateChanged)
+	this.coord.mu.Lock()
+	this.coord.coordWaiters--
+	this.coord.mu.Unlock()
+	return err
+}
+
 func stopTimer(timer Timer) {
 	if !nilInterface(timer) {
 		timer.Stop()
+	}
+}
+
+func timerExpired(timer Timer) bool {
+	if nilInterface(timer) {
+		return false
+	}
+	select {
+	case <-timer.C():
+		return true
+	default:
+		return false
 	}
 }

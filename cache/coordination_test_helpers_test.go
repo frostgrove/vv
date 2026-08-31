@@ -226,30 +226,18 @@ func waitAddressState[K, V any](t *testing.T, instance *Cache[K, V], key K, acce
 
 func waitCacheQuiescent[K, V any](t *testing.T, instance *Cache[K, V]) {
 	t.Helper()
-	core, err := instance.core()
-	if err != nil {
-		t.Fatal(err)
-	}
 	deadline := time.NewTimer(coordinationTestTimeout)
 	defer deadline.Stop()
 	for {
-		core.coord.mu.Lock()
-		if len(core.coord.states) == 0 && core.coord.activeFlights == 0 && core.coord.activeWrites == 0 {
-			core.coord.mu.Unlock()
+		stats := instance.Stats()
+		if stats == (LocalStats{}) {
 			return
 		}
-		capacityChanged := core.coord.capacityChanged
-		var stateChanged <-chan struct{}
-		for _, state := range core.coord.states {
-			stateChanged = state.changed
-			break
-		}
-		core.coord.mu.Unlock()
 		select {
-		case <-capacityChanged:
-		case <-stateChanged:
 		case <-deadline.C:
-			t.Fatalf("cache did not quiesce: %+v", instance.Stats())
+			t.Fatalf("cache did not quiesce: %+v", stats)
+		default:
+			runtime.Gosched()
 		}
 	}
 }

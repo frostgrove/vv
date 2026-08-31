@@ -84,6 +84,10 @@ func encodeEnvelope[V any](runtime Runtime, codec Codec[V], descriptor codecDesc
 }
 
 func decodeEnvelope[V any](encoded []byte, runtime Runtime, codec Codec[V], descriptor codecDescriptor, policy Policy) (Result[V], int, error) {
+	return decodeEnvelopeAccounting(encoded, runtime, codec, descriptor, policy, nil)
+}
+
+func decodeEnvelopeAccounting[V any](encoded []byte, runtime Runtime, codec Codec[V], descriptor codecDescriptor, policy Policy, decodedBytes *int64) (Result[V], int, error) {
 	maximum, err := maxEnvelopeBytes(policy)
 	if err != nil || len(encoded) > maximum || len(encoded) < envelopeFixedSize+envelopeHashSize || !bytes.Equal(encoded[:8], envelopeMagic[:]) {
 		return Result[V]{}, 0, ErrCorrupt
@@ -148,6 +152,13 @@ func decodeEnvelope[V any](encoded []byte, runtime Runtime, codec Codec[V], desc
 			return Result[V]{}, 0, ErrCorrupt
 		}
 		return Result[V]{}, 0, fmt.Errorf("%w: value decode failed", ErrCorrupt)
+	}
+	decoded, err := invokeDecodeCharge(codec, value, policy.MaxValueBytes)
+	if err != nil {
+		return Result[V]{}, 0, ErrCorrupt
+	}
+	if decodedBytes != nil {
+		*decodedBytes = decoded
 	}
 	return Result[V]{Value: value, State: state, validUntil: validUntil}, len(entry.payload), nil
 }
@@ -449,6 +460,16 @@ func validateRuntimePolicy(runtime Runtime, policy Policy) error {
 	if policy.Negative.duration > 0 {
 		if _, ok := addTime(now, policy.Negative.duration); !ok {
 			return fmt.Errorf("%w: negative duration overflows timestamp", ErrInvalid)
+		}
+	}
+	if policy.FlightSaturation.mode == WaitForFlight {
+		if _, ok := addTime(now, policy.FlightSaturation.timeout); !ok {
+			return fmt.Errorf("%w: flight wait overflows timestamp", ErrInvalid)
+		}
+	}
+	if policy.TransientSaturation.mode == WaitForTransientMode {
+		if _, ok := addTime(now, policy.TransientSaturation.timeout); !ok {
+			return fmt.Errorf("%w: transient wait overflows timestamp", ErrInvalid)
 		}
 	}
 	return nil

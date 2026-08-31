@@ -276,7 +276,7 @@ func (this *Definition[K, V]) prepareActivation(input activationInput, provider 
 			runtime.ClockSkew = provider.ClockSkew
 		}
 	}
-	prepared, err := New(runtime, backend, scope, this.spec.Keys, this.spec.Values, this.policy)
+	prepared, err := newResolvedCache(runtime, backend, scope, this.spec.Keys, this.spec.Values, this.policy, this.transientPlan)
 	if err != nil {
 		return activationPlan{}, err
 	}

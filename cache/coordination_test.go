@@ -265,6 +265,7 @@ type coordinationOwnedValue struct {
 }
 
 func TestJoinedWaitersReceiveIndependentResults(t *testing.T) {
+	requireSafeJSONRuntime(t)
 	backend := newCoordinationBackend()
 	instance := newCoordinationCache(t, backend, JSON[*coordinationOwnedValue](ValueSchema(1)))
 	loaderEntered := make(chan struct{})

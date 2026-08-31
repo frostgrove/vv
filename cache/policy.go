@@ -100,6 +100,31 @@ func WaitBounded(timeout time.Duration) FlightSaturationPolicy {
 	return FlightSaturationPolicy{mode: WaitForFlight, timeout: timeout}
 }
 
+type TransientSaturationMode uint8
+
+const (
+	RejectTransientMode TransientSaturationMode = iota + 1
+	WaitForTransientMode
+)
+
+type TransientSaturationPolicy struct {
+	mode    TransientSaturationMode
+	timeout time.Duration
+}
+
+const (
+	MaximumTransientWaiters = 4096
+	defaultTransientWaiters = 64
+)
+
+func RejectTransient() TransientSaturationPolicy {
+	return TransientSaturationPolicy{mode: RejectTransientMode}
+}
+
+func WaitForTransient(timeout time.Duration) TransientSaturationPolicy {
+	return TransientSaturationPolicy{mode: WaitForTransientMode, timeout: timeout}
+}
+
 type StalePolicy uint8
 
 const (
@@ -130,13 +155,20 @@ type Policy struct {
 	MaxBatchKeys        int
 	MaxBatchKeyBytes    int
 	MaxBatchResultBytes int
+	MaxTransientBytes   int64
+	MaxTransientWaiters int
+	TransientSaturation TransientSaturationPolicy
 	ReadFailure         FailurePolicy
 	WriteFailure        FailurePolicy
 	InvalidateFailure   FailurePolicy
 	Corruption          CorruptionPolicy
 
-	profile  string
-	disabled bool
+	profile            string
+	disabled           bool
+	transientDefaulted bool
+	transientExplicit  bool
+	transientSet       bool
+	transientResolved  int64
 }
 
 type Profile struct {
@@ -156,13 +188,16 @@ var (
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          16,
+		MaxFlights:          1,
 		FlightSaturation:    WaitBounded(time.Second),
 		Stale:               ServeOnLoaderError,
 		LastWaiter:          CancelLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    1 << 20,
 		MaxBatchResultBytes: 64 << 20,
+		MaxTransientBytes:   256 << 20,
+		MaxTransientWaiters: 64,
+		TransientSaturation: WaitForTransient(time.Second),
 		ReadFailure:         AsMiss,
 		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
@@ -176,13 +211,16 @@ var (
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          32,
+		MaxFlights:          2,
 		FlightSaturation:    WaitBounded(2 * time.Second),
 		Stale:               ServeOnLoaderError,
 		LastWaiter:          FinishLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    4 << 20,
 		MaxBatchResultBytes: 128 << 20,
+		MaxTransientBytes:   512 << 20,
+		MaxTransientWaiters: 64,
+		TransientSaturation: WaitForTransient(2 * time.Second),
 		ReadFailure:         Propagate,
 		WriteFailure:        Propagate,
 		InvalidateFailure:   Propagate,
@@ -200,18 +238,23 @@ func hotDefaults() Policy {
 		MaxKeyBytes:         16 << 10,
 		MaxValueBytes:       16 << 20,
 		MaxValueDepth:       128,
-		MaxFlights:          8,
+		MaxFlights:          1,
 		FlightSaturation:    WaitBounded(250 * time.Millisecond),
 		Stale:               ServeWhileRefreshing,
 		LastWaiter:          CancelLoader,
 		MaxBatchKeys:        256,
 		MaxBatchKeyBytes:    1 << 20,
 		MaxBatchResultBytes: 64 << 20,
+		MaxTransientBytes:   256 << 20,
+		MaxTransientWaiters: 64,
+		TransientSaturation: WaitForTransient(250 * time.Millisecond),
 		ReadFailure:         AsMiss,
 		WriteFailure:        Ignore,
 		InvalidateFailure:   Propagate,
 		Corruption:          CorruptAsMiss,
 		profile:             "Hot",
+		transientDefaulted:  true,
+		transientResolved:   256 << 20,
 	}
 }
 
@@ -219,11 +262,15 @@ func disabledDefaults() Policy {
 	policy := hotDefaults()
 	policy.profile = "Disabled"
 	policy.disabled = true
+	policy.transientDefaulted = true
+	policy.transientResolved = policy.MaxTransientBytes
 	return policy
 }
 
 func profile(name string, provider ProviderKind, policy Policy) Profile {
 	policy.profile = name
+	policy.transientDefaulted = policy.MaxTransientBytes > 0
+	policy.transientResolved = policy.MaxTransientBytes
 	normalized, err := normalizePolicy(policy)
 	return Profile{name: name, provider: provider, policy: normalized, err: err}
 }
@@ -272,6 +319,18 @@ func MaxValueBytes(value int) Option {
 			return fmt.Errorf("%w: max value bytes must be positive", ErrInvalid)
 		}
 		policy.MaxValueBytes = value
+		maximumEnvelopeBytes, err := maxEnvelopeBytes(*policy)
+		if err != nil {
+			return err
+		}
+		if policy.MaxBatchResultBytes < maximumEnvelopeBytes {
+			policy.MaxBatchResultBytes = maximumEnvelopeBytes
+		}
+		if !policy.transientExplicit {
+			policy.MaxTransientBytes = 0
+			policy.transientDefaulted = true
+			policy.transientResolved = 0
+		}
 		return nil
 	})
 }
@@ -282,6 +341,50 @@ func MaxFlights(value int) Option {
 			return fmt.Errorf("%w: max flights must be positive", ErrInvalid)
 		}
 		policy.MaxFlights = value
+		if !policy.transientExplicit {
+			policy.MaxTransientBytes = 0
+			policy.transientDefaulted = true
+			policy.transientResolved = 0
+		}
+		return nil
+	})
+}
+
+func MaxTransientBytes(value int64) Option {
+	return policyOption(func(policy *Policy) error {
+		if value <= 0 {
+			return fmt.Errorf("%w: max transient bytes must be positive", ErrInvalid)
+		}
+		policy.MaxTransientBytes = value
+		policy.transientDefaulted = false
+		policy.transientExplicit = true
+		policy.transientResolved = 0
+		return nil
+	})
+}
+
+func MaxTransientWaiters(value int) Option {
+	return policyOption(func(policy *Policy) error {
+		if value <= 0 || value > MaximumTransientWaiters {
+			return fmt.Errorf("%w: max transient waiters is invalid", ErrInvalid)
+		}
+		policy.MaxTransientWaiters = value
+		if !policy.transientExplicit {
+			policy.MaxTransientBytes = 0
+			policy.transientDefaulted = true
+			policy.transientResolved = 0
+		}
+		return nil
+	})
+}
+
+func TransientSaturation(value TransientSaturationPolicy) Option {
+	return policyOption(func(policy *Policy) error {
+		if err := validateTransientSaturation(value); err != nil {
+			return err
+		}
+		policy.TransientSaturation = value
+		policy.transientSet = true
 		return nil
 	})
 }
@@ -311,13 +414,24 @@ func NegativeFor(value time.Duration) Option {
 }
 
 func normalizePolicy(policy Policy) (Policy, error) {
-	if policy.disabled {
-		return policy, nil
+	if policy.MaxTransientWaiters == 0 {
+		policy.MaxTransientWaiters = defaultTransientWaiters
 	}
-	if policy.profile == "" {
+	if policy.transientDefaulted && policy.MaxTransientBytes != 0 && policy.MaxTransientBytes != policy.transientResolved {
+		policy.transientDefaulted = false
+		policy.transientExplicit = true
+		policy.transientResolved = 0
+	}
+	if policy.MaxTransientBytes != 0 && !policy.transientDefaulted && !policy.transientExplicit {
+		policy.transientExplicit = true
+	}
+	if !policy.disabled && policy.profile == "" {
 		base := hotDefaults()
 		overlayPolicy(&base, policy)
 		policy = base
+	}
+	if err := resolveTransientDefaults(&policy); err != nil {
+		return Policy{}, failure("build policy", err)
 	}
 	if err := validatePolicy(policy); err != nil {
 		return Policy{}, failure("build policy", err)
@@ -326,6 +440,7 @@ func normalizePolicy(policy Policy) (Policy, error) {
 }
 
 func overlayPolicy(target *Policy, source Policy) {
+	dependentTransientChanged := source.MaxValueBytes != 0 || source.MaxFlights != 0 || source.MaxTransientWaiters != 0
 	if source.Freshness.set {
 		target.Freshness = source.Freshness
 	}
@@ -367,6 +482,25 @@ func overlayPolicy(target *Policy, source Policy) {
 	}
 	if source.MaxBatchResultBytes != 0 {
 		target.MaxBatchResultBytes = source.MaxBatchResultBytes
+	}
+	if dependentTransientChanged && source.MaxTransientBytes == 0 {
+		target.MaxTransientBytes = 0
+		target.transientDefaulted = true
+		target.transientExplicit = false
+		target.transientResolved = 0
+	}
+	if source.MaxTransientBytes != 0 {
+		target.MaxTransientBytes = source.MaxTransientBytes
+		target.transientDefaulted = source.transientDefaulted
+		target.transientExplicit = source.transientExplicit || !source.transientDefaulted
+		target.transientResolved = source.transientResolved
+	}
+	if source.MaxTransientWaiters != 0 {
+		target.MaxTransientWaiters = source.MaxTransientWaiters
+	}
+	if source.TransientSaturation != (TransientSaturationPolicy{}) || source.transientSet {
+		target.TransientSaturation = source.TransientSaturation
+		target.transientSet = source.transientSet
 	}
 	if source.ReadFailure != 0 {
 		target.ReadFailure = source.ReadFailure
@@ -428,8 +562,9 @@ func validatePolicy(policy Policy) error {
 		return fmt.Errorf("%w: negative or jitter duration is invalid", ErrInvalid)
 	}
 	if policy.MaxKeyBytes <= 0 || policy.MaxKeyBytes > MaxEncodedKeyBytes || policy.MaxValueBytes <= 0 ||
-		policy.MaxValueDepth <= 0 || policy.MaxFlights <= 0 || policy.MaxBatchKeys <= 0 ||
-		policy.MaxBatchKeyBytes <= 0 || policy.MaxBatchResultBytes <= 0 {
+		policy.MaxValueDepth <= 0 || policy.MaxValueDepth > jsonSafeMaximumDepth || policy.MaxFlights <= 0 || policy.MaxBatchKeys <= 0 ||
+		policy.MaxBatchKeyBytes <= 0 || policy.MaxBatchResultBytes <= 0 || policy.MaxTransientBytes <= 0 ||
+		policy.MaxTransientWaiters <= 0 || policy.MaxTransientWaiters > MaximumTransientWaiters {
 		return fmt.Errorf("%w: cache bounds must all be positive and finite", ErrInvalid)
 	}
 	maximumEnvelopeBytes, err := maxEnvelopeBytes(policy)
@@ -439,9 +574,19 @@ func validatePolicy(policy Policy) error {
 	if policy.MaxBatchKeyBytes < policy.MaxKeyBytes || policy.MaxBatchResultBytes < maximumEnvelopeBytes {
 		return fmt.Errorf("%w: batch budgets must fit one maximum key and value", ErrInvalid)
 	}
+	transient, err := transientPlanFor(policy)
+	if err != nil {
+		return err
+	}
+	if policy.MaxTransientBytes < transient.minimum {
+		return fmt.Errorf("%w: transient budget cannot admit maximum operations and joined callers", ErrInvalid)
+	}
 	if policy.FlightSaturation.mode < RejectFlight || policy.FlightSaturation.mode > WaitForFlight ||
 		(policy.FlightSaturation.mode == WaitForFlight && policy.FlightSaturation.timeout <= 0) {
 		return fmt.Errorf("%w: flight saturation policy is invalid", ErrInvalid)
+	}
+	if err := validateTransientSaturation(policy.TransientSaturation); err != nil {
+		return err
 	}
 	if policy.Stale < RefreshBlocking || policy.Stale > ServeOnLoaderError ||
 		policy.LastWaiter < CancelLoader || policy.LastWaiter > FinishLoader {
@@ -458,6 +603,40 @@ func validatePolicy(policy Policy) error {
 	}
 	if policy.Corruption != RefuseCorrupt && policy.Corruption != CorruptAsMiss {
 		return fmt.Errorf("%w: corruption policy is invalid", ErrInvalid)
+	}
+	return nil
+}
+
+func resolveTransientDefaults(policy *Policy) error {
+	if policy.TransientSaturation == (TransientSaturationPolicy{}) && !policy.transientSet {
+		if policy.FlightSaturation.mode == WaitForFlight {
+			policy.TransientSaturation = WaitForTransient(policy.FlightSaturation.timeout)
+		} else {
+			policy.TransientSaturation = RejectTransient()
+		}
+	}
+	plan, err := transientPlanFor(*policy)
+	if err != nil {
+		return err
+	}
+	if policy.MaxTransientBytes != 0 {
+		if policy.transientDefaulted && policy.MaxTransientBytes == policy.transientResolved && policy.MaxTransientBytes < plan.minimum {
+			policy.MaxTransientBytes = plan.minimum
+			policy.transientResolved = plan.minimum
+		}
+		return nil
+	}
+	policy.MaxTransientBytes = plan.minimum
+	policy.transientDefaulted = true
+	policy.transientResolved = plan.minimum
+	return nil
+}
+
+func validateTransientSaturation(policy TransientSaturationPolicy) error {
+	if policy.mode < RejectTransientMode || policy.mode > WaitForTransientMode ||
+		(policy.mode == WaitForTransientMode && policy.timeout <= 0) ||
+		(policy.mode == RejectTransientMode && policy.timeout != 0) {
+		return fmt.Errorf("%w: transient saturation policy is invalid", ErrInvalid)
 	}
 	return nil
 }

@@ -95,6 +95,13 @@ the exception ([[D-048]], [[D-055]]).
 | [storageminio](storageminio.md) | `vv/storage/storageminio` | **Module** — MinIO SDK backend and native pre-signed GET |
 | [storageminiofx](storageminio.md) | `vv/storage/storageminio/storageminiofx` | **Module** — the same backend, wired into uber/fx, bucket checked at start-up |
 
+## Cache — recreatable values with bounded work
+
+| Module | Import | What it is |
+|---|---|---|
+| [cache](cache.md) | `vv/cache` | Typed declarations, profiles, schemas, local load coordination, stale/negative results and hard transient admission. Stdlib only |
+| [cachememory](cachememory.md) | `vv/cache/cachememory` | Bounded process-local LRU backend with exact public charge accounting and batch reads |
+
 ## The request — one document, four transports
 
 | Module | Import | What it is |

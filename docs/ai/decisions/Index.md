@@ -136,6 +136,8 @@ and the next decision written before its code does should say so here.
 | [D-081](D-081-database-secrets-are-values-and-typed-tls-is-verified.md) | Database secrets render redacted, and an omitted typed-server TLS mode means verified TLS | accepted | configuration, security |
 | [D-082](D-082-source-bound-sessions-are-the-safe-default.md) | A safe executor binding names its canonical source; unconditional adoption is explicitly unsafe | accepted | transactions & datasources |
 | [D-083](D-083-native-bulk-is-an-explicit-repository-capability.md) | Safe batch insertion is typed and policy-aware; native bulk is the magic default, portable SQL the explicit opt-out, and raw effects are Unsafe | accepted | writes, core seam, transactions & datasources |
+| [D-084](D-084-shared-cache-flights-do-not-inherit-a-waiters-context.md) | Shared cache flights have finite value-free contexts; no caller donates request values or lifetime to another | accepted | caching, security, resilience |
+| [D-085](D-085-transient-cache-budgets-cover-cache-attributable-work.md) | Typed admission bounds cache-attributable transient work before it begins; finite waiters have permanently reserved backing | accepted | caching, resilience |
 
 ## By area
 
@@ -145,6 +147,13 @@ interface), D-030 (a verb on the seam is every decorator's obligation, and the
 test that enforces it), D-061 (what embedding erases, which discovery walks are
 safe, and why storage effects require exact forwarding), D-083 (the optional
 typed batch effect and its fail-closed decorator boundary).
+
+**Caching** — D-084 (why shared loads inherit no request values, how disabled
+storage preserves that boundary, and the synchronous observer obligation),
+D-085 (typed byte admission, permanently backed waiter slots, separate flight,
+wire and decoded limits, and the exact ownership boundary), D-021 (declarative
+magic with an explicit construction path), D-020 (adversarial controls are the
+specification).
 
 **Querying** — D-060 (what a request may name, and how much it may ask for),
 D-028 (cursor pagination), D-003 (closed AST, `Raw`), D-004 (`Where` ANDs),

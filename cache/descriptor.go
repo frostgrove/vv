@@ -65,26 +65,31 @@ type ClockSkewDescription struct {
 }
 
 type PolicyDescription struct {
-	Disabled            bool
-	Freshness           FreshnessDescription
-	Retention           RetentionDescription
-	Negative            NegativeDescription
-	Jitter              JitterDescription
-	MaxKeyBytes         int
-	MaxValueBytes       int
-	MaxValueDepth       int
-	MaxFlights          int
-	FlightSaturation    FlightSaturationMode
-	FlightWait          time.Duration
-	Stale               StalePolicy
-	LastWaiter          LastWaiterPolicy
-	MaxBatchKeys        int
-	MaxBatchKeyBytes    int
-	MaxBatchResultBytes int
-	ReadFailure         FailurePolicy
-	WriteFailure        FailurePolicy
-	InvalidateFailure   FailurePolicy
-	Corruption          CorruptionPolicy
+	Disabled               bool
+	Freshness              FreshnessDescription
+	Retention              RetentionDescription
+	Negative               NegativeDescription
+	Jitter                 JitterDescription
+	MaxKeyBytes            int
+	MaxValueBytes          int
+	MaxValueDepth          int
+	MaxFlights             int
+	FlightSaturation       FlightSaturationMode
+	FlightWait             time.Duration
+	Stale                  StalePolicy
+	LastWaiter             LastWaiterPolicy
+	MaxBatchKeys           int
+	MaxBatchKeyBytes       int
+	MaxBatchResultBytes    int
+	MaxTransientBytes      int64
+	MaxTransientWaiters    int
+	ReservedTransientBytes int64
+	TransientSaturation    TransientSaturationMode
+	TransientWait          time.Duration
+	ReadFailure            FailurePolicy
+	WriteFailure           FailurePolicy
+	InvalidateFailure      FailurePolicy
+	Corruption             CorruptionPolicy
 }
 
 type Descriptor struct {
@@ -119,13 +124,10 @@ func (this *Cache[K, V]) Describe() Descriptor {
 		return definition.declaredDescriptor()
 	}
 	if automatic := this.automatic.Load(); automatic != nil {
-		policy, err := automatic.profile.Build()
-		if err == nil {
-			return Descriptor{
-				Profile:      automatic.profile.name,
-				ProviderKind: automatic.profile.provider,
-				Policy:       describePolicy(policy),
-			}
+		return Descriptor{
+			Profile:      automatic.profile.name,
+			ProviderKind: automatic.profile.provider,
+			Policy:       describePolicyWithTransient(automatic.policy, automatic.transientPlan),
 		}
 	}
 	return Descriptor{}
@@ -152,9 +154,15 @@ func describeCore[K, V any](core *cacheCore[K, V]) Descriptor {
 			Mode:  core.runtime.ClockSkew.mode,
 			Bound: core.runtime.ClockSkew.bound,
 		},
-		Policy:    describePolicy(core.policy),
+		Policy:    describePolicyWithTransient(core.policy, core.transientPlan),
 		Activated: true,
 	}
+}
+
+func describePolicyWithTransient(policy Policy, plan transientPlan) PolicyDescription {
+	result := describePolicy(policy)
+	result.ReservedTransientBytes = plan.reserved
+	return result
 }
 
 func scopeModeOf[K any](scope Scope[K]) ScopeMode {
@@ -165,8 +173,32 @@ func scopeModeOf[K any](scope Scope[K]) ScopeMode {
 }
 
 func describePolicy(policy Policy) PolicyDescription {
+	reserved := int64(0)
+	if plan, err := transientPlanFor(policy); err == nil {
+		reserved = plan.reserved
+	}
 	if policy.disabled {
-		return PolicyDescription{Disabled: true}
+		return PolicyDescription{
+			Disabled:               true,
+			MaxKeyBytes:            policy.MaxKeyBytes,
+			MaxValueBytes:          policy.MaxValueBytes,
+			MaxValueDepth:          policy.MaxValueDepth,
+			MaxFlights:             policy.MaxFlights,
+			FlightSaturation:       policy.FlightSaturation.mode,
+			FlightWait:             policy.FlightSaturation.timeout,
+			MaxBatchKeys:           policy.MaxBatchKeys,
+			MaxBatchKeyBytes:       policy.MaxBatchKeyBytes,
+			MaxBatchResultBytes:    policy.MaxBatchResultBytes,
+			MaxTransientBytes:      policy.MaxTransientBytes,
+			MaxTransientWaiters:    policy.MaxTransientWaiters,
+			ReservedTransientBytes: reserved,
+			TransientSaturation:    policy.TransientSaturation.mode,
+			TransientWait:          policy.TransientSaturation.timeout,
+			ReadFailure:            policy.ReadFailure,
+			WriteFailure:           policy.WriteFailure,
+			InvalidateFailure:      policy.InvalidateFailure,
+			Corruption:             policy.Corruption,
+		}
 	}
 	freshness := FreshnessDescription{
 		Mode:     ExpiringFreshnessMode,
@@ -189,24 +221,29 @@ func describePolicy(policy Policy) PolicyDescription {
 		jitter = JitterDescription{Mode: SubtractJitterMode, SubtractUpTo: policy.Jitter.subtractUpTo}
 	}
 	return PolicyDescription{
-		Freshness:           freshness,
-		Retention:           retention,
-		Negative:            negative,
-		Jitter:              jitter,
-		MaxKeyBytes:         policy.MaxKeyBytes,
-		MaxValueBytes:       policy.MaxValueBytes,
-		MaxValueDepth:       policy.MaxValueDepth,
-		MaxFlights:          policy.MaxFlights,
-		FlightSaturation:    policy.FlightSaturation.mode,
-		FlightWait:          policy.FlightSaturation.timeout,
-		Stale:               policy.Stale,
-		LastWaiter:          policy.LastWaiter,
-		MaxBatchKeys:        policy.MaxBatchKeys,
-		MaxBatchKeyBytes:    policy.MaxBatchKeyBytes,
-		MaxBatchResultBytes: policy.MaxBatchResultBytes,
-		ReadFailure:         policy.ReadFailure,
-		WriteFailure:        policy.WriteFailure,
-		InvalidateFailure:   policy.InvalidateFailure,
-		Corruption:          policy.Corruption,
+		Freshness:              freshness,
+		Retention:              retention,
+		Negative:               negative,
+		Jitter:                 jitter,
+		MaxKeyBytes:            policy.MaxKeyBytes,
+		MaxValueBytes:          policy.MaxValueBytes,
+		MaxValueDepth:          policy.MaxValueDepth,
+		MaxFlights:             policy.MaxFlights,
+		FlightSaturation:       policy.FlightSaturation.mode,
+		FlightWait:             policy.FlightSaturation.timeout,
+		Stale:                  policy.Stale,
+		LastWaiter:             policy.LastWaiter,
+		MaxBatchKeys:           policy.MaxBatchKeys,
+		MaxBatchKeyBytes:       policy.MaxBatchKeyBytes,
+		MaxBatchResultBytes:    policy.MaxBatchResultBytes,
+		MaxTransientBytes:      policy.MaxTransientBytes,
+		MaxTransientWaiters:    policy.MaxTransientWaiters,
+		ReservedTransientBytes: reserved,
+		TransientSaturation:    policy.TransientSaturation.mode,
+		TransientWait:          policy.TransientSaturation.timeout,
+		ReadFailure:            policy.ReadFailure,
+		WriteFailure:           policy.WriteFailure,
+		InvalidateFailure:      policy.InvalidateFailure,
+		Corruption:             policy.Corruption,
 	}
 }

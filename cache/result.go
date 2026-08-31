@@ -44,7 +44,12 @@ func Absent[V any]() LoadResult[V] {
 }
 
 type LocalStats struct {
-	CoordinationEntries int
-	ActiveFlights       int
-	ActiveWrites        int
+	CoordinationEntries  int
+	ActiveFlights        int
+	FlightWaiters        int
+	CoordinationWaiters  int
+	ActiveWrites         int
+	TransientBytes       int64
+	TransientWaiters     int
+	TimedContextWatchers int
 }

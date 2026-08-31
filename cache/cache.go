@@ -39,6 +39,9 @@ type cacheCore[K, V any] struct {
 	resourceID         ResourceID
 	requires           []Capability
 	activation         *activationGate
+	transient          *transientBudget
+	transientPlan      transientPlan
+	timedWatchers      atomic.Int64
 
 	coord coordination
 }
@@ -47,6 +50,8 @@ type coordination struct {
 	mu              sync.Mutex
 	states          map[Address]*addressState
 	activeFlights   int
+	flightWaiters   int
+	coordWaiters    int
 	activeWrites    int
 	capacityChanged chan struct{}
 }
@@ -62,15 +67,56 @@ type addressState struct {
 }
 
 func New[K, V any](runtime Runtime, backend Backend, scope Scope[K], keys KeyCodec[K], values Codec[V], policy Policy) (*Cache[K, V], error) {
-	normalizedPolicy, err := normalizePolicy(policy)
+	normalizedPolicy, transientPlan, err := resolveTypedPolicy[K, V](policy)
 	if err != nil {
 		return nil, err
 	}
+	return newResolvedCache(runtime, backend, scope, keys, values, normalizedPolicy, transientPlan)
+}
+
+func resolveTypedPolicy[K, V any](policy Policy) (Policy, transientPlan, error) {
+	normalizedPolicy, err := normalizePolicy(policy)
+	if err != nil {
+		return Policy{}, transientPlan{}, err
+	}
+	plan, err := transientPlanFor(normalizedPolicy)
+	if err != nil {
+		return Policy{}, transientPlan{}, failure("build cache", err)
+	}
+	plan, err = typedTransientPlan[K, V](normalizedPolicy, plan)
+	if err != nil {
+		return Policy{}, transientPlan{}, failure("build cache", err)
+	}
+	if normalizedPolicy.MaxTransientBytes < plan.minimum {
+		if !normalizedPolicy.transientDefaulted || normalizedPolicy.MaxTransientBytes != normalizedPolicy.transientResolved {
+			return Policy{}, transientPlan{}, failure("build cache", fmt.Errorf("%w: transient budget cannot admit typed allocations", ErrInvalid))
+		}
+		normalizedPolicy.MaxTransientBytes = plan.minimum
+		normalizedPolicy.transientResolved = plan.minimum
+	}
+	return normalizedPolicy, plan, nil
+}
+
+func newResolvedCache[K, V any](runtime Runtime, backend Backend, scope Scope[K], keys KeyCodec[K], values Codec[V], normalizedPolicy Policy, transientPlan transientPlan) (*Cache[K, V], error) {
+	var err error
 	runtime, err = normalizeRuntime(runtime, defaultLoaderTimeout)
 	if err != nil {
 		return nil, err
 	}
-	core := &cacheCore[K, V]{runtime: runtime, policy: normalizedPolicy, identity: &cacheIdentity{}}
+	if err := validateRuntimePolicy(runtime, normalizedPolicy); err != nil {
+		return nil, failure("build cache", err)
+	}
+	admissionSlots := 0
+	if normalizedPolicy.TransientSaturation.mode == WaitForTransientMode {
+		admissionSlots = normalizedPolicy.MaxTransientWaiters
+	}
+	core := &cacheCore[K, V]{
+		runtime:       runtime,
+		policy:        normalizedPolicy,
+		identity:      &cacheIdentity{},
+		transient:     newTransientBudget(normalizedPolicy.MaxTransientBytes, transientPlan.reserved, admissionSlots),
+		transientPlan: transientPlan,
+	}
 	core.coord.states = make(map[Address]*addressState)
 	core.coord.capacityChanged = make(chan struct{})
 	if !normalizedPolicy.disabled {
@@ -98,9 +144,6 @@ func (this *cacheCore[K, V]) configure(backend Backend, scope Scope[K], keys Key
 	}
 	valueDescriptor, err := describeCodec(values)
 	if err != nil {
-		return failure("build cache", err)
-	}
-	if err := validateRuntimePolicy(this.runtime, this.policy); err != nil {
 		return failure("build cache", err)
 	}
 	description, ok := BackendDescriptionOf(backend)
@@ -186,12 +229,17 @@ func (this *Cache[K, V]) Stats() LocalStats {
 		return LocalStats{}
 	}
 	core.coord.mu.Lock()
-	defer core.coord.mu.Unlock()
-	return LocalStats{
+	stats := LocalStats{
 		CoordinationEntries: len(core.coord.states),
 		ActiveFlights:       core.coord.activeFlights,
+		FlightWaiters:       core.coord.flightWaiters,
+		CoordinationWaiters: core.coord.coordWaiters,
 		ActiveWrites:        core.coord.activeWrites,
 	}
+	core.coord.mu.Unlock()
+	stats.TransientBytes, stats.TransientWaiters = core.transient.snapshot()
+	stats.TimedContextWatchers = int(core.timedWatchers.Load())
+	return stats
 }
 
 func (this *cacheCore[K, V]) observe(ctx context.Context, event Event) {
