@@ -95,7 +95,7 @@ func TestOnBindsTypedHandlerWithoutMutatingDefinition(t *testing.T) {
 		}
 		handled.Add(1)
 		return nil
-	}))
+	}), Concurrency(1))
 	if consumer.Declaration() != declarationOf(definition) || !reflect.DeepEqual(definition.Describe(), before) {
 		t.Fatal("On changed or replaced its definition")
 	}
@@ -163,18 +163,18 @@ func TestConsumerValidationRejectsNilDuplicateAndNonmemberBindings(t *testing.T)
 	if err := validateConsumers(catalog, nilConsumer); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil consumer = %v", err)
 	}
-	if err := validateConsumers(catalog, On(definition, Handler[string](nil))); !errors.Is(err, ErrInvalid) {
+	if err := validateConsumers(catalog, On(definition, Handler[string](nil), Concurrency(1))); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil handler = %v", err)
 	}
 	var nilDefinition *Definition[string]
-	if err := validateConsumers(catalog, On(nilDefinition, handler)); !errors.Is(err, ErrInvalid) {
+	if err := validateConsumers(catalog, On(nilDefinition, handler, Concurrency(1))); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil definition = %v", err)
 	}
-	if err := validateConsumers(catalog, On(definition, handler), On(definition, handler)); !errors.Is(err, ErrConflict) {
+	if err := validateConsumers(catalog, On(definition, handler, Concurrency(1)), On(definition, handler, Concurrency(1))); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate consumer = %v", err)
 	}
 	nonmember := testQueueDefinition(t, "documents.member", String(1))
-	if err := validateConsumers(catalog, On(nonmember, handler)); !errors.Is(err, ErrInvalid) {
+	if err := validateConsumers(catalog, On(nonmember, handler, Concurrency(1))); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("same-name nonmember = %v", err)
 	}
 }
@@ -200,7 +200,7 @@ func TestConsumerPreservesNilInterfacePayload(t *testing.T) {
 		}
 		called.Store(true)
 		return nil
-	})
+	}, Concurrency(1))
 	payload, err := definition.Encode(nil)
 	if err != nil {
 		t.Fatal(err)

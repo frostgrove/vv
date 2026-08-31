@@ -186,7 +186,7 @@ func TestConcurrentQueueActivationHasOneWinner(t *testing.T) {
 func TestExplicitDefinitionsDoNotRequireActivation(t *testing.T) {
 	definition := testQueueDefinition(t, "tests.explicit", String(SchemaVersion(1)))
 	queue := testQueue(t, queueMustName("tests"), definition, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
-	consumer := On(definition, Handler[string](func(context.Context, string) error { return nil }))
+	consumer := On(definition, Handler[string](func(context.Context, string) error { return nil }), Concurrency(1))
 	if err := validateConsumers(queue.Catalog(), consumer); err != nil {
 		t.Fatal(err)
 	}

@@ -16,18 +16,22 @@ type consumerBinding struct {
 	declaration Declaration
 	decode      func(EncodedPayload) (any, error)
 	handle      func(context.Context, any) error
+	binding     BindingName
+	concurrency int
+	err         error
 	valid       bool
 }
 
 type consumer[P any] struct {
 	definition DefinitionOf[P]
 	handler    Handler[P]
+	options    []WorkerOption
 }
 
 type decodedConsumerValue[P any] struct{ value P }
 
-func On[P any](definition DefinitionOf[P], handler Handler[P]) Consumer {
-	return &consumer[P]{definition: definition, handler: handler}
+func On[P any](definition DefinitionOf[P], handler Handler[P], options ...WorkerOption) Consumer {
+	return &consumer[P]{definition: definition, handler: handler, options: append([]WorkerOption(nil), options...)}
 }
 
 func (*consumer[P]) String() string { return "[job consumer]" }
@@ -44,16 +48,27 @@ func (c *consumer[P]) Declaration() Declaration {
 
 func (c *consumer[P]) consumerBinding() consumerBinding {
 	if c == nil {
-		return consumerBinding{}
+		return consumerBinding{err: invalid("consumer")}
 	}
-	return typedConsumerBinding(c.definition, c.handler)
+	return typedConsumerBinding(c.definition, c.handler, c.options)
 }
 
-func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P]) consumerBinding {
-	if nilInterface(definition) || handler == nil {
-		return consumerBinding{}
+func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P], options []WorkerOption) consumerBinding {
+	if nilInterface(definition) {
+		return consumerBinding{err: invalid("consumer definition")}
+	}
+	if handler == nil {
+		return consumerBinding{declaration: declarationOf(definition), err: invalid("consumer handler")}
 	}
 	declaration := declarationOf(definition)
+	defaultConcurrency := 0
+	if automatic, ok := any(definition).(interface{ defaultWorkerConcurrency() int }); ok {
+		defaultConcurrency = automatic.defaultWorkerConcurrency()
+	}
+	binding, concurrency, err := resolveWorkerOptions(declaration, defaultConcurrency, options)
+	if err != nil {
+		return consumerBinding{declaration: declaration, err: err}
+	}
 	return consumerBinding{
 		declaration: declaration,
 		decode: func(payload EncodedPayload) (any, error) {
@@ -70,33 +85,15 @@ func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P])
 			}
 			return handler(ctx, value.value)
 		},
-		valid: declaration != nil && declaration.declarationName().valid(),
+		binding:     binding,
+		concurrency: concurrency,
+		valid:       declaration != nil && declaration.declarationName().valid(),
 	}
 }
 
 func validateConsumers(catalog Catalog, consumers ...Consumer) error {
-	if catalog.Len() == 0 || catalog.Fingerprint() == "" {
-		return fmt.Errorf("%w: consumer catalog is invalid", ErrInvalid)
-	}
-	seen := make(map[Declaration]struct{}, len(consumers))
-	for index, consumer := range consumers {
-		if nilInterface(consumer) {
-			return fmt.Errorf("%w: consumer %d is nil", ErrInvalid, index)
-		}
-		binding := consumer.consumerBinding()
-		if !binding.valid || nilInterface(binding.declaration) {
-			return fmt.Errorf("%w: consumer %d is invalid or unresolved", ErrInvalid, index)
-		}
-		registered, ok := catalog.Lookup(binding.declaration.declarationName())
-		if !ok || registered != binding.declaration {
-			return fmt.Errorf("%w: consumer %d definition is not an exact catalog member", ErrInvalid, index)
-		}
-		if _, exists := seen[binding.declaration]; exists {
-			return fmt.Errorf("%w: duplicate consumer definition %q", ErrConflict, binding.declaration.declarationName())
-		}
-		seen[binding.declaration] = struct{}{}
-	}
-	return nil
+	_, err := NewWorkerPlan(catalog, consumers...)
+	return err
 }
 
 func (this *Automatic[P]) Declaration() Declaration {
@@ -107,5 +104,12 @@ func (this *Automatic[P]) Declaration() Declaration {
 }
 
 func (this *Automatic[P]) consumerBinding() consumerBinding {
-	return typedConsumerBinding[P](this, this.Handler())
+	return typedConsumerBinding[P](this, this.Handler(), nil)
+}
+
+func (this *Automatic[P]) defaultWorkerConcurrency() int {
+	if this == nil {
+		return 0
+	}
+	return this.profile.workerConcurrency
 }
