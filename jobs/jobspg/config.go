@@ -22,26 +22,39 @@ var ErrNotReady = errors.New("jobspg: driver is not ready")
 var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
 var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
 
+type SchemaManagement uint8
+
+const (
+	ManageSchema SchemaManagement = iota
+	VerifySchema
+)
+
+func (management SchemaManagement) Valid() bool {
+	return management == ManageSchema || management == VerifySchema
+}
+
 type Spec struct {
-	DB        *sql.DB
-	Source    crud.Source
-	Namespace jobs.Namespace
-	Catalog   jobs.Catalog
-	Schema    string
-	Backend   jobs.BackendID
-	Entropy   io.Reader
+	DB               *sql.DB
+	Source           crud.Source
+	Namespace        jobs.Namespace
+	Catalog          jobs.Catalog
+	Schema           string
+	Backend          jobs.BackendID
+	Entropy          io.Reader
+	SchemaManagement SchemaManagement
 }
 
 type Driver struct {
-	db          *sql.DB
-	source      crud.Source
-	namespace   jobs.Namespace
-	catalog     jobs.Catalog
-	description jobs.BackendDescription
-	repo        repository
-	entropy     io.Reader
-	entropyMu   sync.Mutex
-	ready       atomic.Bool
+	db               *sql.DB
+	source           crud.Source
+	namespace        jobs.Namespace
+	catalog          jobs.Catalog
+	description      jobs.BackendDescription
+	repo             repository
+	entropy          io.Reader
+	entropyMu        sync.Mutex
+	schemaManagement SchemaManagement
+	ready            atomic.Bool
 }
 
 var _ jobs.Sender = (*Driver)(nil)
@@ -62,6 +75,9 @@ func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, catalog job
 func New(spec Spec) (*Driver, error) {
 	if spec.DB == nil || spec.Namespace.IsZero() || spec.Catalog.Len() == 0 || spec.Catalog.Fingerprint() == "" {
 		return nil, fmt.Errorf("jobspg: %w: database, namespace, and catalog are required", jobs.ErrInvalid)
+	}
+	if !spec.SchemaManagement.Valid() {
+		return nil, fmt.Errorf("jobspg: %w: schema management", jobs.ErrInvalid)
 	}
 	if spec.Source != nil && !crud.SameDataSource(crud.KeyOf(spec.Source), spec.DB) {
 		return nil, fmt.Errorf("jobspg: %w: CRUD source must use the configured database", jobs.ErrInvalid)
@@ -94,13 +110,14 @@ func New(spec Spec) (*Driver, error) {
 		entropy = rand.Reader
 	}
 	return &Driver{
-		db:          spec.DB,
-		source:      spec.Source,
-		namespace:   spec.Namespace,
-		catalog:     spec.Catalog,
-		description: description,
-		repo:        newRepository(schema),
-		entropy:     entropy,
+		db:               spec.DB,
+		source:           spec.Source,
+		namespace:        spec.Namespace,
+		catalog:          spec.Catalog,
+		description:      description,
+		repo:             newRepository(schema),
+		entropy:          entropy,
+		schemaManagement: spec.SchemaManagement,
 	}, nil
 }
 
@@ -125,16 +142,25 @@ func (d *Driver) Catalog() jobs.Catalog {
 	return d.catalog
 }
 
+func (d *Driver) SchemaManagement() SchemaManagement {
+	if d == nil {
+		return ManageSchema
+	}
+	return d.schemaManagement
+}
+
 func (d *Driver) Prepare(ctx context.Context) error {
 	if d == nil {
 		return ErrNotReady
 	}
 	d.ready.Store(false)
-	if err := d.Migrate(ctx); err != nil {
-		return err
-	}
-	if err := d.BindCatalog(ctx); err != nil {
-		return err
+	if d.schemaManagement == ManageSchema {
+		if err := d.Migrate(ctx); err != nil {
+			return err
+		}
+		if err := d.BindCatalog(ctx); err != nil {
+			return err
+		}
 	}
 	return d.Check(ctx)
 }

@@ -9,19 +9,21 @@ import (
 
 	"github.com/frostgrove/vv/jobs"
 	"github.com/frostgrove/vv/jobs/jobsfx"
+	"github.com/frostgrove/vv/jobs/jobspg"
 )
 
 type ApplicationSettings struct {
-	Application  string
-	Environment  string
-	Schema       string
-	Backend      jobs.BackendID
-	Entropy      io.Reader
-	Housekeeping HousekeepingSettings
-	Catalog      jobs.Catalog
-	Queue        jobs.QueueSpec
-	Workers      jobs.WorkersSpec
-	Scheduler    jobs.SchedulerSpec
+	Application      string
+	Environment      string
+	Schema           string
+	Backend          jobs.BackendID
+	Entropy          io.Reader
+	SchemaManagement jobspg.SchemaManagement
+	Housekeeping     HousekeepingSettings
+	Catalog          jobs.Catalog
+	Queue            jobs.QueueSpec
+	Workers          jobs.WorkersSpec
+	Scheduler        jobs.SchedulerSpec
 }
 
 func Application(settings ApplicationSettings) fx.Option {
@@ -43,11 +45,12 @@ func Application(settings ApplicationSettings) fx.Option {
 	}
 	return fx.Options(
 		Module(Settings{
-			Namespace:    namespace,
-			Schema:       settings.Schema,
-			Backend:      settings.Backend,
-			Entropy:      settings.Entropy,
-			Housekeeping: settings.Housekeeping,
+			Namespace:        namespace,
+			Schema:           settings.Schema,
+			Backend:          settings.Backend,
+			Entropy:          settings.Entropy,
+			SchemaManagement: settings.SchemaManagement,
+			Housekeeping:     settings.Housekeeping,
 		}),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,

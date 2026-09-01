@@ -1,6 +1,6 @@
 # PostgreSQL jobs migrations
 
-`Driver.Prepare` is the recommended migration path. It serializes replicas, builds the retention index concurrently, validates its exact definition, and keeps an already prepared v4 startup read-only against delivery tables. The v3-to-v4 step changes only catalog metadata and does not request a write lock on the delivery table.
+`Driver.Prepare` defaults to `ManageSchema`: it serializes replicas, migrates, binds the application catalog, validates the exact contract, and keeps an already prepared v4 startup read-only against delivery tables. This is the zero-configuration development and test path. Production deployments can set `SchemaManagement: jobspg.VerifySchema`; startup then performs only fail-closed verification and never creates, migrates, or binds schema state. Run `Migrate` and `BindCatalog` from the deployment migration step before starting a verify-only process. The same setting is available through `jobspgfx.Settings` and `jobspgfx.ApplicationSettings`.
 
 `MigrationStatements` is the operator-managed path. Execute its statements in order, one statement per autocommit operation. Do not wrap the returned list in a transaction: it contains `CREATE INDEX CONCURRENTLY`. The schema version is advanced only after exact index validation and provenance stamping.
 

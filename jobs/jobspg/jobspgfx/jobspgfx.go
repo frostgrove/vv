@@ -15,11 +15,12 @@ import (
 )
 
 type Settings struct {
-	Namespace    jobs.Namespace
-	Schema       string
-	Backend      jobs.BackendID
-	Entropy      io.Reader
-	Housekeeping HousekeepingSettings
+	Namespace        jobs.Namespace
+	Schema           string
+	Backend          jobs.BackendID
+	Entropy          io.Reader
+	SchemaManagement jobspg.SchemaManagement
+	Housekeeping     HousekeepingSettings
 }
 
 type HousekeepingSettings struct {
@@ -54,13 +55,14 @@ func Module(settings Settings) fx.Option {
 
 func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error) {
 	driver, err := jobspg.New(jobspg.Spec{
-		DB:        database,
-		Source:    source,
-		Namespace: settings.Namespace,
-		Catalog:   catalog,
-		Schema:    settings.Schema,
-		Backend:   settings.Backend,
-		Entropy:   settings.Entropy,
+		DB:               database,
+		Source:           source,
+		Namespace:        settings.Namespace,
+		Catalog:          catalog,
+		Schema:           settings.Schema,
+		Backend:          settings.Backend,
+		Entropy:          settings.Entropy,
+		SchemaManagement: settings.SchemaManagement,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("jobspgfx: configure PostgreSQL jobs backend: %w", err)
