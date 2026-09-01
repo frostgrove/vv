@@ -110,7 +110,6 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 	app := fx.New(
 		fx.NopLogger,
 		fx.Provide(
-			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
 		jobsfx.Module(jobsfx.Spec{
@@ -157,6 +156,58 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker did not handle the generated declaration")
+	}
+	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelStop()
+	if err = app.Stop(stopContext); err != nil {
+		t.Fatal(err)
+	}
+	started = false
+}
+
+func TestModuleRunsAProducerOnlyGeneratedCatalogWithoutWorkers(t *testing.T) {
+	name, err := jobs.ParseName("jobsfx.producer-only-generated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	producer := jobs.MustMaterialize(jobs.Declare[string](), jobs.GeneratedDefinitionSpec[string]{
+		Name:  name,
+		Codec: jobs.String(1),
+	})
+	generated := jobs.MustCatalog(producer)
+	namespace, err := jobs.NamespaceOf("jobsfx", "producer-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queue *jobs.Queue
+	var workers *jobs.Workers
+	app := fx.New(
+		fx.NopLogger,
+		fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Catalog: generated}),
+		fx.Populate(&queue, &workers),
+	)
+	if err = app.Err(); err != nil {
+		t.Fatal(err)
+	}
+	startContext, cancelStart := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelStart()
+	if err = app.Start(startContext); err != nil {
+		t.Fatal(err)
+	}
+	started := true
+	t.Cleanup(func() {
+		if started {
+			stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancelStop()
+			_ = app.Stop(stopContext)
+		}
+	})
+	if queue == nil || workers != nil {
+		t.Fatalf("queue=%v workers=%v", queue, workers)
+	}
+	if err = jobs.Go(context.Background(), producer, "payload"); err != nil {
+		t.Fatal(err)
 	}
 	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelStop()

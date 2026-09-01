@@ -89,6 +89,21 @@ func (this Catalog) Definitions() []Declaration {
 	return append([]Declaration(nil), this.declarations...)
 }
 
+func (this Catalog) AutomaticConsumers() []Consumer {
+	consumers := make([]Consumer, 0, len(this.declarations))
+	for _, declaration := range this.declarations {
+		consumer, ok := declaration.(Consumer)
+		if !ok {
+			continue
+		}
+		binding := consumer.consumerBinding()
+		if binding.err == nil && binding.valid {
+			consumers = append(consumers, consumer)
+		}
+	}
+	return consumers
+}
+
 func (this Catalog) RequiresTenantPartition() bool {
 	for _, descriptor := range this.descriptors {
 		if descriptor.Partition == PartitionTenantRequired {

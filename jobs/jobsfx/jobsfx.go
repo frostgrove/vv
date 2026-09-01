@@ -62,11 +62,15 @@ func Module(spec Spec) fx.Option {
 				return jobs.NewQueue(configured)
 			},
 			func(catalog jobs.Catalog, backend Backend, registered contributions) (*jobs.Workers, error) {
+				consumers := resolveConsumers(catalog, registered.Consumers)
+				if len(consumers) == 0 {
+					return nil, nil
+				}
 				configured := spec.Workers
 				configured.Namespace = spec.Namespace
 				configured.Catalog = catalog
 				configured.Driver = backend
-				return jobs.NewWorkers(configured, registered.Consumers...)
+				return jobs.NewWorkers(configured, consumers...)
 			},
 			func(queue *jobs.Queue, registered contributions) (scheduledRuntime, error) {
 				if len(registered.Schedules) == 0 {
@@ -132,6 +136,24 @@ func contributionDeclarations(registered contributions) []jobs.Declaration {
 	return declarations
 }
 
+func resolveConsumers(catalog jobs.Catalog, explicit []jobs.Consumer) []jobs.Consumer {
+	consumers := append([]jobs.Consumer(nil), explicit...)
+	explicitDeclarations := make(map[jobs.Declaration]struct{}, len(explicit))
+	for _, consumer := range explicit {
+		if consumer != nil {
+			explicitDeclarations[consumer.Declaration()] = struct{}{}
+		}
+	}
+	for _, consumer := range catalog.AutomaticConsumers() {
+		declaration := consumer.Declaration()
+		if _, exists := explicitDeclarations[declaration]; exists {
+			continue
+		}
+		consumers = append(consumers, consumer)
+	}
+	return consumers
+}
+
 type scheduledRuntime struct {
 	scheduler *jobs.Scheduler
 }
@@ -162,7 +184,9 @@ func (runtime *lifecycleRuntime) start(ctx context.Context) error {
 		return fmt.Errorf("jobsfx: activate queue: %w", err)
 	}
 	runtime.activation = activation
-	go runtime.runWorkers(context.WithoutCancel(ctx))
+	if runtime.workers != nil {
+		go runtime.runWorkers(context.WithoutCancel(ctx))
+	}
 	if runtime.scheduler != nil {
 		schedulerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		runtime.schedulerCancel = cancel
@@ -192,7 +216,10 @@ func (runtime *lifecycleRuntime) stop(ctx context.Context) error {
 	if runtime.schedulerCancel != nil {
 		runtime.schedulerCancel()
 	}
-	drainErr := runtime.workers.Drain(ctx)
+	var drainErr error
+	if runtime.workers != nil {
+		drainErr = runtime.workers.Drain(ctx)
+	}
 	schedulerErr := runtime.waitScheduler(ctx)
 	var activationErr error
 	if runtime.activation != nil {
