@@ -442,7 +442,7 @@ func (i Invocation) arbitrateAttemptDeadline(attempt Attempt, observedAt time.Ti
 		return i, attempt, false, nil
 	}
 	if i.state == InvocationCancelRequested {
-		result, finished, err := i.terminateCancelledAttemptAtDeadline(attempt, observedAt)
+		result, finished, err := i.terminateCancelledAttempt(attempt, observedAt)
 		if err != nil {
 			return Invocation{}, Attempt{}, false, err
 		}
@@ -459,19 +459,35 @@ func (i Invocation) arbitrateAttemptDeadline(attempt Attempt, observedAt time.Ti
 	return result, finished, true, nil
 }
 
-func (i Invocation) terminateCancelledAttemptAtDeadline(attempt Attempt, observedAt time.Time) (Invocation, Attempt, error) {
+func (i Invocation) terminateCancelledAttempt(attempt Attempt, observedAt time.Time) (Invocation, Attempt, error) {
 	if i.IsZero() || i.state != InvocationCancelRequested || i.attempts == nil || attempt.state != AttemptRunning || !sameAttemptToken(i.attempts.value, attempt) || attempt.invocation != i.id || attempt.ordinal != i.attemptOrdinal {
 		return Invocation{}, Attempt{}, transitionConflict("attempt token is not active")
 	}
-	observedAt, err := requiredTime(observedAt, "attempt deadline observation")
+	observedAt, err := requiredTime(observedAt, "attempt termination observation")
 	if err != nil {
 		return Invocation{}, Attempt{}, err
 	}
-	deadline, _ := attemptRuntimeDeadline(attempt)
-	if observedAt.Before(deadline) || observedAt.Before(i.latestOccurredAt()) {
-		return Invocation{}, Attempt{}, transitionConflict("attempt termination deadline has not elapsed")
+	if observedAt.Before(i.latestOccurredAt()) || observedAt.Before(attempt.progressedAt) {
+		return Invocation{}, Attempt{}, invalid("attempt termination observation")
 	}
 	return i.applyAttemptDecision(attempt, cancellationTerminatedDisposition(), observedAt, attemptDecision{state: InvocationTerminated, retrySpent: i.retrySpent, handlerDeferrals: i.handlerDeferrals})
+}
+
+func (i Invocation) revokeAttempt(attempt Attempt, reason Reason, observedAt time.Time, delay, deadlineRetryDelay time.Duration) (Invocation, Attempt, error) {
+	if reason != ReasonShutdown && reason != ReasonLeaseLost {
+		return Invocation{}, Attempt{}, invalid("attempt revocation reason")
+	}
+	if err := i.validateTimeoutRetryDelay(deadlineRetryDelay); err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	if i.state == InvocationCancelRequested {
+		return i.terminateCancelledAttempt(attempt, observedAt)
+	}
+	retry, err := RetryDisposition(reason, PublicFailure{}, 0, RetryCostNone)
+	if err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	return i.finishAttemptAuthoritatively(attempt, retry, observedAt, delay, deadlineRetryDelay)
 }
 
 func (i Invocation) RecordProgress(attempt Attempt, at time.Time) (Invocation, Attempt, error) {

@@ -55,10 +55,11 @@ const (
 	DeliveryCommandReleaseUnchanged
 	DeliveryCommandRejectCorrupt
 	DeliveryCommandArbitrateAttemptDeadline
+	DeliveryCommandRevokeAttempt
 )
 
 func (k DeliveryCommandKind) Valid() bool {
-	return k >= DeliveryCommandBeginAttempt && k <= DeliveryCommandArbitrateAttemptDeadline
+	return k >= DeliveryCommandBeginAttempt && k <= DeliveryCommandRevokeAttempt
 }
 
 func (k DeliveryCommandKind) String() string {
@@ -79,6 +80,8 @@ func (k DeliveryCommandKind) String() string {
 		return "reject_corrupt"
 	case DeliveryCommandArbitrateAttemptDeadline:
 		return "arbitrate_attempt_deadline"
+	case DeliveryCommandRevokeAttempt:
+		return "revoke_attempt"
 	default:
 		return "unknown"
 	}
@@ -113,6 +116,10 @@ func FinishAttemptCommand(lease LeaseRef, disposition Disposition, delay, deadli
 
 func ArbitrateAttemptDeadlineCommand(lease LeaseRef, deadlineRetryDelay time.Duration) (DeliveryCommand, error) {
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandArbitrateAttemptDeadline, lease: cloneLeaseRef(lease), deadlineDelay: deadlineRetryDelay})
+}
+
+func RevokeAttemptCommand(lease LeaseRef, reason Reason, retryDelay time.Duration) (DeliveryCommand, error) {
+	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandRevokeAttempt, lease: cloneLeaseRef(lease), delay: retryDelay, deadlineDelay: retryDelay, reason: reason})
 }
 
 func DeferDeliveryCommand(lease LeaseRef, reason Reason, failure PublicFailure, delay time.Duration) (DeliveryCommand, error) {
@@ -298,6 +305,12 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 			return DeliveryApplication{}, transitionConflict("invocation has no active attempt")
 		}
 		application.invocation, application.attempt, application.changed, err = current.arbitrateAttemptDeadline(current.attempts.value, now, command.deadlineDelay)
+	case DeliveryCommandRevokeAttempt:
+		if current.attempts == nil {
+			return DeliveryApplication{}, transitionConflict("invocation has no active attempt")
+		}
+		application.invocation, application.attempt, err = current.revokeAttempt(current.attempts.value, command.reason, now, command.delay, command.deadlineDelay)
+		application.changed = err == nil
 	case DeliveryCommandDeferDelivery:
 		availableAt, timeErr := relativeDeliveryTime(now, command.delay)
 		if timeErr != nil {
@@ -372,6 +385,10 @@ func validateDeliveryCommand(command DeliveryCommand) (DeliveryCommand, error) {
 	case DeliveryCommandArbitrateAttemptDeadline:
 		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || !validCommandDelay(true, command.deadlineDelay) || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
 			return DeliveryCommand{}, invalid("arbitrate attempt deadline command")
+		}
+	case DeliveryCommandRevokeAttempt:
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || !validCommandDelay(true, command.delay) || command.deadlineDelay != command.delay || command.reason != ReasonShutdown && command.reason != ReasonLeaseLost || !command.failure.IsZero() || command.state != 0 {
+			return DeliveryCommand{}, invalid("revoke attempt command")
 		}
 	default:
 		return DeliveryCommand{}, invalid("delivery command kind")

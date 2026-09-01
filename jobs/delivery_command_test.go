@@ -59,6 +59,9 @@ func TestDeliveryCommandsAreClosedFencedAndTimestampFree(t *testing.T) {
 		},
 		func() (DeliveryCommand, error) { return ArbitrateAttemptDeadlineCommand(lease, DefaultRetryDelay) },
 		func() (DeliveryCommand, error) {
+			return RevokeAttemptCommand(lease, ReasonShutdown, DefaultRetryDelay)
+		},
+		func() (DeliveryCommand, error) {
 			return DeferDeliveryCommand(lease, ReasonAdmission, PublicFailure{}, MinRetryDelay)
 		},
 		func() (DeliveryCommand, error) {
@@ -83,7 +86,7 @@ func TestDeliveryCommandsAreClosedFencedAndTimestampFree(t *testing.T) {
 	for _, command := range commands {
 		kinds[command.Kind()] = struct{}{}
 	}
-	if len(kinds) != int(DeliveryCommandArbitrateAttemptDeadline) {
+	if len(kinds) != int(DeliveryCommandRevokeAttempt) {
 		t.Fatalf("closed command kinds = %d", len(kinds))
 	}
 	timeType := reflect.TypeFor[time.Time]()

@@ -59,7 +59,7 @@ func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error) {
 			var finished Attempt
 			if event.disposition.kind == DispositionTerminated {
 				if event.disposition == cancellationTerminatedDisposition() {
-					next, finished, err = current.terminateCancelledAttemptAtDeadline(current.attempts.value, event.occurredAt)
+					next, finished, err = current.terminateCancelledAttempt(current.attempts.value, event.occurredAt)
 				} else {
 					next, err = current.Terminate(event.occurredAt)
 					if err == nil {
