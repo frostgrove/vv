@@ -111,9 +111,10 @@ type resolvedWorkersConfig struct {
 }
 
 type Workers struct {
-	config resolvedWorkersConfig
-	plan   WorkerPlan
-	fatal  *workerFailureLatch
+	config  resolvedWorkersConfig
+	plan    WorkerPlan
+	fatal   *workerFailureLatch
+	runtime *workersRuntime
 }
 
 func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
@@ -136,7 +137,7 @@ func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
 		return nil, err
 	}
 	config.backend = backend
-	return &Workers{config: config, plan: plan, fatal: newWorkerFailureLatch()}, nil
+	return &Workers{config: config, plan: plan, fatal: newWorkerFailureLatch(), runtime: newWorkersRuntime()}, nil
 }
 
 func validateWorkerPlanDurability(plan WorkerPlan, profile DurabilityProfile) error {
