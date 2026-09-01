@@ -24,22 +24,24 @@ func TestModulePublishesOneDriverThroughAllContracts(t *testing.T) {
 	var driver *jobspg.Driver
 	var backend jobsfx.Backend
 	var admin jobs.Admin
+	var transactions jobs.FencedTransactions
+	var retention jobs.RetentionSweeper
 	app := fx.New(
 		fx.NopLogger,
 		fx.Supply(database, catalog),
 		fx.Provide(func() crud.Source { return source }),
 		jobspgfx.Module(settings),
-		fx.Populate(&driver, &backend, &admin),
+		fx.Populate(&driver, &backend, &admin, &transactions, &retention),
 	)
 	if err := app.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if driver == nil || backend != driver || admin != driver {
-		t.Fatalf("driver=%v backend=%v admin=%v", driver, backend, admin)
+	if driver == nil || backend != driver || admin != driver || transactions != driver || retention != driver {
+		t.Fatalf("driver=%v backend=%v admin=%v transactions=%v retention=%v", driver, backend, admin, transactions, retention)
 	}
 }
 
-func TestModuleCompletesTheJobsFxGraphWithoutOwningLifecycle(t *testing.T) {
+func TestModuleCompletesTheJobsFxGraphWithoutPreparingInTheConstructor(t *testing.T) {
 	database := &sql.DB{}
 	source := crudsql.Postgres(database)
 	definition := jobs.MustWire(jobs.Declare[string](), jobs.WireSpec[string]{

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"time"
 
 	"go.uber.org/fx"
 
@@ -14,10 +15,19 @@ import (
 )
 
 type Settings struct {
-	Namespace jobs.Namespace
-	Schema    string
-	Backend   jobs.BackendID
-	Entropy   io.Reader
+	Namespace    jobs.Namespace
+	Schema       string
+	Backend      jobs.BackendID
+	Entropy      io.Reader
+	Housekeeping HousekeepingSettings
+}
+
+type HousekeepingSettings struct {
+	Disabled     bool
+	Interval     time.Duration
+	SweepTimeout time.Duration
+	BatchSize    int
+	MaxBatches   int
 }
 
 func Module(settings Settings) fx.Option {
@@ -25,13 +35,20 @@ func Module(settings Settings) fx.Option {
 		return New(settings, database, source, catalog)
 	}
 	return fx.Module("vv.jobspg",
-		fx.Provide(fx.Annotate(
-			constructor,
-			fx.As(new(jobsfx.Backend)),
-			fx.As(new(jobs.Admin)),
-			fx.As(new(jobs.FencedTransactions)),
-			fx.As(fx.Self()),
-		)),
+		fx.Provide(
+			fx.Annotate(
+				constructor,
+				fx.As(new(jobsfx.Backend)),
+				fx.As(new(jobs.Admin)),
+				fx.As(new(jobs.FencedTransactions)),
+				fx.As(new(jobs.RetentionSweeper)),
+				fx.As(fx.Self()),
+			),
+			func() (housekeepingConfig, error) {
+				return normalizeHousekeeping(settings.Housekeeping)
+			},
+		),
+		fx.Invoke(bindRetentionLifecycle),
 	)
 }
 
