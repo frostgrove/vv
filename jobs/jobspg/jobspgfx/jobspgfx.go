@@ -29,6 +29,7 @@ func Module(settings Settings) fx.Option {
 			constructor,
 			fx.As(new(jobsfx.Backend)),
 			fx.As(new(jobs.Admin)),
+			fx.As(new(jobs.FencedTransactions)),
 			fx.As(fx.Self()),
 		)),
 	)

@@ -16,6 +16,7 @@ type TxFencer struct {
 }
 
 var _ jobs.LeaseFence = (*TxFencer)(nil)
+var _ jobs.FencedTransactions = (*Driver)(nil)
 
 func (d *Driver) Fencer(tx *sql.Tx) (*TxFencer, error) {
 	if err := d.requireReady(); err != nil {
