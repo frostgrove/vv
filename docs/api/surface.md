@@ -535,6 +535,8 @@ type UpsertScope interface{ ... }
 ```go
 var ErrEngine = errors.New("crudsql: unknown engine")
 func Source(q Queryer, d crud.Dialect, options ...Option) crud.Source
+func Transaction(executor crud.Executor) (*sql.Tx, bool)
+func TransactionFor(ctx context.Context, source any) (*sql.Tx, bool)
 func Wired(ctx context.Context, engine Engine, database *sql.DB, options ...Option) (crud.Source, error)
 type DB struct{ ... }
     func For(engine Engine, database *sql.DB, options ...Option) (DB, error)
@@ -881,6 +883,525 @@ type Case struct{ ... }
 type Corpus struct{ ... }
     func Load(dir, engine string) (*Corpus, error)
 type Err struct{ ... }
+```
+
+## github.com/frostgrove/vv/jobs
+```go
+const DefaultAdmissionFreshness = 30 * time.Second ...
+const MaxDefinitions = 4096 ...
+const DefaultAttemptTimeout = 10 * time.Minute ...
+const MaxDeliveryRecordBytes ...
+const MaxPartitionBytes = 512 ...
+const DefaultListLimit = 100
+const DefaultPurgeLimit = 100
+const MaxHeldReasonBytes = 64
+const MaxLeaseTokenBytes = 2 << 10
+const MaxListDefinitions = 128
+const MaxListLimit = 1000
+const MaxListOffset = 1_000_000
+const MaxPurgeLimit = 1000
+const MaxResourceUnits = 1 << 20
+const MaximumCollapseDelay = MaximumMaxElapsed
+const MaximumPriority = 1000
+const WorkerIncarnationBytes = 16
+var ErrAdmissionHeld = errors.New("jobs: admission held") ...
+var ErrInvalid = errors.New("jobs: invalid value") ...
+var Interactive = newProfile("Interactive", "interactive", 50, 4, 2 * time.Minute, 2 * time.Hour, 3, 64, 64, ...) ...
+var ErrDriver = errors.New("jobs: driver operation failed") ...
+var ErrInvocationNotFound = errors.New("jobs: invocation not found")
+var ErrStepTimeout = errors.New("jobs: step timed out")
+func BuildDurableContext(namespace Namespace, definition Name, mode PartitionMode, policy TracePolicy, ...) (PartitionKey, DurableContext, error)
+func Deferred(err error) error
+func DeliveryRecordSize(record DeliveryRecord) (int, error)
+func EnqueueOnce[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], ...) (InvocationID, EnqueueOnceOutcome, error)
+func Go[P any](ctx context.Context, automatic *Automatic[P], payload P, ...) error
+func IsDeferred(err error) bool
+func IsPermanent(err error) bool
+func Permanent(err error) error
+func RejectPlacement(reason error) error
+func RestoreTrustedIdentity(ctx context.Context, restorer TrustedIdentityRestorer, ...) (restored context.Context, err error)
+func Step(ctx context.Context, reporter ProgressReporter, timeout time.Duration, ...) error
+type AckMode uint8
+    const AckBeforePersistence AckMode = iota + 1 ...
+type AckModeSet struct{ ... }
+    func AckModes(values ...AckMode) (AckModeSet, error)
+type AcknowledgedLoss uint8
+    const AcknowledgedLossPossible AcknowledgedLoss = iota + 1 ...
+type ActorIdentity struct{ ... }
+type AdapterHandler[P any] func(context.Context, P, DeliveryMeta, AttemptController) error
+type Admin interface{ ... }
+type Admission struct{ ... }
+    func NewAdmission(limit int, heldReason HeldReason, observedAt time.Time) (Admission, error)
+type AdmissionDecision struct{ ... }
+type AdmissionError struct{ ... }
+type AdmissionPublisher struct{ ... }
+type AdmissionReader struct{ ... }
+type AdmissionSignal uint8
+    const AdmissionUninitialized AdmissionSignal = iota ...
+type AdmissionSnapshot struct{ ... }
+    func NewAdmissionSnapshot(freshness time.Duration) (*AdmissionSnapshot, error)
+type ApplyRequest struct{ ... }
+    func NewApplyRequest(command DeliveryCommand) (ApplyRequest, error)
+type ApplyResult struct{ ... }
+    func NewApplyResult(observedAt time.Time, result DeliveryCommandResult, ...) (ApplyResult, error)
+    func ValidateApplyResult(description BackendDescription, request ApplyRequest, result ApplyResult) (ApplyResult, error)
+type Attempt struct{ ... }
+type AttemptController interface{ ... }
+type AttemptOrdinal struct{ ... }
+    func NewAttemptOrdinal(value uint16) (AttemptOrdinal, error)
+type AttemptRecord struct{ ... }
+type AttemptState uint8
+    const AttemptRunning AttemptState = iota + 1 ...
+type Automatic[P any] struct{ ... }
+    func Auto[P any](handler Handler[P], profiles ...Profile) *Automatic[P]
+    func Declare[P any](profiles ...Profile) *Automatic[P]
+    func MustWire[P any](automatic *Automatic[P], spec WireSpec[P]) *Automatic[P]
+    func Wire[P any](automatic *Automatic[P], spec WireSpec[P]) (*Automatic[P], error)
+type BackendDescription struct{ ... }
+    func NewBackendDescription(id BackendID, durability DurabilityProfile, capabilities Capabilities) (BackendDescription, error)
+    func NewBackendDescriptionWithResources(id BackendID, durability DurabilityProfile, capabilities Capabilities, ...) (BackendDescription, error)
+    func ValidateDeliveryDriver(driver DeliveryDriver) (description BackendDescription, err error)
+type BackendID struct{ ... }
+    func BackendIDFromBytes(value [BackendIDBytes]byte) (BackendID, error)
+type BackoffDescription struct{ ... }
+type BackoffPolicy struct{ ... }
+    func Exponential(initial, maximum time.Duration, jitter JitterMode) BackoffPolicy
+type BeginAttemptSpec struct{ ... }
+type BindingName struct{ ... }
+    func ParseBindingName(raw string) (BindingName, error)
+type BuildID struct{ ... }
+    func ParseBuildID(raw string) (BuildID, error)
+type Capabilities struct{ ... }
+type Catalog struct{ ... }
+    func MustCatalog(declarations ...Declaration) Catalog
+    func NewCatalog(declarations ...Declaration) (Catalog, error)
+type CatalogDescriptor struct{ ... }
+type ClaimBatch struct{ ... }
+    func NewClaimBatch(observedAt time.Time, items []ClaimedDelivery) (ClaimBatch, error)
+    func ValidateClaimBatch(description BackendDescription, request ClaimRequest, batch ClaimBatch) (ClaimBatch, error)
+type ClaimRequest struct{ ... }
+    func NewClaimRequest(spec ClaimRequestSpec) (ClaimRequest, error)
+type ClaimRequestSpec struct{ ... }
+type ClaimTarget struct{ ... }
+    func NewClaimTarget(spec ClaimTargetSpec) (ClaimTarget, error)
+type ClaimTargetSpec struct{ ... }
+type ClaimedDelivery struct{ ... }
+    func NewClaimedDelivery(target ClaimTarget, lease LeaseRef, record DeliveryRecord) (ClaimedDelivery, error)
+    func TakeClaimedDelivery(target ClaimTarget, lease LeaseRef, record *DeliveryRecord) (ClaimedDelivery, error)
+type Clock interface{ ... }
+type Codec[P any] interface{ ... }
+    func Bytes(version SchemaVersion) Codec[[]byte]
+    func JSON[V any](version SchemaVersion) Codec[V]
+    func RFC3339UTC(version SchemaVersion) Codec[time.Time]
+    func String(version SchemaVersion) Codec[string]
+    func TrustedJSON[V any](version SchemaVersion) Codec[V]
+type CodecDescription struct{ ... }
+type CodecID struct{ ... }
+    func ParseCodecID(raw string) (CodecID, error)
+type CodecMode string
+    const SafeCodecMode CodecMode = "safe" ...
+type Consumer interface{ ... }
+    func On[P any](definition DefinitionOf[P], handler Handler[P], options ...WorkerOption) Consumer
+    func OnAdapter[P any](definition DefinitionOf[P], handler AdapterHandler[P], options ...WorkerOption) Consumer
+type ContextCapture struct{ ... }
+    func NewContextCapture(spec ContextCaptureSpec) (ContextCapture, error)
+type ContextCaptureRequest struct{ ... }
+type ContextCaptureSpec struct{ ... }
+type ContextScope uint8
+    const ContextSystem ContextScope = iota + 1 ...
+type Controller interface{ ... }
+type CorrelationField struct{ ... }
+    func NewCorrelationField(key CorrelationKey, value string) (CorrelationField, error)
+type CorrelationKey struct{ ... }
+    func ParseCorrelationKey(raw string) (CorrelationKey, error)
+type CorrelationRecord struct{ ... }
+type DebounceOption interface{ ... }
+    func MaxDelay(maximum time.Duration) DebounceOption
+type Declaration interface{ ... }
+type DeferDeliverySpec struct{ ... }
+type Definition[P any] struct{ ... }
+    func Define[P any](spec DefinitionSpec[P]) (*Definition[P], error)
+    func MustDefine[P any](spec DefinitionSpec[P]) *Definition[P]
+type DefinitionOf[P any] interface{ ... }
+type DefinitionSpec[P any] struct{ ... }
+type DeliveryApplication struct{ ... }
+    func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.Time) (DeliveryApplication, error)
+type DeliveryCommand struct{ ... }
+    func ArbitrateAttemptDeadlineCommand(lease LeaseRef, deadlineRetryDelay time.Duration) (DeliveryCommand, error)
+    func BeginAttemptCommand(lease LeaseRef, binding BindingName, build BuildID) (DeliveryCommand, error)
+    func DeferDeliveryCommand(lease LeaseRef, reason Reason, failure PublicFailure, delay time.Duration) (DeliveryCommand, error)
+    func FinishAttemptCommand(lease LeaseRef, disposition Disposition, ...) (DeliveryCommand, error)
+    func FinishDeliveryCommand(lease LeaseRef, state InvocationState, reason Reason, failure PublicFailure) (DeliveryCommand, error)
+    func ProgressCommand(lease LeaseRef) (DeliveryCommand, error)
+    func RejectCorruptCommand(lease LeaseRef) (DeliveryCommand, error)
+    func ReleaseForAdmissionCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error)
+    func ReleaseForShutdownCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error)
+    func ReleaseUnchangedCommand(lease LeaseRef, binding BindingName, build BuildID, delay time.Duration) (DeliveryCommand, error)
+    func RevokeAttemptCommand(lease LeaseRef, reason Reason, retryDelay time.Duration) (DeliveryCommand, error)
+type DeliveryCommandKind uint8
+    const DeliveryCommandBeginAttempt DeliveryCommandKind = iota + 1 ...
+type DeliveryCommandResult struct{ ... }
+    func NewDeliveryCommandResult(mutation DeliveryMutationStatus, control DeliveryControlStatus) (DeliveryCommandResult, error)
+type DeliveryCompatibility uint8
+    const DeliveryCompatible DeliveryCompatibility = iota + 1 ...
+type DeliveryControlStatus uint8
+    const DeliveryControlNone DeliveryControlStatus = iota ...
+type DeliveryDeferralLimit struct{ ... }
+    func NewDeliveryDeferralLimit(value uint16) (DeliveryDeferralLimit, error)
+type DeliveryDeferrals struct{ ... }
+    func NewDeliveryDeferrals(value uint16) (DeliveryDeferrals, error)
+type DeliveryDriver interface{ ... }
+type DeliveryMeta struct{ ... }
+    func NewDeliveryMeta(spec DeliveryMetaSpec) (DeliveryMeta, error)
+type DeliveryMetaSpec struct{ ... }
+type DeliveryMutationStatus uint8
+    const DeliveryMutationApplied DeliveryMutationStatus = iota + 1 ...
+type DeliveryRecord struct{ ... }
+    func NewDeliveryRecord(invocation Invocation, payload EncodedPayload, wireDigest WireDigest, ...) (DeliveryRecord, error)
+type DeliveryRelease struct{ ... }
+type DeliveryView struct{ ... }
+    func NewDeliveryView(invocation Invocation, payload EncodedPayload) (DeliveryView, error)
+type Descriptor struct{ ... }
+type DigestRevision uint16
+    const DigestRevision1 DigestRevision = iota + 1 ...
+type Disposition struct{ ... }
+    func CancelledDisposition(reason Reason) (Disposition, error)
+    func DeferredDisposition(failure PublicFailure, after time.Duration) (Disposition, error)
+    func DiscardDisposition(reason Reason, failure PublicFailure) (Disposition, error)
+    func NewDisposition(spec DispositionSpec) (Disposition, error)
+    func PermanentFailureDisposition(reason Reason, failure PublicFailure) (Disposition, error)
+    func QuarantineDisposition(reason Reason, failure PublicFailure) (Disposition, error)
+    func RetryDisposition(reason Reason, failure PublicFailure, after time.Duration, cost RetryCost) (Disposition, error)
+    func SuccessDisposition() Disposition
+    func TerminatedDisposition() Disposition
+type DispositionKind uint8
+    const DispositionSucceeded DispositionKind = iota + 1 ...
+type DispositionSpec struct{ ... }
+type DurabilityProfile struct{ ... }
+    func NewDurabilityProfile(ack AckMode, loss AcknowledgedLoss, failures FailureSet) (DurabilityProfile, error)
+type DurabilityRequirement struct{ ... }
+    func NewDurabilityRequirement(acceptedAckModes AckModeSet, protectedFailures FailureSet) (DurabilityRequirement, error)
+type DurableContext struct{ ... }
+    func RestoreDurableContext(namespace Namespace, partition PartitionKey, definition Name, ...) (DurableContext, error)
+type DurableContextBinding struct{ ... }
+type DurableContextRecord struct{ ... }
+type EncodedPayload struct{ ... }
+    func NewEncodedPayload(codec CodecID, version SchemaVersion, data []byte) (EncodedPayload, error)
+type EncodedPayloadRecord struct{ ... }
+type EnqueueOnceOutcome uint8
+    const EnqueueCreated EnqueueOnceOutcome = iota + 1 ...
+type EnqueueOption interface{ ... }
+    func After(delay time.Duration) EnqueueOption
+    func AtPriority(priority int) EnqueueOption
+    func Collapse(raw string) EnqueueOption
+    func Debounce(raw string, option DebounceOption) EnqueueOption
+    func StartBefore(deadline time.Time) EnqueueOption
+    func Unique(raw string) EnqueueOption
+type ErrorClassifier func(HandlerFailure) Disposition
+type Failure uint8
+    const FailureProcessCrash Failure = iota + 1 ...
+type FailureCode struct{ ... }
+    func ParseFailureCode(raw string) (FailureCode, error)
+type FailureSet struct{ ... }
+    func Failures(values ...Failure) (FailureSet, error)
+type FencedTransactions interface{ ... }
+type FinishAttemptSpec struct{ ... }
+type FinishDeliverySpec struct{ ... }
+type Handler[P any] func(context.Context, P) error
+type HandlerDeferralLimit struct{ ... }
+    func NewHandlerDeferralLimit(value uint16) (HandlerDeferralLimit, error)
+type HandlerDeferrals struct{ ... }
+    func NewHandlerDeferrals(value uint16) (HandlerDeferrals, error)
+type HandlerFailure struct{ ... }
+type HeldReason struct{ ... }
+    func ParseHeldReason(raw string) (HeldReason, error)
+type IdentityEpoch uint64
+    func NewIdentityEpoch(value uint64) (IdentityEpoch, error)
+type IdentityProvenance struct{ ... }
+    func ParseIdentityProvenance(raw string) (IdentityProvenance, error)
+type IdentityRestoreRequest struct{ ... }
+type IntentDigest struct{ ... }
+    func IntentDigestFromBytes(value [IntentDigestBytes]byte) (IntentDigest, error)
+type IntentDigestPlan struct{ ... }
+    func CurrentIntentDigestPlan() IntentDigestPlan
+    func NewIntentDigestPlan(current DigestRevision, compatibility ...DigestRevision) (IntentDigestPlan, error)
+    func WithLegacyIntentCompatibility(plan IntentDigestPlan) (IntentDigestPlan, error)
+type IntentDigests struct{ ... }
+    func NewIntentDigests(current IntentKey, compatibility ...IntentKey) (IntentDigests, error)
+    func RestoreInvocationIntentDigests(invocation Invocation) (IntentDigests, error)
+type IntentKey struct{ ... }
+    func NewIntentKey(scope IntentScopeBinding, revision DigestRevision, purpose IntentPurpose, ...) (IntentKey, error)
+type IntentPurpose uint8
+    const IntentRegular IntentPurpose = iota + 1 ...
+type IntentScopeBinding struct{ ... }
+    func IntentScopeBindingFromBytes(value [IntentScopeBytes]byte) (IntentScopeBinding, error)
+type Invocation struct{ ... }
+    func NewInvocation(spec InvocationSpec) (Invocation, error)
+    func RedriveInvocation(invocation Invocation, at time.Time) (Invocation, error)
+    func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error)
+type InvocationGenesisRecord struct{ ... }
+type InvocationID struct{ ... }
+    func Enqueue[P any](ctx context.Context, queue *Queue, definition DefinitionOf[P], payload P, ...) (InvocationID, error)
+    func InvocationIDFromBytes(value [16]byte) (InvocationID, error)
+    func NewInvocationID() (InvocationID, error)
+    func ParseInvocationID(raw string) (InvocationID, error)
+type InvocationOutcome struct{ ... }
+    func ActiveAttemptOutcome(ordinal AttemptOrdinal, startedAt time.Time) (InvocationOutcome, error)
+    func CancelRequestedOutcome(ordinal AttemptOrdinal, requestedAt time.Time) (InvocationOutcome, error)
+    func DeferredDeliveryOutcome(reason Reason, failure PublicFailure, observedAt, availableAt time.Time) (InvocationOutcome, error)
+    func FinishedAttemptOutcome(ordinal AttemptOrdinal, disposition Disposition, terminalReason Reason, ...) (InvocationOutcome, error)
+    func InitialInvocationOutcome() InvocationOutcome
+    func TerminalDeliveryOutcome(state InvocationState, reason, terminalReason Reason, failure PublicFailure, ...) (InvocationOutcome, error)
+type InvocationOutcomeKind uint8
+    const InvocationOutcomeInitial InvocationOutcomeKind = iota + 1 ...
+type InvocationRestoreSpec struct{ ... }
+type InvocationSpec struct{ ... }
+type InvocationState uint8
+    const InvocationQueued InvocationState = iota + 1 ...
+type JitterMode uint8
+    const NoJitter JitterMode = iota + 1 ...
+type LeaseFence interface{ ... }
+type LeaseRef struct{ ... }
+    func NewLeaseRef(backend BackendID, invocation InvocationID, driverToken []byte) (LeaseRef, error)
+type LeaseRenewal struct{ ... }
+    func NewLeaseRenewal(previous LeaseRef, current LeaseRef, mutation DeliveryMutationStatus, ...) (LeaseRenewal, error)
+type LegacyIntent struct{ ... }
+    func RestoreLegacyIntent(raw string) (LegacyIntent, error)
+type ListSpec struct{ ... }
+type Name struct{ ... }
+    func ParseName(raw string) (Name, error)
+type Namespace struct{ ... }
+    func NamespaceOf(application, environment string) (Namespace, error)
+    func NewNamespace(application, environment Name) (Namespace, error)
+type Operations interface{ ... }
+type Option interface{ ... }
+    func AcceptAckModes(values ...AckMode) Option
+    func AcceptAnyAckMode() Option
+    func AllowAcknowledgedLoss() Option
+    func AllowTraceCorrelations(values ...CorrelationKey) Option
+    func AttemptTimeout(value time.Duration) Option
+    func DecodedBytes(value int) Option
+    func MaxBytes(value int) Option
+    func MaxDecodedPayloadBytes(value int) Option
+    func MaxDeliveryDeferrals(value int) Option
+    func MaxDepth(value int) Option
+    func MaxElapsed(value time.Duration) Option
+    func MaxHandlerDeferrals(value int) Option
+    func NoTraceCorrelations() Option
+    func OnQueue(value QueueName) Option
+    func PayloadBytes(value int) Option
+    func PayloadDepth(value int) Option
+    func Priority(value int) Option
+    func ProgressTimeout(value time.Duration) Option
+    func ProtectAcknowledgedEnqueuesFrom(values ...Failure) Option
+    func RetainFor(value time.Duration) Option
+    func RetainIntentsFor(value time.Duration) Option
+    func Retries(value int) Option
+    func RetryBackoff(value BackoffPolicy) Option
+type PartitionDigest struct{ ... }
+    func PartitionDigestFromBytes(value [32]byte) (PartitionDigest, error)
+type PartitionKey struct{ ... }
+    func RestorePartitionKey(namespace Namespace, binding PartitionNamespaceBinding, ...) (PartitionKey, error)
+type PartitionMode uint8
+    const PartitionGlobal PartitionMode = iota ...
+type PartitionNamespaceBinding struct{ ... }
+    func PartitionNamespaceBindingFromBytes(value [32]byte) (PartitionNamespaceBinding, error)
+type PayloadDigest struct{ ... }
+    func NewPayloadDigest(identity CodecID, version SchemaVersion, value [32]byte) (PayloadDigest, error)
+type PayloadIdentity[P any] interface{ ... }
+type PayloadIdentityDescription struct{ ... }
+type PayloadLimit struct{ ... }
+    func DefaultPayloadLimit() PayloadLimit
+type PayloadRevision struct{ ... }
+    func NewPayloadRevision(codec CodecID, version SchemaVersion) (PayloadRevision, error)
+type Placement struct{ ... }
+    func NewPlacement(spec PlacementSpec) (Placement, error)
+type PlacementMode uint8
+    const PlacementRegular PlacementMode = iota + 1 ...
+type PlacementOutcome uint8
+    const PlacementCreated PlacementOutcome = iota + 1 ...
+type PlacementResult struct{ ... }
+    func NewPlacementResult(id InvocationID, outcome PlacementOutcome) (PlacementResult, error)
+type PlacementSpec struct{ ... }
+type Policy struct{ ... }
+type PolicyDescription struct{ ... }
+type PolicySnapshot struct{ ... }
+    func NewPolicySnapshot(policy Policy) (PolicySnapshot, error)
+type ProducerActor struct{ ... }
+    func Actor(raw string) ProducerActor
+    func ParseActor(raw string) (ProducerActor, error)
+type ProducerIntent struct{ ... }
+    func Intent(raw string) ProducerIntent
+    func ParseIntent(raw string) (ProducerIntent, error)
+type ProducerPartition struct{ ... }
+    func ParsePartition(raw string) (ProducerPartition, error)
+    func Partition(raw string) ProducerPartition
+type ProducerRequirements struct{ ... }
+    func ProducerCoreOnly() ProducerRequirements
+    func RequireProducerCapabilities(capabilities Capabilities) ProducerRequirements
+    func StandardProducerRequirements() ProducerRequirements
+type Profile struct{ ... }
+type ProgressReporter interface{ ... }
+type ProtectedIdentityToken struct{ ... }
+    func NewProtectedIdentityToken(value []byte) (ProtectedIdentityToken, error)
+type PublicFailure struct{ ... }
+    func NewPublicFailure(code FailureCode, message string) (PublicFailure, error)
+type Queue struct{ ... }
+    func NewQueue(spec QueueSpec) (*Queue, error)
+type QueueActivation struct{ ... }
+type QueueName struct{ ... }
+    func ParseQueueName(raw string) (QueueName, error)
+type QueueSpec struct{ ... }
+type Reason uint8
+    const ReasonNone Reason = iota ...
+type RecoverRequest struct{ ... }
+    func NewRecoverRequest(spec RecoverRequestSpec) (RecoverRequest, error)
+type RecoverRequestSpec struct{ ... }
+type RecoverResult struct{ ... }
+    func NewRecoverResult(observedAt time.Time, items []RecoveredDelivery, released int, more bool) (RecoverResult, error)
+    func ValidateRecoverResult(description BackendDescription, request RecoverRequest, result RecoverResult) (RecoverResult, error)
+type RecoveredDelivery struct{ ... }
+    func NewRecoveredDelivery(lease LeaseRef, record DeliveryRecord) (RecoveredDelivery, error)
+    func TakeRecoveredDelivery(lease LeaseRef, record *DeliveryRecord) (RecoveredDelivery, error)
+type RenewRequest struct{ ... }
+    func NewRenewRequest(leases []LeaseRef, leaseTTL time.Duration) (RenewRequest, error)
+type RenewResult struct{ ... }
+    func NewRenewResult(observedAt time.Time, items []LeaseRenewal) (RenewResult, error)
+    func ValidateRenewResult(description BackendDescription, request RenewRequest, result RenewResult) (RenewResult, error)
+type ResourceProfile struct{ ... }
+    func NewResourceProfile(spec ResourceProfileSpec) (ResourceProfile, error)
+type ResourceProfileSpec struct{ ... }
+type Resources struct{ ... }
+    func NewResources(spec ResourcesSpec) (Resources, error)
+    func SumResources(values ...Resources) (Resources, error)
+type ResourcesSpec struct{ ... }
+type RestoredDelivery struct{ ... }
+    func RestoreDeliveryRecord(catalog Catalog, record DeliveryRecord) (RestoredDelivery, error)
+type RestoredIdentity struct{ ... }
+    func NewRestoredIdentity(ctx context.Context, tenant ProducerPartition, actor ProducerActor) (RestoredIdentity, error)
+type RetentionSweeper interface{ ... }
+type RetryCost uint8
+    const RetryCostNone RetryCost = iota ...
+type RetryLimit struct{ ... }
+    func NewRetryLimit(value uint16) (RetryLimit, error)
+type RetrySpent struct{ ... }
+    func NewRetrySpent(value uint16) (RetrySpent, error)
+type Schedule interface{ ... }
+    func DefineSchedule[P any](spec ScheduleSpec[P]) (Schedule, error)
+type ScheduleCadence struct{ ... }
+    func At(value time.Time) ScheduleCadence
+    func FixedEvery(every time.Duration, options ...ScheduleCadenceOption) ScheduleCadence
+type ScheduleCadenceOption interface{ ... }
+    func Anchor(value time.Time) ScheduleCadenceOption
+type ScheduleDescription struct{ ... }
+type ScheduleOverlap uint8
+    const AllowOverlap ScheduleOverlap = iota ...
+type ScheduleRevision uint16
+type ScheduleRunResult struct{ ... }
+type ScheduleSpec[P any] struct{ ... }
+type Scheduler struct{ ... }
+    func NewScheduler(spec SchedulerSpec, schedules ...Schedule) (*Scheduler, error)
+type SchedulerSpec struct{ ... }
+type SchemaVersion uint32
+    const AutomaticPayloadIdentityVersion SchemaVersion = 1
+type Sender interface{ ... }
+type Staged struct{ ... }
+    func EnqueueIn[P any](ctx context.Context, queue *Queue, stager Stager, definition DefinitionOf[P], ...) (Staged, error)
+    func EnqueueOnceIn[P any](ctx context.Context, queue *Queue, stager Stager, definition DefinitionOf[P], ...) (Staged, error)
+    func NewStaged(transaction TransactionContext, result PlacementResult) (Staged, error)
+type Stager interface{ ... }
+type TenantIdentity struct{ ... }
+type TenantPartitioner interface{ ... }
+type TenantPartitionerFunc func(context.Context) (ProducerPartition, error)
+type Timer interface{ ... }
+type TraceCarrierRecord struct{ ... }
+type TraceCarrierSpec struct{ ... }
+type TracePolicy struct{ ... }
+    func NewTracePolicy(keys ...CorrelationKey) (TracePolicy, error)
+type TransactionBinding struct{ ... }
+    func TransactionBindingFromBytes(value [32]byte) (TransactionBinding, error)
+type TransactionContext struct{ ... }
+    func NewTransactionContext(backend BackendID, binding TransactionBinding, durability DurabilityProfile) (TransactionContext, error)
+type TrustedContextProvider interface{ ... }
+    func TrustTenantPartitioner(partitioner TenantPartitioner, provenance IdentityProvenance, ...) (TrustedContextProvider, error)
+type TrustedContextProviderFunc func(context.Context, ContextCaptureRequest) (ContextCapture, error)
+type TrustedIdentityRestorer interface{ ... }
+type TrustedIdentityRestorerFunc func(context.Context, IdentityRestoreRequest) (RestoredIdentity, error)
+type UntrustedTraceCarrier struct{ ... }
+    func NewUntrustedTraceCarrier(spec TraceCarrierSpec) (UntrustedTraceCarrier, error)
+type UpcastDescription struct{ ... }
+type Upcaster interface{ ... }
+    func Upcast[A, B any](from Codec[A], to Codec[B], fn func(A) (B, error)) Upcaster
+type WireDigest struct{ ... }
+    func WireDigestFromBytes(value [32]byte) (WireDigest, error)
+type WireSpec[P any] struct{ ... }
+type WorkerAdmissionGroup struct{ ... }
+type WorkerBindingDescription struct{ ... }
+type WorkerDeliveryResultCount struct{ ... }
+type WorkerEvent struct{ ... }
+type WorkerFailure uint8
+    const WorkerFailureNone WorkerFailure = iota ...
+type WorkerIncarnation struct{ ... }
+    func WorkerIncarnationFromBytes(value [WorkerIncarnationBytes]byte) (WorkerIncarnation, error)
+type WorkerObserver interface{ ... }
+type WorkerObserverFunc func(context.Context, WorkerEvent)
+type WorkerOperation uint8
+    const WorkerOperationRun WorkerOperation = iota + 1 ...
+type WorkerOption interface{ ... }
+    func Binding(raw string) WorkerOption
+    func Classify(classifier ErrorClassifier) WorkerOption
+    func Concurrency(value int) WorkerOption
+    func WithAdmission(reader AdmissionReader) WorkerOption
+type WorkerOutcome uint8
+    const WorkerOutcomeStarted WorkerOutcome = iota + 1 ...
+type WorkerPlan struct{ ... }
+    func MustWorkerPlan(catalog Catalog, consumers ...Consumer) WorkerPlan
+    func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error)
+type WorkerPlanDescription struct{ ... }
+type Workers struct{ ... }
+    func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error)
+type WorkersDescription struct{ ... }
+type WorkersSpec struct{ ... }
+```
+
+## github.com/frostgrove/vv/jobs/jobsmemory
+```go
+var ErrClosed = errors.New("jobsmemory: closed")
+type Backend struct{ ... }
+    func New(limits Limits, options ...Option) (*Backend, error)
+    func NewDefault(options ...Option) (*Backend, error)
+type Clock interface{ ... }
+type Limits struct{ ... }
+    func DefaultLimits() Limits
+type Option interface{ ... }
+    func WithBackendID(id jobs.BackendID) Option
+    func WithClock(clock Clock) Option
+type Stats struct{ ... }
+```
+
+## github.com/frostgrove/vv/jobs/jobspg
+```go
+const DefaultListLimit = jobs.DefaultListLimit
+const DefaultPurgeLimit = jobs.DefaultPurgeLimit
+const DefaultSchema = "frostgrove_jobs"
+const MaxListDefinitions = jobs.MaxListDefinitions
+const MaxListLimit = jobs.MaxListLimit
+const MaxListOffset = jobs.MaxListOffset
+const MaxPurgeLimit = jobs.MaxPurgeLimit
+const SchemaVersion = 5
+var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
+var ErrNotReady = errors.New("jobspg: driver is not ready")
+var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
+func MigrationStatements(schema string) ([]string, error)
+type Driver struct{ ... }
+    func New(spec Spec) (*Driver, error)
+    func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, ...) (*Driver, error)
+type ListSpec = jobs.ListSpec
+type SchemaManagement uint8
+    const ManageSchema SchemaManagement = iota ...
+type Spec struct{ ... }
+type TxFencer struct{ ... }
+type TxStager struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/port
@@ -1599,6 +2120,58 @@ type StatusRenderer struct{ ... }
 type TransportOption func(*transport)
     func WithCallOptions(options ...grpc.CallOption) TransportOption
     func WithVocabulary(c *errs.Codes) TransportOption
+```
+
+## github.com/frostgrove/vv/jobs/jobsfx
+```go
+func AsBackend(constructor any) any
+func AsConsumer(constructor any) any
+func AsDeclaration(constructor any) any
+func AsSchedule(constructor any) any
+func Bundle(catalog jobs.Catalog, optionValues []BundleOption, ...) fx.Option
+func Module(spec Spec) fx.Option
+type AdmissionProvider interface{ ... }
+type Backend interface{ ... }
+type Binding[D, P any] struct{ ... }
+    func Auto[D, P any](handler func(D, context.Context, P) error, profiles ...jobs.Profile) *Binding[D, P]
+    func AutoAdapter[D, P any](...) *Binding[D, P]
+    func AutoAdapterFor[D adapterFor[P], P any](profiles ...jobs.Profile) *Binding[D, P]
+    func AutoFor[D handlerFor[P], P any](profiles ...jobs.Profile) *Binding[D, P]
+type BundleOption interface{ ... }
+    func Concurrency(overrides map[jobs.Name]int) BundleOption
+type HandlerOptions interface{ ... }
+type Option = fx.Option
+type Registration interface{ ... }
+type Registry struct{ ... }
+    func MustRegistry(registrations ...Registration) Registry
+    func NewRegistry(registrations ...Registration) (Registry, error)
+type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/jobs/jobspg/jobspgfx
+```go
+const DefaultHousekeepingInterval = time.Minute
+const DefaultHousekeepingMaxBatches = 64
+const DefaultHousekeepingSweepTimeout = 30 * time.Second
+const MaxHousekeepingBatches = 1024
+func Application(settings ApplicationSettings) fx.Option
+func Module(settings Settings) fx.Option
+func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error)
+type ApplicationSettings struct{ ... }
+type HousekeepingSettings struct{ ... }
+type Settings struct{ ... }
+```
+
+## github.com/frostgrove/vv/jobs/jobsredis
+```go
+const DefaultPrefix = "frostgrove:jobs"
+const FormatVersion = "1"
+var ErrFormatMismatch = errors.New("jobsredis: format mismatch")
+var ErrNotReady = errors.New("jobsredis: driver is not ready")
+type Driver struct{ ... }
+    func New(spec Spec) (*Driver, error)
+    func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error)
+type Spec struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/storage/storageminio
