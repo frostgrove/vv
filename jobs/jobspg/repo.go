@@ -15,11 +15,12 @@ var errIntentConflict = errors.New("jobspg: intent conflict")
 var errCandidateConflict = errors.New("jobspg: candidate conflict")
 
 type repository struct {
-	schema     string
-	meta       string
-	catalogs   string
-	deliveries string
-	intents    string
+	schema      string
+	meta        string
+	catalogs    string
+	definitions string
+	deliveries  string
+	intents     string
 }
 
 type storedDelivery struct {
@@ -50,11 +51,12 @@ type expiredCandidate struct {
 func newRepository(schema string) repository {
 	quoted := quoteIdentifier(schema)
 	return repository{
-		schema:     quoted,
-		meta:       quoted + ".schema_meta",
-		catalogs:   quoted + ".catalogs",
-		deliveries: quoted + ".deliveries",
-		intents:    quoted + ".intents",
+		schema:      quoted,
+		meta:        quoted + ".schema_meta",
+		catalogs:    quoted + ".catalogs",
+		definitions: quoted + ".catalog_definitions",
+		deliveries:  quoted + ".deliveries",
+		intents:     quoted + ".intents",
 	}
 }
 
@@ -69,7 +71,7 @@ func (r repository) migrationStatements() []string {
 singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
 version integer NOT NULL CHECK (version > 0)
 )`,
-		`INSERT INTO ` + r.meta + ` (singleton, version) VALUES (true, 1) ON CONFLICT (singleton) DO NOTHING`,
+		`INSERT INTO ` + r.meta + ` (singleton, version) VALUES (true, 2) ON CONFLICT (singleton) DO NOTHING`,
 		`CREATE TABLE IF NOT EXISTS ` + r.catalogs + ` (
 namespace bytea PRIMARY KEY CHECK (octet_length(namespace) = 32),
 application text NOT NULL,
@@ -77,6 +79,15 @@ environment text NOT NULL,
 fingerprint text NOT NULL,
 created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 )`,
+		`CREATE TABLE IF NOT EXISTS ` + r.definitions + ` (
+namespace bytea NOT NULL CHECK (octet_length(namespace) = 32),
+definition text NOT NULL,
+fingerprint text NOT NULL,
+created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+PRIMARY KEY (namespace, definition),
+FOREIGN KEY (namespace) REFERENCES ` + r.catalogs + ` (namespace) ON DELETE CASCADE
+)`,
+		`UPDATE ` + r.meta + ` SET version = 2 WHERE singleton = true AND version = 1`,
 		`CREATE TABLE IF NOT EXISTS ` + r.deliveries + ` (
 namespace bytea NOT NULL CHECK (octet_length(namespace) = 32),
 id bytea NOT NULL CHECK (octet_length(id) = 16),
@@ -151,50 +162,6 @@ func (r repository) migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("%w: have %d, need %d", ErrSchemaMismatch, version, SchemaVersion)
 	}
 	return tx.Commit()
-}
-
-func (r repository) bindCatalog(ctx context.Context, db *sql.DB, namespace jobs.Namespace, fingerprint string) error {
-	namespaceBytes := namespace.Digest()
-	_, err := db.ExecContext(ctx, `INSERT INTO `+r.catalogs+` (namespace, application, environment, fingerprint)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (namespace) DO NOTHING`, namespaceBytes[:], namespace.Application().Value(), namespace.Environment().Value(), fingerprint)
-	if err != nil {
-		return fmt.Errorf("jobspg: bind catalog: %w", err)
-	}
-	var current, application, environment string
-	err = db.QueryRowContext(ctx, `SELECT fingerprint, application, environment FROM `+r.catalogs+` WHERE namespace = $1`, namespaceBytes[:]).Scan(&current, &application, &environment)
-	if err != nil {
-		return fmt.Errorf("jobspg: read catalog binding: %w", err)
-	}
-	if current != fingerprint || application != namespace.Application().Value() || environment != namespace.Environment().Value() {
-		return fmt.Errorf("%w: namespace is already bound to another catalog", ErrCatalogMismatch)
-	}
-	return nil
-}
-
-func (r repository) check(ctx context.Context, db *sql.DB, namespace jobs.Namespace, fingerprint string) error {
-	var version int
-	if err := db.QueryRowContext(ctx, `SELECT version FROM `+r.meta+` WHERE singleton = true`).Scan(&version); err != nil {
-		return fmt.Errorf("%w: %v", ErrSchemaMismatch, err)
-	}
-	if version != SchemaVersion {
-		return fmt.Errorf("%w: have %d, need %d", ErrSchemaMismatch, version, SchemaVersion)
-	}
-	if _, err := db.ExecContext(ctx, `SELECT namespace, id, definition, codec, codec_version, priority, state, available_at, record_size, record, payload_identity, payload_version, payload_digest, lease_owner, lease_token, lease_epoch, lease_expires_at, excluded_binding, excluded_build, created_at, updated_at FROM `+r.deliveries+` WHERE false`); err != nil {
-		return fmt.Errorf("%w: deliveries: %v", ErrSchemaMismatch, err)
-	}
-	if _, err := db.ExecContext(ctx, `SELECT namespace, scope, revision, purpose, digest, invocation_id, created_at FROM `+r.intents+` WHERE false`); err != nil {
-		return fmt.Errorf("%w: intents: %v", ErrSchemaMismatch, err)
-	}
-	namespaceBytes := namespace.Digest()
-	var current string
-	if err := db.QueryRowContext(ctx, `SELECT fingerprint FROM `+r.catalogs+` WHERE namespace = $1`, namespaceBytes[:]).Scan(&current); err != nil {
-		return fmt.Errorf("%w: catalog binding: %v", ErrCatalogMismatch, err)
-	}
-	if current != fingerprint {
-		return fmt.Errorf("%w: persisted and configured fingerprints differ", ErrCatalogMismatch)
-	}
-	return nil
 }
 
 func databaseNow(ctx context.Context, tx *sql.Tx) (time.Time, error) {

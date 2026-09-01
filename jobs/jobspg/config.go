@@ -15,7 +15,7 @@ import (
 )
 
 const DefaultSchema = "frostgrove_jobs"
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 var ErrNotReady = errors.New("jobspg: driver is not ready")
 var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
@@ -142,7 +142,7 @@ func (d *Driver) BindCatalog(ctx context.Context) error {
 	if d == nil || d.db == nil {
 		return ErrNotReady
 	}
-	return d.repo.bindCatalog(ctx, d.db, d.namespace, d.catalog.Fingerprint())
+	return d.repo.bindCatalog(ctx, d.db, d.namespace, d.catalog)
 }
 
 func (d *Driver) Check(ctx context.Context) error {
@@ -150,7 +150,7 @@ func (d *Driver) Check(ctx context.Context) error {
 		return ErrNotReady
 	}
 	d.ready.Store(false)
-	if err := d.repo.check(ctx, d.db, d.namespace, d.catalog.Fingerprint()); err != nil {
+	if err := d.repo.check(ctx, d.db, d.namespace, d.catalog); err != nil {
 		return err
 	}
 	d.ready.Store(true)
