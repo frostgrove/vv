@@ -8,6 +8,11 @@ import (
 	"github.com/frostgrove/vv/jobs"
 )
 
+const (
+	maximumJSONByteExpansion      = len(`\u003c`)
+	maxEncodedDeliveryRecordBytes = maximumJSONByteExpansion * jobs.MaxDeliveryRecordBytes
+)
+
 type recordDTO struct {
 	Version       int
 	Genesis       genesisDTO
@@ -156,7 +161,20 @@ func encodeRecord(record jobs.DeliveryRecord) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jobspg: encode delivery record: %w", err)
 	}
+	if err := validateEncodedRecordSize(len(encoded)); err != nil {
+		return nil, err
+	}
 	return encoded, nil
+}
+
+func validateEncodedRecordSize(size int) error {
+	if size > maxEncodedDeliveryRecordBytes {
+		return fmt.Errorf("jobspg: encode delivery record: %w", jobs.ErrTooLarge)
+	}
+	if size < 1 {
+		return fmt.Errorf("jobspg: encode delivery record: %w", jobs.ErrInvalid)
+	}
+	return nil
 }
 
 func decodeRecord(encoded []byte) (jobs.DeliveryRecord, error) {

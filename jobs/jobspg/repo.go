@@ -81,11 +81,12 @@ version integer NOT NULL CHECK (version > 0)
 func (r repository) migrationStatements() []string {
 	statements := r.migrationBootstrapStatements()
 	statements = append(statements, r.migrationUpgradeStatements()...)
-	return append(statements, r.catalogEvolutionMigrationStatements()...)
+	statements = append(statements, r.catalogEvolutionMigrationStatements()...)
+	return append(statements, r.schemaHardeningMigrationStatements()...)
 }
 
 func (r repository) migrationUpgradeStatements() []string {
-	return []string{
+	statements := []string{
 		`CREATE TABLE IF NOT EXISTS ` + r.catalogs + ` (
 namespace bytea PRIMARY KEY CHECK (octet_length(namespace) = 32),
 application text NOT NULL,
@@ -191,10 +192,8 @@ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
 PRIMARY KEY (namespace, scope, revision, purpose, digest),
 FOREIGN KEY (namespace, invocation_id) REFERENCES ` + r.deliveries + ` (namespace, id) ON DELETE CASCADE
 )`,
-		`CREATE INDEX IF NOT EXISTS deliveries_ready_idx ON ` + r.deliveries + ` (namespace, definition, priority, available_at, id) WHERE state = 1 AND lease_token IS NULL`,
-		`CREATE INDEX IF NOT EXISTS deliveries_expired_idx ON ` + r.deliveries + ` (namespace, lease_expires_at, id) WHERE lease_token IS NOT NULL`,
-		`CREATE INDEX IF NOT EXISTS intents_invocation_idx ON ` + r.intents + ` (namespace, invocation_id)`,
 	}
+	return append(statements, r.operationalIndexStatements()...)
 }
 
 func (r repository) catalogEvolutionMigrationStatements() []string {
@@ -243,6 +242,8 @@ func MigrationStatements(schema string) ([]string, error) {
 	statements = append(statements, repo.retentionIndexStatements(true)...)
 	statements = append(statements, repo.retentionIndexValidationStatements()...)
 	statements = append(statements, repo.retentionIndexCommentStatements()...)
+	statements = append(statements, repo.operationalIndexValidationStatements()...)
+	statements = append(statements, repo.schemaConstraintValidationStatements()...)
 	statements = append(statements, `UPDATE `+repo.meta+` SET version = 4 WHERE singleton = true AND version IN (1, 2, 3)`)
 	return append([]string(nil), statements...), nil
 }
@@ -271,14 +272,9 @@ func (r repository) migrateLocked(ctx context.Context, conn *sql.Conn) error {
 	if version < 1 || version > SchemaVersion {
 		return fmt.Errorf("%w: unsupported intermediate version %d", ErrSchemaMismatch, version)
 	}
-	if version == SchemaVersion {
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		return r.validateRetentionIndexes(ctx, conn)
-	}
+	currentVersion := version == SchemaVersion
 	needsRetentionMigration := version <= 2
-	if needsRetentionMigration {
+	if !currentVersion && needsRetentionMigration {
 		for _, statement := range r.migrationUpgradeStatements() {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("jobspg: migrate: %w", err)
@@ -291,19 +287,38 @@ func (r repository) migrateLocked(ctx context.Context, conn *sql.Conn) error {
 			return fmt.Errorf("%w: unsupported intermediate version %d", ErrSchemaMismatch, version)
 		}
 	}
-	for _, statement := range r.catalogEvolutionMigrationStatements() {
+	if !currentVersion {
+		for _, statement := range r.catalogEvolutionMigrationStatements() {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("jobspg: migrate catalog contracts: %w", err)
+			}
+		}
+	}
+	for _, statement := range r.schemaHardeningMigrationStatements() {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("jobspg: migrate catalog contracts: %w", err)
+			return fmt.Errorf("jobspg: harden schema: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if currentVersion {
+		if err := r.validateSchemaConstraints(ctx, conn); err != nil {
+			return err
+		}
+		if err := r.validateRetentionIndexes(ctx, conn); err != nil {
+			return err
+		}
+		return r.validateOperationalIndexes(ctx, conn)
 	}
 	if needsRetentionMigration {
 		if err := r.buildRetentionIndexes(ctx, conn); err != nil {
 			return err
 		}
 	} else if err := r.validateRetentionIndexes(ctx, conn); err != nil {
+		return err
+	}
+	if err := r.validateOperationalIndexes(ctx, conn); err != nil {
 		return err
 	}
 	return r.finalizeMigration(ctx, conn)

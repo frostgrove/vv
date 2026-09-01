@@ -317,6 +317,12 @@ func (r repository) check(ctx context.Context, db *sql.DB, namespace jobs.Namesp
 	if _, err := db.ExecContext(ctx, `SELECT namespace, scope, revision, purpose, digest, invocation_id, created_at FROM `+r.intents+` WHERE false`); err != nil {
 		return fmt.Errorf("%w: intents: %v", ErrSchemaMismatch, err)
 	}
+	if err := r.validateSchemaConstraints(ctx, db); err != nil {
+		return err
+	}
+	if err := r.validateOperationalIndexes(ctx, db); err != nil {
+		return err
+	}
 	if err := r.validateRetentionIndexes(ctx, db); err != nil {
 		return err
 	}

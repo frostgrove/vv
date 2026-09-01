@@ -271,6 +271,12 @@ func (r repository) finalizeMigration(ctx context.Context, conn *sql.Conn) error
 		return err
 	}
 	defer tx.Rollback()
+	if err := r.validateSchemaConstraints(ctx, tx); err != nil {
+		return err
+	}
+	if err := r.validateOperationalIndexes(ctx, tx); err != nil {
+		return err
+	}
 	if err := r.validateRetentionIndexes(ctx, tx); err != nil {
 		return err
 	}

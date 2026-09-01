@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -106,6 +107,44 @@ func TestUniqueRecordRoundTripPreservesPlacementModeAndIntent(t *testing.T) {
 	}
 }
 
+func TestEncodeRecordAcceptsMaximumPayloadAndRejectsEncodedOverflowBoundary(t *testing.T) {
+	escaped, err := json.Marshal(strings.Repeat("<", 1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(escaped) != 2+1024*maximumJSONByteExpansion {
+		t.Fatalf("maximum JSON expansion = %d, encoded bytes = %d", maximumJSONByteExpansion, len(escaped))
+	}
+	if maxEncodedDeliveryRecordBytes != maximumJSONByteExpansion*jobs.MaxDeliveryRecordBytes {
+		t.Fatalf("encoded record bound = %d", maxEncodedDeliveryRecordBytes)
+	}
+	if err := validateEncodedRecordSize(maxEncodedDeliveryRecordBytes); err != nil {
+		t.Fatalf("exact encoded record bound was rejected: %v", err)
+	}
+	if err := validateEncodedRecordSize(maxEncodedDeliveryRecordBytes + 1); !errors.Is(err, jobs.ErrTooLarge) {
+		t.Fatalf("encoded record above bound = %v", err)
+	}
+	namespace, catalog, placement := testMaximumPayloadPlacement(t)
+	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert, err := driver.newPlacement(placement, placement.Candidate(), time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insert.record) <= jobs.MaxPayloadBytes || len(insert.record) >= maxEncodedDeliveryRecordBytes {
+		t.Fatalf("maximum-payload record encoded bytes = %d", len(insert.record))
+	}
+	record, err := decodeRecord(insert.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.RestoreDeliveryRecord(catalog, record); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 	namespace, catalog, placement := testPlacement(t)
 	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
@@ -175,6 +214,39 @@ func testPlacementWith(t *testing.T, options ...jobs.EnqueueOption) (jobs.Namesp
 		t.Fatal(err)
 	}
 	if _, err := jobs.Enqueue(context.Background(), queue, definition, "payload", options...); err != nil {
+		t.Fatal(err)
+	}
+	return namespace, catalog, sender.placement
+}
+
+func testMaximumPayloadPlacement(t *testing.T) (jobs.Namespace, jobs.Catalog, jobs.Placement) {
+	t.Helper()
+	name, err := jobs.ParseName("jobspg.maximum-payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := jobs.Default.With(jobs.MaxBytes(jobs.MaxPayloadBytes), jobs.MaxDecodedPayloadBytes(jobs.MaxPayloadBytes)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := jobs.MustDefine(jobs.DefinitionSpec[[]byte]{Name: name, Codec: jobs.Bytes(1), Policy: policy, Partition: jobs.PartitionGlobal})
+	catalog := jobs.MustCatalog(definition)
+	namespace, err := jobs.NamespaceOf("jobspg-tests", "maximum-payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failures, _ := jobs.Failures(jobs.FailureProcessCrash)
+	durability, _ := jobs.NewDurabilityProfile(jobs.AckLocalPersistence, jobs.AcknowledgedLossExcludedForDeclaredFailures, failures)
+	var backendBytes [jobs.BackendIDBytes]byte
+	backendBytes[0] = 2
+	backend, _ := jobs.BackendIDFromBytes(backendBytes)
+	description, _ := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
+	sender := &captureSender{description: description}
+	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: sender, Entropy: bytes.NewReader(bytes.Repeat([]byte{8}, 16))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.Enqueue(context.Background(), queue, definition, bytes.Repeat([]byte{0xff}, jobs.MaxPayloadBytes)); err != nil {
 		t.Fatal(err)
 	}
 	return namespace, catalog, sender.placement
