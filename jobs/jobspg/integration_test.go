@@ -8,13 +8,122 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
 	"github.com/frostgrove/vv/jobs"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+type postgresFencedController struct {
+	lease  jobs.LeaseRef
+	events *[]string
+}
+
+func (postgresFencedController) Pulse(context.Context) error { return nil }
+func (controller postgresFencedController) Guard(ctx context.Context, fence jobs.LeaseFence) error {
+	*controller.events = append(*controller.events, "guard")
+	return fence.Fence(ctx, controller.lease)
+}
+
+func TestPostgresAmbientCRUDPlacement(t *testing.T) {
+	dsn := os.Getenv("FROSTGROVE_JOBSPG_TEST_DSN")
+	if dsn == "" {
+		t.Skip("FROSTGROVE_JOBSPG_TEST_DSN is not set")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	environment := fmt.Sprintf("ambient-%d", time.Now().UnixNano())
+	namespace, err := jobs.NamespaceOf("jobspg-integration", environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := newRepository(DefaultSchema)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if err := repo.deleteNamespace(cleanupCtx, db, namespace); err != nil {
+			t.Errorf("delete test namespace: %v", err)
+		}
+	})
+	definition := postgresTestDefinition(t, "jobspg.ambient")
+	catalog := jobs.MustCatalog(definition)
+	source := crudsql.Postgres(db)
+	driver, err := New(Spec{DB: db, Source: source, Namespace: namespace, Catalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal := errors.New("roll back placement")
+	var rolledBack jobs.InvocationID
+	err = crud.InNewTx(ctx, source, func(txContext context.Context) error {
+		var enqueueErr error
+		rolledBack, enqueueErr = jobs.Enqueue(txContext, queue, definition, "rollback")
+		if enqueueErr != nil {
+			return enqueueErr
+		}
+		return refusal
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("rollback transaction = %v", err)
+	}
+	if _, err := driver.Get(ctx, rolledBack); !errors.Is(err, jobs.ErrInvocationNotFound) {
+		t.Fatalf("rolled-back placement = %v", err)
+	}
+	var committed jobs.InvocationID
+	err = crud.InNewTx(ctx, source, func(txContext context.Context) error {
+		var enqueueErr error
+		committed, enqueueErr = jobs.Enqueue(txContext, queue, definition, "commit")
+		return enqueueErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view, err := driver.Get(ctx, committed); err != nil || view.Invocation().ID() != committed {
+		t.Fatalf("committed placement = %v, %v", view.Invocation().ID(), err)
+	}
+	lease := adminClaimInvocation(t, ctx, driver, namespace, definition, committed, 7)
+	events := []string{}
+	controller := postgresFencedController{lease: lease, events: &events}
+	err = driver.InFencedTx(ctx, controller,
+		func(txContext context.Context) error {
+			if tx, ok := crudsql.TransactionFor(txContext, source); !ok || tx == nil {
+				return errors.New("fenced transaction is not visible through CRUD")
+			}
+			events = append(events, "before")
+			return nil
+		},
+		func(context.Context) error {
+			events = append(events, "effect")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(events, []string{"before", "guard", "effect"}) {
+		t.Fatalf("fenced transaction events = %v", events)
+	}
+	adminFinishLease(t, ctx, driver, lease)
+}
 
 func TestPostgresVerticalSlice(t *testing.T) {
 	dsn := os.Getenv("FROSTGROVE_JOBSPG_TEST_DSN")

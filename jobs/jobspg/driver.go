@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/frostgrove/vv/crud"
+	"github.com/frostgrove/vv/crud/adapter/crudsql"
 	"github.com/frostgrove/vv/jobs"
 )
 
@@ -16,6 +18,27 @@ func (d *Driver) Place(ctx context.Context, placement jobs.Placement) (jobs.Plac
 	}
 	if placement.IsZero() || placement.Namespace().Digest() != d.namespace.Digest() {
 		return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrInvalid)
+	}
+	if d.source != nil {
+		executor, found := crud.ExecutorFor(ctx, d.source)
+		if found {
+			if !crud.IsTransaction(executor) {
+				return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrUnsupported)
+			}
+			tx, ok := crudsql.Transaction(executor)
+			if !ok {
+				return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrUnsupported)
+			}
+			stager, err := d.Stager(tx)
+			if err != nil {
+				return jobs.PlacementResult{}, err
+			}
+			staged, err := stager.Stage(ctx, placement)
+			if err != nil {
+				return jobs.PlacementResult{}, err
+			}
+			return jobs.NewPlacementResult(staged.InvocationID(), staged.Outcome())
+		}
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		result, err := d.place(ctx, placement)
