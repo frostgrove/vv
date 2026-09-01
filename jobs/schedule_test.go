@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestSchedulerRunDuePlacesTypedOccurrence(t *testing.T) {
 	}
 }
 
-func TestSchedulerUsesCollapseForNoOverlapAndSkipsFutureOneShot(t *testing.T) {
+func TestSchedulerDefaultsToAllowOverlapAndRejectsUnsupportedNoOverlap(t *testing.T) {
 	definition := MustDefine(DefinitionSpec[string]{
 		Name:   testJobName(t, "maintenance.sweep"),
 		Codec:  String(1),
@@ -105,6 +106,17 @@ func TestSchedulerUsesCollapseForNoOverlapAndSkipsFutureOneShot(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	_, err = DefineSchedule(ScheduleSpec[string]{
+		Name:     testJobName(t, "maintenance.sweep.serial"),
+		Revision: 1,
+		Cadence:  At(now),
+		Job:      definition,
+		Payload:  func(time.Time) (string, error) { return "serial", nil },
+		Overlap:  SkipOverlap,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("no-overlap schedule = %v", err)
 	}
 	future, err := DefineSchedule(ScheduleSpec[string]{
 		Name:     testJobName(t, "maintenance.sweep.future"),
@@ -131,7 +143,7 @@ func TestSchedulerUsesCollapseForNoOverlapAndSkipsFutureOneShot(t *testing.T) {
 	sender.mu.Lock()
 	placements := append([]Placement(nil), sender.placements...)
 	sender.mu.Unlock()
-	if len(placements) != 1 || placements[0].Mode() != PlacementCollapse {
+	if len(placements) != 1 || placements[0].Mode() != PlacementOnce {
 		t.Fatalf("placements = %#v", placements)
 	}
 }

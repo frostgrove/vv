@@ -98,8 +98,8 @@ func (cadence ScheduleCadence) occurrence(now time.Time) (time.Time, time.Time, 
 type ScheduleOverlap uint8
 
 const (
-	SkipOverlap ScheduleOverlap = iota
-	AllowOverlap
+	AllowOverlap ScheduleOverlap = iota
+	SkipOverlap
 )
 
 func (overlap ScheduleOverlap) Valid() bool { return overlap == SkipOverlap || overlap == AllowOverlap }
@@ -144,6 +144,9 @@ func DefineSchedule[P any](spec ScheduleSpec[P]) (Schedule, error) {
 	if !spec.Name.valid() || !spec.Revision.Valid() || !spec.Cadence.valid() || nilInterface(spec.Job) || spec.Payload == nil || !spec.Overlap.Valid() {
 		return nil, invalid("schedule")
 	}
+	if spec.Overlap == SkipOverlap {
+		return nil, fmt.Errorf("%w: durable no-overlap scheduling is not available", ErrUnsupported)
+	}
 	declaration := declarationOf(spec.Job)
 	if nilInterface(declaration) || !declaration.declarationName().valid() || spec.Job.Partition() != PartitionGlobal {
 		return nil, fmt.Errorf("%w: schedule job must be a resolved global definition", ErrUnsupported)
@@ -180,13 +183,6 @@ func (schedule *typedSchedule[P]) scheduleEntry() scheduleEntry {
 				return 0, err
 			}
 			key := scheduleIntent(schedule.description, due)
-			if schedule.description.NoOverlap {
-				_, err := Enqueue(ctx, queue, schedule.definition, payload, Collapse(key))
-				if err != nil {
-					return 0, err
-				}
-				return EnqueueCreated, nil
-			}
 			_, outcome, err := EnqueueOnce(ctx, queue, schedule.definition, Intent(key), payload)
 			return outcome, err
 		},
@@ -195,9 +191,6 @@ func (schedule *typedSchedule[P]) scheduleEntry() scheduleEntry {
 
 func scheduleIntent(description ScheduleDescription, due time.Time) string {
 	base := "schedule:" + description.Name.Value() + ":" + strconv.FormatUint(uint64(description.Revision), 10)
-	if description.NoOverlap {
-		return base
-	}
 	return base + ":" + strconv.FormatInt(due.UnixNano(), 10)
 }
 
