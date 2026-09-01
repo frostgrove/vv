@@ -89,7 +89,7 @@ type resolvedWorkersConfig struct {
 	backend          BackendDescription
 	build            BuildID
 	identity         TrustedIdentityRestorer
-	clock            Clock
+	clock            *workerClock
 	entropy          *entropySource
 	leaseTTL         time.Duration
 	heartbeat        time.Duration
@@ -224,9 +224,13 @@ func resolveWorkersConfig(spec WorkersSpec) (resolvedWorkersConfig, error) {
 	if err != nil {
 		return resolvedWorkersConfig{}, err
 	}
-	clock := spec.Clock
-	if nilInterface(clock) {
-		clock = systemClock{}
+	clockSource := spec.Clock
+	if nilInterface(clockSource) {
+		clockSource = systemClock{}
+	}
+	clock, err := newWorkerClock(clockSource)
+	if err != nil {
+		return resolvedWorkersConfig{}, err
 	}
 	entropy := spec.Entropy
 	if nilInterface(entropy) {

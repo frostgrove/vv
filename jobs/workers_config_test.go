@@ -129,7 +129,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if description.ClaimItems != spec.ClaimItems || description.ClaimBytes != spec.ClaimBytes || description.InFlightBytes != spec.InFlightBytes || description.PulseWaiters != spec.PulseWaiters {
 		t.Fatalf("explicit budgets = %#v", description)
 	}
-	if workers.config.clock != clock || workers.config.entropy.reader != entropy || workers.config.identity != identity || identityCalls.Load() != 0 || clock.calls.Load() != 0 || entropyReads.Load() != 0 {
+	if workers.config.clock.source != clock || workers.config.entropy.reader != entropy || workers.config.identity != identity || identityCalls.Load() != 0 || clock.calls.Load() != 0 || entropyReads.Load() != 0 {
 		t.Fatal("explicit runtime dependencies were changed or invoked")
 	}
 
@@ -146,7 +146,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if adaptive.Describe().Heartbeat != time.Second || adaptive.Describe().OperationTimeout != time.Second || adaptive.Describe().ReclaimInterval != 2*time.Second {
 		t.Fatalf("adaptive durations = %#v", adaptive.Describe())
 	}
-	if _, ok := adaptive.config.clock.(systemClock); !ok || adaptive.config.entropy.reader != rand.Reader {
+	if _, ok := adaptive.config.clock.source.(systemClock); !ok || adaptive.config.entropy.reader != rand.Reader {
 		t.Fatal("nil-like runtime dependencies did not resolve to safe defaults")
 	}
 	adaptiveSpec.LeaseTTL = MinimumLeaseTTL
