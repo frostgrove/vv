@@ -192,6 +192,29 @@ func (this *Tx) Rollback(ctx context.Context) error { return this.tx.Rollback() 
 
 func (this *Tx) Tx() *sql.Tx { return this.tx }
 
+func Transaction(executor crud.Executor) (*sql.Tx, bool) {
+	if executor == nil || !crud.IsTransaction(executor) {
+		return nil, false
+	}
+	if direct, ok := executor.(interface{ Tx() *sql.Tx }); ok {
+		tx := direct.Tx()
+		return tx, tx != nil
+	}
+	if wrapped, ok := executor.(interface{ Unwrap() Queryer }); ok {
+		tx, ok := wrapped.Unwrap().(*sql.Tx)
+		return tx, ok && tx != nil
+	}
+	return nil, false
+}
+
+func TransactionFor(ctx context.Context, source any) (*sql.Tx, bool) {
+	executor, ok := crud.ExecutorFor(ctx, source)
+	if !ok {
+		return nil, false
+	}
+	return Transaction(executor)
+}
+
 func (this *Tx) Begin(ctx context.Context) (crud.Tx, error) {
 	name := "vv_sp_" + strconv.FormatInt(this.depth.Add(1), 10)
 	if _, err := this.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
@@ -205,6 +228,8 @@ type savepoint struct {
 	parent *Tx
 	name   string
 }
+
+func (this *savepoint) Tx() *sql.Tx { return this.parent.tx }
 
 func (this *savepoint) Commit(ctx context.Context) error {
 	_, err := this.parent.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+this.name)
