@@ -60,6 +60,7 @@ func TestJobBoundsAreExact(t *testing.T) {
 		"default waiters":            {DefaultTransientWaiters, 256},
 		"maximum waiters":            {MaxTransientWaiters, 4096},
 		"worker in-flight bytes":     {DefaultWorkerInFlightBytes, 67108864},
+		"maximum worker bytes":       {MaxWorkerInFlightBytes, 1073741824},
 	}
 	for name, test := range integers {
 		t.Run(name, func(t *testing.T) {
@@ -73,24 +74,28 @@ func TestJobBoundsAreExact(t *testing.T) {
 		got  time.Duration
 		want time.Duration
 	}{
-		"default attempt timeout": {DefaultAttemptTimeout, 10 * time.Minute},
-		"maximum attempt timeout": {MaximumAttemptTimeout, 24 * time.Hour},
-		"default max elapsed":     {DefaultMaxElapsed, 24 * time.Hour},
-		"maximum max elapsed":     {MaximumMaxElapsed, 30 * 24 * time.Hour},
-		"minimum retry delay":     {MinRetryDelay, 100 * time.Millisecond},
-		"default retry delay":     {DefaultRetryDelay, 5 * time.Second},
-		"default max retry delay": {DefaultMaxRetryDelay, 5 * time.Minute},
-		"maximum retry delay":     {MaxRetryDelay, time.Hour},
-		"terminal retention":      {DefaultTerminalRetention, 7 * 24 * time.Hour},
-		"intent retention":        {DefaultIntentRetention, 30 * 24 * time.Hour},
-		"maximum retention":       {MaxRetention, 365 * 24 * time.Hour},
-		"poll interval":           {DefaultPollInterval, time.Second},
-		"lease ttl":               {DefaultLeaseTTL, time.Minute},
-		"heartbeat":               {DefaultHeartbeat, 15 * time.Second},
-		"reclaim interval":        {DefaultReclaimInterval, 15 * time.Second},
-		"shutdown grace":          {DefaultShutdownGrace, 20 * time.Second},
-		"maximum shutdown grace":  {MaxShutdownGrace, 10 * time.Minute},
-		"transient wait":          {DefaultTransientWait, 250 * time.Millisecond},
+		"default attempt timeout":  {DefaultAttemptTimeout, 10 * time.Minute},
+		"maximum attempt timeout":  {MaximumAttemptTimeout, 24 * time.Hour},
+		"default max elapsed":      {DefaultMaxElapsed, 24 * time.Hour},
+		"maximum max elapsed":      {MaximumMaxElapsed, 30 * 24 * time.Hour},
+		"minimum retry delay":      {MinRetryDelay, 100 * time.Millisecond},
+		"default retry delay":      {DefaultRetryDelay, 5 * time.Second},
+		"default max retry delay":  {DefaultMaxRetryDelay, 5 * time.Minute},
+		"maximum retry delay":      {MaxRetryDelay, time.Hour},
+		"terminal retention":       {DefaultTerminalRetention, 7 * 24 * time.Hour},
+		"intent retention":         {DefaultIntentRetention, 30 * 24 * time.Hour},
+		"maximum retention":        {MaxRetention, 365 * 24 * time.Hour},
+		"minimum poll interval":    {MinimumPollInterval, 10 * time.Millisecond},
+		"poll interval":            {DefaultPollInterval, time.Second},
+		"maximum poll interval":    {MaximumPollInterval, time.Minute},
+		"lease ttl":                {DefaultLeaseTTL, time.Minute},
+		"heartbeat":                {DefaultHeartbeat, 15 * time.Second},
+		"minimum reclaim interval": {MinimumReclaimInterval, 100 * time.Millisecond},
+		"reclaim interval":         {DefaultReclaimInterval, 15 * time.Second},
+		"maximum reclaim interval": {MaximumReclaimInterval, 24 * time.Hour},
+		"shutdown grace":           {DefaultShutdownGrace, 20 * time.Second},
+		"maximum shutdown grace":   {MaxShutdownGrace, 10 * time.Minute},
+		"transient wait":           {DefaultTransientWait, 250 * time.Millisecond},
 	}
 	for name, test := range durations {
 		t.Run(name, func(t *testing.T) {

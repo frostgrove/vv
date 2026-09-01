@@ -58,6 +58,7 @@ const (
 	DefaultTransientWaiters    = 256
 	MaxTransientWaiters        = 4096
 	DefaultWorkerInFlightBytes = 64 << 20
+	MaxWorkerInFlightBytes     = 1 << 30
 )
 
 const (
@@ -75,12 +76,16 @@ const (
 	DefaultIntentRetention   = 30 * 24 * time.Hour
 	MaxRetention             = 365 * 24 * time.Hour
 
+	MinimumPollInterval    = 10 * time.Millisecond
 	DefaultPollInterval    = time.Second
+	MaximumPollInterval    = time.Minute
 	MinimumLeaseTTL        = time.Second
 	DefaultLeaseTTL        = time.Minute
 	MaximumLeaseTTL        = 24 * time.Hour
 	DefaultHeartbeat       = 15 * time.Second
+	MinimumReclaimInterval = 100 * time.Millisecond
 	DefaultReclaimInterval = 15 * time.Second
+	MaximumReclaimInterval = MaximumLeaseTTL
 	DefaultShutdownGrace   = 20 * time.Second
 	MaxShutdownGrace       = 10 * time.Minute
 	DefaultTransientWait   = 250 * time.Millisecond
