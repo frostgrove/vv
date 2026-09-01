@@ -93,6 +93,55 @@ func TestGeneratedCatalog(t *testing.T) {
 	}
 }
 
+func TestGenerationBuildsInjectedFxBundle(t *testing.T) {
+	directory := fixtureJobsFXPackage(t, `package sample
+
+import (
+	"context"
+
+	jobs "github.com/frostgrove/vv/jobs"
+	jobsfx "github.com/frostgrove/vv/jobs/jobsfx"
+)
+
+type Payload struct {
+	ID string
+}
+
+type Handler struct{}
+
+func (*Handler) Handle(context.Context, Payload) error {
+	return nil
+}
+
+func (*Handler) HandleAdapter(context.Context, Payload, jobs.DeliveryMeta, jobs.AttemptController) error {
+	return nil
+}
+
+var Injected = jobsfx.Auto((*Handler).Handle)
+
+var Fenced = jobsfx.AutoAdapter((*Handler).HandleAdapter, jobs.Heavy)
+
+var Producer = jobs.Declare[Payload]()
+`)
+	if err := Run(&Options{Dir: directory}); err != nil {
+		t.Fatal(err)
+	}
+	generated := readFile(t, filepath.Join(directory, "vv_jobs_gen.go"))
+	for _, expected := range []string{
+		`_vvjobsfx "github.com/frostgrove/vv/jobs/jobsfx"`,
+		"_vvjobs.MustMaterialize(Fenced.Automatic",
+		"_vvjobs.MustMaterialize(Injected.Automatic",
+		"_vvjobs.MustCatalog(Fenced.Automatic, Injected.Automatic, Producer)",
+		"func VVJobs(options ..._vvjobsfx.BundleOption) _vvjobsfx.Option",
+		"_vvjobsfx.Bundle(VVJobsCatalog, options, Fenced, Injected)",
+	} {
+		if !bytes.Contains(generated, []byte(expected)) {
+			t.Fatalf("generated source lacks %q:\n%s", expected, generated)
+		}
+	}
+	goTest(t, directory)
+}
+
 func TestCheckReportsDriftWithoutWriting(t *testing.T) {
 	directory := fixturePackage(t, `package sample
 
@@ -198,6 +247,29 @@ func fixturePackage(t *testing.T, source string) string {
 	module := fmt.Sprintf("module example.com/sample\n\ngo 1.26\n\nrequire github.com/frostgrove/vv v0.0.0\n\nreplace github.com/frostgrove/vv => %s\n", filepath.ToSlash(root))
 	writeFile(t, filepath.Join(directory, "go.mod"), module)
 	writeFile(t, filepath.Join(directory, "jobs.go"), source)
+	return directory
+}
+
+func fixtureJobsFXPackage(t *testing.T, source string) string {
+	t.Helper()
+	directory := t.TempDir()
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := fmt.Sprintf("module example.com/sample\n\ngo 1.26.6\n\nrequire (\n\tgithub.com/frostgrove/vv v0.0.0\n\tgithub.com/frostgrove/vv/jobs/jobsfx v0.0.0\n)\n\nreplace github.com/frostgrove/vv => %s\nreplace github.com/frostgrove/vv/jobs/jobsfx => %s\n", filepath.ToSlash(root), filepath.ToSlash(filepath.Join(root, "jobs", "jobsfx")))
+	writeFile(t, filepath.Join(directory, "go.mod"), module)
+	sums, err := os.ReadFile(filepath.Join(root, "jobs", "jobsfx", "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(directory, "go.sum"), string(sums))
+	writeFile(t, filepath.Join(directory, "jobs.go"), source)
+	command := exec.Command("go", "mod", "tidy")
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy: %v\n%s", err, output)
+	}
 	return directory
 }
 

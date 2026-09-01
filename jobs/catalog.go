@@ -28,7 +28,11 @@ func NewCatalog(declarations ...Declaration) (Catalog, error) {
 	}
 	entries := append([]Declaration(nil), declarations...)
 	for index, declaration := range entries {
-		if nilInterface(declaration) || !declaration.declarationName().valid() {
+		if nilInterface(declaration) {
+			return Catalog{}, fmt.Errorf("%w: declaration %d is nil or unresolved", ErrInvalid, index)
+		}
+		entries[index] = canonicalDeclarationOf(declaration)
+		if nilInterface(entries[index]) || !entries[index].declarationName().valid() {
 			return Catalog{}, fmt.Errorf("%w: declaration %d is nil or unresolved", ErrInvalid, index)
 		}
 	}
@@ -55,6 +59,13 @@ func NewCatalog(declarations ...Declaration) (Catalog, error) {
 		byName[name] = index
 	}
 	return Catalog{declarations: entries, descriptors: descriptors, byName: byName, fingerprint: fingerprintDescriptors(descriptors)}, nil
+}
+
+func canonicalDeclarationOf(declaration Declaration) Declaration {
+	if canonical, ok := declaration.(interface{ canonicalDeclaration() Declaration }); ok {
+		return canonical.canonicalDeclaration()
+	}
+	return declaration
 }
 
 func MustCatalog(declarations ...Declaration) Catalog {

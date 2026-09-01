@@ -21,6 +21,10 @@ type Backend interface {
 	jobs.DeliveryDriver
 }
 
+type backendPreparer interface {
+	Prepare(context.Context) error
+}
+
 func AsDeclaration(constructor any) any {
 	return fx.Annotate(constructor, fx.As(new(jobs.Declaration)), fx.ResultTags(declarationGroup))
 }
@@ -125,13 +129,25 @@ func resolveCatalog(configured jobs.Catalog, registered contributions) (jobs.Cat
 
 func contributionDeclarations(registered contributions) []jobs.Declaration {
 	declarations := make([]jobs.Declaration, 0, len(registered.Declarations)+len(registered.Consumers))
-	declarations = append(declarations, registered.Declarations...)
+	seen := make(map[jobs.Declaration]struct{}, len(registered.Declarations)+len(registered.Consumers))
+	for _, declaration := range registered.Declarations {
+		if _, exists := seen[declaration]; exists {
+			continue
+		}
+		seen[declaration] = struct{}{}
+		declarations = append(declarations, declaration)
+	}
 	for _, consumer := range registered.Consumers {
 		if consumer == nil {
 			declarations = append(declarations, nil)
 			continue
 		}
-		declarations = append(declarations, consumer.Declaration())
+		declaration := consumer.Declaration()
+		if _, exists := seen[declaration]; exists {
+			continue
+		}
+		seen[declaration] = struct{}{}
+		declarations = append(declarations, declaration)
 	}
 	return declarations
 }
@@ -164,6 +180,7 @@ type schedulerRunResult struct {
 }
 
 type lifecycleRuntime struct {
+	backend         Backend
 	queue           *jobs.Queue
 	workers         *jobs.Workers
 	scheduler       *jobs.Scheduler
@@ -173,12 +190,17 @@ type lifecycleRuntime struct {
 	schedulerDone   chan schedulerRunResult
 }
 
-func bindLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, queue *jobs.Queue, workers *jobs.Workers, scheduled scheduledRuntime) {
-	runtime := &lifecycleRuntime{queue: queue, workers: workers, scheduler: scheduled.scheduler, shutdowner: shutdowner}
+func bindLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, backend Backend, queue *jobs.Queue, workers *jobs.Workers, scheduled scheduledRuntime) {
+	runtime := &lifecycleRuntime{backend: backend, queue: queue, workers: workers, scheduler: scheduled.scheduler, shutdowner: shutdowner}
 	lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
 }
 
 func (runtime *lifecycleRuntime) start(ctx context.Context) error {
+	if preparer, ok := runtime.backend.(backendPreparer); ok {
+		if err := prepareBackend(ctx, preparer); err != nil {
+			return fmt.Errorf("jobsfx: prepare backend: %w", err)
+		}
+	}
 	activation, err := runtime.queue.Activate()
 	if err != nil {
 		return fmt.Errorf("jobsfx: activate queue: %w", err)
@@ -194,6 +216,15 @@ func (runtime *lifecycleRuntime) start(ctx context.Context) error {
 		go runtime.runScheduler(schedulerContext)
 	}
 	return nil
+}
+
+func prepareBackend(ctx context.Context, preparer backendPreparer) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = jobs.ErrDriver
+		}
+	}()
+	return preparer.Prepare(ctx)
 }
 
 func (runtime *lifecycleRuntime) runWorkers(ctx context.Context) {

@@ -15,11 +15,18 @@ func render(loaded *loadedPackage, declarations []declaration, document manifest
 		entries[entry.Variable] = entry
 	}
 	paths := payloadImportPaths(loaded, declarations)
-	aliases := make(map[string]string, len(paths)+1)
+	injected := false
+	for _, declaration := range declarations {
+		injected = injected || declaration.injected
+	}
+	aliases := make(map[string]string, len(paths)+2)
 	aliases[jobsImportPath] = "_vvjobs"
+	if injected {
+		aliases[jobsFXImportPath] = "_vvjobsfx"
+	}
 	index := 0
 	for _, path := range paths {
-		if path == jobsImportPath {
+		if path == jobsImportPath || path == jobsFXImportPath {
 			continue
 		}
 		aliases[path] = fmt.Sprintf("_vvjobstype%d", index)
@@ -29,8 +36,11 @@ func render(loaded *loadedPackage, declarations []declaration, document manifest
 	fmt.Fprintf(&output, "package %s\n\n", loaded.name)
 	output.WriteString("import (\n")
 	fmt.Fprintf(&output, "\t_vvjobs %q\n", jobsImportPath)
+	if injected {
+		fmt.Fprintf(&output, "\t_vvjobsfx %q\n", jobsFXImportPath)
+	}
 	for _, path := range paths {
-		if path != jobsImportPath {
+		if path != jobsImportPath && path != jobsFXImportPath {
 			fmt.Fprintf(&output, "\t%s %q\n", aliases[path], path)
 		}
 	}
@@ -53,7 +63,11 @@ func render(loaded *loadedPackage, declarations []declaration, document manifest
 		if entry.Partition == "tenant_required" {
 			partition = "_vvjobs.PartitionTenantRequired"
 		}
-		fmt.Fprintf(&output, "\t_vvjobs.MustMaterialize(%s, _vvjobs.GeneratedDefinitionSpec[%s]{\n", declaration.variable, payload)
+		target := declaration.variable
+		if declaration.injected {
+			target += ".Automatic"
+		}
+		fmt.Fprintf(&output, "\t_vvjobs.MustMaterialize(%s, _vvjobs.GeneratedDefinitionSpec[%s]{\n", target, payload)
 		fmt.Fprintf(&output, "\t\tName: _vvJobsMustName(%s),\n", strconv.Quote(entry.Name))
 		fmt.Fprintf(&output, "\t\tCodec: _vvjobs.JSON[%s](_vvjobs.SchemaVersion(%d)),\n", payload, entry.Codec.Version)
 		fmt.Fprintf(&output, "\t\tPartition: %s,\n", partition)
@@ -65,8 +79,21 @@ func render(loaded *loadedPackage, declarations []declaration, document manifest
 			output.WriteString(", ")
 		}
 		output.WriteString(declaration.variable)
+		if declaration.injected {
+			output.WriteString(".Automatic")
+		}
 	}
 	output.WriteString(")\n}()\n")
+	if injected {
+		output.WriteString("\nfunc VVJobs(options ..._vvjobsfx.BundleOption) _vvjobsfx.Option {\n")
+		output.WriteString("\treturn _vvjobsfx.Bundle(VVJobsCatalog, options")
+		for _, declaration := range declarations {
+			if declaration.injected {
+				fmt.Fprintf(&output, ", %s", declaration.variable)
+			}
+		}
+		output.WriteString(")\n}\n")
+	}
 	formatted, err := format.Source(output.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("jobsgen: format generated Go: %w", err)

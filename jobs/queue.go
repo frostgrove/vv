@@ -657,7 +657,7 @@ func preparePlacement[P any](ctx context.Context, queue *Queue, definition Defin
 }
 
 func declarationOf[P any](definition DefinitionOf[P]) Declaration {
-	return definition
+	return canonicalDeclarationOf(definition)
 }
 
 func resolveEnqueueOptions(values []EnqueueOption) (enqueueOptions, error) {

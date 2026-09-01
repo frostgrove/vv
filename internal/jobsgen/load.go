@@ -69,6 +69,9 @@ func loadPackage(dir, output string) (*loadedPackage, error) {
 	if _, exists := declarations["VVJobsCatalog"]; exists {
 		return nil, fmt.Errorf("jobsgen: generated declaration VVJobsCatalog collides with authored code")
 	}
+	if _, exists := declarations["VVJobs"]; exists {
+		return nil, fmt.Errorf("jobsgen: generated declaration VVJobs collides with authored code")
+	}
 	if _, exists := declarations["_vvJobsMustName"]; exists {
 		return nil, fmt.Errorf("jobsgen: generated declaration _vvJobsMustName collides with authored code")
 	}
@@ -80,7 +83,11 @@ func loadPackage(dir, output string) (*loadedPackage, error) {
 		Instances:  map[*ast.Ident]types.Instance{},
 		Selections: map[*ast.SelectorExpr]*types.Selection{},
 	}
-	stub, err := parser.ParseFile(fset, "<jobsgen-catalog>", "package "+metadata.Name+"\nimport _vvjobsbootstrap \""+jobsImportPath+"\"\nvar VVJobsCatalog _vvjobsbootstrap.Catalog\n", 0)
+	stubSource := "package " + metadata.Name + "\nimport _vvjobsbootstrap \"" + jobsImportPath + "\"\nvar VVJobsCatalog _vvjobsbootstrap.Catalog\n"
+	if packageImports(files, jobsFXImportPath) {
+		stubSource = "package " + metadata.Name + "\nimport (\n_vvjobsbootstrap \"" + jobsImportPath + "\"\n_vvjobsfxbootstrap \"" + jobsFXImportPath + "\"\n)\nvar VVJobsCatalog _vvjobsbootstrap.Catalog\nfunc VVJobs(..._vvjobsfxbootstrap.BundleOption) _vvjobsfxbootstrap.Option { panic(\"generated\") }\n"
+	}
+	stub, err := parser.ParseFile(fset, "<jobsgen-catalog>", stubSource, 0)
 	if err != nil {
 		return nil, fmt.Errorf("jobsgen: build catalog stub: %w", err)
 	}
@@ -92,6 +99,18 @@ func loadPackage(dir, output string) (*loadedPackage, error) {
 		return nil, fmt.Errorf("jobsgen: type-check package: %w", err)
 	}
 	return &loadedPackage{dir: metadata.Dir, name: metadata.Name, importPath: metadata.ImportPath, fset: fset, files: files, fileNames: fileNames, info: info, types: checked, declarations: declarations}, nil
+}
+
+func packageImports(files []*ast.File, path string) bool {
+	want := `"` + path + `"`
+	for _, file := range files {
+		for _, spec := range file.Imports {
+			if spec.Path != nil && spec.Path.Value == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func listPackage(dir string) (packageMetadata, error) {

@@ -193,3 +193,5 @@ func (this *Automatic[P]) declarationName() Name {
 }
 
 func (this *Automatic[P]) declarationMarker() {}
+
+func (this *Automatic[P]) canonicalDeclaration() Declaration { return this }

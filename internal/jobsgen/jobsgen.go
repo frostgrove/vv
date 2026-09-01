@@ -55,7 +55,7 @@ func Run(options *Options) error {
 		return err
 	}
 	if len(declarations) == 0 && previous == nil {
-		return fmt.Errorf("jobsgen: no package-level jobs.Auto or jobs.Declare declarations found in %s", config.dir)
+		return fmt.Errorf("jobsgen: no package-level jobs.Auto, jobs.Declare, jobsfx.Auto, or jobsfx.AutoAdapter declarations found in %s", config.dir)
 	}
 	document, err := buildManifest(loaded, declarations, previous)
 	if err != nil {

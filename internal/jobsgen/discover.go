@@ -8,12 +8,22 @@ import (
 	"strings"
 )
 
-const jobsImportPath = "github.com/frostgrove/vv/jobs"
+const (
+	jobsImportPath   = "github.com/frostgrove/vv/jobs"
+	jobsFXImportPath = "github.com/frostgrove/vv/jobs/jobsfx"
+)
 
 type declaration struct {
 	variable string
 	kind     string
 	payload  types.Type
+	injected bool
+}
+
+type declarationReference struct {
+	kind     string
+	display  string
+	injected bool
 }
 
 func discover(loaded *loadedPackage) ([]declaration, error) {
@@ -32,22 +42,22 @@ func discover(loaded *loadedPackage) ([]declaration, error) {
 					continue
 				}
 				for index, value := range spec.Values {
-					reference, kind := directDeclarationReference(loaded.info, value)
+					reference, declarationType := directDeclarationReference(loaded.info, value)
 					if reference == nil {
 						continue
 					}
 					supported[reference] = struct{}{}
 					name := spec.Names[index]
 					if name.Name == "_" {
-						problems = append(problems, positionProblem(loaded, name, "jobs."+kind+" must be assigned to a named package-level variable"))
+						problems = append(problems, positionProblem(loaded, name, declarationType.display+" must be assigned to a named package-level variable"))
 						continue
 					}
-					payload, err := automaticPayload(loaded.info.Defs[name])
+					payload, err := automaticPayload(loaded.info.Defs[name], declarationType.injected)
 					if err != nil {
 						problems = append(problems, positionProblem(loaded, name, err.Error()))
 						continue
 					}
-					result = append(result, declaration{variable: name.Name, kind: kind, payload: payload})
+					result = append(result, declaration{variable: name.Name, kind: declarationType.kind, payload: payload, injected: declarationType.injected})
 				}
 			}
 		}
@@ -58,14 +68,14 @@ func discover(loaded *loadedPackage) ([]declaration, error) {
 			if !ok {
 				return true
 			}
-			kind, ok := jobsDeclarationObject(loaded.info.Uses[identifier])
+			declarationType, ok := jobsDeclarationObject(loaded.info.Uses[identifier])
 			if !ok {
 				return true
 			}
 			if _, ok := supported[identifier]; ok {
 				return true
 			}
-			problems = append(problems, positionProblem(loaded, identifier, "jobs."+kind+" is only supported as a direct package-level variable initializer"))
+			problems = append(problems, positionProblem(loaded, identifier, declarationType.display+" is only supported as a direct package-level variable initializer"))
 			return true
 		})
 	}
@@ -79,10 +89,10 @@ func discover(loaded *loadedPackage) ([]declaration, error) {
 	return result, nil
 }
 
-func directDeclarationReference(info *types.Info, expression ast.Expr) (*ast.Ident, string) {
+func directDeclarationReference(info *types.Info, expression ast.Expr) (*ast.Ident, declarationReference) {
 	call, ok := unparen(expression).(*ast.CallExpr)
 	if !ok {
-		return nil, ""
+		return nil, declarationReference{}
 	}
 	function := unparen(call.Fun)
 	switch item := function.(type) {
@@ -98,27 +108,37 @@ func directDeclarationReference(info *types.Info, expression ast.Expr) (*ast.Ide
 	case *ast.Ident:
 		identifier = item
 	default:
-		return nil, ""
+		return nil, declarationReference{}
 	}
-	kind, ok := jobsDeclarationObject(info.Uses[identifier])
+	declarationType, ok := jobsDeclarationObject(info.Uses[identifier])
 	if !ok {
-		return nil, ""
+		return nil, declarationReference{}
 	}
-	return identifier, kind
+	return identifier, declarationType
 }
 
-func jobsDeclarationObject(object types.Object) (string, bool) {
+func jobsDeclarationObject(object types.Object) (declarationReference, bool) {
 	function, ok := object.(*types.Func)
-	if !ok || function.Pkg() == nil || function.Pkg().Path() != jobsImportPath {
-		return "", false
+	if !ok || function.Pkg() == nil {
+		return declarationReference{}, false
 	}
-	if function.Name() != "Auto" && function.Name() != "Declare" {
-		return "", false
+	switch function.Pkg().Path() {
+	case jobsImportPath:
+		if function.Name() != "Auto" && function.Name() != "Declare" {
+			return declarationReference{}, false
+		}
+		return declarationReference{kind: function.Name(), display: "jobs." + function.Name()}, true
+	case jobsFXImportPath:
+		if function.Name() != "Auto" && function.Name() != "AutoAdapter" {
+			return declarationReference{}, false
+		}
+		return declarationReference{kind: "Auto", display: "jobsfx." + function.Name(), injected: true}, true
+	default:
+		return declarationReference{}, false
 	}
-	return function.Name(), true
 }
 
-func automaticPayload(object types.Object) (types.Type, error) {
+func automaticPayload(object types.Object, injected bool) (types.Type, error) {
 	variable, ok := object.(*types.Var)
 	if !ok {
 		return nil, fmt.Errorf("cannot resolve automatic declaration type")
@@ -128,6 +148,12 @@ func automaticPayload(object types.Object) (types.Type, error) {
 		return nil, fmt.Errorf("declaration must have type *jobs.Automatic[P]")
 	}
 	named, ok := types.Unalias(pointer.Elem()).(*types.Named)
+	if injected {
+		if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != jobsFXImportPath || named.Obj().Name() != "Binding" || named.TypeArgs().Len() != 2 {
+			return nil, fmt.Errorf("declaration must have type *jobsfx.Binding[D, P]")
+		}
+		return named.TypeArgs().At(1), nil
+	}
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != jobsImportPath || named.Obj().Name() != "Automatic" || named.TypeArgs().Len() != 1 {
 		return nil, fmt.Errorf("declaration must have type *jobs.Automatic[P]")
 	}
