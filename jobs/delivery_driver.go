@@ -570,27 +570,40 @@ func (ApplyRequest) MarshalJSON() ([]byte, error) {
 }
 
 type ApplyResult struct {
+	observedAt  time.Time
 	result      DeliveryCommandResult
 	application DeliveryApplication
 	validated   bool
 }
 
-func NewApplyResult(result DeliveryCommandResult, application DeliveryApplication) (ApplyResult, error) {
+func NewApplyResult(observedAt time.Time, result DeliveryCommandResult, application DeliveryApplication) (ApplyResult, error) {
 	if result.IsZero() || !result.mutation.Valid() || !result.control.Valid() {
 		return ApplyResult{}, invalid("apply result")
+	}
+	if result.mutation == DeliveryMutationAmbiguous {
+		if !observedAt.IsZero() {
+			return ApplyResult{}, invalid("ambiguous apply observation time")
+		}
+	} else {
+		var err error
+		observedAt, err = requiredTime(observedAt, "apply observation time")
+		if err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	if (result.mutation == DeliveryMutationApplied) == application.IsZero() {
 		return ApplyResult{}, invalid("apply result application certainty")
 	}
-	if result.mutation == DeliveryMutationApplied && result.control == DeliveryControlTerminated {
+	if result.mutation == DeliveryMutationApplied && result.control == DeliveryControlTerminated && !deadlineTerminationApplication(application) {
 		return ApplyResult{}, invalid("applied terminated result")
 	}
 	if result.mutation == DeliveryMutationAmbiguous && result.control != DeliveryControlNone {
 		return ApplyResult{}, invalid("ambiguous apply control status")
 	}
-	return ApplyResult{result: result, application: application}, nil
+	return ApplyResult{observedAt: observedAt, result: result, application: application}, nil
 }
 
+func (r ApplyResult) ObservedAt() time.Time            { return r.observedAt }
 func (r ApplyResult) Result() DeliveryCommandResult    { return r.result }
 func (r ApplyResult) Application() DeliveryApplication { return r.application }
 func (r ApplyResult) HandlerReady() bool {
@@ -620,10 +633,14 @@ func ValidateApplyResult(description BackendDescription, request ApplyRequest, r
 	if !description.valid() || request.command.lease.backend != description.ID() {
 		return ApplyResult{}, invalid("apply request backend")
 	}
+	validObservation := result.result.mutation == DeliveryMutationAmbiguous && result.observedAt.IsZero() || result.result.mutation != DeliveryMutationAmbiguous && canonicalRequiredDeliveryTime(result.observedAt)
+	if !validObservation {
+		return ApplyResult{}, driverContractError("apply", invalid("observation time"))
+	}
 	if result.result.IsZero() || !result.result.mutation.Valid() || !result.result.control.Valid() {
 		return ApplyResult{}, driverContractError("apply", invalid("command result"))
 	}
-	if result.result.mutation == DeliveryMutationApplied && result.result.control == DeliveryControlTerminated {
+	if result.result.mutation == DeliveryMutationApplied && result.result.control == DeliveryControlTerminated && !deadlineTerminationApplication(result.application) {
 		return ApplyResult{}, driverContractError("apply", invalid("applied terminated result"))
 	}
 	if result.result.mutation != DeliveryMutationApplied {
@@ -640,7 +657,7 @@ func ValidateApplyResult(description BackendDescription, request ApplyRequest, r
 	if result.result.control != authoritativeApplicationControl(application) {
 		return ApplyResult{}, driverContractError("apply", invalid("application control status"))
 	}
-	if !validAppliedDeliveryApplication(request.command, application) {
+	if !validAppliedDeliveryApplication(request.command, application, result.observedAt) {
 		return ApplyResult{}, driverContractError("apply", invalid("authoritative application"))
 	}
 	result.validated = true
@@ -648,7 +665,10 @@ func ValidateApplyResult(description BackendDescription, request ApplyRequest, r
 }
 
 func authoritativeApplicationControl(application DeliveryApplication) DeliveryControlStatus {
-	if application.kind == DeliveryCommandProgress && application.invocation.State() == InvocationCancelRequested {
+	if deadlineTerminationApplication(application) {
+		return DeliveryControlTerminated
+	}
+	if (application.kind == DeliveryCommandProgress || application.kind == DeliveryCommandArbitrateAttemptDeadline) && application.invocation.State() == InvocationCancelRequested {
 		return DeliveryControlCancelRequested
 	}
 	if application.kind == DeliveryCommandFinishAttempt && application.attempt.Disposition().kind == DispositionCancelled && application.attempt.Disposition().reason == ReasonCancelRequested {
@@ -657,7 +677,12 @@ func authoritativeApplicationControl(application DeliveryApplication) DeliveryCo
 	return DeliveryControlNone
 }
 
-func validAppliedDeliveryApplication(command DeliveryCommand, application DeliveryApplication) bool {
+func deadlineTerminationApplication(application DeliveryApplication) bool {
+	attempt, ok := application.Attempt()
+	return application.kind == DeliveryCommandArbitrateAttemptDeadline && application.changed && ok && application.invocation.State() == InvocationTerminated && attempt.State() == AttemptFinished && attempt.Disposition() == cancellationTerminatedDisposition()
+}
+
+func validAppliedDeliveryApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
 	if command.kind == DeliveryCommandRejectCorrupt {
 		return application.invocation.IsZero() && application.attempt.IsZero() && application.changed && application.release.IsZero()
 	}
@@ -666,90 +691,261 @@ func validAppliedDeliveryApplication(command DeliveryCommand, application Delive
 	}
 	switch command.kind {
 	case DeliveryCommandBeginAttempt:
-		return validBeginApplication(command, application)
+		return validBeginApplication(command, application, observedAt)
 	case DeliveryCommandProgress:
-		return validProgressApplication(application)
+		return validProgressApplication(application, observedAt)
 	case DeliveryCommandFinishAttempt:
-		return validFinishApplication(command, application)
+		return validFinishApplication(command, application, observedAt)
 	case DeliveryCommandDeferDelivery:
-		return validDeferApplication(command, application)
+		return validDeferApplication(command, application, observedAt)
 	case DeliveryCommandFinishDelivery:
-		return validFinishDeliveryApplication(command, application)
+		return validFinishDeliveryApplication(command, application, observedAt)
 	case DeliveryCommandReleaseUnchanged:
-		return validReleaseApplication(command, application)
+		return validReleaseApplication(command, application, observedAt)
+	case DeliveryCommandArbitrateAttemptDeadline:
+		return validDeadlineApplication(command, application, observedAt)
 	default:
 		return false
 	}
 }
 
-func validBeginApplication(command DeliveryCommand, application DeliveryApplication) bool {
+func validBeginApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
 	if !application.changed || !application.release.IsZero() {
 		return false
 	}
 	attempt, hasAttempt := application.Attempt()
 	outcome := application.invocation.Outcome()
 	if !hasAttempt {
-		return application.invocation.State() == InvocationDead && outcome.kind == InvocationOutcomeDeliveryTerminal && (outcome.terminalReason == ReasonStartBefore || outcome.terminalReason == ReasonMaxElapsed) && outcome.reason == outcome.terminalReason && outcome.failure.IsZero() && outcome.availableAt.IsZero()
+		reason := application.invocation.deadlineReason(observedAt)
+		return application.invocation.State() == InvocationDead && reason != ReasonNone && outcome.kind == InvocationOutcomeDeliveryTerminal && outcome.occurredAt == observedAt && outcome.terminalReason == reason && outcome.reason == reason && outcome.failure.IsZero() && outcome.availableAt.IsZero()
 	}
-	if application.invocation.State() != InvocationRunning || attempt.State() != AttemptRunning || attempt.InvocationID() != application.invocation.ID() || attempt.Binding() != command.binding || attempt.Build() != command.build || !latestAttemptIs(application.invocation, attempt) {
+	if application.invocation.State() != InvocationRunning || attempt.State() != AttemptRunning || attempt.InvocationID() != application.invocation.ID() || attempt.Binding() != command.binding || attempt.Build() != command.build || attempt.StartedAt() != observedAt || !latestAttemptIs(application.invocation, attempt) {
 		return false
 	}
-	return outcome.kind == InvocationOutcomeAttemptActive && outcome.attempt == attempt.Ordinal() && outcome.occurredAt == attempt.StartedAt() && validRunningAttemptSnapshot(application.invocation, attempt)
+	return validActiveAttemptOutcome(outcome, attempt) && validRunningAttemptSnapshot(application.invocation, attempt)
 }
 
-func validProgressApplication(application DeliveryApplication) bool {
+func validProgressApplication(application DeliveryApplication, observedAt time.Time) bool {
 	attempt, hasAttempt := application.Attempt()
-	if !hasAttempt || !application.release.IsZero() || attempt.State() != AttemptRunning || attempt.InvocationID() != application.invocation.ID() || !latestAttemptIs(application.invocation, attempt) || !validRunningAttemptSnapshot(application.invocation, attempt) {
+	if !hasAttempt || !application.release.IsZero() || attempt.State() != AttemptRunning || attempt.InvocationID() != application.invocation.ID() || attempt.ProgressedAt() != observedAt || !latestAttemptIs(application.invocation, attempt) || !validRunningAttemptSnapshot(application.invocation, attempt) {
 		return false
 	}
 	outcome := application.invocation.Outcome()
 	switch application.invocation.State() {
 	case InvocationRunning:
-		return outcome.kind == InvocationOutcomeAttemptActive && outcome.attempt == attempt.Ordinal()
+		return validActiveAttemptOutcome(outcome, attempt)
 	case InvocationCancelRequested:
-		return outcome.kind == InvocationOutcomeCancelRequested && outcome.attempt == attempt.Ordinal() && outcome.reason == ReasonCancelRequested
+		return application.invocation.CancelRequestedAt() == outcome.occurredAt && validCancelRequestedLedger(application.invocation.history, attempt, observedAt)
 	default:
 		return false
 	}
 }
 
-func validFinishApplication(command DeliveryCommand, application DeliveryApplication) bool {
-	attempt, hasAttempt := application.Attempt()
-	if !application.changed || !hasAttempt || !application.release.IsZero() || attempt.State() != AttemptFinished || attempt.InvocationID() != application.invocation.ID() || !latestAttemptIs(application.invocation, attempt) {
-		return false
-	}
-	outcome := application.invocation.Outcome()
-	if outcome.kind != InvocationOutcomeAttemptFinished || outcome.attempt != attempt.Ordinal() || outcome.disposition != attempt.Disposition() || outcome.occurredAt != attempt.FinishedAt() {
+func validFinishApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
+	attempt, outcome, ok := finishedApplicationSnapshot(application, observedAt)
+	if !ok || !validApplicationDeadlineRetryDelay(application, attempt, command.deadlineDelay) {
 		return false
 	}
 	effective := attempt.Disposition()
-	proposed := effective == command.disposition
 	cancelled := effective.kind == DispositionCancelled && effective.reason == ReasonCancelRequested && effective.retryAfter == 0 && effective.retryCost == RetryCostNone && effective.failure.IsZero()
 	timedOut := effective.kind == DispositionRetry && (effective.reason == ReasonAttemptTimeout || effective.reason == ReasonProgressTimeout) && effective.retryAfter == 0 && effective.retryCost == RetryCostCharged && effective.failure.IsZero()
-	if !proposed && !cancelled && !timedOut {
+	if cancelled {
+		return application.invocation.State() == InvocationCancelled && outcome.availableAt.IsZero() && outcome.terminalReason == ReasonNone && validCancellationPredecessor(application.invocation, attempt, observedAt)
+	}
+	if !validActiveAttemptPredecessor(application.invocation, attempt) {
 		return false
 	}
-	if cancelled {
-		return application.invocation.State() == InvocationCancelled && outcome.availableAt.IsZero() && outcome.terminalReason == ReasonNone
+	if timedOut {
+		return validTimedOutApplication(command, application, attempt, outcome, observedAt)
 	}
-	if proposed && (effective.kind == DispositionRetry || effective.kind == DispositionDeferred) && !outcome.availableAt.IsZero() {
-		expected, err := relativeDeliveryTime(attempt.FinishedAt(), command.delay)
-		if err != nil || outcome.availableAt != expected {
+	if effective != command.disposition {
+		return false
+	}
+	reason := application.invocation.attemptFinishDeadlineReason(attempt, effective, observedAt)
+	if reason == ReasonAttemptTimeout || reason == ReasonProgressTimeout {
+		return false
+	}
+	if reason == ReasonMaxElapsed {
+		return application.invocation.State() == InvocationDead && outcome.terminalReason == ReasonMaxElapsed && outcome.availableAt.IsZero()
+	}
+	return validProposedFinishApplication(command, application, effective, outcome, observedAt)
+}
+
+func validDeadlineApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
+	attempt, hasAttempt := application.Attempt()
+	if !hasAttempt || !application.release.IsZero() || attempt.InvocationID() != application.invocation.ID() || !latestAttemptIs(application.invocation, attempt) || !validApplicationDeadlineRetryDelay(application, attempt, command.deadlineDelay) {
+		return false
+	}
+	deadline, _ := attemptRuntimeDeadline(attempt)
+	if attempt.State() == AttemptRunning {
+		if application.changed || !observedAt.Before(deadline) || observedAt.Before(application.invocation.latestOccurredAt()) || !validRunningAttemptSnapshot(application.invocation, attempt) {
+			return false
+		}
+		outcome := application.invocation.Outcome()
+		switch application.invocation.State() {
+		case InvocationRunning:
+			return application.invocation.CancelRequestedAt().IsZero() && validActiveAttemptOutcome(outcome, attempt)
+		case InvocationCancelRequested:
+			return application.invocation.CancelRequestedAt() == outcome.occurredAt && validCancelRequestedLedger(application.invocation.history, attempt, observedAt)
+		default:
 			return false
 		}
 	}
-	if effective.kind != DispositionRetry && effective.kind != DispositionDeferred && !outcome.availableAt.IsZero() {
+	finished, outcome, ok := finishedApplicationSnapshot(application, observedAt)
+	if !ok || finished != attempt || observedAt.Before(deadline) {
 		return false
 	}
-	return application.invocation.State() == InvocationQueued || application.invocation.State().Terminal()
+	effective := attempt.Disposition()
+	if effective == cancellationTerminatedDisposition() {
+		return application.invocation.State() == InvocationTerminated && outcome.availableAt.IsZero() && outcome.terminalReason == ReasonNone && validCancellationPredecessor(application.invocation, attempt, observedAt)
+	}
+	if effective.kind != DispositionRetry || effective.reason != ReasonAttemptTimeout && effective.reason != ReasonProgressTimeout || effective.retryAfter != 0 || effective.retryCost != RetryCostCharged || !effective.failure.IsZero() {
+		return false
+	}
+	return validActiveAttemptPredecessor(application.invocation, attempt) && validTimedOutApplication(command, application, attempt, outcome, observedAt)
 }
 
-func validDeferApplication(command DeliveryCommand, application DeliveryApplication) bool {
+func finishedApplicationSnapshot(application DeliveryApplication, observedAt time.Time) (Attempt, InvocationOutcome, bool) {
+	attempt, hasAttempt := application.Attempt()
+	expectedFinishedAt := time.Time{}
+	if application.invocation.State().Terminal() {
+		expectedFinishedAt = observedAt
+	}
+	if !application.changed || !hasAttempt || !application.release.IsZero() || attempt.State() != AttemptFinished || attempt.FinishedAt() != observedAt || attempt.ProgressedAt().After(observedAt) || !attempt.Disposition().valid() || !attempt.Disposition().allowedForAttempt() || !validAttemptSchedule(application.invocation, attempt) || application.invocation.FinishedAt() != expectedFinishedAt || !application.invocation.CancelRequestedAt().IsZero() || !latestAttemptIs(application.invocation, attempt) {
+		return Attempt{}, InvocationOutcome{}, false
+	}
+	outcome := application.invocation.Outcome()
+	if !outcome.valid() || outcome.kind != InvocationOutcomeAttemptFinished || outcome.attempt != attempt.Ordinal() || outcome.disposition != attempt.Disposition() || outcome.occurredAt != observedAt {
+		return Attempt{}, InvocationOutcome{}, false
+	}
+	return attempt, outcome, true
+}
+
+func validCancelRequestedLedger(current *invocationOutcomeLedger, attempt Attempt, observedAt time.Time) bool {
+	if current == nil || current.previous == nil || current.value.occurredAt.After(observedAt) {
+		return false
+	}
+	cancelled, err := CancelRequestedOutcome(attempt.Ordinal(), current.value.occurredAt)
+	if err != nil || current.value != cancelled {
+		return false
+	}
+	active, err := ActiveAttemptOutcome(attempt.Ordinal(), attempt.StartedAt())
+	return err == nil && current.previous.value == active
+}
+
+func validCancellationPredecessor(invocation Invocation, attempt Attempt, observedAt time.Time) bool {
+	return invocation.history != nil && validCancelRequestedLedger(invocation.history.previous, attempt, observedAt)
+}
+
+func validActiveAttemptPredecessor(invocation Invocation, attempt Attempt) bool {
+	if invocation.history == nil || invocation.history.previous == nil {
+		return false
+	}
+	return validActiveAttemptOutcome(invocation.history.previous.value, attempt)
+}
+
+func validActiveAttemptOutcome(outcome InvocationOutcome, attempt Attempt) bool {
+	active, err := ActiveAttemptOutcome(attempt.Ordinal(), attempt.StartedAt())
+	return err == nil && outcome == active
+}
+
+func validApplicationDeadlineRetryDelay(application DeliveryApplication, attempt Attempt, delay time.Duration) bool {
+	retrySpent := application.invocation.RetrySpent().Value()
+	if application.invocation.State() == InvocationQueued && attempt.Disposition().kind == DispositionRetry && attempt.Disposition().retryCost == RetryCostCharged {
+		if retrySpent == 0 {
+			return false
+		}
+		retrySpent--
+	}
+	return validTimeoutRetryDelay(application.invocation.Policy().Backoff(), retrySpent, delay)
+}
+
+func validTimedOutApplication(command DeliveryCommand, application DeliveryApplication, attempt Attempt, outcome InvocationOutcome, observedAt time.Time) bool {
+	deadline, reason := attemptRuntimeDeadline(attempt)
+	if observedAt.Before(deadline) || attempt.Disposition().reason != reason {
+		return false
+	}
+	maxElapsedAt := application.invocation.MaxElapsedAt()
+	switch application.invocation.State() {
+	case InvocationQueued:
+		if !observedAt.Before(maxElapsedAt) || command.deadlineDelay >= maxElapsedAt.Sub(observedAt) || outcome.terminalReason != ReasonNone || attempt.Ordinal().Value() == MaxAttemptOrdinal || application.invocation.RetrySpent().Value() > application.invocation.Policy().RetryLimit().Value() {
+			return false
+		}
+		expected, err := requiredTime(observedAt.Add(command.deadlineDelay), "attempt timeout availability")
+		return err == nil && outcome.availableAt == expected
+	case InvocationDead:
+		switch outcome.terminalReason {
+		case ReasonMaxElapsed:
+			if !observedAt.Before(maxElapsedAt) {
+				return outcome.availableAt.IsZero()
+			}
+			return attempt.Ordinal().Value() != MaxAttemptOrdinal && application.invocation.RetrySpent().Value() < application.invocation.Policy().RetryLimit().Value() && command.deadlineDelay >= maxElapsedAt.Sub(observedAt) && outcome.availableAt == maxElapsedAt
+		case ReasonRetryExhausted, ReasonAttemptsExhausted:
+			if !observedAt.Before(maxElapsedAt) || !outcome.availableAt.IsZero() {
+				return false
+			}
+			if outcome.terminalReason == ReasonAttemptsExhausted {
+				return attempt.Ordinal().Value() == MaxAttemptOrdinal
+			}
+			return attempt.Ordinal().Value() != MaxAttemptOrdinal && application.invocation.RetrySpent().Value() == application.invocation.Policy().RetryLimit().Value()
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func validProposedFinishApplication(command DeliveryCommand, application DeliveryApplication, effective Disposition, outcome InvocationOutcome, observedAt time.Time) bool {
+	switch effective.kind {
+	case DispositionSucceeded:
+		return application.invocation.State() == InvocationSucceeded && outcome.terminalReason == ReasonNone && outcome.availableAt.IsZero()
+	case DispositionPermanentFailure:
+		return application.invocation.State() == InvocationFailed && outcome.terminalReason == ReasonNone && outcome.availableAt.IsZero()
+	case DispositionDiscard:
+		return application.invocation.State() == InvocationDiscarded && outcome.terminalReason == ReasonNone && outcome.availableAt.IsZero()
+	case DispositionQuarantine:
+		return application.invocation.State() == InvocationQuarantined && outcome.terminalReason == ReasonNone && outcome.availableAt.IsZero()
+	case DispositionRetry, DispositionDeferred:
+		expected, err := relativeDeliveryTime(observedAt, command.delay)
+		if err != nil {
+			return false
+		}
+		if application.invocation.State() == InvocationQueued {
+			return outcome.terminalReason == ReasonNone && outcome.availableAt == expected
+		}
+		if application.invocation.State() != InvocationDead {
+			return false
+		}
+		if effective.kind == DispositionRetry {
+			switch outcome.terminalReason {
+			case ReasonMaxElapsed:
+				return outcome.availableAt == expected
+			case ReasonRetryExhausted, ReasonAttemptsExhausted:
+				return outcome.availableAt.IsZero()
+			default:
+				return false
+			}
+		}
+		switch outcome.terminalReason {
+		case ReasonMaxElapsed:
+			return outcome.availableAt == expected
+		case ReasonDeferralsExhausted, ReasonAttemptsExhausted:
+			return outcome.availableAt.IsZero()
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func validDeferApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
 	if !application.changed || !application.attempt.IsZero() || !application.release.IsZero() {
 		return false
 	}
 	outcome := application.invocation.Outcome()
-	if outcome.reason != command.reason || outcome.failure != command.failure {
+	if outcome.reason != command.reason || outcome.failure != command.failure || outcome.occurredAt != observedAt {
 		return false
 	}
 	expected, err := relativeDeliveryTime(outcome.occurredAt, command.delay)
@@ -768,12 +964,12 @@ func validDeferApplication(command DeliveryCommand, application DeliveryApplicat
 	return outcome.availableAt.IsZero() || outcome.availableAt == expected
 }
 
-func validFinishDeliveryApplication(command DeliveryCommand, application DeliveryApplication) bool {
+func validFinishDeliveryApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
 	if !application.changed || !application.attempt.IsZero() || !application.release.IsZero() {
 		return false
 	}
 	outcome := application.invocation.Outcome()
-	if outcome.kind != InvocationOutcomeDeliveryTerminal || outcome.reason != command.reason || outcome.failure != command.failure || !outcome.availableAt.IsZero() {
+	if outcome.kind != InvocationOutcomeDeliveryTerminal || outcome.reason != command.reason || outcome.failure != command.failure || outcome.occurredAt != observedAt || !outcome.availableAt.IsZero() {
 		return false
 	}
 	if application.invocation.State() == command.state {
@@ -782,7 +978,7 @@ func validFinishDeliveryApplication(command DeliveryCommand, application Deliver
 	return application.invocation.State() == InvocationDead && outcome.terminalState == InvocationDead && (outcome.terminalReason == ReasonMaxElapsed || outcome.terminalReason == ReasonStartBefore)
 }
 
-func validReleaseApplication(command DeliveryCommand, application DeliveryApplication) bool {
+func validReleaseApplication(command DeliveryCommand, application DeliveryApplication, observedAt time.Time) bool {
 	if !application.attempt.IsZero() {
 		return false
 	}
@@ -791,7 +987,7 @@ func validReleaseApplication(command DeliveryCommand, application DeliveryApplic
 			return false
 		}
 		outcome := application.invocation.Outcome()
-		if outcome.kind != InvocationOutcomeDeliveryTerminal || outcome.terminalState != InvocationDead || outcome.reason != command.reason || !outcome.failure.IsZero() || outcome.terminalReason != ReasonMaxElapsed && outcome.terminalReason != ReasonStartBefore || !canonicalRequiredDeliveryTime(outcome.occurredAt) {
+		if outcome.kind != InvocationOutcomeDeliveryTerminal || outcome.terminalState != InvocationDead || outcome.reason != command.reason || !outcome.failure.IsZero() || outcome.occurredAt != observedAt || outcome.terminalReason != ReasonMaxElapsed && outcome.terminalReason != ReasonStartBefore {
 			return false
 		}
 		observedReason := application.invocation.deadlineReason(outcome.occurredAt)
@@ -805,12 +1001,19 @@ func validReleaseApplication(command DeliveryCommand, application DeliveryApplic
 	if !ok || application.invocation.State() != InvocationQueued || release.binding != command.binding || release.build != command.build || release.reason != command.reason || !canonicalRequiredDeliveryTime(release.availableAt) {
 		return false
 	}
-	observedAt, err := requiredTime(release.availableAt.Add(-command.delay), "release observation time")
-	return err == nil && !observedAt.Before(application.invocation.readyAt()) && application.invocation.deadlineReason(observedAt) == ReasonNone && application.invocation.deadlineReason(release.availableAt) == ReasonNone
+	expected, err := releaseAvailability(application.invocation, observedAt, command.delay)
+	return err == nil && release.availableAt == expected && !observedAt.Before(application.invocation.readyAt()) && application.invocation.deadlineReason(observedAt) == ReasonNone && application.invocation.deadlineReason(release.availableAt) == ReasonNone
 }
 
 func validRunningAttemptSnapshot(invocation Invocation, attempt Attempt) bool {
-	if !canonicalRequiredDeliveryTime(attempt.StartedAt()) || !canonicalRequiredDeliveryTime(attempt.Deadline()) || attempt.Deadline().Before(attempt.StartedAt()) || attempt.Deadline().After(invocation.MaxElapsedAt()) {
+	if !invocation.FinishedAt().IsZero() || invocation.State() == InvocationRunning && !invocation.CancelRequestedAt().IsZero() || invocation.State() == InvocationCancelRequested && invocation.CancelRequestedAt().IsZero() || invocation.State() != InvocationRunning && invocation.State() != InvocationCancelRequested || attempt.State() != AttemptRunning || !attempt.FinishedAt().IsZero() || !attempt.Disposition().IsZero() {
+		return false
+	}
+	return validAttemptSchedule(invocation, attempt)
+}
+
+func validAttemptSchedule(invocation Invocation, attempt Attempt) bool {
+	if attempt.InvocationID() != invocation.ID() || attempt.Ordinal().IsZero() || !attempt.Ordinal().valid() || attempt.Ordinal() != invocation.AttemptOrdinal() || !attempt.Binding().valid() || !attempt.Build().valid() || !invocation.RetrySpent().valid() || invocation.RetrySpent().Value() > invocation.Policy().RetryLimit().Value() || !invocation.HandlerDeferrals().valid() || invocation.HandlerDeferrals().Value() > invocation.Policy().HandlerDeferralLimit().Value() || !invocation.DeliveryDeferrals().valid() || invocation.DeliveryDeferrals().Value() > invocation.Policy().DeliveryDeferralLimit().Value() || invocation.attempts == nil || invocation.attempts.length != int(attempt.Ordinal().Value()) || !canonicalRequiredDeliveryTime(attempt.StartedAt()) || attempt.StartedAt().Before(invocation.EligibleAt()) || !attempt.StartedAt().Before(invocation.MaxElapsedAt()) || !canonicalRequiredDeliveryTime(attempt.Deadline()) || !attempt.StartedAt().Before(attempt.Deadline()) || attempt.Deadline().After(invocation.MaxElapsedAt()) || attempt.Ordinal().Value() == 1 && !invocation.StartBefore().IsZero() && !attempt.StartedAt().Before(invocation.StartBefore()) {
 		return false
 	}
 	expectedDeadline, err := requiredTime(attempt.StartedAt().Add(invocation.Policy().AttemptTimeout()), "attempt deadline")
@@ -826,7 +1029,7 @@ func validRunningAttemptSnapshot(invocation Invocation, attempt Attempt) bool {
 	if invocation.Policy().ProgressTimeout() == 0 {
 		return attempt.ProgressedAt().IsZero() && attempt.ProgressDeadline().IsZero()
 	}
-	if !canonicalRequiredDeliveryTime(attempt.ProgressedAt()) || !canonicalRequiredDeliveryTime(attempt.ProgressDeadline()) || attempt.ProgressDeadline().After(attempt.Deadline()) {
+	if !canonicalRequiredDeliveryTime(attempt.ProgressedAt()) || !canonicalRequiredDeliveryTime(attempt.ProgressDeadline()) || attempt.ProgressedAt().Before(attempt.StartedAt()) || !attempt.ProgressedAt().Before(attempt.Deadline()) || attempt.ProgressDeadline().After(attempt.Deadline()) {
 		return false
 	}
 	expected, err := requiredTime(attempt.ProgressedAt().Add(invocation.Policy().ProgressTimeout()), "progress deadline")

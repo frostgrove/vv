@@ -141,6 +141,7 @@ func TestDispositionFactoriesPreserveExactAccounting(t *testing.T) {
 		{"dependency", func() (Disposition, error) { return DeferredDisposition(failure, MinRetryDelay) }, DispositionDeferred, ReasonDependency, MinRetryDelay, RetryCostNone},
 		{"cancelled", func() (Disposition, error) { return CancelledDisposition(ReasonCancelRequested) }, DispositionCancelled, ReasonCancelRequested, 0, RetryCostNone},
 		{"terminated", func() (Disposition, error) { return TerminatedDisposition(), nil }, DispositionTerminated, ReasonOperatorTerminated, 0, RetryCostNone},
+		{"cancellation terminated", func() (Disposition, error) { return cancellationTerminatedDisposition(), nil }, DispositionTerminated, ReasonCancelRequested, 0, RetryCostNone},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -213,7 +214,6 @@ func TestDispositionRejectsCounterBypassesAndHotLoops(t *testing.T) {
 		{Kind: DispositionCancelled, Reason: ReasonCancelRequested, RetryAfter: MinRetryDelay},
 		{Kind: DispositionCancelled, Reason: ReasonCancelRequested, RetryCost: RetryCostCharged},
 		{Kind: DispositionTerminated, Reason: ReasonNone},
-		{Kind: DispositionTerminated, Reason: ReasonCancelRequested},
 		{Kind: DispositionTerminated, Reason: ReasonOperatorTerminated, Failure: failure},
 		{Kind: DispositionTerminated, Reason: ReasonOperatorTerminated, RetryAfter: MinRetryDelay},
 		{Kind: DispositionTerminated, Reason: ReasonOperatorTerminated, RetryCost: RetryCostCharged},

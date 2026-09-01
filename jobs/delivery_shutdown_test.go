@@ -121,7 +121,7 @@ func TestReleaseCrossingCanonicalUpperDeadlineUsesDeadline(t *testing.T) {
 				}
 				request, requestErr := NewApplyRequest(command)
 				status, statusErr := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
-				result, resultErr := NewApplyResult(status, application)
+				result, resultErr := NewApplyResult(at, status, application)
 				if requestErr != nil || statusErr != nil || resultErr != nil {
 					t.Fatalf("driver result construction = (%v, %v, %v)", requestErr, statusErr, resultErr)
 				}
@@ -186,7 +186,7 @@ func TestReleaseCrossingCanonicalUpperDeadlineWithinMinimumDelay(t *testing.T) {
 				outcome := application.Invocation().Outcome()
 				request, requestErr := NewApplyRequest(command)
 				status, statusErr := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
-				result, resultErr := NewApplyResult(status, application)
+				result, resultErr := NewApplyResult(at, status, application)
 				_, validateErr := ValidateApplyResult(queueTestBackendDescription(1), request, result)
 				record, recordErr := NewDeliveryRecord(application.Invocation(), payload, digestWirePayload(payload), PayloadDigest{})
 				restored, restoreErr := RestoreDeliveryRecord(catalog, record)
@@ -333,7 +333,7 @@ func TestDriverValidatesShutdownReleasePostcondition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewApplyResult(resultStatus, application)
+	result, err := NewApplyResult(invocation.EligibleAt(), resultStatus, application)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestDriverValidatesShutdownReleasePostcondition(t *testing.T) {
 	}
 	wrong := application
 	wrong.release.reason = ReasonCompatibility
-	wrongResult, err := NewApplyResult(resultStatus, wrong)
+	wrongResult, err := NewApplyResult(invocation.EligibleAt(), resultStatus, wrong)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestDriverRejectsForgedTerminalReleaseAvailability(t *testing.T) {
 			ledger := *application.invocation.history
 			test.mutate(&ledger.value)
 			application.invocation.history = &ledger
-			result, resultErr := NewApplyResult(status, application)
+			result, resultErr := NewApplyResult(test.at, status, application)
 			if resultErr != nil {
 				t.Fatal(resultErr)
 			}

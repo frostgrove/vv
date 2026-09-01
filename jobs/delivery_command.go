@@ -54,10 +54,11 @@ const (
 	DeliveryCommandFinishDelivery
 	DeliveryCommandReleaseUnchanged
 	DeliveryCommandRejectCorrupt
+	DeliveryCommandArbitrateAttemptDeadline
 )
 
 func (k DeliveryCommandKind) Valid() bool {
-	return k >= DeliveryCommandBeginAttempt && k <= DeliveryCommandRejectCorrupt
+	return k >= DeliveryCommandBeginAttempt && k <= DeliveryCommandArbitrateAttemptDeadline
 }
 
 func (k DeliveryCommandKind) String() string {
@@ -76,21 +77,24 @@ func (k DeliveryCommandKind) String() string {
 		return "release_unchanged"
 	case DeliveryCommandRejectCorrupt:
 		return "reject_corrupt"
+	case DeliveryCommandArbitrateAttemptDeadline:
+		return "arbitrate_attempt_deadline"
 	default:
 		return "unknown"
 	}
 }
 
 type DeliveryCommand struct {
-	kind        DeliveryCommandKind
-	lease       LeaseRef
-	binding     BindingName
-	build       BuildID
-	disposition Disposition
-	delay       time.Duration
-	reason      Reason
-	failure     PublicFailure
-	state       InvocationState
+	kind          DeliveryCommandKind
+	lease         LeaseRef
+	binding       BindingName
+	build         BuildID
+	disposition   Disposition
+	delay         time.Duration
+	deadlineDelay time.Duration
+	reason        Reason
+	failure       PublicFailure
+	state         InvocationState
 }
 
 func BeginAttemptCommand(lease LeaseRef, binding BindingName, build BuildID) (DeliveryCommand, error) {
@@ -102,9 +106,13 @@ func ProgressCommand(lease LeaseRef) (DeliveryCommand, error) {
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandProgress, lease: cloneLeaseRef(lease)})
 }
 
-func FinishAttemptCommand(lease LeaseRef, disposition Disposition, delay time.Duration) (DeliveryCommand, error) {
-	command := DeliveryCommand{kind: DeliveryCommandFinishAttempt, lease: cloneLeaseRef(lease), disposition: disposition, delay: delay}
+func FinishAttemptCommand(lease LeaseRef, disposition Disposition, delay, deadlineRetryDelay time.Duration) (DeliveryCommand, error) {
+	command := DeliveryCommand{kind: DeliveryCommandFinishAttempt, lease: cloneLeaseRef(lease), disposition: disposition, delay: delay, deadlineDelay: deadlineRetryDelay}
 	return validateDeliveryCommand(command)
+}
+
+func ArbitrateAttemptDeadlineCommand(lease LeaseRef, deadlineRetryDelay time.Duration) (DeliveryCommand, error) {
+	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandArbitrateAttemptDeadline, lease: cloneLeaseRef(lease), deadlineDelay: deadlineRetryDelay})
 }
 
 func DeferDeliveryCommand(lease LeaseRef, reason Reason, failure PublicFailure, delay time.Duration) (DeliveryCommand, error) {
@@ -129,16 +137,17 @@ func RejectCorruptCommand(lease LeaseRef) (DeliveryCommand, error) {
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandRejectCorrupt, lease: cloneLeaseRef(lease)})
 }
 
-func (c DeliveryCommand) Kind() DeliveryCommandKind { return c.kind }
-func (c DeliveryCommand) Lease() LeaseRef           { return cloneLeaseRef(c.lease) }
-func (c DeliveryCommand) Binding() BindingName      { return c.binding }
-func (c DeliveryCommand) Build() BuildID            { return c.build }
-func (c DeliveryCommand) Disposition() Disposition  { return c.disposition }
-func (c DeliveryCommand) Delay() time.Duration      { return c.delay }
-func (c DeliveryCommand) Reason() Reason            { return c.reason }
-func (c DeliveryCommand) Failure() PublicFailure    { return c.failure }
-func (c DeliveryCommand) State() InvocationState    { return c.state }
-func (DeliveryCommand) String() string              { return "[job delivery command]" }
+func (c DeliveryCommand) Kind() DeliveryCommandKind         { return c.kind }
+func (c DeliveryCommand) Lease() LeaseRef                   { return cloneLeaseRef(c.lease) }
+func (c DeliveryCommand) Binding() BindingName              { return c.binding }
+func (c DeliveryCommand) Build() BuildID                    { return c.build }
+func (c DeliveryCommand) Disposition() Disposition          { return c.disposition }
+func (c DeliveryCommand) Delay() time.Duration              { return c.delay }
+func (c DeliveryCommand) DeadlineRetryDelay() time.Duration { return c.deadlineDelay }
+func (c DeliveryCommand) Reason() Reason                    { return c.reason }
+func (c DeliveryCommand) Failure() PublicFailure            { return c.failure }
+func (c DeliveryCommand) State() InvocationState            { return c.state }
+func (DeliveryCommand) String() string                      { return "[job delivery command]" }
 func (c DeliveryCommand) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, c.String())
 }
@@ -282,8 +291,13 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 		if current.attempts == nil {
 			return DeliveryApplication{}, transitionConflict("invocation has no active attempt")
 		}
-		application.invocation, application.attempt, err = current.finishAttemptAuthoritatively(current.attempts.value, command.disposition, now, command.delay)
+		application.invocation, application.attempt, err = current.finishAttemptAuthoritatively(current.attempts.value, command.disposition, now, command.delay, command.deadlineDelay)
 		application.changed = err == nil
+	case DeliveryCommandArbitrateAttemptDeadline:
+		if current.attempts == nil {
+			return DeliveryApplication{}, transitionConflict("invocation has no active attempt")
+		}
+		application.invocation, application.attempt, application.changed, err = current.arbitrateAttemptDeadline(current.attempts.value, now, command.deadlineDelay)
 	case DeliveryCommandDeferDelivery:
 		availableAt, timeErr := relativeDeliveryTime(now, command.delay)
 		if timeErr != nil {
@@ -328,32 +342,39 @@ func validateDeliveryCommand(command DeliveryCommand) (DeliveryCommand, error) {
 	}
 	switch command.kind {
 	case DeliveryCommandBeginAttempt:
-		if !command.binding.valid() || !command.build.valid() || !command.disposition.IsZero() || command.delay != 0 || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
+		if !command.binding.valid() || !command.build.valid() || !command.disposition.IsZero() || command.delay != 0 || command.deadlineDelay != 0 || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
 			return DeliveryCommand{}, invalid("begin attempt command")
 		}
 	case DeliveryCommandProgress, DeliveryCommandRejectCorrupt:
-		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || command.deadlineDelay != 0 || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
 			return DeliveryCommand{}, invalid("empty delivery command")
 		}
 	case DeliveryCommandReleaseUnchanged:
 		compatibility := command.reason == ReasonCompatibility && command.binding.valid() && command.build.valid()
 		shutdown := command.reason == ReasonShutdown && command.binding.IsZero() && command.build.IsZero()
-		if !compatibility && !shutdown || !command.disposition.IsZero() || !command.failure.IsZero() || command.state != 0 || !validCommandDelay(true, command.delay) {
+		if !compatibility && !shutdown || !command.disposition.IsZero() || !command.failure.IsZero() || command.state != 0 || command.deadlineDelay != 0 || !validCommandDelay(true, command.delay) {
 			return DeliveryCommand{}, invalid("release unchanged command")
 		}
 	case DeliveryCommandFinishAttempt:
 		rescheduled := command.disposition.kind == DispositionRetry || command.disposition.kind == DispositionDeferred
-		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.valid() || !command.disposition.allowedForAttempt() || command.disposition.kind == DispositionTerminated || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 || !validCommandDelay(rescheduled, command.delay) || rescheduled && command.delay < command.disposition.retryAfter || command.disposition.kind == DispositionDeferred && command.delay != command.disposition.retryAfter {
+		timeout := command.disposition.reason == ReasonAttemptTimeout || command.disposition.reason == ReasonProgressTimeout
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.valid() || !command.disposition.allowedForAttempt() || command.disposition.kind == DispositionTerminated || timeout || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 || !validCommandDelay(rescheduled, command.delay) || !validCommandDelay(true, command.deadlineDelay) || rescheduled && command.delay < command.disposition.retryAfter || command.disposition.kind == DispositionDeferred && command.delay != command.disposition.retryAfter {
 			return DeliveryCommand{}, invalid("finish attempt command")
 		}
 	case DeliveryCommandDeferDelivery:
-		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || !deliveryDeferralReason(command.reason) || !validOptionalFailure(command.failure) || command.state != 0 || !validCommandDelay(true, command.delay) {
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || !deliveryDeferralReason(command.reason) || !validOptionalFailure(command.failure) || command.state != 0 || command.deadlineDelay != 0 || !validCommandDelay(true, command.delay) {
 			return DeliveryCommand{}, invalid("defer delivery command")
 		}
 	case DeliveryCommandFinishDelivery:
-		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || command.state != InvocationDiscarded && command.state != InvocationQuarantined || command.reason != ReasonPayload && command.reason != ReasonCompatibility || !validOptionalFailure(command.failure) {
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || command.deadlineDelay != 0 || command.state != InvocationDiscarded && command.state != InvocationQuarantined || command.reason != ReasonPayload && command.reason != ReasonCompatibility || !validOptionalFailure(command.failure) {
 			return DeliveryCommand{}, invalid("finish delivery command")
 		}
+	case DeliveryCommandArbitrateAttemptDeadline:
+		if !command.binding.IsZero() || !command.build.IsZero() || !command.disposition.IsZero() || command.delay != 0 || !validCommandDelay(true, command.deadlineDelay) || command.reason != ReasonNone || !command.failure.IsZero() || command.state != 0 {
+			return DeliveryCommand{}, invalid("arbitrate attempt deadline command")
+		}
+	default:
+		return DeliveryCommand{}, invalid("delivery command kind")
 	}
 	command.lease = cloneLeaseRef(command.lease)
 	return command, nil
@@ -421,7 +442,7 @@ func (a DeliveryApplication) matches(command DeliveryCommand) bool {
 
 func digestDeliveryCommand(command DeliveryCommand) [32]byte {
 	digest := sha256.New()
-	writePlacementString(digest, "frostgrove.jobs.delivery-command.v1")
+	writePlacementString(digest, "frostgrove.jobs.delivery-command.v2")
 	writePlacementUint(digest, uint64(command.kind))
 	writePlacementBytes(digest, command.lease.binding[:])
 	writePlacementString(digest, command.binding.value)
@@ -433,6 +454,7 @@ func digestDeliveryCommand(command DeliveryCommand) [32]byte {
 	writePlacementString(digest, command.disposition.failure.code.value)
 	writePlacementString(digest, command.disposition.failure.message)
 	writePlacementUint(digest, uint64(command.delay))
+	writePlacementUint(digest, uint64(command.deadlineDelay))
 	writePlacementUint(digest, uint64(command.reason))
 	writePlacementString(digest, command.failure.code.value)
 	writePlacementString(digest, command.failure.message)

@@ -380,7 +380,10 @@ func (i Invocation) FinishAttempt(attempt Attempt, spec FinishAttemptSpec) (Invo
 	return i.applyAttemptDecision(active, spec.Disposition, finishedAt, decision)
 }
 
-func (i Invocation) finishAttemptAuthoritatively(attempt Attempt, disposition Disposition, finishedAt time.Time, proposedDelay time.Duration) (Invocation, Attempt, error) {
+func (i Invocation) finishAttemptAuthoritatively(attempt Attempt, disposition Disposition, finishedAt time.Time, proposedDelay, deadlineRetryDelay time.Duration) (Invocation, Attempt, error) {
+	if err := i.validateTimeoutRetryDelay(deadlineRetryDelay); err != nil {
+		return Invocation{}, Attempt{}, err
+	}
 	if i.state == InvocationCancelRequested {
 		cancelled, err := CancelledDisposition(ReasonCancelRequested)
 		if err != nil {
@@ -410,7 +413,7 @@ func (i Invocation) finishAttemptAuthoritatively(attempt Attempt, disposition Di
 	if terminal {
 		return i.applyAttemptDecision(attempt, timeout, finishedAt, decision)
 	}
-	delay := retryBackoffCap(i.policy.Backoff(), i.retrySpent.Value())
+	delay := deadlineRetryDelay
 	if delay >= i.maxElapsedAt.Sub(finishedAt) {
 		decision.state = InvocationDead
 		decision.terminalReason = ReasonMaxElapsed
@@ -422,6 +425,53 @@ func (i Invocation) finishAttemptAuthoritatively(attempt Attempt, disposition Di
 		return Invocation{}, Attempt{}, err
 	}
 	return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: timeout, AvailableAt: availableAt})
+}
+
+func (i Invocation) arbitrateAttemptDeadline(attempt Attempt, observedAt time.Time, deadlineRetryDelay time.Duration) (Invocation, Attempt, bool, error) {
+	if i.IsZero() || i.attempts == nil || attempt.state != AttemptRunning || !sameAttemptToken(i.attempts.value, attempt) || i.state != InvocationRunning && i.state != InvocationCancelRequested {
+		return Invocation{}, Attempt{}, false, transitionConflict("attempt token is not active")
+	}
+	if err := i.validateTimeoutRetryDelay(deadlineRetryDelay); err != nil {
+		return Invocation{}, Attempt{}, false, err
+	}
+	if observedAt.Before(i.latestOccurredAt()) {
+		return Invocation{}, Attempt{}, false, invalid("attempt deadline observation")
+	}
+	deadline, reason := attemptRuntimeDeadline(attempt)
+	if observedAt.Before(deadline) {
+		return i, attempt, false, nil
+	}
+	if i.state == InvocationCancelRequested {
+		result, finished, err := i.terminateCancelledAttemptAtDeadline(attempt, observedAt)
+		if err != nil {
+			return Invocation{}, Attempt{}, false, err
+		}
+		return result, finished, true, nil
+	}
+	timeout, err := RetryDisposition(reason, PublicFailure{}, 0, RetryCostCharged)
+	if err != nil {
+		return Invocation{}, Attempt{}, false, err
+	}
+	result, finished, err := i.finishAttemptAuthoritatively(attempt, timeout, observedAt, 0, deadlineRetryDelay)
+	if err != nil {
+		return Invocation{}, Attempt{}, false, err
+	}
+	return result, finished, true, nil
+}
+
+func (i Invocation) terminateCancelledAttemptAtDeadline(attempt Attempt, observedAt time.Time) (Invocation, Attempt, error) {
+	if i.IsZero() || i.state != InvocationCancelRequested || i.attempts == nil || attempt.state != AttemptRunning || !sameAttemptToken(i.attempts.value, attempt) || attempt.invocation != i.id || attempt.ordinal != i.attemptOrdinal {
+		return Invocation{}, Attempt{}, transitionConflict("attempt token is not active")
+	}
+	observedAt, err := requiredTime(observedAt, "attempt deadline observation")
+	if err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	deadline, _ := attemptRuntimeDeadline(attempt)
+	if observedAt.Before(deadline) || observedAt.Before(i.latestOccurredAt()) {
+		return Invocation{}, Attempt{}, transitionConflict("attempt termination deadline has not elapsed")
+	}
+	return i.applyAttemptDecision(attempt, cancellationTerminatedDisposition(), observedAt, attemptDecision{state: InvocationTerminated, retrySpent: i.retrySpent, handlerDeferrals: i.handlerDeferrals})
 }
 
 func (i Invocation) RecordProgress(attempt Attempt, at time.Time) (Invocation, Attempt, error) {
@@ -673,6 +723,12 @@ func (i Invocation) decideAttempt(attempt Attempt, disposition Disposition, fini
 				return attemptDecision{}, invalid("attempt completed after its deadline")
 			}
 		} else {
+			if disposition.reason == ReasonAttemptTimeout || disposition.reason == ReasonProgressTimeout {
+				_, timeoutReason := attemptRuntimeDeadline(attempt)
+				if disposition.reason != timeoutReason {
+					return attemptDecision{}, invalid("attempt timeout reason")
+				}
+			}
 			decision.state = InvocationDead
 			decision.terminalReason = reason
 			return decision, nil
@@ -862,16 +918,21 @@ func (i Invocation) attemptFinishDeadlineReason(attempt Attempt, disposition Dis
 	if !finishedAt.Before(i.maxElapsedAt) {
 		return ReasonMaxElapsed
 	}
-	if !finishedAt.Before(attempt.deadline) {
-		return ReasonAttemptTimeout
-	}
-	if !attempt.progressDeadline.IsZero() && !finishedAt.Before(attempt.progressDeadline) {
-		return ReasonProgressTimeout
+	deadline, reason := attemptRuntimeDeadline(attempt)
+	if !finishedAt.Before(deadline) {
+		return reason
 	}
 	if disposition.kind == DispositionRetry || disposition.kind == DispositionDeferred {
 		return i.deadlineReason(finishedAt)
 	}
 	return ReasonNone
+}
+
+func attemptRuntimeDeadline(attempt Attempt) (time.Time, Reason) {
+	if !attempt.progressDeadline.IsZero() && attempt.progressDeadline.Before(attempt.deadline) {
+		return attempt.progressDeadline, ReasonProgressTimeout
+	}
+	return attempt.deadline, ReasonAttemptTimeout
 }
 
 func sameAttemptToken(left, right Attempt) bool {
@@ -904,6 +965,21 @@ func (i Invocation) validateAttemptDelay(disposition Disposition, observedAt, av
 		return invalid("retry backoff delay")
 	}
 	return nil
+}
+
+func (i Invocation) validateTimeoutRetryDelay(delay time.Duration) error {
+	if !validTimeoutRetryDelay(i.policy.Backoff(), i.retrySpent.Value(), delay) {
+		return invalid("attempt timeout retry delay")
+	}
+	return nil
+}
+
+func validTimeoutRetryDelay(backoff BackoffPolicy, retrySpent uint16, delay time.Duration) bool {
+	cap := retryBackoffCap(backoff, retrySpent)
+	if backoff.Jitter == NoJitter {
+		return delay == cap
+	}
+	return delay >= MinRetryDelay && delay <= cap
 }
 
 func retryBackoffCap(backoff BackoffPolicy, spent uint16) time.Duration {

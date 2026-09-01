@@ -439,7 +439,7 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
-	result, err := NewApplyResult(applied, application)
+	result, err := NewApplyResult(invocation.EligibleAt(), applied, application)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 		t.Fatal("unvalidated apply result authorized handler")
 	}
 	terminatedApplied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlTerminated)
-	if _, err := NewApplyResult(terminatedApplied, application); !errors.Is(err, ErrInvalid) {
+	if _, err := NewApplyResult(invocation.EligibleAt(), terminatedApplied, application); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("applied terminated = %v", err)
 	}
 	validated, err := ValidateApplyResult(description, request, result)
@@ -458,13 +458,13 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expiredResult, _ := NewApplyResult(applied, expiredApplication)
+	expiredResult, _ := NewApplyResult(invocation.MaxElapsedAt(), applied, expiredApplication)
 	validated, err = ValidateApplyResult(description, request, expiredResult)
 	if err != nil || validated.HandlerReady() || !validated.Application().Invocation().State().Terminal() {
 		t.Fatalf("expired begin = (%v, %v)", validated, err)
 	}
 	lost, _ := NewDeliveryCommandResult(DeliveryMutationLeaseLost, DeliveryControlNone)
-	lostResult, err := NewApplyResult(lost, DeliveryApplication{})
+	lostResult, err := NewApplyResult(invocation.EligibleAt(), lost, DeliveryApplication{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 		t.Fatalf("lease lost = (%v, %v)", validated, err)
 	}
 	lostTerminated, _ := NewDeliveryCommandResult(DeliveryMutationLeaseLost, DeliveryControlTerminated)
-	lostTerminatedResult, err := NewApplyResult(lostTerminated, DeliveryApplication{})
+	lostTerminatedResult, err := NewApplyResult(invocation.EligibleAt(), lostTerminated, DeliveryApplication{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,13 +480,13 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 		t.Fatalf("terminated lease loss = %v", err)
 	}
 	ambiguousCancel, _ := NewDeliveryCommandResult(DeliveryMutationAmbiguous, DeliveryControlCancelRequested)
-	if _, err := NewApplyResult(ambiguousCancel, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewApplyResult(time.Time{}, ambiguousCancel, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("ambiguous cancellation = %v", err)
 	}
-	if _, err := NewApplyResult(lost, DeliveryApplication{kind: DeliveryCommandBeginAttempt}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewApplyResult(invocation.EligibleAt(), lost, DeliveryApplication{kind: DeliveryCommandBeginAttempt}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("lease lost application = %v", err)
 	}
-	if _, err := NewApplyResult(applied, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewApplyResult(invocation.EligibleAt(), applied, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("applied zero application = %v", err)
 	}
 	forged := result
@@ -501,6 +501,244 @@ func TestApplyResultRequiresAuthoritativeAppliedBegin(t *testing.T) {
 		if _, err := json.Marshal(value); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("JSON %T = %v", value, err)
 		}
+	}
+}
+
+func TestApplyResultObservationTimeTracksMutationCertainty(t *testing.T) {
+	_, _, invocation, _, _ := deliveryRecordFixture(t, PlacementRegular)
+	description := queueTestBackendDescription(1)
+	lease := deliveryTestLease(t, invocation.ID(), []byte("observation"))
+	command, _ := BeginAttemptCommand(lease, testBindingName(t), testBuildID(t))
+	request, _ := NewApplyRequest(command)
+	application, err := ApplyDeliveryCommand(invocation, command, invocation.EligibleAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
+	lost, _ := NewDeliveryCommandResult(DeliveryMutationLeaseLost, DeliveryControlNone)
+	ambiguous, _ := NewDeliveryCommandResult(DeliveryMutationAmbiguous, DeliveryControlNone)
+	if _, err := NewApplyResult(time.Time{}, applied, application); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("applied without observation = %v", err)
+	}
+	if _, err := NewApplyResult(time.Time{}, lost, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("lease loss without observation = %v", err)
+	}
+	if _, err := NewApplyResult(invocation.EligibleAt(), ambiguous, DeliveryApplication{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ambiguous authoritative observation = %v", err)
+	}
+	ambiguousResult, err := NewApplyResult(time.Time{}, ambiguous, DeliveryApplication{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateApplyResult(description, request, ambiguousResult); err != nil {
+		t.Fatalf("zero ambiguous observation = %v", err)
+	}
+	forgedAmbiguous := ambiguousResult
+	forgedAmbiguous.observedAt = invocation.EligibleAt()
+	if _, err := ValidateApplyResult(description, request, forgedAmbiguous); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged ambiguous observation = %v", err)
+	}
+	local := invocation.EligibleAt().In(time.FixedZone("local", 6*60*60))
+	lostResult, err := NewApplyResult(invocation.EligibleAt(), lost, DeliveryApplication{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lostResult.observedAt = local
+	if _, err := ValidateApplyResult(description, request, lostResult); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("noncanonical lease loss observation = %v", err)
+	}
+	canonical, err := NewApplyResult(local, applied, application)
+	if err != nil || canonical.ObservedAt() != invocation.EligibleAt() {
+		t.Fatalf("canonical observation = (%v, %v)", canonical.ObservedAt(), err)
+	}
+	shifted := canonical
+	shifted.observedAt = shifted.observedAt.Add(time.Nanosecond)
+	if _, err := ValidateApplyResult(description, request, shifted); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("shifted observation = %v", err)
+	}
+	noncanonical := canonical
+	noncanonical.observedAt = local
+	if _, err := ValidateApplyResult(description, request, noncanonical); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("noncanonical observation = %v", err)
+	}
+}
+
+func TestApplyResultValidatesDeadlineArbitrationAndCancellationFence(t *testing.T) {
+	policy := testInvocationPolicy(t, AttemptTimeout(time.Minute), MaxElapsed(10*time.Minute), RetryBackoff(Exponential(time.Second, time.Second, NoJitter)))
+	invocation := testInvocationForPolicy(t, policy)
+	description := queueTestBackendDescription(1)
+	lease := deliveryTestLease(t, invocation.ID(), []byte("deadline-result"))
+	begin, _ := BeginAttemptCommand(lease, testBindingName(t), testBuildID(t))
+	started, err := ApplyDeliveryCommand(invocation, begin, invocation.EligibleAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := started.Invocation()
+	attempt, _ := started.Attempt()
+	command, _ := ArbitrateAttemptDeadlineCommand(lease, time.Second)
+	request, _ := NewApplyRequest(command)
+	applied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
+	earlyAt := attempt.Deadline().Add(-time.Nanosecond)
+	early, err := ApplyDeliveryCommand(running, command, earlyAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlyResult, _ := NewApplyResult(earlyAt, applied, early)
+	validated, err := ValidateApplyResult(description, request, earlyResult)
+	if err != nil || validated.HandlerReady() || validated.Application().Changed() {
+		t.Fatalf("early deadline result = (%v, %v)", validated, err)
+	}
+	forgedEarly := earlyResult
+	forgedEarly.application.invocation.cancelRequestedAt = attempt.StartedAt()
+	if _, err := ValidateApplyResult(description, request, forgedEarly); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged early cancellation field = %v", err)
+	}
+	forgedEarly = earlyResult
+	forgedEarly.application.invocation.finishedAt = attempt.StartedAt()
+	if _, err := ValidateApplyResult(description, request, forgedEarly); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged early finish field = %v", err)
+	}
+	forgedEarly = earlyResult
+	earlyHistory := *forgedEarly.application.invocation.history
+	earlyHistory.value.reason = ReasonLeaseLost
+	forgedEarly.application.invocation.history = &earlyHistory
+	if _, err := ValidateApplyResult(description, request, forgedEarly); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged early outcome = %v", err)
+	}
+	forgedEarly = earlyResult
+	forgedEarly.observedAt = attempt.Deadline()
+	if _, err := ValidateApplyResult(description, request, forgedEarly); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("early result at deadline = %v", err)
+	}
+	due, err := ApplyDeliveryCommand(running, command, attempt.Deadline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dueResult, _ := NewApplyResult(attempt.Deadline(), applied, due)
+	if _, err := ValidateApplyResult(description, request, dueResult); err != nil {
+		t.Fatalf("due deadline result = %v", err)
+	}
+	forgedDue := dueResult
+	forgedDue.application.invocation.finishedAt = attempt.Deadline()
+	if _, err := ValidateApplyResult(description, request, forgedDue); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged queued finish field = %v", err)
+	}
+	forgedSchedule := dueResult
+	forgedSchedule.application.attempt.deadline = forgedSchedule.application.attempt.deadline.Add(-time.Second)
+	attempts := *forgedSchedule.application.invocation.attempts
+	attempts.value = forgedSchedule.application.attempt
+	forgedSchedule.application.invocation.attempts = &attempts
+	if _, err := ValidateApplyResult(description, request, forgedSchedule); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged attempt schedule = %v", err)
+	}
+	forgedOutcome := dueResult
+	outcomes := *forgedOutcome.application.invocation.history
+	outcomes.value.reason = ReasonLeaseLost
+	forgedOutcome.application.invocation.history = &outcomes
+	if _, err := ValidateApplyResult(description, request, forgedOutcome); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged timeout outcome = %v", err)
+	}
+	forgedPredecessor := dueResult
+	outcomes = *forgedPredecessor.application.invocation.history
+	predecessor := *outcomes.previous
+	predecessor.value.occurredAt = predecessor.value.occurredAt.Add(time.Nanosecond)
+	outcomes.previous = &predecessor
+	forgedPredecessor.application.invocation.history = &outcomes
+	if _, err := ValidateApplyResult(description, request, forgedPredecessor); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged active predecessor = %v", err)
+	}
+	requested, err := running.RequestCancel(attempt.StartedAt().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlyCancel, err := ApplyDeliveryCommand(requested, command, earlyAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appliedCancel, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlCancelRequested)
+	earlyCancelResult, _ := NewApplyResult(earlyAt, appliedCancel, earlyCancel)
+	if _, err := ValidateApplyResult(description, request, earlyCancelResult); err != nil {
+		t.Fatalf("early cancellation result = %v", err)
+	}
+	terminated, err := ApplyDeliveryCommand(requested, command, attempt.Deadline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appliedTerminated, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlTerminated)
+	terminatedResult, err := NewApplyResult(attempt.Deadline(), appliedTerminated, terminated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateApplyResult(description, request, terminatedResult); err != nil {
+		t.Fatalf("terminated cancellation result = %v", err)
+	}
+	forgedTerminationField := terminatedResult
+	forgedTerminationField.application.invocation.finishedAt = time.Time{}
+	if _, err := ValidateApplyResult(description, request, forgedTerminationField); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged termination finish field = %v", err)
+	}
+	forged := terminated
+	history := *forged.invocation.history
+	predecessor = *history.previous
+	predecessor.value.reason = ReasonLeaseLost
+	history.previous = &predecessor
+	forged.invocation.history = &history
+	forgedResult, err := NewApplyResult(attempt.Deadline(), appliedTerminated, forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateApplyResult(description, request, forgedResult); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged cancellation predecessor = %v", err)
+	}
+	finish, _ := FinishAttemptCommand(lease, SuccessDisposition(), 0, time.Second)
+	cancelled, err := ApplyDeliveryCommand(requested, finish, attempt.Deadline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled.kind = DeliveryCommandArbitrateAttemptDeadline
+	cancelled.proof = digestDeliveryCommand(command)
+	cancelledResult, err := NewApplyResult(attempt.Deadline(), applied, cancelled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateApplyResult(description, request, cancelledResult); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged cooperative arbitration = %v", err)
+	}
+	shifted := terminatedResult
+	shifted.observedAt = shifted.observedAt.Add(time.Nanosecond)
+	if _, err := ValidateApplyResult(description, request, shifted); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("shifted termination observation = %v", err)
+	}
+}
+
+func TestApplyResultRejectsForgedTimeoutLimitPrecedence(t *testing.T) {
+	policy := testInvocationPolicy(t, AttemptTimeout(time.Minute), MaxElapsed(time.Minute+time.Second), Retries(0), RetryBackoff(Exponential(2*time.Second, 2*time.Second, NoJitter)))
+	invocation := testInvocationForPolicy(t, policy)
+	description := queueTestBackendDescription(1)
+	lease := deliveryTestLease(t, invocation.ID(), []byte("timeout-precedence"))
+	begin, _ := BeginAttemptCommand(lease, testBindingName(t), testBuildID(t))
+	running, err := ApplyDeliveryCommand(invocation, begin, invocation.EligibleAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, _ := running.Attempt()
+	command, _ := ArbitrateAttemptDeadlineCommand(lease, 2*time.Second)
+	request, _ := NewApplyRequest(command)
+	application, err := ApplyDeliveryCommand(running.Invocation(), command, attempt.Deadline())
+	if err != nil || application.Invocation().Outcome().TerminalReason() != ReasonRetryExhausted {
+		t.Fatalf("baseline precedence = (%v, %v)", application, err)
+	}
+	ledger := *application.invocation.history
+	ledger.value.terminalReason = ReasonMaxElapsed
+	ledger.value.availableAt = invocation.MaxElapsedAt()
+	application.invocation.history = &ledger
+	applied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
+	result, err := NewApplyResult(attempt.Deadline(), applied, application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateApplyResult(description, request, result); !errors.Is(err, ErrDriverContract) {
+		t.Fatalf("forged max elapsed precedence = %v", err)
 	}
 }
 
@@ -533,24 +771,24 @@ func TestApplyResultAcceptsOnlyClosedFinishArbitrations(t *testing.T) {
 	if !ok {
 		t.Fatal("begin did not mint attempt")
 	}
-	success, _ := FinishAttemptCommand(lease, SuccessDisposition(), 0)
+	success, _ := FinishAttemptCommand(lease, SuccessDisposition(), 0, DefaultRetryDelay)
 	request, _ := NewApplyRequest(success)
 	applied, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlNone)
 	succeeded, err := ApplyDeliveryCommand(running, success, attempt.StartedAt().Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	succeededResult, _ := NewApplyResult(applied, succeeded)
+	succeededResult, _ := NewApplyResult(attempt.StartedAt().Add(time.Second), applied, succeeded)
 	if _, err := ValidateApplyResult(description, request, succeededResult); err != nil {
 		t.Fatalf("success = %v", err)
 	}
 	retryDisposition, _ := RetryDisposition(ReasonHandlerFailure, PublicFailure{}, DefaultRetryDelay, RetryCostCharged)
-	retry, _ := FinishAttemptCommand(lease, retryDisposition, DefaultRetryDelay)
+	retry, _ := FinishAttemptCommand(lease, retryDisposition, DefaultRetryDelay, DefaultRetryDelay)
 	retried, err := ApplyDeliveryCommand(running, retry, attempt.StartedAt().Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongResult, _ := NewApplyResult(applied, retried)
+	wrongResult, _ := NewApplyResult(attempt.StartedAt().Add(time.Second), applied, retried)
 	if _, err := ValidateApplyResult(description, request, wrongResult); !errors.Is(err, ErrDriverContract) {
 		t.Fatalf("wrong same-kind finish = %v", err)
 	}
@@ -558,7 +796,7 @@ func TestApplyResultAcceptsOnlyClosedFinishArbitrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	timeoutResult, _ := NewApplyResult(applied, timedOut)
+	timeoutResult, _ := NewApplyResult(attempt.Deadline(), applied, timedOut)
 	validated, err := ValidateApplyResult(description, request, timeoutResult)
 	timeoutAttempt, timeoutOK := validated.Application().Attempt()
 	if err != nil || !timeoutOK || timeoutAttempt.Disposition().Kind() != DispositionRetry || timeoutAttempt.Disposition().Reason() != ReasonAttemptTimeout || timeoutAttempt.Disposition().RetryCost() != RetryCostCharged {
@@ -573,13 +811,13 @@ func TestApplyResultAcceptsOnlyClosedFinishArbitrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	appliedCancel, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlCancelRequested)
-	cancelledResult, _ := NewApplyResult(appliedCancel, cancelled)
+	cancelledResult, _ := NewApplyResult(attempt.StartedAt().Add(2*time.Second), appliedCancel, cancelled)
 	validated, err = ValidateApplyResult(description, request, cancelledResult)
 	cancelledAttempt, cancelledOK := validated.Application().Attempt()
 	if err != nil || !cancelledOK || cancelledAttempt.Disposition().Kind() != DispositionCancelled || validated.Application().Invocation().State() != InvocationCancelled {
 		t.Fatalf("cancellation arbitration = (%v, %v)", validated, err)
 	}
-	hiddenCancelResult, _ := NewApplyResult(applied, cancelled)
+	hiddenCancelResult, _ := NewApplyResult(attempt.StartedAt().Add(2*time.Second), applied, cancelled)
 	if _, err := ValidateApplyResult(description, request, hiddenCancelResult); !errors.Is(err, ErrDriverContract) {
 		t.Fatalf("hidden cancellation = %v", err)
 	}
@@ -601,7 +839,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	progressResult, _ := NewApplyResult(applied, progressed)
+	progressResult, _ := NewApplyResult(progressInvocation.EligibleAt().Add(time.Second), applied, progressed)
 	if _, err := ValidateApplyResult(description, progressRequest, progressResult); err != nil {
 		t.Fatalf("progress = %v", err)
 	}
@@ -619,11 +857,11 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	appliedCancel, _ := NewDeliveryCommandResult(DeliveryMutationApplied, DeliveryControlCancelRequested)
-	cancelProgressResult, _ := NewApplyResult(appliedCancel, cancelProgressed)
+	cancelProgressResult, _ := NewApplyResult(progressInvocation.EligibleAt().Add(2*time.Second), appliedCancel, cancelProgressed)
 	if _, err := ValidateApplyResult(description, progressRequest, cancelProgressResult); err != nil {
 		t.Fatalf("cancel progress = %v", err)
 	}
-	hiddenCancelProgress, _ := NewApplyResult(applied, cancelProgressed)
+	hiddenCancelProgress, _ := NewApplyResult(progressInvocation.EligibleAt().Add(2*time.Second), applied, cancelProgressed)
 	if _, err := ValidateApplyResult(description, progressRequest, hiddenCancelProgress); !errors.Is(err, ErrDriverContract) {
 		t.Fatalf("hidden progress cancellation = %v", err)
 	}
@@ -636,7 +874,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deferResult, _ := NewApplyResult(applied, deferred)
+	deferResult, _ := NewApplyResult(queued.EligibleAt(), applied, deferred)
 	if _, err := ValidateApplyResult(description, deferRequest, deferResult); err != nil {
 		t.Fatalf("defer = %v", err)
 	}
@@ -645,7 +883,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongDeferResult, _ := NewApplyResult(applied, wrongDeferred)
+	wrongDeferResult, _ := NewApplyResult(queued.EligibleAt(), applied, wrongDeferred)
 	if _, err := ValidateApplyResult(description, deferRequest, wrongDeferResult); !errors.Is(err, ErrDriverContract) {
 		t.Fatalf("wrong defer source = %v", err)
 	}
@@ -656,7 +894,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishResult, _ := NewApplyResult(applied, finished)
+	finishResult, _ := NewApplyResult(queued.EligibleAt(), applied, finished)
 	if _, err := ValidateApplyResult(description, finishRequest, finishResult); err != nil {
 		t.Fatalf("finish delivery = %v", err)
 	}
@@ -664,7 +902,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadlineResult, _ := NewApplyResult(applied, deadlineFinished)
+	deadlineResult, _ := NewApplyResult(queued.MaxElapsedAt(), applied, deadlineFinished)
 	validated, err := ValidateApplyResult(description, finishRequest, deadlineResult)
 	if err != nil || validated.Application().Invocation().State() != InvocationDead || validated.Application().Invocation().Outcome().TerminalReason() != ReasonMaxElapsed {
 		t.Fatalf("finish deadline arbitration = (%v, %v)", validated, err)
@@ -674,7 +912,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongFinishResult, _ := NewApplyResult(applied, wrongFinished)
+	wrongFinishResult, _ := NewApplyResult(queued.EligibleAt(), applied, wrongFinished)
 	if _, err := ValidateApplyResult(description, finishRequest, wrongFinishResult); !errors.Is(err, ErrDriverContract) {
 		t.Fatalf("wrong delivery terminal = %v", err)
 	}
@@ -685,7 +923,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseResult, _ := NewApplyResult(applied, released)
+	releaseResult, _ := NewApplyResult(queued.EligibleAt(), applied, released)
 	if _, err := ValidateApplyResult(description, releaseRequest, releaseResult); err != nil {
 		t.Fatalf("release = %v", err)
 	}
@@ -693,7 +931,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadlineReleaseResult, _ := NewApplyResult(applied, deadlineReleased)
+	deadlineReleaseResult, _ := NewApplyResult(queued.MaxElapsedAt(), applied, deadlineReleased)
 	validated, err = ValidateApplyResult(description, releaseRequest, deadlineReleaseResult)
 	if err != nil || validated.Application().Invocation().State() != InvocationDead || validated.Application().Invocation().Outcome().Reason() != ReasonCompatibility {
 		t.Fatalf("release deadline arbitration = (%v, %v)", validated, err)

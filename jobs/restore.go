@@ -58,9 +58,20 @@ func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error) {
 			}
 			var finished Attempt
 			if event.disposition.kind == DispositionTerminated {
-				next, err = current.Terminate(event.occurredAt)
-				if err == nil {
-					finished = next.attempts.value
+				if event.disposition == cancellationTerminatedDisposition() {
+					next, finished, err = current.terminateCancelledAttemptAtDeadline(current.attempts.value, event.occurredAt)
+				} else {
+					next, err = current.Terminate(event.occurredAt)
+					if err == nil {
+						finished = next.attempts.value
+					}
+				}
+			} else if timeoutDisposition(event.disposition) {
+				if event.availableAt.After(current.maxElapsedAt) {
+					next, finished, err = current.FinishAttempt(current.attempts.value, FinishAttemptSpec{FinishedAt: event.occurredAt, Disposition: event.disposition, AvailableAt: event.availableAt})
+				} else {
+					delay := restoredTimeoutRetryDelay(current, event)
+					next, finished, err = current.finishAttemptAuthoritatively(current.attempts.value, event.disposition, event.occurredAt, 0, delay)
 				}
 			} else {
 				next, finished, err = current.FinishAttempt(current.attempts.value, FinishAttemptSpec{FinishedAt: event.occurredAt, Disposition: event.disposition, AvailableAt: event.availableAt})
@@ -92,6 +103,17 @@ func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error) {
 		return Invocation{}, corruptInvocationLedger()
 	}
 	return current, nil
+}
+
+func timeoutDisposition(disposition Disposition) bool {
+	return disposition.kind == DispositionRetry && (disposition.reason == ReasonAttemptTimeout || disposition.reason == ReasonProgressTimeout) && disposition.retryAfter == 0 && disposition.retryCost == RetryCostCharged && disposition.failure.IsZero()
+}
+
+func restoredTimeoutRetryDelay(current Invocation, event InvocationOutcome) time.Duration {
+	if !event.availableAt.IsZero() && event.availableAt.Before(current.maxElapsedAt) {
+		return event.availableAt.Sub(event.occurredAt)
+	}
+	return retryBackoffCap(current.policy.Backoff(), current.retrySpent.Value())
 }
 
 func invocationHistoryMatches(invocation Invocation, outcomes []InvocationOutcome) bool {

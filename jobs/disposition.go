@@ -265,6 +265,11 @@ func TerminatedDisposition() Disposition {
 	return disposition
 }
 
+func cancellationTerminatedDisposition() Disposition {
+	disposition, _ := NewDisposition(DispositionSpec{Kind: DispositionTerminated, Reason: ReasonCancelRequested})
+	return disposition
+}
+
 func (d Disposition) Kind() DispositionKind     { return d.kind }
 func (d Disposition) Reason() Reason            { return d.reason }
 func (d Disposition) RetryAfter() time.Duration { return d.retryAfter }
@@ -320,7 +325,7 @@ func validateDispositionCombination(spec DispositionSpec) error {
 			return invalid("cancellation disposition state")
 		}
 	case DispositionTerminated:
-		if spec.Reason != ReasonOperatorTerminated || spec.RetryAfter != 0 || spec.RetryCost != RetryCostNone || !spec.Failure.IsZero() {
+		if spec.Reason != ReasonOperatorTerminated && spec.Reason != ReasonCancelRequested || spec.RetryAfter != 0 || spec.RetryCost != RetryCostNone || !spec.Failure.IsZero() {
 			return invalid("termination disposition state")
 		}
 	}
