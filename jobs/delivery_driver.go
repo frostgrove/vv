@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -289,7 +290,7 @@ func (d ClaimedDelivery) Record() DeliveryRecord {
 	if d.record == nil {
 		return DeliveryRecord{}
 	}
-	return cloneDeliveryRecord(d.record.value)
+	return d.record.cloneSnapshot()
 }
 func (ClaimedDelivery) String() string { return "[job claimed delivery]" }
 func (d ClaimedDelivery) Format(state fmt.State, _ rune) {
@@ -339,7 +340,7 @@ func ValidateClaimBatch(description BackendDescription, request ClaimRequest, ba
 	sizes := make([]int, len(batch.items))
 	total := 0
 	for index := range batch.items {
-		size, err := DeliveryRecordSize(batch.items[index].recordValue())
+		size, err := batch.items[index].recordSize()
 		if err != nil {
 			return ClaimBatch{}, driverContractError("claim", err)
 		}
@@ -908,7 +909,7 @@ func (d RecoveredDelivery) Record() DeliveryRecord {
 	if d.record == nil {
 		return DeliveryRecord{}
 	}
-	return cloneDeliveryRecord(d.record.value)
+	return d.record.cloneSnapshot()
 }
 func (RecoveredDelivery) String() string { return "[job recovered delivery]" }
 func (d RecoveredDelivery) Format(state fmt.State, _ rune) {
@@ -965,7 +966,7 @@ func ValidateRecoverResult(description BackendDescription, request RecoverReques
 	}
 	total := 0
 	for index := range result.items {
-		size, err := DeliveryRecordSize(result.items[index].recordValue())
+		size, err := result.items[index].recordSize()
 		if err != nil {
 			return RecoverResult{}, driverContractError("recover", err)
 		}
@@ -996,27 +997,73 @@ func cloneRecoveredDeliveries(values []RecoveredDelivery) []RecoveredDelivery {
 	return append([]RecoveredDelivery(nil), values...)
 }
 
-type deliveryRecordEnvelope struct{ value DeliveryRecord }
+type deliveryRecordEnvelope struct {
+	mu    sync.Mutex
+	value DeliveryRecord
+	taken bool
+}
 
 func newDeliveryRecordEnvelope(record DeliveryRecord, take bool) *deliveryRecordEnvelope {
 	if !take {
 		record = cloneDeliveryRecord(record)
 	}
+	record.Payload.Data = record.Payload.Data[:len(record.Payload.Data):len(record.Payload.Data)]
 	return &deliveryRecordEnvelope{value: record}
 }
 
-func (d ClaimedDelivery) recordValue() DeliveryRecord {
+func (d ClaimedDelivery) recordSize() (int, error) {
 	if d.record == nil {
-		return DeliveryRecord{}
+		return DeliveryRecordSize(DeliveryRecord{})
 	}
-	return d.record.value
+	return d.record.size()
 }
 
-func (d RecoveredDelivery) recordValue() DeliveryRecord {
+func (d RecoveredDelivery) recordSize() (int, error) {
 	if d.record == nil {
-		return DeliveryRecord{}
+		return DeliveryRecordSize(DeliveryRecord{})
 	}
-	return d.record.value
+	return d.record.size()
+}
+
+func (d ClaimedDelivery) takeRecordValue() (DeliveryRecord, bool) {
+	if d.record == nil {
+		return DeliveryRecord{}, false
+	}
+	return d.record.take()
+}
+
+func (d RecoveredDelivery) takeRecordValue() (DeliveryRecord, bool) {
+	if d.record == nil {
+		return DeliveryRecord{}, false
+	}
+	return d.record.take()
+}
+
+func (e *deliveryRecordEnvelope) cloneSnapshot() DeliveryRecord {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return cloneDeliveryRecord(e.value)
+}
+
+func (e *deliveryRecordEnvelope) size() (int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.taken {
+		return 0, invalid("consumed delivery record")
+	}
+	return DeliveryRecordSize(e.value)
+}
+
+func (e *deliveryRecordEnvelope) take() (DeliveryRecord, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.taken {
+		return DeliveryRecord{}, false
+	}
+	e.taken = true
+	record := e.value
+	e.value = DeliveryRecord{}
+	return record, true
 }
 
 func validLeaseTTL(value time.Duration) bool {

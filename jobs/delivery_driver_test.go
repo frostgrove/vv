@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -216,6 +217,111 @@ func TestClaimBatchEnforcesStableIdentityTargetCapacityAndCopies(t *testing.T) {
 	oversizedOutcomes.Outcomes = make([]InvocationOutcome, MaxInvocationOutcomes+1)
 	if _, err := NewRecoveredDelivery(firstLease, oversizedOutcomes); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("oversized recovered outcomes = %v", err)
+	}
+}
+
+func TestClaimedDeliveryRecordCanBeConsumedOnce(t *testing.T) {
+	_, definition, invocation, _, record := deliveryRecordFixture(t, PlacementRegular)
+	target := driverClaimTarget(t, definition.Name(), record.Payload.Codec, record.Payload.Version, 1, "worker.primary")
+	description := queueTestBackendDescription(1)
+	request := mustClaimRequest(t, record.Genesis.Namespace, []ClaimTarget{target}, 1, MaxDeliveryRecordBytes)
+	lease := deliveryTestLease(t, invocation.ID(), []byte("consume-record"))
+	source := cloneDeliveryRecord(record)
+	payloadPointer := &source.Payload.Data[0]
+	delivery, err := TakeClaimedDelivery(target, lease, &source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := NewClaimBatch(record.Genesis.EligibleAt, []ClaimedDelivery{delivery})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateClaimBatch(description, request, batch); err != nil {
+		t.Fatal(err)
+	}
+	owned, ok := delivery.takeRecordValue()
+	if !ok || &owned.Payload.Data[0] != payloadPointer {
+		t.Fatal("claimed delivery did not transfer record ownership")
+	}
+	if second, secondOK := delivery.takeRecordValue(); secondOK || !second.Genesis.ID.IsZero() {
+		t.Fatal("claimed delivery allowed a second ownership transfer")
+	}
+	if public := delivery.Record(); !public.Genesis.ID.IsZero() || public.Payload.Data != nil || public.Outcomes != nil || public.Attempts != nil {
+		t.Fatal("consumed claimed delivery retained record storage")
+	}
+	if _, err := ValidateClaimBatch(description, request, batch); !errors.Is(err, ErrDriver) || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("consumed claim batch validation = %v", err)
+	}
+}
+
+func TestClaimedDeliveryPublicRecordIsolatedFromConcurrentConsumption(t *testing.T) {
+	_, definition, invocation, _, record := deliveryRecordFixture(t, PlacementRegular)
+	record.Payload.Data = bytes.Repeat([]byte{'a'}, MaxPayloadBytes)
+	target := driverClaimTarget(t, definition.Name(), record.Payload.Codec, record.Payload.Version, 1, "worker.primary")
+	lease := deliveryTestLease(t, invocation.ID(), []byte("concurrent-consume"))
+	delivery, err := NewClaimedDelivery(target, lease, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	readerDone := make(chan error, 1)
+	go func() {
+		close(started)
+		for index := 0; index < 100; index++ {
+			snapshot := delivery.Record()
+			if snapshot.Payload.Data != nil && bytes.Count(snapshot.Payload.Data, []byte{'a'}) != len(snapshot.Payload.Data) {
+				readerDone <- errors.New("public record observed transferred mutation")
+				return
+			}
+		}
+		readerDone <- nil
+	}()
+	<-started
+	owned, ok := delivery.takeRecordValue()
+	if !ok {
+		t.Fatal("record was not consumed")
+	}
+	for index := range owned.Payload.Data {
+		owned.Payload.Data[index] = 'b'
+	}
+	if readerErr := <-readerDone; readerErr != nil {
+		t.Fatal(readerErr)
+	}
+}
+
+func TestRecoveredDeliveryRecordCanBeConsumedOnce(t *testing.T) {
+	_, _, invocation, _, record := deliveryRecordFixture(t, PlacementRegular)
+	description := queueTestBackendDescription(1)
+	request, err := NewRecoverRequest(record.Genesis.Namespace, 1, MaxDeliveryRecordBytes, DefaultLeaseTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := deliveryTestLease(t, invocation.ID(), []byte("consume-recovered-record"))
+	source := cloneDeliveryRecord(record)
+	payloadPointer := &source.Payload.Data[0]
+	delivery, err := TakeRecoveredDelivery(lease, &source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewRecoverResult(record.Genesis.EligibleAt, []RecoveredDelivery{delivery}, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateRecoverResult(description, request, result); err != nil {
+		t.Fatal(err)
+	}
+	owned, ok := delivery.takeRecordValue()
+	if !ok || &owned.Payload.Data[0] != payloadPointer {
+		t.Fatal("recovered delivery did not transfer record ownership")
+	}
+	if second, secondOK := delivery.takeRecordValue(); secondOK || !second.Genesis.ID.IsZero() {
+		t.Fatal("recovered delivery allowed a second ownership transfer")
+	}
+	if public := delivery.Record(); !public.Genesis.ID.IsZero() || public.Payload.Data != nil || public.Outcomes != nil || public.Attempts != nil {
+		t.Fatal("consumed recovered delivery retained record storage")
+	}
+	if _, err := ValidateRecoverResult(description, request, result); !errors.Is(err, ErrDriver) || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("consumed recover result validation = %v", err)
 	}
 }
 

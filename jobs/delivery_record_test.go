@@ -43,6 +43,25 @@ func TestDeliveryRecordRestoresCanonicalStateAndCopiesStorageSlices(t *testing.T
 	}
 }
 
+func TestOwnedDeliveryRestoreTransfersPayloadStorage(t *testing.T) {
+	catalog, _, _, _, record := deliveryRecordFixture(t, PlacementRegular)
+	payloadPointer := &record.Payload.Data[0]
+	restored, err := restoreOwnedDeliveryRecord(catalog, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &restored.payloadValue().encodedBytes()[0] != payloadPointer {
+		t.Fatal("owned restore copied payload storage")
+	}
+	public, err := RestoreDeliveryRecord(catalog, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &public.payloadValue().encodedBytes()[0] == payloadPointer {
+		t.Fatal("public restore did not preserve defensive ownership")
+	}
+}
+
 func TestRestoreDeliveryRecordRejectsBoundsBeforeCatalogLookup(t *testing.T) {
 	_, _, _, _, base := deliveryRecordFixture(t, PlacementRegular)
 	tests := []DeliveryRecord{

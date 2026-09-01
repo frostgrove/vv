@@ -215,6 +215,14 @@ func (this *Definition[P]) preparePayload(value P, requireIdentity bool) (Encode
 }
 
 func (this *Definition[P]) Decode(payload EncodedPayload) (P, error) {
+	return this.decodePayload(payload, false)
+}
+
+func (this *Definition[P]) decodeOwned(payload EncodedPayload) (P, error) {
+	return this.decodePayload(payload, true)
+}
+
+func (this *Definition[P]) decodePayload(payload EncodedPayload, owned bool) (P, error) {
 	var zero P
 	if this == nil || payload.IsZero() {
 		return zero, fmt.Errorf("%w: definition or payload is invalid", ErrInvalid)
@@ -225,10 +233,13 @@ func (this *Definition[P]) Decode(payload EncodedPayload) (P, error) {
 	if err := this.validateCurrentCodec(); err != nil {
 		return zero, err
 	}
-	encoded := bytes.Clone(payload.encodedBytes())
+	encoded := payload.encodedBytes()
 	if payload.Version() == this.codecInfo.version {
 		if !payload.matches(this.codecInfo.id) {
 			return zero, fmt.Errorf("%w: current payload codec does not match", ErrCorrupt)
+		}
+		if owned {
+			return invokeCodecDecodeOwned(this.codec, encoded, this.policy.Payload)
 		}
 		return invokeCodecDecode(this.codec, encoded, this.policy.Payload)
 	}
@@ -246,11 +257,20 @@ func (this *Definition[P]) Decode(payload EncodedPayload) (P, error) {
 		if err := validateUpcasterSnapshot(upcaster); err != nil {
 			return zero, err
 		}
-		next, err := invokeUpcaster(upcaster.upcaster, encoded, this.policy.Payload)
+		var next []byte
+		var err error
+		if owned {
+			next, err = invokeUpcasterOwned(upcaster.upcaster, encoded, this.policy.Payload)
+		} else {
+			next, err = invokeUpcaster(upcaster.upcaster, encoded, this.policy.Payload)
+		}
 		if err != nil {
 			return zero, err
 		}
 		encoded = next
+	}
+	if owned {
+		return invokeCodecDecodeOwned(this.codec, encoded, this.policy.Payload)
 	}
 	return invokeCodecDecode(this.codec, encoded, this.policy.Payload)
 }
@@ -395,7 +415,26 @@ func invokeCodecEncode[P any](codec Codec[P], value P, limit PayloadLimit) (enco
 	return encoded, err
 }
 
+func invokeCodecEncodeOwned[P any](codec Codec[P], value P, limit PayloadLimit) ([]byte, error) {
+	encoded, err := invokeCodecEncode(codec, value, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) > limit.MaxBytes || len(encoded) > MaxPayloadBytes {
+		return nil, ErrTooLarge
+	}
+	if _, owned := any(codec).(interface{ ownsEncodedOutput() }); !owned {
+		encoded = bytes.Clone(encoded)
+	}
+	return encoded[:len(encoded):len(encoded)], nil
+}
+
 func invokeCodecDecode[P any](codec Codec[P], encoded []byte, limit PayloadLimit) (value P, err error) {
+	return invokeCodecDecodeOwned(codec, bytes.Clone(encoded), limit)
+}
+
+func invokeCodecDecodeOwned[P any](codec Codec[P], encoded []byte, limit PayloadLimit) (value P, err error) {
+	encoded = encoded[:len(encoded):len(encoded)]
 	defer func() {
 		if recover() != nil {
 			var zero P
@@ -403,11 +442,21 @@ func invokeCodecDecode[P any](codec Codec[P], encoded []byte, limit PayloadLimit
 			err = fmt.Errorf("%w: codec decode panicked", ErrCorrupt)
 		}
 	}()
-	value, err = codec.Decode(bytes.Clone(encoded), limit)
+	if decoder, ok := any(codec).(interface {
+		decodeOwned([]byte, PayloadLimit) (P, error)
+	}); ok {
+		value, err = decoder.decodeOwned(encoded, limit)
+	} else {
+		value, err = codec.Decode(encoded, limit)
+	}
 	if err != nil {
 		var zero P
 		value = zero
 		err = normalizeCodecDecodeError(err)
+	}
+	if raw, ok := any(value).([]byte); ok {
+		raw = raw[:len(raw):len(raw)]
+		value = any(raw).(P)
 	}
 	return value, err
 }

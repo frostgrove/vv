@@ -74,6 +74,21 @@ func TestPrimitiveCodecsCloneAndEnforceSeparateLimits(t *testing.T) {
 	}
 }
 
+func TestTakenEncodedPayloadOwnsCallerBuffer(t *testing.T) {
+	data := []byte("owned")
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &payload.encodedBytes()[0] != &data[0] {
+		t.Fatal("taken payload copied caller buffer")
+	}
+	data[0] = 'O'
+	if string(payload.encodedBytes()) != "Owned" {
+		t.Fatal("taken payload did not retain ownership")
+	}
+}
+
 func TestRFC3339UTCIsCanonicalAndRejectsOffsets(t *testing.T) {
 	codec := RFC3339UTC(3)
 	limit := PayloadLimit{MaxBytes: 30, MaxDecodedBytes: 64, MaxDepth: 1}

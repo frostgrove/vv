@@ -82,6 +82,7 @@ func (this jsonCodec[V]) codecMode() CodecMode {
 	}
 	return SafeCodecMode
 }
+func (jsonCodec[V]) ownsEncodedOutput() {}
 
 func (this jsonCodec[V]) Encode(value V, limit PayloadLimit) ([]byte, error) {
 	if err := validateJSONPayloadLimit(limit); err != nil {

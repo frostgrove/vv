@@ -40,13 +40,25 @@ type EncodedPayload struct {
 }
 
 func NewEncodedPayload(codec CodecID, version SchemaVersion, data []byte) (EncodedPayload, error) {
+	return newEncodedPayload(codec, version, data, true)
+}
+
+func takeEncodedPayload(codec CodecID, version SchemaVersion, data []byte) (EncodedPayload, error) {
+	return newEncodedPayload(codec, version, data, false)
+}
+
+func newEncodedPayload(codec CodecID, version SchemaVersion, data []byte, clone bool) (EncodedPayload, error) {
 	if codec.IsZero() || version.IsZero() {
 		return EncodedPayload{}, fmt.Errorf("%w: payload codec and version are required", ErrInvalid)
 	}
 	if len(data) > MaxPayloadBytes {
 		return EncodedPayload{}, ErrTooLarge
 	}
-	return EncodedPayload{codec: codec, version: version, data: bytes.Clone(data)}, nil
+	if clone {
+		data = bytes.Clone(data)
+	}
+	data = data[:len(data):len(data)]
+	return EncodedPayload{codec: codec, version: version, data: data}, nil
 }
 
 func (this EncodedPayload) Codec() CodecID             { return this.codec }
@@ -77,6 +89,7 @@ func String(version SchemaVersion) Codec[string] {
 func (stringCodec) ID() CodecID                 { return builtinCodecID("string") }
 func (this stringCodec) Version() SchemaVersion { return this.version }
 func (stringCodec) codecMode() CodecMode        { return SafeCodecMode }
+func (stringCodec) ownsEncodedOutput()          {}
 
 func (stringCodec) Encode(value string, limit PayloadLimit) ([]byte, error) {
 	if err := validatePayloadLimit(limit); err != nil {
@@ -107,6 +120,7 @@ func Bytes(version SchemaVersion) Codec[[]byte] {
 func (bytesCodec) ID() CodecID                 { return builtinCodecID("bytes") }
 func (this bytesCodec) Version() SchemaVersion { return this.version }
 func (bytesCodec) codecMode() CodecMode        { return SafeCodecMode }
+func (bytesCodec) ownsEncodedOutput()          {}
 
 func (bytesCodec) Encode(value []byte, limit PayloadLimit) ([]byte, error) {
 	if err := validatePayloadLimit(limit); err != nil {
@@ -128,6 +142,16 @@ func (bytesCodec) Decode(encoded []byte, limit PayloadLimit) ([]byte, error) {
 	return bytes.Clone(encoded), nil
 }
 
+func (bytesCodec) decodeOwned(encoded []byte, limit PayloadLimit) ([]byte, error) {
+	if err := validatePayloadLimit(limit); err != nil {
+		return nil, err
+	}
+	if len(encoded) > limit.MaxBytes || len(encoded) > limit.MaxDecodedBytes {
+		return nil, ErrTooLarge
+	}
+	return encoded, nil
+}
+
 type rfc3339UTCCodec struct{ version SchemaVersion }
 
 func RFC3339UTC(version SchemaVersion) Codec[time.Time] {
@@ -137,6 +161,7 @@ func RFC3339UTC(version SchemaVersion) Codec[time.Time] {
 func (rfc3339UTCCodec) ID() CodecID                 { return builtinCodecID("time-rfc3339-utc") }
 func (this rfc3339UTCCodec) Version() SchemaVersion { return this.version }
 func (rfc3339UTCCodec) codecMode() CodecMode        { return SafeCodecMode }
+func (rfc3339UTCCodec) ownsEncodedOutput()          {}
 
 func (rfc3339UTCCodec) Encode(value time.Time, limit PayloadLimit) ([]byte, error) {
 	if err := validatePayloadLimit(limit); err != nil {

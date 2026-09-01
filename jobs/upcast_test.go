@@ -172,6 +172,12 @@ type failingUpcaster struct {
 	secret        string
 }
 
+type ownedTailUpcaster struct{ backing []byte }
+
+type aliasingBytesCodec struct{ version SchemaVersion }
+
+type oversizedBytesCodec struct{ version SchemaVersion }
+
 func (this stubUpcaster) From() SchemaVersion                 { return this.from }
 func (this stubUpcaster) To() SchemaVersion                   { return this.to }
 func (this stubUpcaster) SourceCodec() CodecID                { return this.id }
@@ -201,6 +207,79 @@ func (this failingUpcaster) upcast(value []byte, _ PayloadLimit) ([]byte, error)
 		return []byte(this.secret), this.runtimeErr
 	}
 	return bytes.Clone(value), nil
+}
+
+func (ownedTailUpcaster) From() SchemaVersion                      { return 1 }
+func (ownedTailUpcaster) To() SchemaVersion                        { return 2 }
+func (ownedTailUpcaster) SourceCodec() CodecID                     { return builtinCodecID("bytes") }
+func (ownedTailUpcaster) TargetCodec() CodecID                     { return builtinCodecID("bytes") }
+func (ownedTailUpcaster) validateUpcasterLimit(PayloadLimit) error { return nil }
+func (ownedTailUpcaster) upcasterMarker()                          {}
+func (u ownedTailUpcaster) upcast([]byte, PayloadLimit) ([]byte, error) {
+	return bytes.Clone(u.backing[:7]), nil
+}
+func (u ownedTailUpcaster) upcastOwned([]byte, PayloadLimit) ([]byte, error) {
+	return u.backing[:7], nil
+}
+
+func TestOwnedUpcastCannotExposeEncodedTail(t *testing.T) {
+	upcaster := ownedTailUpcaster{backing: []byte("visible-private-tail")}
+	definition := MustDefine(DefinitionSpec[[]byte]{Name: testJobName(t, "tests.owned-upcast-tail"), Codec: Bytes(2), Upcasters: []Upcaster{upcaster}, Policy: testPolicy(t)})
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, []byte("historic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := definition.decodeOwned(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != "visible" || cap(decoded) != len(decoded) {
+		t.Fatal("owned upcast exposed encoded backing tail")
+	}
+}
+
+func (aliasingBytesCodec) ID() CodecID                                         { return builtinCodecID("bytes") }
+func (c aliasingBytesCodec) Version() SchemaVersion                            { return c.version }
+func (aliasingBytesCodec) Encode(value []byte, _ PayloadLimit) ([]byte, error) { return value, nil }
+func (aliasingBytesCodec) Decode(value []byte, _ PayloadLimit) ([]byte, error) { return value, nil }
+
+func TestOwnedTypedUpcastTakesCustomCodecOutput(t *testing.T) {
+	retained := []byte("retained")
+	target := aliasingBytesCodec{version: 2}
+	upcaster := Upcast(Bytes(1), target, func([]byte) ([]byte, error) { return retained, nil })
+	definition := MustDefine(DefinitionSpec[[]byte]{Name: testJobName(t, "tests.owned-upcast-alias"), Codec: Bytes(2), Upcasters: []Upcaster{upcaster}, Policy: testPolicy(t)})
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, []byte("historic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := definition.decodeOwned(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded[0] = 'R'
+	if string(retained) != "retained" {
+		t.Fatal("owned upcast retained custom codec output alias")
+	}
+}
+
+func (oversizedBytesCodec) ID() CodecID              { return builtinCodecID("bytes") }
+func (c oversizedBytesCodec) Version() SchemaVersion { return c.version }
+func (oversizedBytesCodec) Encode([]byte, PayloadLimit) ([]byte, error) {
+	return make([]byte, MaxPayloadBytes+1), nil
+}
+func (oversizedBytesCodec) Decode(value []byte, _ PayloadLimit) ([]byte, error) { return value, nil }
+
+func TestOwnedTypedUpcastRejectsCustomOutputBeforeOwnershipCopy(t *testing.T) {
+	target := oversizedBytesCodec{version: 2}
+	upcaster := Upcast(Bytes(1), target, func(value []byte) ([]byte, error) { return value, nil })
+	definition := MustDefine(DefinitionSpec[[]byte]{Name: testJobName(t, "tests.owned-upcast-oversized"), Codec: Bytes(2), Upcasters: []Upcaster{upcaster}, Policy: testPolicy(t)})
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, []byte("historic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := definition.decodeOwned(payload); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("oversized custom output = %v", err)
+	}
 }
 
 func TestDefinitionNormalizesCustomUpcasterValidationAndRuntimeErrors(t *testing.T) {

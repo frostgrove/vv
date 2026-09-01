@@ -157,6 +157,15 @@ func (this *Automatic[P]) Decode(payload EncodedPayload) (P, error) {
 	return definition.Decode(payload)
 }
 
+func (this *Automatic[P]) decodeOwned(payload EncodedPayload) (P, error) {
+	definition := this.resolved()
+	if definition == nil {
+		var zero P
+		return zero, ErrNotActivated
+	}
+	return definition.decodeOwned(payload)
+}
+
 func (this *Automatic[P]) Handler() Handler[P] {
 	if this == nil {
 		return nil

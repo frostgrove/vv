@@ -15,6 +15,7 @@ type Consumer interface {
 type consumerBinding struct {
 	declaration   Declaration
 	decode        func(EncodedPayload) (any, error)
+	decodeOwned   func(EncodedPayload) (any, error)
 	handle        func(context.Context, any) error
 	handleAdapter func(context.Context, any, DeliveryMeta, ProgressReporter) error
 	classifier    ErrorClassifier
@@ -122,6 +123,13 @@ func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P],
 			}
 			return decodedConsumerValue[P]{value: value}, nil
 		},
+		decodeOwned: func(payload EncodedPayload) (any, error) {
+			value, err := definition.decodeOwned(payload)
+			if err != nil {
+				return nil, err
+			}
+			return decodedConsumerValue[P]{value: value}, nil
+		},
 		handle: func(ctx context.Context, decoded any) error {
 			value, ok := decoded.(decodedConsumerValue[P])
 			if !ok {
@@ -158,6 +166,13 @@ func typedAdapterConsumerBinding[P any](definition DefinitionOf[P], handler Adap
 		declaration: declaration,
 		decode: func(payload EncodedPayload) (any, error) {
 			value, err := definition.Decode(payload)
+			if err != nil {
+				return nil, err
+			}
+			return decodedConsumerValue[P]{value: value}, nil
+		},
+		decodeOwned: func(payload EncodedPayload) (any, error) {
+			value, err := definition.decodeOwned(payload)
 			if err != nil {
 				return nil, err
 			}

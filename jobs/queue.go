@@ -24,6 +24,7 @@ type DefinitionOf[P any] interface {
 	Encode(P) (EncodedPayload, error)
 	Digest(P) (PayloadDigest, error)
 	Decode(EncodedPayload) (P, error)
+	decodeOwned(EncodedPayload) (P, error)
 	preparePayload(P, bool) (EncodedPayload, PayloadDigest, error)
 }
 

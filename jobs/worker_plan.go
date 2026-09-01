@@ -122,7 +122,7 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 		if binding.err != nil {
 			return WorkerPlan{}, fmt.Errorf("worker binding %d: %w", index, binding.err)
 		}
-		if !binding.valid || nilInterface(binding.declaration) || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency || !validOptionalAdmissionReader(binding.admission) || !binding.mode.valid() || binding.mode == consumerHandlerStandard && (binding.handle == nil || binding.handleAdapter != nil) || binding.mode == consumerHandlerAdapter && (binding.handle != nil || binding.handleAdapter == nil) {
+		if !binding.valid || nilInterface(binding.declaration) || binding.decode == nil || binding.decodeOwned == nil || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency || !validOptionalAdmissionReader(binding.admission) || !binding.mode.valid() || binding.mode == consumerHandlerStandard && (binding.handle == nil || binding.handleAdapter != nil) || binding.mode == consumerHandlerAdapter && (binding.handle != nil || binding.handleAdapter == nil) {
 			return WorkerPlan{}, fmt.Errorf("%w: worker binding %d is invalid or unresolved", ErrInvalid, index)
 		}
 		registered, ok := catalog.Lookup(binding.declaration.declarationName())

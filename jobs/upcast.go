@@ -60,6 +60,14 @@ func (this typedUpcaster[A, B]) validateUpcasterLimit(limit PayloadLimit) error 
 }
 
 func (this typedUpcaster[A, B]) upcast(encoded []byte, limit PayloadLimit) (result []byte, err error) {
+	result, err = this.upcastOwned(bytes.Clone(encoded), limit)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Clone(result), nil
+}
+
+func (this typedUpcaster[A, B]) upcastOwned(encoded []byte, limit PayloadLimit) (result []byte, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = nil
@@ -72,7 +80,7 @@ func (this typedUpcaster[A, B]) upcast(encoded []byte, limit PayloadLimit) (resu
 	if len(encoded) > limit.MaxBytes {
 		return nil, ErrTooLarge
 	}
-	value, err := invokeCodecDecode(this.from, encoded, limit)
+	value, err := invokeCodecDecodeOwned(this.from, encoded, limit)
 	if err != nil {
 		return nil, normalizeUpcastRuntimeError(err)
 	}
@@ -80,14 +88,14 @@ func (this typedUpcaster[A, B]) upcast(encoded []byte, limit PayloadLimit) (resu
 	if err != nil {
 		return nil, ErrCorrupt
 	}
-	result, err = invokeCodecEncode(this.to, next, limit)
+	result, err = invokeCodecEncodeOwned(this.to, next, limit)
 	if err != nil {
 		return nil, normalizeUpcastRuntimeError(err)
 	}
 	if len(result) > limit.MaxBytes {
 		return nil, ErrTooLarge
 	}
-	return bytes.Clone(result), nil
+	return result, nil
 }
 
 type upcasterDescription struct {
@@ -141,6 +149,31 @@ func invokeUpcaster(upcaster Upcaster, encoded []byte, limit PayloadLimit) (resu
 		return nil, ErrTooLarge
 	}
 	return bytes.Clone(result), nil
+}
+
+func invokeUpcasterOwned(upcaster Upcaster, encoded []byte, limit PayloadLimit) (result []byte, err error) {
+	encoded = encoded[:len(encoded):len(encoded)]
+	defer func() {
+		if recover() != nil {
+			result = nil
+			err = ErrCorrupt
+		}
+	}()
+	if owned, ok := upcaster.(interface {
+		upcastOwned([]byte, PayloadLimit) ([]byte, error)
+	}); ok {
+		result, err = owned.upcastOwned(encoded, limit)
+	} else {
+		result, err = upcaster.upcast(encoded, limit)
+	}
+	if err != nil {
+		return nil, normalizeUpcastRuntimeError(err)
+	}
+	if len(result) > limit.MaxBytes {
+		return nil, ErrTooLarge
+	}
+	result = result[:len(result):len(result)]
+	return result, nil
 }
 
 func invokeUpcasterLimitValidation(upcaster Upcaster, limit PayloadLimit) (err error) {

@@ -116,6 +116,45 @@ func TestManualDefinitionEncodesVersionedEnvelopeAndDescribesPolicy(t *testing.T
 	}
 }
 
+func TestDefinitionOwnedDecodeTransfersBytePayload(t *testing.T) {
+	definition := testQueueDefinition(t, "tests.owned-bytes", Bytes(1))
+	data := []byte("owned bytes")
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := definition.decodeOwned(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) == 0 || &decoded[0] != &data[0] {
+		t.Fatal("owned decode copied byte payload")
+	}
+	public, err := definition.Decode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(public) == 0 || &public[0] == &data[0] {
+		t.Fatal("public decode did not preserve defensive ownership")
+	}
+}
+
+func TestDefinitionOwnedDecodeCannotExposePayloadTail(t *testing.T) {
+	definition := testQueueDefinition(t, "tests.owned-byte-tail", Bytes(1))
+	backing := []byte("visible-private-tail")
+	payload, err := takeEncodedPayload(builtinCodecID("bytes"), 1, backing[:7])
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := definition.decodeOwned(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != "visible" || cap(decoded) != len(decoded) || cap(payload.encodedBytes()) != len(payload.encodedBytes()) {
+		t.Fatal("owned decode exposed payload backing tail")
+	}
+}
+
 func TestDefinitionRequiresStableNameCodecPolicyAndMaxElapsed(t *testing.T) {
 	valid := DefinitionSpec[string]{Name: testJobName(t, "documents.translate"), Codec: String(1), Policy: testPolicy(t)}
 	tests := []struct {

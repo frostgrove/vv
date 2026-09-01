@@ -671,6 +671,50 @@ func TestRestoreInvocationReplaysAndRejectsEveryLedgerMismatch(t *testing.T) {
 	}
 }
 
+func TestInvocationLedgerMatchersRejectMalformedLinks(t *testing.T) {
+	queued := testInvocationForPolicy(t, testInvocationPolicy(t))
+	outcomes := queued.History()
+	if !invocationHistoryMatches(queued, outcomes) || !invocationAttemptsMatch(queued, nil) || !invocationHistoryMatches(Invocation{}, nil) || !invocationHistoryMatches(Invocation{}, []InvocationOutcome{}) || !invocationAttemptsMatch(Invocation{}, []AttemptRecord{}) {
+		t.Fatal("valid ledger shape did not match")
+	}
+	wrongOutcome := append([]InvocationOutcome(nil), outcomes...)
+	wrongOutcome[0] = InvocationOutcome{}
+	if invocationHistoryMatches(queued, wrongOutcome) {
+		t.Fatal("outcome value mismatch was accepted")
+	}
+	zeroLength := queued
+	zeroLength.history = &invocationOutcomeLedger{value: outcomes[0]}
+	if invocationHistoryMatches(zeroLength, nil) || invocationHistoryMatches(zeroLength, outcomes) {
+		t.Fatal("zero-length nonempty history was accepted")
+	}
+	cyclic := queued
+	cycle := &invocationOutcomeLedger{value: outcomes[0], length: 1}
+	cycle.previous = cycle
+	cyclic.history = cycle
+	if invocationHistoryMatches(cyclic, outcomes) {
+		t.Fatal("cyclic history was accepted")
+	}
+	running, _ := beginTestAttempt(t, queued, queued.EligibleAt())
+	runningOutcomes := running.History()
+	attempts := running.AttemptRecords()
+	if !invocationAttemptsMatch(running, attempts) {
+		t.Fatal("valid attempt ledger did not match")
+	}
+	matched := false
+	allocations := testing.AllocsPerRun(100, func() {
+		matched = invocationHistoryMatches(running, runningOutcomes) && invocationAttemptsMatch(running, attempts)
+	})
+	if allocations != 0 || !matched {
+		t.Fatalf("valid ledger match = (%v, %v allocations)", matched, allocations)
+	}
+	attemptCycle := &attemptLedger{value: running.attempts.value, length: 1}
+	attemptCycle.previous = attemptCycle
+	running.attempts = attemptCycle
+	if invocationAttemptsMatch(running, attempts) {
+		t.Fatal("cyclic attempt ledger was accepted")
+	}
+}
+
 func testGenesisInvocation(t *testing.T) Invocation {
 	t.Helper()
 	return testInvocationForPolicy(t, testInvocationPolicy(t))

@@ -81,6 +81,7 @@ type RestoredDelivery struct {
 
 func (d RestoredDelivery) Invocation() Invocation       { return d.invocation }
 func (d RestoredDelivery) Payload() EncodedPayload      { return cloneEncodedPayload(d.payload) }
+func (d RestoredDelivery) payloadValue() EncodedPayload { return d.payload }
 func (d RestoredDelivery) WireDigest() WireDigest       { return d.wireDigest }
 func (d RestoredDelivery) PayloadDigest() PayloadDigest { return d.payloadDigest }
 func (d RestoredDelivery) Compatibility() DeliveryCompatibility {
@@ -160,6 +161,14 @@ func NewDeliveryRecord(invocation Invocation, payload EncodedPayload, wireDigest
 }
 
 func RestoreDeliveryRecord(catalog Catalog, record DeliveryRecord) (RestoredDelivery, error) {
+	return restoreDeliveryRecord(catalog, record, false)
+}
+
+func restoreOwnedDeliveryRecord(catalog Catalog, record DeliveryRecord) (RestoredDelivery, error) {
+	return restoreDeliveryRecord(catalog, record, true)
+}
+
+func restoreDeliveryRecord(catalog Catalog, record DeliveryRecord, owned bool) (RestoredDelivery, error) {
 	if err := preflightDeliveryRecord(record); err != nil {
 		return RestoredDelivery{}, err
 	}
@@ -187,7 +196,12 @@ func RestoreDeliveryRecord(catalog Catalog, record DeliveryRecord) (RestoredDeli
 	if err != nil {
 		return RestoredDelivery{}, corruptDeliveryRecord()
 	}
-	payload, err := NewEncodedPayload(record.Payload.Codec, record.Payload.Version, record.Payload.Data)
+	var payload EncodedPayload
+	if owned {
+		payload, err = takeEncodedPayload(record.Payload.Codec, record.Payload.Version, record.Payload.Data)
+	} else {
+		payload, err = NewEncodedPayload(record.Payload.Codec, record.Payload.Version, record.Payload.Data)
+	}
 	if err != nil || digestWirePayload(payload) != record.WireDigest {
 		return RestoredDelivery{}, corruptDeliveryRecord()
 	}

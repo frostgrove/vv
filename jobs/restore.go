@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"fmt"
-	"slices"
 	"time"
 )
 
@@ -89,10 +88,44 @@ func RestoreInvocation(spec InvocationRestoreSpec) (Invocation, error) {
 			return Invocation{}, corruptInvocationLedger()
 		}
 	}
-	if !slices.Equal(current.History(), spec.Outcomes) || !slices.Equal(current.AttemptRecords(), spec.Attempts) {
+	if !invocationHistoryMatches(current, spec.Outcomes) || !invocationAttemptsMatch(current, spec.Attempts) {
 		return Invocation{}, corruptInvocationLedger()
 	}
 	return current, nil
+}
+
+func invocationHistoryMatches(invocation Invocation, outcomes []InvocationOutcome) bool {
+	if invocation.history == nil {
+		return len(outcomes) == 0
+	}
+	if invocation.history.length != len(outcomes) {
+		return false
+	}
+	current := invocation.history
+	for index := len(outcomes) - 1; index >= 0; index-- {
+		if current == nil || current.value != outcomes[index] {
+			return false
+		}
+		current = current.previous
+	}
+	return current == nil
+}
+
+func invocationAttemptsMatch(invocation Invocation, attempts []AttemptRecord) bool {
+	if invocation.attempts == nil {
+		return len(attempts) == 0
+	}
+	if invocation.attempts.length != len(attempts) {
+		return false
+	}
+	current := invocation.attempts
+	for index := len(attempts) - 1; index >= 0; index-- {
+		if current == nil || current.value.Record() != attempts[index] {
+			return false
+		}
+		current = current.previous
+	}
+	return current == nil
 }
 
 func restoreTerminalDelivery(current Invocation, event InvocationOutcome) (Invocation, error) {
