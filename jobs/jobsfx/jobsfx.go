@@ -13,6 +13,7 @@ import (
 const (
 	declarationGroup = `group:"vv.jobs.declarations"`
 	consumerGroup    = `group:"vv.jobs.consumers"`
+	scheduleGroup    = `group:"vv.jobs.schedules"`
 )
 
 type Backend interface {
@@ -28,14 +29,20 @@ func AsConsumer(constructor any) any {
 	return fx.Annotate(constructor, fx.As(new(jobs.Consumer)), fx.ResultTags(consumerGroup))
 }
 
+func AsSchedule(constructor any) any {
+	return fx.Annotate(constructor, fx.As(new(jobs.Schedule)), fx.ResultTags(scheduleGroup))
+}
+
 func AsBackend(constructor any) any {
 	return fx.Annotate(constructor, fx.As(new(Backend)), fx.As(fx.Self()))
 }
 
 type Spec struct {
 	Namespace jobs.Namespace
+	Catalog   jobs.Catalog
 	Queue     jobs.QueueSpec
 	Workers   jobs.WorkersSpec
+	Scheduler jobs.SchedulerSpec
 }
 
 func Module(spec Spec) fx.Option {
@@ -44,7 +51,9 @@ func Module(spec Spec) fx.Option {
 	}
 	return fx.Module("vv.jobs",
 		fx.Provide(
-			newCatalog,
+			func(registered contributions) (jobs.Catalog, error) {
+				return resolveCatalog(spec.Catalog, registered)
+			},
 			func(catalog jobs.Catalog, backend Backend) (*jobs.Queue, error) {
 				configured := spec.Queue
 				configured.Namespace = spec.Namespace
@@ -59,6 +68,18 @@ func Module(spec Spec) fx.Option {
 				configured.Driver = backend
 				return jobs.NewWorkers(configured, registered.Consumers...)
 			},
+			func(queue *jobs.Queue, registered contributions) (scheduledRuntime, error) {
+				if len(registered.Schedules) == 0 {
+					return scheduledRuntime{}, nil
+				}
+				configured := spec.Scheduler
+				configured.Queue = queue
+				scheduler, err := jobs.NewScheduler(configured, registered.Schedules...)
+				if err != nil {
+					return scheduledRuntime{}, err
+				}
+				return scheduledRuntime{scheduler: scheduler}, nil
+			},
 		),
 		fx.Invoke(bindLifecycle),
 	)
@@ -69,9 +90,36 @@ type contributions struct {
 
 	Declarations []jobs.Declaration `group:"vv.jobs.declarations"`
 	Consumers    []jobs.Consumer    `group:"vv.jobs.consumers"`
+	Schedules    []jobs.Schedule    `group:"vv.jobs.schedules"`
 }
 
 func newCatalog(registered contributions) (jobs.Catalog, error) {
+	declarations := contributionDeclarations(registered)
+	catalog, err := jobs.NewCatalog(declarations...)
+	if err != nil {
+		return jobs.Catalog{}, fmt.Errorf("jobsfx: catalog: %w", err)
+	}
+	return catalog, nil
+}
+
+func resolveCatalog(configured jobs.Catalog, registered contributions) (jobs.Catalog, error) {
+	if configured.Fingerprint() == "" {
+		return newCatalog(registered)
+	}
+	contributed, err := jobs.NewCatalog(contributionDeclarations(registered)...)
+	if err != nil {
+		return jobs.Catalog{}, fmt.Errorf("jobsfx: contributions: %w", err)
+	}
+	for _, declaration := range contributed.Definitions() {
+		member, ok := configured.Lookup(declaration.Describe().Name)
+		if !ok || member != declaration {
+			return jobs.Catalog{}, fmt.Errorf("jobsfx: %w: declaration %q is not a member of the configured catalog", jobs.ErrInvalid, declaration.Describe().Name)
+		}
+	}
+	return configured, nil
+}
+
+func contributionDeclarations(registered contributions) []jobs.Declaration {
 	declarations := make([]jobs.Declaration, 0, len(registered.Declarations)+len(registered.Consumers))
 	declarations = append(declarations, registered.Declarations...)
 	for _, consumer := range registered.Consumers {
@@ -81,22 +129,30 @@ func newCatalog(registered contributions) (jobs.Catalog, error) {
 		}
 		declarations = append(declarations, consumer.Declaration())
 	}
-	catalog, err := jobs.NewCatalog(declarations...)
-	if err != nil {
-		return jobs.Catalog{}, fmt.Errorf("jobsfx: catalog: %w", err)
-	}
-	return catalog, nil
+	return declarations
+}
+
+type scheduledRuntime struct {
+	scheduler *jobs.Scheduler
+}
+
+type schedulerRunResult struct {
+	err       error
+	cancelled bool
 }
 
 type lifecycleRuntime struct {
-	queue      *jobs.Queue
-	workers    *jobs.Workers
-	shutdowner fx.Shutdowner
-	activation *jobs.QueueActivation
+	queue           *jobs.Queue
+	workers         *jobs.Workers
+	scheduler       *jobs.Scheduler
+	shutdowner      fx.Shutdowner
+	activation      *jobs.QueueActivation
+	schedulerCancel context.CancelFunc
+	schedulerDone   chan schedulerRunResult
 }
 
-func bindLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, queue *jobs.Queue, workers *jobs.Workers) {
-	runtime := &lifecycleRuntime{queue: queue, workers: workers, shutdowner: shutdowner}
+func bindLifecycle(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, queue *jobs.Queue, workers *jobs.Workers, scheduled scheduledRuntime) {
+	runtime := &lifecycleRuntime{queue: queue, workers: workers, scheduler: scheduled.scheduler, shutdowner: shutdowner}
 	lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
 }
 
@@ -106,21 +162,56 @@ func (runtime *lifecycleRuntime) start(ctx context.Context) error {
 		return fmt.Errorf("jobsfx: activate queue: %w", err)
 	}
 	runtime.activation = activation
-	go runtime.run(context.WithoutCancel(ctx))
+	go runtime.runWorkers(context.WithoutCancel(ctx))
+	if runtime.scheduler != nil {
+		schedulerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		runtime.schedulerCancel = cancel
+		runtime.schedulerDone = make(chan schedulerRunResult, 1)
+		go runtime.runScheduler(schedulerContext)
+	}
 	return nil
 }
 
-func (runtime *lifecycleRuntime) run(ctx context.Context) {
+func (runtime *lifecycleRuntime) runWorkers(ctx context.Context) {
 	if err := runtime.workers.Run(ctx); err != nil {
 		_ = runtime.shutdowner.Shutdown(fx.ExitCode(1))
 	}
 }
 
+func (runtime *lifecycleRuntime) runScheduler(ctx context.Context) {
+	err := runtime.scheduler.Run(ctx)
+	result := schedulerRunResult{err: err, cancelled: ctx.Err() != nil}
+	runtime.schedulerDone <- result
+	close(runtime.schedulerDone)
+	if err != nil && !result.cancelled {
+		_ = runtime.shutdowner.Shutdown(fx.ExitCode(1))
+	}
+}
+
 func (runtime *lifecycleRuntime) stop(ctx context.Context) error {
+	if runtime.schedulerCancel != nil {
+		runtime.schedulerCancel()
+	}
 	drainErr := runtime.workers.Drain(ctx)
+	schedulerErr := runtime.waitScheduler(ctx)
 	var activationErr error
 	if runtime.activation != nil {
 		activationErr = runtime.activation.Close()
 	}
-	return errors.Join(drainErr, activationErr)
+	return errors.Join(drainErr, schedulerErr, activationErr)
+}
+
+func (runtime *lifecycleRuntime) waitScheduler(ctx context.Context) error {
+	if runtime.schedulerDone == nil {
+		return nil
+	}
+	select {
+	case result := <-runtime.schedulerDone:
+		if result.cancelled && errors.Is(result.err, context.Canceled) {
+			return nil
+		}
+		return result.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
