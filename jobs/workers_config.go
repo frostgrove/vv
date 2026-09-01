@@ -31,22 +31,23 @@ type systemTimer struct{ *time.Timer }
 func (timer systemTimer) C() <-chan time.Time { return timer.Timer.C }
 
 type WorkersSpec struct {
-	Namespace       Namespace
-	Catalog         Catalog
-	Driver          DeliveryDriver
-	Build           BuildID
-	Identity        TrustedIdentityRestorer
-	Clock           Clock
-	Entropy         io.Reader
-	LeaseTTL        time.Duration
-	Heartbeat       time.Duration
-	PollInterval    time.Duration
-	ReclaimInterval time.Duration
-	ShutdownGrace   time.Duration
-	ClaimItems      int
-	ClaimBytes      int
-	InFlightBytes   int
-	PulseWaiters    int
+	Namespace        Namespace
+	Catalog          Catalog
+	Driver           DeliveryDriver
+	Build            BuildID
+	Identity         TrustedIdentityRestorer
+	Clock            Clock
+	Entropy          io.Reader
+	LeaseTTL         time.Duration
+	Heartbeat        time.Duration
+	OperationTimeout time.Duration
+	PollInterval     time.Duration
+	ReclaimInterval  time.Duration
+	ShutdownGrace    time.Duration
+	ClaimItems       int
+	ClaimBytes       int
+	InFlightBytes    int
+	PulseWaiters     int
 }
 
 func (WorkersSpec) String() string { return "[job workers spec]" }
@@ -55,19 +56,20 @@ func (spec WorkersSpec) Format(state fmt.State, _ rune) {
 }
 
 type WorkersDescription struct {
-	Namespace       Namespace
-	Backend         BackendDescription
-	Build           BuildID
-	Plan            WorkerPlanDescription
-	LeaseTTL        time.Duration
-	Heartbeat       time.Duration
-	PollInterval    time.Duration
-	ReclaimInterval time.Duration
-	ShutdownGrace   time.Duration
-	ClaimItems      int
-	ClaimBytes      int
-	InFlightBytes   int
-	PulseWaiters    int
+	Namespace        Namespace
+	Backend          BackendDescription
+	Build            BuildID
+	Plan             WorkerPlanDescription
+	LeaseTTL         time.Duration
+	Heartbeat        time.Duration
+	OperationTimeout time.Duration
+	PollInterval     time.Duration
+	ReclaimInterval  time.Duration
+	ShutdownGrace    time.Duration
+	ClaimItems       int
+	ClaimBytes       int
+	InFlightBytes    int
+	PulseWaiters     int
 }
 
 func (description WorkersDescription) String() string {
@@ -81,23 +83,24 @@ func (description WorkersDescription) LogValue() slog.Value {
 }
 
 type resolvedWorkersConfig struct {
-	namespace       Namespace
-	catalog         Catalog
-	driver          DeliveryDriver
-	backend         BackendDescription
-	build           BuildID
-	identity        TrustedIdentityRestorer
-	clock           Clock
-	entropy         *entropySource
-	leaseTTL        time.Duration
-	heartbeat       time.Duration
-	pollInterval    time.Duration
-	reclaimInterval time.Duration
-	shutdownGrace   time.Duration
-	claimItems      int
-	claimBytes      int
-	inFlightBytes   int
-	pulseWaiters    int
+	namespace        Namespace
+	catalog          Catalog
+	driver           DeliveryDriver
+	backend          BackendDescription
+	build            BuildID
+	identity         TrustedIdentityRestorer
+	clock            Clock
+	entropy          *entropySource
+	leaseTTL         time.Duration
+	heartbeat        time.Duration
+	operationTimeout time.Duration
+	pollInterval     time.Duration
+	reclaimInterval  time.Duration
+	shutdownGrace    time.Duration
+	claimItems       int
+	claimBytes       int
+	inFlightBytes    int
+	pulseWaiters     int
 }
 
 type Workers struct {
@@ -121,8 +124,24 @@ func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateWorkerPlanDurability(plan, backend.Durability()); err != nil {
+		return nil, err
+	}
 	config.backend = backend
 	return &Workers{config: config, plan: plan}, nil
+}
+
+func validateWorkerPlanDurability(plan WorkerPlan, profile DurabilityProfile) error {
+	declarations := make([]Declaration, len(plan.bindings))
+	for index := range plan.bindings {
+		declarations[index] = plan.bindings[index].declaration
+	}
+	catalog, err := NewCatalog(declarations...)
+	if err != nil {
+		return err
+	}
+	_, err = resolveQueueDurability(catalog, DurabilityRequirement{}, profile)
+	return err
 }
 
 func (workers *Workers) Describe() WorkersDescription {
@@ -130,19 +149,20 @@ func (workers *Workers) Describe() WorkersDescription {
 		return WorkersDescription{}
 	}
 	return WorkersDescription{
-		Namespace:       workers.config.namespace,
-		Backend:         workers.config.backend,
-		Build:           workers.config.build,
-		Plan:            workers.plan.Describe(),
-		LeaseTTL:        workers.config.leaseTTL,
-		Heartbeat:       workers.config.heartbeat,
-		PollInterval:    workers.config.pollInterval,
-		ReclaimInterval: workers.config.reclaimInterval,
-		ShutdownGrace:   workers.config.shutdownGrace,
-		ClaimItems:      workers.config.claimItems,
-		ClaimBytes:      workers.config.claimBytes,
-		InFlightBytes:   workers.config.inFlightBytes,
-		PulseWaiters:    workers.config.pulseWaiters,
+		Namespace:        workers.config.namespace,
+		Backend:          workers.config.backend,
+		Build:            workers.config.build,
+		Plan:             workers.plan.Describe(),
+		LeaseTTL:         workers.config.leaseTTL,
+		Heartbeat:        workers.config.heartbeat,
+		OperationTimeout: workers.config.operationTimeout,
+		PollInterval:     workers.config.pollInterval,
+		ReclaimInterval:  workers.config.reclaimInterval,
+		ShutdownGrace:    workers.config.shutdownGrace,
+		ClaimItems:       workers.config.claimItems,
+		ClaimBytes:       workers.config.claimBytes,
+		InFlightBytes:    workers.config.inFlightBytes,
+		PulseWaiters:     workers.config.pulseWaiters,
 	}
 }
 
@@ -172,11 +192,15 @@ func resolveWorkersConfig(spec WorkersSpec) (resolvedWorkersConfig, error) {
 	if err != nil {
 		return resolvedWorkersConfig{}, err
 	}
+	operationTimeout, err := resolveWorkerOperationTimeout(spec.OperationTimeout, leaseTTL, heartbeat)
+	if err != nil {
+		return resolvedWorkersConfig{}, err
+	}
 	pollInterval, err := resolveBoundedWorkerDuration(spec.PollInterval, DefaultPollInterval, MinimumPollInterval, MaximumPollInterval, "worker poll interval")
 	if err != nil {
 		return resolvedWorkersConfig{}, err
 	}
-	reclaimInterval, err := resolveBoundedWorkerDuration(spec.ReclaimInterval, DefaultReclaimInterval, MinimumReclaimInterval, MaximumReclaimInterval, "worker reclaim interval")
+	reclaimInterval, err := resolveWorkerReclaimInterval(spec.ReclaimInterval, leaseTTL)
 	if err != nil {
 		return resolvedWorkersConfig{}, err
 	}
@@ -209,22 +233,23 @@ func resolveWorkersConfig(spec WorkersSpec) (resolvedWorkersConfig, error) {
 		entropy = rand.Reader
 	}
 	return resolvedWorkersConfig{
-		namespace:       spec.Namespace,
-		catalog:         spec.Catalog,
-		driver:          spec.Driver,
-		build:           spec.Build,
-		identity:        spec.Identity,
-		clock:           clock,
-		entropy:         &entropySource{reader: entropy},
-		leaseTTL:        leaseTTL,
-		heartbeat:       heartbeat,
-		pollInterval:    pollInterval,
-		reclaimInterval: reclaimInterval,
-		shutdownGrace:   shutdownGrace,
-		claimItems:      claimItems,
-		claimBytes:      claimBytes,
-		inFlightBytes:   inFlightBytes,
-		pulseWaiters:    pulseWaiters,
+		namespace:        spec.Namespace,
+		catalog:          spec.Catalog,
+		driver:           spec.Driver,
+		build:            spec.Build,
+		identity:         spec.Identity,
+		clock:            clock,
+		entropy:          &entropySource{reader: entropy},
+		leaseTTL:         leaseTTL,
+		heartbeat:        heartbeat,
+		operationTimeout: operationTimeout,
+		pollInterval:     pollInterval,
+		reclaimInterval:  reclaimInterval,
+		shutdownGrace:    shutdownGrace,
+		claimItems:       claimItems,
+		claimBytes:       claimBytes,
+		inFlightBytes:    inFlightBytes,
+		pulseWaiters:     pulseWaiters,
 	}, nil
 }
 
@@ -255,6 +280,28 @@ func resolveWorkerHeartbeat(value, leaseTTL time.Duration) (time.Duration, error
 		return 0, invalid("worker heartbeat")
 	}
 	return value, nil
+}
+
+func resolveWorkerOperationTimeout(value, leaseTTL, heartbeat time.Duration) (time.Duration, error) {
+	if value < 0 {
+		return 0, invalid("worker operation timeout")
+	}
+	safety := (leaseTTL - heartbeat) / 3
+	if value == 0 {
+		value = min(DefaultOperationTimeout, safety)
+	}
+	if value > MaximumOperationTimeout {
+		return 0, tooLarge("worker operation timeout")
+	}
+	if value < MinimumOperationTimeout || value > safety {
+		return 0, invalid("worker operation timeout")
+	}
+	return value, nil
+}
+
+func resolveWorkerReclaimInterval(value, leaseTTL time.Duration) (time.Duration, error) {
+	fallback := min(DefaultReclaimInterval, leaseTTL/2)
+	return resolveBoundedWorkerDuration(value, fallback, MinimumReclaimInterval, MaximumReclaimInterval, "worker reclaim interval")
 }
 
 func resolveBoundedWorkerDuration(value, fallback, minimum, maximum time.Duration, field string) (time.Duration, error) {

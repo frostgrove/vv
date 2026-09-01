@@ -83,7 +83,7 @@ func TestNewWorkersResolvesSafeDefaultsWithoutLifecycleEffects(t *testing.T) {
 	if description.Plan.CatalogFingerprint != spec.Catalog.Fingerprint() || description.Plan.TotalConcurrency != 1 || len(description.Plan.Bindings) != 1 {
 		t.Fatalf("workers plan snapshot = %#v", description.Plan)
 	}
-	if description.LeaseTTL != DefaultLeaseTTL || description.Heartbeat != DefaultHeartbeat || description.PollInterval != DefaultPollInterval || description.ReclaimInterval != DefaultReclaimInterval || description.ShutdownGrace != DefaultShutdownGrace {
+	if description.LeaseTTL != DefaultLeaseTTL || description.Heartbeat != DefaultHeartbeat || description.OperationTimeout != DefaultOperationTimeout || description.PollInterval != DefaultPollInterval || description.ReclaimInterval != DefaultReclaimInterval || description.ShutdownGrace != DefaultShutdownGrace {
 		t.Fatalf("workers duration defaults = %#v", description)
 	}
 	if description.ClaimItems != DefaultClaimItems || description.ClaimBytes != DefaultClaimBytes || description.InFlightBytes != DefaultWorkerInFlightBytes || description.PulseWaiters != DefaultTransientWaiters {
@@ -110,8 +110,9 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	spec.Entropy = entropy
 	spec.LeaseTTL = 4 * time.Second
 	spec.Heartbeat = 2 * time.Second
+	spec.OperationTimeout = 500 * time.Millisecond
 	spec.PollInterval = 2 * time.Second
-	spec.ReclaimInterval = 3 * time.Second
+	spec.ReclaimInterval = 5 * time.Second
 	spec.ShutdownGrace = 4 * time.Second
 	spec.ClaimItems = MaxClaimItems
 	spec.ClaimBytes = MaxDeliveryRecordBytes + 1024
@@ -122,7 +123,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	description := workers.Describe()
-	if description.LeaseTTL != spec.LeaseTTL || description.Heartbeat != spec.Heartbeat || description.PollInterval != spec.PollInterval || description.ReclaimInterval != spec.ReclaimInterval || description.ShutdownGrace != spec.ShutdownGrace {
+	if description.LeaseTTL != spec.LeaseTTL || description.Heartbeat != spec.Heartbeat || description.OperationTimeout != spec.OperationTimeout || description.PollInterval != spec.PollInterval || description.ReclaimInterval != spec.ReclaimInterval || description.ShutdownGrace != spec.ShutdownGrace {
 		t.Fatalf("explicit durations = %#v", description)
 	}
 	if description.ClaimItems != spec.ClaimItems || description.ClaimBytes != spec.ClaimBytes || description.InFlightBytes != spec.InFlightBytes || description.PulseWaiters != spec.PulseWaiters {
@@ -142,8 +143,8 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adaptive.Describe().Heartbeat != time.Second {
-		t.Fatalf("adaptive heartbeat = %s", adaptive.Describe().Heartbeat)
+	if adaptive.Describe().Heartbeat != time.Second || adaptive.Describe().OperationTimeout != time.Second || adaptive.Describe().ReclaimInterval != 2*time.Second {
+		t.Fatalf("adaptive durations = %#v", adaptive.Describe())
 	}
 	if _, ok := adaptive.config.clock.(systemClock); !ok || adaptive.config.entropy.reader != rand.Reader {
 		t.Fatal("nil-like runtime dependencies did not resolve to safe defaults")
@@ -153,8 +154,95 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if minimum.Describe().Heartbeat != MinimumLeaseTTL/4 {
-		t.Fatalf("minimum lease heartbeat = %s", minimum.Describe().Heartbeat)
+	if minimum.Describe().Heartbeat != MinimumLeaseTTL/4 || minimum.Describe().OperationTimeout != MinimumLeaseTTL/4 || minimum.Describe().ReclaimInterval != MinimumLeaseTTL/2 {
+		t.Fatalf("minimum lease durations = %#v", minimum.Describe())
+	}
+}
+
+func TestNewWorkersOperationTimeoutAndReclaimBoundaries(t *testing.T) {
+	base, consumer, _, _ := workersConfigFixture(t, "workers.duration-boundaries")
+	tests := []struct {
+		name             string
+		leaseTTL         time.Duration
+		heartbeat        time.Duration
+		operationTimeout time.Duration
+		reclaimInterval  time.Duration
+		wantOperation    time.Duration
+		wantReclaim      time.Duration
+	}{
+		{name: "minimum operation", operationTimeout: MinimumOperationTimeout, wantOperation: MinimumOperationTimeout, wantReclaim: DefaultReclaimInterval},
+		{name: "exact safety", operationTimeout: (DefaultLeaseTTL - DefaultHeartbeat) / 3, wantOperation: (DefaultLeaseTTL - DefaultHeartbeat) / 3, wantReclaim: DefaultReclaimInterval},
+		{name: "maximum operation", leaseTTL: MaximumLeaseTTL, operationTimeout: MaximumOperationTimeout, wantOperation: MaximumOperationTimeout, wantReclaim: DefaultReclaimInterval},
+		{name: "fractional adaptive safety", leaseTTL: 4 * time.Second, heartbeat: 2 * time.Second, wantOperation: 2 * time.Second / 3, wantReclaim: 2 * time.Second},
+		{name: "minimum reclaim", reclaimInterval: MinimumReclaimInterval, wantOperation: DefaultOperationTimeout, wantReclaim: MinimumReclaimInterval},
+		{name: "maximum reclaim beyond lease", leaseTTL: time.Second, reclaimInterval: MaximumReclaimInterval, wantOperation: time.Second / 4, wantReclaim: MaximumReclaimInterval},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := base
+			spec.LeaseTTL = test.leaseTTL
+			spec.Heartbeat = test.heartbeat
+			spec.OperationTimeout = test.operationTimeout
+			spec.ReclaimInterval = test.reclaimInterval
+			workers, err := NewWorkers(spec, consumer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			description := workers.Describe()
+			if description.OperationTimeout != test.wantOperation || description.ReclaimInterval != test.wantReclaim {
+				t.Fatalf("durations = operation %s reclaim %s, want %s and %s", description.OperationTimeout, description.ReclaimInterval, test.wantOperation, test.wantReclaim)
+			}
+		})
+	}
+}
+
+func TestNewWorkersRejectsUnsupportedDurabilityBeforeRuntimeEffects(t *testing.T) {
+	policy, err := Default.With(ProtectAcknowledgedEnqueuesFrom(FailureProcessCrash)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := MustDefine(DefinitionSpec[string]{Name: queueMustName("workers.durability"), Codec: String(1), Policy: policy})
+	spec, _, driver, identityCalls := workersConfigFixture(t, "workers.durability-fixture")
+	spec.Catalog = MustCatalog(definition)
+	clock := &workersConfigClock{}
+	var entropyReads atomic.Int32
+	spec.Clock = clock
+	spec.Entropy = &countingEntropyReader{reads: &entropyReads}
+	possible, err := NewDurabilityProfile(AckBeforePersistence, AcknowledgedLossPossible, FailureSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.description, err = NewBackendDescription(queueTestBackendID(9), possible, Capabilities{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := On(definition, Handler[string](func(context.Context, string) error {
+		panic("handler must not run during construction")
+	}), Concurrency(1))
+	workers, err := NewWorkers(spec, consumer)
+	if workers != nil || !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("weak durability = (%v, %v)", workers, err)
+	}
+	if driver.descriptionCalls.Load() != 1 || driver.operationCalls.Load() != 0 || identityCalls.Load() != 0 || clock.calls.Load() != 0 || entropyReads.Load() != 0 {
+		t.Fatalf("durability rejection effects: description=%d operations=%d identity=%d clock=%d entropy=%d", driver.descriptionCalls.Load(), driver.operationCalls.Load(), identityCalls.Load(), clock.calls.Load(), entropyReads.Load())
+	}
+	driver.description = queueTestBackendDescription(9)
+	workers, err = NewWorkers(spec, consumer)
+	if err != nil || workers == nil || workers.Describe().Backend != driver.description {
+		t.Fatalf("strong durability = (%v, %v)", workers, err)
+	}
+	weakDefinition := testQueueDefinition(t, "workers.durability-unrelated", String(1))
+	spec.Catalog = MustCatalog(definition, weakDefinition)
+	weakConsumer := On(weakDefinition, Handler[string](func(context.Context, string) error {
+		panic("handler must not run during construction")
+	}), Concurrency(1))
+	driver.description, err = NewBackendDescription(queueTestBackendID(9), possible, Capabilities{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers, err = NewWorkers(spec, weakConsumer)
+	if err != nil || workers == nil || workers.Describe().Plan.TotalConcurrency != 1 {
+		t.Fatalf("unrelated durability = (%v, %v)", workers, err)
 	}
 }
 
@@ -179,6 +267,10 @@ func TestNewWorkersValidatesConfigurationAndDriverDescription(t *testing.T) {
 		{name: "large lease", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.LeaseTTL = MaximumLeaseTTL + 1 }},
 		{name: "negative heartbeat", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.Heartbeat = -1 }},
 		{name: "fragile heartbeat", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.Heartbeat = DefaultLeaseTTL/2 + 1 }},
+		{name: "negative operation timeout", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.OperationTimeout = -1 }},
+		{name: "short operation timeout", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.OperationTimeout = MinimumOperationTimeout - 1 }},
+		{name: "large operation timeout", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.OperationTimeout = MaximumOperationTimeout + 1 }},
+		{name: "unsafe operation timeout", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.OperationTimeout = (DefaultLeaseTTL-DefaultHeartbeat)/3 + 1 }},
 		{name: "negative poll", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.PollInterval = -1 }},
 		{name: "short poll", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.PollInterval = MinimumPollInterval - 1 }},
 		{name: "large poll", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.PollInterval = MaximumPollInterval + 1 }},

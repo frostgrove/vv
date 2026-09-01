@@ -76,17 +76,20 @@ const (
 	DefaultIntentRetention   = 30 * 24 * time.Hour
 	MaxRetention             = 365 * 24 * time.Hour
 
-	MinimumPollInterval    = 10 * time.Millisecond
-	DefaultPollInterval    = time.Second
-	MaximumPollInterval    = time.Minute
-	MinimumLeaseTTL        = time.Second
-	DefaultLeaseTTL        = time.Minute
-	MaximumLeaseTTL        = 24 * time.Hour
-	DefaultHeartbeat       = 15 * time.Second
-	MinimumReclaimInterval = 100 * time.Millisecond
-	DefaultReclaimInterval = 15 * time.Second
-	MaximumReclaimInterval = MaximumLeaseTTL
-	DefaultShutdownGrace   = 20 * time.Second
-	MaxShutdownGrace       = 10 * time.Minute
-	DefaultTransientWait   = 250 * time.Millisecond
+	MinimumPollInterval     = 10 * time.Millisecond
+	DefaultPollInterval     = time.Second
+	MaximumPollInterval     = time.Minute
+	MinimumLeaseTTL         = time.Second
+	DefaultLeaseTTL         = time.Minute
+	MaximumLeaseTTL         = 24 * time.Hour
+	DefaultHeartbeat        = 15 * time.Second
+	MinimumOperationTimeout = 10 * time.Millisecond
+	DefaultOperationTimeout = 10 * time.Second
+	MaximumOperationTimeout = time.Minute
+	MinimumReclaimInterval  = 100 * time.Millisecond
+	DefaultReclaimInterval  = 15 * time.Second
+	MaximumReclaimInterval  = MaximumLeaseTTL
+	DefaultShutdownGrace    = 20 * time.Second
+	MaxShutdownGrace        = 10 * time.Minute
+	DefaultTransientWait    = 250 * time.Millisecond
 )
