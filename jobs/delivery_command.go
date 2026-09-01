@@ -223,13 +223,16 @@ type DeliveryApplication struct {
 	attempt    Attempt
 	changed    bool
 	release    DeliveryRelease
+	proof      [32]byte
 }
 
 func (a DeliveryApplication) Kind() DeliveryCommandKind { return a.kind }
 func (a DeliveryApplication) Invocation() Invocation    { return a.invocation }
 func (a DeliveryApplication) Attempt() (Attempt, bool)  { return a.attempt, !a.attempt.IsZero() }
 func (a DeliveryApplication) Changed() bool             { return a.changed }
-func (a DeliveryApplication) RequiresFence() bool       { return a.kind.Valid() }
+func (a DeliveryApplication) RequiresFence() bool {
+	return a.kind.Valid() && a.proof != [32]byte{}
+}
 func (a DeliveryApplication) Release() (DeliveryRelease, bool) {
 	return a.release, !a.release.IsZero()
 }
@@ -255,12 +258,12 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 		if !current.IsZero() {
 			return DeliveryApplication{}, transitionConflict("restored invocation cannot be rejected as corrupt")
 		}
-		return DeliveryApplication{kind: command.kind, changed: true}, nil
+		return DeliveryApplication{kind: command.kind, changed: true, proof: digestDeliveryCommand(command)}, nil
 	}
 	if current.IsZero() || current.ID() != command.lease.invocation {
 		return DeliveryApplication{}, ErrLeaseLost
 	}
-	application := DeliveryApplication{kind: command.kind, invocation: current}
+	application := DeliveryApplication{kind: command.kind, invocation: current, proof: digestDeliveryCommand(command)}
 	switch command.kind {
 	case DeliveryCommandBeginAttempt:
 		application.invocation, application.attempt, err = current.beginAttemptOrExpire(BeginAttemptSpec{Binding: command.binding, Build: command.build, StartedAt: now})
@@ -385,6 +388,33 @@ func relativeDeliveryTime(now time.Time, delay time.Duration) (time.Time, error)
 func cloneLeaseRef(reference LeaseRef) LeaseRef {
 	reference.token = bytes.Clone(reference.token)
 	return reference
+}
+
+func (a DeliveryApplication) matches(command DeliveryCommand) bool {
+	return a.RequiresFence() && a.proof == digestDeliveryCommand(command)
+}
+
+func digestDeliveryCommand(command DeliveryCommand) [32]byte {
+	digest := sha256.New()
+	writePlacementString(digest, "frostgrove.jobs.delivery-command.v1")
+	writePlacementUint(digest, uint64(command.kind))
+	writePlacementBytes(digest, command.lease.binding[:])
+	writePlacementString(digest, command.binding.value)
+	writePlacementString(digest, command.build.value)
+	writePlacementUint(digest, uint64(command.disposition.kind))
+	writePlacementUint(digest, uint64(command.disposition.reason))
+	writePlacementUint(digest, uint64(command.disposition.retryAfter))
+	writePlacementUint(digest, uint64(command.disposition.retryCost))
+	writePlacementString(digest, command.disposition.failure.code.value)
+	writePlacementString(digest, command.disposition.failure.message)
+	writePlacementUint(digest, uint64(command.delay))
+	writePlacementUint(digest, uint64(command.reason))
+	writePlacementString(digest, command.failure.code.value)
+	writePlacementString(digest, command.failure.message)
+	writePlacementUint(digest, uint64(command.state))
+	var result [32]byte
+	copy(result[:], digest.Sum(nil))
+	return result
 }
 
 func digestLeaseRef(backend BackendID, invocation InvocationID, token []byte) [32]byte {

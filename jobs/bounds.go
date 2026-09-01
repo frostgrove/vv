@@ -76,7 +76,9 @@ const (
 	MaxRetention             = 365 * 24 * time.Hour
 
 	DefaultPollInterval    = time.Second
+	MinimumLeaseTTL        = time.Second
 	DefaultLeaseTTL        = time.Minute
+	MaximumLeaseTTL        = 24 * time.Hour
 	DefaultHeartbeat       = 15 * time.Second
 	DefaultReclaimInterval = 15 * time.Second
 	DefaultShutdownGrace   = 20 * time.Second

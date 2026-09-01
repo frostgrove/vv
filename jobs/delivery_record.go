@@ -229,6 +229,9 @@ func preflightDeliveryRecord(record DeliveryRecord) error {
 	if _, err := DeliveryRecordSize(record); err != nil || len(record.Payload.Data) > record.Genesis.Policy.Payload().MaxBytes {
 		return corruptDeliveryRecord()
 	}
+	if len(record.Outcomes) == 0 || int(record.Genesis.Policy.trace.length) > len(record.Genesis.Policy.trace.keys) {
+		return corruptDeliveryRecord()
+	}
 	if !record.Genesis.ID.valid() || !record.Genesis.Namespace.valid() || !record.Genesis.Partition.validFor(record.Genesis.Namespace) || !record.Genesis.Definition.valid() || !record.Genesis.Queue.valid() || !record.Genesis.Mode.Valid() || !record.Genesis.Intent.validFor(record.Genesis.Namespace, record.Genesis.Partition, record.Genesis.Definition) || !record.Genesis.Policy.valid() || record.Genesis.Queue != record.Genesis.Policy.Queue() || record.Genesis.Priority <= 0 || record.Genesis.Priority > MaximumPriority || !record.Payload.Codec.valid() || record.Payload.Version.IsZero() || !record.WireDigest.valid() || !canonicalRequiredDeliveryTime(record.Genesis.CreatedAt) || !canonicalRequiredDeliveryTime(record.Genesis.EligibleAt) || !canonicalOptionalDeliveryTime(record.Genesis.StartBefore) {
 		return corruptDeliveryRecord()
 	}
@@ -256,7 +259,7 @@ func preflightDeliveryRecord(record DeliveryRecord) error {
 }
 
 func DeliveryRecordSize(record DeliveryRecord) (int, error) {
-	if len(record.Outcomes) == 0 || len(record.Outcomes) > MaxInvocationOutcomes || len(record.Attempts) > MaxAttemptOrdinal || len(record.Payload.Data) > MaxPayloadBytes || len(record.Genesis.Context.Token) > MaxIdentityTokenBytes || len(record.Genesis.Context.Trace.TraceParent) > MaxTraceParentBytes || len(record.Genesis.Context.Trace.TraceState) > MaxTraceStateBytes || len(record.Genesis.Context.Trace.Correlations) > MaxCorrelationFields || len(record.Genesis.Context.Provenance) > MaxIdentityProvenanceBytes || len(record.Genesis.LegacyIntent.value) > MaxIntentBytes || len(record.Genesis.Namespace.application.value) > MaxNameBytes || len(record.Genesis.Namespace.environment.value) > MaxNameBytes || len(record.Genesis.Definition.value) > MaxNameBytes || len(record.Genesis.Queue.value) > MaxQueueNameBytes || len(record.Genesis.Policy.queue.value) > MaxQueueNameBytes || len(record.Payload.Codec.value) > MaxCodecIDBytes || len(record.PayloadDigest.identity.value) > MaxCodecIDBytes || int(record.Genesis.Policy.trace.length) > len(record.Genesis.Policy.trace.keys) {
+	if len(record.Outcomes) > MaxInvocationOutcomes || len(record.Attempts) > MaxAttemptOrdinal || len(record.Payload.Data) > MaxPayloadBytes || len(record.Genesis.Context.Token) > MaxIdentityTokenBytes || len(record.Genesis.Context.Trace.TraceParent) > MaxTraceParentBytes || len(record.Genesis.Context.Trace.TraceState) > MaxTraceStateBytes || len(record.Genesis.Context.Trace.Correlations) > MaxCorrelationFields || len(record.Genesis.Context.Provenance) > MaxIdentityProvenanceBytes || len(record.Genesis.LegacyIntent.value) > MaxIntentBytes || len(record.Genesis.Namespace.application.value) > MaxNameBytes || len(record.Genesis.Namespace.environment.value) > MaxNameBytes || len(record.Genesis.Definition.value) > MaxNameBytes || len(record.Genesis.Queue.value) > MaxQueueNameBytes || len(record.Genesis.Policy.queue.value) > MaxQueueNameBytes || len(record.Payload.Codec.value) > MaxCodecIDBytes || len(record.PayloadDigest.identity.value) > MaxCodecIDBytes {
 		return 0, tooLarge("delivery record")
 	}
 	traceBytes := len(record.Genesis.Context.Trace.TraceParent) + len(record.Genesis.Context.Trace.TraceState)
