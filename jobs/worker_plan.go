@@ -15,8 +15,10 @@ func (option workerOption) applyWorker(options *workerOptions) error { return op
 type workerOptions struct {
 	binding        BindingName
 	concurrency    int
+	classifier     ErrorClassifier
 	bindingSet     bool
 	concurrencySet bool
+	classifierSet  bool
 }
 
 func Binding(raw string) WorkerOption {
@@ -46,9 +48,11 @@ func Concurrency(value int) WorkerOption {
 }
 
 type WorkerBindingDescription struct {
-	Definition  Name
-	Binding     BindingName
-	Concurrency int
+	Definition       Name
+	Binding          BindingName
+	Concurrency      int
+	Adapter          bool
+	CustomClassifier bool
 }
 
 func (WorkerBindingDescription) String() string { return "[job worker binding description]" }
@@ -102,7 +106,7 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 		if binding.err != nil {
 			return WorkerPlan{}, fmt.Errorf("worker binding %d: %w", index, binding.err)
 		}
-		if !binding.valid || nilInterface(binding.declaration) || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency {
+		if !binding.valid || nilInterface(binding.declaration) || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency || !binding.mode.valid() || binding.mode == consumerHandlerStandard && (binding.handle == nil || binding.handleAdapter != nil) || binding.mode == consumerHandlerAdapter && (binding.handle != nil || binding.handleAdapter == nil) {
 			return WorkerPlan{}, fmt.Errorf("%w: worker binding %d is invalid or unresolved", ErrInvalid, index)
 		}
 		registered, ok := catalog.Lookup(binding.declaration.declarationName())
@@ -129,9 +133,11 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 	descriptions := make([]WorkerBindingDescription, len(bindings))
 	for index, binding := range bindings {
 		descriptions[index] = WorkerBindingDescription{
-			Definition:  binding.declaration.declarationName(),
-			Binding:     binding.binding,
-			Concurrency: binding.concurrency,
+			Definition:       binding.declaration.declarationName(),
+			Binding:          binding.binding,
+			Concurrency:      binding.concurrency,
+			Adapter:          binding.mode == consumerHandlerAdapter,
+			CustomClassifier: binding.classifier != nil,
 		}
 	}
 	return WorkerPlan{bindings: bindings, descriptions: descriptions, totalConcurrency: total}, nil
@@ -168,31 +174,37 @@ func (plan WorkerPlan) Format(state fmt.State, _ rune) {
 }
 func (plan WorkerPlan) LogValue() slog.Value { return slog.StringValue(plan.String()) }
 
-func resolveWorkerOptions(declaration Declaration, defaultConcurrency int, values []WorkerOption) (BindingName, int, error) {
+type resolvedWorkerOptions struct {
+	binding     BindingName
+	concurrency int
+	classifier  ErrorClassifier
+}
+
+func resolveWorkerOptions(declaration Declaration, defaultConcurrency int, values []WorkerOption) (resolvedWorkerOptions, error) {
 	if nilInterface(declaration) || !declaration.declarationName().valid() {
-		return BindingName{}, 0, invalid("worker definition")
+		return resolvedWorkerOptions{}, invalid("worker definition")
 	}
 	var options workerOptions
 	for index, value := range values {
 		if nilInterface(value) {
-			return BindingName{}, 0, fmt.Errorf("%w: worker option %d is nil", ErrInvalid, index)
+			return resolvedWorkerOptions{}, fmt.Errorf("%w: worker option %d is nil", ErrInvalid, index)
 		}
 		if err := value.applyWorker(&options); err != nil {
-			return BindingName{}, 0, fmt.Errorf("worker option %d: %w", index, err)
+			return resolvedWorkerOptions{}, fmt.Errorf("worker option %d: %w", index, err)
 		}
 	}
 	if !options.bindingSet {
 		binding, err := ParseBindingName(declaration.declarationName().String())
 		if err != nil {
-			return BindingName{}, 0, err
+			return resolvedWorkerOptions{}, err
 		}
 		options.binding = binding
 	}
 	if !options.concurrencySet {
 		if defaultConcurrency < 1 || defaultConcurrency > MaxBindingConcurrency {
-			return BindingName{}, 0, invalid("explicit worker concurrency is required")
+			return resolvedWorkerOptions{}, invalid("explicit worker concurrency is required")
 		}
 		options.concurrency = defaultConcurrency
 	}
-	return options.binding, options.concurrency, nil
+	return resolvedWorkerOptions{binding: options.binding, concurrency: options.concurrency, classifier: options.classifier}, nil
 }
