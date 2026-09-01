@@ -160,7 +160,7 @@ func restoreTerminalDelivery(current Invocation, event InvocationOutcome) (Invoc
 		return current.FinishDelivery(FinishDeliverySpec{State: event.terminalState, Reason: event.reason, Failure: event.failure, ObservedAt: event.occurredAt})
 	case ReasonMaxElapsed, ReasonStartBefore:
 		switch {
-		case (event.reason == ReasonCompatibility || event.reason == ReasonShutdown) && event.failure.IsZero():
+		case (event.reason == ReasonCompatibility || event.reason == ReasonShutdown || event.reason == ReasonAdmission) && event.failure.IsZero():
 			return current.releaseUnchanged(event.reason, event.occurredAt, event.availableAt)
 		case deliveryDeferralReason(event.reason) && !event.availableAt.IsZero():
 			return current.DeferDelivery(DeferDeliverySpec{Reason: event.reason, Failure: event.failure, ObservedAt: event.occurredAt, AvailableAt: event.availableAt})

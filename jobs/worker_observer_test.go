@@ -18,17 +18,22 @@ type workerObserverFixture struct {
 	plan       WorkerPlan
 	definition Name
 	binding    BindingName
+	group      WorkerAdmissionGroup
 }
 
 func newWorkerObserverFixture(t *testing.T) workerObserverFixture {
 	t.Helper()
 	definition := testQueueDefinition(t, "workers.observer", String(1))
+	snapshot, err := NewAdmissionSnapshot(time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plan := MustWorkerPlan(
 		MustCatalog(definition),
-		On(definition, Handler[string](func(context.Context, string) error { return nil }), Binding("workers.observer.primary"), Concurrency(2)),
+		On(definition, Handler[string](func(context.Context, string) error { return nil }), Binding("workers.observer.primary"), Concurrency(2), WithAdmission(snapshot.Reader())),
 	)
 	description := plan.Describe().Bindings[0]
-	return workerObserverFixture{plan: plan, definition: description.Definition, binding: description.Binding}
+	return workerObserverFixture{plan: plan, definition: description.Definition, binding: description.Binding, group: description.AdmissionGroup}
 }
 
 func mustWorkerDeliveryResultCount(t *testing.T, mutation DeliveryMutationStatus, control DeliveryControlStatus, items int) WorkerDeliveryResultCount {
@@ -93,8 +98,7 @@ func workerObserverSpec(t *testing.T, fixture workerObserverFixture, operation W
 			spec.Results = []WorkerDeliveryResultCount{mustWorkerDeliveryResultCount(t, DeliveryMutationApplied, DeliveryControlNone, 1)}
 		}
 	case WorkerOperationAdmission:
-		spec.Definition = fixture.definition
-		spec.Binding = fixture.binding
+		spec.AdmissionGroup = fixture.group
 		switch outcome {
 		case WorkerOutcomeReady:
 			spec.AdmissionSignal = AdmissionReady
@@ -464,17 +468,29 @@ func TestWorkerEventEnforcesAggregateAndExactScopes(t *testing.T) {
 			t.Fatalf("non-aggregate %s = %v", operation, err)
 		}
 	}
-	for _, operation := range []WorkerOperation{WorkerOperationApply, WorkerOperationAdmission} {
-		outcome := WorkerOutcomeComplete
-		if operation == WorkerOperationAdmission {
-			outcome = WorkerOutcomeReady
-		}
-		spec := workerObserverSpec(t, fixture, operation, outcome)
+	for _, operation := range []WorkerOperation{WorkerOperationApply} {
+		spec := workerObserverSpec(t, fixture, operation, WorkerOutcomeComplete)
 		spec.Definition = Name{}
 		spec.Binding = BindingName{}
 		if _, err := newWorkerEvent(fixture.plan, spec); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("aggregate %s = %v", operation, err)
 		}
+	}
+	admission := workerObserverSpec(t, fixture, WorkerOperationAdmission, WorkerOutcomeReady)
+	admission.Definition = fixture.definition
+	admission.Binding = fixture.binding
+	if _, err := newWorkerEvent(fixture.plan, admission); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("exact admission = %v", err)
+	}
+	admission = workerObserverSpec(t, fixture, WorkerOperationAdmission, WorkerOutcomeReady)
+	admission.AdmissionGroup = WorkerAdmissionGroup{}
+	if _, err := newWorkerEvent(fixture.plan, admission); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing admission group = %v", err)
+	}
+	admission = workerObserverSpec(t, fixture, WorkerOperationAdmission, WorkerOutcomeReady)
+	admission.AdmissionGroup.value = workerAdmissionGroupPrefix + strings.Repeat("0", 64)
+	if _, err := newWorkerEvent(fixture.plan, admission); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("foreign admission group = %v", err)
 	}
 	foreign := workerObserverSpec(t, fixture, WorkerOperationApply, WorkerOutcomeComplete)
 	foreign.Definition = testJobName(t, "workers.observer.foreign")
@@ -565,6 +581,7 @@ func TestWorkerEventRejectsFieldsOwnedByOtherOperations(t *testing.T) {
 	invalid := []workerEventSpec{
 		func() workerEventSpec { value := base; value.CommandKind = DeliveryCommandBeginAttempt; return value }(),
 		func() workerEventSpec { value := base; value.AdmissionSignal = AdmissionReady; return value }(),
+		func() workerEventSpec { value := base; value.AdmissionGroup = fixture.group; return value }(),
 		func() workerEventSpec {
 			value := base
 			value.Results = []WorkerDeliveryResultCount{mustWorkerDeliveryResultCount(t, DeliveryMutationApplied, DeliveryControlNone, 1)}
@@ -628,6 +645,7 @@ func TestWorkerEventValidatesFailuresAdmissionAndElapsed(t *testing.T) {
 	}{
 		{AdmissionUninitialized, WorkerOutcomeInvalid, 1, 0},
 		{AdmissionReady, WorkerOutcomeReady, 0, 2},
+		{AdmissionUnrestricted, WorkerOutcomeReady, 0, 2},
 		{AdmissionReady, WorkerOutcomeSaturated, 1, 1},
 		{AdmissionHeld, WorkerOutcomeHeld, 1, 0},
 		{AdmissionStale, WorkerOutcomeStale, 1, 0},
@@ -680,7 +698,7 @@ func TestWorkerEventSurfaceIsImmutableMetricSafeAndRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Operation() != spec.Operation || event.Outcome() != spec.Outcome || event.Failure() != spec.Failure || event.Definition() != spec.Definition || event.Binding() != spec.Binding || event.CommandKind() != spec.CommandKind || event.AdmissionSignal() != spec.AdmissionSignal || event.Items() != spec.Items || event.Released() != spec.Released || event.Bytes() != spec.Bytes || event.Active() != spec.Active || event.Limit() != spec.Limit || event.More() != spec.More || event.Elapsed() != spec.Elapsed || !reflect.DeepEqual(event.Results(), spec.Results) {
+	if event.Operation() != spec.Operation || event.Outcome() != spec.Outcome || event.Failure() != spec.Failure || event.Definition() != spec.Definition || event.Binding() != spec.Binding || event.AdmissionGroup() != spec.AdmissionGroup || event.CommandKind() != spec.CommandKind || event.AdmissionSignal() != spec.AdmissionSignal || event.Items() != spec.Items || event.Released() != spec.Released || event.Bytes() != spec.Bytes || event.Active() != spec.Active || event.Limit() != spec.Limit || event.More() != spec.More || event.Elapsed() != spec.Elapsed || !reflect.DeepEqual(event.Results(), spec.Results) {
 		t.Fatalf("worker event getters = %#v", event)
 	}
 	eventType := reflect.TypeFor[WorkerEvent]()
@@ -705,6 +723,7 @@ func TestWorkerEventSurfaceIsImmutableMetricSafeAndRedacted(t *testing.T) {
 		"Failure":         reflect.TypeFor[WorkerFailure](),
 		"Definition":      reflect.TypeFor[Name](),
 		"Binding":         reflect.TypeFor[BindingName](),
+		"AdmissionGroup":  reflect.TypeFor[WorkerAdmissionGroup](),
 		"CommandKind":     reflect.TypeFor[DeliveryCommandKind](),
 		"AdmissionSignal": reflect.TypeFor[AdmissionSignal](),
 		"Results":         reflect.TypeFor[[]WorkerDeliveryResultCount](),

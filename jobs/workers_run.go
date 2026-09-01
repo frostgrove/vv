@@ -36,6 +36,8 @@ type workerRunSession struct {
 	handlerContext context.Context
 	cancelPoll     context.CancelCauseFunc
 	cancelHandlers context.CancelCauseFunc
+	startMu        sync.RWMutex
+	draining       bool
 	drain          chan struct{}
 	force          chan struct{}
 	drainOnce      sync.Once
@@ -61,9 +63,21 @@ func newWorkerRunSession(parent context.Context) *workerRunSession {
 
 func (session *workerRunSession) requestDrain() {
 	session.drainOnce.Do(func() {
+		session.startMu.Lock()
+		session.draining = true
 		session.cancelPoll(ErrCancelled)
 		close(session.drain)
+		session.startMu.Unlock()
 	})
+}
+
+func (session *workerRunSession) drainingRequested() bool {
+	if session == nil {
+		return true
+	}
+	session.startMu.RLock()
+	defer session.startMu.RUnlock()
+	return session.draining
 }
 
 func (session *workerRunSession) requestForce() {
@@ -165,33 +179,67 @@ func (runtime *workersRuntime) result() error {
 }
 
 type workerPool struct {
-	workers  *Workers
-	session  *workerRunSession
-	bindings map[Name]*workerRuntimeBinding
-	mu       sync.Mutex
-	bytes    int
-	active   map[*activeWorkerDelivery]struct{}
-	wg       sync.WaitGroup
-	failure  chan error
-	failOnce sync.Once
+	workers         *Workers
+	session         *workerRunSession
+	bindings        map[Name]*workerRuntimeBinding
+	admissionGroups []*workerAdmissionGroup
+	mu              sync.Mutex
+	bytes           int
+	active          map[*activeWorkerDelivery]struct{}
+	wg              sync.WaitGroup
+	failure         chan error
+	failOnce        sync.Once
 }
 
 type workerRuntimeBinding struct {
-	binding consumerBinding
-	active  int
+	binding        consumerBinding
+	admissionGroup *workerAdmissionGroup
+	active         int
+}
+
+type workerAdmissionGroup struct {
+	identity    WorkerAdmissionGroup
+	admission   AdmissionReader
+	members     []*workerRuntimeBinding
+	concurrency int
+	cursor      int
+	observation workerAdmissionObservation
+}
+
+type workerAdmissionObservation struct {
+	signal      AdmissionSignal
+	outcome     WorkerOutcome
+	active      int
+	limit       int
+	initialized bool
 }
 
 func newWorkerPool(workers *Workers, session *workerRunSession) *workerPool {
 	bindings := make(map[Name]*workerRuntimeBinding, workers.plan.Len())
+	groupsByAdmission := make(map[*admissionCell]*workerAdmissionGroup)
+	groups := make([]*workerAdmissionGroup, 0)
 	for _, binding := range workers.plan.workerBindings() {
-		bindings[binding.declaration.declarationName()] = &workerRuntimeBinding{binding: binding}
+		runtimeBinding := &workerRuntimeBinding{binding: binding}
+		if binding.admission.initialized {
+			group := groupsByAdmission[binding.admission.cell]
+			if group == nil {
+				group = &workerAdmissionGroup{identity: binding.admissionGroup, admission: binding.admission}
+				groupsByAdmission[binding.admission.cell] = group
+				groups = append(groups, group)
+			}
+			runtimeBinding.admissionGroup = group
+			group.members = append(group.members, runtimeBinding)
+			group.concurrency += binding.concurrency
+		}
+		bindings[binding.declaration.declarationName()] = runtimeBinding
 	}
 	return &workerPool{
-		workers:  workers,
-		session:  session,
-		bindings: bindings,
-		active:   make(map[*activeWorkerDelivery]struct{}),
-		failure:  make(chan error, 1),
+		workers:         workers,
+		session:         session,
+		bindings:        bindings,
+		admissionGroups: groups,
+		active:          make(map[*activeWorkerDelivery]struct{}),
+		failure:         make(chan error, 1),
 	}
 }
 
@@ -303,12 +351,7 @@ func (pool *workerPool) claim() bool {
 		}
 		return pool.session.pollContext.Err() == nil
 	}
-	for _, delivery := range batch.items {
-		if !pool.acceptClaimed(delivery) {
-			pool.releaseClaimed(delivery)
-		}
-	}
-	return true
+	return pool.dispatchClaimed(batch.items)
 }
 
 func (pool *workerPool) claimRequest() (ClaimRequest, bool, error) {
@@ -317,24 +360,38 @@ func (pool *workerPool) claimRequest() (ClaimRequest, bool, error) {
 		return ClaimRequest{}, false, err
 	}
 	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	var observations []workerEventSpec
+	defer func() {
+		pool.mu.Unlock()
+		pool.observeAdmission(observations)
+	}()
 	remainingBytes := pool.workers.config.inFlightBytes - pool.bytes
 	if remainingBytes < MaxDeliveryRecordBytes {
 		return ClaimRequest{}, false, nil
 	}
 	targets := make([]ClaimTarget, 0, len(pool.bindings))
 	total := 0
+	groupAvailable := make(map[*workerAdmissionGroup]int, len(pool.admissionGroups))
+	for _, group := range pool.admissionGroups {
+		decision := group.admission.Evaluate(group.concurrency, now)
+		active := 0
+		for _, member := range group.members {
+			active += member.active
+		}
+		if observation, changed := group.nextObservation(decision, active); changed && pool.workers.config.observer != nil {
+			observations = append(observations, observation)
+		}
+		if decision.Err() != nil {
+			continue
+		}
+		groupAvailable[group] = max(decision.Limit()-active, 0)
+	}
 	for _, planned := range pool.workers.plan.bindings {
 		current := pool.bindings[planned.declaration.declarationName()]
-		limit := planned.concurrency
-		if planned.admission.initialized {
-			decision := planned.admission.Evaluate(planned.concurrency, now)
-			if decision.Err() != nil {
-				continue
-			}
-			limit = decision.Limit()
+		available := planned.concurrency - current.active
+		if current.admissionGroup != nil {
+			available = min(available, groupAvailable[current.admissionGroup])
 		}
-		available := limit - current.active
 		if available <= 0 {
 			continue
 		}
@@ -348,6 +405,7 @@ func (pool *workerPool) claimRequest() (ClaimRequest, bool, error) {
 	if total == 0 {
 		return ClaimRequest{}, false, nil
 	}
+	pool.orderClaimTargets(targets)
 	maxItems := min(pool.workers.config.claimItems, total)
 	maxBytes := min(pool.workers.config.claimBytes, remainingBytes)
 	request, err := NewClaimRequest(ClaimRequestSpec{
@@ -359,6 +417,216 @@ func (pool *workerPool) claimRequest() (ClaimRequest, bool, error) {
 		LeaseTTL:    pool.workers.config.leaseTTL,
 	})
 	return request, err == nil, err
+}
+
+func (pool *workerPool) orderClaimTargets(targets []ClaimTarget) {
+	positions := make(map[*workerAdmissionGroup][]int, len(pool.admissionGroups))
+	available := make(map[*workerAdmissionGroup]map[*workerRuntimeBinding]ClaimTarget, len(pool.admissionGroups))
+	for index, target := range targets {
+		binding := pool.bindings[target.definition]
+		if binding == nil || binding.admissionGroup == nil {
+			continue
+		}
+		group := binding.admissionGroup
+		positions[group] = append(positions[group], index)
+		if available[group] == nil {
+			available[group] = make(map[*workerRuntimeBinding]ClaimTarget)
+		}
+		available[group][binding] = target
+	}
+	for _, group := range pool.admissionGroups {
+		groupPositions := positions[group]
+		if len(groupPositions) < 2 {
+			continue
+		}
+		ordered := make([]ClaimTarget, 0, len(groupPositions))
+		for scanned := 0; scanned < len(group.members); scanned++ {
+			member := group.members[(group.cursor+scanned)%len(group.members)]
+			if target, ok := available[group][member]; ok {
+				ordered = append(ordered, target)
+			}
+		}
+		for index, position := range groupPositions {
+			targets[position] = ordered[index]
+		}
+	}
+}
+
+type workerAdmissionDemand struct {
+	group  *workerAdmissionGroup
+	counts map[*workerRuntimeBinding]int
+	total  int
+}
+
+type workerAdmissionDecision struct {
+	demand  workerAdmissionDemand
+	allowed int
+}
+
+func (pool *workerPool) dispatchClaimed(items []ClaimedDelivery) bool {
+	allowances, err := pool.admitClaimed(items)
+	if err != nil {
+		shutdown := pool.session.drainingRequested() || errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled)
+		for _, delivery := range items {
+			if shutdown {
+				pool.releaseClaimed(delivery)
+			} else {
+				pool.releaseAdmission(delivery)
+			}
+		}
+		if shutdown {
+			return false
+		}
+		pool.fail(err)
+		return false
+	}
+	stopping := false
+	for _, delivery := range items {
+		if pool.session.drainingRequested() {
+			stopping = true
+			pool.releaseClaimed(delivery)
+			continue
+		}
+		binding := pool.bindings[delivery.target.definition]
+		if binding == nil || allowances[binding] == 0 {
+			pool.releaseAdmission(delivery)
+			continue
+		}
+		allowances[binding]--
+		if !pool.acceptClaimed(delivery) {
+			pool.releaseClaimed(delivery)
+		}
+	}
+	return !stopping && pool.session.pollContext.Err() == nil
+}
+
+func (pool *workerPool) admitClaimed(items []ClaimedDelivery) (map[*workerRuntimeBinding]int, error) {
+	now, err := pool.workers.config.clock.Now()
+	if err != nil {
+		return nil, err
+	}
+	allowances := make(map[*workerRuntimeBinding]int, len(pool.bindings))
+	groupDemands := make(map[*workerAdmissionGroup]*workerAdmissionDemand, len(pool.admissionGroups))
+	pool.mu.Lock()
+	var observations []workerEventSpec
+	defer func() {
+		pool.mu.Unlock()
+		pool.observeAdmission(observations)
+	}()
+	for _, delivery := range items {
+		binding := pool.bindings[delivery.target.definition]
+		if binding == nil || binding.binding.binding != delivery.target.binding {
+			return nil, invalid("claimed worker binding")
+		}
+		free := binding.binding.concurrency - binding.active
+		if free <= allowances[binding] {
+			continue
+		}
+		if binding.admissionGroup != nil {
+			demand := groupDemands[binding.admissionGroup]
+			if demand == nil {
+				demand = &workerAdmissionDemand{group: binding.admissionGroup, counts: make(map[*workerRuntimeBinding]int)}
+				groupDemands[binding.admissionGroup] = demand
+			}
+			if demand.counts[binding] < free {
+				demand.counts[binding]++
+				demand.total++
+			}
+			continue
+		}
+		allowances[binding]++
+	}
+	decisions := make([]workerAdmissionDecision, 0, len(groupDemands))
+	for _, group := range pool.admissionGroups {
+		demand := groupDemands[group]
+		if demand == nil || demand.total == 0 {
+			continue
+		}
+		decision := group.admission.Evaluate(group.concurrency, now)
+		active := 0
+		for _, member := range group.members {
+			active += member.active
+		}
+		if observation, changed := group.nextObservation(decision, active); changed && pool.workers.config.observer != nil {
+			observations = append(observations, observation)
+		}
+		if decision.Err() != nil {
+			continue
+		}
+		allowed := min(max(decision.Limit()-active, 0), demand.total)
+		decisions = append(decisions, workerAdmissionDecision{demand: *demand, allowed: allowed})
+	}
+	for _, decision := range decisions {
+		group := decision.demand.group
+		remaining := decision.allowed
+		for remaining > 0 {
+			selected := -1
+			for scanned := 0; scanned < len(group.members); scanned++ {
+				index := (group.cursor + scanned) % len(group.members)
+				member := group.members[index]
+				if decision.demand.counts[member] > 0 {
+					selected = index
+					break
+				}
+			}
+			if selected < 0 {
+				return nil, invalid("worker admission demand")
+			}
+			member := group.members[selected]
+			decision.demand.counts[member]--
+			allowances[member]++
+			remaining--
+			group.cursor = (selected + 1) % len(group.members)
+		}
+	}
+	return allowances, nil
+}
+
+func (group *workerAdmissionGroup) nextObservation(decision AdmissionDecision, active int) (workerEventSpec, bool) {
+	signal := decision.Signal()
+	outcome := WorkerOutcomeInvalid
+	limit := 0
+	switch signal {
+	case AdmissionReady, AdmissionUnrestricted:
+		limit = decision.Limit()
+		if limit > 0 && active >= limit {
+			outcome = WorkerOutcomeSaturated
+		} else if limit > 0 {
+			outcome = WorkerOutcomeReady
+		} else {
+			signal = AdmissionInvalid
+		}
+	case AdmissionHeld:
+		outcome = WorkerOutcomeHeld
+	case AdmissionStale:
+		outcome = WorkerOutcomeStale
+	case AdmissionUninitialized, AdmissionInvalid:
+		outcome = WorkerOutcomeInvalid
+	default:
+		signal = AdmissionInvalid
+	}
+	current := workerAdmissionObservation{signal: signal, outcome: outcome, active: active, limit: limit, initialized: true}
+	if group.observation == current {
+		return workerEventSpec{}, false
+	}
+	group.observation = current
+	return workerEventSpec{
+		Operation:       WorkerOperationAdmission,
+		Outcome:         outcome,
+		AdmissionGroup:  group.identity,
+		AdmissionSignal: signal,
+		Active:          active,
+		Limit:           limit,
+	}, true
+}
+
+func (pool *workerPool) observeAdmission(observations []workerEventSpec) {
+	for _, observation := range observations {
+		event, err := newWorkerEvent(pool.workers.plan, observation)
+		if err == nil {
+			safeObserve(pool.workers.config.observer, context.Background(), event)
+		}
+	}
 }
 
 func (pool *workerPool) claimTarget(binding consumerBinding, available int) (ClaimTarget, error) {
@@ -395,10 +663,16 @@ func (pool *workerPool) acceptClaimed(delivery ClaimedDelivery) bool {
 		pool.fail(err)
 		return false
 	}
+	pool.session.startMu.RLock()
+	if pool.session.draining {
+		pool.session.startMu.RUnlock()
+		return false
+	}
 	pool.mu.Lock()
 	binding := pool.bindings[delivery.target.definition]
 	if binding == nil || binding.binding.binding != delivery.target.binding || binding.active >= binding.binding.concurrency || size > pool.workers.config.inFlightBytes-pool.bytes {
 		pool.mu.Unlock()
+		pool.session.startMu.RUnlock()
 		return false
 	}
 	active := newActiveWorkerDelivery(pool, binding, delivery.lease, size)
@@ -408,11 +682,20 @@ func (pool *workerPool) acceptClaimed(delivery ClaimedDelivery) bool {
 	pool.wg.Add(1)
 	pool.mu.Unlock()
 	go active.runClaimed(delivery)
+	pool.session.startMu.RUnlock()
 	return true
 }
 
 func (pool *workerPool) releaseClaimed(delivery ClaimedDelivery) {
-	command, err := ReleaseForShutdownCommand(delivery.lease, DefaultRetryDelay)
+	pool.releaseClaimedWith(delivery, DefaultRetryDelay, ReleaseForShutdownCommand)
+}
+
+func (pool *workerPool) releaseAdmission(delivery ClaimedDelivery) {
+	pool.releaseClaimedWith(delivery, MinRetryDelay, ReleaseForAdmissionCommand)
+}
+
+func (pool *workerPool) releaseClaimedWith(delivery ClaimedDelivery, delay time.Duration, build func(LeaseRef, time.Duration) (DeliveryCommand, error)) {
+	command, err := build(delivery.lease, delay)
 	if err != nil {
 		pool.fail(err)
 		return
@@ -429,18 +712,15 @@ func (pool *workerPool) releaseClaimed(delivery ClaimedDelivery) {
 }
 
 func (pool *workerPool) recover() bool {
-	request, err := NewRecoverRequest(RecoverRequestSpec{
-		Namespace:   pool.workers.config.namespace,
-		Incarnation: pool.session.incarnation,
-		MaxItems:    min(pool.workers.config.claimItems, MaxReclaimBatch),
-		MaxBytes:    pool.workers.config.claimBytes,
-		LeaseTTL:    pool.workers.config.leaseTTL,
-	})
-	if err != nil {
-		pool.fail(err)
-		return false
-	}
 	for {
+		request, ok, err := pool.recoverRequest()
+		if err != nil {
+			pool.fail(err)
+			return false
+		}
+		if !ok {
+			return true
+		}
 		result, call := pool.workers.callRecover(pool.session.pollContext, request)
 		if call.err != nil {
 			if call.fatal() {
@@ -449,8 +729,18 @@ func (pool *workerPool) recover() bool {
 			}
 			return pool.session.pollContext.Err() == nil
 		}
+		queued := make([]ClaimedDelivery, 0, len(result.items))
 		for _, delivery := range result.items {
-			pool.acceptRecovered(delivery)
+			claimed, ok, keepRunning := pool.prepareRecovered(delivery)
+			if !keepRunning {
+				return false
+			}
+			if ok {
+				queued = append(queued, claimed)
+			}
+		}
+		if len(queued) > 0 && !pool.dispatchClaimed(queued) {
+			return false
 		}
 		if !result.more {
 			return true
@@ -463,60 +753,77 @@ func (pool *workerPool) recover() bool {
 	}
 }
 
-func (pool *workerPool) acceptRecovered(delivery RecoveredDelivery) {
+func (pool *workerPool) recoverRequest() (RecoverRequest, bool, error) {
+	pool.mu.Lock()
+	remainingBytes := pool.workers.config.inFlightBytes - pool.bytes
+	pool.mu.Unlock()
+	if remainingBytes < MaxDeliveryRecordBytes {
+		return RecoverRequest{}, false, nil
+	}
+	request, err := NewRecoverRequest(RecoverRequestSpec{
+		Namespace:   pool.workers.config.namespace,
+		Incarnation: pool.session.incarnation,
+		MaxItems:    min(pool.workers.config.claimItems, MaxReclaimBatch),
+		MaxBytes:    min(pool.workers.config.claimBytes, remainingBytes),
+		LeaseTTL:    pool.workers.config.leaseTTL,
+	})
+	return request, err == nil, err
+}
+
+func (pool *workerPool) prepareRecovered(delivery RecoveredDelivery) (ClaimedDelivery, bool, bool) {
 	restored, err := RestoreDeliveryRecord(pool.workers.config.catalog, delivery.Record())
 	if err != nil {
 		if errors.Is(err, ErrCorrupt) {
-			pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) { return RejectCorruptCommand(lease) })
-			return
+			return ClaimedDelivery{}, false, pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) { return RejectCorruptCommand(lease) })
 		}
 		pool.fail(err)
-		return
+		return ClaimedDelivery{}, false, false
 	}
 	invocation := restored.Invocation()
 	switch invocation.State() {
 	case InvocationRunning, InvocationCancelRequested:
 		delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
-		pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) {
+		ok := pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) {
 			return RevokeAttemptCommand(lease, ReasonLeaseLost, delay)
 		})
+		return ClaimedDelivery{}, false, ok
 	case InvocationQueued:
 		binding := pool.bindings[invocation.Definition()]
 		if binding == nil {
-			pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) {
+			ok := pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) {
 				return ReleaseForShutdownCommand(lease, DefaultRetryDelay)
 			})
-			return
+			return ClaimedDelivery{}, false, ok
 		}
 		target, targetErr := pool.claimTarget(binding.binding, 1)
 		if targetErr != nil {
 			pool.fail(targetErr)
-			return
+			return ClaimedDelivery{}, false, false
 		}
-		claimed := ClaimedDelivery{target: target, lease: delivery.lease, record: delivery.record}
-		if !pool.acceptClaimed(claimed) {
-			pool.releaseClaimed(claimed)
-		}
+		return ClaimedDelivery{target: target, lease: delivery.lease, record: delivery.record}, true, true
 	default:
 		pool.fail(driverContractError("recover", invalid("recovered invocation state")))
+		return ClaimedDelivery{}, false, false
 	}
 }
 
-func (pool *workerPool) applyRecovered(lease LeaseRef, build func(LeaseRef) (DeliveryCommand, error)) {
+func (pool *workerPool) applyRecovered(lease LeaseRef, build func(LeaseRef) (DeliveryCommand, error)) bool {
 	command, err := build(lease)
 	if err != nil {
 		pool.fail(err)
-		return
+		return false
 	}
 	request, err := NewApplyRequest(command)
 	if err != nil {
 		pool.fail(err)
-		return
+		return false
 	}
 	_, call := pool.workers.callApply(pool.session.controlContext, request)
 	if call.fatal() {
 		pool.fail(call.err)
+		return false
 	}
+	return pool.session.pollContext.Err() == nil
 }
 
 func (pool *workerPool) fail(err error) {
@@ -633,14 +940,6 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 		delivery.pool.fail(err)
 		return
 	}
-	handled := make(chan error, 1)
-	go func() {
-		if delivery.binding.binding.mode == consumerHandlerAdapter {
-			handled <- delivery.binding.binding.handleAdapter(preparation.context, preparation.decoded, meta, workerAttemptController{delivery: delivery})
-			return
-		}
-		handled <- delivery.binding.binding.handle(preparation.context, preparation.decoded)
-	}()
 	now, err := delivery.pool.workers.config.clock.Now()
 	if err != nil {
 		delivery.pool.fail(err)
@@ -652,6 +951,22 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 	}
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
+	handled := make(chan error, 1)
+	session := delivery.pool.session
+	session.startMu.RLock()
+	if session.draining {
+		session.startMu.RUnlock()
+		delivery.revoke(session.controlContext, ReasonShutdown)
+		return
+	}
+	go func() {
+		if delivery.binding.binding.mode == consumerHandlerAdapter {
+			handled <- delivery.binding.binding.handleAdapter(preparation.context, preparation.decoded, meta, workerAttemptController{delivery: delivery})
+			return
+		}
+		handled <- delivery.binding.binding.handle(preparation.context, preparation.decoded)
+	}()
+	session.startMu.RUnlock()
 	select {
 	case result := <-handled:
 		select {

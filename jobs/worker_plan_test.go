@@ -189,7 +189,7 @@ func TestWorkerPlanConfiguresDynamicAdmissionExplicitly(t *testing.T) {
 	}
 	description := plan.Describe()
 	bindings := plan.workerBindings()
-	if len(bindings) != 1 || bindings[0].admission.cell != first.Reader().cell || bindings[0].admission.Freshness() != time.Minute || !description.Bindings[0].DynamicAdmission {
+	if len(bindings) != 1 || bindings[0].admission.cell != first.Reader().cell || bindings[0].admission.Freshness() != time.Minute || bindings[0].admissionGroup != description.Bindings[0].AdmissionGroup || !description.Bindings[0].AdmissionGroup.valid() || !description.Bindings[0].DynamicAdmission {
 		t.Fatalf("dynamic admission was not retained: %#v", description.Bindings[0])
 	}
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -212,7 +212,7 @@ func TestAutomaticWorkerWithoutAdmissionRemainsStatic(t *testing.T) {
 	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "workers.static-admission"), Codec: String(1)})
 	plan := MustWorkerPlan(MustCatalog(automatic), automatic)
 	binding := plan.workerBindings()[0]
-	if binding.admission != (AdmissionReader{}) || plan.Describe().Bindings[0].DynamicAdmission {
+	if binding.admission != (AdmissionReader{}) || !binding.admissionGroup.IsZero() || !plan.Describe().Bindings[0].AdmissionGroup.IsZero() || plan.Describe().Bindings[0].DynamicAdmission {
 		t.Fatal("automatic worker unexpectedly configured dynamic admission")
 	}
 	if binding.concurrency != Default.workerConcurrency {

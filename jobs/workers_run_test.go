@@ -10,16 +10,20 @@ import (
 )
 
 type workersRunDriver struct {
-	mu          sync.Mutex
-	description BackendDescription
-	record      DeliveryRecord
-	lease       LeaseRef
-	invocation  Invocation
-	observedAt  time.Time
-	claimed     bool
-	finished    chan struct{}
-	finishOnce  sync.Once
-	kinds       []DeliveryCommandKind
+	mu           sync.Mutex
+	description  BackendDescription
+	record       DeliveryRecord
+	lease        LeaseRef
+	invocation   Invocation
+	observedAt   time.Time
+	claimed      bool
+	finished     chan struct{}
+	finishOnce   sync.Once
+	beginOnce    sync.Once
+	kinds        []DeliveryCommandKind
+	reasons      []Reason
+	beginReached chan struct{}
+	beginRelease chan struct{}
 }
 
 func (driver *workersRunDriver) Description() BackendDescription {
@@ -54,7 +58,15 @@ func (driver *workersRunDriver) Renew(_ context.Context, request RenewRequest) (
 	return NewRenewResult(driver.observedAt, items)
 }
 
-func (driver *workersRunDriver) Apply(_ context.Context, request ApplyRequest) (ApplyResult, error) {
+func (driver *workersRunDriver) Apply(ctx context.Context, request ApplyRequest) (ApplyResult, error) {
+	if request.command.kind == DeliveryCommandBeginAttempt && driver.beginReached != nil {
+		driver.beginOnce.Do(func() { close(driver.beginReached) })
+		select {
+		case <-driver.beginRelease:
+		case <-ctx.Done():
+			return ApplyResult{}, ctx.Err()
+		}
+	}
 	driver.mu.Lock()
 	defer driver.mu.Unlock()
 	application, err := ApplyDeliveryCommand(driver.invocation, request.command, driver.observedAt)
@@ -73,6 +85,7 @@ func (driver *workersRunDriver) Apply(_ context.Context, request ApplyRequest) (
 		driver.invocation = application.invocation
 	}
 	driver.kinds = append(driver.kinds, request.command.kind)
+	driver.reasons = append(driver.reasons, request.command.reason)
 	driver.observedAt = driver.observedAt.Add(time.Millisecond)
 	if request.command.kind == DeliveryCommandFinishAttempt {
 		driver.finishOnce.Do(func() { close(driver.finished) })
@@ -141,6 +154,74 @@ func TestWorkersRunProcessesClaimedDelivery(t *testing.T) {
 	defer driver.mu.Unlock()
 	if driver.invocation.State() != InvocationSucceeded || len(driver.kinds) != 2 || driver.kinds[0] != DeliveryCommandBeginAttempt || driver.kinds[1] != DeliveryCommandFinishAttempt {
 		t.Fatalf("delivery state=%s commands=%v", driver.invocation.State(), driver.kinds)
+	}
+}
+
+func TestWorkersDrainWhileBeginIsBlockedDoesNotStartHandler(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description:  queueTestBackendDescription(1),
+		record:       fixture.record,
+		lease:        fixture.lease,
+		invocation:   fixture.invocation,
+		observedAt:   fixture.invocation.EligibleAt(),
+		finished:     make(chan struct{}),
+		beginReached: make(chan struct{}),
+		beginRelease: make(chan struct{}),
+	}
+	handled := make(chan struct{}, 1)
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error {
+		handled <- struct{}{}
+		return nil
+	}), Binding("worker.primary"), Concurrency(1))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runResult := make(chan error, 1)
+	go func() { runResult <- workers.Run(context.Background()) }()
+	select {
+	case <-driver.beginReached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not reach begin attempt")
+	}
+	workers.runtime.mu.Lock()
+	session := workers.runtime.session
+	workers.runtime.mu.Unlock()
+	drainContext, cancelDrain := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelDrain()
+	drainResult := make(chan error, 1)
+	go func() { drainResult <- workers.Drain(drainContext) }()
+	deadline := time.Now().Add(time.Second)
+	for !session.drainingRequested() {
+		if time.Now().After(deadline) {
+			t.Fatal("worker did not enter drain")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(driver.beginRelease)
+	if err = <-drainResult; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-runResult; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handled:
+		t.Fatal("handler started after drain")
+	default:
+	}
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if len(driver.kinds) != 2 || driver.kinds[0] != DeliveryCommandBeginAttempt || driver.kinds[1] != DeliveryCommandRevokeAttempt || driver.reasons[1] != ReasonShutdown {
+		t.Fatalf("drain commands=%v reasons=%v", driver.kinds, driver.reasons)
 	}
 }
 

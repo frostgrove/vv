@@ -13,18 +13,19 @@ type Consumer interface {
 }
 
 type consumerBinding struct {
-	declaration   Declaration
-	decode        func(EncodedPayload) (any, error)
-	decodeOwned   func(EncodedPayload) (any, error)
-	handle        func(context.Context, any) error
-	handleAdapter func(context.Context, any, DeliveryMeta, AttemptController) error
-	classifier    ErrorClassifier
-	admission     AdmissionReader
-	mode          consumerHandlerMode
-	binding       BindingName
-	concurrency   int
-	err           error
-	valid         bool
+	declaration    Declaration
+	decode         func(EncodedPayload) (any, error)
+	decodeOwned    func(EncodedPayload) (any, error)
+	handle         func(context.Context, any) error
+	handleAdapter  func(context.Context, any, DeliveryMeta, AttemptController) error
+	classifier     ErrorClassifier
+	admission      AdmissionReader
+	admissionGroup WorkerAdmissionGroup
+	mode           consumerHandlerMode
+	binding        BindingName
+	concurrency    int
+	err            error
+	valid          bool
 }
 
 type consumerHandlerMode uint8

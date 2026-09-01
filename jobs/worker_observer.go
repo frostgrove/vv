@@ -183,6 +183,7 @@ type workerEventSpec struct {
 	Failure         WorkerFailure
 	Definition      Name
 	Binding         BindingName
+	AdmissionGroup  WorkerAdmissionGroup
 	CommandKind     DeliveryCommandKind
 	AdmissionSignal AdmissionSignal
 	Results         []WorkerDeliveryResultCount
@@ -210,6 +211,7 @@ type WorkerEvent struct {
 	failure         WorkerFailure
 	definition      Name
 	binding         BindingName
+	admissionGroup  WorkerAdmissionGroup
 	commandKind     DeliveryCommandKind
 	admissionSignal AdmissionSignal
 	results         []WorkerDeliveryResultCount
@@ -238,6 +240,7 @@ func newWorkerEvent(plan WorkerPlan, spec workerEventSpec) (WorkerEvent, error) 
 		failure:         spec.Failure,
 		definition:      spec.Definition,
 		binding:         spec.Binding,
+		admissionGroup:  spec.AdmissionGroup,
 		commandKind:     spec.CommandKind,
 		admissionSignal: spec.AdmissionSignal,
 		results:         results,
@@ -257,6 +260,9 @@ func (event WorkerEvent) Outcome() WorkerOutcome     { return event.outcome }
 func (event WorkerEvent) Failure() WorkerFailure     { return event.failure }
 func (event WorkerEvent) Definition() Name           { return event.definition }
 func (event WorkerEvent) Binding() BindingName       { return event.binding }
+func (event WorkerEvent) AdmissionGroup() WorkerAdmissionGroup {
+	return event.admissionGroup
+}
 func (event WorkerEvent) CommandKind() DeliveryCommandKind {
 	return event.commandKind
 }
@@ -344,9 +350,23 @@ func validateWorkerEventSpec(plan WorkerPlan, spec workerEventSpec) error {
 	if spec.Failure != WorkerFailureNone && spec.Failure != WorkerFailureRuntime && !workerDriverOperation(spec.Operation) {
 		return invalid("worker event driver failure")
 	}
-	concurrency, exact, err := workerEventScope(plan, spec.Definition, spec.Binding)
-	if err != nil {
-		return err
+	concurrency := 0
+	exact := false
+	if spec.Operation == WorkerOperationAdmission {
+		var err error
+		concurrency, err = workerAdmissionEventScope(plan, spec.Definition, spec.Binding, spec.AdmissionGroup)
+		if err != nil {
+			return err
+		}
+	} else {
+		if !spec.AdmissionGroup.IsZero() {
+			return invalid("worker event admission group")
+		}
+		var err error
+		concurrency, exact, err = workerEventScope(plan, spec.Definition, spec.Binding)
+		if err != nil {
+			return err
+		}
 	}
 	if spec.Active > concurrency || spec.Limit > concurrency {
 		return invalid("worker event scope metrics")
@@ -355,6 +375,22 @@ func validateWorkerEventSpec(plan WorkerPlan, spec workerEventSpec) error {
 		return err
 	}
 	return validateWorkerEventOperationFields(spec, concurrency)
+}
+
+func workerAdmissionEventScope(plan WorkerPlan, definition Name, binding BindingName, group WorkerAdmissionGroup) (int, error) {
+	if !definition.IsZero() || !binding.IsZero() || !group.valid() {
+		return 0, invalid("worker admission event scope")
+	}
+	concurrency := 0
+	for _, planned := range plan.bindings {
+		if planned.admissionGroup == group {
+			concurrency += planned.concurrency
+		}
+	}
+	if concurrency == 0 {
+		return 0, invalid("worker admission group is not in the plan")
+	}
+	return concurrency, nil
 }
 
 func validWorkerEventPlan(plan WorkerPlan) bool {
@@ -384,10 +420,13 @@ func workerEventScope(plan WorkerPlan, definition Name, binding BindingName) (in
 }
 
 func validateWorkerEventIdentity(spec workerEventSpec, exact bool) error {
-	if spec.Operation == WorkerOperationApply || spec.Operation == WorkerOperationAdmission {
+	if spec.Operation == WorkerOperationApply {
 		if !exact {
 			return invalid("worker event requires a plan binding")
 		}
+		return nil
+	}
+	if spec.Operation == WorkerOperationAdmission {
 		return nil
 	}
 	if exact {
@@ -547,7 +586,7 @@ func validateWorkerAdmissionEvent(spec workerEventSpec) error {
 		return invalid("worker admission event")
 	}
 	switch spec.AdmissionSignal {
-	case AdmissionReady:
+	case AdmissionReady, AdmissionUnrestricted:
 		if spec.Limit == 0 {
 			return invalid("ready worker admission limit")
 		}

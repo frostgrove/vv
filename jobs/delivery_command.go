@@ -140,6 +140,10 @@ func ReleaseForShutdownCommand(lease LeaseRef, delay time.Duration) (DeliveryCom
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandReleaseUnchanged, lease: cloneLeaseRef(lease), reason: ReasonShutdown, delay: delay})
 }
 
+func ReleaseForAdmissionCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error) {
+	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandReleaseUnchanged, lease: cloneLeaseRef(lease), reason: ReasonAdmission, delay: delay})
+}
+
 func RejectCorruptCommand(lease LeaseRef) (DeliveryCommand, error) {
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandRejectCorrupt, lease: cloneLeaseRef(lease)})
 }
@@ -364,8 +368,8 @@ func validateDeliveryCommand(command DeliveryCommand) (DeliveryCommand, error) {
 		}
 	case DeliveryCommandReleaseUnchanged:
 		compatibility := command.reason == ReasonCompatibility && command.binding.valid() && command.build.valid()
-		shutdown := command.reason == ReasonShutdown && command.binding.IsZero() && command.build.IsZero()
-		if !compatibility && !shutdown || !command.disposition.IsZero() || !command.failure.IsZero() || command.state != 0 || command.deadlineDelay != 0 || !validCommandDelay(true, command.delay) {
+		unbound := (command.reason == ReasonShutdown || command.reason == ReasonAdmission) && command.binding.IsZero() && command.build.IsZero()
+		if !compatibility && !unbound || !command.disposition.IsZero() || !command.failure.IsZero() || command.state != 0 || command.deadlineDelay != 0 || !validCommandDelay(true, command.delay) {
 			return DeliveryCommand{}, invalid("release unchanged command")
 		}
 	case DeliveryCommandFinishAttempt:

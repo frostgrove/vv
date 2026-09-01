@@ -61,7 +61,7 @@ func TestAdmissionRejectsIntrinsicInvalidDecisions(t *testing.T) {
 		match  error
 	}{
 		{"negative", -1, reason, now, ErrInvalid},
-		{"over framework bound", MaxBindingConcurrency + 1, reason, now, ErrTooLarge},
+		{"over framework bound", MaxWorkerConcurrency + 1, reason, now, ErrTooLarge},
 		{"zero without reason", 0, HeldReason{}, now, ErrInvalid},
 		{"positive with reason", 1, reason, now, ErrInvalid},
 		{"zero timestamp", 1, HeldReason{}, time.Time{}, ErrInvalid},
@@ -163,6 +163,27 @@ func TestAdmissionReaderEvaluatesReadyHeldAndConcurrency(t *testing.T) {
 	}
 }
 
+func TestAdmissionReaderEvaluatesUnrestrictedAtRequestedConcurrency(t *testing.T) {
+	snapshot, err := NewAdmissionSnapshot(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	if err = snapshot.Publisher().Unrestricted(observed); err != nil {
+		t.Fatal(err)
+	}
+	for _, concurrency := range []int{1, 4, MaxBindingConcurrency} {
+		decision := snapshot.Reader().Evaluate(concurrency, observed.Add(time.Second))
+		assertAdmissionDecision(t, decision, concurrency, AdmissionUnrestricted, HeldReason{}, observed, nil)
+	}
+	decision := snapshot.Reader().Evaluate(4, observed.Add(time.Minute+time.Nanosecond))
+	assertAdmissionDecision(t, decision, 0, AdmissionStale, HeldReason{}, observed, ErrAdmissionStale)
+	var zeroPublisher AdmissionPublisher
+	if err = zeroPublisher.Unrestricted(observed); !errors.Is(err, ErrAdmissionUninitialized) {
+		t.Fatalf("zero publisher unrestricted = %v", err)
+	}
+}
+
 func TestAdmissionReaderRejectsInvalidConcurrencyAndClock(t *testing.T) {
 	snapshot, err := NewAdmissionSnapshot(time.Minute)
 	if err != nil {
@@ -178,7 +199,7 @@ func TestAdmissionReaderRejectsInvalidConcurrencyAndClock(t *testing.T) {
 	}{
 		{0, now},
 		{-1, now},
-		{MaxBindingConcurrency + 1, now},
+		{MaxWorkerConcurrency + 1, now},
 		{1, time.Time{}},
 		{1, now.Add(-time.Nanosecond)},
 	} {
@@ -245,7 +266,7 @@ func TestAdmissionPublisherFailsClosedOnInvalidUpdate(t *testing.T) {
 		{"negative", -1, reason, ErrInvalid, reason},
 		{"zero without reason", 0, HeldReason{}, ErrInvalid, HeldReason{}},
 		{"positive with reason", 1, reason, ErrInvalid, reason},
-		{"over framework bound", MaxBindingConcurrency + 1, HeldReason{}, ErrTooLarge, HeldReason{}},
+		{"over framework bound", MaxWorkerConcurrency + 1, HeldReason{}, ErrTooLarge, HeldReason{}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

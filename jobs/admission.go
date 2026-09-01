@@ -49,7 +49,7 @@ func NewAdmission(limit int, heldReason HeldReason, observedAt time.Time) (Admis
 	if limit < 0 {
 		return Admission{}, admissionError(AdmissionInvalid, HeldReason{})
 	}
-	if limit > MaxBindingConcurrency {
+	if limit > MaxWorkerConcurrency {
 		return Admission{}, tooLarge("admission limit")
 	}
 	if !heldReason.IsZero() && !heldReason.valid() {
@@ -83,7 +83,7 @@ func (Admission) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("%w: admission cannot be serialized", ErrUnsupported)
 }
 func (a Admission) valid() bool {
-	if !a.initialized || a.limit < 0 || a.limit > MaxBindingConcurrency || a.observedAt.IsZero() {
+	if !a.initialized || a.limit < 0 || a.limit > MaxWorkerConcurrency || a.observedAt.IsZero() {
 		return false
 	}
 	if !a.heldReason.IsZero() && !a.heldReason.valid() {
@@ -98,6 +98,7 @@ type AdmissionSignal uint8
 const (
 	AdmissionUninitialized AdmissionSignal = iota
 	AdmissionReady
+	AdmissionUnrestricted
 	AdmissionHeld
 	AdmissionStale
 	AdmissionInvalid
@@ -109,6 +110,8 @@ func (s AdmissionSignal) String() string {
 		return "uninitialized"
 	case AdmissionReady:
 		return "ready"
+	case AdmissionUnrestricted:
+		return "unrestricted"
 	case AdmissionHeld:
 		return "held"
 	case AdmissionStale:
@@ -175,7 +178,7 @@ func (d AdmissionDecision) Signal() AdmissionSignal { return d.signal }
 func (d AdmissionDecision) HeldReason() HeldReason  { return d.heldReason }
 func (d AdmissionDecision) ObservedAt() time.Time   { return d.observedAt }
 func (d AdmissionDecision) Err() error {
-	if d.signal == AdmissionReady {
+	if d.signal == AdmissionReady || d.signal == AdmissionUnrestricted {
 		return nil
 	}
 	return admissionError(d.signal, d.heldReason)
@@ -303,6 +306,21 @@ func (p AdmissionPublisher) Publish(admission Admission) error {
 	return p.publish(admissionState{admission: admission, signal: AdmissionReady})
 }
 
+func (p AdmissionPublisher) Unrestricted(observedAt time.Time) error {
+	if !p.initialized || p.cell == nil {
+		return admissionError(AdmissionUninitialized, HeldReason{})
+	}
+	canonical, err := requiredTime(observedAt, "admission observation time")
+	if err != nil {
+		publishErr := p.publishInvalid(HeldReason{}, observedAt)
+		if publishErr != nil {
+			return errors.Join(err, publishErr)
+		}
+		return err
+	}
+	return p.publish(admissionState{signal: AdmissionUnrestricted, observedAt: canonical})
+}
+
 func (p AdmissionPublisher) publishInvalid(heldReason HeldReason, observedAt time.Time) error {
 	if !p.initialized || p.cell == nil {
 		return admissionError(AdmissionUninitialized, HeldReason{})
@@ -360,7 +378,7 @@ func (r AdmissionReader) Evaluate(concurrency int, now time.Time) AdmissionDecis
 	if !r.initialized || r.cell == nil || r.freshness <= 0 || r.freshness > MaximumAdmissionFreshness {
 		return AdmissionDecision{signal: AdmissionUninitialized}
 	}
-	if concurrency < 1 || concurrency > MaxBindingConcurrency || now.IsZero() {
+	if concurrency < 1 || concurrency > MaxWorkerConcurrency || now.IsZero() {
 		return AdmissionDecision{signal: AdmissionInvalid}
 	}
 	current := r.cell.value.Load()
@@ -373,6 +391,20 @@ func (r AdmissionReader) Evaluate(concurrency int, now time.Time) AdmissionDecis
 			heldReason: current.heldReason,
 			observedAt: current.observedAt,
 		}
+	}
+	if current.signal == AdmissionUnrestricted {
+		decision := AdmissionDecision{signal: AdmissionUnrestricted, observedAt: current.observedAt}
+		now, err := requiredTime(now, "admission evaluation time")
+		if err != nil || current.observedAt.After(now) {
+			decision.signal = AdmissionInvalid
+			return decision
+		}
+		if now.Sub(current.observedAt) > r.freshness {
+			decision.signal = AdmissionStale
+			return decision
+		}
+		decision.limit = concurrency
+		return decision
 	}
 	admission := current.admission
 	decision := AdmissionDecision{

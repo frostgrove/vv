@@ -582,7 +582,7 @@ func (i Invocation) releaseUnchanged(source Reason, observedAt, availableAt time
 	if i.IsZero() || i.state != InvocationQueued {
 		return Invocation{}, transitionConflict("invocation cannot release unchanged")
 	}
-	if source != ReasonCompatibility && source != ReasonShutdown {
+	if source != ReasonCompatibility && source != ReasonShutdown && source != ReasonAdmission {
 		return Invocation{}, invalid("unchanged release reason")
 	}
 	observedAt, err := requiredTime(observedAt, "unchanged release time")

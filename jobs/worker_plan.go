@@ -1,10 +1,28 @@
 package jobs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
 )
+
+const workerAdmissionGroupPrefix = "sha256:"
+
+type WorkerAdmissionGroup struct{ value string }
+
+func (group WorkerAdmissionGroup) Value() string  { return group.value }
+func (group WorkerAdmissionGroup) String() string { return group.value }
+func (group WorkerAdmissionGroup) IsZero() bool   { return group.value == "" }
+func (group WorkerAdmissionGroup) valid() bool {
+	if len(group.value) != len(workerAdmissionGroupPrefix)+sha256.Size*2 || group.value[:len(workerAdmissionGroupPrefix)] != workerAdmissionGroupPrefix {
+		return false
+	}
+	raw := group.value[len(workerAdmissionGroupPrefix):]
+	decoded, err := hex.DecodeString(raw)
+	return err == nil && hex.EncodeToString(decoded) == raw
+}
 
 type WorkerOption interface{ applyWorker(*workerOptions) error }
 
@@ -63,6 +81,7 @@ func WithAdmission(reader AdmissionReader) WorkerOption {
 type WorkerBindingDescription struct {
 	Definition       Name
 	Binding          BindingName
+	AdmissionGroup   WorkerAdmissionGroup
 	Concurrency      int
 	Adapter          bool
 	CustomClassifier bool
@@ -147,10 +166,23 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 		return bindings[left].declaration.declarationName().String() < bindings[right].declaration.declarationName().String()
 	})
 	descriptions := make([]WorkerBindingDescription, len(bindings))
+	groupMembers := make(map[*admissionCell][]int)
+	for index := range bindings {
+		if bindings[index].admission.initialized {
+			groupMembers[bindings[index].admission.cell] = append(groupMembers[bindings[index].admission.cell], index)
+		}
+	}
+	for _, members := range groupMembers {
+		group := newWorkerAdmissionGroup(bindings, members)
+		for _, index := range members {
+			bindings[index].admissionGroup = group
+		}
+	}
 	for index, binding := range bindings {
 		descriptions[index] = WorkerBindingDescription{
 			Definition:       binding.declaration.declarationName(),
 			Binding:          binding.binding,
+			AdmissionGroup:   binding.admissionGroup,
 			Concurrency:      binding.concurrency,
 			Adapter:          binding.mode == consumerHandlerAdapter,
 			CustomClassifier: binding.classifier != nil,
@@ -158,6 +190,17 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 		}
 	}
 	return WorkerPlan{bindings: bindings, descriptions: descriptions, totalConcurrency: total, catalogFingerprint: catalog.Fingerprint()}, nil
+}
+
+func newWorkerAdmissionGroup(bindings []consumerBinding, members []int) WorkerAdmissionGroup {
+	digest := sha256.New()
+	writeFingerprintString(digest, "frostgrove.jobs.worker-admission-group.v1")
+	writeFingerprintUint(digest, uint64(len(members)))
+	for _, index := range members {
+		writeFingerprintString(digest, bindings[index].declaration.declarationName().Value())
+		writeFingerprintString(digest, bindings[index].binding.Value())
+	}
+	return WorkerAdmissionGroup{value: workerAdmissionGroupPrefix + hex.EncodeToString(digest.Sum(nil))}
 }
 
 func MustWorkerPlan(catalog Catalog, consumers ...Consumer) WorkerPlan {
