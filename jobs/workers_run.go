@@ -284,7 +284,7 @@ func newWorkerPool(workers *Workers, session *workerRunSession) *workerPool {
 	}
 }
 
-func (workers *Workers) run(session *workerRunSession) (error, bool) {
+func (workers *Workers) run(session *workerRunSession) (result error, parentCancelled bool) {
 	pool := newWorkerPool(workers, session)
 	heartbeatContext, stopHeartbeat := context.WithCancel(session.handlerContext)
 	heartbeatDone := make(chan struct{})
@@ -295,14 +295,20 @@ func (workers *Workers) run(session *workerRunSession) (error, bool) {
 	defer func() {
 		stopHeartbeat()
 		<-heartbeatDone
+		select {
+		case failure := <-pool.failure:
+			if result == nil || parentCancelled || errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded) {
+				result = failure
+				parentCancelled = false
+			}
+		default:
+		}
 	}()
 	dispatchDone := make(chan struct{})
 	go func() {
 		defer close(dispatchDone)
 		pool.dispatch()
 	}()
-	var result error
-	parentCancelled := false
 	select {
 	case <-session.parent.Done():
 		result = context.Cause(session.parent)
@@ -336,12 +342,24 @@ func (workers *Workers) run(session *workerRunSession) (error, bool) {
 			return result, parentCancelled
 		}
 	}
-	timer := time.NewTimer(workers.config.shutdownGrace)
-	defer timer.Stop()
+	_, deadline, timer, err := workers.config.clock.startTimer(workers.config.shutdownGrace)
+	if err != nil {
+		session.requestForce()
+		<-activeDone
+		return err, false
+	}
 	select {
 	case <-activeDone:
+		if _, valid := timer.stop(); !valid {
+			return ErrInvalid, false
+		}
 		return result, parentCancelled
-	case <-timer.C:
+	case _, open := <-timer.C():
+		if err := validateWorkerTimerWake(workers.config.clock, deadline, timer, open); err != nil {
+			session.requestForce()
+			<-activeDone
+			return err, false
+		}
 		session.requestForce()
 		<-activeDone
 		return result, parentCancelled
@@ -370,21 +388,49 @@ func (pool *workerPool) dispatch() {
 		if !pool.claim() {
 			return
 		}
-		if !waitWorkerPoll(pool.session.pollContext, pool.workers.config.pollInterval) {
+		ready, waitErr := waitWorkerInterval(pool.session.pollContext, pool.workers.config.clock, pool.workers.config.pollInterval)
+		if waitErr != nil {
+			pool.fail(waitErr)
+			return
+		}
+		if !ready {
 			return
 		}
 	}
 }
 
-func waitWorkerPoll(ctx context.Context, interval time.Duration) bool {
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
+func waitWorkerInterval(ctx context.Context, clock *workerClock, interval time.Duration) (bool, error) {
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	_, deadline, timer, err := clock.startTimer(interval)
+	if err != nil {
+		return false, err
+	}
 	select {
 	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
+		_, valid := timer.stop()
+		if !valid {
+			return false, ErrInvalid
+		}
+		return false, nil
+	case _, open := <-timer.C():
+		if err := validateWorkerTimerWake(clock, deadline, timer, open); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
+}
+
+func validateWorkerTimerWake(clock *workerClock, deadline time.Time, timer *workerTimer, open bool) error {
+	if _, valid := timer.stop(); !valid || !open {
+		return ErrInvalid
+	}
+	now, err := clock.Now()
+	if err != nil || now.Before(deadline) {
+		return ErrInvalid
+	}
+	return nil
 }
 
 func (pool *workerPool) claim() bool {
@@ -1023,17 +1069,21 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 		delivery.pool.fail(err)
 		return
 	}
-	now, err := delivery.pool.workers.config.clock.Now()
+	deadline := attempt.Deadline()
+	_, timer, pending, err := delivery.pool.workers.config.clock.startDeadline(deadline)
 	if err != nil {
 		delivery.pool.fail(err)
 		return
 	}
-	duration := attempt.Deadline().Sub(now)
-	if duration <= 0 {
-		duration = time.Nanosecond
+	if !pending {
+		delivery.arbitrateAttemptDeadline(ctx)
+		return
 	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
+	defer func() {
+		if _, valid := timer.stop(); !valid {
+			delivery.pool.fail(ErrInvalid)
+		}
+	}()
 	handled := make(chan error, 1)
 	session := delivery.pool.session
 	session.startMu.RLock()
@@ -1060,19 +1110,28 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 			disposition := classifyHandlerResult(delivery.binding.binding.classifier, result)
 			delivery.finish(ctx, disposition)
 		}
-	case <-timer.C:
+	case _, open := <-timer.C():
+		if err := validateWorkerTimerWake(delivery.pool.workers.config.clock, deadline, timer, open); err != nil {
+			delivery.cancel(ErrInvalid)
+			delivery.pool.fail(err)
+			return
+		}
 		delivery.cancel(context.DeadlineExceeded)
-		invocation := delivery.snapshotInvocation()
-		delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
-		delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
-			return ArbitrateAttemptDeadlineCommand(lease, delay)
-		})
+		delivery.arbitrateAttemptDeadline(ctx)
 	case <-delivery.pool.session.force:
 		delivery.cancel(ErrTerminated)
 		delivery.revoke(delivery.pool.session.controlContext, ReasonShutdown)
 	case <-delivery.lost:
 		delivery.cancel(ErrLeaseLost)
 	}
+}
+
+func (delivery *activeWorkerDelivery) arbitrateAttemptDeadline(ctx context.Context) {
+	invocation := delivery.snapshotInvocation()
+	delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
+	delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
+		return ArbitrateAttemptDeadlineCommand(lease, delay)
+	})
 }
 
 func (delivery *activeWorkerDelivery) finish(ctx context.Context, disposition Disposition) {
@@ -1152,16 +1211,14 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 }
 
 func (pool *workerPool) heartbeat(ctx context.Context) {
-	ticker := time.NewTicker(pool.workers.config.heartbeat)
-	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
+		ready, err := waitWorkerInterval(ctx, pool.workers.config.clock, pool.workers.config.heartbeat)
+		if err != nil {
+			pool.fail(err)
 			return
-		case <-ticker.C:
-			if !pool.renewActive(ctx) {
-				return
-			}
+		}
+		if !ready || !pool.renewActive(ctx) {
+			return
 		}
 	}
 }

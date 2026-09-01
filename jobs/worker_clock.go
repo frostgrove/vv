@@ -59,17 +59,51 @@ func (clock *workerClock) startTimer(duration time.Duration) (time.Time, time.Ti
 	if err != nil {
 		return time.Time{}, time.Time{}, nil, ErrInvalid
 	}
-	inner, channel, err := callWorkerClockTimer(clock.source, deadline)
+	timer, err := clock.newTimerAt(deadline)
 	if err != nil {
-		stopWorkerTimer(inner)
 		return time.Time{}, time.Time{}, nil, err
 	}
-	return startedAt, deadline, &workerTimer{clock: clock, inner: inner, channel: channel}, nil
+	return startedAt, deadline, timer, nil
 }
 
 func (clock *workerClock) NewTimer(duration time.Duration) (*workerTimer, error) {
 	_, _, timer, err := clock.startTimer(duration)
 	return timer, err
+}
+
+func (clock *workerClock) startDeadline(deadline time.Time) (time.Time, *workerTimer, bool, error) {
+	if clock == nil || nilInterface(clock.source) {
+		return time.Time{}, nil, false, ErrInvalid
+	}
+	deadline, err := requiredTime(deadline, "worker deadline")
+	if err != nil {
+		return time.Time{}, nil, false, ErrInvalid
+	}
+
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+
+	now, err := clock.now()
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+	if !now.Before(deadline) {
+		return now, nil, false, nil
+	}
+	timer, err := clock.newTimerAt(deadline)
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+	return now, timer, true, nil
+}
+
+func (clock *workerClock) newTimerAt(deadline time.Time) (*workerTimer, error) {
+	inner, channel, err := callWorkerClockTimer(clock.source, deadline)
+	if err != nil {
+		stopWorkerTimer(inner)
+		return nil, err
+	}
+	return &workerTimer{clock: clock, inner: inner, channel: channel}, nil
 }
 
 func (clock *workerClock) stopTimerChecked(timer Timer) (bool, bool) {
