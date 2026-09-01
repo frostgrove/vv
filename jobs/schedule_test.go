@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -81,6 +82,51 @@ func TestSchedulerRunDuePlacesTypedOccurrence(t *testing.T) {
 	payload, err := definition.Decode(placements[0].Payload())
 	if err != nil || payload != anchor.Add(2*time.Hour).Format(time.RFC3339) {
 		t.Fatalf("payload = (%q, %v)", payload, err)
+	}
+}
+
+func TestSchedulerRunDueContainsPayloadPanic(t *testing.T) {
+	definition := MustDefine(DefinitionSpec[string]{
+		Name:   testJobName(t, "maintenance.panicking"),
+		Codec:  String(1),
+		Policy: testPolicy(t),
+	})
+	sender := &scheduleSender{description: queueTestBackendDescription(1)}
+	queue, err := NewQueue(QueueSpec{
+		Namespace: queueTestNamespace(t, "scheduler-panic"),
+		Catalog:   MustCatalog(definition),
+		Sender:    sender,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2035, 1, 2, 3, 0, 0, 0, time.UTC)
+	schedule, err := DefineSchedule(ScheduleSpec[string]{
+		Name:     testJobName(t, "maintenance.panicking.hourly"),
+		Revision: 1,
+		Cadence:  At(now),
+		Job:      definition,
+		Payload:  func(time.Time) (string, error) { panic("private payload panic") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler, err := NewScheduler(SchedulerSpec{Queue: queue, Clock: scheduleClock{now: now}}, schedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := scheduler.RunDue(context.Background())
+	if !errors.Is(err, ErrInvalid) || strings.Contains(err.Error(), "private") {
+		t.Fatalf("panic result = (%#v, %v)", result, err)
+	}
+	if result != (ScheduleRunResult{Due: 1}) {
+		t.Fatalf("run result = %#v", result)
+	}
+	sender.mu.Lock()
+	placements := len(sender.placements)
+	sender.mu.Unlock()
+	if placements != 0 {
+		t.Fatalf("placements = %d", placements)
 	}
 }
 

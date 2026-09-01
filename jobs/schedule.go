@@ -178,7 +178,7 @@ func (schedule *typedSchedule[P]) scheduleEntry() scheduleEntry {
 		description: schedule.description,
 		declaration: declarationOf(schedule.definition),
 		enqueue: func(ctx context.Context, queue *Queue, due time.Time) (EnqueueOnceOutcome, error) {
-			payload, err := schedule.payload(due)
+			payload, err := invokeSchedulePayload(schedule.payload, due)
 			if err != nil {
 				return 0, err
 			}
@@ -187,6 +187,17 @@ func (schedule *typedSchedule[P]) scheduleEntry() scheduleEntry {
 			return outcome, err
 		},
 	}
+}
+
+func invokeSchedulePayload[P any](payload func(time.Time) (P, error), due time.Time) (value P, err error) {
+	defer func() {
+		if recover() != nil {
+			var zero P
+			value = zero
+			err = fmt.Errorf("%w: schedule payload panicked", ErrInvalid)
+		}
+	}()
+	return payload(due)
 }
 
 func scheduleIntent(description ScheduleDescription, due time.Time) string {
