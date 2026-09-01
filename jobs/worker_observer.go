@@ -421,9 +421,6 @@ func workerEventScope(plan WorkerPlan, definition Name, binding BindingName) (in
 
 func validateWorkerEventIdentity(spec workerEventSpec, exact bool) error {
 	if spec.Operation == WorkerOperationApply {
-		if !exact {
-			return invalid("worker event requires a plan binding")
-		}
 		return nil
 	}
 	if spec.Operation == WorkerOperationAdmission {
@@ -480,9 +477,6 @@ func validateWorkerEventOperationFields(spec workerEventSpec, concurrency int) e
 func validateWorkerLifecycleEvent(spec workerEventSpec) error {
 	if spec.Items != 0 || spec.Bytes != 0 || len(spec.Results) != 0 || spec.Outcome == WorkerOutcomeStarted && spec.Elapsed != 0 {
 		return invalid("worker lifecycle event metrics")
-	}
-	if spec.Outcome == WorkerOutcomeForced && spec.Active == 0 {
-		return invalid("forced worker event active count")
 	}
 	return nil
 }

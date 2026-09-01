@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -43,6 +44,7 @@ type workerRunSession struct {
 	drainOnce      sync.Once
 	forceOnce      sync.Once
 	incarnation    WorkerIncarnation
+	active         atomic.Int64
 }
 
 func newWorkerRunSession(parent context.Context) *workerRunSession {
@@ -96,13 +98,24 @@ func (workers *Workers) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	startedAt := workers.observeWorkerStart(WorkerOperationRun, 0)
 	session.incarnation, err = newWorkerIncarnation(workers.config.entropy)
 	if err != nil {
 		workers.runtime.finish(err)
+		workers.observeWorkerFinish(WorkerOperationRun, WorkerOutcomeFailed, WorkerFailureRuntime, 0, startedAt)
 		return err
 	}
-	err = workers.run(session)
+	err, parentCancelled := workers.run(session)
 	workers.runtime.finish(err)
+	outcome := WorkerOutcomeComplete
+	failure := WorkerFailureNone
+	if parentCancelled {
+		outcome = WorkerOutcomeCancelled
+	} else if err != nil {
+		outcome = WorkerOutcomeFailed
+		failure = WorkerFailureRuntime
+	}
+	workers.observeWorkerFinish(WorkerOperationRun, outcome, failure, 0, startedAt)
 	return err
 }
 
@@ -117,13 +130,41 @@ func (workers *Workers) Drain(ctx context.Context) error {
 	if session != nil {
 		session.requestDrain()
 	}
+	active := 0
+	if session != nil {
+		active = int(session.active.Load())
+	}
+	startedAt := workers.observeWorkerStart(WorkerOperationDrain, active)
+	finish := func() error {
+		result := workers.runtime.result()
+		outcome := WorkerOutcomeComplete
+		failure := WorkerFailureNone
+		if result != nil {
+			outcome = WorkerOutcomeFailed
+			failure = WorkerFailureRuntime
+		}
+		workers.observeWorkerFinish(WorkerOperationDrain, outcome, failure, 0, startedAt)
+		return result
+	}
 	select {
 	case <-done:
-		return workers.runtime.result()
+		return finish()
+	default:
+	}
+	select {
+	case <-done:
+		return finish()
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return finish()
+		default:
+		}
 		if session != nil {
+			active = int(session.active.Load())
 			session.requestForce()
 		}
+		workers.observeWorkerFinish(WorkerOperationDrain, WorkerOutcomeForced, WorkerFailureNone, active, startedAt)
 		return ctx.Err()
 	}
 }
@@ -243,7 +284,7 @@ func newWorkerPool(workers *Workers, session *workerRunSession) *workerPool {
 	}
 }
 
-func (workers *Workers) run(session *workerRunSession) error {
+func (workers *Workers) run(session *workerRunSession) (error, bool) {
 	pool := newWorkerPool(workers, session)
 	heartbeatContext, stopHeartbeat := context.WithCancel(session.handlerContext)
 	heartbeatDone := make(chan struct{})
@@ -261,9 +302,11 @@ func (workers *Workers) run(session *workerRunSession) error {
 		pool.dispatch()
 	}()
 	var result error
+	parentCancelled := false
 	select {
 	case <-session.parent.Done():
 		result = context.Cause(session.parent)
+		parentCancelled = true
 		session.requestDrain()
 	case <-session.drain:
 		select {
@@ -282,26 +325,26 @@ func (workers *Workers) run(session *workerRunSession) error {
 	if result != nil && !errors.Is(result, context.Canceled) && !errors.Is(result, context.DeadlineExceeded) {
 		session.requestForce()
 		<-activeDone
-		return result
+		return result, parentCancelled
 	}
 	if session.parent.Err() == nil {
 		select {
 		case <-activeDone:
-			return result
+			return result, parentCancelled
 		case <-session.force:
 			<-activeDone
-			return result
+			return result, parentCancelled
 		}
 	}
 	timer := time.NewTimer(workers.config.shutdownGrace)
 	defer timer.Stop()
 	select {
 	case <-activeDone:
-		return result
+		return result, parentCancelled
 	case <-timer.C:
 		session.requestForce()
 		<-activeDone
-		return result
+		return result, parentCancelled
 	}
 }
 
@@ -351,9 +394,15 @@ func (pool *workerPool) claim() bool {
 		return false
 	}
 	if !ok {
+		active, limit, saturated := pool.observationCapacity()
+		if saturated {
+			pool.workers.observeSaturation(WorkerOperationClaim, active, limit)
+		}
 		return true
 	}
 	batch, call := pool.workers.callClaim(pool.session.pollContext, request)
+	active, _, _ := pool.observationCapacity()
+	pool.workers.observeClaim(batch, call, active)
 	if call.err != nil {
 		if call.fatal() {
 			pool.fail(call.err)
@@ -362,6 +411,21 @@ func (pool *workerPool) claim() bool {
 		return pool.session.pollContext.Err() == nil
 	}
 	return pool.dispatchClaimed(batch.items)
+}
+
+func (pool *workerPool) observationCapacity() (int, int, bool) {
+	pool.mu.Lock()
+	active := len(pool.active)
+	byteSaturated := pool.workers.config.inFlightBytes-pool.bytes < MaxDeliveryRecordBytes
+	pool.mu.Unlock()
+	limit := pool.workers.plan.TotalConcurrency()
+	if active >= limit {
+		return active, limit, true
+	}
+	if byteSaturated && active > 0 {
+		return active, active, true
+	}
+	return active, limit, false
 }
 
 func (pool *workerPool) claimRequest() (ClaimRequest, bool, error) {
@@ -689,6 +753,7 @@ func (pool *workerPool) acceptClaimed(delivery ClaimedDelivery) bool {
 	binding.active++
 	pool.bytes += size
 	pool.active[active] = struct{}{}
+	pool.session.active.Add(1)
 	pool.wg.Add(1)
 	pool.mu.Unlock()
 	go active.runClaimed(delivery)
@@ -715,7 +780,8 @@ func (pool *workerPool) releaseClaimedWith(delivery ClaimedDelivery, delay time.
 		pool.fail(err)
 		return
 	}
-	_, call := pool.workers.callApply(pool.session.controlContext, request)
+	result, call := pool.workers.callApply(pool.session.controlContext, request)
+	pool.workers.observeApply(delivery.target.definition, delivery.target.binding, request, result, call)
 	if call.fatal() {
 		pool.fail(call.err)
 	}
@@ -729,9 +795,15 @@ func (pool *workerPool) recover() bool {
 			return false
 		}
 		if !ok {
+			active, limit, saturated := pool.observationCapacity()
+			if saturated {
+				pool.workers.observeSaturation(WorkerOperationRecover, active, limit)
+			}
 			return true
 		}
 		result, call := pool.workers.callRecover(pool.session.pollContext, request)
+		active, _, _ := pool.observationCapacity()
+		pool.workers.observeRecover(result, call, active)
 		if call.err != nil {
 			if call.fatal() {
 				pool.fail(call.err)
@@ -828,7 +900,8 @@ func (pool *workerPool) applyRecovered(lease LeaseRef, build func(LeaseRef) (Del
 		pool.fail(err)
 		return false
 	}
-	_, call := pool.workers.callApply(pool.session.controlContext, request)
+	result, call := pool.workers.callApply(pool.session.controlContext, request)
+	pool.workers.observeApply(Name{}, BindingName{}, request, result, call)
 	if call.fatal() {
 		pool.fail(call.err)
 		return false
@@ -882,6 +955,7 @@ func (delivery *activeWorkerDelivery) runClaimed(claimed ClaimedDelivery) {
 		delivery.pool.bytes -= delivery.size
 		delete(delivery.pool.active, delivery)
 		delivery.pool.mu.Unlock()
+		delivery.pool.session.active.Add(-1)
 		delivery.pool.wg.Done()
 	}()
 	select {
@@ -1035,23 +1109,29 @@ func (delivery *activeWorkerDelivery) snapshotInvocation() Invocation {
 
 func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(LeaseRef) (DeliveryCommand, error)) (ApplyResult, workerDriverCall) {
 	delivery.mu.Lock()
-	defer delivery.mu.Unlock()
 	if delivery.closed {
+		delivery.mu.Unlock()
 		return ApplyResult{}, workerDriverCall{outcome: WorkerOutcomeCancelled, err: ErrLeaseLost}
 	}
 	command, err := build(delivery.lease)
 	if err != nil {
 		delivery.closeLost(err)
+		delivery.mu.Unlock()
 		return ApplyResult{}, workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureRuntime, err: err}
 	}
 	request, err := NewApplyRequest(command)
 	if err != nil {
 		delivery.closeLost(err)
+		delivery.mu.Unlock()
 		return ApplyResult{}, workerDriverCall{outcome: WorkerOutcomeFailed, failure: WorkerFailureRuntime, err: err}
 	}
 	result, call := delivery.pool.workers.callApply(ctx, request)
+	definition := delivery.binding.binding.declaration.declarationName()
+	binding := delivery.binding.binding.binding
 	if call.err != nil || result.result.mutation != DeliveryMutationApplied {
 		delivery.closeLost(call.err)
+		delivery.mu.Unlock()
+		delivery.pool.workers.observeApply(definition, binding, request, result, call)
 		if call.fatal() {
 			delivery.pool.fail(call.err)
 		}
@@ -1066,6 +1146,8 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 	if command.kind != DeliveryCommandBeginAttempt && command.kind != DeliveryCommandProgress || result.result.control == DeliveryControlTerminated {
 		delivery.closed = true
 	}
+	delivery.mu.Unlock()
+	delivery.pool.workers.observeApply(definition, binding, request, result, call)
 	return result, call
 }
 
@@ -1130,6 +1212,7 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 			delivery.closeLost(call.err)
 			delivery.mu.Unlock()
 		}
+		pool.workers.observeRenew(request, result, call)
 		if call.fatal() {
 			pool.fail(call.err)
 			return false
@@ -1151,6 +1234,7 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 		}
 		delivery.mu.Unlock()
 	}
+	pool.workers.observeRenew(request, result, call)
 	return true
 }
 

@@ -468,13 +468,11 @@ func TestWorkerEventEnforcesAggregateAndExactScopes(t *testing.T) {
 			t.Fatalf("non-aggregate %s = %v", operation, err)
 		}
 	}
-	for _, operation := range []WorkerOperation{WorkerOperationApply} {
-		spec := workerObserverSpec(t, fixture, operation, WorkerOutcomeComplete)
-		spec.Definition = Name{}
-		spec.Binding = BindingName{}
-		if _, err := newWorkerEvent(fixture.plan, spec); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("aggregate %s = %v", operation, err)
-		}
+	apply := workerObserverSpec(t, fixture, WorkerOperationApply, WorkerOutcomeComplete)
+	apply.Definition = Name{}
+	apply.Binding = BindingName{}
+	if _, err := newWorkerEvent(fixture.plan, apply); err != nil {
+		t.Fatalf("aggregate apply = %v", err)
 	}
 	admission := workerObserverSpec(t, fixture, WorkerOperationAdmission, WorkerOutcomeReady)
 	admission.Definition = fixture.definition
