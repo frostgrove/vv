@@ -150,7 +150,7 @@ func NewInvocation(spec InvocationSpec) (Invocation, error) {
 		return Invocation{}, invalid("invocation identity or policy")
 	}
 	purpose := spec.Intent.Purpose()
-	if spec.Mode == PlacementRegular && purpose != IntentRegular || spec.Mode == PlacementOnce && purpose != IntentOnce || (spec.Mode == PlacementCollapse || spec.Mode == PlacementDebounce) && purpose != IntentCollapse {
+	if spec.Mode == PlacementRegular && purpose != IntentRegular || spec.Mode == PlacementOnce && purpose != IntentOnce || (spec.Mode == PlacementCollapse || spec.Mode == PlacementDebounce || spec.Mode == PlacementUnique) && purpose != IntentCollapse {
 		return Invocation{}, invalid("invocation placement intent")
 	}
 	if spec.Mode == PlacementRegular {

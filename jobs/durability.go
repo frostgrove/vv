@@ -217,6 +217,7 @@ func (p DurabilityProfile) valid() bool {
 type Capabilities struct {
 	Priority         bool
 	Debounce         bool
+	Unique           bool
 	Scheduled        bool
 	AttemptTrace     bool
 	OrderedPartition bool
@@ -228,6 +229,7 @@ func (c Capabilities) Format(state fmt.State, _ rune) { _, _ = fmt.Fprint(state,
 func (c Capabilities) satisfies(required Capabilities) bool {
 	return (!required.Priority || c.Priority) &&
 		(!required.Debounce || c.Debounce) &&
+		(!required.Unique || c.Unique) &&
 		(!required.Scheduled || c.Scheduled) &&
 		(!required.AttemptTrace || c.AttemptTrace) &&
 		(!required.OrderedPartition || c.OrderedPartition) &&
@@ -240,7 +242,7 @@ type ProducerRequirements struct {
 }
 
 func StandardProducerRequirements() ProducerRequirements {
-	return ProducerRequirements{capabilities: Capabilities{Priority: true, Debounce: true, Scheduled: true}, explicit: true}
+	return ProducerRequirements{capabilities: Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true}, explicit: true}
 }
 
 func RequireProducerCapabilities(capabilities Capabilities) ProducerRequirements {

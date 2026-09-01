@@ -18,10 +18,11 @@ const (
 	PlacementOnce
 	PlacementCollapse
 	PlacementDebounce
+	PlacementUnique
 )
 
 func (m PlacementMode) Valid() bool {
-	return m >= PlacementRegular && m <= PlacementDebounce
+	return m >= PlacementRegular && m <= PlacementUnique
 }
 
 func (m PlacementMode) String() string {
@@ -34,6 +35,8 @@ func (m PlacementMode) String() string {
 		return "collapse"
 	case PlacementDebounce:
 		return "debounce"
+	case PlacementUnique:
+		return "unique"
 	default:
 		return "unknown"
 	}
@@ -211,7 +214,7 @@ func NewPlacement(spec PlacementSpec) (Placement, error) {
 		return Placement{}, invalid("placement identity or policy")
 	}
 	purpose := spec.IntentDigests.Current().Purpose()
-	if spec.Mode == PlacementRegular && purpose != IntentRegular || spec.Mode == PlacementOnce && purpose != IntentOnce || (spec.Mode == PlacementCollapse || spec.Mode == PlacementDebounce) && purpose != IntentCollapse {
+	if spec.Mode == PlacementRegular && purpose != IntentRegular || spec.Mode == PlacementOnce && purpose != IntentOnce || (spec.Mode == PlacementCollapse || spec.Mode == PlacementDebounce || spec.Mode == PlacementUnique) && purpose != IntentCollapse {
 		return Placement{}, invalid("placement intent purpose")
 	}
 	if spec.Mode == PlacementRegular && !regularIntentDigestsMatch(spec.Namespace, spec.Partition, spec.Definition, spec.Candidate, spec.IntentDigests) {
@@ -233,7 +236,7 @@ func NewPlacement(spec PlacementSpec) (Placement, error) {
 		return Placement{}, invalid("placement delay")
 	}
 	switch spec.Mode {
-	case PlacementRegular, PlacementOnce, PlacementCollapse:
+	case PlacementRegular, PlacementOnce, PlacementCollapse, PlacementUnique:
 		if spec.MaxDelay != 0 {
 			return Placement{}, invalid("placement maximum delay")
 		}

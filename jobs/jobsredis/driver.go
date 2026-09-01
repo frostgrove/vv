@@ -45,6 +45,12 @@ func (d *Driver) Place(ctx context.Context, placement jobs.Placement) (jobs.Plac
 			return jobs.NewPlacementResult(record.Genesis.ID, outcome)
 		case jobs.PlacementCollapse, jobs.PlacementDebounce:
 			return d.collapse(opCtx, placement, existing, now)
+		case jobs.PlacementUnique:
+			id, parseErr := jobs.ParseInvocationID(existing.ID)
+			if parseErr != nil {
+				return jobs.PlacementResult{}, parseErr
+			}
+			return jobs.NewPlacementResult(id, jobs.PlacementExisting)
 		}
 	}
 

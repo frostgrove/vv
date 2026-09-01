@@ -76,6 +76,17 @@ func (d *Driver) List(ctx context.Context, spec ListSpec) ([]jobs.DeliveryView, 
 	return views, nil
 }
 
+func (d *Driver) Count(ctx context.Context, spec ListSpec) (int64, error) {
+	if err := d.requireReady(); err != nil {
+		return 0, err
+	}
+	normalized, err := normalizeListSpec(spec)
+	if err != nil {
+		return 0, err
+	}
+	return d.repo.countDeliveryRecords(ctx, d.db, d.namespace, normalized)
+}
+
 func (d *Driver) Redrive(ctx context.Context, id jobs.InvocationID) (jobs.DeliveryView, error) {
 	if err := d.requireReady(); err != nil {
 		return jobs.DeliveryView{}, err
@@ -88,6 +99,24 @@ func (d *Driver) Redrive(ctx context.Context, id jobs.InvocationID) (jobs.Delive
 		return jobs.DeliveryView{}, err
 	}
 	defer tx.Rollback()
+	now, err := databaseNow(ctx, tx)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	snapshot, err := d.repo.readDeliveryRecord(ctx, tx, d.namespace, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return jobs.DeliveryView{}, jobs.ErrInvocationNotFound
+	}
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	preview, err := d.redriveRecord(snapshot, now)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	if err := d.repo.lockIntentKeys(ctx, tx, d.namespace, []jobs.IntentKey{preview.intent}); err != nil {
+		return jobs.DeliveryView{}, err
+	}
 	encoded, err := d.repo.lockDeliveryRecord(ctx, tx, d.namespace, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return jobs.DeliveryView{}, jobs.ErrInvocationNotFound
@@ -95,15 +124,14 @@ func (d *Driver) Redrive(ctx context.Context, id jobs.InvocationID) (jobs.Delive
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	now, err := databaseNow(ctx, tx)
-	if err != nil {
-		return jobs.DeliveryView{}, err
-	}
 	redrive, err := d.redriveRecord(encoded, now)
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	if redrive.mode == jobs.PlacementCollapse || redrive.mode == jobs.PlacementDebounce {
+	if redrive.mode != preview.mode || redrive.intent != preview.intent {
+		return jobs.DeliveryView{}, jobs.ErrConflict
+	}
+	if redrive.mode == jobs.PlacementCollapse || redrive.mode == jobs.PlacementDebounce || redrive.mode == jobs.PlacementUnique {
 		if err := d.repo.restoreCurrentIntent(ctx, tx, d.namespace, id, redrive.intent); err != nil {
 			if errors.Is(err, errIntentConflict) {
 				return jobs.DeliveryView{}, jobs.ErrConflict

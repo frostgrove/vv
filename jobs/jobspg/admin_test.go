@@ -127,4 +127,7 @@ func TestAdminMethodsRequireReadinessAndValidateWithoutDatabaseAccess(t *testing
 	if _, err := driver.PurgeTerminal(ctx, time.Now(), 1); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("PurgeTerminal before readiness = %v", err)
 	}
+	if _, err := driver.SweepTerminalRetention(ctx, 1); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("SweepTerminalRetention before readiness = %v", err)
+	}
 }

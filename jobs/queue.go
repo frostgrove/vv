@@ -233,10 +233,11 @@ const (
 	PlacementExistingSamePayload
 	PlacementConflict
 	PlacementCollapsed
+	PlacementExisting
 )
 
 func (o PlacementOutcome) Valid() bool {
-	return o >= PlacementCreated && o <= PlacementCollapsed
+	return o >= PlacementCreated && o <= PlacementExisting
 }
 
 func (o PlacementOutcome) String() string {
@@ -249,6 +250,8 @@ func (o PlacementOutcome) String() string {
 		return "conflict"
 	case PlacementCollapsed:
 		return "collapsed"
+	case PlacementExisting:
+		return "existing"
 	default:
 		return "unknown"
 	}
@@ -372,6 +375,19 @@ func Collapse(raw string) EnqueueOption {
 		}
 		options.collapse = intent
 		options.mode = PlacementCollapse
+		options.collapseSet = true
+		return nil
+	})
+}
+
+func Unique(raw string) EnqueueOption {
+	intent := Intent(raw)
+	return enqueueOption(func(options *enqueueOptions) error {
+		if options.collapseSet || !intent.valid() {
+			return invalid("unique key")
+		}
+		options.collapse = intent
+		options.mode = PlacementUnique
 		options.collapseSet = true
 		return nil
 	})
@@ -572,7 +588,10 @@ func validateEnqueueRequest[P any](ctx context.Context, queue *Queue, definition
 	if resolved.delaySet && !queue.description.Capabilities().Scheduled {
 		return enqueueRequest{}, fmt.Errorf("%w: sender does not support scheduling", ErrUnsupported)
 	}
-	if resolved.collapseSet && !queue.description.Capabilities().Debounce {
+	if resolved.mode == PlacementUnique && !queue.description.Capabilities().Unique {
+		return enqueueRequest{}, fmt.Errorf("%w: sender does not support unique placement", ErrUnsupported)
+	}
+	if resolved.collapseSet && resolved.mode != PlacementUnique && !queue.description.Capabilities().Debounce {
 		return enqueueRequest{}, fmt.Errorf("%w: sender does not support collapse or debounce", ErrUnsupported)
 	}
 	policy, err := NewPolicySnapshot(definition.Policy())
@@ -811,6 +830,8 @@ func validPlacementResult(placement Placement, result PlacementResult) bool {
 		return result.Outcome() == PlacementCreated && result.InvocationID() == placement.Candidate() || result.Outcome() == PlacementExistingSamePayload || result.Outcome() == PlacementConflict
 	case PlacementCollapse, PlacementDebounce:
 		return result.Outcome() == PlacementCreated && result.InvocationID() == placement.Candidate() || result.Outcome() == PlacementCollapsed
+	case PlacementUnique:
+		return result.Outcome() == PlacementCreated && result.InvocationID() == placement.Candidate() || result.Outcome() == PlacementExisting
 	default:
 		return false
 	}

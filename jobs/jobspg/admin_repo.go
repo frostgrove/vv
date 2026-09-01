@@ -10,21 +10,29 @@ import (
 	"github.com/frostgrove/vv/jobs"
 )
 
+type deliveryRecordQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (r repository) getDeliveryRecord(ctx context.Context, db *sql.DB, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
+	return r.readDeliveryRecord(ctx, db, namespace, id)
+}
+
+func (r repository) readDeliveryRecord(ctx context.Context, querier deliveryRecordQuerier, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
 	var record []byte
-	err := db.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
+	err := querier.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
 	return record, err
 }
 
 func (r repository) lockDeliveryRecord(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
 	var record []byte
-	err := tx.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
+	err := tx.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
 	return record, err
 }
 
 func (r repository) listDeliveryRecords(ctx context.Context, db *sql.DB, namespace jobs.Namespace, spec normalizedListSpec) ([][]byte, error) {
 	args := []any{namespaceArgument(namespace)}
-	conditions := []string{"namespace = $1"}
+	conditions := []string{"namespace = $1", "record IS NOT NULL"}
 	if len(spec.definitions) != 0 {
 		placeholders := make([]string, len(spec.definitions))
 		for index, definition := range spec.definitions {
@@ -59,6 +67,30 @@ func (r repository) listDeliveryRecords(ctx context.Context, db *sql.DB, namespa
 	return records, rows.Err()
 }
 
+func (r repository) countDeliveryRecords(ctx context.Context, db *sql.DB, namespace jobs.Namespace, spec normalizedListSpec) (int64, error) {
+	args := []any{namespaceArgument(namespace)}
+	conditions := []string{"namespace = $1", "record IS NOT NULL"}
+	if len(spec.definitions) != 0 {
+		placeholders := make([]string, len(spec.definitions))
+		for index, definition := range spec.definitions {
+			args = append(args, definition.Value())
+			placeholders[index] = fmt.Sprintf("$%d", len(args))
+		}
+		conditions = append(conditions, "definition IN ("+strings.Join(placeholders, ", ")+")")
+	}
+	if len(spec.states) != 0 {
+		placeholders := make([]string, len(spec.states))
+		for index, state := range spec.states {
+			args = append(args, int(state))
+			placeholders[index] = fmt.Sprintf("$%d", len(args))
+		}
+		conditions = append(conditions, "state IN ("+strings.Join(placeholders, ", ")+")")
+	}
+	var count int64
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+r.deliveries+` WHERE `+strings.Join(conditions, " AND "), args...).Scan(&count)
+	return count, err
+}
+
 func (r repository) restoreCurrentIntent(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, key jobs.IntentKey) error {
 	scope := key.Scope().Bytes()
 	digest := key.Digest().Bytes()
@@ -91,6 +123,8 @@ SET state = $3,
     lease_expires_at = NULL,
     excluded_binding = NULL,
     excluded_build = NULL,
+    record_expires_at = NULL,
+    intent_expires_at = NULL,
     created_at = $4,
     updated_at = $4
 WHERE namespace = $1
@@ -124,20 +158,47 @@ WHERE namespace = $1
 }
 
 func (r repository) purgeTerminal(ctx context.Context, db *sql.DB, namespace jobs.Namespace, before time.Time, limit int) (int, error) {
-	result, err := db.ExecContext(ctx, `WITH doomed AS (
-    SELECT namespace, id
-    FROM `+r.deliveries+`
-    WHERE namespace = $1
-      AND updated_at < $2
-      AND state IN ($3, $4, $5, $6, $7, $8, $9)
-    ORDER BY updated_at, id
-    LIMIT $10
-    FOR UPDATE SKIP LOCKED
-)
-DELETE FROM `+r.deliveries+` AS deliveries
-USING doomed
-WHERE deliveries.namespace = doomed.namespace
-  AND deliveries.id = doomed.id`,
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	ids, err := r.terminalCandidates(ctx, tx, namespace, before, limit)
+	if err != nil {
+		return 0, err
+	}
+	keys, err := r.intentKeysForDeliveries(ctx, tx, namespace, ids)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.lockIntentKeys(ctx, tx, namespace, keys); err != nil {
+		return 0, err
+	}
+	if err := r.lockIntentRowsForDeliveries(ctx, tx, namespace, ids); err != nil {
+		return 0, err
+	}
+	ids, err = r.lockTerminalDeliveries(ctx, tx, namespace, ids)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := r.deleteTerminalCandidates(ctx, tx, namespace, before, ids)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
+func (r repository) terminalCandidates(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, before time.Time, limit int) ([]jobs.InvocationID, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id
+FROM `+r.deliveries+`
+WHERE namespace = $1
+  AND updated_at < $2
+  AND state IN ($3, $4, $5, $6, $7, $8, $9)
+ORDER BY updated_at, id
+LIMIT $10`,
 		namespaceArgument(namespace),
 		before,
 		int(jobs.InvocationSucceeded),
@@ -150,11 +211,111 @@ WHERE deliveries.namespace = doomed.namespace
 		limit,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	rows, err := result.RowsAffected()
+	defer rows.Close()
+	ids := make([]jobs.InvocationID, 0, limit)
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		id, err := scanInvocation(raw)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r repository) intentKeysForDeliveries(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, ids []jobs.InvocationID) ([]jobs.IntentKey, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := []any{namespaceArgument(namespace)}
+	placeholders := appendInvocationArguments(&args, ids)
+	rows, err := tx.QueryContext(ctx, `SELECT scope, revision, purpose, digest
+FROM `+r.intents+`
+WHERE namespace = $1 AND invocation_id IN (`+strings.Join(placeholders, `, `)+`)
+ORDER BY scope, revision, purpose, digest`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := make([]jobs.IntentKey, 0, len(ids))
+	for rows.Next() {
+		var scope, digest []byte
+		var revision, purpose int
+		if err := rows.Scan(&scope, &revision, &purpose, &digest); err != nil {
+			return nil, err
+		}
+		key, err := scanIntentKey(scope, revision, purpose, digest)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (r repository) lockIntentRowsForDeliveries(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, ids []jobs.InvocationID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := []any{namespaceArgument(namespace)}
+	placeholders := appendInvocationArguments(&args, ids)
+	rows, err := tx.QueryContext(ctx, `SELECT purpose
+FROM `+r.intents+`
+WHERE namespace = $1 AND invocation_id IN (`+strings.Join(placeholders, `, `)+`)
+ORDER BY scope, revision, purpose, digest
+FOR UPDATE`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var purpose int
+		if err := rows.Scan(&purpose); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (r repository) deleteTerminalCandidates(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, before time.Time, ids []jobs.InvocationID) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := []any{namespaceArgument(namespace), before}
+	placeholders := appendInvocationArguments(&args, ids)
+	args = append(args,
+		int(jobs.InvocationSucceeded),
+		int(jobs.InvocationFailed),
+		int(jobs.InvocationDead),
+		int(jobs.InvocationDiscarded),
+		int(jobs.InvocationQuarantined),
+		int(jobs.InvocationCancelled),
+		int(jobs.InvocationTerminated),
+	)
+	state := len(args) - 6
+	result, err := tx.ExecContext(ctx, `DELETE FROM `+r.deliveries+`
+WHERE namespace = $1
+  AND updated_at < $2
+  AND id IN (`+strings.Join(placeholders, `, `)+`)
+  AND state IN (`+fmt.Sprintf(`$%d, $%d, $%d, $%d, $%d, $%d, $%d`, state, state+1, state+2, state+3, state+4, state+5, state+6)+`)`, args...)
 	if err != nil {
 		return 0, err
 	}
-	return int(rows), nil
+	rows, err := result.RowsAffected()
+	return int(rows), err
+}
+
+func appendInvocationArguments(args *[]any, ids []jobs.InvocationID) []string {
+	placeholders := make([]string, len(ids))
+	for index, id := range ids {
+		*args = append(*args, invocationArgument(id))
+		placeholders[index] = fmt.Sprintf("$%d", len(*args))
+	}
+	return placeholders
 }

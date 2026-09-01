@@ -81,13 +81,38 @@ func TestRecordRoundTripPreservesRestorableAttemptLedger(t *testing.T) {
 	}
 }
 
+func TestUniqueRecordRoundTripPreservesPlacementModeAndIntent(t *testing.T) {
+	namespace, catalog, placement := testPlacementWith(t, jobs.Unique("sweeper"))
+	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	insert, err := driver.newPlacement(placement, placement.Candidate(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := decodeRecord(insert.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := jobs.RestoreDeliveryRecord(catalog, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := restored.Invocation()
+	if invocation.Mode() != jobs.PlacementUnique || invocation.Intent().Purpose() != jobs.IntentCollapse || string(restored.Payload().Bytes()) != "payload" {
+		t.Fatal("unique placement changed during PostgreSQL record round trip")
+	}
+}
+
 func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 	namespace, catalog, placement := testPlacement(t)
 	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if driver.Description().IsZero() || driver.Description().Capabilities() != (jobs.Capabilities{Priority: true, Debounce: true, Scheduled: true}) {
+	if driver.Description().IsZero() || driver.Description().Capabilities() != (jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true}) {
 		t.Fatal("default PostgreSQL description is incomplete")
 	}
 	if _, err := driver.Place(context.Background(), placement); !errors.Is(err, ErrNotReady) {
@@ -98,7 +123,7 @@ func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(statements, "\n")
-	for _, required := range []string{`"frostgrove_jobs".schema_meta`, `"frostgrove_jobs".catalogs`, `"frostgrove_jobs".deliveries`, `"frostgrove_jobs".intents`} {
+	for _, required := range []string{`"frostgrove_jobs".schema_meta`, `"frostgrove_jobs".catalogs`, `"frostgrove_jobs".deliveries`, `"frostgrove_jobs".intents`, `record_expires_at`, `intent_expires_at`, `ALTER COLUMN record DROP NOT NULL`, `deliveries_record_pair_check`, `deliveries_retention_deadline_pair_check`} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("migration is missing %s", required)
 		}
@@ -106,12 +131,23 @@ func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 	if strings.Contains(joined, "priority DESC") {
 		t.Fatal("PostgreSQL queue priority is not ascending")
 	}
+	indexAt := strings.Index(joined, `CREATE INDEX CONCURRENTLY IF NOT EXISTS "deliveries_retention_idx"`)
+	validationAt := strings.Index(joined, "retention index deliveries_retention_idx schema mismatch")
+	commentAt := strings.Index(joined, `COMMENT ON INDEX "frostgrove_jobs"."deliveries_retention_idx"`)
+	versionAt := strings.LastIndex(joined, `SET version = 4`)
+	if indexAt < 0 || validationAt <= indexAt || commentAt <= validationAt || versionAt <= commentAt {
+		t.Fatalf("manual retention migration phases are unordered: index=%d validation=%d comment=%d version=%d", indexAt, validationAt, commentAt, versionAt)
+	}
 	if _, err := MigrationStatements("Public"); !errors.Is(err, jobs.ErrInvalid) {
 		t.Fatalf("unsafe schema accepted: %v", err)
 	}
 }
 
 func testPlacement(t *testing.T) (jobs.Namespace, jobs.Catalog, jobs.Placement) {
+	return testPlacementWith(t, jobs.After(time.Second), jobs.AtPriority(500))
+}
+
+func testPlacementWith(t *testing.T, options ...jobs.EnqueueOption) (jobs.Namespace, jobs.Catalog, jobs.Placement) {
 	t.Helper()
 	name, err := jobs.ParseName("jobspg.roundtrip")
 	if err != nil {
@@ -132,13 +168,13 @@ func testPlacement(t *testing.T) (jobs.Namespace, jobs.Catalog, jobs.Placement) 
 	var backendBytes [jobs.BackendIDBytes]byte
 	backendBytes[0] = 1
 	backend, _ := jobs.BackendIDFromBytes(backendBytes)
-	description, _ := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Scheduled: true})
+	description, _ := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
 	sender := &captureSender{description: description}
 	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: sender, Entropy: bytes.NewReader(bytes.Repeat([]byte{7}, 16))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.Enqueue(context.Background(), queue, definition, "payload", jobs.After(time.Second), jobs.AtPriority(500)); err != nil {
+	if _, err := jobs.Enqueue(context.Background(), queue, definition, "payload", options...); err != nil {
 		t.Fatal(err)
 	}
 	return namespace, catalog, sender.placement

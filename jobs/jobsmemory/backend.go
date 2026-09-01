@@ -150,6 +150,7 @@ func New(limits Limits, options ...Option) (*Backend, error) {
 	description, err := jobs.NewBackendDescription(settings.backendID, durability, jobs.Capabilities{
 		Priority:     true,
 		Debounce:     true,
+		Unique:       true,
 		Scheduled:    true,
 		AttemptTrace: true,
 	})
@@ -253,6 +254,10 @@ func (backend *Backend) Place(ctx context.Context, placement jobs.Placement) (jo
 	case jobs.PlacementCollapse, jobs.PlacementDebounce:
 		if existing != nil && existing.lease == nil && existing.invocation.State() == jobs.InvocationQueued {
 			return backend.collapseLocked(placement, existing, now)
+		}
+	case jobs.PlacementUnique:
+		if existing != nil {
+			return jobs.NewPlacementResult(existing.invocation.ID(), jobs.PlacementExisting)
 		}
 	}
 

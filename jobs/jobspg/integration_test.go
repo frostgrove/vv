@@ -171,8 +171,8 @@ func TestPostgresVerticalSlice(t *testing.T) {
 		t.Fatal(err)
 	}
 	changedSuccess := jobs.MustDefine(jobs.DefinitionSpec[string]{Name: success.Name(), Codec: jobs.String(1), Policy: changedPolicy, Partition: jobs.PartitionGlobal})
-	if _, err := Open(ctx, db, namespace, jobs.MustCatalog(changedSuccess)); !errors.Is(err, ErrCatalogMismatch) {
-		t.Fatalf("changed definition open = %v", err)
+	if _, err := Open(ctx, db, namespace, jobs.MustCatalog(changedSuccess)); err != nil {
+		t.Fatalf("policy-only definition change open = %v", err)
 	}
 	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: driver})
 	if err != nil {

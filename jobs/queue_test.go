@@ -178,7 +178,12 @@ func TestQueueSnapshotsBackendContractAndRejectsIncompleteCapabilities(t *testin
 	if queue.Description() != full || queue.Backend() != full.ID() || queue.Durability() != full.Durability() || queue.Capabilities() != full.Capabilities() || queue.Requirements() != StandardProducerRequirements() {
 		t.Fatal("queue did not preserve one backend snapshot")
 	}
-	for _, capabilities := range []Capabilities{{Debounce: true, Scheduled: true}, {Priority: true, Scheduled: true}, {Priority: true, Debounce: true}} {
+	for _, capabilities := range []Capabilities{
+		{Debounce: true, Unique: true, Scheduled: true},
+		{Priority: true, Unique: true, Scheduled: true},
+		{Priority: true, Debounce: true, Scheduled: true},
+		{Priority: true, Debounce: true, Unique: true},
+	} {
 		description, err := NewBackendDescription(queueTestBackendID(8), queueTestDurability(), capabilities)
 		if err != nil {
 			t.Fatal(err)
@@ -216,6 +221,9 @@ func TestQueueSnapshotsBackendContractAndRejectsIncompleteCapabilities(t *testin
 	if _, err := Enqueue(context.Background(), coreQueue, definition, "value", Collapse("same")); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("debounce preflight = %v", err)
 	}
+	if _, err := Enqueue(context.Background(), coreQueue, definition, "value", Unique("same")); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unique preflight = %v", err)
+	}
 	if _, err := Enqueue(context.Background(), coreQueue, definition, "value", After(time.Second)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("scheduled preflight = %v", err)
 	}
@@ -227,6 +235,9 @@ func TestQueueSnapshotsBackendContractAndRejectsIncompleteCapabilities(t *testin
 	}
 	if _, err := EnqueueIn(context.Background(), coreQueue, panickingQueueStager{}, definition, "value", Collapse("same")); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("staged debounce preflight = %v", err)
+	}
+	if _, err := EnqueueIn(context.Background(), coreQueue, panickingQueueStager{}, definition, "value", Unique("same")); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("staged unique preflight = %v", err)
 	}
 	if _, err := EnqueueIn(context.Background(), coreQueue, panickingQueueStager{}, definition, "value", After(time.Second)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("staged scheduling preflight = %v", err)
@@ -488,7 +499,7 @@ func TestQueueSerializesEntropyForConcurrentEnqueue(t *testing.T) {
 
 func TestLegacyIntentCompatibilityIsExplicit(t *testing.T) {
 	definition := testQueueDefinition(t, "tests.legacy", String(1))
-	captured := make([]Placement, 0, 3)
+	captured := make([]Placement, 0, 4)
 	sender := queueSenderFunc(func(_ context.Context, placement Placement) (PlacementResult, error) {
 		captured = append(captured, placement)
 		return mustPlacementResult(placement.Candidate(), PlacementCreated), nil
@@ -501,7 +512,7 @@ func TestLegacyIntentCompatibilityIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queue, err := NewQueue(QueueSpec{Namespace: queueTestNamespace(t, "tests"), Catalog: MustCatalog(definition), Sender: sender, Digests: plan, Entropy: bytes.NewReader(make([]byte, 48))})
+	queue, err := NewQueue(QueueSpec{Namespace: queueTestNamespace(t, "tests"), Catalog: MustCatalog(definition), Sender: sender, Digests: plan, Entropy: bytes.NewReader(make([]byte, 64))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,10 +525,13 @@ func TestLegacyIntentCompatibilityIsExplicit(t *testing.T) {
 	if _, err := Enqueue(context.Background(), queue, definition, "value", After(time.Second), Debounce("debounce-key", MaxDelay(time.Minute))); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := Enqueue(context.Background(), queue, definition, "value", Unique("unique-key")); err != nil {
+		t.Fatal(err)
+	}
 	for index, expected := range []struct {
 		mode  PlacementMode
 		value string
-	}{{PlacementOnce, "legacy-key"}, {PlacementCollapse, "collapse-key"}, {PlacementDebounce, "debounce-key"}} {
+	}{{PlacementOnce, "legacy-key"}, {PlacementCollapse, "collapse-key"}, {PlacementDebounce, "debounce-key"}, {PlacementUnique, "unique-key"}} {
 		placement := captured[index]
 		legacy, ok := placement.LegacyIntent()
 		if !ok || legacy.Value() != expected.value || placement.Mode() != expected.mode || !placement.IntentDigests().validFor(placement.Namespace(), placement.Partition(), placement.Definition()) || len(placement.IntentDigests().ReservationKeys()) != 2 {
@@ -669,6 +683,47 @@ func TestEnqueuePriorityCollapseDebounceAndSelfChainModes(t *testing.T) {
 	}
 	if _, _, err := EnqueueOnce(context.Background(), queue, definition, Intent("once"), "value", Collapse("key")); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("once collapse error = %v", err)
+	}
+}
+
+func TestUniqueUsesAppendOnlyModeAndKeepsTheActivePayload(t *testing.T) {
+	if PlacementRegular != 1 || PlacementOnce != 2 || PlacementCollapse != 3 || PlacementDebounce != 4 || PlacementUnique != 5 {
+		t.Fatal("placement mode values changed")
+	}
+	if PlacementCreated != 1 || PlacementExistingSamePayload != 2 || PlacementConflict != 3 || PlacementCollapsed != 4 || PlacementExisting != 5 {
+		t.Fatal("placement outcome values changed")
+	}
+	definition := testQueueDefinition(t, "tests.unique", String(1))
+	placements := make([]Placement, 0, 2)
+	var active InvocationID
+	sender := queueSenderFunc(func(_ context.Context, placement Placement) (PlacementResult, error) {
+		placements = append(placements, placement)
+		if len(placements) == 1 {
+			active = placement.Candidate()
+			return mustPlacementResult(active, PlacementCreated), nil
+		}
+		return mustPlacementResult(active, PlacementExisting), nil
+	})
+	queue := testQueue(t, queueMustName("tests"), definition, sender, bytes.NewReader(make([]byte, 32)))
+	first, err := Enqueue(context.Background(), queue, definition, "first", Unique("sweeper"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Enqueue(context.Background(), queue, definition, "second", Unique("sweeper"))
+	if err != nil || second != first {
+		t.Fatalf("duplicate unique = (%v, %v), want %v", second, err, first)
+	}
+	if placements[0].Mode() != PlacementUnique || placements[1].Mode() != PlacementUnique || placements[0].IntentDigest() != placements[1].IntentDigest() || string(placements[0].Payload().Bytes()) != "first" || string(placements[1].Payload().Bytes()) != "second" {
+		t.Fatalf("unique placements = %+v", placements)
+	}
+	if _, err := Enqueue(context.Background(), queue, definition, "value", Unique("")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("empty unique key = %v", err)
+	}
+	if _, err := Enqueue(context.Background(), queue, definition, "value", Unique("one"), Collapse("two")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mixed keyed modes = %v", err)
+	}
+	if _, _, err := EnqueueOnce(context.Background(), queue, definition, Intent("once"), "value", Unique("unique")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("once unique = %v", err)
 	}
 }
 
@@ -953,7 +1008,7 @@ func queueTestBackendID(value byte) BackendID {
 }
 
 func queueTestBackendDescription(value byte) BackendDescription {
-	description, err := NewBackendDescription(queueTestBackendID(value), queueTestDurability(), Capabilities{Priority: true, Debounce: true, Scheduled: true})
+	description, err := NewBackendDescription(queueTestBackendID(value), queueTestDurability(), Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
 	if err != nil {
 		panic(err)
 	}

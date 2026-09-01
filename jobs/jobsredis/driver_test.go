@@ -166,6 +166,183 @@ func TestEnqueueOnceSurvivesDriverReopen(t *testing.T) {
 	}
 }
 
+func TestUniqueSurvivesClaimRecoveryRetryAndDeferralUntilTerminal(t *testing.T) {
+	server := miniredis.RunT(t)
+	now := time.Now().Round(0).UTC()
+	server.SetTime(now)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	definition, catalog, namespace := testDefinition(t)
+	driver, err := Open(context.Background(), client, namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := jobs.Enqueue(context.Background(), queue, definition, "first", jobs.Unique("sweeper"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := jobs.Enqueue(context.Background(), queue, definition, "queued replacement", jobs.Unique("sweeper"))
+	if err != nil || duplicate != first {
+		t.Fatalf("queued duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	target := redisTestTarget(t, definition)
+	claim := redisTestClaim(t, driver, namespace, target, 1)
+	if claim.Len() != 1 || claim.Items()[0].Record().Genesis.Mode != jobs.PlacementUnique || string(claim.Items()[0].Record().Payload.Data) != "first" {
+		t.Fatalf("unique claim = %+v", claim.Items())
+	}
+	if duplicate, err = jobs.Enqueue(context.Background(), queue, definition, "running replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("running duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	now = now.Add(jobs.MinimumLeaseTTL)
+	server.SetTime(now)
+	recoverRequest, err := jobs.NewRecoverRequest(jobs.RecoverRequestSpec{
+		Namespace: namespace, Incarnation: redisTestIncarnation(t, 2), MaxItems: 1,
+		MaxBytes: jobs.MaxDeliveryRecordBytes, LeaseTTL: jobs.MinimumLeaseTTL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := driver.Recover(context.Background(), recoverRequest)
+	if err != nil || len(recovered.Items()) != 1 || recovered.Items()[0].Record().Genesis.ID != first {
+		t.Fatalf("unique recovery = (%v, %v)", recovered, err)
+	}
+	lease := recovered.Items()[0].Lease()
+	applyRedisCommand(t, driver, mustRedisBegin(t, lease, target))
+	now = now.Add(time.Millisecond)
+	server.SetTime(now)
+	retry, err := jobs.RetryDisposition(jobs.ReasonHandlerFailure, jobs.PublicFailure{}, jobs.MinRetryDelay, jobs.RetryCostCharged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishRetry, err := jobs.FinishAttemptCommand(lease, retry, jobs.MinRetryDelay, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyRedisCommand(t, driver, finishRetry)
+	if duplicate, err = jobs.Enqueue(context.Background(), queue, definition, "retry replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("retry duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	now = now.Add(jobs.MinRetryDelay)
+	server.SetTime(now)
+	lease = redisTestClaim(t, driver, namespace, target, 3).Items()[0].Lease()
+	applyRedisCommand(t, driver, mustRedisBegin(t, lease, target))
+	now = now.Add(time.Millisecond)
+	server.SetTime(now)
+	deferred, err := jobs.DeferredDisposition(jobs.PublicFailure{}, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishDeferred, err := jobs.FinishAttemptCommand(lease, deferred, jobs.MinRetryDelay, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyRedisCommand(t, driver, finishDeferred)
+	if duplicate, err = jobs.Enqueue(context.Background(), queue, definition, "deferred replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("deferred duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	now = now.Add(jobs.MinRetryDelay)
+	server.SetTime(now)
+	lease = redisTestClaim(t, driver, namespace, target, 4).Items()[0].Lease()
+	applyRedisCommand(t, driver, mustRedisBegin(t, lease, target))
+	now = now.Add(time.Millisecond)
+	server.SetTime(now)
+	finishSuccess, err := jobs.FinishAttemptCommand(lease, jobs.SuccessDisposition(), 0, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := applyRedisCommand(t, driver, finishSuccess)
+	if result.Application().Invocation().State() != jobs.InvocationSucceeded {
+		t.Fatalf("terminal state = %v", result.Application().Invocation().State())
+	}
+	next, err := jobs.Enqueue(context.Background(), queue, definition, "next", jobs.Unique("sweeper"))
+	if err != nil || next == first {
+		t.Fatalf("post-terminal unique = (%v, %v), old %v", next, err, first)
+	}
+}
+
+func redisTestTarget(t *testing.T, definition *jobs.Definition[string]) jobs.ClaimTarget {
+	t.Helper()
+	description := definition.Describe()
+	revision, err := jobs.NewPayloadRevision(description.Codec.ID, description.Codec.CurrentVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := jobs.ParseBindingName("redis.unique")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("redis-unique-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := jobs.NewClaimTarget(jobs.ClaimTargetSpec{Definition: definition.Name(), Binding: binding, Build: build, SupportedRevisions: []jobs.PayloadRevision{revision}, Available: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
+func redisTestClaim(t *testing.T, driver *Driver, namespace jobs.Namespace, target jobs.ClaimTarget, marker byte) jobs.ClaimBatch {
+	t.Helper()
+	request, err := jobs.NewClaimRequest(jobs.ClaimRequestSpec{
+		Namespace: namespace, Incarnation: redisTestIncarnation(t, marker), Targets: []jobs.ClaimTarget{target},
+		MaxItems: 1, MaxBytes: jobs.MaxDeliveryRecordBytes, LeaseTTL: jobs.MinimumLeaseTTL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := driver.Claim(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := jobs.ValidateClaimBatch(driver.Description(), request, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return validated
+}
+
+func redisTestIncarnation(t *testing.T, marker byte) jobs.WorkerIncarnation {
+	t.Helper()
+	var raw [jobs.WorkerIncarnationBytes]byte
+	raw[0] = marker
+	incarnation, err := jobs.WorkerIncarnationFromBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return incarnation
+}
+
+func mustRedisBegin(t *testing.T, lease jobs.LeaseRef, target jobs.ClaimTarget) jobs.DeliveryCommand {
+	t.Helper()
+	command, err := jobs.BeginAttemptCommand(lease, target.Binding(), target.Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func applyRedisCommand(t *testing.T, driver *Driver, command jobs.DeliveryCommand) jobs.ApplyResult {
+	t.Helper()
+	request, err := jobs.NewApplyRequest(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := driver.Apply(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := jobs.ValidateApplyResult(driver.Description(), request, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return validated
+}
+
 func testDefinition(t *testing.T) (*jobs.Definition[string], jobs.Catalog, jobs.Namespace) {
 	t.Helper()
 	name, err := jobs.ParseName("example.deliver")

@@ -16,7 +16,7 @@ import (
 )
 
 const DefaultSchema = "frostgrove_jobs"
-const SchemaVersion = 2
+const SchemaVersion = 4
 
 var ErrNotReady = errors.New("jobspg: driver is not ready")
 var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
@@ -46,6 +46,7 @@ type Driver struct {
 
 var _ jobs.Sender = (*Driver)(nil)
 var _ jobs.DeliveryDriver = (*Driver)(nil)
+var _ jobs.RetentionSweeper = (*Driver)(nil)
 
 func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, catalog jobs.Catalog) (*Driver, error) {
 	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog})
@@ -84,7 +85,7 @@ func New(spec Spec) (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	description, err := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Scheduled: true})
+	description, err := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
 	if err != nil {
 		return nil, err
 	}

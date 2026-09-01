@@ -44,7 +44,9 @@ func TestPostgresAdminGetListRedriveConflictAndPurge(t *testing.T) {
 	})
 	regular := postgresTestDefinition(t, "jobspg.admin.regular")
 	collapse := postgresTestDefinition(t, "jobspg.admin.collapse")
-	catalog := jobs.MustCatalog(regular, collapse)
+	claimLock := postgresTestDefinition(t, "jobspg.admin.claim-lock")
+	unique := postgresTestDefinition(t, "jobspg.admin.unique")
+	catalog := jobs.MustCatalog(regular, collapse, claimLock, unique)
 	driver, err := Open(ctx, db, namespace, catalog)
 	if err != nil {
 		t.Fatal(err)
@@ -107,11 +109,60 @@ func TestPostgresAdminGetListRedriveConflictAndPurge(t *testing.T) {
 	if err != nil || collapsedID != restorableID {
 		t.Fatalf("restored collapse reservation = (%v, %v), want %v", collapsedID, err, restorableID)
 	}
+	rolling, err := jobs.NewIntentDigestPlan(jobs.DigestRevision2, jobs.DigestRevision1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolling, err = jobs.WithLegacyIntentCompatibility(rolling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollingQueue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: driver, Digests: rolling})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimLockID, err := jobs.Enqueue(ctx, rollingQueue, claimLock, "claim lock", jobs.Collapse("document:claim-lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminAssertClaimPlacementLockOrder(t, ctx, db, repo, driver, rollingQueue, namespace, claimLock, claimLockID)
+	uniqueID, err := jobs.Enqueue(ctx, queue, unique, "first", jobs.Unique("sweeper:42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	queuedUnique, err := jobs.Enqueue(ctx, queue, unique, "queued replacement", jobs.Unique("sweeper:42"))
+	if err != nil || queuedUnique != uniqueID {
+		t.Fatalf("queued unique duplicate = (%v, %v), want %v", queuedUnique, err, uniqueID)
+	}
+	uniqueLease := adminClaimInvocation(t, ctx, driver, namespace, unique, uniqueID, 5)
+	runningUnique, err := jobs.Enqueue(ctx, queue, unique, "running replacement", jobs.Unique("sweeper:42"))
+	if err != nil || runningUnique != uniqueID {
+		t.Fatalf("running unique duplicate = (%v, %v), want %v", runningUnique, err, uniqueID)
+	}
+	uniqueView, err := driver.Get(ctx, uniqueID)
+	if err != nil || string(uniqueView.Payload().Bytes()) != "first" {
+		t.Fatalf("unique payload = (%q, %v)", uniqueView.Payload().Bytes(), err)
+	}
+	adminFinishLease(t, ctx, driver, uniqueLease)
+	adminAssertRedrivePlacementLockOrder(t, ctx, db, repo, driver, queue, namespace, unique, uniqueID)
+	adminFinishInvocation(t, ctx, driver, namespace, unique, uniqueID, 6)
+	nextUnique, err := jobs.Enqueue(ctx, queue, unique, "next", jobs.Unique("sweeper:42"))
+	if err != nil || nextUnique == uniqueID {
+		t.Fatalf("post-terminal unique = (%v, %v), old %v", nextUnique, err, uniqueID)
+	}
+	if _, err := driver.Redrive(ctx, uniqueID); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("Redrive with occupied unique intent = %v", err)
+	}
+	onceID, _, err := jobs.EnqueueOnce(ctx, queue, regular, jobs.Intent("purge-lock"), "once")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminFinishInvocation(t, ctx, driver, namespace, regular, onceID, 7)
 	purged, err := driver.PurgeTerminal(ctx, time.Now().Add(time.Hour), 10)
-	if err != nil || purged != 2 {
+	if err != nil || purged != 4 {
 		t.Fatalf("PurgeTerminal = (%d, %v)", purged, err)
 	}
-	for _, id := range []jobs.InvocationID{regularID, collapseID} {
+	for _, id := range []jobs.InvocationID{regularID, collapseID, uniqueID, onceID} {
 		if _, err := driver.Get(ctx, id); !errors.Is(err, jobs.ErrInvocationNotFound) {
 			t.Fatalf("Get purged %v = %v", id, err)
 		}
@@ -119,6 +170,150 @@ func TestPostgresAdminGetListRedriveConflictAndPurge(t *testing.T) {
 	if _, err := driver.Get(ctx, competingID); err != nil {
 		t.Fatalf("PurgeTerminal removed queued invocation: %v", err)
 	}
+}
+
+func adminAssertClaimPlacementLockOrder(t *testing.T, ctx context.Context, db *sql.DB, repo repository, driver *Driver, queue *jobs.Queue, namespace jobs.Namespace, definition *jobs.Definition[string], id jobs.InvocationID) {
+	t.Helper()
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+	intents, err := repo.intentKeysForDeliveries(ctx, blocker, namespace, []jobs.InvocationID{id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(intents) != 2 {
+		t.Fatalf("rolling collapse intents = %d", len(intents))
+	}
+	if err := repo.lockIntentRowsForDeliveries(ctx, blocker, namespace, []jobs.InvocationID{id}); err != nil {
+		t.Fatal(err)
+	}
+	target := postgresTestClaimTarget(t, definition, "jobspg.admin.claim-lock")
+	request, err := jobs.NewClaimRequest(jobs.ClaimRequestSpec{Namespace: namespace, Incarnation: postgresTestIncarnation(t, 8), Targets: []jobs.ClaimTarget{target}, MaxItems: 1, MaxBytes: jobs.MaxDeliveryRecordBytes, LeaseTTL: jobs.DefaultLeaseTTL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type claimResult struct {
+		batch jobs.ClaimBatch
+		err   error
+	}
+	type placementResult struct {
+		id  jobs.InvocationID
+		err error
+	}
+	claimDone := make(chan claimResult, 1)
+	go func() {
+		batch, claimErr := driver.Claim(ctx, request)
+		claimDone <- claimResult{batch: batch, err: claimErr}
+	}()
+	for _, intent := range intents {
+		adminWaitForIntentLock(t, ctx, db, repo, namespace, intent)
+	}
+	placementDone := make(chan placementResult, 1)
+	go func() {
+		placed, placementErr := jobs.Enqueue(ctx, queue, definition, "claim replacement", jobs.Collapse("document:claim-lock"))
+		placementDone <- placementResult{id: placed, err: placementErr}
+	}()
+	select {
+	case placed := <-placementDone:
+		t.Fatalf("collapse placement bypassed claim intent locks: (%v, %v)", placed.id, placed.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	claimed := <-claimDone
+	if claimed.err != nil || claimed.batch.Len() != 1 || claimed.batch.Items()[0].Record().Genesis.ID != id {
+		t.Fatalf("claim = (%d, %v)", claimed.batch.Len(), claimed.err)
+	}
+	placed := <-placementDone
+	if placed.err != nil || placed.id == id {
+		t.Fatalf("collapse replacement = (%v, %v), old %v", placed.id, placed.err, id)
+	}
+}
+
+func adminAssertRedrivePlacementLockOrder(t *testing.T, ctx context.Context, db *sql.DB, repo repository, driver *Driver, queue *jobs.Queue, namespace jobs.Namespace, definition *jobs.Definition[string], id jobs.InvocationID) {
+	t.Helper()
+	terminal, err := driver.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+	if _, err := repo.lockDeliveryRecord(ctx, blocker, namespace, id); err != nil {
+		t.Fatal(err)
+	}
+	type redriveResult struct {
+		view jobs.DeliveryView
+		err  error
+	}
+	type placementResult struct {
+		id  jobs.InvocationID
+		err error
+	}
+	redriveDone := make(chan redriveResult, 1)
+	go func() {
+		view, redriveErr := driver.Redrive(ctx, id)
+		redriveDone <- redriveResult{view: view, err: redriveErr}
+	}()
+	adminWaitForIntentLock(t, ctx, db, repo, namespace, terminal.Invocation().Intent())
+	placementDone := make(chan placementResult, 1)
+	go func() {
+		placed, placementErr := jobs.Enqueue(ctx, queue, definition, "redrive replacement", jobs.Unique("sweeper:42"))
+		placementDone <- placementResult{id: placed, err: placementErr}
+	}()
+	var early *placementResult
+	select {
+	case result := <-placementDone:
+		early = &result
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	redriven := <-redriveDone
+	placed := placementResult{}
+	if early != nil {
+		placed = *early
+	} else {
+		placed = <-placementDone
+	}
+	if early != nil {
+		t.Fatalf("unique placement bypassed a redrive waiting on its delivery lock: (%v, %v)", placed.id, placed.err)
+	}
+	if redriven.err != nil || redriven.view.Invocation().State() != jobs.InvocationQueued {
+		t.Fatalf("Redrive released unique intent = (%v, %v)", redriven.view.Invocation().State(), redriven.err)
+	}
+	if placed.err != nil || placed.id != id {
+		t.Fatalf("restored unique reservation = (%v, %v), want %v", placed.id, placed.err, id)
+	}
+}
+
+func adminWaitForIntentLock(t *testing.T, ctx context.Context, db *sql.DB, repo repository, namespace jobs.Namespace, key jobs.IntentKey) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		probe, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		err = repo.lockIntentKeys(probeCtx, probe, namespace, []jobs.IntentKey{key})
+		cancel()
+		_ = probe.Rollback()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("operation did not acquire the intent lock")
 }
 
 func adminFinishInvocation(t *testing.T, ctx context.Context, driver *Driver, namespace jobs.Namespace, definition *jobs.Definition[string], id jobs.InvocationID, marker byte) {

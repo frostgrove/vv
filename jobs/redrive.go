@@ -27,6 +27,7 @@ type ListSpec struct {
 type Admin interface {
 	Get(context.Context, InvocationID) (DeliveryView, error)
 	List(context.Context, ListSpec) ([]DeliveryView, error)
+	Count(context.Context, ListSpec) (int64, error)
 	Redrive(context.Context, InvocationID) (DeliveryView, error)
 	PurgeTerminal(context.Context, time.Time, int) (int, error)
 }

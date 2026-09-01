@@ -74,6 +74,9 @@ func (d *Driver) placeInTx(ctx context.Context, tx *sql.Tx, placement jobs.Place
 		return jobs.PlacementResult{}, err
 	}
 	intents := placement.IntentDigests().ReadCandidates()
+	if err := d.repo.lockIntentKeys(ctx, tx, d.namespace, intents); err != nil {
+		return jobs.PlacementResult{}, err
+	}
 	existing, found, err := d.repo.findIntent(ctx, tx, d.namespace, intents)
 	if err != nil {
 		return jobs.PlacementResult{}, err
@@ -131,6 +134,8 @@ func (d *Driver) placeExisting(ctx context.Context, tx *sql.Tx, placement jobs.P
 			}
 		}
 		return jobs.NewPlacementResult(existing.id, jobs.PlacementCollapsed)
+	case jobs.PlacementUnique:
+		return jobs.NewPlacementResult(existing.id, jobs.PlacementExisting)
 	default:
 		return jobs.PlacementResult{}, jobs.ErrInvalid
 	}
@@ -271,48 +276,80 @@ func (d *Driver) Claim(ctx context.Context, request jobs.ClaimRequest) (jobs.Cla
 	if err != nil {
 		return jobs.ClaimBatch{}, err
 	}
-	items := make([]jobs.ClaimedDelivery, 0, request.MaxItems())
-	remainingItems := request.MaxItems()
-	remainingBytes := request.MaxBytes()
+	type plannedClaim struct {
+		target    jobs.ClaimTarget
+		candidate claimCandidate
+	}
+	planned := make([]plannedClaim, 0, request.MaxItems())
+	collapseIDs := make([]jobs.InvocationID, 0, request.MaxItems())
+	remainingPlanned := request.MaxItems()
 	for _, target := range request.Targets() {
-		if remainingItems == 0 {
+		if remainingPlanned == 0 {
 			break
 		}
-		limit := min(target.Available(), remainingItems)
-		candidates, err := d.repo.claimCandidates(ctx, tx, d.namespace, target, limit, remainingBytes, now)
+		limit := min(target.Available(), remainingPlanned)
+		candidates, err := d.repo.claimCandidates(ctx, tx, d.namespace, target, limit, request.MaxBytes(), now)
 		if err != nil {
 			return jobs.ClaimBatch{}, err
 		}
 		for _, candidate := range candidates {
-			if candidate.recordSize > remainingBytes {
-				break
-			}
 			record, err := decodeRecord(candidate.record)
 			if err != nil {
 				return jobs.ClaimBatch{}, err
 			}
-			token, err := d.token()
-			if err != nil {
-				return jobs.ClaimBatch{}, err
+			planned = append(planned, plannedClaim{target: target, candidate: candidate})
+			if record.Genesis.Mode == jobs.PlacementCollapse || record.Genesis.Mode == jobs.PlacementDebounce {
+				collapseIDs = append(collapseIDs, candidate.id)
 			}
-			if err := d.repo.claim(ctx, tx, d.namespace, candidate.id, request.Incarnation(), token, now.Add(request.LeaseTTL()), now); err != nil {
-				return jobs.ClaimBatch{}, err
-			}
+		}
+		remainingPlanned -= len(candidates)
+	}
+	intents, err := d.repo.intentKeysForDeliveries(ctx, tx, d.namespace, collapseIDs)
+	if err != nil {
+		return jobs.ClaimBatch{}, err
+	}
+	if err := d.repo.lockIntentKeys(ctx, tx, d.namespace, intents); err != nil {
+		return jobs.ClaimBatch{}, err
+	}
+	if err := d.repo.lockIntentRowsForDeliveries(ctx, tx, d.namespace, collapseIDs); err != nil {
+		return jobs.ClaimBatch{}, err
+	}
+	items := make([]jobs.ClaimedDelivery, 0, request.MaxItems())
+	remainingBytes := request.MaxBytes()
+	for _, item := range planned {
+		candidate, found, err := d.repo.lockClaimCandidate(ctx, tx, d.namespace, item.candidate.id, item.target, remainingBytes, now)
+		if err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		if !found {
+			continue
+		}
+		record, err := decodeRecord(candidate.record)
+		if err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		token, err := d.token()
+		if err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		if err := d.repo.claim(ctx, tx, d.namespace, candidate.id, request.Incarnation(), token, now.Add(request.LeaseTTL()), now); err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		if record.Genesis.Mode == jobs.PlacementCollapse || record.Genesis.Mode == jobs.PlacementDebounce {
 			if err := d.repo.releaseCollapseIntent(ctx, tx, d.namespace, candidate.id); err != nil {
 				return jobs.ClaimBatch{}, err
 			}
-			lease, err := jobs.NewLeaseRef(d.description.ID(), candidate.id, token)
-			if err != nil {
-				return jobs.ClaimBatch{}, err
-			}
-			claimed, err := jobs.NewClaimedDelivery(target, lease, record)
-			if err != nil {
-				return jobs.ClaimBatch{}, err
-			}
-			items = append(items, claimed)
-			remainingItems--
-			remainingBytes -= candidate.recordSize
 		}
+		lease, err := jobs.NewLeaseRef(d.description.ID(), candidate.id, token)
+		if err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		claimed, err := jobs.NewClaimedDelivery(item.target, lease, record)
+		if err != nil {
+			return jobs.ClaimBatch{}, err
+		}
+		items = append(items, claimed)
+		remainingBytes -= candidate.recordSize
 	}
 	if err := tx.Commit(); err != nil {
 		return jobs.ClaimBatch{}, err
@@ -387,6 +424,9 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 	if err != nil {
 		return jobs.ApplyResult{}, err
 	}
+	if err := d.repo.lockDeliveryIntents(ctx, tx, d.namespace, lease.InvocationID()); err != nil {
+		return jobs.ApplyResult{}, err
+	}
 	stored, held, err := d.repo.heldDelivery(ctx, tx, d.namespace, lease, now)
 	if err != nil {
 		return jobs.ApplyResult{}, err
@@ -406,7 +446,15 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 		if err != nil {
 			return jobs.ApplyResult{}, err
 		}
-		if err := d.repo.rejectCorrupt(ctx, tx, d.namespace, lease, now); err != nil {
+		retention, intentRetention := d.retentionDurations(stored.definition, nil)
+		recordExpiresAt, intentExpiresAt, err := terminalRetentionDeadlines(now, retention, intentRetention)
+		if err != nil {
+			return jobs.ApplyResult{}, err
+		}
+		if err := d.repo.rejectCorrupt(ctx, tx, d.namespace, lease, recordExpiresAt, intentExpiresAt, now); err != nil {
+			return jobs.ApplyResult{}, err
+		}
+		if err := d.repo.releaseCollapseIntent(ctx, tx, d.namespace, lease.InvocationID()); err != nil {
 			return jobs.ApplyResult{}, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -441,6 +489,8 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 	state := application.Invocation().State()
 	clearLease := state != jobs.InvocationRunning && state != jobs.InvocationCancelRequested
 	var availableAt any
+	var recordExpiresAt any
+	var intentExpiresAt any
 	var excludedBinding, excludedBuild string
 	if state == jobs.InvocationQueued {
 		availableAt = queuedAvailability(application.Invocation())
@@ -450,11 +500,24 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 			excludedBuild = release.ExcludedBuild().Value()
 		}
 	}
-	if err := d.repo.saveApplication(ctx, tx, d.namespace, lease, state, availableAt, encoded, size, clearLease, excludedBinding, excludedBuild, now); err != nil {
+	if state.Terminal() {
+		recordDeadline, intentDeadline, err := terminalRetentionDeadlines(now, application.Invocation().Policy().Retention(), application.Invocation().Policy().IntentRetention())
+		if err != nil {
+			return jobs.ApplyResult{}, err
+		}
+		recordExpiresAt = recordDeadline
+		intentExpiresAt = intentDeadline
+	}
+	if err := d.repo.saveApplication(ctx, tx, d.namespace, lease, state, availableAt, encoded, size, clearLease, excludedBinding, excludedBuild, recordExpiresAt, intentExpiresAt, now); err != nil {
 		if errors.Is(err, jobs.ErrLeaseLost) {
 			return leaseLostApply(now)
 		}
 		return jobs.ApplyResult{}, err
+	}
+	if state.Terminal() {
+		if err := d.repo.releaseCollapseIntent(ctx, tx, d.namespace, lease.InvocationID()); err != nil {
+			return jobs.ApplyResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return jobs.ApplyResult{}, err

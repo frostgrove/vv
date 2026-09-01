@@ -163,14 +163,14 @@ func TestTransactionContextIsBoundRedactedAndDurabilityExact(t *testing.T) {
 
 func TestBackendDescriptionIsValidatedImmutableAndMachineReadable(t *testing.T) {
 	id := queueTestBackendID(4)
-	capabilities := Capabilities{Priority: true, Debounce: true, Scheduled: true, AttemptTrace: true}
+	capabilities := Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true, AttemptTrace: true}
 	description, err := NewBackendDescription(id, queueTestDurability(), capabilities)
 	if err != nil {
 		t.Fatal(err)
 	}
 	copy := description.Capabilities()
 	copy.Priority = false
-	if description.ID() != id || description.Durability() != queueTestDurability() || description.Capabilities() != capabilities || !description.Capabilities().Priority || description.IsZero() || !description.valid() {
+	if description.ID() != id || description.Durability() != queueTestDurability() || description.Capabilities() != capabilities || !description.Capabilities().Priority || !description.Capabilities().Unique || description.IsZero() || !description.valid() {
 		t.Fatalf("description = %+v", description)
 	}
 	if fmt.Sprint(description) != "[job backend description]" || fmt.Sprint(capabilities) != "[job backend capabilities]" {

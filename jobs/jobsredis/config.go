@@ -85,6 +85,7 @@ func New(spec Spec) (*Driver, error) {
 	description, err := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{
 		Priority:     true,
 		Debounce:     true,
+		Unique:       true,
 		Scheduled:    true,
 		AttemptTrace: true,
 	})

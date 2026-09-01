@@ -2,8 +2,11 @@ package jobspg
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +29,39 @@ type deliveryInsert struct {
 	createdAt       time.Time
 }
 
+func (r repository) lockIntentKeys(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, keys []jobs.IntentKey) error {
+	locks := make([]int64, len(keys))
+	for index, key := range keys {
+		locks[index] = intentAdvisoryLock(namespace, key)
+	}
+	sort.Slice(locks, func(left, right int) bool { return locks[left] < locks[right] })
+	for index, lock := range locks {
+		if index > 0 && lock == locks[index-1] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, lock); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func intentAdvisoryLock(namespace jobs.Namespace, key jobs.IntentKey) int64 {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("frostgrove.jobs.intent-lock.v1"))
+	namespaceDigest := namespace.Digest()
+	_, _ = hash.Write(namespaceDigest[:])
+	scope := key.Scope().Bytes()
+	_, _ = hash.Write(scope[:])
+	var kind [3]byte
+	binary.BigEndian.PutUint16(kind[:2], uint16(key.Revision()))
+	kind[2] = byte(key.Purpose())
+	_, _ = hash.Write(kind[:])
+	digest := key.Digest().Bytes()
+	_, _ = hash.Write(digest[:])
+	return int64(binary.BigEndian.Uint64(hash.Sum(nil)))
+}
+
 func (r repository) findIntent(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, keys []jobs.IntentKey) (storedDelivery, bool, error) {
 	if len(keys) == 0 {
 		return storedDelivery{}, false, nil
@@ -39,7 +75,7 @@ func (r repository) findIntent(ctx context.Context, tx *sql.Tx, namespace jobs.N
 		conditions[index] = fmt.Sprintf("(scope = $%d AND revision = $%d AND purpose = $%d AND digest = $%d)", base, base+1, base+2, base+3)
 		args = append(args, scope[:], int(key.Revision()), int(key.Purpose()), digest[:])
 	}
-	query := `SELECT invocation_id FROM ` + r.intents + ` WHERE namespace = $1 AND (` + strings.Join(conditions, ` OR `) + `) FOR UPDATE`
+	query := `SELECT invocation_id FROM ` + r.intents + ` WHERE namespace = $1 AND (` + strings.Join(conditions, ` OR `) + `) ORDER BY scope, revision, purpose, digest FOR UPDATE`
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return storedDelivery{}, false, err
@@ -76,20 +112,23 @@ func (r repository) findIntent(ctx context.Context, tx *sql.Tx, namespace jobs.N
 
 func (r repository) loadDelivery(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) (storedDelivery, error) {
 	var rawID []byte
+	var rawDefinition string
 	var state int
+	var recordSize sql.NullInt64
 	var available sql.NullTime
 	var payloadIdentity sql.NullString
 	var payloadVersion sql.NullInt64
 	var payloadDigest []byte
 	var leaseToken []byte
 	var stored storedDelivery
-	err := tx.QueryRowContext(ctx, `SELECT id, record, record_size, state, created_at, available_at, payload_identity, payload_version, payload_digest, lease_token
+	err := tx.QueryRowContext(ctx, `SELECT id, definition, record, record_size, state, created_at, available_at, payload_identity, payload_version, payload_digest, lease_token
 FROM `+r.deliveries+`
 WHERE namespace = $1 AND id = $2
 FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
 		&rawID,
+		&rawDefinition,
 		&stored.record,
-		&stored.recordSize,
+		&recordSize,
 		&state,
 		&stored.createdAt,
 		&available,
@@ -104,6 +143,13 @@ FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
 	stored.id, err = scanInvocation(rawID)
 	if err != nil {
 		return storedDelivery{}, err
+	}
+	stored.definition, err = jobs.ParseName(rawDefinition)
+	if err != nil {
+		return storedDelivery{}, err
+	}
+	if recordSize.Valid {
+		stored.recordSize = int(recordSize.Int64)
 	}
 	stored.state = jobs.InvocationState(state)
 	if available.Valid {
@@ -272,8 +318,7 @@ WHERE namespace = $1
   AND (excluded_binding IS NULL OR excluded_binding <> $6 OR excluded_build <> $7)
   AND (` + strings.Join(conditions, ` OR `) + `)
 ORDER BY priority, available_at, id
-LIMIT $` + fmt.Sprint(limitParameter) + `
-FOR UPDATE SKIP LOCKED`
+LIMIT $` + fmt.Sprint(limitParameter)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -293,6 +338,47 @@ FOR UPDATE SKIP LOCKED`
 		result = append(result, candidate)
 	}
 	return result, rows.Err()
+}
+
+func (r repository) lockClaimCandidate(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, target jobs.ClaimTarget, remainingBytes int, now time.Time) (claimCandidate, bool, error) {
+	args := []any{
+		namespaceArgument(namespace),
+		invocationArgument(id),
+		int(jobs.InvocationQueued),
+		target.Definition().Value(),
+		now,
+		remainingBytes,
+		target.Binding().Value(),
+		target.Build().Value(),
+	}
+	revisions := target.SupportedRevisions()
+	conditions := make([]string, len(revisions))
+	for index, revision := range revisions {
+		base := len(args) + 1
+		conditions[index] = fmt.Sprintf("(codec = $%d AND codec_version = $%d)", base, base+1)
+		args = append(args, revision.Codec().Value(), int64(revision.Version()))
+	}
+	query := `SELECT record, record_size
+FROM ` + r.deliveries + `
+WHERE namespace = $1
+  AND id = $2
+  AND state = $3
+  AND definition = $4
+  AND available_at <= $5
+  AND record_size <= $6
+  AND lease_token IS NULL
+  AND (excluded_binding IS NULL OR excluded_binding <> $7 OR excluded_build <> $8)
+  AND (` + strings.Join(conditions, ` OR `) + `)
+FOR UPDATE SKIP LOCKED`
+	candidate := claimCandidate{id: id}
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&candidate.record, &candidate.recordSize)
+	if err == sql.ErrNoRows {
+		return claimCandidate{}, false, nil
+	}
+	if err != nil {
+		return claimCandidate{}, false, err
+	}
+	return candidate, true, nil
 }
 
 func (r repository) claim(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, incarnation jobs.WorkerIncarnation, token []byte, expiresAt, now time.Time) error {
@@ -324,6 +410,22 @@ func (r repository) releaseCollapseIntent(ctx context.Context, tx *sql.Tx, names
 	_, err := tx.ExecContext(ctx, `DELETE FROM `+r.intents+` WHERE namespace = $1 AND invocation_id = $2 AND purpose = $3`,
 		namespaceArgument(namespace), invocationArgument(id), int(jobs.IntentCollapse))
 	return err
+}
+
+func (r repository) lockDeliveryIntents(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) error {
+	rows, err := tx.QueryContext(ctx, `SELECT purpose FROM `+r.intents+` WHERE namespace = $1 AND invocation_id = $2 ORDER BY scope, revision, purpose, digest FOR UPDATE`,
+		namespaceArgument(namespace), invocationArgument(id))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var purpose int
+		if err := rows.Scan(&purpose); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func (r repository) fenceLease(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, lease jobs.LeaseRef) (bool, error) {
@@ -399,7 +501,7 @@ func (r repository) heldDelivery(ctx context.Context, tx *sql.Tx, namespace jobs
 	return stored, true, nil
 }
 
-func (r repository) saveApplication(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, lease jobs.LeaseRef, state jobs.InvocationState, availableAt any, record []byte, recordSize int, clearLease bool, excludedBinding, excludedBuild string, now time.Time) error {
+func (r repository) saveApplication(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, lease jobs.LeaseRef, state jobs.InvocationState, availableAt any, record []byte, recordSize int, clearLease bool, excludedBinding, excludedBuild string, recordExpiresAt, intentExpiresAt any, now time.Time) error {
 	leaseOwner := `lease_owner`
 	leaseToken := `lease_token`
 	leaseExpiresAt := `lease_expires_at`
@@ -418,7 +520,9 @@ SET state = $4,
     lease_expires_at = ` + leaseExpiresAt + `,
     excluded_binding = $8,
     excluded_build = $9,
-    updated_at = $10
+    record_expires_at = $10,
+    intent_expires_at = $11,
+    updated_at = $12
 WHERE namespace = $1 AND id = $2 AND lease_token = $3`
 	result, err := tx.ExecContext(ctx, query,
 		namespaceArgument(namespace),
@@ -430,6 +534,8 @@ WHERE namespace = $1 AND id = $2 AND lease_token = $3`
 		recordSize,
 		nullableText(excludedBinding),
 		nullableText(excludedBuild),
+		recordExpiresAt,
+		intentExpiresAt,
 		now,
 	)
 	if err != nil {
@@ -445,7 +551,7 @@ WHERE namespace = $1 AND id = $2 AND lease_token = $3`
 	return nil
 }
 
-func (r repository) rejectCorrupt(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, lease jobs.LeaseRef, now time.Time) error {
+func (r repository) rejectCorrupt(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, lease jobs.LeaseRef, recordExpiresAt, intentExpiresAt, now time.Time) error {
 	result, err := tx.ExecContext(ctx, `UPDATE `+r.deliveries+`
 SET state = $4,
     available_at = NULL,
@@ -454,9 +560,11 @@ SET state = $4,
     lease_expires_at = NULL,
     excluded_binding = NULL,
     excluded_build = NULL,
-    updated_at = $5
+    record_expires_at = $5,
+    intent_expires_at = $6,
+    updated_at = $7
 WHERE namespace = $1 AND id = $2 AND lease_token = $3`,
-		namespaceArgument(namespace), invocationArgument(lease.InvocationID()), lease.DriverToken(), int(jobs.InvocationQuarantined), now)
+		namespaceArgument(namespace), invocationArgument(lease.InvocationID()), lease.DriverToken(), int(jobs.InvocationQuarantined), recordExpiresAt, intentExpiresAt, now)
 	if err != nil {
 		return err
 	}

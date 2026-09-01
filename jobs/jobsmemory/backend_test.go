@@ -150,6 +150,85 @@ func TestEnqueueOnceAndCapacity(t *testing.T) {
 	}
 }
 
+func TestUniqueSurvivesClaimRecoveryRetryAndDeferralUntilTerminal(t *testing.T) {
+	fixture := newFixture(t, 4)
+	ctx := context.Background()
+	first, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "first", jobs.Unique("sweeper"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "queued replacement", jobs.Unique("sweeper"))
+	if err != nil || duplicate != first {
+		t.Fatalf("queued duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	claim := fixture.claim(t, fixture.incarnation(6))
+	if claim.Len() != 1 || claim.Items()[0].Record().Genesis.Mode != jobs.PlacementUnique || string(claim.Items()[0].Record().Payload.Data) != "first" {
+		t.Fatalf("unique claim = %+v", claim.Items())
+	}
+	if duplicate, err = jobs.Enqueue(ctx, fixture.queue, fixture.definition, "running replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("running duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	fixture.clock.Advance(jobs.DefaultLeaseTTL)
+	recoverRequest, err := jobs.NewRecoverRequest(jobs.RecoverRequestSpec{
+		Namespace: fixture.namespace, Incarnation: fixture.incarnation(7), MaxItems: 1,
+		MaxBytes: jobs.MaxDeliveryRecordBytes, LeaseTTL: jobs.DefaultLeaseTTL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fixture.backend.Recover(ctx, recoverRequest)
+	if err != nil || len(recovered.Items()) != 1 || recovered.Items()[0].Record().Genesis.ID != first {
+		t.Fatalf("unique recovery = (%v, %v)", recovered, err)
+	}
+	lease := recovered.Items()[0].Lease()
+	applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+	fixture.clock.Advance(time.Millisecond)
+	retry, err := jobs.RetryDisposition(jobs.ReasonHandlerFailure, jobs.PublicFailure{}, jobs.MinRetryDelay, jobs.RetryCostCharged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishRetry, err := jobs.FinishAttemptCommand(lease, retry, jobs.MinRetryDelay, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMemoryCommand(t, fixture.backend, finishRetry)
+	if duplicate, err = jobs.Enqueue(ctx, fixture.queue, fixture.definition, "retry replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("retry duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	fixture.clock.Advance(jobs.MinRetryDelay)
+	lease = fixture.claim(t, fixture.incarnation(8)).Items()[0].Lease()
+	applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+	fixture.clock.Advance(time.Millisecond)
+	deferred, err := jobs.DeferredDisposition(jobs.PublicFailure{}, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishDeferred, err := jobs.FinishAttemptCommand(lease, deferred, jobs.MinRetryDelay, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMemoryCommand(t, fixture.backend, finishDeferred)
+	if duplicate, err = jobs.Enqueue(ctx, fixture.queue, fixture.definition, "deferred replacement", jobs.Unique("sweeper")); err != nil || duplicate != first {
+		t.Fatalf("deferred duplicate = (%v, %v), want %v", duplicate, err, first)
+	}
+	fixture.clock.Advance(jobs.MinRetryDelay)
+	lease = fixture.claim(t, fixture.incarnation(9)).Items()[0].Lease()
+	applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+	fixture.clock.Advance(time.Millisecond)
+	finishSuccess, err := jobs.FinishAttemptCommand(lease, jobs.SuccessDisposition(), 0, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := applyMemoryCommand(t, fixture.backend, finishSuccess)
+	if result.Application().Invocation().State() != jobs.InvocationSucceeded {
+		t.Fatalf("terminal state = %v", result.Application().Invocation().State())
+	}
+	next, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "next", jobs.Unique("sweeper"))
+	if err != nil || next == first {
+		t.Fatalf("post-terminal unique = (%v, %v), old %v", next, err, first)
+	}
+}
+
 func TestNamespaceIsolationAndExpiredRecovery(t *testing.T) {
 	fixture := newFixture(t, 4)
 	if _, err := jobs.Enqueue(context.Background(), fixture.queue, fixture.definition, "payload"); err != nil {
@@ -270,4 +349,30 @@ func (fixture fixture) incarnation(value byte) jobs.WorkerIncarnation {
 		panic(err)
 	}
 	return incarnation
+}
+
+func mustBeginMemoryCommand(t *testing.T, lease jobs.LeaseRef, binding jobs.BindingName, build jobs.BuildID) jobs.DeliveryCommand {
+	t.Helper()
+	command, err := jobs.BeginAttemptCommand(lease, binding, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func applyMemoryCommand(t *testing.T, backend *Backend, command jobs.DeliveryCommand) jobs.ApplyResult {
+	t.Helper()
+	request, err := jobs.NewApplyRequest(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := backend.Apply(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := jobs.ValidateApplyResult(backend.Description(), request, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return validated
 }
