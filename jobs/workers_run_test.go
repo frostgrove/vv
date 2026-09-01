@@ -22,6 +22,7 @@ type workersRunDriver struct {
 	beginOnce    sync.Once
 	kinds        []DeliveryCommandKind
 	reasons      []Reason
+	renewSizes   []int
 	beginReached chan struct{}
 	beginRelease chan struct{}
 }
@@ -47,6 +48,7 @@ func (driver *workersRunDriver) Claim(_ context.Context, request ClaimRequest) (
 func (driver *workersRunDriver) Renew(_ context.Context, request RenewRequest) (RenewResult, error) {
 	driver.mu.Lock()
 	defer driver.mu.Unlock()
+	driver.renewSizes = append(driver.renewSizes, len(request.leases))
 	items := make([]LeaseRenewal, len(request.leases))
 	for index, lease := range request.leases {
 		renewal, err := NewLeaseRenewal(lease, lease, DeliveryMutationApplied, DeliveryControlNone)
@@ -56,6 +58,90 @@ func (driver *workersRunDriver) Renew(_ context.Context, request RenewRequest) (
 		items[index] = renewal
 	}
 	return NewRenewResult(driver.observedAt, items)
+}
+
+func TestWorkerPoolBatchesEveryActiveLeaseIntoOneRenewCall(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(2))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+	binding := pool.bindings[fixture.definition.Name()]
+	secondLease, err := NewLeaseRef(fixture.lease.Backend(), queueTestInvocationID(t, 2), []byte("second-active-lease"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newActiveWorkerDelivery(pool, binding, fixture.lease, 1)
+	second := newActiveWorkerDelivery(pool, binding, secondLease, 1)
+	pool.active[first] = struct{}{}
+	pool.active[second] = struct{}{}
+	if !pool.renewActive(t.Context()) {
+		t.Fatal("batched renew stopped the worker pool")
+	}
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if len(driver.renewSizes) != 1 || driver.renewSizes[0] != 2 {
+		t.Fatalf("renew batches = %v", driver.renewSizes)
+	}
+}
+
+func TestWorkerPoolShardsRenewalsAtTheDriverContractLimit(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(1))
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+	binding := pool.bindings[fixture.definition.Name()]
+	for index := 0; index < MaxClaimItems+1; index++ {
+		var raw [InvocationIDBytes]byte
+		raw[0] = byte(index + 1)
+		raw[1] = byte(index>>8) + 1
+		id, idErr := InvocationIDFromBytes(raw)
+		if idErr != nil {
+			t.Fatal(idErr)
+		}
+		lease, leaseErr := NewLeaseRef(fixture.lease.Backend(), id, []byte{byte(index), byte(index >> 8), 1})
+		if leaseErr != nil {
+			t.Fatal(leaseErr)
+		}
+		pool.active[newActiveWorkerDelivery(pool, binding, lease, 1)] = struct{}{}
+	}
+	if !pool.renewActive(t.Context()) {
+		t.Fatal("sharded renew stopped the worker pool")
+	}
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if len(driver.renewSizes) != 2 || driver.renewSizes[0] != MaxClaimItems || driver.renewSizes[1] != 1 {
+		t.Fatalf("renew shards = %v", driver.renewSizes)
+	}
 }
 
 func (driver *workersRunDriver) Apply(ctx context.Context, request ApplyRequest) (ApplyResult, error) {

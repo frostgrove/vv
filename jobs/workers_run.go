@@ -245,6 +245,16 @@ func newWorkerPool(workers *Workers, session *workerRunSession) *workerPool {
 
 func (workers *Workers) run(session *workerRunSession) error {
 	pool := newWorkerPool(workers, session)
+	heartbeatContext, stopHeartbeat := context.WithCancel(session.handlerContext)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		pool.heartbeat(heartbeatContext)
+	}()
+	defer func() {
+		stopHeartbeat()
+		<-heartbeatDone
+	}()
 	dispatchDone := make(chan struct{})
 	go func() {
 		defer close(dispatchDone)
@@ -837,36 +847,36 @@ func (pool *workerPool) fail(err error) {
 }
 
 type activeWorkerDelivery struct {
-	pool       *workerPool
-	binding    *workerRuntimeBinding
-	size       int
-	mu         sync.Mutex
-	lease      LeaseRef
-	invocation Invocation
-	closed     bool
-	done       chan struct{}
-	lost       chan struct{}
-	lostOnce   sync.Once
-	cancel     context.CancelCauseFunc
+	pool           *workerPool
+	binding        *workerRuntimeBinding
+	size           int
+	mu             sync.Mutex
+	lease          LeaseRef
+	invocation     Invocation
+	closed         bool
+	lost           chan struct{}
+	lostOnce       sync.Once
+	handlerContext context.Context
+	cancel         context.CancelCauseFunc
 }
 
 func newActiveWorkerDelivery(pool *workerPool, binding *workerRuntimeBinding, lease LeaseRef, size int) *activeWorkerDelivery {
+	handlerContext, cancel := context.WithCancelCause(pool.session.handlerContext)
 	return &activeWorkerDelivery{
-		pool:    pool,
-		binding: binding,
-		size:    size,
-		lease:   cloneLeaseRef(lease),
-		done:    make(chan struct{}),
-		lost:    make(chan struct{}),
+		pool:           pool,
+		binding:        binding,
+		size:           size,
+		lease:          cloneLeaseRef(lease),
+		lost:           make(chan struct{}),
+		handlerContext: handlerContext,
+		cancel:         cancel,
 	}
 }
 
 func (delivery *activeWorkerDelivery) runClaimed(claimed ClaimedDelivery) {
-	ctx, cancel := context.WithCancelCause(delivery.pool.session.handlerContext)
-	delivery.cancel = cancel
+	ctx := delivery.handlerContext
 	defer func() {
-		cancel(context.Canceled)
-		close(delivery.done)
+		delivery.cancel(context.Canceled)
 		delivery.pool.mu.Lock()
 		delivery.binding.active--
 		delivery.pool.bytes -= delivery.size
@@ -874,7 +884,6 @@ func (delivery *activeWorkerDelivery) runClaimed(claimed ClaimedDelivery) {
 		delivery.pool.mu.Unlock()
 		delivery.pool.wg.Done()
 	}()
-	go delivery.renew(ctx)
 	select {
 	case <-delivery.pool.session.drain:
 		delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
@@ -1060,48 +1069,89 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 	return result, call
 }
 
-func (delivery *activeWorkerDelivery) renew(ctx context.Context) {
-	ticker := time.NewTicker(delivery.pool.workers.config.heartbeat)
+func (pool *workerPool) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(pool.workers.config.heartbeat)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-delivery.done:
-			return
-		case <-delivery.lost:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			delivery.renewOnce(ctx)
+			if !pool.renewActive(ctx) {
+				return
+			}
 		}
 	}
 }
 
-func (delivery *activeWorkerDelivery) renewOnce(ctx context.Context) {
-	delivery.mu.Lock()
-	defer delivery.mu.Unlock()
-	if delivery.closed {
-		return
+func (pool *workerPool) renewActive(ctx context.Context) bool {
+	pool.mu.Lock()
+	active := make([]*activeWorkerDelivery, 0, len(pool.active))
+	for delivery := range pool.active {
+		active = append(active, delivery)
 	}
-	request, err := NewRenewRequest([]LeaseRef{delivery.lease}, delivery.pool.workers.config.leaseTTL)
-	if err != nil {
-		delivery.closeLost(err)
-		return
-	}
-	result, call := delivery.pool.workers.callRenew(ctx, request)
-	if call.err != nil || result.Len() != 1 || result.items[0].mutation != DeliveryMutationApplied {
-		delivery.closeLost(call.err)
-		if call.fatal() {
-			delivery.pool.fail(call.err)
+	pool.mu.Unlock()
+	for offset := 0; offset < len(active); offset += MaxClaimItems {
+		end := min(offset+MaxClaimItems, len(active))
+		if !pool.renewActiveBatch(ctx, active[offset:end]) {
+			return false
 		}
-		return
 	}
-	renewal := result.items[0]
-	delivery.lease = renewal.current
-	if renewal.control == DeliveryControlCancelRequested && delivery.cancel != nil {
-		delivery.cancel(ErrCancelled)
+	return true
+}
+
+func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWorkerDelivery) bool {
+	locked := make([]*activeWorkerDelivery, 0, len(batch))
+	leases := make([]LeaseRef, 0, len(batch))
+	for _, delivery := range batch {
+		delivery.mu.Lock()
+		if delivery.closed {
+			delivery.mu.Unlock()
+			continue
+		}
+		locked = append(locked, delivery)
+		leases = append(leases, delivery.lease)
 	}
-	if renewal.control == DeliveryControlTerminated {
-		delivery.closeLost(ErrTerminated)
+	if len(leases) == 0 {
+		return true
 	}
+	request, err := NewRenewRequest(leases, pool.workers.config.leaseTTL)
+	if err != nil {
+		for _, delivery := range locked {
+			delivery.closeLost(err)
+			delivery.mu.Unlock()
+		}
+		pool.fail(err)
+		return false
+	}
+	result, call := pool.workers.callRenew(ctx, request)
+	if call.err != nil || result.Len() != len(locked) {
+		for _, delivery := range locked {
+			delivery.closeLost(call.err)
+			delivery.mu.Unlock()
+		}
+		if call.fatal() {
+			pool.fail(call.err)
+			return false
+		}
+		return true
+	}
+	for index, delivery := range locked {
+		renewal := result.items[index]
+		if renewal.mutation != DeliveryMutationApplied {
+			delivery.closeLost(nil)
+		} else {
+			delivery.lease = renewal.current
+			if renewal.control == DeliveryControlCancelRequested && delivery.cancel != nil {
+				delivery.cancel(ErrCancelled)
+			}
+			if renewal.control == DeliveryControlTerminated {
+				delivery.closeLost(ErrTerminated)
+			}
+		}
+		delivery.mu.Unlock()
+	}
+	return true
 }
 
 func (delivery *activeWorkerDelivery) closeLost(error) {
