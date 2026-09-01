@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 )
 
@@ -71,7 +72,7 @@ func (this typedUpcaster[A, B]) upcastOwned(encoded []byte, limit PayloadLimit) 
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = nil
-			err = fmt.Errorf("%w: upcaster panicked", ErrCorrupt)
+			err = fmt.Errorf("%w: upcaster panicked", ErrInvalid)
 		}
 	}()
 	if this.fn == nil {
@@ -86,7 +87,7 @@ func (this typedUpcaster[A, B]) upcastOwned(encoded []byte, limit PayloadLimit) 
 	}
 	next, err := this.fn(value)
 	if err != nil {
-		return nil, ErrCorrupt
+		return nil, normalizeUpcastRuntimeError(err)
 	}
 	result, err = invokeCodecEncodeOwned(this.to, next, limit)
 	if err != nil {
@@ -138,7 +139,7 @@ func invokeUpcaster(upcaster Upcaster, encoded []byte, limit PayloadLimit) (resu
 	defer func() {
 		if recover() != nil {
 			result = nil
-			err = ErrCorrupt
+			err = ErrInvalid
 		}
 	}()
 	result, err = upcaster.upcast(bytes.Clone(encoded), limit)
@@ -156,7 +157,7 @@ func invokeUpcasterOwned(upcaster Upcaster, encoded []byte, limit PayloadLimit) 
 	defer func() {
 		if recover() != nil {
 			result = nil
-			err = ErrCorrupt
+			err = ErrInvalid
 		}
 	}()
 	if owned, ok := upcaster.(interface {
@@ -189,10 +190,16 @@ func normalizeUpcastRuntimeError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if normalized := normalizeCodecDecodeError(err); normalized == ErrTooLarge || normalized == ErrUnsupported {
-		return normalized
+	switch {
+	case errors.Is(err, ErrTooLarge):
+		return ErrTooLarge
+	case errors.Is(err, ErrUnsupported):
+		return ErrUnsupported
+	case errors.Is(err, ErrCorrupt):
+		return ErrCorrupt
+	default:
+		return ErrInvalid
 	}
-	return ErrCorrupt
 }
 
 func (this typedUpcaster[A, B]) validateUpcaster() error {

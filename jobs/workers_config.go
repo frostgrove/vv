@@ -328,7 +328,8 @@ func resolveWorkerInFlightBytes(value, claimBytes int) (int, error) {
 	if value > MaxWorkerInFlightBytes {
 		return 0, tooLarge("worker in-flight bytes")
 	}
-	if value < MaxDeliveryRecordBytes+MaxDecodedBytes || claimBytes > value-MaxDecodedBytes {
+	headroom := MaxDeliveryRecordBytes + MaxDecodedBytes
+	if value < headroom || claimBytes > value-headroom {
 		return 0, invalid("worker in-flight bytes")
 	}
 	return value, nil

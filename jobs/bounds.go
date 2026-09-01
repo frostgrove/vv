@@ -57,7 +57,7 @@ const (
 	DefaultTransientBytes      = 16 << 20
 	DefaultTransientWaiters    = 256
 	MaxTransientWaiters        = 4096
-	DefaultWorkerInFlightBytes = 64 << 20
+	DefaultWorkerInFlightBytes = 128 << 20
 	MaxWorkerInFlightBytes     = 1 << 30
 )
 

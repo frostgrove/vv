@@ -59,7 +59,7 @@ func TestJobBoundsAreExact(t *testing.T) {
 		"default transient bytes":    {DefaultTransientBytes, 16777216},
 		"default waiters":            {DefaultTransientWaiters, 256},
 		"maximum waiters":            {MaxTransientWaiters, 4096},
-		"worker in-flight bytes":     {DefaultWorkerInFlightBytes, 67108864},
+		"worker in-flight bytes":     {DefaultWorkerInFlightBytes, 134217728},
 		"maximum worker bytes":       {MaxWorkerInFlightBytes, 1073741824},
 	}
 	for name, test := range integers {
@@ -68,6 +68,9 @@ func TestJobBoundsAreExact(t *testing.T) {
 				t.Fatalf("got %d, want %d", test.got, test.want)
 			}
 		})
+	}
+	if DefaultWorkerInFlightBytes < MaxClaimBytes+MaxDeliveryRecordBytes+MaxDecodedBytes {
+		t.Fatal("default worker memory does not cover claim, preparation, and decoded payload bounds")
 	}
 
 	durations := map[string]struct {

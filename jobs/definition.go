@@ -439,7 +439,7 @@ func invokeCodecDecodeOwned[P any](codec Codec[P], encoded []byte, limit Payload
 		if recover() != nil {
 			var zero P
 			value = zero
-			err = fmt.Errorf("%w: codec decode panicked", ErrCorrupt)
+			err = fmt.Errorf("%w: codec decode panicked", ErrInvalid)
 		}
 	}()
 	if decoder, ok := any(codec).(interface {
@@ -493,6 +493,6 @@ func normalizeCodecDecodeError(err error) error {
 	case errors.Is(err, ErrCorrupt):
 		return ErrCorrupt
 	default:
-		return ErrCorrupt
+		return ErrInvalid
 	}
 }

@@ -115,7 +115,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	spec.ShutdownGrace = 4 * time.Second
 	spec.ClaimItems = MaxClaimItems
 	spec.ClaimBytes = MaxDeliveryRecordBytes + 1024
-	spec.InFlightBytes = spec.ClaimBytes + MaxDecodedBytes
+	spec.InFlightBytes = spec.ClaimBytes + MaxDeliveryRecordBytes + MaxDecodedBytes
 	spec.PulseWaiters = MaxTransientWaiters
 	workers, err := NewWorkers(spec, consumer)
 	if err != nil {
@@ -193,11 +193,11 @@ func TestNewWorkersValidatesConfigurationAndDriverDescription(t *testing.T) {
 		{name: "small claim bytes", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.ClaimBytes = MaxDeliveryRecordBytes - 1 }},
 		{name: "large claim bytes", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.ClaimBytes = MaxClaimBytes + 1 }},
 		{name: "negative in-flight bytes", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.InFlightBytes = -1 }},
-		{name: "small in-flight bytes", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.InFlightBytes = MaxDeliveryRecordBytes + MaxDecodedBytes - 1 }},
+		{name: "small in-flight bytes", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.InFlightBytes = 2*MaxDeliveryRecordBytes + MaxDecodedBytes - 1 }},
 		{name: "large in-flight bytes", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.InFlightBytes = MaxWorkerInFlightBytes + 1 }},
-		{name: "missing decode headroom", want: ErrInvalid, change: func(spec *WorkersSpec) {
+		{name: "missing preparation headroom", want: ErrInvalid, change: func(spec *WorkersSpec) {
 			spec.ClaimBytes = MaxDeliveryRecordBytes + 1
-			spec.InFlightBytes = MaxDeliveryRecordBytes + MaxDecodedBytes
+			spec.InFlightBytes = 2*MaxDeliveryRecordBytes + MaxDecodedBytes
 		}},
 		{name: "negative pulse waiters", want: ErrInvalid, change: func(spec *WorkersSpec) { spec.PulseWaiters = -1 }},
 		{name: "large pulse waiters", want: ErrTooLarge, change: func(spec *WorkersSpec) { spec.PulseWaiters = MaxTransientWaiters + 1 }},

@@ -293,7 +293,7 @@ func TestDefinitionContainsCodecDescriptorEncodeAndDecodePanics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeDefinition.Decode(mustEncodedPayload(t, "panic", 1, "value")); !errors.Is(err, ErrCorrupt) {
+	if _, err := decodeDefinition.Decode(mustEncodedPayload(t, "panic", 1, "value")); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("decode panic escaped: %v", err)
 	}
 }
@@ -342,8 +342,8 @@ func TestDefinitionNormalizesEveryCustomCodecError(t *testing.T) {
 		{fmt.Errorf("%w: %s", ErrTooLarge, secret), ErrTooLarge},
 		{fmt.Errorf("%w: %s", ErrUnsupported, secret), ErrUnsupported},
 		{fmt.Errorf("%w: %s", ErrCorrupt, secret), ErrCorrupt},
-		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrCorrupt},
-		{errors.New(secret), ErrCorrupt},
+		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrInvalid},
+		{errors.New(secret), ErrInvalid},
 	}
 	payload := mustEncodedPayload(t, id.String(), 1, "value")
 	for index, test := range decodeCases {
@@ -355,7 +355,7 @@ func TestDefinitionNormalizesEveryCustomCodecError(t *testing.T) {
 		}
 	}
 	panicDefinition = MustDefine(DefinitionSpec[string]{Name: testJobName(t, "codec.decode-panic"), Codec: secretStringCodec{id: id, version: 1, secret: secret, panicAt: "decode"}, Policy: testPolicy(t)})
-	if _, err := panicDefinition.Decode(payload); !errors.Is(err, ErrCorrupt) || strings.Contains(fmt.Sprint(err), secret) {
+	if _, err := panicDefinition.Decode(payload); !errors.Is(err, ErrInvalid) || strings.Contains(fmt.Sprint(err), secret) {
 		t.Fatalf("decode panic = %v", err)
 	}
 }

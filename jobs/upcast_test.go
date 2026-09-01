@@ -60,12 +60,18 @@ func TestTypedUpcasterChainIsSortedContiguousAndBoundedPerHop(t *testing.T) {
 	}
 }
 
-func TestUpcasterPanicAndFailureAreCorruptHistoricPayload(t *testing.T) {
+func TestUpcasterPreservesRuntimeFailureProvenance(t *testing.T) {
 	const secret = "private-transform-error-material"
-	for _, fn := range []func(revisionOne) (revisionTwo, error){
-		func(revisionOne) (revisionTwo, error) { panic(secret) },
-		func(revisionOne) (revisionTwo, error) { return revisionTwo{}, errors.New(secret) },
-	} {
+	tests := []struct {
+		fn   func(revisionOne) (revisionTwo, error)
+		want error
+	}{
+		{fn: func(revisionOne) (revisionTwo, error) { panic(secret) }, want: ErrInvalid},
+		{fn: func(revisionOne) (revisionTwo, error) { return revisionTwo{}, errors.New(secret) }, want: ErrInvalid},
+		{fn: func(revisionOne) (revisionTwo, error) { return revisionTwo{}, fmt.Errorf("%w: %s", ErrCorrupt, secret) }, want: ErrCorrupt},
+	}
+	for _, test := range tests {
+		fn := test.fn
 		v1 := TrustedJSON[revisionOne](1)
 		v2 := TrustedJSON[revisionTwo](2)
 		definition, err := Define(DefinitionSpec[revisionTwo]{Name: testJobName(t, "documents.failure"), Codec: v2, Upcasters: []Upcaster{Upcast(v1, v2, fn)}, Policy: testPolicy(t)})
@@ -80,8 +86,8 @@ func TestUpcasterPanicAndFailureAreCorruptHistoricPayload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := definition.Decode(payload); !errors.Is(err, ErrCorrupt) || strings.Contains(fmt.Sprint(err), secret) {
-			t.Fatalf("expected ErrCorrupt, got %v", err)
+		if _, err := definition.Decode(payload); !errors.Is(err, test.want) || strings.Contains(fmt.Sprint(err), secret) {
+			t.Fatalf("expected %v, got %v", test.want, err)
 		}
 	}
 }
@@ -127,8 +133,8 @@ func TestTypedUpcasterNormalizesSourceAndTargetCodecErrors(t *testing.T) {
 		{fmt.Errorf("%w: %s", ErrTooLarge, secret), ErrTooLarge},
 		{fmt.Errorf("%w: %s", ErrUnsupported, secret), ErrUnsupported},
 		{fmt.Errorf("%w: %s", ErrCorrupt, secret), ErrCorrupt},
-		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrCorrupt},
-		{errors.New(secret), ErrCorrupt},
+		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrInvalid},
+		{errors.New(secret), ErrInvalid},
 	}
 	for index, test := range sourceCases {
 		source := secretStringCodec{id: id, version: 1, secret: secret, decodeErr: test.err}
@@ -142,10 +148,10 @@ func TestTypedUpcasterNormalizesSourceAndTargetCodecErrors(t *testing.T) {
 		want error
 	}{
 		{fmt.Errorf("%w: %s", ErrTooLarge, secret), ErrTooLarge},
-		{fmt.Errorf("%w: %s", ErrUnsupported, secret), ErrCorrupt},
-		{fmt.Errorf("%w: %s", ErrCorrupt, secret), ErrCorrupt},
-		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrCorrupt},
-		{errors.New(secret), ErrCorrupt},
+		{fmt.Errorf("%w: %s", ErrUnsupported, secret), ErrInvalid},
+		{fmt.Errorf("%w: %s", ErrCorrupt, secret), ErrInvalid},
+		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrInvalid},
+		{errors.New(secret), ErrInvalid},
 	}
 	for index, test := range targetCases {
 		target := secretStringCodec{id: id, version: 2, secret: secret, encodeErr: test.err}
@@ -314,7 +320,7 @@ func TestDefinitionNormalizesCustomUpcasterValidationAndRuntimeErrors(t *testing
 			t.Fatal(err)
 		}
 		_, err = definition.Decode(mustEncodedPayload(t, "string", 1, "value"))
-		if !errors.Is(err, ErrCorrupt) || strings.Contains(fmt.Sprint(err), secret) {
+		if !errors.Is(err, ErrInvalid) || strings.Contains(fmt.Sprint(err), secret) {
 			t.Fatalf("runtime panic = %v", err)
 		}
 	}
@@ -325,8 +331,8 @@ func TestDefinitionNormalizesCustomUpcasterValidationAndRuntimeErrors(t *testing
 		{fmt.Errorf("%w: %s", ErrTooLarge, secret), ErrTooLarge},
 		{fmt.Errorf("%w: %s", ErrUnsupported, secret), ErrUnsupported},
 		{fmt.Errorf("%w: %s", ErrCorrupt, secret), ErrCorrupt},
-		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrCorrupt},
-		{errors.New(secret), ErrCorrupt},
+		{fmt.Errorf("%w: %s", ErrInvalid, secret), ErrInvalid},
+		{errors.New(secret), ErrInvalid},
 	}
 	for index, test := range runtimeCases {
 		upcaster := failingUpcaster{from: 1, to: 2, id: id, runtimeErr: test.err, secret: secret}
