@@ -326,6 +326,25 @@ func (r repository) releaseCollapseIntent(ctx context.Context, tx *sql.Tx, names
 	return err
 }
 
+func (r repository) fenceRecord(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, now time.Time) ([]byte, bool, error) {
+	var record []byte
+	err := tx.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+`
+WHERE namespace = $1
+  AND id = $2
+  AND state IN ($4, $5)
+  AND lease_token IS NOT NULL
+  AND lease_expires_at > $3
+FOR UPDATE`,
+		namespaceArgument(namespace), invocationArgument(id), now, int(jobs.InvocationRunning), int(jobs.InvocationCancelRequested)).Scan(&record)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return record, true, nil
+}
+
 func (r repository) renew(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, previous jobs.LeaseRef, token []byte, expiresAt, now time.Time) (jobs.InvocationState, bool, error) {
 	var state int
 	err := tx.QueryRowContext(ctx, `UPDATE `+r.deliveries+`

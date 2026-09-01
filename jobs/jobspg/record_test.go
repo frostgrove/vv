@@ -79,6 +79,45 @@ func TestRecordRoundTripPreservesRestorableAttemptLedger(t *testing.T) {
 	if _, err := jobs.RestoreDeliveryRecord(catalog, decoded); err != nil {
 		t.Fatal(err)
 	}
+	meta, err := jobs.NewDeliveryMeta(jobs.DeliveryMetaSpec{
+		Invocation:      application.Invocation().ID(),
+		Definition:      application.Invocation().Definition(),
+		Binding:         binding,
+		Build:           build,
+		Attempt:         application.Invocation().AttemptOrdinal(),
+		CreatedAt:       application.Invocation().CreatedAt(),
+		EligibleAt:      application.Invocation().EligibleAt(),
+		StartedAt:       now.Add(time.Second),
+		AttemptDeadline: application.Invocation().Attempts()[0].Deadline(),
+		MaxElapsedAt:    application.Invocation().MaxElapsedAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, err := matchesFence(catalog, encoded, meta)
+	if err != nil || !matched {
+		t.Fatalf("current attempt fence matched=%t err=%v", matched, err)
+	}
+	otherBuild, _ := jobs.ParseBuildID("other-build")
+	stale, err := jobs.NewDeliveryMeta(jobs.DeliveryMetaSpec{
+		Invocation:      meta.InvocationID(),
+		Definition:      meta.Definition(),
+		Binding:         meta.Binding(),
+		Build:           otherBuild,
+		Attempt:         meta.AttemptOrdinal(),
+		CreatedAt:       meta.CreatedAt(),
+		EligibleAt:      meta.EligibleAt(),
+		StartedAt:       meta.StartedAt(),
+		AttemptDeadline: meta.AttemptDeadline(),
+		MaxElapsedAt:    meta.MaxElapsedAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, err = matchesFence(catalog, encoded, stale)
+	if err != nil || matched {
+		t.Fatalf("stale attempt fence matched=%t err=%v", matched, err)
+	}
 }
 
 func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
