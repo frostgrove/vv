@@ -59,6 +59,19 @@ type entropySource struct {
 	reader io.Reader
 }
 
+func (source *entropySource) read(destination []byte) error {
+	if source == nil || nilInterface(source.reader) || len(destination) == 0 {
+		return ErrEntropy
+	}
+	source.mu.Lock()
+	err := readEntropy(source.reader, destination)
+	source.mu.Unlock()
+	if err != nil {
+		return ErrEntropy
+	}
+	return nil
+}
+
 type Queue struct {
 	namespace            Namespace
 	catalog              Catalog
@@ -708,10 +721,7 @@ func invokeContextProvider(provider TrustedContextProvider, ctx context.Context,
 
 func (q *Queue) nextInvocationID() (InvocationID, error) {
 	var value [InvocationIDBytes]byte
-	q.entropy.mu.Lock()
-	err := readEntropy(q.entropy.reader, value[:])
-	q.entropy.mu.Unlock()
-	if err != nil {
+	if err := q.entropy.read(value[:]); err != nil {
 		return InvocationID{}, ErrEntropy
 	}
 	value[6] = value[6]&0x0f | 0x40

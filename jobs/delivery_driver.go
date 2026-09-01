@@ -163,11 +163,12 @@ func cloneClaimTarget(target ClaimTarget) ClaimTarget {
 }
 
 type ClaimRequestSpec struct {
-	Namespace Namespace
-	Targets   []ClaimTarget
-	MaxItems  int
-	MaxBytes  int
-	LeaseTTL  time.Duration
+	Namespace   Namespace
+	Incarnation WorkerIncarnation
+	Targets     []ClaimTarget
+	MaxItems    int
+	MaxBytes    int
+	LeaseTTL    time.Duration
 }
 
 func (ClaimRequestSpec) String() string { return "[job claim request spec]" }
@@ -176,11 +177,12 @@ func (s ClaimRequestSpec) Format(state fmt.State, _ rune) {
 }
 
 type ClaimRequest struct {
-	namespace Namespace
-	targets   []ClaimTarget
-	maxItems  int
-	maxBytes  int
-	leaseTTL  time.Duration
+	namespace   Namespace
+	incarnation WorkerIncarnation
+	targets     []ClaimTarget
+	maxItems    int
+	maxBytes    int
+	leaseTTL    time.Duration
 }
 
 func NewClaimRequest(spec ClaimRequestSpec) (ClaimRequest, error) {
@@ -190,19 +192,20 @@ func NewClaimRequest(spec ClaimRequestSpec) (ClaimRequest, error) {
 	if len(spec.Targets) > MaxDefinitions {
 		return ClaimRequest{}, tooLarge("claim request targets")
 	}
-	request := ClaimRequest{namespace: spec.Namespace, targets: cloneClaimTargets(spec.Targets), maxItems: spec.MaxItems, maxBytes: spec.MaxBytes, leaseTTL: spec.LeaseTTL}
+	request := ClaimRequest{namespace: spec.Namespace, incarnation: spec.Incarnation, targets: cloneClaimTargets(spec.Targets), maxItems: spec.MaxItems, maxBytes: spec.MaxBytes, leaseTTL: spec.LeaseTTL}
 	if err := validateClaimRequest(request); err != nil {
 		return ClaimRequest{}, err
 	}
 	return request, nil
 }
 
-func (r ClaimRequest) Namespace() Namespace    { return r.namespace }
-func (r ClaimRequest) Targets() []ClaimTarget  { return cloneClaimTargets(r.targets) }
-func (r ClaimRequest) MaxItems() int           { return r.maxItems }
-func (r ClaimRequest) MaxBytes() int           { return r.maxBytes }
-func (r ClaimRequest) LeaseTTL() time.Duration { return r.leaseTTL }
-func (ClaimRequest) String() string            { return "[job claim request]" }
+func (r ClaimRequest) Namespace() Namespace           { return r.namespace }
+func (r ClaimRequest) Incarnation() WorkerIncarnation { return r.incarnation }
+func (r ClaimRequest) Targets() []ClaimTarget         { return cloneClaimTargets(r.targets) }
+func (r ClaimRequest) MaxItems() int                  { return r.maxItems }
+func (r ClaimRequest) MaxBytes() int                  { return r.maxBytes }
+func (r ClaimRequest) LeaseTTL() time.Duration        { return r.leaseTTL }
+func (ClaimRequest) String() string                   { return "[job claim request]" }
 func (r ClaimRequest) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, r.String())
 }
@@ -212,7 +215,7 @@ func (ClaimRequest) MarshalJSON() ([]byte, error) {
 }
 
 func validateClaimRequest(request ClaimRequest) error {
-	if !request.namespace.valid() || len(request.targets) == 0 || len(request.targets) > MaxDefinitions || request.maxItems < 1 || request.maxItems > MaxClaimItems || request.maxBytes < MaxDeliveryRecordBytes || request.maxBytes > MaxClaimBytes || !validLeaseTTL(request.leaseTTL) {
+	if !request.namespace.valid() || !request.incarnation.valid() || len(request.targets) == 0 || len(request.targets) > MaxDefinitions || request.maxItems < 1 || request.maxItems > MaxClaimItems || request.maxBytes < MaxDeliveryRecordBytes || request.maxBytes > MaxClaimBytes || !validLeaseTTL(request.leaseTTL) {
 		if len(request.targets) > MaxDefinitions || request.maxItems > MaxClaimItems || request.maxBytes > MaxClaimBytes {
 			return tooLarge("claim request")
 		}
@@ -1097,34 +1100,57 @@ func latestAttemptIs(invocation Invocation, attempt Attempt) bool {
 	return invocation.attempts != nil && invocation.attempts.value == attempt
 }
 
+type RecoverRequestSpec struct {
+	Namespace   Namespace
+	Incarnation WorkerIncarnation
+	MaxItems    int
+	MaxBytes    int
+	LeaseTTL    time.Duration
+}
+
+func (RecoverRequestSpec) String() string { return "[job recover request spec]" }
+func (s RecoverRequestSpec) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, s.String())
+}
+
 type RecoverRequest struct {
-	namespace Namespace
-	maxItems  int
-	maxBytes  int
-	leaseTTL  time.Duration
+	namespace   Namespace
+	incarnation WorkerIncarnation
+	maxItems    int
+	maxBytes    int
+	leaseTTL    time.Duration
 }
 
-func NewRecoverRequest(namespace Namespace, maxItems, maxBytes int, leaseTTL time.Duration) (RecoverRequest, error) {
-	if !namespace.valid() || maxItems < 1 || maxBytes < MaxDeliveryRecordBytes || !validLeaseTTL(leaseTTL) {
-		return RecoverRequest{}, invalid("recover request")
+func NewRecoverRequest(spec RecoverRequestSpec) (RecoverRequest, error) {
+	request := RecoverRequest{namespace: spec.Namespace, incarnation: spec.Incarnation, maxItems: spec.MaxItems, maxBytes: spec.MaxBytes, leaseTTL: spec.LeaseTTL}
+	if err := validateRecoverRequest(request); err != nil {
+		return RecoverRequest{}, err
 	}
-	if maxItems > MaxReclaimBatch || maxBytes > MaxClaimBytes {
-		return RecoverRequest{}, tooLarge("recover request")
-	}
-	return RecoverRequest{namespace: namespace, maxItems: maxItems, maxBytes: maxBytes, leaseTTL: leaseTTL}, nil
+	return request, nil
 }
 
-func (r RecoverRequest) Namespace() Namespace    { return r.namespace }
-func (r RecoverRequest) MaxItems() int           { return r.maxItems }
-func (r RecoverRequest) MaxBytes() int           { return r.maxBytes }
-func (r RecoverRequest) LeaseTTL() time.Duration { return r.leaseTTL }
-func (RecoverRequest) String() string            { return "[job recover request]" }
+func (r RecoverRequest) Namespace() Namespace           { return r.namespace }
+func (r RecoverRequest) Incarnation() WorkerIncarnation { return r.incarnation }
+func (r RecoverRequest) MaxItems() int                  { return r.maxItems }
+func (r RecoverRequest) MaxBytes() int                  { return r.maxBytes }
+func (r RecoverRequest) LeaseTTL() time.Duration        { return r.leaseTTL }
+func (RecoverRequest) String() string                   { return "[job recover request]" }
 func (r RecoverRequest) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, r.String())
 }
 func (r RecoverRequest) LogValue() slog.Value { return slog.StringValue(r.String()) }
 func (RecoverRequest) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("%w: recover request cannot be serialized", ErrUnsupported)
+}
+
+func validateRecoverRequest(request RecoverRequest) error {
+	if !request.namespace.valid() || !request.incarnation.valid() || request.maxItems < 1 || request.maxBytes < MaxDeliveryRecordBytes || !validLeaseTTL(request.leaseTTL) {
+		return invalid("recover request")
+	}
+	if request.maxItems > MaxReclaimBatch || request.maxBytes > MaxClaimBytes {
+		return tooLarge("recover request")
+	}
+	return nil
 }
 
 type RecoveredDelivery struct {
@@ -1212,8 +1238,8 @@ func ValidateRecoverResult(description BackendDescription, request RecoverReques
 	if !description.valid() {
 		return RecoverResult{}, invalid("recover backend description")
 	}
-	if !request.namespace.valid() || request.maxItems < 1 || request.maxItems > MaxReclaimBatch || request.maxBytes < MaxDeliveryRecordBytes || request.maxBytes > MaxClaimBytes || !validLeaseTTL(request.leaseTTL) {
-		return RecoverResult{}, invalid("recover request")
+	if err := validateRecoverRequest(request); err != nil {
+		return RecoverResult{}, err
 	}
 	if !canonicalRequiredDeliveryTime(result.observedAt) || result.released < 0 || len(result.items) > request.maxItems || result.released > request.maxItems-len(result.items) || result.more && len(result.items) == 0 && result.released == 0 {
 		return RecoverResult{}, driverContractError("recover", invalid("result"))

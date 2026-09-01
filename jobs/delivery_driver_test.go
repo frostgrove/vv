@@ -56,6 +56,7 @@ func TestDeliveryDriverDescriptionFailsClosed(t *testing.T) {
 
 func TestClaimTargetAndRequestAreCanonicalBoundedAndImmutable(t *testing.T) {
 	_, definition, _, _, record := deliveryRecordFixture(t, PlacementRegular)
+	incarnation := driverTestWorkerIncarnation(t)
 	oldCodec, _ := ParseCodecID("legacy.string")
 	oldRevision, _ := NewPayloadRevision(oldCodec, 1)
 	currentRevision, _ := NewPayloadRevision(record.Payload.Codec, 2)
@@ -73,8 +74,8 @@ func TestClaimTargetAndRequestAreCanonicalBoundedAndImmutable(t *testing.T) {
 	if target.SupportedRevisions()[0] != oldRevision {
 		t.Fatal("target retained returned revisions")
 	}
-	request, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target}, MaxItems: 2, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL})
-	if err != nil || request.MaxItems() != 2 || request.MaxBytes() != MaxDeliveryRecordBytes || request.LeaseTTL() != DefaultLeaseTTL {
+	request, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: incarnation, Targets: []ClaimTarget{target}, MaxItems: 2, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL})
+	if err != nil || request.Incarnation() != incarnation || request.MaxItems() != 2 || request.MaxBytes() != MaxDeliveryRecordBytes || request.LeaseTTL() != DefaultLeaseTTL {
 		t.Fatalf("request = (%v, %v)", request, err)
 	}
 	returnedTargets := request.Targets()
@@ -82,17 +83,20 @@ func TestClaimTargetAndRequestAreCanonicalBoundedAndImmutable(t *testing.T) {
 	if request.Targets()[0].SupportedRevisions()[0] != oldRevision {
 		t.Fatal("request retained returned targets")
 	}
-	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target}, MaxItems: 3, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero incarnation = %v", err)
+	}
+	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: incarnation, Targets: []ClaimTarget{target}, MaxItems: 3, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("items beyond availability = %v", err)
 	}
-	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes - 1, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: incarnation, Targets: []ClaimTarget{target}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes - 1, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unclaimable byte cap = %v", err)
 	}
-	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: MinimumLeaseTTL - time.Nanosecond}); !errors.Is(err, ErrInvalid) {
+	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: incarnation, Targets: []ClaimTarget{target}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: MinimumLeaseTTL - time.Nanosecond}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("short lease = %v", err)
 	}
 	duplicate, _ := NewClaimTarget(ClaimTargetSpec{Definition: definition.Name(), Binding: mustDriverBinding(t, "worker.other"), Build: testBuildID(t), SupportedRevisions: target.SupportedRevisions(), Available: 1})
-	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Targets: []ClaimTarget{target, duplicate}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrConflict) {
+	if _, err := NewClaimRequest(ClaimRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: incarnation, Targets: []ClaimTarget{target, duplicate}, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate definition = %v", err)
 	}
 	if _, err := NewClaimTarget(ClaimTargetSpec{Definition: definition.Name(), Binding: testBindingName(t), Build: testBuildID(t), SupportedRevisions: make([]PayloadRevision, MaxSupportedRevisions+1), Available: 1}); !errors.Is(err, ErrTooLarge) {
@@ -176,6 +180,11 @@ func TestClaimBatchEnforcesStableIdentityTargetCapacityAndCopies(t *testing.T) {
 	validated, err := ValidateClaimBatch(description, request, validBatch)
 	if err != nil || validated.Len() != 1 {
 		t.Fatalf("valid batch = (%v, %v)", validated, err)
+	}
+	forgedRequest := request
+	forgedRequest.incarnation = WorkerIncarnation{}
+	if _, err := ValidateClaimBatch(description, forgedRequest, validBatch); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("forged zero incarnation = %v", err)
 	}
 	if firstItem.record != validBatch.items[0].record || firstItem.record != validated.items[0].record || firstItem.record != validated.Items()[0].record {
 		t.Fatal("claim boundary amplified delivery record copies")
@@ -292,9 +301,15 @@ func TestClaimedDeliveryPublicRecordIsolatedFromConcurrentConsumption(t *testing
 func TestRecoveredDeliveryRecordCanBeConsumedOnce(t *testing.T) {
 	_, _, invocation, _, record := deliveryRecordFixture(t, PlacementRegular)
 	description := queueTestBackendDescription(1)
-	request, err := NewRecoverRequest(record.Genesis.Namespace, 1, MaxDeliveryRecordBytes, DefaultLeaseTTL)
+	if _, err := NewRecoverRequest(RecoverRequestSpec{Namespace: record.Genesis.Namespace, MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero incarnation = %v", err)
+	}
+	request, err := NewRecoverRequest(RecoverRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: driverTestWorkerIncarnation(t), MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if request.Incarnation().IsZero() {
+		t.Fatal("recover request lost worker incarnation")
 	}
 	lease := deliveryTestLease(t, invocation.ID(), []byte("consume-recovered-record"))
 	source := cloneDeliveryRecord(record)
@@ -309,6 +324,11 @@ func TestRecoveredDeliveryRecordCanBeConsumedOnce(t *testing.T) {
 	}
 	if _, err := ValidateRecoverResult(description, request, result); err != nil {
 		t.Fatal(err)
+	}
+	forgedRequest := request
+	forgedRequest.incarnation = WorkerIncarnation{}
+	if _, err := ValidateRecoverResult(description, forgedRequest, result); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("forged zero incarnation = %v", err)
 	}
 	owned, ok := delivery.takeRecordValue()
 	if !ok || &owned.Payload.Data[0] != payloadPointer {
@@ -940,7 +960,7 @@ func TestApplyResultValidatesProgressAndDeliveryPostconditions(t *testing.T) {
 
 func TestRecoverReturnsBoundedNewlyFencedRecordsForCoreSettlement(t *testing.T) {
 	_, _, invocation, _, record := deliveryRecordFixture(t, PlacementRegular)
-	request, err := NewRecoverRequest(record.Genesis.Namespace, 2, MaxDeliveryRecordBytes, DefaultLeaseTTL)
+	request, err := NewRecoverRequest(RecoverRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: driverTestWorkerIncarnation(t), MaxItems: 2, MaxBytes: MaxDeliveryRecordBytes, LeaseTTL: DefaultLeaseTTL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -986,7 +1006,7 @@ func TestRecoverReturnsBoundedNewlyFencedRecordsForCoreSettlement(t *testing.T) 
 	if _, err := ValidateRecoverResult(queueTestBackendDescription(1), request, wrongResult); !errors.Is(err, ErrDriver) {
 		t.Fatalf("recovery backend = %v", err)
 	}
-	if _, err := NewRecoverRequest(record.Genesis.Namespace, 1, MaxDeliveryRecordBytes-1, DefaultLeaseTTL); !errors.Is(err, ErrInvalid) {
+	if _, err := NewRecoverRequest(RecoverRequestSpec{Namespace: record.Genesis.Namespace, Incarnation: driverTestWorkerIncarnation(t), MaxItems: 1, MaxBytes: MaxDeliveryRecordBytes - 1, LeaseTTL: DefaultLeaseTTL}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unrecoverable byte cap = %v", err)
 	}
 	if _, err := TakeRecoveredDelivery(lease, nil); !errors.Is(err, ErrInvalid) {
@@ -1014,7 +1034,7 @@ func driverClaimTarget(t *testing.T, name Name, codec CodecID, version SchemaVer
 
 func mustClaimRequest(t *testing.T, namespace Namespace, targets []ClaimTarget, maxItems, maxBytes int) ClaimRequest {
 	t.Helper()
-	request, err := NewClaimRequest(ClaimRequestSpec{Namespace: namespace, Targets: targets, MaxItems: maxItems, MaxBytes: maxBytes, LeaseTTL: DefaultLeaseTTL})
+	request, err := NewClaimRequest(ClaimRequestSpec{Namespace: namespace, Incarnation: driverTestWorkerIncarnation(t), Targets: targets, MaxItems: maxItems, MaxBytes: maxBytes, LeaseTTL: DefaultLeaseTTL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1028,4 +1048,15 @@ func mustDriverBinding(t *testing.T, raw string) BindingName {
 		t.Fatal(err)
 	}
 	return binding
+}
+
+func driverTestWorkerIncarnation(t *testing.T) WorkerIncarnation {
+	t.Helper()
+	var value [WorkerIncarnationBytes]byte
+	value[0] = 1
+	incarnation, err := WorkerIncarnationFromBytes(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return incarnation
 }
