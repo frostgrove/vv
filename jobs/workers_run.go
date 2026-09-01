@@ -634,7 +634,7 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 	handled := make(chan error, 1)
 	go func() {
 		if delivery.binding.binding.mode == consumerHandlerAdapter {
-			handled <- delivery.binding.binding.handleAdapter(preparation.context, preparation.decoded, meta, workerProgressReporter{delivery: delivery})
+			handled <- delivery.binding.binding.handleAdapter(preparation.context, preparation.decoded, meta, workerAttemptController{delivery: delivery})
 			return
 		}
 		handled <- delivery.binding.binding.handle(preparation.context, preparation.decoded)
@@ -792,20 +792,44 @@ func (delivery *activeWorkerDelivery) closeLost(error) {
 	delivery.lostOnce.Do(func() { close(delivery.lost) })
 }
 
-type workerProgressReporter struct {
+type workerAttemptController struct {
 	delivery *activeWorkerDelivery
 }
 
-func (reporter workerProgressReporter) Pulse(ctx context.Context) error {
-	if reporter.delivery == nil || nilInterface(ctx) {
+func (controller workerAttemptController) Pulse(ctx context.Context) error {
+	if controller.delivery == nil || nilInterface(ctx) {
 		return ErrInvalid
 	}
-	_, call := reporter.delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
+	_, call := controller.delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
 		return ProgressCommand(lease)
 	})
 	return call.err
 }
 
-func (reporter workerProgressReporter) String() string {
-	return fmt.Sprintf("[job progress reporter active=%t]", reporter.delivery != nil)
+func (controller workerAttemptController) Guard(ctx context.Context, fence LeaseFence) error {
+	if controller.delivery == nil || nilInterface(ctx) || nilInterface(fence) {
+		return ErrInvalid
+	}
+	return controller.delivery.guard(ctx, fence)
+}
+
+func (controller workerAttemptController) String() string {
+	return fmt.Sprintf("[job attempt controller active=%t]", controller.delivery != nil)
+}
+
+func (delivery *activeWorkerDelivery) guard(ctx context.Context, fence LeaseFence) (err error) {
+	delivery.mu.Lock()
+	defer delivery.mu.Unlock()
+	if delivery.closed {
+		return ErrLeaseLost
+	}
+	defer func() {
+		if recover() != nil {
+			err = ErrDriver
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fence.Fence(ctx, delivery.lease)
 }

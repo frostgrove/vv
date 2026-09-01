@@ -11,7 +11,16 @@ type ProgressReporter interface {
 	Pulse(context.Context) error
 }
 
-type AdapterHandler[P any] func(context.Context, P, DeliveryMeta, ProgressReporter) error
+type LeaseFence interface {
+	Fence(context.Context, LeaseRef) error
+}
+
+type AttemptController interface {
+	ProgressReporter
+	Guard(context.Context, LeaseFence) error
+}
+
+type AdapterHandler[P any] func(context.Context, P, DeliveryMeta, AttemptController) error
 
 type DeliveryMetaSpec struct {
 	Invocation       InvocationID

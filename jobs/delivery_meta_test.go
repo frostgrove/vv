@@ -18,6 +18,23 @@ type recordingProgressReporter struct {
 	seen  atomic.Pointer[context.Context]
 }
 
+type recordingLeaseFence struct {
+	lease LeaseRef
+	err   error
+}
+
+func (fence *recordingLeaseFence) Fence(_ context.Context, lease LeaseRef) error {
+	fence.lease = lease
+	return fence.err
+}
+
+func (reporter *recordingProgressReporter) Guard(ctx context.Context, fence LeaseFence) error {
+	if fence == nil {
+		return ErrInvalid
+	}
+	return fence.Fence(ctx, LeaseRef{})
+}
+
 func (reporter *recordingProgressReporter) Pulse(ctx context.Context) error {
 	reporter.calls.Add(1)
 	reporter.seen.Store(&ctx)
@@ -116,6 +133,10 @@ func TestDeliveryMetaSurfaceAndFormattingExcludeDeliveryControls(t *testing.T) {
 	if reporterType.NumMethod() != 1 || reporterType.Method(0).Name != "Pulse" {
 		t.Fatalf("progress reporter methods = %v", reporterType)
 	}
+	controllerType := reflect.TypeOf((*AttemptController)(nil)).Elem()
+	if controllerType.NumMethod() != 2 {
+		t.Fatalf("attempt controller methods = %v", controllerType)
+	}
 	spec := deliveryMetaFixture(t)
 	meta, err := NewDeliveryMeta(spec)
 	if err != nil {
@@ -141,6 +162,30 @@ func TestDeliveryMetaSurfaceAndFormattingExcludeDeliveryControls(t *testing.T) {
 	}
 }
 
+func TestAttemptControllerGuardsTheCurrentRotatingLease(t *testing.T) {
+	invocation, err := NewInvocationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := NewLeaseRef(queueTestBackendID(1), invocation, []byte("current-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := &activeWorkerDelivery{lease: lease}
+	controller := workerAttemptController{delivery: delivery}
+	fence := &recordingLeaseFence{}
+	if err := controller.Guard(context.Background(), fence); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fence.lease, lease) {
+		t.Fatal("guard did not use the current lease")
+	}
+	delivery.closed = true
+	if err := controller.Guard(context.Background(), fence); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("closed delivery guard = %v", err)
+	}
+}
+
 func TestOnAdapterRetainsTypedModeWithoutLifecycleEffects(t *testing.T) {
 	standardDefinition := testQueueDefinition(t, "workers.adapter-standard", String(1))
 	adapterDefinition := testQueueDefinition(t, "workers.adapter-advanced", String(1))
@@ -159,7 +204,7 @@ func TestOnAdapterRetainsTypedModeWithoutLifecycleEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter := OnAdapter(adapterDefinition, AdapterHandler[string](func(ctx context.Context, payload string, provided DeliveryMeta, progress ProgressReporter) error {
+	adapter := OnAdapter(adapterDefinition, AdapterHandler[string](func(ctx context.Context, payload string, provided DeliveryMeta, progress AttemptController) error {
 		adapterCalls.Add(1)
 		if payload != "adapter" || provided != meta || progress != reporter {
 			t.Fatalf("adapter inputs = (%q, %#v, %T)", payload, provided, progress)
@@ -224,7 +269,7 @@ func TestOnAdapterRejectsInvalidInputsAndContainsPanics(t *testing.T) {
 		t.Fatalf("nil adapter handler = %v", err)
 	}
 	var calls atomic.Int32
-	consumer := OnAdapter(definition, AdapterHandler[string](func(context.Context, string, DeliveryMeta, ProgressReporter) error {
+	consumer := OnAdapter(definition, AdapterHandler[string](func(context.Context, string, DeliveryMeta, AttemptController) error {
 		calls.Add(1)
 		panic("adapter-panic-private")
 	}), Concurrency(1))

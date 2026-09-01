@@ -17,7 +17,7 @@ type consumerBinding struct {
 	decode        func(EncodedPayload) (any, error)
 	decodeOwned   func(EncodedPayload) (any, error)
 	handle        func(context.Context, any) error
-	handleAdapter func(context.Context, any, DeliveryMeta, ProgressReporter) error
+	handleAdapter func(context.Context, any, DeliveryMeta, AttemptController) error
 	classifier    ErrorClassifier
 	admission     AdmissionReader
 	mode          consumerHandlerMode
@@ -178,12 +178,12 @@ func typedAdapterConsumerBinding[P any](definition DefinitionOf[P], handler Adap
 			}
 			return decodedConsumerValue[P]{value: value}, nil
 		},
-		handleAdapter: func(ctx context.Context, decoded any, meta DeliveryMeta, progress ProgressReporter) error {
+		handleAdapter: func(ctx context.Context, decoded any, meta DeliveryMeta, controller AttemptController) error {
 			value, ok := decoded.(decodedConsumerValue[P])
-			if !ok || !meta.valid() || meta.Definition() != declaration.declarationName() || meta.Binding() != resolved.binding || nilInterface(progress) {
+			if !ok || !meta.valid() || meta.Definition() != declaration.declarationName() || meta.Binding() != resolved.binding || nilInterface(controller) {
 				return fmt.Errorf("%w: adapter consumer input does not match", ErrInvalid)
 			}
-			return invokeHandlerContained(func() error { return handler(ctx, value.value, meta, progress) })
+			return invokeHandlerContained(func() error { return handler(ctx, value.value, meta, controller) })
 		},
 		classifier:  resolved.classifier,
 		admission:   resolved.admission,
