@@ -275,6 +275,9 @@ func (d *Driver) Claim(ctx context.Context, request jobs.ClaimRequest) (jobs.Cla
 			if err := d.repo.claim(ctx, tx, d.namespace, candidate.id, request.Incarnation(), token, now.Add(request.LeaseTTL()), now); err != nil {
 				return jobs.ClaimBatch{}, err
 			}
+			if err := d.repo.releaseCollapseIntent(ctx, tx, d.namespace, candidate.id); err != nil {
+				return jobs.ClaimBatch{}, err
+			}
 			lease, err := jobs.NewLeaseRef(d.description.ID(), candidate.id, token)
 			if err != nil {
 				return jobs.ClaimBatch{}, err

@@ -320,6 +320,12 @@ WHERE namespace = $1 AND id = $2 AND lease_token IS NULL`,
 	return nil
 }
 
+func (r repository) releaseCollapseIntent(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM `+r.intents+` WHERE namespace = $1 AND invocation_id = $2 AND purpose = $3`,
+		namespaceArgument(namespace), invocationArgument(id), int(jobs.IntentCollapse))
+	return err
+}
+
 func (r repository) renew(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, previous jobs.LeaseRef, token []byte, expiresAt, now time.Time) (jobs.InvocationState, bool, error) {
 	var state int
 	err := tx.QueryRowContext(ctx, `UPDATE `+r.deliveries+`
