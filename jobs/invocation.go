@@ -336,6 +336,21 @@ func (i Invocation) BeginAttempt(spec BeginAttemptSpec) (Invocation, Attempt, er
 	return result, attempt, nil
 }
 
+func (i Invocation) beginAttemptOrExpire(spec BeginAttemptSpec) (Invocation, Attempt, error) {
+	startedAt, err := requiredTime(spec.StartedAt, "attempt start")
+	if err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	if i.IsZero() || i.state != InvocationQueued || startedAt.Before(i.readyAt()) {
+		return Invocation{}, Attempt{}, transitionConflict("invocation cannot begin an attempt")
+	}
+	if i.deadlineReason(startedAt) == ReasonNone {
+		return i.BeginAttempt(spec)
+	}
+	expired, err := i.Expire(startedAt)
+	return expired, Attempt{}, err
+}
+
 func (i Invocation) FinishAttempt(attempt Attempt, spec FinishAttemptSpec) (Invocation, Attempt, error) {
 	if i.IsZero() || i.attempts == nil || attempt.state != AttemptRunning || !sameAttemptToken(i.attempts.value, attempt) || attempt.invocation != i.id || attempt.ordinal != i.attemptOrdinal {
 		return Invocation{}, Attempt{}, transitionConflict("attempt token is not active")
@@ -363,6 +378,50 @@ func (i Invocation) FinishAttempt(attempt Attempt, spec FinishAttemptSpec) (Invo
 		return Invocation{}, Attempt{}, err
 	}
 	return i.applyAttemptDecision(active, spec.Disposition, finishedAt, decision)
+}
+
+func (i Invocation) finishAttemptAuthoritatively(attempt Attempt, disposition Disposition, finishedAt time.Time, proposedDelay time.Duration) (Invocation, Attempt, error) {
+	if i.state == InvocationCancelRequested {
+		cancelled, err := CancelledDisposition(ReasonCancelRequested)
+		if err != nil {
+			return Invocation{}, Attempt{}, err
+		}
+		return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: cancelled})
+	}
+	if i.state != InvocationRunning {
+		return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: disposition})
+	}
+	reason := i.attemptFinishDeadlineReason(attempt, disposition, finishedAt)
+	if reason == ReasonMaxElapsed {
+		return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: disposition})
+	}
+	if reason != ReasonAttemptTimeout && reason != ReasonProgressTimeout {
+		availableAt, err := relativeDeliveryTime(finishedAt, proposedDelay)
+		if err != nil {
+			return Invocation{}, Attempt{}, err
+		}
+		return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: disposition, AvailableAt: availableAt})
+	}
+	timeout, err := RetryDisposition(reason, PublicFailure{}, 0, RetryCostCharged)
+	if err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	decision, terminal := i.attemptRescheduleLimit(timeout, finishedAt, attemptDecision{retrySpent: i.retrySpent, handlerDeferrals: i.handlerDeferrals})
+	if terminal {
+		return i.applyAttemptDecision(attempt, timeout, finishedAt, decision)
+	}
+	delay := retryBackoffCap(i.policy.Backoff(), i.retrySpent.Value())
+	if delay >= i.maxElapsedAt.Sub(finishedAt) {
+		decision.state = InvocationDead
+		decision.terminalReason = ReasonMaxElapsed
+		decision.availableAt = i.maxElapsedAt
+		return i.applyAttemptDecision(attempt, timeout, finishedAt, decision)
+	}
+	availableAt, err := requiredTime(finishedAt.Add(delay), "attempt timeout availability")
+	if err != nil {
+		return Invocation{}, Attempt{}, err
+	}
+	return i.FinishAttempt(attempt, FinishAttemptSpec{FinishedAt: finishedAt, Disposition: timeout, AvailableAt: availableAt})
 }
 
 func (i Invocation) RecordProgress(attempt Attempt, at time.Time) (Invocation, Attempt, error) {
@@ -630,25 +689,8 @@ func (i Invocation) decideAttempt(attempt Attempt, disposition Disposition, fini
 }
 
 func (i Invocation) decideAttemptReschedule(disposition Disposition, finishedAt, availableAt time.Time, decision attemptDecision) (attemptDecision, error) {
-	if reason := i.deadlineReason(finishedAt); reason != ReasonNone {
-		decision.state = InvocationDead
-		decision.terminalReason = reason
-		return decision, nil
-	}
-	if i.attemptOrdinal.Value() == MaxAttemptOrdinal {
-		decision.state = InvocationDead
-		decision.terminalReason = ReasonAttemptsExhausted
-		return decision, nil
-	}
-	if disposition.kind == DispositionRetry && disposition.retryCost == RetryCostCharged && i.retrySpent.Value() == i.policy.RetryLimit().Value() {
-		decision.state = InvocationDead
-		decision.terminalReason = ReasonRetryExhausted
-		return decision, nil
-	}
-	if disposition.kind == DispositionDeferred && i.handlerDeferrals.Value() == i.policy.HandlerDeferralLimit().Value() {
-		decision.state = InvocationDead
-		decision.terminalReason = ReasonDeferralsExhausted
-		return decision, nil
+	if limited, terminal := i.attemptRescheduleLimit(disposition, finishedAt, decision); terminal {
+		return limited, nil
 	}
 	if availableAt.IsZero() {
 		return attemptDecision{}, invalid("rescheduled attempt availability")
@@ -671,6 +713,30 @@ func (i Invocation) decideAttemptReschedule(disposition Disposition, finishedAt,
 		decision.handlerDeferrals, _ = NewHandlerDeferrals(i.handlerDeferrals.Value() + 1)
 	}
 	return decision, nil
+}
+
+func (i Invocation) attemptRescheduleLimit(disposition Disposition, finishedAt time.Time, decision attemptDecision) (attemptDecision, bool) {
+	if reason := i.deadlineReason(finishedAt); reason != ReasonNone {
+		decision.state = InvocationDead
+		decision.terminalReason = reason
+		return decision, true
+	}
+	if i.attemptOrdinal.Value() == MaxAttemptOrdinal {
+		decision.state = InvocationDead
+		decision.terminalReason = ReasonAttemptsExhausted
+		return decision, true
+	}
+	if disposition.kind == DispositionRetry && disposition.retryCost == RetryCostCharged && i.retrySpent.Value() == i.policy.RetryLimit().Value() {
+		decision.state = InvocationDead
+		decision.terminalReason = ReasonRetryExhausted
+		return decision, true
+	}
+	if disposition.kind == DispositionDeferred && i.handlerDeferrals.Value() == i.policy.HandlerDeferralLimit().Value() {
+		decision.state = InvocationDead
+		decision.terminalReason = ReasonDeferralsExhausted
+		return decision, true
+	}
+	return decision, false
 }
 
 func (i Invocation) applyAttemptDecision(attempt Attempt, disposition Disposition, finishedAt time.Time, decision attemptDecision) (Invocation, Attempt, error) {

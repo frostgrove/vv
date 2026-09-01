@@ -263,7 +263,7 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 	application := DeliveryApplication{kind: command.kind, invocation: current}
 	switch command.kind {
 	case DeliveryCommandBeginAttempt:
-		application.invocation, application.attempt, err = current.BeginAttempt(BeginAttemptSpec{Binding: command.binding, Build: command.build, StartedAt: now})
+		application.invocation, application.attempt, err = current.beginAttemptOrExpire(BeginAttemptSpec{Binding: command.binding, Build: command.build, StartedAt: now})
 		application.changed = err == nil
 	case DeliveryCommandProgress:
 		if current.attempts == nil {
@@ -275,11 +275,7 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 		if current.attempts == nil {
 			return DeliveryApplication{}, transitionConflict("invocation has no active attempt")
 		}
-		availableAt, timeErr := relativeDeliveryTime(now, command.delay)
-		if timeErr != nil {
-			return DeliveryApplication{}, timeErr
-		}
-		application.invocation, application.attempt, err = current.FinishAttempt(current.attempts.value, FinishAttemptSpec{FinishedAt: now, Disposition: command.disposition, AvailableAt: availableAt})
+		application.invocation, application.attempt, err = current.finishAttemptAuthoritatively(current.attempts.value, command.disposition, now, command.delay)
 		application.changed = err == nil
 	case DeliveryCommandDeferDelivery:
 		availableAt, timeErr := relativeDeliveryTime(now, command.delay)
