@@ -44,6 +44,7 @@ type Driver struct {
 
 var _ jobs.Sender = (*Driver)(nil)
 var _ jobs.DeliveryDriver = (*Driver)(nil)
+var _ jobs.Controller = (*Driver)(nil)
 
 func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error) {
 	driver, err := New(Spec{Client: client, Namespace: namespace})

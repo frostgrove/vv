@@ -93,3 +93,59 @@ func recordFromInvocation(invocation jobs.Invocation, previous jobs.DeliveryReco
 	}
 	return rebuiltRecord{record: record, size: size}, nil
 }
+
+func deliveryCharge(invocation jobs.Invocation, record jobs.DeliveryRecord, size int) (int, error) {
+	if invocation.IsTerminal() {
+		return size, nil
+	}
+	at := invocation.CreatedAt()
+	for _, outcome := range invocation.History() {
+		if outcome.OccurredAt().After(at) {
+			at = outcome.OccurredAt()
+		}
+	}
+	for _, attempt := range invocation.Attempts() {
+		for _, occurredAt := range []time.Time{attempt.StartedAt(), attempt.ProgressedAt(), attempt.FinishedAt()} {
+			if occurredAt.After(at) {
+				at = occurredAt
+			}
+		}
+	}
+	if invocation.CancelRequestedAt().After(at) {
+		at = invocation.CancelRequestedAt()
+	}
+	maximum := size
+	terminated, err := invocation.Terminate(at)
+	if err != nil {
+		return 0, err
+	}
+	rebuilt, err := recordFromInvocation(terminated, record)
+	if err != nil {
+		return 0, err
+	}
+	maximum = max(maximum, rebuilt.size)
+	if invocation.State() == jobs.InvocationCancelRequested {
+		return maximum, nil
+	}
+	requested, err := invocation.RequestCancel(at)
+	if err != nil {
+		return 0, err
+	}
+	rebuilt, err = recordFromInvocation(requested, record)
+	if err != nil {
+		return 0, err
+	}
+	maximum = max(maximum, rebuilt.size)
+	if requested.IsTerminal() {
+		return maximum, nil
+	}
+	terminated, err = requested.Terminate(at)
+	if err != nil {
+		return 0, err
+	}
+	rebuilt, err = recordFromInvocation(terminated, record)
+	if err != nil {
+		return 0, err
+	}
+	return max(maximum, rebuilt.size), nil
+}

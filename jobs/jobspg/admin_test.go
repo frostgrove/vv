@@ -128,6 +128,12 @@ func TestAdminMethodsRequireReadinessAndValidateWithoutDatabaseAccess(t *testing
 	if _, err := driver.Redrive(ctx, placement.Candidate()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("Redrive before readiness = %v", err)
 	}
+	if _, err := driver.Cancel(ctx, placement.Candidate()); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("Cancel before readiness = %v", err)
+	}
+	if _, err := driver.Terminate(ctx, placement.Candidate()); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("Terminate before readiness = %v", err)
+	}
 	if _, err := driver.PurgeTerminal(ctx, time.Now(), 1); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("PurgeTerminal before readiness = %v", err)
 	}

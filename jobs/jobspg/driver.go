@@ -453,7 +453,7 @@ func (d *Driver) Renew(ctx context.Context, request jobs.RenewRequest) (jobs.Ren
 			return jobs.RenewResult{}, err
 		}
 		if !applied {
-			items[index], err = jobs.NewLeaseRenewal(previous, jobs.LeaseRef{}, jobs.DeliveryMutationLeaseLost, jobs.DeliveryControlNone)
+			items[index], err = jobs.NewLeaseRenewal(previous, jobs.LeaseRef{}, jobs.DeliveryMutationLeaseLost, deliveryControl(state))
 		} else {
 			current, leaseErr := jobs.NewLeaseRef(d.description.ID(), previous.InvocationID(), token)
 			if leaseErr != nil {
@@ -501,7 +501,7 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 		return jobs.ApplyResult{}, err
 	}
 	if !held {
-		return leaseLostApply(now)
+		return leaseLostApply(now, deliveryControl(stored.state))
 	}
 	record, decodeErr := decodeRecord(stored.record)
 	if command.Kind() == jobs.DeliveryCommandRejectCorrupt {
@@ -579,7 +579,7 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 	}
 	if err := d.repo.saveApplication(ctx, tx, d.namespace, lease, state, availableAt, encoded, size, clearLease, excludedBinding, excludedBuild, recordExpiresAt, intentExpiresAt, now); err != nil {
 		if errors.Is(err, jobs.ErrLeaseLost) {
-			return leaseLostApply(now)
+			return leaseLostApply(now, jobs.DeliveryControlNone)
 		}
 		return jobs.ApplyResult{}, err
 	}
@@ -599,8 +599,8 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 	return jobs.NewApplyResult(now, result, application)
 }
 
-func leaseLostApply(now time.Time) (jobs.ApplyResult, error) {
-	result, err := jobs.NewDeliveryCommandResult(jobs.DeliveryMutationLeaseLost, jobs.DeliveryControlNone)
+func leaseLostApply(now time.Time, control jobs.DeliveryControlStatus) (jobs.ApplyResult, error) {
+	result, err := jobs.NewDeliveryCommandResult(jobs.DeliveryMutationLeaseLost, control)
 	if err != nil {
 		return jobs.ApplyResult{}, err
 	}

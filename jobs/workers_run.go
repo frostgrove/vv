@@ -1206,6 +1206,9 @@ func (delivery *activeWorkerDelivery) apply(ctx context.Context, build func(Leas
 	definition := delivery.binding.binding.declaration.declarationName()
 	binding := delivery.binding.binding.binding
 	if call.err != nil || result.result.mutation != DeliveryMutationApplied {
+		if call.err == nil {
+			delivery.cancelControl(result.result.control)
+		}
 		delivery.closeLost(call.err)
 		delivery.mu.Unlock()
 		delivery.pool.workers.observeApply(definition, binding, request, result, call)
@@ -1297,6 +1300,7 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 	for index, delivery := range locked {
 		renewal := result.items[index]
 		if renewal.mutation != DeliveryMutationApplied {
+			delivery.cancelControl(renewal.control)
 			delivery.closeLost(nil)
 		} else {
 			delivery.lease = renewal.current
@@ -1316,6 +1320,18 @@ func (pool *workerPool) renewActiveBatch(ctx context.Context, batch []*activeWor
 func (delivery *activeWorkerDelivery) closeLost(error) {
 	delivery.closed = true
 	delivery.lostOnce.Do(func() { close(delivery.lost) })
+}
+
+func (delivery *activeWorkerDelivery) cancelControl(control DeliveryControlStatus) {
+	if delivery.cancel == nil {
+		return
+	}
+	switch control {
+	case DeliveryControlCancelRequested:
+		delivery.cancel(ErrCancelled)
+	case DeliveryControlTerminated:
+		delivery.cancel(ErrTerminated)
+	}
 }
 
 type workerAttemptController struct {

@@ -502,7 +502,11 @@ RETURNING state`,
 		int(jobs.InvocationCancelRequested),
 	).Scan(&state)
 	if err == sql.ErrNoRows {
-		return 0, false, nil
+		err = tx.QueryRowContext(ctx, `SELECT state FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 FOR UPDATE`, namespaceArgument(namespace), invocationArgument(previous.InvocationID())).Scan(&state)
+		if err == sql.ErrNoRows {
+			return 0, false, nil
+		}
+		return jobs.InvocationState(state), false, err
 	}
 	if err != nil {
 		return 0, false, err
@@ -519,7 +523,7 @@ func (r repository) heldDelivery(ctx context.Context, tx *sql.Tx, namespace jobs
 		return storedDelivery{}, false, err
 	}
 	if len(stored.leaseToken) == 0 || !equalBytes(stored.leaseToken, lease.DriverToken()) {
-		return storedDelivery{}, false, nil
+		return stored, false, nil
 	}
 	var expiresAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `SELECT lease_expires_at FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2`, namespaceArgument(namespace), invocationArgument(lease.InvocationID())).Scan(&expiresAt)
@@ -527,7 +531,7 @@ func (r repository) heldDelivery(ctx context.Context, tx *sql.Tx, namespace jobs
 		return storedDelivery{}, false, err
 	}
 	if !expiresAt.Valid || !expiresAt.Time.After(now) {
-		return storedDelivery{}, false, nil
+		return stored, false, nil
 	}
 	return stored, true, nil
 }

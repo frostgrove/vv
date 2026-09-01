@@ -24,6 +24,8 @@ func TestModulePublishesOneDriverThroughAllContracts(t *testing.T) {
 	var driver *jobspg.Driver
 	var backend jobsfx.Backend
 	var admin jobs.Admin
+	var controller jobs.Controller
+	var operations jobs.Operations
 	var transactions jobs.FencedTransactions
 	var retention jobs.RetentionSweeper
 	app := fx.New(
@@ -31,13 +33,13 @@ func TestModulePublishesOneDriverThroughAllContracts(t *testing.T) {
 		fx.Supply(database, catalog),
 		fx.Provide(func() crud.Source { return source }),
 		jobspgfx.Module(settings),
-		fx.Populate(&driver, &backend, &admin, &transactions, &retention),
+		fx.Populate(&driver, &backend, &admin, &controller, &operations, &transactions, &retention),
 	)
 	if err := app.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if driver == nil || backend != driver || admin != driver || transactions != driver || retention != driver {
-		t.Fatalf("driver=%v backend=%v admin=%v transactions=%v retention=%v", driver, backend, admin, transactions, retention)
+	if driver == nil || backend != driver || admin != driver || controller != driver || operations != driver || transactions != driver || retention != driver {
+		t.Fatalf("driver=%v backend=%v admin=%v controller=%v operations=%v transactions=%v retention=%v", driver, backend, admin, controller, operations, transactions, retention)
 	}
 }
 

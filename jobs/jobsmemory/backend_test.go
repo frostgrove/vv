@@ -130,6 +130,236 @@ func TestRenewRotatesFenceAndRecoverFindsUncertainClaim(t *testing.T) {
 	}
 }
 
+func TestControllerCancelsQueuedAndRequestsRunningCancellation(t *testing.T) {
+	fixture := newFixture(t, 4)
+	ctx := context.Background()
+	queued, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(time.Second)
+	cancelled, err := fixture.backend.Cancel(ctx, queued)
+	if err != nil || cancelled.Invocation().State() != jobs.InvocationCancelled || string(cancelled.Payload().Bytes()) != "queued" {
+		t.Fatalf("queued cancel = (%v, %q, %v)", cancelled.Invocation().State(), cancelled.Payload().Bytes(), err)
+	}
+	if _, err := fixture.backend.Cancel(ctx, queued); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("repeated cancel = %v", err)
+	}
+	if _, err := fixture.backend.Terminate(ctx, queued); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("terminate cancelled = %v", err)
+	}
+
+	runningID, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "running", jobs.Unique("memory-control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := fixture.claim(t, fixture.incarnation(10))
+	if claim.Len() != 1 || claim.Items()[0].Lease().InvocationID() != runningID {
+		t.Fatalf("running claim = %+v", claim.Items())
+	}
+	lease := claim.Items()[0].Lease()
+	applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+	fixture.clock.Advance(time.Second)
+	requested, err := fixture.backend.Cancel(ctx, runningID)
+	if err != nil || requested.Invocation().State() != jobs.InvocationCancelRequested || string(requested.Payload().Bytes()) != "running" {
+		t.Fatalf("running cancel = (%v, %q, %v)", requested.Invocation().State(), requested.Payload().Bytes(), err)
+	}
+	if stats := fixture.backend.Stats(); stats.Leased != 1 {
+		t.Fatalf("cancel request leases = %d", stats.Leased)
+	}
+	renewRequest, err := jobs.NewRenewRequest([]jobs.LeaseRef{lease}, jobs.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := fixture.backend.Renew(ctx, renewRequest)
+	if err != nil || renewed.Items()[0].Mutation() != jobs.DeliveryMutationApplied || renewed.Items()[0].Control() != jobs.DeliveryControlCancelRequested {
+		t.Fatalf("cancel renewal = (%v, %v, %v)", renewed.Items()[0].Mutation(), renewed.Items()[0].Control(), err)
+	}
+	if _, err := fixture.backend.Cancel(ctx, runningID); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("repeated running cancel = %v", err)
+	}
+}
+
+func TestControllerTerminateFencesLeaseAndReleasesUniqueIntent(t *testing.T) {
+	fixture := newFixture(t, 4)
+	ctx := context.Background()
+	id, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "running", jobs.Unique("memory-terminate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := fixture.claim(t, fixture.incarnation(11)).Items()[0].Lease()
+	applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+	fixture.clock.Advance(time.Second)
+	terminated, err := fixture.backend.Terminate(ctx, id)
+	if err != nil || terminated.Invocation().State() != jobs.InvocationTerminated || terminated.Invocation().Attempts()[0].Disposition().Kind() != jobs.DispositionTerminated {
+		t.Fatalf("terminate = (%v, %v)", terminated.Invocation().State(), err)
+	}
+	if stats := fixture.backend.Stats(); stats.Leased != 0 || stats.Records != 1 {
+		t.Fatalf("terminate stats = %+v", stats)
+	}
+	renewRequest, err := jobs.NewRenewRequest([]jobs.LeaseRef{lease}, jobs.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := fixture.backend.Renew(ctx, renewRequest)
+	if err != nil || renewed.Items()[0].Mutation() != jobs.DeliveryMutationLeaseLost || renewed.Items()[0].Control() != jobs.DeliveryControlTerminated {
+		t.Fatalf("terminated renewal = (%v, %v, %v)", renewed.Items()[0].Mutation(), renewed.Items()[0].Control(), err)
+	}
+	finish, err := jobs.FinishAttemptCommand(lease, jobs.SuccessDisposition(), 0, jobs.MinRetryDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := applyMemoryCommand(t, fixture.backend, finish)
+	if stale.Result().Mutation() != jobs.DeliveryMutationLeaseLost || stale.Result().Control() != jobs.DeliveryControlTerminated {
+		t.Fatalf("stale finish = (%v, %v)", stale.Result().Mutation(), stale.Result().Control())
+	}
+	next, err := jobs.Enqueue(ctx, fixture.queue, fixture.definition, "next", jobs.Unique("memory-terminate"))
+	if err != nil || next == id {
+		t.Fatalf("released unique = (%v, %v), old %v", next, err, id)
+	}
+	if _, err := fixture.backend.Terminate(ctx, id); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("repeated terminate = %v", err)
+	}
+}
+
+func TestControllerCapacityReservationKeepsControlAvailableAtByteLimit(t *testing.T) {
+	fixture := newFixture(t, 1)
+	id, err := jobs.Enqueue(t.Context(), fixture.queue, fixture.definition, "capacity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.backend.mu.Lock()
+	item := fixture.backend.entries[id]
+	if item.charge <= item.size {
+		fixture.backend.mu.Unlock()
+		t.Fatalf("control reserve = size %d charge %d", item.size, item.charge)
+	}
+	before := fixture.backend.bytes + fixture.backend.reserved
+	fixture.backend.limits.MaxBytes = before
+	fixture.backend.mu.Unlock()
+	fixture.clock.Advance(time.Second)
+	if _, err := fixture.backend.Cancel(t.Context(), id); err != nil {
+		t.Fatalf("cancel at byte limit = %v", err)
+	}
+	fixture.backend.mu.Lock()
+	defer fixture.backend.mu.Unlock()
+	item = fixture.backend.entries[id]
+	if item.charge != item.size || fixture.backend.bytes != int64(item.size) || fixture.backend.reserved != 0 || fixture.backend.bytes > before {
+		t.Fatalf("terminal accounting = size %d charge %d bytes %d reserved %d before %d", item.size, item.charge, fixture.backend.bytes, fixture.backend.reserved, before)
+	}
+}
+
+func TestControllerSerializesWithRenewAndFinish(t *testing.T) {
+	t.Run("cancel and renew", func(t *testing.T) {
+		fixture := newFixture(t, 1)
+		id, err := jobs.Enqueue(t.Context(), fixture.queue, fixture.definition, "cancel-renew")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease := fixture.claim(t, fixture.incarnation(12)).Items()[0].Lease()
+		applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+		fixture.clock.Advance(time.Second)
+		renewRequest, err := jobs.NewRenewRequest([]jobs.LeaseRef{lease}, jobs.DefaultLeaseTTL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		cancelDone := make(chan error, 1)
+		renewDone := make(chan struct {
+			result jobs.RenewResult
+			err    error
+		}, 1)
+		go func() {
+			<-start
+			_, cancelErr := fixture.backend.Cancel(context.Background(), id)
+			cancelDone <- cancelErr
+		}()
+		go func() {
+			<-start
+			result, renewErr := fixture.backend.Renew(context.Background(), renewRequest)
+			renewDone <- struct {
+				result jobs.RenewResult
+				err    error
+			}{result: result, err: renewErr}
+		}()
+		close(start)
+		if err := <-cancelDone; err != nil {
+			t.Fatal(err)
+		}
+		renewed := <-renewDone
+		if renewed.err != nil || renewed.result.Items()[0].Mutation() != jobs.DeliveryMutationApplied {
+			t.Fatalf("concurrent renew = (%v, %v)", renewed.result, renewed.err)
+		}
+		fixture.backend.mu.Lock()
+		item := fixture.backend.entries[id]
+		state := item.invocation.State()
+		current := item.lease.reference
+		fixture.backend.mu.Unlock()
+		if state != jobs.InvocationCancelRequested || !sameLease(current, renewed.result.Items()[0].Current()) {
+			t.Fatalf("post-race state = %v lease = %v", state, current)
+		}
+	})
+
+	t.Run("terminate and finish", func(t *testing.T) {
+		fixture := newFixture(t, 1)
+		id, _, err := jobs.EnqueueOnce(t.Context(), fixture.queue, fixture.definition, jobs.Intent("terminate-finish"), "payload")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease := fixture.claim(t, fixture.incarnation(13)).Items()[0].Lease()
+		applyMemoryCommand(t, fixture.backend, mustBeginMemoryCommand(t, lease, fixture.binding, fixture.build))
+		fixture.clock.Advance(time.Second)
+		finish, err := jobs.FinishAttemptCommand(lease, jobs.SuccessDisposition(), 0, jobs.MinRetryDelay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishRequest, err := jobs.NewApplyRequest(finish)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		terminateDone := make(chan error, 1)
+		finishDone := make(chan struct {
+			result jobs.ApplyResult
+			err    error
+		}, 1)
+		go func() {
+			<-start
+			_, terminateErr := fixture.backend.Terminate(context.Background(), id)
+			terminateDone <- terminateErr
+		}()
+		go func() {
+			<-start
+			result, finishErr := fixture.backend.Apply(context.Background(), finishRequest)
+			finishDone <- struct {
+				result jobs.ApplyResult
+				err    error
+			}{result: result, err: finishErr}
+		}()
+		close(start)
+		terminateErr := <-terminateDone
+		finished := <-finishDone
+		if finished.err != nil {
+			t.Fatal(finished.err)
+		}
+		if terminateErr == nil {
+			if finished.result.Result().Mutation() != jobs.DeliveryMutationLeaseLost || finished.result.Result().Control() != jobs.DeliveryControlTerminated {
+				t.Fatalf("finish after terminate = (%v, %v)", finished.result.Result().Mutation(), finished.result.Result().Control())
+			}
+		} else if !errors.Is(terminateErr, jobs.ErrConflict) || finished.result.Result().Mutation() != jobs.DeliveryMutationApplied {
+			t.Fatalf("terminate after finish = (%v, %v)", terminateErr, finished.result.Result().Mutation())
+		}
+		fixture.backend.mu.Lock()
+		item := fixture.backend.entries[id]
+		state := item.invocation.State()
+		leased := item.lease != nil
+		fixture.backend.mu.Unlock()
+		if !state.Terminal() || leased {
+			t.Fatalf("post-race state = %v leased = %t", state, leased)
+		}
+	})
+}
+
 func TestEnqueueOnceAndCapacity(t *testing.T) {
 	fixture := newFixture(t, 1)
 	intent := jobs.Intent("request-1")

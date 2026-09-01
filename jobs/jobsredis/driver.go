@@ -265,7 +265,7 @@ func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.App
 		return jobs.ApplyResult{}, err
 	}
 	if !found || !sameLease(entry, lease) || !entry.LeaseUntil.After(now) {
-		return leaseLostApply(now)
+		return leaseLostApply(now, deliveryControl(entry, found))
 	}
 	if command.Kind() == jobs.DeliveryCommandRejectCorrupt {
 		application, applyErr := jobs.ApplyDeliveryCommand(jobs.Invocation{}, command, now)
@@ -556,8 +556,8 @@ func applicationControl(kind jobs.DeliveryCommandKind, application jobs.Delivery
 	return jobs.DeliveryControlNone
 }
 
-func leaseLostApply(now time.Time) (jobs.ApplyResult, error) {
-	result, err := jobs.NewDeliveryCommandResult(jobs.DeliveryMutationLeaseLost, jobs.DeliveryControlNone)
+func leaseLostApply(now time.Time, control jobs.DeliveryControlStatus) (jobs.ApplyResult, error) {
+	result, err := jobs.NewDeliveryCommandResult(jobs.DeliveryMutationLeaseLost, control)
 	if err != nil {
 		return jobs.ApplyResult{}, err
 	}

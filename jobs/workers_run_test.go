@@ -25,6 +25,10 @@ type workersRunDriver struct {
 	delays         []time.Duration
 	deadlineDelays []time.Duration
 	renewSizes     []int
+	renewMutation  DeliveryMutationStatus
+	renewControl   DeliveryControlStatus
+	applyMutation  DeliveryMutationStatus
+	applyControl   DeliveryControlStatus
 	beginReached   chan struct{}
 	beginRelease   chan struct{}
 }
@@ -53,13 +57,74 @@ func (driver *workersRunDriver) Renew(_ context.Context, request RenewRequest) (
 	driver.renewSizes = append(driver.renewSizes, len(request.leases))
 	items := make([]LeaseRenewal, len(request.leases))
 	for index, lease := range request.leases {
-		renewal, err := NewLeaseRenewal(lease, lease, DeliveryMutationApplied, DeliveryControlNone)
+		mutation := driver.renewMutation
+		if !mutation.Valid() {
+			mutation = DeliveryMutationApplied
+		}
+		control := driver.renewControl
+		if !control.Valid() {
+			control = DeliveryControlNone
+		}
+		current := lease
+		if mutation != DeliveryMutationApplied {
+			current = LeaseRef{}
+		}
+		renewal, err := NewLeaseRenewal(lease, current, mutation, control)
 		if err != nil {
 			return RenewResult{}, err
 		}
 		items[index] = renewal
 	}
 	return NewRenewResult(driver.observedAt, items)
+}
+
+func TestWorkerPoolPropagatesOperatorControlBeforeClosingLostLease(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		control DeliveryControlStatus
+		cause   error
+	}{
+		{"cancel", DeliveryControlCancelRequested, ErrCancelled},
+		{"terminate", DeliveryControlTerminated, ErrTerminated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+			driver := &workersRunDriver{
+				description:   queueTestBackendDescription(1),
+				observedAt:    fixture.invocation.EligibleAt(),
+				finished:      make(chan struct{}),
+				renewMutation: DeliveryMutationLeaseLost,
+				renewControl:  test.control,
+			}
+			consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(1))
+			workers, err := NewWorkers(WorkersSpec{
+				Namespace: fixture.namespace,
+				Catalog:   fixture.catalog,
+				Driver:    driver,
+				Build:     fixture.build,
+				Identity:  workerDeliveryIdentityRestorer(t),
+				Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+			}, consumer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+			binding := pool.bindings[fixture.definition.Name()]
+			delivery := newActiveWorkerDelivery(pool, binding, fixture.lease, 1)
+			pool.active[delivery] = struct{}{}
+			if !pool.renewActive(t.Context()) {
+				t.Fatal("controlled renewal stopped the worker pool")
+			}
+			if cause := context.Cause(delivery.handlerContext); !errors.Is(cause, test.cause) {
+				t.Fatalf("handler cancellation cause = %v", cause)
+			}
+			select {
+			case <-delivery.lost:
+			default:
+				t.Fatal("controlled delivery did not close its lease")
+			}
+		})
+	}
 }
 
 func TestWorkerPoolBatchesEveryActiveLeaseIntoOneRenewCall(t *testing.T) {
@@ -157,6 +222,13 @@ func (driver *workersRunDriver) Apply(ctx context.Context, request ApplyRequest)
 	}
 	driver.mu.Lock()
 	defer driver.mu.Unlock()
+	if driver.applyMutation.Valid() && driver.applyMutation != DeliveryMutationApplied {
+		result, err := NewDeliveryCommandResult(driver.applyMutation, driver.applyControl)
+		if err != nil {
+			return ApplyResult{}, err
+		}
+		return NewApplyResult(driver.observedAt, result, DeliveryApplication{})
+	}
 	application, err := ApplyDeliveryCommand(driver.invocation, request.command, driver.observedAt)
 	if err != nil {
 		return ApplyResult{}, err
@@ -181,6 +253,57 @@ func (driver *workersRunDriver) Apply(ctx context.Context, request ApplyRequest)
 		driver.finishOnce.Do(func() { close(driver.finished) })
 	}
 	return applied, nil
+}
+
+func TestWorkerApplyPropagatesOperatorControlBeforeClosingLostLease(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		control DeliveryControlStatus
+		cause   error
+	}{
+		{"cancel", DeliveryControlCancelRequested, ErrCancelled},
+		{"terminate", DeliveryControlTerminated, ErrTerminated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+			driver := &workersRunDriver{
+				description:   queueTestBackendDescription(1),
+				observedAt:    fixture.invocation.EligibleAt(),
+				finished:      make(chan struct{}),
+				applyMutation: DeliveryMutationLeaseLost,
+				applyControl:  test.control,
+			}
+			consumer := On(fixture.definition, Handler[string](func(context.Context, string) error { return nil }), Binding("worker.primary"), Concurrency(1))
+			workers, err := NewWorkers(WorkersSpec{
+				Namespace: fixture.namespace,
+				Catalog:   fixture.catalog,
+				Driver:    driver,
+				Build:     fixture.build,
+				Identity:  workerDeliveryIdentityRestorer(t),
+				Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+			}, consumer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pool := newWorkerPool(workers, newWorkerRunSession(context.Background()))
+			binding := pool.bindings[fixture.definition.Name()]
+			delivery := newActiveWorkerDelivery(pool, binding, fixture.lease, 1)
+			_, call := delivery.apply(t.Context(), func(lease LeaseRef) (DeliveryCommand, error) {
+				return ProgressCommand(lease)
+			})
+			if call.err != nil {
+				t.Fatal(call.err)
+			}
+			if cause := context.Cause(delivery.handlerContext); !errors.Is(cause, test.cause) {
+				t.Fatalf("handler cancellation cause = %v", cause)
+			}
+			select {
+			case <-delivery.lost:
+			default:
+				t.Fatal("controlled delivery did not close its lease")
+			}
+		})
+	}
 }
 
 func (driver *workersRunDriver) Recover(context.Context, RecoverRequest) (RecoverResult, error) {

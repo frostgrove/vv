@@ -73,6 +73,7 @@ type Backend struct {
 	entries     map[jobs.InvocationID]*entry
 	intents     map[jobs.IntentKey]jobs.InvocationID
 	bytes       int64
+	reserved    int64
 	sequence    uint64
 	leaseEpoch  uint64
 	closed      bool
@@ -82,6 +83,7 @@ type entry struct {
 	invocation jobs.Invocation
 	record     jobs.DeliveryRecord
 	size       int
+	charge     int
 	readyAt    time.Time
 	sequence   uint64
 	lease      *lease
@@ -117,6 +119,7 @@ func (systemClock) Now() time.Time {
 var (
 	_ jobs.Sender         = (*Backend)(nil)
 	_ jobs.DeliveryDriver = (*Backend)(nil)
+	_ jobs.Controller     = (*Backend)(nil)
 )
 
 func New(limits Limits, options ...Option) (*Backend, error) {
@@ -208,6 +211,7 @@ func (backend *Backend) Reset() error {
 	backend.entries = make(map[jobs.InvocationID]*entry)
 	backend.intents = make(map[jobs.IntentKey]jobs.InvocationID)
 	backend.bytes = 0
+	backend.reserved = 0
 	return nil
 }
 
@@ -219,6 +223,7 @@ func (backend *Backend) Close() error {
 	backend.entries = make(map[jobs.InvocationID]*entry)
 	backend.intents = make(map[jobs.IntentKey]jobs.InvocationID)
 	backend.bytes = 0
+	backend.reserved = 0
 	backend.closed = true
 	backend.mu.Unlock()
 	return nil
@@ -315,6 +320,83 @@ func (backend *Backend) Enqueue(ctx context.Context, record jobs.DeliveryRecord)
 	}
 	backend.insertLocked(item)
 	return nil
+}
+
+func (backend *Backend) Cancel(ctx context.Context, id jobs.InvocationID) (jobs.DeliveryView, error) {
+	return backend.control(ctx, id, false)
+}
+
+func (backend *Backend) Terminate(ctx context.Context, id jobs.InvocationID) (jobs.DeliveryView, error) {
+	return backend.control(ctx, id, true)
+}
+
+func (backend *Backend) control(ctx context.Context, id jobs.InvocationID, terminate bool) (jobs.DeliveryView, error) {
+	if err := validateContext(ctx); err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	if backend == nil {
+		return jobs.DeliveryView{}, ErrClosed
+	}
+	if id.IsZero() {
+		return jobs.DeliveryView{}, jobs.ErrInvalid
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if err := backend.readyLocked(ctx); err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	item := backend.entries[id]
+	if item == nil {
+		return jobs.DeliveryView{}, jobs.ErrInvocationNotFound
+	}
+	now, err := backend.now()
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	invocation := jobs.Invocation{}
+	if terminate {
+		invocation, err = item.invocation.Terminate(now)
+	} else {
+		invocation, err = item.invocation.RequestCancel(now)
+	}
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	updated, err := recordFromInvocation(invocation, item.record)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	charge, err := deliveryCharge(invocation, updated.record, updated.size)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	if delta := int64(charge - item.charge); delta > backend.limits.MaxBytes-backend.bytes-backend.reserved {
+		return jobs.DeliveryView{}, jobs.ErrSaturated
+	}
+	payload, err := jobs.NewEncodedPayload(updated.record.Payload.Codec, updated.record.Payload.Version, updated.record.Payload.Data)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	view, err := jobs.NewDeliveryView(invocation, payload)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	backend.bytes += int64(updated.size - item.size)
+	backend.reserved += int64(charge - updated.size - item.charge + item.size)
+	item.invocation = invocation
+	item.record = updated.record
+	item.size = updated.size
+	item.charge = charge
+	if invocation.IsTerminal() {
+		item.lease = nil
+		item.readyAt = time.Time{}
+		item.excluded = exclusion{}
+		if invocation.Mode() != jobs.PlacementOnce {
+			backend.unreserveLocked(item)
+			item.intents = nil
+		}
+	}
+	return view, nil
 }
 
 func (backend *Backend) Claim(ctx context.Context, request jobs.ClaimRequest) (jobs.ClaimBatch, error) {
@@ -489,13 +571,19 @@ func (backend *Backend) Apply(ctx context.Context, request jobs.ApplyRequest) (j
 	if err != nil {
 		return jobs.ApplyResult{}, err
 	}
-	if delta := int64(updated.size - item.size); delta > backend.limits.MaxBytes-backend.bytes {
+	charge, err := deliveryCharge(application.Invocation(), updated.record, updated.size)
+	if err != nil {
+		return jobs.ApplyResult{}, err
+	}
+	if delta := int64(charge - item.charge); delta > backend.limits.MaxBytes-backend.bytes-backend.reserved {
 		return jobs.ApplyResult{}, jobs.ErrSaturated
 	}
 	backend.bytes += int64(updated.size - item.size)
+	backend.reserved += int64(charge - updated.size - item.charge + item.size)
 	item.invocation = application.Invocation()
 	item.record = updated.record
 	item.size = updated.size
+	item.charge = charge
 	if item.invocation.IsTerminal() {
 		item.lease = nil
 		item.readyAt = time.Time{}
@@ -581,14 +669,20 @@ func (backend *Backend) collapseLocked(placement jobs.Placement, item *entry, no
 	if err != nil {
 		return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrTooLarge)
 	}
-	if int64(size-item.size) > backend.limits.MaxBytes-backend.bytes {
+	charge, err := deliveryCharge(invocation, record, size)
+	if err != nil {
+		return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrTooLarge)
+	}
+	if int64(charge-item.charge) > backend.limits.MaxBytes-backend.bytes-backend.reserved {
 		return jobs.PlacementResult{}, jobs.RejectPlacement(jobs.ErrSaturated)
 	}
 	backend.unreserveLocked(item)
 	backend.bytes += int64(size - item.size)
+	backend.reserved += int64(charge - size - item.charge + item.size)
 	item.invocation = invocation
 	item.record = record
 	item.size = size
+	item.charge = charge
 	item.readyAt = eligibleAt
 	item.excluded = exclusion{}
 	item.intents = placement.IntentDigests().ReservationKeys()
@@ -605,16 +699,21 @@ func (backend *Backend) newEntryLocked(invocation jobs.Invocation, record jobs.D
 	if err != nil {
 		return nil, jobs.RejectPlacement(jobs.ErrTooLarge)
 	}
-	if len(backend.entries) == backend.limits.MaxRecords || int64(size) > backend.limits.MaxBytes-backend.bytes {
+	charge, err := deliveryCharge(invocation, record, size)
+	if err != nil {
+		return nil, jobs.RejectPlacement(jobs.ErrTooLarge)
+	}
+	if len(backend.entries) == backend.limits.MaxRecords || int64(charge) > backend.limits.MaxBytes-backend.bytes-backend.reserved {
 		return nil, jobs.RejectPlacement(jobs.ErrSaturated)
 	}
 	backend.sequence++
-	return &entry{invocation: invocation, record: record, size: size, readyAt: invocation.EligibleAt(), sequence: backend.sequence, intents: append([]jobs.IntentKey(nil), intents...)}, nil
+	return &entry{invocation: invocation, record: record, size: size, charge: charge, readyAt: invocation.EligibleAt(), sequence: backend.sequence, intents: append([]jobs.IntentKey(nil), intents...)}, nil
 }
 
 func (backend *Backend) insertLocked(item *entry) {
 	backend.entries[item.invocation.ID()] = item
 	backend.bytes += int64(item.size)
+	backend.reserved += int64(item.charge - item.size)
 	backend.reserveLocked(item)
 }
 
@@ -624,6 +723,7 @@ func (backend *Backend) removeLocked(item *entry) {
 	}
 	delete(backend.entries, item.invocation.ID())
 	backend.bytes -= int64(item.size)
+	backend.reserved -= int64(item.charge - item.size)
 	backend.unreserveLocked(item)
 }
 
