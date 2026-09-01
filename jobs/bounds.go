@@ -49,7 +49,7 @@ const (
 	MaxWorkerConcurrency  = 4096
 	DefaultClaimItems     = 64
 	MaxClaimItems         = 256
-	DefaultClaimBytes     = 4 << 20
+	DefaultClaimBytes     = MaxDeliveryRecordBytes
 	MaxClaimBytes         = 64 << 20
 
 	DefaultReclaimBatch        = 100

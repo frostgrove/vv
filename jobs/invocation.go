@@ -453,6 +453,33 @@ func (i Invocation) DeferDelivery(spec DeferDeliverySpec) (Invocation, error) {
 	return result, nil
 }
 
+func (i Invocation) releaseUnchanged(observedAt, availableAt time.Time) (Invocation, error) {
+	if i.IsZero() || i.state != InvocationQueued {
+		return Invocation{}, transitionConflict("invocation cannot release unchanged")
+	}
+	observedAt, err := requiredTime(observedAt, "unchanged release time")
+	if err != nil {
+		return Invocation{}, err
+	}
+	if observedAt.Before(i.readyAt()) {
+		return Invocation{}, transitionConflict("unchanged release precedes eligibility")
+	}
+	if reason := i.deadlineReason(observedAt); reason != ReasonNone {
+		return i.finishDeliveryDecision(InvocationDead, ReasonCompatibility, reason, PublicFailure{}, observedAt, time.Time{})
+	}
+	availableAt, err = requiredTime(availableAt, "unchanged release availability")
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := validateBoundedDelay(observedAt, availableAt); err != nil {
+		return Invocation{}, err
+	}
+	if reason := i.deadlineReason(availableAt); reason != ReasonNone {
+		return i.finishDeliveryDecision(InvocationDead, ReasonCompatibility, reason, PublicFailure{}, observedAt, availableAt)
+	}
+	return i, nil
+}
+
 func (i Invocation) FinishDelivery(spec FinishDeliverySpec) (Invocation, error) {
 	if i.IsZero() || i.state != InvocationQueued {
 		return Invocation{}, transitionConflict("invocation cannot finish delivery")

@@ -52,7 +52,7 @@ func TestJobBoundsAreExact(t *testing.T) {
 		"worker concurrency":         {MaxWorkerConcurrency, 4096},
 		"default claim items":        {DefaultClaimItems, 64},
 		"claim items":                {MaxClaimItems, 256},
-		"default claim bytes":        {DefaultClaimBytes, 4194304},
+		"default claim bytes":        {DefaultClaimBytes, MaxDeliveryRecordBytes},
 		"claim bytes":                {MaxClaimBytes, 67108864},
 		"default reclaim batch":      {DefaultReclaimBatch, 100},
 		"reclaim batch":              {MaxReclaimBatch, 1000},
