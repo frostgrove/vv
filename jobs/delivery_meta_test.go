@@ -47,7 +47,7 @@ func TestDeliveryMetaCanonicalizesBoundedValueData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.InvocationID() != spec.Invocation || meta.Definition() != spec.Definition || meta.Binding() != spec.Binding || meta.Build() != spec.Build || meta.AttemptOrdinal() != spec.Attempt {
+	if meta.InvocationID() != spec.Invocation || meta.Definition() != spec.Definition || meta.Binding() != spec.Binding || meta.Build() != spec.Build || meta.AttemptOrdinal() != spec.Attempt || meta.RetrySpent() != spec.RetrySpent || meta.RetryLimit() != spec.RetryLimit || meta.LastChargedAttempt() {
 		t.Fatalf("delivery identity = %#v", meta)
 	}
 	times := []struct {
@@ -83,6 +83,12 @@ func TestDeliveryMetaRejectsUnboundedAndIncoherentValues(t *testing.T) {
 		{name: "build", mutate: func(spec *DeliveryMetaSpec) { spec.Build = BuildID{} }, want: ErrInvalid},
 		{name: "attempt zero", mutate: func(spec *DeliveryMetaSpec) { spec.Attempt = AttemptOrdinal{} }, want: ErrInvalid},
 		{name: "attempt large", mutate: func(spec *DeliveryMetaSpec) { spec.Attempt = AttemptOrdinal{value: uint16(MaxAttemptOrdinal + 1)} }, want: ErrInvalid},
+		{name: "retry spent large", mutate: func(spec *DeliveryMetaSpec) { spec.RetrySpent = RetrySpent{value: uint16(MaximumRetries + 1)} }, want: ErrInvalid},
+		{name: "retry limit large", mutate: func(spec *DeliveryMetaSpec) { spec.RetryLimit = RetryLimit{value: uint16(MaximumRetries + 1)} }, want: ErrInvalid},
+		{name: "retry spent over limit", mutate: func(spec *DeliveryMetaSpec) {
+			spec.RetrySpent = RetrySpent{value: 3}
+			spec.RetryLimit = RetryLimit{value: 2}
+		}, want: ErrInvalid},
 		{name: "creation zero", mutate: func(spec *DeliveryMetaSpec) { spec.CreatedAt = time.Time{} }, want: ErrInvalid},
 		{name: "eligible before creation", mutate: func(spec *DeliveryMetaSpec) { spec.EligibleAt = spec.CreatedAt.Add(-time.Nanosecond) }, want: ErrInvalid},
 		{name: "eligible delay", mutate: func(spec *DeliveryMetaSpec) { spec.EligibleAt = spec.CreatedAt.Add(MaxRetention + time.Nanosecond) }, want: ErrInvalid},
@@ -118,13 +124,33 @@ func TestDeliveryMetaRejectsUnboundedAndIncoherentValues(t *testing.T) {
 	}
 }
 
+func TestDeliveryMetaLastChargedAttemptIgnoresDeferralOrdinals(t *testing.T) {
+	spec := deliveryMetaFixture(t)
+	spec.RetrySpent = RetrySpent{value: 3}
+	spec.RetryLimit = RetryLimit{value: 3}
+	for _, ordinal := range []uint16{4, 9} {
+		spec.Attempt = AttemptOrdinal{value: ordinal}
+		meta, err := NewDeliveryMeta(spec)
+		if err != nil || !meta.LastChargedAttempt() {
+			t.Fatalf("last charged attempt at ordinal %d = (%v, %v)", ordinal, meta.LastChargedAttempt(), err)
+		}
+	}
+	spec.RetrySpent = RetrySpent{value: 2}
+	meta, err := NewDeliveryMeta(spec)
+	if err != nil || meta.LastChargedAttempt() {
+		t.Fatalf("remaining charged attempt = (%v, %v)", meta.LastChargedAttempt(), err)
+	}
+}
+
 func TestDeliveryMetaSurfaceAndFormattingExcludeDeliveryControls(t *testing.T) {
 	allowedSpec := map[string]bool{
 		"Invocation": true, "Definition": true, "Binding": true, "Build": true, "Attempt": true,
+		"RetrySpent": true, "RetryLimit": true,
 		"CreatedAt": true, "EligibleAt": true, "StartedAt": true, "AttemptDeadline": true, "MaxElapsedAt": true, "ProgressDeadline": true,
 	}
 	allowedValue := map[string]bool{
 		"invocation": true, "definition": true, "binding": true, "build": true, "attempt": true,
+		"retrySpent": true, "retryLimit": true,
 		"createdAt": true, "eligibleAt": true, "startedAt": true, "attemptDeadline": true, "maxElapsedAt": true, "progressDeadline": true,
 	}
 	assertExactDeliveryMetaFields(t, reflect.TypeFor[DeliveryMetaSpec](), allowedSpec)
@@ -333,6 +359,14 @@ func deliveryMetaFixture(t *testing.T) DeliveryMetaSpec {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retrySpent, err := NewRetrySpent(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryLimit, err := NewRetryLimit(3)
+	if err != nil {
+		t.Fatal(err)
+	}
 	location := time.FixedZone("fixture", 6*60*60)
 	createdAt := time.Date(2026, 9, 1, 12, 0, 0, 123, location)
 	eligibleAt := createdAt.Add(time.Second)
@@ -343,6 +377,8 @@ func deliveryMetaFixture(t *testing.T) DeliveryMetaSpec {
 		Binding:          binding,
 		Build:            build,
 		Attempt:          attempt,
+		RetrySpent:       retrySpent,
+		RetryLimit:       retryLimit,
 		CreatedAt:        createdAt,
 		EligibleAt:       eligibleAt,
 		StartedAt:        startedAt,

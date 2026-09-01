@@ -620,6 +620,8 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 		Binding:          attempt.Binding(),
 		Build:            attempt.Build(),
 		Attempt:          attempt.Ordinal(),
+		RetrySpent:       application.invocation.RetrySpent(),
+		RetryLimit:       application.invocation.Policy().RetryLimit(),
 		CreatedAt:        application.invocation.CreatedAt(),
 		EligibleAt:       application.invocation.EligibleAt(),
 		StartedAt:        attempt.StartedAt(),
@@ -799,6 +801,19 @@ type workerAttemptController struct {
 func (controller workerAttemptController) Pulse(ctx context.Context) error {
 	if controller.delivery == nil || nilInterface(ctx) {
 		return ErrInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	controller.delivery.mu.Lock()
+	closed := controller.delivery.closed
+	progressTimeout := controller.delivery.invocation.Policy().ProgressTimeout()
+	controller.delivery.mu.Unlock()
+	if closed {
+		return ErrLeaseLost
+	}
+	if progressTimeout == 0 {
+		return ErrUnsupported
 	}
 	_, call := controller.delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
 		return ProgressCommand(lease)

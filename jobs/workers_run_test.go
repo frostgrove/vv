@@ -144,6 +144,24 @@ func TestWorkersRunProcessesClaimedDelivery(t *testing.T) {
 	}
 }
 
+func TestWorkerAttemptControllerDoesNotLoseLeaseWhenProgressIsDisabled(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	delivery := &activeWorkerDelivery{invocation: fixture.invocation}
+	err := (workerAttemptController{delivery: delivery}).Pulse(t.Context())
+	if !errors.Is(err, ErrUnsupported) || delivery.closed {
+		t.Fatalf("pulse = %v, closed = %t", err, delivery.closed)
+	}
+}
+
+func TestWorkerAttemptControllerRejectsClosedDeliveryBeforeProgressCapability(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	delivery := &activeWorkerDelivery{invocation: fixture.invocation, closed: true}
+	err := (workerAttemptController{delivery: delivery}).Pulse(t.Context())
+	if !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("pulse = %v", err)
+	}
+}
+
 func TestWorkersDrainBeforeRunSealsLifecycle(t *testing.T) {
 	spec, consumer, _, _ := workersConfigFixture(t, "workers.run.sealed")
 	workers, err := NewWorkers(spec, consumer)

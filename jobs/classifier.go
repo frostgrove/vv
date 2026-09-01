@@ -71,10 +71,19 @@ func classifyHandlerResult(classifier ErrorClassifier, result error) Disposition
 }
 
 func classifyHandlerFailure(classifier ErrorClassifier, failure HandlerFailure) (result Disposition) {
+	result = classifierFailureDisposition()
+	defer func() {
+		if recover() != nil || classifier != nil && !validClassifierDisposition(result, failure) {
+			result = classifierFailureDisposition()
+		}
+	}()
 	if !failure.valid() {
-		return classifierFailureDisposition()
+		return result
 	}
 	if classifier == nil {
+		if disposition, ok := classifiedHandlerDisposition(failure); ok {
+			return disposition
+		}
 		reason := ReasonHandlerFailure
 		if failure.panicked {
 			reason = ReasonPanic
@@ -82,12 +91,6 @@ func classifyHandlerFailure(classifier ErrorClassifier, failure HandlerFailure) 
 		result, _ = RetryDisposition(reason, PublicFailure{}, 0, RetryCostCharged)
 		return result
 	}
-	result = classifierFailureDisposition()
-	defer func() {
-		if recover() != nil || !validClassifierDisposition(result, failure) {
-			result = classifierFailureDisposition()
-		}
-	}()
 	result = classifier(failure)
 	return result
 }

@@ -28,6 +28,8 @@ type DeliveryMetaSpec struct {
 	Binding          BindingName
 	Build            BuildID
 	Attempt          AttemptOrdinal
+	RetrySpent       RetrySpent
+	RetryLimit       RetryLimit
 	CreatedAt        time.Time
 	EligibleAt       time.Time
 	StartedAt        time.Time
@@ -51,6 +53,8 @@ type DeliveryMeta struct {
 	binding          BindingName
 	build            BuildID
 	attempt          AttemptOrdinal
+	retrySpent       RetrySpent
+	retryLimit       RetryLimit
 	createdAt        time.Time
 	eligibleAt       time.Time
 	startedAt        time.Time
@@ -62,6 +66,9 @@ type DeliveryMeta struct {
 func NewDeliveryMeta(spec DeliveryMetaSpec) (DeliveryMeta, error) {
 	if !spec.Invocation.valid() || !spec.Definition.valid() || !spec.Binding.valid() || !spec.Build.valid() || spec.Attempt.IsZero() || !spec.Attempt.valid() {
 		return DeliveryMeta{}, invalid("delivery metadata identity")
+	}
+	if !spec.RetrySpent.valid() || !spec.RetryLimit.valid() || spec.RetrySpent.Value() > spec.RetryLimit.Value() {
+		return DeliveryMeta{}, invalid("delivery metadata retry budget")
 	}
 	createdAt, err := requiredTime(spec.CreatedAt, "delivery creation time")
 	if err != nil {
@@ -99,6 +106,8 @@ func NewDeliveryMeta(spec DeliveryMetaSpec) (DeliveryMeta, error) {
 		binding:          spec.Binding,
 		build:            spec.Build,
 		attempt:          spec.Attempt,
+		retrySpent:       spec.RetrySpent,
+		retryLimit:       spec.RetryLimit,
 		createdAt:        createdAt,
 		eligibleAt:       eligibleAt,
 		startedAt:        startedAt,
@@ -113,6 +122,11 @@ func (m DeliveryMeta) Definition() Name               { return m.definition }
 func (m DeliveryMeta) Binding() BindingName           { return m.binding }
 func (m DeliveryMeta) Build() BuildID                 { return m.build }
 func (m DeliveryMeta) AttemptOrdinal() AttemptOrdinal { return m.attempt }
+func (m DeliveryMeta) RetrySpent() RetrySpent         { return m.retrySpent }
+func (m DeliveryMeta) RetryLimit() RetryLimit         { return m.retryLimit }
+func (m DeliveryMeta) LastChargedAttempt() bool {
+	return !m.IsZero() && m.retrySpent.Value() == m.retryLimit.Value()
+}
 func (m DeliveryMeta) CreatedAt() time.Time           { return m.createdAt }
 func (m DeliveryMeta) EligibleAt() time.Time          { return m.eligibleAt }
 func (m DeliveryMeta) StartedAt() time.Time           { return m.startedAt }
@@ -133,6 +147,8 @@ func (m DeliveryMeta) valid() bool {
 		Binding:          m.binding,
 		Build:            m.build,
 		Attempt:          m.attempt,
+		RetrySpent:       m.retrySpent,
+		RetryLimit:       m.retryLimit,
 		CreatedAt:        m.createdAt,
 		EligibleAt:       m.eligibleAt,
 		StartedAt:        m.startedAt,
