@@ -1,7 +1,13 @@
 # Roadmap
 
-What is not built. Nine items, none of them a subsystem, four of them expiring
-at the first tag.
+What is not built. Sixteen items, three of them expiring at the first tag.
+
+Optional features follow the
+[current extension architecture](2026-09-01-extension-architecture-roadmap.md):
+base packages own dependency-neutral typed seams, independently selected
+extensions compose in application code, and no pairwise combination packages
+are added. A linked design roadmap is not evidence that its production module
+exists.
 
 | # | Item | Blocked on | Expires at the first tag |
 |---|---|---|---|
@@ -13,7 +19,14 @@ at the first tag.
 | 6 | `CodeExclusion` is reachable from no engine | somebody provoking an `EXCLUDE` | no |
 | 7 | Whether the framework retries a retryable class | a decision, not code | no |
 | 8 | The tag-name helper, and generated wiring for Fiber and Gin | a decision each | no |
-| 9 | Comments citing two deleted documents | a mechanical sweep | no |
+| 9 | Remaining documentation citations to two deleted documents | classification and a mechanical sweep | no |
+| 10 | Versioned telemetry schema and optional OpenTelemetry extension | extension/module ADR and accepted base composition points | no |
+| 11 | Common optional-extension seams and legacy combination-module migration | architecture ADR and compatibility decisions | no |
+| 12 | Jobs/cache conformance and current driver/worker completion | the in-flight implementation and green evidence | no |
+| 13 | Optional multitenancy extension | a concrete consumer and architecture gate | no |
+| 14 | Optional durable audit extension | a named audited resource and atomicity gate | no |
+| 15 | Optional PostgreSQL event-sourcing extension | a named aggregate and append/UoW gate | no |
+| 16 | Optional full-i18n extension | a use case beyond the current error catalogues | no |
 
 ---
 
@@ -26,9 +39,9 @@ suffix is a workaround rather than a choice.
 This is the one item on the list an agent cannot decide. It is a name the owner
 will live with.
 
-**The cheap moment is now.** No tag has been pushed and there is no remote, so a
-rename costs a `sed` and nothing else. After `v0.1.0` it costs a deprecation
-cycle.
+**The cheap moment is now if the module is still unpublished.** This checkout
+has an `origin` remote and no local release tag; verify remote tags and consumers
+immediately before a rename. After `v0.1.0` it costs a deprecation cycle.
 
 Whoever renames next: the imports are the easy half. What breaks is everything
 that is **not** an import, and the two previous renames both leaked at the same
@@ -139,17 +152,177 @@ in every path; `TestWithoutTheTagNameFuncEveryPathIsGoFieldNames` in
 module — which a consumer may do and the library's own generated output may not
 ([[D-033]]). `-binding none` plus `ServingFor` is the hand-written way in today.
 
-## 9. Comments citing two deleted documents
+## 9. Remaining documentation citations to two deleted documents
 
-17 comments across 15 `.go` files, and 21 doc bodies, cite `ROADMAP-errors.md`
-or `ROADMAP-framework.md` by section — files that no longer exist. A reader
-following one lands nowhere.
+No Go source file currently cites `ROADMAP-errors.md` or
+`ROADMAP-framework.md`. Documentation still cites those deleted files in
+historical/design context, so each remaining reference must be classified as a
+historical pointer or rewritten to its current successor instead of relying on
+stale hard-coded counts.
 
 [retired-sections.md](retired-sections.md) maps every old section to its
 successor, so the fix is mechanical: rewrite each citation to name the successor
 directly, then delete that map.
 
+```sh
+rg -n 'ROADMAP-errors\.md|ROADMAP-framework\.md' --glob '*.go' .
+rg -n 'ROADMAP-errors\.md|ROADMAP-framework\.md' --glob '*.md' docs
 ```
-grep -rn "ROADMAP-errors.md\|ROADMAP-framework.md" --include='*.go' .
-grep -rn "ROADMAP-errors.md\|ROADMAP-framework.md" docs/ --include='*.md'
-```
+
+## 10. Versioned telemetry schema and optional OpenTelemetry extension
+
+No OpenTelemetry module exists. Cache already has subsystem-local typed
+terminal events and storage now has a concrete Store, while the old OTel plan
+assumes a smaller service/repository surface and future storage.
+
+The current delivery plan is
+[2026-08-31-opentelemetry-roadmap.md](2026-08-31-opentelemetry-roadmap.md):
+one optional cross-cutting `vvotel` module with a shared factory, direct
+command/storage decorators and subsystem-local cache adapters. Base packages
+own dependency-neutral typed chain/observer entry points so OTel, tenancy,
+audit and future extensions compose linearly instead of creating pairwise
+packages. The root and every published module other than `otel/` remain
+OTel-free, and `vvotel` imports no optional framework satellite. [[D-048]]
+continues to refuse a shared telemetry contract. Repository spans, logs and
+jobs/event propagation remain explicit deferrals until their current contracts
+and instrumentation seams have conformance evidence. The common package rule is
+owned by the
+[2026-09-01 architecture revision](2026-09-01-extension-architecture-roadmap.md).
+
+This item closes only after the schema/extension ADR, base composition,
+capability and privacy tests, isolated consumer graphs proving OTel optionality,
+minimum/current OTel GA compatibility, and a runnable explicit-lifecycle SDK
+example all pass.
+
+## 11. Common optional-extension seams and legacy module migration
+
+The package rule is now explicit in the
+[2026-09-01 architecture revision](2026-09-01-extension-architecture-roadmap.md).
+Root and pre-existing modules do not depend on OTel, tenancy, audit, event
+sourcing, full i18n or another optional extension. A selected extension may
+ship factories for several root seams, while the application owns order and
+lifecycle. There is no universal registry and no `storageotel`, `auditotel`,
+`tenancyjwt`, `eventsourceotel` or higher-order bundle.
+
+This item includes only justified base work: the service/storage chain helpers
+accepted by the future architecture ADR, bounded typed observer fan-out, exact
+optional-effect rules and module graph gates. Cache fan-out must preserve
+[[D-084]]: a terminal shared-load observer remains synchronous inside its
+admitted flight slot, with no early
+release, extra queue or unowned goroutine. The current executable walks in
+`crud.ExistsUnscopedOf` and `cache.BatchReaderOf` must become exact-outer,
+explicitly forwarded by known wrappers or fail closed before new decorators.
+
+The current tree is not falsely described as already clean. `appfiber`,
+`storageminiofx`, the `accessjwt` → `authjwt` concrete-adapter edge and the
+JWT-nested Redis revocation adapter are compatibility migration cases.
+[[D-074]] must be narrowed before the new invariant can be claimed
+repository-wide. The
+[storage revision](2026-09-01-storage-roadmap.md) owns the Store seam and MinIO/Fx
+case; the other feature revisions own their domain contracts.
+
+This item closes when the ADR amendments, seam/capability matrices, two-fake
+composition tests, source/import allow-lists, isolated `GOWORK=off` fixtures and
+accepted migrations all exist. This roadmap update itself changes no production
+package.
+
+## 12. Jobs/cache conformance and current implementation
+
+Cache is no longer a future subsystem: its typed facade, memory backend,
+policies, declarations and observers exist. Jobs likewise has definitions,
+invocations, attempts, queues, consumers, durable context, worker observation
+vocabulary/config, scheduling and Admin/redrive contracts; production
+`WorkerObserver` emission is not wired yet. PostgreSQL's bounded
+Get/Redrive/PurgeTerminal controls and count-bounded List, memory/PostgreSQL
+drivers, worker execution and the Fx binding have landed, and `jobsredis` is now
+a committed workspace module. List currently materializes full payload-bearing
+records without an aggregate byte budget. `jobs.Admin` is an exact optional
+executable capability, not a promise made by every backend or discoverable
+through an opaque wrapper.
+PostgreSQL and Redis remain `BUILDING`; presence and green scoped/unit tests are
+not release evidence without their live-service/conformance gates.
+
+PostgreSQL redrive currently reuses the invocation ID and replaces its delivery
+record, so the prior attempt/outcome ledger is not available through Admin after
+redrive. Release requires an explicit new-ID/predecessor, durable-generation or
+accepted-loss contract plus concurrency/crash evidence; the current behavior is
+not silently promoted to durable history semantics.
+
+The tagged `jobspg` integration fixtures currently compile only with workspace
+dependency leakage and fail dependency resolution under `GOWORK=off`; skipped or
+workspace-only runs are not isolated live evidence. The pgx-backed live profile
+must run from the unpublished test module (or another dedicated test module)
+without adding a third-party requirement to the root.
+
+The [current jobs/cache revision](2026-09-01-jobs-cache-roadmap.md) narrows the
+remaining work. Cache observer fan-out must be deterministic and bounded
+without changing D-084 timing. Executable batch capability discovery must stop
+at an opaque outer wrapper instead of tunnelling to an inner backend. Jobs adds a
+handler middleware/chain only after a second real use or a concrete conformance
+obligation; OTel and tenancy remain adapters/application wiring, never
+`jobsotel` or `jobstenancy`.
+
+This item is not complete while any claimed memory/PostgreSQL driver or worker
+test fails. `TestRecordRoundTripPreservesRestorableAttemptLedger` failed during
+the initial audit, was fixed and is green in the current scoped run; the active
+worktree also crossed an intermediate non-compiling fencing/repository shape.
+The slice stays `BUILDING`: one clean reviewable base-conformance run plus live
+PostgreSQL/crash evidence—not a moving local snapshot—decides readiness.
+
+## 13. Optional multitenancy extension
+
+The root already has policy/repository scoping tools and tenant-shaped examples;
+it does not have a framework tenancy runtime. The
+[current multitenancy revision](2026-09-01-multitenancy-roadmap.md) proposes at
+most one `tenancy` extension/public package with row and database topology
+factories organized by files. Verified inbound scope comes from existing auth
+and transport boundaries; the tenancy module imports neither JWT, OTel, audit,
+events, cache backends nor routers.
+
+Activation requires a named consumer, one proven row-isolation slice and exact
+source/query/job/cache isolation tests. Database-per-tenant is a later factory
+profile in the same extension unless a genuinely independent external SDK
+forces an adapter boundary.
+
+## 14. Optional durable audit extension
+
+No audit package exists today. The
+[current audit revision](2026-09-01-audit-log-roadmap.md) keeps one optional
+audit capability independent from OTel, tenancy and event sourcing. Its
+factories return ordinary base middleware/decorators; the application composes
+them and supplies bounded audit-owned actor/scope/resource references.
+
+The first slice activates only for a named protected resource with an explicit
+atomicity profile. Telemetry is not audit evidence. Mutation method inventories,
+exact optional-effect handling, redaction, authorization, append durability and
+isolated module graphs are release gates; there is no `auditotel` or
+`auditevent` bridge.
+
+## 15. Optional PostgreSQL event-sourcing extension
+
+No event-sourcing or outbox package exists today. The
+[current PostgreSQL event-sourcing revision](2026-09-01-postgres-event-sourcing-roadmap.md)
+defines one independently selected `eventpg` module for a PostgreSQL aggregate
+store, optimistic append and replay/upcasting. A transaction-local outbox joins
+that same module only if the later E4 gate activates it. The first slice starts
+with a direct API: an event-specific root chain is added only after a second
+implementation justifies that base contract.
+
+Tenancy, audit and OTel are application/base-seam composition, not
+`eventtenancy`, `eventaudit` or `eventotel`. A broker sender is injected through
+a neutral application-owned contract; a future broker adapter may target an
+independently accepted delivery seam but may not import `eventpg`.
+
+## 16. Optional full-i18n extension
+
+The current framework already owns `errs.MessageSource`, loadable error
+catalogues and locale propagation through `port`; HTTP and gRPC renderers accept
+that base seam. There is no full i18n module. The
+[current i18n revision](2026-09-01-i18n-roadmap.md) begins with an evidence gate
+for plural/select application messages beyond those facilities, and that gate
+may legitimately decide not to build anything.
+
+If activated, one optional `i18n` module implements the existing message seam
+and owns CLDR/catalogue boilerplate. Applications pass it to current renderers;
+there are no `i18nhttp`, `i18ngrpc`, `i18notel` or tenancy/i18n combination
+packages.
