@@ -65,6 +65,8 @@ type WorkersDescription struct {
 	Backend          BackendDescription
 	Build            BuildID
 	Plan             WorkerPlanDescription
+	Resources        Resources
+	Lifecycle        Resources
 	ObserverEnabled  bool
 	LeaseTTL         time.Duration
 	Heartbeat        time.Duration
@@ -93,6 +95,8 @@ type resolvedWorkersConfig struct {
 	catalog          Catalog
 	driver           DeliveryDriver
 	backend          BackendDescription
+	resources        Resources
+	lifecycle        Resources
 	build            BuildID
 	identity         TrustedIdentityRestorer
 	observer         WorkerObserver
@@ -136,7 +140,13 @@ func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
 	if err := validateWorkerPlanDurability(plan, backend.Durability()); err != nil {
 		return nil, err
 	}
+	resources, err := backend.ResourceProfile().Resolve(plan.TotalConcurrency())
+	if err != nil {
+		return nil, err
+	}
 	config.backend = backend
+	config.resources = resources
+	config.lifecycle = backend.ResourceProfile().Lifecycle()
 	return &Workers{config: config, plan: plan, fatal: newWorkerFailureLatch(), runtime: newWorkersRuntime()}, nil
 }
 
@@ -162,6 +172,8 @@ func (workers *Workers) Describe() WorkersDescription {
 		Backend:          workers.config.backend,
 		Build:            workers.config.build,
 		Plan:             workers.plan.Describe(),
+		Resources:        workers.config.resources,
+		Lifecycle:        workers.config.lifecycle,
 		ObserverEnabled:  !nilInterface(workers.config.observer),
 		LeaseTTL:         workers.config.leaseTTL,
 		Heartbeat:        workers.config.heartbeat,

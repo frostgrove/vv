@@ -82,13 +82,21 @@ func New(spec Spec) (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	description, err := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{
+	resources, err := jobs.NewResourceProfile(jobs.ResourceProfileSpec{
+		SteadyBase: jobs.ResourcesSpec{MaxConcurrentRemoteOps: 2},
+		PerWorker:  jobs.ResourcesSpec{MaxConcurrentRemoteOps: 1},
+		Lifecycle:  jobs.ResourcesSpec{MaxConcurrentRemoteOps: 1},
+	})
+	if err != nil {
+		return nil, err
+	}
+	description, err := jobs.NewBackendDescriptionWithResources(backend, durability, jobs.Capabilities{
 		Priority:     true,
 		Debounce:     true,
 		Unique:       true,
 		Scheduled:    true,
 		AttemptTrace: true,
-	})
+	}, resources)
 	if err != nil {
 		return nil, err
 	}

@@ -265,6 +265,7 @@ type BackendDescription struct {
 	id           BackendID
 	durability   DurabilityProfile
 	capabilities Capabilities
+	resources    ResourceProfile
 }
 
 func NewBackendDescription(id BackendID, durability DurabilityProfile, capabilities Capabilities) (BackendDescription, error) {
@@ -274,15 +275,30 @@ func NewBackendDescription(id BackendID, durability DurabilityProfile, capabilit
 	return BackendDescription{id: id, durability: durability, capabilities: capabilities}, nil
 }
 
-func (d BackendDescription) ID() BackendID                 { return d.id }
-func (d BackendDescription) Durability() DurabilityProfile { return d.durability }
-func (d BackendDescription) Capabilities() Capabilities    { return d.capabilities }
-func (d BackendDescription) IsZero() bool                  { return d.id.IsZero() }
-func (d BackendDescription) String() string                { return "[job backend description]" }
+func NewBackendDescriptionWithResources(id BackendID, durability DurabilityProfile, capabilities Capabilities, resources ResourceProfile) (BackendDescription, error) {
+	if !resources.declared || !resources.valid() {
+		return BackendDescription{}, invalid("backend description")
+	}
+	description, err := NewBackendDescription(id, durability, capabilities)
+	if err != nil {
+		return BackendDescription{}, err
+	}
+	description.resources = resources
+	return description, nil
+}
+
+func (d BackendDescription) ID() BackendID                    { return d.id }
+func (d BackendDescription) Durability() DurabilityProfile    { return d.durability }
+func (d BackendDescription) Capabilities() Capabilities       { return d.capabilities }
+func (d BackendDescription) ResourceProfile() ResourceProfile { return d.resources }
+func (d BackendDescription) IsZero() bool                     { return d.id.IsZero() }
+func (d BackendDescription) String() string                   { return "[job backend description]" }
 func (d BackendDescription) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, d.String())
 }
-func (d BackendDescription) valid() bool { return d.id.valid() && d.durability.valid() }
+func (d BackendDescription) valid() bool {
+	return d.id.valid() && d.durability.valid() && d.resources.valid()
+}
 
 type TransactionBinding struct{ value [32]byte }
 

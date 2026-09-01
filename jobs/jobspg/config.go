@@ -101,7 +101,15 @@ func New(spec Spec) (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	description, err := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
+	resources, err := jobs.NewResourceProfile(jobs.ResourceProfileSpec{
+		SteadyBase: jobs.ResourcesSpec{MaxConcurrentDBOps: 2},
+		PerWorker:  jobs.ResourcesSpec{MaxConcurrentDBOps: 1},
+		Lifecycle:  jobs.ResourcesSpec{PinnedConnections: 1, MaxConcurrentDBOps: 1},
+	})
+	if err != nil {
+		return nil, err
+	}
+	description, err := jobs.NewBackendDescriptionWithResources(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true}, resources)
 	if err != nil {
 		return nil, err
 	}

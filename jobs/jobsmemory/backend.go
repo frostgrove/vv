@@ -147,13 +147,17 @@ func New(limits Limits, options ...Option) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	description, err := jobs.NewBackendDescription(settings.backendID, durability, jobs.Capabilities{
+	resources, err := jobs.NewResourceProfile(jobs.ResourceProfileSpec{})
+	if err != nil {
+		return nil, err
+	}
+	description, err := jobs.NewBackendDescriptionWithResources(settings.backendID, durability, jobs.Capabilities{
 		Priority:     true,
 		Debounce:     true,
 		Unique:       true,
 		Scheduled:    true,
 		AttemptTrace: true,
-	})
+	}, resources)
 	if err != nil {
 		return nil, err
 	}
