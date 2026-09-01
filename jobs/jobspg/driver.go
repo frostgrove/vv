@@ -346,55 +346,6 @@ func (d *Driver) Renew(ctx context.Context, request jobs.RenewRequest) (jobs.Ren
 	return jobs.NewRenewResult(now, items)
 }
 
-func (d *Driver) Fence(ctx context.Context, tx *sql.Tx, meta jobs.DeliveryMeta) error {
-	if err := d.requireReady(); err != nil {
-		return err
-	}
-	if tx == nil || meta.IsZero() {
-		return jobs.ErrInvalid
-	}
-	now, err := databaseNow(ctx, tx)
-	if err != nil {
-		return err
-	}
-	record, held, err := d.repo.fenceRecord(ctx, tx, d.namespace, meta.InvocationID(), now)
-	if err != nil {
-		return err
-	}
-	if !held {
-		return jobs.ErrLeaseLost
-	}
-	matches, err := matchesFence(d.catalog, record, meta)
-	if err != nil {
-		return err
-	}
-	if !matches {
-		return jobs.ErrLeaseLost
-	}
-	return nil
-}
-
-func matchesFence(catalog jobs.Catalog, record []byte, meta jobs.DeliveryMeta) (bool, error) {
-	encoded, err := decodeRecord(record)
-	if err != nil {
-		return false, err
-	}
-	restored, err := jobs.RestoreDeliveryRecord(catalog, encoded)
-	if err != nil {
-		return false, err
-	}
-	invocation := restored.Invocation()
-	if invocation.ID() != meta.InvocationID() || invocation.Definition() != meta.Definition() || invocation.State() != jobs.InvocationRunning && invocation.State() != jobs.InvocationCancelRequested {
-		return false, nil
-	}
-	attempts := invocation.Attempts()
-	if len(attempts) == 0 {
-		return false, nil
-	}
-	attempt := attempts[len(attempts)-1]
-	return attempt.State() == jobs.AttemptRunning && attempt.Ordinal() == meta.AttemptOrdinal() && attempt.Binding() == meta.Binding() && attempt.Build() == meta.Build(), nil
-}
-
 func (d *Driver) Apply(ctx context.Context, request jobs.ApplyRequest) (jobs.ApplyResult, error) {
 	if err := d.requireReady(); err != nil {
 		return jobs.ApplyResult{}, err
