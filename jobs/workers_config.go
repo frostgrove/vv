@@ -15,14 +15,18 @@ type Timer interface {
 
 type Clock interface {
 	Now() time.Time
-	NewTimer(time.Duration) Timer
+	NewTimerAt(time.Time) Timer
 }
 
 type systemClock struct{}
 
 func (systemClock) Now() time.Time { return time.Now() }
 
-func (systemClock) NewTimer(duration time.Duration) Timer {
+func (systemClock) NewTimerAt(deadline time.Time) Timer {
+	duration := time.Until(deadline)
+	if duration < 0 {
+		duration = 0
+	}
 	return systemTimer{Timer: time.NewTimer(duration)}
 }
 
@@ -109,6 +113,7 @@ type resolvedWorkersConfig struct {
 type Workers struct {
 	config resolvedWorkersConfig
 	plan   WorkerPlan
+	fatal  *workerFailureLatch
 }
 
 func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
@@ -131,7 +136,7 @@ func NewWorkers(spec WorkersSpec, consumers ...Consumer) (*Workers, error) {
 		return nil, err
 	}
 	config.backend = backend
-	return &Workers{config: config, plan: plan}, nil
+	return &Workers{config: config, plan: plan, fatal: newWorkerFailureLatch()}, nil
 }
 
 func validateWorkerPlanDurability(plan WorkerPlan, profile DurabilityProfile) error {

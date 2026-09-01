@@ -61,7 +61,7 @@ func (clock *workersConfigClock) Now() time.Time {
 	panic("clock must not run during construction")
 }
 
-func (clock *workersConfigClock) NewTimer(time.Duration) Timer {
+func (clock *workersConfigClock) NewTimerAt(time.Time) Timer {
 	clock.calls.Add(1)
 	panic("timer must not run during construction")
 }
@@ -385,7 +385,7 @@ func TestWorkersSystemClockProvidesStoppableTimers(t *testing.T) {
 	if clock.Now().IsZero() {
 		t.Fatal("system clock returned zero time")
 	}
-	timer := clock.NewTimer(time.Hour)
+	timer := clock.NewTimerAt(time.Now().Add(time.Hour))
 	if nilInterface(timer) || timer.C() == nil {
 		t.Fatal("system clock returned an invalid timer")
 	}

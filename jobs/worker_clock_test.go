@@ -13,7 +13,7 @@ type workerClockDouble struct {
 	nowCalls   atomic.Int32
 	timerCalls atomic.Int32
 	now        func() time.Time
-	timer      func(time.Duration) Timer
+	timer      func(time.Time) Timer
 }
 
 func (clock *workerClockDouble) Now() time.Time {
@@ -21,9 +21,9 @@ func (clock *workerClockDouble) Now() time.Time {
 	return clock.now()
 }
 
-func (clock *workerClockDouble) NewTimer(duration time.Duration) Timer {
+func (clock *workerClockDouble) NewTimerAt(deadline time.Time) Timer {
 	clock.timerCalls.Add(1)
-	return clock.timer(duration)
+	return clock.timer(deadline)
 }
 
 type workerTimerDouble struct {
@@ -55,7 +55,7 @@ func TestNewWorkerClockIsPureAndRejectsNilSources(t *testing.T) {
 	base := time.Date(2032, 4, 5, 6, 7, 8, 9, time.UTC)
 	source := &workerClockDouble{
 		now:   func() time.Time { return base },
-		timer: func(time.Duration) Timer { panic("must not be called") },
+		timer: func(time.Time) Timer { panic("must not be called") },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil || clock == nil {
@@ -83,7 +83,7 @@ func TestWorkerClockNowCanonicalizesUTCAndStripsMonotonicTime(t *testing.T) {
 	var index atomic.Int32
 	source := &workerClockDouble{
 		now:   func() time.Time { return values[int(index.Add(1))-1] },
-		timer: func(time.Duration) Timer { panic("must not be called") },
+		timer: func(time.Time) Timer { panic("must not be called") },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestWorkerClockNowNormalizesPanicsAndInvalidTimes(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source := &workerClockDouble{now: test.now, timer: func(time.Duration) Timer { panic("must not be called") }}
+			source := &workerClockDouble{now: test.now, timer: func(time.Time) Timer { panic("must not be called") }}
 			clock, err := newWorkerClock(source)
 			if err != nil {
 				t.Fatal(err)
@@ -139,7 +139,7 @@ func TestWorkerClockRejectsRegressionWithoutPoisoningItsLastTime(t *testing.T) {
 		now: func() time.Time {
 			return values[int(index.Add(1))-1]
 		},
-		timer: func(time.Duration) Timer { panic("must not be called") },
+		timer: func(time.Time) Timer { panic("must not be called") },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -180,7 +180,7 @@ func (clock *concurrentWorkerClock) Now() time.Time {
 	return clock.base.Add(time.Duration(sequence))
 }
 
-func (*concurrentWorkerClock) NewTimer(time.Duration) Timer { panic("must not be called") }
+func (*concurrentWorkerClock) NewTimerAt(time.Time) Timer { panic("must not be called") }
 
 func TestWorkerClockSerializesConcurrentNowCalls(t *testing.T) {
 	source := &concurrentWorkerClock{base: time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)}
@@ -243,7 +243,7 @@ func (clock *probedWorkerClock) Now() time.Time {
 	return clock.base.Add(time.Duration(clock.sequence.Add(1)))
 }
 
-func (clock *probedWorkerClock) NewTimer(time.Duration) Timer {
+func (clock *probedWorkerClock) NewTimerAt(time.Time) Timer {
 	clock.probe.enter()
 	defer clock.probe.leave()
 	return &probedWorkerTimer{probe: clock.probe, channel: make(chan time.Time)}
@@ -308,6 +308,7 @@ func TestWorkerClockSerializesEverySourceCallback(t *testing.T) {
 }
 
 func TestWorkerClockNewTimerContainsEveryInvalidSourceResult(t *testing.T) {
+	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
 	tests := []struct {
 		name      string
 		makeTimer func() Timer
@@ -325,8 +326,8 @@ func TestWorkerClockNewTimerContainsEveryInvalidSourceResult(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var made *workerTimerDouble
 			source := &workerClockDouble{
-				now: func() time.Time { panic("must not be called") },
-				timer: func(time.Duration) Timer {
+				now: func() time.Time { return base },
+				timer: func(time.Time) Timer {
 					if test.panicNew {
 						panic("private new timer panic")
 					}
@@ -350,6 +351,45 @@ func TestWorkerClockNewTimerContainsEveryInvalidSourceResult(t *testing.T) {
 	}
 }
 
+func TestWorkerClockStartTimerReleasesEveryInvalidSourceTimer(t *testing.T) {
+	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
+	tests := []struct {
+		name      string
+		makeTimer func() Timer
+		wantStop  int32
+	}{
+		{name: "nil timer", makeTimer: func() Timer { return nil }},
+		{name: "typed nil timer", makeTimer: func() Timer { var timer *workerTimerDouble; return timer }},
+		{name: "nil channel", makeTimer: func() Timer { return &workerTimerDouble{stopValue: true} }, wantStop: 1},
+		{name: "channel panic", makeTimer: func() Timer { return &workerTimerDouble{panicC: true, stopValue: true} }, wantStop: 1},
+		{name: "channel and stop panic", makeTimer: func() Timer { return &workerTimerDouble{panicC: true, panicStop: true} }, wantStop: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var made *workerTimerDouble
+			source := &workerClockDouble{
+				now: func() time.Time { return base },
+				timer: func(time.Time) Timer {
+					value := test.makeTimer()
+					made, _ = value.(*workerTimerDouble)
+					return value
+				},
+			}
+			clock, err := newWorkerClock(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			startedAt, deadline, timer, err := clock.startTimer(time.Second)
+			if !startedAt.IsZero() || !deadline.IsZero() || timer != nil || err != ErrInvalid {
+				t.Fatalf("startTimer() = (%v, %v, %v, %v)", startedAt, deadline, timer, err)
+			}
+			if made != nil && made.stopCalls.Load() != test.wantStop {
+				t.Fatalf("invalid timer stop calls = %d, want %d", made.stopCalls.Load(), test.wantStop)
+			}
+		})
+	}
+}
+
 type workerGoexitTimer struct{ stopped atomic.Int32 }
 
 func (*workerGoexitTimer) C() <-chan time.Time { runtime.Goexit(); return nil }
@@ -363,7 +403,7 @@ func TestWorkerClockNewTimerGoexitReleasesSerializationAndTimer(t *testing.T) {
 	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
 	source := &workerClockDouble{
 		now:   func() time.Time { return base },
-		timer: func(time.Duration) Timer { return inner },
+		timer: func(time.Time) Timer { return inner },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -386,7 +426,7 @@ func TestWorkerClockNewTimerGoexitReleasesSerializationAndTimer(t *testing.T) {
 func TestWorkerClockNewTimerRejectsNonPositiveDurationsBeforeCallingSource(t *testing.T) {
 	source := &workerClockDouble{
 		now:   func() time.Time { panic("must not be called") },
-		timer: func(time.Duration) Timer { panic("must not be called") },
+		timer: func(time.Time) Timer { panic("must not be called") },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -408,12 +448,13 @@ func TestWorkerClockNewTimerRejectsNonPositiveDurationsBeforeCallingSource(t *te
 }
 
 func TestWorkerTimerCachesItsChannelAndAcceptsAClosedChannel(t *testing.T) {
+	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
 	channel := make(chan time.Time)
 	close(channel)
 	inner := &workerTimerDouble{channel: channel, stopValue: true}
 	source := &workerClockDouble{
-		now:   func() time.Time { panic("must not be called") },
-		timer: func(time.Duration) Timer { return inner },
+		now:   func() time.Time { return base },
+		timer: func(time.Time) Timer { return inner },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -440,10 +481,11 @@ func TestWorkerTimerCachesItsChannelAndAcceptsAClosedChannel(t *testing.T) {
 }
 
 func TestWorkerTimerContainsStopPanicAndStopsOnlyOnceConcurrently(t *testing.T) {
+	base := time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC)
 	inner := &workerTimerDouble{channel: make(chan time.Time), panicStop: true}
 	source := &workerClockDouble{
-		now:   func() time.Time { panic("must not be called") },
-		timer: func(time.Duration) Timer { return inner },
+		now:   func() time.Time { return base },
+		timer: func(time.Time) Timer { return inner },
 	}
 	clock, err := newWorkerClock(source)
 	if err != nil {
@@ -496,18 +538,26 @@ func TestWorkerClockWrapsSystemClockAndTimer(t *testing.T) {
 }
 
 func TestWorkerClockErrorsRemainTheExactSentinel(t *testing.T) {
-	source := &workerClockDouble{
+	clockSource := &workerClockDouble{
 		now:   func() time.Time { panic(errors.New("private clock failure")) },
-		timer: func(time.Duration) Timer { panic(errors.New("private timer failure")) },
+		timer: func(time.Time) Timer { panic("must not be called") },
 	}
-	clock, err := newWorkerClock(source)
+	clock, err := newWorkerClock(clockSource)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := clock.Now(); err != ErrInvalid {
 		t.Fatalf("Now() error = %#v, want exact ErrInvalid", err)
 	}
-	if _, err := clock.NewTimer(time.Second); err != ErrInvalid {
+	timerSource := &workerClockDouble{
+		now:   func() time.Time { return time.Date(2032, 4, 5, 6, 7, 8, 0, time.UTC) },
+		timer: func(time.Time) Timer { panic(errors.New("private timer failure")) },
+	}
+	timerClock, err := newWorkerClock(timerSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := timerClock.NewTimer(time.Second); err != ErrInvalid {
 		t.Fatalf("NewTimer() error = %#v, want exact ErrInvalid", err)
 	}
 }
