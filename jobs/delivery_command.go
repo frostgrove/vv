@@ -121,6 +121,10 @@ func ReleaseUnchangedCommand(lease LeaseRef, binding BindingName, build BuildID,
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandReleaseUnchanged, lease: cloneLeaseRef(lease), binding: binding, build: build, reason: ReasonCompatibility, delay: delay})
 }
 
+func ReleaseForShutdownCommand(lease LeaseRef, delay time.Duration) (DeliveryCommand, error) {
+	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandReleaseUnchanged, lease: cloneLeaseRef(lease), reason: ReasonShutdown, delay: delay})
+}
+
 func RejectCorruptCommand(lease LeaseRef) (DeliveryCommand, error) {
 	return validateDeliveryCommand(DeliveryCommand{kind: DeliveryCommandRejectCorrupt, lease: cloneLeaseRef(lease)})
 }
@@ -291,11 +295,14 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 		application.invocation, err = current.FinishDelivery(FinishDeliverySpec{State: command.state, Reason: command.reason, Failure: command.failure, ObservedAt: now})
 		application.changed = err == nil
 	case DeliveryCommandReleaseUnchanged:
-		availableAt, timeErr := relativeDeliveryTime(now, command.delay)
-		if timeErr != nil {
-			return DeliveryApplication{}, timeErr
+		var availableAt time.Time
+		if current.state == InvocationQueued && !now.Before(current.readyAt()) && current.deadlineReason(now) == ReasonNone {
+			availableAt, err = releaseAvailability(current, now, command.delay)
+			if err != nil {
+				return DeliveryApplication{}, err
+			}
 		}
-		validated, validationErr := current.releaseUnchanged(now, availableAt)
+		validated, validationErr := current.releaseUnchanged(command.reason, now, availableAt)
 		if validationErr != nil {
 			return DeliveryApplication{}, validationErr
 		}
@@ -304,7 +311,7 @@ func ApplyDeliveryCommand(current Invocation, command DeliveryCommand, now time.
 			application.changed = true
 			break
 		}
-		application.release = DeliveryRelease{availableAt: availableAt, binding: command.binding, build: command.build}
+		application.release = DeliveryRelease{availableAt: availableAt, binding: command.binding, build: command.build, reason: command.reason}
 		application.changed = false
 	default:
 		err = invalid("delivery command kind")
@@ -329,7 +336,9 @@ func validateDeliveryCommand(command DeliveryCommand) (DeliveryCommand, error) {
 			return DeliveryCommand{}, invalid("empty delivery command")
 		}
 	case DeliveryCommandReleaseUnchanged:
-		if !command.binding.valid() || !command.build.valid() || !command.disposition.IsZero() || command.reason != ReasonCompatibility || !command.failure.IsZero() || command.state != 0 || !validCommandDelay(true, command.delay) {
+		compatibility := command.reason == ReasonCompatibility && command.binding.valid() && command.build.valid()
+		shutdown := command.reason == ReasonShutdown && command.binding.IsZero() && command.build.IsZero()
+		if !compatibility && !shutdown || !command.disposition.IsZero() || !command.failure.IsZero() || command.state != 0 || !validCommandDelay(true, command.delay) {
 			return DeliveryCommand{}, invalid("release unchanged command")
 		}
 	case DeliveryCommandFinishAttempt:
@@ -354,6 +363,7 @@ type DeliveryRelease struct {
 	availableAt time.Time
 	binding     BindingName
 	build       BuildID
+	reason      Reason
 }
 
 func (r DeliveryRelease) AvailableAt() time.Time { return r.availableAt }
@@ -361,8 +371,11 @@ func (r DeliveryRelease) ExcludedBinding() BindingName {
 	return r.binding
 }
 func (r DeliveryRelease) ExcludedBuild() BuildID { return r.build }
-func (r DeliveryRelease) IsZero() bool           { return r.availableAt.IsZero() }
-func (DeliveryRelease) String() string           { return "[job delivery release]" }
+func (r DeliveryRelease) Reason() Reason         { return r.reason }
+func (r DeliveryRelease) IsZero() bool {
+	return r.availableAt.IsZero() && r.binding.IsZero() && r.build.IsZero() && r.reason == ReasonNone
+}
+func (DeliveryRelease) String() string { return "[job delivery release]" }
 func (r DeliveryRelease) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, r.String())
 }
@@ -383,6 +396,18 @@ func relativeDeliveryTime(now time.Time, delay time.Duration) (time.Time, error)
 		return time.Time{}, nil
 	}
 	return requiredTime(now.Add(delay), "delivery command availability")
+}
+
+func releaseAvailability(invocation Invocation, observedAt time.Time, delay time.Duration) (time.Time, error) {
+	availableAt, err := relativeDeliveryTime(observedAt, delay)
+	if err == nil {
+		return availableAt, nil
+	}
+	deadline, _ := invocation.deliveryDeadline()
+	if observedAt.Before(deadline) && delay >= deadline.Sub(observedAt) {
+		return deadline, nil
+	}
+	return time.Time{}, err
 }
 
 func cloneLeaseRef(reference LeaseRef) LeaseRef {

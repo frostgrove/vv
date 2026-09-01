@@ -512,9 +512,12 @@ func (i Invocation) DeferDelivery(spec DeferDeliverySpec) (Invocation, error) {
 	return result, nil
 }
 
-func (i Invocation) releaseUnchanged(observedAt, availableAt time.Time) (Invocation, error) {
+func (i Invocation) releaseUnchanged(source Reason, observedAt, availableAt time.Time) (Invocation, error) {
 	if i.IsZero() || i.state != InvocationQueued {
 		return Invocation{}, transitionConflict("invocation cannot release unchanged")
+	}
+	if source != ReasonCompatibility && source != ReasonShutdown {
+		return Invocation{}, invalid("unchanged release reason")
 	}
 	observedAt, err := requiredTime(observedAt, "unchanged release time")
 	if err != nil {
@@ -524,19 +527,37 @@ func (i Invocation) releaseUnchanged(observedAt, availableAt time.Time) (Invocat
 		return Invocation{}, transitionConflict("unchanged release precedes eligibility")
 	}
 	if reason := i.deadlineReason(observedAt); reason != ReasonNone {
-		return i.finishDeliveryDecision(InvocationDead, ReasonCompatibility, reason, PublicFailure{}, observedAt, time.Time{})
+		return i.finishDeliveryDecision(InvocationDead, source, reason, PublicFailure{}, observedAt, time.Time{})
 	}
 	availableAt, err = requiredTime(availableAt, "unchanged release availability")
 	if err != nil {
 		return Invocation{}, err
 	}
+	if reason := i.deadlineReason(availableAt); reason != ReasonNone {
+		if err := i.validateReleaseDeadlineAvailability(observedAt, availableAt); err != nil {
+			return Invocation{}, err
+		}
+		return i.finishDeliveryDecision(InvocationDead, source, reason, PublicFailure{}, observedAt, availableAt)
+	}
 	if err := validateBoundedDelay(observedAt, availableAt); err != nil {
 		return Invocation{}, err
 	}
-	if reason := i.deadlineReason(availableAt); reason != ReasonNone {
-		return i.finishDeliveryDecision(InvocationDead, ReasonCompatibility, reason, PublicFailure{}, observedAt, availableAt)
-	}
 	return i, nil
+}
+
+func (i Invocation) validateReleaseDeadlineAvailability(observedAt, availableAt time.Time) error {
+	delay := availableAt.Sub(observedAt)
+	if delay >= MinRetryDelay && delay <= MaxRetryDelay {
+		return nil
+	}
+	deadline, _ := i.deliveryDeadline()
+	if delay < 0 || delay >= MinRetryDelay || availableAt != deadline {
+		return invalid("unchanged release deadline")
+	}
+	if _, err := requiredTime(observedAt.Add(MaxRetryDelay), "unchanged release maximum availability"); err == nil {
+		return invalid("unchanged release deadline")
+	}
+	return nil
 }
 
 func (i Invocation) FinishDelivery(spec FinishDeliverySpec) (Invocation, error) {
@@ -825,6 +846,16 @@ func (i Invocation) deadlineReason(at time.Time) Reason {
 		return ReasonStartBefore
 	}
 	return ReasonNone
+}
+
+func (i Invocation) deliveryDeadline() (time.Time, Reason) {
+	deadline := i.maxElapsedAt
+	reason := ReasonMaxElapsed
+	if i.attemptOrdinal.IsZero() && !i.startBefore.IsZero() && i.startBefore.Before(deadline) {
+		deadline = i.startBefore
+		reason = ReasonStartBefore
+	}
+	return deadline, reason
 }
 
 func (i Invocation) attemptFinishDeadlineReason(attempt Attempt, disposition Disposition, finishedAt time.Time) Reason {

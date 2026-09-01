@@ -329,5 +329,9 @@ func validDeliveryTerminalAvailability(outcome InvocationOutcome) bool {
 	if outcome.terminalReason != ReasonMaxElapsed && outcome.terminalReason != ReasonStartBefore || !deliveryDeferralReason(outcome.reason) {
 		return false
 	}
-	return validDeferralWindow(outcome.occurredAt, outcome.availableAt)
+	if !validOutcomeTime(outcome.availableAt) {
+		return false
+	}
+	delay := outcome.availableAt.Sub(outcome.occurredAt)
+	return delay >= 0 && delay <= MaxRetryDelay
 }

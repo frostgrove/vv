@@ -790,10 +790,18 @@ func validReleaseApplication(command DeliveryCommand, application DeliveryApplic
 			return false
 		}
 		outcome := application.invocation.Outcome()
-		return outcome.kind == InvocationOutcomeDeliveryTerminal && outcome.terminalState == InvocationDead && outcome.reason == ReasonCompatibility && outcome.failure.IsZero() && (outcome.terminalReason == ReasonMaxElapsed || outcome.terminalReason == ReasonStartBefore)
+		if outcome.kind != InvocationOutcomeDeliveryTerminal || outcome.terminalState != InvocationDead || outcome.reason != command.reason || !outcome.failure.IsZero() || outcome.terminalReason != ReasonMaxElapsed && outcome.terminalReason != ReasonStartBefore || !canonicalRequiredDeliveryTime(outcome.occurredAt) {
+			return false
+		}
+		observedReason := application.invocation.deadlineReason(outcome.occurredAt)
+		if observedReason != ReasonNone {
+			return observedReason == outcome.terminalReason && outcome.availableAt.IsZero()
+		}
+		expected, err := releaseAvailability(application.invocation, outcome.occurredAt, command.delay)
+		return err == nil && outcome.availableAt == expected && application.invocation.deadlineReason(expected) == outcome.terminalReason
 	}
 	release, ok := application.Release()
-	if !ok || application.invocation.State() != InvocationQueued || release.binding != command.binding || release.build != command.build || !canonicalRequiredDeliveryTime(release.availableAt) {
+	if !ok || application.invocation.State() != InvocationQueued || release.binding != command.binding || release.build != command.build || release.reason != command.reason || !canonicalRequiredDeliveryTime(release.availableAt) {
 		return false
 	}
 	observedAt, err := requiredTime(release.availableAt.Add(-command.delay), "release observation time")
