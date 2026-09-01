@@ -10,21 +10,23 @@ import (
 )
 
 type workersRunDriver struct {
-	mu           sync.Mutex
-	description  BackendDescription
-	record       DeliveryRecord
-	lease        LeaseRef
-	invocation   Invocation
-	observedAt   time.Time
-	claimed      bool
-	finished     chan struct{}
-	finishOnce   sync.Once
-	beginOnce    sync.Once
-	kinds        []DeliveryCommandKind
-	reasons      []Reason
-	renewSizes   []int
-	beginReached chan struct{}
-	beginRelease chan struct{}
+	mu             sync.Mutex
+	description    BackendDescription
+	record         DeliveryRecord
+	lease          LeaseRef
+	invocation     Invocation
+	observedAt     time.Time
+	claimed        bool
+	finished       chan struct{}
+	finishOnce     sync.Once
+	beginOnce      sync.Once
+	kinds          []DeliveryCommandKind
+	reasons        []Reason
+	delays         []time.Duration
+	deadlineDelays []time.Duration
+	renewSizes     []int
+	beginReached   chan struct{}
+	beginRelease   chan struct{}
 }
 
 func (driver *workersRunDriver) Description() BackendDescription {
@@ -172,6 +174,8 @@ func (driver *workersRunDriver) Apply(ctx context.Context, request ApplyRequest)
 	}
 	driver.kinds = append(driver.kinds, request.command.kind)
 	driver.reasons = append(driver.reasons, request.command.reason)
+	driver.delays = append(driver.delays, request.command.delay)
+	driver.deadlineDelays = append(driver.deadlineDelays, request.command.deadlineDelay)
 	driver.observedAt = driver.observedAt.Add(time.Millisecond)
 	if request.command.kind == DeliveryCommandFinishAttempt {
 		driver.finishOnce.Do(func() { close(driver.finished) })
@@ -206,7 +210,7 @@ func TestWorkersRunProcessesClaimedDelivery(t *testing.T) {
 		Driver:    driver,
 		Build:     fixture.build,
 		Identity:  workerDeliveryIdentityRestorer(t),
-		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes+16)),
 	}, consumer)
 	if err != nil {
 		t.Fatal(err)
@@ -243,6 +247,53 @@ func TestWorkersRunProcessesClaimedDelivery(t *testing.T) {
 	}
 }
 
+func TestWorkersRunSamplesFullJitterBeforeRetrySettlement(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
+	driver := &workersRunDriver{
+		description: queueTestBackendDescription(1),
+		record:      fixture.record,
+		lease:       fixture.lease,
+		invocation:  fixture.invocation,
+		observedAt:  fixture.invocation.EligibleAt(),
+		finished:    make(chan struct{}),
+	}
+	consumer := On(fixture.definition, Handler[string](func(context.Context, string) error {
+		return errors.New("retry")
+	}), Binding("worker.jitter"), Concurrency(1))
+	entropy := append(bytes.Repeat([]byte{1}, WorkerIncarnationBytes), make([]byte, 16)...)
+	workers, err := NewWorkers(WorkersSpec{
+		Namespace: fixture.namespace,
+		Catalog:   fixture.catalog,
+		Driver:    driver,
+		Build:     fixture.build,
+		Identity:  workerDeliveryIdentityRestorer(t),
+		Entropy:   bytes.NewReader(entropy),
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runResult := make(chan error, 1)
+	go func() { runResult <- workers.Run(context.Background()) }()
+	select {
+	case <-driver.finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not settle retry")
+	}
+	drainContext, cancelDrain := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelDrain()
+	if err = workers.Drain(drainContext); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-runResult; err != nil {
+		t.Fatal(err)
+	}
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if driver.invocation.State() != InvocationQueued || len(driver.kinds) != 2 || driver.kinds[1] != DeliveryCommandFinishAttempt || driver.delays[1] != MinRetryDelay || driver.deadlineDelays[1] != MinRetryDelay {
+		t.Fatalf("retry state=%s commands=%v delays=%v deadline-delays=%v", driver.invocation.State(), driver.kinds, driver.delays, driver.deadlineDelays)
+	}
+}
+
 func TestWorkersDrainWhileBeginIsBlockedDoesNotStartHandler(t *testing.T) {
 	fixture := newWorkerDeliveryFixture(t, PlacementRegular)
 	driver := &workersRunDriver{
@@ -266,7 +317,7 @@ func TestWorkersDrainWhileBeginIsBlockedDoesNotStartHandler(t *testing.T) {
 		Driver:    driver,
 		Build:     fixture.build,
 		Identity:  workerDeliveryIdentityRestorer(t),
-		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes+16)),
 	}, consumer)
 	if err != nil {
 		t.Fatal(err)

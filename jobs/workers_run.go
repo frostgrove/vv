@@ -910,7 +910,11 @@ func (pool *workerPool) prepareRecovered(delivery RecoveredDelivery) (ClaimedDel
 	invocation := restored.Invocation()
 	switch invocation.State() {
 	case InvocationRunning, InvocationCancelRequested:
-		delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
+		delay, delayErr := sampleRetryDelay(pool.workers.config.entropy, invocation.Policy().Backoff(), invocation.RetrySpent().Value(), 0)
+		if delayErr != nil {
+			pool.fail(delayErr)
+			return ClaimedDelivery{}, false, false
+		}
 		ok := pool.applyRecovered(delivery.lease, func(lease LeaseRef) (DeliveryCommand, error) {
 			return RevokeAttemptCommand(lease, ReasonLeaseLost, delay)
 		})
@@ -1128,7 +1132,11 @@ func (delivery *activeWorkerDelivery) handle(ctx context.Context, preparation cl
 
 func (delivery *activeWorkerDelivery) arbitrateAttemptDeadline(ctx context.Context) {
 	invocation := delivery.snapshotInvocation()
-	delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
+	delay, err := sampleRetryDelay(delivery.pool.workers.config.entropy, invocation.Policy().Backoff(), invocation.RetrySpent().Value(), 0)
+	if err != nil {
+		delivery.pool.fail(err)
+		return
+	}
 	delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
 		return ArbitrateAttemptDeadlineCommand(lease, delay)
 	})
@@ -1141,12 +1149,18 @@ func (delivery *activeWorkerDelivery) finish(ctx context.Context, disposition Di
 		delay = disposition.RetryAfter()
 	}
 	if disposition.Kind() == DispositionRetry {
-		delay = retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
-		if disposition.RetryAfter() > delay {
-			delay = disposition.RetryAfter()
+		var err error
+		delay, err = sampleRetryDelay(delivery.pool.workers.config.entropy, invocation.Policy().Backoff(), invocation.RetrySpent().Value(), disposition.RetryAfter())
+		if err != nil {
+			delivery.pool.fail(err)
+			return
 		}
 	}
-	deadlineDelay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
+	deadlineDelay, err := sampleRetryDelay(delivery.pool.workers.config.entropy, invocation.Policy().Backoff(), invocation.RetrySpent().Value(), 0)
+	if err != nil {
+		delivery.pool.fail(err)
+		return
+	}
 	delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
 		return FinishAttemptCommand(lease, disposition, delay, deadlineDelay)
 	})
@@ -1154,8 +1168,12 @@ func (delivery *activeWorkerDelivery) finish(ctx context.Context, disposition Di
 
 func (delivery *activeWorkerDelivery) revoke(ctx context.Context, reason Reason) {
 	invocation := delivery.snapshotInvocation()
+	delay, err := sampleRetryDelay(delivery.pool.workers.config.entropy, invocation.Policy().Backoff(), invocation.RetrySpent().Value(), 0)
+	if err != nil {
+		delivery.pool.fail(err)
+		return
+	}
 	delivery.apply(ctx, func(lease LeaseRef) (DeliveryCommand, error) {
-		delay := retryBackoffCap(invocation.Policy().Backoff(), invocation.RetrySpent().Value())
 		return RevokeAttemptCommand(lease, reason, delay)
 	})
 }

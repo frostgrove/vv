@@ -67,7 +67,7 @@ func TestWorkersRuntimeEmitsLifecycleAndDriverEvents(t *testing.T) {
 		Build:     fixture.build,
 		Identity:  workerDeliveryIdentityRestorer(t),
 		Observer:  observer,
-		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes+16)),
 	}, consumer)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func newObservedRuntimeWorkers(t *testing.T, fixture workerDeliveryFixture, driv
 		Build:     fixture.build,
 		Identity:  workerDeliveryIdentityRestorer(t),
 		Observer:  observer,
-		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes)),
+		Entropy:   bytes.NewReader(bytes.Repeat([]byte{1}, WorkerIncarnationBytes+16)),
 	}, consumer)
 	if err != nil {
 		t.Fatal(err)
