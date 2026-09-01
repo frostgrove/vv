@@ -36,6 +36,7 @@ type WorkersSpec struct {
 	Driver           DeliveryDriver
 	Build            BuildID
 	Identity         TrustedIdentityRestorer
+	Observer         WorkerObserver
 	Clock            Clock
 	Entropy          io.Reader
 	LeaseTTL         time.Duration
@@ -60,6 +61,7 @@ type WorkersDescription struct {
 	Backend          BackendDescription
 	Build            BuildID
 	Plan             WorkerPlanDescription
+	ObserverEnabled  bool
 	LeaseTTL         time.Duration
 	Heartbeat        time.Duration
 	OperationTimeout time.Duration
@@ -89,6 +91,7 @@ type resolvedWorkersConfig struct {
 	backend          BackendDescription
 	build            BuildID
 	identity         TrustedIdentityRestorer
+	observer         WorkerObserver
 	clock            *workerClock
 	entropy          *entropySource
 	leaseTTL         time.Duration
@@ -153,6 +156,7 @@ func (workers *Workers) Describe() WorkersDescription {
 		Backend:          workers.config.backend,
 		Build:            workers.config.build,
 		Plan:             workers.plan.Describe(),
+		ObserverEnabled:  !nilInterface(workers.config.observer),
 		LeaseTTL:         workers.config.leaseTTL,
 		Heartbeat:        workers.config.heartbeat,
 		OperationTimeout: workers.config.operationTimeout,
@@ -232,6 +236,10 @@ func resolveWorkersConfig(spec WorkersSpec) (resolvedWorkersConfig, error) {
 	if err != nil {
 		return resolvedWorkersConfig{}, err
 	}
+	observer := spec.Observer
+	if nilInterface(observer) {
+		observer = nil
+	}
 	entropy := spec.Entropy
 	if nilInterface(entropy) {
 		entropy = rand.Reader
@@ -242,6 +250,7 @@ func resolveWorkersConfig(spec WorkersSpec) (resolvedWorkersConfig, error) {
 		driver:           spec.Driver,
 		build:            spec.Build,
 		identity:         spec.Identity,
+		observer:         observer,
 		clock:            clock,
 		entropy:          &entropySource{reader: entropy},
 		leaseTTL:         leaseTTL,

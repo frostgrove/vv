@@ -66,6 +66,12 @@ func (clock *workersConfigClock) NewTimer(time.Duration) Timer {
 	panic("timer must not run during construction")
 }
 
+type workersConfigObserver struct{ calls atomic.Int32 }
+
+func (observer *workersConfigObserver) Observe(context.Context, WorkerEvent) {
+	observer.calls.Add(1)
+}
+
 func TestNewWorkersResolvesSafeDefaultsWithoutLifecycleEffects(t *testing.T) {
 	spec, consumer, driver, identityCalls := workersConfigFixture(t, "workers.defaults")
 	var entropyReads atomic.Int32
@@ -77,7 +83,7 @@ func TestNewWorkersResolvesSafeDefaultsWithoutLifecycleEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	description := workers.Describe()
-	if description.Namespace != spec.Namespace || description.Backend != driver.description || description.Build != spec.Build {
+	if description.Namespace != spec.Namespace || description.Backend != driver.description || description.Build != spec.Build || description.ObserverEnabled {
 		t.Fatalf("workers identity snapshot = %#v", description)
 	}
 	if description.Plan.CatalogFingerprint != spec.Catalog.Fingerprint() || description.Plan.TotalConcurrency != 1 || len(description.Plan.Bindings) != 1 {
@@ -103,10 +109,12 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	var identityCalls atomic.Int32
 	identity := &workersConfigIdentity{calls: &identityCalls}
 	clock := &workersConfigClock{}
+	observer := &workersConfigObserver{}
 	var entropyReads atomic.Int32
 	entropy := &countingEntropyReader{reads: &entropyReads}
 	spec.Identity = identity
 	spec.Clock = clock
+	spec.Observer = observer
 	spec.Entropy = entropy
 	spec.LeaseTTL = 4 * time.Second
 	spec.Heartbeat = 2 * time.Second
@@ -129,7 +137,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if description.ClaimItems != spec.ClaimItems || description.ClaimBytes != spec.ClaimBytes || description.InFlightBytes != spec.InFlightBytes || description.PulseWaiters != spec.PulseWaiters {
 		t.Fatalf("explicit budgets = %#v", description)
 	}
-	if workers.config.clock.source != clock || workers.config.entropy.reader != entropy || workers.config.identity != identity || identityCalls.Load() != 0 || clock.calls.Load() != 0 || entropyReads.Load() != 0 {
+	if workers.config.clock.source != clock || workers.config.entropy.reader != entropy || workers.config.identity != identity || workers.config.observer != observer || !description.ObserverEnabled || identityCalls.Load() != 0 || observer.calls.Load() != 0 || clock.calls.Load() != 0 || entropyReads.Load() != 0 {
 		t.Fatal("explicit runtime dependencies were changed or invoked")
 	}
 
@@ -137,8 +145,10 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	adaptiveSpec.LeaseTTL = 4 * time.Second
 	var nilClock *workersConfigClock
 	var nilEntropy *countingEntropyReader
+	var nilObserver *workersConfigObserver
 	adaptiveSpec.Clock = nilClock
 	adaptiveSpec.Entropy = nilEntropy
+	adaptiveSpec.Observer = nilObserver
 	adaptive, err := NewWorkers(adaptiveSpec, adaptiveConsumer)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +156,7 @@ func TestNewWorkersResolvesExplicitAndAdaptiveConfiguration(t *testing.T) {
 	if adaptive.Describe().Heartbeat != time.Second || adaptive.Describe().OperationTimeout != time.Second || adaptive.Describe().ReclaimInterval != 2*time.Second {
 		t.Fatalf("adaptive durations = %#v", adaptive.Describe())
 	}
-	if _, ok := adaptive.config.clock.source.(systemClock); !ok || adaptive.config.entropy.reader != rand.Reader {
+	if _, ok := adaptive.config.clock.source.(systemClock); !ok || adaptive.config.entropy.reader != rand.Reader || adaptive.config.observer != nil || adaptive.Describe().ObserverEnabled {
 		t.Fatal("nil-like runtime dependencies did not resolve to safe defaults")
 	}
 	adaptiveSpec.LeaseTTL = MinimumLeaseTTL
@@ -335,9 +345,10 @@ func TestWorkersDescriptionIsDetachedAndRedacted(t *testing.T) {
 	description.Plan.Bindings[0].Concurrency = MaxBindingConcurrency
 	description.Plan.Bindings = nil
 	description.Plan.CatalogFingerprint = "mutated"
+	description.ObserverEnabled = false
 	description.ClaimBytes = 1
 	fresh := workers.Describe()
-	if fresh.Namespace != spec.Namespace || fresh.Backend.IsZero() || fresh.Build != build || len(fresh.Plan.Bindings) != 1 || fresh.Plan.Bindings[0].Concurrency != 1 || fresh.Plan.CatalogFingerprint != wantFingerprint || fresh.ClaimBytes != DefaultClaimBytes {
+	if fresh.Namespace != spec.Namespace || fresh.Backend.IsZero() || fresh.Build != build || len(fresh.Plan.Bindings) != 1 || fresh.Plan.Bindings[0].Concurrency != 1 || fresh.Plan.CatalogFingerprint != wantFingerprint || fresh.ClaimBytes != DefaultClaimBytes || fresh.ObserverEnabled {
 		t.Fatalf("workers description was mutable: %#v", fresh)
 	}
 	secrets := []string{"workers.private-name", "deploy:PRIVATE-build", wantFingerprint}
