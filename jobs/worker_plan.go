@@ -16,9 +16,11 @@ type workerOptions struct {
 	binding        BindingName
 	concurrency    int
 	classifier     ErrorClassifier
+	admission      AdmissionReader
 	bindingSet     bool
 	concurrencySet bool
 	classifierSet  bool
+	admissionSet   bool
 }
 
 func Binding(raw string) WorkerOption {
@@ -47,12 +49,24 @@ func Concurrency(value int) WorkerOption {
 	})
 }
 
+func WithAdmission(reader AdmissionReader) WorkerOption {
+	return workerOption(func(options *workerOptions) error {
+		if options.admissionSet || !validConfiguredAdmissionReader(reader) {
+			return invalid("worker admission")
+		}
+		options.admission = reader
+		options.admissionSet = true
+		return nil
+	})
+}
+
 type WorkerBindingDescription struct {
 	Definition       Name
 	Binding          BindingName
 	Concurrency      int
 	Adapter          bool
 	CustomClassifier bool
+	DynamicAdmission bool
 }
 
 func (WorkerBindingDescription) String() string { return "[job worker binding description]" }
@@ -64,8 +78,9 @@ func (description WorkerBindingDescription) LogValue() slog.Value {
 }
 
 type WorkerPlanDescription struct {
-	Bindings         []WorkerBindingDescription
-	TotalConcurrency int
+	Bindings           []WorkerBindingDescription
+	TotalConcurrency   int
+	CatalogFingerprint string
 }
 
 func (description WorkerPlanDescription) String() string {
@@ -79,9 +94,10 @@ func (description WorkerPlanDescription) LogValue() slog.Value {
 }
 
 type WorkerPlan struct {
-	bindings         []consumerBinding
-	descriptions     []WorkerBindingDescription
-	totalConcurrency int
+	bindings           []consumerBinding
+	descriptions       []WorkerBindingDescription
+	totalConcurrency   int
+	catalogFingerprint string
 }
 
 func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
@@ -106,7 +122,7 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 		if binding.err != nil {
 			return WorkerPlan{}, fmt.Errorf("worker binding %d: %w", index, binding.err)
 		}
-		if !binding.valid || nilInterface(binding.declaration) || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency || !binding.mode.valid() || binding.mode == consumerHandlerStandard && (binding.handle == nil || binding.handleAdapter != nil) || binding.mode == consumerHandlerAdapter && (binding.handle != nil || binding.handleAdapter == nil) {
+		if !binding.valid || nilInterface(binding.declaration) || !binding.binding.valid() || binding.concurrency < 1 || binding.concurrency > MaxBindingConcurrency || !validOptionalAdmissionReader(binding.admission) || !binding.mode.valid() || binding.mode == consumerHandlerStandard && (binding.handle == nil || binding.handleAdapter != nil) || binding.mode == consumerHandlerAdapter && (binding.handle != nil || binding.handleAdapter == nil) {
 			return WorkerPlan{}, fmt.Errorf("%w: worker binding %d is invalid or unresolved", ErrInvalid, index)
 		}
 		registered, ok := catalog.Lookup(binding.declaration.declarationName())
@@ -138,9 +154,10 @@ func NewWorkerPlan(catalog Catalog, consumers ...Consumer) (WorkerPlan, error) {
 			Concurrency:      binding.concurrency,
 			Adapter:          binding.mode == consumerHandlerAdapter,
 			CustomClassifier: binding.classifier != nil,
+			DynamicAdmission: binding.admission.initialized,
 		}
 	}
-	return WorkerPlan{bindings: bindings, descriptions: descriptions, totalConcurrency: total}, nil
+	return WorkerPlan{bindings: bindings, descriptions: descriptions, totalConcurrency: total, catalogFingerprint: catalog.Fingerprint()}, nil
 }
 
 func MustWorkerPlan(catalog Catalog, consumers ...Consumer) WorkerPlan {
@@ -155,10 +172,13 @@ func (plan WorkerPlan) Len() int { return len(plan.bindings) }
 
 func (plan WorkerPlan) TotalConcurrency() int { return plan.totalConcurrency }
 
+func (plan WorkerPlan) CatalogFingerprint() string { return plan.catalogFingerprint }
+
 func (plan WorkerPlan) Describe() WorkerPlanDescription {
 	return WorkerPlanDescription{
-		Bindings:         append([]WorkerBindingDescription(nil), plan.descriptions...),
-		TotalConcurrency: plan.totalConcurrency,
+		Bindings:           append([]WorkerBindingDescription(nil), plan.descriptions...),
+		TotalConcurrency:   plan.totalConcurrency,
+		CatalogFingerprint: plan.catalogFingerprint,
 	}
 }
 
@@ -178,6 +198,7 @@ type resolvedWorkerOptions struct {
 	binding     BindingName
 	concurrency int
 	classifier  ErrorClassifier
+	admission   AdmissionReader
 }
 
 func resolveWorkerOptions(declaration Declaration, defaultConcurrency int, values []WorkerOption) (resolvedWorkerOptions, error) {
@@ -206,5 +227,13 @@ func resolveWorkerOptions(declaration Declaration, defaultConcurrency int, value
 		}
 		options.concurrency = defaultConcurrency
 	}
-	return resolvedWorkerOptions{binding: options.binding, concurrency: options.concurrency, classifier: options.classifier}, nil
+	return resolvedWorkerOptions{binding: options.binding, concurrency: options.concurrency, classifier: options.classifier, admission: options.admission}, nil
+}
+
+func validConfiguredAdmissionReader(reader AdmissionReader) bool {
+	return reader.initialized && reader.cell != nil && reader.freshness > 0 && reader.freshness <= MaximumAdmissionFreshness
+}
+
+func validOptionalAdmissionReader(reader AdmissionReader) bool {
+	return !reader.initialized && reader.cell == nil && reader.freshness == 0 || validConfiguredAdmissionReader(reader)
 }

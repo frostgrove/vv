@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestWorkerPlanResolvesEffectiveBindingsWithoutLifecycleEffects(t *testing.T) {
@@ -56,7 +57,7 @@ func TestWorkerPlanResolvesEffectiveBindingsWithoutLifecycleEffects(t *testing.T
 		{Definition: declared.Name(), Binding: mustWorkerBinding(t, "workers.declared"), Concurrency: Heavy.workerConcurrency},
 		{Definition: explicit.Name(), Binding: mustWorkerBinding(t, "workers.primary"), Concurrency: 4},
 	}
-	if plan.Len() != 3 || plan.TotalConcurrency() != Default.workerConcurrency+Heavy.workerConcurrency+4 || !reflect.DeepEqual(description.Bindings, want) || description.TotalConcurrency != plan.TotalConcurrency() {
+	if plan.Len() != 3 || plan.TotalConcurrency() != Default.workerConcurrency+Heavy.workerConcurrency+4 || !reflect.DeepEqual(description.Bindings, want) || description.TotalConcurrency != plan.TotalConcurrency() || plan.CatalogFingerprint() != beforeFingerprint || description.CatalogFingerprint != beforeFingerprint {
 		t.Fatalf("worker plan = %#v", description)
 	}
 	if catalog.Fingerprint() != beforeFingerprint || !reflect.DeepEqual(catalog.Describe(), beforeCatalog) {
@@ -150,6 +151,75 @@ func TestWorkerPlanValidatesOptionsAndCopiesOnInput(t *testing.T) {
 	}
 }
 
+func TestWorkerPlanConfiguresDynamicAdmissionExplicitly(t *testing.T) {
+	definition := testQueueDefinition(t, "workers.admission", String(1))
+	catalog := MustCatalog(definition)
+	handler := Handler[string](func(context.Context, string) error { return nil })
+	first, err := NewAdmissionSnapshot(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewAdmissionSnapshot(2 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zeroReader AdmissionReader
+	tests := []struct {
+		name    string
+		options []WorkerOption
+	}{
+		{name: "zero reader", options: []WorkerOption{Concurrency(1), WithAdmission(zeroReader)}},
+		{name: "fabricated reader", options: []WorkerOption{Concurrency(1), WithAdmission(AdmissionReader{initialized: true})}},
+		{name: "duplicate", options: []WorkerOption{Concurrency(1), WithAdmission(first.Reader()), WithAdmission(second.Reader())}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewWorkerPlan(catalog, On(definition, handler, test.options...)); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("worker admission options = %v", err)
+			}
+		})
+	}
+
+	options := []WorkerOption{Concurrency(2), WithAdmission(first.Reader())}
+	consumer := On(definition, handler, options...)
+	options[1] = WithAdmission(second.Reader())
+	plan, err := NewWorkerPlan(catalog, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := plan.Describe()
+	bindings := plan.workerBindings()
+	if len(bindings) != 1 || bindings[0].admission.cell != first.Reader().cell || bindings[0].admission.Freshness() != time.Minute || !description.Bindings[0].DynamicAdmission {
+		t.Fatalf("dynamic admission was not retained: %#v", description.Bindings[0])
+	}
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	if err := first.Publisher().Update(1, HeldReason{}, now); err != nil {
+		t.Fatal(err)
+	}
+	decision := bindings[0].admission.Evaluate(bindings[0].concurrency, now)
+	if decision.Signal() != AdmissionReady || decision.Limit() != 1 {
+		t.Fatalf("stored admission reader lost its snapshot: signal=%v limit=%d", decision.Signal(), decision.Limit())
+	}
+	bindings[0].admission = second.Reader()
+	fresh := plan.workerBindings()
+	if fresh[0].admission.cell != first.Reader().cell || fresh[0].admission.Freshness() != time.Minute {
+		t.Fatal("worker binding copy mutated the plan")
+	}
+}
+
+func TestAutomaticWorkerWithoutAdmissionRemainsStatic(t *testing.T) {
+	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
+	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.static-admission"), Codec: String(1)})
+	plan := MustWorkerPlan(MustCatalog(automatic), automatic)
+	binding := plan.workerBindings()[0]
+	if binding.admission != (AdmissionReader{}) || plan.Describe().Bindings[0].DynamicAdmission {
+		t.Fatal("automatic worker unexpectedly configured dynamic admission")
+	}
+	if binding.concurrency != Default.workerConcurrency {
+		t.Fatalf("automatic static concurrency = %d", binding.concurrency)
+	}
+}
+
 func TestWorkerPlanRequiresExactUniqueCatalogMembersAndBindings(t *testing.T) {
 	left := testQueueDefinition(t, "workers.left", String(1))
 	right := testQueueDefinition(t, "workers.right", String(1))
@@ -207,12 +277,14 @@ func TestWorkerPlanDescriptionIsDetachedDeterministicAndRedacted(t *testing.T) {
 	}
 	mutated := left.Describe()
 	mutated.Bindings[0].Concurrency = MaxBindingConcurrency
+	mutated.Bindings[0].DynamicAdmission = true
 	mutated.Bindings = nil
+	mutated.CatalogFingerprint = "mutated"
 	fresh := left.Describe()
-	if len(fresh.Bindings) != 2 || fresh.Bindings[0].Concurrency != 1 || fresh.TotalConcurrency != 3 {
+	if len(fresh.Bindings) != 2 || fresh.Bindings[0].Concurrency != 1 || fresh.Bindings[0].DynamicAdmission || fresh.TotalConcurrency != 3 || fresh.CatalogFingerprint != catalog.Fingerprint() || left.CatalogFingerprint() != catalog.Fingerprint() {
 		t.Fatalf("worker description was mutable: %#v", fresh)
 	}
-	secret := "workers.alpha"
+	secrets := []string{"workers.alpha", catalog.Fingerprint()}
 	values := []string{
 		fmt.Sprint(left),
 		fmt.Sprintf("%+v", left),
@@ -227,12 +299,29 @@ func TestWorkerPlanDescriptionIsDetachedDeterministicAndRedacted(t *testing.T) {
 		fresh.Bindings[0].LogValue().String(),
 	}
 	for _, value := range values {
-		if strings.Contains(value, secret) {
-			t.Fatalf("worker plan formatting leaked stable internals: %q", value)
+		for _, secret := range secrets {
+			if strings.Contains(value, secret) {
+				t.Fatalf("worker plan formatting leaked stable internals: %q", value)
+			}
 		}
 	}
-	if got := slog.AnyValue(left).Resolve().String(); strings.Contains(got, secret) {
+	if got := slog.AnyValue(left).Resolve().String(); strings.Contains(got, secrets[0]) || strings.Contains(got, secrets[1]) {
 		t.Fatalf("structured log leaked stable internals: %q", got)
+	}
+}
+
+func TestWorkerPlanRetainsExactWholeCatalogFingerprint(t *testing.T) {
+	alpha := testQueueDefinition(t, "workers.fingerprint-alpha", String(1))
+	beta := testQueueDefinition(t, "workers.fingerprint-beta", String(1))
+	handler := Handler[string](func(context.Context, string) error { return nil })
+	whole := MustCatalog(alpha, beta)
+	partial := MustCatalog(alpha)
+	plan := MustWorkerPlan(whole, On(alpha, handler, Concurrency(1)))
+	if plan.CatalogFingerprint() != whole.Fingerprint() || plan.Describe().CatalogFingerprint != whole.Fingerprint() {
+		t.Fatalf("worker plan fingerprint = %q, want %q", plan.CatalogFingerprint(), whole.Fingerprint())
+	}
+	if plan.CatalogFingerprint() == partial.Fingerprint() {
+		t.Fatal("worker plan fingerprint was derived from consumer subset")
 	}
 }
 

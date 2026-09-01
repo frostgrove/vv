@@ -18,6 +18,7 @@ type consumerBinding struct {
 	handle        func(context.Context, any) error
 	handleAdapter func(context.Context, any, DeliveryMeta, ProgressReporter) error
 	classifier    ErrorClassifier
+	admission     AdmissionReader
 	mode          consumerHandlerMode
 	binding       BindingName
 	concurrency   int
@@ -129,6 +130,7 @@ func typedConsumerBinding[P any](definition DefinitionOf[P], handler Handler[P],
 			return invokeHandlerContained(func() error { return handler(ctx, value.value) })
 		},
 		classifier:  resolved.classifier,
+		admission:   resolved.admission,
 		mode:        consumerHandlerStandard,
 		binding:     resolved.binding,
 		concurrency: resolved.concurrency,
@@ -169,6 +171,7 @@ func typedAdapterConsumerBinding[P any](definition DefinitionOf[P], handler Adap
 			return invokeHandlerContained(func() error { return handler(ctx, value.value, meta, progress) })
 		},
 		classifier:  resolved.classifier,
+		admission:   resolved.admission,
 		mode:        consumerHandlerAdapter,
 		binding:     resolved.binding,
 		concurrency: resolved.concurrency,
