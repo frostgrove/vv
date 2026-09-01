@@ -20,11 +20,11 @@ func TestAutomaticDeclarationRequiresHandlerAndNeverInfersWireName(t *testing.T)
 		t.Fatalf("Auto inferred a runtime wire identity: %#v", automatic.Describe())
 	}
 	if _, err := automatic.Encode("value"); !errors.Is(err, ErrNotActivated) {
-		t.Fatalf("unmaterialized Auto encoded payload: %v", err)
+		t.Fatalf("unwired Auto encoded payload: %v", err)
 	}
 }
 
-func TestMaterializedAutomaticUsesGeneratedIdentityAndTypedHandler(t *testing.T) {
+func TestWiredAutomaticUsesTypedContractAndHandler(t *testing.T) {
 	var calls atomic.Int64
 	automatic := Auto(Handler[string](func(_ context.Context, value string) error {
 		if value != "payload" {
@@ -33,11 +33,11 @@ func TestMaterializedAutomaticUsesGeneratedIdentityAndTypedHandler(t *testing.T)
 		calls.Add(1)
 		return nil
 	}), Interactive)
-	materialized, err := Materialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "documents.automatic"), Codec: String(1)})
+	wired, err := Wire(automatic, WireSpec[string]{Name: testJobName(t, "documents.automatic"), Codec: String(1)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if materialized != automatic || !automatic.Describe().Resolved || !automatic.Describe().Automatic {
+	if wired != automatic || !automatic.Describe().Resolved || !automatic.Describe().Automatic {
 		t.Fatalf("automatic declaration did not resolve: %#v", automatic.Describe())
 	}
 	payload, err := automatic.Encode("payload")
@@ -56,9 +56,9 @@ func TestMaterializedAutomaticUsesGeneratedIdentityAndTypedHandler(t *testing.T)
 	}
 }
 
-func TestMaterializeIsAtomicUnderConcurrentGeneration(t *testing.T) {
+func TestWireIsAtomicUnderConcurrentConfiguration(t *testing.T) {
 	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
-	spec := GeneratedDefinitionSpec[string]{Name: testJobName(t, "documents.concurrent"), Codec: String(1)}
+	spec := WireSpec[string]{Name: testJobName(t, "documents.concurrent"), Codec: String(1)}
 	const contenders = 32
 	var successes atomic.Int64
 	var conflicts atomic.Int64
@@ -68,7 +68,7 @@ func TestMaterializeIsAtomicUnderConcurrentGeneration(t *testing.T) {
 	for range contenders {
 		go func() {
 			defer group.Done()
-			_, err := Materialize(automatic, spec)
+			_, err := Wire(automatic, spec)
 			switch {
 			case err == nil:
 				successes.Add(1)
@@ -81,7 +81,7 @@ func TestMaterializeIsAtomicUnderConcurrentGeneration(t *testing.T) {
 	}
 	group.Wait()
 	if successes.Load() != 1 || conflicts.Load() != contenders-1 || unexpected.Load() != 0 {
-		t.Fatalf("materialization outcomes: success=%d conflict=%d unexpected=%d", successes.Load(), conflicts.Load(), unexpected.Load())
+		t.Fatalf("wire outcomes: success=%d conflict=%d unexpected=%d", successes.Load(), conflicts.Load(), unexpected.Load())
 	}
 }
 
@@ -122,7 +122,7 @@ func TestAutoAndOnUseTheSameConsumerContract(t *testing.T) {
 		automaticCalls.Add(1)
 		return nil
 	}))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "documents.auto-consumer"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "documents.auto-consumer"), Codec: String(1)})
 	catalog := MustCatalog(automatic)
 	if err := validateConsumers(catalog, automatic); err != nil {
 		t.Fatal(err)
@@ -179,13 +179,13 @@ func TestConsumerValidationRejectsNilDuplicateAndNonmemberBindings(t *testing.T)
 	}
 }
 
-func TestOnCanPrecedeAutomaticMaterialization(t *testing.T) {
+func TestOnCanPrecedeAutomaticWiring(t *testing.T) {
 	automatic := Declare[string]()
 	consumer := On(automatic, Handler[string](func(context.Context, string) error { return nil }))
 	if consumer.Declaration() != automatic {
 		t.Fatal("On did not preserve the automatic declaration")
 	}
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "documents.late-consumer"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "documents.late-consumer"), Codec: String(1)})
 	if err := validateConsumers(MustCatalog(automatic), consumer); err != nil {
 		t.Fatal(err)
 	}

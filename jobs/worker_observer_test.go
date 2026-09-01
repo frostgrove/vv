@@ -493,10 +493,10 @@ func TestWorkerEventEnforcesAggregateAndExactScopes(t *testing.T) {
 	}
 }
 
-func TestWorkerEventFindsMaterializedAutomaticBindingInSortedPlan(t *testing.T) {
+func TestWorkerEventFindsWiredAutomaticBindingInSortedPlan(t *testing.T) {
 	handler := Handler[string](func(context.Context, string) error { return nil })
 	automatic := Auto(handler)
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.observer.middle"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "workers.observer.middle"), Codec: String(1)})
 	alpha := testQueueDefinition(t, "workers.observer.alpha", String(1))
 	zulu := testQueueDefinition(t, "workers.observer.zulu", String(1))
 	plan := MustWorkerPlan(

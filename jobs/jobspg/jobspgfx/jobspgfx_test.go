@@ -42,7 +42,7 @@ func TestModulePublishesOneDriverThroughAllContracts(t *testing.T) {
 func TestModuleCompletesTheJobsFxGraphWithoutOwningLifecycle(t *testing.T) {
 	database := &sql.DB{}
 	source := crudsql.Postgres(database)
-	definition := jobs.MustMaterialize(jobs.Declare[string](), jobs.GeneratedDefinitionSpec[string]{
+	definition := jobs.MustWire(jobs.Declare[string](), jobs.WireSpec[string]{
 		Name:  testName(t, "jobspgfx.graph"),
 		Codec: jobs.String(1),
 	})

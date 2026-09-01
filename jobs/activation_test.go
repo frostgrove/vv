@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-func TestDeclareMaterializesWithoutAHandler(t *testing.T) {
+func TestDeclareWiresWithoutAHandler(t *testing.T) {
 	automatic := Declare[string]()
 	if automatic.Handler() != nil {
 		t.Fatal("declaration-only automatic has a handler")
 	}
-	definition, err := Materialize(automatic, GeneratedDefinitionSpec[string]{
+	definition, err := Wire(automatic, WireSpec[string]{
 		Name:  queueMustName("tests.declared"),
 		Codec: String(SchemaVersion(1)),
 	})
@@ -22,33 +22,33 @@ func TestDeclareMaterializesWithoutAHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	if definition.Name() != automatic.Name() || !automatic.Describe().Automatic {
-		t.Fatal("declaration did not materialize")
+		t.Fatal("declaration did not wire")
 	}
 }
 
-func TestMaterializeReturnPreservesAutomaticActivationBinding(t *testing.T) {
+func TestWireReturnPreservesAutomaticActivationBinding(t *testing.T) {
 	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
-	materialized, err := Materialize(automatic, GeneratedDefinitionSpec[string]{Name: queueMustName("tests.materialized-return"), Codec: String(1)})
-	if err != nil || materialized != automatic {
-		t.Fatalf("materialized = %p, %v", materialized, err)
+	wired, err := Wire(automatic, WireSpec[string]{Name: queueMustName("tests.wired-return"), Codec: String(1)})
+	if err != nil || wired != automatic {
+		t.Fatalf("wired = %p, %v", wired, err)
 	}
-	queue := testQueue(t, queueMustName("tests"), materialized, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
+	queue := testQueue(t, queueMustName("tests"), wired, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
 	activation, err := queue.Activate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Go(context.Background(), materialized, "value"); err != nil {
+	if err := Go(context.Background(), wired, "value"); err != nil {
 		t.Fatal(err)
 	}
 	if err := activation.Close(); err != nil {
 		t.Fatal(err)
 	}
-	generated, ok := automatic.Definition()
+	definition, ok := automatic.Definition()
 	if !ok {
-		t.Fatal("generated definition is missing")
+		t.Fatal("wired definition is missing")
 	}
-	if _, err := NewCatalog(generated); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("detached generated definition catalog = %v", err)
+	if _, err := NewCatalog(definition); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("detached wired definition catalog = %v", err)
 	}
 }
 
@@ -58,7 +58,7 @@ func TestQueueActivationEnablesGoUntilClosedWithoutStartingHandlers(t *testing.T
 		handlerCalls.Add(1)
 		return nil
 	}))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{
+	MustWire(automatic, WireSpec[string]{
 		Name:  queueMustName("tests.go"),
 		Codec: String(SchemaVersion(1)),
 	})
@@ -93,7 +93,7 @@ func TestQueueActivationEnablesGoUntilClosedWithoutStartingHandlers(t *testing.T
 }
 
 func TestQueueActivationIsIdempotentForTheSameQueue(t *testing.T) {
-	automatic := materializedAutomatic(t, "tests.idempotent")
+	automatic := wiredAutomatic(t, "tests.idempotent")
 	queue := testQueue(t, queueMustName("tests"), automatic, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
 	first, err := queue.Activate()
 	if err != nil {
@@ -112,9 +112,9 @@ func TestQueueActivationIsIdempotentForTheSameQueue(t *testing.T) {
 }
 
 func TestOverlappingQueueActivationIsAllOrNothingAndCanRebind(t *testing.T) {
-	leftOnly := materializedAutomatic(t, "tests.left")
-	shared := materializedAutomatic(t, "tests.shared")
-	rightOnly := materializedAutomatic(t, "tests.right")
+	leftOnly := wiredAutomatic(t, "tests.left")
+	shared := wiredAutomatic(t, "tests.shared")
+	rightOnly := wiredAutomatic(t, "tests.right")
 	sender := successfulQueueSender()
 	left := queueFromDeclarations(t, "left", sender, leftOnly, shared)
 	right := queueFromDeclarations(t, "right", sender, shared, rightOnly)
@@ -144,7 +144,7 @@ func TestOverlappingQueueActivationIsAllOrNothingAndCanRebind(t *testing.T) {
 }
 
 func TestConcurrentQueueActivationHasOneWinner(t *testing.T) {
-	automatic := materializedAutomatic(t, "tests.concurrent")
+	automatic := wiredAutomatic(t, "tests.concurrent")
 	sender := successfulQueueSender()
 	left := testQueue(t, queueMustName("left"), automatic, sender, bytes.NewReader(make([]byte, 16)))
 	right := testQueue(t, queueMustName("right"), automatic, sender, bytes.NewReader(make([]byte, 16)))
@@ -198,7 +198,7 @@ func TestExplicitDefinitionsDoNotRequireActivation(t *testing.T) {
 func TestExplicitConsumerCoexistsWithAutomaticProducerActivation(t *testing.T) {
 	automatic := Declare[string]()
 	consumer := On(automatic, Handler[string](func(context.Context, string) error { return nil }))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: queueMustName("tests.consumer-producer"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: queueMustName("tests.consumer-producer"), Codec: String(1)})
 	queue := testQueue(t, queueMustName("tests"), automatic, successfulQueueSender(), bytes.NewReader(make([]byte, 32)))
 	if err := validateConsumers(queue.Catalog(), consumer); err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestExplicitConsumerCoexistsWithAutomaticProducerActivation(t *testing.T) {
 }
 
 func TestGoCannotObserveAnUncommittedActivation(t *testing.T) {
-	automatic := materializedAutomatic(t, "tests.activation-gate")
+	automatic := wiredAutomatic(t, "tests.activation-gate")
 	queue := testQueue(t, queueMustName("tests"), automatic, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
 	activation := &QueueActivation{queue: queue}
 	automatic.activation.Store(activation)
@@ -238,7 +238,7 @@ func TestGoCannotObserveAnUncommittedActivation(t *testing.T) {
 }
 
 func TestStaleCloseCannotDetachNewActivation(t *testing.T) {
-	automatic := materializedAutomatic(t, "tests.generation")
+	automatic := wiredAutomatic(t, "tests.generation")
 	left := testQueue(t, queueMustName("left"), automatic, successfulQueueSender(), bytes.NewReader(make([]byte, 16)))
 	rightCalls := atomic.Int64{}
 	rightSender := queueSenderFunc(func(_ context.Context, placement Placement) (PlacementResult, error) {
@@ -272,7 +272,7 @@ func TestStaleCloseCannotDetachNewActivation(t *testing.T) {
 }
 
 func TestConcurrentGoAndCloseAreLifecycleSafe(t *testing.T) {
-	automatic := materializedAutomatic(t, "tests.close-race")
+	automatic := wiredAutomatic(t, "tests.close-race")
 	queue := testQueue(t, queueMustName("tests"), automatic, successfulQueueSender(), bytes.NewReader(make([]byte, 16*128)))
 	activation, err := queue.Activate()
 	if err != nil {
@@ -331,10 +331,10 @@ func queueFromDeclarations(t *testing.T, namespace string, sender Sender, declar
 	return queue
 }
 
-func materializedAutomatic(t *testing.T, name string) *Automatic[string] {
+func wiredAutomatic(t *testing.T, name string) *Automatic[string] {
 	t.Helper()
 	automatic := Declare[string]()
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{
+	MustWire(automatic, WireSpec[string]{
 		Name:  queueMustName(name),
 		Codec: String(SchemaVersion(1)),
 	})

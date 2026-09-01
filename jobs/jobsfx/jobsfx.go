@@ -55,7 +55,7 @@ func Module(spec Spec) fx.Option {
 	}
 	return fx.Module("vv.jobs",
 		fx.Provide(
-			func(registered contributions) (jobs.Catalog, error) {
+			func(registered declarationContributions) (jobs.Catalog, error) {
 				return resolveCatalog(spec.Catalog, registered)
 			},
 			func(catalog jobs.Catalog, backend Backend) (*jobs.Queue, error) {
@@ -65,7 +65,7 @@ func Module(spec Spec) fx.Option {
 				configured.Sender = backend
 				return jobs.NewQueue(configured)
 			},
-			func(catalog jobs.Catalog, backend Backend, registered contributions) (*jobs.Workers, error) {
+			func(catalog jobs.Catalog, backend Backend, registered consumerContributions) (*jobs.Workers, error) {
 				consumers := resolveConsumers(catalog, registered.Consumers)
 				if len(consumers) == 0 {
 					return nil, nil
@@ -76,7 +76,7 @@ func Module(spec Spec) fx.Option {
 				configured.Driver = backend
 				return jobs.NewWorkers(configured, consumers...)
 			},
-			func(queue *jobs.Queue, registered contributions) (scheduledRuntime, error) {
+			func(queue *jobs.Queue, registered scheduleContributions) (scheduledRuntime, error) {
 				if len(registered.Schedules) == 0 {
 					return scheduledRuntime{}, nil
 				}
@@ -93,16 +93,29 @@ func Module(spec Spec) fx.Option {
 	)
 }
 
-type contributions struct {
+type declarationContributions struct {
 	fx.In
 
 	Declarations []jobs.Declaration `group:"vv.jobs.declarations"`
-	Consumers    []jobs.Consumer    `group:"vv.jobs.consumers"`
-	Schedules    []jobs.Schedule    `group:"vv.jobs.schedules"`
 }
 
-func newCatalog(registered contributions) (jobs.Catalog, error) {
+type consumerContributions struct {
+	fx.In
+
+	Consumers []jobs.Consumer `group:"vv.jobs.consumers"`
+}
+
+type scheduleContributions struct {
+	fx.In
+
+	Schedules []jobs.Schedule `group:"vv.jobs.schedules"`
+}
+
+func newCatalog(registered declarationContributions) (jobs.Catalog, error) {
 	declarations := contributionDeclarations(registered)
+	if len(declarations) == 0 {
+		return jobs.Catalog{}, fmt.Errorf("jobsfx: %w: catalog is empty; use jobsfx.Registry, configure Spec.Catalog, or contribute jobsfx.AsDeclaration", jobs.ErrInvalid)
+	}
 	catalog, err := jobs.NewCatalog(declarations...)
 	if err != nil {
 		return jobs.Catalog{}, fmt.Errorf("jobsfx: catalog: %w", err)
@@ -110,7 +123,7 @@ func newCatalog(registered contributions) (jobs.Catalog, error) {
 	return catalog, nil
 }
 
-func resolveCatalog(configured jobs.Catalog, registered contributions) (jobs.Catalog, error) {
+func resolveCatalog(configured jobs.Catalog, registered declarationContributions) (jobs.Catalog, error) {
 	if configured.Fingerprint() == "" {
 		return newCatalog(registered)
 	}
@@ -127,22 +140,10 @@ func resolveCatalog(configured jobs.Catalog, registered contributions) (jobs.Cat
 	return configured, nil
 }
 
-func contributionDeclarations(registered contributions) []jobs.Declaration {
-	declarations := make([]jobs.Declaration, 0, len(registered.Declarations)+len(registered.Consumers))
-	seen := make(map[jobs.Declaration]struct{}, len(registered.Declarations)+len(registered.Consumers))
+func contributionDeclarations(registered declarationContributions) []jobs.Declaration {
+	declarations := make([]jobs.Declaration, 0, len(registered.Declarations))
+	seen := make(map[jobs.Declaration]struct{}, len(registered.Declarations))
 	for _, declaration := range registered.Declarations {
-		if _, exists := seen[declaration]; exists {
-			continue
-		}
-		seen[declaration] = struct{}{}
-		declarations = append(declarations, declaration)
-	}
-	for _, consumer := range registered.Consumers {
-		if consumer == nil {
-			declarations = append(declarations, nil)
-			continue
-		}
-		declaration := consumer.Declaration()
 		if _, exists := seen[declaration]; exists {
 			continue
 		}

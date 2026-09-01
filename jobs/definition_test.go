@@ -367,11 +367,11 @@ func TestDefinitionHoldersNeverFormatRetainedCodecOrUpcasterState(t *testing.T) 
 	upcaster := Upcast(codecV1, codecV2, func(value string) (string, error) { return value, nil })
 	spec := DefinitionSpec[string]{Name: testJobName(t, "codec.formatted"), Codec: codecV2, Upcasters: []Upcaster{upcaster}, Policy: testPolicy(t)}
 	definition := MustDefine(spec)
-	generated := GeneratedDefinitionSpec[string]{Name: testJobName(t, "codec.automatic-formatted"), Codec: &codecV2, Upcasters: []Upcaster{upcaster}}
+	wire := WireSpec[string]{Name: testJobName(t, "codec.automatic-formatted"), Codec: &codecV2, Upcasters: []Upcaster{upcaster}}
 	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
-	MustMaterialize(automatic, generated)
+	MustWire(automatic, wire)
 	catalog := MustCatalog(definition, automatic)
-	values := []any{spec, &spec, generated, &generated, definition, *definition, upcaster, automatic, catalog, &catalog}
+	values := []any{spec, &spec, wire, &wire, definition, *definition, upcaster, automatic, catalog, &catalog}
 	for index, value := range values {
 		for _, format := range []string{"%v", "%+v", "%#v"} {
 			formatted := fmt.Sprintf(format, value)

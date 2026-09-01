@@ -17,6 +17,14 @@ type Binding[D, P any] struct {
 	adapterHandler func(D, context.Context, P, jobs.DeliveryMeta, jobs.AttemptController) error
 }
 
+type handlerFor[P any] interface {
+	Handle(context.Context, P) error
+}
+
+type adapterFor[P any] interface {
+	Handle(context.Context, P, jobs.DeliveryMeta, jobs.AttemptController) error
+}
+
 func Auto[D, P any](handler func(D, context.Context, P) error, profiles ...jobs.Profile) *Binding[D, P] {
 	if handler == nil {
 		panic(fmt.Errorf("jobsfx: %w: automatic job handler is required", jobs.ErrInvalid))
@@ -29,6 +37,18 @@ func AutoAdapter[D, P any](handler func(D, context.Context, P, jobs.DeliveryMeta
 		panic(fmt.Errorf("jobsfx: %w: automatic adapter handler is required", jobs.ErrInvalid))
 	}
 	return &Binding[D, P]{Automatic: jobs.Declare[P](profiles...), adapterHandler: handler}
+}
+
+func AutoFor[D handlerFor[P], P any](profiles ...jobs.Profile) *Binding[D, P] {
+	return Auto(func(dependency D, ctx context.Context, payload P) error {
+		return dependency.Handle(ctx, payload)
+	}, profiles...)
+}
+
+func AutoAdapterFor[D adapterFor[P], P any](profiles ...jobs.Profile) *Binding[D, P] {
+	return AutoAdapter(func(dependency D, ctx context.Context, payload P, meta jobs.DeliveryMeta, controller jobs.AttemptController) error {
+		return dependency.Handle(ctx, payload, meta, controller)
+	}, profiles...)
 }
 
 func (binding *Binding[D, P]) Declaration() jobs.Declaration {
@@ -52,6 +72,10 @@ type Registration interface {
 
 type HandlerOptions interface {
 	JobOptions(jobs.Name) []jobs.WorkerOption
+}
+
+type AdmissionProvider interface {
+	JobAdmission() jobs.AdmissionReader
 }
 
 type BundleOption interface{ applyBundle(*bundleOptions) error }
@@ -115,7 +139,11 @@ func bundleProviders(catalog jobs.Catalog, options bundleOptions, registrations 
 		return nil, fmt.Errorf("jobsfx: %w: bundle catalog is required", jobs.ErrInvalid)
 	}
 	registered := make(map[jobs.Declaration]Registration, len(registrations))
-	providers := make([]fx.Option, 0, catalog.Len())
+	providers := make([]fx.Option, 0, catalog.Len()+len(registrations))
+	for _, declaration := range catalog.Definitions() {
+		value := declaration
+		providers = append(providers, fx.Provide(AsDeclaration(func() jobs.Declaration { return value })))
+	}
 	for index, registration := range registrations {
 		if registration == nil {
 			return nil, fmt.Errorf("jobsfx: %w: bundle registration %d is nil", jobs.ErrInvalid, index)
@@ -144,13 +172,6 @@ func bundleProviders(catalog jobs.Catalog, options bundleOptions, registrations 
 			return nil, fmt.Errorf("jobsfx: %w: concurrency override %q has no injected handler", jobs.ErrInvalid, name)
 		}
 	}
-	for _, declaration := range catalog.Definitions() {
-		if registered[declaration] != nil {
-			continue
-		}
-		value := declaration
-		providers = append(providers, fx.Provide(AsDeclaration(func() jobs.Declaration { return value })))
-	}
 	return providers, nil
 }
 
@@ -159,6 +180,9 @@ func (binding *Binding[D, P]) consumerConstructor(options []jobs.WorkerOption) a
 		values := append([]jobs.WorkerOption(nil), options...)
 		if provider, ok := any(dependency).(HandlerOptions); ok {
 			values = append(values, provider.JobOptions(binding.Name())...)
+		}
+		if provider, ok := any(dependency).(AdmissionProvider); ok {
+			values = append(values, jobs.WithAdmission(provider.JobAdmission()))
 		}
 		return values
 	}

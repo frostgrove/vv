@@ -20,15 +20,11 @@ func TestCacheGenerateSubcommandHasDedicatedFlags(t *testing.T) {
 	}
 }
 
-func TestJobsGenerateSubcommandHasDedicatedFlags(t *testing.T) {
+func TestJobsGenerateSubcommandDoesNotExist(t *testing.T) {
 	var output bytes.Buffer
-	err := run([]string{"generate", "jobs", "-help"}, &output, &output)
-	if !errors.Is(err, flag.ErrHelp) {
-		t.Fatalf("jobs help error = %v", err)
-	}
-	help := output.String()
-	if !strings.Contains(help, "-manifest") || !strings.Contains(help, "-check") || strings.Contains(help, "-adapter") {
-		t.Fatalf("jobs help dispatched to the wrong command:\n%s", help)
+	err := run([]string{"generate", "jobs"}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("jobs generator error = %v", err)
 	}
 }
 

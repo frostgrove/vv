@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +46,47 @@ type preparingBackend struct {
 	panics    bool
 }
 
+type catalogHandler struct{ catalog jobs.Catalog }
+
+func (*catalogHandler) Handle(context.Context, string) error { return nil }
+
+type admissionProviderJob struct {
+	reader jobs.AdmissionReader
+}
+
+func (*admissionProviderJob) Handle(context.Context, string) error { return nil }
+
+func (job *admissionProviderJob) JobAdmission() jobs.AdmissionReader { return job.reader }
+
+type directAdmissionJob struct {
+	handled  chan struct{}
+	callback func()
+	calls    atomic.Int32
+}
+
+func (job *directAdmissionJob) Handle(context.Context, string) error {
+	job.handled <- struct{}{}
+	return nil
+}
+
+func (job *directAdmissionJob) Admit(free int) int {
+	job.calls.Add(1)
+	job.callback()
+	return free
+}
+
+type conflictingAdmissionJob struct {
+	reader jobs.AdmissionReader
+}
+
+func (*conflictingAdmissionJob) Handle(context.Context, string) error { return nil }
+
+func (job *conflictingAdmissionJob) JobAdmission() jobs.AdmissionReader { return job.reader }
+
+func (job *conflictingAdmissionJob) JobOptions(jobs.Name) []jobs.WorkerOption {
+	return []jobs.WorkerOption{jobs.WithAdmission(job.reader)}
+}
+
 func (backend *preparingBackend) Prepare(ctx context.Context) error {
 	if backend.panics {
 		panic("prepare")
@@ -52,11 +96,11 @@ func (backend *preparingBackend) Prepare(ctx context.Context) error {
 	return backend.err
 }
 
-func TestGeneratedBundleInjectsTypedHandlersAndAppliesConcurrency(t *testing.T) {
+func TestBundleInjectsTypedHandlersAndAppliesConcurrency(t *testing.T) {
 	standard := jobsfx.Auto((*injectedJob).Handle)
 	adapter := jobsfx.AutoAdapter((*injectedJob).HandleAdapter, jobs.Heavy)
-	jobs.MustMaterialize(standard.Automatic, jobs.GeneratedDefinitionSpec[string]{Name: testName(t, "jobsfx.injected"), Codec: jobs.String(1)})
-	jobs.MustMaterialize(adapter.Automatic, jobs.GeneratedDefinitionSpec[string]{Name: testName(t, "jobsfx.injected-adapter"), Codec: jobs.String(1)})
+	jobs.MustWire(standard.Automatic, jobs.WireSpec[string]{Name: testName(t, "jobsfx.injected"), Codec: jobs.String(1)})
+	jobs.MustWire(adapter.Automatic, jobs.WireSpec[string]{Name: testName(t, "jobsfx.injected-adapter"), Codec: jobs.String(1)})
 	producer := testDefinition(t, "jobsfx.injected-producer")
 	catalog := jobs.MustCatalog(standard, adapter, producer)
 	var _ jobs.DefinitionOf[string] = standard
@@ -166,6 +210,183 @@ func TestGeneratedBundleInjectsTypedHandlersAndAppliesConcurrency(t *testing.T) 
 	}
 }
 
+func TestConfiguredCatalogDoesNotDependOnHandlerConstruction(t *testing.T) {
+	binding := jobsfx.AutoFor[*catalogHandler, string]()
+	jobs.MustWire(binding.Automatic, jobs.WireSpec[string]{
+		Name: testName(t, "jobsfx.catalog-handler"), Codec: jobs.String(1),
+	})
+	catalog := jobs.MustCatalog(binding)
+	namespace, err := jobs.NamespaceOf("jobsfx", "catalog-handler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("jobsfx:catalog-handler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := fx.New(
+		fx.NopLogger,
+		jobsfx.Bundle(catalog, nil, binding),
+		fx.Provide(
+			func(runtimeCatalog jobs.Catalog) *catalogHandler {
+				return &catalogHandler{catalog: runtimeCatalog}
+			},
+			jobsfx.AsBackend(jobsmemory.NewDefault),
+		),
+		jobsfx.Module(jobsfx.Spec{
+			Namespace: namespace,
+			Workers:   jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()},
+		}),
+	)
+	if err := app.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfiguredBindingsDiscoverProvidedAndManualAdmissionSnapshots(t *testing.T) {
+	provided := jobsfx.AutoFor[*admissionProviderJob, string]()
+	manual := testAutomatic(t, "jobsfx.snapshot-manual", func(context.Context, string) error { return nil })
+	jobs.MustWire(provided.Automatic, jobs.WireSpec[string]{Name: testName(t, "jobsfx.snapshot-provided"), Codec: jobs.String(1)})
+	catalog := jobs.MustCatalog(provided, manual)
+	namespace, err := jobs.NamespaceOf("jobsfx", "snapshot-admission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("jobsfx:snapshot-admission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	providedSnapshot, err := jobs.NewAdmissionSnapshot(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manualSnapshot, err := jobs.NewAdmissionSnapshot(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manualConsumer := jobs.On(manual, func(context.Context, string) error { return nil }, jobs.WithAdmission(manualSnapshot.Reader()))
+	var workers *jobs.Workers
+	app := fx.New(
+		fx.NopLogger,
+		fx.Supply(&admissionProviderJob{reader: providedSnapshot.Reader()}),
+		jobsfx.Bundle(catalog, nil, provided),
+		fx.Provide(
+			jobsfx.AsConsumer(func() jobs.Consumer { return manualConsumer }),
+			jobsfx.AsBackend(jobsmemory.NewDefault),
+		),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+		fx.Populate(&workers),
+	)
+	if err := app.Err(); err != nil {
+		t.Fatal(err)
+	}
+	description := workers.Describe().Plan
+	if len(description.Bindings) != 2 {
+		t.Fatalf("snapshot admission bindings = %#v", description)
+	}
+	for _, binding := range description.Bindings {
+		if !binding.DynamicAdmission {
+			t.Fatalf("snapshot admission was not discovered: %#v", binding)
+		}
+	}
+}
+
+func TestConfiguredBindingsNeverInvokeLegacyAdmissionCallbacks(t *testing.T) {
+	tests := []struct {
+		name     string
+		callback func()
+	}{
+		{name: "panic", callback: func() { panic("legacy admission callback") }},
+		{name: "goexit", callback: runtime.Goexit},
+		{name: "block", callback: func() { <-make(chan struct{}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			binding := jobsfx.AutoFor[*directAdmissionJob, string]()
+			jobs.MustWire(binding.Automatic, jobs.WireSpec[string]{Name: testName(t, "jobsfx.legacy-"+test.name), Codec: jobs.String(1)})
+			namespace, err := jobs.NamespaceOf("jobsfx", "legacy-"+test.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			build, err := jobs.ParseBuildID("jobsfx:legacy-" + test.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := &directAdmissionJob{handled: make(chan struct{}, 1), callback: test.callback}
+			var workers *jobs.Workers
+			app := fx.New(
+				fx.NopLogger,
+				fx.Supply(handler),
+				jobsfx.Bundle(jobs.MustCatalog(binding), nil, binding),
+				fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
+				jobsfx.Module(jobsfx.Spec{
+					Namespace: namespace,
+					Workers: jobs.WorkersSpec{
+						Build:        build,
+						Identity:     testIdentityRestorer(),
+						PollInterval: jobs.MinimumPollInterval,
+					},
+				}),
+				fx.Populate(&workers),
+			)
+			if err = app.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if description := workers.Describe().Plan.Bindings; len(description) != 1 || description[0].DynamicAdmission {
+				t.Fatalf("legacy callback changed worker admission = %#v", description)
+			}
+			startContext, cancelStart := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancelStart()
+			if err = app.Start(startContext); err != nil {
+				t.Fatal(err)
+			}
+			if err = binding.Go(context.Background(), "payload"); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-handler.handled:
+			case <-time.After(3 * time.Second):
+				t.Fatal("handler did not run")
+			}
+			stopContext, cancelStop := context.WithTimeout(context.Background(), time.Second)
+			defer cancelStop()
+			if err = app.Stop(stopContext); err != nil {
+				t.Fatal(err)
+			}
+			if calls := handler.calls.Load(); calls != 0 {
+				t.Fatalf("legacy admission callback calls = %d", calls)
+			}
+		})
+	}
+}
+
+func TestConfiguredBindingRejectsDuplicateSnapshotAdmission(t *testing.T) {
+	binding := jobsfx.AutoFor[*conflictingAdmissionJob, string]()
+	jobs.MustWire(binding.Automatic, jobs.WireSpec[string]{Name: testName(t, "jobsfx.snapshot-conflict"), Codec: jobs.String(1)})
+	namespace, err := jobs.NamespaceOf("jobsfx", "snapshot-conflict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("jobsfx:snapshot-conflict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := jobs.NewAdmissionSnapshot(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := fx.New(
+		fx.NopLogger,
+		fx.Supply(&conflictingAdmissionJob{reader: snapshot.Reader()}),
+		jobsfx.Bundle(jobs.MustCatalog(binding), nil, binding),
+		fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
+	)
+	if err := app.Err(); !errors.Is(err, jobs.ErrInvalid) {
+		t.Fatalf("duplicate snapshot admission = %v", err)
+	}
+}
+
 func TestBundleAllowsManualConsumerOverride(t *testing.T) {
 	automatic := testAutomatic(t, "jobsfx.manual-override", func(context.Context, string) error { return nil })
 	catalog := jobs.MustCatalog(automatic)
@@ -220,6 +441,7 @@ func TestModulePreparesOptionalBackendBeforeQueueActivation(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsBackend(func() *preparingBackend { return backend }),
 		),
 		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Workers: jobs.WorkersSpec{Build: build, Identity: testIdentityRestorer()}}),
@@ -243,7 +465,7 @@ func TestModulePreparesOptionalBackendBeforeQueueActivation(t *testing.T) {
 }
 
 func TestModulePrepareFailureLeavesQueueInactive(t *testing.T) {
-	automatic := jobs.MustMaterialize(jobs.Declare[string](), jobs.GeneratedDefinitionSpec[string]{Name: testName(t, "jobsfx.prepare-failure"), Codec: jobs.String(1)})
+	automatic := jobs.MustWire(jobs.Declare[string](), jobs.WireSpec[string]{Name: testName(t, "jobsfx.prepare-failure"), Codec: jobs.String(1)})
 	memory, err := jobsmemory.NewDefault()
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +498,7 @@ func TestModulePrepareFailureLeavesQueueInactive(t *testing.T) {
 }
 
 func TestModuleContainsPreparePanic(t *testing.T) {
-	automatic := jobs.MustMaterialize(jobs.Declare[string](), jobs.GeneratedDefinitionSpec[string]{Name: testName(t, "jobsfx.prepare-panic"), Codec: jobs.String(1)})
+	automatic := jobs.MustWire(jobs.Declare[string](), jobs.WireSpec[string]{Name: testName(t, "jobsfx.prepare-panic"), Codec: jobs.String(1)})
 	memory, err := jobsmemory.NewDefault()
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +552,7 @@ func TestModuleBuildsAndRunsTheDefaultJobRuntime(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsDeclaration(func() *jobs.Definition[string] { return extra }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
@@ -384,19 +607,38 @@ func TestModuleBuildsAndRunsTheDefaultJobRuntime(t *testing.T) {
 	}
 }
 
-func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
-	handled := make(chan string, 1)
-	automatic := testAutomatic(t, "jobsfx.generated", func(_ context.Context, value string) error {
-		handled <- value
-		return nil
-	})
-	extra := testDefinition(t, "jobsfx.generated-producer")
-	generated := jobs.MustCatalog(automatic, extra)
-	namespace, err := jobs.NamespaceOf("jobsfx", "generated")
+func TestModuleExplainsConsumerOnlyCatalogMigration(t *testing.T) {
+	automatic := testAutomatic(t, "jobsfx.consumer-only", func(context.Context, string) error { return nil })
+	namespace, err := jobs.NamespaceOf("jobsfx", "consumer-only")
 	if err != nil {
 		t.Fatal(err)
 	}
-	build, err := jobs.ParseBuildID("jobsfx:generated")
+	app := fx.New(
+		fx.NopLogger,
+		fx.Provide(
+			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsBackend(jobsmemory.NewDefault),
+		),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace}),
+	)
+	if err = app.Err(); !errors.Is(err, jobs.ErrInvalid) || !strings.Contains(err.Error(), "jobsfx.Registry") || !strings.Contains(err.Error(), "jobsfx.AsDeclaration") {
+		t.Fatalf("consumer-only migration error = %v", err)
+	}
+}
+
+func TestModuleUsesTheConfiguredCatalogWithoutRebuildingIt(t *testing.T) {
+	handled := make(chan string, 1)
+	automatic := testAutomatic(t, "jobsfx.configured", func(_ context.Context, value string) error {
+		handled <- value
+		return nil
+	})
+	extra := testDefinition(t, "jobsfx.configured-producer")
+	configured := jobs.MustCatalog(automatic, extra)
+	namespace, err := jobs.NamespaceOf("jobsfx", "configured")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := jobs.ParseBuildID("jobsfx:configured")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +650,7 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 		),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
-			Catalog:   generated,
+			Catalog:   configured,
 			Workers: jobs.WorkersSpec{
 				Build:        build,
 				Identity:     testIdentityRestorer(),
@@ -420,12 +662,12 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 	if err = app.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if catalog.Fingerprint() != generated.Fingerprint() {
+	if catalog.Fingerprint() != configured.Fingerprint() {
 		t.Fatalf("catalog fingerprint = %q", catalog.Fingerprint())
 	}
 	member, ok := catalog.Lookup(extra.Name())
 	if !ok || member != extra {
-		t.Fatalf("generated producer declaration = %v, %v", member, ok)
+		t.Fatalf("configured producer declaration = %v, %v", member, ok)
 	}
 	startContext, cancelStart := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelStart()
@@ -440,16 +682,16 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 			_ = app.Stop(stopContext)
 		}
 	})
-	if err = jobs.Go(context.Background(), automatic, "generated-payload"); err != nil {
+	if err = jobs.Go(context.Background(), automatic, "configured-payload"); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case value := <-handled:
-		if value != "generated-payload" {
+		if value != "configured-payload" {
 			t.Fatalf("handled %q", value)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("worker did not handle the generated declaration")
+		t.Fatal("worker did not handle the configured declaration")
 	}
 	stopContext, cancelStop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelStop()
@@ -459,16 +701,16 @@ func TestModuleUsesTheGeneratedCatalogWithoutRebuildingIt(t *testing.T) {
 	started = false
 }
 
-func TestModuleRunsAProducerOnlyGeneratedCatalogWithoutWorkers(t *testing.T) {
-	name, err := jobs.ParseName("jobsfx.producer-only-generated")
+func TestModuleRunsAProducerOnlyConfiguredCatalogWithoutWorkers(t *testing.T) {
+	name, err := jobs.ParseName("jobsfx.producer-only-configured")
 	if err != nil {
 		t.Fatal(err)
 	}
-	producer := jobs.MustMaterialize(jobs.Declare[string](), jobs.GeneratedDefinitionSpec[string]{
+	producer := jobs.MustWire(jobs.Declare[string](), jobs.WireSpec[string]{
 		Name:  name,
 		Codec: jobs.String(1),
 	})
-	generated := jobs.MustCatalog(producer)
+	configured := jobs.MustCatalog(producer)
 	namespace, err := jobs.NamespaceOf("jobsfx", "producer-only")
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +720,7 @@ func TestModuleRunsAProducerOnlyGeneratedCatalogWithoutWorkers(t *testing.T) {
 	app := fx.New(
 		fx.NopLogger,
 		fx.Provide(jobsfx.AsBackend(jobsmemory.NewDefault)),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Catalog: generated}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Catalog: configured}),
 		fx.Populate(&queue, &workers),
 	)
 	if err = app.Err(); err != nil {
@@ -511,9 +753,9 @@ func TestModuleRunsAProducerOnlyGeneratedCatalogWithoutWorkers(t *testing.T) {
 	started = false
 }
 
-func TestModuleRejectsContributionsOutsideTheGeneratedCatalog(t *testing.T) {
+func TestModuleRejectsContributionsOutsideTheConfiguredCatalog(t *testing.T) {
 	registered := testAutomatic(t, "jobsfx.registered", func(context.Context, string) error { return nil })
-	generated := jobs.MustCatalog(testDefinition(t, "jobsfx.generated-only"))
+	configured := jobs.MustCatalog(testDefinition(t, "jobsfx.configured-only"))
 	namespace, err := jobs.NamespaceOf("jobsfx", "catalog-membership")
 	if err != nil {
 		t.Fatal(err)
@@ -522,9 +764,10 @@ func TestModuleRejectsContributionsOutsideTheGeneratedCatalog(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return registered }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return registered }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
-		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Catalog: generated}),
+		jobsfx.Module(jobsfx.Spec{Namespace: namespace, Catalog: configured}),
 	)
 	if err = app.Err(); !errors.Is(err, jobs.ErrInvalid) {
 		t.Fatalf("application error = %v", err)
@@ -566,6 +809,7 @@ func TestModuleStartsAndStopsTheScheduler(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsSchedule(func() jobs.Schedule { return schedule }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
@@ -638,6 +882,7 @@ func TestSchedulerFailureRequestsApplicationShutdown(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsSchedule(func() jobs.Schedule { return schedule }),
 			jobsfx.AsBackend(jobsmemory.NewDefault),
 		),
@@ -688,6 +933,7 @@ func TestWorkerFailureRequestsApplicationShutdown(t *testing.T) {
 		fx.NopLogger,
 		fx.Provide(
 			jobsfx.AsConsumer(func() *jobs.Automatic[string] { return automatic }),
+			jobsfx.AsDeclaration(func() jobs.Declaration { return automatic }),
 			jobsfx.AsBackend(newPanickingBackend),
 		),
 		jobsfx.Module(jobsfx.Spec{
@@ -747,7 +993,7 @@ func (*panickingBackend) Claim(context.Context, jobs.ClaimRequest) (jobs.ClaimBa
 func testAutomatic(t *testing.T, raw string, handler jobs.Handler[string]) *jobs.Automatic[string] {
 	t.Helper()
 	name := testName(t, raw)
-	return jobs.MustMaterialize(jobs.Auto(handler), jobs.GeneratedDefinitionSpec[string]{Name: name, Codec: jobs.String(1)})
+	return jobs.MustWire(jobs.Auto(handler), jobs.WireSpec[string]{Name: name, Codec: jobs.String(1)})
 }
 
 func testName(t *testing.T, raw string) jobs.Name {

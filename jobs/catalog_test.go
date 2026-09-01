@@ -74,7 +74,7 @@ func TestCatalogFingerprintIgnoresAutomaticConstructionMechanism(t *testing.T) {
 	name := testJobName(t, "equivalent.job")
 	manual := MustDefine(DefinitionSpec[string]{Name: name, Codec: String(1), Policy: testPolicy(t)})
 	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: name, Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: name, Codec: String(1)})
 	manualCatalog := MustCatalog(manual)
 	automaticCatalog := MustCatalog(automatic)
 	if !automatic.Describe().Automatic {
@@ -101,8 +101,8 @@ func TestCatalogFingerprintIgnoresAutomaticWorkerConcurrency(t *testing.T) {
 	name := testJobName(t, "equivalent.worker-concurrency")
 	left := Auto(handler, leftProfile)
 	right := Auto(handler, rightProfile)
-	MustMaterialize(left, GeneratedDefinitionSpec[string]{Name: name, Codec: String(1)})
-	MustMaterialize(right, GeneratedDefinitionSpec[string]{Name: name, Codec: String(1)})
+	MustWire(left, WireSpec[string]{Name: name, Codec: String(1)})
+	MustWire(right, WireSpec[string]{Name: name, Codec: String(1)})
 	if leftProfile.workerConcurrency == rightProfile.workerConcurrency {
 		t.Fatal("test profiles have the same worker concurrency")
 	}
@@ -119,8 +119,8 @@ func TestCatalogFingerprintIgnoresAutomaticWorkerConcurrency(t *testing.T) {
 func TestCatalogReturnsOnlyExecutableAutomaticConsumers(t *testing.T) {
 	consumer := Auto(Handler[string](func(context.Context, string) error { return nil }))
 	producer := Declare[string]()
-	MustMaterialize(consumer, GeneratedDefinitionSpec[string]{Name: testJobName(t, "catalog.consumer"), Codec: String(1)})
-	MustMaterialize(producer, GeneratedDefinitionSpec[string]{Name: testJobName(t, "catalog.producer"), Codec: String(1)})
+	MustWire(consumer, WireSpec[string]{Name: testJobName(t, "catalog.consumer"), Codec: String(1)})
+	MustWire(producer, WireSpec[string]{Name: testJobName(t, "catalog.producer"), Codec: String(1)})
 	manual := MustDefine(DefinitionSpec[string]{Name: testJobName(t, "catalog.manual"), Codec: String(1), Policy: testPolicy(t)})
 	catalog := MustCatalog(producer, manual, consumer)
 	consumers := catalog.AutomaticConsumers()

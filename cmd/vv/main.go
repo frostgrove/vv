@@ -9,7 +9,6 @@ import (
 
 	"github.com/frostgrove/vv/internal/cachegen"
 	"github.com/frostgrove/vv/internal/codegen"
-	"github.com/frostgrove/vv/internal/jobsgen"
 )
 
 func main() {
@@ -23,28 +22,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) >= 2 && args[0] == "generate" && args[1] == "cache" {
 		return runCache(args[2:], stdout, stderr)
 	}
-	if len(args) >= 2 && args[0] == "generate" && args[1] == "jobs" {
-		return runJobs(args[2:], stdout, stderr)
-	}
 	return runModels(args, stdout, stderr)
-}
-
-func runJobs(args []string, stdout, stderr io.Writer) error {
-	var options jobsgen.Options
-	flags := flag.NewFlagSet("vv generate jobs", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.StringVar(&options.Dir, "dir", ".", "package directory")
-	flags.StringVar(&options.Out, "out", "vv_jobs_gen.go", "generated Go file name")
-	flags.StringVar(&options.Manifest, "manifest", "jobs.manifest.yml", "jobs manifest file name")
-	flags.BoolVar(&options.Check, "check", false, "check generated artifacts without writing")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("generate jobs accepts no positional arguments")
-	}
-	options.Log = stdout
-	return jobsgen.Run(&options)
 }
 
 func runCache(args []string, stdout, stderr io.Writer) error {

@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 )
 
-type GeneratedDefinitionSpec[P any] struct {
+type WireSpec[P any] struct {
 	Name      Name
 	Codec     Codec[P]
 	Identity  PayloadIdentity[P]
@@ -14,8 +14,8 @@ type GeneratedDefinitionSpec[P any] struct {
 	Partition PartitionMode
 }
 
-func (GeneratedDefinitionSpec[P]) String() string { return "[generated job definition spec]" }
-func (this GeneratedDefinitionSpec[P]) Format(state fmt.State, _ rune) {
+func (WireSpec[P]) String() string { return "[job wire spec]" }
+func (this WireSpec[P]) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, this.String())
 }
 
@@ -55,12 +55,12 @@ func Declare[P any](profiles ...Profile) *Automatic[P] {
 	return &Automatic[P]{profile: profile, policy: policy}
 }
 
-func Materialize[P any](automatic *Automatic[P], spec GeneratedDefinitionSpec[P]) (*Automatic[P], error) {
+func Wire[P any](automatic *Automatic[P], spec WireSpec[P]) (*Automatic[P], error) {
 	if automatic == nil {
 		return nil, fmt.Errorf("%w: automatic declaration is invalid", ErrInvalid)
 	}
 	if automatic.definition.Load() != nil {
-		return nil, fmt.Errorf("%w: automatic declaration is already materialized", ErrConflict)
+		return nil, fmt.Errorf("%w: automatic declaration already has a wire contract", ErrConflict)
 	}
 	definition, err := Define(DefinitionSpec[P]{Name: spec.Name, Codec: spec.Codec, Identity: spec.Identity, Upcasters: spec.Upcasters, Policy: automatic.policy, Partition: spec.Partition})
 	if err != nil {
@@ -68,17 +68,17 @@ func Materialize[P any](automatic *Automatic[P], spec GeneratedDefinitionSpec[P]
 	}
 	definition.descriptor.Automatic = true
 	if !automatic.definition.CompareAndSwap(nil, definition) {
-		return nil, fmt.Errorf("%w: automatic declaration is already materialized", ErrConflict)
+		return nil, fmt.Errorf("%w: automatic declaration already has a wire contract", ErrConflict)
 	}
 	return automatic, nil
 }
 
-func MustMaterialize[P any](automatic *Automatic[P], spec GeneratedDefinitionSpec[P]) *Automatic[P] {
-	materialized, err := Materialize(automatic, spec)
+func MustWire[P any](automatic *Automatic[P], spec WireSpec[P]) *Automatic[P] {
+	wired, err := Wire(automatic, spec)
 	if err != nil {
 		panic(err)
 	}
-	return materialized
+	return wired
 }
 
 func (this *Automatic[P]) Name() Name {

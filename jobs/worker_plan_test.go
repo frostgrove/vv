@@ -39,8 +39,8 @@ func TestWorkerPlanResolvesEffectiveBindingsWithoutLifecycleEffects(t *testing.T
 		explicitCalls.Add(1)
 		return nil
 	}), Binding("workers.primary"), Concurrency(4))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.automatic"), Codec: String(1)})
-	MustMaterialize(declared, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.declared"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "workers.automatic"), Codec: String(1)})
+	MustWire(declared, WireSpec[string]{Name: testJobName(t, "workers.declared"), Codec: String(1)})
 	catalog := MustCatalog(explicit, declared, automatic)
 	beforeFingerprint := catalog.Fingerprint()
 	beforeCatalog := catalog.Describe()
@@ -94,7 +94,7 @@ func TestWorkerPlanRequiresExplicitConcurrencyOnlyForExplicitDefinition(t *testi
 		t.Fatalf("missing explicit concurrency = %v", err)
 	}
 	automatic := Auto(handler, Interactive)
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.profile-default"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "workers.profile-default"), Codec: String(1)})
 	plan, err := NewWorkerPlan(MustCatalog(automatic), automatic)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,7 @@ func TestWorkerPlanConfiguresDynamicAdmissionExplicitly(t *testing.T) {
 
 func TestAutomaticWorkerWithoutAdmissionRemainsStatic(t *testing.T) {
 	automatic := Auto(Handler[string](func(context.Context, string) error { return nil }))
-	MustMaterialize(automatic, GeneratedDefinitionSpec[string]{Name: testJobName(t, "workers.static-admission"), Codec: String(1)})
+	MustWire(automatic, WireSpec[string]{Name: testJobName(t, "workers.static-admission"), Codec: String(1)})
 	plan := MustWorkerPlan(MustCatalog(automatic), automatic)
 	binding := plan.workerBindings()[0]
 	if binding.admission != (AdmissionReader{}) || plan.Describe().Bindings[0].DynamicAdmission {
