@@ -19,6 +19,7 @@ use (
 	./crud/http/crudfiber
 	./crud/http/crudgin
 	./crud/rpc/crudgrpc
+	./jobs/jobsfx
 	./storage/storageminio
 	./storage/storageminio/storageminiofx
 	./test
