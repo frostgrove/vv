@@ -29,6 +29,7 @@ type storedDelivery struct {
 	definition      jobs.Name
 	record          []byte
 	recordSize      int
+	intentKeys      []jobs.IntentKey
 	state           jobs.InvocationState
 	createdAt       time.Time
 	availableAt     time.Time
@@ -82,6 +83,7 @@ func (r repository) migrationStatements() []string {
 	statements := r.migrationBootstrapStatements()
 	statements = append(statements, r.migrationUpgradeStatements()...)
 	statements = append(statements, r.catalogEvolutionMigrationStatements()...)
+	statements = append(statements, r.intentKeysMigrationStatements()...)
 	return append(statements, r.schemaHardeningMigrationStatements()...)
 }
 
@@ -133,6 +135,7 @@ record_size integer CHECK (record_size > 0),
 record bytea,
 record_expires_at timestamptz,
 intent_expires_at timestamptz,
+intent_keys bytea,
 payload_identity text,
 payload_version bigint,
 payload_digest bytea,
@@ -243,8 +246,9 @@ func MigrationStatements(schema string) ([]string, error) {
 	statements = append(statements, repo.retentionIndexValidationStatements()...)
 	statements = append(statements, repo.retentionIndexCommentStatements()...)
 	statements = append(statements, repo.operationalIndexValidationStatements()...)
+	statements = append(statements, repo.intentKeysColumnValidationStatements()...)
 	statements = append(statements, repo.schemaConstraintValidationStatements()...)
-	statements = append(statements, `UPDATE `+repo.meta+` SET version = 4 WHERE singleton = true AND version IN (1, 2, 3)`)
+	statements = append(statements, `UPDATE `+repo.meta+` SET version = 5 WHERE singleton = true AND version IN (1, 2, 3, 4)`)
 	return append([]string(nil), statements...), nil
 }
 
@@ -293,6 +297,20 @@ func (r repository) migrateLocked(ctx context.Context, conn *sql.Conn) error {
 				return fmt.Errorf("jobspg: migrate catalog contracts: %w", err)
 			}
 		}
+		intentKeysReady, err := r.intentKeysColumnReady(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("jobspg: inspect intent reservations: %w", err)
+		}
+		if !intentKeysReady {
+			for _, statement := range r.intentKeysMigrationStatements() {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return fmt.Errorf("jobspg: migrate intent reservations: %w", err)
+				}
+			}
+		}
+	}
+	if err := r.validateIntentKeysColumn(ctx, tx); err != nil {
+		return fmt.Errorf("jobspg: validate intent reservations: %w", err)
 	}
 	for _, statement := range r.schemaHardeningMigrationStatements() {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {

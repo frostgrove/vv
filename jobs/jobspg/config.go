@@ -16,7 +16,7 @@ import (
 )
 
 const DefaultSchema = "frostgrove_jobs"
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 var ErrNotReady = errors.New("jobspg: driver is not ready")
 var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")

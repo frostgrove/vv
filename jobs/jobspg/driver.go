@@ -110,8 +110,14 @@ func (d *Driver) placeExisting(ctx context.Context, tx *sql.Tx, placement jobs.P
 		if existing.id != placement.Candidate() {
 			return jobs.PlacementResult{}, jobs.ErrConflict
 		}
+		if err := d.persistExistingIntentKeys(ctx, tx, placement, intents, existing); err != nil {
+			return jobs.PlacementResult{}, err
+		}
 		return jobs.NewPlacementResult(existing.id, jobs.PlacementCreated)
 	case jobs.PlacementOnce:
+		if err := d.persistExistingIntentKeys(ctx, tx, placement, intents, existing); err != nil {
+			return jobs.PlacementResult{}, err
+		}
 		outcome := jobs.PlacementConflict
 		if samePayloadDigest(existing, placement.PayloadDigest()) {
 			outcome = jobs.PlacementExistingSamePayload
@@ -127,18 +133,76 @@ func (d *Driver) placeExisting(ctx context.Context, tx *sql.Tx, placement jobs.P
 			if err := d.repo.updateCollapsed(ctx, tx, d.namespace, existing, updated, availableAt, now); err != nil {
 				return jobs.PlacementResult{}, err
 			}
-			for _, intent := range intents {
-				if err := d.repo.ensureIntent(ctx, tx, d.namespace, existing.id, intent); err != nil {
-					return jobs.PlacementResult{}, err
-				}
-			}
+		}
+		if err := d.persistExistingIntentKeys(ctx, tx, placement, intents, existing); err != nil {
+			return jobs.PlacementResult{}, err
 		}
 		return jobs.NewPlacementResult(existing.id, jobs.PlacementCollapsed)
 	case jobs.PlacementUnique:
+		if err := d.persistExistingIntentKeys(ctx, tx, placement, intents, existing); err != nil {
+			return jobs.PlacementResult{}, err
+		}
 		return jobs.NewPlacementResult(existing.id, jobs.PlacementExisting)
 	default:
 		return jobs.PlacementResult{}, jobs.ErrInvalid
 	}
+}
+
+func (d *Driver) persistExistingIntentKeys(ctx context.Context, tx *sql.Tx, placement jobs.Placement, incoming []jobs.IntentKey, existing storedDelivery) error {
+	current := placement.IntentDigests().Current()
+	legacyFallback := false
+	if len(existing.intentKeys) != 0 {
+		current = existing.intentKeys[0]
+	}
+	if len(existing.record) != 0 {
+		record, err := decodeRecord(existing.record)
+		if err != nil {
+			return err
+		}
+		restored, err := jobs.RestoreDeliveryRecord(d.catalog, record)
+		if err != nil {
+			return err
+		}
+		if restored.Invocation().ID() != existing.id {
+			return jobs.ErrCorrupt
+		}
+		current = restored.Invocation().Intent()
+		_, legacyFallback = restored.Invocation().LegacyIntent()
+		if len(existing.intentKeys) != 0 {
+			if _, err := validateInvocationIntentKeys(restored.Invocation(), existing.intentKeys); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range incoming {
+		if err := d.repo.ensureIntent(ctx, tx, d.namespace, existing.id, key); err != nil {
+			return err
+		}
+	}
+	actual, err := d.repo.intentKeysForDeliveries(ctx, tx, d.namespace, []jobs.InvocationID{existing.id})
+	if err != nil {
+		return err
+	}
+	ordered, err := orderIntentKeys(current, actual)
+	if err != nil {
+		return err
+	}
+	for _, persisted := range existing.intentKeys {
+		found := false
+		for _, key := range ordered {
+			if key == persisted {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return corruptIntentKeys()
+		}
+	}
+	if len(existing.intentKeys) == 0 && legacyFallback && len(ordered) == 1 {
+		return nil
+	}
+	return d.repo.updateDeliveryIntentKeys(ctx, tx, d.namespace, existing.id, ordered)
 }
 
 func (d *Driver) newPlacement(placement jobs.Placement, id jobs.InvocationID, now time.Time) (deliveryInsert, error) {
@@ -167,7 +231,12 @@ func (d *Driver) newPlacement(placement jobs.Placement, id jobs.InvocationID, no
 	if err != nil {
 		return deliveryInsert{}, err
 	}
-	return deliveryInsertFromRecord(record, eligibleAt)
+	insert, err := deliveryInsertFromRecord(record, eligibleAt)
+	if err != nil {
+		return deliveryInsert{}, err
+	}
+	insert.intentKeys = placement.IntentDigests().ReservationKeys()
+	return insert, nil
 }
 
 func (d *Driver) collapsedPlacement(placement jobs.Placement, existing storedDelivery) (deliveryInsert, error) {

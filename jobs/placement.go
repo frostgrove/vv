@@ -335,6 +335,30 @@ func digestProducerIntents(plan IntentDigestPlan, namespace Namespace, partition
 	})
 }
 
+func RestoreInvocationIntentDigests(invocation Invocation) (IntentDigests, error) {
+	if invocation.IsZero() {
+		return IntentDigests{}, invalid("invocation intent digests")
+	}
+	current := invocation.Intent()
+	legacy, ok := invocation.LegacyIntent()
+	if !ok {
+		return NewIntentDigests(current)
+	}
+	compatibility := DigestRevision2
+	if current.Revision() == DigestRevision2 {
+		compatibility = DigestRevision1
+	}
+	plan, err := NewIntentDigestPlan(current.Revision(), compatibility)
+	if err != nil {
+		return IntentDigests{}, invalid("invocation intent digests")
+	}
+	restored, err := digestProducerIntents(plan, invocation.Namespace(), invocation.Partition(), invocation.Definition(), current.Purpose(), ProducerIntent{value: legacy.value})
+	if err != nil || restored.Current() != current {
+		return IntentDigests{}, invalid("invocation intent digests")
+	}
+	return restored, nil
+}
+
 func digestRegularIntents(plan IntentDigestPlan, namespace Namespace, partition PartitionKey, definition Name, candidate InvocationID) (IntentDigests, error) {
 	if !plan.valid() || !namespace.valid() || !partition.validFor(namespace) || !definition.valid() || !candidate.valid() {
 		return IntentDigests{}, invalid("regular intent digest input")

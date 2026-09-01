@@ -135,7 +135,31 @@ func (r repository) schemaConstraints() []schemaConstraint {
 				exclusionDefinition,
 			),
 		},
+		{
+			name:       "deliveries_intent_keys_contract_check",
+			table:      "deliveries",
+			definition: intentKeysSchemaConstraint(),
+		},
 	}
+}
+
+func intentKeysSchemaConstraint() string {
+	cases := make([]string, 0, jobs.MaxIntentDigestKeys)
+	for count := 1; count <= jobs.MaxIntentDigestKeys; count++ {
+		encodedBytes := intentKeysHeaderBytes + count*intentKeyEncodingBytes
+		cases = append(cases, `WHEN `+schemaComparison(`octet_length(intent_keys)`, "=", fmt.Sprint(encodedBytes))+`
+        THEN `+schemaAnd(
+			schemaComparison(`get_byte(intent_keys, 0)`, "=", fmt.Sprint(intentKeysEncodingVersion)),
+			schemaComparison(`get_byte(intent_keys, 1)`, "=", fmt.Sprint(count)),
+		))
+	}
+	return schemaOr(
+		schemaNull("intent_keys"),
+		`CASE
+        `+strings.Join(cases, "\n        ")+`
+        ELSE false
+      END`,
+	)
 }
 
 func schemaRevisionConstraint(column, version, maxVersion string) string {

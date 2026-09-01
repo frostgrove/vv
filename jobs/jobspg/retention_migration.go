@@ -271,6 +271,9 @@ func (r repository) finalizeMigration(ctx context.Context, conn *sql.Conn) error
 		return err
 	}
 	defer tx.Rollback()
+	if err := r.validateIntentKeysColumn(ctx, tx); err != nil {
+		return err
+	}
 	if err := r.validateSchemaConstraints(ctx, tx); err != nil {
 		return err
 	}
@@ -280,7 +283,7 @@ func (r repository) finalizeMigration(ctx context.Context, conn *sql.Conn) error
 	if err := r.validateRetentionIndexes(ctx, tx); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE `+r.meta+` SET version = $1 WHERE singleton = true AND version IN (1, 2, 3)`, SchemaVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE `+r.meta+` SET version = $1 WHERE singleton = true AND version IN (1, 2, 3, 4)`, SchemaVersion); err != nil {
 		return fmt.Errorf("jobspg: finalize migration: %w", err)
 	}
 	var version int

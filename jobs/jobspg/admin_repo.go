@@ -14,20 +14,42 @@ type deliveryRecordQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+type adminDeliveryRecord struct {
+	record     []byte
+	intentKeys []jobs.IntentKey
+}
+
 func (r repository) getDeliveryRecord(ctx context.Context, db *sql.DB, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
-	return r.readDeliveryRecord(ctx, db, namespace, id)
+	stored, err := r.readDeliveryRecord(ctx, db, namespace, id)
+	return stored.record, err
 }
 
-func (r repository) readDeliveryRecord(ctx context.Context, querier deliveryRecordQuerier, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
-	var record []byte
-	err := querier.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
-	return record, err
+func (r repository) readDeliveryRecord(ctx context.Context, querier deliveryRecordQuerier, namespace jobs.Namespace, id jobs.InvocationID) (adminDeliveryRecord, error) {
+	var stored adminDeliveryRecord
+	var encodedIntentKeys []byte
+	err := querier.QueryRowContext(ctx, `SELECT record, intent_keys FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL`, namespaceArgument(namespace), invocationArgument(id)).Scan(&stored.record, &encodedIntentKeys)
+	if err != nil {
+		return adminDeliveryRecord{}, err
+	}
+	stored.intentKeys, err = decodeIntentKeys(encodedIntentKeys)
+	if err != nil {
+		return adminDeliveryRecord{}, err
+	}
+	return stored, nil
 }
 
-func (r repository) lockDeliveryRecord(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) ([]byte, error) {
-	var record []byte
-	err := tx.QueryRowContext(ctx, `SELECT record FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(&record)
-	return record, err
+func (r repository) lockDeliveryRecord(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID) (adminDeliveryRecord, error) {
+	var stored adminDeliveryRecord
+	var encodedIntentKeys []byte
+	err := tx.QueryRowContext(ctx, `SELECT record, intent_keys FROM `+r.deliveries+` WHERE namespace = $1 AND id = $2 AND record IS NOT NULL FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(&stored.record, &encodedIntentKeys)
+	if err != nil {
+		return adminDeliveryRecord{}, err
+	}
+	stored.intentKeys, err = decodeIntentKeys(encodedIntentKeys)
+	if err != nil {
+		return adminDeliveryRecord{}, err
+	}
+	return stored, nil
 }
 
 func (r repository) listDeliveryRecords(ctx context.Context, db *sql.DB, namespace jobs.Namespace, spec normalizedListSpec) ([][]byte, error) {
@@ -91,23 +113,28 @@ func (r repository) countDeliveryRecords(ctx context.Context, db *sql.DB, namesp
 	return count, err
 }
 
-func (r repository) restoreCurrentIntent(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, key jobs.IntentKey) error {
-	scope := key.Scope().Bytes()
-	digest := key.Digest().Bytes()
-	result, err := tx.ExecContext(ctx, `INSERT INTO `+r.intents+` AS current (namespace, scope, revision, purpose, digest, invocation_id)
+func (r repository) restoreIntents(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, keys []jobs.IntentKey) error {
+	if len(keys) == 0 || len(keys) > jobs.MaxIntentDigestKeys {
+		return jobs.ErrInvalid
+	}
+	for _, key := range keys {
+		scope := key.Scope().Bytes()
+		digest := key.Digest().Bytes()
+		result, err := tx.ExecContext(ctx, `INSERT INTO `+r.intents+` AS current (namespace, scope, revision, purpose, digest, invocation_id)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (namespace, scope, revision, purpose, digest)
 DO UPDATE SET invocation_id = EXCLUDED.invocation_id
 WHERE current.invocation_id = EXCLUDED.invocation_id`, namespaceArgument(namespace), scope[:], int(key.Revision()), int(key.Purpose()), digest[:], invocationArgument(id))
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows != 1 {
-		return errIntentConflict
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errIntentConflict
+		}
 	}
 	return nil
 }

@@ -107,6 +107,47 @@ func TestInvocationPreservesExplicitLegacyIntentCompatibility(t *testing.T) {
 	}
 }
 
+func TestRestoreInvocationIntentDigestsRebuildsEveryRollingAlias(t *testing.T) {
+	policy := testInvocationPolicy(t)
+	spec := testInvocationSpec(t, policy)
+	spec.Mode = PlacementUnique
+	spec.LegacyIntent = protectLegacyIntent(Intent("rolling-key"))
+	plan, err := NewIntentDigestPlan(DigestRevision2, DigestRevision1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := digestProducerIntents(plan, spec.Namespace, spec.Partition, spec.Definition, IntentCollapse, Intent("rolling-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Intent = want.Current()
+	invocation, err := NewInvocation(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := RestoreInvocationIntentDigests(invocation)
+	if err != nil || !slices.Equal(restored.ReservationKeys(), want.ReservationKeys()) {
+		t.Fatalf("restored aliases = (%v, %v), want %v", restored.ReservationKeys(), err, want.ReservationKeys())
+	}
+	tampered := invocation
+	raw := tampered.intent.Digest().Bytes()
+	raw[0] ^= 1
+	digest, err := IntentDigestFromBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered.intent, err = NewIntentKey(tampered.intent.Scope(), tampered.intent.Revision(), tampered.intent.Purpose(), digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestoreInvocationIntentDigests(tampered); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tampered invocation aliases = %v", err)
+	}
+	if _, err := RestoreInvocationIntentDigests(Invocation{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero invocation aliases = %v", err)
+	}
+}
+
 func TestInvocationDerivesRetryAndDeferralAccountingWithoutReuse(t *testing.T) {
 	policy := testInvocationPolicy(t,
 		Retries(1),

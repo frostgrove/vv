@@ -51,7 +51,11 @@ func TestNormalizeListSpecDefaultsClonesAndBoundsFilters(t *testing.T) {
 }
 
 func TestRedriveRecordPreservesPayloadAndProducesRestorableGenesis(t *testing.T) {
-	namespace, catalog, placement := testPlacement(t)
+	plan, err := jobs.NewIntentDigestPlan(jobs.DigestRevision2, jobs.DigestRevision1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, catalog, placement := testPlacementWithDigests(t, plan, jobs.Unique("redrive-rolling"))
 	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
 	if err != nil {
 		t.Fatal(err)
@@ -82,11 +86,11 @@ func TestRedriveRecordPreservesPayloadAndProducesRestorableGenesis(t *testing.T)
 		t.Fatal(err)
 	}
 	now := terminal.FinishedAt().Add(time.Hour)
-	redrive, err := driver.redriveRecord(terminalEncoded, now)
+	redrive, err := driver.redriveRecord(terminalEncoded, placement.IntentDigests().ReservationKeys(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if redrive.createdAt != now || redrive.mode != terminal.Mode() || redrive.intent != terminal.Intent() || redrive.size <= 0 {
+	if redrive.createdAt != now || redrive.mode != terminal.Mode() || !slices.Equal(redrive.intents, placement.IntentDigests().ReservationKeys()) || redrive.size <= 0 {
 		t.Fatalf("redrive metadata = %+v", redrive)
 	}
 	decoded, err := decodeRecord(redrive.encoded)
@@ -103,7 +107,7 @@ func TestRedriveRecordPreservesPayloadAndProducesRestorableGenesis(t *testing.T)
 	if viewPayload := redrive.view.Payload().Bytes(); !slices.Equal(viewPayload, restored.Payload().Bytes()) || redrive.view.Invocation().ID() != terminal.ID() {
 		t.Fatal("redrive view does not match durable record")
 	}
-	if _, err := driver.redriveRecord(insert.record, now); !errors.Is(err, jobs.ErrConflict) {
+	if _, err := driver.redriveRecord(insert.record, placement.IntentDigests().ReservationKeys(), now); !errors.Is(err, jobs.ErrConflict) {
 		t.Fatalf("nonterminal record redrive = %v", err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,11 @@ func TestRecordRoundTripPreservesRestorableAttemptLedger(t *testing.T) {
 }
 
 func TestUniqueRecordRoundTripPreservesPlacementModeAndIntent(t *testing.T) {
-	namespace, catalog, placement := testPlacementWith(t, jobs.Unique("sweeper"))
+	plan, err := jobs.NewIntentDigestPlan(jobs.DigestRevision2, jobs.DigestRevision1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, catalog, placement := testPlacementWithDigests(t, plan, jobs.Unique("sweeper"))
 	driver, err := New(Spec{DB: &sql.DB{}, Namespace: namespace, Catalog: catalog})
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +109,14 @@ func TestUniqueRecordRoundTripPreservesPlacementModeAndIntent(t *testing.T) {
 	invocation := restored.Invocation()
 	if invocation.Mode() != jobs.PlacementUnique || invocation.Intent().Purpose() != jobs.IntentCollapse || string(restored.Payload().Bytes()) != "payload" {
 		t.Fatal("unique placement changed during PostgreSQL record round trip")
+	}
+	encodedIntents, err := encodeIntentKeys(insert.intentKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedIntents, err := decodeIntentKeys(encodedIntents)
+	if err != nil || !slices.Equal(decodedIntents, placement.IntentDigests().ReservationKeys()) || decodedIntents[0] != invocation.Intent() {
+		t.Fatalf("unique reservation metadata = (%v, %v)", decodedIntents, err)
 	}
 }
 
@@ -173,7 +186,7 @@ func TestConstructorsSeparateMagicPreparationFromManualWiring(t *testing.T) {
 	indexAt := strings.Index(joined, `CREATE INDEX CONCURRENTLY IF NOT EXISTS "deliveries_retention_idx"`)
 	validationAt := strings.Index(joined, "retention index deliveries_retention_idx schema mismatch")
 	commentAt := strings.Index(joined, `COMMENT ON INDEX "frostgrove_jobs"."deliveries_retention_idx"`)
-	versionAt := strings.LastIndex(joined, `SET version = 4`)
+	versionAt := strings.LastIndex(joined, `SET version = 5`)
 	if indexAt < 0 || validationAt <= indexAt || commentAt <= validationAt || versionAt <= commentAt {
 		t.Fatalf("manual retention migration phases are unordered: index=%d validation=%d comment=%d version=%d", indexAt, validationAt, commentAt, versionAt)
 	}
@@ -187,6 +200,10 @@ func testPlacement(t *testing.T) (jobs.Namespace, jobs.Catalog, jobs.Placement) 
 }
 
 func testPlacementWith(t *testing.T, options ...jobs.EnqueueOption) (jobs.Namespace, jobs.Catalog, jobs.Placement) {
+	return testPlacementWithDigests(t, jobs.CurrentIntentDigestPlan(), options...)
+}
+
+func testPlacementWithDigests(t *testing.T, digests jobs.IntentDigestPlan, options ...jobs.EnqueueOption) (jobs.Namespace, jobs.Catalog, jobs.Placement) {
 	t.Helper()
 	name, err := jobs.ParseName("jobspg.roundtrip")
 	if err != nil {
@@ -209,7 +226,7 @@ func testPlacementWith(t *testing.T, options ...jobs.EnqueueOption) (jobs.Namesp
 	backend, _ := jobs.BackendIDFromBytes(backendBytes)
 	description, _ := jobs.NewBackendDescription(backend, durability, jobs.Capabilities{Priority: true, Debounce: true, Unique: true, Scheduled: true})
 	sender := &captureSender{description: description}
-	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: sender, Entropy: bytes.NewReader(bytes.Repeat([]byte{7}, 16))})
+	queue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: sender, Entropy: bytes.NewReader(bytes.Repeat([]byte{7}, 16)), Digests: digests})
 	if err != nil {
 		t.Fatal(err)
 	}

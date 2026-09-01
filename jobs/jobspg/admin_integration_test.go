@@ -113,10 +113,6 @@ func TestPostgresAdminGetListRedriveConflictAndPurge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rolling, err = jobs.WithLegacyIntentCompatibility(rolling)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rollingQueue, err := jobs.NewQueue(jobs.QueueSpec{Namespace: namespace, Catalog: catalog, Sender: driver, Digests: rolling})
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +122,7 @@ func TestPostgresAdminGetListRedriveConflictAndPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminAssertClaimPlacementLockOrder(t, ctx, db, repo, driver, rollingQueue, namespace, claimLock, claimLockID)
-	uniqueID, err := jobs.Enqueue(ctx, queue, unique, "first", jobs.Unique("sweeper:42"))
+	uniqueID, err := jobs.Enqueue(ctx, rollingQueue, unique, "first", jobs.Unique("sweeper:42"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,8 +240,15 @@ func adminAssertRedrivePlacementLockOrder(t *testing.T, ctx context.Context, db 
 		t.Fatal(err)
 	}
 	defer blocker.Rollback()
-	if _, err := repo.lockDeliveryRecord(ctx, blocker, namespace, id); err != nil {
+	stored, err := repo.lockDeliveryRecord(ctx, blocker, namespace, id)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(stored.intentKeys) != jobs.MaxIntentDigestKeys {
+		t.Fatalf("persisted rolling unique intents = %d", len(stored.intentKeys))
+	}
+	if _, ok := terminal.Invocation().LegacyIntent(); ok {
+		t.Fatal("rolling reservation persisted a raw legacy intent")
 	}
 	type redriveResult struct {
 		view jobs.DeliveryView
@@ -260,7 +263,9 @@ func adminAssertRedrivePlacementLockOrder(t *testing.T, ctx context.Context, db 
 		view, redriveErr := driver.Redrive(ctx, id)
 		redriveDone <- redriveResult{view: view, err: redriveErr}
 	}()
-	adminWaitForIntentLock(t, ctx, db, repo, namespace, terminal.Invocation().Intent())
+	for _, intent := range stored.intentKeys {
+		adminWaitForIntentLock(t, ctx, db, repo, namespace, intent)
+	}
 	placementDone := make(chan placementResult, 1)
 	go func() {
 		placed, placementErr := jobs.Enqueue(ctx, queue, definition, "redrive replacement", jobs.Unique("sweeper:42"))
@@ -271,6 +276,10 @@ func adminAssertRedrivePlacementLockOrder(t *testing.T, ctx context.Context, db 
 	case result := <-placementDone:
 		early = &result
 	case <-time.After(150 * time.Millisecond):
+	}
+	var releasedAt time.Time
+	if err := db.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&releasedAt); err != nil {
+		t.Fatal(err)
 	}
 	if err := blocker.Rollback(); err != nil {
 		t.Fatal(err)
@@ -287,6 +296,9 @@ func adminAssertRedrivePlacementLockOrder(t *testing.T, ctx context.Context, db 
 	}
 	if redriven.err != nil || redriven.view.Invocation().State() != jobs.InvocationQueued {
 		t.Fatalf("Redrive released unique intent = (%v, %v)", redriven.view.Invocation().State(), redriven.err)
+	}
+	if redriven.view.Invocation().CreatedAt().Before(releasedAt) {
+		t.Fatalf("Redrive used pre-lock time %v before %v", redriven.view.Invocation().CreatedAt(), releasedAt)
 	}
 	if placed.err != nil || placed.id != id {
 		t.Fatalf("restored unique reservation = (%v, %v), want %v", placed.id, placed.err, id)

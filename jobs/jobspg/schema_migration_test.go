@@ -18,6 +18,7 @@ func TestSchemaHardeningMigrationPinsCoreContracts(t *testing.T) {
 		`catalogs_core_contract_check`,
 		`catalog_definitions_core_contract_check`,
 		`deliveries_core_contract_check`,
+		`deliveries_intent_keys_contract_check`,
 		`(octet_length(application) <= ` + fmt.Sprint(jobs.MaxNameBytes) + `)`,
 		`(octet_length(environment) <= ` + fmt.Sprint(jobs.MaxNameBytes) + `)`,
 		`(octet_length(definition) <= ` + fmt.Sprint(jobs.MaxNameBytes) + `)`,
@@ -30,6 +31,9 @@ func TestSchemaHardeningMigrationPinsCoreContracts(t *testing.T) {
 		`(state <= ` + fmt.Sprint(int(jobs.InvocationTerminated)) + `)`,
 		`(record_size <= ` + fmt.Sprint(jobs.MaxDeliveryRecordBytes) + `)`,
 		`(octet_length(record) <= ` + fmt.Sprint(maxEncodedDeliveryRecordBytes) + `)`,
+		`(octet_length(intent_keys) = ` + fmt.Sprint(minEncodedIntentKeysBytes) + `)`,
+		`(octet_length(intent_keys) = ` + fmt.Sprint(maxEncodedIntentKeysBytes) + `)`,
+		`(get_byte(intent_keys, 0) = ` + fmt.Sprint(intentKeysEncodingVersion) + `)`,
 		`fingerprint ~ '^sha256:[0-9a-f]{64}$'`,
 		`codec_mode = ANY (ARRAY['safe'::text, 'trusted'::text, 'custom'::text])`,
 		`'` + fmt.Sprint(uint64(math.MaxUint32)) + `'::bigint >= ALL`,
@@ -49,7 +53,12 @@ func TestSchemaHardeningMigrationPinsCoreContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	manualJoined := strings.Join(manual, "\n")
-	versionAt := strings.LastIndex(manualJoined, `SET version = 4`)
+	versionAt := strings.LastIndex(manualJoined, `SET version = 5`)
+	columnAt := strings.Index(manualJoined, `ADD COLUMN IF NOT EXISTS intent_keys bytea`)
+	columnValidationAt := strings.Index(manualJoined, `intent_keys column contract mismatch`)
+	if columnAt < 0 || columnValidationAt <= columnAt || versionAt <= columnValidationAt {
+		t.Fatalf("intent key column phases are unordered: add=%d validation=%d version=%d", columnAt, columnValidationAt, versionAt)
+	}
 	for _, fragment := range []string{`pg_get_expr(schema_constraint.conbin, schema_constraint.conrelid, false)`, `NOT schema_constraint.connoinherit`} {
 		if !strings.Contains(manualJoined, fragment) {
 			t.Fatalf("manual schema validation is missing %q", fragment)
@@ -61,6 +70,9 @@ func TestSchemaHardeningMigrationPinsCoreContracts(t *testing.T) {
 		exactAt := strings.Index(manualJoined, `schema constraint `+spec.name+` definition mismatch`)
 		if addAt < 0 || validateAt <= addAt || exactAt <= validateAt || versionAt <= exactAt {
 			t.Fatalf("constraint %q phases are unordered: add=%d validate=%d exact=%d version=%d", spec.name, addAt, validateAt, exactAt, versionAt)
+		}
+		if spec.name == "deliveries_intent_keys_contract_check" && columnAt >= addAt {
+			t.Fatalf("intent key column follows its constraint: column=%d constraint=%d", columnAt, addAt)
 		}
 	}
 }
@@ -100,7 +112,7 @@ func TestOperationalIndexesHaveExactFailClosedContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(statements, "\n")
-	versionAt := strings.LastIndex(joined, `SET version = 4`)
+	versionAt := strings.LastIndex(joined, `SET version = 5`)
 	for _, spec := range operationalIndexes {
 		create := `CREATE INDEX IF NOT EXISTS ` + quoteIdentifier(spec.name)
 		validation := `operational index ` + spec.name + ` schema mismatch`

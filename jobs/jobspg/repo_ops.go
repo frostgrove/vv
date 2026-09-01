@@ -23,6 +23,7 @@ type deliveryInsert struct {
 	availableAt     time.Time
 	recordSize      int
 	record          []byte
+	intentKeys      []jobs.IntentKey
 	payloadIdentity jobs.CodecID
 	payloadVersion  jobs.SchemaVersion
 	payloadDigest   []byte
@@ -120,8 +121,9 @@ func (r repository) loadDelivery(ctx context.Context, tx *sql.Tx, namespace jobs
 	var payloadVersion sql.NullInt64
 	var payloadDigest []byte
 	var leaseToken []byte
+	var encodedIntentKeys []byte
 	var stored storedDelivery
-	err := tx.QueryRowContext(ctx, `SELECT id, definition, record, record_size, state, created_at, available_at, payload_identity, payload_version, payload_digest, lease_token
+	err := tx.QueryRowContext(ctx, `SELECT id, definition, record, record_size, intent_keys, state, created_at, available_at, payload_identity, payload_version, payload_digest, lease_token
 FROM `+r.deliveries+`
 WHERE namespace = $1 AND id = $2
 FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
@@ -129,6 +131,7 @@ FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
 		&rawDefinition,
 		&stored.record,
 		&recordSize,
+		&encodedIntentKeys,
 		&state,
 		&stored.createdAt,
 		&available,
@@ -151,6 +154,10 @@ FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
 	if recordSize.Valid {
 		stored.recordSize = int(recordSize.Int64)
 	}
+	stored.intentKeys, err = decodeIntentKeys(encodedIntentKeys)
+	if err != nil {
+		return storedDelivery{}, err
+	}
 	stored.state = jobs.InvocationState(state)
 	if available.Valid {
 		stored.availableAt = available.Time.Round(0).UTC()
@@ -168,10 +175,14 @@ FOR UPDATE`, namespaceArgument(namespace), invocationArgument(id)).Scan(
 }
 
 func (r repository) insertDelivery(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, value deliveryInsert) error {
+	encodedIntentKeys, err := encodeIntentKeys(value.intentKeys)
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO `+r.deliveries+` (
 namespace, id, definition, codec, codec_version, priority, state, available_at, record_size, record,
-payload_identity, payload_version, payload_digest, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+intent_keys, payload_identity, payload_version, payload_digest, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT (namespace, id) DO NOTHING`,
 		namespaceArgument(namespace),
 		invocationArgument(value.id),
@@ -183,11 +194,31 @@ ON CONFLICT (namespace, id) DO NOTHING`,
 		value.availableAt,
 		value.recordSize,
 		value.record,
+		encodedIntentKeys,
 		nullableText(value.payloadIdentity.Value()),
 		nullableInt(value.payloadVersion),
 		nullableBytes(value.payloadDigest),
 		value.createdAt,
 	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errCandidateConflict
+	}
+	return nil
+}
+
+func (r repository) updateDeliveryIntentKeys(ctx context.Context, tx *sql.Tx, namespace jobs.Namespace, id jobs.InvocationID, keys []jobs.IntentKey) error {
+	encoded, err := encodeIntentKeys(keys)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE `+r.deliveries+` SET intent_keys = $3 WHERE namespace = $1 AND id = $2`, namespaceArgument(namespace), invocationArgument(id), encoded)
 	if err != nil {
 		return err
 	}

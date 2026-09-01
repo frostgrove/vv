@@ -311,11 +311,14 @@ func (r repository) check(ctx context.Context, db *sql.DB, namespace jobs.Namesp
 	if _, err := db.ExecContext(ctx, `SELECT namespace, definition, fingerprint, codec, codec_mode, codec_version, codec_revisions, partition_mode, payload_identity, payload_identity_version, payload_identity_automatic, created_at FROM `+r.definitions+` WHERE false`); err != nil {
 		return fmt.Errorf("%w: catalog definitions: %v", ErrSchemaMismatch, err)
 	}
-	if _, err := db.ExecContext(ctx, `SELECT namespace, id, definition, codec, codec_version, priority, state, available_at, record_size, record, record_expires_at, intent_expires_at, payload_identity, payload_version, payload_digest, lease_owner, lease_token, lease_epoch, lease_expires_at, excluded_binding, excluded_build, created_at, updated_at FROM `+r.deliveries+` WHERE false`); err != nil {
+	if _, err := db.ExecContext(ctx, `SELECT namespace, id, definition, codec, codec_version, priority, state, available_at, record_size, record, record_expires_at, intent_expires_at, intent_keys, payload_identity, payload_version, payload_digest, lease_owner, lease_token, lease_epoch, lease_expires_at, excluded_binding, excluded_build, created_at, updated_at FROM `+r.deliveries+` WHERE false`); err != nil {
 		return fmt.Errorf("%w: deliveries: %v", ErrSchemaMismatch, err)
 	}
 	if _, err := db.ExecContext(ctx, `SELECT namespace, scope, revision, purpose, digest, invocation_id, created_at FROM `+r.intents+` WHERE false`); err != nil {
 		return fmt.Errorf("%w: intents: %v", ErrSchemaMismatch, err)
+	}
+	if err := r.validateIntentKeysColumn(ctx, db); err != nil {
+		return err
 	}
 	if err := r.validateSchemaConstraints(ctx, db); err != nil {
 		return err

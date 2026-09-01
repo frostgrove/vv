@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/frostgrove/vv/jobs"
@@ -30,7 +31,7 @@ type redriveRecord struct {
 	encoded   []byte
 	size      int
 	createdAt time.Time
-	intent    jobs.IntentKey
+	intents   []jobs.IntentKey
 	mode      jobs.PlacementMode
 	view      jobs.DeliveryView
 }
@@ -110,34 +111,42 @@ func (d *Driver) Redrive(ctx context.Context, id jobs.InvocationID) (jobs.Delive
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	preview, err := d.redriveRecord(snapshot, now)
+	preview, err := d.redriveRecord(snapshot.record, snapshot.intentKeys, now)
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	if err := d.repo.lockIntentKeys(ctx, tx, d.namespace, []jobs.IntentKey{preview.intent}); err != nil {
+	if err := d.repo.lockIntentKeys(ctx, tx, d.namespace, preview.intents); err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	encoded, err := d.repo.lockDeliveryRecord(ctx, tx, d.namespace, id)
+	stored, err := d.repo.lockDeliveryRecord(ctx, tx, d.namespace, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return jobs.DeliveryView{}, jobs.ErrInvocationNotFound
 	}
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	redrive, err := d.redriveRecord(encoded, now)
+	locked, err := d.redriveRecord(stored.record, stored.intentKeys, now)
 	if err != nil {
 		return jobs.DeliveryView{}, err
 	}
-	if redrive.mode != preview.mode || redrive.intent != preview.intent {
+	if locked.mode != preview.mode || !slices.Equal(locked.intents, preview.intents) {
 		return jobs.DeliveryView{}, jobs.ErrConflict
 	}
-	if redrive.mode == jobs.PlacementCollapse || redrive.mode == jobs.PlacementDebounce || redrive.mode == jobs.PlacementUnique {
-		if err := d.repo.restoreCurrentIntent(ctx, tx, d.namespace, id, redrive.intent); err != nil {
+	if locked.mode == jobs.PlacementCollapse || locked.mode == jobs.PlacementDebounce || locked.mode == jobs.PlacementUnique {
+		if err := d.repo.restoreIntents(ctx, tx, d.namespace, id, locked.intents); err != nil {
 			if errors.Is(err, errIntentConflict) {
 				return jobs.DeliveryView{}, jobs.ErrConflict
 			}
 			return jobs.DeliveryView{}, err
 		}
+	}
+	now, err = databaseNow(ctx, tx)
+	if err != nil {
+		return jobs.DeliveryView{}, err
+	}
+	redrive, err := d.redriveRecord(stored.record, stored.intentKeys, now)
+	if err != nil {
+		return jobs.DeliveryView{}, err
 	}
 	if err := d.repo.redriveDelivery(ctx, tx, d.namespace, id, redrive.encoded, redrive.size, redrive.createdAt); err != nil {
 		return jobs.DeliveryView{}, err
@@ -177,7 +186,7 @@ func (d *Driver) deliveryView(encoded []byte) (jobs.DeliveryView, error) {
 	return jobs.NewDeliveryView(restored.Invocation(), restored.Payload())
 }
 
-func (d *Driver) redriveRecord(encoded []byte, now time.Time) (redriveRecord, error) {
+func (d *Driver) redriveRecord(encoded []byte, persistedIntents []jobs.IntentKey, now time.Time) (redriveRecord, error) {
 	record, err := decodeRecord(encoded)
 	if err != nil {
 		return redriveRecord{}, err
@@ -206,7 +215,11 @@ func (d *Driver) redriveRecord(encoded []byte, now time.Time) (redriveRecord, er
 	if err != nil {
 		return redriveRecord{}, err
 	}
-	return redriveRecord{encoded: encoded, size: size, createdAt: invocation.CreatedAt(), intent: invocation.Intent(), mode: invocation.Mode(), view: view}, nil
+	intents, err := validateInvocationIntentKeys(invocation, persistedIntents)
+	if err != nil {
+		return redriveRecord{}, err
+	}
+	return redriveRecord{encoded: encoded, size: size, createdAt: invocation.CreatedAt(), intents: intents, mode: invocation.Mode(), view: view}, nil
 }
 
 func normalizeListSpec(spec ListSpec) (normalizedListSpec, error) {
