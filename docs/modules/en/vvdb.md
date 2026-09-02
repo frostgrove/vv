@@ -102,8 +102,11 @@ compatibility). `DB_PARAMS` is a URL query, for example
 `DB_REPLICA_PARAMS` and `DB_REPLICA_POOL_MAX_IDLE` — so an operator can use an
 environment-only replica or override the readable YAML declaration.
 `MustLoad` uses `./config/app.yml` when neither `--config-path` nor
-`CONFIG_PATH` is set. Set `vvcfg.DefaultCfgPath = ""` to use the same
-declaration in an image with no config file. An explicit `DB_DSN` or
+`CONFIG_PATH` is set. For an image with no config file, load the same
+declaration through a source that allows one to be missing:
+`vvcfg.LoadFrom[Config](vvcfg.Source{Arguments: os.Args[1:], AllowNoFile: true})`.
+A mounted file is still named by the flag or `CONFIG_PATH`; with neither, the
+block is filled from `DB_*` alone. An explicit `DB_DSN` or
 `DB_REPLICA_DSN` replaces the corresponding
 field-form connection from YAML as one unit; a `Config` assembled in Go still
 refuses a raw DSN beside typed connection fields.

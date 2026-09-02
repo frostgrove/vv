@@ -101,8 +101,11 @@ sqlDB, replica := vvdb.MustOpenReadWrite(&cfg.DB)
 `DB_REPLICA_PARAMS`, `DB_REPLICA_POOL_MAX_IDLE`: реплику можно целиком задать
 переменными или переопределить ими читаемое YAML-описание.
 Если нет ни `--config-path`, ни `CONFIG_PATH`, `MustLoad` использует
-`./config/app.yml`. Присвой `vvcfg.DefaultCfgPath = ""`, чтобы та же декларация
-работала в image без config-файла.
+`./config/app.yml`. Чтобы та же декларация работала в image без config-файла,
+грузи её через source, которому отсутствие файла разрешено:
+`vvcfg.LoadFrom[Config](vvcfg.Source{Arguments: os.Args[1:], AllowNoFile: true})`.
+Примонтированный файл по-прежнему назовут флаг или `CONFIG_PATH`; если не назвал
+никто, блок соберётся из одних `DB_*`.
 Явный `DB_DSN` или `DB_REPLICA_DSN` одной операцией заменяет соответствующее
 field-описание из YAML; `Config`, собранный в Go, по-прежнему откажет raw DSN
 рядом с typed connection fields.

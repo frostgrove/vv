@@ -99,6 +99,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | Generate and run database migrations from the application config | the application author | `vvgoose` | vvdb · vvcfg | covered |
 | [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | Sign people in without writing an auth system | the application author | `access` | accessjwt · revokeredis · accessnet/gin/fiber | covered |
 | [UC-024](modules/cache/UC-024-cache-recreatable-values-without-unbounded-work.md) | Cache recreatable values without unbounded work | the application author | `cache` | cachememory | covered |
+| [UC-025](modules/health/UC-025-say-whether-this-replica-should-take-traffic.md) | Say whether this replica should take traffic | the application author, for an orchestrator, a load balancer and an operator | `health` | appfiber | covered |
+| [UC-026](modules/runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | Run background work without losing a worker silently | the application author | `runtime` | appfx · jobs | covered |
+| [UC-027](modules/app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | Run one codebase as an API, a worker and a seed command | the application author | `app` | appfx · appfiber · runtime | covered |
 
 ## Coverage map
 | Use case | Flows |
@@ -116,7 +119,7 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-011](modules/crudtest/UC-011-test-repository-behaviour-without-a-database.md) | `crudtest` | — | [[FL-001]] [[FL-002]] [[FL-004]] |
 | [UC-012](modules/sqlrepo/UC-012-talk-to-more-than-one-database.md) | `sqlrepo` | adapters | [[FL-009]] [[FL-016]] |
 | [UC-013](modules/port/UC-013-business-rules-between-handler-and-repository.md) | `port` | crudhttp | [[FL-001]] [[FL-002]] [[FL-003]] [[FL-011]] [[FL-013]] [[FL-015]] |
-| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | `codegen` | specs | [[FL-010]] [[FL-004]] [[FL-015]] |
+| [UC-014](modules/codegen/UC-014-keep-generated-artefacts-in-sync.md) | `codegen` | specs | [[FL-010]] [[FL-004]] [[FL-015]] [[FL-029]] [[FL-002]] |
 | [UC-015](general/UC-015-map-a-failure-to-the-transport.md) | `general` | — | [[FL-011]] [[FL-013]] [[FL-014]] [[FL-015]] |
 | [UC-016](modules/sqlrepo/UC-016-hide-rows-permanently-at-the-repository-level.md) | `sqlrepo` | security | [[FL-004]] [[FL-007]] [[FL-005]] [[FL-006]] |
 | [UC-017](modules/faults/UC-017-get-every-error-for-one-payload-at-once.md) | `faults` | errs | [[FL-011]] [[FL-014]] [[FL-017]] |
@@ -127,6 +130,9 @@ For newcomer-oriented navigation, see the [module index](modules/Index.md) and
 | [UC-022](modules/vvgoose/UC-022-run-and-generate-database-migrations.md) | `vvgoose` | vvdb · vvcfg | [[FL-022]] |
 | [UC-023](modules/auth/UC-023-sign-people-in-without-writing-an-auth-system.md) | `access` | accessjwt · revokeredis · accessnet/gin/fiber | [[FL-023]] |
 | [UC-024](modules/cache/UC-024-cache-recreatable-values-without-unbounded-work.md) | `cache` | cachememory | [[FL-025]] |
+| [UC-025](modules/health/UC-025-say-whether-this-replica-should-take-traffic.md) | `health` | appfiber | [[FL-027]] [[FL-024]] |
+| [UC-026](modules/runtime/UC-026-run-background-work-without-losing-a-worker-silently.md) | `runtime` | appfx · jobs | [[FL-028]] |
+| [UC-027](modules/app/UC-027-run-one-codebase-as-an-api-a-worker-and-a-seed-command.md) | `app` | appfx · appfiber · runtime | [[FL-030]] |
 
 ## Gaps
 

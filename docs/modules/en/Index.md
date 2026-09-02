@@ -42,7 +42,7 @@ long form of it.
                                     security.Gate
    who is calling, established once at the door and read by every policy
 
-   app ──► appfx · appfiber ──► authhttp.Verify
+   app · module ──► appfx · appfiber ──► authhttp.Verify
    what main() assembles, and the gate that refuses to start when the router
    and the access declarations disagree
 ```
@@ -110,6 +110,7 @@ the exception ([[D-048]], [[D-055]]).
 | [port](port.md) | `vv/port` | The transport-neutral half: eight commands, `Service`, `Mapper`, the path chain |
 | [porthttp](porthttp.md) | `vv/port/porthttp` | The HTTP projection of the error contract: the status table, the envelope, the `Renderer` seam, the body decode. Every subsystem's, not CRUD's |
 | [crudhttp](crudhttp.md) | `vv/crud/http/crudhttp` | What is HTTP *and* CRUD: the request shapes, the model hop, and the forwarders over `porthttp` |
+| [wire](wire.md) | `vv/crud/wire` | The public bodies' seam: `PatchMapper`, `Presenter`, and the three coverage assertions that keep a body honest |
 | [crudnet](crudnet.md) | `vv/crud/http/crudnet` | A full CRUD API on `net/http`. Stdlib, so it ships in the library |
 | [crudfiber](crudfiber.md) | `vv/crud/http/crudfiber` | **Module** — the same API on Fiber v3 |
 | [crudgin](crudgin.md) | `vv/crud/http/crudgin` | **Module** — the same API on Gin |
@@ -153,8 +154,13 @@ of the library ([[D-058]]).
 | Module | Import | What it is |
 |---|---|---|
 | [app](app.md) | `vv/app` | An ordered chain of contributions, and a seed command that is safe to run twice. Stdlib and `port` only |
-| [appfx](app.md) | `vv/app/appfx` | **Module** — the seeder group and the runner, in an uber/fx graph |
-| [appfiber](app.md) | `vv/app/http/appfiber` | **Module** — routes and middleware contributed by modules that do not import each other, mounted under one prefix, with the boot access gate |
+| [module](app.md) | `vv/app/module` | What a bounded context contributes, filed by role, and the deployment profile that decides which of it is wired — described without being built. Stdlib only |
+| [appfx](app.md) | `vv/app/appfx` | **Module** — a module catalog under a deployment profile, and the seeder group and the runner, in an uber/fx graph |
+| [appfiber](app.md) | `vv/app/http/appfiber` | **Module** — routes and middleware contributed by modules that do not import each other, mounted under one prefix, with the boot access gate, the registrar that makes one call mount, declare and enforce an operation, and the health routes |
+| [health](health.md) | `vv/health` | Liveness, a public readiness projection and an authenticated operator projection, over checks the composition root weighs. Stdlib only |
+| [healthfx](health.md) | `vv/health/healthfx` | **Module** — the check group and the registry, in an uber/fx graph |
+| [runtime](runtime.md) | `vv/runtime` | The `Runner` contract, a supervisor that starts, drains and reports background work, and a per-replica periodic runner. Stdlib only |
+| [runtimefx](runtime.md) | `vv/runtime/runtimefx` | **Module** — the runner group bound to the fx lifecycle, so a contributed runner needs no invoke that names it |
 
 The library holds no container of its own and never will ([[D-037]]). These bind
 to the one the consumer chose: fx keeps the graph, and `go get
@@ -164,9 +170,9 @@ github.com/frostgrove/vv` still resolves nothing ([[D-074]]).
 
 | Module | Import | What it is |
 |---|---|---|
-| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Generates the update DTO, the metamodel and — with `-adapter` — the whole resource |
+| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Generates the update DTO, the metamodel, the public wire bodies with their manifest, and — with `-adapter` — the whole resource |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Read one typed flag out of `os.Args` before `flag.Parse` owns it |
-| [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Module** — load a YAML config into a struct, with validation |
+| [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Module** — load a config file into a struct: the whole tree validated, unknown keys refused, provenance reported |
 | [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Module** — Goose CLI, migrations, and SQL-table generation from a Go model |
 
 ## What "module" means here

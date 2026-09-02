@@ -17,29 +17,34 @@ tenant policy or telemetry does not merge those ownership boundaries.
 The current repository tree contains:
 
 - `cache`, with typed declarations, activation, address/codec/policy handling,
-  lookup and mutation, bounded shared-load coordination, typed observations and
-  transient budgets;
+  lookup and mutation, bounded shared-load coordination, typed observations with
+  a bounded fan-out, transient budgets, a bounded execution memo, `ResolveMany`,
+  a driver-extensible capability set and a neutral `Check` probe;
 - `cache/cachememory`, a process-local backend with its own typed observer;
 - `cache/cachetest`, backend conformance and deterministic test helpers;
 - `jobs`, with typed definitions, codecs, enqueue and staged enqueue, invocation
   and attempt records, delivery/worker contracts, durable identity restoration,
   schedules, the `Admin`/`DeliveryView` contract, count-bounded `ListSpec` and
-  redrive transition, plus a `WorkerObserver` vocabulary/config slot whose
-  production emission is not wired yet;
+  redrive transition, a `WorkerObserver` vocabulary whose runtime emission is
+  wired in `jobs/worker_observer_runtime.go` and composes through
+  `jobs.WorkerObservers`, and a neutral `Check` probe;
 - `jobs/jobsmemory`, the process-local sender/worker backend;
 - `jobs/jobspg`, a code-present `database/sql` PostgreSQL sender/worker backend
-  with transaction staging, bounded single-record Get/Redrive and count-bounded
-  List/PurgeTerminal operator controls that remains in the building release
-  stage;
+  with transaction staging, bounded single-record Get/Redrive, count-bounded
+  List/PurgeTerminal operator controls and a schema-management choice that no
+  zero value can turn into a migration ([[D-101]]), that remains in the
+  building release stage;
 - `jobs/jobsfx`, an already-present nested module adapting the neutral jobs
   constructors and lifecycle to Fx; and
 - `jobs/jobsredis`, a committed nested Redis sender/worker backend that remains
   in the building release stage.
 
-`cache`, `cache/cachememory`, `cache/cachetest`, `jobs`, `jobs/jobsmemory` and
-`jobs/jobspg` are packages in the root module. They do not have a `go.mod` and
-do not receive a `go.work` entry. A directory is not a separate module merely
-because it is a backend package.
+`cache`, `cache/cachememory`, `cache/cachetest`, `jobs` and `jobs/jobsmemory`
+are packages in the root module. They do not have a `go.mod` and do not receive
+a `go.work` entry. A directory is not a separate module merely because it is a
+backend package. `jobs/jobspg` was one of them until its own tagged fixtures
+made the root module untidy; what moved it out is the isolated-tests paragraph
+below, and nothing about its production dependencies.
 
 During this audit the changing jobs worktree exposed a durable-record
 round-trip regression, passed after its fix, and also crossed an intermediate
@@ -71,18 +76,27 @@ record with no aggregate byte budget. Before release it needs a bounded summary
 projection or explicit total-byte budget and continuation; a default or maximum
 item count must not imply that worst-case payload materialization is safe.
 
-The tagged `jobspg` integration fixtures currently import pgx from inside the
-root module. They compile/skip in the workspace because another module supplies
-that dependency, while `GOWORK=off` cannot resolve it. This is not isolated live
-evidence. Run the PostgreSQL live profile from the existing unpublished `test`
-module or another dedicated test module; do not add pgx to the dependency-free
-root merely to make the fixture pass.
+The tagged `jobspg` integration fixtures import pgx from inside `package
+jobspg`, and `go mod tidy` reads every build configuration — so the tag hides
+that import from a compiler and from nothing else. Whichever module holds those
+files owes pgx a `require`, and while they sat in the root module that was the
+dependency-free root: `make check` failed on it, and the fixtures resolved in
+the workspace only because a sibling happened to supply pgx. The files are
+internal tests, reaching `repository`, `newRepository` and the unexported
+fixtures, so the unpublished `test` module cannot hold them without a rewrite of
+what they test. `jobs/jobspg` therefore carries its own `go.mod`: pgx is
+required by the module whose tests import it, the root stays third-party-free,
+and the live profile resolves under `GOWORK=off`. Rewriting the fixtures against
+the exported surface and moving them to `test` would make `jobspg` a root
+package again, and that is the one reason to revisit this. Adding pgx to the
+root to make the fixture pass stays forbidden.
 
-The current tree does not yet implement the proposed execution memo,
-`ResolveMany`, PostgreSQL cache backend, Redis cache backend,
-job batches/continuations, or an external workflow-engine adapter. Redis jobs
-is committed building work rather than a released API. All of these remain
-planned/building work, not documentation of delivered contracts.
+The execution memo, `ResolveMany` and the base-owned observer fan-out have since
+landed and are described by [[D-094]], [[D-095]] and [[D-096]]. The current tree
+still does not implement a PostgreSQL cache backend, a Redis cache backend, job
+batches/continuations, or an external workflow-engine adapter. Redis jobs is
+committed building work rather than a released API. Those remain planned/building
+work, not documentation of delivered contracts.
 
 ## Architectural decision
 
@@ -99,16 +113,21 @@ github.com/frostgrove/vv
   jobs/
   jobs/jobsmemory/
   jobs/jobstest/                 future; only if distinct helpers justify it
-  jobs/jobspg/                   in progress; database/sql implementation
 
 optional ecosystem modules
   jobs/jobsfx/                   current jobs→Fx owner adapter
+  jobs/jobspg/                   building; database/sql implementation, a module
+                                 because its own tests take a driver
+  jobs/jobspg/jobspgfx/          building; jobspg→Fx adapter
   jobs/jobsredis/                building; Redis SDK implementation
 ```
 
-`cachepg` and `jobspg` are root packages when they use only `database/sql` and
-root contracts. They are not nested modules: `database/sql` is standard
-library, and a consumer selects its SQL driver in the application.
+`cachepg` is a root package while it uses only `database/sql` and root
+contracts, and a directory is not a nested module merely because it is a backend
+package: `database/sql` is standard library, and a consumer selects its SQL
+driver in the application. `jobspg` is the case that rule did not cover. Its
+production code still takes nothing but `database/sql`; its tests take a driver,
+and a published `go.mod` cannot hide a test import.
 
 A separately versioned module is justified only by a genuine optional external
 implementation ecosystem. The current `jobs/jobsredis` module is that shape;
@@ -173,12 +192,13 @@ It must not grow as subsystem × backend × topology × telemetry × container.
 ### Illustrative linear composition
 
 This application sketch intentionally contains no jobs × cache × tenancy × OTel
-package. `cache.New`, `jobs.NewQueue` and `jobs.NewWorkers` are current entry
-points. `cache.Observers`, the extension factories and their exact option names
-remain illustrative until the corresponding milestones are accepted:
+package. `cache.New`, `jobs.NewQueue`, `jobs.NewWorkers`, `cache.Observers` and
+`jobs.WorkerObservers` are current entry points. The extension factories and
+their exact option names remain illustrative until the corresponding milestones
+are accepted:
 
 ```go
-cacheRuntime.Observer = cache.Observers(
+cacheRuntime.Observer = cache.MustObservers(
     applicationCacheObserver,
     vvotel.Cache(telemetry, cacheTelemetryPolicy),
 )
@@ -198,7 +218,7 @@ workers, err := jobs.NewWorkers(jobs.WorkersSpec{
     Catalog:   jobCatalog,
     Driver:    postgresJobs,
     Identity:  tenancy.JobIdentity(tenantResolver),
-    Observer:  applicationJobObserver, // config exists; emission is not wired yet
+    Observer:  jobs.MustWorkerObservers(applicationJobObserver, exporter),
 }, consumers...)
 ```
 
@@ -213,12 +233,13 @@ does not justify `jobsotel`.
 
 ### Base-owned observer fan-out preserves D-084
 
-The cache facade currently has one `cache.Observer` slot and the memory backend
-has a distinct observer slot. Multiple independent application/extension
-observers require two base-owned composition helpers, not an OTel-owned chain
-and not one hook shared by both event vocabularies.
+**Landed.** `cache.Observers`/`MustObservers` and
+`jobs.WorkerObservers`/`MustWorkerObservers` are the two base-owned helpers, each
+over its own event vocabulary; the memory backend keeps its distinct observer
+slot. [[D-096]] is the accepted decision. The requirements below are what they
+satisfy, not what they owe.
 
-M0 freezes a small maximum child count. Each helper then has these mandatory
+The maximum child count is eight per helper. Each helper has these mandatory
 semantics:
 
 - construction copies and validates a finite list, skips nil/typed-nil entries
@@ -236,9 +257,10 @@ semantics:
 - every child remains bounded and non-blocking and must not re-enter `Resolve`
   on the emitting cache. `Stats` inspection remains allowed.
 
-`TestReviewBlockingObserverConsumesAFlightSlot` and
-`TestBackgroundLeaseCoversSynchronousObserver`, plus an ordered multi-observer
-variant, are non-negotiable regression evidence. Changing the synchronous
+`TestReviewBlockingObserverConsumesAFlightSlot`,
+`TestBackgroundLeaseCoversSynchronousObserver` and the ordered multi-observer
+tests in `cache/observers_test.go` and `jobs/worker_observers_test.go` are
+non-negotiable regression evidence. Changing the synchronous
 contract requires a separate decision that explicitly supersedes [[D-084]]; it
 cannot be smuggled in as telemetry convenience.
 
@@ -270,29 +292,46 @@ terminal hook rather than wrapping backend executable effects.
 
 ### Execution-scoped memo
 
-The proposed L0 memo is owned by `cache`, installed explicitly at an execution
-entry point, and bounded by entries, retained bytes and scope lifetime. It is
-not a process global, identity map, authorization cache or replacement backend.
+**Landed** as `cache.Memo` / `cache.WithMemo`; [[D-094]] is the accepted
+decision. The L0 memo is owned by `cache`, installed explicitly at an execution
+entry point, and bounded by entries and retained bytes. It is not a process
+global, identity map, authorization cache or replacement backend.
 
 Application HTTP middleware installs a fresh memo for a request. Application
 job entry wiring installs a fresh memo around handler execution. The jobs
 package neither imports cache nor implicitly creates a memo; direct job and
 cache callers continue to work without one. A scope is closed deterministically
-by its owner, and detached work does not retain it accidentally.
+by its owner, and `Close` empties the container, so detached work that kept the
+context retains nothing.
 
-The contract must distinguish a backend miss from an application-confirmed
-clean absence, never memoize errors, and publish precise behavior for
-superseded mutations, cancellation, single-flight waiters and oversized
-values. Transaction-local uncommitted data enters the memo only after an
-explicit commit signal; when commit/rollback cannot be observed, mutation of
-the memo is skipped.
+The memo distinguishes a backend miss — never remembered, because a concurrent
+writer may be filling it — from an application-confirmed clean absence, which is
+stored as a negative envelope and remembered like any other. Errors, corrupt and
+oversized envelopes are never remembered. It holds copied encoded envelopes, so
+freshness is recomputed on every read and no two callers share a value. Loads
+never consult it, and `Put`, `Forget`, `Resolve` and `ResolveMany` drop the
+entry for every address they touch, which is what makes a superseded mutation
+safe without a commit signal.
+
+Transaction-local uncommitted data still enters no memo: there is no transaction
+seam here yet, and until `cachepg` supplies one the rule stands unchanged — when
+commit/rollback cannot be observed, mutation of the memo is skipped.
 
 ### `ResolveMany` and mutation
 
-`ResolveMany` may reuse the cache's typed address, budget and per-address flight
-machinery. It preserves input order and duplicates, limits backend and loader
-work, validates every native batch response, and defines partial error and
-cancellation behavior. It does not assume a native batch is atomic.
+**Landed**; [[D-095]] is the accepted decision. `ResolveMany` reuses the cache's
+typed address and budget machinery, preserves input order and duplicates,
+deduplicates addresses, calls the typed `BatchLoader` at most once, validates
+its answer count and presences, proves the cumulative encoded bound before the
+first write and fails as a whole. It does not assume a native batch is atomic.
+
+It deliberately does **not** join per-address flights: coalescing a batch across
+callers means holding coordination state for every address across one loader
+call, and that is a lock-ordering problem. Per-address `Resolve` remains the API
+that coalesces. `ResolveMany` fills `Miss`; a `Stale` entry is returned stale and
+refreshed by `Resolve`, because a batch loader cannot express per-key stale
+fallback without the partial-failure semantics the all-or-error contract
+refuses.
 
 Mutation remains explicit. Same-source PostgreSQL cache staging may use a
 cache-owned transaction hook implemented by `cachepg`. External invalidation is
@@ -403,6 +442,19 @@ accepted in the owning auth/access boundary; the current notification sink is
 not automatically that contract, and revocation must not reuse cache semantics
 merely because both happen to use Redis.
 
+Sharing one Redis between them is now a refusal rather than a convention.
+`cache.ActivationSpec.Resources` declares which tenants a resource identity
+carries, and `Activate` refuses a cache resolved onto a resource that holds
+durable work or durable security; only those two may share one resource, behind
+`SharedDurableSecurity(reason)` ([[D-104]]). A root that sets
+`RequireDeclaredResources` refuses an undeclared resource instead of reading
+silence as separation. What remains open is reach: nothing yet compares the
+endpoint identity a Redis client was actually built with. The boot doctor now
+exists for the composition root — `module.Doctor` describes a deployment profile
+over the module catalog without activating it ([[D-106]]) — and collecting each
+subsystem's schema, readiness and resource identity into that diagnosis is the
+step this needs.
+
 ## Delivery plan
 
 ### M0 — freeze boundaries and truthful status
@@ -443,11 +495,14 @@ Exit evidence:
 
 ### M2 — cache composition and execution locality
 
-1. Add bounded base-owned observer fan-out separately to `cache` and
-   `cache/cachememory`, preserving D-084 flight-slot backpressure.
-2. Add the bounded execution memo and explicit application entry/close wiring.
-3. Add `ResolveMany` over existing address and flight machinery with exact
-   budgets, duplicate ordering and partial-error semantics.
+1. **Done.** Bounded base-owned observer fan-out in `cache` (`cache.Observers`),
+   preserving D-084 flight-slot backpressure; `jobs.WorkerObservers` is its
+   counterpart. `cache/cachememory` keeps its own observer slot and still owes
+   its own fan-out.
+2. **Done.** The bounded execution memo (`cache.Memo`, `cache.WithMemo`); the
+   application still owns entry and close wiring.
+3. **Done.** `ResolveMany` over the existing address, budget and mutation
+   machinery with exact budgets, duplicate ordering and all-or-error semantics.
 4. Expand `cachetest` so all backend implementations prove scalar/batch
    capability honesty and callback safety.
 
@@ -506,7 +561,7 @@ Exit evidence:
 | Base-only consumers | Fresh `GOWORK=off` fixtures import cache-only, jobs-only and both root packages without OTel, tenancy, Redis, Fx or workflow SDK modules in source/direct/transitive graphs |
 | Extension consumers | Separate fixtures select `vvotel`, tenancy, and both together through application wiring; production extensions never import each other |
 | Workspace integrity | `go.work` entries equal real nested modules, excluding documented example/test-only modules; root packages are absent; committed nested modules have no local `replace` |
-| Isolated PostgreSQL tests | Tagged jobspg live conformance resolves and runs from an unpublished/dedicated test module under `GOWORK=off`; a workspace-supplied pgx import or skipped DSN is not evidence, and root `go.mod` stays third-party-free |
+| Isolated PostgreSQL tests | Tagged jobspg live conformance resolves and runs under `GOWORK=off` from the module that holds it, whose `go.mod` names the driver; a workspace-supplied pgx import or skipped DSN is not evidence, and root `go.mod` stays third-party-free |
 | Additive package count | Repository scan rejects subsystem × extension/backend/container combination directories and records the justification for every new `go.mod` |
 | Capability honesty | Method inventory and executable matrices prove exact forwarding/refusal/fallback for every optional effect; unknown wrappers cannot tunnel to inner `BatchReader` or `jobs.Admin` authority |
 | D-084 safety | Blocking/panicking/ordered fan-out tests prove the terminal shared-load callback stays synchronous before full flight release, consumes the admitted slot, adds no goroutine/queue/admission and cannot suppress cleanup or later children |
@@ -552,11 +607,13 @@ The matrix is test topology, not production package topology:
 | Surface | Current status |
 |---|---|
 | `cache`, `cache/cachememory`, `cache/cachetest` | Implemented base packages; preserve their current tests and accepted decisions |
-| Cache observer fan-out, execution memo, `ResolveMany` | Planned |
+| Cache observer fan-out, execution memo, `ResolveMany` | Implemented in `cache`; see [[D-094]], [[D-095]], [[D-096]]. `cache/cachememory`'s own backend-event fan-out remains planned |
+| Cache capability set beyond `BatchReader` | Implemented: five more built-in interfaces plus a driver-declared set; see [[D-093]] |
+| Cache and jobs `Check` probes | Implemented as neutral seams the composition root wraps; see [[D-096]] |
 | `cachepg`, Redis cache | Planned; no shipped package/module yet |
-| `jobs`, `jobs/jobsmemory` | Implemented base surface with continuing hardening; `WorkerObserver` vocabulary/config exists but runtime emission is not wired |
+| `jobs`, `jobs/jobsmemory` | Implemented base surface with continuing hardening; `WorkerObserver` vocabulary, config and runtime emission all exist, and several observers compose through `jobs.WorkerObservers` |
 | `jobs.Admin`, `DeliveryView`, redrive transition | Implemented dependency-neutral contract; only `jobspg.Driver` implements it and memory/Redis do not. `jobsfx.Backend` does not require or manufacture it; `AsBackend` republishes the constructor's declared result type through `fx.Self`, so a concrete driver remains selectable only when that is the declared result and every `jobs.Admin` binding stays explicit. Current List is count-bounded but not byte-bounded, and same-ID redrive replaces the stored attempt ledger |
-| `jobs/jobspg` | **Building**; Get/List/Redrive/PurgeTerminal controls are committed alongside sender/worker/staging, but List byte bounds, redrive provenance/history, clean base conformance, authorization-facing/payload-safety review and isolated live PostgreSQL/crash evidence remain incomplete; current tagged fixtures are workspace-dependent |
+| `jobs/jobspg` | **Building**; Get/List/Redrive/PurgeTerminal controls are committed alongside sender/worker/staging, but List byte bounds, redrive provenance/history, clean base conformance, authorization-facing/payload-safety review and isolated live PostgreSQL/crash evidence remain incomplete; the tagged fixtures now resolve pgx from the module's own `go.mod` instead of the workspace |
 | `jobs/jobsfx` | Present; common-ADR classification and lifecycle audit remain |
 | `jobs/jobsredis` | **Building** committed independent backend module; isolated unit tests are green, but published dependency/no-`replace`, base conformance, live Redis and crash/lease gates remain |
 | External workflow adapter | Planned |

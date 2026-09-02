@@ -21,7 +21,8 @@ Usage: make <command>
   check                        Run all structural checks
   check-deps, check-tiers      Run an individual dependency check
   check-utils, check-triplets
-  check-todo, check-tidy
+  check-todo, check-replaces
+  check-tidy
   api, vuln                    Regenerate API baseline or scan vulnerabilities
   main-deps, version, release  Maintain module versions and publish a release
   clean                        Stop databases and clear Go's test cache
@@ -43,6 +44,7 @@ case ${1:-help} in
 	check-utils) exec "$SCRIPT_DIR/checks.sh" utils ;;
 	check-triplets) exec "$SCRIPT_DIR/checks.sh" triplets ;;
 	check-todo) exec "$SCRIPT_DIR/checks.sh" todo ;;
+	check-replaces) exec "$SCRIPT_DIR/checks.sh" replaces ;;
 	check-tidy) exec "$SCRIPT_DIR/checks.sh" tidy ;;
 	up|down|logs|psql|mysql|mariadb) exec "$SCRIPT_DIR/database.sh" "$1" ;;
 	fmt) exec gofmt -l -w . ;;

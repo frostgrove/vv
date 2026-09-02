@@ -839,12 +839,14 @@ declaration are out of reach.
 ## Release blockers found here
 
 **This table is the general remit only.** The fourteen module sweeps carry their
-own active blockers and a tag has to clear both sets. The four
+own active blockers and a tag has to clear both sets. The three
 that are load-bearing for the cases above and are not in this table: a preload
 has no row ceiling and nothing can give it one (`query` row 1); a cursor over a
 `sql.Null*` column is accepted and returns a page short of rows (`crud` row 1);
-`sqlrepo.Scope` does not reach `Save` or `SaveAll` (`sqlrepo` row 1); a `Save`
-carrying a tombstone's key resurrects the row (`sqlrepo` row 2). The former fifth
+a `Save` carrying a tombstone's key resurrects the row (`sqlrepo` row 2).
+`sqlrepo.Scope` reaching neither `Save` nor `SaveAll` was the fourth and is
+closed (`sqlrepo` row 1): a declared scope now narrows the row a keyed write may
+reach and the read-back that follows it ([[D-011]]). The former fifth
 item — the source-level COPY bypass — is retained as a closed historical row in
 the adapters sweep. The rest are in their own tables, which is where their fixes
 live.

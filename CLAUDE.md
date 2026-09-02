@@ -123,8 +123,8 @@ make api           # regenerate docs/api/surface.md, the exported-surface baseli
 ```
 
 `make check` runs the structural checks `go test` cannot: `check-deps`,
-`check-tiers`, `check-utils`, `check-triplets`, `check-todo`, `check-tidy`. Run
-it before reporting a task done — several of them fail on things a test suite is
+`check-tiers`, `check-utils`, `check-triplets`, `check-todo`, `check-replaces`,
+`check-tidy`. Run it before reporting a task done — several of them fail on things a test suite is
 structurally unable to see.
 
 `make vuln` is deliberately outside `check`, because `check` must run offline.

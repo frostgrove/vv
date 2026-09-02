@@ -122,7 +122,7 @@ The current tree already has some of the required shapes and is missing others:
 | `jobs` | typed `Consumer`, handler binding, exact optional `Admin` executable capability and `WorkerObserver` vocabulary/config; runtime observer emission is not wired | Keep Admin selection exact/explicit and never tunnel through a driver wrapper; first wire/narrow the point-event contract, then add fan-out or a handler-lifecycle middleware only for justified independent uses |
 | `errs` and `port` | `MessageSource`, explicit locale in context | Full i18n implements these seams; transport-specific i18n bridge packages are unnecessary |
 | `auth` | `Authenticator`; `auth.Chain` means fallback | Do not reuse fallback order as decorator order; add a separately named typed middleware only when needed |
-| `app` | `Ordered[H]` contributions | Use for additive host contributions; do not turn it into an extension registry |
+| `app` | `Ordered[H]` contributions; `module.Definition` files a context's constructors by deployment role and `module.Catalog` is the one list of them | Use for additive host contributions; a definition holds constructors as opaque values and imports no container, router or extension, and neither becomes a registry |
 
 Base APIs are added only when at least two independent consumers or one current
 consumer plus a concrete conformance obligation justify them. They contain no

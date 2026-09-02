@@ -53,7 +53,7 @@
                                     security.Gate
    who is calling, established once at the door and read by every policy
 
-   app ──► appfx · appfiber ──► authhttp.Verify
+   app · module ──► appfx · appfiber ──► authhttp.Verify
    what main() assembles, and the gate that refuses to start when the router
    and the access declarations disagree
 ```
@@ -121,6 +121,7 @@
 | [port](port.md) | `vv/port` | Транспортно-нейтральная половина: восемь команд, `Service`, `Mapper`, цепочка path |
 | [porthttp](porthttp.md) | `vv/port/porthttp` | HTTP-проекция контракта ошибок: таблица статусов, конверт, шов `Renderer`, разбор тела. Общая для всех подсистем, не CRUD'а |
 | [crudhttp](crudhttp.md) | `vv/crud/http/crudhttp` | То, что одновременно HTTP *и* CRUD: формы запроса, переход модели и форвардеры поверх `porthttp` |
+| [wire](wire.md) | `vv/crud/wire` | Шов публичных тел: `PatchMapper`, `Presenter` и три проверки покрытия, которые держат тело честным |
 | [crudnet](crudnet.md) | `vv/crud/http/crudnet` | Полный CRUD API на `net/http`. Stdlib, поэтому поставляется в библиотеке |
 | [crudfiber](crudfiber.md) | `vv/crud/http/crudfiber` | **Модуль** — тот же API на Fiber v3 |
 | [crudgin](crudgin.md) | `vv/crud/http/crudgin` | **Модуль** — тот же API на Gin |
@@ -163,8 +164,13 @@
 | Модуль | Импорт | Что это |
 |---|---|---|
 | [app](app.md) | `vv/app` | Упорядоченная цепочка вкладов и команда сидов, которую не страшно запустить дважды. Только stdlib и `port` |
-| [appfx](app.md) | `vv/app/appfx` | **Модуль** — группа сидеров и runner в графе uber/fx |
-| [appfiber](app.md) | `vv/app/http/appfiber` | **Модуль** — маршруты и middleware от модулей, которые не импортируют друг друга, смонтированные под одним префиксом, с гейтом доступа на старте |
+| [module](app.md) | `vv/app/module` | Что вносит ограниченный контекст, разложенное по ролям, и профиль деплоя, решающий, что из этого проводится, — описываемое, ничего не собирая. Только stdlib |
+| [appfx](app.md) | `vv/app/appfx` | **Модуль** — каталог модулей под профилем деплоя, а также группа сидеров и runner в графе uber/fx |
+| [appfiber](app.md) | `vv/app/http/appfiber` | **Модуль** — маршруты и middleware от модулей, которые не импортируют друг друга, смонтированные под одним префиксом, с гейтом доступа на старте, регистратором, у которого один вызов монтирует, объявляет и защищает операцию, и маршруты health |
+| [health](health.md) | `vv/health` | Liveness, публичная проекция готовности и операторская проекция под аутентификацией — поверх проверок, важность которых задаёт композиционный корень. Только stdlib |
+| [healthfx](health.md) | `vv/health/healthfx` | **Модуль** — группа проверок и реестр в графе uber/fx |
+| [runtime](runtime.md) | `vv/runtime` | Контракт `Runner`, супервизор, который запускает, сливает и докладывает про фоновую работу, и per-replica периодический раннер. Только stdlib |
+| [runtimefx](runtime.md) | `vv/runtime/runtimefx` | **Модуль** — группа раннеров, привязанная к жизненному циклу fx: вкладу не нужен invoke, который его называет |
 
 Собственного контейнера у библиотеки нет и не будет ([[D-037]]). Эти модули
 привязываются к тому, который выбрал потребитель: граф держит fx, а
@@ -174,9 +180,9 @@
 
 | Модуль | Импорт | Что это |
 |---|---|---|
-| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Генерирует update DTO, метамодель и — с `-adapter` — весь ресурс целиком |
+| [cmd/vv](vv-cli.md) | `vv/cmd/vv` | Генерирует update DTO, метамодель, публичные wire-тела с манифестом и — с `-adapter` — весь ресурс целиком |
 | [vvflag](vvflag.md) | `vv/utils/vvflag` | Читает один типизированный флаг из `os.Args` до того, как им завладеет `flag.Parse` |
-| [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Модуль** — загружает YAML-конфиг в структуру, с валидацией |
+| [vvcfg](vvcfg.md) | `vv/utils/vvcfg` | **Модуль** — загружает конфиг-файл в структуру: валидируется всё дерево, неизвестные ключи отвергаются, происхождение значений в отчёте |
 | [vvgoose](vvgoose.md) | `vv/utils/vvgoose` | **Модуль** — Goose CLI, миграции и генерация SQL-таблицы из Go-модели |
 
 ## Что здесь означает «модуль»

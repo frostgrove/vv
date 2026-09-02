@@ -15,6 +15,34 @@ type Seeder struct{ ... }
 type Seeding struct{ ... }
 ```
 
+## github.com/frostgrove/vv/app/module
+```go
+var ErrDefinition = errors.New("module: the definition is not usable") ...
+var Base = Profile{ ... } ...
+type Builder struct{ ... }
+    func New(name string) *Builder
+type Catalog struct{ ... }
+    func MustCatalog(definitions ...Definition) Catalog
+    func NewCatalog(definitions ...Definition) (Catalog, error)
+type CatalogDescriptor struct{ ... }
+type Contribution struct{ ... }
+type Definition struct{ ... }
+    func Auto(name string, constructors ...any) Definition
+    func Define(spec Spec) (Definition, error)
+    func MustDefine(spec Spec) Definition
+type Descriptor struct{ ... }
+type Diagnosis struct{ ... }
+    func Doctor(catalog Catalog, profile Profile) Diagnosis
+type Kind string
+    const ProvideKind Kind = "provide" ...
+type KindDescriptor struct{ ... }
+type Profile struct{ ... }
+type Refusal struct{ ... }
+type Role string
+    const API Role = "api" ...
+type Spec struct{ ... }
+```
+
 ## github.com/frostgrove/vv/auth
 ```go
 const HeaderAuthorization = "Authorization"
@@ -23,6 +51,7 @@ var ErrAmbiguousGuardOrder = errors.New("auth: ambiguous guard order")
 var ErrCredentialCardinality = errors.New("auth: credential source must contain at most one value")
 var ErrGuardNotReady = errors.New("auth: guard is not ready")
 var ErrUnauthenticated = errors.New("auth: authentication is required")
+func AmbiguousCredential(reason string) error
 func HasAll(p Principal, ps ...Permission) bool
 func HasAny(p Principal, ps ...Permission) bool
 func InAny(p Principal, rs ...Role) bool
@@ -38,15 +67,24 @@ type Credential struct{ ... }
     func ParseAuthorization(header string) (Credential, bool)
 type Guard struct{ ... }
     func NewGuard(a Authenticator, options ...Option) *Guard
+type Lookout func(get func(name string) string) (Credential, bool, error)
+type Observer interface{ ... }
+    func Sampled(oneIn int, observer Observer) Observer
+type ObserverFunc func(ctx context.Context, reason Reason)
 type Option interface{ ... }
     func Header(name string) Option
     func Lookup(fn func(get func(name string) string) (Credential, bool)) Option
+    func LookupOrRefuse(fn Lookout) Option
+    func Observe(observer Observer) Option
     func Optional() Option
 type Permission string
     func Scopes(scope string) []Permission
 type Principal interface{ ... }
     func PrincipalFrom(ctx context.Context) (Principal, bool)
     func Require(ctx context.Context) (Principal, error)
+type Reason struct{ ... }
+type ReasonKind string
+    const ReasonNoCredential ReasonKind = "no_credential" ...
 type Role string
 type RoleMap map[Role][]Permission
 ```
@@ -69,13 +107,21 @@ type StoreFunc func(ctx context.Context, key string) (auth.Principal, bool, erro
 
 ## github.com/frostgrove/vv/auth/http/authhttp
 ```go
+const HeaderOrigin = "Origin" ...
 var ErrSurface = errors.New("the API and its access declarations disagree")
 func Cookie(name string) auth.Option
 func Locale(r *http.Request) context.Context
+func Preflight(method string, header func(name string) string) bool
 func Refuse(w http.ResponseWriter, r *http.Request, rd porthttp.Renderer, err error)
 func RendererFor(options []porthttp.RenderOption) porthttp.Renderer
+func UnsafeCookieWinsOverAuthorization(name string) auth.Option
 func Verify(declared []Endpoint, mounted []Route, options ...VerifyOption) error
+func VerifyAreas(mounted []Route, areas ...Area) error
+type Area struct{ ... }
+    func Rooted(declared ...Endpoint) Area
+    func Under(prefix string, declared ...Endpoint) Area
 type Endpoint struct{ ... }
+    func AtRoot(endpoint Endpoint) Endpoint
     func Authenticated(method, path, why string) Endpoint
     func Public(method, path, why string) Endpoint
     func Requires(method, path string, permissions ...auth.Permission) Endpoint
@@ -87,8 +133,10 @@ type VerifyOption func(*verification)
 ## github.com/frostgrove/vv/auth/http/authnet
 ```go
 const AnyMethod = "*"
+func AnswerPreflight(middleware func(http.Handler) http.Handler, preflight http.Handler) func(http.Handler) http.Handler
 func Handler(guard *auth.Guard, next http.Handler, options ...porthttp.RenderOption) http.Handler
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) func(http.Handler) http.Handler
+func SkipPreflight(middleware func(http.Handler) http.Handler) func(http.Handler) http.Handler
 type Surface struct{ ... }
     func Over(mux *http.ServeMux) *Surface
 ```
@@ -96,13 +144,18 @@ type Surface struct{ ... }
 ## github.com/frostgrove/vv/cache
 ```go
 const MaxNamespacePartBytes = 128 ...
+const MaxCapabilityBytes = 64 ...
+const MaxMemoEntries = 4096 ...
 const MaximumTransientWaiters = 4096 ...
 const MaxCodecIDBytes = 64
+const MaxObservers = 8
+const MaxWaiverReasonBytes = 256
 var ErrInvalid = errors.New("invalid cache declaration or call") ...
 var Hot = profile("Hot", MemoryProviderKind, hotDefaults()) ...
 func Activate(ctx context.Context, spec ActivationSpec) error
 func CapabilityOf[T any](backend Backend) (T, bool)
 func Supports(backend Backend, capability Capability) bool
+func WithMemo(ctx context.Context, memo *Memo) context.Context
 type ActivationError struct{ ... }
 type ActivationSpec struct{ ... }
 type Address struct{ ... }
@@ -113,6 +166,7 @@ type BackendDescription struct{ ... }
 type BackendTopology uint8
     const ProcessBackend BackendTopology = iota + 1 ...
 type BackendWrapper interface{ ... }
+type BatchLoader[K, V any] func(context.Context, []K) ([]LoadResult[V], error)
 type BatchReadLimit struct{ ... }
 type BatchReader interface{ ... }
     func BatchReaderOf(backend Backend) (BatchReader, bool)
@@ -120,7 +174,9 @@ type Cache[K, V any] struct{ ... }
     func Auto[K, V any](profiles ...Profile) *Cache[K, V]
     func New[K, V any](runtime Runtime, backend Backend, scope Scope[K], keys KeyCodec[K], ...) (*Cache[K, V], error)
 type Capability string
-    const BatchReadCapability Capability = "batch_read"
+    const BatchReadCapability Capability = "batch_read" ...
+    func DeclaredCapabilitiesOf(backend Backend) []Capability
+type CapabilityDeclarer interface{ ... }
 type Clock interface{ ... }
 type ClockSkewDescription struct{ ... }
 type Codec[V any] interface{ ... }
@@ -129,6 +185,8 @@ type Codec[V any] interface{ ... }
     func RFC3339UTC(schema ValueSchema) Codec[time.Time]
     func String(schema ValueSchema) Codec[string]
     func TrustedJSON[V any](schema ValueSchema) Codec[V]
+type CompareAndSwapper interface{ ... }
+    func CompareAndSwapperOf(backend Backend) (CompareAndSwapper, bool)
 type CorruptionPolicy uint8
     const RefuseCorrupt CorruptionPolicy = iota + 1 ...
 type Declaration interface{ ... }
@@ -160,6 +218,8 @@ type FreshnessDescription struct{ ... }
 type FreshnessMode string
     const ExpiringFreshnessMode FreshnessMode = "expiring" ...
 type Generation uint32
+type HealthChecker interface{ ... }
+    func HealthCheckerOf(backend Backend) (HealthChecker, bool)
 type JitterDescription struct{ ... }
 type JitterMode string
     const NoJitterMode JitterMode = "disabled" ...
@@ -181,6 +241,15 @@ type LoadResult[V any] struct{ ... }
     func Present[V any](value V) LoadResult[V]
 type Loader[K, V any] func(context.Context, K) (LoadResult[V], error)
 type LocalStats struct{ ... }
+type Maintainer interface{ ... }
+    func MaintainerOf(backend Backend) (Maintainer, bool)
+type MaintenanceLimit struct{ ... }
+type MaintenanceReport struct{ ... }
+type Memo struct{ ... }
+    func MemoFrom(ctx context.Context) *Memo
+    func NewMemo(limit MemoLimit) (*Memo, error)
+type MemoLimit struct{ ... }
+type MemoStats struct{ ... }
 type Namespace struct{ ... }
     func MustNamespace(application, environment, purpose string, generation Generation) Namespace
     func NamespaceOf(application, environment, purpose string, generation Generation) (Namespace, error)
@@ -192,6 +261,8 @@ type NegativeDescription struct{ ... }
 type NegativeMode string
     const NoNegativeMode NegativeMode = "disabled" ...
 type Observer interface{ ... }
+    func MustObservers(children ...Observer) Observer
+    func Observers(children ...Observer) (Observer, error)
 type Operation string
     const LookupOperation Operation = "lookup" ...
 type Option interface{ ... }
@@ -220,7 +291,10 @@ type Random interface{ ... }
 type ReadLimit struct{ ... }
 type Reason string
     const BackendReason Reason = "backend" ...
+type ResourceDeclaration struct{ ... }
 type ResourceID string
+type ResourceTenant string
+    const CacheTenant ResourceTenant = "cache" ...
 type Result[V any] struct{ ... }
 type Retention struct{ ... }
     func CapacityBoundedRetention() Retention
@@ -240,6 +314,8 @@ type ScopePlan[K any] struct{ ... }
 type Set struct{ ... }
     func MustSet(declarations ...Declaration) Set
     func NewSet(declarations ...Declaration) (Set, error)
+type SharedResourceWaiver struct{ ... }
+    func SharedDurableSecurity(reason string) SharedResourceWaiver
 type SkewMode uint8
     const SingleProcessSkew SkewMode = iota + 1 ...
 type SkewPolicy struct{ ... }
@@ -249,7 +325,13 @@ type StalePolicy uint8
     const RefreshBlocking StalePolicy = iota + 1 ...
 type State uint8
     const Hit State = iota + 1 ...
+type Tag struct{ ... }
+    func NewTag(value string) (Tag, error)
+type TagInvalidator interface{ ... }
+    func TagInvalidatorOf(backend Backend) (TagInvalidator, bool)
 type Timer interface{ ... }
+type Transactional interface{ ... }
+    func TransactionalOf(backend Backend) (Transactional, bool)
 type TransientSaturationMode uint8
     const RejectTransientMode TransientSaturationMode = iota + 1 ...
 type TransientSaturationPolicy struct{ ... }
@@ -311,10 +393,12 @@ const PortableBindLimit = 999
 const RelTagKey = "rel"
 const TagKey = "db"
 var ErrNotFound = errors.New("crud: not found") ...
+var ReadOptions = OptionGroup{ ... } ...
 var NowFunc = time.Now
 func BindExecutor(ctx context.Context, source Source, e Executor) context.Context
 func BindLimit(d Dialect) int
 func ClaimSavepoint(ctx context.Context, source any) (int64, bool)
+func CreateOf[M any, ID comparable](core Core[M, ID], ctx context.Context, m *M) (M, error, bool)
 func CursorFieldSupported(f *Field) bool
 func DefaultValuesClause(d Dialect) string
 func DefinedFields(s *Schema, dataTransferObject any) ([]string, error)
@@ -336,10 +420,12 @@ func LoadTombstonesOf[M any, ID comparable](core Core[M, ID], ctx context.Contex
 func MarshalPredicate(p Predicate) (json.RawMessage, error)
 func MayBeTautologyFor(m *Meta, p Predicate) bool
 func OptElem(t reflect.Type) reflect.Type
+func OptionSpelling(field string) string
 func RegisterTable[M any](table string)
 func RegisterTableRef[M any](table TableRef)
 func RegisterTableRefType(t reflect.Type, table TableRef)
 func RegisterTableType(t reflect.Type, table string)
+func ReplaceOf[M any, ID comparable](core Core[M, ID], ctx context.Context, m *M) (M, error, bool)
 func RestoreOf[M any, ID comparable](core Core[M, ID], ctx context.Context, ids ...ID) (int64, error, bool)
 func RestoreScopedOf[M any, ID comparable](core Core[M, ID], ctx context.Context, restore *ScopedRestore[ID]) (int64, error, bool)
 func RunPreloads(ctx context.Context, ex Executor, d Dialect, m *Meta, items any, ...) error
@@ -353,6 +439,8 @@ func TryRegisterTableRef[M any](table TableRef) error
 func TryRegisterTableRefType(t reflect.Type, table TableRef) error
 func TryRegisterTableType(t reflect.Type, table string) error
 func UnsafeBulkInsertFor(ctx context.Context, source Source, table TableRef, columns []string, ...) (int64, error)
+func UpdateCountsChangedRowsOnly(d Dialect) bool
+func UpsertTargetsPrimaryKey(d Dialect) bool
 func UsesPortableBatch(options ...BatchOption) bool
 func WithExecutor(ctx context.Context, e Executor) context.Context
 func WithExecutorFor(ctx context.Context, ds any, e Executor) context.Context
@@ -378,6 +466,7 @@ type Change struct{ ... }
     func DefinedChanges(s *Schema, dataTransferObject any) ([]Change, error)
 type Core[M any, ID comparable] interface{ ... }
     func Chain[M any, ID comparable](c Core[M, ID], mw ...Middleware[M, ID]) Core[M, ID]
+type Creator[M any] interface{ ... }
 type DefaultValuesInserter interface{ ... }
 type Dialect interface{ ... }
 type Executor interface{ ... }
@@ -428,6 +517,7 @@ type Option func(*Options)
     func Unsorted() Option
     func Where(p Predicate) Option
     func With(source *Options) Option
+type OptionGroup struct{ ... }
 type Optional = utils.Optional
 type Options struct{ ... }
     func Build(options ...Option) *Options
@@ -479,6 +569,7 @@ type RelKind uint8
 type Relation struct{ ... }
 type RelationScopes struct{ ... }
     func MergeRelationScopes(a, b *RelationScopes) *RelationScopes
+type Replacer[M any] interface{ ... }
 type Repo[M any, ID comparable, U any] struct{ ... }
     func Decorate[M any, ID comparable, U any](r *Repo[M, ID, U], mw ...Middleware[M, ID]) *Repo[M, ID, U]
     func Wrap[M any, ID comparable, U any](c Core[M, ID]) *Repo[M, ID, U]
@@ -528,6 +619,7 @@ type UnsafeBulkInserter interface{ ... }
 type UnscopedExister[M any, ID comparable] interface{ ... }
 type UpdatePlan struct{ ... }
     func PlanFor[U any](s *Schema) (*UpdatePlan, error)
+type UpdateRowCount interface{ ... }
 type UpsertScope interface{ ... }
 ```
 
@@ -715,10 +807,10 @@ func Status(err error) int
 func WithErrors(f HandlerFunc, options ...crudhttp.RenderOption) http.Handler
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
     func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
     func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
     func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
     func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
@@ -736,8 +828,13 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*http.Request) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(*http.Request, M) any) Option[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+type Presenter[M, R any] = wire.Presenter[M, R]
 type Renderer = crudhttp.Renderer
 type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
+    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
+    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
 type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 ```
 
@@ -822,6 +919,20 @@ type Setting func(*settings)
     func UnstablePagination() Setting
 ```
 
+## github.com/frostgrove/vv/crud/wire
+```go
+func CoversCreate[M, In any](except ...string) error
+func CoversPatch[U, P any](except ...string) error
+func CoversResponse[M, R any](except ...string) error
+func MustCoverCreate[M, In any](except ...string)
+func MustCoverPatch[U, P any](except ...string)
+func MustCoverResponse[M, R any](except ...string)
+type PatchMapper[P, U any] interface{ ... }
+    func IdentityPatch[U any]() PatchMapper[U, U]
+type Presenter[M, R any] interface{ ... }
+    func IdentityPresenter[M any]() Presenter[M, M]
+```
+
 ## github.com/frostgrove/vv/errs
 ```go
 const DefaultLocaleFile = "default"
@@ -885,6 +996,30 @@ type Corpus struct{ ... }
 type Err struct{ ... }
 ```
 
+## github.com/frostgrove/vv/health
+```go
+const DefaultTimeout = 2 * time.Second ...
+const MaxMessageBytes = 256
+var ErrRegistration = errors.New("health: the registered checks are not usable")
+type CheckDetail struct{ ... }
+type Contribution struct{ ... }
+type Detail struct{ ... }
+type Importance string
+    const Required Importance = "required" ...
+type Probe interface{ ... }
+type ProbeFunc func(ctx context.Context) error
+type RegistrationError struct{ ... }
+type Registry struct{ ... }
+    func Auto(contributions ...Contribution) (*Registry, error)
+    func New(spec Spec) (*Registry, error)
+type Report struct{ ... }
+type Spec struct{ ... }
+type State string
+    const StatePassing State = "passing" ...
+type Status string
+    const StatusLive Status = "live" ...
+```
+
 ## github.com/frostgrove/vv/jobs
 ```go
 const DefaultAdmissionFreshness = 30 * time.Second ...
@@ -901,6 +1036,7 @@ const MaxListLimit = 1000
 const MaxListOffset = 1_000_000
 const MaxPurgeLimit = 1000
 const MaxResourceUnits = 1 << 20
+const MaxWorkerObservers = 8
 const MaximumCollapseDelay = MaximumMaxElapsed
 const MaximumPriority = 1000
 const WorkerIncarnationBytes = 16
@@ -1344,6 +1480,8 @@ type WorkerFailure uint8
 type WorkerIncarnation struct{ ... }
     func WorkerIncarnationFromBytes(value [WorkerIncarnationBytes]byte) (WorkerIncarnation, error)
 type WorkerObserver interface{ ... }
+    func MustWorkerObservers(children ...WorkerObserver) WorkerObserver
+    func WorkerObservers(children ...WorkerObserver) (WorkerObserver, error)
 type WorkerObserverFunc func(context.Context, WorkerEvent)
 type WorkerOperation uint8
     const WorkerOperationRun WorkerOperation = iota + 1 ...
@@ -1377,31 +1515,6 @@ type Option interface{ ... }
     func WithBackendID(id jobs.BackendID) Option
     func WithClock(clock Clock) Option
 type Stats struct{ ... }
-```
-
-## github.com/frostgrove/vv/jobs/jobspg
-```go
-const DefaultListLimit = jobs.DefaultListLimit
-const DefaultPurgeLimit = jobs.DefaultPurgeLimit
-const DefaultSchema = "frostgrove_jobs"
-const MaxListDefinitions = jobs.MaxListDefinitions
-const MaxListLimit = jobs.MaxListLimit
-const MaxListOffset = jobs.MaxListOffset
-const MaxPurgeLimit = jobs.MaxPurgeLimit
-const SchemaVersion = 5
-var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
-var ErrNotReady = errors.New("jobspg: driver is not ready")
-var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
-func MigrationStatements(schema string) ([]string, error)
-type Driver struct{ ... }
-    func New(spec Spec) (*Driver, error)
-    func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, ...) (*Driver, error)
-type ListSpec = jobs.ListSpec
-type SchemaManagement uint8
-    const ManageSchema SchemaManagement = iota ...
-type Spec struct{ ... }
-type TxFencer struct{ ... }
-type TxStager struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/port
@@ -1539,6 +1652,38 @@ type TransportOption func(*transport)
     func WithRequestHook(fn func(*http.Request) error) TransportOption
 ```
 
+## github.com/frostgrove/vv/runtime
+```go
+const DefaultDrainGrace = 15 * time.Second
+var ErrDuplicateRunner = errors.New("runtime: two runners share a name") ...
+var PerReplicaTimer = Declaration{ ... }
+type Declaration struct{ ... }
+    func DeclarationOf(runner Runner) Declaration
+type Declaring interface{ ... }
+type Drainer interface{ ... }
+type Durability string
+    const NonDurable Durability = "non-durable" ...
+type Observer interface{ ... }
+type ObserverFunc func(state RunnerState)
+type PeriodicSpec struct{ ... }
+type Phase string
+    const PhaseIdle Phase = "idle" ...
+type Placement string
+    const PerReplica Placement = "per-replica" ...
+type Readier interface{ ... }
+type Runner interface{ ... }
+    func Every(name string, interval time.Duration, pass func(ctx context.Context) error) (Runner, error)
+    func NewPeriodic(spec PeriodicSpec) (Runner, error)
+type RunnerState struct{ ... }
+type Spec struct{ ... }
+type Supervisor struct{ ... }
+    func Auto(runners ...Runner) (*Supervisor, error)
+    func NewSupervisor(spec Spec) (*Supervisor, error)
+type Ticker interface{ ... }
+    func SystemTicks(interval time.Duration) Ticker
+type Ticks func(interval time.Duration) Ticker
+```
+
 ## github.com/frostgrove/vv/storage
 ```go
 const MaxKeyBytes = 768 ...
@@ -1635,25 +1780,50 @@ func Parse[T any](args []string, name string, def T) (T, error)
 ## github.com/frostgrove/vv/app/appfx
 ```go
 func AsSeeder(constructor any) any
+func Auto(catalog module.Catalog) fx.Option
+func Option(definition module.Definition, profile module.Profile) fx.Option
+func Options(catalog module.Catalog, profile module.Profile) fx.Option
 func Seeding(spec app.Seeding) fx.Option
 type Seeders struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/app/http/appfiber
 ```go
+const DefaultHealthPath = "/health"
 const OrderAuth = 100
+var ErrRouteSet = errors.New("a route set was given an operation it cannot mount")
+var ErrUnchecked = errors.New("an operation declares a permission nothing in front of it checks")
 func AsMiddleware(constructor any) any
+func AsOperations(constructor any) any
 func AsResolver(constructor any) any
 func AsRoute(constructor any) any
 func Listen(lifecycle fx.Lifecycle, shutdowner fx.Shutdowner, fiberApp *fiber.App, ...)
+func Listening(spec Spec) fx.Option
 func Mount(fiberApp *fiber.App, mounted Mounted, prefix string) error
+func Mounting(spec Spec) fx.Option
+func NamingUnchecked(log *slog.Logger, unchecked []Unchecked) error
+func RefusingUnchecked(_ *slog.Logger, unchecked []Unchecked) error
 func Serving(spec Spec) fx.Option
+type HealthSpec struct{ ... }
 type Middleware = app.Ordered[fiber.Handler]
     func Guarding(name string, guard *auth.Guard, options ...porthttp.RenderOption) Middleware
 type Mounted struct{ ... }
+type Operations interface{ ... }
+type Policy struct{ ... }
+    func Authenticated(why string) Policy
+    func Public(why string) Policy
+    func Requires(permissions ...auth.Permission) Policy
 type Resolvers struct{ ... }
 type Route interface{ ... }
+    func Health(spec HealthSpec) (Route, error)
+type RouteSet struct{ ... }
+    func NewRouteSet(spec RouteSetSpec) (*RouteSet, error)
+    func Routes(prefix string, options ...porthttp.RenderOption) *RouteSet
+type RouteSetSpec struct{ ... }
 type Spec struct{ ... }
+type Unchecked struct{ ... }
+type UncheckedRule func(log *slog.Logger, unchecked []Unchecked) error
+    func ExcusingUnchecked(reason string, contributors ...string) UncheckedRule
 ```
 
 ## github.com/frostgrove/vv/auth/access
@@ -1662,6 +1832,8 @@ const PermRoleRead auth.Permission = "role.read" ...
 const AttrSubjectID = "subject_id" ...
 const DefaultSessionTTL = 30 * 24 * time.Hour ...
 const CodeBadCredentials errs.Code = "bad_credentials" ...
+const CodeTooManyAttempts errs.Code = "too_many_attempts" ...
+const DefaultAttemptsPerIdentifier = 10 ...
 const ReasonSignedOut = "signed out" ...
 const CodeUnknownRole errs.Code = "unknown_role" ...
 const CodeSystemRole errs.Code = "system_role"
@@ -1699,17 +1871,28 @@ func NewGuard(authenticator *SessionAuthenticator) *auth.Guard
 func NewPermissionService(store *Store) *port.DefaultService[Permission, uuid.UUID, PermissionUpdate]
 func NewToken() (string, error)
 func OfSubject(ref SubjectRef) crud.Option
+func Overloaded() error
 func PermissionPolicy() security.Policy[Permission, uuid.UUID]
 func PermissionQuery() *query.Config
 func RolePolicy() security.Policy[Role, uuid.UUID]
 func RoleQuery() *query.Config
 func Slugify(input string) string
 func Sync(ctx context.Context, store *Store, declared []ModuleGrants, ...) error
+func TooManyAttempts() error
 type Agent struct{ ... }
 type Argon2Hasher struct{ ... }
     func NewHasher() *Argon2Hasher
 type AttachPermissionCommand struct{ ... }
+type Attempt struct{ ... }
+type AttemptLimiter interface{ ... }
+type AttemptObserver interface{ ... }
+type AttemptOutcome string
+    const AttemptSucceeded AttemptOutcome = "succeeded" ...
+type AttemptPolicy struct{ ... }
 type AuthResponse struct{ ... }
+type BulkheadHasher struct{ ... }
+    func Bulkhead(inner Hasher) *BulkheadHasher
+    func NewBulkhead(inner Hasher, permits, queue int) *BulkheadHasher
 type ChangePasswordCommand struct{ ... }
 type ChangePasswordUseCase struct{ ... }
     func NewChangePassword(dependencies *Deps) *ChangePasswordUseCase
@@ -1742,6 +1925,7 @@ type GrantsService struct{ ... }
 type Hasher interface{ ... }
 type Issued struct{ ... }
 type LoginCommand struct{ ... }
+type LoginConfig struct{ ... }
 type LoginUseCase struct{ ... }
     func NewLogin(dependencies *Deps) *LoginUseCase
 type LogoutAllCommand struct{ ... }
@@ -1751,6 +1935,9 @@ type LogoutCommand struct{ ... }
 type LogoutResponse struct{ ... }
 type LogoutUseCase struct{ ... }
     func NewLogout(dependencies *Deps) *LogoutUseCase
+type MemoryLimiter struct{ ... }
+    func DefaultMemoryLimiter() *MemoryLimiter
+    func NewMemoryLimiter(policy AttemptPolicy) *MemoryLimiter
 type ModuleGrants struct{ ... }
     func OwnGrants() ModuleGrants
 type MountedSubject struct{ ... }
@@ -1769,6 +1956,7 @@ type Principal struct{ ... }
 type PrincipalDto struct{ ... }
     func NewPrincipalDto(principal *Principal) PrincipalDto
 type Profile struct{ ... }
+type Protection struct{ ... }
 type RefreshRequest struct{ ... }
 type Registrar[P any] interface{ ... }
 type RevocationSink interface{ ... }
@@ -1842,11 +2030,14 @@ type SubjectType string
 ## github.com/frostgrove/vv/auth/access/http/accesshttp
 ```go
 const Register = "register" ...
+const HeaderOrigin = "Origin" ...
+const CodeCrossSite errs.Code = "cross_site_request"
 const DeliveryHeader = "X-Auth-Delivery"
 type Cookie struct{ ... }
 type Cookies struct{ ... }
 type Credentials struct{ ... }
     func NewCredentials(table Table, policy Cookies) Credentials
+type CrossSite struct{ ... }
 type Delivery string
     const DeliverCookies Delivery = "cookies" ...
     func Rotating(requested Delivery, byCookie bool) Delivery
@@ -1875,6 +2066,7 @@ type RegisterHandler[P any] struct{ ... }
 func AsGrants(constructor any) any
 func AsSubject(constructor any) any
 func Module(configuration access.Config, options ...auth.Option) fx.Option
+type Protection struct{ ... }
 type Registered struct{ ... }
 ```
 
@@ -1885,10 +2077,11 @@ func Strategy(spec Spec) access.Strategy
 type Claims struct{ ... }
 type Outcome int
     const Rotate Outcome = iota ...
-    func Classify(presented Presented, now time.Time, grace time.Duration) Outcome
+    func Classify(presented Presented, now time.Time, window Window) Outcome
 type Presented struct{ ... }
 type RevocationList interface{ ... }
 type Spec struct{ ... }
+type Window struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/auth/access/accessjwt/revokeredis
@@ -1969,16 +2162,22 @@ type Parser[C any] struct{ ... }
 
 ## github.com/frostgrove/vv/auth/http/authfiber
 ```go
+func AnswerPreflight(handler fiber.Handler, preflight fiber.Handler) fiber.Handler
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) fiber.Handler
 func Routes(app *fiber.App) []authhttp.Route
+func SkipPreflight(handler fiber.Handler) fiber.Handler
 func Verify(app *fiber.App, declared []authhttp.Endpoint, options ...authhttp.VerifyOption) error
+func VerifyAreas(app *fiber.App, areas ...authhttp.Area) error
 ```
 
 ## github.com/frostgrove/vv/auth/http/authgin
 ```go
+func AnswerPreflight(middleware gin.HandlerFunc, preflight gin.HandlerFunc) gin.HandlerFunc
 func Middleware(guard *auth.Guard, options ...porthttp.RenderOption) gin.HandlerFunc
 func Routes(engine *gin.Engine) []authhttp.Route
+func SkipPreflight(middleware gin.HandlerFunc) gin.HandlerFunc
 func Verify(engine *gin.Engine, declared []authhttp.Endpoint, ...) error
+func VerifyAreas(engine *gin.Engine, areas ...authhttp.Area) error
 ```
 
 ## github.com/frostgrove/vv/auth/rpc/authgrpc
@@ -2014,10 +2213,10 @@ func Errors(options ...crudhttp.RenderOption) fiber.Handler
 func Status(err error) int
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
     func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
     func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
     func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
     func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
@@ -2034,8 +2233,13 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(fiber.Ctx) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(fiber.Ctx, M) any) Option[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+type Presenter[M, R any] = wire.Presenter[M, R]
 type Renderer = crudhttp.Renderer
 type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
+    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
+    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
 type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 ```
 
@@ -2047,10 +2251,10 @@ func Routing(engine *gin.Engine, options ...crudhttp.RenderOption)
 func Status(err error) int
 type BulkDeleteRequest[ID comparable] = crudhttp.BulkDeleteRequest[ID]
 type Envelope = crudhttp.Envelope
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
     func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
     func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
     func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
     func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
@@ -2067,8 +2271,13 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func WithRenderer[M any, ID comparable, U any](r crudhttp.Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(*gin.Context) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(*gin.Context, M) any) Option[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+type Presenter[M, R any] = wire.Presenter[M, R]
 type Renderer = crudhttp.Renderer
 type Repository[M any, ID comparable, U any] = crudhttp.Repository[M, ID, U]
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
+    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
+    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
 type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 ```
 
@@ -2088,10 +2297,10 @@ func ServiceName(name string) string
 func StreamErrors(options ...RenderOption) grpc.StreamServerInterceptor
 func Transport(conn grpc.ClientConnInterface, name string, options ...TransportOption) remote.Transport
 func WithLocale(ctx context.Context, locale string) context.Context
-type Handler[M any, ID comparable, U any] = HandlerFor[M, ID, U, M]
+type Handler[M any, ID comparable, U any] = ResourceFor[M, ID, U, M, U, M]
     func New[M any, ID comparable, U any](repository Repository[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
     func Serving[M any, ID comparable, U any](service Service[M, ID, U], options ...Option[M, ID, U]) *Handler[M, ID, U]
-type HandlerFor[M any, ID comparable, U any, In any] struct{ ... }
+type HandlerFor[M any, ID comparable, U any, In any] = ResourceFor[M, ID, U, In, U, M]
     func NewFor[In, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *HandlerFor[M, ID, U, In]
     func ServingFor[In, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], options ...Option[M, ID, U]) *HandlerFor[M, ID, U, In]
 type Mapper[In, M any] = port.Mapper[In, M]
@@ -2106,6 +2315,8 @@ type Option[M any, ID comparable, U any] func(*options[M, ID, U])
     func WithRenderer[M any, ID comparable, U any](r Renderer) Option[M, ID, U]
     func WithScope[M any, ID comparable, U any](fn func(context.Context) ([]crud.Option, error)) Option[M, ID, U]
     func WithTransform[M any, ID comparable, U any](fn func(context.Context, M) any) Option[M, ID, U]
+type PatchMapper[P, U any] = wire.PatchMapper[P, U]
+type Presenter[M, R any] = wire.Presenter[M, R]
 type RenderOption func(*StatusRenderer)
     func WithCodes(c *errs.Codes) RenderOption
     func WithMaxViolations(n int) RenderOption
@@ -2114,12 +2325,24 @@ type RenderOption func(*StatusRenderer)
     func WithRetryDelay(d time.Duration) RenderOption
 type Renderer interface{ ... }
 type Repository[M any, ID comparable, U any] = port.Repository[M, ID, U]
+type ResourceFor[M any, ID comparable, U any, In any, P any, R any] struct{ ... }
+    func NewWire[In, P, R, M any, ID comparable, U any](repository Repository[M, ID, U], mapper Mapper[In, M], ...) *ResourceFor[M, ID, U, In, P, R]
+    func ServingWire[In, P, R, M any, ID comparable, U any](service Service[M, ID, U], mapper Mapper[In, M], patcher PatchMapper[P, U], ...) *ResourceFor[M, ID, U, In, P, R]
 type Service[M any, ID comparable, U any] = port.Service[M, ID, U]
 type StatusRenderer struct{ ... }
     func NewRenderer(options ...RenderOption) *StatusRenderer
 type TransportOption func(*transport)
     func WithCallOptions(options ...grpc.CallOption) TransportOption
     func WithVocabulary(c *errs.Codes) TransportOption
+```
+
+## github.com/frostgrove/vv/health/healthfx
+```go
+func AsCheck(constructor any) any
+func Auto() fx.Option
+func Checking(spec Spec) fx.Option
+type Registered struct{ ... }
+type Spec struct{ ... }
 ```
 
 ## github.com/frostgrove/vv/jobs/jobsfx
@@ -2148,6 +2371,31 @@ type Registry struct{ ... }
 type Spec struct{ ... }
 ```
 
+## github.com/frostgrove/vv/jobs/jobspg
+```go
+const DefaultListLimit = jobs.DefaultListLimit
+const DefaultPurgeLimit = jobs.DefaultPurgeLimit
+const DefaultSchema = "frostgrove_jobs"
+const MaxListDefinitions = jobs.MaxListDefinitions
+const MaxListLimit = jobs.MaxListLimit
+const MaxListOffset = jobs.MaxListOffset
+const MaxPurgeLimit = jobs.MaxPurgeLimit
+const SchemaVersion = 5
+var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
+var ErrNotReady = errors.New("jobspg: driver is not ready")
+var ErrSchemaMismatch = errors.New("jobspg: schema mismatch")
+func MigrationStatements(schema string) ([]string, error)
+type Driver struct{ ... }
+    func New(spec Spec) (*Driver, error)
+    func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, ...) (*Driver, error)
+type ListSpec = jobs.ListSpec
+type SchemaManagement uint8
+    const UnsetSchemaManagement SchemaManagement = iota ...
+type Spec struct{ ... }
+type TxFencer struct{ ... }
+type TxStager struct{ ... }
+```
+
 ## github.com/frostgrove/vv/jobs/jobspg/jobspgfx
 ```go
 const DefaultHousekeepingInterval = time.Minute
@@ -2158,7 +2406,11 @@ func Application(settings ApplicationSettings) fx.Option
 func Module(settings Settings) fx.Option
 func New(settings Settings, database *sql.DB, source crud.Source, catalog jobs.Catalog) (*jobspg.Driver, error)
 type ApplicationSettings struct{ ... }
+type DeploymentProfile string
+    const DevelopmentProfile DeploymentProfile = "development" ...
+    func ProfileOf(environment string) DeploymentProfile
 type HousekeepingSettings struct{ ... }
+type SchemaManagementDecision struct{ ... }
 type Settings struct{ ... }
 ```
 
@@ -2171,6 +2423,17 @@ var ErrNotReady = errors.New("jobsredis: driver is not ready")
 type Driver struct{ ... }
     func New(spec Spec) (*Driver, error)
     func Open(ctx context.Context, client redis.UniversalClient, namespace jobs.Namespace) (*Driver, error)
+type Spec struct{ ... }
+```
+
+## github.com/frostgrove/vv/runtime/runtimefx
+```go
+func AsRunner(constructor any) any
+func Auto() fx.Option
+func Supervising(spec Spec) fx.Option
+type FailurePolicy string
+    const ShutDownOnFailure FailurePolicy = "shut-down" ...
+type Registered struct{ ... }
 type Spec struct{ ... }
 ```
 
@@ -2193,12 +2456,35 @@ type Settings struct{ ... }
 
 ## github.com/frostgrove/vv/utils/vvcfg
 ```go
-var DefaultCfgPath = "./config/app.yml"
+const DefaultPath = "./config/app.yml"
 var ErrNoPath = errors.New("vvcfg: no configuration path: pass --config-path or set CONFIG_PATH")
+var ErrNotASize = errors.New("vvcfg: not a size: write one like 25MiB")
+var ErrUndeclaredPath = errors.New("vvcfg: no field declares this path")
+var ErrUnreadableFormat = errors.New(...)
 func Load[T any](path string) (*T, error)
 func MustLoad[T any](paths ...string) *T
+func ValidateTree(root any) error
+type Bytes int64
+    func ParseBytes(written string) (Bytes, error)
+type CrossValidator interface{ ... }
+type Deprecation struct{ ... }
 type EnvironmentApplier interface{ ... }
+type EnvironmentSourceError struct{ ... }
+type Field struct{ ... }
+type Origin int
+    const OriginUnknown Origin = iota ...
+type PathOrigin int
+    const PathFromNothing PathOrigin = iota ...
 type PrefixedEnvironmentApplier interface{ ... }
+type Report struct{ ... }
+    func LoadFrom[T any](source Source) (*T, *Report, error)
+    func LoadStrict[T any](path string) (*T, *Report, error)
+type SelfValidator interface{ ... }
+type Source struct{ ... }
+    func DefaultSource() Source
+type UnknownKeysError struct{ ... }
+type UnusedEnvironmentError struct{ ... }
+type ValidationError struct{ ... }
 type Validator interface{ ... }
 ```
 
@@ -2220,3 +2506,4 @@ type ReadWriteOption func(*readWriteOptions)
 ```go
 func Execute(config *vvdb.Config)
 ```
+

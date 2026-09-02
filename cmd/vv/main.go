@@ -22,6 +22,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) >= 2 && args[0] == "generate" && args[1] == "cache" {
 		return runCache(args[2:], stdout, stderr)
 	}
+	if len(args) >= 2 && args[0] == "generate" && args[1] == "resource" {
+		return runResource(args[2:], stdout, stderr)
+	}
 	return runModels(args, stdout, stderr)
 }
 
@@ -43,6 +46,30 @@ func runCache(args []string, stdout, stderr io.Writer) error {
 	}
 	options.Log = stdout
 	return cachegen.Run(&options)
+}
+
+func runResource(args []string, stdout, stderr io.Writer) error {
+	var options codegen.ResourceOptions
+	flags := flag.NewFlagSet("vv generate resource", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&options.Dir, "dir", ".", "package directory")
+	flags.StringVar(&options.Out, "out", "vv_wire_gen.go", "generated Go file name")
+	flags.StringVar(&options.Manifest, "manifest", "resource.manifest.yml", "per-resource manifest file name")
+	flags.StringVar(&options.Types, "types", "", "comma-separated model names; default is every model-file struct")
+	flags.StringVar(&options.Skip, "skip", "", "comma-separated field names to leave out entirely")
+	flags.StringVar(&options.Readonly, "readonly", "", "comma-separated field names to keep out of the update DTO")
+	flags.StringVar(&options.Into, "into", "", "write into this directory instead of -dir")
+	flags.StringVar(&options.Import, "import", "", "import path of -dir, used to qualify model types written elsewhere")
+	flags.BoolVar(&options.Recursive, "recursive", true, "walk model files below -dir and generate beside each package")
+	flags.BoolVar(&options.Check, "check", false, "check the generated artefacts without writing")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("generate resource accepts no positional arguments")
+	}
+	options.Log = stdout
+	return codegen.RunResource(&options)
 }
 
 func runModels(args []string, stdout, stderr io.Writer) error {
@@ -67,6 +94,7 @@ func runModels(args []string, stdout, stderr io.Writer) error {
 	flags.BoolVar(&options.Adapter, "adapter", false, "also generate the resource adapter: input DTO, mapper, inverse path map, service and wiring")
 	flags.StringVar(&options.Binding, "binding", "net", "which transport the generated wiring is written for: net or none")
 	flags.BoolVar(&options.Recursive, "recursive", options.Recursive, "walk model files below -dir and generate beside each package")
+	flags.BoolVar(&options.Check, "check", false, "check the generated artefacts without writing")
 	noDTO := flags.Bool("no-dto", false, "skip update DTOs")
 	noMeta := flags.Bool("no-meta", false, "skip metamodels")
 	flags.BoolVar(&options.NoRepo, "no-repo", false, "skip repository blueprints and binding factories")

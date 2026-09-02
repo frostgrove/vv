@@ -22,11 +22,33 @@ TRIPLETS=(
 	'auth/access/http/accessnet,auth/access/http/accessgin,auth/access/http/accessfiber'
 )
 
+# `go mod tidy` reads every build configuration, so a third-party import inside a
+# _test.go is a requirement of the published module and the tag it hides behind
+# exempts nothing — hence -test and the tag this repository puts fixtures behind.
+# A listing that fails is a refusal rather than an empty answer: a test importing
+# a package the module does not require fails in exactly that way.
+root_third_party() {
+	local listing status=0
+	listing=$("$GO" list -deps -test -tags=integration -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>&1) || status=$?
+	if (( status != 0 )); then
+		printf '%s\n' "$listing"
+		return "$status"
+	fi
+	printf '%s\n' "$listing" | grep -v "^$VV_MODULE" | grep -v '^$' || true
+}
+
 check_deps() {
-	local dependencies module count
-	dependencies=$("$GO" list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... 2>/dev/null | grep -v "^$VV_MODULE" || true)
+	local dependencies module count status=0
+	dependencies=$(root_third_party) || status=$?
+	if (( status != 0 )); then
+		echo 'the root module cannot be listed with its tests — a test importing a package'
+		echo 'the module does not require reads exactly like this (D-036):'
+		echo "$dependencies" | sed 's/^/  /'
+		return 1
+	fi
 	if [[ -n $dependencies ]]; then
-		echo 'the root module has third-party dependencies:'
+		echo 'the root module has third-party dependencies (D-036) — a package that imports'
+		echo 'one belongs in a module of its own, and so does a test that imports one:'
 		echo "$dependencies" | sed 's/^/  /'
 		return 1
 	fi
@@ -175,23 +197,83 @@ check_todo() {
 	echo 'check-todo: ok'
 }
 
-check_tidy() {
-	local module root output failed=0
+check_replaces() {
+	local module replaced target declared failed=0
 	while IFS= read -r module; do
-		root=$(realpath --relative-to="$module" .)
-		output=$(cd "$module" && GOWORK=off "$GO" mod edit -replace "$VV_MODULE=$root" && GOWORK=off "$GO" mod tidy -diff 2>&1; GOWORK=off "$GO" mod edit -dropreplace "$VV_MODULE")
-		if [[ -n $output ]]; then
-			echo "$module is not tidy — run make tidy"
-			failed=1
-		fi
+		while read -r replaced target; do
+			if [[ $replaced == "$VV_MODULE" ]]; then
+				echo "$module replaces the library it requires:"
+				echo "  replace $replaced => $target"
+				echo '  a published go.mod carries no replace (D-033). check-tidy adds one for the'
+				echo '  length of the check and go.work resolves it for every build, so all this'
+				echo '  directive does is hide that the required version is a fiction.'
+				failed=1
+				continue
+			fi
+			declared=
+			if [[ -f $module/$target/go.mod ]]; then
+				declared=$(awk '$1 == "module" { print $2; exit }' "$module/$target/go.mod")
+			fi
+			if [[ $declared != "$replaced" ]]; then
+				echo "$module replaces $replaced with something this repository does not carry:"
+				echo "  replace $replaced => $target"
+				echo '  a replace of an untagged sibling is the one directive a satellite may keep,'
+				echo '  and it has to name the directory that sibling lives in'
+				failed=1
+			fi
+		done < <(replace_directives "$module/go.mod")
 	done < <(satellites)
+	(( failed == 0 )) || return 1
+	echo 'check-replaces: ok'
+}
+
+# The question can only be asked with the library replaced by this working tree,
+# and asking it therefore writes to the file being checked. Restoring go.mod is
+# not the same as dropping the replace again: a satellite that carries its own
+# lost it to every `make check`, and `go mod edit` reformats what it rewrites.
+# The answer is the exit status — 1 for untidy, 2 and up for a module that does
+# not resolve — because `go mod tidy` also prints warnings a tidy module earns.
+tidy_diff() {
+	local module=$1 root saved status=0
+	root=$(realpath --relative-to="$module" .)
+	saved=$(mktemp)
+	if ! cp "$module/go.mod" "$saved"; then
+		echo "cannot copy $module/go.mod aside, so it was left alone"
+		rm -f "$saved"
+		return 2
+	fi
+	(
+		cd "$module" || exit 1
+		GOWORK=off "$GO" mod edit -replace "$VV_MODULE=$root" || exit 1
+		GOWORK=off "$GO" mod tidy -diff 2>&1
+	) || status=$?
+	cp "$saved" "$module/go.mod"
+	rm -f "$saved"
+	return "$status"
+}
+
+check_tidy() {
+	local module output status failed=0
 	while IFS= read -r module; do
-		output=$(cd "$module" && GOWORK=off "$GO" mod tidy -diff 2>&1)
-		if [[ -n $output ]]; then
+		status=0
+		case $module in
+			. | ./test | ./_examples)
+				output=$(cd "$module" && GOWORK=off "$GO" mod tidy -diff 2>&1) || status=$?
+				;;
+			*)
+				output=$(tidy_diff "$module") || status=$?
+				;;
+		esac
+		if (( status == 1 )); then
 			echo "$module is not tidy — run make tidy"
+		elif (( status != 0 )); then
+			echo "$module cannot be read as a module at all:"
+		fi
+		if (( status != 0 )); then
+			[[ -z $output ]] || echo "$output" | sed 's/^/  /'
 			failed=1
 		fi
-	done < <(printf '.\n./test\n./_examples\n')
+	done < <(all_modules)
 	(( failed == 0 )) || return 1
 	echo 'check-tidy: ok'
 }
@@ -203,6 +285,7 @@ case ${1:-} in
 		check_utils
 		check_triplets
 		check_todo
+		check_replaces
 		check_tidy
 		;;
 	deps) check_deps ;;
@@ -210,6 +293,7 @@ case ${1:-} in
 	utils) check_utils ;;
 	triplets) check_triplets ;;
 	todo) check_todo ;;
+	replaces) check_replaces ;;
 	tidy) check_tidy ;;
 	*) echo "unknown check: ${1:-}" >&2; exit 2 ;;
 esac

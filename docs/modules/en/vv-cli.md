@@ -15,6 +15,14 @@ this writes them. With `-adapter` it writes the rest of the resource too: the
 request body, the mapper, **the inverse of that mapping**, a service shell and
 the wiring.
 
+There are three subcommands, and they write different artefacts:
+
+| Command | Writes | Page |
+|---|---|---|
+| `vv generate` (or no subcommand) | `vv_gen.go` — the update DTO, the metamodel, the repository blueprint | this one |
+| `vv generate resource` | `vv_wire_gen.go` and `resource.manifest.yml` — the **public** create, patch and response bodies | [below](#generate-resource) |
+| `vv generate cache` | `vv_cache_gen.go` and `cache.manifest.yml` — the cache scope set | [cache](cache.md) |
+
 For a package, it reads exported structs in `model.go`, `*.model.go`, and
 `*_model.go`, then writes `vv_gen.go` next to them. Ordinary Go fields need no
 `db`, GORM, or other ORM tags: the normal snake-case column and plural table
@@ -155,6 +163,11 @@ the base's columns without teaching the generator their types.
 | `-binding` | `net` | which transport the generated wiring is written for: `net` or `none` |
 | `-specs` | the specs package | import path override |
 | `-crud` | the crud package | import path override |
+| `-check` | off | render everything and compare with what is on disk instead of writing; a file that differs or is missing is reported by path, and nothing is written |
+
+`-check` is what belongs in CI. It fails naming every package whose artefacts
+are behind their models — not only the first one the walk reaches — so one run
+tells you the whole list.
 
 Without `-types`, exported structs in `model.go`, `*.model.go` and `*_model.go`
 are models by convention; elsewhere a `db`/`rel` tag opts a struct in.
@@ -222,6 +235,108 @@ mounting on Fiber or Gin with `ServingFor` yourself. Fiber and Gin wiring is not
 generated, because a generated file in this library may not import a satellite
 module ([[D-033]]).
 
+## generate resource
+
+The public bodies. `vv_gen.go` is the **persistence** half: `ArticleUpdate` is what an `UPDATE` may
+write, including the columns only your own code writes. It is not a promise to a
+client, and parameterising a public PATCH binder with it makes it one
+([[D-105]]).
+
+```bash
+go run github.com/frostgrove/vv/cmd/vv generate resource -dir ./src/mod
+```
+
+writes `vv_wire_gen.go` beside each model package:
+
+```go
+type ArticleInput struct{ … }                 // the create body
+type ArticleInputMapper struct{}              // port.Mapper[ArticleInput, Article]
+
+type ArticlePatch struct{ … }                 // the PATCH body
+type ArticlePatchMapper struct{}              // wire.PatchMapper[ArticlePatch, ArticleUpdate]
+
+type ArticleResponse struct{ … }              // the answer body
+type ArticlePresenter struct{}                // wire.Presenter[Article, ArticleResponse]
+
+func init() {
+    wire.MustCoverCreate[Article, ArticleInput]("ID", "CreatedAt")
+    wire.MustCoverPatch[ArticleUpdate, ArticlePatch]("TenantID")
+    wire.MustCoverResponse[Article, ArticleResponse]()
+}
+```
+
+Mount them with the binding's explicit constructor — the same name on all four
+transports:
+
+```go
+crudfiber.ServingWire(svc, ArticleInputMapper{}, ArticlePatchMapper{}, ArticlePresenter{})
+```
+
+`New`, `NewFor`, `Serving` and `ServingFor` are unchanged and still take the
+model and the persistence DTO. See [wire](wire.md).
+
+### The manifest
+
+Each body is derived by **narrowing** — the widest set that is safe, not the
+widest set that is possible — and the result is written to
+`resource.manifest.yml` beside the package, where it is checked in and reviewed:
+
+```json
+{
+  "format": 1,
+  "generated_by": "vv generate resource",
+  "package": "blog",
+  "resources": [
+    {
+      "model": "Article",
+      "patch": {
+        "narrowed": ["Rating", "Title"],
+        "fields": ["Title"],
+        "widened": [],
+        "derivation_fingerprint": "3850a0…",
+        "confirmed": false
+      }
+    }
+  ]
+}
+```
+
+| body | starts from | drops |
+|---|---|---|
+| create | the create field set — no relation, no `generated`, no lock, no database-owned key | `secret` |
+| patch | the columns `ArticleUpdate` writes | `secret` |
+| response | every column | `secret`, and anything `-skip` removed |
+
+- **Narrowing needs nothing.** Delete a name from `fields` and the next run
+  generates a smaller body and declares the omission in the coverage assertion.
+- **Widening is signed.** Put back a name the narrowing excluded and it appears
+  in `widened`; generation stops with an error naming `Article patch` until
+  `confirmed: true` sits beside it. The manifest is still written so you have
+  the line to edit; the Go file is not.
+- **A confirmation does not outlive its derivation.** `derivation_fingerprint`
+  is over the narrowed set, so a model that gains or loses a column asks again.
+- **An impossible field is an error, not a question.** A `generated` column
+  offered as a patch field is refused outright — no amount of confirming would
+  make a mapper for it.
+
+### Flags
+
+| Flag | Default | Does |
+|---|---|---|
+| `-dir` | `.` | the package directory to read |
+| `-out` | `vv_wire_gen.go` | the generated Go file name |
+| `-manifest` | `resource.manifest.yml` | the manifest file name |
+| `-types` | tagged structs and exported structs in model files | comma-separated model names |
+| `-skip` | — | field names to leave out entirely |
+| `-readonly` | — | field names kept out of the patch body |
+| `-into` | `-dir` | write somewhere else; needs `-import`, and cannot be combined with `-recursive` |
+| `-import` | — | import path of `-dir`, so model types are qualified when written elsewhere |
+| `-recursive` | **on** | walk model files below `-dir` and generate beside each package |
+| `-check` | off | render and compare, writing nothing; both artefacts are checked |
+
+Both artefacts are refused if the file under that name was not written by this
+generator, so an authored `resource.manifest.yml` is never overwritten.
+
 ## Generated repository
 
 Alongside the DTO and metamodel, the default output provides a driver-neutral
@@ -272,5 +387,6 @@ make generate   # regenerate every DTO and metamodel in the tree
 
 - [specs](specs.md) — what the metamodel plugs into
 - [port](port.md) — `PathMap`, `Mapper` and `MustCoverUpdate`
-- [[UC-014]] keep generated artefacts in sync · [[FL-010]] model to DTO and metamodel
-- [[D-018]] DTOs and metamodels are generated · [[D-050]] the generated adapter is total
+- [wire](wire.md) — `PatchMapper`, `Presenter` and the three coverage assertions
+- [[UC-014]] keep generated artefacts in sync · [[FL-010]] model to DTO and metamodel · [[FL-029]] model to public wire body
+- [[D-018]] DTOs and metamodels are generated · [[D-050]] the generated adapter is total · [[D-105]] the persistence patch is not the public body

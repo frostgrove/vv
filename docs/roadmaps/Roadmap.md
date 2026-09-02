@@ -150,7 +150,8 @@ in every path; `TestWithoutTheTagNameFuncEveryPathIsGoFieldNames` in
 **Generated wiring for Fiber and Gin.** `cmd/vv -binding` writes `net` or
 `none`. Fiber and Gin wiring would make a generated file import a satellite
 module — which a consumer may do and the library's own generated output may not
-([[D-033]]). `-binding none` plus `ServingFor` is the hand-written way in today.
+([[D-033]]). `-binding none` plus `ServingFor` — or `ServingWire`, when the
+public bodies are generated too ([[D-105]]) — is the hand-written way in today.
 
 ## 9. Remaining documentation citations to two deleted documents
 
@@ -205,13 +206,16 @@ lifecycle. There is no universal registry and no `storageotel`, `auditotel`,
 `tenancyjwt`, `eventsourceotel` or higher-order bundle.
 
 This item includes only justified base work: the service/storage chain helpers
-accepted by the future architecture ADR, bounded typed observer fan-out, exact
-optional-effect rules and module graph gates. Cache fan-out must preserve
+accepted by the future architecture ADR, exact optional-effect rules and module
+graph gates. Bounded typed observer fan-out has landed for both root subsystems
+— `cache.Observers` and `jobs.WorkerObservers`, [[D-096]] — and preserves
 [[D-084]]: a terminal shared-load observer remains synchronous inside its
-admitted flight slot, with no early
-release, extra queue or unowned goroutine. The current executable walks in
-`crud.ExistsUnscopedOf` and `cache.BatchReaderOf` must become exact-outer,
-explicitly forwarded by known wrappers or fail closed before new decorators.
+admitted flight slot, with no early release, extra queue or unowned goroutine.
+The neutral probe seam landed with it: `Cache.Check` and `Workers.Check` publish
+an answer, and the composition root still chooses importance ([[D-091]]). The
+current executable walks in `crud.ExistsUnscopedOf` and `cache.BatchReaderOf`
+must become exact-outer, explicitly forwarded by known wrappers or fail closed
+before new decorators.
 
 The current tree is not falsely described as already clean. `appfiber`,
 `storageminiofx`, the `accessjwt` → `authjwt` concrete-adapter edge and the
@@ -229,10 +233,20 @@ package.
 ## 12. Jobs/cache conformance and current implementation
 
 Cache is no longer a future subsystem: its typed facade, memory backend,
-policies, declarations and observers exist. Jobs likewise has definitions,
-invocations, attempts, queues, consumers, durable context, worker observation
-vocabulary/config, scheduling and Admin/redrive contracts; production
-`WorkerObserver` emission is not wired yet. PostgreSQL's bounded
+policies, declarations, observers, bounded execution memo ([[D-094]]),
+`ResolveMany` ([[D-095]]), driver-extensible capability set ([[D-093]]) and
+declared eviction domains ([[D-104]]) exist. Activation now refuses a cache
+placed on the resource identity that holds queued work or revoked sessions, so
+the three-resource rule is checked rather than remembered, and
+`RequireDeclaredResources` lets a root refuse an undeclared one instead of
+treating silence as separation. The composition root itself now has a doctor —
+`module.Doctor` prints what a deployment profile would activate across the
+module catalog without building any of it ([[D-106]]) — but its reach stops at
+the composition: it does not yet collect each subsystem's schema version,
+required migration or resource identity, which is what would compare the
+endpoint a Redis client was actually built with. Jobs likewise has definitions, invocations, attempts, queues, consumers,
+durable context, worker observation vocabulary/config and its runtime emission,
+scheduling and Admin/redrive contracts. PostgreSQL's bounded
 Get/Redrive/PurgeTerminal controls and count-bounded List, memory/PostgreSQL
 drivers, worker execution and the Fx binding have landed, and `jobsredis` is now
 a committed workspace module. List currently materializes full payload-bearing
@@ -248,19 +262,21 @@ redrive. Release requires an explicit new-ID/predecessor, durable-generation or
 accepted-loss contract plus concurrency/crash evidence; the current behavior is
 not silently promoted to durable history semantics.
 
-The tagged `jobspg` integration fixtures currently compile only with workspace
-dependency leakage and fail dependency resolution under `GOWORK=off`; skipped or
-workspace-only runs are not isolated live evidence. The pgx-backed live profile
-must run from the unpublished test module (or another dedicated test module)
-without adding a third-party requirement to the root.
+The tagged `jobspg` integration fixtures are internal tests that import a pgx
+driver, so the module holding them owes pgx a `require` — `go mod tidy` reads
+every build configuration and the tag exempts nothing. `jobs/jobspg` is
+therefore a module of its own: the fixtures resolve under `GOWORK=off` from a
+`go.mod` that names the driver, and the root stays third-party-free. Skipped or
+workspace-only runs are still not isolated live evidence, and pgx still does not
+belong in the root.
 
 The [current jobs/cache revision](2026-09-01-jobs-cache-roadmap.md) narrows the
-remaining work. Cache observer fan-out must be deterministic and bounded
-without changing D-084 timing. Executable batch capability discovery must stop
-at an opaque outer wrapper instead of tunnelling to an inner backend. Jobs adds a
-handler middleware/chain only after a second real use or a concrete conformance
-obligation; OTel and tenancy remain adapters/application wiring, never
-`jobsotel` or `jobstenancy`.
+remaining work. Executable batch capability discovery must stop at an opaque
+outer wrapper instead of tunnelling to an inner backend — the capability set is
+now open to a driver ([[D-093]]) but that exact-outer question is unchanged and
+still open. Jobs adds a handler middleware/chain only after a second real use or
+a concrete conformance obligation; OTel and tenancy remain adapters/application
+wiring, never `jobsotel` or `jobstenancy`.
 
 This item is not complete while any claimed memory/PostgreSQL driver or worker
 test fails. `TestRecordRoundTripPreservesRestorableAttemptLedger` failed during
