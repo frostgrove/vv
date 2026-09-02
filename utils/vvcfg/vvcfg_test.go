@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,13 +64,6 @@ func write(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return p
-}
-
-func setDefaultCfgPath(t *testing.T, path string) {
-	t.Helper()
-	previous := DefaultCfgPath
-	DefaultCfgPath = path
-	t.Cleanup(func() { DefaultCfgPath = previous })
 }
 
 func setArgs(t *testing.T, args ...string) {
@@ -325,17 +319,27 @@ func TestVVDBRawDSNEnvironmentReplacesAFileFormConnection(t *testing.T) {
 	}
 }
 
-func TestMustLoadUsesEnvironmentWhenDefaultPathIsDisabled(t *testing.T) {
+func TestAConfigurationWithNoFileLoadsOnlyWhenTheAuthorAllowedIt(t *testing.T) {
 	t.Setenv("CONFIG_PATH", "")
 	t.Setenv("DB_ENGINE", "postgres")
 	t.Setenv("DB_HOST", "db.from.env")
 	t.Setenv("DB_NAME", "orders")
-	setDefaultCfgPath(t, "")
-	setArgs(t, "app")
 
-	got := MustLoad[databaseConf]()
+	refused := Source{Arguments: []string{}}
+	if _, _, err := LoadFrom[databaseConf](refused); !errors.Is(err, ErrNoPath) {
+		t.Fatalf("a source that names no file and does not allow one should refuse: %v", err)
+	}
+
+	allowed := Source{Arguments: []string{}, AllowNoFile: true}
+	got, report, err := LoadFrom[databaseConf](allowed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.DB.Engine != vvdb.Postgres || got.DB.Host != "db.from.env" || got.DB.Name != "orders" {
 		t.Fatalf("environment-only config = %+v", got.DB)
+	}
+	if report.Path != "" || report.PathOrigin != PathFromNothing {
+		t.Fatalf("report of an environment-only load = %+v", report)
 	}
 }
 
@@ -422,26 +426,62 @@ func TestMustLoadPanicsOnAnError(t *testing.T) {
 	MustLoad[conf](filepath.Join(t.TempDir(), "nope.yaml"))
 }
 
-func TestMustLoadUsesTheDefaultPath(t *testing.T) {
-	p := write(t, "name: from-default\nport: 5\n")
+func TestTheDefaultPathIsCarriedByTheSourceAndNotByThePackage(t *testing.T) {
 	t.Setenv("CONFIG_PATH", "")
-	setDefaultCfgPath(t, p)
-	setArgs(t, "app")
+	first := Source{Arguments: []string{}, DefaultPath: write(t, "name: from-first-default\nport: 5\n")}
+	second := Source{Arguments: []string{}, DefaultPath: write(t, "name: from-second-default\nport: 6\n")}
 
-	got := MustLoad[conf]()
-	if got.Name != "from-default" || got.Port != 5 {
-		t.Fatalf("MustLoad default config = %+v", got)
+	var group sync.WaitGroup
+	results := make([]string, 2)
+	for index, source := range []Source{first, second} {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			got, report, err := LoadFrom[conf](source)
+			if err != nil {
+				results[index] = err.Error()
+				return
+			}
+			results[index] = got.Name + " " + report.PathOrigin.String()
+		}()
+	}
+	group.Wait()
+
+	if results[0] != "from-first-default the default path" || results[1] != "from-second-default the default path" {
+		t.Fatalf("two sources loaded concurrently = %q and %q: a default path shared through the package cannot answer both", results[0], results[1])
 	}
 }
 
-func TestMustLoadPrefersTheFlagOverEnvironmentAndDefault(t *testing.T) {
+func TestResolutionPrefersTheFlagOverEnvironmentAndDefaultAndSaysWhichOneItUsed(t *testing.T) {
 	flag := write(t, "name: from-flag\nport: 6\n")
-	t.Setenv("CONFIG_PATH", write(t, "name: from-environment\nport: 7\n"))
-	setDefaultCfgPath(t, write(t, "name: from-default\nport: 8\n"))
-	setArgs(t, "app", "--config-path", flag)
+	environment := write(t, "name: from-environment\nport: 7\n")
+	fallback := write(t, "name: from-default\nport: 8\n")
+	t.Setenv("CONFIG_PATH", environment)
 
-	got := MustLoad[conf]()
-	if got.Name != "from-flag" || got.Port != 6 {
-		t.Fatalf("MustLoad precedence config = %+v", got)
+	source := Source{Arguments: []string{"--config-path", flag}, DefaultPath: fallback}
+	got, report, err := LoadFrom[conf](source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "from-flag" || report.PathOrigin != PathFromFlag || report.Path != flag {
+		t.Fatalf("config = %+v, report = %s", got, report)
+	}
+
+	withoutFlag := Source{Arguments: []string{}, DefaultPath: fallback}
+	got, report, err = LoadFrom[conf](withoutFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "from-environment" || report.PathOrigin != PathFromEnvironment {
+		t.Fatalf("without the flag the environment should name the file: %+v %s", got, report)
+	}
+
+	t.Setenv("CONFIG_PATH", "")
+	got, report, err = LoadFrom[conf](withoutFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "from-default" || report.PathOrigin != PathFromDefault {
+		t.Fatalf("with neither the source default should be used: %+v %s", got, report)
 	}
 }
