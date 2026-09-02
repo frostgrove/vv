@@ -165,7 +165,7 @@ func TestPostgresCatalogVersionEvolutionSupportsRollingDeploys(t *testing.T) {
 
 func openCatalogDriver(t *testing.T, ctx context.Context, db *sql.DB, schema string, namespace jobs.Namespace, catalog jobs.Catalog) *Driver {
 	t.Helper()
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func openCatalogDriver(t *testing.T, ctx context.Context, db *sql.DB, schema str
 }
 
 func prepareCatalogDriver(ctx context.Context, db *sql.DB, schema string, namespace jobs.Namespace, catalog jobs.Catalog) error {
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		return err
 	}

@@ -25,12 +25,13 @@ var ErrCatalogMismatch = errors.New("jobspg: catalog mismatch")
 type SchemaManagement uint8
 
 const (
-	ManageSchema SchemaManagement = iota
+	UnsetSchemaManagement SchemaManagement = iota
 	VerifySchema
+	ManageSchema
 )
 
-func (management SchemaManagement) Valid() bool {
-	return management == ManageSchema || management == VerifySchema
+func (this SchemaManagement) Valid() bool {
+	return this == UnsetSchemaManagement || this == VerifySchema || this == ManageSchema
 }
 
 type Spec struct {
@@ -62,7 +63,7 @@ var _ jobs.DeliveryDriver = (*Driver)(nil)
 var _ jobs.RetentionSweeper = (*Driver)(nil)
 
 func Open(ctx context.Context, db *sql.DB, namespace jobs.Namespace, catalog jobs.Catalog) (*Driver, error) {
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, SchemaManagement: ManageSchema})
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +79,10 @@ func New(spec Spec) (*Driver, error) {
 	}
 	if !spec.SchemaManagement.Valid() {
 		return nil, fmt.Errorf("jobspg: %w: schema management", jobs.ErrInvalid)
+	}
+	schemaManagement := spec.SchemaManagement
+	if schemaManagement == UnsetSchemaManagement {
+		schemaManagement = VerifySchema
 	}
 	if spec.Source != nil && !crud.SameDataSource(crud.KeyOf(spec.Source), spec.DB) {
 		return nil, fmt.Errorf("jobspg: %w: CRUD source must use the configured database", jobs.ErrInvalid)
@@ -125,96 +130,96 @@ func New(spec Spec) (*Driver, error) {
 		description:      description,
 		repo:             newRepository(schema),
 		entropy:          entropy,
-		schemaManagement: spec.SchemaManagement,
+		schemaManagement: schemaManagement,
 	}, nil
 }
 
-func (d *Driver) Description() jobs.BackendDescription {
-	if d == nil {
+func (this *Driver) Description() jobs.BackendDescription {
+	if this == nil {
 		return jobs.BackendDescription{}
 	}
-	return d.description
+	return this.description
 }
 
-func (d *Driver) Namespace() jobs.Namespace {
-	if d == nil {
+func (this *Driver) Namespace() jobs.Namespace {
+	if this == nil {
 		return jobs.Namespace{}
 	}
-	return d.namespace
+	return this.namespace
 }
 
-func (d *Driver) Catalog() jobs.Catalog {
-	if d == nil {
+func (this *Driver) Catalog() jobs.Catalog {
+	if this == nil {
 		return jobs.Catalog{}
 	}
-	return d.catalog
+	return this.catalog
 }
 
-func (d *Driver) SchemaManagement() SchemaManagement {
-	if d == nil {
-		return ManageSchema
+func (this *Driver) SchemaManagement() SchemaManagement {
+	if this == nil {
+		return UnsetSchemaManagement
 	}
-	return d.schemaManagement
+	return this.schemaManagement
 }
 
-func (d *Driver) Prepare(ctx context.Context) error {
-	if d == nil {
+func (this *Driver) Prepare(ctx context.Context) error {
+	if this == nil {
 		return ErrNotReady
 	}
-	d.ready.Store(false)
-	if d.schemaManagement == ManageSchema {
-		if err := d.Migrate(ctx); err != nil {
+	this.ready.Store(false)
+	if this.schemaManagement == ManageSchema {
+		if err := this.Migrate(ctx); err != nil {
 			return err
 		}
-		if err := d.BindCatalog(ctx); err != nil {
+		if err := this.BindCatalog(ctx); err != nil {
 			return err
 		}
 	}
-	return d.Check(ctx)
+	return this.Check(ctx)
 }
 
-func (d *Driver) Migrate(ctx context.Context) error {
-	if d == nil || d.db == nil {
+func (this *Driver) Migrate(ctx context.Context) error {
+	if this == nil || this.db == nil {
 		return ErrNotReady
 	}
-	return d.repo.migrate(ctx, d.db)
+	return this.repo.migrate(ctx, this.db)
 }
 
-func (d *Driver) BindCatalog(ctx context.Context) error {
-	if d == nil || d.db == nil {
+func (this *Driver) BindCatalog(ctx context.Context) error {
+	if this == nil || this.db == nil {
 		return ErrNotReady
 	}
-	return d.repo.bindCatalog(ctx, d.db, d.namespace, d.catalog)
+	return this.repo.bindCatalog(ctx, this.db, this.namespace, this.catalog)
 }
 
-func (d *Driver) Check(ctx context.Context) error {
-	if d == nil || d.db == nil {
+func (this *Driver) Check(ctx context.Context) error {
+	if this == nil || this.db == nil {
 		return ErrNotReady
 	}
-	d.ready.Store(false)
-	if err := d.repo.check(ctx, d.db, d.namespace, d.catalog); err != nil {
+	this.ready.Store(false)
+	if err := this.repo.check(ctx, this.db, this.namespace, this.catalog); err != nil {
 		return err
 	}
-	d.ready.Store(true)
+	this.ready.Store(true)
 	return nil
 }
 
-func (d *Driver) CheckSchema(ctx context.Context) error {
-	return d.Check(ctx)
+func (this *Driver) CheckSchema(ctx context.Context) error {
+	return this.Check(ctx)
 }
 
-func (d *Driver) requireReady() error {
-	if d == nil || d.db == nil || !d.ready.Load() {
+func (this *Driver) requireReady() error {
+	if this == nil || this.db == nil || !this.ready.Load() {
 		return ErrNotReady
 	}
 	return nil
 }
 
-func (d *Driver) token() ([]byte, error) {
+func (this *Driver) token() ([]byte, error) {
 	value := make([]byte, 32)
-	d.entropyMu.Lock()
-	_, err := io.ReadFull(d.entropy, value)
-	d.entropyMu.Unlock()
+	this.entropyMu.Lock()
+	_, err := io.ReadFull(this.entropy, value)
+	this.entropyMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("jobspg: lease entropy: %w", err)
 	}

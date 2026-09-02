@@ -45,3 +45,15 @@ changing the binary.
 `WorkerObserver` is a trusted synchronous instrumentation boundary. Implementations must return
 promptly and hand blocking export work to their own bounded transport; observer panics are
 contained, but a blocking observer intentionally applies backpressure to the worker loop.
+
+Compose several independent observers with `jobs.WorkerObservers` (or
+`MustWorkerObservers`) rather than a chain of your own: it refuses more than
+`MaxWorkerObservers` children at construction, skips nil and typed-nil entries,
+runs children synchronously in registration order and isolates each child's
+panic so the later ones still run. It starts no goroutine, queue, retry or
+timer.
+
+`Workers.Check(ctx) error` is the neutral readiness probe: it reports a latched
+fatal driver failure, then the run state. It carries no importance, name or
+status code — the composition root wraps it in the health contribution it chose.
+See `[[D-096]]`.

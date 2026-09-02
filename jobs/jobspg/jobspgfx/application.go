@@ -13,23 +13,28 @@ import (
 )
 
 type ApplicationSettings struct {
-	Application      string
-	Environment      string
-	Schema           string
-	Backend          jobs.BackendID
-	Entropy          io.Reader
-	SchemaManagement jobspg.SchemaManagement
-	Housekeeping     HousekeepingSettings
-	Catalog          jobs.Catalog
-	Queue            jobs.QueueSpec
-	Workers          jobs.WorkersSpec
-	Scheduler        jobs.SchedulerSpec
+	Application                    string
+	Environment                    string
+	Schema                         string
+	Backend                        jobs.BackendID
+	Entropy                        io.Reader
+	SchemaManagement               jobspg.SchemaManagement
+	AllowManagedSchemaInProduction bool
+	Housekeeping                   HousekeepingSettings
+	Catalog                        jobs.Catalog
+	Queue                          jobs.QueueSpec
+	Workers                        jobs.WorkersSpec
+	Scheduler                      jobs.SchedulerSpec
 }
 
 func Application(settings ApplicationSettings) fx.Option {
 	namespace, err := jobs.NamespaceOf(settings.Application, settings.Environment)
 	if err != nil {
 		return fx.Error(fmt.Errorf("jobspgfx: application namespace: %w", err))
+	}
+	decision, err := settings.SchemaManagementDecision()
+	if err != nil {
+		return fx.Error(err)
 	}
 	workers := settings.Workers
 	if workers.Build.IsZero() {
@@ -49,9 +54,10 @@ func Application(settings ApplicationSettings) fx.Option {
 			Schema:           settings.Schema,
 			Backend:          settings.Backend,
 			Entropy:          settings.Entropy,
-			SchemaManagement: settings.SchemaManagement,
+			SchemaManagement: decision.Management,
 			Housekeeping:     settings.Housekeeping,
 		}),
+		fx.Supply(decision),
 		jobsfx.Module(jobsfx.Spec{
 			Namespace: namespace,
 			Catalog:   settings.Catalog,

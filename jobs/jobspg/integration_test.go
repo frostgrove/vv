@@ -61,7 +61,7 @@ func TestPostgresAmbientCRUDPlacement(t *testing.T) {
 	definition := postgresTestDefinition(t, "jobspg.ambient")
 	catalog := jobs.MustCatalog(definition)
 	source := crudsql.Postgres(db)
-	driver, err := New(Spec{DB: db, Source: source, Namespace: namespace, Catalog: catalog})
+	driver, err := New(Spec{DB: db, Source: source, Namespace: namespace, Catalog: catalog, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}

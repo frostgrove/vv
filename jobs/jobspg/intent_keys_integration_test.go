@@ -34,7 +34,7 @@ func TestPostgresIntentReservationsSurviveApplicationAndRollingRedrive(t *testin
 	collapse := postgresTestDefinition(t, "jobspg.intent-keys.collapse")
 	legacyUnique := postgresTestDefinition(t, "jobspg.intent-keys.legacy-unique")
 	catalog := jobs.MustCatalog(unique, collapse, legacyUnique)
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPostgresIntentKeysMigrationUpgradesV4(t *testing.T) {
 	}
 	definition := postgresTestDefinition(t, "jobspg.intent-keys.upgrade")
 	catalog := jobs.MustCatalog(definition)
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestPostgresIntentKeysMigrationUpgradesV4(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	upgraded, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	upgraded, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}

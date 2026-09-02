@@ -173,7 +173,7 @@ func TestPostgresSchemaTwoUpgradeBackfillsTerminalRetention(t *testing.T) {
 	})
 	definition := postgresTestDefinition(t, "jobspg.retention.upgrade")
 	catalog := jobs.MustCatalog(definition)
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,11 +200,11 @@ func TestPostgresSchemaTwoUpgradeBackfillsTerminalRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	upgraded, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	upgraded, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	peer, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}

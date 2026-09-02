@@ -35,7 +35,7 @@ func TestPostgresSchemaHardeningUpgradesV4AndRejectsDrift(t *testing.T) {
 	}
 	definition := postgresTestDefinition(t, "jobspg.hardening")
 	catalog := jobs.MustCatalog(definition)
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ payload_identity, payload_version, payload_digest, excluded_binding, excluded_bu
 func assertPostgresMaximumPayloadRecord(t *testing.T, ctx context.Context, db *sql.DB, schema string) {
 	t.Helper()
 	namespace, catalog, placement := testMaximumPayloadPlacement(t)
-	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema})
+	driver, err := New(Spec{DB: db, Namespace: namespace, Catalog: catalog, Schema: schema, SchemaManagement: ManageSchema})
 	if err != nil {
 		t.Fatal(err)
 	}
