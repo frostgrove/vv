@@ -3,8 +3,10 @@ package appfiber
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/fx"
@@ -23,18 +25,27 @@ type Route interface {
 	Access() []authhttp.Endpoint
 }
 
+type Operations interface {
+	Operations() *RouteSet
+}
+
 type Middleware = app.Ordered[fiber.Handler]
 
 const OrderAuth = 100
 
 const (
 	routeGroup      = `group:"vv.appfiber.routes"`
+	operationGroup  = `group:"vv.appfiber.operations"`
 	middlewareGroup = `group:"vv.appfiber.middleware"`
 	resolverGroup   = `group:"vv.appfiber.resolvers"`
 )
 
 func AsRoute(constructor any) any {
 	return fx.Annotate(constructor, fx.As(new(Route)), fx.ResultTags(routeGroup))
+}
+
+func AsOperations(constructor any) any {
+	return fx.Annotate(constructor, fx.As(new(Operations)), fx.ResultTags(operationGroup))
 }
 
 func AsMiddleware(constructor any) any {
@@ -49,9 +60,35 @@ type Mounted struct {
 	fx.In
 
 	Routes      []Route      `group:"vv.appfiber.routes"`
+	Operations  []Operations `group:"vv.appfiber.operations"`
 	Middlewares []Middleware `group:"vv.appfiber.middleware"`
 
+	Unchecked UncheckedRule `optional:"true"`
+
 	Logger *slog.Logger `optional:"true"`
+}
+
+func (this Mounted) contributions() ([]Route, error) {
+	routes := slices.Clone(this.Routes)
+	for _, contributor := range this.Operations {
+		set := contributor.Operations()
+		if set == nil {
+			return nil, fmt.Errorf("appfiber: the operations of %T came out nil", contributor)
+		}
+		route, err := set.Route()
+		if err != nil {
+			return nil, fmt.Errorf("appfiber: the operations of %T were refused: %w", contributor, err)
+		}
+		routes = append(routes, route)
+	}
+	return routes, nil
+}
+
+func (this Mounted) unchecked() UncheckedRule {
+	if this.Unchecked != nil {
+		return this.Unchecked
+	}
+	return NamingUnchecked
 }
 
 type Resolvers struct {
@@ -73,14 +110,31 @@ type Spec struct {
 }
 
 func Serving(spec Spec) fx.Option {
-	return fx.Module("vv.appfiber",
+	mounting := spec
+	mounting.Addr = ""
+	return fx.Options(Mounting(mounting), Listening(spec))
+}
+
+func Mounting(spec Spec) fx.Option {
+	if spec.Addr != "" {
+		return fx.Error(fmt.Errorf(
+			"appfiber: Mounting was given the address %q and never listens; Serving is the option that does both",
+			spec.Addr))
+	}
+	return fx.Module("vv.appfiber.mounting",
 		fx.Invoke(func(fiberApp *fiber.App, mounted Mounted) error {
 			return Mount(fiberApp, mounted, spec.Prefix)
 		}),
+	)
+}
+
+func Listening(spec Spec) fx.Option {
+	if spec.Addr == "" {
+		return fx.Error(errors.New(
+			"appfiber: no address was given to listen on; Mounting is the option that mounts the API without listening"))
+	}
+	return fx.Module("vv.appfiber.listening",
 		fx.Invoke(func(in serving) {
-			if spec.Addr == "" {
-				return
-			}
 			Listen(in.Lifecycle, in.Shutdowner, in.App, spec, logger(in.Logger))
 		}),
 	)
@@ -100,27 +154,41 @@ func Mount(fiberApp *fiber.App, mounted Mounted, prefix string) error {
 
 	api := fiberApp.Group(prefix)
 	for _, middleware := range app.Sorted(mounted.Middlewares) {
+		// A contribution that arrived without a handler is a wiring branch that fell through, and
+		// skipping it silently is how a named guard stops running while the surface it protected
+		// keeps answering. Verify cannot see it: `Use` registrations are not in the route table.
 		if middleware.Handler == nil {
-			continue
+			return fmt.Errorf("appfiber: the middleware %q was contributed without a handler",
+				middleware.Name)
 		}
 		api.Use(middleware.Handler)
 		log.Info("api middleware mounted",
 			slog.String("name", middleware.Name), slog.Int("order", middleware.Order))
 	}
 
+	routes, err := mounted.contributions()
+	if err != nil {
+		return err
+	}
+
 	var declared []authhttp.Endpoint
-	for _, route := range mounted.Routes {
+	var unchecked []Unchecked
+	for _, route := range routes {
 		route.Mount(api)
 		declared = append(declared, route.Access()...)
+		unchecked = append(unchecked, uncheckedIn(route)...)
 	}
 
 	if err := authfiber.Verify(fiberApp, declared, authhttp.UnderPrefix(prefix)); err != nil {
 		return err
 	}
+	if err := mounted.unchecked()(log, unchecked); err != nil {
+		return err
+	}
 
 	log.Info("api mounted",
 		slog.String("prefix", prefix),
-		slog.Int("routes", len(mounted.Routes)),
+		slog.Int("routes", len(routes)),
 		slog.Int("declared_endpoints", len(declared)))
 	return nil
 }

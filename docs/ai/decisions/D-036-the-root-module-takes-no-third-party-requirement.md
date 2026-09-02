@@ -71,6 +71,9 @@ attached by the caller.
   the root cannot require it.
 - Do not tag a first-party module after the root that requires it. It is a leaf,
   so it is tagged first — `errs`, then the root, then the satellites.
+- Do not read a build tag as an exemption. A third-party import inside a
+  `_test.go` is a requirement of whichever module holds the file, because
+  `go mod tidy` reads every build configuration.
 
 ## Where it lives
 
@@ -78,7 +81,20 @@ attached by the caller.
 - `errs/doc.go` — records what the first tag freezes, and the packaging note
   the package's placeholder carried until phase 1 replaced it with real code.
 - `scripts/checks.sh:check_deps` — the mechanical check, which filters on the module path
-  prefix and so passes a first-party requirement and fails a third-party one.
+  prefix and so passes a first-party requirement and fails a third-party one. It
+  lists the root module with `-test -tags=integration`, because a driver imported
+  by a `_test.go` behind a build tag is still a `require` in the published
+  `go.mod`: `go mod tidy` reads every build configuration and the tag exempts
+  nothing. A listing that fails is a refusal rather than an empty answer — a test
+  importing a package the module does not require fails exactly that way, and the
+  arm's old `2>/dev/null || true` read that as a clean module.
+- `scripts/checks.sh:root_third_party` — the listing itself, split out so the failure
+  to list and the third-party answer are two different refusals.
+- `jobs/jobspg/go.mod` — the module that exists because of this decision. Its
+  production code takes nothing but `database/sql`; its tagged integration
+  fixtures open a database through pgx, they are internal tests and cannot move
+  to `test/` without being rewritten, so the requirement they create lives with
+  them instead of in the root.
 - `scripts/checks.sh:TIER0_SEALED` — the other half, added with phase 1. This decision's
   case rests on `errs` having an **empty** require block and therefore being
   taggable first, and nothing enforced that: `check-tiers` filters out every
@@ -102,8 +118,9 @@ attached by the caller.
   the first tag `errs` is a package **of the root module**; `go mod tidy` counts
   test imports and `make check-tidy` runs `go mod tidy -diff` on `.`, so that
   line would either fail the check or put the root's first third-party
-  requirement into `go.mod`. `make check-deps` runs `go list -deps` without
-  `-test` and would not have seen it.
+  requirement into `go.mod`. `make check-deps` did not see it then, because that
+  arm listed the root module without `-test`; it does now, and `jobs/jobspg` is
+  the case that made the difference visible.
 
 ## Proven by
 
@@ -117,7 +134,23 @@ watching it fail, while `go build ./...` and `go vet ./...` stayed green because
 `go.work` resolves it from the Fiber binding.
 
 That last part is the reason this check exists at all: the workspace hides
-exactly the mistake the invariant forbids.
+exactly the mistake the invariant forbids. It hid the test half of the same
+mistake for as long as the arm ran without `-test`: seven tagged fixtures in
+`jobs/jobspg` imported pgx, `check-deps` said `ok`, and the only symptom was
+`check-tidy` demanding a pgx `require` in the root `go.mod`.
+
+`scripts/checks_test.go` pins both halves:
+
+- `TestCheckDepsRefusesAThirdPartyPackageOnlyAnIntegrationTestImports` builds a
+  fixture repository whose only third-party import is in a `//go:build
+  integration` test and requires `check-deps` to name it. Against the arm as it
+  was, the fixture printed `check-deps: ok`.
+- `TestCheckDepsPassesWhenATestOfTheRootModuleStaysInTheStandardLibrary` is its
+  control: the same fixture with a test that imports nothing but `testing` has to
+  pass, so the first test cannot be satisfied by a check that refuses everything.
+- `TestNoTestInTheRootModuleOfThisRepositoryImportsAThirdPartyPackage` runs the
+  check against this repository. It is the one that fails if `jobs/jobspg` loses
+  its `go.mod` again.
 
 ```
 make check-tiers

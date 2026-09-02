@@ -155,6 +155,17 @@ half-land. `retract` in the root `go.mod` is the only remedy after the fact.
   at once, and this repository has already been bitten by exactly that.
 - `scripts/modules.sh` — rewrites each submodule's library requirement and
   tidies modules without leaving published `replace` directives behind.
+- `scripts/checks.sh:check_replaces` — "do not put a `replace` in a published
+  `go.mod`" as a command rather than a sentence. It refuses a satellite that
+  replaces the library, and it refuses a replace whose target is not the
+  directory the replaced module lives in. The replace of an *untagged sibling* is
+  the one it allows: `auth/access`, `storage/storageminio` and `jobs/jobspg` have
+  no version to require yet, so their satellites name the directory instead, and
+  the directive goes when the tag arrives.
+- `scripts/checks.sh:check_tidy` and `scripts/common.sh:replace_directives` — the
+  tidiness question, asked with the library replaced by this tree and answered
+  without writing to it. `check_tidy` gives back every `go.mod` it touched byte
+  for byte and prints `go mod tidy -diff` for the module it refuses.
 - `scripts/release.sh` — the release ordering and lockstep check.
 - `README.md` — "Install", which states what to `go get`.
 
@@ -210,6 +221,22 @@ than a sentence.
 The dependency isolation itself is visible in the `go.mod` files: gin's
 transitive set (sonic, validator/v10, quic-go, protobuf, mongo-driver) appears
 in `crud/http/crudgin/go.mod` and nowhere else.
+
+The `replace` half is asserted rather than trusted, and `scripts/checks_test.go`
+is where. `TestNoPublishedModuleInThisRepositoryReplacesTheLibrary` runs
+`check-replaces` against this repository — it found `jobs/jobsfx`,
+`jobs/jobsredis` and `jobs/jobspg/jobspgfx` carrying a permanent replace of the
+library, which is the shape this decision forbids and which nothing had been
+looking for. `TestCheckReplacesKeepsTheReplaceOfAnUntaggedSibling` is the control
+that keeps the check from being a blanket ban.
+
+`TestCheckTidyGivesBackEveryGoModExactlyAsItFoundIt` is the other half, and it
+comes from the same defect: `check_tidy` used to undo its temporary replace with
+`go mod edit -dropreplace` instead of restoring the file, so `make check` deleted
+those three directives on every run and left the working tree dirty.
+`TestCheckTidyNamesTheUntidyModuleAndPrintsItsDiff` pins the rest of it — the
+check exited 1 without printing anything at all, because `set -e` killed the
+script on the exit status `go mod tidy -diff` uses to *mean* "untidy".
 
 ## See also
 

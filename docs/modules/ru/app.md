@@ -2,7 +2,8 @@
 
 ```go
 import "github.com/frostgrove/vv/app"                 // значения
-import "github.com/frostgrove/vv/app/appfx"           // uber/fx: команда сидов
+import "github.com/frostgrove/vv/app/module"          // что вносит ограниченный контекст
+import "github.com/frostgrove/vv/app/appfx"           // uber/fx: модули и команда сидов
 import "github.com/frostgrove/vv/app/http/appfiber"   // uber/fx + Fiber: API
 ```
 
@@ -12,9 +13,9 @@ import "github.com/frostgrove/vv/app/http/appfiber"   // uber/fx + Fiber: API
 · **Зависит от:** `port` · а `appfiber` — ещё от `authhttp` и `authfiber`
 
 Те части старта программы, которые пишет каждый сервис и большинство пишет с
-мелкими ошибками: упорядоченная цепочка вкладов, команда сидов, которую не
-страшно запустить дважды, и HTTP-поверхность, собранная из модулей, которые не
-импортируют друг друга.
+мелкими ошибками: упорядоченная цепочка вкладов, модуль, который говорит, что он
+вносит и в какой вид деплоя, команда сидов, которую не страшно запустить дважды,
+и HTTP-поверхность, собранная из модулей, которые не импортируют друг друга.
 
 ---
 
@@ -34,13 +35,119 @@ import "github.com/frostgrove/vv/app/http/appfiber"   // uber/fx + Fiber: API
 
 Контейнер здесь не нужен. `NewRunner` принимает слайс, собранный как угодно.
 
-### `appfx` — команда сидов в графе fx
+### `module` — что вносит ограниченный контекст, без контейнера
 
 | | |
 |---|---|
+| `Role` | `API`, `Worker`, `Seeder` — три вида деплоя, к которым может относиться вклад |
+| `Kind` | `ProvideKind`, `RouteKind`, `WorkerKind`, `SeederKind`, `CheckKind` и `Kind.Role()` |
+| `New(name)` | строитель: `Order`, `Provide`, `Routes`, `Workers`, `Seeders`, `Checks`, затем `Build()` / `MustBuild()` |
+| `Spec` / `Define(spec)` / `MustDefine(spec)` | явная форма, вызовом над которой и является строитель |
+| `Auto(name, ctors…)` | короткая форма для модуля, который только предоставляет конструкторы |
+| `Definition` | само значение: `Name()`, `Order()`, `Roles()`, `Contributions()`, `Active(profile)`, `Describe(profile)` |
+| `Profile` | деплой: `Name` и роли, которые он запускает, плюс `With(roles…)`, `Named(name)`, `Carries(role)`, `Check()` |
+| `Base` · `Serving` · `Working` · `Seeding` · `Complete` | пять профилей, которыми деплой бывает чаще всего |
+| `NewCatalog(defs…)` / `MustCatalog(defs…)` | единственный список модулей, упорядоченный и проверенный |
+| `Catalog.Names()` / `Definitions()` / `Describe(profile)` / `Check(profile)` | что в нём лежит и пригоден ли профиль над ним |
+| `Doctor(catalog, profile)` | `Diagnosis`: дескриптор, проблемы и замечания — собранный, ничего не собирая |
+| `ErrDefinition` · `ErrProfile` · `ErrCatalog` · `Refusal` | отказы, каждый со всеми проблемами разом |
+
+```go
+func Module() module.Definition {
+    return module.New("workspace").
+        Order(200).
+        Provide(NewRepository, NewDocuments).
+        Routes(appfiber.AsRoute(NewHandler)).
+        Workers(runtimefx.AsRunner(NewDebtSweeper)).
+        Seeders(appfx.AsSeeder(NewTemplateSeeder)).
+        Checks(healthfx.AsCheck(NewStorageCheck)).
+        MustBuild()
+}
+```
+
+Конструкторы аннотирует композиционный корень — той аннотацией, которой владеет
+сама подсистема: `module` только раскладывает их по полкам и никогда не узнаёт,
+что такое роутер, супервизор или контейнер. Второй HTTP-биндинг не добавляет
+здесь ни одного пакета.
+
+`Auto` — короткая форма, `New` — строитель, `Define` — явная спецификация, и
+строитель является вызовом над спецификацией, а не вторым контрактом. Все трое
+отклоняют одно и то же и разом: модуль без имени, nil-конструктор, модуль,
+который не вносит ничего.
+
+### Профиль деплоя
+
+`Complete` запускает все роли. `Serving` монтирует маршруты и не запускает
+воркеров; `Working` запускает воркеров и ничего не монтирует; `Seeding` крутит
+сидеры и не делает ни того, ни другого. Обычные конструкторы и health-проверки
+принадлежат каждому профилю: реплике-воркеру репозиторий нужен так же, и
+`/health/ready` она отвечает так же.
+
+```go
+catalog := module.MustCatalog(access.Module(), workspace.Module(), ops.Module())
+
+fx.New(
+    appfx.Options(catalog, module.Serving),          // реплика API
+    appfiber.Serving(appfiber.Spec{Prefix: "/api/v1", Addr: ":8080"}),
+).Run()
+```
+
+Роль, которую профиль не назвал, не проводится вообще. Этим это и отличается от
+трёх рукописных списков опций: команда сидов и API собирают один и тот же граф, а
+разделяет их одно значение, а не то, кто последним правил два файла из трёх.
+
+`module.Serving.With(module.Worker).Named("monolith")` — деплой, который и то, и
+другое.
+
+### `Doctor` — чем этот процесс собирается быть
+
+```go
+fmt.Print(module.Doctor(catalog, profile))
+```
+
+```text
+profile serving activates api
+  access (order 100)
+    provide   3  active
+    check     1  active
+  workspace (order 200)
+    provide  12  active
+    route     2  active
+    worker    1  inactive
+    seeder    1  inactive
+  ops (order 300)
+    worker    1  inactive
+notice: the module "ops" contributes nothing to the serving profile
+```
+
+**Чтобы это ответить, в каталоге не вызывается ничего.** Ни один конструктор не
+исполняется, ни один пул не открывается — именно поэтому это безопасно печатать
+из команды, которой нельзя трогать деплой, и именно поэтому ответ есть даже для
+графа, который не собирается. `Diagnosis` разделяет проблемы и замечания:
+проблема — это отказ ([[D-106]]), замечание — форма, которую стоит прочитать.
+Запустить все роли над каталогом без единого воркера — обычное дело, поэтому это
+замечание; профиль, который не активирует ничего, — это процесс, который
+стартует, отрапортует healthy и ничего не сделает, поэтому это проблема.
+
+Чего в диагнозе пока нет — сводки схем и готовности по подсистемам: миграции,
+которая нужна драйверу `jobs`, идентичности ресурса, на котором собран кеш. Место
+для них — здесь.
+
+### `appfx` — модули и команда сидов в графе fx
+
+| | |
+|---|---|
+| `Options(catalog, profile)` | все модули каталога, проведённые под этот деплой |
+| `Option(definition, profile)` | один модуль, проведённый так же |
+| `Auto(catalog)` | `Options` под `module.Complete` |
 | `AsSeeder(ctor)` | аннотирует конструктор, чтобы его `app.Seeder` попал в группу |
 | `Seeders` | группа как параметр-объект `fx.In` |
 | `Seeding(spec)` | предоставляет `*app.Runner` поверх всего, что попало в группу |
+
+Весь биндинг в этом и состоит: один `fx.Module` на определение, внутри —
+конструкторы, которые активирует профиль. Отклонённый каталог или профиль
+превращается в `fx.Error`, потому что контейнер, которому не дали ничего,
+стартует прекрасно.
 
 ```go
 fx.Options(
@@ -55,6 +162,14 @@ fx.Options(
 | | |
 |---|---|
 | `Route` | что вносит ограниченный контекст: `Mount(fiber.Router)` и `Access() []authhttp.Endpoint` |
+| `Policy` | что нужно, чтобы дойти до операции: `Requires(perms…)`, `Authenticated(why)`, `Public(why)` |
+| `RouteSetSpec` | `Prefix`, `Render` |
+| `NewRouteSet(spec)` | регистратор, отказывающий на плохом префиксе сразу |
+| `Routes(prefix, opts…)` | тот же регистратор, доносящий плохой префикс до сборки |
+| `RouteSet.GET/POST/PUT/PATCH/DELETE(path, policy, handler)` | один вызов: монтирование, декларация и внешняя проверка |
+| `RouteSet.Handle(method, path, policy, handler)` | то же для метода, которого нет среди глаголов |
+| `RouteSet.Route()` / `MustRoute()` | `Route` — или все проблемы разом |
+| `ErrRouteSet` | то, что оборачивает любой отказ регистратора |
 | `Middleware` | `app.Ordered[fiber.Handler]` |
 | `OrderAuth` | место guard'а: перед всем, что предполагает вызывающего |
 | `AsRoute` / `AsMiddleware` / `AsResolver` | три аннотации, которыми пользуется модуль |
@@ -64,6 +179,9 @@ fx.Options(
 | `Serving(spec)` | смонтировать, проверить, слушать |
 | `Mount(app, mounted, prefix)` | то же монтирование без запуска через fx |
 | `Listen(lc, sd, app, spec, log)` | то же прослушивание |
+| `HealthSpec` | `Registry`, `Path`, `Operator`, `Render` |
+| `Health(spec)` | три проекции health как обычный вкладываемый маршрут |
+| `DefaultHealthPath` | `/health` |
 
 ```go
 fx.Options(
@@ -76,6 +194,69 @@ fx.Options(
 
 Пустой `Addr` не слушает — именно это нужно тесту, которому важны только
 смонтированные маршруты.
+
+### Один вызов вместо двух списков
+
+`Mount` и `Access` — два метода, и писать их руками значит держать в
+согласии два списка. Регистратор делает это невозможным для обычного случая:
+один вызов несёт путь, политику и хендлер, а набор строит из этой единственной
+записи и монтирование, и декларацию, и проверку перед хендлером.
+
+```go
+func NewHandler(useCase *DeadJobs) (appfiber.Route, error) {
+    handler := &Handler{useCase: useCase}
+    return appfiber.Routes("/ops/jobs").
+        GET("/dead", appfiber.Requires(PermJobsRead), handler.list).
+        POST("/dead/:id/restart", appfiber.Requires(PermJobsWrite), handler.restart).
+        Route()
+}
+```
+
+Путь склеивается с префиксом один раз, поэтому объявленный путь и смонтированный
+не могут оказаться разными строками. `Requires` ставит перед хендлером внешнюю
+проверку — `auth.Require`, затем `auth.HasAll`, затем хендлер — и отказывает
+через тот же рендерер `porthttp`, что и остальная поверхность. `Public(why)` не
+монтирует никакой проверки и требует причину словами; `Requires()` без
+разрешений и `Public("")` отвергаются оба, потому что «забыл» не должно читаться
+как «разрешений не нужно».
+
+Проверка читает не декларацию: и то и другое — проекции `Policy` ([[D-100]]).
+Ничто не выводит решение на запросе из `authhttp.Endpoint` — это [[D-073]], и оно
+в силе.
+
+`Routes(prefix)` собирает ошибки и отдаёт их все в `Route()`, поэтому цепочка
+читается одним выражением; `NewRouteSet(RouteSetSpec{…})` — тот же регистратор,
+отказывающий прямо на вызове, для места сборки, которому так удобнее.
+
+`Route` остаётся интерфейсом. Модуль, форму которого набор не покрывает, пишет
+`Mount` и `Access` руками, и гейт ниже относится к нему точно так же: маршрут,
+смонтированный мимо регистратора, по-прежнему роняет старт, потому что гейт
+читает таблицу Fiber, а не записи набора.
+
+### Маршруты health
+
+`Health` превращает `*health.Registry` в такой же `Route`, как все прочие, — и
+гейт ниже видит его наравне с ними:
+
+```go
+fx.Provide(appfiber.AsRoute(func(registry *health.Registry) (appfiber.Route, error) {
+    return appfiber.Health(appfiber.HealthSpec{
+        Registry: registry,
+        Operator: []auth.Permission{PermHealthRead},
+    })
+}))
+```
+
+`GET /health/live` и `GET /health/ready` объявлены `Public` — пробе нечем
+аутентифицироваться — и отвечают двумя ограниченными проекциями. Пустой
+`Operator` не монтирует третий маршрут вовсе; заполненный монтирует
+`GET /health/detail` за этими разрешениями, проверка идёт в хендлере, а отказ
+рендерится через `porthttp`, не раскрывая ничего из детализации.
+
+503 отвечает только `down`. Деградировавшая реплика отвечает 200 и говорит об
+этом в теле: вывод её из ротации убирает те реплики, которые всё ещё
+обслуживают работающую половину API. Рассуждение — [[D-090]] и [[D-091]], реестр
+— [health](health.md).
 
 ## Гейт: старт падает, когда роутер и декларации расходятся
 
@@ -140,4 +321,6 @@ type-switch. [[D-037]] — решение с тремя шагами, по ко�
 - [authfiber](authfiber.md) — как читается таблица маршрутов Fiber
 - [crudhttp](crudhttp.md) — `Table.Guarded`, десять маршрутов CRUD-ресурса
 - [accessfx](access.md) — та же форма для контекста access
-- [[D-037]] · [[D-073]] · [[D-074]] · [[FL-024]]
+- [health](health.md) — то, из чего отвечают маршруты health
+- [runtime](runtime.md) — фоновая работа, которую запускает супервизор, а не она сама
+- [[D-037]] · [[D-073]] · [[D-074]] · [[D-090]] · [[D-091]] · [[D-100]] · [[D-106]] · [[FL-024]] · [[FL-027]] · [[FL-030]]
